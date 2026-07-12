@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
     BROADCAST_STREAM_HEARTBEAT_MS,
     BROADCAST_STREAM_LEASE_MS,
+    BROADCAST_STREAM_STARTING_TIMEOUT_MS,
     buildBroadcastRuntimeSession,
     buildGameDayBroadcastSetupUrl,
     canOpenGameDayBroadcastSetup,
@@ -41,9 +42,31 @@ describe('Game Day broadcast entry', () => {
             status: 'scheduled',
             broadcastSession: {
                 managedStreamReady: true,
+                localStreamStatus: 'starting',
+                localStreamUpdatedAt: new Date('2026-07-11T19:59:50.000Z')
+            }
+        }, { now })).toEqual({ state: 'starting', label: 'Device streaming is starting.' });
+        expect(resolveGameDayBroadcastStatus({
+            status: 'scheduled',
+            broadcastSession: {
+                managedStreamReady: true,
+                localStreamStatus: 'starting',
+                localStreamUpdatedAt: new Date('2026-07-11T19:58:59.000Z')
+            }
+        }, { now })).toEqual({
+            state: 'stale',
+            label: 'The device stream start timed out. Open setup to retry streaming.'
+        });
+        expect(resolveGameDayBroadcastStatus({
+            status: 'scheduled',
+            broadcastSession: {
+                managedStreamReady: true,
                 localStreamStatus: 'starting'
             }
-        })).toEqual({ state: 'starting', label: 'Device streaming is starting.' });
+        }, { now })).toEqual({
+            state: 'stale',
+            label: 'The device stream start timed out. Open setup to retry streaming.'
+        });
         expect(resolveGameDayBroadcastStatus({
             status: 'scheduled',
             broadcastSession: {
@@ -123,6 +146,7 @@ describe('Game Day broadcast entry', () => {
         });
         expect(BROADCAST_STREAM_LEASE_MS).toBeLessThanOrEqual(60_000);
         expect(BROADCAST_STREAM_HEARTBEAT_MS).toBeLessThan(BROADCAST_STREAM_LEASE_MS);
+        expect(BROADCAST_STREAM_STARTING_TIMEOUT_MS).toBeGreaterThanOrEqual(BROADCAST_STREAM_LEASE_MS);
         expect(buildBroadcastRuntimeSession({
             existingSession: {
                 id: 'broadcast-1',
@@ -145,7 +169,7 @@ describe('Game Day broadcast wiring', () => {
     it('uses the shared deep link for coaches, videographers, and Stream & Score helpers', () => {
         const gameDaySource = readFileSync(resolve(process.cwd(), 'game-day.html'), 'utf8');
 
-        expect(gameDaySource).toContain("from './js/game-day-broadcast.js?v=4'");
+        expect(gameDaySource).toContain("from './js/game-day-broadcast.js?v=5'");
         expect(gameDaySource.match(/data-game-day-broadcast-card/g)?.length).toBeGreaterThanOrEqual(2);
         expect(gameDaySource).toContain('renderLimitedVideographerAccess(accessInfo)');
         expect(gameDaySource).toContain('renderLimitedStreamAndScoreAccess(accessInfo)');

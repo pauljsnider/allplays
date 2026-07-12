@@ -6,6 +6,7 @@ const failedBroadcastStatuses = new Set(['failed', 'error', 'permission_failed']
 const runtimeBroadcastStatuses = new Set(['ready', 'starting', 'live', 'failed']);
 export const BROADCAST_STREAM_HEARTBEAT_MS = 15_000;
 export const BROADCAST_STREAM_LEASE_MS = 45_000;
+export const BROADCAST_STREAM_STARTING_TIMEOUT_MS = 60_000;
 
 function toTimeMs(value) {
     if (value instanceof Date) return value.getTime();
@@ -48,6 +49,7 @@ export function resolveGameDayBroadcastStatus(game = {}, { now = new Date() } = 
         session.localStreamStatus || session.runtimeStatus || session.streamStatus || session.status || ''
     ).trim().toLowerCase();
     const leaseExpiresAtMs = toTimeMs(session.localStreamLeaseExpiresAt);
+    const streamUpdatedAtMs = toTimeMs(session.localStreamUpdatedAt || session.updatedAt);
     const nowMs = toTimeMs(now) ?? Date.now();
     if (liveBroadcastStatuses.has(streamStatus) && leaseExpiresAtMs !== null && leaseExpiresAtMs > nowMs) {
         return {
@@ -64,6 +66,12 @@ export function resolveGameDayBroadcastStatus(game = {}, { now = new Date() } = 
     }
 
     if (startingBroadcastStatuses.has(streamStatus)) {
+        if (streamUpdatedAtMs === null || nowMs - streamUpdatedAtMs > BROADCAST_STREAM_STARTING_TIMEOUT_MS) {
+            return {
+                state: 'stale',
+                label: 'The device stream start timed out. Open setup to retry streaming.'
+            };
+        }
         return {
             state: 'starting',
             label: 'Device streaming is starting.'
