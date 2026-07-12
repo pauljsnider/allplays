@@ -1541,11 +1541,8 @@ service cloud.firestore {
              data.get('category', '') == 'matching_response' &&
              data.get('fromUserId', '') == request.auth.uid &&
              itemId == postId + '__' + request.auth.uid &&
-             data.get('title', '') is string &&
-             data.get('title', '').size() > 0 &&
-             data.get('title', '').size() <= 160 &&
-             data.get('body', '') is string &&
-             data.get('body', '').size() <= 300 &&
+             data.get('title', '') == 'New matching response' &&
+             data.get('body', '') == 'Someone responded to your opportunity.' &&
              data.get('appRoute', '') == '/opportunities?view=mine' &&
              data.get('postId', '') is string &&
              isMatchingSocialPostType(post.get('type', '')) &&

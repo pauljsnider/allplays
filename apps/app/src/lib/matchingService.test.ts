@@ -253,6 +253,8 @@ describe('respondToMatchingPost', () => {
     const [notificationRef, notification] = adapterMocks.setDoc.mock.calls[1];
     expect(notificationRef.path).toBe('users/author-1/notificationInbox/post-1__parent-1');
     expect(notification.category).toBe('matching_response');
+    expect(notification.title).toBe('New matching response');
+    expect(notification.body).toBe('Someone responded to your opportunity.');
     expect(notification.appRoute).toBe('/opportunities?view=mine');
     expect(notification.fromUserId).toBe('parent-1');
     expect(notification.readAt).toBeNull();
@@ -280,7 +282,7 @@ describe('respondToMatchingPost', () => {
     const response = adapterMocks.setDoc.mock.calls[0][1];
     const notification = adapterMocks.setDoc.mock.calls[1][1];
     expect(response.responderName).toBe('ALL PLAYS user');
-    expect(notification.body).toBe('ALL PLAYS user responded to "Ethan (U12 Soccer) is looking for a team".');
+    expect(notification.body).toBe('Someone responded to your opportunity.');
     expect(JSON.stringify({ response, notification })).not.toContain('parent@example.com');
   });
 

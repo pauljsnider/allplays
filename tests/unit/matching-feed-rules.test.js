@@ -1,5 +1,11 @@
 import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import {
+    assertFails,
+    assertSucceeds,
+    initializeTestEnvironment
+} from '@firebase/rules-unit-testing';
+import { doc, serverTimestamp, setDoc } from 'firebase/firestore';
 
 function rulesSource() {
     return readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
@@ -185,6 +191,8 @@ describe('Player/team matching feed Firestore rules', () => {
         expect(source).toContain("data.get('category', '') == 'matching_response' &&");
         expect(source).toContain("data.get('fromUserId', '') == request.auth.uid &&");
         expect(source).toContain("itemId == postId + '__' + request.auth.uid &&");
+        expect(source).toContain("data.get('title', '') == 'New matching response' &&");
+        expect(source).toContain("data.get('body', '') == 'Someone responded to your opportunity.' &&");
         expect(source).toContain("data.get('appRoute', '') == '/opportunities?view=mine' &&");
         expect(source).toContain("post.get('authorId', '') == recipientId &&");
         expect(source).toContain('!isBlockedMatchingPair(recipientId, request.auth.uid) &&');
@@ -194,5 +202,64 @@ describe('Player/team matching feed Firestore rules', () => {
 
         const inboxBlock = source.match(/match \/notificationInbox\/\{itemId\} \{[\s\S]*?\}/);
         expect(inboxBlock?.[0]).toContain('allow update, delete: if false;');
+    });
+
+    describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('matching notification rules engine coverage', () => {
+        let testEnv;
+
+        beforeAll(async () => {
+            testEnv = await initializeTestEnvironment({
+                projectId: `allplays-matching-notification-rules-${Date.now()}`,
+                firestore: { rules: rulesSource() }
+            });
+        }, 30000);
+
+        beforeEach(async () => {
+            await testEnv.clearFirestore();
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                const firestore = context.firestore();
+                await setDoc(doc(firestore, 'socialPosts/post-1'), {
+                    type: 'player_seeking_team',
+                    visibility: 'community',
+                    status: 'open',
+                    hidden: false,
+                    authorId: 'author-1'
+                });
+                await setDoc(doc(firestore, 'socialPosts/post-1/responses/responder-1'), {
+                    responderId: 'responder-1'
+                });
+            });
+        });
+
+        afterAll(async () => {
+            await testEnv?.cleanup();
+        });
+
+        function notificationPayload(overrides = {}) {
+            return {
+                category: 'matching_response',
+                title: 'New matching response',
+                body: 'Someone responded to your opportunity.',
+                appRoute: '/opportunities?view=mine',
+                postId: 'post-1',
+                fromUserId: 'responder-1',
+                createdAt: serverTimestamp(),
+                readAt: null,
+                ...overrides
+            };
+        }
+
+        it('allows trusted notification copy and rejects responder-controlled title or body', async () => {
+            const responderDb = testEnv.authenticatedContext('responder-1').firestore();
+            const validRef = doc(responderDb, 'users/author-1/notificationInbox/post-1__responder-1');
+
+            await assertFails(setDoc(validRef, notificationPayload({
+                title: 'Urgent: contact me'
+            })));
+            await assertFails(setDoc(validRef, notificationPayload({
+                body: 'Email attacker@example.com'
+            })));
+            await assertSucceeds(setDoc(validRef, notificationPayload()));
+        });
     });
 });

@@ -24,7 +24,6 @@ import {
   buildMatchingTitle,
   containsContactInfo,
   getMatchingExpiryDate,
-  getMatchingKindLabel,
   isMatchingPostOpen,
   matchingPostToFeedItem,
   MATCHING_RESPONSE_MAX_LENGTH,
@@ -251,8 +250,8 @@ export async function respondToMatchingPost(user: AuthUser, post: MatchingPost, 
   try {
     await setDoc(doc(db, 'users', post.authorId, 'notificationInbox', `${post.id}__${user.uid}`), {
       category: 'matching_response',
-      title: `New response: ${getMatchingKindLabel(post.kind)}`,
-      body: `${getUserDisplayName(user)} responded to "${post.title}".`,
+      title: 'New matching response',
+      body: 'Someone responded to your opportunity.',
       appRoute: '/opportunities?view=mine',
       postId: post.id,
       fromUserId: user.uid,
