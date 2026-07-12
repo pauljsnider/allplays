@@ -100,6 +100,34 @@ beside the result.
    each run should start from a clean app launch unless the row explicitly says
    warm resume.
 
+## Raw evidence contract
+
+Before filling the tables or closing #2050, save the raw run evidence as JSON
+and validate it:
+
+```sh
+npm run app:validate-performance-measurements -- docs/app-performance-measurements.json
+```
+
+The JSON artifact must include:
+
+- `issue: 2050`, `baselineSha`, `afterSha`, and a shared `fixture` with
+  `testAccount`, `teamOrOrganization`, `homeTeamCount`, `scheduleEventCount`,
+  and `messageThreadCount`.
+- Four `profiles`: `desktop-web`, `throttled-4g-web`, `mid-range-android`, and
+  `iphone`, each with exact hardware, OS, runtime, browser/WebView, network, and
+  CPU notes.
+- `before` and `after` phases for every profile. Each phase must use the
+  matching SHA, include a `capturedAt` timestamp, and include at least 3 clean
+  raw `runs`.
+- Every run must include `coldStartHomeTtiMs`, `warmResumeMs`,
+  `readsHomeMount`, `readsScheduleMount`, `readsMessagesMount`,
+  `entryChunkGzipBytes`, `rsvpTapLatencyMs`, and `chatSendLatencyMs`.
+
+The validator rejects placeholders and missing profile/phase coverage, then
+prints a markdown median summary that can be pasted into the final comparison
+table and the GitHub issue.
+
 ## Baseline template
 
 Fill this table from `master` at the start of the push without changing the
@@ -143,6 +171,7 @@ Keep this summary table current as fixes land. Numbers are medians of 3 runs.
 
 ## Closing the loop
 
-When the perf/UX fixes have landed, re-measure, fill the final column, and paste
-the completed table into #2050 before closing it. The procedure above is the
-contract: anyone should be able to reproduce these numbers from a clean checkout.
+When the perf/UX fixes have landed, re-measure, validate the raw JSON artifact,
+fill the final column, and paste the completed table into #2050 before closing it.
+The procedure above is the contract: anyone should be able to reproduce these
+numbers from a clean checkout.
