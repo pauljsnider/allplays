@@ -1471,7 +1471,8 @@ service cloud.firestore {
       let post = get(/databases/$(database)/documents/socialPosts/$(postId)).data;
       return (
                post.get('type', '') == 'team_seeking_players' &&
-               data.get('teamId', null) == null
+               data.get('teamId', null) == null &&
+               data.get('teamName', null) == null
              ) ||
              (
                post.get('type', '') == 'player_seeking_team' &&
