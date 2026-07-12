@@ -18,6 +18,7 @@ import {
   signUpWithEmail
 } from '../lib/authService';
 import type { AuthState } from '../lib/types';
+import { getSafeAuthNextRoute } from '../lib/authNextRoute';
 
 type AuthMode = 'login' | 'signup';
 
@@ -27,6 +28,7 @@ export function AuthPage({ auth }: { auth: AuthState }) {
   const inviteCode = (searchParams.get('code') || '').trim().toUpperCase();
   const inviteType = (searchParams.get('type') || 'parent').trim().toLowerCase();
   const requestedMode = searchParams.get('mode');
+  const requestedNextRoute = getSafeAuthNextRoute(searchParams.get('next'));
   const initialMode: AuthMode = requestedMode === 'login' ? 'login' : inviteCode ? 'signup' : 'login';
   const [mode, setMode] = useState<AuthMode>(initialMode);
   const [email, setEmail] = useState('');
@@ -48,14 +50,14 @@ export function AuthPage({ auth }: { auth: AuthState }) {
     if (inviteCode) {
       return `/accept-invite?code=${encodeURIComponent(inviteCode)}&type=${encodeURIComponent(inviteType)}`;
     }
-    return getRouteForUser(auth.user);
-  }, [auth.user, inviteCode, inviteType]);
+    return requestedNextRoute || getRouteForUser(auth.user);
+  }, [auth.user, inviteCode, inviteType, requestedNextRoute]);
 
   useEffect(() => {
     if (!auth.loading && auth.user && !inviteCode) {
-      navigate(getRouteForUser(auth.user), { replace: true });
+      navigate(postAuthRoute, { replace: true });
     }
-  }, [auth.loading, auth.user, inviteCode, navigate]);
+  }, [auth.loading, auth.user, inviteCode, navigate, postAuthRoute]);
 
   useEffect(() => {
     let cancelled = false;
@@ -108,7 +110,7 @@ export function AuthPage({ auth }: { auth: AuthState }) {
 
         await signUpWithEmail(normalizedEmail, password, code);
         await auth.refresh();
-        navigate('/verify-pending', { replace: true });
+        navigate(requestedNextRoute ? `/verify-pending?next=${encodeURIComponent(requestedNextRoute)}` : '/verify-pending', { replace: true });
         return;
       }
 
@@ -117,7 +119,7 @@ export function AuthPage({ auth }: { auth: AuthState }) {
         rememberPendingInvite(inviteCode, inviteType);
       }
       const hydrated = inviteCode ? null : await hydrateFirebaseUser(credential.user).catch(() => null);
-      const postLoginRoute = inviteCode ? postAuthRoute : getRouteForUser(hydrated?.user || auth.user);
+      const postLoginRoute = inviteCode || requestedNextRoute ? postAuthRoute : getRouteForUser(hydrated?.user || auth.user);
       if (credential.nativeRest) {
         window.location.hash = `#${postLoginRoute}`;
         window.location.reload();
@@ -150,10 +152,10 @@ export function AuthPage({ auth }: { auth: AuthState }) {
       if (result) {
         const hydrated = mode === 'signup' || inviteCode ? null : await hydrateFirebaseUser(result.user).catch(() => null);
         const postGoogleRoute = mode === 'signup'
-          ? '/verify-pending'
+          ? requestedNextRoute ? `/verify-pending?next=${encodeURIComponent(requestedNextRoute)}` : '/verify-pending'
           : inviteCode
             ? postAuthRoute
-            : getRouteForUser(hydrated?.user || auth.user);
+            : requestedNextRoute || getRouteForUser(hydrated?.user || auth.user);
         if (result.nativeRest) {
           window.location.hash = `#${postGoogleRoute}`;
           window.location.reload();

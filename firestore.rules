@@ -2086,6 +2086,31 @@ service cloud.firestore {
       allow read, update, delete: if isGlobalAdmin();
     }
 
+    // Public sports opportunities are exposed through callable functions that
+    // return an allow-listed public projection. Source records contain private
+    // author/recipient identifiers and are never directly client-readable.
+    match /publicOpportunities/{listingId} {
+      allow read, write: if false;
+    }
+
+    match /publicOpportunityReports/{reportId} {
+      allow read, write: if false;
+    }
+
+    match /opportunityInquiries/{inquiryId} {
+      allow read: if isSignedIn() &&
+                  resource.data.get('participantIds', []) is list &&
+                  request.auth.uid in resource.data.get('participantIds', []);
+      allow create, update, delete: if false;
+
+      match /messages/{messageId} {
+        allow read: if isSignedIn() &&
+                    get(/databases/$(database)/documents/opportunityInquiries/$(inquiryId)).data.get('participantIds', []) is list &&
+                    request.auth.uid in get(/databases/$(database)/documents/opportunityInquiries/$(inquiryId)).data.get('participantIds', []);
+        allow create, update, delete: if false;
+      }
+    }
+
     match /publicUserProfiles/{userId} {
       allow read: if canReadPublicUserProfile(userId, resource.data);
       allow create: if (isGlobalAdmin() && isPublicUserProfilePayloadValid(userId, request.resource.data)) ||

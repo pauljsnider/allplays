@@ -139,7 +139,7 @@ export function buildAppSearchActions(auth: Pick<AuthState, 'user' | 'isAdmin' |
       kind: 'action',
       title: 'Browse Teams',
       subtitle: 'Explore public teams on ALL PLAYS',
-      ...(auth.user ? { route: '/teams/browse' } : { href: 'https://allplays.ai/teams.html' })
+      route: '/teams/browse'
     }
   ];
 
@@ -158,6 +158,13 @@ export function buildAppSearchActions(auth: Pick<AuthState, 'user' | 'isAdmin' |
         title: 'Get Started',
         subtitle: 'Create an account',
         route: '/auth?mode=signup'
+      },
+      {
+        id: 'discover-opportunities',
+        kind: 'action',
+        title: 'Discover Opportunities',
+        subtitle: 'Sports jobs, roster openings, volunteers, and players looking for teams',
+        route: '/discover'
       }
     );
     return actions;
@@ -219,6 +226,20 @@ export function buildAppSearchActions(auth: Pick<AuthState, 'user' | 'isAdmin' |
       title: 'Profile',
       subtitle: 'Account settings and notifications',
       route: '/profile'
+    },
+    {
+      id: 'discover-opportunities',
+      kind: 'action',
+      title: 'Discover Opportunities',
+      subtitle: 'Sports jobs, roster openings, volunteers, and players looking for teams',
+      route: '/discover'
+    },
+    {
+      id: 'post-opportunity',
+      kind: 'action',
+      title: 'Post Public Opportunity',
+      subtitle: 'Publish a sports job, team opening, volunteer role, or looking-for-team post',
+      route: '/discover/new'
     }
   );
 

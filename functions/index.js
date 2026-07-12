@@ -145,6 +145,15 @@ const {
   getRegistrationSource,
   getTeamSportsConnectConfig
 } = require('./sports-connect-registration-sync.cjs');
+const {
+  cleanText: cleanOpportunityText,
+  normalizeOpportunityFilters,
+  normalizeOpportunityInput,
+  getEffectiveOpportunityStatus,
+  matchesOpportunityFilters,
+  serializePublicOpportunity,
+  buildOpportunityExpiry
+} = require('./public-opportunities-core.cjs');
 
 if (admin.apps.length === 0) {
   admin.initializeApp();
@@ -164,6 +173,21 @@ const checkStripeWebhookRateLimit = createInMemoryRateLimiter({
 const checkPublicRegistrationSubmissionRateLimit = createInMemoryRateLimiter({
   windowMs: 10 * 60_000,
   maxRequests: 3,
+  maxKeys: 5_000
+});
+const checkPublicOpportunityBrowseRateLimit = createInMemoryRateLimiter({
+  windowMs: 60_000,
+  maxRequests: 120,
+  maxKeys: 5_000
+});
+const checkPublicOpportunityWriteRateLimit = createInMemoryRateLimiter({
+  windowMs: 10 * 60_000,
+  maxRequests: 12,
+  maxKeys: 5_000
+});
+const checkPublicOpportunityMessageRateLimit = createInMemoryRateLimiter({
+  windowMs: 10 * 60_000,
+  maxRequests: 20,
   maxKeys: 5_000
 });
 
@@ -11411,4 +11435,488 @@ exports.queueTeamEmailDelivery = functions.firestore
       queuedAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
+  });
+
+// Public sports opportunity board. Public responses are serialized through an
+// explicit allow-list; Firestore rules deny direct client access to the source
+// documents because they also contain author and recipient identifiers.
+function throwOpportunityError(code, message, details = {}) {
+  throw new functions.https.HttpsError(code, message, details);
+}
+
+function assertOpportunityRateLimit(checker, context, key = '') {
+  const requestIp = getRequestIp(context?.rawRequest || {});
+  const rateLimit = checker({ ip: `${key || 'public'}|${requestIp}` });
+  if (!rateLimit.allowed) {
+    throwOpportunityError('resource-exhausted', 'Too many requests. Please wait a few minutes and try again.', {
+      retryAfterSeconds: rateLimit.retryAfterSeconds
+    });
+  }
+}
+
+function requireOpportunityAuth(context, { verified = false } = {}) {
+  if (!context.auth?.uid) {
+    throwOpportunityError('unauthenticated', 'Sign in to continue.');
+  }
+  if (verified && context.auth.token?.email_verified !== true) {
+    throwOpportunityError('failed-precondition', 'Verify your email before publishing a public opportunity.');
+  }
+  return context.auth.uid;
+}
+
+async function getOpportunityCaller(context) {
+  const uid = requireOpportunityAuth(context);
+  const userSnap = await firestore.doc(`users/${uid}`).get();
+  return {
+    uid,
+    email: String(context.auth.token?.email || userSnap.data()?.email || '').trim().toLowerCase(),
+    user: userSnap.exists ? userSnap.data() || {} : {}
+  };
+}
+
+function isOpportunityPlatformAdmin(caller) {
+  return caller?.user?.isAdmin === true || caller?.user?.isPlatformAdmin === true ||
+    caller?.user?.roles?.includes?.('platformAdmin');
+}
+
+function encodeOpportunityCursor(docSnap) {
+  if (!docSnap) return null;
+  return Buffer.from(JSON.stringify({
+    createdAt: docSnap.data()?.createdAt?.toMillis?.() || 0,
+    id: docSnap.id
+  }), 'utf8').toString('base64url');
+}
+
+function decodeOpportunityCursor(value) {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(String(value), 'base64url').toString('utf8'));
+    if (!parsed.id || !Number.isFinite(Number(parsed.createdAt))) return null;
+    return { id: String(parsed.id), createdAt: admin.firestore.Timestamp.fromMillis(Number(parsed.createdAt)) };
+  } catch {
+    return null;
+  }
+}
+
+function serializeOpportunityMessage(docSnap) {
+  const data = docSnap.data() || {};
+  return {
+    id: docSnap.id,
+    authorId: String(data.authorId || ''),
+    authorName: cleanOpportunityText(data.authorName, 100) || 'ALL PLAYS member',
+    body: cleanOpportunityText(data.body, 1500),
+    createdAt: data.createdAt?.toDate?.().toISOString?.() || null
+  };
+}
+
+function serializeOpportunityInquiry(docSnap, messages = []) {
+  const data = docSnap.data() || {};
+  return {
+    id: docSnap.id,
+    listingId: String(data.listingId || ''),
+    listingTitle: cleanOpportunityText(data.listingTitle, 100),
+    listingKind: String(data.listingKind || ''),
+    teamId: String(data.teamId || '') || null,
+    participantIds: Array.isArray(data.participantIds) ? data.participantIds.map(String) : [],
+    status: data.status === 'closed' ? 'closed' : 'open',
+    createdAt: data.createdAt?.toDate?.().toISOString?.() || null,
+    updatedAt: data.updatedAt?.toDate?.().toISOString?.() || null,
+    messages
+  };
+}
+
+async function requireOpportunityListing(listingId) {
+  let normalizedId;
+  try {
+    normalizedId = normalizeFirestoreId(listingId, 'listingId');
+  } catch (error) {
+    throwOpportunityError('invalid-argument', error.message);
+  }
+  const listingRef = firestore.doc(`publicOpportunities/${normalizedId}`);
+  const listingSnap = await listingRef.get();
+  if (!listingSnap.exists) throwOpportunityError('not-found', 'Opportunity not found.');
+  return { listingRef, listingSnap, listing: listingSnap.data() || {} };
+}
+
+async function canManageOpportunity(caller, listing) {
+  if (isOpportunityPlatformAdmin(caller) || listing.authorId === caller.uid) return true;
+  if (!listing.teamId) return false;
+  const teamSnap = await firestore.doc(`teams/${listing.teamId}`).get();
+  return teamSnap.exists && hasTeamAdminAccess({
+    team: teamSnap.data() || {},
+    user: caller.user,
+    uid: caller.uid,
+    email: caller.email
+  });
+}
+
+async function resolveOpportunityTeam(input, caller) {
+  if (input.kind === 'player_seeking_team') return null;
+  const teamSnap = await firestore.doc(`teams/${input.teamId}`).get();
+  if (!teamSnap.exists) throwOpportunityError('not-found', 'Team not found.');
+  const team = teamSnap.data() || {};
+  if (team.isPublic !== true) throwOpportunityError('failed-precondition', 'Only public teams can publish public opportunities.');
+  if (!hasTeamAdminAccess({ team, user: caller.user, uid: caller.uid, email: caller.email })) {
+    throwOpportunityError('permission-denied', 'Only a team owner or admin can publish for this team.');
+  }
+  return { id: teamSnap.id, ...team };
+}
+
+exports.listPublicOpportunities = functions.https.onCall(async (data, context = {}) => {
+  assertOpportunityRateLimit(checkPublicOpportunityBrowseRateLimit, context, 'list');
+  const filters = normalizeOpportunityFilters(data?.filters || {});
+  const requestedPageSize = Number(data?.pageSize || 24);
+  const pageSize = Math.min(40, Math.max(1, Number.isFinite(requestedPageSize) ? requestedPageSize : 24));
+  const cursor = decodeOpportunityCursor(data?.cursor);
+  let baseQuery = firestore.collection('publicOpportunities')
+    .where('status', '==', 'active')
+    .orderBy('createdAt', 'desc')
+    .orderBy(admin.firestore.FieldPath.documentId(), 'desc');
+  if (cursor) baseQuery = baseQuery.startAfter(cursor.createdAt, cursor.id);
+
+  const items = [];
+  let lastScanned = null;
+  let exhausted = false;
+  let stoppedBeforeEndOfScan = false;
+  for (let page = 0; page < 5 && items.length < pageSize && !exhausted; page += 1) {
+    let scanQuery = baseQuery.limit(100);
+    if (lastScanned) {
+      scanQuery = firestore.collection('publicOpportunities')
+        .where('status', '==', 'active')
+        .orderBy('createdAt', 'desc')
+        .orderBy(admin.firestore.FieldPath.documentId(), 'desc')
+        .startAfter(lastScanned.data().createdAt, lastScanned.id)
+        .limit(100);
+    }
+    const scan = await scanQuery.get();
+    exhausted = scan.size < 100;
+    for (let index = 0; index < scan.docs.length; index += 1) {
+      const docSnap = scan.docs[index];
+      lastScanned = docSnap;
+      const listing = docSnap.data() || {};
+      if (matchesOpportunityFilters(listing, filters)) {
+        items.push(serializePublicOpportunity(docSnap.id, listing));
+        if (items.length >= pageSize) {
+          stoppedBeforeEndOfScan = index < scan.docs.length - 1;
+          break;
+        }
+      }
+    }
+  }
+
+  return {
+    items,
+    nextCursor: (stoppedBeforeEndOfScan || !exhausted) && lastScanned ? encodeOpportunityCursor(lastScanned) : null
+  };
+});
+
+exports.getPublicOpportunity = functions.https.onCall(async (data, context = {}) => {
+  assertOpportunityRateLimit(checkPublicOpportunityBrowseRateLimit, context, 'get');
+  const { listingSnap, listing } = await requireOpportunityListing(data?.listingId);
+  if (listing.status === 'removed') throwOpportunityError('not-found', 'Opportunity not found.');
+  return { item: serializePublicOpportunity(listingSnap.id, listing) };
+});
+
+exports.createPublicOpportunity = functions.https.onCall(async (data, context = {}) => {
+  const uid = requireOpportunityAuth(context, { verified: true });
+  assertOpportunityRateLimit(checkPublicOpportunityWriteRateLimit, context, `create:${uid}`);
+  let input;
+  try {
+    input = normalizeOpportunityInput(data || {});
+  } catch (error) {
+    throwOpportunityError('invalid-argument', error.message || 'Invalid opportunity.');
+  }
+  const caller = await getOpportunityCaller(context);
+  const team = await resolveOpportunityTeam(input, caller);
+  const now = admin.firestore.Timestamp.now();
+  const listingRef = firestore.collection('publicOpportunities').doc();
+  const record = {
+    ...input,
+    guardianAttested: input.kind === 'player_seeking_team' ? true : false,
+    teamId: team?.id || null,
+    teamName: team ? cleanOpportunityText(team.name, 100) : null,
+    teamPhotoUrl: team ? cleanOpportunityText(team.photoUrl, 1000) || null : null,
+    authorId: uid,
+    recipientUserIds: [uid],
+    status: 'active',
+    createdAt: now,
+    updatedAt: now,
+    expiresAt: admin.firestore.Timestamp.fromDate(buildOpportunityExpiry(now.toMillis()))
+  };
+  await listingRef.set(record);
+  return { item: serializePublicOpportunity(listingRef.id, record) };
+});
+
+exports.updatePublicOpportunity = functions.https.onCall(async (data, context = {}) => {
+  const uid = requireOpportunityAuth(context, { verified: true });
+  assertOpportunityRateLimit(checkPublicOpportunityWriteRateLimit, context, `update:${uid}`);
+  const caller = await getOpportunityCaller(context);
+  const { listingRef, listingSnap, listing } = await requireOpportunityListing(data?.listingId);
+  if (!(await canManageOpportunity(caller, listing))) throwOpportunityError('permission-denied', 'You cannot edit this opportunity.');
+  let input;
+  try {
+    input = normalizeOpportunityInput({ ...(data?.input || {}), kind: listing.kind, teamId: listing.teamId, guardianAttested: listing.guardianAttested });
+  } catch (error) {
+    throwOpportunityError('invalid-argument', error.message || 'Invalid opportunity.');
+  }
+  const team = await resolveOpportunityTeam(input, caller);
+  const update = {
+    ...input,
+    teamName: team ? cleanOpportunityText(team.name, 100) : null,
+    teamPhotoUrl: team ? cleanOpportunityText(team.photoUrl, 1000) || null : null,
+    updatedAt: admin.firestore.Timestamp.now()
+  };
+  await listingRef.update(update);
+  return { item: serializePublicOpportunity(listingSnap.id, { ...listing, ...update }) };
+});
+
+async function setOpportunityLifecycleStatus(data, context, mode) {
+  const uid = requireOpportunityAuth(context, { verified: true });
+  assertOpportunityRateLimit(checkPublicOpportunityWriteRateLimit, context, `${mode}:${uid}`);
+  const caller = await getOpportunityCaller(context);
+  const { listingRef, listingSnap, listing } = await requireOpportunityListing(data?.listingId);
+  if (!(await canManageOpportunity(caller, listing))) throwOpportunityError('permission-denied', 'You cannot manage this opportunity.');
+  const now = admin.firestore.Timestamp.now();
+  const update = mode === 'renew'
+    ? { status: 'active', expiresAt: admin.firestore.Timestamp.fromDate(buildOpportunityExpiry(now.toMillis())), updatedAt: now }
+    : { status: 'closed', closedAt: now, updatedAt: now };
+  await listingRef.update(update);
+  return { item: serializePublicOpportunity(listingSnap.id, { ...listing, ...update }) };
+}
+
+exports.closePublicOpportunity = functions.https.onCall((data, context) => setOpportunityLifecycleStatus(data, context, 'close'));
+exports.renewPublicOpportunity = functions.https.onCall((data, context) => setOpportunityLifecycleStatus(data, context, 'renew'));
+
+exports.listMyPublicOpportunities = functions.https.onCall(async (data, context = {}) => {
+  const uid = requireOpportunityAuth(context);
+  const snap = await firestore.collection('publicOpportunities')
+    .where('authorId', '==', uid)
+    .orderBy('createdAt', 'desc')
+    .limit(100)
+    .get();
+  return { items: snap.docs.map((docSnap) => serializePublicOpportunity(docSnap.id, docSnap.data() || {})) };
+});
+
+exports.listManagedPublicOpportunityTeams = functions.https.onCall(async (_data, context = {}) => {
+  const caller = await getOpportunityCaller(context);
+  const queries = [firestore.collection('teams').where('ownerId', '==', caller.uid).get()];
+  if (caller.email) queries.push(firestore.collection('teams').where('adminEmails', 'array-contains', caller.email).get());
+  const snapshots = await Promise.all(queries);
+  const teams = new Map();
+  snapshots.forEach((snapshot) => snapshot.docs.forEach((docSnap) => {
+    const team = docSnap.data() || {};
+    if (team.isPublic !== true) return;
+    teams.set(docSnap.id, {
+      id: docSnap.id,
+      name: cleanOpportunityText(team.name, 100),
+      sport: cleanOpportunityText(team.sport, 60),
+      city: cleanOpportunityText(team.city, 80),
+      state: cleanOpportunityText(team.state, 40),
+      zip: cleanOpportunityText(team.zip, 10)
+    });
+  }));
+  return { items: Array.from(teams.values()).sort((a, b) => a.name.localeCompare(b.name)) };
+});
+
+exports.reportPublicOpportunity = functions.https.onCall(async (data, context = {}) => {
+  const uid = requireOpportunityAuth(context);
+  assertOpportunityRateLimit(checkPublicOpportunityWriteRateLimit, context, `report:${uid}`);
+  const { listingSnap, listing } = await requireOpportunityListing(data?.listingId);
+  if (listing.status === 'removed') throwOpportunityError('not-found', 'Opportunity not found.');
+  const reason = cleanOpportunityText(data?.reason, 500);
+  if (!reason) throwOpportunityError('invalid-argument', 'Choose or enter a report reason.');
+  await firestore.doc(`publicOpportunityReports/${listingSnap.id}_${uid}`).set({
+    listingId: listingSnap.id,
+    listingTitle: cleanOpportunityText(listing.title, 100),
+    reporterId: uid,
+    reason,
+    status: 'open',
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+  }, { merge: true });
+  return { success: true };
+});
+
+async function resolveOpportunityRecipients(listing) {
+  const recipients = new Set([String(listing.authorId || '')].filter(Boolean));
+  if (listing.teamId) {
+    const teamSnap = await firestore.doc(`teams/${listing.teamId}`).get();
+    if (teamSnap.exists) {
+      const team = teamSnap.data() || {};
+      if (team.ownerId) recipients.add(String(team.ownerId));
+      (await getUserIdsByEmails(team.adminEmails || [])).forEach((uid) => recipients.add(uid));
+    }
+  }
+  return Array.from(recipients).filter(Boolean);
+}
+
+exports.createOpportunityInquiry = functions.https.onCall(async (data, context = {}) => {
+  const uid = requireOpportunityAuth(context);
+  assertOpportunityRateLimit(checkPublicOpportunityMessageRateLimit, context, `inquiry:${uid}`);
+  const body = cleanOpportunityText(data?.message, 1500);
+  if (!body) throwOpportunityError('invalid-argument', 'Write a message first.');
+  const { listingSnap, listing } = await requireOpportunityListing(data?.listingId);
+  if (getEffectiveOpportunityStatus(listing) !== 'active') throwOpportunityError('failed-precondition', 'This opportunity is no longer accepting inquiries.');
+  if (listing.authorId === uid) throwOpportunityError('failed-precondition', 'You cannot inquire about your own listing.');
+  const recipients = (await resolveOpportunityRecipients(listing)).filter((recipientId) => recipientId !== uid);
+  if (!recipients.length) throwOpportunityError('failed-precondition', 'This listing does not have an available recipient.');
+  const callerName = cleanOpportunityText(context.auth.token?.name || context.auth.token?.email, 100) || 'ALL PLAYS member';
+  const inquiryRef = firestore.collection('opportunityInquiries').doc();
+  const messageRef = inquiryRef.collection('messages').doc();
+  const now = admin.firestore.Timestamp.now();
+  const participantIds = Array.from(new Set([uid, ...recipients]));
+  const inquiry = {
+    listingId: listingSnap.id,
+    listingTitle: cleanOpportunityText(listing.title, 100),
+    listingKind: listing.kind,
+    teamId: listing.teamId || null,
+    senderId: uid,
+    recipientUserIds: recipients,
+    participantIds,
+    status: 'open',
+    createdAt: now,
+    updatedAt: now
+  };
+  const batch = firestore.batch();
+  batch.set(inquiryRef, inquiry);
+  batch.set(messageRef, { authorId: uid, authorName: callerName, body, createdAt: now });
+  await batch.commit();
+  await writeNotificationInboxRecords({
+    targets: recipients.map((recipientId) => ({ uid: recipientId })),
+    category: 'opportunities',
+    title: 'New opportunity inquiry',
+    body: `${callerName} asked about ${inquiry.listingTitle}.`,
+    appRoute: `/discover/inquiries/${inquiryRef.id}`,
+    teamId: listing.teamId || null,
+    conversationId: inquiryRef.id
+  });
+  return { inquiry: serializeOpportunityInquiry({ id: inquiryRef.id, data: () => inquiry }, [
+    { id: messageRef.id, authorId: uid, authorName: callerName, body, createdAt: now.toDate().toISOString() }
+  ]) };
+});
+
+async function requireOpportunityInquiry(inquiryId, uid) {
+  let normalizedId;
+  try {
+    normalizedId = normalizeFirestoreId(inquiryId, 'inquiryId');
+  } catch (error) {
+    throwOpportunityError('invalid-argument', error.message);
+  }
+  const ref = firestore.doc(`opportunityInquiries/${normalizedId}`);
+  const snap = await ref.get();
+  if (!snap.exists) throwOpportunityError('not-found', 'Inquiry not found.');
+  const inquiry = snap.data() || {};
+  if (!Array.isArray(inquiry.participantIds) || !inquiry.participantIds.includes(uid)) {
+    throwOpportunityError('permission-denied', 'You cannot access this inquiry.');
+  }
+  return { ref, snap, inquiry };
+}
+
+exports.listOpportunityInquiries = functions.https.onCall(async (_data, context = {}) => {
+  const uid = requireOpportunityAuth(context);
+  const snap = await firestore.collection('opportunityInquiries')
+    .where('participantIds', 'array-contains', uid)
+    .orderBy('updatedAt', 'desc')
+    .limit(50)
+    .get();
+  return { items: snap.docs.map((docSnap) => serializeOpportunityInquiry(docSnap)) };
+});
+
+exports.getOpportunityInquiry = functions.https.onCall(async (data, context = {}) => {
+  const uid = requireOpportunityAuth(context);
+  const { snap } = await requireOpportunityInquiry(data?.inquiryId, uid);
+  const messagesSnap = await snap.ref.collection('messages').orderBy('createdAt', 'asc').limit(200).get();
+  return { inquiry: serializeOpportunityInquiry(snap, messagesSnap.docs.map(serializeOpportunityMessage)) };
+});
+
+exports.replyToOpportunityInquiry = functions.https.onCall(async (data, context = {}) => {
+  const uid = requireOpportunityAuth(context);
+  assertOpportunityRateLimit(checkPublicOpportunityMessageRateLimit, context, `reply:${uid}`);
+  const body = cleanOpportunityText(data?.message, 1500);
+  if (!body) throwOpportunityError('invalid-argument', 'Write a message first.');
+  const { ref, inquiry } = await requireOpportunityInquiry(data?.inquiryId, uid);
+  if (inquiry.status === 'closed') throwOpportunityError('failed-precondition', 'This inquiry is closed.');
+  const authorName = cleanOpportunityText(context.auth.token?.name || context.auth.token?.email, 100) || 'ALL PLAYS member';
+  const messageRef = ref.collection('messages').doc();
+  const now = admin.firestore.Timestamp.now();
+  const batch = firestore.batch();
+  batch.set(messageRef, { authorId: uid, authorName, body, createdAt: now });
+  batch.update(ref, { updatedAt: now });
+  await batch.commit();
+  const recipients = (inquiry.participantIds || []).filter((participantId) => participantId !== uid);
+  await writeNotificationInboxRecords({
+    targets: recipients.map((recipientId) => ({ uid: recipientId })),
+    category: 'opportunities',
+    title: 'Opportunity inquiry reply',
+    body: `${authorName} replied about ${inquiry.listingTitle || 'an opportunity'}.`,
+    appRoute: `/discover/inquiries/${ref.id}`,
+    teamId: inquiry.teamId || null,
+    conversationId: ref.id
+  });
+  return { success: true };
+});
+
+exports.listPublicOpportunityReports = functions.https.onCall(async (_data, context = {}) => {
+  const caller = await getOpportunityCaller(context);
+  if (!isOpportunityPlatformAdmin(caller)) throwOpportunityError('permission-denied', 'Platform admin access is required.');
+  const snap = await firestore.collection('publicOpportunityReports').where('status', '==', 'open').limit(100).get();
+  return {
+    items: snap.docs.map((docSnap) => {
+      const report = docSnap.data() || {};
+      return {
+        id: docSnap.id,
+        listingId: String(report.listingId || ''),
+        listingTitle: cleanOpportunityText(report.listingTitle, 100),
+        reason: cleanOpportunityText(report.reason, 500),
+        createdAt: report.createdAt?.toDate?.().toISOString?.() || null
+      };
+    })
+  };
+});
+
+exports.moderatePublicOpportunity = functions.https.onCall(async (data, context = {}) => {
+  const caller = await getOpportunityCaller(context);
+  if (!isOpportunityPlatformAdmin(caller)) throwOpportunityError('permission-denied', 'Platform admin access is required.');
+  const action = data?.action === 'restore' ? 'restore' : data?.action === 'remove' ? 'remove' : '';
+  if (!action) throwOpportunityError('invalid-argument', 'Choose remove or restore.');
+  const { listingRef } = await requireOpportunityListing(data?.listingId);
+  const now = admin.firestore.Timestamp.now();
+  const update = action === 'remove'
+    ? { status: 'removed', moderatedBy: caller.uid, moderatedAt: now, updatedAt: now }
+    : { status: 'active', expiresAt: admin.firestore.Timestamp.fromDate(buildOpportunityExpiry(now.toMillis())), moderatedBy: caller.uid, moderatedAt: now, updatedAt: now };
+  await listingRef.update(update);
+  const reportsSnap = await firestore.collection('publicOpportunityReports').where('listingId', '==', listingRef.id).limit(100).get();
+  const batch = firestore.batch();
+  reportsSnap.docs.forEach((reportSnap) => batch.update(reportSnap.ref, { status: 'resolved', resolution: action, updatedAt: now }));
+  if (!reportsSnap.empty) await batch.commit();
+  return { success: true };
+});
+
+exports.closePublicOpportunitiesForPrivateTeam = functions.firestore
+  .document('teams/{teamId}')
+  .onWrite(async (change, context) => {
+    const before = change.before.exists ? change.before.data() || {} : null;
+    const after = change.after.exists ? change.after.data() || {} : null;
+    const wasDiscoverable = before?.isPublic === true && before?.active !== false;
+    const isDiscoverable = after?.isPublic === true && after?.active !== false;
+    if (!wasDiscoverable || isDiscoverable) return null;
+
+    const now = admin.firestore.Timestamp.now();
+    while (true) {
+      const activeListings = await firestore.collection('publicOpportunities')
+        .where('teamId', '==', context.params.teamId)
+        .where('status', '==', 'active')
+        .limit(400)
+        .get();
+      if (activeListings.empty) break;
+      const batch = firestore.batch();
+      activeListings.docs.forEach((docSnap) => batch.update(docSnap.ref, {
+        status: 'closed',
+        closedReason: 'team_not_public',
+        closedAt: now,
+        updatedAt: now
+      }));
+      await batch.commit();
+    }
+    return null;
   });

@@ -103,13 +103,14 @@ describe('React app search service', () => {
         expect(signedOutActions.map((item) => item.id)).toEqual([
             'browse-teams',
             'sign-in',
-            'get-started'
+            'get-started',
+            'discover-opportunities'
         ]);
         expect(signedOutActions[0]).toMatchObject({
             id: 'browse-teams',
-            href: 'https://allplays.ai/teams.html'
+            route: '/teams/browse'
         });
-        expect(signedOutActions[0]).not.toHaveProperty('route');
+        expect(signedOutActions[0]).not.toHaveProperty('href');
 
         const signedInActions = buildAppSearchActions(auth);
         expect(signedInActions.map((item) => item.id)).toEqual([
@@ -121,7 +122,9 @@ describe('React app search service', () => {
             'social-feed',
             'find-friends',
             'create-social-post',
-            'profile'
+            'profile',
+            'discover-opportunities',
+            'post-opportunity'
         ]);
         expect(signedInActions[0]).toMatchObject({
             id: 'browse-teams',
@@ -196,7 +199,7 @@ describe('React app search service', () => {
             teams: manyTeams,
             players: manyPlayers
         });
-        expect(defaultResults.actions.map((item) => item.id)).toEqual(['browse-teams', 'dashboard', 'my-teams', 'schedule', 'messages', 'social-feed', 'find-friends', 'create-social-post', 'profile']);
+        expect(defaultResults.actions.map((item) => item.id)).toEqual(['browse-teams', 'dashboard', 'my-teams', 'schedule', 'messages', 'social-feed', 'find-friends', 'create-social-post', 'profile', 'discover-opportunities', 'post-opportunity']);
         expect(defaultResults.teams).toHaveLength(20);
         expect(defaultResults.players).toHaveLength(20);
     });

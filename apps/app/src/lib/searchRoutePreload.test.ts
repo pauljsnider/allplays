@@ -19,6 +19,8 @@ describe('searchRoutePreload', () => {
 
   it('keeps existing plain-path route preload coverage intact', () => {
     expect(resolveSearchRoutePreloader('/teams')).toBeTypeOf('function');
+    expect(resolveSearchRoutePreloader('/discover')).toBeTypeOf('function');
+    expect(resolveSearchRoutePreloader('/discover/new')).toBeTypeOf('function');
     expect(resolveSearchRoutePreloader('/teams/browse')).toBeTypeOf('function');
     expect(resolveSearchRoutePreloader('/players/team-1/player-1')).toBeTypeOf('function');
     expect(resolveSearchRoutePreloader('/help/parent-fees')).toBeTypeOf('function');

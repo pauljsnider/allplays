@@ -1,4 +1,5 @@
 import { PublicTeamSearch } from '../components/PublicTeamSearch';
+import { Link } from 'react-router-dom';
 
 export function PublicTeamsBrowse() {
   return (
@@ -9,9 +10,10 @@ export function PublicTeamsBrowse() {
         <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">
           Find public teams, then open the existing team page in read-only mode.
         </p>
+        <Link to="/discover" className="mt-3 inline-block text-sm font-black text-primary-700">Browse opportunities too →</Link>
       </section>
 
-      <PublicTeamSearch autoBrowseOnMount showBackLink />
+      <PublicTeamSearch autoBrowseOnMount />
     </div>
   );
 }

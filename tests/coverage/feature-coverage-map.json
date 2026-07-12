@@ -690,6 +690,57 @@
             ]
         },
         {
+            "id": "public.opportunities-team-discovery",
+            "label": "Public sports opportunities and team discovery",
+            "priority": "high",
+            "plannedPr": "public-sports-opportunities",
+            "targetTiers": [
+                "unit",
+                "integration",
+                "workflow"
+            ],
+            "legacyPages": [],
+            "appPages": [
+                "apps/app/src/pages/Discover.tsx",
+                "apps/app/src/pages/OpportunityDetail.tsx",
+                "apps/app/src/pages/OpportunityForm.tsx",
+                "apps/app/src/pages/OpportunityInquiry.tsx",
+                "apps/app/src/pages/OpportunityManage.tsx"
+            ],
+            "cloudFunctions": [
+                "closePublicOpportunitiesForPrivateTeam",
+                "closePublicOpportunity",
+                "createOpportunityInquiry",
+                "createPublicOpportunity",
+                "getOpportunityInquiry",
+                "getPublicOpportunity",
+                "listManagedPublicOpportunityTeams",
+                "listMyPublicOpportunities",
+                "listOpportunityInquiries",
+                "listPublicOpportunities",
+                "listPublicOpportunityReports",
+                "moderatePublicOpportunity",
+                "renewPublicOpportunity",
+                "replyToOpportunityInquiry",
+                "reportPublicOpportunity",
+                "updatePublicOpportunity"
+            ],
+            "unitTests": [
+                "tests/unit/public-opportunities-core.test.js",
+                "tests/unit/public-opportunities-functions-source.test.js",
+                "tests/unit/public-opportunities-rules.test.js"
+            ],
+            "integrationTests": [
+                "apps/app/src/lib/authNextRoute.test.ts",
+                "apps/app/src/lib/opportunityLogic.test.ts",
+                "apps/app/src/pages/Discover.test.tsx"
+            ],
+            "workflowTests": [
+                "tests/smoke/app-discover.spec.js"
+            ],
+            "knownGaps": []
+        },
+        {
             "id": "private-ai.mobile-capabilities-performance",
             "label": "Private AI, native/mobile capabilities, performance, and app infrastructure",
             "priority": "medium",
