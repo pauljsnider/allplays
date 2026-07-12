@@ -157,6 +157,24 @@ describe('appDataCache', () => {
     expect(secondCache.getCachedAppData('user:b')).toEqual({ user: 'b' });
   });
 
+  it('invalidates one cached key in memory and persisted storage', async () => {
+    const firstCache = await loadCacheModule();
+    const loader = vi.fn()
+      .mockResolvedValueOnce({ version: 1 })
+      .mockResolvedValueOnce({ version: 2 });
+
+    await firstCache.loadCachedAppData('schedule:key', loader, { ttlMs: 60_000 });
+    await firstCache.loadCachedAppData('other:key', async () => ({ other: true }), { ttlMs: 60_000 });
+
+    firstCache.invalidateCachedAppData('schedule:key');
+
+    expect(firstCache.getCachedAppData('schedule:key')).toBeNull();
+    expect(window.localStorage.getItem('allplays:appDataCache:schedule%3Akey')).toBeNull();
+    expect(window.localStorage.getItem('allplays:appDataCache:other%3Akey')).toContain('other');
+    await expect(firstCache.loadCachedAppData('schedule:key', loader, { ttlMs: 60_000 })).resolves.toEqual({ version: 2 });
+    expect(loader).toHaveBeenCalledTimes(2);
+  });
+
   it('uses one shared key for parent schedule summaries across pages', async () => {
     const cache = await loadCacheModule();
 

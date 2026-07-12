@@ -208,13 +208,14 @@ vi.mock('./appDataCache', () => ({
   getCachedAppData: vi.fn(),
   loadCachedAppData: vi.fn((_key: string, loader: () => Promise<unknown>) => loader()),
   clearAppDataCache: vi.fn(),
+  invalidateCachedAppData: vi.fn(),
   getParentScheduleSummaryCacheKey: (userId: string) => `app-schedule-summary:${userId}`
 }));
 
 import { addGame, addPractice, broadcastLiveEvent, buildSingleLegacyTournamentGameDocument, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, claimOpenOfficiatingSlot, clearOccurrenceOverride, releaseAssignmentClaim, respondToOfficiatingAssignment, updateEvent, updateGame, updateOccurrence, getAssignmentClaims, getGame, getGames, getPlayers, getPracticeSession, getPracticeSessions, getRsvpBreakdownByPlayer, getRsvpSummaries, getRsvps, getTeam, getTeams, listRideOffersForEvent, submitRsvp, submitRsvpForPlayer, updatePracticeAttendance, getDoc, getDocs } from './adapters/legacyScheduleDb';
 import { getNativeAuthIdToken } from './authService';
 import { expandRecurrence, fetchAndParseCalendar, isTeamActive, mergeAssignmentsWithClaims } from './adapters/legacyScheduleHelpers';
-import { getCachedAppData, loadCachedAppData } from './appDataCache';
+import { getCachedAppData, invalidateCachedAppData, loadCachedAppData } from './appDataCache';
 import { mapScheduleEventRecord } from './firestore/mappers';
 import { loadProfileDocument } from './profileService';
 import { getScheduleTournamentInfo } from './scheduleLogic';
@@ -2338,6 +2339,7 @@ describe('parent family RSVP submission', () => {
       response: 'going',
       note: 'Both need a ride'
     });
+    expect(invalidateCachedAppData).toHaveBeenCalledWith('app-schedule-summary:parent-1');
     expect(mocks.runTransactionMock).not.toHaveBeenCalled();
     expect(submitRsvpForPlayer).not.toHaveBeenCalled();
   });
@@ -2575,6 +2577,7 @@ describe('staff RSVP management', () => {
       playerId: 'player-override',
       response: 'going'
     }));
+    expect(invalidateCachedAppData).toHaveBeenCalledWith('app-schedule-summary:coach-1');
     expect(submitRsvpForPlayer).not.toHaveBeenCalledWith('team-1', 'game-1', 'coach-1', expect.objectContaining({
       playerId: 'child-event-player'
     }));

@@ -99,6 +99,12 @@ export function clearAppDataCache(prefix = '') {
   removeStoredCacheEntries(prefix);
 }
 
+export function invalidateCachedAppData(key: string) {
+  cacheInvalidationVersion += 1;
+  cache.delete(key);
+  removeStoredCacheEntry(key);
+}
+
 function loadAndStoreCachedAppData<T>(
   key: string,
   loader: () => Promise<T>,
@@ -249,6 +255,12 @@ function removeStoredCacheEntries(prefix: string) {
       storage.removeItem(key);
     }
   }
+}
+
+function removeStoredCacheEntry(key: string) {
+  const storage = getCacheStorage();
+  if (!storage) return;
+  storage.removeItem(toStorageKey(key));
 }
 
 function getCacheStorage() {
