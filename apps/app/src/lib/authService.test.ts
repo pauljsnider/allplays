@@ -105,12 +105,15 @@ import {
   signInWithRedirect
 } from './firebaseAuthRuntime';
 import { Capacitor } from '@capacitor/core';
+import { sendEmailVerification } from './firebaseAuthRuntime';
 import {
+  buildVerificationContinueUrl,
   describeAuthError,
   getRouteForUser,
   hydrateFirebaseUser,
   isValidAuthEmail,
   observeFirebaseUser,
+  resendVerificationEmail,
   sendResetEmail,
   signInWithEmail,
   signInWithGoogleAccount,
@@ -133,6 +136,43 @@ describe('auth email validation', () => {
 
   it('does not disclose whether a sign-in email belongs to an account', () => {
     expect(describeAuthError({ code: 'auth/user-not-found' })).toBe('Email or password is incorrect.');
+  });
+
+  it('maps REST too-many-attempts responses to the throttle message', () => {
+    expect(describeAuthError({ restCode: 'TOO_MANY_ATTEMPTS_TRY_LATER' }))
+      .toBe('Too many attempts. Wait a few minutes and try again.');
+    expect(describeAuthError({ code: 'auth/too-many-requests' }))
+      .toBe('Too many attempts. Wait a few minutes and try again.');
+  });
+});
+
+describe('resendVerificationEmail', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    authState.currentUser = null;
+  });
+
+  afterEach(() => {
+    authState.currentUser = null;
+  });
+
+  it('builds an in-app verify-pending continue URL', () => {
+    expect(buildVerificationContinueUrl()).toContain('/app/#/verify-pending');
+  });
+
+  it('sends the verification email with actionCodeSettings that return to the app', async () => {
+    const reload = vi.fn().mockResolvedValue(undefined);
+    authState.currentUser = { reload, email: 'coach@allplays.ai' } as any;
+
+    await resendVerificationEmail();
+
+    expect(reload).toHaveBeenCalled();
+    expect(vi.mocked(sendEmailVerification)).toHaveBeenCalledTimes(1);
+    const [, actionCodeSettings] = vi.mocked(sendEmailVerification).mock.calls[0];
+    expect(actionCodeSettings).toMatchObject({
+      url: buildVerificationContinueUrl(),
+      handleCodeInApp: false
+    });
   });
 });
 
