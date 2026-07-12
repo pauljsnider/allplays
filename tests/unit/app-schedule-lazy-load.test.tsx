@@ -40,7 +40,7 @@ describe('Schedule lazy-load guards', () => {
         expect(refreshSource).toContain('cacheHit: Boolean(cached) && !force');
         expect(refreshSource).toContain('onError: (loadError) => {');
         expect(refreshSource).toContain("const mappedError = toAppServiceError(loadError, 'Unable to load schedule.');");
-        expect(refreshSource).toContain('if (!hasExistingSchedule) {\n            applyScheduleResult({ children: [], events: [] });\n          }');
+        expect(refreshSource).toContain('if (!hasExistingSchedule) {\n            applyScheduleResult({ children: [], events: [], staffTeamIds: [] });\n          }');
         expect(refreshSource).not.toContain('setLoading(');
         expect(refreshSource).not.toContain('finally {');
     });
