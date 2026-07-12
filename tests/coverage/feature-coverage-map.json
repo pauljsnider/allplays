@@ -210,6 +210,7 @@
                 "teams.html"
             ],
             "appPages": [
+                "apps/app/src/pages/CreateTeam.tsx",
                 "apps/app/src/pages/Home.tsx",
                 "apps/app/src/pages/PlayerDetail.tsx",
                 "apps/app/src/pages/PublicTeamsBrowse.tsx",
@@ -240,6 +241,8 @@
                 "tests/unit/teams-public-visibility.test.js"
             ],
             "integrationTests": [
+                "apps/app/src/lib/teamCreationService.test.ts",
+                "apps/app/src/pages/CreateTeam.test.tsx",
                 "apps/app/src/pages/Home.test.tsx",
                 "apps/app/src/pages/PlayerDetail.test.tsx",
                 "apps/app/src/pages/TeamDetail.test.tsx",
