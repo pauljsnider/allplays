@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+// Keep this regression test in the root unit suite so test:unit:ci runs it in deploy gates.
 import React from 'react';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { UserCircle } from 'lucide-react';
