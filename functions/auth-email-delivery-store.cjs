@@ -11,7 +11,8 @@ function createAuthEmailDeliveryStore({
   buildMailJob,
   normalizeEmail,
   hashRecipient,
-  now = Date.now
+  now = Date.now,
+  passwordResetRequestTtlMs = 24 * 60 * 60 * 1000
 }) {
   async function reserve(type, email, scope = '') {
     const requestedAt = now();
@@ -74,11 +75,13 @@ function createAuthEmailDeliveryStore({
   }
 
   async function enqueuePasswordResetRequest(email) {
+    const requestedAt = now();
     const requestRef = firestore.collection('authEmailRequests').doc();
     await requestRef.create({
       type: 'password_reset',
       email: normalizeEmail(email),
-      createdAt: FieldValue.serverTimestamp()
+      createdAt: FieldValue.serverTimestamp(),
+      expiresAt: Timestamp.fromMillis(requestedAt + passwordResetRequestTtlMs)
     });
     return requestRef.id;
   }

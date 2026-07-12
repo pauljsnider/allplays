@@ -2049,11 +2049,12 @@ const passwordResetEmailWorker = createPasswordResetEmailWorker({
   isValidEmail: isValidAuthEmail,
   getActionSettings: getAuthEmailActionSettings,
   queueDelivery: queueAuthEmailDelivery,
-  releaseDelivery: releaseAuthEmailDelivery,
   isAlreadyExistsError
 });
 
-exports.processPasswordResetEmailRequest = functions.firestore
+exports.processPasswordResetEmailRequest = functions
+  .runWith({ failurePolicy: true })
+  .firestore
   .document('authEmailRequests/{requestId}')
   .onCreate((snapshot, context) => passwordResetEmailWorker.processPasswordResetRequest(
     snapshot.data(),
@@ -2062,6 +2063,24 @@ exports.processPasswordResetEmailRequest = functions.firestore
       deleteRequest: () => snapshot.ref.delete()
     }
   ));
+
+async function sweepPendingPasswordResetEmailRequests() {
+  const snapshot = await firestore.collection('authEmailRequests')
+    .orderBy('createdAt')
+    .limit(100)
+    .get();
+  await runWithConcurrencyLimit(snapshot.docs, 5, (requestDoc) =>
+    passwordResetEmailWorker.processPasswordResetRequest(requestDoc.data(), {
+      requestId: requestDoc.id,
+      deleteRequest: () => requestDoc.ref.delete()
+    })
+  );
+  return null;
+}
+
+exports.sweepPendingPasswordResetEmailRequests = functions.pubsub
+  .schedule('every 5 minutes')
+  .onRun(sweepPendingPasswordResetEmailRequests);
 
 exports.queueInviteEmail = functions.https.onCall(async (data, context) => {
   const uid = String(context.auth?.uid || '').trim();

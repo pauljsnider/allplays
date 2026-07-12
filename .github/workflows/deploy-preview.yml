@@ -51,6 +51,9 @@ jobs:
       - name: Run unit tests
         run: npm run test:unit:ci
 
+      - name: Run authentication email functions coverage
+        run: npm run test:functions:auth-email
+
   regression-guards:
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest

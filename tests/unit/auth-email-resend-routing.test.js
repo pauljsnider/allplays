@@ -36,11 +36,15 @@ describe('authentication email delivery routing', () => {
         expect(resetCallableSource).toContain('enqueuePasswordResetRequest');
         expect(resetCallableSource).not.toContain('getUserByEmail');
         expect(passwordResetWorkerSource).toContain('generatePasswordResetLink');
+        expect(passwordResetWorkerSource).not.toContain('releaseDelivery');
         expect(callablesSource).toContain('generateEmailVerificationLink');
         expect(callablesSource).toContain('generateSignInWithEmailLink');
         expect(deliveryStoreSource).toContain("firestore.collection('mail').doc(deliveryId || buildMailDocId");
         expect(functionsSource).toContain('createAuthEmailCallableHandlers');
         expect(functionsSource).toContain('createAuthEmailDeliveryStore');
+        expect(functionsSource).toContain('.runWith({ failurePolicy: true })');
+        expect(functionsSource).toContain(".schedule('every 5 minutes')");
+        expect(functionsSource).toContain('runWithConcurrencyLimit(snapshot.docs, 5');
         expect(authEmailCoreSource).toContain("provider: 'resend'");
     });
 
@@ -65,5 +69,17 @@ describe('authentication email delivery routing', () => {
 
         expect(requestRuleStart).toBeGreaterThan(-1);
         expect(requestRule).toContain('allow read, write: if false;');
+    });
+
+    it('runs extracted authentication email behavior tests in PR and production CI', () => {
+        const packageSource = read('package.json');
+        const ciSource = read('.github/workflows/ci.yml');
+        const previewSource = read('.github/workflows/deploy-preview.yml');
+        const productionSource = read('.github/workflows/deploy-prod.yml');
+
+        expect(packageSource).toContain('test:functions:auth-email');
+        for (const workflowSource of [ciSource, previewSource, productionSource]) {
+            expect(workflowSource).toContain('npm run test:functions:auth-email');
+        }
     });
 });

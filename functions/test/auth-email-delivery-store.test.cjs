@@ -110,7 +110,8 @@ test('password-reset request queue stores only deferred server work', async () =
     value: {
       type: 'password_reset',
       email: 'coach@example.com',
-      createdAt: { server: true }
+      createdAt: { server: true },
+      expiresAt: { millis: 86_401_000 }
     }
   }]);
 });

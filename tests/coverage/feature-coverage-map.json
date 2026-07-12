@@ -134,6 +134,7 @@
                 "confirmParentAccountMerge",
                 "previewAccountMerge",
                 "processPasswordResetEmailRequest",
+                "sweepPendingPasswordResetEmailRequests",
                 "queueEmailVerification",
                 "queueInviteSignInEmail",
                 "queuePasswordResetEmail",

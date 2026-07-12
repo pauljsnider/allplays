@@ -32,6 +32,9 @@ jobs:
       - name: Run unit tests
         run: npm run test:unit:ci
 
+      - name: Run authentication email functions coverage
+        run: npm run test:functions:auth-email
+
   regression-guards:
     runs-on: ubuntu-latest
 
