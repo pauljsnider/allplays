@@ -421,7 +421,7 @@ describe('executeEmailPasswordSignup', () => {
             email: 'friend@example.com',
             emailVerificationRequired: true
         }));
-        expect(dependencies.sendEmailVerification).toHaveBeenCalledTimes(1);
+        expect(dependencies.sendVerificationEmail).toHaveBeenCalledTimes(1);
     });
 
     it('rolls back auth account and rethrows when friend invite redemption fails', async () => {
@@ -461,7 +461,7 @@ describe('executeEmailPasswordSignup', () => {
         expect(dependencies.signOut).toHaveBeenCalledTimes(1);
         expect(dependencies.updateUserProfile).not.toHaveBeenCalled();
         expect(dependencies.markAccessCodeAsUsed).not.toHaveBeenCalled();
-        expect(dependencies.sendEmailVerification).not.toHaveBeenCalled();
+        expect(dependencies.sendVerificationEmail).not.toHaveBeenCalled();
     });
 
     it('rolls back auth account and rethrows when admin invite redemption fails', async () => {
