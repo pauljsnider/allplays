@@ -3037,6 +3037,56 @@ describe('partial parent schedule team failures (#3021)', () => {
 
 });
 
+describe('staff-only parent schedule placeholders (#3857)', () => {
+  const staffUser = {
+    uid: 'coach-1',
+    email: 'coach@example.com',
+    roles: ['coach'],
+    coachOf: ['team-1'],
+    parentOf: []
+  } as any;
+  const staffTeam = {
+    id: 'team-1',
+    name: 'Bears',
+    ownerId: 'coach-1',
+    adminEmails: [],
+    active: true
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (globalThis as any).window = { location: { protocol: 'https:' }, setTimeout, clearTimeout } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [] } as any);
+    vi.mocked(getTeams).mockResolvedValue([staffTeam] as any);
+    vi.mocked(getTeam).mockResolvedValue(staffTeam as any);
+    vi.mocked(getGames).mockResolvedValue([{
+      id: 'game-1',
+      type: 'game',
+      date: new Date('2026-06-25T18:00:00.000Z'),
+      opponent: 'Falcons',
+      location: 'Main Gym'
+    }] as any);
+    vi.mocked(getPracticeSessions).mockResolvedValue([] as any);
+    vi.mocked(getDoc).mockResolvedValue(playerSnapshot('missing', null) as any);
+  });
+
+  it('uses staff placeholders internally without returning them as parent players', async () => {
+    const result = await loadParentSchedule(staffUser, { hydrateDetails: false, expandStaffPlayers: false });
+
+    expect(result.staffTeamIds).toEqual(['team-1']);
+    expect(result.children).toEqual([]);
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0]).toMatchObject({
+      teamId: 'team-1',
+      id: 'game-1',
+      childId: 'staff-team-team-1',
+      childName: 'Team schedule',
+      isTeamStaff: true
+    });
+    expect(getPlayers).not.toHaveBeenCalled();
+  });
+});
+
 describe('web-created tournament standings hydration (#1967)', () => {
   const parentUser = {
     uid: 'parent-1',

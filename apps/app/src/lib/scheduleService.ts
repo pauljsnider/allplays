@@ -3697,7 +3697,9 @@ async function buildParentScheduleTeamChildren(user: AuthUser, profile: Record<s
     }
   });
 
-  const scheduleChildren = [...byTeam.values()].flat();
+  // `byTeam` may include synthetic staff-team placeholders so staff-only teams
+  // can load schedules, but public children are consumed as real players.
+  const scheduleChildren = expandStaffPlayers ? [...byTeam.values()].flat() : children;
   return { children: scheduleChildren, byTeam, staffTeams };
 }
 
