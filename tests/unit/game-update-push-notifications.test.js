@@ -115,11 +115,13 @@ describe('game schedule update push notifications', () => {
     it('deduplicates live score sends by the before/after score transition before delivering notifications', async () => {
         const sendCategoryNotification = vi.fn(async () => ({ successCount: 1, failureCount: 0 }));
         const checkAndSetNotificationDedup = vi.fn(async () => true);
+        const hasRecentBigMomentLiveEventForScore = vi.fn(async () => false);
         const handler = new Function(
             'functions',
             'detectGameNotificationCategory',
             'sendCategoryNotification',
             'checkAndSetNotificationDedup',
+            'hasRecentBigMomentLiveEventForScore',
             'toNumericScore',
             'buildScheduleUpdateNotificationPayload',
             `const exports = {};
@@ -137,6 +139,7 @@ return exports.notifyGameUpdated;`
             () => 'liveScore',
             sendCategoryNotification,
             checkAndSetNotificationDedup,
+            hasRecentBigMomentLiveEventForScore,
             (value) => Number(value || 0),
             () => ({ title: 'unused', body: 'unused' })
         );

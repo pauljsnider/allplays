@@ -7654,6 +7654,33 @@ async function checkAndSetNotificationDedup(teamId, category, gameId, dedupKey =
   return result;
 }
 
+async function hasRecentBigMomentLiveEventForScore(teamId, gameId, after = {}) {
+  const normalizedTeamId = String(teamId || '').trim();
+  const normalizedGameId = String(gameId || '').trim();
+  if (!normalizedTeamId || !normalizedGameId) return false;
+
+  const homeScore = toNumericScore(after.homeScore);
+  const awayScore = toNumericScore(after.awayScore);
+  try {
+    const liveEventsSnap = await firestore.collection(`teams/${normalizedTeamId}/games/${normalizedGameId}/liveEvents`)
+      .orderBy('createdAt', 'desc')
+      .limit(8)
+      .get();
+    return liveEventsSnap.docs.some((docSnap) => {
+      const event = docSnap.data() || {};
+      if (!buildBigMomentLiveEventNotification(event)) return false;
+      return toNumericScore(event.homeScore) === homeScore && toNumericScore(event.awayScore) === awayScore;
+    });
+  } catch (error) {
+    functions.logger.warn('Failed to check live events before live score notification', {
+      teamId: normalizedTeamId,
+      gameId: normalizedGameId,
+      error: error?.message || String(error || 'Unknown error')
+    });
+    return false;
+  }
+}
+
 
 function mergeNotificationWebpushOptions(baseWebpush = {}, deliveryOptions = {}) {
   if (!deliveryOptions?.webpush) return baseWebpush;
@@ -10299,6 +10326,15 @@ exports.notifyGameUpdated = functions.firestore
 
     if (category === 'liveScore') {
       const liveScoreDedupKey = `score:${toNumericScore(before.homeScore)}:${toNumericScore(before.awayScore)}->${toNumericScore(after.homeScore)}:${toNumericScore(after.awayScore)}`;
+      if (await hasRecentBigMomentLiveEventForScore(teamId, gameId, after)) {
+        functions.logger.info('Notification dedup: skipping generic live score send for live event-backed score', {
+          teamId,
+          category,
+          gameId,
+          dedupKey: liveScoreDedupKey
+        });
+        return null;
+      }
       const canSendLiveScore = await checkAndSetNotificationDedup(teamId, category, gameId, liveScoreDedupKey);
       if (!canSendLiveScore) {
         functions.logger.info('Notification dedup: skipping duplicate live score send', {

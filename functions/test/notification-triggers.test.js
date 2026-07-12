@@ -613,6 +613,42 @@ test('notifyGameUpdated sends liveScore notifications and records once-only audi
     }
 });
 
+test('notifyGameUpdated suppresses generic liveScore when a matching big-moment live event exists', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        parentUserIds: ['parent-1'],
+        indexedTargets: [
+            { uid: 'coach-1', deviceId: 'coach-device', token: 'coach-token', categories: { liveScore: true } },
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { liveScore: true } }
+        ]
+    });
+
+    try {
+        await env.firestoreState.doc('teams/team-1/games/game-2/liveEvents/doc-event-1').set({
+            type: 'stat',
+            statKey: 'PTS',
+            value: 2,
+            playerName: 'Ava Cole',
+            homeScore: 12,
+            awayScore: 8,
+            createdAt: '2026-06-28T12:00:00.000Z'
+        });
+
+        const ref = env.firestoreState.doc('teams/team-1/games/game-2');
+        const change = makeChange(ref, { homeScore: 10, awayScore: 8 }, { homeScore: 12, awayScore: 8, updatedBy: 'coach-1' });
+        const context = { params: { teamId: 'team-1', gameId: 'game-2' } };
+
+        const result = await moduleExports.notifyGameUpdated(change, context);
+
+        assert.equal(result, null);
+        assert.equal(env.counts.dedupTransactions, 0);
+        assert.equal(env.messagingCalls.length, 0);
+        assert.equal(env.auditWrites.length, 0);
+    } finally {
+        cleanup();
+    }
+});
+
 test('notifyLiveEventCreated sends one deduped big-moment notification to eligible recipients except the actor', async () => {
     const { moduleExports, env, cleanup } = loadNotificationInternals({
         teamDoc: { ownerId: 'coach-1', adminEmails: [] },
