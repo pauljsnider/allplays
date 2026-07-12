@@ -11823,7 +11823,7 @@ exports.reportPublicOpportunity = functions.https.onCall(async (data, context = 
 });
 
 async function resolveOpportunityRecipients(listing) {
-  const recipients = new Set([String(listing.authorId || '')].filter(Boolean));
+  const recipients = new Set();
   if (listing.teamId) {
     const teamSnap = await firestore.doc(`teams/${normalizeOpportunityTeamId(listing.teamId)}`).get();
     if (teamSnap.exists) {
@@ -11831,6 +11831,8 @@ async function resolveOpportunityRecipients(listing) {
       if (team.ownerId) recipients.add(String(team.ownerId));
       (await getUserIdsByEmails(team.adminEmails || [])).forEach((uid) => recipients.add(uid));
     }
+  } else if (listing.authorId) {
+    recipients.add(String(listing.authorId));
   }
   return Array.from(recipients).filter(Boolean);
 }

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 const source = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
 const opportunitySource = source.slice(source.indexOf('// Public sports opportunity board'));
+const manageSource = readFileSync(new URL('../../apps/app/src/pages/OpportunityManage.tsx', import.meta.url), 'utf8');
 
 describe('public opportunity callable wiring', () => {
   it('exports public browse, lifecycle, inquiry, and moderation contracts', () => {
@@ -83,6 +84,22 @@ describe('public opportunity callable wiring', () => {
     expect(source).toMatch(/createOpportunityInquiry[\s\S]*requireOpportunityAuth\(context, \{ verified: true \}\)/);
     expect(source).toContain('exports.getPublicTeamProfile');
     expect(source).toContain("description: cleanOpportunityText(team.description, 1000) || null");
+  });
+
+  it('routes team inquiries only to current team administrators', () => {
+    const resolverStart = source.indexOf('async function resolveOpportunityRecipients(listing)');
+    const recipientResolver = source.slice(resolverStart, source.indexOf('\nexports.createOpportunityInquiry', resolverStart));
+    expect(recipientResolver).toContain('const recipients = new Set();');
+    expect(recipientResolver).toContain('if (team.ownerId) recipients.add(String(team.ownerId));');
+    expect(recipientResolver).toContain('getUserIdsByEmails(team.adminEmails || [])');
+    expect(recipientResolver).toContain('else if (listing.authorId)');
+    expect(recipientResolver).not.toContain('new Set([String(listing.authorId');
+  });
+
+  it('shows and loads moderation reports only for protected isAdmin accounts', () => {
+    expect(manageSource).toContain('const canModerateReports = auth.user?.isAdmin === true;');
+    expect(manageSource).toContain('canModerateReports ? listPublicOpportunityReports() : Promise.resolve([])');
+    expect(manageSource).not.toContain('auth.user?.isPlatformAdmin');
   });
 
   it('includes current team-managed listings in management results', () => {

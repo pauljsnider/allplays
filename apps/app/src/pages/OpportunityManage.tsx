@@ -26,7 +26,7 @@ export function OpportunityManage({ auth }: { auth: AuthState }) {
   const [busyId, setBusyId] = useState('');
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
-  const isPlatformAdmin = auth.isPlatformAdmin || auth.user?.isPlatformAdmin || auth.user?.isAdmin;
+  const canModerateReports = auth.user?.isAdmin === true;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -42,7 +42,7 @@ export function OpportunityManage({ auth }: { auth: AuthState }) {
       const [nextListings, nextInquiries, nextReports] = await Promise.all([
         listMyPublicOpportunities(),
         listOpportunityInquiries(),
-        isPlatformAdmin ? listPublicOpportunityReports() : Promise.resolve([])
+        canModerateReports ? listPublicOpportunityReports() : Promise.resolve([])
       ]);
       setListings(nextListings);
       setInquiries(nextInquiries);
@@ -52,7 +52,7 @@ export function OpportunityManage({ auth }: { auth: AuthState }) {
     } finally {
       setLoading(false);
     }
-  }, [auth.user?.uid, isPlatformAdmin]);
+  }, [auth.user?.uid, canModerateReports]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -87,10 +87,10 @@ export function OpportunityManage({ auth }: { auth: AuthState }) {
     <div className="space-y-4">
       <section className="app-card p-4 sm:p-5">
         <div className="flex flex-wrap items-start justify-between gap-3"><div><div className="app-label">Discover</div><h1 className="mt-1 text-2xl font-black text-gray-950">Listings and inquiries</h1><p className="mt-1 text-sm font-semibold text-gray-600">Manage public opportunities and private responses.</p></div><div className="flex gap-2"><button type="button" className="ghost-button !min-h-10" onClick={() => void load()}><RefreshCw className="h-4 w-4" />Refresh</button><Link to="/discover/new" className="primary-button !min-h-10"><Plus className="h-4 w-4" />New listing</Link></div></div>
-        <div className={`mt-4 grid gap-1 rounded-xl bg-gray-100 p-1 ${isPlatformAdmin ? 'grid-cols-3' : 'grid-cols-2'}`}>
+        <div className={`mt-4 grid gap-1 rounded-xl bg-gray-100 p-1 ${canModerateReports ? 'grid-cols-3' : 'grid-cols-2'}`}>
           <TabButton active={tab === 'listings'} onClick={() => setTab('listings')} label={`My listings (${listings.length})`} />
           <TabButton active={tab === 'inquiries'} onClick={() => setTab('inquiries')} label={`Inquiries (${inquiries.length})`} />
-          {isPlatformAdmin ? <TabButton active={tab === 'reports'} onClick={() => setTab('reports')} label={`Reports (${reports.length})`} /> : null}
+          {canModerateReports ? <TabButton active={tab === 'reports'} onClick={() => setTab('reports')} label={`Reports (${reports.length})`} /> : null}
         </div>
       </section>
       {error ? <Status tone="error" message={error} /> : null}
