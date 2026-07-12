@@ -70,4 +70,10 @@ describe('public opportunity callable wiring', () => {
     expect(source).toContain('while (items.length < pageSize && !exhausted)');
     expect(source).not.toContain('page < 5 && items.length < pageSize');
   });
+
+  it('hides inactive detail records from public callers while preserving manager access', () => {
+    expect(source).toMatch(/getPublicOpportunity[\s\S]*getEffectiveOpportunityStatus\(listing\) !== 'active'/);
+    expect(source).toMatch(/getPublicOpportunity[\s\S]*!context\.auth\?\.uid[\s\S]*Opportunity not found/);
+    expect(source).toMatch(/getPublicOpportunity[\s\S]*canManageOpportunity\(caller, listing\)/);
+  });
 });

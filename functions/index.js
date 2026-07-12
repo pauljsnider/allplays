@@ -11634,7 +11634,13 @@ exports.listPublicOpportunities = functions.https.onCall(async (data, context = 
 exports.getPublicOpportunity = functions.https.onCall(async (data, context = {}) => {
   assertOpportunityRateLimit(checkPublicOpportunityBrowseRateLimit, context, 'get');
   const { listingSnap, listing } = await requireOpportunityListing(data?.listingId);
-  if (listing.status === 'removed') throwOpportunityError('not-found', 'Opportunity not found.');
+  if (getEffectiveOpportunityStatus(listing) !== 'active') {
+    if (!context.auth?.uid) throwOpportunityError('not-found', 'Opportunity not found.');
+    const caller = await getOpportunityCaller(context);
+    if (!(await canManageOpportunity(caller, listing))) {
+      throwOpportunityError('not-found', 'Opportunity not found.');
+    }
+  }
   return { item: serializePublicOpportunity(listingSnap.id, listing) };
 });
 
