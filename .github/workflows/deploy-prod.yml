@@ -139,7 +139,7 @@ jobs:
               exit "$deploy_status"
             fi
 
-            if (( attempt >= max_attempts )); then
+            if (( attempt == max_attempts )); then
               echo "Firebase production deploy failed after ${max_attempts} transient attempts." >&2
               exit "$deploy_status"
             fi

@@ -98,7 +98,7 @@ describe('authentication email delivery routing', () => {
         expect(productionSource.match(/--force/g) ?? []).toHaveLength(0);
         expect(productionSource).toContain('max_attempts=3');
         expect(productionSource).toContain('for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do');
-        expect(productionSource).toContain('if (( attempt >= max_attempts )); then');
+        expect(productionSource).toContain('if (( attempt == max_attempts )); then');
         expect(productionSource).toContain('retry_delay_seconds=$((15 * (2 ** (attempt - 1))))');
     });
 
@@ -107,7 +107,8 @@ describe('authentication email delivery routing', () => {
         const deployStepStart = productionSource.indexOf('      - name: Deploy Firebase production');
         const deployStep = productionSource.slice(deployStepStart);
         const transientGuard = 'if ! grep -Eiq "$transient_pattern" "$deploy_log"; then';
-        const attemptLimitGuard = 'if (( attempt >= max_attempts )); then';
+        const attemptLimitGuard = 'if (( attempt == max_attempts )); then';
+        const retryDelay = 'retry_delay_seconds=$((15 * (2 ** (attempt - 1))))';
         const nonTransientBranch = deployStep.slice(
             deployStep.indexOf(transientGuard),
             deployStep.indexOf(attemptLimitGuard)
@@ -119,6 +120,7 @@ describe('authentication email delivery routing', () => {
         expect(deployStep).toContain('deploy_status="${PIPESTATUS[0]}"');
         expect(deployStep).toContain(transientGuard);
         expect(deployStep.indexOf(transientGuard)).toBeLessThan(deployStep.indexOf(attemptLimitGuard));
+        expect(deployStep.indexOf(attemptLimitGuard)).toBeLessThan(deployStep.indexOf(retryDelay));
         expect(nonTransientBranch).toContain('failed with a non-transient error; not retrying.');
         expect(nonTransientBranch).toContain('exit "$deploy_status"');
     });
