@@ -174,6 +174,7 @@ function makeFunctionsStub() {
         onCreate: (fn) => fn,
         onUpdate: (fn) => fn,
         onWrite: (fn) => fn,
+        onDelete: (fn) => fn,
         onRun: (fn) => fn,
         document() {
             return this;
@@ -198,6 +199,9 @@ function makeFunctionsStub() {
         },
         firestore: {
             document: () => triggerChain
+        },
+        auth: {
+            user: () => triggerChain
         },
         pubsub: {
             schedule: () => triggerChain
