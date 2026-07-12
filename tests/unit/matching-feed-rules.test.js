@@ -40,6 +40,7 @@ describe('Player/team matching feed Firestore rules', () => {
         expect(source).toContain('function isCommunityMatchingPostCreateValid(data)');
         expect(source).toContain("data.get('visibility', '') == 'community' &&");
         expect(source).toContain("data.get('status', '') == 'open' &&");
+        expect(source).toContain('data.keys().hasOnly(communityMatchingPostFields())');
         expect(source).toContain("data.get('expiresAt', null) is timestamp &&");
         expect(source).toContain("data.get('media', []).size() == 0 &&");
         expect(source).toContain("data.get('playerIds', []).size() == 0 &&");
@@ -53,15 +54,19 @@ describe('Player/team matching feed Firestore rules', () => {
     it('keeps the matching detail map on a field allowlist', () => {
         const source = rulesSource();
         expect(source).toContain('function matchingDetailFields()');
+        expect(source).toContain('function isNonBlankString(value)');
         for (const field of matchingDetailFields) {
             expect(source).toContain(`'${field}'`);
         }
         expect(source).toContain('data.get(\'matching\', {}).keys().hasOnly(matchingDetailFields())');
+        expect(source).toContain("isNonBlankString(data.get('matching', {}).get('sport', ''))");
+        expect(source).toContain("isNonBlankString(data.get('matching', {}).get('ageGroup', ''))");
     });
 
-    it('requires team admin rights for team_seeking_players posts', () => {
+    it('requires an existing team and admin rights for team_seeking_players posts', () => {
         const source = rulesSource();
         expect(source).toContain("data.get('type', '') == 'team_seeking_players' &&");
+        expect(source).toContain("exists(/databases/$(database)/documents/teams/$(data.get('teamId', ''))) &&");
         expect(source).toContain("isTeamOwnerOrAdmin(data.get('teamId', ''))");
         expect(source).toContain("data.get('type', '') == 'player_seeking_team' &&");
         expect(source).toContain("data.get('teamId', null) == null");
@@ -88,8 +93,11 @@ describe('Player/team matching feed Firestore rules', () => {
         expect(source).toContain('match /responses/{userId}');
         expect(source).toContain('function isMatchingResponseTargetPost(postId)');
         expect(source).toContain("post.get('authorId', '') != request.auth.uid");
+        expect(source).toContain("post.get('expiresAt', null) is timestamp &&");
+        expect(source).toContain("post.get('expiresAt', null) > request.time &&");
         expect(source).toContain('function isMatchingPostAuthor(postId)');
         expect(source).toContain('function isMatchingResponsePayloadValid(data)');
+        expect(source).toContain('isAllowedMatchingProfilePhotoUrl(data.get(\'responderPhotoUrl\', null))');
         for (const field of matchingResponseFields) {
             expect(source).toContain(`'${field}'`);
         }
@@ -102,6 +110,8 @@ describe('Player/team matching feed Firestore rules', () => {
         expect(source).toContain("data.get('category', '') == 'matching_response' &&");
         expect(source).toContain("data.get('fromUserId', '') == request.auth.uid &&");
         expect(source).toContain("data.get('appRoute', '') == '/opportunities?view=mine' &&");
+        expect(source).toContain("post.get('authorId', '') == recipientId &&");
+        expect(source).toContain('exists(/databases/$(database)/documents/socialPosts/$(postId)/responses/$(request.auth.uid)) &&');
         expect(source).toContain('allow create: if isMatchingResponseNotificationCreateValid(userId, request.resource.data);');
 
         const inboxBlock = source.match(/match \/notificationInbox\/\{itemId\} \{[\s\S]*?\}/);

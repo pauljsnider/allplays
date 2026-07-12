@@ -93,7 +93,7 @@ beforeEach(() => {
 describe('createMatchingPost', () => {
   it('writes a community post without contact fields or roster ids', async () => {
     adapterMocks.addDoc.mockResolvedValue({ id: 'new-post' });
-    const postId = await createMatchingPost(user, {
+    const postId = await createMatchingPost({ ...user, photoUrl: 'javascript:alert(1)' }, {
       kind: 'player_seeking_team',
       sport: 'Soccer',
       ageGroup: 'U12',
@@ -111,6 +111,7 @@ describe('createMatchingPost', () => {
     expect(payload.media).toEqual([]);
     expect(payload.playerIds).toEqual([]);
     expect(payload.playerNames).toEqual(['Ethan']);
+    expect(payload.authorPhotoUrl).toBeNull();
     expect(payload.matching.sport).toBe('Soccer');
     expect(payload.expiresAt).toBeTruthy();
     expect('authorEmail' in payload).toBe(false);
@@ -195,12 +196,13 @@ describe('respondToMatchingPost', () => {
   it('upserts one response per user and notifies the author', async () => {
     adapterMocks.setDoc.mockResolvedValue(undefined);
     adapterMocks.addDoc.mockResolvedValue({ id: 'note-1' });
-    await respondToMatchingPost(user, openPost(), { message: 'We would love to have Ethan try out.' });
+    await respondToMatchingPost({ ...user, photoUrl: 'https://lh3.googleusercontent.com/a/photo.png' }, openPost(), { message: 'We would love to have Ethan try out.' });
 
     const [ref, payload, options] = adapterMocks.setDoc.mock.calls[0];
     expect(ref.path).toBe('socialPosts/post-1/responses/parent-1');
     expect(options).toEqual({ merge: true });
     expect(payload.responderId).toBe('parent-1');
+    expect(payload.responderPhotoUrl).toBe('https://lh3.googleusercontent.com/a/photo.png');
     expect(payload.message).toContain('try out');
 
     const [collectionRef, notification] = adapterMocks.addDoc.mock.calls[0];

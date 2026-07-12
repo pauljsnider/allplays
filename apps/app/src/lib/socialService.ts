@@ -15,6 +15,7 @@ import {
 } from './adapters/legacySocialDb';
 import { loadParentHome } from './homeService';
 import { loadRelevantMatchingFeedItems } from './matchingService';
+import { isMatchingPostOpen, normalizeMatchingPost } from './matchingLogic';
 import { createLogger } from './logger';
 import type { ParentHomeModel } from './homeLogic';
 import { uploadTeamChatAttachment } from './chatService';
@@ -198,6 +199,10 @@ export async function loadVisibleSocialPosts(user: AuthUser, home: ParentHomeMod
   }
 
   return [...postDocs.values()]
+    .filter((post) => {
+      const matchingPost = normalizeMatchingPost(post);
+      return !matchingPost || isMatchingPostOpen(matchingPost);
+    })
     .map(mapSocialPost)
     .filter((post) => !post.hidden)
     .slice(0, socialPostLimit);

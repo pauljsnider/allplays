@@ -231,6 +231,77 @@ describe('React app social service', () => {
         expect(model.metrics.feedItems).toBeGreaterThanOrEqual(2);
     });
 
+    it('does not merge closed or expired matching posts through the generic Home feed loader', async () => {
+        const { loadSocialHome } = await import('../../apps/app/src/lib/socialService.ts');
+        const home = {
+            players: [],
+            teams: [{ teamId: 'team-1', teamName: 'Bears', role: 'Parent', sport: 'Basketball', players: [], nextEvent: null, eventCount: 0, unreadCount: 0, openActions: 0 }],
+            upcomingEvents: [],
+            actionItems: [],
+            fees: [],
+            metrics: { players: 0, teams: 1, rsvpNeeded: 0, unreadMessages: 0, packetsReady: 0 }
+        };
+        firebaseMocks.getDocs.mockImplementation(async (queryRef) => {
+            const whereClause = queryRef.clauses.find((clause) => clause.field);
+            if (whereClause?.field === 'visibleUserIds') {
+                return snapshot([
+                    {
+                        id: 'closed-match',
+                        type: 'team_seeking_players',
+                        visibility: 'community',
+                        status: 'closed',
+                        authorId: 'coach-1',
+                        authorName: 'Coach',
+                        teamId: 'team-1',
+                        teamName: 'Bears',
+                        title: 'Bears need players',
+                        detail: 'U12 Basketball',
+                        matching: { sport: 'Basketball', ageGroup: 'U12', zip: '43004' },
+                        createdAt: { seconds: 1780000000 },
+                        expiresAt: { seconds: 4102444800 },
+                        hidden: false
+                    },
+                    {
+                        id: 'expired-match',
+                        type: 'player_seeking_team',
+                        visibility: 'community',
+                        status: 'open',
+                        authorId: 'parent-2',
+                        authorName: 'Parent',
+                        title: 'Player looking',
+                        detail: 'U12 Basketball',
+                        matching: { sport: 'Basketball', ageGroup: 'U12', zip: '43004' },
+                        createdAt: { seconds: 1700000000 },
+                        expiresAt: { seconds: 1700000001 },
+                        hidden: false
+                    },
+                    {
+                        id: 'normal-post',
+                        type: 'team_media',
+                        visibility: 'team',
+                        authorId: 'friend-1',
+                        authorName: 'Jamie Friend',
+                        teamId: 'team-1',
+                        teamName: 'Bears',
+                        title: 'Team photo',
+                        detail: 'Bears update',
+                        createdAt: { seconds: 4102444800 },
+                        playerIds: [],
+                        playerNames: [],
+                        media: []
+                    }
+                ]);
+            }
+            return snapshot([]);
+        });
+
+        const model = await loadSocialHome(user, home);
+
+        expect(model.feedItems.map((item) => item.id)).toContain('normal-post');
+        expect(model.feedItems.map((item) => item.id)).not.toContain('closed-match');
+        expect(model.feedItems.map((item) => item.id)).not.toContain('expired-match');
+    });
+
     it('searches public profiles by hashed email and shared discovery teams', async () => {
         const { searchSocialUsers } = await import('../../apps/app/src/lib/socialService.ts');
         const home = {

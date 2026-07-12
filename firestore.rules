@@ -1255,15 +1255,58 @@ service cloud.firestore {
       ];
     }
 
+    function communityMatchingPostFields() {
+      return [
+        'type',
+        'visibility',
+        'status',
+        'authorId',
+        'authorName',
+        'authorPhotoUrl',
+        'teamId',
+        'teamName',
+        'teamIds',
+        'playerIds',
+        'playerNames',
+        'title',
+        'detail',
+        'caption',
+        'media',
+        'matching',
+        'visibleUserIds',
+        'expiresAt',
+        'hidden',
+        'reportCount',
+        'reactionCounts',
+        'commentCount',
+        'createdAt',
+        'updatedAt'
+      ];
+    }
+
+    function isNonBlankString(value) {
+      return value is string && value.matches('.*\\S.*');
+    }
+
+    function isAllowedMatchingProfilePhotoUrl(value) {
+      return value == null ||
+             (
+               value is string &&
+               value.matches('https://(allplays[.]ai|firebasestorage[.]googleapis[.]com|storage[.]googleapis[.]com|lh[3-6][.]googleusercontent[.]com)/.*')
+             );
+    }
+
     function isCommunityMatchingPostCreateValid(data) {
       return isSignedIn() &&
+             data.keys().hasOnly(communityMatchingPostFields()) &&
              data.get('authorId', '') == request.auth.uid &&
              isMatchingSocialPostType(data.get('type', '')) &&
              data.get('visibility', '') == 'community' &&
              data.get('status', '') == 'open' &&
              data.get('expiresAt', null) is timestamp &&
-             data.get('title', '') is string &&
-             data.get('title', '').size() > 0 &&
+             isNonBlankString(data.get('authorName', '')) &&
+             isAllowedMatchingProfilePhotoUrl(data.get('authorPhotoUrl', null)) &&
+             isNonBlankString(data.get('title', '')) &&
              data.get('title', '').size() <= 160 &&
              data.get('detail', '') is string &&
              data.get('caption', '') is string &&
@@ -1276,10 +1319,8 @@ service cloud.firestore {
              !data.keys().hasAny(['authorEmail', 'email', 'phone']) &&
              data.get('matching', {}) is map &&
              data.get('matching', {}).keys().hasOnly(matchingDetailFields()) &&
-             data.get('matching', {}).get('sport', '') is string &&
-             data.get('matching', {}).get('sport', '') != '' &&
-             data.get('matching', {}).get('ageGroup', '') is string &&
-             data.get('matching', {}).get('ageGroup', '') != '' &&
+             isNonBlankString(data.get('matching', {}).get('sport', '')) &&
+             isNonBlankString(data.get('matching', {}).get('ageGroup', '')) &&
              (
                (
                  data.get('type', '') == 'player_seeking_team' &&
@@ -1289,6 +1330,7 @@ service cloud.firestore {
                  data.get('type', '') == 'team_seeking_players' &&
                  data.get('teamId', '') is string &&
                  data.get('teamId', '') != '' &&
+                 exists(/databases/$(database)/documents/teams/$(data.get('teamId', ''))) &&
                  isTeamOwnerOrAdmin(data.get('teamId', ''))
                )
              );
@@ -1309,12 +1351,13 @@ service cloud.firestore {
                'updatedAt'
              ]) &&
              request.resource.data.get('status', '') in ['open', 'filled', 'closed'] &&
-             request.resource.data.get('title', '') is string &&
-             request.resource.data.get('title', '').size() > 0 &&
+             isNonBlankString(request.resource.data.get('title', '')) &&
              request.resource.data.get('caption', '') is string &&
              request.resource.data.get('caption', '').size() <= 600 &&
              request.resource.data.get('matching', {}) is map &&
-             request.resource.data.get('matching', {}).keys().hasOnly(matchingDetailFields());
+             request.resource.data.get('matching', {}).keys().hasOnly(matchingDetailFields()) &&
+             isNonBlankString(request.resource.data.get('matching', {}).get('sport', '')) &&
+             isNonBlankString(request.resource.data.get('matching', {}).get('ageGroup', ''));
     }
 
     function isMatchingResponseTargetPost(postId) {
@@ -1323,6 +1366,8 @@ service cloud.firestore {
              post.get('visibility', '') == 'community' &&
              post.get('status', '') == 'open' &&
              post.get('hidden', false) != true &&
+             post.get('expiresAt', null) is timestamp &&
+             post.get('expiresAt', null) > request.time &&
              post.get('authorId', '') != request.auth.uid;
     }
 
@@ -1344,12 +1389,15 @@ service cloud.firestore {
              data.get('responderId', '') == request.auth.uid &&
              data.get('responderName', '') is string &&
              data.get('responderName', '').size() > 0 &&
+             isAllowedMatchingProfilePhotoUrl(data.get('responderPhotoUrl', null)) &&
              data.get('message', '') is string &&
              data.get('message', '').size() > 0 &&
              data.get('message', '').size() <= 600;
     }
 
     function isMatchingResponseNotificationCreateValid(recipientId, data) {
+      let postId = data.get('postId', '');
+      let post = get(/databases/$(database)/documents/socialPosts/$(postId)).data;
       return isSignedIn() &&
              request.auth.uid != recipientId &&
              data.keys().hasOnly([
@@ -1371,6 +1419,11 @@ service cloud.firestore {
              data.get('body', '').size() <= 300 &&
              data.get('appRoute', '') == '/opportunities?view=mine' &&
              data.get('postId', '') is string &&
+             isMatchingSocialPostType(post.get('type', '')) &&
+             post.get('visibility', '') == 'community' &&
+             post.get('authorId', '') == recipientId &&
+             exists(/databases/$(database)/documents/socialPosts/$(postId)/responses/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/socialPosts/$(postId)/responses/$(request.auth.uid)).data.get('responderId', '') == request.auth.uid &&
              data.get('readAt', null) == null;
     }
 

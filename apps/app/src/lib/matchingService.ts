@@ -70,6 +70,28 @@ function getUserDisplayName(user: AuthUser | null, fallback = 'ALL PLAYS user') 
   return compact(user?.displayName) || compact(user?.email) || fallback;
 }
 
+function sanitizeProfilePhotoUrl(value: unknown): string | null {
+  const url = compact(value);
+  if (!url) return null;
+  try {
+    const parsed = new URL(url);
+    const hostname = parsed.hostname.toLowerCase();
+    const allowedHosts = [
+      'allplays.ai',
+      'firebasestorage.googleapis.com',
+      'storage.googleapis.com',
+      'lh3.googleusercontent.com',
+      'lh4.googleusercontent.com',
+      'lh5.googleusercontent.com',
+      'lh6.googleusercontent.com'
+    ];
+    if (parsed.protocol !== 'https:' || !allowedHosts.includes(hostname)) return null;
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
 export async function createMatchingPost(user: AuthUser, draft: MatchingPostDraft): Promise<string> {
   if (!user?.uid) throw new Error('Sign in to create a post.');
   const details = buildMatchingDetails(draft);
@@ -86,7 +108,7 @@ export async function createMatchingPost(user: AuthUser, draft: MatchingPostDraf
     status: 'open',
     authorId: user.uid,
     authorName: getUserDisplayName(user),
-    authorPhotoUrl: user.photoUrl || null,
+    authorPhotoUrl: sanitizeProfilePhotoUrl(user.photoUrl),
     teamId: teamId || null,
     teamName: teamName || null,
     teamIds: teamId ? [teamId] : [],
@@ -187,7 +209,7 @@ export async function respondToMatchingPost(user: AuthUser, post: MatchingPost, 
   await setDoc(doc(db, 'socialPosts', post.id, 'responses', user.uid), {
     responderId: user.uid,
     responderName: getUserDisplayName(user),
-    responderPhotoUrl: user.photoUrl || null,
+    responderPhotoUrl: sanitizeProfilePhotoUrl(user.photoUrl),
     teamId: compact(input.teamId) || null,
     teamName: compact(input.teamName) || null,
     message,

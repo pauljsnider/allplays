@@ -92,6 +92,8 @@ describe('notification inbox pipeline', () => {
 
         expect(inboxRules).toContain('allow read: if isOwner(userId);');
         expect(inboxRules).toContain('allow create: if isMatchingResponseNotificationCreateValid(userId, request.resource.data);');
+        expect(rulesSource).toContain("post.get('authorId', '') == recipientId &&");
+        expect(rulesSource).toContain('exists(/databases/$(database)/documents/socialPosts/$(postId)/responses/$(request.auth.uid)) &&');
         expect(inboxRules).toContain('allow update, delete: if false;');
         expect(inboxRules).not.toContain('isGlobalAdmin()');
         expect(inboxRules).not.toContain('allow write');
