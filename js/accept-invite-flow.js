@@ -191,5 +191,11 @@ export async function processInviteCode(userId, code, deps, authEmail = null) {
         };
     }
 
-    throw new Error('Unknown invite type');
+    if (!validation.type || validation.type === 'standard') {
+        // Standard access codes are signup activation codes, not signed-in invites (#3843).
+        // Never consume the code here — it stays valid for the person it was meant for.
+        throw new Error("This is a signup code for creating a new account. You're already signed in — share this code with someone new instead of opening it yourself.");
+    }
+
+    throw new Error(`This invite code type isn't supported here (${validation.type}). Ask whoever sent it for a new invite link.`);
 }

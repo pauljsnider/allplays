@@ -49,7 +49,7 @@ describe('admin invite signup cache busting', () => {
             "import { redeemAdminInviteAtomically } from './js/admin-invite.js?v=6';"
         );
         expect(acceptInviteSource).toContain(
-            "import { createInviteProcessor, getInviteDashboardUrl, isInviteAlreadyRedeemedError } from './js/accept-invite-flow.js?v=8';"
+            "import { createInviteProcessor, getInviteDashboardUrl, isInviteAlreadyRedeemedError } from './js/accept-invite-flow.js?v=9';"
         );
     });
 
