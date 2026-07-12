@@ -1288,6 +1288,12 @@ service cloud.firestore {
       return value is string && value.matches('.*\\S.*');
     }
 
+    function hasNoContactInfo(value) {
+      return value is string &&
+             !value.matches('.*[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+[.][A-Za-z]{2,}.*') &&
+             !value.matches('.*[0-9][0-9() .-]{8,}[0-9].*');
+    }
+
     function isAllowedMatchingProfilePhotoUrl(value) {
       return value == null ||
              (
@@ -1309,7 +1315,7 @@ service cloud.firestore {
              isNonBlankString(data.get('title', '')) &&
              data.get('title', '').size() <= 160 &&
              data.get('detail', '') is string &&
-             data.get('caption', '') is string &&
+             hasNoContactInfo(data.get('caption', '')) &&
              data.get('caption', '').size() <= 600 &&
              data.get('media', []) is list &&
              data.get('media', []).size() == 0 &&
@@ -1352,7 +1358,7 @@ service cloud.firestore {
              ]) &&
              request.resource.data.get('status', '') in ['open', 'filled', 'closed'] &&
              isNonBlankString(request.resource.data.get('title', '')) &&
-             request.resource.data.get('caption', '') is string &&
+             hasNoContactInfo(request.resource.data.get('caption', '')) &&
              request.resource.data.get('caption', '').size() <= 600 &&
              request.resource.data.get('matching', {}) is map &&
              request.resource.data.get('matching', {}).keys().hasOnly(matchingDetailFields()) &&
@@ -1369,6 +1375,23 @@ service cloud.firestore {
              post.get('expiresAt', null) is timestamp &&
              post.get('expiresAt', null) > request.time &&
              post.get('authorId', '') != request.auth.uid;
+    }
+
+    function isMatchingResponseTeamContextValid(postId, data) {
+      let post = get(/databases/$(database)/documents/socialPosts/$(postId)).data;
+      return (
+               post.get('type', '') == 'team_seeking_players' &&
+               data.get('teamId', null) == null
+             ) ||
+             (
+               post.get('type', '') == 'player_seeking_team' &&
+               data.get('teamId', '') is string &&
+               data.get('teamId', '') != '' &&
+               data.get('teamName', '') is string &&
+               data.get('teamName', '').size() > 0 &&
+               exists(/databases/$(database)/documents/teams/$(data.get('teamId', ''))) &&
+               isTeamOwnerOrAdmin(data.get('teamId', ''))
+             );
     }
 
     function isMatchingPostAuthor(postId) {
@@ -1390,7 +1413,7 @@ service cloud.firestore {
              data.get('responderName', '') is string &&
              data.get('responderName', '').size() > 0 &&
              isAllowedMatchingProfilePhotoUrl(data.get('responderPhotoUrl', null)) &&
-             data.get('message', '') is string &&
+             hasNoContactInfo(data.get('message', '')) &&
              data.get('message', '').size() > 0 &&
              data.get('message', '').size() <= 600;
     }
@@ -2323,6 +2346,7 @@ service cloud.firestore {
                     (isOwner(userId) || isMatchingPostAuthor(postId) || isGlobalAdmin());
         allow create, update: if isOwner(userId) &&
                               isMatchingResponseTargetPost(postId) &&
+                              isMatchingResponseTeamContextValid(postId, request.resource.data) &&
                               isMatchingResponsePayloadValid(request.resource.data);
         allow delete: if isSignedIn() &&
                       (isOwner(userId) || isMatchingPostAuthor(postId) || isGlobalAdmin());

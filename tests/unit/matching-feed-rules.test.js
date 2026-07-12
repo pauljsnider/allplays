@@ -42,6 +42,10 @@ describe('Player/team matching feed Firestore rules', () => {
         expect(source).toContain("data.get('status', '') == 'open' &&");
         expect(source).toContain('data.keys().hasOnly(communityMatchingPostFields())');
         expect(source).toContain("data.get('expiresAt', null) is timestamp &&");
+        expect(source).toContain("hasNoContactInfo(data.get('caption', ''))");
+        expect(source).toContain("hasNoContactInfo(request.resource.data.get('caption', ''))");
+        expect(source).toContain("!value.matches('.*[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+[.][A-Za-z]{2,}.*')");
+        expect(source).toContain("!value.matches('.*[0-9][0-9() .-]{8,}[0-9].*')");
         expect(source).toContain("data.get('media', []).size() == 0 &&");
         expect(source).toContain("data.get('playerIds', []).size() == 0 &&");
         expect(source).toContain("!data.keys().hasAny(['authorEmail', 'email', 'phone'])");
@@ -97,11 +101,18 @@ describe('Player/team matching feed Firestore rules', () => {
         expect(source).toContain("post.get('expiresAt', null) > request.time &&");
         expect(source).toContain('function isMatchingPostAuthor(postId)');
         expect(source).toContain('function isMatchingResponsePayloadValid(data)');
+        expect(source).toContain('function isMatchingResponseTeamContextValid(postId, data)');
         expect(source).toContain('isAllowedMatchingProfilePhotoUrl(data.get(\'responderPhotoUrl\', null))');
+        expect(source).toContain("hasNoContactInfo(data.get('message', ''))");
         for (const field of matchingResponseFields) {
             expect(source).toContain(`'${field}'`);
         }
         expect(source).toContain("data.get('message', '').size() <= 600");
+        expect(source).toContain("post.get('type', '') == 'player_seeking_team' &&");
+        expect(source).toContain("data.get('teamId', '') is string &&");
+        expect(source).toContain("exists(/databases/$(database)/documents/teams/$(data.get('teamId', ''))) &&");
+        expect(source).toContain("isTeamOwnerOrAdmin(data.get('teamId', ''))");
+        expect(source).toContain('isMatchingResponseTeamContextValid(postId, request.resource.data) &&');
     });
 
     it('allows only narrowly-validated matching response notifications in the inbox', () => {

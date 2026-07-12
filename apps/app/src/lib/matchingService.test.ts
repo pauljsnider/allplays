@@ -196,13 +196,19 @@ describe('respondToMatchingPost', () => {
   it('upserts one response per user and notifies the author', async () => {
     adapterMocks.setDoc.mockResolvedValue(undefined);
     adapterMocks.addDoc.mockResolvedValue({ id: 'note-1' });
-    await respondToMatchingPost({ ...user, photoUrl: 'https://lh3.googleusercontent.com/a/photo.png' }, openPost(), { message: 'We would love to have Ethan try out.' });
+    await respondToMatchingPost({ ...user, photoUrl: 'https://lh3.googleusercontent.com/a/photo.png' }, openPost(), {
+      message: 'We would love to have Ethan try out.',
+      teamId: 'team-1',
+      teamName: 'Rockets'
+    });
 
     const [ref, payload, options] = adapterMocks.setDoc.mock.calls[0];
     expect(ref.path).toBe('socialPosts/post-1/responses/parent-1');
     expect(options).toEqual({ merge: true });
     expect(payload.responderId).toBe('parent-1');
     expect(payload.responderPhotoUrl).toBe('https://lh3.googleusercontent.com/a/photo.png');
+    expect(payload.teamId).toBe('team-1');
+    expect(payload.teamName).toBe('Rockets');
     expect(payload.message).toContain('try out');
 
     const [collectionRef, notification] = adapterMocks.addDoc.mock.calls[0];
@@ -216,11 +222,11 @@ describe('respondToMatchingPost', () => {
   it('still succeeds when the notification write fails', async () => {
     adapterMocks.setDoc.mockResolvedValue(undefined);
     adapterMocks.addDoc.mockRejectedValue(new Error('rules rejected'));
-    await expect(respondToMatchingPost(user, openPost(), { message: 'Interested!' })).resolves.toBeUndefined();
+    await expect(respondToMatchingPost(user, openPost({ kind: 'team_seeking_players' }), { message: 'Interested!' })).resolves.toBeUndefined();
     expect(adapterMocks.setDoc).toHaveBeenCalledTimes(1);
   });
 
-  it('blocks responding to your own or non-open posts and contact info in messages', async () => {
+  it('blocks responding to your own or non-open posts, contact info in messages, and player posts without a managed team', async () => {
     await expect(respondToMatchingPost(user, openPost({ authorId: user.uid }), { message: 'hi' }))
       .rejects.toThrow(/your own post/i);
     await expect(respondToMatchingPost(user, openPost({ status: 'filled' }), { message: 'hi' }))
@@ -229,6 +235,8 @@ describe('respondToMatchingPost', () => {
       .rejects.toThrow(/emails and phone/i);
     await expect(respondToMatchingPost(user, openPost(), { message: '   ' }))
       .rejects.toThrow(/message/i);
+    await expect(respondToMatchingPost(user, openPost(), { message: 'Interested!' }))
+      .rejects.toThrow(/team you manage/i);
     expect(adapterMocks.setDoc).not.toHaveBeenCalled();
   });
 });

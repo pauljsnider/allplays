@@ -204,6 +204,9 @@ export async function respondToMatchingPost(user: AuthUser, post: MatchingPost, 
   if (containsContactInfo(message)) {
     throw new Error('Remove emails and phone numbers — the poster can follow up in the app.');
   }
+  if (post.kind === 'player_seeking_team' && (!compact(input.teamId) || !compact(input.teamName))) {
+    throw new Error('Choose the team you manage before responding.');
+  }
 
   // One response per user per post (requirement 3.6): the doc id is the responder uid.
   await setDoc(doc(db, 'socialPosts', post.id, 'responses', user.uid), {

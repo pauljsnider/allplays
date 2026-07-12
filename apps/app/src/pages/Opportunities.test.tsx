@@ -124,6 +124,18 @@ describe('Opportunities page', () => {
     expect(screen.getByText('Your post')).toBeTruthy();
   });
 
+  it('hides player-post responses when the user does not manage a team', async () => {
+    homeServiceMocks.loadParentHome.mockResolvedValue({
+      ...homeModel,
+      teams: [{ ...homeModel.teams[0], role: 'Parent' }]
+    });
+    await act(async () => {
+      renderOpportunities();
+    });
+    await screen.findByText('Ethan (U12 Soccer) is looking for a team');
+    expect(screen.queryByRole('button', { name: /I'm interested/ })).toBeNull();
+  });
+
   it('filters posts by kind', async () => {
     matchingServiceMocks.loadOpenMatchingPosts.mockResolvedValue([
       matchingPost(),

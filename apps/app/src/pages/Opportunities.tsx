@@ -53,6 +53,16 @@ function isLikelyTeamAdminRole(role: string): boolean {
   return normalized !== 'parent' && normalized !== 'public' && normalized !== 'fan' && normalized !== 'follower';
 }
 
+function getAdminTeams(home: ParentHomeModel | null): ParentHomeTeam[] {
+  return (home?.teams || []).filter((team) => isLikelyTeamAdminRole(team.role));
+}
+
+function canRespondToOpportunity(post: MatchingPost, isMine: boolean, home: ParentHomeModel | null): boolean {
+  if (isMine) return false;
+  if (post.kind === 'player_seeking_team') return getAdminTeams(home).length > 0;
+  return true;
+}
+
 export function Opportunities({ auth }: { auth: AuthState }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const [posts, setPosts] = useState<MatchingPost[]>([]);
@@ -160,6 +170,7 @@ export function Opportunities({ auth }: { auth: AuthState }) {
                   key={post.id}
                   post={post}
                   isMine={post.authorId === auth.user?.uid}
+                  canRespond={canRespondToOpportunity(post, post.authorId === auth.user?.uid, home)}
                   onRespond={() => setRespondPost(post)}
                 />
               ))
@@ -268,7 +279,7 @@ function OpportunityFilters({ filters, onChange }: { filters: MatchingPostFilter
   );
 }
 
-function OpportunityCard({ post, isMine, onRespond }: { post: MatchingPost; isMine: boolean; onRespond: () => void }) {
+function OpportunityCard({ post, isMine, canRespond, onRespond }: { post: MatchingPost; isMine: boolean; canRespond: boolean; onRespond: () => void }) {
   const isPlayerPost = post.kind === 'player_seeking_team';
   return (
     <article className="app-card overflow-hidden">
@@ -297,7 +308,7 @@ function OpportunityCard({ post, isMine, onRespond }: { post: MatchingPost; isMi
             <ChevronRight className="h-4 w-4" aria-hidden="true" />
           </a>
         ) : null}
-        {!isMine ? (
+        {canRespond ? (
           <button type="button" className="ghost-button !min-h-9 !px-3 text-xs" onClick={onRespond}>
             <MessageCircle className="h-4 w-4" aria-hidden="true" />
             I'm interested
@@ -464,7 +475,7 @@ function OpportunityComposerModal({
 }) {
   const isPlayerPost = kind === 'player_seeking_team';
   const players: ParentHomePlayer[] = home?.players || [];
-  const adminTeams: ParentHomeTeam[] = (home?.teams || []).filter((team) => isLikelyTeamAdminRole(team.role));
+  const adminTeams: ParentHomeTeam[] = getAdminTeams(home);
   const [playerKey, setPlayerKey] = useState('');
   const [playerFirstName, setPlayerFirstName] = useState('');
   const [teamId, setTeamId] = useState(adminTeams[0]?.teamId || '');
@@ -675,7 +686,7 @@ function OpportunityRespondModal({
   onClose: () => void;
   onSubmit: (input: { message: string; teamId?: string | null; teamName?: string | null }) => Promise<void>;
 }) {
-  const adminTeams: ParentHomeTeam[] = (home?.teams || []).filter((team) => isLikelyTeamAdminRole(team.role));
+  const adminTeams: ParentHomeTeam[] = getAdminTeams(home);
   const showTeamPicker = post.kind === 'player_seeking_team' && adminTeams.length > 0;
   const [message, setMessage] = useState('');
   const [teamId, setTeamId] = useState(adminTeams[0]?.teamId || '');
