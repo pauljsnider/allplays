@@ -840,8 +840,8 @@ describe('React app team detail model', () => {
         expect(model.team.mediaUrl).toBe('https://allplays.ai/team-media.html#teamId=team%2Fwith+slash');
         expect(model.team.registrationProvider).toEqual([
             { label: 'Provider', value: 'League Apps' },
-            { label: 'Team ID', value: 'remote-team-1' },
-            { label: 'Last Sync', value: 'ok' }
+            { label: 'Provider team ID', value: 'remote-team-1', copyable: true },
+            { label: 'Last sync', value: 'Ok' }
         ]);
         expect(model.players.map((player) => player.id)).toEqual(['player-2', 'player-10']);
         expect(model.linkedPlayers.map((player) => player.id)).toEqual(['player-2', 'player-10']);
