@@ -553,6 +553,51 @@ test.describe('edit schedule imported calendar rows', () => {
     });
 });
 
+test.describe('edit schedule Bulk AI image input', () => {
+    test.beforeEach(async ({ page }) => {
+        await registerRoutes(page);
+    });
+
+    test('accepts pasted schedule screenshots without blocking plain text paste', async ({ page }) => {
+        await page.addInitScript((state) => {
+            window.__editScheduleTestState = state;
+            window.HTMLElement.prototype.scrollIntoView = function scrollIntoView() {};
+        }, buildState());
+
+        await page.goto(`${serverOrigin}/edit-schedule.html#teamId=team-1`, { waitUntil: 'domcontentloaded' });
+        await page.locator('#tab-bulk-ai').click();
+
+        const plainTextPrevented = await page.locator('#bulk-text-input').evaluate((textarea) => {
+            const dataTransfer = new DataTransfer();
+            dataTransfer.setData('text/plain', 'only home games');
+            const event = new ClipboardEvent('paste', {
+                bubbles: true,
+                cancelable: true,
+                clipboardData: dataTransfer
+            });
+            textarea.dispatchEvent(event);
+            return event.defaultPrevented;
+        });
+        expect(plainTextPrevented).toBe(false);
+
+        const imagePastePrevented = await page.locator('#bulk-text-input').evaluate((textarea) => {
+            const dataTransfer = new DataTransfer();
+            dataTransfer.items.add(new File(['schedule image'], 'schedule.png', { type: 'image/png' }));
+            const event = new ClipboardEvent('paste', {
+                bubbles: true,
+                cancelable: true,
+                clipboardData: dataTransfer
+            });
+            textarea.dispatchEvent(event);
+            return event.defaultPrevented;
+        });
+
+        expect(imagePastePrevented).toBe(true);
+        await expect(page.locator('#schedule-image-preview')).toBeVisible();
+        await expect(page.locator('#schedule-image-preview-img')).toHaveAttribute('src', /^data:image\/png;base64,/);
+    });
+});
+
 test.describe('edit schedule season record fields', () => {
     test.beforeEach(async ({ page }) => {
         await registerRoutes(page);
