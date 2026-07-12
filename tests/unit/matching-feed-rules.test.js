@@ -42,12 +42,18 @@ describe('Player/team matching feed Firestore rules', () => {
         expect(source).toContain("data.get('status', '') == 'open' &&");
         expect(source).toContain('data.keys().hasOnly(communityMatchingPostFields())');
         expect(source).toContain("data.get('expiresAt', null) is timestamp &&");
+        expect(source).toContain("data.get('expiresAt', null) > request.time &&");
+        expect(source).toContain("data.get('expiresAt', null) <= request.time + duration.value(90, 'd') &&");
+        expect(source).toContain("hasNoContactInfo(data.get('title', ''))");
+        expect(source).toContain("hasNoContactInfo(data.get('detail', ''))");
         expect(source).toContain("hasNoContactInfo(data.get('caption', ''))");
         expect(source).toContain("hasNoContactInfo(request.resource.data.get('caption', ''))");
         expect(source).toContain("!value.matches('.*[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+[.][A-Za-z]{2,}.*')");
         expect(source).toContain("!value.matches('.*[0-9][0-9() .-]{8,}[0-9].*')");
         expect(source).toContain("data.get('media', []).size() == 0 &&");
         expect(source).toContain("data.get('playerIds', []).size() == 0 &&");
+        expect(source).toContain('isMatchingDetailPayloadValid(data) &&');
+        expect(source).toContain('isCommunityMatchingCreateScopeValid(data)');
         expect(source).toContain("!data.keys().hasAny(['authorEmail', 'email', 'phone'])");
         expect(source).toContain('isCommunityMatchingPostCreateValid(request.resource.data)');
 
@@ -62,9 +68,12 @@ describe('Player/team matching feed Firestore rules', () => {
         for (const field of matchingDetailFields) {
             expect(source).toContain(`'${field}'`);
         }
-        expect(source).toContain('data.get(\'matching\', {}).keys().hasOnly(matchingDetailFields())');
-        expect(source).toContain("isNonBlankString(data.get('matching', {}).get('sport', ''))");
-        expect(source).toContain("isNonBlankString(data.get('matching', {}).get('ageGroup', ''))");
+        expect(source).toContain('matching.keys().hasOnly(matchingDetailFields())');
+        expect(source).toContain("matching.get('kind', '') == data.get('type', '')");
+        expect(source).toContain("isNonBlankString(matching.get('sport', ''))");
+        expect(source).toContain("isNonBlankString(matching.get('ageGroup', ''))");
+        expect(source).toContain("isAllowedMatchingSignupUrl(matching.get('signupUrl', ''))");
+        expect(source).toContain("hasNoContactInfo(matching.get('playerFirstName', ''))");
     });
 
     it('requires an existing team and admin rights for team_seeking_players posts', () => {
@@ -74,6 +83,23 @@ describe('Player/team matching feed Firestore rules', () => {
         expect(source).toContain("isTeamOwnerOrAdmin(data.get('teamId', ''))");
         expect(source).toContain("data.get('type', '') == 'player_seeking_team' &&");
         expect(source).toContain("data.get('teamId', null) == null");
+    });
+
+    it('prevents direct SDK writes from widening matching post scope or derived fields', () => {
+        const source = rulesSource();
+        expect(source).toContain('function isCommunityMatchingCreateScopeValid(data)');
+        expect(source).toContain("data.get('visibleUserIds', []) is list &&");
+        expect(source).toContain("data.get('visibleUserIds', []).size() == 1 &&");
+        expect(source).toContain("request.auth.uid in data.get('visibleUserIds', [])");
+        expect(source).toContain('function isPlayerSeekingTeamCreateScopeValid(data)');
+        expect(source).toContain("data.get('teamIds', []).size() == 0 &&");
+        expect(source).toContain("matching.get('playerFirstName', '') in data.get('playerNames', [])");
+        expect(source).toContain("matching.get('signupUrl', '') == ''");
+        expect(source).toContain('function isTeamSeekingPlayersCreateScopeValid(data)');
+        expect(source).toContain("data.get('teamIds', []).size() == 1 &&");
+        expect(source).toContain("data.get('teamId', '') in data.get('teamIds', [])");
+        expect(source).toContain("data.get('playerNames', []).size() == 0");
+        expect(source).toContain("hasNoContactInfo(data.get('teamName', ''))");
     });
 
     it('lets signed-in users read community posts and authors manage lifecycle', () => {

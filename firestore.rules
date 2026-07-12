@@ -1294,11 +1294,111 @@ service cloud.firestore {
              !value.matches('.*[0-9][0-9() .-]{8,}[0-9].*');
     }
 
+    function isNullableContactSafeString(value, maxLength) {
+      return value == null ||
+             (
+               hasNoContactInfo(value) &&
+               value.size() <= maxLength
+             );
+    }
+
     function isAllowedMatchingProfilePhotoUrl(value) {
       return value == null ||
              (
                value is string &&
                value.matches('https://(allplays[.]ai|firebasestorage[.]googleapis[.]com|storage[.]googleapis[.]com|lh[3-6][.]googleusercontent[.]com)/.*')
+             );
+    }
+
+    function isAllowedMatchingSignupUrl(value) {
+      return value == '' ||
+             (
+               value is string &&
+               value.size() <= 240 &&
+               value.matches('https://(www[.])?allplays[.]ai/.*')
+             );
+    }
+
+    function isMatchingDetailPayloadValid(data) {
+      let matching = data.get('matching', {});
+      return matching is map &&
+             matching.keys().hasOnly(matchingDetailFields()) &&
+             matching.get('kind', '') == data.get('type', '') &&
+             isNonBlankString(matching.get('sport', '')) &&
+             hasNoContactInfo(matching.get('sport', '')) &&
+             matching.get('sport', '').size() <= 40 &&
+             isNonBlankString(matching.get('ageGroup', '')) &&
+             hasNoContactInfo(matching.get('ageGroup', '')) &&
+             matching.get('ageGroup', '').size() <= 20 &&
+             hasNoContactInfo(matching.get('city', '')) &&
+             matching.get('city', '').size() <= 60 &&
+             hasNoContactInfo(matching.get('state', '')) &&
+             matching.get('state', '').size() <= 2 &&
+             hasNoContactInfo(matching.get('zip', '')) &&
+             matching.get('zip', '').size() <= 10 &&
+             (
+               isNonBlankString(matching.get('zip', '')) ||
+               (isNonBlankString(matching.get('city', '')) && isNonBlankString(matching.get('state', '')))
+             ) &&
+             hasNoContactInfo(matching.get('positions', '')) &&
+             matching.get('positions', '').size() <= 120 &&
+             hasNoContactInfo(matching.get('level', '')) &&
+             matching.get('level', '').size() <= 40 &&
+             hasNoContactInfo(matching.get('timeframe', '')) &&
+             matching.get('timeframe', '').size() <= 80 &&
+             (
+               matching.get('openSpots', null) == null ||
+               (
+                 matching.get('openSpots', null) is int &&
+                 matching.get('openSpots', null) >= 1 &&
+                 matching.get('openSpots', null) <= 99
+               )
+             ) &&
+             isAllowedMatchingSignupUrl(matching.get('signupUrl', ''));
+    }
+
+    function isPlayerSeekingTeamCreateScopeValid(data) {
+      let matching = data.get('matching', {});
+      return data.get('type', '') == 'player_seeking_team' &&
+             data.get('teamId', null) == null &&
+             data.get('teamName', null) == null &&
+             data.get('teamIds', []) is list &&
+             data.get('teamIds', []).size() == 0 &&
+             isNonBlankString(matching.get('playerFirstName', '')) &&
+             hasNoContactInfo(matching.get('playerFirstName', '')) &&
+             matching.get('playerFirstName', '').size() <= 40 &&
+             matching.get('signupUrl', '') == '' &&
+             matching.get('openSpots', null) == null &&
+             data.get('playerNames', []) is list &&
+             data.get('playerNames', []).size() == 1 &&
+             matching.get('playerFirstName', '') in data.get('playerNames', []);
+    }
+
+    function isTeamSeekingPlayersCreateScopeValid(data) {
+      let matching = data.get('matching', {});
+      return data.get('type', '') == 'team_seeking_players' &&
+             data.get('teamId', '') is string &&
+             data.get('teamId', '') != '' &&
+             exists(/databases/$(database)/documents/teams/$(data.get('teamId', ''))) &&
+             isTeamOwnerOrAdmin(data.get('teamId', '')) &&
+             isNonBlankString(data.get('teamName', '')) &&
+             hasNoContactInfo(data.get('teamName', '')) &&
+             data.get('teamName', '').size() <= 120 &&
+             data.get('teamIds', []) is list &&
+             data.get('teamIds', []).size() == 1 &&
+             data.get('teamId', '') in data.get('teamIds', []) &&
+             data.get('playerNames', []) is list &&
+             data.get('playerNames', []).size() == 0 &&
+             matching.get('playerFirstName', '') == '';
+    }
+
+    function isCommunityMatchingCreateScopeValid(data) {
+      return data.get('visibleUserIds', []) is list &&
+             data.get('visibleUserIds', []).size() == 1 &&
+             request.auth.uid in data.get('visibleUserIds', []) &&
+             (
+               isPlayerSeekingTeamCreateScopeValid(data) ||
+               isTeamSeekingPlayersCreateScopeValid(data)
              );
     }
 
@@ -1310,11 +1410,15 @@ service cloud.firestore {
              data.get('visibility', '') == 'community' &&
              data.get('status', '') == 'open' &&
              data.get('expiresAt', null) is timestamp &&
+             data.get('expiresAt', null) > request.time &&
+             data.get('expiresAt', null) <= request.time + duration.value(90, 'd') &&
              isNonBlankString(data.get('authorName', '')) &&
              isAllowedMatchingProfilePhotoUrl(data.get('authorPhotoUrl', null)) &&
              isNonBlankString(data.get('title', '')) &&
+             hasNoContactInfo(data.get('title', '')) &&
              data.get('title', '').size() <= 160 &&
-             data.get('detail', '') is string &&
+             hasNoContactInfo(data.get('detail', '')) &&
+             data.get('detail', '').size() <= 240 &&
              hasNoContactInfo(data.get('caption', '')) &&
              data.get('caption', '').size() <= 600 &&
              data.get('media', []) is list &&
@@ -1323,23 +1427,9 @@ service cloud.firestore {
              data.get('playerIds', []).size() == 0 &&
              data.get('hidden', false) == false &&
              !data.keys().hasAny(['authorEmail', 'email', 'phone']) &&
-             data.get('matching', {}) is map &&
-             data.get('matching', {}).keys().hasOnly(matchingDetailFields()) &&
-             isNonBlankString(data.get('matching', {}).get('sport', '')) &&
-             isNonBlankString(data.get('matching', {}).get('ageGroup', '')) &&
-             (
-               (
-                 data.get('type', '') == 'player_seeking_team' &&
-                 data.get('teamId', null) == null
-               ) ||
-               (
-                 data.get('type', '') == 'team_seeking_players' &&
-                 data.get('teamId', '') is string &&
-                 data.get('teamId', '') != '' &&
-                 exists(/databases/$(database)/documents/teams/$(data.get('teamId', ''))) &&
-                 isTeamOwnerOrAdmin(data.get('teamId', ''))
-               )
-             );
+             isNullableContactSafeString(data.get('teamName', null), 120) &&
+             isMatchingDetailPayloadValid(data) &&
+             isCommunityMatchingCreateScopeValid(data);
     }
 
     function isMatchingPostAuthorLifecycleUpdateValid() {
