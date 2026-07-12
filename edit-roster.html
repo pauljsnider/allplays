@@ -566,6 +566,7 @@
         import { formatRegistrationRosterImportResults, getRegistrationRosterPlayers, hasConfiguredRegistrationProviderMetadata, isExternallyLinkedRosterTeam, planRegistrationRosterImport } from './js/edit-roster-registration-import.js?v=2';
         import { buildRegistrationReviewCsv, buildRegistrationReviewCsvFilename, getDefaultRegistrationReviewCsvColumnKeys, getRegistrationReviewCsvColumnDefinitions, matchesRegistrationReviewScreeningStatus, summarizeRegistrationReviewScreening } from './js/registration-review.js?v=6';
         import { buildRosterPrintHtml } from './js/roster-print.js?v=2';
+        import { buildLinkedParentContacts } from './js/roster-parent-contacts.js?v=1';
         import { getApp } from './js/vendor/firebase-app.js';
         import { getAI, getGenerativeModel, GoogleAIBackend, Schema } from './js/vendor/firebase-ai.js';
 
@@ -1563,6 +1564,19 @@
                     });
                     parentsByPlayerId.set(link.playerId, existing);
                 });
+            });
+            // Team owners/admins cannot list the /users directory (getAllUsers is
+            // gated to global admins), so merge in the linked-parent accounts that
+            // live on each player doc — those are readable by team staff and are the
+            // reliable source of parent chips for coaches (#3865).
+            players.forEach((player) => {
+                if (!player?.id) return;
+                const merged = buildLinkedParentContacts(player, parentsByPlayerId.get(player.id) || []);
+                if (merged.length) {
+                    parentsByPlayerId.set(player.id, merged);
+                } else {
+                    parentsByPlayerId.delete(player.id);
+                }
             });
             const pendingRequestsByPlayerId = new Map();
             (membershipRequests || [])
