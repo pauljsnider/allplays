@@ -46,6 +46,12 @@ import {
 import { buildCoachOverrideRsvpDocId, shouldDeleteLegacyRsvpForOverride } from './rsvp-doc-ids.js';
 import { computeEffectiveRsvpSummary } from './rsvp-summary.js?v=2';
 import { buildGameDayRsvpBreakdown } from './game-day-rsvp-breakdown.js?v=2';
+import {
+    buildRsvpFallbackPlayerIdsByUser,
+    extractDirectRsvpPlayerIds,
+    extractPlayerIdsFromParentScope,
+    uniqueNonEmptyIds
+} from './rsvp-player-fallback.js?v=1';
 import { isAvailabilityLocked, normalizeAvailabilityPreferences } from './availability-preferences.js?v=1';
 import {
     collectOfficialLookupQueryTargets,
@@ -2790,10 +2796,19 @@ function playerHasRosterContactFields(player = {}) {
     );
 }
 
+function playerHasRosterParentUserIds(player = {}) {
+    const parents = Array.isArray(player?.parents) ? player.parents : [];
+    return Boolean(
+        parents.some((parent) => String(parent?.userId || parent?.uid || parent?.parentUserId || parent?.accountUserId || '').trim()) ||
+        String(player?.parentUserId || '').trim() ||
+        String(player?.guardianUserId || '').trim()
+    );
+}
+
 async function mergePlayerPrivateProfileParents(teamId, players = []) {
     const rosterPlayers = Array.isArray(players) ? players : [];
     return Promise.all(rosterPlayers.map(async (player) => {
-        if (!player?.id || playerHasRosterContactFields(player)) return player;
+        if (!player?.id || (playerHasRosterContactFields(player) && playerHasRosterParentUserIds(player))) return player;
         try {
             const privateProfile = await getPlayerPrivateProfile(teamId, player.id);
             const privateParents = Array.isArray(privateProfile?.parents) ? privateProfile.parents : [];
@@ -8326,11 +8341,6 @@ function normalizeRsvpResponse(response) {
     return 'not_responded';
 }
 
-function uniqueNonEmptyIds(ids) {
-    if (!Array.isArray(ids)) return [];
-    return Array.from(new Set(ids.filter((id) => typeof id === 'string' && id.trim())));
-}
-
 const rsvpSummaryHydrationCacheByTeam = new Map();
 
 function getRsvpSummaryHydrationCache(teamId) {
@@ -8361,12 +8371,7 @@ function getCachedFallbackPlayerIdsForUser(teamId, userId) {
         const playerIdsPromise = (async () => {
             try {
                 const profile = await getUserProfile(userId);
-                const parentLinks = Array.isArray(profile?.parentOf) ? profile.parentOf : [];
-                return uniqueNonEmptyIds(
-                    parentLinks
-                        .filter((link) => link?.teamId === teamId)
-                        .map((link) => link?.playerId)
-                );
+                return extractPlayerIdsFromParentScope(teamId, profile);
             } catch (err) {
                 if (err?.code === 'permission-denied') return [];
                 throw err;
@@ -8380,48 +8385,26 @@ function getCachedFallbackPlayerIdsForUser(teamId, userId) {
     return cache.playerIdsByUserPromise.get(userId);
 }
 
-function extractDirectRsvpPlayerIds(rsvp) {
-    const direct = uniqueNonEmptyIds(rsvp?.playerIds);
-    if (direct.length) return direct;
-    const legacy = [];
-    if (typeof rsvp?.playerId === 'string' && rsvp.playerId.trim()) legacy.push(rsvp.playerId.trim());
-    if (typeof rsvp?.childId === 'string' && rsvp.childId.trim()) legacy.push(rsvp.childId.trim());
-    return uniqueNonEmptyIds(legacy);
-}
-
 async function buildFallbackPlayerIdsByUser(teamId, rsvps, options = {}) {
     const resolveIdsForUser = typeof options.resolveIdsForUser === 'function'
         ? options.resolveIdsForUser
         : async (uid) => {
             try {
                 const profile = await getUserProfile(uid);
-                const parentLinks = Array.isArray(profile?.parentOf) ? profile.parentOf : [];
-                return uniqueNonEmptyIds(
-                    parentLinks
-                        .filter((link) => link?.teamId === teamId)
-                        .map((link) => link?.playerId)
-                );
+                return extractPlayerIdsFromParentScope(teamId, profile);
             } catch (err) {
                 if (err?.code === 'permission-denied') return [];
                 throw err;
             }
         };
 
-    const fallbackByUser = new Map();
-    const unresolvedUserIds = Array.from(new Set(
-        rsvps
-            .filter((rsvp) => extractDirectRsvpPlayerIds(rsvp).length === 0)
-            .map((rsvp) => rsvp?.userId || rsvp?.id)
-            .filter(Boolean)
-    ));
-    if (unresolvedUserIds.length === 0) return fallbackByUser;
-
-    await Promise.all(unresolvedUserIds.map(async (uid) => {
-        const idsForTeam = await resolveIdsForUser(uid);
-        fallbackByUser.set(uid, idsForTeam);
-    }));
-
-    return fallbackByUser;
+    return buildRsvpFallbackPlayerIdsByUser({
+        teamId,
+        rsvps,
+        players: options.players || [],
+        resolveIdsForUser,
+        resolveUsersByParentPlayerKey: options.resolveUsersByParentPlayerKey
+    });
 }
 
 function resolveRsvpPlayerIds(rsvp, fallbackByUser) {
@@ -8574,6 +8557,7 @@ async function computeRsvpSummary(teamId, gameId, options = {}) {
         getCachedRsvpRoster(teamId, { forceRefresh: freshRoster })
     ]);
     const fallbackByUser = await buildFallbackPlayerIdsByUser(teamId, rsvps, {
+        players: roster,
         resolveIdsForUser: (uid) => getCachedFallbackPlayerIdsForUser(teamId, uid)
     });
     const activeRosterIds = new Set(roster.map((player) => player.id));
@@ -8607,6 +8591,7 @@ export async function getRsvpSummaries(teamId, gameIds) {
 
         const rsvps = result.value;
         const fallbackByUser = await buildFallbackPlayerIdsByUser(teamId, rsvps, {
+            players: roster,
             resolveIdsForUser: (uid) => getCachedFallbackPlayerIdsForUser(teamId, uid)
         });
         const summary = computeEffectiveRsvpSummary({
@@ -9127,7 +9112,9 @@ export async function getRsvpBreakdownByPlayer(teamId, gameId) {
         getRsvps(teamId, gameId)
     ]);
     const playersWithPrivateContacts = await mergePlayerPrivateProfileParents(teamId, players);
-    const fallbackByUser = await buildFallbackPlayerIdsByUser(teamId, rsvps);
+    const fallbackByUser = await buildFallbackPlayerIdsByUser(teamId, rsvps, {
+        players: playersWithPrivateContacts
+    });
     const breakdown = buildGameDayRsvpBreakdown({ players: playersWithPrivateContacts, rsvps, fallbackByUser });
     return { ...breakdown, players: playersWithPrivateContacts, rsvps };
 }

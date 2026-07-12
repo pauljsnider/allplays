@@ -2375,6 +2375,24 @@ describe('parent family RSVP submission', () => {
     expect(submitRsvpForPlayer).not.toHaveBeenCalled();
   });
 
+  it('uses the recurring occurrence id for single-child RSVP writes', async () => {
+    const occurrenceEvent = {
+      ...baseEvent,
+      id: 'practice-1__2026-07-13',
+      childId: 'player-1'
+    };
+    vi.mocked(submitRsvpForPlayer).mockResolvedValue(null as any);
+
+    await submitParentScheduleRsvp(occurrenceEvent, user as any, 'going', 'Practice occurrence');
+
+    expect(submitRsvpForPlayer).toHaveBeenCalledWith('team-1', 'practice-1__2026-07-13', 'parent-1', {
+      displayName: 'Parent One',
+      playerId: 'player-1',
+      response: 'going',
+      note: 'Practice occurrence'
+    });
+  });
+
   it('propagates a failed atomic legacy family commit without running separate cleanup', async () => {
     const commitError = new Error('atomic family commit failed');
     vi.mocked(submitRsvp).mockRejectedValueOnce(commitError);
@@ -2550,6 +2568,43 @@ describe('staff RSVP management', () => {
     expect(result.grouped.not_responded).toEqual([
       expect.objectContaining({ playerId: 'p4', playerName: 'Devon Lee', response: 'not_responded' })
     ]);
+  });
+
+  it('uses the recurring occurrence id for staff RSVP breakdown reads', async () => {
+    const occurrenceEvent = { ...event, id: 'practice-1__2026-07-13' };
+    vi.mocked(getRsvpBreakdownByPlayer).mockResolvedValue({
+      grouped: {
+        going: [{ playerId: 'p1', playerName: 'Avery Smith', response: 'going' }],
+        maybe: [],
+        not_going: [],
+        not_responded: []
+      },
+      counts: { going: 1, maybe: 0, notGoing: 0, notResponded: 0, total: 1 }
+    } as any);
+
+    await loadStaffScheduleRsvpBreakdown(occurrenceEvent, user as any);
+
+    expect(getRsvpBreakdownByPlayer).toHaveBeenCalledWith('team-1', 'practice-1__2026-07-13');
+  });
+
+  it('attributes native fallback staff RSVP rows through roster parent links', async () => {
+    (globalThis as any).window.location.protocol = 'capacitor:';
+    vi.mocked(getRsvpBreakdownByPlayer).mockRejectedValue(new Error('primary unavailable'));
+    vi.mocked(getPlayers).mockResolvedValue([
+      { id: 'p1', name: 'Avery Smith', parentUserId: 'parent-1' },
+      { id: 'p2', name: 'Devon Lee', parentUserId: 'parent-2' }
+    ] as any);
+    vi.mocked(getRsvps).mockResolvedValue([
+      { id: 'parent-1', userId: 'parent-1', response: 'going' }
+    ] as any);
+
+    const result = await loadStaffScheduleRsvpBreakdown(event, user as any);
+
+    expect(result.grouped.going).toEqual([
+      expect.objectContaining({ playerId: 'p1', response: 'going' })
+    ]);
+    expect(getPlayers).toHaveBeenCalledWith('team-1', { includeInactive: true });
+    expect(getRsvps).toHaveBeenCalledWith('team-1', 'game-1');
   });
 
   it('reuses one in-flight staff RSVP event-data load for breakdown and reminder preview', async () => {

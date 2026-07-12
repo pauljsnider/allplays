@@ -4142,6 +4142,23 @@ function normalizeStaffScheduleRsvpBreakdown(value: any): StaffScheduleRsvpBreak
   };
 }
 
+function buildRosterRsvpFallbackByUser(players: any[] = []) {
+  const fallbackByUser = new Map<string, string[]>();
+  (Array.isArray(players) ? players : []).forEach((player) => {
+    const playerId = compactString(player?.id || player?.playerId);
+    if (!playerId) return;
+    getPlayerParentUserIds(player).forEach((userId) => {
+      const normalizedUserId = compactString(userId);
+      if (!normalizedUserId) return;
+      fallbackByUser.set(normalizedUserId, uniqueNonEmptyStrings([
+        ...(fallbackByUser.get(normalizedUserId) || []),
+        playerId
+      ]));
+    });
+  });
+  return fallbackByUser;
+}
+
 async function loadStaffRsvpEventData(event: ParentScheduleEvent): Promise<StaffRsvpEventData> {
   try {
     // The breakdown fans out across every roster player + their RSVPs, so it
@@ -4158,8 +4175,9 @@ async function loadStaffRsvpEventData(event: ParentScheduleEvent): Promise<Staff
       loadPlayers(event.teamId),
       loadRsvps(event.teamId, event.id)
     ]);
+    const fallbackByUser = buildRosterRsvpFallbackByUser(players);
     return {
-      breakdown: normalizeStaffScheduleRsvpBreakdown(buildGameDayRsvpBreakdown({ players, rsvps })),
+      breakdown: normalizeStaffScheduleRsvpBreakdown(buildGameDayRsvpBreakdown({ players, rsvps, fallbackByUser })),
       reminderPreview: buildStaffRsvpReminderPreview(players, rsvps)
     };
   }
