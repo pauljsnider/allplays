@@ -613,6 +613,100 @@ test('notifyGameUpdated sends liveScore notifications and records once-only audi
     }
 });
 
+test('notifyLiveEventCreated sends one deduped big-moment notification to eligible recipients except the actor', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        parentUserIds: ['parent-1'],
+        indexedTargets: [
+            { uid: 'coach-1', roles: ['staff'], deviceId: 'actor-device', token: 'actor-token', categories: { liveScore: true } },
+            { uid: 'assistant-1', roles: ['staff'], deviceId: 'assistant-device', token: 'assistant-token', categories: { liveScore: true } },
+            { uid: 'parent-1', roles: ['parent'], deviceId: 'parent-device', token: 'parent-token', categories: { liveScore: true } },
+            { uid: 'opted-out-1', roles: ['parent'], deviceId: 'opted-out-device', token: 'opted-out-token', categories: { liveScore: false } },
+            { uid: 'unrelated-1', roles: ['viewer'], deviceId: 'unrelated-device', token: 'unrelated-token', categories: { liveScore: true } }
+        ]
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/games/game-3/liveEvents/doc-event-1');
+        const snapshot = makeSnapshot(ref, {
+            eventId: 'client-event-1',
+            type: 'stat',
+            statKey: 'PTS',
+            value: 3,
+            playerName: 'Ava Cole',
+            period: 'Q4',
+            homeScore: 55,
+            awayScore: 53,
+            createdBy: 'coach-1',
+            description: 'Ava hit a three while discussing a private sideline note'
+        });
+        const context = { params: { teamId: 'team-1', gameId: 'game-3', eventId: 'doc-event-1' } };
+
+        const firstResult = await moduleExports.notifyLiveEventCreated(snapshot, context);
+        const duplicateResult = await moduleExports.notifyLiveEventCreated(snapshot, context);
+
+        assert.equal(firstResult?.successCount, 2);
+        assert.equal(duplicateResult, null);
+        assert.equal(env.counts.dedupTransactions, 2);
+        assert.equal(env.messagingCalls.length, 1);
+        assert.deepEqual(env.messagingCalls[0].tokens.sort(), ['assistant-token', 'parent-token']);
+        assert.equal(env.messagingCalls[0].title, '3 points: Ava Cole');
+        assert.equal(env.messagingCalls[0].body, 'Q4 · Score 55–53');
+        assert.equal(env.messagingCalls[0].body.includes('private'), false);
+        assert.equal(env.messagingCalls[0].data.category, 'liveScore');
+        assert.equal(env.messagingCalls[0].data.eventId, 'doc-event-1');
+        assert.equal(env.messagingCalls[0].data.appRoute, '/schedule/team-1/game-3?section=game');
+        assert.equal(env.messagingCalls[0].webLink, 'https://allplays.ai/live-game.html?teamId=team-1&gameId=game-3');
+        assert.equal(env.auditWrites.length, 1);
+        assert.deepEqual(env.auditWrites[0].value.targetUserIds.sort(), ['assistant-1', 'parent-1']);
+        assert.equal(env.auditWrites[0].value.dedupGuardApplied, false);
+        assert.equal(env.dedupWrites.some((write) => write.value?.dedupKey === 'live-event:doc-event-1'), true);
+    } finally {
+        cleanup();
+    }
+});
+
+test('notifyLiveEventCreated ignores routine, generic, and reversed live events', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        parentUserIds: ['parent-1'],
+        indexedTargets: [
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { liveScore: true } }
+        ]
+    });
+
+    try {
+        const ignoredEvents = [
+            { type: 'clock_start' },
+            { type: 'clock_pause' },
+            { type: 'period_change' },
+            { type: 'lineup' },
+            { type: 'substitution' },
+            { type: 'undo' },
+            { type: 'note', text: 'Routine note' },
+            { type: 'stat', statKey: 'rebounds', value: 1 },
+            { type: 'stat', statKey: 'pts', value: -2 },
+            { type: 'baseball', baseballAction: 'single' }
+        ];
+
+        for (const [index, event] of ignoredEvents.entries()) {
+            const eventId = `ignored-${index}`;
+            const ref = env.firestoreState.doc(`teams/team-1/games/game-3/liveEvents/${eventId}`);
+            const result = await moduleExports.notifyLiveEventCreated(
+                makeSnapshot(ref, event),
+                { params: { teamId: 'team-1', gameId: 'game-3', eventId } }
+            );
+            assert.equal(result, null);
+        }
+
+        assert.equal(env.counts.dedupTransactions, 0);
+        assert.equal(env.messagingCalls.length, 0);
+        assert.equal(env.auditWrites.length, 0);
+    } finally {
+        cleanup();
+    }
+});
+
 test('notifyTeamChatMessageCreated sends mentions and liveChat only to enabled recipients and records audit entries', async () => {
     const { moduleExports, env, cleanup } = loadNotificationInternals({
         teamDoc: { ownerId: 'coach-1', adminEmails: ['assistant@example.com'] },

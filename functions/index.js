@@ -138,6 +138,11 @@ const {
   buildNotificationDeliveryOptions
 } = require('./notification-delivery-metadata.cjs');
 const {
+  buildBigMomentLiveEventNotification,
+  buildLiveEventNotificationDedupKey,
+  getLiveEventActorUid
+} = require('./live-event-notification-core.cjs');
+const {
   getStaleNotificationTokenCutoffMillis
 } = require('./notification-token-sweep-core.cjs');
 const {
@@ -10325,6 +10330,43 @@ exports.notifyGameUpdated = functions.firestore
       title: payload.title,
       body: payload.body,
       actorUid
+    });
+  });
+
+exports.notifyLiveEventCreated = functions.firestore
+  .document('teams/{teamId}/games/{gameId}/liveEvents/{eventId}')
+  .onCreate(async (snapshot, context) => {
+    const event = snapshot.data() || {};
+    const teamId = String(context.params?.teamId || '').trim();
+    const gameId = String(context.params?.gameId || '').trim();
+    const documentEventId = String(context.params?.eventId || snapshot.id || '').trim();
+    if (!teamId || !gameId || !documentEventId) return null;
+
+    const payload = buildBigMomentLiveEventNotification(event);
+    if (!payload) return null;
+
+    const dedupKey = buildLiveEventNotificationDedupKey(event, documentEventId);
+    if (!dedupKey) return null;
+    const canSend = await checkAndSetNotificationDedup(teamId, 'liveScore', gameId, dedupKey);
+    if (!canSend) {
+      functions.logger.info('Notification dedup: skipping duplicate live event send', {
+        teamId,
+        gameId,
+        eventId: documentEventId,
+        dedupKey
+      });
+      return null;
+    }
+
+    return sendCategoryNotification({
+      teamId,
+      gameId,
+      eventId: documentEventId,
+      category: 'liveScore',
+      title: payload.title,
+      body: payload.body,
+      actorUid: getLiveEventActorUid(event),
+      dedupKey
     });
   });
 
