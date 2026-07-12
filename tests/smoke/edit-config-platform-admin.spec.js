@@ -235,7 +235,7 @@ async function mockDependencies(page) {
     await page.route('**/js/edit-config-access.js?v=2', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: EDIT_CONFIG_ACCESS_STUB }));
     await page.route(/\/js\/team-admin-banner\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: TEAM_ADMIN_BANNER_STUB }));
     await page.route('**/js/stat-leaderboards.js?v=2', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: STAT_LEADERBOARDS_STUB }));
-    await page.route('**/js/stat-config-presets.js?v=1', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: STAT_CONFIG_PRESETS_STUB }));
+    await page.route('**/js/stat-config-presets.js?v=2', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: STAT_CONFIG_PRESETS_STUB }));
 }
 
 test('platform admin saves advanced stat definition metadata through edit-config controls', async ({ page, baseURL }) => {
