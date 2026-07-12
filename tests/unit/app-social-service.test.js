@@ -152,6 +152,7 @@ describe('React app social service', () => {
                 recipientId: 'friend-1',
                 memberIds: ['friend-1', 'user-1'],
                 status: 'pending',
+                respondedAt: null,
                 sharedTeamIds: ['team-1']
             }),
             { merge: true }

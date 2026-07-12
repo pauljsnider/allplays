@@ -306,6 +306,7 @@ export async function sendFriendRequest(user: AuthUser, friend: SocialFriend) {
     sharedTeamIds: friend.sharedTeamIds || [],
     sharedTeamNames: friend.sharedTeamNames || [],
     blockedBy: [],
+    respondedAt: null,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp()
   }, { merge: true });
