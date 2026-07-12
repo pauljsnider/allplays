@@ -19,9 +19,15 @@ export function CreateTeam({ auth }: { auth: AuthState }) {
   const [saveError, setSaveError] = useState('');
   const [statConfigWarning, setStatConfigWarning] = useState('');
   const [createdTeamId, setCreatedTeamId] = useState('');
+  const createdTeamPath = createdTeamId ? `/teams/${encodeURIComponent(createdTeamId)}` : '';
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (createdTeamPath) {
+      navigate(createdTeamPath, { replace: true });
+      return;
+    }
+
     setNameError('');
     setSportError('');
     setSaveError('');
@@ -165,13 +171,13 @@ export function CreateTeam({ auth }: { auth: AuthState }) {
           {statConfigWarning ? (
             <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">
               <div>{statConfigWarning}</div>
-              {createdTeamId ? <Link to={`/teams/${encodeURIComponent(createdTeamId)}`} className="mt-2 inline-flex font-black text-amber-950">Open team</Link> : null}
+              {createdTeamPath ? <Link to={createdTeamPath} className="mt-2 inline-flex font-black text-amber-950">Open team</Link> : null}
             </div>
           ) : null}
 
           <button type="submit" className="primary-button w-full justify-center" disabled={saving} aria-disabled={saving}>
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
-            Create team
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : createdTeamPath ? <CheckCircle2 className="h-4 w-4" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
+            {createdTeamPath ? 'Open team' : 'Create team'}
           </button>
         </form>
       </section>
