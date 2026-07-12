@@ -57,4 +57,10 @@ describe('public opportunity callable wiring', () => {
     expect(source).toContain('exports.getPublicTeamProfile');
     expect(source).toContain("description: cleanOpportunityText(team.description, 1000) || null");
   });
+
+  it('includes current team-managed listings in management results', () => {
+    expect(source).toContain('listOpportunityManagedTeamDocuments(caller)');
+    expect(source).toContain(".where('teamId', 'in', managedTeamIds.slice(index, index + 30))");
+    expect(source).toContain('managedListingSnaps.forEach');
+  });
 });

@@ -70,7 +70,22 @@ function normalizeOpportunityInput(value = {}) {
   if (!input.sport) throw new Error('Choose a sport.');
   if (!input.city || !input.state) throw new Error('Add a city and state.');
   if (input.zip && !/^\d{5}(?:-\d{4})?$/.test(input.zip)) throw new Error('Enter a valid ZIP code.');
-  if (containsUnsafePublicContact(`${input.title} ${input.description} ${input.availability} ${input.compensationSummary}`)) {
+  const displayedText = [
+    input.title,
+    input.description,
+    input.sport,
+    input.role,
+    input.ageGroup,
+    input.competitiveLevel,
+    input.division,
+    input.city,
+    input.state,
+    input.zip,
+    input.availability,
+    input.startDate,
+    input.compensationSummary
+  ].join(' ');
+  if (containsUnsafePublicContact(displayedText)) {
     throw new Error('Public listings cannot include an email address, phone number, or exact street address.');
   }
 
@@ -78,7 +93,7 @@ function normalizeOpportunityInput(value = {}) {
     if (!input.guardianAttested) throw new Error('Confirm that you are an adult or legal guardian.');
     if (!input.ageGroup) throw new Error('Add the player age group.');
     if (input.teamId) throw new Error('Looking-for-team listings cannot be posted as a team.');
-    if (containsUnsafeYouthIdentity(`${input.title} ${input.description} ${input.availability}`)) {
+    if (containsUnsafeYouthIdentity(displayedText)) {
       throw new Error('Remove names, school details, birth information, contact details, and exact addresses from the youth listing.');
     }
     input.title = `${input.ageGroup} ${input.sport} player looking for a team`;

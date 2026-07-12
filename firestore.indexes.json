@@ -82,6 +82,14 @@
       ]
     },
     {
+      "collectionGroup": "publicOpportunities",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "teamId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "opportunityInquiries",
       "queryScope": "COLLECTION",
       "fields": [

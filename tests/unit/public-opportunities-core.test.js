@@ -59,6 +59,19 @@ describe('public sports opportunity core', () => {
     expect(containsUnsafePublicContact('512.555.1212')).toBe(true);
     expect(containsUnsafePublicContact('123 Main Street')).toBe(true);
     expect(containsUnsafePublicContact('Austin, TX 78701')).toBe(false);
+    expect(() => normalizeOpportunityInput({ ...teamInput, role: 'Email coach@example.com' })).toThrow(/email address, phone number/);
+    expect(() => normalizeOpportunityInput({ ...teamInput, division: 'Meet at 123 Main Street' })).toThrow(/exact street address/);
+  });
+
+  it('screens every displayed youth field for identity details', () => {
+    expect(() => normalizeOpportunityInput({
+      ...teamInput,
+      kind: 'player_seeking_team',
+      teamId: '',
+      guardianAttested: true,
+      division: 'North Middle School',
+      compensationType: 'not_applicable'
+    })).toThrow(/school details/);
   });
 
   it('expires listings after thirty days and filters active results', () => {

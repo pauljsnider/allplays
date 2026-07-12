@@ -11564,6 +11564,15 @@ async function resolveOpportunityTeam(input, caller) {
   return { id: teamSnap.id, ...team };
 }
 
+async function listOpportunityManagedTeamDocuments(caller) {
+  const queries = [firestore.collection('teams').where('ownerId', '==', caller.uid).get()];
+  if (caller.email) queries.push(firestore.collection('teams').where('adminEmails', 'array-contains', caller.email).get());
+  const snapshots = await Promise.all(queries);
+  const teams = new Map();
+  snapshots.forEach((snapshot) => snapshot.docs.forEach((docSnap) => teams.set(docSnap.id, docSnap)));
+  return teams;
+}
+
 exports.listPublicOpportunities = functions.https.onCall(async (data, context = {}) => {
   assertOpportunityRateLimit(checkPublicOpportunityBrowseRateLimit, context, 'list');
   const filters = normalizeOpportunityFilters(data?.filters || {});
@@ -11696,22 +11705,39 @@ exports.closePublicOpportunity = functions.https.onCall((data, context) => setOp
 exports.renewPublicOpportunity = functions.https.onCall((data, context) => setOpportunityLifecycleStatus(data, context, 'renew'));
 
 exports.listMyPublicOpportunities = functions.https.onCall(async (data, context = {}) => {
-  const uid = requireOpportunityAuth(context);
-  const snap = await firestore.collection('publicOpportunities')
-    .where('authorId', '==', uid)
+  const caller = await getOpportunityCaller(context);
+  const [authoredSnap, managedTeams] = await Promise.all([
+    firestore.collection('publicOpportunities')
+      .where('authorId', '==', caller.uid)
+      .orderBy('createdAt', 'desc')
+      .limit(100)
+      .get(),
+    listOpportunityManagedTeamDocuments(caller)
+  ]);
+  const managedTeamIds = Array.from(managedTeams.keys());
+  const managedListingQueries = [];
+  for (let index = 0; index < managedTeamIds.length; index += 30) {
+    managedListingQueries.push(firestore.collection('publicOpportunities')
+      .where('teamId', 'in', managedTeamIds.slice(index, index + 30))
     .orderBy('createdAt', 'desc')
-    .limit(100)
-    .get();
-  return { items: snap.docs.map((docSnap) => serializePublicOpportunity(docSnap.id, docSnap.data() || {})) };
+      .limit(100)
+      .get());
+  }
+  const managedListingSnaps = await Promise.all(managedListingQueries);
+  const listings = new Map();
+  authoredSnap.docs.forEach((docSnap) => listings.set(docSnap.id, docSnap));
+  managedListingSnaps.forEach((snap) => snap.docs.forEach((docSnap) => listings.set(docSnap.id, docSnap)));
+  const docs = Array.from(listings.values())
+    .sort((left, right) => (right.data()?.createdAt?.toMillis?.() || 0) - (left.data()?.createdAt?.toMillis?.() || 0))
+    .slice(0, 100);
+  return { items: docs.map((docSnap) => serializePublicOpportunity(docSnap.id, docSnap.data() || {})) };
 });
 
 exports.listManagedPublicOpportunityTeams = functions.https.onCall(async (_data, context = {}) => {
   const caller = await getOpportunityCaller(context);
-  const queries = [firestore.collection('teams').where('ownerId', '==', caller.uid).get()];
-  if (caller.email) queries.push(firestore.collection('teams').where('adminEmails', 'array-contains', caller.email).get());
-  const snapshots = await Promise.all(queries);
+  const managedTeams = await listOpportunityManagedTeamDocuments(caller);
   const teams = new Map();
-  snapshots.forEach((snapshot) => snapshot.docs.forEach((docSnap) => {
+  managedTeams.forEach((docSnap) => {
     const team = docSnap.data() || {};
     if (team.isPublic !== true || team.active === false) return;
     teams.set(docSnap.id, {
@@ -11722,7 +11748,7 @@ exports.listManagedPublicOpportunityTeams = functions.https.onCall(async (_data,
       state: cleanOpportunityText(team.state, 40),
       zip: cleanOpportunityText(team.zip, 10)
     });
-  }));
+  });
   return { items: Array.from(teams.values()).sort((a, b) => a.name.localeCompare(b.name)) };
 });
 
