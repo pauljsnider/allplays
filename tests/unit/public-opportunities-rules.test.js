@@ -61,11 +61,18 @@ describe('public opportunity Firestore boundaries', () => {
           participantIds: ['user-1', 'former-admin', 'current-admin']
         });
         await setDoc(doc(context.firestore(), 'opportunityInquiries', 'inquiry-1', 'messages', 'message-1'), { body: 'Private' });
+        await setDoc(doc(context.firestore(), 'opportunityInquiries', 'individual-inquiry'), {
+          senderId: 'user-1',
+          teamId: null,
+          participantIds: ['user-1', 'individual-recipient']
+        });
+        await setDoc(doc(context.firestore(), 'opportunityInquiries', 'individual-inquiry', 'messages', 'message-1'), { body: 'Individual private thread' });
       });
       const anonymousDb = testEnv.unauthenticatedContext().firestore();
       const participantDb = testEnv.authenticatedContext('user-1').firestore();
       const currentAdminDb = testEnv.authenticatedContext('current-admin', { email: 'current-admin@example.com' }).firestore();
       const formerAdminDb = testEnv.authenticatedContext('former-admin', { email: 'former-admin@example.com' }).firestore();
+      const individualRecipientDb = testEnv.authenticatedContext('individual-recipient').firestore();
       const outsiderDb = testEnv.authenticatedContext('user-3').firestore();
 
       await expectPermissionDenied(getDoc(doc(anonymousDb, 'publicOpportunities', 'listing-1')));
@@ -81,6 +88,9 @@ describe('public opportunity Firestore boundaries', () => {
       await expectPermissionDenied(getDoc(doc(formerAdminDb, 'opportunityInquiries', 'inquiry-1')));
       await expectPermissionDenied(getDoc(doc(formerAdminDb, 'opportunityInquiries', 'inquiry-1', 'messages', 'message-1')));
       await expectPermissionDenied(getDoc(doc(outsiderDb, 'opportunityInquiries', 'inquiry-1')));
+      await assertSucceeds(getDoc(doc(individualRecipientDb, 'opportunityInquiries', 'individual-inquiry')));
+      await assertSucceeds(getDoc(doc(individualRecipientDb, 'opportunityInquiries', 'individual-inquiry', 'messages', 'message-1')));
+      await expectPermissionDenied(getDoc(doc(outsiderDb, 'opportunityInquiries', 'individual-inquiry')));
     });
   });
 });

@@ -41,7 +41,8 @@ service cloud.firestore {
               data.get('senderId', '') == request.auth.uid ||
               (data.get('participantIds', []) is list &&
                request.auth.uid in data.get('participantIds', []) &&
-               (data.get('teamId', '') == '' ||
+               (data.get('teamId', null) == null ||
+                data.get('teamId', '') == '' ||
                 (data.get('teamId', '') is string &&
                  isTeamOwnerOrAdmin(data.get('teamId', ''))))));
     }
