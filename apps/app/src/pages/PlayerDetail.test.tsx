@@ -328,6 +328,72 @@ describe('PlayerDetail athlete profile season selection', () => {
     });
   });
 
+  it('does not preserve an athlete profile when navigating to another player', async () => {
+    const nextProfileDeferred = createDeferred<any>();
+    const currentAthleteProfile = {
+      ...buildDetailData().athleteProfile,
+      profile: {
+        id: 'profile-current',
+        athlete: { name: 'Sam Player', headline: 'Current athlete headline' },
+        bio: {},
+        privacy: 'private',
+        clips: [],
+        seasons: [{ seasonKey: 'team-current::player-current' }]
+      },
+      builderUrl: 'https://allplays.ai/athlete-profile-builder.html?teamId=team-current&playerId=player-current&profileId=profile-current'
+    };
+    const nextAthleteProfileShell = {
+      profile: null,
+      shareUrl: '',
+      builderUrl: 'https://allplays.ai/athlete-profile-builder.html?teamId=team-next&playerId=player-next',
+      seasonOptions: [{
+        seasonKey: 'team-next::player-next',
+        teamId: 'team-next',
+        teamName: 'Next Team',
+        playerId: 'player-next',
+        playerName: 'Jordan Player'
+      }]
+    };
+
+    playerServiceMocks.loadParentPlayerDetail
+      .mockResolvedValueOnce(buildDetailData({ athleteProfile: currentAthleteProfile }))
+      .mockResolvedValueOnce(buildDetailData({
+        child: {
+          teamId: 'team-next',
+          teamName: 'Next Team',
+          playerId: 'player-next',
+          playerName: 'Jordan Player'
+        },
+        player: {
+          id: 'player-next',
+          teamId: 'team-next',
+          teamName: 'Next Team',
+          name: 'Jordan Player',
+          number: '24',
+          photoUrl: ''
+        },
+        team: { id: 'team-next', name: 'Next Team' },
+        athleteProfile: nextAthleteProfileShell
+      }));
+    playerServiceMocks.loadParentPlayerAthleteProfile.mockImplementationOnce(() => nextProfileDeferred.promise);
+
+    renderPlayerDetailWithRouteSwitcher();
+
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Athlete Profile' }));
+    expect(await screen.findByDisplayValue('Current athlete headline')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next player route' }));
+
+    await screen.findByText('Jordan Player');
+    await waitFor(() => {
+      expect(playerServiceMocks.loadParentPlayerAthleteProfile).toHaveBeenCalledWith(auth.user, 'team-next', 'player-next');
+    });
+    expect(screen.queryByDisplayValue('Current athlete headline')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Save Athlete Profile' })).toBeNull();
+  });
+
   it('does not auto-retry failed video clip loads until the user retries', async () => {
     playerServiceMocks.loadParentPlayerVideoClips
       .mockRejectedValueOnce(new Error('Clip network failed.'))

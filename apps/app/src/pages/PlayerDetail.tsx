@@ -433,13 +433,16 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
     try {
       const nextData = await loadParentPlayerDetail(auth.user, teamId, playerId);
       const nextAthleteProfileLoaded = hasResolvedAthleteProfile(nextData.athleteProfile);
+      const preserveAthleteProfile = athleteProfileLoaded && !nextAthleteProfileLoaded && !!data
+        && data.child.teamId === nextData.child.teamId
+        && data.child.playerId === nextData.child.playerId;
       setData((current) => ({
         ...nextData,
-        athleteProfile: athleteProfileLoaded && !nextAthleteProfileLoaded && current
+        athleteProfile: preserveAthleteProfile && current
           ? current.athleteProfile
           : nextData.athleteProfile
       }));
-      setAthleteProfileLoaded(nextAthleteProfileLoaded || athleteProfileLoaded);
+      setAthleteProfileLoaded(nextAthleteProfileLoaded || preserveAthleteProfile);
       setAthleteProfileError(null);
       setVideoClipsError(null);
       if (reloadVideoClips) {
@@ -449,7 +452,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
           force: true
         });
       }
-      if (athleteProfileLoaded && !nextAthleteProfileLoaded) {
+      if (preserveAthleteProfile) {
         const nextAthleteProfile = await loadAthleteProfile({
           nextTeamId: nextData.child.teamId,
           nextPlayerId: nextData.child.playerId,
