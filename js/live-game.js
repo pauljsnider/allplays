@@ -545,6 +545,15 @@ function startBroadcastHeartbeat() {
   }, BROADCAST_STREAM_HEARTBEAT_MS);
 }
 
+async function saveAbortedNativeBroadcastStart(status, warningMessage) {
+  stopBroadcastHeartbeat();
+  try {
+    await saveBroadcastRuntimeStatus(status);
+  } catch (saveError) {
+    console.warn(warningMessage, saveError);
+  }
+}
+
 function stopNativeCameraPreview() {
   stopBroadcastHeartbeat();
   if (state.nativeCameraStream) {
@@ -676,12 +685,25 @@ async function beginNativeBroadcastStream() {
       els.nativeCameraPreview.srcObject = stream;
     }
     await els.nativeCameraPreview.play();
-    if (state.nativeCameraStream !== stream || els.nativeCameraPreview.srcObject !== stream) return;
+    if (state.nativeCameraStream !== stream || els.nativeCameraPreview.srcObject !== stream) {
+      await saveAbortedNativeBroadcastStart(
+        BROADCAST_STREAM_STATUSES.READY,
+        'Failed to clear aborted device stream start status:'
+      );
+      if (state.nativeBroadcastStatus === BROADCAST_STREAM_STATUSES.STARTING) {
+        setNativeBroadcastStatus(BROADCAST_STREAM_STATUSES.READY);
+      }
+      return;
+    }
     const postPlayReadiness = getNativeCameraReadiness();
     if (!postPlayReadiness.cameraReady || !postPlayReadiness.microphoneReady) {
       const message = 'Camera and microphone are no longer ready. Retry to restore setup and start again.';
       setNativeBroadcastStatus(BROADCAST_STREAM_STATUSES.FAILED, message);
       setNativeCameraStatus(message, 'error');
+      await saveAbortedNativeBroadcastStart(
+        BROADCAST_STREAM_STATUSES.FAILED,
+        'Failed to save aborted device stream failure status:'
+      );
       return;
     }
     await saveBroadcastRuntimeStatus(BROADCAST_STREAM_STATUSES.LIVE);

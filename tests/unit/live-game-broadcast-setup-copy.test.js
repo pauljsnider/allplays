@@ -26,6 +26,7 @@ describe('live game camera setup and stream controls', () => {
         expect(copySurface).toContain('BROADCAST_STREAM_STATUSES.STARTING');
         expect(copySurface).toContain('BROADCAST_STREAM_STATUSES.LIVE');
         expect(copySurface).toContain('BROADCAST_STREAM_STATUSES.FAILED');
+        expect(copySurface).toContain('async function saveAbortedNativeBroadcastStart(status, warningMessage)');
         expect(beginSource).toContain('state.nativeCameraStream');
         expect(beginSource).toContain('await saveBroadcastRuntimeStatus(BROADCAST_STREAM_STATUSES.STARTING)');
         expect(beginSource).toContain('await els.nativeCameraPreview.play()');
@@ -47,6 +48,11 @@ describe('live game camera setup and stream controls', () => {
         expect(afterPlaySource).toContain('els.nativeCameraPreview.srcObject !== stream');
         expect(afterPlaySource).toContain('const postPlayReadiness = getNativeCameraReadiness();');
         expect(afterPlaySource).toContain('!postPlayReadiness.cameraReady || !postPlayReadiness.microphoneReady');
+        const streamChangedAbortPattern = /state\.nativeCameraStream !== stream[\s\S]*saveAbortedNativeBroadcastStart\(\s*BROADCAST_STREAM_STATUSES\.READY[\s\S]*setNativeBroadcastStatus\(BROADCAST_STREAM_STATUSES\.READY\)[\s\S]*return;/;
+        const readinessFailedAbortPattern = /!postPlayReadiness\.cameraReady \|\| !postPlayReadiness\.microphoneReady[\s\S]*setNativeBroadcastStatus\(BROADCAST_STREAM_STATUSES\.FAILED, message\)[\s\S]*saveAbortedNativeBroadcastStart\(\s*BROADCAST_STREAM_STATUSES\.FAILED[\s\S]*return;/;
+
+        expect(afterPlaySource).toMatch(streamChangedAbortPattern);
+        expect(afterPlaySource).toMatch(readinessFailedAbortPattern);
         expect(beginSource.indexOf('await saveBroadcastRuntimeStatus(BROADCAST_STREAM_STATUSES.STARTING)')).toBeLessThan(beginSource.indexOf('await els.nativeCameraPreview.play()'));
         expect(afterPlaySource.indexOf('state.nativeCameraStream !== stream')).toBeLessThan(afterPlaySource.indexOf('setNativeBroadcastStatus(BROADCAST_STREAM_STATUSES.LIVE)'));
     });
