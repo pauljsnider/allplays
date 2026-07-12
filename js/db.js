@@ -4729,7 +4729,12 @@ export async function redeemAdminInviteAtomically(codeId, userId, fallbackEmail 
 async function autoAcceptParentInviteForExistingUser(accessCodeId) {
     const autoAcceptParentInvite = httpsCallable(functions, 'autoAcceptParentInviteForExistingUser');
     const result = await autoAcceptParentInvite({ codeId: accessCodeId });
-    return Boolean(result?.data?.autoLinked);
+    const payload = result?.data || {};
+    const autoLinked = payload.autoLinked === true;
+    return {
+        autoLinked,
+        existingUser: payload.existingUser === true || autoLinked
+    };
 }
 
 export async function inviteParent(teamId, playerId, playerNum, parentEmail, relation) {
@@ -4765,17 +4770,20 @@ export async function inviteParent(teamId, playerId, playerNum, parentEmail, rel
     };
     const { id: accessCodeId, code } = await createUniqueAccessCode(accessCodeData);
 
-    // Check if user with this email already exists
-    let existingUser = null;
+    // Let the server decide whether a user with this email already exists.
+    // Non-global-admin team owners/admins cannot query /users from the client,
+    // so a client-side lookup would throw permission-denied here even though
+    // the invite code was already created and the invite email already queued.
+    let existingUser = false;
     let autoLinked = false;
     if (normalizedParentEmail) {
-        existingUser = await getUserByEmail(normalizedParentEmail);
-        if (existingUser) {
-            try {
-                autoLinked = await autoAcceptParentInviteForExistingUser(accessCodeId);
-            } catch (error) {
-                console.warn(`Could not auto-link existing parent invite: ${error?.message || 'Unknown error'}`);
-            }
+        try {
+            const autoAcceptResult = await autoAcceptParentInviteForExistingUser(accessCodeId);
+            existingUser = autoAcceptResult.existingUser;
+            autoLinked = autoAcceptResult.autoLinked;
+        } catch (error) {
+            // The invite was already created and emailed; never fail it on auto-link.
+            console.warn(`Could not auto-link existing parent invite: ${error?.message || 'Unknown error'}`);
         }
     }
 
@@ -4784,7 +4792,7 @@ export async function inviteParent(teamId, playerId, playerNum, parentEmail, rel
         code,
         teamName: team?.name || null,
         playerName: player?.name || null,
-        existingUser: !!existingUser,
+        existingUser,
         autoLinked
     };
 }
@@ -4828,8 +4836,14 @@ export async function inviteAdmin(teamId, adminEmail) {
     };
     const { id: accessCodeId, code } = await createUniqueAccessCode(accessCodeData);
 
-    // Check if user already exists
-    const existingUser = await getUserByEmail(normalizedEmail);
+    // Check if user already exists (best-effort: non-global-admins cannot
+    // query /users, and the invite code is already created either way)
+    let existingUser = null;
+    try {
+        existingUser = await getUserByEmail(normalizedEmail);
+    } catch (error) {
+        console.warn(`Could not check for existing admin user: ${error?.message || 'Unknown error'}`);
+    }
 
     return {
         id: accessCodeId,

@@ -2487,13 +2487,13 @@ exports.autoAcceptParentInviteForExistingUser = functions.https.onCall(async (da
     throw new functions.https.HttpsError('not-found', 'Player not found.');
   }
   if (userQuerySnap.empty) {
-    return { autoLinked: false, reason: 'no-existing-user' };
+    return { autoLinked: false, existingUser: false, reason: 'no-existing-user' };
   }
 
   const team = teamSnap.data() || {};
   const actor = actorSnap.exists ? actorSnap.data() || {} : {};
   const actorEmail = context.auth.token?.email || actor.email || '';
-  if (!hasTeamAdminAccess({ team, uid: context.auth.uid, email: actorEmail })) {
+  if (!hasTeamAdminAccess({ team, user: actor, uid: context.auth.uid, email: actorEmail })) {
     throw new functions.https.HttpsError('permission-denied', 'Only team owners and admins can auto-link parent invites.');
   }
 
@@ -2564,7 +2564,7 @@ exports.autoAcceptParentInviteForExistingUser = functions.https.onCall(async (da
     });
   });
 
-  return { autoLinked: true, userId: userRef.id };
+  return { autoLinked: true, existingUser: true, userId: userRef.id };
 });
 
 
