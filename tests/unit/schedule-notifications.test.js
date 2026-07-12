@@ -341,6 +341,28 @@ describe('schedule notification helpers', () => {
         vi.unstubAllGlobals();
     });
 
+    it('maps network fetch failures to an actionable reminder service error', async () => {
+        const fetchMock = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'));
+        vi.stubGlobal('fetch', fetchMock);
+        vi.stubGlobal('window', { __ALLPLAYS_CONFIG__: { functionsBaseUrl: 'https://functions.example.test/' } });
+
+        const auth = {
+            currentUser: { getIdToken: vi.fn().mockResolvedValue('id-token') },
+            app: { options: { projectId: 'demo-project' } }
+        };
+
+        await expect(sendPublicRsvpReminderEmails({
+            auth,
+            teamId: 'team-1',
+            gameId: 'game-1',
+            eventType: 'game',
+            eventTitle: 'vs. Wildcats',
+            eventDate: new Date('2026-05-11T18:30:00.000Z')
+        })).rejects.toThrow('Could not reach the reminder service. Check your connection and try again.');
+
+        vi.unstubAllGlobals();
+    });
+
     it('builds parent email preview for no-response players', () => {
         const preview = buildAvailabilityReminderEmailPreview([
             { id: 'p1', name: 'A', parents: [{ userId: 'u1', email: 'one@example.com' }] },
