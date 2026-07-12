@@ -17,6 +17,7 @@ import { loadParentHome } from './homeService';
 import { loadRelevantMatchingFeedItems } from './matchingService';
 import { isMatchingPostOpen, normalizeMatchingPost } from './matchingLogic';
 import { createLogger } from './logger';
+import { toAppServiceError } from './appErrors';
 import type { ParentHomeModel } from './homeLogic';
 import { uploadTeamChatAttachment } from './chatService';
 import type { AuthUser } from './types';
@@ -154,6 +155,7 @@ export async function loadSocialHome(user: AuthUser | null, homeOverride?: Paren
   const home = homeOverride || await loadParentHome(user);
   const authorName = getUserDisplayName(user);
   const derivedFeed = buildDerivedSocialFeedItems(home, user.uid, authorName);
+  let friendshipsError: string | null = null;
   const [posts, matchingFeed, friendships, suggestions] = await Promise.all([
     loadVisibleSocialPosts(user, home).catch((error) => {
       logger.warn('Unable to load social posts.', { error });
@@ -161,7 +163,11 @@ export async function loadSocialHome(user: AuthUser | null, homeOverride?: Paren
     }),
     loadRelevantMatchingFeedItems(user, home),
     loadFriendships(user).catch((error) => {
-      logger.warn('Unable to load friendships.', { error });
+      const appError = toAppServiceError(error, "Couldn't load friend requests.");
+      logger.warn('Unable to load friendships.', { error: appError });
+      // Surface this instead of silently rendering "no requests" — a swallowed
+      // failure here hides incoming friend requests entirely (#3867).
+      friendshipsError = appError.message;
       return [];
     }),
     loadFriendSuggestions(user, home).catch((error) => {
@@ -174,7 +180,8 @@ export async function loadSocialHome(user: AuthUser | null, homeOverride?: Paren
     feedItems: mergeSocialFeedItems(posts, matchingFeed, derivedFeed),
     friendshipFriends: friendships,
     suggestions,
-    currentUserId: user.uid
+    currentUserId: user.uid,
+    friendshipsError
   });
 }
 
@@ -308,6 +315,9 @@ export async function sendFriendRequest(user: AuthUser, friend: SocialFriend) {
     sharedTeamIds: friend.sharedTeamIds || [],
     sharedTeamNames: friend.sharedTeamNames || [],
     blockedBy: [],
+    // Re-requesting after a prior decline/remove: reset the response so the
+    // recipient sees a fresh pending request rather than stale state (#3867).
+    respondedAt: null,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp()
   }, { merge: true });

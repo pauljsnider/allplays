@@ -1508,6 +1508,16 @@ function FriendsSection({
         </div>
 
         <div className="grid gap-3 p-3 lg:grid-cols-2">
+          {social.friendshipsError ? (
+            <div className="lg:col-span-2 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3">
+              <div className="min-w-0">
+                <div className="text-sm font-black text-rose-800">Couldn't load friend requests</div>
+                <div className="mt-0.5 text-xs font-semibold text-rose-700">{social.friendshipsError}</div>
+              </div>
+              <button type="button" className="secondary-button !min-h-9" onClick={() => onRefresh()} disabled={loading}>Retry</button>
+            </div>
+          ) : null}
+
           {results.length ? (
             <FriendPanel title="Search results" count={results.length}>
               {results.map((friend) => (
@@ -1522,6 +1532,12 @@ function FriendsSection({
                   onBlock={() => runFriendAction(() => blockFriend(friend.id, auth.user!.uid), 'Friend blocked.')}
                 />
               ))}
+            </FriendPanel>
+          ) : null}
+
+          {!social.incomingRequests.length && !social.friendshipsError ? (
+            <FriendPanel title="Needs response" count={0}>
+              <EmptyFriendState title="No requests right now" detail="Friend requests you receive will appear here to accept or decline." />
             </FriendPanel>
           ) : null}
 

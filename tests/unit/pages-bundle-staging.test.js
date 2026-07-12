@@ -27,13 +27,18 @@ afterEach(() => {
 });
 
 describe('pages bundle staging', () => {
-    it('does not track generated dependency directories', () => {
-        const trackedFiles = execFileSync('git', ['ls-files', '--', 'node_modules', 'apps/app/node_modules'], {
-            cwd: process.cwd(),
+    it('does not track dependency install directories in the repository', () => {
+        const trackedDependencyDirs = execFileSync('git', [
+            'ls-files',
+            '--',
+            'node_modules',
+            'apps/app/node_modules'
+        ], {
+            cwd: path.resolve(import.meta.dirname, '../..'),
             encoding: 'utf8'
         }).trim();
 
-        expect(trackedFiles).toBe('');
+        expect(trackedDependencyDirs).toBe('');
     });
 
     it('stages the legacy root and React app without publishing source or config files', () => {

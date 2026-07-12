@@ -152,6 +152,7 @@ const baseSocial = {
   incomingRequests: [],
   outgoingRequests: [],
   suggestions: [],
+  friendshipsError: null,
   metrics: {
     feedItems: 0,
     friends: 0,
@@ -779,6 +780,27 @@ describe('Home', () => {
       expect(socialServiceMocks.respondToFriendRequest).toHaveBeenCalledWith('friendship-1', 'accepted');
       expect(socialServiceMocks.loadSocialHome).toHaveBeenCalledTimes(2);
     });
+  });
+
+  it('shows a retryable friend request load error instead of an empty request list', async () => {
+    socialServiceMocks.loadSocialHome.mockResolvedValueOnce({
+      ...baseSocial,
+      friendshipsError: 'Missing index for friendships.'
+    });
+
+    renderHome(signedInAuth, '/home?section=friends');
+
+    await screen.findByRole('heading', { name: 'Friends' });
+    expect(await screen.findByText("Couldn't load friend requests")).toBeTruthy();
+    expect(screen.getByText('Missing index for friendships.')).toBeTruthy();
+    expect(screen.queryByText('No requests right now')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    await waitFor(() => {
+      expect(socialServiceMocks.loadSocialHome).toHaveBeenCalledTimes(2);
+    });
+    expect(await screen.findByText('No requests right now')).toBeTruthy();
   });
 
   it('renders Today content from larger Home payloads and keeps it visible after refresh', async () => {
