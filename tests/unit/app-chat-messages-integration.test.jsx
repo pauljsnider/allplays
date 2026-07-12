@@ -1560,6 +1560,7 @@ describe('React app messages integration', () => {
         expect(chatMocks.loadChatRecipientOptions).not.toHaveBeenCalled();
 
         await click(container, 'Team Email');
+        await waitForTeamEmailDialog(container);
         expect(chatMocks.loadChatRecipientOptions).toHaveBeenCalledTimes(1);
 
         await click(container, 'Close Team Email');

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type InputHTMLAttributes } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type InputHTMLAttributes } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
   AlertCircle,
@@ -54,6 +54,7 @@ import {
   type ParentPlayerStatRow,
   type PlayerVideoClip
 } from '../lib/playerService';
+import { AvatarImage } from '../components/AvatarImage';
 import { DetailLoadErrorState } from '../components/DetailLoadErrorState';
 import { getEventDetailPath } from '../lib/homeLogic';
 import { toAppServiceError, type AppServiceError } from '../lib/appErrors';
@@ -317,6 +318,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
   const [videoClipsLoaded, setVideoClipsLoaded] = useState(false);
   const [videoClipsLoading, setVideoClipsLoading] = useState(false);
   const [videoClipsError, setVideoClipsError] = useState<AppServiceError | null>(null);
+  const playerDetailRequestIdRef = useRef(0);
   const athleteProfileRequestKeyRef = useRef('');
   const videoClipsRequestKeyRef = useRef('');
 
@@ -368,7 +370,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
     }
   };
 
-  const loadAthleteProfile = async ({
+  const loadAthleteProfile = useCallback(async ({
     nextTeamId,
     nextPlayerId,
     force = false
@@ -414,7 +416,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
         setAthleteProfileLoading(false);
       }
     }
-  };
+  }, [athleteProfileLoading, auth.user]);
 
   const refreshPlayer = async ({
     showLoading = data === null,
@@ -423,6 +425,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
     showLoading?: boolean;
     reloadVideoClips?: boolean;
   } = {}) => {
+    const requestId = ++playerDetailRequestIdRef.current;
     const fullPageLoading = showLoading || data === null;
     if (fullPageLoading) {
       setLoading(true);
@@ -432,9 +435,20 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
     setError(null);
     try {
       const nextData = await loadParentPlayerDetail(auth.user, teamId, playerId);
+      if (playerDetailRequestIdRef.current !== requestId) {
+        return;
+      }
       const nextAthleteProfileLoaded = hasResolvedAthleteProfile(nextData.athleteProfile);
-      setData(nextData);
-      setAthleteProfileLoaded(nextAthleteProfileLoaded);
+      const preserveAthleteProfile = athleteProfileLoaded && !nextAthleteProfileLoaded && !!data
+        && data.child.teamId === nextData.child.teamId
+        && data.child.playerId === nextData.child.playerId;
+      setData((current) => ({
+        ...nextData,
+        athleteProfile: preserveAthleteProfile && current
+          ? current.athleteProfile
+          : nextData.athleteProfile
+      }));
+      setAthleteProfileLoaded(nextAthleteProfileLoaded || preserveAthleteProfile);
       setAthleteProfileError(null);
       setVideoClipsError(null);
       if (reloadVideoClips) {
@@ -444,7 +458,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
           force: true
         });
       }
-      if (athleteProfileLoaded && !nextAthleteProfileLoaded) {
+      if (preserveAthleteProfile) {
         const nextAthleteProfile = await loadAthleteProfile({
           nextTeamId: nextData.child.teamId,
           nextPlayerId: nextData.child.playerId,
@@ -455,11 +469,17 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
         }
       }
     } catch (loadError: any) {
+      if (playerDetailRequestIdRef.current !== requestId) {
+        return;
+      }
       if (fullPageLoading) {
         setData(null);
       }
       setError(toAppServiceError(loadError, 'Unable to load player.'));
     } finally {
+      if (playerDetailRequestIdRef.current !== requestId) {
+        return;
+      }
       if (fullPageLoading) {
         setLoading(false);
       } else {
@@ -471,6 +491,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
   useEffect(() => {
     athleteProfileRequestKeyRef.current = '';
     videoClipsRequestKeyRef.current = '';
+    setRefreshing(false);
     setAthleteProfileLoaded(false);
     setAthleteProfileLoading(false);
     setAthleteProfileError(null);
@@ -487,7 +508,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
       nextTeamId: data.child.teamId,
       nextPlayerId: data.child.playerId
     });
-  }, [activeSection, athleteProfileLoaded, athleteProfileLoading, data]);
+  }, [activeSection, athleteProfileLoaded, athleteProfileLoading, data, loadAthleteProfile]);
 
   useEffect(() => {
     if (loading || !data) return;
@@ -544,7 +565,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
             <ChevronLeft className="h-4 w-4" aria-hidden="true" />
           </Link>
           <div className="flex h-11 w-11 flex-none items-center justify-center overflow-hidden rounded-2xl bg-primary-50 text-base font-black text-primary-700">
-            {data.player.photoUrl ? <img src={data.player.photoUrl} alt={`${playerName} profile photo`} loading="lazy" decoding="async" className="h-full w-full object-cover" /> : <span>{jersey || getInitials(playerName)}</span>}
+            {data.player.photoUrl ? <AvatarImage src={data.player.photoUrl} alt={`${playerName} profile photo`} loading="lazy" decoding="async" className="h-full w-full object-cover" fallback={<span>{jersey || getInitials(playerName)}</span>} /> : <span>{jersey || getInitials(playerName)}</span>}
           </div>
           <div className="min-w-0 flex-1">
             <div className="app-label">Player</div>
@@ -933,7 +954,7 @@ function PlayerProfileSection({
       {activePanel === 'athlete' ? (
         athleteProfileLoaded ? (
           <AthleteProfileBuilderCard
-            key={`${data.athleteProfile.profile?.id || 'new'}:${data.athleteProfile.profile?.privacy || 'private'}:${String(data.athleteProfile.shareUrl || '').trim()}`}
+            key={`${data.child.teamId}:${data.child.playerId}`}
             data={data}
             auth={auth}
             onChanged={onChanged}
@@ -1045,7 +1066,7 @@ function StaffRosterDetailsCard({ data, auth, onChanged }: { data: ParentPlayerD
     <section className="app-card p-4">
       <div className="flex items-start gap-3">
         <div className="flex h-14 w-14 flex-none items-center justify-center overflow-hidden rounded-2xl bg-primary-50 text-sm font-black text-primary-700">
-          {previewUrl ? <img src={previewUrl} alt={`${name || data.child.playerName || 'Player'} roster photo preview`} className="h-full w-full object-cover" /> : getInitials(name || data.child.playerName || 'Player')}
+          {previewUrl ? <AvatarImage src={previewUrl} alt={`${name || data.child.playerName || 'Player'} roster photo preview`} className="h-full w-full object-cover" fallback={getInitials(name || data.child.playerName || 'Player')} /> : getInitials(name || data.child.playerName || 'Player')}
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 text-sm font-black text-gray-950">
@@ -1148,7 +1169,7 @@ function EditablePlayerProfileCard({ data, auth, onChanged }: { data: ParentPlay
     <section className="app-card p-4">
       <div className="flex items-start gap-3">
         <div className="flex h-14 w-14 flex-none items-center justify-center overflow-hidden rounded-2xl bg-primary-50 text-sm font-black text-primary-700">
-          {previewUrl ? <img src={previewUrl} alt={`${playerName} profile photo preview`} className="h-full w-full object-cover" /> : getInitials(playerName)}
+          {previewUrl ? <AvatarImage src={previewUrl} alt={`${playerName} profile photo preview`} className="h-full w-full object-cover" fallback={getInitials(playerName)} /> : getInitials(playerName)}
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 text-sm font-black text-gray-950">
@@ -1513,6 +1534,10 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
     setHighlightClipError('');
   }, [initialClipDrafts]);
 
+  useEffect(() => {
+    setPrivacy(existing?.privacy === 'public' ? 'public' : 'private');
+  }, [existing?.privacy]);
+
   const toggleSeasonKey = (seasonKey: string) => {
     setSelectedSeasonKeys((current) => (
       current.includes(seasonKey)
@@ -1738,7 +1763,7 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
         <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
           <div className="flex items-center gap-3">
             <div className="flex h-16 w-16 flex-none items-center justify-center overflow-hidden rounded-2xl bg-white text-sm font-black text-primary-700">
-              {headshotPreviewUrl ? <img src={headshotPreviewUrl} alt="Athlete profile headshot preview" className="h-full w-full object-cover" /> : getInitials(name || data.child.playerName || 'Athlete')}
+              {headshotPreviewUrl ? <AvatarImage src={headshotPreviewUrl} alt="Athlete profile headshot preview" className="h-full w-full object-cover" fallback={getInitials(name || data.child.playerName || 'Athlete')} /> : getInitials(name || data.child.playerName || 'Athlete')}
             </div>
             <div className="min-w-0 flex-1">
               <div className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Public headshot</div>

@@ -131,6 +131,14 @@ describe('AuthPage signup validation', () => {
     cleanup();
   });
 
+  it('opens the signup form when requested without an invite code', () => {
+    renderAuthPage('/auth?mode=signup');
+
+    expect(screen.getByRole('heading', { name: 'Create your account' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Create account' })).toBeTruthy();
+    expect(screen.getByLabelText('Join code')).toBeTruthy();
+  });
+
   it('describes an unverified invite code without claiming it was applied', () => {
     renderAuthPage('/auth?mode=login&code=QQQQQQQQ&type=parent');
 
@@ -188,7 +196,6 @@ describe('AuthPage signup validation', () => {
   it('clears activation code errors when the invite code is edited', async () => {
     renderAuthPage('/auth?mode=signup');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Sign up' }));
     fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'coach@example.com' } });
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'secret1' } });
     fireEvent.change(screen.getByLabelText('Confirm password'), { target: { value: 'secret1' } });

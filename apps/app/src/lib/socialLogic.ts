@@ -27,7 +27,7 @@ export type SocialVisibility =
   | 'friends_and_team'
   | 'public_profile';
 
-export type SocialFeedFilter = 'all' | 'friends' | 'teams' | 'players' | 'highlights';
+export type SocialFeedFilter = 'all' | 'friends' | 'teams' | 'players' | 'highlights' | 'opportunities';
 
 export type FriendshipStatus = 'none' | 'pending' | 'accepted' | 'declined' | 'removed' | 'blocked';
 
@@ -98,7 +98,8 @@ export const socialFeedFilters: Array<{ id: SocialFeedFilter; label: string }> =
   { id: 'friends', label: 'Friends' },
   { id: 'teams', label: 'Teams' },
   { id: 'players', label: 'Players' },
-  { id: 'highlights', label: 'Highlights' }
+  { id: 'highlights', label: 'Highlights' },
+  { id: 'opportunities', label: 'Opportunities' }
 ];
 
 export const socialVisibilityOptions: Array<{ id: SocialVisibility; label: string; detail: string }> = [
@@ -345,6 +346,7 @@ export function mergeSocialFeedItems(...itemLists: SocialFeedItem[][]) {
 }
 
 export function filterSocialFeedItems(items: SocialFeedItem[], filter: SocialFeedFilter) {
+  if (filter === 'opportunities') return [];
   if (filter === 'all') return items;
   if (filter === 'friends') return items.filter((item) => item.visibility === 'friends' || item.visibility === 'friends_and_team');
   if (filter === 'teams') return items.filter((item) => Boolean(item.teamId) || item.visibility === 'team' || item.visibility === 'friends_and_team');

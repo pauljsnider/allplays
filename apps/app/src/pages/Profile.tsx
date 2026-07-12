@@ -23,6 +23,7 @@ import {
   UserCircle,
   XCircle
 } from 'lucide-react';
+import { AvatarImage } from '../components/AvatarImage';
 import { describeAuthError, reloadCurrentUser, resendVerificationEmail, sendResetEmail, setCurrentUserPassword } from '../lib/authService';
 import {
   createProfileAccessCode,
@@ -1225,7 +1226,7 @@ export function Profile({ auth }: { auth: AuthState }) {
       <section className="app-card profile-summary-card p-4">
         <div className="flex items-center gap-3">
           <div className="flex h-16 w-16 flex-none items-center justify-center overflow-hidden rounded-2xl bg-primary-50 text-primary-700">
-            {photoPreview ? <img src={photoPreview} alt="" className="h-full w-full object-cover" /> : <UserCircle className="h-9 w-9" aria-hidden="true" />}
+            {photoPreview ? <AvatarImage src={photoPreview} alt="" className="h-full w-full object-cover" fallback={<UserCircle className="h-9 w-9" aria-hidden="true" />} /> : <UserCircle className="h-9 w-9" aria-hidden="true" />}
           </div>
           <div className="min-w-0 flex-1">
             <div className="app-label">Profile</div>

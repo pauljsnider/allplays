@@ -3,16 +3,19 @@ import type { ReactNode } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
   Bell,
+  BriefcaseBusiness,
   CalendarDays,
   CalendarPlus,
   ChevronDown,
   ClipboardList,
+  Compass,
   CreditCard,
   Dumbbell,
   FilePlus2,
   Home,
   ImagePlus,
   KeyRound,
+  LogIn,
   MessageCircle,
   Newspaper,
   Plus,
@@ -43,10 +46,17 @@ const NotificationInboxSheet = lazy(() => import('./NotificationInboxSheet').the
 
 const navItems: NavItem[] = [
   { label: 'Home', path: '/home', icon: Home },
+  { label: 'Discover', path: '/discover', icon: Compass },
   { label: 'Schedule', path: '/schedule', icon: CalendarDays },
   { label: 'Messages', path: '/messages', icon: MessageCircle },
   { label: 'My Teams', path: '/teams', icon: Users },
   { label: 'Profile', path: '/profile', icon: UserCircle }
+];
+
+const publicNavItems: NavItem[] = [
+  { label: 'Discover', path: '/discover', icon: Compass },
+  { label: 'Find Teams', path: '/teams/browse', icon: Users },
+  { label: 'Sign In', path: '/auth', icon: LogIn }
 ];
 
 type AddWorkflow = {
@@ -252,6 +262,8 @@ export function AppShell({ auth, children }: AppShellProps) {
   };
 
   const addWorkflows = buildAddWorkflows();
+  const hasSignedInSession = Boolean(auth.user || auth.roles.length);
+  const activeNavItems = hasSignedInSession ? navItems : publicNavItems;
   const commonAddWorkflows = commonAddWorkflowIds
     .map((id) => addWorkflows.find((workflow) => workflow.id === id))
     .filter((workflow): workflow is AddWorkflow => workflow !== undefined);
@@ -269,7 +281,7 @@ export function AppShell({ auth, children }: AppShellProps) {
 
   const handleAddWorkflow = async (workflow: AddWorkflow) => {
     closeAddWorkflowModal();
-    if (workflow.id === 'request-access' && !auth.user) {
+    if (workflow.id === 'request-access' && !hasSignedInSession) {
       await openPublicUrl(legacyUrl('teams.html'));
       return;
     }
@@ -338,7 +350,7 @@ export function AppShell({ auth, children }: AppShellProps) {
               <button
                 type="button"
                 className="flex min-w-0 flex-1 items-center gap-3 text-left"
-                onClick={() => navigate('/home')}
+                onClick={() => navigate(hasSignedInSession ? '/home' : '/discover')}
                 aria-label="Go to home"
               >
                 <img src="./logo_small.png" alt="" className="h-10 w-10 flex-none rounded-xl shadow-sm" />
@@ -350,7 +362,7 @@ export function AppShell({ auth, children }: AppShellProps) {
                 </span>
               </button>
               <div className="flex flex-none items-center gap-2">
-                <button
+                {hasSignedInSession ? <button
                   type="button"
                   className={`ghost-button !h-10 !min-h-10 ${isAiRoute ? '!border-primary-200 !bg-primary-50 !text-primary-700' : ''}`}
                   onClick={() => navigate('/ai')}
@@ -359,8 +371,9 @@ export function AppShell({ auth, children }: AppShellProps) {
                 >
                   <Sparkles className="h-5 w-5" aria-hidden="true" />
                   AI
-                </button>
-                {renderNotificationTrigger('ghost-button !h-10 !min-h-10 relative')}
+                </button> : null}
+                {hasSignedInSession ? renderNotificationTrigger('ghost-button !h-10 !min-h-10 relative') : null}
+                {hasSignedInSession ? <>
                 <button
                   type="button"
                   className="ghost-button !h-10 !min-h-10"
@@ -380,6 +393,11 @@ export function AppShell({ auth, children }: AppShellProps) {
                   <Plus className="h-5 w-5" aria-hidden="true" />
                   Add
                 </button>
+                </> : <>
+                  <button type="button" className="ghost-button !h-10 !min-h-10" onClick={() => setSearchOpen(true)} aria-label="Search"><Search className="h-5 w-5" />Search</button>
+                  <button type="button" className="ghost-button !h-10 !min-h-10" onClick={() => navigate('/auth')}>Sign in</button>
+                  <button type="button" className="primary-button !h-10 !min-h-10" onClick={() => navigate('/auth?mode=signup')}>Create account</button>
+                </>}
               </div>
             </div>
           </header>
@@ -387,7 +405,7 @@ export function AppShell({ auth, children }: AppShellProps) {
           <div className={`mx-auto grid max-w-7xl grid-cols-[236px_minmax(0,1fr)] gap-6 px-6 py-6 ${isDesktopMessages ? 'desktop-shell-grid-messages' : ''}`}>
             <aside className="sticky top-[84px] h-[calc(100vh-108px)] self-start rounded-2xl border border-gray-200 bg-white p-3 shadow-app">
               <nav className="space-y-1" aria-label="Primary navigation">
-                {navItems.map((item) => {
+                {activeNavItems.map((item) => {
                   const Icon = item.icon;
                   const isActive = location.pathname === item.path || (item.path !== '/home' && location.pathname.startsWith(item.path + '/'));
 
@@ -407,7 +425,7 @@ export function AppShell({ auth, children }: AppShellProps) {
               </nav>
               <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-3">
                 <div className="app-label">Account</div>
-                <div className="mt-1 truncate text-sm font-black text-gray-950">{auth.user?.displayName || auth.user?.email || 'ALL PLAYS User'}</div>
+                <div className="mt-1 truncate text-sm font-black text-gray-950">{auth.user?.displayName || auth.user?.email || 'Public visitor'}</div>
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {auth.roles.map((role) => <RoleBadge key={role} role={role} />)}
                 </div>
@@ -440,7 +458,7 @@ export function AppShell({ auth, children }: AppShellProps) {
               <button
                 type="button"
                 className="flex min-w-0 flex-1 items-center gap-3 text-left"
-                onClick={() => navigate('/home')}
+                onClick={() => navigate(hasSignedInSession ? '/home' : '/discover')}
                 aria-label="Go to home"
               >
                 <img src="./logo_small.png" alt="" className="h-10 w-10 flex-none rounded-xl shadow-sm" />
@@ -452,7 +470,7 @@ export function AppShell({ auth, children }: AppShellProps) {
                 </span>
               </button>
               <div className="flex flex-none items-center gap-2">
-                <button
+                {hasSignedInSession ? <button
                   type="button"
                   className={`ghost-button !h-10 !min-h-10 !w-10 !p-0 ${isAiRoute ? '!border-primary-200 !bg-primary-50 !text-primary-700' : ''}`}
                   onClick={() => navigate('/ai')}
@@ -461,8 +479,9 @@ export function AppShell({ auth, children }: AppShellProps) {
                 >
                   <Sparkles className="h-5 w-5" aria-hidden="true" />
                   <span className="sr-only">Private AI</span>
-                </button>
-                {renderNotificationTrigger('ghost-button !h-10 !min-h-10 !w-10 !p-0 relative', true)}
+                </button> : null}
+                {hasSignedInSession ? renderNotificationTrigger('ghost-button !h-10 !min-h-10 !w-10 !p-0 relative', true) : null}
+                {hasSignedInSession ? <>
                 <button
                   type="button"
                   className="ghost-button !h-10 !min-h-10 !w-10 !p-0"
@@ -484,6 +503,7 @@ export function AppShell({ auth, children }: AppShellProps) {
                   <Plus className="h-5 w-5" aria-hidden="true" />
                   <span className="hidden sm:inline">Add</span>
                 </button>
+                </> : <><button type="button" className="ghost-button !h-10 !min-h-10 !w-10 !p-0" onClick={() => setSearchOpen(true)} aria-label="Search"><Search className="h-5 w-5" /></button><button type="button" className="primary-button !h-10 !min-h-10 !px-3" onClick={() => navigate('/auth')}>Sign in</button></>}
               </div>
             </div>
           </header> : null}
@@ -500,8 +520,8 @@ export function AppShell({ auth, children }: AppShellProps) {
             className={`safe-bottom fixed inset-x-0 bottom-0 z-40 border-t border-gray-200 bg-white/95 px-2 pt-2 backdrop-blur ${isMobileChatDetail ? 'app-bottom-nav-chat-detail' : ''}`}
             aria-label="Primary navigation"
           >
-            <div className="mx-auto grid max-w-5xl grid-cols-5 gap-1">
-              {navItems.map((item) => {
+            <div className="mx-auto grid max-w-5xl gap-1" style={{ gridTemplateColumns: `repeat(${activeNavItems.length}, minmax(0, 1fr))` }}>
+              {activeNavItems.map((item) => {
                 const Icon = item.icon;
                 const isActive = location.pathname === item.path || (item.path !== '/home' && location.pathname.startsWith(item.path + '/'));
 
@@ -543,7 +563,7 @@ export function AppShell({ auth, children }: AppShellProps) {
         </Suspense>
       ) : null}
 
-      {addTeamOpen ? (
+      {addTeamOpen && hasSignedInSession ? (
         <Modal overlayClassName="z-50 flex items-end bg-gray-950/40 p-3 backdrop-blur-sm sm:items-center sm:justify-center" ariaLabel="Add workflow" onClose={closeAddWorkflowModal}>
           <div className="add-workflow-panel w-full max-w-3xl rounded-2xl bg-white shadow-app-lg">
             <div className="flex items-center justify-between border-b border-gray-200 p-4">
@@ -713,6 +733,15 @@ function buildAddWorkflows(): AddWorkflow[] {
       icon: Newspaper,
       kind: 'native',
       href: '/home?section=feed&social=create'
+    },
+    {
+      id: 'public-opportunity',
+      label: 'Public opportunity',
+      detail: 'Players wanted, sports jobs, volunteers, or looking for a team',
+      section: 'Social',
+      icon: BriefcaseBusiness,
+      kind: 'native',
+      href: '/discover/new'
     },
     {
       id: 'find-friends',

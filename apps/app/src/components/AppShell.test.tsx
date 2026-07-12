@@ -568,7 +568,7 @@ describe('AppShell', () => {
     fireEvent.click(disclosure);
 
     expect(disclosure.getAttribute('aria-expanded')).toBe('true');
-    expect(dialog.querySelectorAll('.add-workflow-card')).toHaveLength(16);
+    expect(dialog.querySelectorAll('.add-workflow-card')).toHaveLength(17);
     expect(within(dialog).getByRole('button', { name: /^Game or practice/ })).toBeTruthy();
     expect(within(dialog).getByRole('button', { name: /^Fees/ })).toBeTruthy();
   });
@@ -618,7 +618,7 @@ describe('AppShell', () => {
     expect(publicActionMocks.openPublicUrl).not.toHaveBeenCalled();
   });
 
-  it('keeps Find team public for signed-out home preview users', async () => {
+  it('routes signed-out preview users to the native public team finder', async () => {
     render(
       <MemoryRouter initialEntries={['/home']}>
         <Routes>
@@ -632,9 +632,9 @@ describe('AppShell', () => {
     fireEvent.click(screen.getByRole('button', { name: /Find team.*Browse and search public teams.*App/i }));
 
     await waitFor(() => {
-      expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://allplays.ai/teams.html');
+      expect(screen.getByText('Native public team browse')).toBeTruthy();
     });
-    expect(screen.queryByText('Native public team browse')).toBeNull();
+    expect(publicActionMocks.openPublicUrl).not.toHaveBeenCalled();
   });
 
   it('dismisses the search dialog when native back asks overlays to close', async () => {

@@ -103,13 +103,14 @@ describe('React app search service', () => {
         expect(signedOutActions.map((item) => item.id)).toEqual([
             'browse-teams',
             'sign-in',
-            'get-started'
+            'get-started',
+            'discover-opportunities'
         ]);
         expect(signedOutActions[0]).toMatchObject({
             id: 'browse-teams',
-            href: 'https://allplays.ai/teams.html'
+            route: '/teams/browse'
         });
-        expect(signedOutActions[0]).not.toHaveProperty('route');
+        expect(signedOutActions[0]).not.toHaveProperty('href');
 
         const signedInActions = buildAppSearchActions(auth);
         expect(signedInActions.map((item) => item.id)).toEqual([
@@ -121,7 +122,9 @@ describe('React app search service', () => {
             'social-feed',
             'find-friends',
             'create-social-post',
-            'profile'
+            'profile',
+            'discover-opportunities',
+            'post-opportunity'
         ]);
         expect(signedInActions[0]).toMatchObject({
             id: 'browse-teams',
@@ -183,6 +186,7 @@ describe('React app search service', () => {
 
         expect(results.teams).toHaveLength(20);
         expect(results.teams[0].title).toBe('Bears');
+        expect(results.teams[0].route).toBe('/teams/team-1/public');
         expect(results.players).toHaveLength(20);
         expect(results.players[0].title).toBe('#9 Pat Bear');
         expect(results.flat.map((item) => item.kind)).toEqual([
@@ -196,9 +200,28 @@ describe('React app search service', () => {
             teams: manyTeams,
             players: manyPlayers
         });
-        expect(defaultResults.actions.map((item) => item.id)).toEqual(['browse-teams', 'dashboard', 'my-teams', 'schedule', 'messages', 'social-feed', 'find-friends', 'create-social-post', 'profile']);
+        expect(defaultResults.actions.map((item) => item.id)).toEqual(['browse-teams', 'dashboard', 'my-teams', 'schedule', 'messages', 'social-feed', 'find-friends', 'create-social-post', 'profile', 'discover-opportunities', 'post-opportunity']);
         expect(defaultResults.teams).toHaveLength(20);
         expect(defaultResults.players).toHaveLength(20);
+    });
+
+    it('routes app-access teams to private detail and public-only teams to the public-safe profile', () => {
+        const results = computeAppSearchResults({
+            queryText: '',
+            auth,
+            teams: [
+                { id: 'private-team', name: 'Private Team', isPublic: false, fromAppAccess: true },
+                { id: 'accessible-public', name: 'Accessible Public Team', isPublic: true, fromAppAccess: true },
+                { id: 'public team', name: 'Public Team', isPublic: true }
+            ],
+            players: []
+        });
+
+        expect(results.teams.map((team) => [team.title, team.route])).toEqual([
+            ['Private Team', '/teams/private-team'],
+            ['Accessible Public Team', '/teams/accessible-public'],
+            ['Public Team', '/teams/public%20team/public']
+        ]);
     });
 
     it('translates help role filters without affecting non-help search results', () => {
@@ -516,7 +539,7 @@ describe('React app search service', () => {
             }]
         });
         firebaseMocks.getDocs
-            .mockResolvedValueOnce({ docs: [firestoreTeam('team-owner', { name: 'Owner Eagles', sport: 'Volleyball', isPublic: false, ownerId: 'user-1' })] })
+            .mockResolvedValueOnce({ docs: [firestoreTeam('team-owner', { name: 'Owner Eagles', sport: 'Volleyball', isPublic: true, ownerId: 'user-1' })] })
             .mockResolvedValueOnce({ docs: [firestoreTeam('team-admin', { name: 'Admin Lions', sport: 'Soccer', isPublic: false, adminEmails: ['parent@example.com'] })] })
             .mockResolvedValueOnce({ docs: [] })
             .mockResolvedValueOnce({ docs: [] });
@@ -527,6 +550,10 @@ describe('React app search service', () => {
             name: 'Home Rockets',
             fromAppAccess: true,
             photoUrl: 'https://img.example.test/home.png'
+        });
+        expect(teams.find((team) => team.id === 'team-owner')).toMatchObject({
+            isPublic: true,
+            fromAppAccess: true
         });
         expect(teams.find((team) => team.id === 'team-inactive-access')).toBeUndefined();
         expect(teams.find((team) => team.id === 'team-archived-access')).toBeUndefined();

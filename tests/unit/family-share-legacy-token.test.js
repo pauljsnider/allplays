@@ -33,3 +33,38 @@ describe('legacy empty family share tokens', () => {
         expect(functionsSource).toContain('firestore.doc(`teams/${teamId}/players/${playerId}`).get()');
     });
 });
+
+describe('family page normalizeFamilyPageChildren edge cases', () => {
+    it('filters children without both teamId and playerId', () => {
+        const familyPage = readRepoFile('family.html');
+
+        expect(familyPage).toContain("filter(child => child.teamId && child.playerId)");
+    });
+
+    it('uses token.children when present and non-empty, skipping the Cloud Function fallback', () => {
+        const familyPage = readRepoFile('family.html');
+
+        expect(familyPage).toContain('if (storedChildren.length > 0) return storedChildren;');
+    });
+
+    it('reads token from Firestore via getFamilyShareToken before checking expiry', () => {
+        const familyPage = readRepoFile('family.html');
+
+        expect(familyPage).toContain("token = await getFamilyShareToken(tokenId)");
+        expect(familyPage).toContain("if (!token || token.active === false)");
+        expect(familyPage).toContain("if (isFamilyShareTokenExpired(token))");
+    });
+
+    it('creates tokens with a 30-day expiry window', () => {
+        const dbSource = readRepoFile('js/db.js');
+
+        expect(dbSource).toContain('FAMILY_SHARE_TOKEN_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000');
+    });
+
+    it('includes ownerUserId in created token documents for owner-only list queries', () => {
+        const dbSource = readRepoFile('js/db.js');
+
+        expect(dbSource).toContain('ownerUserId');
+        expect(dbSource).toContain("where('ownerUserId', '==', ownerUserId)");
+    });
+});

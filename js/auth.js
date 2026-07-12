@@ -20,7 +20,7 @@ import { executeEmailPasswordSignup } from './signup-flow.js?v=6';
 import { redeemAdminInviteAcceptance, redeemAdminInviteAtomically } from './admin-invite.js?v=6';
 import { mergeApprovedParentMembershipRequests } from './parent-membership-utils.js?v=2';
 import { buildLegacyJoinUrl } from './join-code.js?v=1';
-import { createInviteProcessor } from './accept-invite-flow.js?v=9';
+import { createInviteProcessor } from './accept-invite-flow.js?v=10';
 
 async function cleanupFailedNewUser(user, context) {
     if (!user) {

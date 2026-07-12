@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState, type MouseEvent as Rea
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   AlertCircle,
+  BriefcaseBusiness,
   CalendarDays,
   Car,
   CheckCircle2,
@@ -26,6 +27,7 @@ import {
   Users,
   type LucideIcon
 } from 'lucide-react';
+import { AvatarImage } from '../components/AvatarImage';
 import { Modal } from '../components/Modal';
 import { HomePageSkeleton } from '../components/PageSkeletons';
 import { PullToRefresh } from '../components/PullToRefresh';
@@ -88,6 +90,9 @@ import {
   type SocialVisibility
 } from '../lib/socialLogic';
 import type { AuthState } from '../lib/types';
+import { OpportunityCard } from '../components/OpportunityCard';
+import { listPublicOpportunities } from '../lib/opportunityService';
+import type { PublicOpportunity } from '../lib/opportunityLogic';
 
 type HomeSectionId = 'today' | 'feed' | 'players' | 'teams' | 'friends';
 
@@ -1069,7 +1074,24 @@ function FeedSection({
   onStatus: (status: { tone: 'error' | 'success'; message: string } | null) => void;
 }) {
   const [filter, setFilter] = useState<SocialFeedFilter>('all');
+  const [opportunities, setOpportunities] = useState<PublicOpportunity[]>([]);
+  const [opportunityLoading, setOpportunityLoading] = useState(false);
+  const [opportunityLoaded, setOpportunityLoaded] = useState(false);
+  const [opportunityError, setOpportunityError] = useState('');
   const visibleItems = useMemo(() => filterSocialFeedItems(social.feedItems, filter), [social.feedItems, filter]);
+
+  useEffect(() => {
+    if (filter !== 'opportunities' || opportunityLoaded || opportunityLoading) return;
+    setOpportunityLoading(true);
+    setOpportunityError('');
+    listPublicOpportunities({}, null)
+      .then((result) => setOpportunities(result.items.slice(0, 8)))
+      .catch((loadError: any) => setOpportunityError(loadError?.message || 'Unable to load public opportunities.'))
+      .finally(() => {
+        setOpportunityLoaded(true);
+        setOpportunityLoading(false);
+      });
+  }, [filter, opportunityLoaded, opportunityLoading]);
 
   return (
     <section className="home-section-content space-y-3">
@@ -1084,10 +1106,13 @@ function FeedSection({
             <button type="button" className="ghost-button !h-9 !min-h-9 !w-9 !p-0" onClick={() => onRefresh()} disabled={loading} aria-label="Refresh feed" title="Refresh feed">
               {loading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <RefreshCw className="h-4 w-4" aria-hidden="true" />}
             </button>
-            <button type="button" className="primary-button !min-h-9 !px-3 text-xs" onClick={() => onOpenComposer()}>
+            {filter === 'opportunities' ? <Link to="/discover/new" className="primary-button !min-h-9 !px-3 text-xs">
+              <Plus className="h-4 w-4" aria-hidden="true" />
+              Post opportunity
+            </Link> : <button type="button" className="primary-button !min-h-9 !px-3 text-xs" onClick={() => onOpenComposer()}>
               <Plus className="h-4 w-4" aria-hidden="true" />
               Post
-            </button>
+            </button>}
           </div>
         </div>
         <div className="overflow-x-auto border-b border-gray-100 px-3 py-2">
@@ -1107,7 +1132,9 @@ function FeedSection({
         </div>
         <div className="grid gap-3 p-3 xl:grid-cols-[minmax(0,1fr)_280px]">
           <div className="space-y-3">
-            {visibleItems.length ? visibleItems.map((item) => (
+            {filter === 'opportunities' ? opportunityLoading ? (
+              <div className="app-card p-6 text-center"><Loader2 className="mx-auto h-6 w-6 animate-spin text-primary-600" /><div className="mt-2 text-sm font-black text-gray-700">Loading opportunities</div></div>
+            ) : opportunityError ? <Status tone="error" message={opportunityError} /> : opportunities.length ? <>{opportunities.map((item) => <OpportunityCard key={item.id} item={item} />)}<Link to="/discover" className="ghost-button w-full justify-center">Browse all public opportunities</Link></> : <EmptyCard icon={BriefcaseBusiness} title="No active opportunities" detail="Post a team opening, sports job, volunteer role, or looking-for-team listing." /> : visibleItems.length ? visibleItems.map((item) => (
               <SocialFeedCard
                 key={item.id}
                 item={item}
@@ -1141,6 +1168,10 @@ function FeedSection({
                 Quick shares
               </div>
               <div className="mt-2 grid gap-2">
+                <Link to="/discover/new" className="flex min-h-10 items-center justify-between rounded-lg bg-amber-50 px-3 text-left text-xs font-black text-amber-900 ring-1 ring-amber-100">
+                  Post public opportunity
+                  <ChevronRight className="h-4 w-4 flex-none text-amber-600" aria-hidden="true" />
+                </Link>
                 {socialPostPresets.slice(0, 4).map((preset) => (
                   <button
                     key={preset.id}
@@ -1589,7 +1620,7 @@ function FriendCard({
     <div className="rounded-xl border border-gray-200 bg-white p-3">
       <div className="flex items-start gap-3">
         {friend.photoUrl ? (
-          <img src={friend.photoUrl} alt="" loading="lazy" decoding="async" className="h-10 w-10 flex-none rounded-full object-cover" />
+          <AvatarImage src={friend.photoUrl} alt="" loading="lazy" decoding="async" className="h-10 w-10 flex-none rounded-full object-cover" fallback={<div className="flex h-10 w-10 flex-none items-center justify-center rounded-full bg-gray-950 text-xs font-black text-white">{getFriendInitials(friend.name)}</div>} />
         ) : (
           <div className="flex h-10 w-10 flex-none items-center justify-center rounded-full bg-gray-950 text-xs font-black text-white">{getFriendInitials(friend.name)}</div>
         )}

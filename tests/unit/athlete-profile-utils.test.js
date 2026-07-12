@@ -223,4 +223,36 @@ describe('athlete profile helpers', () => {
             'https://allplays.example/athlete-profile.html?profileId=profile-123'
         );
     });
+
+    it('preserves public privacy through normalization', () => {
+        const result = normalizeAthleteProfileDraft({
+            athlete: { name: 'Jordan' },
+            bio: {},
+            privacy: 'public',
+            clips: [],
+            selectedSeasonKeys: ['team-1::player-1']
+        });
+        expect(result.privacy).toBe('public');
+    });
+
+    it('preserves private privacy through normalization', () => {
+        const result = normalizeAthleteProfileDraft({
+            athlete: { name: 'Jordan' },
+            bio: {},
+            privacy: 'private',
+            clips: [],
+            selectedSeasonKeys: ['team-1::player-1']
+        });
+        expect(result.privacy).toBe('private');
+    });
+
+    it('defaults to private when privacy is missing, undefined, or an unrecognized value', () => {
+        expect(normalizeAthleteProfileDraft({ athlete: {}, bio: {}, clips: [] }).privacy).toBe('private');
+        expect(normalizeAthleteProfileDraft({ athlete: {}, bio: {}, privacy: undefined, clips: [] }).privacy).toBe('private');
+        expect(normalizeAthleteProfileDraft({ athlete: {}, bio: {}, privacy: null, clips: [] }).privacy).toBe('private');
+        expect(normalizeAthleteProfileDraft({ athlete: {}, bio: {}, privacy: '', clips: [] }).privacy).toBe('private');
+        expect(normalizeAthleteProfileDraft({ athlete: {}, bio: {}, privacy: 'Public', clips: [] }).privacy).toBe('private');
+        expect(normalizeAthleteProfileDraft({ athlete: {}, bio: {}, privacy: 'PUBLIC', clips: [] }).privacy).toBe('private');
+        expect(normalizeAthleteProfileDraft({ athlete: {}, bio: {}, privacy: 'secret', clips: [] }).privacy).toBe('private');
+    });
 });

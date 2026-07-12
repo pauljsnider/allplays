@@ -103,6 +103,14 @@ async function waitForTeamsRoute(page, readyLocator) {
 }
 
 async function mockHomePlayerModules(page) {
+    await page.route('https://img.example.test/**', async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'image/png',
+            body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO9W6l8AAAAASUVORK5CYII=', 'base64')
+        });
+    });
+
     await page.addInitScript(() => {
         window.__playerLoads = [];
         window.__socialPosts = [];

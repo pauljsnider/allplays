@@ -599,11 +599,11 @@ describe('React app shell search', () => {
         expect(container.textContent).toContain('Bears');
 
         await pressDialogKey(container, 'ArrowDown');
-        expect(routePreloadMocks.preloadSearchRoute).toHaveBeenCalledWith('/teams/team-1');
+        expect(routePreloadMocks.preloadSearchRoute).toHaveBeenCalledWith('/teams/team-1/public');
         expect(container.querySelector('[data-testid="route"]').textContent).toBe('/home');
 
         await pressDialogKey(container, 'Enter');
-        expect(container.querySelector('[data-testid="route"]').textContent).toBe('/teams/team-1');
+        expect(container.querySelector('[data-testid="route"]').textContent).toBe('/teams/team-1/public');
         expect(routePreloadMocks.preloadSearchRoute).toHaveBeenCalledTimes(1);
     });
 

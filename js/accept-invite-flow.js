@@ -212,5 +212,5 @@ export async function processInviteCode(userId, code, deps, authEmail = null) {
         };
     }
 
-    throw new Error('Unknown invite type');
+    throw new Error(`This invite code type isn't supported here (${validation.type}). Ask whoever sent it for a new invite link.`);
 }
