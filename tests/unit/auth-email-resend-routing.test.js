@@ -28,6 +28,7 @@ describe('authentication email delivery routing', () => {
         const authEmailCoreSource = read('functions/auth-email-core.cjs');
         const callablesSource = read('functions/auth-email-callables.cjs');
         const passwordResetWorkerSource = read('functions/auth-email-password-reset-worker.cjs');
+        const passwordResetSweeperSource = read('functions/auth-email-password-reset-sweeper.cjs');
         const deliveryStoreSource = read('functions/auth-email-delivery-store.cjs');
         const resetCallableStart = callablesSource.indexOf('async function queuePasswordResetEmail');
         const resetCallableEnd = callablesSource.indexOf('\n  async function resolveVerificationUser', resetCallableStart);
@@ -44,7 +45,8 @@ describe('authentication email delivery routing', () => {
         expect(functionsSource).toContain('createAuthEmailDeliveryStore');
         expect(functionsSource).toContain('.runWith({ failurePolicy: true })');
         expect(functionsSource).toContain(".schedule('every 5 minutes')");
-        expect(functionsSource).toContain('runWithConcurrencyLimit(snapshot.docs, 5');
+        expect(functionsSource).toContain('createPasswordResetEmailSweeper');
+        expect(passwordResetSweeperSource).toContain('Password-reset backlog request remains queued for retry.');
         expect(authEmailCoreSource).toContain("provider: 'resend'");
     });
 

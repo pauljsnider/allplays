@@ -82,6 +82,7 @@ const {
 const { createAuthEmailCallableHandlers } = require('./auth-email-callables.cjs');
 const { createAuthEmailDeliveryStore } = require('./auth-email-delivery-store.cjs');
 const { createPasswordResetEmailWorker } = require('./auth-email-password-reset-worker.cjs');
+const { createPasswordResetEmailSweeper } = require('./auth-email-password-reset-sweeper.cjs');
 const { findOwnedInviteCode: findOwnedAuthEmailInviteCode } = require('./auth-email-invite-store.cjs');
 const {
   normalizeEmail,
@@ -2064,23 +2065,26 @@ exports.processPasswordResetEmailRequest = functions
     }
   ));
 
-async function sweepPendingPasswordResetEmailRequests() {
-  const snapshot = await firestore.collection('authEmailRequests')
-    .orderBy('createdAt')
-    .limit(100)
-    .get();
-  await runWithConcurrencyLimit(snapshot.docs, 5, (requestDoc) =>
+const passwordResetEmailSweeper = createPasswordResetEmailSweeper({
+  async listRequests() {
+    const snapshot = await firestore.collection('authEmailRequests')
+      .orderBy('createdAt')
+      .limit(100)
+      .get();
+    return snapshot.docs;
+  },
+  processRequest: (requestDoc) =>
     passwordResetEmailWorker.processPasswordResetRequest(requestDoc.data(), {
       requestId: requestDoc.id,
       deleteRequest: () => requestDoc.ref.delete()
-    })
-  );
-  return null;
-}
+    }),
+  logger: functions.logger,
+  concurrency: 5
+});
 
 exports.sweepPendingPasswordResetEmailRequests = functions.pubsub
   .schedule('every 5 minutes')
-  .onRun(sweepPendingPasswordResetEmailRequests);
+  .onRun(() => passwordResetEmailSweeper.sweep());
 
 exports.queueInviteEmail = functions.https.onCall(async (data, context) => {
   const uid = String(context.auth?.uid || '').trim();
