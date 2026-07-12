@@ -8,6 +8,8 @@ test.skip(
 const appBaseUrl = process.env.SMOKE_APP_BASE_URL || '';
 test.skip(!appBaseUrl, 'SMOKE_APP_BASE_URL is required for React app smoke tests');
 
+const mockAvatarUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=';
+
 function appUrl(baseURL, hashPath) {
     const url = new URL('/', appBaseUrl || baseURL);
     url.hash = hashPath;
@@ -274,7 +276,7 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
 
                 export async function uploadProfilePhoto(file) {
                     window.__appProfileCalls.uploads.push({ name: file.name, type: file.type });
-                    return 'https://example.test/avatar.png';
+                    return '${mockAvatarUrl}';
                 }
 
                 export async function loadNotificationTeams() {
@@ -360,7 +362,7 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
 
                 export async function uploadProfilePhoto(file) {
                     window.__appProfileCalls.uploads.push({ name: file.name, type: file.type });
-                    return 'https://example.test/avatar.png';
+                    return '${mockAvatarUrl}';
                 }
             `
         });
@@ -580,7 +582,7 @@ test('app auth screen exposes sign in, sign up, Google, activation code, invite,
     await page.goto(appUrl(baseURL, '/auth?code=AB12CD34&type=parent'), { waitUntil: 'domcontentloaded' });
 
     await expect(page.getByRole('heading', { name: 'Create your account' })).toBeVisible();
-    await expect(page.getByText('Join code entered:')).toBeVisible();
+    await expect(page.getByText('Join code entered: AB12CD34')).toBeVisible();
     await expect(page.getByText('We’ll verify it after you sign in or create your account.')).toBeVisible();
     await expect(page.getByLabel('Join code')).toHaveValue('AB12CD34');
     await expect(page.getByRole('button', { name: 'Continue with Google' })).toBeVisible();
@@ -670,7 +672,7 @@ test('profile exposes account, notification, invite, verification, password, upl
     await page.getByRole('button', { name: 'Save profile' }).click();
     await expect(page.getByText('Profile saved.')).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Pat Parent Updated' })).toBeVisible();
-    await expect(page.locator('.profile-summary-card img')).toHaveAttribute('src', 'https://example.test/avatar.png');
+    await expect(page.locator('.profile-summary-card img')).toHaveAttribute('src', mockAvatarUrl);
     await expect.poll(async () => page.evaluate(() => window.__appProfileCalls.profileLoads)).toBeGreaterThan(0);
 
     const alertsTab = page.getByRole('button', { name: 'Alerts', exact: true });
