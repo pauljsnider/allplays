@@ -249,7 +249,7 @@ export async function respondToMatchingPost(user: AuthUser, post: MatchingPost, 
   }, { merge: true });
 
   try {
-    await addDoc(collection(db, `users/${post.authorId}/notificationInbox`), {
+    await setDoc(doc(db, 'users', post.authorId, 'notificationInbox', `${post.id}__${user.uid}`), {
       category: 'matching_response',
       title: `New response: ${getMatchingKindLabel(post.kind)}`,
       body: `${getUserDisplayName(user)} responded to "${post.title}".`,

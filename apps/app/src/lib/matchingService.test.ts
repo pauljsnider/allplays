@@ -235,7 +235,6 @@ describe('respondToMatchingPost', () => {
   it('upserts one response per user and notifies the author', async () => {
     adapterMocks.getDoc.mockResolvedValue({ exists: () => false });
     adapterMocks.setDoc.mockResolvedValue(undefined);
-    adapterMocks.addDoc.mockResolvedValue({ id: 'note-1' });
     await respondToMatchingPost({ ...user, photoUrl: 'https://lh3.googleusercontent.com/a/photo.png' }, openPost(), {
       message: 'We would love to have Ethan try out.',
       teamId: 'team-1',
@@ -251,8 +250,8 @@ describe('respondToMatchingPost', () => {
     expect(payload.teamName).toBe('Rockets');
     expect(payload.message).toContain('try out');
 
-    const [collectionRef, notification] = adapterMocks.addDoc.mock.calls[0];
-    expect(collectionRef.path).toBe('users/author-1/notificationInbox');
+    const [notificationRef, notification] = adapterMocks.setDoc.mock.calls[1];
+    expect(notificationRef.path).toBe('users/author-1/notificationInbox/post-1__parent-1');
     expect(notification.category).toBe('matching_response');
     expect(notification.appRoute).toBe('/opportunities?view=mine');
     expect(notification.fromUserId).toBe('parent-1');
@@ -262,15 +261,16 @@ describe('respondToMatchingPost', () => {
   it('still succeeds when the notification write fails', async () => {
     adapterMocks.getDoc.mockResolvedValue({ exists: () => false });
     adapterMocks.setDoc.mockResolvedValue(undefined);
-    adapterMocks.addDoc.mockRejectedValue(new Error('rules rejected'));
+    adapterMocks.setDoc
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('rules rejected'));
     await expect(respondToMatchingPost(user, openPost({ kind: 'team_seeking_players' }), { message: 'Interested!' })).resolves.toBeUndefined();
-    expect(adapterMocks.setDoc).toHaveBeenCalledTimes(1);
+    expect(adapterMocks.setDoc).toHaveBeenCalledTimes(2);
   });
 
   it('does not expose email in a response or notification when the profile has no display name', async () => {
     adapterMocks.getDoc.mockResolvedValue({ exists: () => false });
     adapterMocks.setDoc.mockResolvedValue(undefined);
-    adapterMocks.addDoc.mockResolvedValue({ id: 'note-1' });
     await respondToMatchingPost({ ...user, displayName: '' }, openPost(), {
       message: 'Interested!',
       teamId: 'team-1',
@@ -278,7 +278,7 @@ describe('respondToMatchingPost', () => {
     });
 
     const response = adapterMocks.setDoc.mock.calls[0][1];
-    const notification = adapterMocks.addDoc.mock.calls[0][1];
+    const notification = adapterMocks.setDoc.mock.calls[1][1];
     expect(response.responderName).toBe('ALL PLAYS user');
     expect(notification.body).toBe('ALL PLAYS user responded to "Ethan (U12 Soccer) is looking for a team".');
     expect(JSON.stringify({ response, notification })).not.toContain('parent@example.com');

@@ -179,14 +179,16 @@ describe('Player/team matching feed Firestore rules', () => {
 
     it('allows only narrowly-validated matching response notifications in the inbox', () => {
         const source = rulesSource();
-        expect(source).toContain('function isMatchingResponseNotificationCreateValid(recipientId, data)');
+        expect(source).toContain('function isMatchingResponseNotificationCreateValid(recipientId, itemId, data)');
         expect(source).toContain("data.get('category', '') == 'matching_response' &&");
         expect(source).toContain("data.get('fromUserId', '') == request.auth.uid &&");
+        expect(source).toContain("itemId == postId + '__' + request.auth.uid &&");
         expect(source).toContain("data.get('appRoute', '') == '/opportunities?view=mine' &&");
         expect(source).toContain("post.get('authorId', '') == recipientId &&");
         expect(source).toContain('!isBlockedMatchingPair(recipientId, request.auth.uid) &&');
         expect(source).toContain('exists(/databases/$(database)/documents/socialPosts/$(postId)/responses/$(request.auth.uid)) &&');
-        expect(source).toContain('allow create: if isMatchingResponseNotificationCreateValid(userId, request.resource.data);');
+        expect(source).toContain("data.get('createdAt', null) == request.time &&");
+        expect(source).toContain('allow create: if isMatchingResponseNotificationCreateValid(userId, itemId, request.resource.data);');
 
         const inboxBlock = source.match(/match \/notificationInbox\/\{itemId\} \{[\s\S]*?\}/);
         expect(inboxBlock?.[0]).toContain('allow update, delete: if false;');

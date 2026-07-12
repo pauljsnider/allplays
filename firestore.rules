@@ -1522,7 +1522,7 @@ service cloud.firestore {
              data.get('message', '').size() <= 600;
     }
 
-    function isMatchingResponseNotificationCreateValid(recipientId, data) {
+    function isMatchingResponseNotificationCreateValid(recipientId, itemId, data) {
       let postId = data.get('postId', '');
       let post = get(/databases/$(database)/documents/socialPosts/$(postId)).data;
       return isSignedIn() &&
@@ -1539,6 +1539,7 @@ service cloud.firestore {
              ]) &&
              data.get('category', '') == 'matching_response' &&
              data.get('fromUserId', '') == request.auth.uid &&
+             itemId == postId + '__' + request.auth.uid &&
              data.get('title', '') is string &&
              data.get('title', '').size() > 0 &&
              data.get('title', '').size() <= 160 &&
@@ -1552,6 +1553,7 @@ service cloud.firestore {
              !isBlockedMatchingPair(recipientId, request.auth.uid) &&
              exists(/databases/$(database)/documents/socialPosts/$(postId)/responses/$(request.auth.uid)) &&
              get(/databases/$(database)/documents/socialPosts/$(postId)/responses/$(request.auth.uid)).data.get('responderId', '') == request.auth.uid &&
+             data.get('createdAt', null) == request.time &&
              data.get('readAt', null) == null;
     }
 
@@ -2562,7 +2564,7 @@ service cloud.firestore {
         allow read: if isOwner(userId);
         // Matching-post responses may deliver a narrowly-validated inbox item;
         // everything else stays server-only.
-        allow create: if isMatchingResponseNotificationCreateValid(userId, request.resource.data);
+        allow create: if isMatchingResponseNotificationCreateValid(userId, itemId, request.resource.data);
         allow update, delete: if false;
       }
 
