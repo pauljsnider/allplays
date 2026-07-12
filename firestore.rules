@@ -394,6 +394,13 @@ service cloud.firestore {
       return data.isPublic is bool && data.isPublic == true;
     }
 
+    function canReadTeamMediaManagerTeamDocument(data) {
+      let permission = data.get('teamPermissions', {}).get('teamMediaManagement', {});
+      return isSignedIn() &&
+             permission.get('mode', '') == 'selected' &&
+             request.auth.uid in permission.get('memberIds', []);
+    }
+
     function canListManagedTeamDocument(data) {
       return isSignedIn() &&
              (data.ownerId == request.auth.uid ||
@@ -403,7 +410,8 @@ service cloud.firestore {
 
     function canReadTeamDocument(data) {
       return canReadPublicTeamDocument(data) ||
-             canReadManagedTeamDocument(data);
+             canReadManagedTeamDocument(data) ||
+             canReadTeamMediaManagerTeamDocument(data);
     }
 
     function isTeamOwnerOrGlobalAdmin(teamId) {
