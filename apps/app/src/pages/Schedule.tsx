@@ -4,7 +4,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { Modal } from '../components/Modal';
 import { SchedulePageSkeleton } from '../components/PageSkeletons';
 import { PullToRefresh } from '../components/PullToRefresh';
-import { addTeamCalendarUrl, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createScheduleImportGame, createScheduleImportPractice, finalizeScheduleImportBatch, loadParentSchedule, loadScheduleStatTrackerConfigsForApp, removeTeamCalendarUrl, type ParentScheduleChild, type ScheduleGameFormInput, type SchedulePracticeFormInput, type PracticeRecurrenceFormInput, type ScheduleStatTrackerConfigOption, type ScheduleTournamentCreateFormInput } from '../lib/scheduleService';
+import { addTeamCalendarUrl, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createScheduleImportGame, createScheduleImportPractice, finalizeScheduleImportBatch, loadParentSchedule, loadScheduleStatTrackerConfigsForApp, removeTeamCalendarUrl, type ParentScheduleChild, type ParentScheduleStaffTeam, type ScheduleGameFormInput, type SchedulePracticeFormInput, type PracticeRecurrenceFormInput, type ScheduleStatTrackerConfigOption, type ScheduleTournamentCreateFormInput } from '../lib/scheduleService';
 import { getCachedAppData, getParentScheduleSummaryCacheKey, loadCachedAppData } from '../lib/appDataCache';
 import { toAppServiceError, type AppServiceError } from '../lib/appErrors';
 import { startAppInitialLoadTimer } from '../lib/telemetry';
@@ -25,6 +25,7 @@ import {
   getCalendarScheduleEntries,
   getEventOpenAssignmentCount,
   getGenericEventDetailPath,
+  getManageableScheduleTeamOptions,
   getParentScheduleTeamOptions,
   getScheduleEventDetailPath,
   getWindowedCalendarScheduleEntries,
@@ -171,6 +172,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const [timeRange, setTimeRange] = useState<ScheduleTimeRange>(() => getScheduleTimeRangeFromQuery(searchParams.get('range')) || 'all');
   const [children, setChildren] = useState<ParentScheduleChild[]>([]);
   const [events, setEvents] = useState<ParentScheduleEvent[]>([]);
+  const [staffTeams, setStaffTeams] = useState<ParentScheduleStaffTeam[]>([]);
   const [scheduleLoadError, setScheduleLoadError] = useState<AppServiceError | null>(null);
   const {
     loading: scheduleReadLoading,
@@ -239,11 +241,14 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const trackerConfigRequestPromiseRef = useRef<Record<string, Promise<ScheduleStatTrackerConfigOption[]>>>({});
   const [trackerConfigRequestedTeamIds, setTrackerConfigRequestedTeamIds] = useState<Record<string, true>>({});
 
-  const applyScheduleResult = (data: { children: ParentScheduleChild[]; events: ParentScheduleEvent[]; }) => {
+  const applyScheduleResult = (data: { children: ParentScheduleChild[]; events: ParentScheduleEvent[]; staffTeams?: ParentScheduleStaffTeam[]; }) => {
     childrenRef.current = data.children;
     eventsRef.current = data.events;
     setChildren(data.children);
     setEvents(data.events);
+    if (data.staffTeams) {
+      setStaffTeams(data.staffTeams);
+    }
   };
 
   const mergeScheduleResult = (data: { children: ParentScheduleChild[]; events: ParentScheduleEvent[]; }) => {
@@ -618,8 +623,8 @@ export function Schedule({ auth }: { auth: AuthState }) {
     rideRequests: windowedListEntries.rideRequests
   }), [counts.packetsReady, counts.rsvpNeeded, windowedListEntries.nextEvent, windowedListEntries.openAssignments, windowedListEntries.rideRequests]);
   const manageableTeamOptions = useMemo(() => (
-    teamOptions.filter((team) => events.some((event) => event.teamId === team.teamId && event.isTeamStaff === true))
-  ), [events, teamOptions]);
+    getManageableScheduleTeamOptions(teamOptions, events, staffTeams)
+  ), [events, staffTeams, teamOptions]);
   const [selectedStaffManageTeamId, setSelectedStaffManageTeamId] = useState('');
   const hasManageableScheduleTeams = manageableTeamOptions.length > 0;
   const selectedCalendarTeam = useMemo(() => {
