@@ -85,13 +85,18 @@ describe('authentication email delivery routing', () => {
         }
     });
 
-    it('enables the password-reset retry policy before the non-destructive production deploy', () => {
+    it('enables the password-reset retry policy only when production still needs the migration', () => {
         const productionSource = read('.github/workflows/deploy-prod.yml');
         const firebaseDeployCommands = productionSource
             .split('\n')
             .map(line => line.trim())
             .filter(line => line.startsWith('run: npx firebase-tools@14.25.0 deploy'));
 
+        expect(productionSource).toContain('id: password-reset-retry-policy');
+        expect(productionSource).toContain('google-github-actions/setup-gcloud@v3');
+        expect(productionSource).toContain('gcloud functions describe processPasswordResetEmailRequest');
+        expect(productionSource).toContain('eventTrigger.failurePolicy.retry');
+        expect(productionSource).toContain("if: steps.password-reset-retry-policy.outputs.enabled != 'true'");
         expect(firebaseDeployCommands).toEqual([
             'run: npx firebase-tools@14.25.0 deploy --only functions:processPasswordResetEmailRequest --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive --force',
             'run: npx firebase-tools@14.25.0 deploy --only hosting,firestore:rules,firestore:indexes,functions --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive'

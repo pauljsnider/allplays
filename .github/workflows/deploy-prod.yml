@@ -116,7 +116,22 @@ jobs:
           printf '%s' '${{ secrets.FIREBASE_SERVICE_ACCOUNT_GAME_FLOW_C6311 }}' > "$credentials_file"
           echo "GOOGLE_APPLICATION_CREDENTIALS=$credentials_file" >> "$GITHUB_ENV"
 
+      - name: Setup Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Check password-reset retry policy
+        id: password-reset-retry-policy
+        run: |
+          gcloud auth activate-service-account --key-file="$GOOGLE_APPLICATION_CREDENTIALS"
+          retry_policy="$(gcloud functions describe processPasswordResetEmailRequest --region us-central1 --project game-flow-c6311 --format='value(eventTrigger.failurePolicy.retry)')"
+          if [ "$retry_policy" = "True" ] || [ "$retry_policy" = "true" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Enable password-reset retry policy
+        if: steps.password-reset-retry-policy.outputs.enabled != 'true'
         run: npx firebase-tools@14.25.0 deploy --only functions:processPasswordResetEmailRequest --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive --force
 
       - name: Deploy Firebase production
