@@ -21,7 +21,7 @@ import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, 
 import { hasFullTeamAccess } from './team-access.js?v=1';
 import { buildScoreLinkedClipRecord, isScoredPlayEvent, validateGameClipFile } from './game-clips.js?v=1';
 import { computePanelVisibility } from './live-stream-utils.js?v=1';
-import { checkAuth } from './auth.js?v=48';
+import { checkAuth } from './auth.js?v=49';
 import { isViewerChatEnabled } from './live-game-chat.js?v=1';
 import { createPlayAnnouncer } from './live-game-announcer.js?v=1';
 import {

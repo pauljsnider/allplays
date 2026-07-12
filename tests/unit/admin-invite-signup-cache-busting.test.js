@@ -56,13 +56,13 @@ describe('admin invite signup cache busting', () => {
 
     it('bumps auth module consumers after signup flow changes', () => {
         const authConsumers = {
-            'login.html': 'auth.js?v=48',
-            'accept-invite.html': 'auth.js?v=48',
-            'edit-team.html': 'auth.js?v=48',
-            'js/admin.js': 'auth.js?v=48',
-            'js/live-game.js': 'auth.js?v=48',
-            'js/live-tracker.js': 'auth.js?v=48',
-            'js/track-basketball.js': 'auth.js?v=48'
+            'login.html': 'auth.js?v=49',
+            'accept-invite.html': 'auth.js?v=49',
+            'edit-team.html': 'auth.js?v=49',
+            'js/admin.js': 'auth.js?v=49',
+            'js/live-game.js': 'auth.js?v=49',
+            'js/live-tracker.js': 'auth.js?v=49',
+            'js/track-basketball.js': 'auth.js?v=49'
         };
 
         for (const [relativePath, expectedVersion] of Object.entries(authConsumers)) {
@@ -71,20 +71,20 @@ describe('admin invite signup cache busting', () => {
         }
 
         const editTeamSource = readFileSync(resolve(process.cwd(), 'edit-team.html'), 'utf8');
-        expect(editTeamSource).toContain("import { checkAuth, sendInviteEmail } from './js/auth.js?v=48';");
+        expect(editTeamSource).toContain("import { checkAuth, sendInviteEmail } from './js/auth.js?v=49';");
         expect(editTeamSource).not.toContain("import { checkAuth, sendInviteEmail } from './js/auth.js?v=40';");
     });
 
     it('bumps the shared header logout import with auth.js consumers', () => {
         const utilsSource = readFileSync(resolve(process.cwd(), 'js/utils.js'), 'utf8');
-        const logoutImportMatches = utilsSource.match(/const \{ logout \} = await import\('\.\/auth\.js\?v=48'\);/g) || [];
+        const logoutImportMatches = utilsSource.match(/const \{ logout \} = await import\('\.\/auth\.js\?v=49'\);/g) || [];
 
         expect(logoutImportMatches).toHaveLength(1);
         expect(utilsSource).not.toContain("const { logout } = await import('./auth.js?v=25');");
         expect(utilsSource).not.toContain("const { logout } = await import('./auth.js?v=41');");
     });
 
-    it('pins every deployed auth consumer to v48 without stale auth or db wrappers', () => {
+    it('pins every deployed auth consumer to v49 without stale auth or db wrappers', () => {
         const deployedSources = collectVersionedSourceFiles(process.cwd());
         const authConsumers = deployedSources.flatMap((relativePath) => {
             const source = readFileSync(resolve(process.cwd(), relativePath), 'utf8');
@@ -93,7 +93,7 @@ describe('admin invite signup cache busting', () => {
         });
         const staleConsumers = deployedSources.flatMap((relativePath) => {
             const source = readFileSync(resolve(process.cwd(), relativePath), 'utf8');
-            const staleImports = source.match(/(?:(?<![\w-])auth\.js\?v=(?!48\b)\d+|(?<![\w-])utils\.js\?v=(?!15\b)\d+|db\.js\?v=(?:76|77|78))\b/g) || [];
+            const staleImports = source.match(/(?:(?<![\w-])auth\.js\?v=(?!49\b)\d+|(?<![\w-])utils\.js\?v=(?!15\b)\d+|db\.js\?v=(?:76|77|78))\b/g) || [];
             return staleImports.map((importPath) => `${relativePath}: ${importPath}`);
         });
 
