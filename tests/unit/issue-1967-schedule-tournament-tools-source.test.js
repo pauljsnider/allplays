@@ -13,6 +13,7 @@ const tournamentBracketsTestSource = readFileSync(new URL('./tournament-brackets
 const bracketManagementTestSource = readFileSync(new URL('./bracket-management.test.js', import.meta.url), 'utf8');
 const dbTournamentOverridesTestSource = readFileSync(new URL('./db-tournament-overrides.test.js', import.meta.url), 'utf8');
 const appTournamentInfoTestSource = readFileSync(new URL('./app-schedule-tournament-info.test.ts', import.meta.url), 'utf8');
+const parityCloseoutSource = readFileSync(new URL('../../docs/pr-notes/issue-1967-tournament-tools-parity.md', import.meta.url), 'utf8');
 
 describe('issue 1967 schedule tournament tools source contract', () => {
     it('keeps pool standings helpers and persisted override APIs available', () => {
@@ -55,5 +56,23 @@ describe('issue 1967 schedule tournament tools source contract', () => {
         expect(scheduleDetailSource).toContain('<option value="tournament">Tournament</option>');
         expect(scheduleLogicSource).toContain('export function getScheduleTournamentInfo');
         expect(appTournamentInfoTestSource).toContain('builds a concise label and details from tournament bracket metadata');
+    });
+
+    it('keeps the #1967 closeout matrix tied to live web/app verification', () => {
+        [
+            'Status as of 2026-07-12',
+            'Cross-Surface Closeout Matrix',
+            'Web-created tournament -> app render and update',
+            'App-created multi-game block -> legacy web render',
+            'Tournament game lifecycle',
+            'Failed multi-game save recovery',
+            'Do not close #1967 from mocked automation alone.',
+            'teams/{teamId}/games/{gameId}',
+            'competitionType: tournament',
+            'tests/smoke/app-schedule.spec.js',
+            'apps/app/src/lib/scheduleService.test.ts'
+        ].forEach((needle) => {
+            expect(parityCloseoutSource).toContain(needle);
+        });
     });
 });
