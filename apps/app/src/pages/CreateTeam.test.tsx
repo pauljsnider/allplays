@@ -107,6 +107,7 @@ describe('CreateTeam', () => {
 
     expect(await screen.findByText(/Team created, but the default stat config could not be added/)).toBeTruthy();
     expect(screen.getByRole('link', { name: 'Open team' })).toHaveAttribute('href', '/teams/team-new');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Create team' })).not.toBeDisabled());
   });
 
   it('blocks direct rendering without a signed-in user', () => {
