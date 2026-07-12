@@ -128,7 +128,7 @@ import {
 } from './scheduleLogic';
 import type { AutoFilledLineupPlayer, GamePlanPublishPayloadInput } from './gameDayLineupPublish';
 import { DEFAULT_TEAM_CONVERSATION_ID } from './chatLogic';
-import { getCachedAppData, getParentScheduleSummaryCacheKey, loadCachedAppData } from './appDataCache';
+import { getCachedAppData, getParentScheduleSummaryCacheKey, invalidateCachedAppData, loadCachedAppData } from './appDataCache';
 import { toAppServiceError } from './appErrors';
 import { createLogger } from './logger';
 import { getNativeRestDedupKey, loadDedupedNativeRestRequest, shouldDedupNativeRestRequest } from './nativeRestDedup';
@@ -4179,6 +4179,10 @@ export async function submitParentScheduleRsvp(event: ParentScheduleEvent, user:
     }
     logScheduleWarning('Falling back to REST RSVP submit.', 'parent-rsvp-submit', error, { fallback: 'rest', teamId: event.teamId, gameId: event.id, childId: event.childId });
     return nativeSubmitRsvpForPlayer(event.teamId, event.id, user, event.childId, response, note, event.availabilityNoteVisibility === 'team' ? 'team' : 'admins');
+  } finally {
+    // Drop the cached schedule summary so the list reflects the new RSVP
+    // immediately instead of serving the 5-minute-TTL snapshot on return.
+    invalidateCachedAppData(getParentScheduleSummaryCacheKey(user.uid));
   }
 }
 
@@ -4223,6 +4227,8 @@ export async function submitParentScheduleRsvpForChildren(events: ParentSchedule
     }
     logScheduleWarning('Falling back to REST family RSVP submit.', 'parent-family-rsvp-submit', error, { fallback: 'rest', teamId: firstEvent.teamId, gameId: firstEvent.id, childIds });
     return nativeSubmitRsvpForChildren(firstEvent.teamId, firstEvent.id, user, childIds, response, note, firstEvent.availabilityNoteVisibility === 'team' ? 'team' : 'admins');
+  } finally {
+    invalidateCachedAppData(getParentScheduleSummaryCacheKey(user.uid));
   }
 }
 

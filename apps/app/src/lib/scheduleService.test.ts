@@ -208,13 +208,14 @@ vi.mock('./appDataCache', () => ({
   getCachedAppData: vi.fn(),
   loadCachedAppData: vi.fn((_key: string, loader: () => Promise<unknown>) => loader()),
   clearAppDataCache: vi.fn(),
+  invalidateCachedAppData: vi.fn(),
   getParentScheduleSummaryCacheKey: (userId: string) => `app-schedule-summary:${userId}`
 }));
 
 import { addGame, addPractice, broadcastLiveEvent, buildSingleLegacyTournamentGameDocument, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, claimOpenOfficiatingSlot, clearOccurrenceOverride, releaseAssignmentClaim, respondToOfficiatingAssignment, updateEvent, updateGame, updateOccurrence, getAssignmentClaims, getGame, getGames, getPlayers, getPracticeSession, getPracticeSessions, getRsvpBreakdownByPlayer, getRsvpSummaries, getRsvps, getTeam, getTeams, listRideOffersForEvent, submitRsvp, submitRsvpForPlayer, updatePracticeAttendance, getDoc, getDocs } from './adapters/legacyScheduleDb';
 import { getNativeAuthIdToken } from './authService';
 import { expandRecurrence, fetchAndParseCalendar, isTeamActive, mergeAssignmentsWithClaims } from './adapters/legacyScheduleHelpers';
-import { getCachedAppData, loadCachedAppData } from './appDataCache';
+import { getCachedAppData, invalidateCachedAppData, loadCachedAppData } from './appDataCache';
 import { mapScheduleEventRecord } from './firestore/mappers';
 import { loadProfileDocument } from './profileService';
 import { getScheduleTournamentInfo } from './scheduleLogic';
@@ -2340,6 +2341,8 @@ describe('parent family RSVP submission', () => {
     });
     expect(mocks.runTransactionMock).not.toHaveBeenCalled();
     expect(submitRsvpForPlayer).not.toHaveBeenCalled();
+    // The stale-schedule fix: the cached summary is invalidated after the write.
+    expect(vi.mocked(invalidateCachedAppData)).toHaveBeenCalledWith('app-schedule-summary:parent-1');
   });
 
   it('propagates a failed atomic legacy family commit without running separate cleanup', async () => {

@@ -99,6 +99,17 @@ export function clearAppDataCache(prefix = '') {
   removeStoredCacheEntries(prefix);
 }
 
+// Invalidate a single cache entry (memory + persisted storage) so the next
+// loadCachedAppData for this key re-runs the loader instead of serving a stale
+// TTL'd value. Bumping the invalidation version also discards any in-flight
+// load that started before the mutation.
+export function invalidateCachedAppData(key: string) {
+  if (!key) return;
+  cacheInvalidationVersion += 1;
+  cache.delete(key);
+  removeStoredCacheEntries(key);
+}
+
 function loadAndStoreCachedAppData<T>(
   key: string,
   loader: () => Promise<T>,
