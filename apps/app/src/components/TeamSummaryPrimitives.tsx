@@ -1,22 +1,24 @@
 import { Shield } from 'lucide-react';
+import { AvatarImage } from './AvatarImage';
 
 export function getInitials(name: string) {
   return name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join('') || 'T';
 }
 
 export function TeamAvatar({ name, photoUrl, large = false }: { name: string; photoUrl?: string | null; large?: boolean }) {
-  if (photoUrl) {
-    return (
-      <span className={`flex flex-none overflow-hidden rounded-2xl bg-gray-100 shadow-sm ${large ? 'h-12 w-12' : 'h-11 w-11'}`}>
-        <img src={photoUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
-      </span>
-    );
-  }
-  return (
+  const initialsBadge = (
     <span className={`flex flex-none items-center justify-center rounded-2xl bg-gray-950 font-black text-white shadow-sm ${large ? 'h-12 w-12 text-sm' : 'h-11 w-11 text-xs'}`}>
       {getInitials(name)}
     </span>
   );
+  if (photoUrl) {
+    return (
+      <span className={`flex flex-none overflow-hidden rounded-2xl bg-gray-100 shadow-sm ${large ? 'h-12 w-12' : 'h-11 w-11'}`}>
+        <AvatarImage src={photoUrl} alt="" className="h-full w-full object-cover" loading="lazy" fallback={initialsBadge} />
+      </span>
+    );
+  }
+  return initialsBadge;
 }
 
 export function TeamLauncherChip({ label, tone = 'gray' }: { label: string; tone?: 'gray' | 'primary' | 'amber' }) {

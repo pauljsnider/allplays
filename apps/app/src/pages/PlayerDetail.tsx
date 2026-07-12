@@ -54,6 +54,7 @@ import {
   type ParentPlayerStatRow,
   type PlayerVideoClip
 } from '../lib/playerService';
+import { AvatarImage } from '../components/AvatarImage';
 import { DetailLoadErrorState } from '../components/DetailLoadErrorState';
 import { getEventDetailPath } from '../lib/homeLogic';
 import { toAppServiceError, type AppServiceError } from '../lib/appErrors';
@@ -565,7 +566,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
             <ChevronLeft className="h-4 w-4" aria-hidden="true" />
           </Link>
           <div className="flex h-11 w-11 flex-none items-center justify-center overflow-hidden rounded-2xl bg-primary-50 text-base font-black text-primary-700">
-            {data.player.photoUrl ? <img src={data.player.photoUrl} alt={`${playerName} profile photo`} loading="lazy" decoding="async" className="h-full w-full object-cover" /> : <span>{jersey || getInitials(playerName)}</span>}
+            {data.player.photoUrl ? <AvatarImage src={data.player.photoUrl} alt={`${playerName} profile photo`} loading="lazy" decoding="async" className="h-full w-full object-cover" fallback={<span>{jersey || getInitials(playerName)}</span>} /> : <span>{jersey || getInitials(playerName)}</span>}
           </div>
           <div className="min-w-0 flex-1">
             <div className="app-label">Player</div>
@@ -1066,7 +1067,7 @@ function StaffRosterDetailsCard({ data, auth, onChanged }: { data: ParentPlayerD
     <section className="app-card p-4">
       <div className="flex items-start gap-3">
         <div className="flex h-14 w-14 flex-none items-center justify-center overflow-hidden rounded-2xl bg-primary-50 text-sm font-black text-primary-700">
-          {previewUrl ? <img src={previewUrl} alt={`${name || data.child.playerName || 'Player'} roster photo preview`} className="h-full w-full object-cover" /> : getInitials(name || data.child.playerName || 'Player')}
+          {previewUrl ? <AvatarImage src={previewUrl} alt={`${name || data.child.playerName || 'Player'} roster photo preview`} className="h-full w-full object-cover" fallback={getInitials(name || data.child.playerName || 'Player')} /> : getInitials(name || data.child.playerName || 'Player')}
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 text-sm font-black text-gray-950">
@@ -1169,7 +1170,7 @@ function EditablePlayerProfileCard({ data, auth, onChanged }: { data: ParentPlay
     <section className="app-card p-4">
       <div className="flex items-start gap-3">
         <div className="flex h-14 w-14 flex-none items-center justify-center overflow-hidden rounded-2xl bg-primary-50 text-sm font-black text-primary-700">
-          {previewUrl ? <img src={previewUrl} alt={`${playerName} profile photo preview`} className="h-full w-full object-cover" /> : getInitials(playerName)}
+          {previewUrl ? <AvatarImage src={previewUrl} alt={`${playerName} profile photo preview`} className="h-full w-full object-cover" fallback={getInitials(playerName)} /> : getInitials(playerName)}
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 text-sm font-black text-gray-950">
@@ -1763,7 +1764,7 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
         <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
           <div className="flex items-center gap-3">
             <div className="flex h-16 w-16 flex-none items-center justify-center overflow-hidden rounded-2xl bg-white text-sm font-black text-primary-700">
-              {headshotPreviewUrl ? <img src={headshotPreviewUrl} alt="Athlete profile headshot preview" className="h-full w-full object-cover" /> : getInitials(name || data.child.playerName || 'Athlete')}
+              {headshotPreviewUrl ? <AvatarImage src={headshotPreviewUrl} alt="Athlete profile headshot preview" className="h-full w-full object-cover" fallback={getInitials(name || data.child.playerName || 'Athlete')} /> : getInitials(name || data.child.playerName || 'Athlete')}
             </div>
             <div className="min-w-0 flex-1">
               <div className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Public headshot</div>
