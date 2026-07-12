@@ -3,15 +3,17 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 describe('parent invite auto-linking', () => {
-    it('auto-accepts existing parent accounts when inviteParent finds a user', () => {
+    it('auto-accepts existing parent accounts without listing users in the browser', () => {
         const source = readFileSync(resolve(process.cwd(), 'js/db.js'), 'utf8');
         const inviteIndex = source.indexOf('export async function inviteParent');
         expect(inviteIndex).toBeGreaterThanOrEqual(0);
 
         const inviteSource = source.slice(inviteIndex, inviteIndex + 3200);
-        expect(inviteSource).toContain('existingUser = await getUserByEmail(normalizedParentEmail);');
-        expect(inviteSource).toContain('autoLinked = await autoAcceptParentInviteForExistingUser');
+        expect(inviteSource).not.toContain('getUserByEmail(normalizedParentEmail)');
+        expect(inviteSource).toContain('const autoAcceptResult = await autoAcceptParentInviteForExistingUser(accessCodeId);');
         expect(inviteSource).toContain('console.warn(`Could not auto-link existing parent invite:');
+        expect(inviteSource.indexOf('const { id: accessCodeId, code } = await createUniqueAccessCode(accessCodeData);'))
+            .toBeLessThan(inviteSource.indexOf('await autoAcceptParentInviteForExistingUser(accessCodeId);'));
         expect(inviteSource).toContain('autoLinked');
     });
 
@@ -22,7 +24,8 @@ describe('parent invite auto-linking', () => {
 
         const helperSource = source.slice(helperIndex, helperIndex + 900);
         expect(helperSource).toContain("httpsCallable(functions, 'autoAcceptParentInviteForExistingUser')");
-        expect(helperSource).toContain('return Boolean(result?.data?.autoLinked);');
+        expect(helperSource).toContain('autoLinked: data.autoLinked === true');
+        expect(helperSource).toContain('existingUser: data.autoLinked === true');
     });
 
     it('links the user, player parents list, and accepted invite atomically server-side', () => {

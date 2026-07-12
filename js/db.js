@@ -4729,7 +4729,12 @@ export async function redeemAdminInviteAtomically(codeId, userId, fallbackEmail 
 async function autoAcceptParentInviteForExistingUser(accessCodeId) {
     const autoAcceptParentInvite = httpsCallable(functions, 'autoAcceptParentInviteForExistingUser');
     const result = await autoAcceptParentInvite({ codeId: accessCodeId });
-    return Boolean(result?.data?.autoLinked);
+    const data = result?.data || {};
+    return {
+        autoLinked: data.autoLinked === true,
+        existingUser: data.autoLinked === true,
+        reason: typeof data.reason === 'string' ? data.reason : null
+    };
 }
 
 export async function inviteParent(teamId, playerId, playerNum, parentEmail, relation) {
@@ -4765,17 +4770,16 @@ export async function inviteParent(teamId, playerId, playerNum, parentEmail, rel
     };
     const { id: accessCodeId, code } = await createUniqueAccessCode(accessCodeData);
 
-    // Check if user with this email already exists
-    let existingUser = null;
+    // The callable performs the privileged existing-user lookup server-side.
+    let existingUser = false;
     let autoLinked = false;
     if (normalizedParentEmail) {
-        existingUser = await getUserByEmail(normalizedParentEmail);
-        if (existingUser) {
-            try {
-                autoLinked = await autoAcceptParentInviteForExistingUser(accessCodeId);
-            } catch (error) {
-                console.warn(`Could not auto-link existing parent invite: ${error?.message || 'Unknown error'}`);
-            }
+        try {
+            const autoAcceptResult = await autoAcceptParentInviteForExistingUser(accessCodeId);
+            existingUser = autoAcceptResult.existingUser === true;
+            autoLinked = autoAcceptResult.autoLinked === true;
+        } catch (error) {
+            console.warn(`Could not auto-link existing parent invite: ${error?.message || 'Unknown error'}`);
         }
     }
 
@@ -4784,7 +4788,7 @@ export async function inviteParent(teamId, playerId, playerNum, parentEmail, rel
         code,
         teamName: team?.name || null,
         playerName: player?.name || null,
-        existingUser: !!existingUser,
+        existingUser,
         autoLinked
     };
 }
