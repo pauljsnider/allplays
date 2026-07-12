@@ -50,7 +50,7 @@ type StatusMessage = { tone: 'success' | 'error'; message: string } | null;
 
 function isLikelyTeamAdminRole(role: string): boolean {
   const normalized = String(role || '').trim().toLowerCase();
-  return normalized !== 'parent' && normalized !== 'public' && normalized !== 'fan' && normalized !== 'follower';
+  return normalized === 'admin';
 }
 
 function getAdminTeams(home: ParentHomeModel | null): ParentHomeTeam[] {

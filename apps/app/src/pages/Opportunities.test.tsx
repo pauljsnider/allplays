@@ -124,10 +124,10 @@ describe('Opportunities page', () => {
     expect(screen.getByText('Your post')).toBeTruthy();
   });
 
-  it('hides player-post responses when the user does not manage a team', async () => {
+  it.each(['Parent', 'Coach', 'Team', 'Unknown'])('hides player-post responses for the non-admin %s role', async (role) => {
     homeServiceMocks.loadParentHome.mockResolvedValue({
       ...homeModel,
-      teams: [{ ...homeModel.teams[0], role: 'Parent' }]
+      teams: [{ ...homeModel.teams[0], role }]
     });
     await act(async () => {
       renderOpportunities();
