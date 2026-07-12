@@ -15,6 +15,7 @@ import {
 } from './adapters/legacySocialDb';
 import { loadParentHome } from './homeService';
 import { createLogger } from './logger';
+import { toAppServiceError } from './appErrors';
 import type { ParentHomeModel } from './homeLogic';
 import { uploadTeamChatAttachment } from './chatService';
 import type { AuthUser } from './types';
@@ -159,10 +160,11 @@ export async function loadSocialHome(user: AuthUser | null, homeOverride?: Paren
       return [];
     }),
     loadFriendships(user).catch((error) => {
-      logger.warn('Unable to load friendships.', { error });
+      const appError = toAppServiceError(error, "Couldn't load friend requests.");
+      logger.warn('Unable to load friendships.', { error: appError });
       // Surface this instead of silently rendering "no requests" — a swallowed
       // failure here hides incoming friend requests entirely (#3867).
-      friendshipsError = error?.message || 'Unable to load friend requests.';
+      friendshipsError = appError.message;
       return [];
     }),
     loadFriendSuggestions(user, home).catch((error) => {
