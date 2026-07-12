@@ -1,0 +1,90 @@
+import { readFileSync } from 'node:fs';
+import { describe, expect, it } from 'vitest';
+import {
+    buildBulkAiPracticePayload,
+    normalizeBulkAiEventForAdd
+} from '../../js/edit-schedule-ai-import.js';
+
+describe('edit schedule bulk AI import', () => {
+    const Timestamp = {
+        fromDate: (value) => value
+    };
+
+    function defaultEndTime(startDate) {
+        return new Date(startDate.getTime() + 90 * 60 * 1000);
+    }
+
+    it('normalizes practice add operations without requiring an opponent', () => {
+        const normalized = normalizeBulkAiEventForAdd({
+            eventType: 'practice',
+            date: '2026-07-13T18:00:00',
+            title: 'Practice',
+            location: ' Overland Trail Elementary ',
+            notes: ' Bring water '
+        });
+
+        expect(normalized).toMatchObject({
+            eventType: 'practice',
+            title: 'Practice',
+            opponent: null,
+            location: 'Overland Trail Elementary',
+            notes: 'Bring water',
+            status: 'scheduled'
+        });
+    });
+
+    it('builds a practice payload for the issue 3860 fixture', () => {
+        const payload = buildBulkAiPracticePayload({
+            eventType: 'practice',
+            date: '2026-07-13T18:00:00',
+            title: 'Practice',
+            location: 'Overland Trail Elementary'
+        }, {
+            Timestamp,
+            getDefaultEndTime: defaultEndTime,
+            userId: 'coach-1'
+        });
+
+        expect(payload.title).toBe('Practice');
+        expect(payload.location).toBe('Overland Trail Elementary');
+        expect(payload.date).toEqual(new Date('2026-07-13T18:00:00'));
+        expect(payload.end).toEqual(new Date('2026-07-13T19:30:00'));
+        expect(payload.source).toBe('bulk_ai');
+        expect(payload.sourceMetadata).toEqual({
+            importedBy: 'coach-1',
+            importedFrom: 'edit-schedule-bulk-ai'
+        });
+    });
+
+    it('preserves game add behavior while adding eventType', () => {
+        const normalized = normalizeBulkAiEventForAdd({
+            eventType: 'game',
+            date: '2026-04-02T18:30:00',
+            opponent: ' Tigers ',
+            location: ' Main Field ',
+            isHome: 'away',
+            assignments: [{ role: 'Snack', value: 'Sam' }]
+        });
+
+        expect(normalized).toMatchObject({
+            eventType: 'game',
+            opponent: 'Tigers',
+            location: 'Main Field',
+            isHome: false,
+            kitColor: 'Away kit',
+            assignments: [{ role: 'Snack', value: 'Sam' }],
+            homeScore: 0,
+            awayScore: 0
+        });
+    });
+
+    it('keeps practice rules in the inline AI prompt and response schema', () => {
+        const source = readFileSync(new URL('../../edit-schedule.html', import.meta.url), 'utf8');
+
+        expect(source).toContain('eventType: Schema.string()');
+        expect(source).toContain('Practice", "Training", or practice-style scrimmage have no opponent');
+        expect(source).toContain('"eventType": "practice"');
+        expect(source).toContain('buildBulkAiPracticePayload(normalizedGame');
+        expect(source).toContain('await addPractice(currentTeamId, practiceData);');
+    });
+});
