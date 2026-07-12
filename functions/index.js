@@ -11543,10 +11543,18 @@ async function requireOpportunityListing(listingId) {
   return { listingRef, listingSnap, listing: listingSnap.data() || {} };
 }
 
+function normalizeOpportunityTeamId(teamId) {
+  try {
+    return normalizeFirestoreId(teamId, 'teamId');
+  } catch (error) {
+    throwOpportunityError('invalid-argument', error.message);
+  }
+}
+
 async function canManageOpportunity(caller, listing) {
   if (isOpportunityPlatformAdmin(caller) || listing.authorId === caller.uid) return true;
   if (!listing.teamId) return false;
-  const teamSnap = await firestore.doc(`teams/${listing.teamId}`).get();
+  const teamSnap = await firestore.doc(`teams/${normalizeOpportunityTeamId(listing.teamId)}`).get();
   return teamSnap.exists && hasTeamAdminAccess({
     team: teamSnap.data() || {},
     user: caller.user,
@@ -11557,7 +11565,7 @@ async function canManageOpportunity(caller, listing) {
 
 async function resolveOpportunityTeam(input, caller) {
   if (input.kind === 'player_seeking_team') return null;
-  const teamSnap = await firestore.doc(`teams/${input.teamId}`).get();
+  const teamSnap = await firestore.doc(`teams/${normalizeOpportunityTeamId(input.teamId)}`).get();
   if (!teamSnap.exists) throwOpportunityError('not-found', 'Team not found.');
   const team = teamSnap.data() || {};
   if (!isOpportunityTeamDiscoverable(team)) {
@@ -11817,7 +11825,7 @@ exports.reportPublicOpportunity = functions.https.onCall(async (data, context = 
 async function resolveOpportunityRecipients(listing) {
   const recipients = new Set([String(listing.authorId || '')].filter(Boolean));
   if (listing.teamId) {
-    const teamSnap = await firestore.doc(`teams/${listing.teamId}`).get();
+    const teamSnap = await firestore.doc(`teams/${normalizeOpportunityTeamId(listing.teamId)}`).get();
     if (teamSnap.exists) {
       const team = teamSnap.data() || {};
       if (team.ownerId) recipients.add(String(team.ownerId));
@@ -11959,7 +11967,7 @@ exports.moderatePublicOpportunity = functions.https.onCall(async (data, context 
   const { listingRef, listing } = await requireOpportunityListing(data?.listingId);
   const restoringRemovedListing = action === 'restore' && listing.status === 'removed';
   if (restoringRemovedListing && listing.kind !== 'player_seeking_team') {
-    const teamSnap = await firestore.doc(`teams/${listing.teamId}`).get();
+    const teamSnap = await firestore.doc(`teams/${normalizeOpportunityTeamId(listing.teamId)}`).get();
     const team = teamSnap.data() || {};
     if (!teamSnap.exists || !isOpportunityTeamDiscoverable(team)) {
       throwOpportunityError('failed-precondition', 'The linked team must be active and public before this listing can be restored.');

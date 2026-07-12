@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const source = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
+const opportunitySource = source.slice(source.indexOf('// Public sports opportunity board'));
 
 describe('public opportunity callable wiring', () => {
   it('exports public browse, lifecycle, inquiry, and moderation contracts', () => {
@@ -68,6 +69,14 @@ describe('public opportunity callable wiring', () => {
     expect(source).toMatch(/resolveOpportunityTeam[\s\S]*!isOpportunityTeamDiscoverable\(team\)/);
     expect(source).toContain('const wasDiscoverable = isOpportunityTeamDiscoverable(before);');
     expect(source).toContain('const isDiscoverable = isOpportunityTeamDiscoverable(after);');
+  });
+
+  it('normalizes linked team IDs before every opportunity-side team lookup', () => {
+    expect(source).toMatch(/function normalizeOpportunityTeamId\(teamId\)[\s\S]*normalizeFirestoreId\(teamId, 'teamId'\)/);
+    expect(source).toContain('teams/${normalizeOpportunityTeamId(input.teamId)}');
+    expect(source).toContain('teams/${normalizeOpportunityTeamId(listing.teamId)}');
+    expect(opportunitySource).not.toContain('teams/${input.teamId}');
+    expect(opportunitySource).not.toContain('teams/${listing.teamId}');
   });
 
   it('requires verified inquiry senders and allow-lists public team profiles', () => {
