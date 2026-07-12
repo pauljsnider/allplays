@@ -120,7 +120,7 @@ describe('createMatchingPost', () => {
 
   it('uses a privacy-safe author name when the profile has no display name', async () => {
     adapterMocks.addDoc.mockResolvedValue({ id: 'new-post' });
-    await createMatchingPost({ ...user, displayName: null }, {
+    await createMatchingPost({ ...user, displayName: '' }, {
       kind: 'player_seeking_team',
       sport: 'Soccer',
       ageGroup: 'U12',
@@ -245,7 +245,7 @@ describe('respondToMatchingPost', () => {
   it('does not expose email in a response or notification when the profile has no display name', async () => {
     adapterMocks.setDoc.mockResolvedValue(undefined);
     adapterMocks.addDoc.mockResolvedValue({ id: 'note-1' });
-    await respondToMatchingPost({ ...user, displayName: null }, openPost(), {
+    await respondToMatchingPost({ ...user, displayName: '' }, openPost(), {
       message: 'Interested!',
       teamId: 'team-1',
       teamName: 'Rockets'
