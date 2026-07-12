@@ -1,8 +1,14 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen } from '@testing-library/react';
+import React from 'react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { UserCircle } from 'lucide-react';
-import { describe, expect, it, vi } from 'vitest';
-import { AvatarImage } from './AvatarImage';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { AvatarImage } from '../../apps/app/src/components/AvatarImage';
+
+afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+});
 
 describe('AvatarImage', () => {
     it('renders the image when the src loads normally', () => {
