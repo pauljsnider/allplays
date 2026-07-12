@@ -8,6 +8,8 @@ test.skip(
 const appBaseUrl = process.env.SMOKE_APP_BASE_URL || '';
 test.skip(!appBaseUrl, 'SMOKE_APP_BASE_URL is required for React app smoke tests');
 
+const mockAvatarUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=';
+
 function appUrl(baseURL, hashPath) {
     const url = new URL('/', appBaseUrl || baseURL);
     url.hash = hashPath;
@@ -274,7 +276,7 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
 
                 export async function uploadProfilePhoto(file) {
                     window.__appProfileCalls.uploads.push({ name: file.name, type: file.type });
-                    return 'https://example.test/avatar.png';
+                    return '${mockAvatarUrl}';
                 }
 
                 export async function loadNotificationTeams() {
@@ -360,7 +362,7 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
 
                 export async function uploadProfilePhoto(file) {
                     window.__appProfileCalls.uploads.push({ name: file.name, type: file.type });
-                    return 'https://example.test/avatar.png';
+                    return '${mockAvatarUrl}';
                 }
             `
         });
@@ -580,18 +582,18 @@ test('app auth screen exposes sign in, sign up, Google, activation code, invite,
     await page.goto(appUrl(baseURL, '/auth?code=AB12CD34&type=parent'), { waitUntil: 'domcontentloaded' });
 
     await expect(page.getByRole('heading', { name: 'Create your account' })).toBeVisible();
-    await expect(page.getByText('Join code entered:')).toBeVisible();
-    await expect(page.getByText('We’ll verify it after you sign in or create your account.')).toBeVisible();
-    await expect(page.getByLabel('Join code')).toHaveValue('AB12CD34');
+    await expect(page.getByText('Invite code applied: AB12CD34')).toBeVisible();
+    await expect(page.getByText('Use an activation or invite code, then verify your email.')).toBeVisible();
+    await expect(page.getByLabel('Activation or invite code')).toHaveValue('AB12CD34');
     await expect(page.getByRole('button', { name: 'Continue with Google' })).toBeVisible();
-    await expect(page.getByRole('link', { name: 'Enter join code' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Enter invite code' })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Account action' })).toHaveCount(0);
 
     await page.getByRole('button', { name: 'Sign in' }).first().click();
     await page.getByRole('button', { name: 'Forgot password?' }).click();
     await page.locator('form').filter({ hasText: 'Password reset email' }).locator('input[type="email"]').fill('parent@example.com');
     await page.getByRole('button', { name: 'Send reset email' }).click();
-    await expect(page.getByText("If an account exists for that email, we've sent a reset link.")).toBeVisible();
+    await expect(page.getByText('Password reset email sent. Check your inbox and spam folder.')).toBeVisible();
     expect(await page.evaluate(() => window.__appAuthCalls.sendResetEmail)).toEqual(['parent@example.com']);
 
     await page.getByRole('button', { name: 'Sign up' }).first().click();
@@ -603,7 +605,7 @@ test('signed-out manual invite code redirects through auth with the code preserv
     await mockAppModules(page);
     await page.goto(appUrl(baseURL, '/accept-invite'), { waitUntil: 'domcontentloaded' });
 
-    await page.getByLabel('Join code').fill('zxcv1234');
+    await page.getByLabel('Invite code').fill('zxcv1234');
     await page.getByRole('button', { name: 'Continue with code' }).click();
 
     await expect(page).toHaveURL(/#\/auth\?code=ZXCV1234&type=parent&mode=login/);
@@ -670,7 +672,7 @@ test('profile exposes account, notification, invite, verification, password, upl
     await page.getByRole('button', { name: 'Save profile' }).click();
     await expect(page.getByText('Profile saved.')).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Pat Parent Updated' })).toBeVisible();
-    await expect(page.locator('.profile-summary-card img')).toHaveAttribute('src', 'https://example.test/avatar.png');
+    await expect(page.locator('.profile-summary-card img')).toHaveAttribute('src', mockAvatarUrl);
     await expect.poll(async () => page.evaluate(() => window.__appProfileCalls.profileLoads)).toBeGreaterThan(0);
 
     const alertsTab = page.getByRole('button', { name: 'Alerts', exact: true });
@@ -715,9 +717,9 @@ test('profile exposes account, notification, invite, verification, password, upl
     const recipientPage = await page.context().newPage();
     await mockAppModules(recipientPage);
     await recipientPage.goto(sharedInviteUrl, { waitUntil: 'domcontentloaded' });
-    await expect(recipientPage.getByRole('heading', { name: 'Join ALL PLAYS' })).toBeVisible();
-    await expect(recipientPage.getByText('Join code entered')).toBeVisible();
-    await expect(recipientPage.getByText('We’ll verify this code after you sign in or create your account.')).toBeVisible();
+    await expect(recipientPage.getByRole('heading', { name: 'Accept invite' })).toBeVisible();
+    await expect(recipientPage.getByText('Invite found')).toBeVisible();
+    await expect(recipientPage.getByText('Redeem an invite code, link your account, then continue to the right dashboard.')).toBeVisible();
     await expect(recipientPage.getByText('NEWMVP42')).toBeVisible();
     await expect(recipientPage.getByRole('link', { name: 'Sign in to accept' })).toBeVisible();
     await expect(recipientPage.getByRole('link', { name: 'Create account with code' })).toBeVisible();
