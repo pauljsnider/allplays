@@ -49,8 +49,8 @@ describe('Player/team matching feed Firestore rules', () => {
         expect(source).toContain("hasNoContactInfo(data.get('authorName', ''))");
         expect(source).toContain("hasNoContactInfo(data.get('detail', ''))");
         expect(source).toContain("hasNoContactInfo(data.get('caption', ''))");
-        expect(source).toContain("!value.matches('.*[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+[.][A-Za-z]{2,}.*')");
-        expect(source).toContain("!value.matches('.*[0-9][0-9() .-]{8,}[0-9].*')");
+        expect(source).toContain("!value.matches('[\\\\s\\\\S]*[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+[.][A-Za-z]{2,}[\\\\s\\\\S]*')");
+        expect(source).toContain("!value.matches('[\\\\s\\\\S]*[0-9][0-9() .-]{8,}[0-9][\\\\s\\\\S]*')");
         expect(source).toContain("data.get('media', []).size() == 0 &&");
         expect(source).toContain("data.get('playerIds', []).size() == 0 &&");
         expect(source).toContain('isMatchingDetailPayloadValid(data) &&');
@@ -61,6 +61,16 @@ describe('Player/team matching feed Firestore rules', () => {
 
         // Community visibility is NOT added to the generic social visibility list.
         expect(source).toContain("return value in ['household', 'team', 'friends', 'friends_and_team', 'public_profile'];");
+    });
+
+    it('uses multiline-safe contact-info guards', () => {
+        const source = rulesSource();
+        const contactGuard = source.match(/function hasNoContactInfo\(value\) \{[\s\S]*?\n    \}/)?.[0];
+
+        expect(contactGuard).toContain('[\\\\s\\\\S]*[A-Za-z0-9._%+-]+@');
+        expect(contactGuard).toContain('[A-Za-z]{2,}[\\\\s\\\\S]*');
+        expect(contactGuard).toContain('[\\\\s\\\\S]*[0-9][0-9() .-]{8,}[0-9][\\\\s\\\\S]*');
+        expect(contactGuard).not.toContain("matches('.*");
     });
 
     it('keeps the matching detail map on a field allowlist', () => {

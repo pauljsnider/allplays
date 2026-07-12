@@ -1290,8 +1290,8 @@ service cloud.firestore {
 
     function hasNoContactInfo(value) {
       return value is string &&
-             !value.matches('.*[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+[.][A-Za-z]{2,}.*') &&
-             !value.matches('.*[0-9][0-9() .-]{8,}[0-9].*');
+             !value.matches('[\\s\\S]*[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+[.][A-Za-z]{2,}[\\s\\S]*') &&
+             !value.matches('[\\s\\S]*[0-9][0-9() .-]{8,}[0-9][\\s\\S]*');
     }
 
     function isNullableContactSafeString(value, maxLength) {
