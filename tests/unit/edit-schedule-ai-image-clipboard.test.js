@@ -121,6 +121,52 @@ describe('edit schedule Bulk AI image clipboard support', () => {
         expect(document.getElementById('schedule-image-preview').classList.contains('hidden')).toBe(true);
     });
 
+    it('captures image paste when Bulk AI is visible but focus is still outside the panel', () => {
+        const controller = setupController();
+        const file = new File(['schedule image'], 'schedule.png', { type: 'image/png' });
+        const event = createPasteEvent([
+            { type: 'image/png', getAsFile: () => file }
+        ]);
+
+        document.body.dispatchEvent(event);
+
+        expect(event.defaultPrevented).toBe(true);
+        expect(controller.getBulkAiImageFile()).toBe(file);
+        expect(document.getElementById('schedule-image-preview').classList.contains('hidden')).toBe(false);
+    });
+
+    it('does not capture page-level image paste while the Bulk AI panel is hidden', () => {
+        const controller = setupController();
+        const container = document.getElementById('content-bulk-ai');
+        const file = new File(['schedule image'], 'schedule.png', { type: 'image/png' });
+        const event = createPasteEvent([
+            { type: 'image/png', getAsFile: () => file }
+        ]);
+        container.classList.add('hidden');
+
+        const dispatchResult = document.body.dispatchEvent(event);
+
+        expect(dispatchResult).toBe(true);
+        expect(event.defaultPrevented).toBe(false);
+        expect(controller.getBulkAiImageFile()).toBeNull();
+    });
+
+    it('does not capture page-level image paste from unrelated editable fields', () => {
+        const controller = setupController();
+        const outsideInput = document.createElement('input');
+        document.body.append(outsideInput);
+        const file = new File(['schedule image'], 'schedule.png', { type: 'image/png' });
+        const event = createPasteEvent([
+            { type: 'image/png', getAsFile: () => file }
+        ]);
+
+        const dispatchResult = outsideInput.dispatchEvent(event);
+
+        expect(dispatchResult).toBe(true);
+        expect(event.defaultPrevented).toBe(false);
+        expect(controller.getBulkAiImageFile()).toBeNull();
+    });
+
     it('extracts only image files from clipboard items', () => {
         const file = new File(['schedule image'], 'schedule.jpg', { type: 'image/jpeg' });
         const event = createPasteEvent([

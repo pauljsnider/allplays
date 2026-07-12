@@ -27,6 +27,15 @@ function hasDraggedImage(event) {
     return Boolean(getDroppedImageFile(event));
 }
 
+function isEditablePasteTarget(target) {
+    if (!target || typeof target.closest !== 'function') return false;
+    return Boolean(target.closest('input, textarea, [contenteditable="true"], [contenteditable=""]'));
+}
+
+function isBulkAiContainerActive(container) {
+    return Boolean(container && container.isConnected !== false && !container.classList.contains('hidden'));
+}
+
 export function createBulkAiImageController({
     imageInput,
     preview,
@@ -106,12 +115,20 @@ export function createBulkAiImageController({
         return setBulkAiImage(file);
     }
 
-    function bindBulkAiImageControls({ container, textInput } = {}) {
+    function bindBulkAiImageControls({ container, textInput, documentTarget = globalThis.document } = {}) {
         imageInput?.addEventListener('change', handleBulkAiImageInputChange);
         removeButton?.addEventListener('click', clearBulkAiImage);
 
         const pasteTargets = new Set([textInput, container].filter(Boolean));
         pasteTargets.forEach((target) => target.addEventListener('paste', handleBulkAiImagePaste));
+
+        const handlePagePaste = (event) => {
+            if (!isBulkAiContainerActive(container)) return false;
+            if (container.contains(event.target)) return false;
+            if (isEditablePasteTarget(event.target)) return false;
+            return handleBulkAiImagePaste(event);
+        };
+        documentTarget?.addEventListener?.('paste', handlePagePaste);
 
         container?.addEventListener('dragover', handleBulkAiImageDragOver);
         container?.addEventListener('drop', handleBulkAiImageDrop);
@@ -120,6 +137,7 @@ export function createBulkAiImageController({
             imageInput?.removeEventListener('change', handleBulkAiImageInputChange);
             removeButton?.removeEventListener('click', clearBulkAiImage);
             pasteTargets.forEach((target) => target.removeEventListener('paste', handleBulkAiImagePaste));
+            documentTarget?.removeEventListener?.('paste', handlePagePaste);
             container?.removeEventListener('dragover', handleBulkAiImageDragOver);
             container?.removeEventListener('drop', handleBulkAiImageDrop);
         };
