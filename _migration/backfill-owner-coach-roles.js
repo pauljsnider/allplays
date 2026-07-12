@@ -25,7 +25,12 @@ import { readFileSync } from 'fs';
 
 const APPLY = process.argv.includes('--apply');
 const teamFlagIdx = process.argv.indexOf('--team');
-const onlyTeamId = teamFlagIdx !== -1 ? String(process.argv[teamFlagIdx + 1] || '').trim() : null;
+const teamFlagValue = teamFlagIdx !== -1 ? String(process.argv[teamFlagIdx + 1] || '').trim() : null;
+if (teamFlagIdx !== -1 && (!teamFlagValue || teamFlagValue.startsWith('--'))) {
+    console.error('Missing team ID after --team. No changes were made.');
+    process.exit(1);
+}
+const onlyTeamId = teamFlagValue;
 
 let dbInstance = null;
 
