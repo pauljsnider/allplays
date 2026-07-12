@@ -11882,7 +11882,20 @@ exports.createOpportunityInquiry = functions.https.onCall(async (data, context =
   ]) };
 });
 
-async function requireOpportunityInquiry(inquiryId, uid) {
+async function canAccessOpportunityInquiry(caller, inquiry) {
+  if (isOpportunityPlatformAdmin(caller) || inquiry.senderId === caller.uid) return true;
+  if (!Array.isArray(inquiry.participantIds) || !inquiry.participantIds.includes(caller.uid)) return false;
+  if (!inquiry.teamId) return true;
+  const teamSnap = await firestore.doc(`teams/${normalizeOpportunityTeamId(inquiry.teamId)}`).get();
+  return teamSnap.exists && hasTeamAdminAccess({
+    team: teamSnap.data() || {},
+    user: caller.user,
+    uid: caller.uid,
+    email: caller.email
+  });
+}
+
+async function requireOpportunityInquiry(inquiryId, caller) {
   let normalizedId;
   try {
     normalizedId = normalizeFirestoreId(inquiryId, 'inquiryId');
@@ -11893,35 +11906,37 @@ async function requireOpportunityInquiry(inquiryId, uid) {
   const snap = await ref.get();
   if (!snap.exists) throwOpportunityError('not-found', 'Inquiry not found.');
   const inquiry = snap.data() || {};
-  if (!Array.isArray(inquiry.participantIds) || !inquiry.participantIds.includes(uid)) {
+  if (!await canAccessOpportunityInquiry(caller, inquiry)) {
     throwOpportunityError('permission-denied', 'You cannot access this inquiry.');
   }
   return { ref, snap, inquiry };
 }
 
 exports.listOpportunityInquiries = functions.https.onCall(async (_data, context = {}) => {
-  const uid = requireOpportunityAuth(context);
+  const caller = await getOpportunityCaller(context);
   const snap = await firestore.collection('opportunityInquiries')
-    .where('participantIds', 'array-contains', uid)
+    .where('participantIds', 'array-contains', caller.uid)
     .orderBy('updatedAt', 'desc')
     .limit(50)
     .get();
-  return { items: snap.docs.map((docSnap) => serializeOpportunityInquiry(docSnap)) };
+  const access = await Promise.all(snap.docs.map((docSnap) => canAccessOpportunityInquiry(caller, docSnap.data() || {})));
+  return { items: snap.docs.filter((_docSnap, index) => access[index]).map((docSnap) => serializeOpportunityInquiry(docSnap)) };
 });
 
 exports.getOpportunityInquiry = functions.https.onCall(async (data, context = {}) => {
-  const uid = requireOpportunityAuth(context);
-  const { snap } = await requireOpportunityInquiry(data?.inquiryId, uid);
+  const caller = await getOpportunityCaller(context);
+  const { snap } = await requireOpportunityInquiry(data?.inquiryId, caller);
   const messagesSnap = await snap.ref.collection('messages').orderBy('createdAt', 'asc').limit(200).get();
   return { inquiry: serializeOpportunityInquiry(snap, messagesSnap.docs.map(serializeOpportunityMessage)) };
 });
 
 exports.replyToOpportunityInquiry = functions.https.onCall(async (data, context = {}) => {
-  const uid = requireOpportunityAuth(context);
+  const caller = await getOpportunityCaller(context);
+  const { uid } = caller;
   assertOpportunityRateLimit(checkPublicOpportunityMessageRateLimit, context, `reply:${uid}`);
   const body = cleanOpportunityText(data?.message, 1500);
   if (!body) throwOpportunityError('invalid-argument', 'Write a message first.');
-  const { ref, inquiry } = await requireOpportunityInquiry(data?.inquiryId, uid);
+  const { ref, inquiry } = await requireOpportunityInquiry(data?.inquiryId, caller);
   if (inquiry.status === 'closed') throwOpportunityError('failed-precondition', 'This inquiry is closed.');
   const authorName = cleanOpportunityText(context.auth.token?.name || context.auth.token?.email, 100) || 'ALL PLAYS member';
   const messageRef = ref.collection('messages').doc();
@@ -11930,7 +11945,13 @@ exports.replyToOpportunityInquiry = functions.https.onCall(async (data, context 
   batch.set(messageRef, { authorId: uid, authorName, body, createdAt: now });
   batch.update(ref, { updatedAt: now });
   await batch.commit();
-  const recipients = (inquiry.participantIds || []).filter((participantId) => participantId !== uid);
+  const currentTeamRecipients = inquiry.teamId
+    ? new Set(await resolveOpportunityRecipients(inquiry))
+    : null;
+  const recipients = (inquiry.participantIds || []).filter((participantId) =>
+    participantId !== uid &&
+    (!currentTeamRecipients || participantId === inquiry.senderId || currentTeamRecipients.has(participantId))
+  );
   await writeNotificationInboxRecords({
     targets: recipients.map((recipientId) => ({ uid: recipientId })),
     category: 'opportunities',

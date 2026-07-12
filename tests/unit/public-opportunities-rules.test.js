@@ -13,11 +13,13 @@ async function expectPermissionDenied(operation) {
 }
 
 describe('public opportunity Firestore boundaries', () => {
-  it('keeps listings and reports server-only while allowing participant-only inquiry reads', () => {
+  it('keeps listings and reports server-only while revalidating team inquiry access', () => {
     expect(rules).toContain('match /publicOpportunities/{listingId}');
     expect(rules).toContain('match /publicOpportunityReports/{reportId}');
     expect(rules).toContain('match /opportunityInquiries/{inquiryId}');
-    expect(rules).toContain("request.auth.uid in resource.data.get('participantIds', [])");
+    expect(rules).toContain('function canReadOpportunityInquiry(data)');
+    expect(rules).toContain("data.get('senderId', '') == request.auth.uid");
+    expect(rules).toContain("isTeamOwnerOrAdmin(data.get('teamId', ''))");
     expect(rules).toContain('allow create, update, delete: if false;');
   });
 
@@ -46,15 +48,24 @@ describe('public opportunity Firestore boundaries', () => {
       }
     });
 
-    it('denies direct listing access and limits inquiry reads to participants', async () => {
+    it('denies direct listing access and revokes a removed team administrator', async () => {
       await testEnv.withSecurityRulesDisabled(async (context) => {
         await setDoc(doc(context.firestore(), 'publicOpportunities', 'listing-1'), { title: 'Private source record' });
-        await setDoc(doc(context.firestore(), 'opportunityInquiries', 'inquiry-1'), { participantIds: ['user-1', 'user-2'] });
+        await setDoc(doc(context.firestore(), 'teams', 'team-1'), {
+          ownerId: 'owner-1',
+          adminEmails: ['current-admin@example.com']
+        });
+        await setDoc(doc(context.firestore(), 'opportunityInquiries', 'inquiry-1'), {
+          senderId: 'user-1',
+          teamId: 'team-1',
+          participantIds: ['user-1', 'former-admin', 'current-admin']
+        });
         await setDoc(doc(context.firestore(), 'opportunityInquiries', 'inquiry-1', 'messages', 'message-1'), { body: 'Private' });
       });
       const anonymousDb = testEnv.unauthenticatedContext().firestore();
       const participantDb = testEnv.authenticatedContext('user-1').firestore();
-      const otherParticipantDb = testEnv.authenticatedContext('user-2').firestore();
+      const currentAdminDb = testEnv.authenticatedContext('current-admin', { email: 'current-admin@example.com' }).firestore();
+      const formerAdminDb = testEnv.authenticatedContext('former-admin', { email: 'former-admin@example.com' }).firestore();
       const outsiderDb = testEnv.authenticatedContext('user-3').firestore();
 
       await expectPermissionDenied(getDoc(doc(anonymousDb, 'publicOpportunities', 'listing-1')));
@@ -64,9 +75,11 @@ describe('public opportunity Firestore boundaries', () => {
       await expectPermissionDenied(getDoc(doc(anonymousDb, 'opportunityInquiries', 'inquiry-1')));
 
       const inquirySnapshot = await assertSucceeds(getDoc(doc(participantDb, 'opportunityInquiries', 'inquiry-1')));
-      expect(inquirySnapshot.data()).toEqual({ participantIds: ['user-1', 'user-2'] });
-      const messageSnapshot = await assertSucceeds(getDoc(doc(otherParticipantDb, 'opportunityInquiries', 'inquiry-1', 'messages', 'message-1')));
+      expect(inquirySnapshot.data()).toMatchObject({ senderId: 'user-1', teamId: 'team-1' });
+      const messageSnapshot = await assertSucceeds(getDoc(doc(currentAdminDb, 'opportunityInquiries', 'inquiry-1', 'messages', 'message-1')));
       expect(messageSnapshot.data()).toEqual({ body: 'Private' });
+      await expectPermissionDenied(getDoc(doc(formerAdminDb, 'opportunityInquiries', 'inquiry-1')));
+      await expectPermissionDenied(getDoc(doc(formerAdminDb, 'opportunityInquiries', 'inquiry-1', 'messages', 'message-1')));
       await expectPermissionDenied(getDoc(doc(outsiderDb, 'opportunityInquiries', 'inquiry-1')));
     });
   });

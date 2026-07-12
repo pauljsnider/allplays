@@ -96,6 +96,14 @@ describe('public opportunity callable wiring', () => {
     expect(recipientResolver).not.toContain('new Set([String(listing.authorId');
   });
 
+  it('revokes private team inquiry access and notifications from former administrators', () => {
+    expect(source).toMatch(/canAccessOpportunityInquiry[\s\S]*isOpportunityPlatformAdmin\(caller\)[\s\S]*inquiry\.senderId === caller\.uid/);
+    expect(source).toMatch(/canAccessOpportunityInquiry[\s\S]*inquiry\.participantIds\.includes\(caller\.uid\)[\s\S]*hasTeamAdminAccess/);
+    expect(source).toContain('snap.docs.map((docSnap) => canAccessOpportunityInquiry(caller, docSnap.data() || {}))');
+    expect(source).toContain('const currentTeamRecipients = inquiry.teamId');
+    expect(source).toContain('currentTeamRecipients.has(participantId)');
+  });
+
   it('shows and loads moderation reports only for protected isAdmin accounts', () => {
     expect(manageSource).toContain('const canModerateReports = auth.user?.isAdmin === true;');
     expect(manageSource).toContain('canModerateReports ? listPublicOpportunityReports() : Promise.resolve([])');
