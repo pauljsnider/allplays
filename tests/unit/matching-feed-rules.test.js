@@ -103,9 +103,11 @@ describe('Player/team matching feed Firestore rules', () => {
         expect(source).toContain("hasNoContactInfo(data.get('teamName', ''))");
     });
 
-    it('lets signed-in users read community posts and authors manage lifecycle', () => {
+    it('lets signed-in users read only matching community posts and authors manage lifecycle', () => {
         const source = rulesSource();
-        expect(source).toContain("data.get('visibility', '') == 'community' ||");
+        const readRule = source.match(/function canReadSocialPost\(data\) \{[\s\S]*?\n    \}/);
+        expect(readRule?.[0]).toContain("data.get('visibility', '') == 'community' &&");
+        expect(readRule?.[0]).toContain("isMatchingSocialPostType(data.get('type', ''))");
         expect(source).toContain('function isMatchingPostAuthorLifecycleUpdateValid()');
         expect(source).toContain("request.resource.data.get('status', '') in ['open', 'filled', 'closed'] &&");
         expect(source).toContain('isCommunityMatchingPostContractValid(request.resource.data)');

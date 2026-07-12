@@ -1559,9 +1559,10 @@ service cloud.firestore {
              (
                data.get('authorId', '') == request.auth.uid ||
                request.auth.uid in data.get('visibleUserIds', []) ||
-               // Community visibility is restricted to matching post types at
-               // create time, so any community post is readable by signed-in users.
-               data.get('visibility', '') == 'community' ||
+               (
+                 data.get('visibility', '') == 'community' &&
+                 isMatchingSocialPostType(data.get('type', ''))
+               ) ||
                canReadSocialTeamPost(data) ||
                isGlobalAdmin()
              );
