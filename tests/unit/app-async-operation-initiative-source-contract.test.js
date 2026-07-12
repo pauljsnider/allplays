@@ -68,11 +68,7 @@ describe('app async operation initiative source contract', () => {
         expect(homeServiceSource).toContain('function rethrowIfPermissionError(error: unknown, fallbackMessage: string)');
         expect(homeServiceSource).toContain("rethrowIfPermissionError(error, 'Unable to load Home chat.')");
 
-        expect(scheduleServiceSource).toContain("from './appDataCache';");
-        expect(scheduleServiceSource).toContain('getCachedAppData');
-        expect(scheduleServiceSource).toContain('getParentScheduleSummaryCacheKey');
-        expect(scheduleServiceSource).toContain('invalidateCachedAppData');
-        expect(scheduleServiceSource).toContain('loadCachedAppData');
+        expect(scheduleServiceSource).toContain("import { getCachedAppData, getParentScheduleSummaryCacheKey, invalidateCachedAppData, loadCachedAppData } from './appDataCache';");
         expect(scheduleServiceSource).toContain("import { toAppServiceError } from './appErrors';");
         expect(scheduleServiceSource).toContain("throw toAppServiceError(error, 'Unable to load schedule.');");
         expect(scheduleServiceSource).toContain("startUxTimer('parent schedule service load'");
