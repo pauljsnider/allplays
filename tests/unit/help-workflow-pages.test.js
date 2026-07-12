@@ -35,7 +35,7 @@ function extractAppHelpIndexEntry(appHelpIndex, id) {
 describe('help and workflow page inventory', () => {
     it('keeps every workflow page structured for direct navigation and generated TOCs', () => {
         const workflowPages = listRootPages('workflow-');
-        expect(workflowPages).toHaveLength(17);
+        expect(workflowPages).toHaveLength(18);
 
         for (const file of workflowPages) {
             const html = readRepoFile(file);
@@ -103,6 +103,7 @@ describe('help and workflow page inventory', () => {
             'workflow-awards-certificates.html',
             'workflow-choose-home-dashboard.html',
             'workflow-communication.html',
+            'workflow-family-sharing.html',
             'workflow-fees-payments.html',
             'workflow-game-day.html',
             'workflow-getting-started.html',

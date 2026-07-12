@@ -265,9 +265,9 @@ beforeEach(() => {
     serviceMocks.initiateParentTeamFeeCheckout.mockResolvedValue({ success: true, checkoutUrl: 'https://pay.example.test/created-fee' });
     serviceMocks.loadFamilyShareModel.mockResolvedValue({
         children: [{ teamId: 'team-1', playerId: 'player-1', playerName: 'Pat Star' }],
-        tokens: [{ id: 'token-1', label: 'Grandma', url: 'https://allplays.ai/family.html?token=token-1', childCount: 1, extraCalendarUrls: [] }]
+        tokens: [{ id: 'token-1', label: 'Grandma', url: 'https://allplays.ai/app/#/family/token-1', childCount: 1, extraCalendarUrls: [] }]
     });
-    serviceMocks.createParentFamilyShare.mockResolvedValue({ tokenId: 'token-2', url: 'https://allplays.ai/family.html?token=token-2' });
+    serviceMocks.createParentFamilyShare.mockResolvedValue({ tokenId: 'token-2', url: 'https://allplays.ai/app/#/family/token-2' });
     serviceMocks.revokeParentFamilyShare.mockResolvedValue();
     serviceMocks.updateParentFamilyShareCalendars.mockResolvedValue();
     serviceMocks.loadParentRegistrations.mockResolvedValue([{
@@ -562,7 +562,7 @@ describe('React app parent tools integration', () => {
     it('keeps revoke disabled for already revoked family share links', async () => {
         serviceMocks.loadFamilyShareModel.mockResolvedValueOnce({
             children: [{ teamId: 'team-1', playerId: 'player-1', playerName: 'Pat Star' }],
-            tokens: [{ id: 'token-1', label: 'Grandma', url: 'https://allplays.ai/family.html?token=token-1', childCount: 1, extraCalendarUrls: [], revoked: true }]
+            tokens: [{ id: 'token-1', label: 'Grandma', url: 'https://allplays.ai/app/#/family/token-1', childCount: 1, extraCalendarUrls: [], revoked: true }]
         });
         const { container } = await renderParentTools('/parent-tools/share');
         await waitForText(container, 'Revoked');
@@ -581,7 +581,7 @@ describe('React app parent tools integration', () => {
     it('marks expired family share links so they are not presented as reusable active links', async () => {
         serviceMocks.loadFamilyShareModel.mockResolvedValueOnce({
             children: [{ teamId: 'team-1', playerId: 'player-1', playerName: 'Pat Star' }],
-            tokens: [{ id: 'token-1', label: 'Grandma', url: 'https://allplays.ai/family.html?token=token-1', childCount: 1, extraCalendarUrls: [], expired: true, statusLabel: 'Expired' }]
+            tokens: [{ id: 'token-1', label: 'Grandma', url: 'https://allplays.ai/app/#/family/token-1', childCount: 1, extraCalendarUrls: [], expired: true, statusLabel: 'Expired' }]
         });
 
         const { container } = await renderParentTools('/parent-tools/share');

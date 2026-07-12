@@ -96,7 +96,7 @@
 
         // From parent-dashboard.html
         function buildFamilyShareUrl(origin, tokenId) {
-            return `${origin}/family.html?token=${tokenId}`;
+            return `${origin}/app/#/family/${encodeURIComponent(tokenId)}`;
         }
 
         // Share-form calendar list management (mirrors shareFormCalendarUrls array operations)
@@ -307,14 +307,14 @@
 
         test('Share URL construction', 'buildFamilyShareUrl produces correct URL', () => {
             const url = buildFamilyShareUrl('https://allplays.app', 'abc123');
-            assertEquals(url, 'https://allplays.app/family.html?token=abc123', 'URL should include origin, path, and token param');
+            assertEquals(url, 'https://allplays.app/app/#/family/abc123', 'URL should include origin, app path, and token segment');
         });
 
-        test('Share URL construction', 'token appears in URL query string', () => {
+        test('Share URL construction', 'token appears in URL hash path', () => {
             const token = generateShareToken();
             const url = buildFamilyShareUrl('https://allplays.app', token);
             const parsed = new URL(url);
-            assertEquals(parsed.searchParams.get('token'), token, 'Token should be recoverable from URL');
+            assertEquals(decodeURIComponent(parsed.hash.split('/family/')[1] || ''), token, 'Token should be recoverable from URL');
         });
 
         test('Share URL construction', 'path is always /family.html', () => {

@@ -314,7 +314,9 @@ export function getLegacyUrl(path: string, params: Record<string, string> = {}, 
 }
 
 export function getFamilyShareUrl(tokenId: string) {
-  return getLegacyUrl('family.html', { token: tokenId });
+  const url = new URL('app/', legacyOrigin);
+  url.hash = `/family/${encodeURIComponent(tokenId)}`;
+  return url.toString();
 }
 
 export async function submitOfflineRegistration(teamId: string, formId: string, submission: Record<string, any>) {

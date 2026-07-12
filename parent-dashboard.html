@@ -1167,7 +1167,7 @@
         }
 
         function buildFamilyShareUrl(tokenId) {
-            return `${getFamilyPageOrigin()}/family.html?token=${tokenId}`;
+            return `${getFamilyPageOrigin()}/app/#/family/${encodeURIComponent(tokenId)}`;
         }
 
         function showShareLinkWorkflowStatus(message, tone = 'neutral') {

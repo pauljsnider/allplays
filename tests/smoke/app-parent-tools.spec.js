@@ -85,12 +85,12 @@ const parentFamilyShareServiceMock = `
         window.__parentToolLoadCounts.share += 1;
         return {
             children: [{ teamId: 'team-1', playerId: 'player-1', playerName: 'Pat Star' }],
-            tokens: [{ id: 'token-1', label: 'Grandma', url: 'https://allplays.ai/family.html?token=token-1', childCount: 1, extraCalendarUrls: [] }]
+            tokens: [{ id: 'token-1', label: 'Grandma', url: 'https://allplays.ai/app/#/family/token-1', childCount: 1, extraCalendarUrls: [] }]
         };
     }
     export async function createParentFamilyShare(user, label, urls) {
         window.__familyCreates.push({ label, urls });
-        return { tokenId: 'token-2', url: 'https://allplays.ai/family.html?token=token-2' };
+        return { tokenId: 'token-2', url: 'https://allplays.ai/app/#/family/token-2' };
     }
     export async function revokeParentFamilyShare() {}
     export async function updateParentFamilyShareCalendars() {}
@@ -455,12 +455,12 @@ async function mockParentToolsModules(page) {
                     window.__parentToolLoadCounts.share += 1;
                     return {
                         children: [{ teamId: 'team-1', playerId: 'player-1', playerName: 'Pat Star' }],
-                        tokens: [{ id: 'token-1', label: 'Grandma', url: 'https://allplays.ai/family.html?token=token-1', childCount: 1, extraCalendarUrls: [] }]
+                        tokens: [{ id: 'token-1', label: 'Grandma', url: 'https://allplays.ai/app/#/family/token-1', childCount: 1, extraCalendarUrls: [] }]
                     };
                 }
                 export async function createParentFamilyShare(user, label, urls) {
                     window.__familyCreates.push({ label, urls });
-                    return { tokenId: 'token-2', url: 'https://allplays.ai/family.html?token=token-2' };
+                    return { tokenId: 'token-2', url: 'https://allplays.ai/app/#/family/token-2' };
                 }
                 export async function revokeParentFamilyShare() {}
                 export async function updateParentFamilyShareCalendars() {}
@@ -582,9 +582,9 @@ test('parent tools hub completes access, fees, calendars, share, registration, a
     });
     await page.getByRole('button', { name: /Create share link/ }).click();
     await expect.poll(() => page.evaluate(() => window.__familyCreates.at(-1))).toEqual({ label: 'Grandpa', urls: [] });
-    await expect(page.getByText('https://allplays.ai/family.html?token=token-2')).toBeVisible();
+    await expect(page.getByText('https://allplays.ai/app/#/family/token-2')).toBeVisible();
     await page.getByRole('button', { name: 'Share newly created family link' }).click();
-    await expect.poll(() => page.evaluate(() => window.__sharedUrls.at(-1)?.url)).toBe('https://allplays.ai/family.html?token=token-2');
+    await expect.poll(() => page.evaluate(() => window.__sharedUrls.at(-1)?.url)).toBe('https://allplays.ai/app/#/family/token-2');
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
 
     await page.getByRole('button', { name: 'Register' }).click();

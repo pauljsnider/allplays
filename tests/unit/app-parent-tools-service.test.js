@@ -285,7 +285,7 @@ describe('React app parent tools service', () => {
 
     it('builds legacy URLs used for current-site handoffs', () => {
         expect(getLegacyUrl('team.html', {}, { teamId: 'team-1' })).toBe('https://allplays.ai/team.html#teamId=team-1');
-        expect(getFamilyShareUrl('token-1')).toBe('https://allplays.ai/family.html?token=token-1');
+        expect(getFamilyShareUrl('token-1')).toBe('https://allplays.ai/app/#/family/token-1');
         expect(getRegistrationUrl('team-1', 'form-1')).toBe('https://allplays.ai/registration.html?teamId=team-1&formId=form-1');
         expect(getAppRegistrationUrl('team-1', 'form-1')).toBe('https://allplays.ai/app/#/registration?teamId=team-1&formId=form-1');
         expect(getCertificateUrl('team-1', 'cert-1')).toBe('https://allplays.ai/certificates.html#teamId=team-1&certificateId=cert-1');
@@ -640,13 +640,13 @@ describe('React app parent tools service', () => {
         await expect(loadFamilyShareModel(user)).resolves.toMatchObject({
             children: [{ teamId: 'team-1', playerId: 'player-1', playerName: 'Pat Star' }],
             tokens: [
-                { id: 'token-1', url: 'https://allplays.ai/family.html?token=token-1', childCount: 1, expired: false, statusLabel: 'Active' },
-                { id: 'token-legacy', url: 'https://allplays.ai/family.html?token=token-legacy', childCount: 1, expired: true, statusLabel: 'Expired' }
+                { id: 'token-1', url: 'https://allplays.ai/app/#/family/token-1', childCount: 1, expired: false, statusLabel: 'Active' },
+                { id: 'token-legacy', url: 'https://allplays.ai/app/#/family/token-legacy', childCount: 1, expired: true, statusLabel: 'Expired' }
             ]
         });
         await expect(createParentFamilyShare(user, 'Coach', ['https://calendar.example.test/a.ics'])).resolves.toEqual({
             tokenId: 'token-2',
-            url: 'https://allplays.ai/family.html?token=token-2'
+            url: 'https://allplays.ai/app/#/family/token-2'
         });
         expect(dbMocks.createFamilyShareToken).toHaveBeenCalledWith('user-1', expect.any(Array), 'Coach', ['https://calendar.example.test/a.ics']);
         await revokeParentFamilyShare('token-1');

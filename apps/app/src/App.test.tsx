@@ -131,6 +131,10 @@ vi.mock('./pages/PublicTeamsBrowse', () => ({
   PublicTeamsBrowse: () => <div>Browse public teams page</div>,
 }));
 
+vi.mock('./pages/FamilyShare', () => ({
+  FamilyShare: () => <div>Family share page</div>,
+}));
+
 vi.mock('./pages/Officials', () => ({
   Officials: () => <div>Officials assignments page</div>,
 }));
@@ -346,6 +350,29 @@ describe('App protected route loading', () => {
     );
 
     expect(await screen.findByText('Browse public teams page')).toBeTruthy();
+    expect(screen.queryByText('Loading ALL PLAYS')).toBeNull();
+  });
+
+  it('routes signed-out family share links as public app pages', async () => {
+    authMock.state = {
+      ...authMock.signedInAuth,
+      user: null,
+      loading: false,
+      roles: [],
+      isParent: false,
+      isCoach: false,
+      isAdmin: false,
+      isPlatformAdmin: false
+    };
+
+    render(
+      <MemoryRouter initialEntries={['/family/token-1']}>
+        <App />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('Family share page')).toBeTruthy();
+    expect(screen.getByRole('navigation', { name: 'Primary navigation' })).toBeTruthy();
     expect(screen.queryByText('Loading ALL PLAYS')).toBeNull();
   });
 

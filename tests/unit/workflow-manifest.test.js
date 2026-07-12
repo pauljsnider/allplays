@@ -56,6 +56,28 @@ describe('workflow manifest', () => {
         expect(helpHtml).toContain('Manage Team Fees and Payments');
     });
 
+    it('ships and indexes the family sharing workflow help page', () => {
+        const manifest = JSON.parse(readRepoFile('workflow-manifest.json'));
+        const workflow = manifest.find((item) => item.id === 'family-sharing');
+        const helpHtml = readRepoFile('help.html');
+        const appHelpIndex = readRepoFile('apps/app/src/lib/helpKnowledgeIndex.ts');
+
+        expect(repoFileExists('workflow-family-sharing.html')).toBe(true);
+        expect(workflow).toMatchObject({
+            id: 'family-sharing',
+            title: 'Share a Family Schedule Link',
+            file: 'workflow-family-sharing.html'
+        });
+        expect(workflow.roles).toEqual(['Parent']);
+        expect(workflow.searchText).toContain('/app/#/family/:token');
+        expect(workflow.searchText).toContain('Share with family');
+        expect(helpHtml).toContain('workflow-family-sharing.html');
+        expect(helpHtml).toContain('Share a Family Schedule Link');
+        expect(appHelpIndex).toContain('"id": "family-sharing"');
+        expect(appHelpIndex).toContain('"file": "workflow-family-sharing.html"');
+        expect(appHelpIndex).toContain('/app/#/family/:token');
+    });
+
     it('removes stale Game Day practice plan links from generated help indexes', () => {
         const manifest = JSON.parse(readRepoFile('workflow-manifest.json'));
         const workflow = manifest.find((item) => item.id === 'game-day');

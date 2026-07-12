@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/png" href="img/logo_small.png">
+    <title>Share a Family Schedule Link - ALL PLAYS Help</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="css/styles.css">
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              primary: {
+                50: '#eef2ff',
+                100: '#e0e7ff',
+                500: '#6366f1',
+                600: '#4f46e5',
+                700: '#4338ca',
+                800: '#3730a3',
+                900: '#312e81'
+              }
+            }
+          }
+        }
+      }
+    </script>
+    <style>
+      :root {
+        --wf-bg: #f8fafc;
+        --wf-panel: #ffffff;
+        --wf-text: #0f172a;
+        --wf-muted: #52606f;
+        --wf-border: #d9e2ec;
+      }
+
+      body {
+        background:
+          radial-gradient(circle at 82% 0%, rgba(99,102,241,0.14) 0%, rgba(248,250,252,0) 42%),
+          radial-gradient(circle at 8% 20%, rgba(67,56,202,0.10) 0%, rgba(248,250,252,0) 48%),
+          var(--wf-bg);
+        color: var(--wf-text);
+      }
+
+      .wf-shell {
+        width: min(1160px, 100%);
+        margin: 0 auto;
+        padding: 1.5rem 1rem 3rem;
+      }
+
+      .wf-back-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        font-size: 0.85rem;
+        font-weight: 700;
+        color: #4338ca;
+      }
+
+      .wf-hero {
+        margin-top: 0.75rem;
+        background: linear-gradient(140deg, #312e81 0%, #4338ca 46%, #4f46e5 100%);
+        border-radius: 1.1rem;
+        padding: 1.25rem 1.25rem 1.15rem;
+        color: #ecfeff;
+        box-shadow: 0 14px 36px rgba(15, 23, 42, 0.22);
+      }
+
+      .wf-kicker {
+        font-size: 0.73rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        opacity: 0.84;
+      }
+
+      .wf-title {
+        margin-top: 0.4rem;
+        font-size: clamp(1.75rem, 2.8vw, 2.35rem);
+        line-height: 1.15;
+        font-weight: 800;
+      }
+
+      .wf-summary {
+        margin-top: 0.75rem;
+        max-width: 60ch;
+        color: rgba(236, 254, 255, 0.95);
+        line-height: 1.58;
+      }
+
+      .wf-meta-row {
+        margin-top: 0.95rem;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.65rem;
+        align-items: center;
+      }
+
+      .wf-meta-pill,
+      .wf-role-chip {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        font-size: 0.78rem;
+        font-weight: 700;
+        padding: 0.24rem 0.62rem;
+      }
+
+      .wf-meta-pill {
+        border: 1px solid rgba(236, 254, 255, 0.36);
+        background: rgba(236, 254, 255, 0.12);
+        color: #ecfeff;
+      }
+
+      .wf-role-chip {
+        border: 1px solid #c7d2fe;
+        background: #eef2ff;
+        color: #3730a3;
+      }
+
+      .wf-layout {
+        margin-top: 1rem;
+        display: grid;
+        gap: 1rem;
+      }
+
+      .wf-panel {
+        background: var(--wf-panel);
+        border: 1px solid var(--wf-border);
+        border-radius: 1rem;
+        box-shadow: 0 7px 20px rgba(15, 23, 42, 0.08);
+      }
+
+      .wf-panel-section {
+        padding: 1rem;
+        border-bottom: 1px solid var(--wf-border);
+      }
+
+      .wf-panel-section:last-child {
+        border-bottom: 0;
+      }
+
+      .wf-panel-title {
+        font-size: 0.78rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: #334155;
+        margin-bottom: 0.6rem;
+      }
+
+      .wf-roles {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4rem;
+      }
+
+      .wf-toc {
+        display: grid;
+        gap: 0.33rem;
+      }
+
+      .wf-toc a {
+        display: block;
+        padding: 0.43rem 0.52rem;
+        border-radius: 0.55rem;
+        color: #334155;
+        font-size: 0.82rem;
+        line-height: 1.35;
+        transition: background 120ms ease, color 120ms ease;
+      }
+
+      .wf-toc a:hover,
+      .wf-toc a.is-active {
+        background: #e0e7ff;
+        color: #312e81;
+        font-weight: 700;
+      }
+
+      .wf-content {
+        padding: 1.2rem 1.15rem;
+      }
+
+      .help-workflow-body {
+        display: grid;
+        gap: 0.45rem;
+      }
+
+      .help-workflow-body h2 {
+        font-size: 1.4rem;
+        font-weight: 800;
+        color: #1f2937;
+        margin-top: 1.25rem;
+        padding-top: 1.05rem;
+        border-top: 1px solid #dbe7f0;
+        scroll-margin-top: 6rem;
+      }
+
+      .help-workflow-body h2:first-of-type {
+        margin-top: 0.15rem;
+        padding-top: 0;
+        border-top: 0;
+      }
+
+      .help-workflow-body h3 {
+        font-size: 1.08rem;
+        font-weight: 700;
+        color: #1e293b;
+        margin-top: 0.88rem;
+        scroll-margin-top: 6rem;
+      }
+
+      .help-workflow-body p,
+      .help-workflow-body li {
+        color: var(--wf-muted);
+        line-height: 1.67;
+      }
+
+      .help-workflow-body ol,
+      .help-workflow-body ul {
+        margin-left: 1.2rem;
+      }
+
+      .help-workflow-body code {
+        background: #eef2ff;
+        color: #3730a3;
+        border: 1px solid #c7d2fe;
+        padding: 0.1rem 0.35rem;
+        border-radius: 0.3rem;
+        font-size: 0.86em;
+      }
+
+      .wf-mobile-toc {
+        margin-top: 0.95rem;
+      }
+
+      @media (min-width: 1024px) {
+        .wf-layout {
+          grid-template-columns: 270px minmax(0, 1fr);
+          align-items: start;
+        }
+
+        .wf-sidebar {
+          position: sticky;
+          top: 1rem;
+        }
+      }
+
+      @media (max-width: 1023px) {
+        .wf-sidebar .wf-panel-section:nth-child(1) {
+          display: none;
+        }
+      }
+    </style>
+  <script type="module" src="/js/telemetry.js?v=2"></script>
+  <script type="module" src="./js/help-context.js?v=1"></script>
+</head>
+<body class="text-gray-900 min-h-screen flex flex-col">
+    <div id="header-container"></div>
+    <main class="flex-grow">
+      <div class="wf-shell">
+        <a href="help.html" data-help-back-link class="wf-back-link">&larr; Back to Help Center</a>
+        <section class="wf-hero">
+          <p class="wf-kicker">Workflow Guide</p>
+          <h1 class="wf-title">Share a Family Schedule Link</h1>
+          <p class="wf-summary">Use this workflow when a parent wants grandparents, relatives, or caregivers to view players, teams, upcoming events, and recent results without creating an ALL PLAYS account.</p>
+          <div class="wf-meta-row">
+            <span class="wf-meta-pill">4 min read</span>
+            <span class="wf-meta-pill">Updated from live product pages</span>
+          </div>
+        </section>
+
+        <section class="wf-layout">
+          <aside class="wf-sidebar">
+            <div class="wf-panel">
+              <div class="wf-panel-section">
+                <div class="wf-panel-title">On this page</div>
+                <nav id="workflow-toc" class="wf-toc"></nav>
+              </div>
+              <div class="wf-panel-section">
+                <div class="wf-panel-title">Who can use this</div>
+                <div class="wf-roles"><span class="wf-role-chip">Parent</span></div>
+              </div>
+            </div>
+          </aside>
+
+          <article class="wf-panel wf-content">
+            <div id="workflow-mobile-toc" class="wf-mobile-toc"></div>
+            <div class="help-workflow-body">
+              <h2 id="overview">Overview</h2>
+              <p>Family sharing creates a private link from the app. The link opens <code>/app/#/family/:token</code> and shows a read-only family page with shared players, teams, upcoming games and practices, recent results, and external calendar events that are attached to the token.</p>
+              <p>The legacy <code>family.html?token=...</code> page still works during transition, but new app-created links open the app-native family page first.</p>
+
+              <h2 id="who-is-this-for">Who Is This For</h2>
+              <ul>
+                <li>Parents who want to share schedule visibility with relatives, babysitters, or caregivers.</li>
+                <li>Family members who need read-only access and do not need team chat, RSVP, fees, or roster editing.</li>
+                <li>Admins or coaches helping a parent confirm where the share workflow lives in the app.</li>
+              </ul>
+
+              <h2 id="prerequisites">Prerequisites</h2>
+              <ul>
+                <li>The parent is signed in to the app and has at least one linked player.</li>
+                <li>The player is connected to a team schedule in ALL PLAYS.</li>
+                <li>Optional external calendar feed URLs are valid web links if the parent wants to include outside calendars.</li>
+              </ul>
+
+              <h2 id="step-by-step-workflow">Step-by-Step Workflow</h2>
+              <ol>
+                <li>Open the app and go to <strong>Home</strong>, then choose <strong>Family share</strong>, or open <strong>Add</strong> and choose <strong>Share with family</strong>.</li>
+                <li>Confirm the players shown in the Family share tool. If no players appear, link a player first from the parent access workflow.</li>
+                <li>Enter a label such as Grandma, Uncle Chris, or Babysitter.</li>
+                <li>Optionally paste external calendar feed URLs, one per line.</li>
+                <li>Select <strong>Create share link</strong>. The app copies the link when the browser allows clipboard access.</li>
+                <li>Select <strong>Share</strong> to use native sharing on iOS or Android, or copy the link and send it through your preferred message app.</li>
+                <li>Have the recipient open the link. They should see the family page in the app flow, including players, teams, upcoming events, and recent results.</li>
+                <li>Return to Family share any time to refresh, edit feeds, or revoke a link.</li>
+              </ol>
+
+              <h2 id="what-family-sees">What Family Sees</h2>
+              <p>Recipients can open the link without signing in. The family page is read-only and shows shared players, team names, schedule cards, event locations, final scores when available, and an expired/revoked message when a token is no longer valid.</p>
+              <p>Recipients do not get team chat, RSVP controls, fee access, roster editing, private contacts, or admin tools from this link.</p>
+
+              <h2 id="revoke-or-refresh">Revoke or Refresh Access</h2>
+              <ul>
+                <li>Use <strong>Revoke</strong> when a link should stop working immediately.</li>
+                <li>Create a fresh link when an old link expires or when the shared audience changes.</li>
+                <li>Edit calendar feeds from the existing token card when only outside calendar sources need to change.</li>
+              </ul>
+
+              <h2 id="common-questions">Common Questions</h2>
+              <h3>Does the family member need an account?</h3>
+              <p>No. Family share links are designed for no-login viewing.</p>
+              <h3>Can a family member RSVP from this page?</h3>
+              <p>No. Use parent account access or public RSVP links when a response is needed.</p>
+              <h3>Why does the link open the app path?</h3>
+              <p>New links use <code>https://allplays.ai/app/#/family/:token</code> so the same app flow works on web and native shells.</p>
+
+              <h2 id="recovery-troubleshooting">Recovery &amp; Troubleshooting</h2>
+              <ul>
+                <li>Link says expired: ask the parent to create a new family share link.</li>
+                <li>Link says revoked: ask the parent to send a replacement if access is still needed.</li>
+                <li>No events appear: confirm the linked team schedule has upcoming games or practices.</li>
+                <li>External calendar warning appears: the outside calendar feed may be blocked or unavailable; ALL PLAYS events should still load.</li>
+              </ul>
+
+              <h2 id="related-workflows">Related Workflows</h2>
+              <ul>
+                <li><a href="workflow-choose-home-dashboard.html" style="color:#4338ca;font-weight:600;">Use the Right Dashboard</a> - find the parent surfaces that lead to family tools.</li>
+                <li><a href="workflow-join-team.html" style="color:#4338ca;font-weight:600;">Join a Team from an Invite</a> - connect the parent account to teams and players first.</li>
+                <li><a href="workflow-schedule.html" style="color:#4338ca;font-weight:600;">Manage the Schedule</a> - publish games and practices that family viewers will see.</li>
+                <li><a href="workflow-communication.html" style="color:#4338ca;font-weight:600;">Coordinate Team Messages and Availability</a> - use RSVP and communication workflows when relatives need more than read-only access.</li>
+              </ul>
+
+              <h2 id="need-more-help">Need More Help</h2>
+              <p>Share the token label, the player/team name, and the exact message shown on the family page so a parent or team admin can confirm whether the link is active, expired, revoked, or missing schedule data.</p>
+            </div>
+          </article>
+        </section>
+      </div>
+    </main>
+    <div id="footer-container"></div>
+
+    <script type="module">
+      import { checkAuth } from './js/auth.js?v=14';
+      import { renderHeader, renderFooter } from './js/utils.js?v=15';
+
+      renderFooter(document.getElementById('footer-container'));
+      checkAuth((user) => {
+        renderHeader(document.getElementById('header-container'), user);
+      });
+    </script>
+    <script>
+      (function() {
+        const headings = Array.from(document.querySelectorAll('.help-workflow-body h2[id]'));
+        const toc = document.getElementById('workflow-toc');
+        const mobileToc = document.getElementById('workflow-mobile-toc');
+        if (!toc || !headings.length) return;
+
+        const links = headings.map((h) => {
+          const a = document.createElement('a');
+          a.href = '#' + h.id;
+          a.textContent = h.textContent || h.id;
+          toc.appendChild(a);
+          return a;
+        });
+        const allLinks = [...links];
+        let mobileWrapper = null;
+        let preserveHashActiveUntil = 0;
+
+        const sectionById = new Map(headings.map((h) => [h.id, h]));
+        const setActive = (activeId) => {
+          let active = sectionById.get(activeId) || headings[0];
+          if (!sectionById.has(activeId)) {
+            for (const h of headings) {
+              if (h.getBoundingClientRect().top <= 140) active = h;
+            }
+          }
+          allLinks.forEach((a) => a.classList.toggle('is-active', a.getAttribute('href') === '#' + active.id));
+        };
+
+        const addLinkHandlers = (tocLinks) => {
+          tocLinks.forEach((a) => {
+            a.addEventListener('click', () => {
+              setActive(a.getAttribute('href').slice(1));
+              if (mobileWrapper && mobileWrapper.contains(a)) {
+                mobileWrapper.open = false;
+              }
+            });
+          });
+        };
+
+        const ensureMobileToc = () => {
+          if (!mobileToc || mobileWrapper || window.innerWidth >= 1024) return;
+          const wrapper = document.createElement('details');
+          wrapper.className = 'wf-panel-section wf-panel';
+          wrapper.style.marginBottom = '0.95rem';
+          wrapper.style.padding = '0.8rem 1rem';
+          const summary = document.createElement('summary');
+          summary.textContent = 'Jump to section';
+          summary.style.cursor = 'pointer';
+          summary.style.fontWeight = '700';
+          summary.style.color = '#0f172a';
+          const list = toc.cloneNode(true);
+          list.style.marginTop = '0.6rem';
+          const mobileLinks = Array.from(list.querySelectorAll('a'));
+          allLinks.push(...mobileLinks);
+          addLinkHandlers(mobileLinks);
+          wrapper.appendChild(summary);
+          wrapper.appendChild(list);
+          mobileToc.appendChild(wrapper);
+          mobileWrapper = wrapper;
+          setActive(window.location.hash.slice(1) || null);
+        };
+
+        const syncHashActiveAfterResize = () => {
+          if (!window.location.hash) return;
+          preserveHashActiveUntil = performance.now() + 120;
+          const activeHash = window.location.hash.slice(1);
+          window.requestAnimationFrame(() => {
+            window.requestAnimationFrame(() => setActive(activeHash));
+          });
+          window.setTimeout(() => {
+            setActive(activeHash);
+            preserveHashActiveUntil = 0;
+          }, 80);
+        };
+
+        addLinkHandlers(links);
+        ensureMobileToc();
+
+        window.addEventListener('scroll', () => {
+          window.requestAnimationFrame(() => {
+            if (window.location.hash && performance.now() < preserveHashActiveUntil) {
+              setActive(window.location.hash.slice(1));
+              return;
+            }
+            setActive(null);
+          });
+        }, { passive: true });
+        window.addEventListener('hashchange', () => setActive(window.location.hash.slice(1)));
+        window.addEventListener('resize', () => {
+          ensureMobileToc();
+          syncHashActiveAfterResize();
+        }, { passive: true });
+        setActive(window.location.hash.slice(1) || null);
+      })();
+    </script>
+</body>
+</html>
