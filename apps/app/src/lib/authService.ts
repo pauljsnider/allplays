@@ -230,8 +230,8 @@ export function describeAuthError(error: any) {
     return 'Enter a valid email address.';
   }
 
-  if (code === 'auth/too-many-requests') {
-    return 'Too many attempts. Wait a bit and try again.';
+  if (code === 'auth/too-many-requests' || message.includes('TOO_MANY_ATTEMPTS_TRY_LATER')) {
+    return 'Too many attempts. Wait a few minutes and try again.';
   }
 
   if (code === 'auth/network-request-failed') {
@@ -1215,14 +1215,26 @@ export async function sendResetEmail(email: string) {
   }
 }
 
+// Continue URL the verification email returns to. Points back into the app's
+// verify-pending route so the user lands on our branded "check your email"
+// screen instead of Firebase's default hosted handler.
+export function buildVerificationContinueUrl() {
+  const base = (typeof window !== 'undefined' && /^https?:$/i.test(window.location.protocol))
+    ? window.location.origin
+    : 'https://allplays.ai';
+  return `${base}/app/#/verify-pending`;
+}
+
 export async function resendVerificationEmail() {
+  const actionCodeSettings = { url: buildVerificationContinueUrl(), handleCodeInApp: false };
   const user = getCurrentFirebaseUser();
   if (!user) {
     const idToken = await getNativeAuthIdToken();
     if (idToken) {
       await callFirebaseAuthRest('accounts:sendOobCode', {
         requestType: 'VERIFY_EMAIL',
-        idToken
+        idToken,
+        continueUrl: actionCodeSettings.url
       });
       return;
     }
@@ -1232,7 +1244,7 @@ export async function resendVerificationEmail() {
   if (typeof user.reload === 'function') {
     await user.reload();
   }
-  await sendEmailVerification(user);
+  await sendEmailVerification(user, actionCodeSettings);
 }
 
 async function refreshNativeFallbackVerification() {
