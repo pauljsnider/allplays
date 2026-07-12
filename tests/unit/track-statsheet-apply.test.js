@@ -204,7 +204,9 @@ describe('track statsheet apply helpers', () => {
     it('clears tracked, live, and private player state when replacing previously tracked game data', () => {
         expect(trackStatsheetSource).toContain("const privateStatsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/privatePlayerStats`));");
         expect(trackStatsheetSource).toContain("const liveEventsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/liveEvents`));");
-        expect(trackStatsheetSource).toMatch(/if \(eventsSnap\.size > 0 \|\| statsSnap\.size > 0 \|\| liveEventsSnap\.size > 0 \|\| privateStatsSnap\.size > 0\) \{[\s\S]*await Promise\.all\(eventsSnap\.docs\.map\(docItem => deleteDoc\(docItem\.ref\)\)\);[\s\S]*await Promise\.all\(statsSnap\.docs\.map\(docItem => deleteDoc\(docItem\.ref\)\)\);[\s\S]*await Promise\.all\(liveEventsSnap\.docs\.map\(docItem => deleteDoc\(docItem\.ref\)\)\);[\s\S]*await Promise\.all\(privateStatsSnap\.docs\.map\(docItem => deleteDoc\(docItem\.ref\)\)\);/);
+        expect(trackStatsheetSource).toContain('const batch = writeBatch(db);');
+        expect(trackStatsheetSource).toMatch(/if \(hasExistingTrackedData\) \{[\s\S]*applyStatus\.textContent = 'Preparing replacement stats…';[\s\S]*eventsSnap\.docs\.forEach\(docItem => batch\.delete\(docItem\.ref\)\);[\s\S]*statsSnap\.docs\.forEach\(docItem => batch\.delete\(docItem\.ref\)\);[\s\S]*liveEventsSnap\.docs\.forEach\(docItem => batch\.delete\(docItem\.ref\)\);[\s\S]*privateStatsSnap\.docs\.forEach\(docItem => batch\.delete\(docItem\.ref\)\);[\s\S]*\}/);
+        expect(trackStatsheetSource).toContain('const commitPromise = batch.commit();');
         expect(buildTrackStatsheetApplyPlan().gameUpdate).toMatchObject({
             liveStatus: 'completed',
             liveHasData: false,
