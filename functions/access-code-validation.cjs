@@ -104,6 +104,7 @@ module.exports = {
   buildSafeAccessCodeData,
   getExpirationTime,
   isAccessCodeExpired,
+  isAccessCodeInactive,
   isAccessCodeRevoked,
   validateAccessCodeCandidates
 };

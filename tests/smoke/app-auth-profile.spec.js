@@ -735,7 +735,7 @@ test('profile exposes account, notification, invite, verification, password, upl
     await page.getByRole('button', { name: 'Set password' }).click();
     await expect(page.getByText('Password set successfully.')).toBeVisible();
     await page.getByRole('button', { name: 'Send password reset' }).click();
-    await expect(page.getByText('Password reset email sent.')).toBeVisible();
+    await expect(page.getByText('Password reset email queued.')).toBeVisible();
     await page.getByRole('button', { name: 'Sign out' }).last().click();
 
     const profileCalls = await page.evaluate(() => ({

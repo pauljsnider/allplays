@@ -27,12 +27,18 @@ describe('authentication email delivery routing', () => {
         const functionsSource = read('functions/index.js');
         const authEmailCoreSource = read('functions/auth-email-core.cjs');
         const callablesSource = read('functions/auth-email-callables.cjs');
+        const passwordResetWorkerSource = read('functions/auth-email-password-reset-worker.cjs');
         const deliveryStoreSource = read('functions/auth-email-delivery-store.cjs');
+        const resetCallableStart = callablesSource.indexOf('async function queuePasswordResetEmail');
+        const resetCallableEnd = callablesSource.indexOf('\n  async function resolveVerificationUser', resetCallableStart);
+        const resetCallableSource = callablesSource.slice(resetCallableStart, resetCallableEnd);
 
-        expect(callablesSource).toContain('generatePasswordResetLink');
+        expect(resetCallableSource).toContain('enqueuePasswordResetRequest');
+        expect(resetCallableSource).not.toContain('getUserByEmail');
+        expect(passwordResetWorkerSource).toContain('generatePasswordResetLink');
         expect(callablesSource).toContain('generateEmailVerificationLink');
         expect(callablesSource).toContain('generateSignInWithEmailLink');
-        expect(deliveryStoreSource).toContain("firestore.collection('mail').doc(buildMailDocId");
+        expect(deliveryStoreSource).toContain("firestore.collection('mail').doc(deliveryId || buildMailDocId");
         expect(functionsSource).toContain('createAuthEmailCallableHandlers');
         expect(functionsSource).toContain('createAuthEmailDeliveryStore');
         expect(authEmailCoreSource).toContain("provider: 'resend'");
@@ -49,5 +55,15 @@ describe('authentication email delivery routing', () => {
 
         expect(cooldownBranch).toContain('return { queued: false, existingUser };');
         expect(cooldownBranch).not.toContain('queued: true');
+    });
+
+    it('keeps deferred password-reset requests server-only', () => {
+        const rulesSource = read('firestore.rules');
+        const requestRuleStart = rulesSource.indexOf('match /authEmailRequests/{requestId}');
+        const requestRuleEnd = rulesSource.indexOf('\n    }', requestRuleStart);
+        const requestRule = rulesSource.slice(requestRuleStart, requestRuleEnd);
+
+        expect(requestRuleStart).toBeGreaterThan(-1);
+        expect(requestRule).toContain('allow read, write: if false;');
     });
 });

@@ -81,6 +81,7 @@ const {
 } = require('./auth-email-core.cjs');
 const { createAuthEmailCallableHandlers } = require('./auth-email-callables.cjs');
 const { createAuthEmailDeliveryStore } = require('./auth-email-delivery-store.cjs');
+const { createPasswordResetEmailWorker } = require('./auth-email-password-reset-worker.cjs');
 const { findOwnedInviteCode: findOwnedAuthEmailInviteCode } = require('./auth-email-invite-store.cjs');
 const {
   normalizeEmail,
@@ -107,6 +108,7 @@ const {
 } = require('./registration-payment-reminders-core.cjs');
 const {
   buildGenericPreAuthAccessCodeValidationResult,
+  isAccessCodeInactive,
   validateAccessCodeCandidates
 } = require('./access-code-validation.cjs');
 const {
@@ -1959,6 +1961,7 @@ const authEmailDeliveryStore = createAuthEmailDeliveryStore({
 const reserveAuthEmailDelivery = authEmailDeliveryStore.reserve;
 const releaseAuthEmailDelivery = authEmailDeliveryStore.release;
 const queueAuthEmailDelivery = authEmailDeliveryStore.queue;
+const enqueuePasswordResetRequest = authEmailDeliveryStore.enqueuePasswordResetRequest;
 
 function buildInviteMailDocId(codeId) {
   const safeCodeId = String(codeId || '').replace(/[^\w.-]+/g, '_').slice(0, 240);
@@ -2026,16 +2029,39 @@ const authEmailCallableHandlers = createAuthEmailCallableHandlers({
   reserveDelivery: reserveAuthEmailDelivery,
   releaseDelivery: releaseAuthEmailDelivery,
   queueDelivery: queueAuthEmailDelivery,
+  enqueuePasswordResetRequest,
   getActionSettings: getAuthEmailActionSettings,
   getInviteContinueUrl,
   findOwnedInviteCode,
   allowedInviteTypes: EMAIL_LINK_INVITE_TYPES,
-  isInviteExpired: isParentInviteExpired
+  isInviteInactive: isAccessCodeInactive
 });
 
 exports.queuePasswordResetEmail = functions.https.onCall(authEmailCallableHandlers.queuePasswordResetEmail);
 exports.queueEmailVerification = functions.https.onCall(authEmailCallableHandlers.queueEmailVerification);
 exports.queueInviteSignInEmail = functions.https.onCall(authEmailCallableHandlers.queueInviteSignInEmail);
+
+const passwordResetEmailWorker = createPasswordResetEmailWorker({
+  auth: admin.auth(),
+  logger: functions.logger,
+  types: AUTH_EMAIL_TYPES,
+  normalizeEmail: normalizeAuthEmail,
+  isValidEmail: isValidAuthEmail,
+  getActionSettings: getAuthEmailActionSettings,
+  queueDelivery: queueAuthEmailDelivery,
+  releaseDelivery: releaseAuthEmailDelivery,
+  isAlreadyExistsError
+});
+
+exports.processPasswordResetEmailRequest = functions.firestore
+  .document('authEmailRequests/{requestId}')
+  .onCreate((snapshot, context) => passwordResetEmailWorker.processPasswordResetRequest(
+    snapshot.data(),
+    {
+      requestId: context.params.requestId,
+      deleteRequest: () => snapshot.ref.delete()
+    }
+  ));
 
 exports.queueInviteEmail = functions.https.onCall(async (data, context) => {
   const uid = String(context.auth?.uid || '').trim();

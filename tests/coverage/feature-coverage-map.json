@@ -133,6 +133,7 @@
                 "autoAcceptParentInviteForExistingUser",
                 "confirmParentAccountMerge",
                 "previewAccountMerge",
+                "processPasswordResetEmailRequest",
                 "queueEmailVerification",
                 "queueInviteSignInEmail",
                 "queuePasswordResetEmail",
@@ -144,7 +145,10 @@
             ],
             "unitTests": [
                 "functions/test/account-merge-core.test.cjs",
+                "functions/test/auth-email-callables.test.cjs",
                 "functions/test/auth-email-core.test.cjs",
+                "functions/test/auth-email-delivery-store.test.cjs",
+                "functions/test/auth-email-password-reset-worker.test.cjs",
                 "tests/unit/accept-invite-flow.test.js",
                 "tests/unit/accept-invite-page.test.js",
                 "tests/unit/access-code-validation.test.js",

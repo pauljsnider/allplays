@@ -17,17 +17,13 @@ const types = {
   SIGN_IN: 'sign_in'
 };
 
-function userNotFound() {
-  return Object.assign(new Error('missing'), { code: 'auth/user-not-found' });
-}
-
 function createHarness(overrides = {}) {
   const calls = {
     order: [],
     queued: [],
     released: [],
     reserved: [],
-    sleeps: [],
+    passwordResetRequests: [],
     findOwned: []
   };
   const auth = {
@@ -41,10 +37,6 @@ function createHarness(overrides = {}) {
     async verifyIdToken(token) {
       calls.order.push(`verify:${token}`);
       return { uid: 'native-user' };
-    },
-    async generatePasswordResetLink(email) {
-      calls.order.push(`reset-link:${email}`);
-      return 'https://identity.example/reset';
     },
     async generateEmailVerificationLink(email) {
       return `https://identity.example/verify?email=${encodeURIComponent(email)}`;
@@ -76,6 +68,10 @@ function createHarness(overrides = {}) {
     async queueDelivery(job) {
       calls.queued.push(job);
     },
+    async enqueuePasswordResetRequest(email) {
+      calls.order.push(`enqueue:${email}`);
+      calls.passwordResetRequests.push(email);
+    },
     getActionSettings: (type, url) => ({ type, url: url || null }),
     getInviteContinueUrl: (code, inviteType) => `https://allplays.ai/accept-invite.html?code=${code}&type=${inviteType}`,
     async findOwnedInviteCode(...args) {
@@ -91,12 +87,11 @@ function createHarness(overrides = {}) {
       };
     },
     allowedInviteTypes: new Set(['parent_invite', 'household_invite', 'coparent_invite', 'admin_invite']),
-    isInviteExpired: () => false,
-    now: () => 1_000,
-    async sleep(milliseconds) {
-      calls.sleeps.push(milliseconds);
-    },
-    minimumPasswordResetResponseMs: 0,
+    isInviteInactive: (data) => data.used === true ||
+      data.revoked === true ||
+      data.active === false ||
+      ['removed', 'cancelled', 'revoked'].includes(String(data.status || '').trim().toLowerCase()) ||
+      data.expiresAt === 'past',
     ...overrides,
     auth
   };
@@ -112,17 +107,16 @@ test('password reset rejects malformed email before backend work', async () => {
   assert.deepEqual(calls.reserved, []);
 });
 
-test('password reset reserves before lookup and is neutral for a missing account', async () => {
-  const { handlers, calls } = createHarness({
-    auth: { async getUserByEmail() { calls.order.push('lookup:missing'); throw userNotFound(); } }
-  });
+test('password reset reserves and enqueues identical deferred work without looking up the account', async () => {
+  const { handlers, calls } = createHarness();
   const result = await handlers.queuePasswordResetEmail({ email: ' Missing@Example.com ' });
   assert.deepEqual(result, { queued: true });
-  assert.deepEqual(calls.order.slice(0, 2), ['reserve:password_reset', 'lookup:missing']);
+  assert.deepEqual(calls.order, ['reserve:password_reset', 'enqueue:missing@example.com']);
+  assert.deepEqual(calls.passwordResetRequests, ['missing@example.com']);
   assert.deepEqual(calls.queued, []);
 });
 
-test('password reset is neutral for rate limit, cooldown, and delivery failure', async () => {
+test('password reset is neutral for rate limit, cooldown, and request-enqueue failure', async () => {
   const rateLimited = createHarness({
     checkPasswordResetRateLimit: () => ({ allowed: false, retryAfterSeconds: 30 })
   });
@@ -131,31 +125,18 @@ test('password reset is neutral for rate limit, cooldown, and delivery failure',
 
   const cooldown = createHarness({ reserveDelivery: async () => false });
   assert.deepEqual(await cooldown.handlers.queuePasswordResetEmail({ email: 'coach@example.com' }), { queued: true });
-  assert.equal(cooldown.calls.order.some((entry) => entry.startsWith('lookup:')), false);
+  assert.deepEqual(cooldown.calls.passwordResetRequests, []);
 
   const failed = createHarness({
-    auth: { async generatePasswordResetLink() { throw Object.assign(new Error('down'), { code: 'unavailable' }); } }
+    async enqueuePasswordResetRequest() { throw Object.assign(new Error('down'), { code: 'unavailable' }); }
   });
   assert.deepEqual(await failed.handlers.queuePasswordResetEmail({ email: 'coach@example.com' }), { queued: true });
   assert.deepEqual(failed.calls.released, [[types.PASSWORD_RESET, 'coach@example.com', '']]);
 });
 
-test('password reset queues the expected job and enforces a minimum neutral response duration', async () => {
-  const { handlers, calls } = createHarness({ minimumPasswordResetResponseMs: 250 });
-  assert.deepEqual(await handlers.queuePasswordResetEmail({ email: 'coach@example.com' }), { queued: true });
-  assert.deepEqual(calls.sleeps, [250]);
-  assert.deepEqual(calls.queued, [{
-    type: types.PASSWORD_RESET,
-    email: 'coach@example.com',
-    actionUrl: 'https://identity.example/reset',
-    displayName: 'Recipient',
-    uid: 'recipient-1'
-  }]);
-});
-
 test('password reset remains neutral when cleanup of a failed reservation also fails', async () => {
   const { handlers } = createHarness({
-    auth: { async generatePasswordResetLink() { throw new Error('link failure'); } },
+    async enqueuePasswordResetRequest() { throw new Error('request failure'); },
     async releaseDelivery() { throw new Error('release failure'); }
   });
   assert.deepEqual(await handlers.queuePasswordResetEmail({ email: 'coach@example.com' }), { queued: true });
@@ -217,8 +198,8 @@ test('invite email requires auth and caller-owned eligible invite', async () => 
   );
 });
 
-test('invite email rejects used, revoked, and expired invites', async () => {
-  for (const condition of ['used', 'revoked', 'expired']) {
+test('invite email rejects every invite state that redemption treats as inactive', async () => {
+  for (const condition of ['used', 'revoked', 'inactive', 'removed', 'cancelled', 'status-revoked', 'expired']) {
     const { handlers } = createHarness({
       async findOwnedInviteCode() {
         return {
@@ -228,11 +209,13 @@ test('invite email rejects used, revoked, and expired invites', async () => {
             email: 'recipient@example.com',
             used: condition === 'used',
             revoked: condition === 'revoked',
+            active: condition === 'inactive' ? false : undefined,
+            status: condition === 'status-revoked' ? 'revoked' :
+              ['removed', 'cancelled'].includes(condition) ? condition : undefined,
             expiresAt: condition === 'expired' ? 'past' : null
           }
         };
-      },
-      isInviteExpired: (value) => value === 'past'
+      }
     });
     await assert.rejects(
       handlers.queueInviteSignInEmail({ code: 'ABCD1234' }, { auth: { uid: 'owner-1' } }),

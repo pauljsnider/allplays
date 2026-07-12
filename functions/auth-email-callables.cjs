@@ -15,14 +15,12 @@ function createAuthEmailCallableHandlers({
   reserveDelivery,
   releaseDelivery,
   queueDelivery,
+  enqueuePasswordResetRequest,
   getActionSettings,
   getInviteContinueUrl,
   findOwnedInviteCode,
   allowedInviteTypes,
-  isInviteExpired,
-  now = Date.now,
-  sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
-  minimumPasswordResetResponseMs = 250
+  isInviteInactive
 }) {
   async function safeRelease(type, email, scope = '') {
     try {
@@ -35,21 +33,12 @@ function createAuthEmailCallableHandlers({
     }
   }
 
-  async function neutralPasswordResetResponse(startedAt) {
-    const remaining = minimumPasswordResetResponseMs - Math.max(0, now() - startedAt);
-    if (remaining > 0) {
-      await sleep(remaining);
-    }
-    return { queued: true };
-  }
-
   async function queuePasswordResetEmail(data, context = {}) {
     const email = normalizeEmail(data?.email);
     if (!isValidEmail(email)) {
       throw new HttpsError('invalid-argument', 'Enter a valid email address.');
     }
 
-    const startedAt = now();
     let reserved = false;
     try {
       const requestLimit = checkPasswordResetRateLimit(context.rawRequest || {});
@@ -57,53 +46,28 @@ function createAuthEmailCallableHandlers({
         logger.warn('Password-reset email request rate limit reached.', {
           retryAfterSeconds: requestLimit.retryAfterSeconds
         });
-        return await neutralPasswordResetResponse(startedAt);
+        return { queued: true };
       }
 
       reserved = await reserveDelivery(types.PASSWORD_RESET, email);
       if (!reserved) {
-        return await neutralPasswordResetResponse(startedAt);
-      }
-
-      let user;
-      try {
-        user = await auth.getUserByEmail(email);
-      } catch (error) {
-        if (!isAuthUserNotFoundError(error)) {
-          logger.error('Unable to look up password-reset recipient.', { code: error?.code || null });
-          await safeRelease(types.PASSWORD_RESET, email);
-          reserved = false;
-        }
-        return await neutralPasswordResetResponse(startedAt);
+        return { queued: true };
       }
 
       try {
-        const actionUrl = await auth.generatePasswordResetLink(
-          email,
-          getActionSettings(types.PASSWORD_RESET)
-        );
-        await queueDelivery({
-          type: types.PASSWORD_RESET,
-          email,
-          actionUrl,
-          displayName: user.displayName || '',
-          uid: user.uid
-        });
+        await enqueuePasswordResetRequest(email);
       } catch (error) {
-        logger.error('Unable to generate or queue password-reset email.', {
-          code: error?.code || null,
-          uid: user.uid
-        });
+        logger.error('Unable to queue password-reset processing request.', { code: error?.code || null });
         await safeRelease(types.PASSWORD_RESET, email);
         reserved = false;
       }
-      return await neutralPasswordResetResponse(startedAt);
+      return { queued: true };
     } catch (error) {
       if (reserved) {
         await safeRelease(types.PASSWORD_RESET, email);
       }
       logger.error('Unable to process password-reset email request.', { code: error?.code || null });
-      return await neutralPasswordResetResponse(startedAt);
+      return { queued: true };
     }
   }
 
@@ -191,7 +155,7 @@ function createAuthEmailCallableHandlers({
     }
     const inviteType = String(invite.data.type || '').trim().toLowerCase();
     const email = normalizeEmail(invite.data.email);
-    if (!isValidEmail(email) || invite.data.used === true || invite.data.revoked === true || isInviteExpired(invite.data.expiresAt)) {
+    if (!isValidEmail(email) || isInviteInactive(invite.data)) {
       throw new HttpsError('failed-precondition', 'Invite is not eligible for email delivery.');
     }
 
@@ -242,6 +206,5 @@ function createAuthEmailCallableHandlers({
 }
 
 module.exports = {
-  createAuthEmailCallableHandlers,
-  isAuthUserNotFoundError
+  createAuthEmailCallableHandlers
 };

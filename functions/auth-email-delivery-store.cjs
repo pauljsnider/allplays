@@ -53,7 +53,8 @@ function createAuthEmailDeliveryStore({
     displayName = '',
     contextLabel = '',
     uid = null,
-    inviteCodeId = null
+    inviteCodeId = null,
+    deliveryId = null
   }) {
     const job = buildMailJob({
       type,
@@ -64,7 +65,7 @@ function createAuthEmailDeliveryStore({
       uid,
       inviteCodeId
     });
-    const mailRef = firestore.collection('mail').doc(buildMailDocId(type, email));
+    const mailRef = firestore.collection('mail').doc(deliveryId || buildMailDocId(type, email));
     await mailRef.create({
       ...job,
       createdAt: FieldValue.serverTimestamp()
@@ -72,7 +73,17 @@ function createAuthEmailDeliveryStore({
     return mailRef.id;
   }
 
-  return { reserve, release, queue };
+  async function enqueuePasswordResetRequest(email) {
+    const requestRef = firestore.collection('authEmailRequests').doc();
+    await requestRef.create({
+      type: 'password_reset',
+      email: normalizeEmail(email),
+      createdAt: FieldValue.serverTimestamp()
+    });
+    return requestRef.id;
+  }
+
+  return { reserve, release, queue, enqueuePasswordResetRequest };
 }
 
 module.exports = { createAuthEmailDeliveryStore };

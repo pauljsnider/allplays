@@ -6,6 +6,7 @@ const { createAuthEmailDeliveryStore } = require('../auth-email-delivery-store.c
 
 function createStore({ nextAllowedAt = null, deleteError = null } = {}) {
   const calls = { sets: [], creates: [], deletes: [], warnings: [] };
+  let autoId = 0;
   const refs = new Map();
   const getRef = (collectionName, id) => {
     const key = `${collectionName}/${id}`;
@@ -26,7 +27,7 @@ function createStore({ nextAllowedAt = null, deleteError = null } = {}) {
   };
   const firestore = {
     collection(name) {
-      return { doc: (id) => getRef(name, id) };
+      return { doc: (id) => getRef(name, id || `auto-${++autoId}`) };
     },
     async runTransaction(callback) {
       return callback({
@@ -99,4 +100,28 @@ test('delivery queue creates the Resend mail job with a server timestamp', async
       createdAt: { server: true }
     }
   }]);
+});
+
+test('password-reset request queue stores only deferred server work', async () => {
+  const { store, calls } = createStore();
+  assert.equal(await store.enqueuePasswordResetRequest(' Coach@Example.com '), 'auto-1');
+  assert.deepEqual(calls.creates, [{
+    path: 'authEmailRequests/auto-1',
+    value: {
+      type: 'password_reset',
+      email: 'coach@example.com',
+      createdAt: { server: true }
+    }
+  }]);
+});
+
+test('delivery queue accepts a deterministic id for trigger retry idempotency', async () => {
+  const { store, calls } = createStore();
+  await store.queue({
+    type: 'password_reset',
+    email: 'coach@example.com',
+    actionUrl: 'https://identity.example/reset',
+    deliveryId: 'auth_password_reset_request-1'
+  });
+  assert.equal(calls.creates[0].path, 'mail/auth_password_reset_request-1');
 });
