@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const familyShareMocks = vi.hoisted(() => ({
+  functions: { name: 'functions' },
   getFamilyShareToken: vi.fn(),
+  httpsCallable: vi.fn(),
   resolveFamilyShareTokenChildren: vi.fn()
 }));
 const scheduleDbMocks = vi.hoisted(() => ({
@@ -28,6 +30,10 @@ describe('familyShareViewerService', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-07-12T12:00:00Z'));
     familyShareMocks.getFamilyShareToken.mockReset();
+    familyShareMocks.httpsCallable.mockReset();
+    familyShareMocks.httpsCallable.mockReturnValue(vi.fn(async () => {
+      throw new Error('callable unavailable');
+    }));
     familyShareMocks.resolveFamilyShareTokenChildren.mockReset();
     scheduleDbMocks.getGames.mockReset();
     scheduleDbMocks.getTeam.mockReset();
@@ -88,6 +94,58 @@ describe('familyShareViewerService', () => {
     expect(familyShareMocks.resolveFamilyShareTokenChildren).not.toHaveBeenCalled();
     expect(scheduleDbMocks.getTeam).toHaveBeenCalledWith('team-1');
     expect(scheduleDbMocks.getGames).toHaveBeenCalledWith('team-1');
+  });
+
+  it('loads private team schedules through the bearer-token callable without direct team reads', async () => {
+    const scheduleCallable = vi.fn(async () => ({
+      data: {
+        children: [
+          { teamId: 'team-private', teamName: 'Bears', playerId: 'player-1', playerName: 'Sam Player' }
+        ],
+        teams: [
+          {
+            teamId: 'team-private',
+            teamName: 'Bears',
+            calendarUrls: [],
+            games: [
+              {
+                id: 'private-game-1',
+                type: 'game',
+                date: '2026-07-13T18:00:00.000Z',
+                opponent: 'Tigers',
+                location: 'Private Field',
+                status: 'scheduled'
+              }
+            ]
+          }
+        ]
+      }
+    }));
+    familyShareMocks.httpsCallable.mockReturnValue(scheduleCallable);
+    familyShareMocks.getFamilyShareToken.mockResolvedValue({
+      id: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      label: 'Grandma schedule',
+      active: true,
+      expiresAt: new Date('2026-08-01T00:00:00Z'),
+      children: [
+        { teamId: 'team-private', teamName: 'Bears', playerId: 'player-1', playerName: 'Sam Player' }
+      ]
+    });
+
+    const model = await loadFamilyShareView('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+
+    expect(familyShareMocks.httpsCallable).toHaveBeenCalledWith(familyShareMocks.functions, 'getFamilyShareSchedule');
+    expect(scheduleCallable).toHaveBeenCalledWith({ tokenId: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' });
+    expect(scheduleDbMocks.getTeam).not.toHaveBeenCalled();
+    expect(scheduleDbMocks.getGames).not.toHaveBeenCalled();
+    expect(model.upcomingEvents).toEqual([
+      expect.objectContaining({
+        id: 'private-game-1',
+        teamId: 'team-private',
+        teamName: 'Bears',
+        opponent: 'Tigers'
+      })
+    ]);
   });
 
   it('resolves legacy callable children when older tokens do not store children', async () => {

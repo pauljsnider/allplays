@@ -1,4 +1,4 @@
-import { getFamilyShareToken, resolveFamilyShareTokenChildren } from './adapters/legacyParentTools';
+import { functions, getFamilyShareToken, httpsCallable, resolveFamilyShareTokenChildren } from './adapters/legacyParentTools';
 import { getGames, getTeam } from './adapters/legacyScheduleDb';
 import {
   expandRecurrence,
@@ -69,6 +69,18 @@ export type FamilyShareViewModel = {
   calendarWarnings: string[];
 };
 
+type FamilyShareScheduleProjection = {
+  children: FamilyShareChild[];
+  teams: FamilyShareScheduleTeamProjection[];
+};
+
+type FamilyShareScheduleTeamProjection = {
+  teamId: string;
+  teamName: string;
+  calendarUrls: string[];
+  games: Record<string, any>[];
+};
+
 const upcomingCutoffMs = 3 * 60 * 60 * 1000;
 const maxUpcomingEvents = 12;
 const maxRecentResults = 8;
@@ -99,9 +111,16 @@ export async function loadFamilyShareView(tokenId: string): Promise<FamilyShareV
     throw new FamilyShareTokenError('expired', 'This family share link has expired.');
   }
 
-  const children = await resolveTokenChildren(normalizedTokenId, token);
+  const scheduleProjection = await loadFamilyShareScheduleProjection(normalizedTokenId);
+  const projectedChildren = normalizeFamilyShareChildren(scheduleProjection?.children);
+  const children = projectedChildren.length ? projectedChildren : await resolveTokenChildren(normalizedTokenId, token);
   const calendarWarnings: string[] = [];
-  const events = await buildCombinedFamilySchedule(children, normalizeCalendarUrls(token.extraCalendarUrls), calendarWarnings);
+  const events = await buildCombinedFamilySchedule(
+    children,
+    normalizeCalendarUrls(token.extraCalendarUrls),
+    calendarWarnings,
+    scheduleProjection?.teams
+  );
   const upcomingEvents = getUpcomingEvents(events);
   const recentResults = getRecentResults(events);
 
@@ -154,6 +173,20 @@ async function resolveTokenChildren(tokenId: string, token: Record<string, any>)
   }
 }
 
+async function loadFamilyShareScheduleProjection(tokenId: string): Promise<FamilyShareScheduleProjection | null> {
+  try {
+    const callable = httpsCallable(functions, 'getFamilyShareSchedule');
+    const response = await callable({ tokenId });
+    const data = asRecord(response?.data);
+    return {
+      children: normalizeFamilyShareChildren(data.children),
+      teams: normalizeScheduleProjectionTeams(data.teams)
+    };
+  } catch {
+    return null;
+  }
+}
+
 function buildFamilyTeams(children: FamilyShareChild[]): FamilyShareTeam[] {
   const teams = new Map<string, FamilyShareTeam>();
   children.forEach((child) => {
@@ -175,32 +208,48 @@ function buildFamilyTeams(children: FamilyShareChild[]): FamilyShareTeam[] {
 async function buildCombinedFamilySchedule(
   children: FamilyShareChild[],
   extraCalendarUrls: string[],
-  calendarWarnings: string[]
+  calendarWarnings: string[],
+  scheduleTeams: FamilyShareScheduleTeamProjection[] = []
 ) {
   const byTeam = new Map<string, FamilyShareChild[]>();
+  const projectedTeamsById = new Map(scheduleTeams.map((team) => [team.teamId, team]));
   children.forEach((child) => {
     if (!byTeam.has(child.teamId)) byTeam.set(child.teamId, []);
     byTeam.get(child.teamId)?.push(child);
   });
 
   const eventRows = await Promise.all([...byTeam.entries()].map(([teamId, teamChildren]) => (
-    buildTeamFamilyEvents(teamId, teamChildren, calendarWarnings)
+    buildTeamFamilyEvents(teamId, teamChildren, calendarWarnings, projectedTeamsById.get(teamId) || null)
   )));
   const events = eventRows.flat();
   events.push(...await buildExtraCalendarEvents(children, extraCalendarUrls, events, calendarWarnings));
   return mergeFamilyEvents(events).sort((a, b) => a.date.getTime() - b.date.getTime());
 }
 
-async function buildTeamFamilyEvents(teamId: string, children: FamilyShareChild[], calendarWarnings: string[]) {
+async function buildTeamFamilyEvents(
+  teamId: string,
+  children: FamilyShareChild[],
+  calendarWarnings: string[],
+  scheduleTeam: FamilyShareScheduleTeamProjection | null = null
+) {
   let team: Record<string, any> | null = null;
   let games: Record<string, any>[] = [];
-  try {
-    [team, games] = await Promise.all([
-      Promise.resolve(getTeam(teamId)).catch(() => null),
-      Promise.resolve(getGames(teamId)).catch(() => [])
-    ]);
-  } catch {
-    return [];
+  if (scheduleTeam) {
+    team = {
+      id: scheduleTeam.teamId,
+      name: scheduleTeam.teamName,
+      calendarUrls: scheduleTeam.calendarUrls
+    };
+    games = scheduleTeam.games;
+  } else {
+    try {
+      [team, games] = await Promise.all([
+        Promise.resolve(getTeam(teamId)).catch(() => null),
+        Promise.resolve(getGames(teamId)).catch(() => [])
+      ]);
+    } catch {
+      return [];
+    }
   }
 
   if (!team) return [];
@@ -426,6 +475,26 @@ function getFamilyEventKey(event: Pick<FamilyShareEvent, 'teamId' | 'id' | 'date
 
 function normalizeCalendarUrls(value: unknown) {
   return uniqueStrings(Array.isArray(value) ? value.map(compactString) : []);
+}
+
+function normalizeScheduleProjectionTeams(value: unknown): FamilyShareScheduleTeamProjection[] {
+  const seen = new Set<string>();
+  return (Array.isArray(value) ? value : [])
+    .map((entry) => {
+      const team = asRecord(entry);
+      const teamId = compactString(team.teamId || team.id);
+      return {
+        teamId,
+        teamName: compactString(team.teamName || team.name),
+        calendarUrls: normalizeCalendarUrls(team.calendarUrls),
+        games: (Array.isArray(team.games) ? team.games : []).map(asRecord)
+      };
+    })
+    .filter((team) => {
+      if (!team.teamId || seen.has(team.teamId)) return false;
+      seen.add(team.teamId);
+      return true;
+    });
 }
 
 function uniqueStrings(values: unknown[]) {
