@@ -2388,20 +2388,30 @@ async function cleanupFailedInviteSignupForUser(userId, options = {}) {
       }, { merge: true });
     });
 
-    transaction.delete(publicProfileRef);
     if (userDeleted) {
+      transaction.delete(publicProfileRef);
       transaction.delete(userRef);
     } else if (userSnap.exists) {
       const remainingRoles = Array.isArray(userData.roles)
         ? userData.roles.filter((role) => role !== 'parent' || remainingParentOf.length > 0)
         : [];
-      transaction.set(userRef, {
+      const nextUserData = {
+        ...userData,
         parentOf: remainingParentOf,
         parentTeamIds: remainingParentTeamIds,
         parentPlayerKeys: remainingParentPlayerKeys,
-        roles: remainingRoles,
+        roles: remainingRoles
+      };
+      transaction.set(userRef, {
+        parentOf: nextUserData.parentOf,
+        parentTeamIds: nextUserData.parentTeamIds,
+        parentPlayerKeys: nextUserData.parentPlayerKeys,
+        roles: nextUserData.roles,
         updatedAt: now
       }, { merge: true });
+      transaction.set(publicProfileRef, buildTrustedPublicUserProfileProjectionPayload(nextUserData, {
+        trustedEmail: userData.email || null
+      }), { merge: true });
     }
 
     result = { recovered: true, inviteCount: eligibleCodes.length, userDeleted };

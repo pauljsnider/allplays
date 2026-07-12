@@ -90,10 +90,36 @@ describe('access code atomic redemption guard', () => {
         expect(helperSource).toContain('used: false');
         expect(helperSource).toContain('usedBy: null');
         expect(helperSource).toContain('usedAt: null');
-        expect(helperSource).toContain('transaction.delete(publicProfileRef)');
         expect(helperSource).toContain('transaction.delete(userRef)');
         expect(helperSource).toContain("parents.filter((parent) => String(parent?.userId || '').trim() !== normalizedUserId)");
 
         expect(source).toContain('exports.cleanupInviteSignupOnAuthDelete = functions.auth.user().onDelete');
+    });
+
+    it('preserves the public profile projection when failed signup cleanup keeps the user', () => {
+        const functionsSourcePath = resolve(process.cwd(), 'functions/index.js');
+        const source = readFileSync(functionsSourcePath, 'utf8');
+
+        const helperIndex = source.indexOf('async function cleanupFailedInviteSignupForUser');
+        expect(helperIndex).toBeGreaterThanOrEqual(0);
+        const helperSource = source.slice(helperIndex, helperIndex + 6200);
+
+        const deleteBranchIndex = helperSource.indexOf('if (userDeleted) {');
+        const keepBranchIndex = helperSource.indexOf('} else if (userSnap.exists) {');
+        const publicDeleteIndex = helperSource.indexOf('transaction.delete(publicProfileRef)');
+        const userDeleteIndex = helperSource.indexOf('transaction.delete(userRef)');
+        expect(deleteBranchIndex).toBeGreaterThanOrEqual(0);
+        expect(keepBranchIndex).toBeGreaterThan(deleteBranchIndex);
+        expect(publicDeleteIndex).toBeGreaterThan(deleteBranchIndex);
+        expect(publicDeleteIndex).toBeLessThan(keepBranchIndex);
+        expect(userDeleteIndex).toBeGreaterThan(publicDeleteIndex);
+        expect(userDeleteIndex).toBeLessThan(keepBranchIndex);
+
+        const keepBranchSource = helperSource.slice(keepBranchIndex);
+        expect(keepBranchSource).toContain('const nextUserData = {');
+        expect(keepBranchSource).toContain('parentOf: remainingParentOf');
+        expect(keepBranchSource).toContain('transaction.set(publicProfileRef, buildTrustedPublicUserProfileProjectionPayload(nextUserData, {');
+        expect(keepBranchSource).toContain('trustedEmail: userData.email || null');
+        expect(keepBranchSource).toContain('}), { merge: true });');
     });
 });
