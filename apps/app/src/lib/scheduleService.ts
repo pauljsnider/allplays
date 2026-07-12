@@ -150,10 +150,15 @@ const scheduleHydrationCacheTtlMs = 30 * 1000;
 const parentHomeHydrationLookAheadMs = 14 * 24 * 60 * 60 * 1000;
 const parentHomeHydrationLookBehindMs = 12 * 60 * 60 * 1000;
 
-function invalidateParentScheduleSummaryCache(user: AuthUser | null | undefined) {
+function getParentHomeSecondaryCacheKey(userId: string) {
+  return `home-secondary:${userId}`;
+}
+
+function invalidateParentScheduleCaches(user: AuthUser | null | undefined) {
   const userId = compactString(user?.uid);
   if (!userId) return;
   invalidateCachedAppData(getParentScheduleSummaryCacheKey(userId));
+  invalidateCachedAppData(getParentHomeSecondaryCacheKey(userId));
 }
 // Default games window for schedule views: ~13 months covers the current and
 // previous season so the "Past Events" filter still shows recent history before
@@ -1888,7 +1893,7 @@ export async function createScheduledGameForApp(
   if (options.requireCreatedId && !createdId) {
     throw new Error('Tournament game save failed because no game id was returned.');
   }
-  invalidateParentScheduleSummaryCache(user);
+  invalidateParentScheduleCaches(user);
   return createdId;
 }
 
@@ -1953,7 +1958,7 @@ export async function updateScheduledGameForApp(teamId: string, gameId: string, 
     logScheduleWarning('Falling back to REST scheduled game update.', 'scheduled-game-update', error, { fallback: 'rest', teamId: normalizedTeamId, gameId: normalizedGameId });
     await nativePatchDocument(`teams/${encodeURIComponent(normalizedTeamId)}/games/${encodeURIComponent(normalizedGameId)}`, payload);
   }
-  invalidateParentScheduleSummaryCache(user);
+  invalidateParentScheduleCaches(user);
   return { updated: true, eventId: normalizedGameId };
 }
 
@@ -2050,7 +2055,7 @@ export async function createScheduledPracticeForApp(teamId: string, input: Sched
 
   try {
     const createdId = await withTimeout(Promise.resolve(addPractice(normalizedTeamId, payload)), 'Scheduled practice create');
-    invalidateParentScheduleSummaryCache(user);
+    invalidateParentScheduleCaches(user);
     return createdId;
   } catch (error) {
     if (!isNativeRuntime()) throw error;
@@ -2059,7 +2064,7 @@ export async function createScheduledPracticeForApp(teamId: string, input: Sched
       ...buildNativePracticePatchPayload(input, user as AuthUser),
       createdAt: new Date()
     });
-    invalidateParentScheduleSummaryCache(user);
+    invalidateParentScheduleCaches(user);
     return doc?.id || '';
   }
 }
@@ -2093,7 +2098,7 @@ export async function updateScheduledPracticeForApp(teamId: string, input: Sched
         updatedBy: (user as AuthUser).uid
       });
     }
-    invalidateParentScheduleSummaryCache(user);
+    invalidateParentScheduleCaches(user);
     return { updated: true, scope, eventId: occurrence.masterId, instanceDate: occurrence.instanceDate };
   }
 
@@ -2115,7 +2120,7 @@ export async function updateScheduledPracticeForApp(teamId: string, input: Sched
       updatedBy: (user as AuthUser).uid
     });
   }
-  invalidateParentScheduleSummaryCache(user);
+  invalidateParentScheduleCaches(user);
   return { updated: true, scope, eventId: normalizedEventId };
 }
 
@@ -2137,7 +2142,7 @@ export async function revertScheduledPracticeOccurrenceForApp(teamId: string, ev
       updatedBy: (user as AuthUser).uid
     });
   }
-  invalidateParentScheduleSummaryCache(user);
+  invalidateParentScheduleCaches(user);
   return { reverted: true, eventId: occurrence.masterId, instanceDate: occurrence.instanceDate };
 }
 
@@ -2192,7 +2197,7 @@ export async function createScheduleImportGame(teamId: string, row: ScheduleImpo
 
   try {
     const createdId = await withTimeout(Promise.resolve(addGame(normalizedTeamId, payload)), 'Schedule import game create');
-    invalidateParentScheduleSummaryCache(user);
+    invalidateParentScheduleCaches(user);
     return createdId;
   } catch (error) {
     if (!isNativeRuntime()) throw error;
@@ -2201,7 +2206,7 @@ export async function createScheduleImportGame(teamId: string, row: ScheduleImpo
       ...payload,
       createdAt: new Date()
     });
-    invalidateParentScheduleSummaryCache(user);
+    invalidateParentScheduleCaches(user);
     return doc?.id || '';
   }
 }
@@ -2233,7 +2238,7 @@ export async function createScheduleImportPractice(teamId: string, row: Schedule
 
   try {
     const createdId = await withTimeout(Promise.resolve(addPractice(normalizedTeamId, payload)), 'Schedule import practice create');
-    invalidateParentScheduleSummaryCache(user);
+    invalidateParentScheduleCaches(user);
     return createdId;
   } catch (error) {
     if (!isNativeRuntime()) throw error;
@@ -2242,7 +2247,7 @@ export async function createScheduleImportPractice(teamId: string, row: Schedule
       ...payload,
       createdAt: new Date()
     });
-    invalidateParentScheduleSummaryCache(user);
+    invalidateParentScheduleCaches(user);
     return doc?.id || '';
   }
 }
@@ -4182,7 +4187,7 @@ export async function submitStaffScheduleRsvpOverride(event: ParentScheduleEvent
     await nativeSubmitRsvpForPlayer(event.teamId, event.id, user!, normalizedPlayerId, response, '', event.availabilityNoteVisibility === 'team' ? 'team' : 'admins');
   }
 
-  invalidateParentScheduleSummaryCache(user);
+  invalidateParentScheduleCaches(user);
   return {
     playerId: normalizedPlayerId,
     response
@@ -4207,7 +4212,7 @@ export async function submitParentScheduleRsvp(event: ParentScheduleEvent, user:
       response,
       note: compactString(note) || null
     })), 'RSVP submit');
-    invalidateParentScheduleSummaryCache(user);
+    invalidateParentScheduleCaches(user);
     return result;
   } catch (error) {
     if (!isNativeRuntime()) {
@@ -4215,7 +4220,7 @@ export async function submitParentScheduleRsvp(event: ParentScheduleEvent, user:
     }
     logScheduleWarning('Falling back to REST RSVP submit.', 'parent-rsvp-submit', error, { fallback: 'rest', teamId: event.teamId, gameId: event.id, childId: event.childId });
     const result = await nativeSubmitRsvpForPlayer(event.teamId, event.id, user, event.childId, response, note, event.availabilityNoteVisibility === 'team' ? 'team' : 'admins');
-    invalidateParentScheduleSummaryCache(user);
+    invalidateParentScheduleCaches(user);
     return result;
   }
 }
@@ -4255,7 +4260,7 @@ export async function submitParentScheduleRsvpForChildren(events: ParentSchedule
       response,
       note: compactString(note) || null
     })), 'Family RSVP submit');
-    invalidateParentScheduleSummaryCache(user);
+    invalidateParentScheduleCaches(user);
     return result;
   } catch (error) {
     if (!isNativeRuntime()) {
@@ -4263,7 +4268,7 @@ export async function submitParentScheduleRsvpForChildren(events: ParentSchedule
     }
     logScheduleWarning('Falling back to REST family RSVP submit.', 'parent-family-rsvp-submit', error, { fallback: 'rest', teamId: firstEvent.teamId, gameId: firstEvent.id, childIds });
     const result = await nativeSubmitRsvpForChildren(firstEvent.teamId, firstEvent.id, user, childIds, response, note, firstEvent.availabilityNoteVisibility === 'team' ? 'team' : 'admins');
-    invalidateParentScheduleSummaryCache(user);
+    invalidateParentScheduleCaches(user);
     return result;
   }
 }
@@ -5771,7 +5776,7 @@ export async function cancelScheduledGameForApp(event: ParentScheduleEvent, user
 
   const notificationError = notificationFailures.length > 0 ? notificationFailures.join('; ') : null;
 
-  invalidateParentScheduleSummaryCache(user);
+  invalidateParentScheduleCaches(user);
   return {
     cancelled: true,
     notificationError
@@ -5812,7 +5817,7 @@ export async function cancelPracticeOccurrenceForApp(event: ParentScheduleEvent,
     });
   }
 
-  invalidateParentScheduleSummaryCache(user);
+  invalidateParentScheduleCaches(user);
   return {
     cancelled: true,
     masterId: occurrence.masterId,
