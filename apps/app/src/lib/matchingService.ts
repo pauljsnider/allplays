@@ -67,7 +67,7 @@ function compact(value: unknown): string {
 }
 
 function getUserDisplayName(user: AuthUser | null, fallback = 'ALL PLAYS user') {
-  return compact(user?.displayName) || compact(user?.email) || fallback;
+  return compact(user?.displayName) || fallback;
 }
 
 function sanitizeProfilePhotoUrl(value: unknown): string | null {

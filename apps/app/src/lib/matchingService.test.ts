@@ -118,6 +118,22 @@ describe('createMatchingPost', () => {
     expect(JSON.stringify(payload)).not.toContain('parent@example.com');
   });
 
+  it('uses a privacy-safe author name when the profile has no display name', async () => {
+    adapterMocks.addDoc.mockResolvedValue({ id: 'new-post' });
+    await createMatchingPost({ ...user, displayName: null }, {
+      kind: 'player_seeking_team',
+      sport: 'Soccer',
+      ageGroup: 'U12',
+      city: 'Columbus',
+      state: 'OH',
+      playerFirstName: 'Ethan'
+    });
+
+    const payload = adapterMocks.addDoc.mock.calls[0][1];
+    expect(payload.authorName).toBe('ALL PLAYS user');
+    expect(JSON.stringify(payload)).not.toContain('parent@example.com');
+  });
+
   it('links team posts to the team feed via teamIds', async () => {
     adapterMocks.addDoc.mockResolvedValue({ id: 'team-post' });
     await createMatchingPost(user, {
@@ -224,6 +240,22 @@ describe('respondToMatchingPost', () => {
     adapterMocks.addDoc.mockRejectedValue(new Error('rules rejected'));
     await expect(respondToMatchingPost(user, openPost({ kind: 'team_seeking_players' }), { message: 'Interested!' })).resolves.toBeUndefined();
     expect(adapterMocks.setDoc).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not expose email in a response or notification when the profile has no display name', async () => {
+    adapterMocks.setDoc.mockResolvedValue(undefined);
+    adapterMocks.addDoc.mockResolvedValue({ id: 'note-1' });
+    await respondToMatchingPost({ ...user, displayName: null }, openPost(), {
+      message: 'Interested!',
+      teamId: 'team-1',
+      teamName: 'Rockets'
+    });
+
+    const response = adapterMocks.setDoc.mock.calls[0][1];
+    const notification = adapterMocks.addDoc.mock.calls[0][1];
+    expect(response.responderName).toBe('ALL PLAYS user');
+    expect(notification.body).toBe('ALL PLAYS user responded to "Ethan (U12 Soccer) is looking for a team".');
+    expect(JSON.stringify({ response, notification })).not.toContain('parent@example.com');
   });
 
   it('blocks responding to your own or non-open posts, contact info in messages, and player posts without a managed team', async () => {

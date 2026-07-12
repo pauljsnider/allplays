@@ -46,6 +46,7 @@ describe('Player/team matching feed Firestore rules', () => {
         expect(source).toContain("data.get('expiresAt', null) > request.time &&");
         expect(source).toContain("data.get('expiresAt', null) <= request.time + duration.value(90, 'd') &&");
         expect(source).toContain("hasNoContactInfo(data.get('title', ''))");
+        expect(source).toContain("hasNoContactInfo(data.get('authorName', ''))");
         expect(source).toContain("hasNoContactInfo(data.get('detail', ''))");
         expect(source).toContain("hasNoContactInfo(data.get('caption', ''))");
         expect(source).toContain("!value.matches('.*[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+[.][A-Za-z]{2,}.*')");
@@ -147,6 +148,7 @@ describe('Player/team matching feed Firestore rules', () => {
         expect(source).toContain('function isMatchingResponseTeamContextValid(postId, data)');
         expect(source).toContain('isAllowedMatchingProfilePhotoUrl(data.get(\'responderPhotoUrl\', null))');
         expect(source).toContain("hasNoContactInfo(data.get('message', ''))");
+        expect(source).toContain("hasNoContactInfo(data.get('responderName', ''))");
         for (const field of matchingResponseFields) {
             expect(source).toContain(`'${field}'`);
         }

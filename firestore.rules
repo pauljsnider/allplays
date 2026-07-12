@@ -1412,6 +1412,7 @@ service cloud.firestore {
              data.get('expiresAt', null) > request.time &&
              data.get('expiresAt', null) <= request.time + duration.value(90, 'd') &&
              isNonBlankString(data.get('authorName', '')) &&
+             hasNoContactInfo(data.get('authorName', '')) &&
              isAllowedMatchingProfilePhotoUrl(data.get('authorPhotoUrl', null)) &&
              isNonBlankString(data.get('title', '')) &&
              hasNoContactInfo(data.get('title', '')) &&
@@ -1502,6 +1503,7 @@ service cloud.firestore {
              data.get('responderId', '') == request.auth.uid &&
              data.get('responderName', '') is string &&
              data.get('responderName', '').size() > 0 &&
+             hasNoContactInfo(data.get('responderName', '')) &&
              isAllowedMatchingProfilePhotoUrl(data.get('responderPhotoUrl', null)) &&
              hasNoContactInfo(data.get('message', '')) &&
              data.get('message', '').size() > 0 &&
