@@ -1164,6 +1164,50 @@ export function getParentScheduleTeamOptions(
   return [...byTeam.values()].sort((a, b) => a.teamName.localeCompare(b.teamName));
 }
 
+// Teams the signed-in user can manage from the schedule (add game/practice,
+// import, etc.). A staff team must appear here even when it has zero events —
+// otherwise a coach whose schedule is empty can never create the first event.
+export function getManageableScheduleTeamOptions(
+  teamOptions: ParentScheduleTeamOption[],
+  events: ParentScheduleEvent[],
+  staffTeams: Array<{ teamId?: string; teamName?: string }> = []
+): ParentScheduleTeamOption[] {
+  const staffTeamIds = new Set(
+    (Array.isArray(staffTeams) ? staffTeams : [])
+      .map((team) => String(team?.teamId || '').trim())
+      .filter(Boolean)
+  );
+  const staffEventTeamIds = new Set(
+    (Array.isArray(events) ? events : [])
+      .filter((event) => event.isTeamStaff === true)
+      .map((event) => String(event.teamId || '').trim())
+      .filter(Boolean)
+  );
+
+  const byTeamId = new Map<string, ParentScheduleTeamOption>();
+  (Array.isArray(teamOptions) ? teamOptions : []).forEach((team) => {
+    if (staffTeamIds.has(team.teamId) || staffEventTeamIds.has(team.teamId)) {
+      byTeamId.set(team.teamId, team);
+    }
+  });
+
+  // Staff teams with no events (and no roster child) never make it into
+  // teamOptions, so synthesize a bare option for them.
+  (Array.isArray(staffTeams) ? staffTeams : []).forEach((team) => {
+    const teamId = String(team?.teamId || '').trim();
+    if (!teamId || byTeamId.has(teamId)) return;
+    byTeamId.set(teamId, {
+      teamId,
+      teamName: String(team?.teamName || teamId).trim() || teamId,
+      playerCount: 0,
+      eventCount: 0,
+      calendarUrls: []
+    });
+  });
+
+  return [...byTeamId.values()].sort((a, b) => a.teamName.localeCompare(b.teamName));
+}
+
 export function getPracticePacketRows(events: ParentScheduleEvent[], now = new Date()): PracticePacketScheduleRow[] {
   const cutoff = new Date(now.getTime() - 3 * 60 * 60 * 1000);
   return (Array.isArray(events) ? events : [])

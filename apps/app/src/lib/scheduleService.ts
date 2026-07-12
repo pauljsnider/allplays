@@ -190,9 +190,16 @@ type ParentScopeLink = ParentScheduleChild & {
   hasMetadata: boolean;
 };
 
+export type ParentScheduleStaffTeam = {
+  teamId: string;
+  teamName: string;
+};
+
 export type ParentScheduleLoadResult = {
   children: ParentScheduleChild[];
   events: ParentScheduleEvent[];
+  /** Teams the user can manage (owner/admin/coach), even if they have no events yet. */
+  staffTeams?: ParentScheduleStaffTeam[];
   isPartial?: boolean;
 };
 
@@ -3902,7 +3909,7 @@ export async function resolveParentGameRoute(user: AuthUser | null, gameId: stri
 
 export async function loadParentSchedule(user: AuthUser | null, options: ParentScheduleLoadOptions = {}): Promise<ParentScheduleLoadResult> {
   if (!user?.uid) {
-    return { children: [], events: [] };
+    return { children: [], events: [], staffTeams: [] };
   }
   const timer = startUxTimer('parent schedule service load', {
     category: 'service_load',
@@ -3963,6 +3970,12 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
     if (hydrateDetails) {
       await hydrateEventDetails(events, user);
     }
+    const staffTeamSummaries = staffTeams
+      .map((team: any) => {
+        const teamId = compactString(team?.id);
+        return teamId ? { teamId, teamName: compactString(team?.name) || teamId } : null;
+      })
+      .filter(Boolean) as ParentScheduleStaffTeam[];
     const isPartial = failedTeamLoads.length > 0;
     timer.end({
       hydrateDetails,
@@ -3973,7 +3986,7 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
       eventRows: events.length,
       isPartial
     });
-    return { children, events, isPartial };
+    return { children, events, staffTeams: staffTeamSummaries, isPartial };
   } catch (error: any) {
     timer.end({ hydrateDetails, expandStaffPlayers, error: error?.message || 'Unable to load parent schedule.' });
     throw error;

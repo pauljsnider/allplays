@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   countOpenScheduleAssignments,
   getCalendarScheduleEntries,
+  getManageableScheduleTeamOptions,
   getWindowedCalendarScheduleEntries,
   getWindowedPracticePacketRows,
-  type ParentScheduleEvent
+  type ParentScheduleEvent,
+  type ParentScheduleTeamOption
 } from './scheduleLogic';
 
 function buildParentScheduleEvent(overrides: Partial<ParentScheduleEvent> = {}): ParentScheduleEvent {
@@ -177,5 +179,48 @@ describe('windowed schedule derivation', () => {
     expect(result.hasMore).toBe(true);
     expect(result.rows.map((row) => row.event.id)).toEqual(['ready', 'completed']);
     expect(result.rows.map((row) => row.status)).toEqual(['ready', 'completed']);
+  });
+});
+
+describe('getManageableScheduleTeamOptions', () => {
+  const teamOption = (teamId: string, teamName: string): ParentScheduleTeamOption => ({
+    teamId,
+    teamName,
+    playerCount: 0,
+    eventCount: 0,
+    calendarUrls: []
+  });
+
+  it('includes a staff team that has no events yet', () => {
+    // The regression: a coach whose team has zero events could never see the
+    // add-game/practice tools because manageable teams were event-derived.
+    const result = getManageableScheduleTeamOptions([], [], [{ teamId: 'team-empty', teamName: 'Empty FC' }]);
+    expect(result.map((team) => team.teamId)).toEqual(['team-empty']);
+    expect(result[0].teamName).toBe('Empty FC');
+  });
+
+  it('keeps teams that already have staff events', () => {
+    const options = [teamOption('team-1', 'Bears')];
+    const events = [buildParentScheduleEvent({ teamId: 'team-1', isTeamStaff: true })];
+    const result = getManageableScheduleTeamOptions(options, events, []);
+    expect(result.map((team) => team.teamId)).toEqual(['team-1']);
+  });
+
+  it('excludes teams where the user is only a parent (non-staff)', () => {
+    const options = [teamOption('team-parent', 'Parent Team')];
+    const events = [buildParentScheduleEvent({ teamId: 'team-parent', isTeamStaff: false })];
+    const result = getManageableScheduleTeamOptions(options, events, []);
+    expect(result).toEqual([]);
+  });
+
+  it('merges staff-event teams and empty staff teams without duplicates, sorted by name', () => {
+    const options = [teamOption('team-b', 'Bravo'), teamOption('team-parent', 'Zulu Parents')];
+    const events = [buildParentScheduleEvent({ teamId: 'team-b', isTeamStaff: true })];
+    const staffTeams = [
+      { teamId: 'team-b', teamName: 'Bravo' },
+      { teamId: 'team-a', teamName: 'Alpha' }
+    ];
+    const result = getManageableScheduleTeamOptions(options, events, staffTeams);
+    expect(result.map((team) => team.teamId)).toEqual(['team-a', 'team-b']);
   });
 });
