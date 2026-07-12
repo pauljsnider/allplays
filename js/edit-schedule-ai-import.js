@@ -11,7 +11,8 @@ export function normalizeBulkPracticeForAdd(practice = {}) {
         throw new Error('Practice date must be a valid date');
     }
 
-    let endDate = practice.endTime ? new Date(practice.endTime) : null;
+    const endSource = practice.endTime || practice.end;
+    let endDate = endSource ? new Date(endSource) : null;
     if (!endDate || !Number.isFinite(endDate.getTime()) || endDate.getTime() <= startDate.getTime()) {
         endDate = new Date(startDate.getTime() + PRACTICE_DEFAULT_DURATION_MS);
     }

@@ -43,6 +43,18 @@ describe('normalizeBulkPracticeForAdd', () => {
         expect(new Date(practice.end).toISOString()).toBe(new Date('2026-07-13T19:30:00').toISOString());
     });
 
+    it('preserves an already-normalized preview end when applying changes', () => {
+        const previewPractice = normalizeBulkPracticeForAdd({
+            date: '2026-07-13T18:00:00',
+            endTime: '2026-07-13T20:00:00',
+            location: 'Gym'
+        });
+
+        const appliedPractice = normalizeBulkPracticeForAdd(previewPractice);
+
+        expect(new Date(appliedPractice.end).toISOString()).toBe(new Date('2026-07-13T20:00:00').toISOString());
+    });
+
     it('throws on an invalid date', () => {
         expect(() => normalizeBulkPracticeForAdd({ location: 'Gym' })).toThrow();
     });
