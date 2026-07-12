@@ -705,7 +705,8 @@
                 "apps/app/src/pages/OpportunityDetail.tsx",
                 "apps/app/src/pages/OpportunityForm.tsx",
                 "apps/app/src/pages/OpportunityInquiry.tsx",
-                "apps/app/src/pages/OpportunityManage.tsx"
+                "apps/app/src/pages/OpportunityManage.tsx",
+                "apps/app/src/pages/PublicTeamDetail.tsx"
             ],
             "cloudFunctions": [
                 "closePublicOpportunitiesForPrivateTeam",
@@ -714,6 +715,7 @@
                 "createPublicOpportunity",
                 "getOpportunityInquiry",
                 "getPublicOpportunity",
+                "getPublicTeamProfile",
                 "listManagedPublicOpportunityTeams",
                 "listMyPublicOpportunities",
                 "listOpportunityInquiries",
@@ -733,7 +735,9 @@
             "integrationTests": [
                 "apps/app/src/lib/authNextRoute.test.ts",
                 "apps/app/src/lib/opportunityLogic.test.ts",
-                "apps/app/src/pages/Discover.test.tsx"
+                "apps/app/src/lib/publicTeamsService.test.ts",
+                "apps/app/src/pages/Discover.test.tsx",
+                "apps/app/src/pages/PublicTeamDetail.test.tsx"
             ],
             "workflowTests": [
                 "tests/smoke/app-discover.spec.js"
