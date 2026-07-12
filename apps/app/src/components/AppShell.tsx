@@ -642,11 +642,11 @@ function buildAddWorkflows(): AddWorkflow[] {
     {
       id: 'create-team',
       label: 'Create team',
-      detail: 'New team, import shell, staff access',
+      detail: 'New team and sport setup',
       section: 'Team',
       icon: Users,
-      kind: 'website',
-      href: legacyUrl('dashboard.html'),
+      kind: 'native',
+      href: '/teams/new',
       badge: 'Coach/Admin'
     },
     {

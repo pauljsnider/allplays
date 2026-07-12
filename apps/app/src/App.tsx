@@ -24,6 +24,7 @@ import type { AuthState } from './lib/types';
 const AuthPage = lazy(() => import('./pages/AuthPage').then((module) => ({ default: module.AuthPage })));
 const AcceptInvite = lazy(() => import('./pages/AcceptInvite').then((module) => ({ default: module.AcceptInvite })));
 const CapabilityPage = lazy(() => import('./pages/CapabilityPage').then((module) => ({ default: module.CapabilityPage })));
+const CreateTeam = lazy(() => import('./pages/CreateTeam').then((module) => ({ default: module.CreateTeam })));
 const GameDetail = lazy(() => import('./pages/GameDetail').then((module) => ({ default: module.GameDetail })));
 const HelpArticle = lazy(() => import('./pages/HelpArticle').then((module) => ({ default: module.HelpArticle })));
 const HelpPortal = lazy(() => import('./pages/HelpPortal').then((module) => ({ default: module.HelpPortal })));
@@ -242,6 +243,7 @@ export default function App() {
         <Route path="/messages/:teamId" element={<Protected auth={auth}><Messages auth={auth} /></Protected>} />
         <Route path="/ai" element={<Protected auth={auth}><PrivateAiChat auth={auth} /></Protected>} />
         <Route path="/teams" element={<Protected auth={auth}><Teams auth={auth} /></Protected>} />
+        <Route path="/teams/new" element={<Protected auth={auth}><CreateTeam auth={auth} /></Protected>} />
         <Route path="/teams/browse" element={<PublicPage auth={auth}><PublicTeamsBrowse /></PublicPage>} />
         <Route path="/teams/:teamId/public" element={<PublicPage auth={auth}><PublicTeamDetail /></PublicPage>} />
         <Route path="/teams/:teamId" element={auth.user || auth.loading ? <Protected auth={auth}><TeamDetail auth={auth} /></Protected> : <PublicPage auth={auth}><PublicTeamDetail /></PublicPage>} />

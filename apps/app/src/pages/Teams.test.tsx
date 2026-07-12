@@ -91,6 +91,7 @@ function renderTeams({ strictMode = false, initialEntry = '/teams' }: { strictMo
     <MemoryRouter initialEntries={[initialEntry]}>
       <Routes>
         <Route path="/teams" element={<Teams auth={auth} />} />
+        <Route path="/teams/new" element={<div>Create team route</div>} />
         <Route path="/accept-invite" element={<div>Accept invite route</div>} />
         <Route path="/teams/browse" element={<div>Browse public teams route</div>} />
       </Routes>
@@ -166,6 +167,16 @@ describe('Teams empty state', () => {
     fireEvent.click(browseLink);
 
     expect(await screen.findByText('Browse public teams route')).toBeTruthy();
+    expect(publicActionMocks.openPublicUrl).not.toHaveBeenCalled();
+  });
+
+  it('opens the native create team route from the empty state primary action', async () => {
+    renderTeams();
+
+    await screen.findByRole('heading', { name: 'No teams linked yet' });
+    fireEvent.click(screen.getByRole('link', { name: 'Create team' }));
+
+    expect(await screen.findByText('Create team route')).toBeTruthy();
     expect(publicActionMocks.openPublicUrl).not.toHaveBeenCalled();
   });
 
