@@ -37,6 +37,12 @@ const legacyInviteFlowMocks = vi.hoisted(() => ({
   createInviteProcessor: vi.fn()
 }));
 
+const legacyAuthEmailMocks = vi.hoisted(() => ({
+  queueCurrentUserVerificationEmail: vi.fn(),
+  queueInviteSignInEmail: vi.fn(),
+  queuePasswordResetEmail: vi.fn()
+}));
+
 const parentMembershipMocks = vi.hoisted(() => ({
   mergeApprovedParentMembershipRequests: vi.fn()
 }));
@@ -68,8 +74,6 @@ vi.mock('./firebaseAuthRuntime', () => ({
   GoogleAuthProvider: class {},
   isSignInWithEmailLink: vi.fn(),
   onAuthStateChanged: authObserverMocks.onAuthStateChanged,
-  sendEmailVerification: vi.fn(),
-  sendPasswordResetEmail: vi.fn(),
   signInWithEmailAndPassword: vi.fn(),
   signInWithEmailLink: vi.fn(),
   signInWithPopup: vi.fn(),
@@ -81,6 +85,7 @@ vi.mock('./firebaseAuthRuntime', () => ({
 
 vi.mock('./adapters/legacyAuth', () => ({
   loadLegacyAdminInvite: vi.fn(async () => legacyAdminInviteMocks),
+  loadLegacyAuthEmail: vi.fn(async () => legacyAuthEmailMocks),
   loadLegacyAuthDb: vi.fn(async () => legacyAuthMocks),
   loadLegacyInviteFlow: vi.fn(async () => legacyInviteFlowMocks),
   loadLegacyParentMembershipUtils: vi.fn(async () => parentMembershipMocks),
@@ -99,15 +104,9 @@ vi.mock('./logger', () => ({
   })
 }));
 
-import {
-  sendPasswordResetEmail,
-  signInWithPopup,
-  signInWithRedirect
-} from './firebaseAuthRuntime';
+import { signInWithPopup, signInWithRedirect } from './firebaseAuthRuntime';
 import { Capacitor } from '@capacitor/core';
-import { sendEmailVerification } from './firebaseAuthRuntime';
 import {
-  buildVerificationContinueUrl,
   describeAuthError,
   getRouteForUser,
   hydrateFirebaseUser,
@@ -156,53 +155,40 @@ describe('resendVerificationEmail', () => {
     authState.currentUser = null;
   });
 
-  it('builds an in-app verify-pending continue URL', () => {
-    expect(buildVerificationContinueUrl()).toContain('/app/#/verify-pending');
-  });
-
-  it('sends the verification email with actionCodeSettings that return to the app', async () => {
+  it('queues the verification email through the Resend-backed callable', async () => {
     const reload = vi.fn().mockResolvedValue(undefined);
     authState.currentUser = { reload, email: 'coach@allplays.ai' } as any;
+    legacyAuthEmailMocks.queueCurrentUserVerificationEmail.mockResolvedValue({ queued: true });
 
     await resendVerificationEmail();
 
     expect(reload).toHaveBeenCalled();
-    expect(vi.mocked(sendEmailVerification)).toHaveBeenCalledTimes(1);
-    const [, actionCodeSettings] = vi.mocked(sendEmailVerification).mock.calls[0];
-    expect(actionCodeSettings).toMatchObject({
-      url: buildVerificationContinueUrl(),
-      handleCodeInApp: false
-    });
+    expect(legacyAuthEmailMocks.queueCurrentUserVerificationEmail).toHaveBeenCalledWith();
   });
 });
 
 describe('sendResetEmail', () => {
-  const sendPasswordResetEmailMock = vi.mocked(sendPasswordResetEmail);
-
   beforeEach(() => {
-    sendPasswordResetEmailMock.mockReset();
+    legacyAuthEmailMocks.queuePasswordResetEmail.mockReset();
   });
 
-  it('normalizes the email and configures the app reset destination', async () => {
-    sendPasswordResetEmailMock.mockResolvedValue(undefined);
+  it('normalizes the email and queues it through the Resend-backed callable', async () => {
+    legacyAuthEmailMocks.queuePasswordResetEmail.mockResolvedValue({ queued: true });
 
     await sendResetEmail(' Player@Example.COM ');
 
-    expect(sendPasswordResetEmailMock).toHaveBeenCalledWith(authState, 'player@example.com', {
-      url: 'https://allplays.ai/reset-password.html',
-      handleCodeInApp: true
-    });
+    expect(legacyAuthEmailMocks.queuePasswordResetEmail).toHaveBeenCalledWith('player@example.com');
   });
 
-  it('treats a missing account like a successful reset request', async () => {
-    sendPasswordResetEmailMock.mockRejectedValue({ code: 'auth/user-not-found' });
+  it('accepts the server-neutral response for a missing account', async () => {
+    legacyAuthEmailMocks.queuePasswordResetEmail.mockResolvedValue({ queued: true });
 
     await expect(sendResetEmail('missing@example.com')).resolves.toBeUndefined();
   });
 
   it('preserves actionable reset failures', async () => {
-    const error = { code: 'auth/too-many-requests' };
-    sendPasswordResetEmailMock.mockRejectedValue(error);
+    const error = { code: 'functions/resource-exhausted' };
+    legacyAuthEmailMocks.queuePasswordResetEmail.mockRejectedValue(error);
 
     await expect(sendResetEmail('player@example.com')).rejects.toBe(error);
   });

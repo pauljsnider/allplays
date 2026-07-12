@@ -191,7 +191,7 @@ describe('profile legacy security recovery flows', () => {
 
         expect(button.disabled).toBe(false);
         expect(button.textContent.trim()).toBe('Resend Email');
-        expect(status.textContent).toBe('Verification email sent! Check your inbox.');
+        expect(status.textContent).toBe('Verification email queued! Check your inbox shortly.');
         expect(status.className).toContain('text-green-700');
         expect(status.classList.contains('hidden')).toBe(false);
 

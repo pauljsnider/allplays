@@ -8,19 +8,20 @@ import {
     signInWithPopup,
     signInWithRedirect,
     getRedirectResult,
-    sendPasswordResetEmail,
-    sendEmailVerification,
-    sendSignInLinkToEmail,
     isSignInWithEmailLink,
     signInWithEmailLink,
     updatePassword
 } from './firebase.js?v=20';
-import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, getUserProfile, getUserTeams, getUserByEmail, getTeam, listMyParentMembershipRequests, normalizeParentScopeLinks } from './db.js?v=92';
+import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, getUserProfile, getUserTeams, getTeam, listMyParentMembershipRequests, normalizeParentScopeLinks } from './db.js?v=92';
 import { executeEmailPasswordSignup } from './signup-flow.js?v=6';
 import { redeemAdminInviteAcceptance, redeemAdminInviteAtomically } from './admin-invite.js?v=6';
 import { mergeApprovedParentMembershipRequests } from './parent-membership-utils.js?v=2';
-import { buildLegacyJoinUrl } from './join-code.js?v=1';
 import { createInviteProcessor } from './accept-invite-flow.js?v=10';
+import {
+    queueCurrentUserVerificationEmail,
+    queueInviteSignInEmail,
+    queuePasswordResetEmail
+} from './auth-email.js?v=1';
 
 async function cleanupFailedNewUser(user, context) {
     if (!user) {
@@ -112,7 +113,7 @@ export async function signup(email, password, activationCode) {
             markAccessCodeAsUsed,
             getTeam,
             getUserProfile,
-            sendEmailVerification,
+            sendVerificationEmail: queueCurrentUserVerificationEmail,
             signOut
         }
     });
@@ -459,13 +460,7 @@ export function checkAuth(callback, options = {}) {
 }
 
 export function resetPassword(email) {
-    const actionCodeSettings = {
-        // URL to redirect back to after password reset
-        url: 'https://allplays.ai/reset-password.html',
-        handleCodeInApp: true
-    };
-
-    return sendPasswordResetEmail(auth, email, actionCodeSettings);
+    return queuePasswordResetEmail(email);
 }
 
 export async function resendVerificationEmail() {
@@ -477,9 +472,9 @@ export async function resendVerificationEmail() {
     // Reload user to ensure we have fresh state
     await user.reload();
 
-    console.log('Attempting to send verification email to:', user.email);
-    await sendEmailVerification(user);
-    console.log('Verification email sent successfully to:', user.email);
+    console.log('Attempting to queue verification email for:', user.email);
+    await queueCurrentUserVerificationEmail();
+    console.log('Verification email queued successfully for:', user.email);
 }
 
 export function getCurrentUser() {
@@ -499,19 +494,8 @@ export function getCurrentUser() {
  * @returns {Promise<{success: boolean, emailSent: boolean, existingUser: boolean}>}
  */
 export async function sendInviteEmail(email, inviteCode, inviteType, metadata = {}) {
-    // Check if user already exists
-    const existingUser = await getUserByEmail(email);
-
-    // Build the continue URL with invite code
-    const continueUrl = buildLegacyJoinUrl(inviteCode, inviteType, 'https://allplays.ai');
-
-    const actionCodeSettings = {
-        url: continueUrl,
-        handleCodeInApp: true
-    };
-
     try {
-        await sendSignInLinkToEmail(auth, email, actionCodeSettings);
+        const result = await queueInviteSignInEmail(inviteCode);
 
         // NOTE: We intentionally do NOT store emailForSignIn / inviteCode / inviteType
         // in localStorage here. The sender is not the recipient — storing the recipient's
@@ -523,7 +507,7 @@ export async function sendInviteEmail(email, inviteCode, inviteType, metadata = 
         return {
             success: true,
             emailSent: true,
-            existingUser: !!existingUser
+            existingUser: result.existingUser === true
         };
     } catch (error) {
         console.error('Error sending invite email:', error);

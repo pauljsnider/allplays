@@ -10,8 +10,6 @@ import {
   initializeAuth as legacyInitializeAuth,
   isSignInWithEmailLink as legacyIsSignInWithEmailLink,
   onAuthStateChanged as legacyOnAuthStateChanged,
-  sendEmailVerification as legacySendEmailVerification,
-  sendPasswordResetEmail as legacySendPasswordResetEmail,
   signInWithEmailAndPassword as legacySignInWithEmailAndPassword,
   signInWithEmailLink as legacySignInWithEmailLink,
   signInWithPopup as legacySignInWithPopup,
@@ -40,8 +38,6 @@ export const indexedDBLocalPersistence = legacyIndexedDBLocalPersistence as any;
 export const initializeAuth = legacyInitializeAuth as (...args: any[]) => any;
 export const isSignInWithEmailLink = legacyIsSignInWithEmailLink as (...args: any[]) => boolean;
 export const onAuthStateChanged = legacyOnAuthStateChanged as (...args: any[]) => () => void;
-export const sendEmailVerification = legacySendEmailVerification as (...args: any[]) => Promise<any>;
-export const sendPasswordResetEmail = legacySendPasswordResetEmail as (...args: any[]) => Promise<any>;
 export const signInWithEmailAndPassword = legacySignInWithEmailAndPassword as (...args: any[]) => Promise<any>;
 export const signInWithEmailLink = legacySignInWithEmailLink as (...args: any[]) => Promise<any>;
 export const signInWithPopup = legacySignInWithPopup as (...args: any[]) => Promise<any>;

@@ -839,7 +839,7 @@ export function Profile({ auth }: { auth: AuthState }) {
     try {
       await resendVerificationEmail();
       setVerificationStatus({
-        message: `Verification email sent to ${user?.email || 'your inbox'}. It can take a couple of minutes — check spam too.`,
+        message: `Verification email queued for ${user?.email || 'your inbox'}. It can take a couple of minutes — check spam too.`,
         tone: 'success'
       });
       setResendCooldown(60);
@@ -1080,7 +1080,7 @@ export function Profile({ auth }: { auth: AuthState }) {
 
     try {
       await sendResetEmail(user.email);
-      setPasswordStatus({ message: 'Password reset email sent.', tone: 'success' });
+      setPasswordStatus({ message: 'Password reset email queued.', tone: 'success' });
     } catch (error) {
       setPasswordStatus({ message: describeAuthError(error), tone: 'error' });
     } finally {

@@ -13,9 +13,6 @@ const firebaseMocks = vi.hoisted(() => {
         signInWithPopup: vi.fn(),
         signInWithRedirect: vi.fn(),
         getRedirectResult: vi.fn(),
-        sendPasswordResetEmail: vi.fn(),
-        sendEmailVerification: vi.fn(),
-        sendSignInLinkToEmail: vi.fn(),
         isSignInWithEmailLink: vi.fn(),
         signInWithEmailLink: vi.fn(),
         updatePassword: vi.fn()
@@ -37,8 +34,15 @@ const dbMocks = vi.hoisted(() => ({
     listMyParentMembershipRequests: vi.fn()
 }));
 
+const authEmailMocks = vi.hoisted(() => ({
+    queueCurrentUserVerificationEmail: vi.fn().mockResolvedValue({ queued: true }),
+    queueInviteSignInEmail: vi.fn(),
+    queuePasswordResetEmail: vi.fn()
+}));
+
 vi.mock('../../js/firebase.js?v=20', () => firebaseMocks);
 vi.mock('../../js/db.js?v=92', () => dbMocks);
+vi.mock('../../js/auth-email.js?v=1', () => authEmailMocks);
 vi.mock('../../js/admin-invite.js?v=6', () => ({
     redeemAdminInviteAcceptance: vi.fn()
 }));
@@ -86,7 +90,7 @@ describe('auth signup parent invite failure handling', () => {
         expect(firebaseMocks.signOut).toHaveBeenCalledWith(firebaseMocks.auth);
         expect(dbMocks.markAccessCodeAsUsed).not.toHaveBeenCalled();
         expect(dbMocks.updateUserProfile).not.toHaveBeenCalled();
-        expect(firebaseMocks.sendEmailVerification).not.toHaveBeenCalled();
+        expect(authEmailMocks.queueCurrentUserVerificationEmail).not.toHaveBeenCalled();
     });
 
     it('does not fail signup when parent invite profile finalization fails after redeem', async () => {
@@ -111,7 +115,7 @@ describe('auth signup parent invite failure handling', () => {
         expect(dbMocks.redeemParentInvite).toHaveBeenCalledWith('user-1', 'PARENT01', 'parent@example.com');
         expect(deleteMock).not.toHaveBeenCalled();
         expect(firebaseMocks.signOut).not.toHaveBeenCalled();
-        expect(firebaseMocks.sendEmailVerification).toHaveBeenCalledWith(user);
+        expect(authEmailMocks.queueCurrentUserVerificationEmail).toHaveBeenCalledWith();
     });
 
     it('delegates signup flow to executeEmailPasswordSignup with parent invite dependencies', () => {
@@ -123,7 +127,7 @@ describe('auth signup parent invite failure handling', () => {
         expect(signupSection).toContain('redeemParentInvite');
         expect(signupSection).toContain('updateUserProfile');
         expect(signupSection).toContain('markAccessCodeAsUsed');
-        expect(signupSection).toContain('sendEmailVerification');
+        expect(signupSection).toContain('sendVerificationEmail: queueCurrentUserVerificationEmail');
         expect(signupSection).toContain('signOut');
     });
 
@@ -147,7 +151,7 @@ describe('auth signup parent invite failure handling', () => {
         await expect(signup('parent@example.com', 'secret123', 'PARENT01')).resolves.toEqual({ user });
         expect(user.delete).not.toHaveBeenCalled();
         expect(firebaseMocks.signOut).not.toHaveBeenCalled();
-        expect(firebaseMocks.sendEmailVerification).toHaveBeenCalledWith(user);
+        expect(authEmailMocks.queueCurrentUserVerificationEmail).toHaveBeenCalledWith();
     });
 
     it('rejects google signup when parent invite linking fails', async () => {
@@ -178,7 +182,7 @@ describe('auth signup parent invite failure handling', () => {
         expect(firebaseMocks.signOut).toHaveBeenCalledWith(firebaseMocks.auth);
         expect(dbMocks.markAccessCodeAsUsed).not.toHaveBeenCalled();
         expect(dbMocks.updateUserProfile).not.toHaveBeenCalled();
-        expect(firebaseMocks.sendEmailVerification).not.toHaveBeenCalled();
+        expect(authEmailMocks.queueCurrentUserVerificationEmail).not.toHaveBeenCalled();
     });
 
     it('rejects google parent invite signup when Google email does not match invite email', async () => {

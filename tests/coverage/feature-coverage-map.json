@@ -133,6 +133,9 @@
                 "autoAcceptParentInviteForExistingUser",
                 "confirmParentAccountMerge",
                 "previewAccountMerge",
+                "queueEmailVerification",
+                "queueInviteSignInEmail",
+                "queuePasswordResetEmail",
                 "redeemAdminInvite",
                 "redeemCoParentInvite",
                 "redeemHouseholdInvite",
@@ -141,6 +144,7 @@
             ],
             "unitTests": [
                 "functions/test/account-merge-core.test.cjs",
+                "functions/test/auth-email-core.test.cjs",
                 "tests/unit/accept-invite-flow.test.js",
                 "tests/unit/accept-invite-page.test.js",
                 "tests/unit/access-code-validation.test.js",
@@ -148,7 +152,9 @@
                 "tests/unit/account-merge-functions-source.test.js",
                 "tests/unit/app-auth-invite-mode.test.jsx",
                 "tests/unit/app-auth-profile-capabilities.test.js",
-                "tests/unit/app-profile-service.test.ts"
+                "tests/unit/app-profile-service.test.ts",
+                "tests/unit/auth-email-client.test.js",
+                "tests/unit/auth-email-resend-routing.test.js"
             ],
             "integrationTests": [
                 "apps/app/src/pages/AcceptInvite.test.tsx",

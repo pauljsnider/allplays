@@ -25,8 +25,6 @@ const firebaseAuthSdk = vi.hoisted(() => {
     isSignInWithEmailLink: vi.fn(),
     onAuthStateChanged: vi.fn(),
     resolvePrimaryFirebaseConfig: vi.fn(() => Promise.resolve(resolvedConfig)),
-    sendEmailVerification: vi.fn(),
-    sendPasswordResetEmail: vi.fn(),
     signInWithEmailAndPassword: vi.fn(),
     signInWithEmailLink: vi.fn(),
     signInWithPopup: vi.fn(),

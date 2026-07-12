@@ -23,7 +23,7 @@ function createDependencies(overrides = {}) {
         getTeam: vi.fn().mockResolvedValue({ id: 'team-42', name: 'Blue Rockets' }),
         addTeamAdminEmail: vi.fn().mockResolvedValue(undefined),
         getUserProfile: vi.fn().mockResolvedValue({ email: 'newadmin@example.com' }),
-        sendEmailVerification: vi.fn().mockResolvedValue(undefined),
+        sendVerificationEmail: vi.fn().mockResolvedValue(undefined),
         signOut: vi.fn().mockResolvedValue(undefined),
         ...overrides
     };
@@ -116,7 +116,7 @@ describe('executeEmailPasswordSignup', () => {
         expect(deleteAuthUser).toHaveBeenCalledTimes(1);
         expect(dependencies.signOut).toHaveBeenCalledWith(auth);
         expect(dependencies.updateUserProfile).not.toHaveBeenCalled();
-        expect(dependencies.sendEmailVerification).not.toHaveBeenCalled();
+        expect(dependencies.sendVerificationEmail).not.toHaveBeenCalled();
     });
 
     it('rolls back signup when admin invite redemption rejects a mismatched email', async () => {
@@ -154,7 +154,7 @@ describe('executeEmailPasswordSignup', () => {
         expect(deleteAuthUser).toHaveBeenCalledTimes(1);
         expect(dependencies.signOut).toHaveBeenCalledWith(auth);
         expect(dependencies.updateUserProfile).not.toHaveBeenCalled();
-        expect(dependencies.sendEmailVerification).not.toHaveBeenCalled();
+        expect(dependencies.sendVerificationEmail).not.toHaveBeenCalled();
     });
 
     it('passes the signup email through to parent invite redemption', async () => {
@@ -206,7 +206,7 @@ describe('executeEmailPasswordSignup', () => {
         })).rejects.toThrow('temporary backend failure');
 
         expect(dependencies.updateUserProfile).not.toHaveBeenCalled();
-        expect(dependencies.sendEmailVerification).not.toHaveBeenCalled();
+        expect(dependencies.sendVerificationEmail).not.toHaveBeenCalled();
         expect(deleteAuthUser).toHaveBeenCalledTimes(1);
         expect(dependencies.signOut).toHaveBeenCalledTimes(1);
         expect(dependencies.signOut).toHaveBeenCalledWith(auth);
@@ -244,7 +244,7 @@ describe('executeEmailPasswordSignup', () => {
         expect(dependencies.signOut).toHaveBeenCalledTimes(1);
         expect(dependencies.signOut).toHaveBeenCalledWith(auth);
         expect(dependencies.updateUserProfile).not.toHaveBeenCalled();
-        expect(dependencies.sendEmailVerification).not.toHaveBeenCalled();
+        expect(dependencies.sendVerificationEmail).not.toHaveBeenCalled();
     });
 
     it('completes parent invite signup and sends verification when linking succeeds', async () => {
@@ -269,7 +269,7 @@ describe('executeEmailPasswordSignup', () => {
         expect(dependencies.redeemParentInvite).toHaveBeenCalledWith('user-123', 'PARENTCODE', 'parent@example.com');
         expect(dependencies.updateUserProfile).toHaveBeenCalledTimes(1);
         expect(reload).toHaveBeenCalledTimes(1);
-        expect(dependencies.sendEmailVerification).toHaveBeenCalledTimes(1);
+        expect(dependencies.sendVerificationEmail).toHaveBeenCalledTimes(1);
     });
 
     it('revalidates after account creation when pre-auth validation is generic', async () => {
@@ -304,7 +304,7 @@ describe('executeEmailPasswordSignup', () => {
         expect(dependencies.validateAccessCode).toHaveBeenCalledTimes(2);
         expect(dependencies.createUserWithEmailAndPassword).toHaveBeenCalledTimes(1);
         expect(dependencies.redeemParentInvite).toHaveBeenCalledWith('user-123', 'PARENTCODE', 'parent@example.com');
-        expect(dependencies.sendEmailVerification).toHaveBeenCalledTimes(1);
+        expect(dependencies.sendVerificationEmail).toHaveBeenCalledTimes(1);
     });
 
     it('cleans up the auth account when post-auth revalidation still fails', async () => {
@@ -381,7 +381,7 @@ describe('executeEmailPasswordSignup', () => {
             emailVerificationRequired: true
         }));
         expect(dependencies.markAccessCodeAsUsed).not.toHaveBeenCalled();
-        expect(dependencies.sendEmailVerification).toHaveBeenCalledTimes(1);
+        expect(dependencies.sendVerificationEmail).toHaveBeenCalledTimes(1);
     });
 
     it('rolls back auth account and rethrows when admin invite redemption fails', async () => {
@@ -420,7 +420,7 @@ describe('executeEmailPasswordSignup', () => {
         expect(deleteAuthUser).toHaveBeenCalledTimes(1);
         expect(dependencies.signOut).toHaveBeenCalledTimes(1);
         expect(dependencies.updateUserProfile).not.toHaveBeenCalled();
-        expect(dependencies.sendEmailVerification).not.toHaveBeenCalled();
+        expect(dependencies.sendVerificationEmail).not.toHaveBeenCalled();
     });
 
     it('fails closed and cleans up when standard access code claim fails', async () => {
@@ -457,7 +457,7 @@ describe('executeEmailPasswordSignup', () => {
         })).rejects.toThrow('Code already used');
 
         expect(dependencies.updateUserProfile).not.toHaveBeenCalled();
-        expect(dependencies.sendEmailVerification).not.toHaveBeenCalled();
+        expect(dependencies.sendVerificationEmail).not.toHaveBeenCalled();
         expect(deleteAuthUser).toHaveBeenCalledTimes(1);
         expect(dependencies.signOut).toHaveBeenCalledWith(auth);
     });

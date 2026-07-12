@@ -228,7 +228,7 @@ describe('VerifyPending page', () => {
         await act(async () => {
             buttonByText(container, 'Resend verification email').click();
         });
-        await waitForText(container, 'Verification email sent. Check your inbox and spam folder.');
+        await waitForText(container, 'Verification email queued. Check your inbox and spam folder shortly.');
         expect(authServiceMocks.resendVerificationEmail).toHaveBeenCalledTimes(1);
 
         await act(async () => {

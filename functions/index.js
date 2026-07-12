@@ -70,6 +70,16 @@ const {
   normalizeInviteEmailType
 } = require('./invite-email-core.cjs');
 const {
+  AUTH_EMAIL_TYPES,
+  buildAuthEmailMailDocId,
+  buildAuthEmailMailJob,
+  buildAuthEmailRateLimitId,
+  getAuthEmailActionSettings,
+  getInviteContinueUrl,
+  isValidAuthEmail,
+  normalizeAuthEmail
+} = require('./auth-email-core.cjs');
+const {
   normalizeEmail,
   normalizeAccountMergePreviewInput,
   hashAccountMergeVerificationToken,
@@ -163,6 +173,8 @@ if (admin.apps.length === 0) {
 
 const firestore = admin.firestore();
 const INVITE_EMAIL_TYPES = new Set(['parent_invite', 'household_invite', 'coparent_invite']);
+const EMAIL_LINK_INVITE_TYPES = new Set(['parent_invite', 'household_invite', 'coparent_invite', 'admin_invite']);
+const AUTH_EMAIL_COOLDOWN_MS = 60 * 1000;
 const TEAM_MEDIA_NOTIFICATION_BATCH_WINDOW_MS = 60 * 60 * 1000;
 const TEAM_MEDIA_NOTIFICATION_DISPATCH_LIMIT = 50;
 const FIRESTORE_BATCH_SAFE_WRITE_LIMIT = 450;
@@ -191,6 +203,11 @@ const checkPublicOpportunityMessageRateLimit = createInMemoryRateLimiter({
   windowMs: 10 * 60_000,
   maxRequests: 20,
   maxKeys: 5_000
+});
+const checkPasswordResetEmailRateLimit = createInMemoryRateLimiter({
+  windowMs: 10 * 60_000,
+  maxRequests: 10,
+  maxKeys: 10_000
 });
 
 function getStripeConfig() {
@@ -1924,6 +1941,87 @@ function isParentInviteExpired(expiresAt) {
   return Number.isFinite(millis) && millis < Date.now();
 }
 
+async function reserveAuthEmailDelivery(type, email, scope = '') {
+  const now = Date.now();
+  const limitRef = firestore.collection('authEmailRateLimits').doc(buildAuthEmailRateLimitId(type, email, scope));
+  return firestore.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(limitRef);
+    const nextAllowedAt = snapshot.data()?.nextAllowedAt;
+    const nextAllowedMillis = typeof nextAllowedAt?.toMillis === 'function'
+      ? nextAllowedAt.toMillis()
+      : new Date(nextAllowedAt || 0).getTime();
+    if (Number.isFinite(nextAllowedMillis) && nextAllowedMillis > now) {
+      return false;
+    }
+
+    transaction.set(limitRef, {
+      type,
+      recipientHash: crypto.createHash('sha256').update(normalizeAuthEmail(email)).digest('hex'),
+      nextAllowedAt: admin.firestore.Timestamp.fromMillis(now + AUTH_EMAIL_COOLDOWN_MS),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+    return true;
+  });
+}
+
+async function releaseAuthEmailDelivery(type, email, scope = '') {
+  const limitRef = firestore.collection('authEmailRateLimits').doc(buildAuthEmailRateLimitId(type, email, scope));
+  await limitRef.delete().catch((error) => {
+    functions.logger.warn('Unable to release failed authentication email reservation.', {
+      code: error?.code || null,
+      type
+    });
+  });
+}
+
+async function queueAuthEmailDelivery({
+  type,
+  email,
+  actionUrl,
+  displayName = '',
+  contextLabel = '',
+  uid = null,
+  inviteCodeId = null
+}) {
+  const job = buildAuthEmailMailJob({
+    type,
+    email,
+    actionUrl,
+    displayName,
+    contextLabel,
+    uid,
+    inviteCodeId
+  });
+  const mailRef = firestore.collection('mail').doc(buildAuthEmailMailDocId(type, email));
+  await mailRef.create({
+    ...job,
+    createdAt: admin.firestore.FieldValue.serverTimestamp()
+  });
+  return mailRef.id;
+}
+
+async function resolveAuthEmailUser(data, context) {
+  let uid = String(context.auth?.uid || '').trim();
+  if (!uid && data?.idToken) {
+    try {
+      const decoded = await admin.auth().verifyIdToken(String(data.idToken));
+      uid = String(decoded?.uid || '').trim();
+    } catch (error) {
+      functions.logger.warn('Rejected invalid native authentication token for auth email request.', {
+        code: error?.code || null
+      });
+    }
+  }
+  if (!uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in before requesting this email.');
+  }
+  return admin.auth().getUser(uid);
+}
+
+function isAuthUserNotFoundError(error) {
+  return error?.code === 'auth/user-not-found' || error?.code === 'user-not-found';
+}
+
 function buildInviteMailDocId(codeId) {
   const safeCodeId = String(codeId || '').replace(/[^\w.-]+/g, '_').slice(0, 240);
   return `invite_${safeCodeId}`;
@@ -1970,11 +2068,11 @@ async function queueInviteEmailForCode(codeId, codeData = {}) {
   }
 }
 
-async function findOwnedInviteCode(code, uid) {
+async function findOwnedInviteCode(code, uid, allowedTypes = INVITE_EMAIL_TYPES) {
   const directSnap = await firestore.doc(`accessCodes/${code}`).get();
   if (directSnap.exists) {
     const directData = directSnap.data() || {};
-    if (INVITE_EMAIL_TYPES.has(String(directData.type || '').trim().toLowerCase()) &&
+    if (allowedTypes.has(String(directData.type || '').trim().toLowerCase()) &&
         String(directData.generatedBy || '').trim() === uid) {
       return { id: directSnap.id, data: directData };
     }
@@ -1983,11 +2081,170 @@ async function findOwnedInviteCode(code, uid) {
   const querySnap = await firestore.collection('accessCodes').where('code', '==', code).limit(10).get();
   const owned = querySnap.docs.find((docSnap) => {
     const candidate = docSnap.data() || {};
-    return INVITE_EMAIL_TYPES.has(String(candidate.type || '').trim().toLowerCase()) &&
+    return allowedTypes.has(String(candidate.type || '').trim().toLowerCase()) &&
       String(candidate.generatedBy || '').trim() === uid;
   });
   return owned ? { id: owned.id, data: owned.data() || {} } : null;
 }
+
+exports.queuePasswordResetEmail = functions.https.onCall(async (data, context = {}) => {
+  const email = normalizeAuthEmail(data?.email);
+  if (!isValidAuthEmail(email)) {
+    throw new functions.https.HttpsError('invalid-argument', 'Enter a valid email address.');
+  }
+
+  const requestLimit = checkPasswordResetEmailRateLimit(context.rawRequest || {});
+  if (!requestLimit.allowed) {
+    functions.logger.warn('Password-reset email request rate limit reached.', {
+      retryAfterSeconds: requestLimit.retryAfterSeconds
+    });
+    return { queued: true };
+  }
+
+  let user;
+  try {
+    user = await admin.auth().getUserByEmail(email);
+  } catch (error) {
+    if (isAuthUserNotFoundError(error)) {
+      return { queued: true };
+    }
+    functions.logger.error('Unable to look up password-reset recipient.', { code: error?.code || null });
+    throw new functions.https.HttpsError('internal', 'Password reset email could not be queued.');
+  }
+
+  const reserved = await reserveAuthEmailDelivery(AUTH_EMAIL_TYPES.PASSWORD_RESET, email);
+  if (!reserved) {
+    return { queued: true };
+  }
+
+  try {
+    const actionUrl = await admin.auth().generatePasswordResetLink(
+      email,
+      getAuthEmailActionSettings(AUTH_EMAIL_TYPES.PASSWORD_RESET)
+    );
+    await queueAuthEmailDelivery({
+      type: AUTH_EMAIL_TYPES.PASSWORD_RESET,
+      email,
+      actionUrl,
+      displayName: user.displayName || '',
+      uid: user.uid
+    });
+    return { queued: true };
+  } catch (error) {
+    await releaseAuthEmailDelivery(AUTH_EMAIL_TYPES.PASSWORD_RESET, email);
+    functions.logger.error('Unable to generate or queue password-reset email.', {
+      code: error?.code || null,
+      uid: user.uid
+    });
+    throw new functions.https.HttpsError('internal', 'Password reset email could not be queued.');
+  }
+});
+
+exports.queueEmailVerification = functions.https.onCall(async (data, context = {}) => {
+  const user = await resolveAuthEmailUser(data, context);
+  const email = normalizeAuthEmail(user.email);
+  if (!isValidAuthEmail(email)) {
+    throw new functions.https.HttpsError('failed-precondition', 'The signed-in account does not have a valid email address.');
+  }
+  if (user.emailVerified) {
+    return { alreadyVerified: true };
+  }
+
+  const reserved = await reserveAuthEmailDelivery(AUTH_EMAIL_TYPES.VERIFICATION, email, user.uid);
+  if (!reserved) {
+    return { queued: true };
+  }
+
+  try {
+    const actionUrl = await admin.auth().generateEmailVerificationLink(
+      email,
+      getAuthEmailActionSettings(AUTH_EMAIL_TYPES.VERIFICATION)
+    );
+    await queueAuthEmailDelivery({
+      type: AUTH_EMAIL_TYPES.VERIFICATION,
+      email,
+      actionUrl,
+      displayName: user.displayName || '',
+      uid: user.uid
+    });
+    return { queued: true };
+  } catch (error) {
+    await releaseAuthEmailDelivery(AUTH_EMAIL_TYPES.VERIFICATION, email, user.uid);
+    functions.logger.error('Unable to generate or queue verification email.', {
+      code: error?.code || null,
+      uid: user.uid
+    });
+    throw new functions.https.HttpsError('internal', 'Verification email could not be queued.');
+  }
+});
+
+exports.queueInviteSignInEmail = functions.https.onCall(async (data, context = {}) => {
+  const uid = String(context.auth?.uid || '').trim();
+  if (!uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in before sending an invite email.');
+  }
+  const code = String(data?.code || '').trim().toUpperCase();
+  if (!/^[A-Z0-9]{8}$/.test(code)) {
+    throw new functions.https.HttpsError('invalid-argument', 'A valid eight-character invite code is required.');
+  }
+
+  const invite = await findOwnedInviteCode(code, uid, EMAIL_LINK_INVITE_TYPES);
+  if (!invite) {
+    throw new functions.https.HttpsError('not-found', 'Invite could not be found.');
+  }
+  const inviteType = String(invite.data.type || '').trim().toLowerCase();
+  const email = normalizeAuthEmail(invite.data.email);
+  if (!isValidAuthEmail(email) || invite.data.used === true || invite.data.revoked === true || isParentInviteExpired(invite.data.expiresAt)) {
+    throw new functions.https.HttpsError('failed-precondition', 'Invite is not eligible for email delivery.');
+  }
+
+  const reserved = await reserveAuthEmailDelivery(AUTH_EMAIL_TYPES.SIGN_IN, email);
+  if (!reserved) {
+    let existingUser = false;
+    try {
+      await admin.auth().getUserByEmail(email);
+      existingUser = true;
+    } catch (error) {
+      if (!isAuthUserNotFoundError(error)) throw error;
+    }
+    return { queued: false, existingUser };
+  }
+
+  try {
+    const continueUrl = getInviteContinueUrl(code, inviteType);
+    const actionUrl = await admin.auth().generateSignInWithEmailLink(
+      email,
+      getAuthEmailActionSettings(AUTH_EMAIL_TYPES.SIGN_IN, continueUrl)
+    );
+    let existingUser = false;
+    let displayName = '';
+    try {
+      const recipient = await admin.auth().getUserByEmail(email);
+      existingUser = true;
+      displayName = recipient.displayName || '';
+    } catch (error) {
+      if (!isAuthUserNotFoundError(error)) throw error;
+    }
+    await queueAuthEmailDelivery({
+      type: AUTH_EMAIL_TYPES.SIGN_IN,
+      email,
+      actionUrl,
+      displayName,
+      contextLabel: String(invite.data.teamName || '').trim(),
+      uid: null,
+      inviteCodeId: invite.id
+    });
+    return { queued: true, existingUser };
+  } catch (error) {
+    await releaseAuthEmailDelivery(AUTH_EMAIL_TYPES.SIGN_IN, email);
+    functions.logger.error('Unable to generate or queue invite sign-in email.', {
+      code: error?.code || null,
+      inviteCodeId: invite.id,
+      inviterUid: uid
+    });
+    throw new functions.https.HttpsError('internal', 'Invite email could not be queued.');
+  }
+});
 
 exports.queueInviteEmail = functions.https.onCall(async (data, context) => {
   const uid = String(context.auth?.uid || '').trim();

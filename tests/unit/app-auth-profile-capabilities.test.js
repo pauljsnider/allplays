@@ -111,7 +111,7 @@ describe('React app auth/profile capability parity', () => {
             'signInWithNativeGoogleCredential',
             'skipNativeAuth: true',
             'completeGoogleRedirect',
-            'sendPasswordResetEmail'
+            'queuePasswordResetEmail'
         ]);
     });
 

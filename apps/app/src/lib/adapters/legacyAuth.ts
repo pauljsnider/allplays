@@ -54,6 +54,12 @@ export type LegacySignupFlowModule = {
   executeEmailPasswordSignup: (...args: any[]) => Promise<unknown>;
 };
 
+export type LegacyAuthEmailModule = {
+  queuePasswordResetEmail: (email: string) => Promise<unknown>;
+  queueCurrentUserVerificationEmail: (idToken?: string) => Promise<unknown>;
+  queueInviteSignInEmail: (inviteCode: string) => Promise<unknown>;
+};
+
 export type LegacyParentMembershipSync = {
   changed: boolean;
   userUpdate: Record<string, unknown>;
@@ -70,6 +76,7 @@ let authDbPromise: Promise<LegacyAuthDbModule> | null = null;
 let adminInvitePromise: Promise<LegacyAdminInviteModule> | null = null;
 let inviteFlowPromise: Promise<LegacyInviteFlowModule> | null = null;
 let signupFlowPromise: Promise<LegacySignupFlowModule> | null = null;
+let authEmailPromise: Promise<LegacyAuthEmailModule> | null = null;
 let parentMembershipUtilsPromise: Promise<LegacyParentMembershipUtilsModule> | null = null;
 
 export function loadLegacyAuthDb() {
@@ -90,6 +97,11 @@ export function loadLegacyInviteFlow() {
 export function loadLegacySignupFlow() {
   signupFlowPromise ||= import('@legacy/signup-flow.js') as Promise<LegacySignupFlowModule>;
   return signupFlowPromise;
+}
+
+export function loadLegacyAuthEmail() {
+  authEmailPromise ||= import('@legacy/auth-email.js') as Promise<LegacyAuthEmailModule>;
+  return authEmailPromise;
 }
 
 export function loadLegacyParentMembershipUtils() {

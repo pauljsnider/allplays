@@ -141,7 +141,7 @@
 
             try {
                 await resendVerificationEmail();
-                showMessage('Verification email sent! Please check your inbox.');
+                showMessage('Verification email queued! Please check your inbox shortly.');
             } catch (error) {
                 console.error('Error sending verification email:', error);
                 if (error.code === 'auth/too-many-requests') {
