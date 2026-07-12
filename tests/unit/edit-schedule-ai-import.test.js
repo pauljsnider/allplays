@@ -38,7 +38,11 @@ describe('edit schedule bulk AI import', () => {
             eventType: 'practice',
             date: '2026-07-13T18:00:00',
             title: 'Practice',
-            location: 'Overland Trail Elementary'
+            location: 'Overland Trail Elementary',
+            assignments: [
+                { role: ' Snack ', value: ' Coach Taylor ' },
+                { role: 'Carpool', value: 'Jordan family' }
+            ]
         }, {
             Timestamp,
             getDefaultEndTime: defaultEndTime,
@@ -49,6 +53,10 @@ describe('edit schedule bulk AI import', () => {
         expect(payload.location).toBe('Overland Trail Elementary');
         expect(payload.date).toEqual(new Date('2026-07-13T18:00:00'));
         expect(payload.end).toEqual(new Date('2026-07-13T19:30:00'));
+        expect(payload.assignments).toEqual([
+            { role: 'Snack', value: 'Coach Taylor' },
+            { role: 'Carpool', value: 'Jordan family' }
+        ]);
         expect(payload.source).toBe('bulk_ai');
         expect(payload.sourceMetadata).toEqual({
             importedBy: 'coach-1',

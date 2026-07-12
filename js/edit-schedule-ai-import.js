@@ -238,6 +238,7 @@ export function buildBulkAiPracticePayload(event, {
         location: normalized.location || '',
         notes: normalized.notes,
         arrivalTime: normalized.arrivalTime ? Timestamp.fromDate(new Date(normalized.arrivalTime)) : null,
+        assignments: normalized.assignments,
         source: 'bulk_ai',
         sourceMetadata: {
             importedBy: userId || null,
