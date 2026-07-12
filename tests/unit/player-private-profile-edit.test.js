@@ -114,12 +114,14 @@ function buildDbProfileUpdateHelpers() {
 function buildPrivateParentMergeHelpers() {
     const source = readDbSource();
     const hasContactsSource = extractFunction(source, 'function playerHasRosterContactFields(');
+    const hasParentUserIdsSource = extractFunction(source, 'function playerHasRosterParentUserIds(');
     const mergeSource = extractFunction(source, 'async function mergePlayerPrivateProfileParents(')
         .replace('async function mergePlayerPrivateProfileParents', 'async function mergePlayerPrivateProfileParents');
 
     const factory = new Function('deps', `
         const { getPlayerPrivateProfile } = deps;
         ${hasContactsSource}
+        ${hasParentUserIdsSource}
         ${mergeSource}
         return { playerHasRosterContactFields, mergePlayerPrivateProfileParents };
     `);
