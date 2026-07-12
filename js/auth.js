@@ -16,7 +16,7 @@ import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemPare
 import { executeEmailPasswordSignup } from './signup-flow.js?v=8';
 import { redeemAdminInviteAcceptance, redeemAdminInviteAtomically } from './admin-invite.js?v=6';
 import { mergeApprovedParentMembershipRequests } from './parent-membership-utils.js?v=2';
-import { createInviteProcessor } from './accept-invite-flow.js?v=10';
+import { createInviteProcessor } from './accept-invite-flow.js?v=11';
 import {
     queueCurrentUserVerificationEmail,
     queueInviteSignInEmail,
