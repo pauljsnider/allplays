@@ -52,26 +52,30 @@ describe('stat config presets', () => {
     it('matches the advertised diamond sport stat templates', () => {
         const expectedColumns = ['AB', 'H', 'R', 'RBI', 'BB', 'FP'];
 
-        expect(getDefaultStatConfigForSport('Baseball')).toEqual(expect.objectContaining({
+        const baseball = getDefaultStatConfigForSport('Baseball');
+        const softball = getDefaultStatConfigForSport('softball');
+
+        expect(baseball).toEqual(expect.objectContaining({
             name: 'Baseball Standard',
             baseType: 'Baseball',
             columns: expectedColumns,
             statDefinitions: expect.arrayContaining([
                 expect.objectContaining({ id: 'ab', label: 'AB', group: 'Batting' }),
                 expect.objectContaining({ id: 'bb', label: 'BB', group: 'Plate Discipline', topStat: true }),
-                expect.objectContaining({ id: 'fp', label: 'FP', group: 'Fielding', format: 'percentage', precision: 3, topStat: true })
+                expect.objectContaining({ id: 'fp', label: 'FP', group: 'Fielding', type: 'base', format: 'number', precision: 0, topStat: true })
             ])
         }));
-        expect(getDefaultStatConfigForSport('softball')).toEqual(expect.objectContaining({
+        expect(softball).toEqual(expect.objectContaining({
             name: 'Softball Standard',
             baseType: 'Softball',
             columns: expectedColumns,
             statDefinitions: expect.arrayContaining([
                 expect.objectContaining({ id: 'ab', label: 'AB', group: 'Batting' }),
                 expect.objectContaining({ id: 'bb', label: 'BB', group: 'Plate Discipline', topStat: true }),
-                expect.objectContaining({ id: 'fp', label: 'FP', group: 'Fielding', format: 'percentage', precision: 3, topStat: true })
+                expect.objectContaining({ id: 'fp', label: 'FP', group: 'Fielding', type: 'base', format: 'number', precision: 0, topStat: true })
             ])
         }));
+
     });
 
     it('serializes editable stat definitions for reload into the config form', () => {

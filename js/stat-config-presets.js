@@ -13,7 +13,7 @@ function createDiamondSportConfig(sport) {
             { label: 'R', acronym: 'R', group: 'Batting', topStat: true },
             { label: 'RBI', acronym: 'RBI', group: 'Batting', topStat: true },
             { label: 'BB', acronym: 'BB', group: 'Plate Discipline', topStat: true },
-            { label: 'FP', acronym: 'FP', group: 'Fielding', format: 'percentage', precision: 3, topStat: true }
+            { label: 'FP', acronym: 'FP', group: 'Fielding', topStat: true }
         ]
     };
 }
@@ -72,13 +72,13 @@ const PRESET_DEFINITIONS = [
     {
         id: 'baseball',
         label: 'Baseball Standard',
-        description: 'At-bats, hits, runs, RBI, walks, and fielding percentage.',
+        description: 'At-bats, hits, runs, RBI, walks, and fielding plays.',
         config: createDiamondSportConfig('Baseball')
     },
     {
         id: 'softball',
         label: 'Softball Standard',
-        description: 'At-bats, hits, runs, RBI, walks, and fielding percentage.',
+        description: 'At-bats, hits, runs, RBI, walks, and fielding plays.',
         config: createDiamondSportConfig('Softball')
     },
     {

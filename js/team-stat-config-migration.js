@@ -1,4 +1,4 @@
-import { getDefaultStatConfigForSport } from './stat-config-presets.js?v=1';
+import { getDefaultStatConfigForSport } from './stat-config-presets.js?v=2';
 
 function normalizeSportLabel(value) {
     return String(value || '').trim().toLowerCase();

@@ -361,11 +361,11 @@ function extractEditTeamModule() {
             'const { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, getPlayerPrivateProfile, copySelectedPlayersForTeamRollover, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail, getAllUsers, getTeamAccessCodes, getConfigs, getGames, updateGame, getRegistrationSources, syncRegistrationProvider } = deps.db;'
         )
         .replace(
-            "import { getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=1';",
+            "import { getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=2';",
             'const { getDefaultStatConfigForSport } = deps.statConfigPresets;'
         )
         .replace(
-            "import { buildTeamSportConfigMigrationPlan } from './js/team-stat-config-migration.js?v=1';",
+            "import { buildTeamSportConfigMigrationPlan } from './js/team-stat-config-migration.js?v=2';",
             'const { buildTeamSportConfigMigrationPlan } = deps.teamStatConfigMigration;'
         )
         .replace(
