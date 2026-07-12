@@ -11482,6 +11482,7 @@ function isOpportunityPlatformAdmin(caller) {
 function encodeOpportunityCursor(docSnap) {
   if (!docSnap) return null;
   return Buffer.from(JSON.stringify({
+    expiresAt: docSnap.data()?.expiresAt?.toMillis?.() || 0,
     createdAt: docSnap.data()?.createdAt?.toMillis?.() || 0,
     id: docSnap.id
   }), 'utf8').toString('base64url');
@@ -11491,8 +11492,12 @@ function decodeOpportunityCursor(value) {
   if (!value) return null;
   try {
     const parsed = JSON.parse(Buffer.from(String(value), 'base64url').toString('utf8'));
-    if (!parsed.id || !Number.isFinite(Number(parsed.createdAt))) return null;
-    return { id: String(parsed.id), createdAt: admin.firestore.Timestamp.fromMillis(Number(parsed.createdAt)) };
+    if (!parsed.id || !Number.isFinite(Number(parsed.expiresAt)) || !Number.isFinite(Number(parsed.createdAt))) return null;
+    return {
+      id: String(parsed.id),
+      expiresAt: admin.firestore.Timestamp.fromMillis(Number(parsed.expiresAt)),
+      createdAt: admin.firestore.Timestamp.fromMillis(Number(parsed.createdAt))
+    };
   } catch {
     return null;
   }
@@ -11579,24 +11584,29 @@ exports.listPublicOpportunities = functions.https.onCall(async (data, context = 
   const requestedPageSize = Number(data?.pageSize || 24);
   const pageSize = Math.min(40, Math.max(1, Number.isFinite(requestedPageSize) ? requestedPageSize : 24));
   const cursor = decodeOpportunityCursor(data?.cursor);
+  const now = admin.firestore.Timestamp.now();
   let baseQuery = firestore.collection('publicOpportunities')
     .where('status', '==', 'active')
+    .where('expiresAt', '>', now)
+    .orderBy('expiresAt', 'desc')
     .orderBy('createdAt', 'desc')
     .orderBy(admin.firestore.FieldPath.documentId(), 'desc');
-  if (cursor) baseQuery = baseQuery.startAfter(cursor.createdAt, cursor.id);
+  if (cursor) baseQuery = baseQuery.startAfter(cursor.expiresAt, cursor.createdAt, cursor.id);
 
   const items = [];
   let lastScanned = null;
   let exhausted = false;
   let stoppedBeforeEndOfScan = false;
-  for (let page = 0; page < 5 && items.length < pageSize && !exhausted; page += 1) {
+  while (items.length < pageSize && !exhausted) {
     let scanQuery = baseQuery.limit(100);
     if (lastScanned) {
       scanQuery = firestore.collection('publicOpportunities')
         .where('status', '==', 'active')
+        .where('expiresAt', '>', now)
+        .orderBy('expiresAt', 'desc')
         .orderBy('createdAt', 'desc')
         .orderBy(admin.firestore.FieldPath.documentId(), 'desc')
-        .startAfter(lastScanned.data().createdAt, lastScanned.id)
+        .startAfter(lastScanned.data().expiresAt, lastScanned.data().createdAt, lastScanned.id)
         .limit(100);
     }
     const scan = await scanQuery.get();

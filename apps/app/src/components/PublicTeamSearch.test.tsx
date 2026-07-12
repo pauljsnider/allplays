@@ -7,16 +7,10 @@ import { render, screen, fireEvent, waitFor, cleanup, within } from '@testing-li
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { PublicTeamSearch } from './PublicTeamSearch';
 import { getPublicTeamsPage } from '../lib/publicTeamsService';
-import { openPublicUrl } from '../lib/publicActions';
 import { ParentHomeTeam } from '../lib/homeLogic';
-import { getTeamWebsiteHashHref } from '../lib/teamNavigation';
 
 vi.mock('../lib/publicTeamsService', () => ({
     getPublicTeamsPage: vi.fn() as MockInstance<(args?: { searchText?: string; cursor?: unknown | null; pageSize?: number }) => Promise<{ teams: ParentHomeTeam[]; nextCursor: unknown | null }>>,
-}));
-
-vi.mock('../lib/publicActions', () => ({
-    openPublicUrl: vi.fn(),
 }));
 
 const mockTeams: ParentHomeTeam[] = [
@@ -358,7 +352,7 @@ describe('PublicTeamSearch', () => {
         expect(within(teamCard as HTMLElement).queryByText('0 players')).toBeNull();
     });
 
-    it('routes to the native team page when app access is available', async () => {
+    it('routes app-access teams to the public-safe profile', async () => {
         renderSearch();
 
         fireEvent.click(screen.getByRole('button', { name: /Browse all public teams/i }));
@@ -367,13 +361,12 @@ describe('PublicTeamSearch', () => {
         const atlantaCard = screen.getByText('Atlanta United').closest('article');
         expect(atlantaCard).toBeTruthy();
 
-        fireEvent.click(within(atlantaCard as HTMLElement).getByRole('button', { name: 'View team' }));
+        fireEvent.click(within(atlantaCard as HTMLElement).getByRole('button', { name: 'View public team' }));
 
-        expect(screen.getByTestId('location-probe').textContent).toBe('/teams/team-atl-1');
-        expect(openPublicUrl).not.toHaveBeenCalled();
+        expect(screen.getByTestId('location-probe').textContent).toBe('/teams/team-atl-1/public');
     });
 
-    it('opens the website team page when only web access is available', async () => {
+    it('routes legacy web-access teams to the public-safe profile', async () => {
         renderSearch();
 
         fireEvent.click(screen.getByRole('button', { name: /Browse all public teams/i }));
@@ -382,13 +375,12 @@ describe('PublicTeamSearch', () => {
         const newYorkCard = screen.getByText('New York Knicks').closest('article');
         expect(newYorkCard).toBeTruthy();
 
-        fireEvent.click(within(newYorkCard as HTMLElement).getByRole('button', { name: 'Open website team page' }));
+        fireEvent.click(within(newYorkCard as HTMLElement).getByRole('button', { name: 'View public team' }));
 
-        expect(openPublicUrl).toHaveBeenCalledWith(getTeamWebsiteHashHref('team.html', 'team-nyc-1'));
-        expect(screen.getByTestId('location-probe').textContent).toBe('/teams');
+        expect(screen.getByTestId('location-probe').textContent).toBe('/teams/team-nyc-1/public');
     });
 
-    it('renders an unavailable state when neither app nor web access exists', async () => {
+    it('routes discovered teams to the public-safe profile regardless of legacy access flags', async () => {
         (getPublicTeamsPage as import('vitest').Mock).mockResolvedValueOnce({
             teams: [
                 {
@@ -408,8 +400,8 @@ describe('PublicTeamSearch', () => {
         await waitFor(() => expect(screen.getByText('Hidden Club')).toBeTruthy());
         const hiddenCard = screen.getByText('Hidden Club').closest('article');
         expect(hiddenCard).toBeTruthy();
-        expect(within(hiddenCard as HTMLElement).queryByRole('button', { name: /View team/i })).toBeNull();
-        expect(within(hiddenCard as HTMLElement).getByText('Team page is not available in the app yet.')).toBeTruthy();
+        fireEvent.click(within(hiddenCard as HTMLElement).getByRole('button', { name: 'View public team' }));
+        expect(screen.getByTestId('location-probe').textContent).toBe('/teams/team-private-1/public');
     });
 
     it('preserves a typed search when the initial auto-browse request resolves later', async () => {

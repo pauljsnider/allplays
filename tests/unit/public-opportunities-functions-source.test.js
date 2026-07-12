@@ -63,4 +63,11 @@ describe('public opportunity callable wiring', () => {
     expect(source).toContain(".where('teamId', 'in', managedTeamIds.slice(index, index + 30))");
     expect(source).toContain('managedListingSnaps.forEach');
   });
+
+  it('queries unexpired listings and scans filtered pages through exhaustion', () => {
+    expect(source).toContain(".where('expiresAt', '>', now)");
+    expect(source).toContain(".orderBy('expiresAt', 'desc')");
+    expect(source).toContain('while (items.length < pageSize && !exhausted)');
+    expect(source).not.toContain('page < 5 && items.length < pageSize');
+  });
 });
