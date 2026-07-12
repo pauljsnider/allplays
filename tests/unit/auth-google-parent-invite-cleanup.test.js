@@ -38,11 +38,13 @@ vi.mock('../../js/db.js?v=94', () => ({
     redeemHouseholdInvite: redeemHouseholdInviteMock,
     redeemCoParentInvite: redeemCoParentInviteMock,
     rollbackParentInviteRedemption: rollbackParentInviteRedemptionMock,
+    redeemFriendInvite: vi.fn(),
     getUserProfile: vi.fn(),
     getUserTeams: vi.fn(),
     getUserByEmail: vi.fn(),
     getTeam: vi.fn(),
-    listMyParentMembershipRequests: vi.fn()
+    listMyParentMembershipRequests: vi.fn(),
+    normalizeParentScopeLinks: vi.fn()
 }));
 
 vi.mock('../../js/signup-flow.js?v=8', () => ({

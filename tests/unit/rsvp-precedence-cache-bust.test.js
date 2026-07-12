@@ -10,7 +10,7 @@ describe('RSVP precedence cache delivery', () => {
         const dbSource = readRepoFile('js/db.js');
         const breakdownSource = readRepoFile('js/game-day-rsvp-breakdown.js');
         const runtimeSources = {
-            'accept-invite.html': 'db.js?v=91',
+            'accept-invite.html': 'db.js?v=93',
             'calendar.html': 'db.js?v=91',
             'edit-schedule.html': 'db.js?v=91',
             'game-day.html': 'db.js?v=91',
@@ -19,6 +19,7 @@ describe('RSVP precedence cache delivery', () => {
             'team.html': 'db.js?v=91',
             'team-chat.html': 'db.js?v=94',
             'js/auth.js': 'db.js?v=94',
+            'profile.html': 'db.js?v=93',
             'js/team-media.js': 'db.js?v=91'
         };
 
@@ -36,6 +37,7 @@ describe('RSVP precedence cache delivery', () => {
             'dashboard.html': 'auth.js?v=49',
             'edit-team.html': 'auth.js?v=49',
             'login.html': 'auth.js?v=49',
+            'profile.html': 'auth.js?v=49',
             'parent-dashboard.html': 'auth.js?v=49',
             'js/admin.js': 'auth.js?v=49',
             'js/live-game.js': 'auth.js?v=49',
