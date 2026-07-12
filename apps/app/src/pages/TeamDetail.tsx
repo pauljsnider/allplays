@@ -1588,9 +1588,16 @@ function InsightsTab({ model, loading, error }: { model: TeamDetailModel; loadin
 
 function MoreTab({ model, auth, staffPermissionsLoading, staffPermissionsError, sponsorsLoading, sponsorsError, onTeamDetailRefresh }: { model: TeamDetailModel; auth: AuthState; staffPermissionsLoading: boolean; staffPermissionsError: string; sponsorsLoading: boolean; sponsorsError: string; onTeamDetailRefresh: () => Promise<void> }) {
   const statTrackerConfigs = model.statTrackerConfigs || [];
+  const [registrationProviderCopyStatus, setRegistrationProviderCopyStatus] = useState<{ label: string; success: boolean } | null>(null);
   const orphanedConfigAssignments = model.canManageTeam
     ? model.upcomingEvents.filter((event) => event.type === 'game' && event.statTrackerConfigId && !event.statTrackerConfigExists)
     : [];
+  const registrationProviderName = model.team.registrationProvider.find((row) => row.label === 'Provider')?.value || 'This team';
+
+  async function copyRegistrationProviderValue(row: TeamDetailModel['team']['registrationProvider'][number]) {
+    const result = await copyPublicText(row.value);
+    setRegistrationProviderCopyStatus({ label: row.label, success: result === 'copied' });
+  }
 
   return (
     <div className="space-y-4">
@@ -1635,14 +1642,28 @@ function MoreTab({ model, auth, staffPermissionsLoading, staffPermissionsError, 
       {model.team.registrationProvider.length ? (
         <section className="app-card p-4">
           <div className="text-sm font-black text-gray-950">Registration provider</div>
+          <div className="mt-1 text-xs font-semibold leading-5 text-gray-500">{registrationProviderName} syncs registrations from an external provider.</div>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
             {model.team.registrationProvider.map((row) => (
               <div key={row.label} className="rounded-xl border border-blue-100 bg-blue-50 p-3">
                 <div className="text-[11px] font-black uppercase tracking-[0.04em] text-blue-700">{row.label}</div>
-                <div className="mt-1 break-all text-sm font-black text-gray-950">{row.value}</div>
+                <div className="mt-1 flex items-start justify-between gap-2">
+                  <div className="min-w-0 break-all text-sm font-black text-gray-950">{row.value}</div>
+                  {row.copyable ? (
+                    <button type="button" className="secondary-button !min-h-8 shrink-0 px-2 text-xs" onClick={() => copyRegistrationProviderValue(row)} aria-label={`Copy ${row.label}`}>
+                      <Copy className="h-3.5 w-3.5" aria-hidden="true" />
+                      Copy
+                    </button>
+                  ) : null}
+                </div>
               </div>
             ))}
           </div>
+          {registrationProviderCopyStatus ? (
+            <div className={`mt-2 text-xs font-black ${registrationProviderCopyStatus.success ? 'text-emerald-700' : 'text-rose-700'}`} role="status">
+              {registrationProviderCopyStatus.success ? `${registrationProviderCopyStatus.label} copied.` : `Unable to copy ${registrationProviderCopyStatus.label}.`}
+            </div>
+          ) : null}
         </section>
       ) : null}
 

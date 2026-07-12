@@ -395,6 +395,54 @@ describe('canManageTeamAdmins adminEmails parity with legacy js/team-access.js',
   });
 });
 
+describe('buildTeamDetailModel registration provider details', () => {
+  it('does not expose the app team id as a registration provider fallback', () => {
+    const built = buildTeamDetailModel({
+      teamId: 'team-1',
+      team: {
+        id: 'team-1',
+        name: 'Bears',
+        sport: 'Basketball'
+      },
+      players: [],
+      configs: [],
+      games: []
+    });
+
+    expect(built.team.registrationProvider).toEqual([]);
+  });
+
+  it('returns provider registration details with human labels and friendly sync state', () => {
+    const syncedAt = new Date(2026, 0, 2, 9, 30);
+    const built = buildTeamDetailModel({
+      teamId: 'team-1',
+      team: {
+        id: 'team-1',
+        name: 'Bears',
+        sport: 'Basketball',
+        registrationSource: {
+          providerName: 'LeagueApps',
+          externalTeamId: 'league-team-22',
+          teamId: 'provider-team-44',
+          lastSyncStatus: 'sync_complete',
+          lastSyncedAt: syncedAt
+        }
+      },
+      players: [],
+      configs: [],
+      games: []
+    });
+
+    expect(built.team.registrationProvider).toEqual([
+      { label: 'Provider', value: 'LeagueApps' },
+      { label: 'External team ID', value: 'league-team-22', copyable: true },
+      { label: 'Provider team ID', value: 'provider-team-44', copyable: true },
+      expect.objectContaining({ label: 'Last sync', value: expect.stringContaining('Sync Complete') })
+    ]);
+    expect(built.team.registrationProvider[3].value).toContain('Jan 2, 2026');
+  });
+});
+
 describe('buildTeamDetailModel standings', () => {
   beforeEach(() => {
     vi.clearAllMocks();

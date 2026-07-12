@@ -626,6 +626,61 @@ describe('TeamDetail', () => {
     await waitFor(() => expect(window.scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'auto' }));
   });
 
+  it('does not render the registration provider card when provider rows are empty', async () => {
+    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue({
+      ...model,
+      team: { ...model.team, registrationProvider: [] }
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1?tab=more']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    expect(screen.getByText('Team links')).toBeTruthy();
+    expect(screen.queryByText('Registration provider')).toBeNull();
+  });
+
+  it('renders registration provider context and copy buttons for provider ids', async () => {
+    const { copyPublicText } = await import('../lib/publicActions');
+    vi.mocked(copyPublicText).mockResolvedValue('copied');
+    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue({
+      ...model,
+      team: {
+        ...model.team,
+        registrationProvider: [
+          { label: 'Provider', value: 'LeagueApps' },
+          { label: 'External team ID', value: 'league-team-22', copyable: true },
+          { label: 'Provider team ID', value: 'provider-team-44', copyable: true },
+          { label: 'Last sync', value: 'Sync Complete · Jan 2, 2026, 9:30 AM' }
+        ]
+      }
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1?tab=more']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('Registration provider')).toBeTruthy();
+    expect(screen.getByText('LeagueApps syncs registrations from an external provider.')).toBeTruthy();
+    expect(screen.getByText('External team ID')).toBeTruthy();
+    expect(screen.getByText('Provider team ID')).toBeTruthy();
+    expect(screen.getByText('Sync Complete · Jan 2, 2026, 9:30 AM')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Copy Provider team ID' }));
+
+    await waitFor(() => expect(copyPublicText).toHaveBeenCalledWith('provider-team-44'));
+    expect((await screen.findByRole('status')).textContent).toContain('Provider team ID copied.');
+  });
+
   it('steps back to team overview before leaving the team hub', async () => {
     const router = createMemoryRouter(
       [
