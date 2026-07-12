@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { stagePagesBundle } from '../../scripts/stage-pages-bundle.mjs';
@@ -26,6 +27,15 @@ afterEach(() => {
 });
 
 describe('pages bundle staging', () => {
+    it('does not track generated dependency directories', () => {
+        const trackedFiles = execFileSync('git', ['ls-files', '--', 'node_modules', 'apps/app/node_modules'], {
+            cwd: process.cwd(),
+            encoding: 'utf8'
+        }).trim();
+
+        expect(trackedFiles).toBe('');
+    });
+
     it('stages the legacy root and React app without publishing source or config files', () => {
         const rootDir = makeTempDir();
         const destinationDir = path.join(makeTempDir(), 'site');

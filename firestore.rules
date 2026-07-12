@@ -1290,8 +1290,7 @@ service cloud.firestore {
 
     function hasNoContactInfo(value) {
       return value is string &&
-             !value.matches('[\\s\\S]*[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+[.][A-Za-z]{2,}[\\s\\S]*') &&
-             !value.matches('[\\s\\S]*[0-9][0-9() .-]{8,}[0-9][\\s\\S]*');
+             !value.matches('[\\s\\S]*([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+[.][A-Za-z]{2,}|[0-9][0-9() .-]{8,}[0-9])[\\s\\S]*');
     }
 
     function isNullableContactSafeString(value, maxLength) {
@@ -1315,9 +1314,29 @@ service cloud.firestore {
              (
                value is string &&
                value.size() <= 240 &&
-               hasNoContactInfo(value) &&
                value.matches('https://(www[.])?allplays[.]ai/.*')
              );
+    }
+
+    function hasNoCommunityMatchingPostContactInfo(data) {
+      let matching = data.get('matching', {});
+      return hasNoContactInfo(
+               data.get('authorName', '') + ' ' +
+               data.get('title', '') + ' ' +
+               data.get('detail', '') + ' ' +
+               data.get('caption', '') + ' ' +
+               matching.get('sport', '') + ' ' +
+               matching.get('ageGroup', '') + ' ' +
+               matching.get('city', '') + ' ' +
+               matching.get('state', '') + ' ' +
+               matching.get('zip', '') + ' ' +
+               matching.get('positions', '') + ' ' +
+               matching.get('level', '') + ' ' +
+               matching.get('timeframe', '') + ' ' +
+               matching.get('playerFirstName', '') + ' ' +
+               matching.get('signupUrl', '')
+             ) &&
+             isNullableContactSafeString(data.get('teamName', null), 120);
     }
 
     function isMatchingDetailPayloadValid(data) {
@@ -1326,26 +1345,24 @@ service cloud.firestore {
              matching.keys().hasOnly(matchingDetailFields()) &&
              matching.get('kind', '') == data.get('type', '') &&
              isNonBlankString(matching.get('sport', '')) &&
-             hasNoContactInfo(matching.get('sport', '')) &&
              matching.get('sport', '').size() <= 40 &&
              isNonBlankString(matching.get('ageGroup', '')) &&
-             hasNoContactInfo(matching.get('ageGroup', '')) &&
              matching.get('ageGroup', '').size() <= 20 &&
-             hasNoContactInfo(matching.get('city', '')) &&
+             matching.get('city', '') is string &&
              matching.get('city', '').size() <= 60 &&
-             hasNoContactInfo(matching.get('state', '')) &&
+             matching.get('state', '') is string &&
              matching.get('state', '').size() <= 2 &&
-             hasNoContactInfo(matching.get('zip', '')) &&
+             matching.get('zip', '') is string &&
              matching.get('zip', '').size() <= 10 &&
              (
                isNonBlankString(matching.get('zip', '')) ||
                (isNonBlankString(matching.get('city', '')) && isNonBlankString(matching.get('state', '')))
              ) &&
-             hasNoContactInfo(matching.get('positions', '')) &&
+             matching.get('positions', '') is string &&
              matching.get('positions', '').size() <= 120 &&
-             hasNoContactInfo(matching.get('level', '')) &&
+             matching.get('level', '') is string &&
              matching.get('level', '').size() <= 40 &&
-             hasNoContactInfo(matching.get('timeframe', '')) &&
+             matching.get('timeframe', '') is string &&
              matching.get('timeframe', '').size() <= 80 &&
              (
                matching.get('openSpots', null) == null ||
@@ -1366,7 +1383,6 @@ service cloud.firestore {
              data.get('teamIds', []) is list &&
              data.get('teamIds', []).size() == 0 &&
              isNonBlankString(matching.get('playerFirstName', '')) &&
-             hasNoContactInfo(matching.get('playerFirstName', '')) &&
              matching.get('playerFirstName', '').size() <= 40 &&
              matching.get('signupUrl', '') == '' &&
              matching.get('openSpots', null) == null &&
@@ -1384,7 +1400,6 @@ service cloud.firestore {
              isTeamOwnerOrAdmin(data.get('teamId', '')) &&
              isNonBlankString(data.get('teamName', '')) &&
              data.get('teamName', '') == get(/databases/$(database)/documents/teams/$(data.get('teamId', ''))).data.get('name', '') &&
-             hasNoContactInfo(data.get('teamName', '')) &&
              data.get('teamName', '').size() <= 120 &&
              data.get('teamIds', []) is list &&
              data.get('teamIds', []).size() == 1 &&
@@ -1413,14 +1428,12 @@ service cloud.firestore {
              data.get('expiresAt', null) > request.time &&
              data.get('expiresAt', null) <= request.time + duration.value(90, 'd') &&
              isNonBlankString(data.get('authorName', '')) &&
-             hasNoContactInfo(data.get('authorName', '')) &&
              isAllowedMatchingProfilePhotoUrl(data.get('authorPhotoUrl', null)) &&
              isNonBlankString(data.get('title', '')) &&
-             hasNoContactInfo(data.get('title', '')) &&
              data.get('title', '').size() <= 160 &&
-             hasNoContactInfo(data.get('detail', '')) &&
+             data.get('detail', '') is string &&
              data.get('detail', '').size() <= 240 &&
-             hasNoContactInfo(data.get('caption', '')) &&
+             data.get('caption', '') is string &&
              data.get('caption', '').size() <= 600 &&
              data.get('media', []) is list &&
              data.get('media', []).size() == 0 &&
@@ -1428,8 +1441,8 @@ service cloud.firestore {
              data.get('playerIds', []).size() == 0 &&
              data.get('hidden', false) == false &&
              !data.keys().hasAny(['authorEmail', 'email', 'phone']) &&
-             isNullableContactSafeString(data.get('teamName', null), 120) &&
              isMatchingDetailPayloadValid(data) &&
+             hasNoCommunityMatchingPostContactInfo(data) &&
              isCommunityMatchingCreateScopeValid(data);
     }
 
@@ -1443,18 +1456,18 @@ service cloud.firestore {
       return resource.data.get('authorId', '') == request.auth.uid &&
              resource.data.get('visibility', '') == 'community' &&
              isMatchingSocialPostType(resource.data.get('type', '')) &&
+             request.resource.data.get('type', '') == resource.data.get('type', '') &&
              isSocialPostScopeImmutable() &&
              request.resource.data.diff(resource.data).affectedKeys().hasOnly([
                'status',
                'expiresAt',
-               'title',
-               'detail',
-               'caption',
-               'matching',
                'updatedAt'
              ]) &&
              request.resource.data.get('status', '') in ['open', 'filled', 'closed'] &&
-             isCommunityMatchingPostContractValid(request.resource.data);
+             request.resource.data.get('expiresAt', resource.data.get('expiresAt', null)) is timestamp &&
+             request.resource.data.get('expiresAt', resource.data.get('expiresAt', null)) > request.time &&
+             request.resource.data.get('expiresAt', resource.data.get('expiresAt', null)) <= request.time + duration.value(90, 'd') &&
+             request.resource.data.get('updatedAt', resource.data.get('updatedAt', null)) is timestamp;
     }
 
     function isBlockedFriendship(friendshipId) {
