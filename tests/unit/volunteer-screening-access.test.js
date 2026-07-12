@@ -143,7 +143,7 @@ describe('volunteer screening access guard', () => {
         const dbSource = fs.readFileSync('js/db.js', 'utf8');
         const guardCall = 'await assertVolunteerScreeningClearedForTeamGrant(teamId,';
 
-        ['grantScorekeeperAccess', 'grantVideographerAccess', 'grantStreamScoreAccess', 'addTeamAdminEmail'].forEach((functionName) => {
+        ['grantScorekeeperAccess', 'grantVideographerAccess', 'grantTeamMediaManagerAccess', 'grantStreamScoreAccess', 'addTeamAdminEmail'].forEach((functionName) => {
             const start = dbSource.indexOf(`export async function ${functionName}`);
             expect(start, `${functionName} should be exported`).toBeGreaterThan(-1);
             const nextExport = dbSource.indexOf('\nexport async function ', start + 1);

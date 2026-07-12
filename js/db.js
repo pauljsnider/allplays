@@ -2366,6 +2366,8 @@ export async function grantTeamMediaManagerAccess(teamId, memberUserId) {
     if (!teamId) throw new Error('Missing team for Team Media manager access');
     if (!normalizedUserId) throw new Error('Team member user ID is required');
 
+    await assertVolunteerScreeningClearedForTeamGrant(teamId, { userId: normalizedUserId });
+
     const docRef = doc(db, "teams", teamId);
     await updateDoc(docRef, {
         'teamPermissions.teamMediaManagement.mode': 'selected',
