@@ -6201,7 +6201,7 @@ export async function updateScheduleAssignment(event: ParentScheduleEvent, user:
   ));
   const persistedAssignments = await persistScheduleAssignments(event, nextAssignments);
 
-  const roleChanged = normalizeAssignmentRoleKey(previousAssignment.role) !== normalizeAssignmentRoleKey(nextRole);
+  const roleChanged = normalizeAssignmentRole(previousAssignment.role || currentRole) !== normalizeAssignmentRole(nextRole);
   if (roleChanged) {
     await clearScheduleAssignmentClaim(event, previousAssignment.role || currentRole, 'assignment-update-old-claim-cleanup');
     await clearScheduleAssignmentClaim(event, nextRole, 'assignment-update-new-claim-cleanup');

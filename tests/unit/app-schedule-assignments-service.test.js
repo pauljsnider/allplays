@@ -367,6 +367,29 @@ describe('React app schedule assignment service integration', () => {
         expect(removed).toEqual([]);
     });
 
+    it('clears exact-case assignment claims when an admin changes only role casing', async () => {
+        const adminUser = user({ uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach Carter' });
+        dbMocks.updateGame.mockResolvedValue(undefined);
+        dbMocks.releaseAssignmentClaim.mockResolvedValue(undefined);
+        dbMocks.getAssignmentClaims.mockResolvedValue({});
+
+        await updateScheduleAssignment(
+            event({
+                assignments: [{ role: 'snacks', value: '', claimable: true }],
+                isTeamAdmin: true
+            }),
+            adminUser,
+            'snacks',
+            { role: ' Snacks ', value: '', claimable: true }
+        );
+
+        expect(dbMocks.updateGame).toHaveBeenLastCalledWith('team-1', 'game-1', {
+            assignments: [{ role: 'Snacks', value: '', claimable: true }]
+        });
+        expect(dbMocks.releaseAssignmentClaim).toHaveBeenCalledWith('team-1', 'game-1', 'snacks');
+        expect(dbMocks.releaseAssignmentClaim).toHaveBeenCalledWith('team-1', 'game-1', 'Snacks');
+    });
+
     it('rejects assignment management for non-admin event viewers', async () => {
         await expect(createScheduleAssignment(
             event({ isTeamAdmin: false }),
