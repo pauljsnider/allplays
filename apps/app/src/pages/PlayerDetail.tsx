@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type InputHTMLAttributes } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type InputHTMLAttributes } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
   AlertCircle,
@@ -370,7 +370,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
     }
   };
 
-  const loadAthleteProfile = async ({
+  const loadAthleteProfile = useCallback(async ({
     nextTeamId,
     nextPlayerId,
     force = false
@@ -416,7 +416,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
         setAthleteProfileLoading(false);
       }
     }
-  };
+  }, [athleteProfileLoading, auth.user]);
 
   const refreshPlayer = async ({
     showLoading = data === null,
@@ -508,8 +508,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
       nextTeamId: data.child.teamId,
       nextPlayerId: data.child.playerId
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSection, athleteProfileLoaded, athleteProfileLoading, data]);
+  }, [activeSection, athleteProfileLoaded, athleteProfileLoading, data, loadAthleteProfile]);
 
   useEffect(() => {
     if (loading || !data) return;
