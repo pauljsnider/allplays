@@ -70,8 +70,9 @@ const AUTH_STUB = `
 export function checkAuth(callback) {
     callback({ uid: 'user-1', email: 'coach@example.com', isAdmin: false });
 }
-export async function sendInviteEmail() {}
 `;
+
+const INVITE_EMAIL_STUB = `export async function queueInviteEmail() { return { queued: true }; }`;
 
 const TEAM_ACCESS_STUB = `
 export function hasFullTeamAccess() { return true; }
@@ -147,6 +148,7 @@ async function mockEditRosterDependencies(page) {
     await page.route(/\/js\/db\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: DB_STUB }));
     await page.route(/\/js\/utils\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: UTILS_STUB }));
     await page.route(/\/js\/auth\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_STUB }));
+    await page.route(/\/js\/invite-email\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: INVITE_EMAIL_STUB }));
     await page.route(/\/js\/team-access\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: TEAM_ACCESS_STUB }));
     await page.route(/\/js\/team-admin-banner\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: TEAM_ADMIN_BANNER_STUB }));
     await page.route(/\/js\/vendor\/firebase-app\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_APP_STUB }));

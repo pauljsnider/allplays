@@ -38,6 +38,7 @@ import {
   normalizeStatTrackerConfig,
   normalizeTrackingStatus,
   query,
+  queueInviteEmail,
   reactivatePlayer,
   revokeScorekeeperAccess,
   revokeVideographerAccess,
@@ -215,6 +216,8 @@ export type CreateRosterParentInviteForAppResult = {
   code: string;
   inviteUrl: string;
   status: 'pending' | 'accepted';
+  email: string | null;
+  emailSent: boolean;
   existingUser: boolean;
   autoLinked: boolean;
   teamName: string | null;
@@ -1017,26 +1020,47 @@ export async function revokeTeamAdminAccessForApp(teamId: string, email: string,
   invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
 }
 
-export async function createRosterParentInviteForApp(teamId: string, user: AuthUser | null, player: Pick<TeamDetailPlayer, 'id' | 'number'>): Promise<CreateRosterParentInviteForAppResult> {
+export async function createRosterParentInviteForApp(
+  teamId: string,
+  user: AuthUser | null,
+  player: Pick<TeamDetailPlayer, 'id' | 'number'>,
+  invite: { email?: string; relation?: string } = {}
+): Promise<CreateRosterParentInviteForAppResult> {
   const normalizedTeamId = cleanString(teamId);
   const normalizedPlayerId = cleanString(player?.id);
+  const normalizedEmail = cleanString(invite?.email).toLowerCase();
+  const relation = cleanString(invite?.relation) || 'Parent';
   if (!normalizedTeamId) throw new Error('Team ID is required.');
   if (!normalizedPlayerId) throw new Error('Player ID is required.');
+  if (normalizedEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+    throw new Error('Enter a valid parent email address.');
+  }
 
   const { team } = await loadTeamDetailBaseSnapshot(normalizedTeamId);
   if (!team || !hasFullTeamAccess(user, team)) {
     throw new Error('You do not have permission to invite parents for this team.');
   }
 
-  const inviteResult = await inviteParent(normalizedTeamId, normalizedPlayerId, cleanString(player?.number), '', 'Parent');
+  const inviteResult = await inviteParent(normalizedTeamId, normalizedPlayerId, cleanString(player?.number), normalizedEmail, relation);
   const code = cleanString(inviteResult?.code).toUpperCase();
   if (!code) throw new Error('Invite code was not created.');
+  let emailSent = false;
+  if (normalizedEmail) {
+    try {
+      await queueInviteEmail(code);
+      emailSent = true;
+    } catch (error) {
+      logger.warn('Parent invite was created, but its email could not be queued.', { error });
+    }
+  }
   invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
 
   return {
     code,
     inviteUrl: buildAppAcceptInviteUrl(code, 'parent'),
     status: inviteResult?.autoLinked ? 'accepted' : 'pending',
+    email: normalizedEmail || null,
+    emailSent,
     existingUser: inviteResult?.existingUser === true,
     autoLinked: inviteResult?.autoLinked === true,
     teamName: inviteResult?.teamName || null,

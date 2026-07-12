@@ -34,7 +34,7 @@ describe('family plan helpers', () => {
         expect(canAddFamilyMember(members)).toBe(false);
     });
 
-    it('renders the setup-only billing and premium activation notice without active entitlement', () => {
+    it('renders parent and caregiver invites with player access details', () => {
         const markup = buildFamilyPlanMarkup({
             entitlementState: 'locked',
             members: [
@@ -44,8 +44,9 @@ describe('family plan helpers', () => {
             ]
         });
 
-        expect(markup).toContain('Family Plan');
-        expect(markup).toContain('Billing and premium activation are not connected yet');
+        expect(markup).toContain('Parent &amp; Caregiver Access');
+        expect(markup).toContain('Email parent invite');
+        expect(markup).toContain('invite code and signup link');
         expect(markup).toContain('active');
         expect(markup).toContain('pending');
         expect(markup).toContain('Invite code');

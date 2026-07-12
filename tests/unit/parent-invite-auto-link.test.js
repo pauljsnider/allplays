@@ -56,10 +56,10 @@ describe('parent invite auto-linking', () => {
         const existingUserIdx = source.indexOf('if (result.existingUser)');
         expect(existingUserIdx).toBeGreaterThanOrEqual(0);
         const existingUserBlock = source.slice(existingUserIdx, existingUserIdx + 2000);
-        // sendInviteEmail must be called inside the existingUser branch
-        expect(existingUserBlock).toContain('sendInviteEmail(email, result.code');
+        // The custom transactional invite email must be queued inside the existingUser branch.
+        expect(existingUserBlock).toContain('queueInviteEmail(result.code)');
         // Email is attempted before the autoLinked branch check
-        expect(existingUserBlock.indexOf('sendInviteEmail')).toBeLessThan(existingUserBlock.indexOf('if (result.autoLinked)'));
+        expect(existingUserBlock.indexOf('queueInviteEmail')).toBeLessThan(existingUserBlock.indexOf('if (result.autoLinked)'));
         // Notification message reflects email sent for auto-linked case
         expect(existingUserBlock).toContain('emailSentForExisting');
         expect(existingUserBlock).toContain('A notification email was also sent to');

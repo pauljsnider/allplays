@@ -35,6 +35,8 @@ export type ParentHouseholdInviteRequest = {
 export type ParentHouseholdInviteResult = {
     code: string;
     inviteUrl: string;
+    email: string;
+    emailSent: boolean;
 };
 
 export async function loadParentHouseholdInviteModel(user: AuthUser | null): Promise<{ linkedPlayers: ParentHouseholdLinkedPlayer[]; members: ParentHouseholdFamilyMember[] }> {
@@ -77,7 +79,9 @@ export async function createParentHouseholdMemberInvite(user: AuthUser | null, r
     }, { existingMembers });
     return {
         code: compactString((result as any)?.code),
-        inviteUrl: toAbsoluteLegacyUrl((result as any)?.inviteUrl)
+        inviteUrl: toAbsoluteLegacyUrl((result as any)?.inviteUrl),
+        email,
+        emailSent: true
     };
 }
 

@@ -92,20 +92,20 @@ const user = {
 beforeEach(() => {
     vi.clearAllMocks();
     familyPlanMocks.readFamilyMembers.mockResolvedValue([]);
-    familyPlanMocks.addPendingFamilyMember.mockResolvedValue({ code: 'HOME1234', inviteUrl: 'accept-invite.html?code=HOME1234' });
+    familyPlanMocks.addPendingFamilyMember.mockResolvedValue({ code: 'HOME1234', inviteUrl: 'accept-invite.html?code=HOME1234&type=household' });
     dbMocks.moveTeamMediaItems.mockResolvedValue(undefined);
     dbMocks.setTeamMediaAlbumCover.mockResolvedValue(undefined);
 });
 
 describe('Parent Tools household invite service', () => {
     it('loads linked players and pending family memberships for the signed-in parent', async () => {
-        familyPlanMocks.readFamilyMembers.mockResolvedValueOnce([{ id: 'member-1', email: 'home@example.com', status: 'pending', inviteUrl: 'accept-invite.html?code=HOME1234' }]);
+        familyPlanMocks.readFamilyMembers.mockResolvedValueOnce([{ id: 'member-1', email: 'home@example.com', status: 'pending', inviteUrl: 'accept-invite.html?code=HOME1234&type=household' }]);
 
         const model = await loadParentHouseholdInviteModel(user);
 
         expect(model.linkedPlayers).toEqual([expect.objectContaining({ teamId: 'team-1', playerId: 'player-1', playerName: 'Pat Star' })]);
         expect(familyPlanMocks.readFamilyMembers).toHaveBeenCalledWith('user-1');
-        expect(model.members[0].inviteUrl).toBe('https://allplays.ai/accept-invite.html?code=HOME1234');
+        expect(model.members[0].inviteUrl).toBe('https://allplays.ai/accept-invite.html?code=HOME1234&type=household');
     });
 
     it('validates required fields before creating a household member invite', async () => {
@@ -136,7 +136,12 @@ describe('Parent Tools household invite service', () => {
             playerName: 'Pat Star',
             playerNumber: '9'
         }), { existingMembers: [{ id: 'member-1', email: 'old@example.com', status: 'pending' }] });
-        expect(result).toEqual({ code: 'HOME1234', inviteUrl: 'https://allplays.ai/accept-invite.html?code=HOME1234' });
+        expect(result).toEqual({
+            code: 'HOME1234',
+            inviteUrl: 'https://allplays.ai/accept-invite.html?code=HOME1234&type=household',
+            email: 'home@example.com',
+            emailSent: true
+        });
     });
 });
 

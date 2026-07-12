@@ -64,6 +64,11 @@ const {
   buildTeamEmailMailJob
 } = require('./team-email-core.cjs');
 const {
+  buildParentInviteEmailMessage,
+  isValidInviteRecipientEmail,
+  normalizeInviteEmailType
+} = require('./invite-email-core.cjs');
+const {
   normalizeEmail,
   normalizeAccountMergePreviewInput,
   hashAccountMergeVerificationToken,
@@ -146,6 +151,7 @@ if (admin.apps.length === 0) {
 }
 
 const firestore = admin.firestore();
+const INVITE_EMAIL_TYPES = new Set(['parent_invite', 'household_invite']);
 const TEAM_MEDIA_NOTIFICATION_BATCH_WINDOW_MS = 60 * 60 * 1000;
 const TEAM_MEDIA_NOTIFICATION_DISPATCH_LIMIT = 50;
 const FIRESTORE_BATCH_SAFE_WRITE_LIMIT = 450;
@@ -1891,6 +1897,108 @@ function isParentInviteExpired(expiresAt) {
     : new Date(expiresAt).getTime();
   return Number.isFinite(millis) && millis < Date.now();
 }
+
+function buildInviteMailDocId(codeId) {
+  const safeCodeId = String(codeId || '').replace(/[^\w.-]+/g, '_').slice(0, 240);
+  return `invite_${safeCodeId}`;
+}
+
+function isAlreadyExistsError(error) {
+  return error?.code === 6 || error?.code === '6' || error?.code === 'already-exists';
+}
+
+async function queueInviteEmailForCode(codeId, codeData = {}) {
+  const type = String(codeData.type || '').trim().toLowerCase();
+  const email = normalizeParentInviteEmail(codeData.email);
+  const code = String(codeData.code || '').trim().toUpperCase();
+  if (!INVITE_EMAIL_TYPES.has(type) || !normalizeInviteEmailType(type) || !isValidInviteRecipientEmail(email) || !code) {
+    return { queued: false, reason: 'not_email_eligible' };
+  }
+
+  const message = buildParentInviteEmailMessage({ ...codeData, type, code });
+  const mailRef = firestore.collection('mail').doc(buildInviteMailDocId(codeId));
+  try {
+    await mailRef.create({
+      to: [email],
+      message: {
+        subject: message.subject,
+        text: message.text,
+        html: message.html
+      },
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      metadata: {
+        type: 'invite',
+        inviteType: type,
+        accessCodeId: String(codeId || '').trim(),
+        teamId: String(codeData.teamId || '').trim() || null,
+        playerId: String(codeData.playerId || '').trim() || null,
+        generatedBy: String(codeData.generatedBy || '').trim() || null
+      }
+    });
+    return { queued: true, deduplicated: false, signupUrl: message.signupUrl };
+  } catch (error) {
+    if (isAlreadyExistsError(error)) {
+      return { queued: true, deduplicated: true, signupUrl: message.signupUrl };
+    }
+    throw error;
+  }
+}
+
+async function findOwnedInviteCode(code, uid) {
+  const directSnap = await firestore.doc(`accessCodes/${code}`).get();
+  if (directSnap.exists) {
+    const directData = directSnap.data() || {};
+    if (INVITE_EMAIL_TYPES.has(String(directData.type || '').trim().toLowerCase()) &&
+        String(directData.generatedBy || '').trim() === uid) {
+      return { id: directSnap.id, data: directData };
+    }
+  }
+
+  const querySnap = await firestore.collection('accessCodes').where('code', '==', code).limit(10).get();
+  const owned = querySnap.docs.find((docSnap) => {
+    const candidate = docSnap.data() || {};
+    return INVITE_EMAIL_TYPES.has(String(candidate.type || '').trim().toLowerCase()) &&
+      String(candidate.generatedBy || '').trim() === uid;
+  });
+  return owned ? { id: owned.id, data: owned.data() || {} } : null;
+}
+
+exports.queueInviteEmail = functions.https.onCall(async (data, context) => {
+  const uid = String(context.auth?.uid || '').trim();
+  if (!uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in before sending an invite email.');
+  }
+  const code = String(data?.code || '').trim().toUpperCase();
+  if (!/^[A-Z0-9]{8}$/.test(code)) {
+    throw new functions.https.HttpsError('invalid-argument', 'A valid eight-character invite code is required.');
+  }
+
+  const invite = await findOwnedInviteCode(code, uid);
+  if (!invite) {
+    throw new functions.https.HttpsError('not-found', 'Invite could not be found.');
+  }
+  if (!isValidInviteRecipientEmail(invite.data.email)) {
+    throw new functions.https.HttpsError('failed-precondition', 'Invite does not have a valid recipient email.');
+  }
+
+  const result = await queueInviteEmailForCode(invite.id, invite.data);
+  if (!result.queued) {
+    throw new functions.https.HttpsError('failed-precondition', 'Invite is not eligible for email delivery.');
+  }
+  return result;
+});
+
+exports.queueParentInviteEmail = functions.firestore
+  .document('accessCodes/{codeId}')
+  .onCreate(async (snap, context) => {
+    const codeData = snap.data() || {};
+    if (!INVITE_EMAIL_TYPES.has(String(codeData.type || '').trim().toLowerCase()) ||
+        !isValidInviteRecipientEmail(codeData.email)) {
+      return null;
+    }
+    await queueInviteEmailForCode(context.params.codeId, codeData);
+    return null;
+  });
 
 function validateAutoAcceptParentInviteCode(data = {}) {
   if (!data || data.type !== 'parent_invite') {

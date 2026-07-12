@@ -128,7 +128,6 @@ export function buildFamilyPlanMarkup({ members = [], entitlementState = 'locked
     const normalizedPlayerLinks = normalizePlayerLinks(playerLinks);
     const counts = getFamilySlotCounts(normalized);
     const slotsFull = counts.used >= counts.max;
-    const entitlementActive = entitlementState === 'unlocked';
     const rows = normalized.length
         ? normalized.map((member) => {
             const label = member.displayName || member.email || 'Family member';
@@ -163,14 +162,13 @@ export function buildFamilyPlanMarkup({ members = [], entitlementState = 'locked
         <div class="p-6 border-b border-gray-100 bg-gray-50">
             <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
                 <div>
-                    <h2 class="text-xl font-bold text-gray-900">Family Plan</h2>
-                    <p class="text-xs text-gray-500 mt-1">Manage up to ${MAX_FAMILY_PLAN_SLOTS} household accounts or pending invites.</p>
+                    <h2 class="text-xl font-bold text-gray-900">Parent &amp; Caregiver Access</h2>
+                    <p class="text-xs text-gray-500 mt-1">Invite another parent or caregiver and connect them to one of your players. The email includes an invite code and signup link.</p>
                 </div>
-                <span class="self-start px-3 py-1 rounded-full border text-xs font-semibold ${entitlementActive ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-700'}">${entitlementActive ? 'Premium active' : 'Setup only'}</span>
+                <span class="self-start px-3 py-1 rounded-full border text-xs font-semibold border-indigo-200 bg-indigo-50 text-indigo-700">Family Plan · ${counts.remaining} slot${counts.remaining === 1 ? '' : 's'} left</span>
             </div>
         </div>
         <div class="p-6 space-y-4">
-            ${entitlementActive ? '' : '<div class="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">Billing and premium activation are not connected yet. These slots only capture the intended household members until an active account entitlement exists.</div>'}
             <div class="flex items-center justify-between gap-3 text-sm">
                 <div class="font-semibold text-gray-900">Member slots</div>
                 <div class="text-gray-600"><span class="font-bold text-gray-900">${counts.used}</span> / ${counts.max} used</div>
@@ -186,7 +184,7 @@ export function buildFamilyPlanMarkup({ members = [], entitlementState = 'locked
                     <input id="family-plan-member-email" type="email" placeholder="Email for pending invite" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" ${slotsFull ? 'disabled' : ''}>
                 </div>
                 <input id="family-plan-member-relation" type="text" placeholder="Relation (for example: guardian, step-parent)" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" ${slotsFull ? 'disabled' : ''}>
-                <button id="family-plan-add-member-btn" class="w-full bg-primary-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-primary-700 transition disabled:bg-gray-300 disabled:cursor-not-allowed" ${slotsFull ? 'disabled' : ''}>Add pending member</button>
+                <button id="family-plan-add-member-btn" class="w-full bg-primary-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-primary-700 transition disabled:bg-gray-300 disabled:cursor-not-allowed" ${slotsFull ? 'disabled' : ''}>Email parent invite</button>
                 <div id="family-plan-validation" class="${validationMessage || slotsFull ? '' : 'hidden'} text-xs rounded-lg px-3 py-2 ${validationMessage ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-amber-50 text-amber-800 border border-amber-200'}">${escapeHtml(validationMessage || `Family Plan is limited to ${MAX_FAMILY_PLAN_SLOTS} active accounts or pending invites.`)}</div>
             </div>
         </div>
@@ -408,11 +406,11 @@ export async function addPendingFamilyMember(userId, member, { deps = {}, existi
     await updateDoc(doc(db, 'users', userId, 'familyMemberships', membershipRef.id), {
         accessCodeId: accessCodeRef.id,
         accessCode: code,
-        inviteUrl: `accept-invite.html?code=${code}`,
+        inviteUrl: `accept-invite.html?code=${code}&type=household`,
         updatedAt: timestamp
     });
 
-    return { code, inviteUrl: `accept-invite.html?code=${code}` };
+    return { code, inviteUrl: `accept-invite.html?code=${code}&type=household` };
 }
 
 

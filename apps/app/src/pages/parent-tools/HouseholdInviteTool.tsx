@@ -12,7 +12,7 @@ export function HouseholdInviteTool({ auth, refreshVersion }: { auth: AuthState;
     const [displayName, setDisplayName] = useState('');
     const [email, setEmail] = useState('');
     const [relation, setRelation] = useState('');
-    const [createdInvite, setCreatedInvite] = useState<{ code: string; inviteUrl: string } | null>(null);
+    const [createdInvite, setCreatedInvite] = useState<{ code: string; inviteUrl: string; email: string; emailSent: boolean } | null>(null);
     const [message, setMessage] = useState('');
     const loadOperation = useParentToolAsyncOperation();
     const submitOperation = useParentToolAsyncOperation();
@@ -77,7 +77,9 @@ export function HouseholdInviteTool({ auth, refreshVersion }: { auth: AuthState;
             {
                 onSuccess: async (result) => {
                     setCreatedInvite(result);
-                    setMessage('Household invite created.');
+                    setMessage(result.emailSent
+                        ? `Invite emailed to ${result.email} with the code and signup link.`
+                        : 'Parent invite created. Copy the link below to share it.');
                     setDisplayName('');
                     setEmail('');
                     setRelation('');
@@ -90,7 +92,7 @@ export function HouseholdInviteTool({ auth, refreshVersion }: { auth: AuthState;
     return (
         <div className="space-y-3">
             <section className="app-card p-4">
-                <ToolHeader icon={Users} title="Household member invite" detail="Create one pending family plan invite for a linked player. This is separate from co-parent and token share links." action={<button type="button" className="ghost-button !min-h-9 text-xs" onClick={refresh} disabled={loading}><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />Refresh</button>} />
+                <ToolHeader icon={Users} title="Invite another parent or caregiver" detail="Email an invite that connects their account to one of your linked players." action={<button type="button" className="ghost-button !min-h-9 text-xs" onClick={refresh} disabled={loading}><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />Refresh</button>} />
                 {error ? <RetryableStatus error={error} fallbackMessage="Unable to load household invites." onRetry={loading ? undefined : refresh} retrying={loading} /> : null}
                 {message ? <Status tone="success" message={message} /> : null}
                 {createdInvite ? (
@@ -117,14 +119,14 @@ export function HouseholdInviteTool({ auth, refreshVersion }: { auth: AuthState;
                         <input className="auth-input" value={relation} onChange={(event) => setRelation(event.target.value)} placeholder="Relation, like grandparent or guardian" autoComplete="off" enterKeyHint="next" disabled={saving || !linkedPlayers.length} />
                         <button type="submit" className="primary-button" disabled={saving || loading || !linkedPlayers.length}>
                             {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Users className="h-4 w-4" aria-hidden="true" />}
-                            Create household invite
+                            Email parent invite
                         </button>
                     </form>
                 )}
             </section>
 
             <section className="app-card p-4">
-                <ToolHeader icon={Users} title="Pending household invites" detail="Family membership invites that have not been redeemed or removed." />
+                <ToolHeader icon={Users} title="Pending parent & caregiver invites" detail="Invites that have not been redeemed or removed." />
                 <div className="mt-3 grid gap-3 lg:grid-cols-2">
                     {pendingMembers.length ? pendingMembers.map((member) => (
                         <div key={member.id} className="rounded-xl border border-gray-200 bg-gray-50 p-3">

@@ -2,6 +2,7 @@
  * Bindings re-exported as-is so existing js/* test mocks apply via the @legacy alias. */
 import * as legacyDb from '@legacy/db.js';
 import { sendInviteEmail as legacy_sendInviteEmail } from '@legacy/auth.js';
+import { queueInviteEmail as legacy_queueInviteEmail } from '@legacy/invite-email.js';
 import { inviteExistingTeamAdmin as legacy_inviteExistingTeamAdmin } from '@legacy/edit-team-admin-invites.js';
 import * as legacyFirebase from '@legacy/firebase.js';
 import { normalizeRosterFieldDefinitions as legacy_normalizeRosterFieldDefinitions, splitRosterProfileValuesByVisibility as legacy_splitRosterProfileValuesByVisibility, validateRosterProfileValues as legacy_validateRosterProfileValues } from '@legacy/roster-profile-fields.js';
@@ -58,6 +59,7 @@ export const updateConfig = (...args: any[]) => callLegacyDb('updateConfig', arg
 export const uploadPlayerPhoto = (...args: any[]) => callLegacyDb('uploadPlayerPhoto', args);
 export const uploadTeamPhoto = (...args: any[]) => callLegacyDb('uploadTeamPhoto', args);
 export const sendInviteEmail = legacy_sendInviteEmail as (...args: any[]) => any;
+export const queueInviteEmail = legacy_queueInviteEmail as (...args: any[]) => any;
 export const inviteExistingTeamAdmin = legacy_inviteExistingTeamAdmin as (...args: any[]) => any;
 export const collection = (...args: any[]) => callLegacyFirebase('collection', args);
 export const collectionGroup = (...args: any[]) => callLegacyFirebase('collectionGroup', args);
