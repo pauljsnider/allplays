@@ -395,6 +395,45 @@ describe('canManageTeamAdmins adminEmails parity with legacy js/team-access.js',
   });
 });
 
+describe('buildTeamDetailModel registration provider', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('returns no registration provider rows when the team has no registration source', () => {
+    const built = buildTeamDetailModel({
+      teamId: 'team-1',
+      team: { id: 'team-1', name: 'Bears', sport: 'Basketball' }
+    });
+
+    expect(built.team.registrationProvider).toEqual([]);
+  });
+
+  it('returns human-labeled rows with copyable ids when a registration source is configured', () => {
+    const built = buildTeamDetailModel({
+      teamId: 'team-1',
+      team: {
+        id: 'team-1',
+        name: 'Bears',
+        sport: 'Basketball',
+        registrationSource: {
+          provider: 'LeagueApps',
+          externalTeamId: 'ext-42',
+          teamId: 'provider-team-7',
+          lastSyncStatus: 'Synced'
+        }
+      }
+    });
+
+    expect(built.team.registrationProvider).toEqual([
+      { label: 'Provider', value: 'LeagueApps' },
+      { label: 'External team ID', value: 'ext-42', copyable: true },
+      { label: 'Provider team ID', value: 'provider-team-7', copyable: true },
+      { label: 'Last sync', value: 'Synced' }
+    ]);
+  });
+});
+
 describe('buildTeamDetailModel standings', () => {
   beforeEach(() => {
     vi.clearAllMocks();

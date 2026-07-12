@@ -266,7 +266,7 @@ export type TeamDetailModel = {
     websiteUrl: string;
     editTeamUrl: string;
     mediaUrl: string;
-    registrationProvider: Array<{ label: string; value: string }>;
+    registrationProvider: Array<{ label: string; value: string; copyable?: boolean }>;
     scheduleNotifications: TeamScheduleNotificationSettings;
   };
   players: TeamDetailPlayer[];
@@ -1661,7 +1661,7 @@ export function buildTeamDetailModel({
       websiteUrl: getPublicHashUrl('team.html', teamId),
       editTeamUrl: getPublicHashUrl('edit-team.html', teamId),
       mediaUrl: getPublicHashUrl('team-media.html', teamId),
-      registrationProvider: getRegistrationProviderDetails(team, teamId),
+      registrationProvider: getRegistrationProviderDetails(team),
       scheduleNotifications: normalizeTeamScheduleNotifications(team?.scheduleNotifications)
     },
     players: normalizedPlayers,
@@ -2197,13 +2197,13 @@ function normalizeSponsorList(sponsors: any[]): TeamDetailSponsor[] {
     .filter((sponsor) => sponsor.id || sponsor.name);
 }
 
-function getRegistrationProviderDetails(team: Record<string, any>, teamId: string) {
+function getRegistrationProviderDetails(team: Record<string, any>) {
   const source = team?.registrationSource || team?.registrationProvider || {};
   const rows = [
     { label: 'Provider', value: cleanString(source.provider || source.providerName) },
-    { label: 'External Team ID', value: cleanString(source.externalTeamId) },
-    { label: 'Team ID', value: cleanString(source.teamId || teamId) },
-    { label: 'Last Sync', value: cleanString(source.lastSyncStatus || source.syncStatus) }
+    { label: 'External team ID', value: cleanString(source.externalTeamId), copyable: true },
+    { label: 'Provider team ID', value: cleanString(source.teamId), copyable: true },
+    { label: 'Last sync', value: cleanString(source.lastSyncStatus || source.syncStatus) }
   ].filter((row) => row.value);
   return rows;
 }
