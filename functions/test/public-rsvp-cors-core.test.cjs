@@ -27,6 +27,7 @@ test('public RSVP CORS allows Firebase preview channel origins', () => {
 });
 
 test('public RSVP CORS rejects everything else', () => {
+  assert.equal(isAllowedPublicRsvpOrigin('*'), false);
   assert.equal(isAllowedPublicRsvpOrigin('https://evil.example'), false);
   assert.equal(isAllowedPublicRsvpOrigin('https://game-flow-c6311--x.web.app.evil.com'), false);
   assert.equal(isAllowedPublicRsvpOrigin('http://allplays.ai'), false);

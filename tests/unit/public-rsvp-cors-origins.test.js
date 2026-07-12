@@ -8,11 +8,24 @@ const functionsSource = readFileSync(resolve(process.cwd(), 'functions/index.js'
 const corsCoreSource = readFileSync(resolve(process.cwd(), 'functions/public-rsvp-cors-core.cjs'), 'utf8');
 const { isAllowedPublicRsvpOrigin } = require(resolve(process.cwd(), 'functions/public-rsvp-cors-core.cjs'));
 
+function extractPublicRsvpCorsWrapper(functionsFileSource) {
+    const start = functionsFileSource.indexOf('function writePublicRsvpCors(req, res)');
+    expect(start, 'Expected writePublicRsvpCors to exist in functions/index.js').toBeGreaterThanOrEqual(0);
+
+    const end = functionsFileSource.indexOf('\nfunction publicRsvpJsonError', start);
+    expect(end, 'Expected writePublicRsvpCors to end before publicRsvpJsonError').toBeGreaterThan(start);
+    return functionsFileSource.slice(start, end);
+}
+
 describe('public RSVP CORS origins', () => {
     it('keeps the HTTPS function wrapper delegated to the shared origin allowlist', () => {
+        const publicRsvpCorsWrapper = extractPublicRsvpCorsWrapper(functionsSource);
+
         expect(functionsSource).toContain("require('./public-rsvp-cors-core.cjs')");
-        expect(functionsSource).toContain('function writePublicRsvpCors(req, res)');
-        expect(functionsSource).toContain('isAllowedPublicRsvpOrigin(origin)');
+        expect(publicRsvpCorsWrapper).toContain('function writePublicRsvpCors(req, res)');
+        expect(publicRsvpCorsWrapper).toContain('isAllowedPublicRsvpOrigin(origin)');
+        expect(publicRsvpCorsWrapper).not.toContain("Access-Control-Allow-Origin', '*'");
+        expect(corsCoreSource).not.toContain("Access-Control-Allow-Origin': '*'");
     });
 
     it('allows the production domains and Firebase Hosting default domains', () => {
@@ -26,6 +39,7 @@ describe('public RSVP CORS origins', () => {
         expect(isAllowedPublicRsvpOrigin('http://localhost:5174')).toBe(true);
         expect(isAllowedPublicRsvpOrigin('http://127.0.0.1:5174')).toBe(true);
         expect(isAllowedPublicRsvpOrigin('https://game-flow-c6311--pr-3864-abc123.web.app')).toBe(true);
+        expect(isAllowedPublicRsvpOrigin('*')).toBe(false);
         expect(isAllowedPublicRsvpOrigin('https://game-flow-c6311--x.web.app.evil.com')).toBe(false);
         expect(isAllowedPublicRsvpOrigin('http://localhost:5174.evil.com')).toBe(false);
     });
