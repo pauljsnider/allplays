@@ -144,12 +144,33 @@ function PlayerPerformanceRow({ player, statKeys, statLabels, hasPlayingTime, te
 function PlayByPlaySection({ plays }: { plays: GameReportPlay[] }) {
   const { supported, enabled, paused, toggleEnabled } = useLiveGameAnnouncer(plays);
 
+  if (!plays.length) {
+    return <EmptyReportState title="No events logged" detail="Play-by-play will appear here during or after the game." />;
+  }
+
   return (
     <div className="space-y-3">
-      <div className="rounded-xl border border-gray-200 bg-white p-3">
+      <div className="max-h-[430px] space-y-2 overflow-y-auto pr-1" aria-label="Play-by-play log">
+        {plays.map((play) => (
+          <div key={play.id || `${play.period}-${play.clock}-${play.text}`} className="rounded-r-xl border-l-4 border-primary-500 bg-gray-50 px-3 py-2.5">
+            <div className="flex items-start gap-2">
+              <span className="mt-0.5 inline-flex min-h-6 flex-none items-center rounded-md bg-primary-600 px-2 text-[11px] font-black text-white">{play.period}</span>
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-semibold leading-5 text-gray-900">{play.text}</div>
+                <div className="mt-1 flex gap-2 text-xs font-semibold text-gray-500">
+                  {play.clock ? <span className="font-mono">{play.clock}</span> : null}
+                  {play.timestamp ? <span>{formatReportTime(play.timestamp)}</span> : null}
+                </div>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="rounded-xl border border-gray-200 bg-gray-50 p-3" aria-label="Play-by-play audio controls">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <div className="text-sm font-black text-gray-950">Audio announcements</div>
+            <div className="text-xs font-black uppercase tracking-[0.04em] text-gray-700">Audio announcements</div>
             <div className="text-xs font-semibold text-gray-500">
               {supported
                 ? paused
@@ -170,27 +191,6 @@ function PlayByPlaySection({ plays }: { plays: GameReportPlay[] }) {
           </button>
         </div>
       </div>
-
-      {!plays.length ? (
-        <EmptyReportState title="No events logged" detail="Play-by-play will appear here during or after the game." />
-      ) : (
-        <div className="max-h-[430px] space-y-2 overflow-y-auto pr-1">
-          {plays.map((play) => (
-            <div key={play.id || `${play.period}-${play.clock}-${play.text}`} className="rounded-r-xl border-l-4 border-primary-500 bg-gray-50 px-3 py-2.5">
-              <div className="flex items-start gap-2">
-                <span className="mt-0.5 inline-flex min-h-6 flex-none items-center rounded-md bg-primary-600 px-2 text-[11px] font-black text-white">{play.period}</span>
-                <div className="min-w-0 flex-1">
-                  <div className="text-sm font-semibold leading-5 text-gray-900">{play.text}</div>
-                  <div className="mt-1 flex gap-2 text-xs font-semibold text-gray-500">
-                    {play.clock ? <span className="font-mono">{play.clock}</span> : null}
-                    {play.timestamp ? <span>{formatReportTime(play.timestamp)}</span> : null}
-                  </div>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
