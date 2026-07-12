@@ -209,6 +209,8 @@
     import { getApp } from './js/vendor/firebase-app.js';
     import { getAI, getGenerativeModel, GoogleAIBackend, Schema } from './js/vendor/firebase-ai.js';
 
+    const FIRESTORE_BATCH_WRITE_LIMIT = 500;
+
     renderFooter(document.getElementById('footer-container'));
 
     let currentTeamId = null;
@@ -784,7 +786,8 @@ RETURN JSON:
         const statsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`));
         const liveEventsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/liveEvents`));
         const privateStatsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/privatePlayerStats`));
-        const hasExistingTrackedData = eventsSnap.size > 0 || statsSnap.size > 0 || liveEventsSnap.size > 0 || privateStatsSnap.size > 0;
+        const replacementCleanupWriteCount = eventsSnap.size + statsSnap.size + liveEventsSnap.size + privateStatsSnap.size;
+        const hasExistingTrackedData = replacementCleanupWriteCount > 0;
         if (hasExistingTrackedData) {
           const confirmClear = confirm('This game already has tracked data. Replace it with the stat sheet results?');
           if (!confirmClear) {
@@ -802,6 +805,11 @@ RETURN JSON:
           awayScore: visitorScore,
           statSheetPhotoUrl: statSheetUrl
         });
+
+        const replacementWriteCount = replacementCleanupWriteCount + applyPlan.aggregatedStatsWrites.length + 1;
+        if (replacementWriteCount > FIRESTORE_BATCH_WRITE_LIMIT) {
+          throw new Error(`Replacement requires ${replacementWriteCount} writes, which exceeds the ${FIRESTORE_BATCH_WRITE_LIMIT}-write Firestore batch limit. Existing game data was not changed.`);
+        }
 
         const batch = writeBatch(db);
         if (hasExistingTrackedData) {

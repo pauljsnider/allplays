@@ -62,6 +62,13 @@ function createScenario(overrides = {}) {
     };
 }
 
+function createLiveEvents(count) {
+    return Object.fromEntries(Array.from({ length: count }, (_, index) => {
+        const eventNumber = String(index + 1).padStart(3, '0');
+        return [`largeLiveEvent${eventNumber}`, { type: 'touch', timestamp: index + 1 }];
+    }));
+}
+
 async function installModuleMocks(page) {
     await page.addInitScript(({ storeKey }) => {
         function loadStore() {
@@ -1047,6 +1054,59 @@ test('preserves existing tracked stats when replacement batch commit fails', asy
     expect(store.commitCalls).toBe(1);
     expect(store.events.oldEvent.type).toBe('score');
     expect(store.liveEvents.oldLiveEvent.type).toBe('assist');
+    expect(store.privatePlayerStats.oldPrivateStat.notes).toBe('private stale data');
+    expect(store.aggregatedStats).toEqual({
+        legacyPlayer: {
+            playerName: 'Old Player',
+            playerNumber: '99',
+            stats: { pts: 99, reb: 1, ast: 1, fouls: 5 }
+        }
+    });
+    expect(store.game.status).toBe('scheduled');
+    expect(store.game.homeScore).toBe(0);
+    expect(store.game.awayScore).toBe(0);
+});
+
+test('preflights oversized replacement cleanup before staging batch deletes', async ({ page, baseURL }) => {
+    const overLimitMessage = 'Replacement requires 503 writes, which exceeds the 500-write Firestore batch limit. Existing game data was not changed.';
+
+    await seedScenario(page, baseURL, createScenario({
+        aggregatedStats: {
+            legacyPlayer: {
+                playerName: 'Old Player',
+                playerNumber: '99',
+                stats: { pts: 99, reb: 1, ast: 1, fouls: 5 }
+            }
+        },
+        events: {
+            oldEvent: { type: 'score', timestamp: 1 }
+        },
+        liveEvents: createLiveEvents(497),
+        privatePlayerStats: {
+            oldPrivateStat: { playerId: 'p1', notes: 'private stale data' }
+        },
+        confirmResponses: [true]
+    }));
+
+    await analyzeStatsheet(page, baseURL);
+    await page.locator('#home-rows tr').nth(1).locator('input[data-field="include"]').check();
+    await page.locator('#home-rows tr').nth(1).locator('select[data-field="mappedPlayerId"]').selectOption('p2');
+    await page.locator('#apply-btn').click();
+
+    await expect(page.locator('#apply-status')).toHaveText(`Error: ${overLimitMessage}`);
+    await expect(page.locator('#apply-btn')).toBeEnabled();
+    await expect(page.locator('#summary-section')).toHaveClass(/hidden/);
+
+    const store = await page.evaluate((storeKey) => JSON.parse(localStorage.getItem(storeKey) || '{}'), STORE_KEY);
+    expect(store.alerts).toContain(`Failed to save stats: ${overLimitMessage}`);
+    expect(store.confirmResults).toEqual([true]);
+    expect(store.commitCalls).toBe(0);
+    expect(store.batchOps).toEqual([]);
+    expect(store.batchDeleteCalls || []).toEqual([]);
+    expect(store.deleteCalls).toEqual([]);
+    expect(Object.keys(store.liveEvents)).toHaveLength(497);
+    expect(store.liveEvents.largeLiveEvent497.type).toBe('touch');
+    expect(store.events.oldEvent.type).toBe('score');
     expect(store.privatePlayerStats.oldPrivateStat.notes).toBe('private stale data');
     expect(store.aggregatedStats).toEqual({
         legacyPlayer: {
