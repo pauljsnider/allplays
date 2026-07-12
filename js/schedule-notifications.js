@@ -331,20 +331,27 @@ export async function sendPublicRsvpReminderEmails({
     }
 
     const token = await user.getIdToken();
-    const response = await fetch(`${getFunctionsBaseUrl(auth)}/sendPublicRsvpEmails`, {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-            teamId,
-            gameId,
-            eventType,
-            eventTitle,
-            eventDate: eventDate instanceof Date ? eventDate.toISOString() : eventDate || null
-        })
-    });
+    let response;
+    try {
+        response = await fetch(`${getFunctionsBaseUrl(auth)}/sendPublicRsvpEmails`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                teamId,
+                gameId,
+                eventType,
+                eventTitle,
+                eventDate: eventDate instanceof Date ? eventDate.toISOString() : eventDate || null
+            })
+        });
+    } catch (networkError) {
+        // A blocked CORS request or offline network surfaces as a bare
+        // TypeError: Failed to fetch. Give the coach something actionable.
+        throw new Error('Could not reach the reminder service. Check your connection and try again.');
+    }
 
     const payload = await response.json().catch(() => ({}));
     if (!response.ok || payload.ok === false) {
