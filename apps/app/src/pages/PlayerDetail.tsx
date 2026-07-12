@@ -433,8 +433,13 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
     try {
       const nextData = await loadParentPlayerDetail(auth.user, teamId, playerId);
       const nextAthleteProfileLoaded = hasResolvedAthleteProfile(nextData.athleteProfile);
-      setData(nextData);
-      setAthleteProfileLoaded(nextAthleteProfileLoaded);
+      setData((current) => ({
+        ...nextData,
+        athleteProfile: athleteProfileLoaded && !nextAthleteProfileLoaded && current
+          ? current.athleteProfile
+          : nextData.athleteProfile
+      }));
+      setAthleteProfileLoaded(nextAthleteProfileLoaded || athleteProfileLoaded);
       setAthleteProfileError(null);
       setVideoClipsError(null);
       if (reloadVideoClips) {
@@ -934,7 +939,7 @@ function PlayerProfileSection({
       {activePanel === 'athlete' ? (
         athleteProfileLoaded ? (
           <AthleteProfileBuilderCard
-            key={`${data.athleteProfile.profile?.id || 'new'}:${String(data.athleteProfile.shareUrl || '').trim()}`}
+            key={`${data.child.teamId}:${data.child.playerId}`}
             data={data}
             auth={auth}
             onChanged={onChanged}

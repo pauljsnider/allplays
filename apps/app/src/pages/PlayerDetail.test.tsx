@@ -1780,7 +1780,7 @@ describe('PlayerDetail custom roster fields', () => {
 
   it('preserves the privacy toggle state across save and refresh cycles', async () => {
     const shareUrl = 'https://allplays.ai/athlete-profile.html?profileId=profile-1';
-    const refreshDeferred = createDeferred<ReturnType<typeof buildDetailData>>();
+    const profileRefreshDeferred = createDeferred<any>();
 
     playerServiceMocks.loadParentPlayerDetail
       .mockResolvedValueOnce(buildDetailData({
@@ -1798,21 +1798,23 @@ describe('PlayerDetail custom roster fields', () => {
           seasonOptions: buildDetailData().athleteProfile.seasonOptions
         }
       }))
-      .mockImplementationOnce(() => refreshDeferred.promise);
+      .mockResolvedValueOnce(buildDetailData());
 
-    playerServiceMocks.loadParentPlayerAthleteProfile.mockResolvedValue({
+    playerServiceMocks.loadParentPlayerAthleteProfile.mockImplementationOnce(() => profileRefreshDeferred.promise);
+
+    const refreshedAthleteProfile = {
       profile: {
         id: 'profile-1',
         athlete: { name: 'Sam Player' },
         bio: {},
-        privacy: 'private',
+        privacy: 'public',
         clips: [],
         seasons: [{ seasonKey: 'team-current::player-current' }]
       },
-      shareUrl: '',
+      shareUrl,
       builderUrl: 'https://allplays.ai/athlete-profile-builder.html?teamId=team-current&playerId=player-current&profileId=profile-1',
       seasonOptions: buildDetailData().athleteProfile.seasonOptions
-    });
+    };
 
     playerServiceMocks.saveParentAthleteProfileDraft.mockImplementation(async (_args: any) => ({
       id: 'profile-1',
@@ -1833,30 +1835,20 @@ describe('PlayerDetail custom roster fields', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Athlete Profile' }));
     await screen.findByText('What others see');
 
+    fireEvent.change(screen.getByLabelText('Headline'), { target: { value: 'Draft headline' } });
     fireEvent.click(screen.getByRole('button', { name: 'public' }));
     expect(screen.getByRole('button', { name: 'Publish Athlete Profile' })).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'Publish Athlete Profile' }));
 
     await waitFor(() => {
-      expect(playerServiceMocks.saveParentAthleteProfileDraft).toHaveBeenCalled();
+      expect(playerServiceMocks.loadParentPlayerAthleteProfile).toHaveBeenCalledTimes(1);
     });
 
-    refreshDeferred.resolve(buildDetailData({
-      athleteProfile: {
-        profile: {
-          id: 'profile-1',
-          athlete: { name: 'Sam Player' },
-          bio: {},
-          privacy: 'public',
-          clips: [],
-          seasons: [{ seasonKey: 'team-current::player-current' }]
-        },
-        shareUrl,
-        builderUrl: 'https://allplays.ai/athlete-profile-builder.html?teamId=team-current&playerId=player-current&profileId=profile-1',
-        seasonOptions: buildDetailData().athleteProfile.seasonOptions
-      }
-    }));
+    expect(screen.getByDisplayValue('Draft headline')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'public' }).className).toContain('border-primary-300');
+
+    profileRefreshDeferred.resolve(refreshedAthleteProfile);
 
     await waitFor(() => {
       const publicBtn = screen.getByRole('button', { name: 'public' });
