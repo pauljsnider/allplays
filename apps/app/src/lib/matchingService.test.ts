@@ -194,6 +194,12 @@ describe('loadOpenMatchingPosts', () => {
     expect(posts.map((post) => post.id)).toEqual(['fresh']);
     const constraints = adapterMocks.query.mock.calls[0].slice(1).flat();
     const whereFields = constraints.filter((entry: any) => entry?.kind === 'where').map((entry: any) => `${entry.field}==${entry.value}`);
+    expect(constraints).toContainEqual({
+      kind: 'where',
+      field: 'type',
+      op: 'in',
+      value: ['player_seeking_team', 'team_seeking_players']
+    });
     expect(whereFields).toContain('visibility==community');
     expect(whereFields).toContain('status==open');
     expect(whereFields).toContain('hidden==false');

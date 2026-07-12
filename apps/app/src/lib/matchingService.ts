@@ -134,6 +134,7 @@ export async function createMatchingPost(user: AuthUser, draft: MatchingPostDraf
 export async function loadOpenMatchingPosts(): Promise<MatchingPost[]> {
   const openQuery = query(
     collection(db, 'socialPosts'),
+    where('type', 'in', ['player_seeking_team', 'team_seeking_players']),
     where('visibility', '==', 'community'),
     where('status', '==', 'open'),
     where('hidden', '==', false),
