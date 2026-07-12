@@ -268,6 +268,10 @@ function hasAssignmentsPosted(event?: ParentScheduleEvent | null) {
   return Array.isArray(event?.assignments) && event.assignments.length > 0;
 }
 
+function canManageEventAssignments(event?: ParentScheduleEvent | null) {
+  return event?.isTeamAdmin === true;
+}
+
 function getEventDetailSections(event?: ParentScheduleEvent | null): Array<{ id: EventDetailSectionId; label: string; shortLabel?: string }> {
   const eventLabel = event?.type === 'practice' ? 'More' : 'Game';
   const sections: Array<{ id: EventDetailSectionId; label: string; shortLabel?: string }> = [
@@ -278,7 +282,7 @@ function getEventDetailSections(event?: ParentScheduleEvent | null): Array<{ id:
     sections.push({ id: 'rideshare', label: 'Rideshare' });
   }
 
-  if (isActiveTrackedScheduleEvent(event) || hasAssignmentsPosted(event)) {
+  if (isActiveTrackedScheduleEvent(event) || hasAssignmentsPosted(event) || canManageEventAssignments(event)) {
     sections.push({ id: 'assignments', label: 'Assignments', shortLabel: 'Tasks' });
   }
 
