@@ -1382,6 +1382,7 @@ service cloud.firestore {
              exists(/databases/$(database)/documents/teams/$(data.get('teamId', ''))) &&
              isTeamOwnerOrAdmin(data.get('teamId', '')) &&
              isNonBlankString(data.get('teamName', '')) &&
+             data.get('teamName', '') == get(/databases/$(database)/documents/teams/$(data.get('teamId', ''))).data.get('name', '') &&
              hasNoContactInfo(data.get('teamName', '')) &&
              data.get('teamName', '').size() <= 120 &&
              data.get('teamIds', []) is list &&
@@ -1478,7 +1479,8 @@ service cloud.firestore {
                data.get('teamName', '') is string &&
                data.get('teamName', '').size() > 0 &&
                exists(/databases/$(database)/documents/teams/$(data.get('teamId', ''))) &&
-               isTeamOwnerOrAdmin(data.get('teamId', ''))
+               isTeamOwnerOrAdmin(data.get('teamId', '')) &&
+               data.get('teamName', '') == get(/databases/$(database)/documents/teams/$(data.get('teamId', ''))).data.get('name', '')
              );
     }
 

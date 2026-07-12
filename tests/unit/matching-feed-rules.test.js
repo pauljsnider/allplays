@@ -82,6 +82,8 @@ describe('Player/team matching feed Firestore rules', () => {
         expect(source).toContain("data.get('type', '') == 'team_seeking_players' &&");
         expect(source).toContain("exists(/databases/$(database)/documents/teams/$(data.get('teamId', ''))) &&");
         expect(source).toContain("isTeamOwnerOrAdmin(data.get('teamId', ''))");
+        const teamPostGuard = source.match(/function isTeamSeekingPlayersCreateScopeValid\(data\) \{[\s\S]*?\n    \}/);
+        expect(teamPostGuard?.[0]).toContain("data.get('teamName', '') == get(/databases/$(database)/documents/teams/$(data.get('teamId', ''))).data.get('name', '')");
         expect(source).toContain("data.get('type', '') == 'player_seeking_team' &&");
         expect(source).toContain("data.get('teamId', null) == null");
     });
@@ -153,6 +155,8 @@ describe('Player/team matching feed Firestore rules', () => {
         expect(source).toContain("data.get('teamId', '') is string &&");
         expect(source).toContain("exists(/databases/$(database)/documents/teams/$(data.get('teamId', ''))) &&");
         expect(source).toContain("isTeamOwnerOrAdmin(data.get('teamId', ''))");
+        const responseTeamGuard = source.match(/function isMatchingResponseTeamContextValid\(postId, data\) \{[\s\S]*?\n    \}/);
+        expect(responseTeamGuard?.[0]).toContain("data.get('teamName', '') == get(/databases/$(database)/documents/teams/$(data.get('teamId', ''))).data.get('name', '')");
         expect(source).toContain('isMatchingResponseTeamContextValid(postId, request.resource.data) &&');
     });
 
