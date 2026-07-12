@@ -46,6 +46,7 @@ import {
 import { buildCoachOverrideRsvpDocId, shouldDeleteLegacyRsvpForOverride } from './rsvp-doc-ids.js';
 import { computeEffectiveRsvpSummary } from './rsvp-summary.js?v=2';
 import { buildGameDayRsvpBreakdown } from './game-day-rsvp-breakdown.js?v=2';
+import { buildRosterUserPlayerMap, createRosterBackedIdResolver } from './roster-rsvp-attribution.js?v=1';
 import { isAvailabilityLocked, normalizeAvailabilityPreferences } from './availability-preferences.js?v=1';
 import {
     collectOfficialLookupQueryTargets,
@@ -9008,7 +9009,26 @@ export async function getRsvpBreakdownByPlayer(teamId, gameId) {
         getRsvps(teamId, gameId)
     ]);
     const playersWithPrivateContacts = await mergePlayerPrivateProfileParents(teamId, players);
-    const fallbackByUser = await buildFallbackPlayerIdsByUser(teamId, rsvps);
+    // Attribute user-level RSVPs (no playerIds) to players using coach-readable
+    // roster parent links before falling back to the responder's profile, which
+    // rules forbid a coach from reading (#3863).
+    const rosterUserPlayerMap = buildRosterUserPlayerMap(playersWithPrivateContacts);
+    const fallbackByUser = await buildFallbackPlayerIdsByUser(teamId, rsvps, {
+        resolveIdsForUser: createRosterBackedIdResolver(rosterUserPlayerMap, async (uid) => {
+            try {
+                const profile = await getUserProfile(uid);
+                const parentLinks = Array.isArray(profile?.parentOf) ? profile.parentOf : [];
+                return uniqueNonEmptyIds(
+                    parentLinks
+                        .filter((link) => link?.teamId === teamId)
+                        .map((link) => link?.playerId)
+                );
+            } catch (err) {
+                if (err?.code === 'permission-denied') return [];
+                throw err;
+            }
+        })
+    });
     const breakdown = buildGameDayRsvpBreakdown({ players: playersWithPrivateContacts, rsvps, fallbackByUser });
     return { ...breakdown, players: playersWithPrivateContacts, rsvps };
 }
