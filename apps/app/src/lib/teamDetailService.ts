@@ -1050,7 +1050,7 @@ export async function createRosterParentInviteForApp(
       await queueInviteEmail(code);
       emailSent = true;
     } catch (error) {
-      console.warn('Parent invite was created, but its email could not be queued:', error);
+      logger.warn('Parent invite was created, but its email could not be queued.', { error });
     }
   }
   invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);

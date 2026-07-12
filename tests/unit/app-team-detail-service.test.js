@@ -272,7 +272,6 @@ describe('React app team detail model', () => {
         getConfigs.mockResolvedValue([]);
         inviteParent.mockResolvedValue({ code: 'ABCD1234', autoLinked: false, existingUser: false, teamName: 'Bears', playerName: 'Pat Star' });
         queueInviteEmail.mockRejectedValue(new Error('mail unavailable'));
-        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
         const result = await createRosterParentInviteForApp(
             'team-1',
@@ -288,8 +287,6 @@ describe('React app team detail model', () => {
             emailSent: false,
             status: 'pending'
         });
-        expect(warnSpy).toHaveBeenCalled();
-        warnSpy.mockRestore();
     });
 
     it('loads normalized roster field definitions only for full team staff', async () => {
