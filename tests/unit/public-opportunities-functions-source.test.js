@@ -28,6 +28,7 @@ describe('public opportunity callable wiring', () => {
     expect(source).toContain("context.auth.token?.email_verified !== true");
     expect(source).toContain('hasTeamAdminAccess({ team, user: caller.user, uid: caller.uid, email: caller.email })');
     expect(source).toContain("team.isPublic !== true");
+    expect(source).toContain("team.active === false");
     expect(source).toContain("status: 'active'");
     expect(source).toContain('buildOpportunityExpiry(now.toMillis())');
     expect(source).toContain('checkPublicOpportunityBrowseRateLimit');
@@ -47,6 +48,6 @@ describe('public opportunity callable wiring', () => {
     expect(source).toContain("mode === 'renew' && listing.kind !== 'player_seeking_team'");
     expect(source).toContain('await resolveOpportunityTeam({ kind: listing.kind, teamId: listing.teamId }, caller);');
     expect(source).toContain("action === 'restore' && listing.kind !== 'player_seeking_team'");
-    expect(source).toContain('The linked team must be public before this listing can be restored.');
+    expect(source).toContain('The linked team must be active and public before this listing can be restored.');
   });
 });

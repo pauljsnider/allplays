@@ -11555,7 +11555,9 @@ async function resolveOpportunityTeam(input, caller) {
   const teamSnap = await firestore.doc(`teams/${input.teamId}`).get();
   if (!teamSnap.exists) throwOpportunityError('not-found', 'Team not found.');
   const team = teamSnap.data() || {};
-  if (team.isPublic !== true) throwOpportunityError('failed-precondition', 'Only public teams can publish public opportunities.');
+  if (team.isPublic !== true || team.active === false) {
+    throwOpportunityError('failed-precondition', 'Only active public teams can publish public opportunities.');
+  }
   if (!hasTeamAdminAccess({ team, user: caller.user, uid: caller.uid, email: caller.email })) {
     throwOpportunityError('permission-denied', 'Only a team owner or admin can publish for this team.');
   }
@@ -11711,7 +11713,7 @@ exports.listManagedPublicOpportunityTeams = functions.https.onCall(async (_data,
   const teams = new Map();
   snapshots.forEach((snapshot) => snapshot.docs.forEach((docSnap) => {
     const team = docSnap.data() || {};
-    if (team.isPublic !== true) return;
+    if (team.isPublic !== true || team.active === false) return;
     teams.set(docSnap.id, {
       id: docSnap.id,
       name: cleanOpportunityText(team.name, 100),
@@ -11888,8 +11890,9 @@ exports.moderatePublicOpportunity = functions.https.onCall(async (data, context 
   const { listingRef, listing } = await requireOpportunityListing(data?.listingId);
   if (action === 'restore' && listing.kind !== 'player_seeking_team') {
     const teamSnap = await firestore.doc(`teams/${listing.teamId}`).get();
-    if (!teamSnap.exists || teamSnap.data()?.isPublic !== true) {
-      throwOpportunityError('failed-precondition', 'The linked team must be public before this listing can be restored.');
+    const team = teamSnap.data() || {};
+    if (!teamSnap.exists || team.isPublic !== true || team.active === false) {
+      throwOpportunityError('failed-precondition', 'The linked team must be active and public before this listing can be restored.');
     }
   }
   const now = admin.firestore.Timestamp.now();

@@ -1076,18 +1076,22 @@ function FeedSection({
   const [filter, setFilter] = useState<SocialFeedFilter>('all');
   const [opportunities, setOpportunities] = useState<PublicOpportunity[]>([]);
   const [opportunityLoading, setOpportunityLoading] = useState(false);
+  const [opportunityLoaded, setOpportunityLoaded] = useState(false);
   const [opportunityError, setOpportunityError] = useState('');
   const visibleItems = useMemo(() => filterSocialFeedItems(social.feedItems, filter), [social.feedItems, filter]);
 
   useEffect(() => {
-    if (filter !== 'opportunities' || opportunities.length || opportunityLoading) return;
+    if (filter !== 'opportunities' || opportunityLoaded || opportunityLoading) return;
     setOpportunityLoading(true);
     setOpportunityError('');
     listPublicOpportunities({}, null)
       .then((result) => setOpportunities(result.items.slice(0, 8)))
       .catch((loadError: any) => setOpportunityError(loadError?.message || 'Unable to load public opportunities.'))
-      .finally(() => setOpportunityLoading(false));
-  }, [filter, opportunities.length, opportunityLoading]);
+      .finally(() => {
+        setOpportunityLoaded(true);
+        setOpportunityLoading(false);
+      });
+  }, [filter, opportunityLoaded, opportunityLoading]);
 
   return (
     <section className="home-section-content space-y-3">

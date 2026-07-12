@@ -29,6 +29,10 @@ const scheduleServiceMocks = vi.hoisted(() => ({
   loadOfficialAssignmentsAccess: vi.fn()
 }));
 
+const opportunityServiceMocks = vi.hoisted(() => ({
+  listPublicOpportunities: vi.fn()
+}));
+
 const uxTimingMocks = vi.hoisted(() => ({
   recordFirstMeaningfulRender: vi.fn(),
   startScreenMountTimer: vi.fn(() => ({ end: vi.fn() })),
@@ -41,11 +45,13 @@ vi.mock('../components/PageSkeletons', () => ({
 vi.mock('../lib/homeService', () => homeServiceMocks);
 vi.mock('../lib/socialService', () => socialServiceMocks);
 vi.mock('../lib/scheduleService', () => scheduleServiceMocks);
+vi.mock('../lib/opportunityService', () => opportunityServiceMocks);
 vi.mock('../lib/uxTiming', () => uxTimingMocks);
 vi.mock('lucide-react', () => {
   const Icon = () => null;
   return {
     AlertCircle: Icon,
+    BriefcaseBusiness: Icon,
     CalendarDays: Icon,
     Car: Icon,
     CheckCircle2: Icon,
@@ -336,6 +342,7 @@ describe('Home', () => {
     homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValue(baseHome);
     socialServiceMocks.loadSocialHome.mockResolvedValue(baseSocial);
     scheduleServiceMocks.loadOfficialAssignmentsAccess.mockResolvedValue({ hasAccess: false, teamCount: 0 });
+    opportunityServiceMocks.listPublicOpportunities.mockResolvedValue({ items: [], nextCursor: null });
   });
 
   afterEach(() => {
@@ -373,6 +380,17 @@ describe('Home', () => {
 
     expect(await screen.findByRole('heading', { name: 'Feed' })).toBeTruthy();
     expect(homeServiceMocks.loadParentHomeSummaryBootstrap).not.toHaveBeenCalled();
+  });
+
+  it('loads an empty opportunities feed only once', async () => {
+    renderHome(signedOutAuth, '/home?section=feed');
+
+    expect(await screen.findByRole('heading', { name: 'Feed' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Opportunities' }));
+
+    expect(await screen.findByText('No active opportunities')).toBeTruthy();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(opportunityServiceMocks.listPublicOpportunities).toHaveBeenCalledTimes(1);
   });
 
   it('renders signed-out Today without waiting for parent or officials hydration', async () => {
