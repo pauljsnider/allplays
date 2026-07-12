@@ -166,7 +166,7 @@ describe('createMatchingPost', () => {
 
 describe('loadOpenMatchingPosts', () => {
   it('queries community open posts and drops expired ones client-side', async () => {
-    adapterMocks.getDocs.mockResolvedValue(snapshotOf([
+    adapterMocks.getDocs.mockResolvedValueOnce(snapshotOf([
       {
         id: 'fresh',
         type: 'player_seeking_team',
@@ -188,9 +188,9 @@ describe('loadOpenMatchingPosts', () => {
         hidden: false
       },
       { id: 'not-matching', type: 'manual_post', createdAt: { seconds: 1780000000 } }
-    ]));
+    ])).mockResolvedValueOnce(snapshotOf([]));
 
-    const posts = await loadOpenMatchingPosts();
+    const posts = await loadOpenMatchingPosts(user);
     expect(posts.map((post) => post.id)).toEqual(['fresh']);
     const constraints = adapterMocks.query.mock.calls[0].slice(1).flat();
     const whereFields = constraints.filter((entry: any) => entry?.kind === 'where').map((entry: any) => `${entry.field}==${entry.value}`);
@@ -204,6 +204,23 @@ describe('loadOpenMatchingPosts', () => {
     expect(whereFields).toContain('status==open');
     expect(whereFields).toContain('hidden==false');
   });
+
+  it('hides posts from users on either side of a blocked friendship', async () => {
+    adapterMocks.getDocs
+      .mockResolvedValueOnce(snapshotOf([
+        { id: 'blocked-by-me', type: 'player_seeking_team', status: 'open', authorId: 'blocked-user', matching: { sport: 'Soccer', ageGroup: 'U12' }, createdAt: { seconds: 1780000000 }, expiresAt: { seconds: 4102444800 }, hidden: false },
+        { id: 'blocked-me', type: 'team_seeking_players', status: 'open', authorId: 'blocker-user', matching: { sport: 'Soccer', ageGroup: 'U12' }, createdAt: { seconds: 1780000000 }, expiresAt: { seconds: 4102444800 }, hidden: false },
+        { id: 'visible', type: 'team_seeking_players', status: 'open', authorId: 'other-user', matching: { sport: 'Soccer', ageGroup: 'U12' }, createdAt: { seconds: 1780000000 }, expiresAt: { seconds: 4102444800 }, hidden: false }
+      ]))
+      .mockResolvedValueOnce(snapshotOf([
+        { id: 'blocked-user__parent-1', memberIds: ['parent-1', 'blocked-user'], status: 'blocked', blockedBy: ['parent-1'] },
+        { id: 'blocker-user__parent-1', memberIds: ['parent-1', 'blocker-user'], status: 'blocked', blockedBy: ['blocker-user'] }
+      ]));
+
+    const posts = await loadOpenMatchingPosts(user);
+
+    expect(posts.map((post) => post.id)).toEqual(['visible']);
+  });
 });
 
 describe('loadRelevantMatchingFeedItems', () => {
@@ -216,6 +233,7 @@ describe('loadRelevantMatchingFeedItems', () => {
 
 describe('respondToMatchingPost', () => {
   it('upserts one response per user and notifies the author', async () => {
+    adapterMocks.getDoc.mockResolvedValue({ exists: () => false });
     adapterMocks.setDoc.mockResolvedValue(undefined);
     adapterMocks.addDoc.mockResolvedValue({ id: 'note-1' });
     await respondToMatchingPost({ ...user, photoUrl: 'https://lh3.googleusercontent.com/a/photo.png' }, openPost(), {
@@ -242,6 +260,7 @@ describe('respondToMatchingPost', () => {
   });
 
   it('still succeeds when the notification write fails', async () => {
+    adapterMocks.getDoc.mockResolvedValue({ exists: () => false });
     adapterMocks.setDoc.mockResolvedValue(undefined);
     adapterMocks.addDoc.mockRejectedValue(new Error('rules rejected'));
     await expect(respondToMatchingPost(user, openPost({ kind: 'team_seeking_players' }), { message: 'Interested!' })).resolves.toBeUndefined();
@@ -249,6 +268,7 @@ describe('respondToMatchingPost', () => {
   });
 
   it('does not expose email in a response or notification when the profile has no display name', async () => {
+    adapterMocks.getDoc.mockResolvedValue({ exists: () => false });
     adapterMocks.setDoc.mockResolvedValue(undefined);
     adapterMocks.addDoc.mockResolvedValue({ id: 'note-1' });
     await respondToMatchingPost({ ...user, displayName: '' }, openPost(), {
@@ -275,6 +295,20 @@ describe('respondToMatchingPost', () => {
       .rejects.toThrow(/message/i);
     await expect(respondToMatchingPost(user, openPost(), { message: 'Interested!' }))
       .rejects.toThrow(/team you manage/i);
+    expect(adapterMocks.setDoc).not.toHaveBeenCalled();
+  });
+
+  it('rejects responses when either user has blocked the other', async () => {
+    adapterMocks.getDoc.mockResolvedValue({
+      exists: () => true,
+      data: () => ({ status: 'blocked', blockedBy: ['author-1'] })
+    });
+
+    await expect(respondToMatchingPost(user, openPost(), {
+      message: 'Interested!',
+      teamId: 'team-1',
+      teamName: 'Rockets'
+    })).rejects.toThrow(/cannot respond/i);
     expect(adapterMocks.setDoc).not.toHaveBeenCalled();
   });
 });

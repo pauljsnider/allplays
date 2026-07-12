@@ -141,6 +141,10 @@ describe('Player/team matching feed Firestore rules', () => {
         expect(source).toContain('match /responses/{userId}');
         expect(source).toContain('function isMatchingResponseTargetPost(postId)');
         expect(source).toContain("post.get('authorId', '') != request.auth.uid");
+        expect(source).toContain('function isBlockedMatchingPair(firstUserId, secondUserId)');
+        expect(source).toContain("isBlockedFriendship(firstUserId + '__' + secondUserId)");
+        expect(source).toContain("isBlockedFriendship(secondUserId + '__' + firstUserId)");
+        expect(source).toContain("!isBlockedMatchingPair(post.get('authorId', ''), request.auth.uid)");
         expect(source).toContain("post.get('expiresAt', null) is timestamp &&");
         expect(source).toContain("post.get('expiresAt', null) > request.time &&");
         expect(source).toContain('function isMatchingPostAuthor(postId)');
@@ -170,6 +174,7 @@ describe('Player/team matching feed Firestore rules', () => {
         expect(source).toContain("data.get('fromUserId', '') == request.auth.uid &&");
         expect(source).toContain("data.get('appRoute', '') == '/opportunities?view=mine' &&");
         expect(source).toContain("post.get('authorId', '') == recipientId &&");
+        expect(source).toContain('!isBlockedMatchingPair(recipientId, request.auth.uid) &&');
         expect(source).toContain('exists(/databases/$(database)/documents/socialPosts/$(postId)/responses/$(request.auth.uid)) &&');
         expect(source).toContain('allow create: if isMatchingResponseNotificationCreateValid(userId, request.resource.data);');
 

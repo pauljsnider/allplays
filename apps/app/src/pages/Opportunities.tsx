@@ -80,7 +80,7 @@ export function Opportunities({ auth }: { auth: AuthState }) {
     setLoading(true);
     try {
       const [openPosts, minePosts, homeModel] = await Promise.all([
-        loadOpenMatchingPosts(),
+        loadOpenMatchingPosts(auth.user),
         loadMyMatchingPosts(auth.user),
         loadParentHome(auth.user).catch(() => null)
       ]);

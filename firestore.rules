@@ -1456,6 +1456,16 @@ service cloud.firestore {
              isCommunityMatchingPostContractValid(request.resource.data);
     }
 
+    function isBlockedFriendship(friendshipId) {
+      return exists(/databases/$(database)/documents/friendships/$(friendshipId)) &&
+             get(/databases/$(database)/documents/friendships/$(friendshipId)).data.get('status', '') == 'blocked';
+    }
+
+    function isBlockedMatchingPair(firstUserId, secondUserId) {
+      return isBlockedFriendship(firstUserId + '__' + secondUserId) ||
+             isBlockedFriendship(secondUserId + '__' + firstUserId);
+    }
+
     function isMatchingResponseTargetPost(postId) {
       let post = get(/databases/$(database)/documents/socialPosts/$(postId)).data;
       return isMatchingSocialPostType(post.get('type', '')) &&
@@ -1464,7 +1474,8 @@ service cloud.firestore {
              post.get('hidden', false) != true &&
              post.get('expiresAt', null) is timestamp &&
              post.get('expiresAt', null) > request.time &&
-             post.get('authorId', '') != request.auth.uid;
+             post.get('authorId', '') != request.auth.uid &&
+             !isBlockedMatchingPair(post.get('authorId', ''), request.auth.uid);
     }
 
     function isMatchingResponseTeamContextValid(postId, data) {
@@ -1538,6 +1549,7 @@ service cloud.firestore {
              isMatchingSocialPostType(post.get('type', '')) &&
              post.get('visibility', '') == 'community' &&
              post.get('authorId', '') == recipientId &&
+             !isBlockedMatchingPair(recipientId, request.auth.uid) &&
              exists(/databases/$(database)/documents/socialPosts/$(postId)/responses/$(request.auth.uid)) &&
              get(/databases/$(database)/documents/socialPosts/$(postId)/responses/$(request.auth.uid)).data.get('responderId', '') == request.auth.uid &&
              data.get('readAt', null) == null;

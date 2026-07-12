@@ -36,7 +36,7 @@ import {
   type MatchingPostStatus,
   type MatchingResponse
 } from './matchingLogic';
-import { toSocialDate } from './socialLogic';
+import { buildFriendshipId, toSocialDate } from './socialLogic';
 
 const logger = createLogger('matching-service');
 const openMatchingPostLimit = 100;
@@ -131,7 +131,22 @@ export async function createMatchingPost(user: AuthUser, draft: MatchingPostDraf
   return postRef.id;
 }
 
-export async function loadOpenMatchingPosts(): Promise<MatchingPost[]> {
+async function loadBlockedUserIds(user: AuthUser): Promise<Set<string>> {
+  const blockedQuery = query(
+    collection(db, 'friendships'),
+    where('memberIds', 'array-contains', user.uid),
+    limit(50)
+  );
+  const snapshot = await withTimeout(getDocs(blockedQuery), 'Blocked users');
+  return new Set(snapshotToDocs(snapshot).flatMap((friendship) =>
+    friendship.status === 'blocked' && Array.isArray(friendship.memberIds)
+      ? friendship.memberIds.map(compact).filter((memberId: string) => memberId && memberId !== user.uid)
+      : []
+  ));
+}
+
+export async function loadOpenMatchingPosts(user: AuthUser): Promise<MatchingPost[]> {
+  if (!user?.uid) return [];
   const openQuery = query(
     collection(db, 'socialPosts'),
     where('type', 'in', ['player_seeking_team', 'team_seeking_players']),
@@ -140,12 +155,16 @@ export async function loadOpenMatchingPosts(): Promise<MatchingPost[]> {
     where('hidden', '==', false),
     limit(openMatchingPostLimit)
   );
-  const snapshot = await withTimeout(getDocs(openQuery), 'Opportunities feed');
+  const [snapshot, blockedUserIds] = await Promise.all([
+    withTimeout(getDocs(openQuery), 'Opportunities feed'),
+    loadBlockedUserIds(user)
+  ]);
   const now = new Date();
   return sortMatchingPosts(
     snapshotToDocs(snapshot)
       .map(normalizeMatchingPost)
       .filter((post): post is MatchingPost => Boolean(post))
+      .filter((post) => !blockedUserIds.has(post.authorId))
       .filter((post) => isMatchingPostOpen(post, now))
   );
 }
@@ -172,7 +191,7 @@ export async function loadMyMatchingPosts(user: AuthUser): Promise<MatchingPost[
  */
 export async function loadRelevantMatchingFeedItems(user: AuthUser, home: ParentHomeModel): Promise<SocialFeedItem[]> {
   try {
-    const posts = await loadOpenMatchingPosts();
+    const posts = await loadOpenMatchingPosts(user);
     return selectRelevantMatchingPosts(posts, home, user.uid).map(matchingPostToFeedItem);
   } catch (error) {
     logger.warn('Unable to load matching posts for the home feed.', { error });
@@ -207,6 +226,14 @@ export async function respondToMatchingPost(user: AuthUser, post: MatchingPost, 
   }
   if (post.kind === 'player_seeking_team' && (!compact(input.teamId) || !compact(input.teamName))) {
     throw new Error('Choose the team you manage before responding.');
+  }
+
+  const friendshipId = buildFriendshipId(user.uid, post.authorId);
+  const friendshipSnapshot = friendshipId
+    ? await getDoc(doc(db, 'friendships', friendshipId)).catch(() => null)
+    : null;
+  if (friendshipSnapshot?.exists?.() && friendshipSnapshot.data()?.status === 'blocked') {
+    throw new Error('You cannot respond to this post.');
   }
 
   // One response per user per post (requirement 3.6): the doc id is the responder uid.

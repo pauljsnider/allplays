@@ -46,12 +46,12 @@ All discovery queries use the existing `withTimeout` + logged-warning pattern; t
 - Rules-level field allowlists on the post payload, `matching` map, responses, and notifications; `!data.keys().hasAny(['authorEmail','email','phone'])`.
 - `team_seeking_players` create requires `isTeamOwnerOrAdmin(teamId)`; `player_seeking_team` requires `teamId == null` and empty `playerIds`/`media`.
 - Comments and reactions are rules-blocked on community posts (respond-only surface, req 5.7).
+- Discovery filters posts from blocked friendships in either direction, and response plus notification writes are rules-blocked for those pairs (req 5.6).
 - Signup links restricted to `https://allplays.ai/...` (client validation) to prevent link spam.
 
 ## Deviations from requirements (phase 1)
 
 - Req 5.3 (auto-hide at 3 reports) needs a server-side counter; reports flow into `socialReports` for admin review instead.
-- Req 5.6 (block-aware delivery) not implemented; responses are already private to author+responder.
 - Rules compile check (`firebase deploy --only firestore:rules --dry-run`) pending re-auth; rules changes are covered by static tests in `tests/unit/matching-feed-rules.test.js`.
 
 ## Testing Strategy
