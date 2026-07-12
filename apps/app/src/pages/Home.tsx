@@ -330,6 +330,8 @@ export function Home({ auth }: { auth: AuthState }) {
   const topAction = home.actionItems[0] || null;
   const showBlockingErrorState = !loading && !hasLoadedHomeDetails && Boolean(homeLoadError);
   const displayName = auth.user?.displayName || auth.user?.email || 'ALL PLAYS User';
+  const friendRequestsUnavailable = Boolean(social.friendshipsError);
+  const friendRequestChipValue = friendRequestsUnavailable ? '!' : String(social.metrics.incomingRequests);
   const openCount = home.metrics.rsvpNeeded + home.metrics.packetsReady + home.metrics.unreadMessages + home.fees.length + social.metrics.incomingRequests;
   const today = new Date();
   const selectedComposerType = (searchParams.get('type') || 'manual_post') as SocialPostType;
@@ -464,7 +466,7 @@ export function Home({ auth }: { auth: AuthState }) {
           <PulseChip icon={ClipboardCheck} label="Packets" value={String(home.metrics.packetsReady)} urgent={home.metrics.packetsReady > 0} />
           <PulseChip icon={MessageCircle} label="Unread" value={String(home.metrics.unreadMessages)} urgent={home.metrics.unreadMessages > 0} />
           <PulseChip icon={Newspaper} label="Feed" value={String(social.metrics.feedItems)} />
-          <PulseChip icon={UserPlus} label="Requests" value={String(social.metrics.incomingRequests)} urgent={social.metrics.incomingRequests > 0} />
+          <PulseChip icon={UserPlus} label="Requests" value={friendRequestChipValue} urgent={social.metrics.incomingRequests > 0 || friendRequestsUnavailable} />
         </div>
       </section>
 
@@ -1154,7 +1156,7 @@ function FeedSection({
               </div>
               <div className="mt-2 grid grid-cols-3 gap-2 text-center">
                 <MiniMetric label="Friends" value={social.metrics.friends} />
-                <MiniMetric label="Requests" value={social.metrics.incomingRequests} urgent={social.metrics.incomingRequests > 0} />
+                <MiniMetric label="Requests" value={social.friendshipsError ? '!' : social.metrics.incomingRequests} urgent={social.metrics.incomingRequests > 0 || Boolean(social.friendshipsError)} />
                 <MiniMetric label="Ideas" value={social.metrics.suggestions} />
               </div>
               <Link to="/home?section=friends" className="mt-3 flex min-h-9 items-center justify-between rounded-lg bg-white px-3 text-xs font-black text-primary-700 ring-1 ring-gray-200">
@@ -1501,7 +1503,9 @@ function FriendsSection({
             </FriendPanel>
           ) : null}
 
-          {social.incomingRequests.length ? (
+          {social.friendshipsError ? (
+            <FriendRequestLoadErrorCard error={social.friendshipsError} onRetry={onRefresh} retrying={loading} />
+          ) : social.incomingRequests.length ? (
             <FriendPanel title="Needs response" count={social.incomingRequests.length} urgent>
               {social.incomingRequests.map((friend) => (
                 <FriendCard
@@ -1516,7 +1520,11 @@ function FriendsSection({
                 />
               ))}
             </FriendPanel>
-          ) : null}
+          ) : (
+            <FriendPanel title="Incoming requests" count={0}>
+              <EmptyFriendState title="No requests right now" detail="When another ALL PLAYS parent adds you, accept or decline here." />
+            </FriendPanel>
+          )}
 
           <FriendPanel title="Your friends" count={social.friends.length}>
             {social.friends.length ? social.friends.map((friend) => (
@@ -1571,6 +1579,24 @@ function FriendsSection({
           ) : null}
         </div>
       </div>
+    </section>
+  );
+}
+
+function FriendRequestLoadErrorCard({ error, onRetry, retrying }: { error: string; onRetry: () => Promise<void> | void; retrying: boolean }) {
+  return (
+    <section role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-rose-900">
+      <div className="flex items-start gap-2">
+        <AlertCircle className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" />
+        <div className="min-w-0 flex-1">
+          <h3 className="text-sm font-black">Couldn't load friend requests</h3>
+          <p className="mt-1 text-xs font-semibold leading-5">{error}</p>
+        </div>
+      </div>
+      <button type="button" className="ghost-button mt-3 !min-h-9 !px-3 text-xs" onClick={() => onRetry()} disabled={retrying}>
+        {retrying ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <RefreshCw className="h-4 w-4" aria-hidden="true" />}
+        Retry
+      </button>
     </section>
   );
 }
@@ -1928,7 +1954,7 @@ function SocialComposerModal({
   );
 }
 
-function MiniMetric({ label, value, urgent = false }: { label: string; value: number; urgent?: boolean }) {
+function MiniMetric({ label, value, urgent = false }: { label: string; value: number | string; urgent?: boolean }) {
   return (
     <div className={`rounded-xl border px-2 py-2 ${urgent ? 'border-amber-200 bg-amber-50' : 'border-gray-200 bg-white'}`}>
       <div className={`text-base font-black ${urgent ? 'text-amber-800' : 'text-gray-950'}`}>{value}</div>

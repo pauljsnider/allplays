@@ -15,6 +15,7 @@ import {
 } from './adapters/legacySocialDb';
 import { loadParentHome } from './homeService';
 import { createLogger } from './logger';
+import { toAppServiceError } from './appErrors';
 import type { ParentHomeModel } from './homeLogic';
 import { uploadTeamChatAttachment } from './chatService';
 import type { AuthUser } from './types';
@@ -152,15 +153,18 @@ export async function loadSocialHome(user: AuthUser | null, homeOverride?: Paren
   const home = homeOverride || await loadParentHome(user);
   const authorName = getUserDisplayName(user);
   const derivedFeed = buildDerivedSocialFeedItems(home, user.uid, authorName);
-  const [posts, friendships, suggestions] = await Promise.all([
+  const [posts, friendshipLoad, suggestions] = await Promise.all([
     loadVisibleSocialPosts(user, home).catch((error) => {
       logger.warn('Unable to load social posts.', { error });
       return [];
     }),
-    loadFriendships(user).catch((error) => {
-      logger.warn('Unable to load friendships.', { error });
-      return [];
-    }),
+    loadFriendships(user)
+      .then((friendships) => ({ friendships, friendshipsError: null as string | null }))
+      .catch((error) => {
+        const appError = toAppServiceError(error, "Couldn't load friend requests.");
+        logger.warn('Unable to load friendships.', { error: appError });
+        return { friendships: [], friendshipsError: appError.message };
+      }),
     loadFriendSuggestions(user, home).catch((error) => {
       logger.warn('Unable to load friend suggestions.', { error });
       return [];
@@ -169,9 +173,10 @@ export async function loadSocialHome(user: AuthUser | null, homeOverride?: Paren
 
   return buildSocialHomeModel({
     feedItems: mergeSocialFeedItems(posts, derivedFeed),
-    friendshipFriends: friendships,
+    friendshipFriends: friendshipLoad.friendships,
     suggestions,
-    currentUserId: user.uid
+    currentUserId: user.uid,
+    friendshipsError: friendshipLoad.friendshipsError
   });
 }
 

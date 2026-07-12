@@ -227,7 +227,34 @@ describe('React app social service', () => {
         expect(model.feedItems.map((item) => item.id)).toEqual(expect.arrayContaining(['post-1', 'derived:player:team-1:player-1']));
         expect(model.incomingRequests).toEqual([expect.objectContaining({ userId: 'friend-1', name: 'Jamie Friend' })]);
         expect(model.suggestions).toEqual([expect.objectContaining({ userId: 'friend-2', name: 'Morgan Parent' })]);
+        expect(model.friendshipsError).toBeNull();
         expect(model.metrics.feedItems).toBeGreaterThanOrEqual(2);
+    });
+
+    it('surfaces friendship load failures on the social home model', async () => {
+        const { loadSocialHome } = await import('../../apps/app/src/lib/socialService.ts');
+        const home = {
+            players: [],
+            teams: [{ teamId: 'team-1', teamName: 'Bears', role: 'Parent', sport: 'Basketball', players: [], nextEvent: null, eventCount: 0, unreadCount: 0, openActions: 0 }],
+            upcomingEvents: [],
+            actionItems: [],
+            fees: [],
+            metrics: { players: 0, teams: 1, rsvpNeeded: 0, unreadMessages: 0, packetsReady: 0 }
+        };
+
+        firebaseMocks.getDocs.mockImplementation(async (queryRef) => {
+            const whereClause = queryRef.clauses.find((clause) => clause.field);
+            if (whereClause?.field === 'memberIds') {
+                throw new Error('Missing index for friendships.');
+            }
+            return snapshot([]);
+        });
+
+        const model = await loadSocialHome(user, home);
+
+        expect(model.friendshipsError).toBe('Missing index for friendships.');
+        expect(model.incomingRequests).toEqual([]);
+        expect(model.metrics.incomingRequests).toBe(0);
     });
 
     it('searches public profiles by hashed email and shared discovery teams', async () => {

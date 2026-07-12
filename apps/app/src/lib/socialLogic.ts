@@ -85,6 +85,7 @@ export type SocialHomeModel = {
   suggestions: SocialFriend[];
   incomingRequests: SocialFriend[];
   outgoingRequests: SocialFriend[];
+  friendshipsError: string | null;
   metrics: {
     feedItems: number;
     friends: number;
@@ -211,6 +212,7 @@ export function emptySocialHome(): SocialHomeModel {
     suggestions: [],
     incomingRequests: [],
     outgoingRequests: [],
+    friendshipsError: null,
     metrics: {
       feedItems: 0,
       friends: 0,
@@ -301,12 +303,14 @@ export function buildSocialHomeModel({
   feedItems,
   friendshipFriends,
   suggestions,
-  currentUserId
+  currentUserId,
+  friendshipsError = null
 }: {
   feedItems: SocialFeedItem[];
   friendshipFriends: SocialFriend[];
   suggestions: SocialFriend[];
   currentUserId: string;
+  friendshipsError?: string | null;
 }): SocialHomeModel {
   const { active, incomingRequests, outgoingRequests } = categorizeFriends(friendshipFriends, currentUserId);
   const activeIds = new Set(active.map((friend) => friend.userId));
@@ -323,6 +327,7 @@ export function buildSocialHomeModel({
     suggestions: cleanSuggestions,
     incomingRequests,
     outgoingRequests,
+    friendshipsError,
     metrics: {
       feedItems: sortedFeedItems.length,
       friends: active.length,
