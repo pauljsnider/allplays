@@ -11476,8 +11476,7 @@ async function getOpportunityCaller(context) {
 }
 
 function isOpportunityPlatformAdmin(caller) {
-  return caller?.user?.isAdmin === true || caller?.user?.isPlatformAdmin === true ||
-    caller?.user?.roles?.includes?.('platformAdmin');
+  return caller?.user?.isAdmin === true;
 }
 
 function encodeOpportunityCursor(docSnap) {

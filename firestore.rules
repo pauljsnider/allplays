@@ -1361,13 +1361,14 @@ service cloud.firestore {
 
     function isOwnerUserCreatePayloadValid(data) {
       return data.get('isAdmin', false) != true &&
+             data.get('isPlatformAdmin', false) != true &&
              !data.keys().hasAny(userMembershipFields()) &&
              !data.keys().hasAny(teamMediaUploadGrantFields()) &&
              isOwnerUserEmailAuthBound(data);
     }
 
     function isOwnerUserUpdatePayloadValid() {
-      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(['isAdmin']) &&
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(['isAdmin', 'isPlatformAdmin']) &&
              !request.resource.data.diff(resource.data).affectedKeys().hasAny(userMembershipFields()) &&
              !request.resource.data.diff(resource.data).affectedKeys().hasAny(teamMediaUploadGrantFields()) &&
              (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['email']) ||

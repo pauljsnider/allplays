@@ -16,6 +16,7 @@ function teamMediaUploadCreateRule() {
 
 function ownerProfileCreateWouldBeAllowed(data) {
     return data.isAdmin !== true &&
+        data.isPlatformAdmin !== true &&
         !['parentOf', 'parentTeamIds', 'parentPlayerKeys', 'playerKeys'].some((field) => Object.hasOwn(data, field)) &&
         !privilegedTeamMediaGrantFields.some((field) => Object.hasOwn(data, field));
 }
@@ -27,6 +28,7 @@ function ownerProfileUpdateWouldBeAllowed(before, after) {
     ]);
 
     return !affectedKeys.has('isAdmin') &&
+        !affectedKeys.has('isPlatformAdmin') &&
         !['parentOf', 'parentTeamIds', 'parentPlayerKeys', 'playerKeys'].some((field) => affectedKeys.has(field)) &&
         !privilegedTeamMediaGrantFields.some((field) => affectedKeys.has(field));
 }
@@ -47,11 +49,15 @@ describe('team media Firestore rules', () => {
         expect(rules).toContain("return ['teamMediaUploadTeamIds', 'mediaUploadTeamIds'];");
         expect(rules).toContain('!data.keys().hasAny(teamMediaUploadGrantFields())');
         expect(rules).toContain('!request.resource.data.diff(resource.data).affectedKeys().hasAny(teamMediaUploadGrantFields())');
+        expect(rules).toContain("data.get('isPlatformAdmin', false) != true");
+        expect(rules).toContain("affectedKeys().hasAny(['isAdmin', 'isPlatformAdmin'])");
 
         expect(ownerProfileCreateWouldBeAllowed({ displayName: 'Parent User' })).toBe(true);
+        expect(ownerProfileCreateWouldBeAllowed({ displayName: 'Parent User', isPlatformAdmin: true })).toBe(false);
         expect(ownerProfileCreateWouldBeAllowed({ displayName: 'Parent User', teamMediaUploadTeamIds: ['team-a'] })).toBe(false);
         expect(ownerProfileCreateWouldBeAllowed({ displayName: 'Parent User', mediaUploadTeamIds: ['team-a'] })).toBe(false);
         expect(ownerProfileUpdateWouldBeAllowed({ displayName: 'Old' }, { displayName: 'New' })).toBe(true);
+        expect(ownerProfileUpdateWouldBeAllowed({ displayName: 'Old' }, { displayName: 'Old', isPlatformAdmin: true })).toBe(false);
         expect(ownerProfileUpdateWouldBeAllowed({ displayName: 'Old' }, { displayName: 'Old', teamMediaUploadTeamIds: ['team-a'] })).toBe(false);
         expect(ownerProfileUpdateWouldBeAllowed({ displayName: 'Old' }, { displayName: 'Old', mediaUploadTeamIds: ['team-a'] })).toBe(false);
         expect(ownerProfileUpdateWouldBeAllowed({ displayName: 'Old', teamMediaUploadTeamIds: ['team-a'] }, { displayName: 'Old' })).toBe(false);

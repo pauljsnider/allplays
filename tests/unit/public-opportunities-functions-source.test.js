@@ -38,6 +38,13 @@ describe('public opportunity callable wiring', () => {
     expect(source).toContain('writeNotificationInboxRecords({');
   });
 
+  it('uses only protected global-admin state for opportunity moderation authority', () => {
+    const adminCheck = source.match(/function isOpportunityPlatformAdmin\(caller\) \{[\s\S]*?\n\}/)?.[0] || '';
+    expect(adminCheck).toContain('caller?.user?.isAdmin === true');
+    expect(adminCheck).not.toContain('isPlatformAdmin');
+    expect(adminCheck).not.toContain('roles');
+  });
+
   it('closes linked opportunities when a team stops being public', () => {
     expect(source).toContain('exports.closePublicOpportunitiesForPrivateTeam');
     expect(source).toContain("closedReason: 'team_not_public'");
