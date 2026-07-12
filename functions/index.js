@@ -70,6 +70,21 @@ const {
   normalizeInviteEmailType
 } = require('./invite-email-core.cjs');
 const {
+  AUTH_EMAIL_TYPES,
+  buildAuthEmailMailDocId,
+  buildAuthEmailMailJob,
+  buildAuthEmailRateLimitId,
+  getAuthEmailActionSettings,
+  getInviteContinueUrl,
+  isValidAuthEmail,
+  normalizeAuthEmail
+} = require('./auth-email-core.cjs');
+const { createAuthEmailCallableHandlers } = require('./auth-email-callables.cjs');
+const { createAuthEmailDeliveryStore } = require('./auth-email-delivery-store.cjs');
+const { createPasswordResetEmailWorker } = require('./auth-email-password-reset-worker.cjs');
+const { createPasswordResetEmailSweeper } = require('./auth-email-password-reset-sweeper.cjs');
+const { findOwnedInviteCode: findOwnedAuthEmailInviteCode } = require('./auth-email-invite-store.cjs');
+const {
   normalizeEmail,
   normalizeAccountMergePreviewInput,
   hashAccountMergeVerificationToken,
@@ -94,6 +109,7 @@ const {
 } = require('./registration-payment-reminders-core.cjs');
 const {
   buildGenericPreAuthAccessCodeValidationResult,
+  isAccessCodeInactive,
   validateAccessCodeCandidates
 } = require('./access-code-validation.cjs');
 const {
@@ -163,6 +179,8 @@ if (admin.apps.length === 0) {
 
 const firestore = admin.firestore();
 const INVITE_EMAIL_TYPES = new Set(['parent_invite', 'household_invite', 'coparent_invite']);
+const EMAIL_LINK_INVITE_TYPES = new Set(['parent_invite', 'household_invite', 'coparent_invite', 'admin_invite']);
+const AUTH_EMAIL_COOLDOWN_MS = 60 * 1000;
 const TEAM_MEDIA_NOTIFICATION_BATCH_WINDOW_MS = 60 * 60 * 1000;
 const TEAM_MEDIA_NOTIFICATION_DISPATCH_LIMIT = 50;
 const FIRESTORE_BATCH_SAFE_WRITE_LIMIT = 450;
@@ -191,6 +209,11 @@ const checkPublicOpportunityMessageRateLimit = createInMemoryRateLimiter({
   windowMs: 10 * 60_000,
   maxRequests: 20,
   maxKeys: 5_000
+});
+const checkPasswordResetEmailRateLimit = createInMemoryRateLimiter({
+  windowMs: 10 * 60_000,
+  maxRequests: 10,
+  maxKeys: 10_000
 });
 
 function getStripeConfig() {
@@ -1924,6 +1947,23 @@ function isParentInviteExpired(expiresAt) {
   return Number.isFinite(millis) && millis < Date.now();
 }
 
+const authEmailDeliveryStore = createAuthEmailDeliveryStore({
+  firestore,
+  Timestamp: admin.firestore.Timestamp,
+  FieldValue: admin.firestore.FieldValue,
+  logger: functions.logger,
+  cooldownMs: AUTH_EMAIL_COOLDOWN_MS,
+  buildRateLimitId: buildAuthEmailRateLimitId,
+  buildMailDocId: buildAuthEmailMailDocId,
+  buildMailJob: buildAuthEmailMailJob,
+  normalizeEmail: normalizeAuthEmail,
+  hashRecipient: (value) => crypto.createHash('sha256').update(value).digest('hex')
+});
+const reserveAuthEmailDelivery = authEmailDeliveryStore.reserve;
+const releaseAuthEmailDelivery = authEmailDeliveryStore.release;
+const queueAuthEmailDelivery = authEmailDeliveryStore.queue;
+const enqueuePasswordResetRequest = authEmailDeliveryStore.enqueuePasswordResetRequest;
+
 function buildInviteMailDocId(codeId) {
   const safeCodeId = String(codeId || '').replace(/[^\w.-]+/g, '_').slice(0, 240);
   return `invite_${safeCodeId}`;
@@ -1970,24 +2010,81 @@ async function queueInviteEmailForCode(codeId, codeData = {}) {
   }
 }
 
-async function findOwnedInviteCode(code, uid) {
-  const directSnap = await firestore.doc(`accessCodes/${code}`).get();
-  if (directSnap.exists) {
-    const directData = directSnap.data() || {};
-    if (INVITE_EMAIL_TYPES.has(String(directData.type || '').trim().toLowerCase()) &&
-        String(directData.generatedBy || '').trim() === uid) {
-      return { id: directSnap.id, data: directData };
-    }
-  }
-
-  const querySnap = await firestore.collection('accessCodes').where('code', '==', code).limit(10).get();
-  const owned = querySnap.docs.find((docSnap) => {
-    const candidate = docSnap.data() || {};
-    return INVITE_EMAIL_TYPES.has(String(candidate.type || '').trim().toLowerCase()) &&
-      String(candidate.generatedBy || '').trim() === uid;
+async function findOwnedInviteCode(code, uid, allowedTypes = INVITE_EMAIL_TYPES) {
+  return findOwnedAuthEmailInviteCode({
+    firestore,
+    code,
+    uid,
+    allowedTypes
   });
-  return owned ? { id: owned.id, data: owned.data() || {} } : null;
 }
+
+const authEmailCallableHandlers = createAuthEmailCallableHandlers({
+  auth: admin.auth(),
+  HttpsError: functions.https.HttpsError,
+  logger: functions.logger,
+  types: AUTH_EMAIL_TYPES,
+  normalizeEmail: normalizeAuthEmail,
+  isValidEmail: isValidAuthEmail,
+  checkPasswordResetRateLimit: checkPasswordResetEmailRateLimit,
+  reserveDelivery: reserveAuthEmailDelivery,
+  releaseDelivery: releaseAuthEmailDelivery,
+  queueDelivery: queueAuthEmailDelivery,
+  enqueuePasswordResetRequest,
+  getActionSettings: getAuthEmailActionSettings,
+  getInviteContinueUrl,
+  findOwnedInviteCode,
+  allowedInviteTypes: EMAIL_LINK_INVITE_TYPES,
+  isInviteInactive: isAccessCodeInactive
+});
+
+exports.queuePasswordResetEmail = functions.https.onCall(authEmailCallableHandlers.queuePasswordResetEmail);
+exports.queueEmailVerification = functions.https.onCall(authEmailCallableHandlers.queueEmailVerification);
+exports.queueInviteSignInEmail = functions.https.onCall(authEmailCallableHandlers.queueInviteSignInEmail);
+
+const passwordResetEmailWorker = createPasswordResetEmailWorker({
+  auth: admin.auth(),
+  logger: functions.logger,
+  types: AUTH_EMAIL_TYPES,
+  normalizeEmail: normalizeAuthEmail,
+  isValidEmail: isValidAuthEmail,
+  getActionSettings: getAuthEmailActionSettings,
+  queueDelivery: queueAuthEmailDelivery,
+  isAlreadyExistsError
+});
+
+exports.processPasswordResetEmailRequest = functions
+  .runWith({ failurePolicy: true })
+  .firestore
+  .document('authEmailRequests/{requestId}')
+  .onCreate((snapshot, context) => passwordResetEmailWorker.processPasswordResetRequest(
+    snapshot.data(),
+    {
+      requestId: context.params.requestId,
+      deleteRequest: () => snapshot.ref.delete()
+    }
+  ));
+
+const passwordResetEmailSweeper = createPasswordResetEmailSweeper({
+  async listRequests() {
+    const snapshot = await firestore.collection('authEmailRequests')
+      .orderBy('createdAt')
+      .limit(100)
+      .get();
+    return snapshot.docs;
+  },
+  processRequest: (requestDoc) =>
+    passwordResetEmailWorker.processPasswordResetRequest(requestDoc.data(), {
+      requestId: requestDoc.id,
+      deleteRequest: () => requestDoc.ref.delete()
+    }),
+  logger: functions.logger,
+  concurrency: 5
+});
+
+exports.sweepPendingPasswordResetEmailRequests = functions.pubsub
+  .schedule('every 5 minutes')
+  .onRun(() => passwordResetEmailSweeper.sweep());
 
 exports.queueInviteEmail = functions.https.onCall(async (data, context) => {
   const uid = String(context.auth?.uid || '').trim();

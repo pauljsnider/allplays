@@ -68,6 +68,9 @@ jobs:
       - name: Run notification functions coverage
         run: npm run test:functions:notifications
 
+      - name: Run authentication email functions coverage
+        run: npm run test:functions:auth-email
+
   app-quality:
     runs-on: ubuntu-latest
 

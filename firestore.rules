@@ -2468,6 +2468,12 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Internal password-reset work queue. Callables and triggers use the Admin SDK;
+    // clients must never inspect recipient addresses or enqueue their own jobs.
+    match /authEmailRequests/{requestId} {
+      allow read, write: if false;
+    }
+
     // Registration sources configured by global admins for the Create Team import path.
     match /registrationSources/{sourceId} {
       allow get, list: if canReadRegistrationSource(resource.data);

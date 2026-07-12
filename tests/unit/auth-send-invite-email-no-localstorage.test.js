@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-const sendSignInLinkToEmailMock = vi.fn();
-const getUserByEmailMock = vi.fn();
+const queueInviteSignInEmailMock = vi.fn();
 
 vi.mock('../../js/firebase.js?v=20', () => ({
     auth: { currentUser: null },
@@ -13,9 +12,6 @@ vi.mock('../../js/firebase.js?v=20', () => ({
     signInWithPopup: vi.fn(),
     signInWithRedirect: vi.fn(),
     getRedirectResult: vi.fn(),
-    sendPasswordResetEmail: vi.fn(),
-    sendEmailVerification: vi.fn(),
-    sendSignInLinkToEmail: sendSignInLinkToEmailMock,
     isSignInWithEmailLink: vi.fn(),
     signInWithEmailLink: vi.fn(),
     updatePassword: vi.fn()
@@ -32,8 +28,13 @@ vi.mock('../../js/db.js?v=92', () => ({
     addTeamAdminEmail: vi.fn(),
     getUserProfile: vi.fn(),
     getUserTeams: vi.fn(),
-    getUserByEmail: getUserByEmailMock,
     listMyParentMembershipRequests: vi.fn()
+}));
+
+vi.mock('../../js/auth-email.js?v=1', () => ({
+    queueCurrentUserVerificationEmail: vi.fn(),
+    queueInviteSignInEmail: queueInviteSignInEmailMock,
+    queuePasswordResetEmail: vi.fn()
 }));
 
 vi.mock('../../js/admin-invite.js?v=6', () => ({
@@ -60,8 +61,7 @@ describe('sendInviteEmail localStorage behavior', () => {
     });
 
     it('does NOT write emailForSignIn to localStorage when sending an invite', async () => {
-        sendSignInLinkToEmailMock.mockResolvedValue(undefined);
-        getUserByEmailMock.mockResolvedValue(null);
+        queueInviteSignInEmailMock.mockResolvedValue({ queued: true, existingUser: false });
 
         const { sendInviteEmail } = await import('../../js/auth.js');
 
@@ -73,8 +73,7 @@ describe('sendInviteEmail localStorage behavior', () => {
     });
 
     it('does NOT write inviteCode to localStorage when sending an invite', async () => {
-        sendSignInLinkToEmailMock.mockResolvedValue(undefined);
-        getUserByEmailMock.mockResolvedValue(null);
+        queueInviteSignInEmailMock.mockResolvedValue({ queued: true, existingUser: false });
 
         const { sendInviteEmail } = await import('../../js/auth.js');
 
@@ -86,8 +85,7 @@ describe('sendInviteEmail localStorage behavior', () => {
     });
 
     it('does NOT write inviteType to localStorage when sending an invite', async () => {
-        sendSignInLinkToEmailMock.mockResolvedValue(undefined);
-        getUserByEmailMock.mockResolvedValue(null);
+        queueInviteSignInEmailMock.mockResolvedValue({ queued: true, existingUser: false });
 
         const { sendInviteEmail } = await import('../../js/auth.js');
 
@@ -99,8 +97,7 @@ describe('sendInviteEmail localStorage behavior', () => {
     });
 
     it('does NOT write any localStorage keys at all when sending an invite', async () => {
-        sendSignInLinkToEmailMock.mockResolvedValue(undefined);
-        getUserByEmailMock.mockResolvedValue(null);
+        queueInviteSignInEmailMock.mockResolvedValue({ queued: true, existingUser: false });
 
         const { sendInviteEmail } = await import('../../js/auth.js');
 
@@ -110,8 +107,7 @@ describe('sendInviteEmail localStorage behavior', () => {
     });
 
     it('returns success result after sending invite without touching localStorage', async () => {
-        sendSignInLinkToEmailMock.mockResolvedValue(undefined);
-        getUserByEmailMock.mockResolvedValue(null);
+        queueInviteSignInEmailMock.mockResolvedValue({ queued: true, existingUser: false });
 
         const { sendInviteEmail } = await import('../../js/auth.js');
 
@@ -122,8 +118,7 @@ describe('sendInviteEmail localStorage behavior', () => {
     });
 
     it('reports existingUser: true when recipient already has an account, and still does not write localStorage', async () => {
-        sendSignInLinkToEmailMock.mockResolvedValue(undefined);
-        getUserByEmailMock.mockResolvedValue({ uid: 'existing-uid', email: 'existing@example.com' });
+        queueInviteSignInEmailMock.mockResolvedValue({ queued: true, existingUser: true });
 
         const { sendInviteEmail } = await import('../../js/auth.js');
 

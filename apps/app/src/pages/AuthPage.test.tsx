@@ -21,7 +21,7 @@ const authServiceMocks = vi.hoisted(() => ({
     return parts.length === 2 && Boolean(parts[0] && parts[1]?.includes('.') && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized));
   },
   normalizeAuthEmail: (value: string | null | undefined) => String(value || '').trim().toLowerCase(),
-  passwordResetConfirmationMessage: "If an account exists for that email, we've sent a reset link.",
+  passwordResetConfirmationMessage: "If an account exists for that email, a reset email has been queued.",
   rememberPendingInvite: vi.fn(),
   sendResetEmail: vi.fn(),
   signInWithEmail: vi.fn(),
@@ -269,7 +269,7 @@ describe('AuthPage password reset', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send reset email' }));
 
     await waitFor(() => expect(authServiceMocks.sendResetEmail).toHaveBeenCalledWith('missing@example.com'));
-    expect(await screen.findByText("If an account exists for that email, we've sent a reset link.")).toBeTruthy();
+    expect(await screen.findByText("If an account exists for that email, a reset email has been queued.")).toBeTruthy();
     expect(screen.queryByText(/no all plays account/i)).toBeNull();
   });
 });

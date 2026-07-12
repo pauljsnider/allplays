@@ -1,4 +1,4 @@
-export const PASSWORD_RESET_CONFIRMATION_MESSAGE = "If an account exists for that email, we've sent a reset link.";
+export const PASSWORD_RESET_CONFIRMATION_MESSAGE = "If an account exists for that email, a reset email has been queued.";
 
 export function getPasswordResetErrorMessage(error) {
     if (error?.code === 'auth/invalid-email') {

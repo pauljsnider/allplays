@@ -16,7 +16,7 @@ export async function executeEmailPasswordSignup({
         markAccessCodeAsUsed,
         getTeam,
         getUserProfile,
-        sendEmailVerification,
+        sendVerificationEmail,
         signOut
     } = dependencies;
 
@@ -157,9 +157,9 @@ export async function executeEmailPasswordSignup({
         const user = auth.currentUser;
         if (user) {
             await user.reload();
-            console.log('SIGNUP: Sending verification email to:', user.email);
-            await sendEmailVerification(user);
-            console.log('SIGNUP: Verification email sent successfully');
+            console.log('SIGNUP: Queueing verification email for:', user.email);
+            await sendVerificationEmail();
+            console.log('SIGNUP: Verification email queued successfully');
         }
     } catch (e) {
         console.error('SIGNUP ERROR:', e.code, e.message);

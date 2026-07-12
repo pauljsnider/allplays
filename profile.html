@@ -431,7 +431,7 @@
 
     <script type="module">
         import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=15';
-        import { checkAuth, setUserPassword, resendVerificationEmail } from './js/auth.js?v=46';
+        import { checkAuth, setUserPassword, resendVerificationEmail } from './js/auth.js?v=48';
         import {
             getUserProfile,
             updateUserProfile,
@@ -1143,7 +1143,7 @@
 
             try {
                 await resendVerificationEmail();
-                status.textContent = 'Verification email sent! Check your inbox.';
+                status.textContent = 'Verification email queued! Check your inbox shortly.';
                 status.className = 'mt-2 text-xs text-green-700';
                 status.classList.remove('hidden');
             } catch (e) {

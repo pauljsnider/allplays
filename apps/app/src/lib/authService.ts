@@ -10,8 +10,6 @@ import {
   GoogleAuthProvider,
   isSignInWithEmailLink,
   onAuthStateChanged,
-  sendEmailVerification,
-  sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signInWithEmailLink,
   signInWithPopup,
@@ -22,6 +20,7 @@ import {
 } from './firebaseAuthRuntime';
 import {
   loadLegacyAdminInvite,
+  loadLegacyAuthEmail,
   loadLegacyAuthDb,
   loadLegacyInviteFlow,
   loadLegacyParentMembershipUtils,
@@ -32,7 +31,7 @@ import { clearAppDataCache } from './appDataCache';
 import type { AuthUser, UserRole } from './types';
 
 export const firebaseAuth = auth;
-export const passwordResetConfirmationMessage = "If an account exists for that email, we've sent a reset link.";
+export const passwordResetConfirmationMessage = "If an account exists for that email, a reset email has been queued.";
 
 const pendingActivationCodeKey = 'pendingActivationCode';
 const pendingInviteCodeKey = 'allplays-app-pending-invite-code';
@@ -1022,11 +1021,13 @@ export async function signUpWithEmail(email: string, password: string, activatio
   const [
     dbModule,
     { redeemAdminInviteAcceptance },
-    { executeEmailPasswordSignup }
+    { executeEmailPasswordSignup },
+    { queueCurrentUserVerificationEmail }
   ] = await Promise.all([
     loadLegacyAuthDb(),
     loadLegacyAdminInvite(),
-    loadLegacySignupFlow()
+    loadLegacySignupFlow(),
+    loadLegacyAuthEmail()
   ]);
 
   return executeEmailPasswordSignup({
@@ -1045,7 +1046,7 @@ export async function signUpWithEmail(email: string, password: string, activatio
       markAccessCodeAsUsed: dbModule.markAccessCodeAsUsed,
       getTeam: dbModule.getTeam,
       getUserProfile: dbModule.getUserProfile,
-      sendEmailVerification,
+      sendVerificationEmail: queueCurrentUserVerificationEmail,
       signOut: firebaseSignOut
     }
   }) as Promise<UserCredential>;
@@ -1199,43 +1200,17 @@ export async function completeGoogleRedirect() {
 }
 
 export async function sendResetEmail(email: string) {
-  try {
-    await sendPasswordResetEmail(auth, requireValidAuthEmail(email), {
-      url: 'https://allplays.ai/reset-password.html',
-      handleCodeInApp: true
-    });
-  } catch (error: unknown) {
-    // Older Firebase configurations can still return this error even though newer
-    // projects suppress it. Treat it as success so password reset cannot be used
-    // to discover whether an email address belongs to an account.
-    if ((error as { code?: string } | null)?.code === 'auth/user-not-found') {
-      return;
-    }
-    throw error;
-  }
-}
-
-// Continue URL the verification email returns to. Points back into the app's
-// verify-pending route so the user lands on our branded "check your email"
-// screen instead of Firebase's default hosted handler.
-export function buildVerificationContinueUrl() {
-  const base = (typeof window !== 'undefined' && /^https?:$/i.test(window.location.protocol))
-    ? window.location.origin
-    : 'https://allplays.ai';
-  return `${base}/app/#/verify-pending`;
+  const { queuePasswordResetEmail } = await loadLegacyAuthEmail();
+  await queuePasswordResetEmail(requireValidAuthEmail(email));
 }
 
 export async function resendVerificationEmail() {
-  const actionCodeSettings = { url: buildVerificationContinueUrl(), handleCodeInApp: false };
+  const { queueCurrentUserVerificationEmail } = await loadLegacyAuthEmail();
   const user = getCurrentFirebaseUser();
   if (!user) {
     const idToken = await getNativeAuthIdToken();
     if (idToken) {
-      await callFirebaseAuthRest('accounts:sendOobCode', {
-        requestType: 'VERIFY_EMAIL',
-        idToken,
-        continueUrl: actionCodeSettings.url
-      });
+      await queueCurrentUserVerificationEmail(idToken);
       return;
     }
     throw new Error('No user is currently signed in.');
@@ -1244,7 +1219,7 @@ export async function resendVerificationEmail() {
   if (typeof user.reload === 'function') {
     await user.reload();
   }
-  await sendEmailVerification(user, actionCodeSettings);
+  await queueCurrentUserVerificationEmail();
 }
 
 async function refreshNativeFallbackVerification() {
