@@ -652,7 +652,7 @@
                                     <label class="block text-sm font-semibold text-gray-800 mb-1">
                                         Upload schedule image (optional)
                                     </label>
-                                    <p class="text-xs text-gray-600 mb-2">Screenshot or photo of the schedule. You can still add text instructions below to guide the AI (e.g., “only home games”).</p>
+                                    <p class="text-xs text-gray-600 mb-2">Upload, paste (Ctrl/Cmd+V), or drop a screenshot of the schedule. You can still add text instructions below to guide the AI (e.g., “only home games”).</p>
                                     <input type="file" id="schedule-image-input" accept="image/*"
                                         class="w-full text-sm text-gray-700 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100">
                                     <div id="schedule-image-preview" class="hidden mt-3">
@@ -971,6 +971,7 @@
         import { buildTournamentGroupOverrideKey, buildTournamentPoolStandings, buildTournamentPoolOverrideKey } from './js/tournament-standings.js?v=4';
         import { SCHEDULE_CSV_IMPORT_FIELDS, buildScheduleImportPreview, inferScheduleCsvMapping, normalizeScheduleImportDraft, parseCsvText } from './js/schedule-csv-import.js?v=2';
         import { buildRegistrationScheduleImportPreview, formatRegistrationImportResults, getRegistrationScheduleEvents, isExternallyLinkedRegistrationTeam, planRegistrationScheduleImport } from './js/edit-schedule-registration-import.js?v=4';
+        import { createBulkAiImageController } from './js/edit-schedule-ai-import.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -4059,22 +4060,16 @@
             }
         });
 
-        // Image upload and preview handlers
-        document.getElementById('schedule-image-input').addEventListener('change', (e) => {
-            const file = e.target.files[0];
-            if (file) {
-                const reader = new FileReader();
-                reader.onload = (event) => {
-                    document.getElementById('schedule-image-preview-img').src = event.target.result;
-                    document.getElementById('schedule-image-preview').classList.remove('hidden');
-                };
-                reader.readAsDataURL(file);
-            }
+        // Image upload, paste, drop, and preview handlers
+        const bulkAiImageController = createBulkAiImageController({
+            imageInput: document.getElementById('schedule-image-input'),
+            preview: document.getElementById('schedule-image-preview'),
+            previewImage: document.getElementById('schedule-image-preview-img'),
+            removeButton: document.getElementById('remove-schedule-image')
         });
-
-        document.getElementById('remove-schedule-image').addEventListener('click', () => {
-            document.getElementById('schedule-image-input').value = '';
-            document.getElementById('schedule-image-preview').classList.add('hidden');
+        bulkAiImageController.bindBulkAiImageControls({
+            container: document.getElementById('content-bulk-ai'),
+            textInput: document.getElementById('bulk-text-input')
         });
 
         // Helper function to convert file to generative part for Gemini
@@ -4665,8 +4660,7 @@
         // Process with AI
         document.getElementById('process-ai-btn').addEventListener('click', async () => {
             const textInput = document.getElementById('bulk-text-input').value.trim();
-            const imageInput = document.getElementById('schedule-image-input');
-            const imageFile = imageInput.files[0];
+            const imageFile = bulkAiImageController.getBulkAiImageFile();
 
             if (!textInput && !imageFile) {
                 alert('Please upload an image or enter additional instructions');
