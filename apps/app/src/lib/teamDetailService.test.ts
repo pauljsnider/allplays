@@ -11,6 +11,7 @@ const dbMocks = vi.hoisted(() => ({
   inviteParent: vi.fn(),
   getLocalAttractionSponsors: vi.fn(),
   getPlayers: vi.fn(),
+  getPlayersWithPrivateRosterContacts: vi.fn(),
   getPlayerTrackingStatuses: vi.fn(),
   getPublicTrackingItems: vi.fn(),
   getRosterFieldDefinitions: vi.fn(),
@@ -56,6 +57,15 @@ vi.mock('../../../../js/auth.js', () => ({ sendInviteEmail: vi.fn() }));
 vi.mock('../../../../js/edit-team-admin-invites.js', () => ({ inviteExistingTeamAdmin: vi.fn() }));
 vi.mock('../../../../js/firebase.js', () => firebaseMocks);
 vi.mock('../../../../js/roster-profile-fields.js', () => ({
+  collectRosterParentContacts: vi.fn((player: any, options: any = {}) => {
+    const contacts = [
+      ...(Array.isArray(player?.parents) ? player.parents : []),
+      ...(Array.isArray(player?.privateProfileParents) ? player.privateProfileParents : []),
+      ...(options.includeFamilyContacts && Array.isArray(player?.privateProfileContacts) ? player.privateProfileContacts : [])
+    ];
+    return contacts.filter((contact: any) => options.includeImported !== false || contact?.source !== 'roster-csv');
+  }),
+  mergeStandardRosterFieldDefinitions: vi.fn((value) => value),
   normalizeRosterFieldDefinitions: vi.fn((value) => value),
   splitRosterProfileValuesByVisibility: vi.fn(() => ({ publicValues: {}, privateValues: {} })),
   validateRosterProfileValues: vi.fn(() => [])
@@ -110,6 +120,10 @@ import {
 import { computeNativeStandings } from '../../../../js/native-standings.js';
 import { hasFullTeamAccess } from '../../../../js/team-access.js';
 
+beforeEach(() => {
+  dbMocks.getPlayersWithPrivateRosterContacts.mockImplementation((...args: any[]) => dbMocks.getPlayers(...args));
+});
+
 describe('createStatTrackerConfigForApp', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -120,6 +134,7 @@ describe('createStatTrackerConfigForApp', () => {
       configurable: true
     });
     dbMocks.getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1' });
+    dbMocks.getPlayersWithPrivateRosterContacts.mockImplementation((...args: any[]) => dbMocks.getPlayers(...args));
     dbMocks.getPlayers.mockResolvedValue([]);
     dbMocks.getGames.mockResolvedValue([]);
     dbMocks.getConfigs.mockResolvedValue([]);
@@ -152,6 +167,7 @@ describe('updateTeamSettingsForApp', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     dbMocks.getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', photoUrl: 'https://img.example.test/team.png' });
+    dbMocks.getPlayersWithPrivateRosterContacts.mockImplementation((...args: any[]) => dbMocks.getPlayers(...args));
     dbMocks.getPlayers.mockResolvedValue([]);
     dbMocks.getGames.mockResolvedValue([]);
     dbMocks.getConfigs.mockResolvedValue([]);
@@ -205,6 +221,7 @@ describe('team detail bootstrap loading', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     dbMocks.getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', name: 'Bears', sport: 'Basketball' });
+    dbMocks.getPlayersWithPrivateRosterContacts.mockImplementation((...args: any[]) => dbMocks.getPlayers(...args));
     dbMocks.getPlayers.mockResolvedValue([{ id: 'player-1', name: 'Pat Star', active: true }]);
     dbMocks.getGames.mockResolvedValue([{ id: 'game-1', type: 'game', status: 'scheduled' }]);
     dbMocks.getConfigs.mockResolvedValue([{ id: 'config-1', name: 'Config' }]);

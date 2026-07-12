@@ -1449,6 +1449,36 @@ describe('TeamDetail', () => {
     await waitFor(() => expect(teamDetailServiceMocks.loadTeamRosterParentInvites).toHaveBeenCalledTimes(1));
   });
 
+  it('shows parent and guardian contacts on managed roster rows', async () => {
+    const managedModel = {
+      ...model,
+      canManageTeam: true,
+      players: [{
+        ...model.players[0],
+        parentContacts: [
+          { userId: 'parent-1', name: 'Pat Parent', email: 'pat@example.com', phone: '555-0101', relation: 'Dad' },
+          { name: 'Robin Guardian', email: 'robin@example.com', relation: 'Guardian', source: 'roster-csv' }
+        ]
+      }]
+    };
+    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue(managedModel);
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: /roster/i }));
+
+    expect(await screen.findByText('Pat Parent')).toBeTruthy();
+    expect(screen.getByText('pat@example.com')).toBeTruthy();
+    expect(screen.getByText('555-0101')).toBeTruthy();
+    expect(screen.getByText('Robin Guardian')).toBeTruthy();
+  });
+
   it('sends the parent email and relation when creating an invite and refreshes summaries after success', async () => {
     const managedModel = {
       ...model,

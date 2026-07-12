@@ -5,6 +5,7 @@ import {
   buildTeamStaffPermissionsViewModel,
   buildTrackingStatusPayload,
   calculateSeasonRecord,
+  collectRosterParentContacts,
   collection,
   computeNativeStandings,
   createConfig,
@@ -20,7 +21,7 @@ import {
   getGames,
   getLocalAttractionSponsors,
   getPlayerTrackingStatuses,
-  getPlayers,
+  getPlayersWithPrivateRosterContacts,
   getPublicTrackingItems,
   getRosterFieldDefinitions,
   getTeam,
@@ -32,8 +33,8 @@ import {
   inviteExistingTeamAdmin,
   inviteParent,
   listSeasonLabels,
+  mergeStandardRosterFieldDefinitions,
   normalizeAdminEmailList,
-  normalizeRosterFieldDefinitions,
   normalizeScheduleNotificationSettings,
   normalizeStatTrackerConfig,
   normalizeTrackingStatus,
@@ -76,6 +77,18 @@ export type TeamDetailPlayer = {
   position: string;
   isLinked: boolean;
   active: boolean;
+  parentContacts?: TeamRosterParentContact[];
+};
+
+export type TeamRosterParentContact = {
+  userId?: string;
+  name?: string;
+  email?: string;
+  phone?: string;
+  relation: string;
+  status?: string;
+  source?: string;
+  storage?: string;
 };
 
 export type TeamScorekeeperGrantTarget = {
@@ -639,7 +652,7 @@ async function loadTeamDocument(teamId: string) {
 async function loadTeamPlayers(teamId: string) {
   return readWithNativeFallback(
     `team players ${teamId}`,
-    () => Promise.resolve(getPlayers(teamId, { includeInactive: true })),
+    () => Promise.resolve(getPlayersWithPrivateRosterContacts(teamId, { includeInactive: true })),
     async () => nativeListCollection(`teams/${encodeURIComponent(teamId)}/players`)
   );
 }
@@ -1077,7 +1090,7 @@ export async function loadRosterFieldDefinitionsForApp(teamId: string, user: Aut
     throw new Error('You do not have permission to manage roster players for this team.');
   }
 
-  return normalizeRosterFieldDefinitions(await getRosterFieldDefinitions(normalizedTeamId, team)) as TeamRosterFieldDefinition[];
+  return mergeStandardRosterFieldDefinitions(await getRosterFieldDefinitions(normalizedTeamId, team)) as TeamRosterFieldDefinition[];
 }
 
 export async function addRosterPlayerForApp(teamId: string, user: AuthUser | null, input: CreateRosterPlayerForAppInput) {
@@ -1707,10 +1720,24 @@ export function buildRosterParentInviteSummaries({
 }): TeamRosterParentInviteSummary[] {
   const normalizedTeamId = cleanString(teamId);
   const acceptedCounts = new Map<string, number>();
+  const playerIdsWithRosterContacts = new Set<string>();
+  (Array.isArray(players) ? players : []).forEach((player) => {
+    const playerId = cleanString(player?.id || player?.playerId);
+    if (!playerId) return;
+    const contacts = collectRosterParentContacts(player, {
+      includeImported: false,
+      includeFamilyContacts: false
+    });
+    if (contacts.length > 0) {
+      acceptedCounts.set(playerId, contacts.length);
+      playerIdsWithRosterContacts.add(playerId);
+    }
+  });
 
   (Array.isArray(confirmedTeamMembers) ? confirmedTeamMembers : []).forEach((member) => {
     const linkedPlayerIds = getAcceptedParentPlayerIds(member, normalizedTeamId);
     linkedPlayerIds.forEach((playerId) => {
+      if (playerIdsWithRosterContacts.has(playerId)) return;
       acceptedCounts.set(playerId, (acceptedCounts.get(playerId) || 0) + 1);
     });
   });
@@ -1885,7 +1912,11 @@ function normalizePlayer(player: any, linked: Set<string>): TeamDetailPlayer {
     photoUrl: getFirstUrl(player?.photoUrl, player?.imageUrl, player?.headshotUrl),
     position: cleanString(player?.position || player?.primaryPosition),
     isLinked: linked.has(id),
-    active: player?.active !== false
+    active: player?.active !== false,
+    parentContacts: collectRosterParentContacts(player, {
+      includeImported: true,
+      includeFamilyContacts: true
+    }) as TeamRosterParentContact[]
   };
 }
 
@@ -2315,6 +2346,8 @@ function normalizeTeamZip(value: unknown) {
 function normalizeRosterFieldValuesForSave(fields: TeamRosterFieldDefinition[], values: Record<string, unknown>) {
   const normalizedValues: Record<string, unknown> = {};
   fields.forEach((field) => {
+    const hasValue = Object.prototype.hasOwnProperty.call(values || {}, field.key);
+    if (!field.required && !hasValue) return;
     const rawValue = values?.[field.key];
     if (field.type === 'checkbox') {
       normalizedValues[field.key] = rawValue === true;

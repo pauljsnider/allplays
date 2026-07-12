@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { buildFullRosterCsvTemplate, planRosterCsvImport, splitRosterProfileValuesByVisibility, summarizeRosterContactInviteResults } from '../../js/roster-profile-fields.js';
+import { buildFullRosterCsvTemplate, mergeStandardRosterFieldDefinitions, planRosterCsvImport, splitRosterProfileValuesByVisibility, summarizeRosterContactInviteResults } from '../../js/roster-profile-fields.js';
 
 describe('roster CSV import planning', () => {
     const fields = [
@@ -448,6 +448,32 @@ describe('roster CSV import planning', () => {
         });
     });
 
+    it('uses the standard optional field catalog for CSV parity with manual roster entry', () => {
+        const standardFields = mergeStandardRosterFieldDefinitions([]);
+        const plan = planRosterCsvImport({
+            fields: standardFields,
+            csvText: 'Name,Number,Preferred Name,Position,DOB,Gender,Grade,School,Jersey Size,Member ID\nAvery Lee,4,Rocket,Forward,2014-02-03,Female,6,Lincoln,YM,AAU-42'
+        });
+
+        expect(plan.errors).toEqual([]);
+        expect(plan.operations[0]).toMatchObject({
+            payload: {
+                name: 'Avery Lee',
+                number: '4',
+                position: 'Forward',
+                profile: { customFields: { preferredName: 'Rocket', position: 'Forward' } }
+            },
+            privateRosterFields: {
+                birthDate: '2014-02-03',
+                gender: 'Female',
+                grade: '6',
+                school: 'Lincoln',
+                jerseySize: 'YM'
+            }
+        });
+        expect(JSON.stringify(plan.operations[0].payload)).not.toContain('AAU-42');
+    });
+
     it('describes parent and guardian contact columns in the roster CSV import UI', () => {
         const page = readFileSync('edit-roster.html', 'utf8');
         const dbSource = readFileSync('js/db.js', 'utf8');
@@ -456,6 +482,8 @@ describe('roster CSV import planning', () => {
         expect(page).toContain('parent/guardian/contact columns such as Parent Email or Guardian Phone');
         expect(page).toContain('Name,Number,Position,DOB,Parent Name,Parent Email,Grade');
         expect(page).toContain('download-roster-template-btn');
+        expect(page).toContain('mergeStandardRosterFieldDefinitions(rosterFieldDefinitionDrafts.filter');
+        expect(page).toContain('splitRosterProfileValuesByVisibility(rosterFieldDefinitions, profileValues)');
         expect(page).toContain('roster-csv-send-invites');
         expect(page).toContain('csv-import-preview');
         expect(page).toContain('renderRosterCsvReview(plan)');
@@ -467,6 +495,7 @@ describe('roster CSV import planning', () => {
         expect(dbSource).toContain('export async function applyRosterCsvImportOperations');
         expect(dbSource).toContain('export async function getPlayersWithPrivateRosterContacts');
         expect(page).toContain('getPlayersWithPrivateRosterContacts(currentTeamId, { includeInactive: true })');
+        expect(page).not.toContain('getAllUsers()');
         expect(dbSource).toContain("if (plannedOperations.length > 200)");
         expect(dbSource).toContain('await batch.commit();');
     });

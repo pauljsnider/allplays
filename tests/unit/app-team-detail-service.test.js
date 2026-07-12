@@ -21,6 +21,7 @@ vi.mock('../../js/db.js', () => ({
     inviteParent: vi.fn(),
     getLocalAttractionSponsors: vi.fn(),
     getPlayers: vi.fn(),
+    getPlayersWithPrivateRosterContacts: vi.fn(),
     getPlayerTrackingStatuses: vi.fn(),
     getPublicTrackingItems: vi.fn(),
     getRosterFieldDefinitions: vi.fn(),
@@ -85,7 +86,7 @@ vi.mock('../../apps/app/src/lib/authService.ts', () => ({
 
 import { __resetTeamDetailBaseSnapshotCacheForTests, addRosterPlayerForApp, buildAdminAcceptInviteUrl, buildPublicTeamGamesIcsUrl, buildRosterParentInviteSummaries, buildTeamDetailModel, canExposePublicFanFeed, createRosterParentInviteForApp, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadRosterFieldDefinitionsForApp, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamRosterParentInvites, loadTeamStaffPermissions, reactivateRosterPlayerForApp, revokeScorekeeperAccessForApp, revokeTeamAdminAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp, updateTeamSettingsForApp } from '../../apps/app/src/lib/teamDetailService.ts';
 import { collection, doc, getDoc, getDocs, query, where } from '../../js/firebase.js';
-import { addPlayer, getAggregatedStatsForGames, getAdSpaceSponsors, getAllUsers, getConfigs, getEvents, getGames, getLocalAttractionSponsors, getPlayerTrackingStatuses, getPlayers, getPublicTrackingItems, getRosterFieldDefinitions, getTeam, grantScorekeeperAccess, grantVideographerAccess, inviteAdmin, inviteParent, addTeamAdminEmail, revokeScorekeeperAccess, revokeVideographerAccess, deactivatePlayer, reactivatePlayer, setPlayerPrivateRosterProfileFields, updateEvent, updateGame, updateTeam, uploadPlayerPhoto, uploadTeamPhoto } from '../../js/db.js';
+import { addPlayer, getAggregatedStatsForGames, getAdSpaceSponsors, getAllUsers, getConfigs, getEvents, getGames, getLocalAttractionSponsors, getPlayerTrackingStatuses, getPlayers, getPlayersWithPrivateRosterContacts, getPublicTrackingItems, getRosterFieldDefinitions, getTeam, grantScorekeeperAccess, grantVideographerAccess, inviteAdmin, inviteParent, addTeamAdminEmail, revokeScorekeeperAccess, revokeVideographerAccess, deactivatePlayer, reactivatePlayer, setPlayerPrivateRosterProfileFields, updateEvent, updateGame, updateTeam, uploadPlayerPhoto, uploadTeamPhoto } from '../../js/db.js';
 import { sendInviteEmail } from '../../js/auth.js';
 import { queueInviteEmail } from '../../js/invite-email.js';
 import { buildPlayerLeaderboardSnapshot } from '../../js/stat-leaderboards.js';
@@ -94,6 +95,7 @@ import { getVisiblePlayerTrackingSummary } from '../../js/player-tracking-summar
 beforeEach(() => {
     __resetTeamDetailBaseSnapshotCacheForTests();
     vi.clearAllMocks();
+    getPlayersWithPrivateRosterContacts.mockImplementation((...args) => getPlayers(...args));
     getDoc.mockResolvedValue({
         id: '',
         exists: () => false,
@@ -310,7 +312,11 @@ describe('React app team detail model', () => {
 
         const fields = await loadRosterFieldDefinitionsForApp('team-1', { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'] });
         expect(getRosterFieldDefinitions).toHaveBeenCalledWith('team-1', expect.objectContaining({ id: 'team-1' }));
-        expect(fields).toEqual([
+        expect(fields).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                key: 'position',
+                label: 'Position'
+            }),
             expect.objectContaining({
                 key: 'grad_year',
                 label: 'Grad Year',
@@ -318,7 +324,7 @@ describe('React app team detail model', () => {
                 options: [{ value: '2028', label: '2028' }],
                 required: true
             })
-        ]);
+        ]));
     });
 
     it('splits private roster fields out of the public player doc when creating roster players', async () => {
@@ -467,6 +473,42 @@ describe('React app team detail model', () => {
                 playerId: 'player-2',
                 status: 'accepted',
                 acceptedParentCount: 1,
+                pendingInviteCount: 0,
+                latestPendingCode: ''
+            }
+        ]);
+    });
+
+    it('counts accepted roster parents from player private contact data without requiring users queries', () => {
+        const summaries = buildRosterParentInviteSummaries({
+            teamId: 'team-1',
+            players: [
+                {
+                    id: 'player-1',
+                    name: 'Pat Star',
+                    privateProfileParents: [{ userId: 'parent-1', name: 'Pat Parent', email: 'pat@example.com', relation: 'Dad' }]
+                },
+                {
+                    id: 'player-2',
+                    name: 'Sam Wing',
+                    privateProfileParents: [{ name: 'Robin Import', email: 'robin@example.com', relation: 'Guardian', source: 'roster-csv' }]
+                }
+            ],
+            pendingParentInvites: []
+        });
+
+        expect(summaries).toEqual([
+            {
+                playerId: 'player-1',
+                status: 'accepted',
+                acceptedParentCount: 1,
+                pendingInviteCount: 0,
+                latestPendingCode: ''
+            },
+            {
+                playerId: 'player-2',
+                status: 'none',
+                acceptedParentCount: 0,
                 pendingInviteCount: 0,
                 latestPendingCode: ''
             }

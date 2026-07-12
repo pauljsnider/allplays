@@ -2708,6 +2708,7 @@ export async function getPlayersWithPrivateRosterContacts(teamId, options = {}) 
             const privateProfile = await getPlayerPrivateProfile(teamId, player.id);
             return {
                 ...player,
+                privateProfileRosterFields: privateProfile?.rosterFields && typeof privateProfile.rosterFields === 'object' ? privateProfile.rosterFields : {},
                 privateProfileParents: Array.isArray(privateProfile?.parents) ? privateProfile.parents : [],
                 privateProfileContacts: Array.isArray(privateProfile?.contacts) ? privateProfile.contacts : []
             };
@@ -2738,6 +2739,7 @@ async function mergePlayerPrivateProfileParents(teamId, players = []) {
             if (privateParents.length === 0) return player;
             return {
                 ...player,
+                privateProfileRosterFields: privateProfile?.rosterFields && typeof privateProfile.rosterFields === 'object' ? privateProfile.rosterFields : {},
                 privateProfileParents: privateParents
             };
         } catch (error) {
