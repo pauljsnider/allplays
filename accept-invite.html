@@ -16,7 +16,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="robots" content="noindex,nofollow">
     <link rel="icon" type="image/png" href="img/logo_small.png">
-    <title>Accept Invite - ALL PLAYS</title>
+    <title>Join with a Code - ALL PLAYS</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="css/styles.css">
     <script>
@@ -49,8 +49,8 @@
             <!-- Loading State -->
             <div id="loading-state" class="text-center">
                 <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto mb-4"></div>
-                <h1 class="text-xl font-bold mb-2">Processing Invite...</h1>
-                <p class="text-gray-600 text-sm">Please wait while we set up your account.</p>
+                <h1 class="text-xl font-bold mb-2">Applying Code...</h1>
+                <p class="text-gray-600 text-sm">Please wait while we connect this code to your account.</p>
             </div>
 
             <!-- Email Required State (when opened on different device) -->
@@ -76,16 +76,16 @@
 
             <!-- Signed-out invite link state -->
             <div id="invite-link-state" class="hidden text-center">
-                <h1 class="text-2xl font-bold mb-4">Join Your Team</h1>
+                <h1 class="text-2xl font-bold mb-4">Join ALL PLAYS</h1>
                 <p class="text-gray-600 text-sm mb-4">
-                    We found your invite link. Sign in or create an account to finish joining this team.
+                    We found your code. Sign in or create an account to connect everything it grants.
                 </p>
                 <p class="text-xs text-gray-500 mb-4">
                     Invite code: <span id="invite-code-confirmation" class="font-mono font-semibold tracking-widest"></span>
                 </p>
                 <a id="continue-invite-link" href="login.html"
                     class="block w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition">
-                    Sign in or create account to join team
+                    Sign in or create account to continue
                 </a>
                 <button type="button" id="enter-different-code-btn"
                     class="mt-3 text-sm text-indigo-600 hover:underline">
@@ -95,13 +95,13 @@
 
             <!-- Manual Code Entry State (fallback) -->
             <div id="manual-code-state" class="hidden">
-                <h1 class="text-2xl font-bold mb-4 text-center">Enter Invite Code</h1>
+                <h1 class="text-2xl font-bold mb-4 text-center">Enter Join Code</h1>
                 <p class="text-gray-600 text-sm mb-4 text-center">
                     Enter the 8-character invite code you received.
                 </p>
                 <form id="code-form" class="space-y-4">
                     <div>
-                        <label class="block text-sm font-medium text-gray-700">Invite Code</label>
+                        <label class="block text-sm font-medium text-gray-700">Join Code</label>
                         <input type="text" id="code-input" required maxlength="8"
                             class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 uppercase text-center text-lg tracking-widest font-mono"
                             placeholder="XXXXXXXX">
@@ -109,7 +109,7 @@
                     <div id="code-error" class="text-red-500 text-sm hidden"></div>
                     <button type="submit" id="submit-code-btn"
                         class="w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition">
-                        Join Team
+                        Apply Code
                     </button>
                 </form>
                 <p class="text-xs text-gray-500 mt-4 text-center">
@@ -125,7 +125,7 @@
                     </svg>
                 </div>
                 <h1 class="text-2xl font-bold mb-2">You're In!</h1>
-                <p id="success-message" class="text-gray-600 mb-4">You've been added to the team.</p>
+                <p id="success-message" class="text-gray-600 mb-4">Your code has been applied.</p>
                 <p class="text-sm text-gray-500 mb-4">Redirecting you now...</p>
             </div>
 
@@ -158,7 +158,7 @@
         import { isEmailSignInLink, completeEmailLinkSignIn, checkAuth, getRedirectUrl } from './js/auth.js?v=46';
         import { validateAccessCode, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } from './js/db.js?v=91';
         import { redeemAdminInviteAtomically } from './js/admin-invite.js?v=6';
-        import { createInviteProcessor, getInviteDashboardUrl, isInviteAlreadyRedeemedError } from './js/accept-invite-flow.js?v=9';
+        import { createInviteProcessor, getInviteDashboardUrl, isInviteAlreadyRedeemedError } from './js/accept-invite-flow.js?v=10';
         import { renderHeader, renderFooter } from './js/utils.js?v=15';
 
         renderFooter(document.getElementById('footer-container'));
@@ -442,7 +442,7 @@
                     errorDiv.textContent = error.message || 'Invalid or expired code';
                     errorDiv.classList.remove('hidden');
                     btn.disabled = false;
-                    btn.textContent = 'Join Team';
+                    btn.textContent = 'Apply Code';
                 }
             }, { skipEmailVerificationCheck: true });
         });

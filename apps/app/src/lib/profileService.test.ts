@@ -58,7 +58,44 @@ vi.mock('../../../../js/team-visibility.js', () => ({
 
 import { normalizeProfilePhoto } from './profilePhotoService';
 import { getNativeAuthIdToken } from './authService';
-import { loadNotificationTeams, loadParentTeams, loadProfileAccessCodesPage, loadProfileDocument, requestAccountMerge } from './profileService';
+import { createProfileAccessCode, loadNotificationTeams, loadParentTeams, loadProfileAccessCodesPage, loadProfileDocument, requestAccountMerge } from './profileService';
+
+describe('createProfileAccessCode', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    it('returns the collision-safe code actually persisted by the shared generator', async () => {
+        dbMocks.generateAccessCode.mockReturnValue('FIRST123');
+        dbMocks.createAccessCode.mockResolvedValue({ id: 'SECOND45', code: 'SECOND45' });
+
+        await expect(createProfileAccessCode('user-1', 'friend@example.com', '')).resolves.toBe('SECOND45');
+        expect(dbMocks.createAccessCode).toHaveBeenCalledWith('user-1', 'friend@example.com', '', 'FIRST123');
+    });
+
+    it('uses the code as the Firestore document id in the native REST fallback', async () => {
+        dbMocks.generateAccessCode.mockReturnValue('FIRST123');
+        dbMocks.createAccessCode.mockRejectedValue(new Error('SDK unavailable'));
+        vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token');
+        const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => (
+            init?.method === 'PATCH'
+                ? { ok: true, status: 200, json: async () => ({}) }
+                : { ok: false, status: 404, json: async () => ({ error: { message: 'not found' } }) }
+        ));
+        vi.stubGlobal('fetch', fetchMock);
+
+        await expect(createProfileAccessCode('user-1', '', '')).resolves.toBe('FIRST123');
+
+        expect(fetchMock).toHaveBeenCalledWith(
+            expect.stringContaining('/accessCodes/FIRST123?currentDocument.exists=false'),
+            expect.objectContaining({ method: 'PATCH' })
+        );
+    });
+});
 
 it('routes handled profile-service failures through the shared logger helper', () => {
     const profileServiceSource = readFileSync('src/lib/profileService.ts', 'utf8');

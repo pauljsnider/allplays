@@ -11,7 +11,7 @@ describe('access code pre-auth callable guard', () => {
         const functionStart = source.indexOf('exports.validateAccessCodeForAcceptance');
         const functionEnd = source.indexOf('function accountMergePreviewAuditRef', functionStart);
         const callableSource = source.slice(functionStart, functionEnd);
-        const authGuardIndex = callableSource.indexOf('if (!context?.auth?.uid && !hasNativeAuthToken)');
+        const authGuardIndex = callableSource.indexOf('if (!acceptingUserId)');
         const nativeTokenIndex = callableSource.indexOf('const nativeAuthToken');
         const nativeVerifyIndex = callableSource.indexOf('admin.auth().verifyIdToken(nativeAuthToken)');
         const queryIndex = callableSource.indexOf("firestore.collection('accessCodes').where('code', '==', code).get()");
@@ -24,5 +24,6 @@ describe('access code pre-auth callable guard', () => {
         expect(queryIndex).toBeGreaterThan(-1);
         expect(nativeVerifyIndex).toBeLessThan(queryIndex);
         expect(authGuardIndex).toBeLessThan(queryIndex);
+        expect(callableSource).toContain('Date.now(), acceptingUserId');
     });
 });

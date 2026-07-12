@@ -15,10 +15,12 @@ import {
     signInWithEmailLink,
     updatePassword
 } from './firebase.js?v=20';
-import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, getUserProfile, getUserTeams, getUserByEmail, getTeam, listMyParentMembershipRequests, normalizeParentScopeLinks } from './db.js?v=91';
+import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, getUserProfile, getUserTeams, getUserByEmail, getTeam, listMyParentMembershipRequests, normalizeParentScopeLinks } from './db.js?v=92';
 import { executeEmailPasswordSignup } from './signup-flow.js?v=6';
-import { redeemAdminInviteAcceptance } from './admin-invite.js?v=6';
+import { redeemAdminInviteAcceptance, redeemAdminInviteAtomically } from './admin-invite.js?v=6';
 import { mergeApprovedParentMembershipRequests } from './parent-membership-utils.js?v=2';
+import { buildLegacyJoinUrl } from './join-code.js?v=1';
+import { createInviteProcessor } from './accept-invite-flow.js?v=10';
 
 async function cleanupFailedNewUser(user, context) {
     if (!user) {
@@ -173,11 +175,10 @@ async function processGoogleAuthResult(result, activationCode = null) {
 
     // Check if this is a new user (first time signing in)
     const isNewUser = result.user.metadata.creationTime === result.user.metadata.lastSignInTime;
+    const code = activationCode || window.sessionStorage.getItem('pendingActivationCode');
     console.log('[Google Auth] Is new user:', isNewUser);
 
     if (isNewUser) {
-        // Get activation code from parameter or sessionStorage
-        const code = activationCode || window.sessionStorage.getItem('pendingActivationCode');
         console.log('[Google Auth] Activation code:', code || 'None');
 
         // New user - require activation code
@@ -288,10 +289,25 @@ async function processGoogleAuthResult(result, activationCode = null) {
 
         // Clear the activation code from sessionStorage
         clearPendingActivationCode();
+        result.activationCodeRedeemed = true;
         console.log('[Google Auth] New user setup complete');
     } else {
+        if (code) {
+            const processInvite = createInviteProcessor({
+                validateAccessCode,
+                redeemParentInvite,
+                redeemHouseholdInvite,
+                redeemCoParentInvite,
+                redeemAdminInviteAtomically,
+                getTeam,
+                getUserProfile,
+                markAccessCodeAsUsed
+            });
+            await processInvite(result.user.uid, code, result.user.email);
+            result.activationCodeRedeemed = true;
+        }
         clearPendingActivationCode();
-        console.log('[Google Auth] Existing user - no setup needed');
+        console.log('[Google Auth] Existing user setup complete');
     }
 
     console.log('[Google Auth] Returning result for user:', result.user.email);
@@ -487,7 +503,7 @@ export async function sendInviteEmail(email, inviteCode, inviteType, metadata = 
     const existingUser = await getUserByEmail(email);
 
     // Build the continue URL with invite code
-    const continueUrl = `https://allplays.ai/accept-invite.html?code=${inviteCode}&type=${inviteType}`;
+    const continueUrl = buildLegacyJoinUrl(inviteCode, inviteType, 'https://allplays.ai');
 
     const actionCodeSettings = {
         url: continueUrl,

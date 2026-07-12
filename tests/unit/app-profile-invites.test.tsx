@@ -280,8 +280,8 @@ describe('Profile invites', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Share saved invite link for ACTIVE123/ }));
 
     await waitFor(() => expect(publicActionsMocks.sharePublicUrl).toHaveBeenCalledWith(expect.objectContaining({
-      url: expect.stringContaining('/app#/accept-invite?code=ACTIVE123&type=parent_invite'),
-      clipboardText: expect.stringContaining('/app#/accept-invite?code=ACTIVE123&type=parent_invite')
+      url: expect.stringContaining('/app#/accept-invite?code=ACTIVE123&type=parent'),
+      clipboardText: expect.stringContaining('/app#/accept-invite?code=ACTIVE123&type=parent')
     })));
   });
 

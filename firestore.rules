@@ -150,6 +150,36 @@ service cloud.firestore {
              data.usedAt == null;
     }
 
+    function isCoParentInvitePayloadValid(data) {
+      return data.keys().hasOnly([
+               'code', 'type', 'teamId', 'playerId', 'playerName', 'teamName',
+               'email', 'generatedBy', 'createdAt', 'expiresAt', 'used', 'usedBy', 'usedAt'
+             ]) &&
+             data.keys().hasAll([
+               'code', 'type', 'teamId', 'playerId', 'email', 'generatedBy',
+               'createdAt', 'expiresAt', 'used', 'usedBy', 'usedAt'
+             ]) &&
+             data.type == 'coparent_invite' &&
+             data.code is string &&
+             data.code.size() > 0 &&
+             data.teamId is string &&
+             data.teamId.size() > 0 &&
+             data.playerId is string &&
+             data.playerId.size() > 0 &&
+             data.email is string &&
+             data.email.size() > 0 &&
+             (!('playerName' in data) || data.playerName == null || data.playerName is string) &&
+             (!('teamName' in data) || data.teamName == null || data.teamName is string) &&
+             data.generatedBy == request.auth.uid &&
+             data.createdAt is timestamp &&
+             data.expiresAt is timestamp &&
+             data.expiresAt > request.time &&
+             data.used == false &&
+             data.usedBy == null &&
+             data.usedAt == null &&
+             isParentForPlayer(data.teamId, data.playerId);
+    }
+
     function isParentInviteRedemptionUpdate() {
       return resource.data.get('type', null) == 'parent_invite' &&
              request.resource.data.get('type', resource.data.get('type', null)) == 'parent_invite' &&
@@ -2255,8 +2285,12 @@ service cloud.firestore {
                           isTeamOwnerOrAdmin(request.resource.data.teamId) &&
                           isParentInvitePayloadValid(request.resource.data) &&
                           request.resource.data.code == codeId) ||
+                         (request.resource.data.get('type', null) == 'coparent_invite' &&
+                          isCoParentInvitePayloadValid(request.resource.data) &&
+                          request.resource.data.code == codeId) ||
                          (request.resource.data.get('type', null) == 'household_invite' &&
-                          isHouseholdInviteAccessCodePayloadValid(request.resource.data))
+                          isHouseholdInviteAccessCodePayloadValid(request.resource.data) &&
+                          request.resource.data.code == codeId)
                        );
       // Only allow the code generator to update/delete, OR allow system to mark as used during signup
       allow update: if isSignedIn() &&

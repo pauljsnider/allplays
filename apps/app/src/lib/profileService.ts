@@ -394,22 +394,39 @@ async function nativeSaveNotificationDeviceToken(userId: string, input: Notifica
 }
 
 async function nativeCreateAccessCode(userId: string, email: string, phone: string, code: string) {
-  await nativeFirestoreRequest('/accessCodes', {
-    method: 'POST',
-    body: JSON.stringify({
-      fields: {
-        code: encodeFirestoreValue(code),
-        type: encodeFirestoreValue('standard'),
-        generatedBy: encodeFirestoreValue(userId),
-        email: encodeFirestoreValue(email || null),
-        phone: encodeFirestoreValue(phone || null),
-        createdAt: encodeFirestoreValue(new Date()),
-        used: encodeFirestoreValue(false),
-        usedBy: encodeFirestoreValue(null),
-        usedAt: encodeFirestoreValue(null)
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const candidateCode = String(attempt === 0 ? code : generateAccessCode()).trim().toUpperCase();
+    const existing = await nativeGetDocument(`accessCodes/${encodeURIComponent(candidateCode)}`).catch(() => null) as Record<string, unknown> | null;
+    if (existing?.generatedBy === userId && existing?.code === candidateCode && existing?.used !== true) {
+      return candidateCode;
+    }
+
+    try {
+      await nativeFirestoreRequest(`/accessCodes/${encodeURIComponent(candidateCode)}?currentDocument.exists=false`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          fields: {
+            code: encodeFirestoreValue(candidateCode),
+            type: encodeFirestoreValue('standard'),
+            generatedBy: encodeFirestoreValue(userId),
+            email: encodeFirestoreValue(email || null),
+            phone: encodeFirestoreValue(phone || null),
+            createdAt: encodeFirestoreValue(new Date()),
+            used: encodeFirestoreValue(false),
+            usedBy: encodeFirestoreValue(null),
+            usedAt: encodeFirestoreValue(null)
+          }
+        })
+      });
+      return candidateCode;
+    } catch (error: any) {
+      if (error?.status !== 409 && error?.status !== 412) {
+        throw error;
       }
-    })
-  });
+    }
+  }
+
+  throw new Error('Could not generate a unique invite code. Please try again.');
 }
 
 async function nativeCreateAccountMergeRequest(userId: string, primaryEmail: string, secondaryEmail: string) {
@@ -571,12 +588,12 @@ export async function saveNotificationDeviceToken(userId: string, input: Notific
 export async function createProfileAccessCode(userId: string, email: string, phone: string) {
   const code = generateAccessCode();
   try {
-    await withTimeout(Promise.resolve(createAccessCode(userId, email, phone, code)), 'Invite code create', primaryDataTimeoutMs);
+    const result = await withTimeout(Promise.resolve(createAccessCode(userId, email, phone, code)), 'Invite code create', primaryDataTimeoutMs);
+    return String(result?.code || code).trim().toUpperCase();
   } catch (error) {
     logProfileWarning('Falling back to REST invite code create.', 'invite-code-create', error, { userId });
-    await nativeCreateAccessCode(userId, email, phone, code);
+    return nativeCreateAccessCode(userId, email, phone, code);
   }
-  return code;
 }
 
 export async function requestAccountMerge(userId: string, primaryEmail: string, secondaryEmail: string) {

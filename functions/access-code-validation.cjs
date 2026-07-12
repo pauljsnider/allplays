@@ -27,6 +27,15 @@ function isAccessCodeInactive(data, nowMs = Date.now()) {
     isAccessCodeExpired(data?.expiresAt, nowMs);
 }
 
+function isAccessCodeRevoked(data) {
+  const status = String(data?.status || '').trim().toLowerCase();
+  return data?.revoked === true ||
+    data?.active === false ||
+    status === 'removed' ||
+    status === 'cancelled' ||
+    status === 'revoked';
+}
+
 const GENERIC_PREAUTH_ACCESS_CODE_MESSAGE = 'Invalid or expired access code';
 
 function buildGenericPreAuthAccessCodeValidationResult() {
@@ -40,22 +49,41 @@ function buildSafeAccessCodeData(data = {}) {
   };
 }
 
-function validateAccessCodeCandidates(docs, nowMs = Date.now()) {
+function validateAccessCodeCandidates(docs, nowMs = Date.now(), acceptingUserId = '') {
   const candidates = Array.isArray(docs) ? docs : [];
   if (candidates.length === 0) {
     return { valid: false, message: 'Invalid access code' };
   }
 
-  const codeDoc = candidates.find((doc) => !isAccessCodeInactive(doc?.data || {}, nowMs)) || candidates[0];
+  const normalizedUserId = String(acceptingUserId || '').trim();
+  const redeemableCode = candidates.find((doc) => !isAccessCodeInactive(doc?.data || {}, nowMs));
+  const alreadyRedeemedCode = normalizedUserId
+    ? candidates.find((doc) => {
+      const candidate = doc?.data || {};
+      return candidate.used === true &&
+        String(candidate.usedBy || '').trim() === normalizedUserId &&
+        !isAccessCodeRevoked(candidate);
+    })
+    : null;
+  const codeDoc = redeemableCode || alreadyRedeemedCode || candidates[0];
   const data = codeDoc?.data || {};
-  const status = String(data.status || '').trim().toLowerCase();
+
+  if (isAccessCodeRevoked(data)) {
+    return { valid: false, message: 'Invite is no longer active' };
+  }
+
+  if (alreadyRedeemedCode === codeDoc) {
+    return {
+      valid: true,
+      alreadyRedeemed: true,
+      codeId: codeDoc.id,
+      type: data.type || 'standard',
+      data: buildSafeAccessCodeData(data)
+    };
+  }
 
   if (data.used === true) {
     return { valid: false, message: 'Code already used' };
-  }
-
-  if (data.revoked === true || data.active === false || status === 'removed' || status === 'cancelled' || status === 'revoked') {
-    return { valid: false, message: 'Invite is no longer active' };
   }
 
   if (isAccessCodeExpired(data.expiresAt, nowMs)) {
@@ -76,5 +104,6 @@ module.exports = {
   buildSafeAccessCodeData,
   getExpirationTime,
   isAccessCodeExpired,
+  isAccessCodeRevoked,
   validateAccessCodeCandidates
 };

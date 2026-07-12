@@ -117,7 +117,7 @@ const setTimeout = deps.setTimeout;
             'const { redeemAdminInviteAtomically } = deps.db;'
         )
         .replace(
-            "import { createInviteProcessor, getInviteDashboardUrl, isInviteAlreadyRedeemedError } from './js/accept-invite-flow.js?v=9';",
+            "import { createInviteProcessor, getInviteDashboardUrl, isInviteAlreadyRedeemedError } from './js/accept-invite-flow.js?v=10';",
             'const { createInviteProcessor, getInviteDashboardUrl, isInviteAlreadyRedeemedError } = deps.acceptInviteFlow;'
         )
         .replace(
@@ -391,6 +391,27 @@ describe('accept-invite page parent flow', () => {
         expect(authenticated.db.redeemParentInvite).toHaveBeenCalledOnce();
         expect(authenticated.db.redeemParentInvite).toHaveBeenCalledWith('parent-2', 'AB12CD34', 'family@example.com');
         expect(authenticated.window.location.href).toBe('http://example.com/parent-dashboard.html');
+    });
+});
+
+describe('accept-invite page standard site-code flow', () => {
+    it('applies a standard code for an already authenticated user', async () => {
+        const { elements, window, db } = await bootAcceptInvite({
+            href: 'http://example.com/accept-invite.html?code=site1234&type=standard',
+            authUser: { uid: 'member-1', email: 'member@example.com' },
+            dbOverrides: {
+                validateAccessCode: vi.fn().mockResolvedValue({
+                    valid: true,
+                    codeId: 'SITE1234',
+                    type: 'standard',
+                    data: { code: 'SITE1234', type: 'standard' }
+                })
+            }
+        });
+
+        expect(db.markAccessCodeAsUsed).toHaveBeenCalledWith('SITE1234', 'member-1');
+        expect(elements.get('success-state').classList.contains('hidden')).toBe(false);
+        expect(window.location.href).toBe('http://example.com/dashboard.html');
     });
 });
 

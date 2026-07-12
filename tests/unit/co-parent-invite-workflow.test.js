@@ -7,9 +7,8 @@ describe('co-parent invite workflow regression', () => {
         const dashboardSource = readFileSync(resolve(process.cwd(), 'parent-dashboard.html'), 'utf8');
 
         expect(dashboardSource).toContain('const invite = await inviteCoParentToAthlete');
-        expect(dashboardSource).toContain('accept-invite.html?code=');
-        expect(dashboardSource).toContain('type=coparent_invite');
-        expect(dashboardSource).toContain('Co-parent invite created. Share this link');
+        expect(dashboardSource).toContain("buildLegacyJoinUrl(inviteCode, 'coparent'");
+        expect(dashboardSource).toContain('Co-parent invite created and queued');
         expect(dashboardSource).not.toContain("await inviteCoParentToAthlete(currentUserId, teamId, playerId, coParentEmail, playerName);\n\n                if (statusEl) {\n                    statusEl.textContent = 'Invitation sent successfully!';");
     });
 
@@ -18,7 +17,7 @@ describe('co-parent invite workflow regression', () => {
 
         expect(acceptInviteSource).toContain('redeemCoParentInvite');
         expect(acceptInviteSource).toContain("./js/db.js?v=91");
-        expect(acceptInviteSource).toContain("./js/accept-invite-flow.js?v=9");
+        expect(acceptInviteSource).toContain("./js/accept-invite-flow.js?v=10");
     });
 
     it('routes co-parent membership grants through a callable instead of browser membership writes', () => {

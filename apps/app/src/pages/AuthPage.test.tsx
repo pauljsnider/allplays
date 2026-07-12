@@ -136,13 +136,13 @@ describe('AuthPage signup validation', () => {
 
     expect(screen.getByRole('heading', { name: 'Create your account' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Create account' })).toBeTruthy();
-    expect(screen.getByLabelText('Activation or invite code')).toBeTruthy();
+    expect(screen.getByLabelText('Join code')).toBeTruthy();
   });
 
   it('describes an unverified invite code without claiming it was applied', () => {
     renderAuthPage('/auth?mode=login&code=QQQQQQQQ&type=parent');
 
-    expect(screen.getByText(/Invite code entered:/).textContent).toContain('QQQQQQQQ');
+    expect(screen.getByText(/Join code entered:/).textContent).toContain('QQQQQQQQ');
     expect(screen.getByText('We’ll verify it after you sign in or create your account.')).toBeTruthy();
     expect(screen.queryByText(/Invite code applied:/)).toBeNull();
   });
@@ -199,12 +199,12 @@ describe('AuthPage signup validation', () => {
     fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'coach@example.com' } });
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'secret1' } });
     fireEvent.change(screen.getByLabelText('Confirm password'), { target: { value: 'secret1' } });
-    fireEvent.change(screen.getByLabelText('Activation or invite code'), { target: { value: '   ' } });
+    fireEvent.change(screen.getByLabelText('Join code'), { target: { value: '   ' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create account' }));
 
     expect(await screen.findByText('Activation code is required.')).toBeTruthy();
 
-    fireEvent.change(screen.getByLabelText('Activation or invite code'), { target: { value: 'abc123' } });
+    fireEvent.change(screen.getByLabelText('Join code'), { target: { value: 'abc123' } });
     expect(screen.queryByText('Activation code is required.')).toBeNull();
   });
 });

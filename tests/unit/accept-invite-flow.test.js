@@ -22,11 +22,43 @@ describe('already-redeemed invite handling (#1808)', () => {
         expect(getInviteDashboardUrl('household')).toBe('parent-dashboard.html');
         expect(getInviteDashboardUrl('admin')).toBe('dashboard.html');
         expect(getInviteDashboardUrl('admin_invite')).toBe('dashboard.html');
+        expect(getInviteDashboardUrl('standard')).toBe('dashboard.html');
         expect(getInviteDashboardUrl(undefined)).toBe('parent-dashboard.html');
     });
 });
 
 describe('accept invite flow', () => {
+    it('redeems standard site codes through the same signed-in processor', async () => {
+        const deps = {
+            validateAccessCode: vi.fn(async () => ({ valid: true, codeId: 'SITE1234', type: 'standard', data: { code: 'SITE1234' } })),
+            markAccessCodeAsUsed: vi.fn().mockResolvedValue(undefined)
+        };
+
+        const result = await createInviteProcessor(deps)('user-1', 'site1234', 'user@example.com');
+
+        expect(deps.markAccessCodeAsUsed).toHaveBeenCalledWith('SITE1234', 'user-1');
+        expect(result).toEqual({
+            success: true,
+            message: 'Your ALL PLAYS access code has been applied!',
+            redirectUrl: 'dashboard.html'
+        });
+    });
+
+    it('returns success without mutating when this account already redeemed the code', async () => {
+        const deps = {
+            validateAccessCode: vi.fn(async () => ({ valid: true, alreadyRedeemed: true, codeId: 'used-1', type: 'admin_invite' })),
+            markAccessCodeAsUsed: vi.fn()
+        };
+
+        await expect(createInviteProcessor(deps)('user-1', 'USED1234')).resolves.toEqual({
+            success: true,
+            alreadyRedeemed: true,
+            message: 'This code is already connected to your account.',
+            redirectUrl: 'dashboard.html'
+        });
+        expect(deps.markAccessCodeAsUsed).not.toHaveBeenCalled();
+    });
+
     it('redeems admin invite codes via atomic redemption when available', async () => {
         const deps = {
             validateAccessCode: vi.fn(async () => ({
@@ -349,7 +381,7 @@ describe('accept invite flow', () => {
         expect(deps.markAccessCodeAsUsed).not.toHaveBeenCalled();
     });
 
-    it('explains standard signup codes to signed-in users without consuming them (#3843)', async () => {
+    it('applies standard signup codes to signed-in users', async () => {
         const deps = {
             validateAccessCode: vi.fn(async () => ({
                 valid: true,
@@ -363,14 +395,16 @@ describe('accept invite flow', () => {
 
         const processInvite = createInviteProcessor(deps);
 
-        await expect(processInvite('user-3', 'ABCD1234', 'signedin@example.com')).rejects.toThrow(
-            "This is a signup code for creating a new account. You're already signed in — share this code with someone new instead of opening it yourself."
-        );
-        expect(deps.markAccessCodeAsUsed).not.toHaveBeenCalled();
+        await expect(processInvite('user-3', 'ABCD1234', 'signedin@example.com')).resolves.toEqual({
+            success: true,
+            message: 'Your ALL PLAYS access code has been applied!',
+            redirectUrl: 'dashboard.html'
+        });
+        expect(deps.markAccessCodeAsUsed).toHaveBeenCalledWith('code-std-1', 'user-3');
         expect(deps.redeemParentInvite).not.toHaveBeenCalled();
     });
 
-    it('treats a missing invite type like a standard signup code', async () => {
+    it('applies legacy codes with a missing type as standard codes', async () => {
         const deps = {
             validateAccessCode: vi.fn(async () => ({
                 valid: true,
@@ -383,10 +417,12 @@ describe('accept invite flow', () => {
 
         const processInvite = createInviteProcessor(deps);
 
-        await expect(processInvite('user-4', 'EFGH5678')).rejects.toThrow(
-            /signup code for creating a new account/
-        );
-        expect(deps.markAccessCodeAsUsed).not.toHaveBeenCalled();
+        await expect(processInvite('user-4', 'EFGH5678')).resolves.toEqual({
+            success: true,
+            message: 'Your ALL PLAYS access code has been applied!',
+            redirectUrl: 'dashboard.html'
+        });
+        expect(deps.markAccessCodeAsUsed).toHaveBeenCalledWith('code-std-2', 'user-4');
     });
 
     it('names the invite type in the unsupported-type error', async () => {

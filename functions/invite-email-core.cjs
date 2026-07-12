@@ -6,6 +6,7 @@ function normalizeInviteEmailType(value) {
   const type = String(value || '').trim().toLowerCase();
   if (type === 'parent_invite') return 'parent';
   if (type === 'household_invite') return 'household';
+  if (type === 'coparent_invite') return 'coparent';
   return '';
 }
 
@@ -45,12 +46,17 @@ function buildParentInviteEmailMessage(invite = {}, origin = ALLPLAYS_ORIGIN) {
   const teamName = String(invite.teamName || '').trim();
   const relation = String(invite.relation || '').trim();
   const isHouseholdInvite = inviteType === 'household';
+  const isCoParentInvite = inviteType === 'coparent';
   const subject = isHouseholdInvite
     ? `You're invited to help with ${playerName} on ALL PLAYS`
-    : `You're invited to follow ${playerName} on ALL PLAYS`;
+    : isCoParentInvite
+      ? `You're invited to co-parent ${playerName} on ALL PLAYS`
+      : `You're invited to follow ${playerName} on ALL PLAYS`;
   const context = teamName ? `${playerName} on ${teamName}` : playerName;
   const intro = isHouseholdInvite
     ? `A parent invited you to connect with ${context}${relation ? ` as ${relation}` : ''}.`
+    : isCoParentInvite
+      ? `A parent invited you to connect with ${context} as a co-parent.`
     : `A coach invited you to connect with ${context}${relation ? ` as ${relation}` : ''}.`;
   const text = [
     intro,

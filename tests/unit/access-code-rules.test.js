@@ -69,6 +69,15 @@ describe('access code Firestore rules', () => {
         expect(rules).toContain("'teamName', 'relation', 'email', 'generatedBy', 'createdAt'");
     });
 
+    it('allows only an already-linked parent to create a schema-valid co-parent invite', () => {
+        expect(rules).toContain('function isCoParentInvitePayloadValid(data)');
+        expect(rules).toContain("data.type == 'coparent_invite'");
+        expect(rules).toContain('isParentForPlayer(data.teamId, data.playerId)');
+        expect(accessCodeRules).toContain("request.resource.data.get('type', null) == 'coparent_invite'");
+        expect(accessCodeRules).toContain('isCoParentInvitePayloadValid(request.resource.data)');
+        expect(accessCodeRules).toContain('request.resource.data.code == codeId');
+    });
+
     it('locks parent_invite targeting to redemption and revoke-only updates', () => {
         expect(rules).toContain('function isParentInviteRedemptionUpdate()');
         expect(rules).toContain("resource.data.get('type', null) == 'parent_invite'");

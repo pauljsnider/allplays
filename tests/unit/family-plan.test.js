@@ -68,15 +68,19 @@ describe('family plan helpers', () => {
     });
 
     it('writes a pending household invite and access code for an available slot', async () => {
-        const addDoc = vi.fn()
-            .mockResolvedValueOnce({ id: 'member-1' })
-            .mockResolvedValueOnce({ id: 'code-1' });
+        const addDoc = vi.fn().mockResolvedValueOnce({ id: 'member-1' });
+        const transactionSet = vi.fn();
+        const runTransaction = vi.fn(async (_db, callback) => callback({
+            get: vi.fn().mockResolvedValue({ exists: () => false }),
+            set: transactionSet
+        }));
         const updateDoc = vi.fn().mockResolvedValue();
         const firebase = {
             db: {},
             collection: vi.fn((_db, path) => ({ path })),
-            doc: vi.fn((_db, ...parts) => ({ path: parts.join('/') })),
+            doc: vi.fn((_db, ...parts) => ({ path: parts.join('/'), id: parts.at(-1) })),
             addDoc,
+            runTransaction,
             updateDoc,
             Timestamp: { fromMillis: (value) => ({ millis: value }) },
             serverTimestamp: () => 'server-now'
@@ -106,7 +110,7 @@ describe('family plan helpers', () => {
             playerId: 'player-1',
             relation: 'Guardian'
         }));
-        expect(addDoc).toHaveBeenCalledWith({ path: 'accessCodes' }, expect.objectContaining({
+        expect(transactionSet).toHaveBeenCalledWith(expect.objectContaining({ path: expect.stringMatching(/^accessCodes\/[A-Z2-9]{8}$/) }), expect.objectContaining({
             type: 'household_invite',
             email: 'new@example.com',
             organizerUserId: 'user-1',
@@ -116,8 +120,8 @@ describe('family plan helpers', () => {
             used: false,
             revoked: false
         }));
-        expect(updateDoc).toHaveBeenCalledWith({ path: 'users/user-1/familyMemberships/member-1' }, expect.objectContaining({
-            accessCodeId: 'code-1',
+        expect(updateDoc).toHaveBeenCalledWith(expect.objectContaining({ path: 'users/user-1/familyMemberships/member-1' }), expect.objectContaining({
+            accessCodeId: expect.stringMatching(/^[A-Z2-9]{8}$/),
             inviteUrl: expect.stringContaining('accept-invite.html?code=')
         }));
         expect(result.inviteUrl).toContain('accept-invite.html?code=');

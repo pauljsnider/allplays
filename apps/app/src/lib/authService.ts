@@ -66,6 +66,8 @@ type FirebaseUser = {
 type UserCredential = {
   user: FirebaseUser;
   nativeRest?: boolean;
+  activationCodeRedeemed?: boolean;
+  wasNewUser?: boolean;
 };
 
 type HydratedUser = {
@@ -1080,7 +1082,12 @@ async function processGoogleResult(result: UserCredential | null, activationCode
   }
   const dbModule = await loadLegacyAuthDb();
 
+  const code = normalizeCode(activationCode || window.sessionStorage.getItem(pendingActivationCodeKey));
   if (!isNewFirebaseUser(result.user)) {
+    if (code) {
+      await redeemInviteForUser(result.user.uid, code, result.user.email);
+      result.activationCodeRedeemed = true;
+    }
     await dbModule.updateUserProfile(result.user.uid, {
       email: result.user.email || '',
       fullName: result.user.displayName || '',
@@ -1089,10 +1096,11 @@ async function processGoogleResult(result: UserCredential | null, activationCode
     }).catch((error: unknown) => {
       logger.warn('Unable to update Google lastLogin; continuing sign-in.', { error });
     });
+    window.sessionStorage.removeItem(pendingActivationCodeKey);
+    result.wasNewUser = false;
     return result;
   }
 
-  const code = normalizeCode(activationCode || window.sessionStorage.getItem(pendingActivationCodeKey));
   if (!code) {
     window.sessionStorage.removeItem(pendingActivationCodeKey);
     await cleanupFailedNewUser(result.user, 'missing activation code');
@@ -1143,6 +1151,8 @@ async function processGoogleResult(result: UserCredential | null, activationCode
   }
 
   window.sessionStorage.removeItem(pendingActivationCodeKey);
+  result.activationCodeRedeemed = true;
+  result.wasNewUser = true;
   return result;
 }
 

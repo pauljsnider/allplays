@@ -70,7 +70,21 @@ export function getGoogleAuthModeForLoginPage({ isLogin = true, urlCodeParam = n
     return 'signup';
 }
 
-const REDEEMABLE_INVITE_TYPES = new Set(['', 'parent', 'admin', 'household', 'household_invite', 'coparent_invite']);
+const REDEEMABLE_INVITE_TYPES = new Set([
+    '',
+    'standard',
+    'site',
+    'parent',
+    'parent_invite',
+    'admin',
+    'admin_invite',
+    'household',
+    'household_invite',
+    'coparent',
+    'co_parent',
+    'co-parent',
+    'coparent_invite'
+]);
 
 export function createLoginRedirectCoordinator({
     windowObject = window,

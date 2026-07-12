@@ -47,7 +47,7 @@ export function AuthPage({ auth }: { auth: AuthState }) {
 
   const title = mode === 'signup' ? 'Create your account' : 'Sign in';
   const subtitle = mode === 'signup'
-    ? 'Use an activation or invite code, then verify your email.'
+    ? 'Use any 8-character ALL PLAYS join code, then verify your email.'
     : 'Use email/password or Google to continue.';
 
   const postAuthRoute = useMemo(() => {
@@ -73,7 +73,12 @@ export function AuthPage({ auth }: { auth: AuthState }) {
           return;
         }
         await auth.refresh();
-        navigate(postAuthRoute, { replace: true });
+        const redirectRoute = result.wasNewUser
+          ? '/verify-pending'
+          : inviteCode
+            ? postAuthRoute
+            : '/home';
+        navigate(redirectRoute, { replace: true });
       } catch (redirectError: any) {
         if (!cancelled) {
           setError(describeAuthError(redirectError));
@@ -85,7 +90,7 @@ export function AuthPage({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [auth, navigate, postAuthRoute]);
+  }, [auth, inviteCode, navigate, postAuthRoute]);
 
   const clearStatus = () => {
     setError('');
@@ -155,7 +160,7 @@ export function AuthPage({ auth }: { auth: AuthState }) {
       const result = await signInWithGoogleAccount(code || null);
       if (result) {
         const hydrated = mode === 'signup' || inviteCode ? null : await hydrateFirebaseUser(result.user).catch(() => null);
-        const postGoogleRoute = mode === 'signup'
+        const postGoogleRoute = mode === 'signup' && result.wasNewUser
           ? requestedNextRoute ? `/verify-pending?next=${encodeURIComponent(requestedNextRoute)}` : '/verify-pending'
           : inviteCode
             ? postAuthRoute
@@ -210,7 +215,7 @@ export function AuthPage({ auth }: { auth: AuthState }) {
 
       {inviteCode ? (
         <div className="mt-4 rounded-xl border border-primary-100 bg-primary-50 p-3 text-sm font-semibold text-primary-800">
-          <div>Invite code entered: <span className="font-mono font-black tracking-widest">{inviteCode}</span></div>
+          <div>Join code entered: <span className="font-mono font-black tracking-widest">{inviteCode}</span></div>
           <div className="mt-1">We’ll verify it after you sign in or create your account.</div>
         </div>
       ) : null}
@@ -268,7 +273,7 @@ export function AuthPage({ auth }: { auth: AuthState }) {
                 autoComplete="new-password"
               />
             </Field>
-            <Field icon={Eye} label="Activation or invite code">
+            <Field icon={Eye} label="Join code">
               <input
                 className="auth-input font-mono uppercase tracking-widest"
                 value={activationCode}
@@ -312,7 +317,7 @@ export function AuthPage({ auth }: { auth: AuthState }) {
       ) : null}
 
       <div className="mt-4 flex flex-wrap justify-center gap-3 text-xs font-bold text-gray-500">
-        <Link to="/accept-invite" className="text-primary-700">Enter invite code</Link>
+        <Link to="/accept-invite" className="text-primary-700">Enter join code</Link>
       </div>
     </AuthFrame>
   );

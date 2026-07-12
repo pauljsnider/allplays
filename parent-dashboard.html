@@ -388,7 +388,7 @@
             listFamilyShareTokens,
             revokeFamilyShareToken,
             updateFamilyShareTokenCalendars
-        } from './js/db.js?v=91';
+        } from './js/db.js?v=92';
         import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } from './js/utils.js?v=15';
         import {
             getIncentiveRules,
@@ -424,7 +424,8 @@
         import { applyRsvpHydration } from './js/rsvp-hydration.js?v=1';
         import { handleParentTeamFeeCheckoutClick, renderParentTeamFees } from './js/parent-dashboard-fees.js?v=6';
         import { initiateTeamFeeCheckout } from './js/stripe-service.js?v=1';
-        import { renderFamilyPlanSection } from './js/family-plan.js?v=4';
+        import { renderFamilyPlanSection } from './js/family-plan.js?v=5';
+        import { buildLegacyJoinUrl } from './js/join-code.js?v=1';
         import { buildAvailabilityNoteRows, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from './js/availability-preferences.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
@@ -549,13 +550,11 @@
 
                 const invite = await inviteCoParentToAthlete(currentUserId, teamId, playerId, coParentEmail, playerName);
                 const inviteCode = String(invite?.code || '').trim().toUpperCase();
-                const inviteUrl = inviteCode
-                    ? `${window.location.origin}${window.location.pathname.replace(/[^/]*$/, '')}accept-invite.html?code=${encodeURIComponent(inviteCode)}&type=coparent_invite`
-                    : '';
+                const inviteUrl = buildLegacyJoinUrl(inviteCode, 'coparent', window.location.origin);
 
                 if (statusEl) {
                     statusEl.innerHTML = inviteUrl
-                        ? `Co-parent invite created. Share this link with ${escapeHtml(coParentEmail)}: <a class="underline font-medium break-all" href="${escapeHtml(inviteUrl)}">${escapeHtml(inviteUrl)}</a><br><span class="text-xs text-gray-600">Invite code: <span class="font-mono font-semibold">${escapeHtml(inviteCode)}</span></span>`
+                        ? `Co-parent invite created and queued for ${escapeHtml(coParentEmail)}. You can also share this link: <a class="underline font-medium break-all" href="${escapeHtml(inviteUrl)}">${escapeHtml(inviteUrl)}</a><br><span class="text-xs text-gray-600">Join code: <span class="font-mono font-semibold">${escapeHtml(inviteCode)}</span></span>`
                         : 'Co-parent invite created. Share the invite code with the co-parent.';
                     statusEl.className = 'text-sm mt-2 text-green-600';
                     statusEl.classList.remove('hidden');
