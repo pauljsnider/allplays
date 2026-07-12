@@ -26,21 +26,25 @@ describe('authentication email delivery routing', () => {
     it('generates action links on the server and queues every auth email through mail', () => {
         const functionsSource = read('functions/index.js');
         const authEmailCoreSource = read('functions/auth-email-core.cjs');
+        const callablesSource = read('functions/auth-email-callables.cjs');
+        const deliveryStoreSource = read('functions/auth-email-delivery-store.cjs');
 
-        expect(functionsSource).toContain('generatePasswordResetLink');
-        expect(functionsSource).toContain('generateEmailVerificationLink');
-        expect(functionsSource).toContain('generateSignInWithEmailLink');
-        expect(functionsSource).toContain("firestore.collection('mail').doc(buildAuthEmailMailDocId");
+        expect(callablesSource).toContain('generatePasswordResetLink');
+        expect(callablesSource).toContain('generateEmailVerificationLink');
+        expect(callablesSource).toContain('generateSignInWithEmailLink');
+        expect(deliveryStoreSource).toContain("firestore.collection('mail').doc(buildMailDocId");
+        expect(functionsSource).toContain('createAuthEmailCallableHandlers');
+        expect(functionsSource).toContain('createAuthEmailDeliveryStore');
         expect(authEmailCoreSource).toContain("provider: 'resend'");
     });
 
     it('does not report a rate-limited invite as sent when no mail job was created', () => {
-        const functionsSource = read('functions/index.js');
-        const callableStart = functionsSource.indexOf('exports.queueInviteSignInEmail');
-        const callableEnd = functionsSource.indexOf('exports.queueInviteEmail =', callableStart + 1);
-        const inviteCallable = functionsSource.slice(callableStart, callableEnd);
+        const callablesSource = read('functions/auth-email-callables.cjs');
+        const callableStart = callablesSource.indexOf('async function queueInviteSignInEmail');
+        const callableEnd = callablesSource.indexOf('\n  return {', callableStart);
+        const inviteCallable = callablesSource.slice(callableStart, callableEnd);
         const cooldownStart = inviteCallable.indexOf('if (!reserved)');
-        const cooldownEnd = inviteCallable.indexOf('\n  try {', cooldownStart);
+        const cooldownEnd = inviteCallable.indexOf('\n    try {', cooldownStart);
         const cooldownBranch = inviteCallable.slice(cooldownStart, cooldownEnd);
 
         expect(cooldownBranch).toContain('return { queued: false, existingUser };');

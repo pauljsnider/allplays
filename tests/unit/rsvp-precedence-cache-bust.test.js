@@ -32,16 +32,16 @@ describe('RSVP precedence cache delivery', () => {
 
     it('versions every deployed auth consumer after auth adopts the fresh db key', () => {
         const authConsumers = {
-            'accept-invite.html': 'auth.js?v=46',
-            'dashboard.html': 'auth.js?v=46',
-            'edit-team.html': 'auth.js?v=47',
-            'login.html': 'auth.js?v=47',
-            'parent-dashboard.html': 'auth.js?v=46',
-            'js/admin.js': 'auth.js?v=46',
-            'js/live-game.js': 'auth.js?v=46',
-            'js/live-tracker.js': 'auth.js?v=46',
-            'js/team-media.js': 'auth.js?v=46',
-            'js/utils.js': 'auth.js?v=46'
+            'accept-invite.html': 'auth.js?v=48',
+            'dashboard.html': 'auth.js?v=48',
+            'edit-team.html': 'auth.js?v=48',
+            'login.html': 'auth.js?v=48',
+            'parent-dashboard.html': 'auth.js?v=48',
+            'js/admin.js': 'auth.js?v=48',
+            'js/live-game.js': 'auth.js?v=48',
+            'js/live-tracker.js': 'auth.js?v=48',
+            'js/team-media.js': 'auth.js?v=48',
+            'js/utils.js': 'auth.js?v=48'
         };
 
         for (const [path, expectedVersion] of Object.entries(authConsumers)) {
