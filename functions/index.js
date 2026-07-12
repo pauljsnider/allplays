@@ -3099,7 +3099,22 @@ function isRecentSignupRollbackTimestamp(value, nowMs) {
     return false;
   }
   const millis = value.toMillis();
-  return nowMs - millis <= SIGNUP_REDEMPTION_ROLLBACK_WINDOW_MS;
+  const ageMs = nowMs - millis;
+  return ageMs >= 0 && ageMs <= SIGNUP_REDEMPTION_ROLLBACK_WINDOW_MS;
+}
+
+function isRecentSignupRollbackDate(value, nowMs) {
+  const millis = typeof value === 'number' ? value : Date.parse(String(value || ''));
+  if (!Number.isFinite(millis)) {
+    return false;
+  }
+  const ageMs = nowMs - millis;
+  return ageMs >= 0 && ageMs <= SIGNUP_REDEMPTION_ROLLBACK_WINDOW_MS;
+}
+
+function isRecentSignupAuthUserRecord(userRecord, nowMs) {
+  return isRecentSignupRollbackDate(userRecord?.metadata?.creationTime, nowMs) ||
+    isRecentSignupRollbackDate(userRecord?.metadata?.createdAt, nowMs);
 }
 
 // Rolls back what an invite/access-code redemption wrote when a brand-new
@@ -3118,6 +3133,15 @@ exports.rollbackFailedSignupRedemption = functions.https.onCall(async (data, con
     throw new functions.https.HttpsError('invalid-argument', 'Access code is required.');
   }
 
+  const rollbackRequestedAtMs = Date.now();
+  let authUserRecentlyCreated = false;
+  try {
+    const authUserRecord = await admin.auth().getUser(userId);
+    authUserRecentlyCreated = isRecentSignupAuthUserRecord(authUserRecord, rollbackRequestedAtMs);
+  } catch (error) {
+    functions.logger.warn('Unable to verify recent auth user for signup rollback.', { userId, error });
+  }
+
   const codeQuerySnap = await firestore.collection('accessCodes').where('code', '==', code).limit(1).get();
   const codeRef = codeQuerySnap.empty ? null : codeQuerySnap.docs[0].ref;
   const userRef = firestore.doc(`users/${userId}`);
@@ -3125,7 +3149,7 @@ exports.rollbackFailedSignupRedemption = functions.https.onCall(async (data, con
   let responsePayload = null;
 
   await firestore.runTransaction(async (transaction) => {
-    const nowMs = Date.now();
+    const nowMs = rollbackRequestedAtMs;
     const [codeSnap, userSnap] = await Promise.all([
       codeRef ? transaction.get(codeRef) : Promise.resolve(null),
       transaction.get(userRef)
@@ -3138,17 +3162,14 @@ exports.rollbackFailedSignupRedemption = functions.https.onCall(async (data, con
       codeData &&
       codeData.used === true &&
       codeData.usedBy === userId &&
+      authUserRecentlyCreated &&
       (!codeData.usedAt || isRecentSignupRollbackTimestamp(codeData.usedAt, nowMs))
     );
 
-    const userData = userSnap.exists ? userSnap.data() || {} : {};
-    // The users/{uid} doc is deleted only when it clearly belongs to this
-    // failed signup: either the code rollback matched this uid, or the doc
-    // was created within the rollback window.
-    const canDeleteUserDoc = userSnap.exists && (
-      canRollBackCode ||
-      isRecentSignupRollbackTimestamp(userData.createdAt, nowMs)
-    );
+    // The users/{uid} doc is deleted only when the Firebase Auth account itself
+    // was created during this failed-signup window. A recent code redemption by
+    // an older account is not enough to remove established profile data.
+    const canDeleteUserDoc = userSnap.exists && authUserRecentlyCreated;
 
     const codeType = codeData ? String(codeData.type || 'standard') : 'standard';
     const teamId = codeData ? String(codeData.teamId || '').trim() : '';
