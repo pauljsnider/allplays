@@ -20,7 +20,7 @@ export function isInviteAlreadyRedeemedError(error) {
 /** Dashboard a successful redemption of this invite type would land on. */
 export function getInviteDashboardUrl(inviteType) {
     const normalized = String(inviteType || '').trim().toLowerCase();
-    if (normalized === 'admin' || normalized === 'admin_invite') {
+    if (normalized === 'admin' || normalized === 'admin_invite' || normalized === 'standard' || normalized === 'site') {
         return 'dashboard.html';
     }
     // parent, household, and unknown types all land on the parent dashboard.
@@ -94,6 +94,27 @@ export async function processInviteCode(userId, code, deps, authEmail = null) {
     const validation = await validateAccessCode(code);
     if (!validation.valid) {
         throw new Error(validation.message || 'Invalid or expired invite code');
+    }
+
+    if (validation.alreadyRedeemed === true) {
+        return {
+            success: true,
+            alreadyRedeemed: true,
+            message: 'This code is already connected to your account.',
+            redirectUrl: getInviteDashboardUrl(validation.type)
+        };
+    }
+
+    if (validation.type === 'standard' || !validation.type) {
+        if (typeof markAccessCodeAsUsed !== 'function') {
+            throw new Error('Missing access code redemption handler');
+        }
+        await markAccessCodeAsUsed(validation.codeId, userId);
+        return {
+            success: true,
+            message: "Your ALL PLAYS access code has been applied!",
+            redirectUrl: 'dashboard.html'
+        };
     }
 
     if (validation.type === 'parent_invite') {

@@ -12,6 +12,7 @@ const {
 test('normalizes supported parent invite types', () => {
   assert.equal(normalizeInviteEmailType('parent_invite'), 'parent');
   assert.equal(normalizeInviteEmailType('household_invite'), 'household');
+  assert.equal(normalizeInviteEmailType('coparent_invite'), 'coparent');
   assert.equal(normalizeInviteEmailType('admin_invite'), '');
 });
 
@@ -58,4 +59,17 @@ test('builds household invite copy without trusting html fields', () => {
   assert.match(message.signupUrl, /type=household/);
   assert.doesNotMatch(message.html, /<Pat>/);
   assert.match(message.html, /&lt;Pat&gt;/);
+});
+
+test('builds co-parent invite copy through the canonical accept flow', () => {
+  const message = buildParentInviteEmailMessage({
+    code: 'COPA1234',
+    type: 'coparent_invite',
+    playerName: 'Sam',
+    teamName: 'Tigers'
+  });
+
+  assert.match(message.subject, /co-parent Sam/);
+  assert.match(message.text, /as a co-parent/);
+  assert.match(message.signupUrl, /accept-invite\.html\?code=COPA1234&type=coparent/);
 });

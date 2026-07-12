@@ -1,27 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { generateJoinCode } from '../../js/join-code.js';
 
-// Node env (default): import.meta.url is a file URL for readFileSync, and
-// Node 20 exposes globalThis.crypto (Web Crypto) for the real-RNG test.
-
-// Behavioral tests for generateHouseholdInviteCode (not exported, so extracted
-// and executed with an injected `globalThis` so we control the RNG). Verifies it
-// consumes the crypto RNG correctly and never falls back to a weak source.
-
-function extractGenerator() {
-    const source = readFileSync(new URL('../../js/family-plan.js', import.meta.url), 'utf8');
-    const match = source.match(/function generateHouseholdInviteCode\(\) \{[\s\S]*?\n\}/);
-    expect(match, 'generateHouseholdInviteCode should exist').toBeTruthy();
-    return match[0];
-}
+// The family-plan generator delegates to this shared helper. These behavioral
+// tests keep the code format and cryptographic source consistent for every flow.
 
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
-// Run the extracted function with a controllable globalThis.crypto.
 function runWith(getRandomValues) {
-    const fnSource = extractGenerator();
-    const factory = new Function('globalThis', `${fnSource}\nreturn generateHouseholdInviteCode();`);
-    return factory({ crypto: { getRandomValues } });
+    return generateJoinCode({ getRandomValues });
 }
 
 describe('generateHouseholdInviteCode behavior', () => {
@@ -51,11 +37,9 @@ describe('generateHouseholdInviteCode behavior', () => {
     });
 
     it('uses the real Web Crypto RNG when available (high uniqueness)', () => {
-        const fnSource = extractGenerator();
-        const factory = new Function('globalThis', `${fnSource}\nreturn generateHouseholdInviteCode();`);
         const codes = new Set();
         for (let i = 0; i < 200; i += 1) {
-            codes.add(factory(globalThis)); // real globalThis.crypto in jsdom
+            codes.add(generateJoinCode());
         }
         // Collisions would indicate a broken/weak RNG; expect near-perfect uniqueness.
         expect(codes.size).toBeGreaterThan(195);

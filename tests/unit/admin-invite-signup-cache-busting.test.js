@@ -3,7 +3,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 function collectVersionedSourceFiles(dir, root = dir) {
-    const ignoredDirs = new Set(['.git', 'coverage', 'dist', 'docs', 'node_modules', 'spec', 'tests']);
+    const ignoredDirs = new Set(['.claude', '.git', '_temp', 'coverage', 'dist', 'docs', 'node_modules', 'spec', 'tests']);
     const files = [];
 
     for (const entry of readdirSync(dir)) {
@@ -35,8 +35,8 @@ describe('admin invite signup cache busting', () => {
         const authSource = readFileSync(resolve(process.cwd(), 'js/auth.js'), 'utf8');
 
         expect(authSource).toContain("import { executeEmailPasswordSignup } from './signup-flow.js?v=6';");
-        expect(authSource).toContain("import { redeemAdminInviteAcceptance } from './admin-invite.js?v=6';");
-        expect(authSource).toContain("from './db.js?v=91';");
+        expect(authSource).toContain("import { redeemAdminInviteAcceptance, redeemAdminInviteAtomically } from './admin-invite.js?v=6';");
+        expect(authSource).toContain("from './db.js?v=92';");
     });
 
     it('pins fresh invite acceptance module versions for admin invite redemption', () => {
@@ -49,15 +49,15 @@ describe('admin invite signup cache busting', () => {
             "import { redeemAdminInviteAtomically } from './js/admin-invite.js?v=6';"
         );
         expect(acceptInviteSource).toContain(
-            "import { createInviteProcessor, getInviteDashboardUrl, isInviteAlreadyRedeemedError } from './js/accept-invite-flow.js?v=8';"
+            "import { createInviteProcessor, getInviteDashboardUrl, isInviteAlreadyRedeemedError } from './js/accept-invite-flow.js?v=9';"
         );
     });
 
     it('bumps auth module consumers after signup flow changes', () => {
         const authConsumers = {
-            'login.html': 'auth.js?v=46',
+            'login.html': 'auth.js?v=47',
             'accept-invite.html': 'auth.js?v=46',
-            'edit-team.html': 'auth.js?v=46',
+            'edit-team.html': 'auth.js?v=47',
             'js/admin.js': 'auth.js?v=46',
             'js/live-game.js': 'auth.js?v=46',
             'js/live-tracker.js': 'auth.js?v=46',
@@ -70,7 +70,7 @@ describe('admin invite signup cache busting', () => {
         }
 
         const editTeamSource = readFileSync(resolve(process.cwd(), 'edit-team.html'), 'utf8');
-        expect(editTeamSource).toContain("import { checkAuth, sendInviteEmail } from './js/auth.js?v=46';");
+        expect(editTeamSource).toContain("import { checkAuth, sendInviteEmail } from './js/auth.js?v=47';");
         expect(editTeamSource).not.toContain("import { checkAuth, sendInviteEmail } from './js/auth.js?v=40';");
     });
 
@@ -86,7 +86,7 @@ describe('admin invite signup cache busting', () => {
     it('does not leave deployed source consumers pinned to stale auth or db wrappers', () => {
         const staleConsumers = collectVersionedSourceFiles(process.cwd()).flatMap((relativePath) => {
             const source = readFileSync(resolve(process.cwd(), relativePath), 'utf8');
-            const staleImports = source.match(/(?:(?<![\w-])auth\.js\?v=(?!46\b)\d+|(?<![\w-])utils\.js\?v=(?!15\b)\d+|db\.js\?v=(?:76|77|78))\b/g) || [];
+            const staleImports = source.match(/(?:(?<![\w-])auth\.js\?v=(?!(?:46|47)\b)\d+|(?<![\w-])utils\.js\?v=(?!15\b)\d+|db\.js\?v=(?:76|77|78))\b/g) || [];
             return staleImports.map((importPath) => `${relativePath}: ${importPath}`);
         });
 

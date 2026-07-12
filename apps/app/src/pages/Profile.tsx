@@ -1902,7 +1902,7 @@ function toDate(value: any): Date | null {
 }
 
 function buildSignupLink(code: string, inviteType?: string | null) {
-  return buildAppAcceptInviteUrl(code, inviteType);
+  return buildAppAcceptInviteUrl(code, inviteType || 'standard');
 }
 
 function buildInviteShareInput(code: string, metadata?: { email?: string | null; phone?: string | null; type?: string | null }) {

@@ -69,4 +69,35 @@ describe('access code validation service', () => {
         });
         expect(buildGenericPreAuthAccessCodeValidationResult()).toEqual(genericResult);
     });
+
+    it('treats a code previously redeemed by the same active account as idempotent', () => {
+        expect(validateAccessCodeCandidates([{
+            id: 'used-parent',
+            data: {
+                code: 'PARENT12',
+                type: 'parent_invite',
+                used: true,
+                usedBy: 'parent-1',
+                expiresAt: Date.now() - 60_000
+            }
+        }], Date.now(), 'parent-1')).toEqual({
+            valid: true,
+            alreadyRedeemed: true,
+            codeId: 'used-parent',
+            type: 'parent_invite',
+            data: { code: 'PARENT12', type: 'parent_invite' }
+        });
+    });
+
+    it('does not treat another account or a revoked grant as already redeemed', () => {
+        expect(validateAccessCodeCandidates([{
+            id: 'used-parent',
+            data: { code: 'PARENT12', type: 'parent_invite', used: true, usedBy: 'parent-1' }
+        }], Date.now(), 'parent-2')).toEqual({ valid: false, message: 'Code already used' });
+
+        expect(validateAccessCodeCandidates([{
+            id: 'revoked-parent',
+            data: { code: 'PARENT12', type: 'parent_invite', used: true, usedBy: 'parent-1', revoked: true }
+        }], Date.now(), 'parent-1')).toEqual({ valid: false, message: 'Invite is no longer active' });
+    });
 });

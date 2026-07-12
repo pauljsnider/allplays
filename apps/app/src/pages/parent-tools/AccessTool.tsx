@@ -376,7 +376,7 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
                         <form className="mt-3 rounded-2xl border border-primary-100 bg-primary-50/60 p-3" onSubmit={redeem}>
                             <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
                                 <label className="min-w-0 flex-1">
-                                    <span className="app-label">Invite code</span>
+                                    <span className="app-label">Join code</span>
                                     <input
                                         className="auth-input mt-1 text-center font-mono uppercase tracking-[0.3em]"
                                         value={redeemCode}
@@ -395,7 +395,7 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
                                     {redeeming ? 'Redeeming...' : 'Redeem code'}
                                 </button>
                             </div>
-                            <p className="mt-2 text-xs font-semibold text-gray-600">Already have an 8-character player invite? Redeem it here and stay in Parent Tools.</p>
+                            <p className="mt-2 text-xs font-semibold text-gray-600">Have any 8-character ALL PLAYS code? Apply it here while signed in.</p>
                         </form>
                         {manualRequestOpen ? (
                             <form className="mt-3 grid gap-3 lg:grid-cols-[1fr_1fr_auto]" onSubmit={submit}>
@@ -487,7 +487,7 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
             </section>
 
             <section className="app-card p-4">
-                <ToolHeader icon={Users} title="Access requests" detail="Pending and decided requests from your account." action={<Link to="/accept-invite" className="secondary-button !min-h-9 text-xs">Open full invite flow</Link>} />
+                <ToolHeader icon={Users} title="Access requests" detail="Pending and decided requests from your account." action={<Link to="/accept-invite" className="secondary-button !min-h-9 text-xs">Open join-code flow</Link>} />
                 <div className="mt-3 grid gap-2 md:grid-cols-2">
                     {requests.length ? requests.map((request) => <AccessRequestCard key={request.id || `${request.teamId}-${request.playerId}`} request={request} />) : (
                         <EmptyState icon={Shield} title="No requests yet" detail="Invite codes can be redeemed here, or you can open the full invite flow." />

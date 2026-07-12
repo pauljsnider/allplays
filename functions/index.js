@@ -151,7 +151,7 @@ if (admin.apps.length === 0) {
 }
 
 const firestore = admin.firestore();
-const INVITE_EMAIL_TYPES = new Set(['parent_invite', 'household_invite']);
+const INVITE_EMAIL_TYPES = new Set(['parent_invite', 'household_invite', 'coparent_invite']);
 const TEAM_MEDIA_NOTIFICATION_BATCH_WINDOW_MS = 60 * 60 * 1000;
 const TEAM_MEDIA_NOTIFICATION_DISPATCH_LIMIT = 50;
 const FIRESTORE_BATCH_SAFE_WRITE_LIMIT = 450;
@@ -3070,10 +3070,11 @@ exports.validateAccessCodeForAcceptance = functions.https.onCall(async (data, co
     throw new functions.https.HttpsError('invalid-argument', 'Access code is required.');
   }
   const nativeAuthToken = String(data?.nativeAuthToken || '').trim();
-  const hasNativeAuthToken = nativeAuthToken
-    ? await admin.auth().verifyIdToken(nativeAuthToken).then(() => true).catch(() => false)
-    : false;
-  if (!context?.auth?.uid && !hasNativeAuthToken) {
+  const nativeAuthUser = nativeAuthToken
+    ? await admin.auth().verifyIdToken(nativeAuthToken).catch(() => null)
+    : null;
+  const acceptingUserId = String(context?.auth?.uid || nativeAuthUser?.uid || nativeAuthUser?.sub || '').trim();
+  if (!acceptingUserId) {
     return buildGenericPreAuthAccessCodeValidationResult();
   }
 
@@ -3081,7 +3082,7 @@ exports.validateAccessCodeForAcceptance = functions.https.onCall(async (data, co
   return validateAccessCodeCandidates(snapshot.docs.map((docSnap) => ({
     id: docSnap.id,
     data: docSnap.data() || {}
-  })));
+  })), Date.now(), acceptingUserId);
 });
 
 function accountMergePreviewAuditRef() {

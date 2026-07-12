@@ -573,17 +573,18 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, getPlayerPrivateProfile, copySelectedPlayersForTeamRollover, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail, getTeamAccessCodes, getConfigs, getGames, updateGame, getRegistrationSources, syncRegistrationProvider } from './js/db.js?v=91';
+        import { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, getPlayerPrivateProfile, copySelectedPlayersForTeamRollover, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail, getTeamAccessCodes, getConfigs, getGames, updateGame, getRegistrationSources, syncRegistrationProvider } from './js/db.js?v=92';
         import { getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=1';
         import { buildTeamSportConfigMigrationPlan } from './js/team-stat-config-migration.js?v=1';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=15';
-        import { checkAuth, sendInviteEmail } from './js/auth.js?v=46';
+        import { checkAuth, sendInviteEmail } from './js/auth.js?v=47';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
         import { normalizeYouTubeEmbedUrl } from './js/live-stream-utils.js?v=1';
         import { hasFullTeamAccess, normalizeAdminEmailList, normalizeStreamVolunteerEmailList, normalizeTeamPermissions } from './js/team-access.js?v=3';
-        import { processPendingAdminInvites, buildAdminInviteFollowUp, inviteExistingTeamAdmin, loadPendingAdminInviteEmails } from './js/edit-team-admin-invites.js?v=4';
+        import { processPendingAdminInvites, buildAdminInviteFollowUp, inviteExistingTeamAdmin, loadPendingAdminInviteEmails } from './js/edit-team-admin-invites.js?v=5';
         import { buildRolloverAccessPreview, buildStaffAdminRolloverUpdate } from './js/rollover-access.js?v=1';
         import { buildRosterRolloverPreviewRows } from './js/roster-rollover-preview.js?v=1';
+        import { buildLegacyJoinUrl } from './js/join-code.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -1851,7 +1852,7 @@
         // Copy admin signup link button
         document.getElementById('copy-admin-link-btn').addEventListener('click', async () => {
             const code = document.getElementById('admin-code-text').textContent;
-            const signupUrl = `${window.location.origin}/login.html?code=${code}&type=admin`;
+            const signupUrl = buildLegacyJoinUrl(code, 'admin', window.location.origin);
             try {
                 await navigator.clipboard.writeText(signupUrl);
                 const btn = document.getElementById('copy-admin-link-btn');

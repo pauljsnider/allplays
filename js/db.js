@@ -72,6 +72,7 @@ import {
 } from './shared-schedule-sync.js';
 import { normalizeTeamNotificationPreferences } from './notification-preferences.js?v=1';
 import { normalizeAdSpaceSponsors, normalizeLocalAttractionSponsors } from './local-attractions.js?v=2';
+import { generateJoinCode, normalizeJoinCode } from './join-code.js?v=1';
 import { buildRosterFieldDefinitionPayload } from './roster-profile-fields.js?v=2';
 import { commitFamilyRsvpWrite } from './rsvp-family-write.js?v=1';
 import {
@@ -4299,44 +4300,15 @@ export async function getTrackedCalendarEventUids(teamId, preloadedGames = null)
 }
 
 // Access Codes
-const ACCESS_CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // Removed ambiguous chars like 0, O, I, 1
-const ACCESS_CODE_LENGTH = 8;
 const ACCESS_CODE_MAX_ATTEMPTS = 5;
 
-function getCryptoRandomValues(length) {
-    const cryptoApi = globalThis.crypto || globalThis.msCrypto;
-    if (!cryptoApi?.getRandomValues) {
-        throw new Error('Secure random number generation is not available in this browser.');
-    }
-
-    const values = new Uint8Array(length);
-    cryptoApi.getRandomValues(values);
-    return values;
-}
-
 export function generateAccessCode() {
-    const maxUnbiasedValue = Math.floor(256 / ACCESS_CODE_CHARS.length) * ACCESS_CODE_CHARS.length;
-    let code = '';
-
-    while (code.length < ACCESS_CODE_LENGTH) {
-        const randomValues = getCryptoRandomValues(ACCESS_CODE_LENGTH - code.length);
-        for (const value of randomValues) {
-            if (value >= maxUnbiasedValue) {
-                continue;
-            }
-            code += ACCESS_CODE_CHARS.charAt(value % ACCESS_CODE_CHARS.length);
-            if (code.length === ACCESS_CODE_LENGTH) {
-                break;
-            }
-        }
-    }
-
-    return code;
+    return generateJoinCode();
 }
 
 async function createUniqueAccessCode(accessCodeData, preferredCode) {
     for (let attempt = 0; attempt < ACCESS_CODE_MAX_ATTEMPTS; attempt += 1) {
-        const candidateCode = String(attempt === 0 && preferredCode ? preferredCode : generateAccessCode()).trim().toUpperCase();
+        const candidateCode = normalizeJoinCode(attempt === 0 && preferredCode ? preferredCode : generateAccessCode());
         if (!candidateCode) {
             continue;
         }

@@ -15,10 +15,10 @@ describe('RSVP precedence cache delivery', () => {
             'edit-schedule.html': 'db.js?v=91',
             'game-day.html': 'db.js?v=91',
             'login.html': 'db.js?v=91',
-            'parent-dashboard.html': 'db.js?v=91',
+            'parent-dashboard.html': 'db.js?v=92',
             'team.html': 'db.js?v=91',
             'team-chat.html': 'db.js?v=94',
-            'js/auth.js': 'db.js?v=91',
+            'js/auth.js': 'db.js?v=92',
             'js/team-media.js': 'db.js?v=91'
         };
 
@@ -31,22 +31,22 @@ describe('RSVP precedence cache delivery', () => {
     });
 
     it('versions every deployed auth consumer after auth adopts the fresh db key', () => {
-        const authConsumers = [
-            'accept-invite.html',
-            'dashboard.html',
-            'edit-team.html',
-            'login.html',
-            'parent-dashboard.html',
-            'js/admin.js',
-            'js/live-game.js',
-            'js/live-tracker.js',
-            'js/team-media.js',
-            'js/utils.js'
-        ].map(readRepoFile);
+        const authConsumers = {
+            'accept-invite.html': 'auth.js?v=46',
+            'dashboard.html': 'auth.js?v=46',
+            'edit-team.html': 'auth.js?v=47',
+            'login.html': 'auth.js?v=47',
+            'parent-dashboard.html': 'auth.js?v=46',
+            'js/admin.js': 'auth.js?v=46',
+            'js/live-game.js': 'auth.js?v=46',
+            'js/live-tracker.js': 'auth.js?v=46',
+            'js/team-media.js': 'auth.js?v=46',
+            'js/utils.js': 'auth.js?v=46'
+        };
 
-        authConsumers.forEach((source) => {
-            expect(source).toContain('auth.js?v=46');
-        });
+        for (const [path, expectedVersion] of Object.entries(authConsumers)) {
+            expect(readRepoFile(path)).toContain(expectedVersion);
+        }
     });
 
     it('propagates fresh keys through cached wrapper and shared utility entry modules', () => {

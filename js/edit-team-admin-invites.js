@@ -1,3 +1,5 @@
+import { buildLegacyJoinUrl } from './join-code.js?v=1';
+
 export async function inviteExistingTeamAdmin({
     teamId,
     email,
@@ -181,9 +183,7 @@ export function buildAdminInviteFollowUp(summary, origin = '') {
 
         const canShareCode = (status === 'existing_user' || status === 'fallback_code') && Boolean(code);
         if (canShareCode) {
-            const acceptInviteUrl = normalizedOrigin
-                ? `${normalizedOrigin}/accept-invite.html?code=${encodeURIComponent(code)}&type=admin`
-                : `accept-invite.html?code=${encodeURIComponent(code)}&type=admin`;
+            const acceptInviteUrl = buildLegacyJoinUrl(code, 'admin', normalizedOrigin);
             shareableInvites.push({ email, code, acceptInviteUrl });
             continue;
         }

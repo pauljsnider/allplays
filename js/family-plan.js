@@ -1,4 +1,5 @@
 import { readAccountPremiumEntitlement } from './premium-entitlements.js?v=1';
+import { buildLegacyJoinUrl, generateJoinCode } from './join-code.js?v=1';
 
 export const MAX_FAMILY_PLAN_SLOTS = 4;
 
@@ -12,18 +13,32 @@ function normalizeStatus(value) {
 }
 
 function generateHouseholdInviteCode() {
-    // Household invite codes become access codes for family-plan linking, so use a
-    // cryptographically secure RNG — a non-crypto PRNG is predictable from observed
-    // outputs. The 32-char alphabet divides 256 evenly, so byte % length is unbiased.
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-    const cryptoApi = globalThis.crypto || globalThis.msCrypto;
-    const randomValues = new Uint8Array(8);
-    cryptoApi.getRandomValues(randomValues);
-    let code = '';
-    for (let i = 0; i < randomValues.length; i += 1) {
-        code += chars.charAt(randomValues[i] % chars.length);
+    return generateJoinCode();
+}
+
+async function createUniqueHouseholdAccessCode(firebase, accessCodeData) {
+    const { db, doc, runTransaction } = firebase;
+    if (typeof runTransaction !== 'function') {
+        throw new Error('Secure household invite creation is unavailable.');
     }
-    return code;
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+        const code = generateHouseholdInviteCode();
+        const accessCodeRef = doc(db, 'accessCodes', code);
+        const created = await runTransaction(db, async (transaction) => {
+            const existing = await transaction.get(accessCodeRef);
+            if (existing.exists()) {
+                return false;
+            }
+            transaction.set(accessCodeRef, { ...accessCodeData, code });
+            return true;
+        });
+        if (created) {
+            return { accessCodeRef, code };
+        }
+    }
+
+    throw new Error('Could not generate a unique invite code. Please try again.');
 }
 
 function normalizePlayerLinks(playerLinks = []) {
@@ -359,7 +374,7 @@ export async function addPendingFamilyMember(userId, member, { deps = {}, existi
         throw new Error('Select the player access to share with this household contact.');
     }
 
-    const { db, collection, addDoc, updateDoc, doc, serverTimestamp, Timestamp } = await loadFirebase(deps);
+    const { db, collection, addDoc, updateDoc, doc, runTransaction, serverTimestamp, Timestamp } = await loadFirebase(deps);
     const timestamp = typeof serverTimestamp === 'function' ? serverTimestamp() : new Date().toISOString();
     const membershipRef = await addDoc(collection(db, `users/${userId}/familyMemberships`), {
         email,
@@ -377,12 +392,10 @@ export async function addPendingFamilyMember(userId, member, { deps = {}, existi
         updatedAt: timestamp,
     });
 
-    const code = generateHouseholdInviteCode();
     const expiresAt = Timestamp?.fromMillis
         ? Timestamp.fromMillis(Date.now() + 7 * 24 * 60 * 60 * 1000)
         : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-    const accessCodeRef = await addDoc(collection(db, 'accessCodes'), {
-        code,
+    const { accessCodeRef, code } = await createUniqueHouseholdAccessCode({ db, doc, runTransaction }, {
         type: 'household_invite',
         email,
         displayName,
@@ -403,14 +416,15 @@ export async function addPendingFamilyMember(userId, member, { deps = {}, existi
         usedAt: null,
         revoked: false
     });
+    const inviteUrl = buildLegacyJoinUrl(code, 'household');
     await updateDoc(doc(db, 'users', userId, 'familyMemberships', membershipRef.id), {
         accessCodeId: accessCodeRef.id,
         accessCode: code,
-        inviteUrl: `accept-invite.html?code=${code}&type=household`,
+        inviteUrl,
         updatedAt: timestamp
     });
 
-    return { code, inviteUrl: `accept-invite.html?code=${code}&type=household` };
+    return { code, inviteUrl };
 }
 
 

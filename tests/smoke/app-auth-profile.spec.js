@@ -580,11 +580,11 @@ test('app auth screen exposes sign in, sign up, Google, activation code, invite,
     await page.goto(appUrl(baseURL, '/auth?code=AB12CD34&type=parent'), { waitUntil: 'domcontentloaded' });
 
     await expect(page.getByRole('heading', { name: 'Create your account' })).toBeVisible();
-    await expect(page.getByText('Invite code entered:')).toBeVisible();
+    await expect(page.getByText('Join code entered:')).toBeVisible();
     await expect(page.getByText('We’ll verify it after you sign in or create your account.')).toBeVisible();
-    await expect(page.getByLabel('Activation or invite code')).toHaveValue('AB12CD34');
+    await expect(page.getByLabel('Join code')).toHaveValue('AB12CD34');
     await expect(page.getByRole('button', { name: 'Continue with Google' })).toBeVisible();
-    await expect(page.getByRole('link', { name: 'Enter invite code' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Enter join code' })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Account action' })).toHaveCount(0);
 
     await page.getByRole('button', { name: 'Sign in' }).first().click();
@@ -603,7 +603,7 @@ test('signed-out manual invite code redirects through auth with the code preserv
     await mockAppModules(page);
     await page.goto(appUrl(baseURL, '/accept-invite'), { waitUntil: 'domcontentloaded' });
 
-    await page.getByLabel('Invite code').fill('zxcv1234');
+    await page.getByLabel('Join code').fill('zxcv1234');
     await page.getByRole('button', { name: 'Continue with code' }).click();
 
     await expect(page).toHaveURL(/#\/auth\?code=ZXCV1234&type=parent&mode=login/);
@@ -715,8 +715,8 @@ test('profile exposes account, notification, invite, verification, password, upl
     const recipientPage = await page.context().newPage();
     await mockAppModules(recipientPage);
     await recipientPage.goto(sharedInviteUrl, { waitUntil: 'domcontentloaded' });
-    await expect(recipientPage.getByRole('heading', { name: 'Accept invite' })).toBeVisible();
-    await expect(recipientPage.getByText('Invite code entered')).toBeVisible();
+    await expect(recipientPage.getByRole('heading', { name: 'Join ALL PLAYS' })).toBeVisible();
+    await expect(recipientPage.getByText('Join code entered')).toBeVisible();
     await expect(recipientPage.getByText('We’ll verify this code after you sign in or create your account.')).toBeVisible();
     await expect(recipientPage.getByText('NEWMVP42')).toBeVisible();
     await expect(recipientPage.getByRole('link', { name: 'Sign in to accept' })).toBeVisible();

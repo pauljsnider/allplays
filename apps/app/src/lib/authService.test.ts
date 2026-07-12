@@ -32,6 +32,11 @@ const legacySignupFlowMocks = vi.hoisted(() => ({
   executeEmailPasswordSignup: vi.fn()
 }));
 
+const legacyInviteFlowMocks = vi.hoisted(() => ({
+  processInvite: vi.fn(),
+  createInviteProcessor: vi.fn()
+}));
+
 const parentMembershipMocks = vi.hoisted(() => ({
   mergeApprovedParentMembershipRequests: vi.fn()
 }));
@@ -77,7 +82,7 @@ vi.mock('./firebaseAuthRuntime', () => ({
 vi.mock('./adapters/legacyAuth', () => ({
   loadLegacyAdminInvite: vi.fn(async () => legacyAdminInviteMocks),
   loadLegacyAuthDb: vi.fn(async () => legacyAuthMocks),
-  loadLegacyInviteFlow: vi.fn(),
+  loadLegacyInviteFlow: vi.fn(async () => legacyInviteFlowMocks),
   loadLegacyParentMembershipUtils: vi.fn(async () => parentMembershipMocks),
   loadLegacySignupFlow: vi.fn(async () => legacySignupFlowMocks)
 }));
@@ -251,6 +256,10 @@ describe('signInWithGoogleAccount invite redemption', () => {
     legacyAuthMocks.markAccessCodeAsUsed.mockReset();
     legacyAuthMocks.updateUserProfile.mockReset();
     legacyAuthMocks.updateUserProfile.mockResolvedValue(undefined);
+    legacyInviteFlowMocks.processInvite.mockReset();
+    legacyInviteFlowMocks.processInvite.mockResolvedValue({ success: true, redirectUrl: 'dashboard.html' });
+    legacyInviteFlowMocks.createInviteProcessor.mockReset();
+    legacyInviteFlowMocks.createInviteProcessor.mockReturnValue(legacyInviteFlowMocks.processInvite);
   });
 
   afterEach(() => {
@@ -273,6 +282,34 @@ describe('signInWithGoogleAccount invite redemption', () => {
       }
     } as any);
   }
+
+  function mockExistingGoogleUser(email: string) {
+    signInWithPopupMock.mockResolvedValue({
+      user: {
+        uid: 'existing-google-user',
+        email,
+        displayName: 'Existing Google User',
+        photoURL: 'https://example.com/photo.png',
+        metadata: {
+          creationTime: '2026-02-01T11:00:00.000Z',
+          lastSignInTime: '2026-03-01T11:00:00.000Z'
+        }
+      }
+    } as any);
+  }
+
+  it('applies a join code when Google returns an existing authenticated account', async () => {
+    mockExistingGoogleUser('member@example.com');
+
+    const result = await signInWithGoogleAccount('site1234');
+
+    expect(legacyInviteFlowMocks.processInvite).toHaveBeenCalledWith(
+      'existing-google-user',
+      'SITE1234',
+      'member@example.com'
+    );
+    expect(result).toMatchObject({ activationCodeRedeemed: true, wasNewUser: false });
+  });
 
   it('redeems household invites instead of claiming them as standard activation codes', async () => {
     mockNewGoogleUser('household@example.com');

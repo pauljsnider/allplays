@@ -26,6 +26,11 @@ describe('invite redirect helper', () => {
         expect(getPostAuthRedirectUrl('dashboard.html', 'abcd1234', true, 'household_invite')).toBe('accept-invite.html?code=ABCD1234&type=household');
     });
 
+    it('preserves standard and co-parent join-code redirects', () => {
+        expect(getPostAuthRedirectUrl('dashboard.html', 'abcd1234', true, 'standard')).toBe('accept-invite.html?code=ABCD1234&type=standard');
+        expect(getPostAuthRedirectUrl('dashboard.html', 'abcd1234', true, 'coparent_invite')).toBe('accept-invite.html?code=ABCD1234&type=coparent');
+    });
+
     it('uses default redirect when no valid code exists', () => {
         expect(getPostAuthRedirectUrl('dashboard.html', '', true)).toBe('dashboard.html');
     });

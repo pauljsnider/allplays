@@ -22,11 +22,43 @@ describe('already-redeemed invite handling (#1808)', () => {
         expect(getInviteDashboardUrl('household')).toBe('parent-dashboard.html');
         expect(getInviteDashboardUrl('admin')).toBe('dashboard.html');
         expect(getInviteDashboardUrl('admin_invite')).toBe('dashboard.html');
+        expect(getInviteDashboardUrl('standard')).toBe('dashboard.html');
         expect(getInviteDashboardUrl(undefined)).toBe('parent-dashboard.html');
     });
 });
 
 describe('accept invite flow', () => {
+    it('redeems standard site codes through the same signed-in processor', async () => {
+        const deps = {
+            validateAccessCode: vi.fn(async () => ({ valid: true, codeId: 'SITE1234', type: 'standard', data: { code: 'SITE1234' } })),
+            markAccessCodeAsUsed: vi.fn().mockResolvedValue(undefined)
+        };
+
+        const result = await createInviteProcessor(deps)('user-1', 'site1234', 'user@example.com');
+
+        expect(deps.markAccessCodeAsUsed).toHaveBeenCalledWith('SITE1234', 'user-1');
+        expect(result).toEqual({
+            success: true,
+            message: 'Your ALL PLAYS access code has been applied!',
+            redirectUrl: 'dashboard.html'
+        });
+    });
+
+    it('returns success without mutating when this account already redeemed the code', async () => {
+        const deps = {
+            validateAccessCode: vi.fn(async () => ({ valid: true, alreadyRedeemed: true, codeId: 'used-1', type: 'admin_invite' })),
+            markAccessCodeAsUsed: vi.fn()
+        };
+
+        await expect(createInviteProcessor(deps)('user-1', 'USED1234')).resolves.toEqual({
+            success: true,
+            alreadyRedeemed: true,
+            message: 'This code is already connected to your account.',
+            redirectUrl: 'dashboard.html'
+        });
+        expect(deps.markAccessCodeAsUsed).not.toHaveBeenCalled();
+    });
+
     it('redeems admin invite codes via atomic redemption when available', async () => {
         const deps = {
             validateAccessCode: vi.fn(async () => ({

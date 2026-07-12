@@ -155,20 +155,20 @@ export function AcceptInvite({ auth }: { auth: AuthState }) {
   };
 
   return (
-    <AuthFrame eyebrow="Invite" backTo="/auth" backLabel="Back to sign in">
+    <AuthFrame eyebrow="Join with code" backTo="/auth" backLabel="Back to sign in">
       <div className="flex items-start gap-3">
         <div className="flex h-11 w-11 flex-none items-center justify-center rounded-xl bg-primary-50 text-primary-700">
           <UserPlus className="h-6 w-6" aria-hidden="true" />
         </div>
         <div>
-          <h1 className="text-2xl font-black text-gray-950">Accept invite</h1>
-          <p className="mt-1 text-sm font-semibold leading-6 text-gray-600">Redeem an invite code, link your account, then continue to the right dashboard.</p>
+          <h1 className="text-2xl font-black text-gray-950">Join ALL PLAYS</h1>
+          <p className="mt-1 text-sm font-semibold leading-6 text-gray-600">Apply any ALL PLAYS join code, connect everything it grants, then continue to the right place.</p>
         </div>
       </div>
 
       {code && !auth.user && state !== 'email-link' ? (
         <div className="mt-4 rounded-xl border border-primary-100 bg-primary-50 p-3">
-          <div className="text-xs font-extrabold uppercase tracking-[0.04em] text-primary-700">Invite code entered</div>
+          <div className="text-xs font-extrabold uppercase tracking-[0.04em] text-primary-700">Join code entered</div>
           <div className="mt-1 font-mono text-lg font-black tracking-widest text-primary-900">{code}</div>
           <p className="mt-1 text-sm font-semibold text-primary-800">We’ll verify this code after you sign in or create your account.</p>
           <div className="mt-3 grid gap-2">
@@ -196,12 +196,12 @@ export function AcceptInvite({ auth }: { auth: AuthState }) {
         <label className="block">
           <span className="mb-1.5 flex items-center gap-1.5 text-xs font-extrabold uppercase tracking-[0.04em] text-gray-500">
             <KeyRound className="h-3.5 w-3.5" aria-hidden="true" />
-            Invite code
+            Join code
           </span>
           <input className="auth-input text-center font-mono uppercase tracking-widest" value={manualCode} onChange={(event) => setManualCode(event.target.value.toUpperCase())} maxLength={8} placeholder="XXXXXXXX" inputMode="text" autoCapitalize="characters" autoComplete="one-time-code" enterKeyHint="go" />
         </label>
         <button type="submit" className="secondary-button w-full justify-center" disabled={state === 'processing'}>
-          {auth.user ? 'Join team' : 'Continue with code'}
+          {auth.user ? 'Apply code' : 'Continue with code'}
         </button>
       </form>
 

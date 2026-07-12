@@ -554,12 +554,13 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getPlayers, getPlayersWithPrivateRosterContacts, addPlayer, applyRosterCsvImportOperations, deactivatePlayer, reactivatePlayer, getGames, uploadPlayerPhoto, updatePlayer, setPlayerPrivateRosterProfileFields, inviteParent, removeParentFromPlayer, getAllUsers, getUnreadChatCount, listTeamParentMembershipRequests, approveParentMembershipRequest, denyParentMembershipRequest, getRosterFieldDefinitions, saveRosterFieldDefinition, disableRosterFieldDefinition, reorderRosterFieldDefinitions, listTeamRegistrationForms, listTeamRegistrationReviews, approveTeamRegistration, rejectTeamRegistration, extendTeamRegistrationOffer, acceptTeamRegistrationOffer, releaseTeamRegistrationWaitlist, listTeamTrackingItems, createTeamTrackingItem, listTeamTrackingStatuses, setTeamTrackingStatus } from './js/db.js?v=91';
+        import { getTeam, getPlayers, getPlayersWithPrivateRosterContacts, addPlayer, applyRosterCsvImportOperations, deactivatePlayer, reactivatePlayer, getGames, uploadPlayerPhoto, updatePlayer, setPlayerPrivateRosterProfileFields, inviteParent, removeParentFromPlayer, getAllUsers, getUnreadChatCount, listTeamParentMembershipRequests, approveParentMembershipRequest, denyParentMembershipRequest, getRosterFieldDefinitions, saveRosterFieldDefinition, disableRosterFieldDefinition, reorderRosterFieldDefinitions, listTeamRegistrationForms, listTeamRegistrationReviews, approveTeamRegistration, rejectTeamRegistration, extendTeamRegistrationOffer, acceptTeamRegistrationOffer, releaseTeamRegistrationWaitlist, listTeamTrackingItems, createTeamTrackingItem, listTeamTrackingStatuses, setTeamTrackingStatus } from './js/db.js?v=92';
         import { buildFullRosterCsvTemplate, buildRosterFieldDefinitionPayload, collectRosterProfileValues, getRosterProfileValues, normalizeRosterFieldDefinitions, planRosterCsvImport, renderRosterProfileFields, summarizeRosterContactInviteResults, validateRosterProfileValues } from './js/roster-profile-fields.js?v=4';
         import { buildTrackingStatusPayload, mergeTrackingStatusRows, normalizeTrackingItemDraft, summarizeTrackingStatus } from './js/tracking-status-admin.js?v=2';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=15';
         import { checkAuth } from './js/auth.js?v=46';
         import { queueInviteEmail } from './js/invite-email.js?v=1';
+        import { buildLegacyJoinUrl } from './js/join-code.js?v=1';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
         import { hasFullTeamAccess, normalizeTeamPermissions } from './js/team-access.js';
         import { formatRegistrationRosterImportResults, getRegistrationRosterPlayers, hasConfiguredRegistrationProviderMetadata, isExternallyLinkedRosterTeam, planRegistrationRosterImport } from './js/edit-roster-registration-import.js?v=2';
@@ -1984,7 +1985,7 @@
         function setupCopyLinkButton(buttonId, codeId) {
             document.getElementById(buttonId).addEventListener('click', async () => {
                 const code = document.getElementById(codeId).textContent;
-                const signupUrl = `${window.location.origin}/login.html?code=${code}&type=parent`;
+                const signupUrl = buildLegacyJoinUrl(code, 'parent', window.location.origin);
                 try {
                     await navigator.clipboard.writeText(signupUrl);
                     const btn = document.getElementById(buttonId);

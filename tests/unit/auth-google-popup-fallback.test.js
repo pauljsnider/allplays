@@ -3,6 +3,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 const signInWithPopupMock = vi.fn();
 const signInWithRedirectMock = vi.fn();
 const getRedirectResultMock = vi.fn();
+const validateAccessCodeMock = vi.fn();
+const markAccessCodeAsUsedMock = vi.fn();
 
 vi.mock('../../js/firebase.js?v=20', () => ({
     auth: { currentUser: null },
@@ -22,9 +24,9 @@ vi.mock('../../js/firebase.js?v=20', () => ({
     updatePassword: vi.fn()
 }));
 
-vi.mock('../../js/db.js?v=91', () => ({
-    validateAccessCode: vi.fn(),
-    markAccessCodeAsUsed: vi.fn(),
+vi.mock('../../js/db.js?v=92', () => ({
+    validateAccessCode: validateAccessCodeMock,
+    markAccessCodeAsUsed: markAccessCodeAsUsedMock,
     updateUserProfile: vi.fn(),
     redeemParentInvite: vi.fn(),
     redeemHouseholdInvite: vi.fn(),
@@ -41,7 +43,8 @@ vi.mock('../../js/signup-flow.js?v=6', () => ({
 }));
 
 vi.mock('../../js/admin-invite.js?v=6', () => ({
-    redeemAdminInviteAcceptance: vi.fn()
+    redeemAdminInviteAcceptance: vi.fn(),
+    redeemAdminInviteAtomically: vi.fn()
 }));
 
 vi.mock('../../js/parent-membership-utils.js?v=2', () => ({
@@ -54,6 +57,8 @@ describe('loginWithGoogle popup fallback handling', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         vi.resetModules();
+        validateAccessCodeMock.mockResolvedValue({ valid: true, type: 'standard', codeId: 'standard-code' });
+        markAccessCodeAsUsedMock.mockResolvedValue(undefined);
 
         sessionStorageMock = {
             setItem: vi.fn(),
@@ -137,6 +142,7 @@ describe('loginWithGoogle popup fallback handling', () => {
         });
 
         expect(sessionStorageMock.setItem).toHaveBeenCalledWith('pendingActivationCode', 'INVITE123');
+        expect(markAccessCodeAsUsedMock).toHaveBeenCalledWith('standard-code', 'existing-user');
         expect(sessionStorageMock.removeItem).toHaveBeenCalledWith('pendingActivationCode');
     });
 
@@ -159,6 +165,7 @@ describe('loginWithGoogle popup fallback handling', () => {
             user: { uid: 'existing-redirect-user' }
         });
 
+        expect(markAccessCodeAsUsedMock).toHaveBeenCalledWith('standard-code', 'existing-redirect-user');
         expect(sessionStorageMock.removeItem).toHaveBeenCalledWith('pendingActivationCode');
     });
 });
