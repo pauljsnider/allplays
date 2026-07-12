@@ -1,9 +1,15 @@
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 function read(path) {
     return readFileSync(resolve(process.cwd(), path), 'utf8');
+}
+
+function sha256(value) {
+    return createHash('sha256').update(value).digest('hex');
 }
 
 describe('authentication email delivery routing', () => {
@@ -85,22 +91,40 @@ describe('authentication email delivery routing', () => {
         }
     });
 
-    it('enables the password-reset retry policy only when production still needs the migration', () => {
+    it('enables the password-reset retry policy before the non-destructive production deploy', () => {
         const productionSource = read('.github/workflows/deploy-prod.yml');
         const firebaseDeployCommands = productionSource
             .split('\n')
             .map(line => line.trim())
-            .filter(line => line.startsWith('run: npx firebase-tools@14.25.0 deploy'));
+            .filter(line => /^(run: )?npx firebase-tools@14\.25\.0 deploy/.test(line));
 
-        expect(productionSource).toContain('id: password-reset-retry-policy');
-        expect(productionSource).toContain('google-github-actions/setup-gcloud@v3');
-        expect(productionSource).toContain('gcloud functions describe processPasswordResetEmailRequest');
-        expect(productionSource).toContain('eventTrigger.failurePolicy.retry');
-        expect(productionSource).toContain("if: steps.password-reset-retry-policy.outputs.enabled != 'true'");
         expect(firebaseDeployCommands).toEqual([
-            'run: npx firebase-tools@14.25.0 deploy --only functions:processPasswordResetEmailRequest --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive --force',
+            'npx firebase-tools@14.25.0 deploy --only functions:processPasswordResetEmailRequest --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive --force',
             'run: npx firebase-tools@14.25.0 deploy --only hosting,firestore:rules,firestore:indexes,functions --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive'
         ]);
+        expect(productionSource).toContain('npx firebase-tools@14.25.0 functions:list');
+        expect(productionSource).toContain('.eventTrigger.retry == true');
+        expect(productionSource).toContain('jq -e \'\.functions == {"source":"functions"}\' "$FIREBASE_PROD_CONFIG"');
+        expect(productionSource).toContain('Refusing retry-policy migration for an unexpected Functions deploy source.');
+        expect(productionSource).toContain('expected_functions_hash="102aad7b6547759d0fa8e5c85d06d2a704cd3768690ce889649efb34600b56a8"');
+        expect(productionSource).toContain('elif [[ "$functions_hash" == "$expected_functions_hash" ]]');
+        expect(productionSource).toContain('Refusing forced retry-policy migration for unreviewed Functions source.');
         expect(productionSource.match(/--force/g)).toHaveLength(1);
+    });
+
+    it('pins the forced migration to the reviewed tracked Functions tree', () => {
+        const productionSource = read('.github/workflows/deploy-prod.yml');
+        const approvedHash = productionSource.match(/expected_functions_hash="([a-f0-9]{64})"/)?.[1];
+        const trackedFunctionFiles = execFileSync('git', ['ls-files', 'functions'], { encoding: 'utf8' })
+            .trim()
+            .split('\n')
+            .filter(Boolean)
+            .sort();
+        const functionsManifest = trackedFunctionFiles
+            .map(path => `${sha256(readFileSync(resolve(process.cwd(), path)))}  ${path}\n`)
+            .join('');
+
+        expect(trackedFunctionFiles).not.toHaveLength(0);
+        expect(approvedHash).toBe(sha256(functionsManifest));
     });
 });
