@@ -33,7 +33,7 @@ import type { AuthUser, UserRole } from './types';
 
 export const firebaseAuth = auth;
 export const passwordResetConfirmationMessage = "If an account exists for that email, we've sent a reset link.";
-export const verificationContinueUrl = 'https://allplays.ai/app/#/verify-pending';
+export const verificationContinueUrl = 'https://allplays.ai/app/#/reset-password';
 
 const pendingActivationCodeKey = 'pendingActivationCode';
 const pendingInviteCodeKey = 'allplays-app-pending-invite-code';

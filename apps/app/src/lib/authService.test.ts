@@ -181,7 +181,7 @@ describe('sendResetEmail', () => {
 describe('resendVerificationEmail', () => {
   const sendEmailVerificationMock = vi.mocked(sendEmailVerification);
   const verificationSettings = {
-    url: 'https://allplays.ai/app/#/verify-pending',
+    url: 'https://allplays.ai/app/#/reset-password',
     handleCodeInApp: true
   };
   const localStorageEntries = new Map<string, string>();
@@ -214,7 +214,7 @@ describe('resendVerificationEmail', () => {
     vi.unstubAllGlobals();
   });
 
-  it('sends web verification emails with the branded app return URL', async () => {
+  it('sends web verification emails to the action-code handler instead of the pending page', async () => {
     const user = {
       uid: 'user-1',
       email: 'player@example.com',
@@ -227,6 +227,7 @@ describe('resendVerificationEmail', () => {
 
     expect(user.reload).toHaveBeenCalledTimes(1);
     expect(sendEmailVerificationMock).toHaveBeenCalledWith(user, verificationSettings);
+    expect(verificationSettings.url).not.toContain('#/verify-pending');
   });
 
   it('includes the same continue URL when native REST sends the verification email', async () => {
