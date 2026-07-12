@@ -917,6 +917,7 @@ function normalizeTeams(teams: any[]): AppSearchTeam[] {
       city: cleanString(team?.city),
       state: cleanString(team?.state),
       isPublic: team?.isPublic,
+      fromAppAccess: team?.fromAppAccess === true,
       active: team?.active,
       archived: team?.archived,
       status: cleanString(team?.status),

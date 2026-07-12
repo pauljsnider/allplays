@@ -539,7 +539,7 @@ describe('React app search service', () => {
             }]
         });
         firebaseMocks.getDocs
-            .mockResolvedValueOnce({ docs: [firestoreTeam('team-owner', { name: 'Owner Eagles', sport: 'Volleyball', isPublic: false, ownerId: 'user-1' })] })
+            .mockResolvedValueOnce({ docs: [firestoreTeam('team-owner', { name: 'Owner Eagles', sport: 'Volleyball', isPublic: true, ownerId: 'user-1' })] })
             .mockResolvedValueOnce({ docs: [firestoreTeam('team-admin', { name: 'Admin Lions', sport: 'Soccer', isPublic: false, adminEmails: ['parent@example.com'] })] })
             .mockResolvedValueOnce({ docs: [] })
             .mockResolvedValueOnce({ docs: [] });
@@ -550,6 +550,10 @@ describe('React app search service', () => {
             name: 'Home Rockets',
             fromAppAccess: true,
             photoUrl: 'https://img.example.test/home.png'
+        });
+        expect(teams.find((team) => team.id === 'team-owner')).toMatchObject({
+            isPublic: true,
+            fromAppAccess: true
         });
         expect(teams.find((team) => team.id === 'team-inactive-access')).toBeUndefined();
         expect(teams.find((team) => team.id === 'team-archived-access')).toBeUndefined();
