@@ -80,6 +80,8 @@ describe('public sports opportunity core', () => {
     expect(getEffectiveOpportunityStatus(listing, now)).toBe('active');
     expect(getEffectiveOpportunityStatus(listing, now + 1001)).toBe('expired');
     expect(matchesOpportunityFilters(listing, { sport: 'basketball', location: 'austin' }, now)).toBe(true);
+    expect(matchesOpportunityFilters(listing, { location: 'Austin, TX' }, now)).toBe(true);
+    expect(matchesOpportunityFilters(listing, { location: 'Austin, TX 78701' }, now)).toBe(true);
     expect(matchesOpportunityFilters(listing, { sport: 'soccer' }, now)).toBe(false);
     expect(buildOpportunityExpiry(now).getTime()).toBe(now + THIRTY_DAYS_MS);
   });

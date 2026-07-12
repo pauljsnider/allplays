@@ -17,13 +17,17 @@ function normalizeKey(value, maxLength = 80) {
   return cleanText(value, maxLength).toLowerCase();
 }
 
+function normalizeLocationKey(value, maxLength = 120) {
+  return normalizeKey(value, maxLength).replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
 function normalizeOpportunityFilters(value = {}) {
   return {
     kind: OPPORTUNITY_KINDS.has(value.kind) ? value.kind : '',
     sport: normalizeKey(value.sport),
     ageGroup: normalizeKey(value.ageGroup),
     compensationType: COMPENSATION_TYPES.has(value.compensationType) ? value.compensationType : '',
-    location: normalizeKey(value.location, 120)
+    location: normalizeLocationKey(value.location, 120)
   };
 }
 
@@ -107,7 +111,7 @@ function normalizeOpportunityInput(value = {}) {
     ...input,
     sportKey: normalizeKey(input.sport),
     ageGroupKey: normalizeKey(input.ageGroup),
-    locationKey: normalizeKey([input.city, input.state, input.zip].filter(Boolean).join(' '), 160)
+    locationKey: normalizeLocationKey([input.city, input.state, input.zip].filter(Boolean).join(' '), 160)
   };
 }
 
@@ -134,7 +138,7 @@ function matchesOpportunityFilters(listing, filters = {}, now = Date.now()) {
   if (normalized.ageGroup && normalizeKey(listing.ageGroup) !== normalized.ageGroup) return false;
   if (normalized.compensationType && listing.compensationType !== normalized.compensationType) return false;
   if (normalized.location) {
-    const haystack = normalizeKey(`${listing.city || ''} ${listing.state || ''} ${listing.zip || ''}`, 180);
+    const haystack = normalizeLocationKey(`${listing.city || ''} ${listing.state || ''} ${listing.zip || ''}`, 180);
     if (!haystack.includes(normalized.location)) return false;
   }
   return true;
@@ -183,6 +187,7 @@ module.exports = {
   THIRTY_DAYS_MS,
   cleanText,
   normalizeKey,
+  normalizeLocationKey,
   normalizeOpportunityFilters,
   normalizeOpportunityInput,
   containsUnsafePublicContact,

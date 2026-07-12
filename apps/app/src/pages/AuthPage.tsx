@@ -29,7 +29,11 @@ export function AuthPage({ auth }: { auth: AuthState }) {
   const inviteType = (searchParams.get('type') || 'parent').trim().toLowerCase();
   const requestedMode = searchParams.get('mode');
   const requestedNextRoute = getSafeAuthNextRoute(searchParams.get('next'));
-  const initialMode: AuthMode = requestedMode === 'login' ? 'login' : inviteCode ? 'signup' : 'login';
+  const initialMode: AuthMode = requestedMode === 'login'
+    ? 'login'
+    : requestedMode === 'signup' || inviteCode
+      ? 'signup'
+      : 'login';
   const [mode, setMode] = useState<AuthMode>(initialMode);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
