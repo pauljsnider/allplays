@@ -136,6 +136,21 @@ describe('Opportunities page', () => {
     expect(screen.queryByRole('button', { name: /I'm interested/ })).toBeNull();
   });
 
+  it('lets team owners respond to player posts and create team posts', async () => {
+    homeServiceMocks.loadParentHome.mockResolvedValue({
+      ...homeModel,
+      teams: [{ ...homeModel.teams[0], role: 'Owner' }]
+    });
+    await act(async () => {
+      renderOpportunities();
+    });
+    expect(await screen.findByRole('button', { name: /I'm interested/ })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Team looking for players' }));
+    expect(await screen.findByRole('option', { name: 'Rockets' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Post' })).not.toBeDisabled();
+  });
+
   it('filters posts by kind', async () => {
     matchingServiceMocks.loadOpenMatchingPosts.mockResolvedValue([
       matchingPost(),
