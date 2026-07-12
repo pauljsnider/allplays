@@ -841,7 +841,7 @@ describe('React app team detail model', () => {
         expect(model.team.registrationProvider).toEqual([
             { label: 'Provider', value: 'League Apps' },
             { label: 'Provider team ID', value: 'remote-team-1', copyable: true },
-            { label: 'Last sync', value: 'ok' }
+            { label: 'Last sync', value: 'Ok' }
         ]);
         expect(model.players.map((player) => player.id)).toEqual(['player-2', 'player-10']);
         expect(model.linkedPlayers.map((player) => player.id)).toEqual(['player-2', 'player-10']);

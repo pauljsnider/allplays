@@ -429,6 +429,7 @@ describe('buildTeamDetailModel registration provider', () => {
   });
 
   it('returns human-labeled rows with copyable ids when a registration source is configured', () => {
+    const syncedAt = new Date(2026, 0, 2, 9, 30);
     const built = buildTeamDetailModel({
       teamId: 'team-1',
       team: {
@@ -439,7 +440,8 @@ describe('buildTeamDetailModel registration provider', () => {
           provider: 'LeagueApps',
           externalTeamId: 'ext-42',
           teamId: 'provider-team-7',
-          lastSyncStatus: 'Synced'
+          lastSyncStatus: 'sync_complete',
+          lastSyncedAt: syncedAt
         }
       }
     });
@@ -448,8 +450,9 @@ describe('buildTeamDetailModel registration provider', () => {
       { label: 'Provider', value: 'LeagueApps' },
       { label: 'External team ID', value: 'ext-42', copyable: true },
       { label: 'Provider team ID', value: 'provider-team-7', copyable: true },
-      { label: 'Last sync', value: 'Synced' }
+      expect.objectContaining({ label: 'Last sync', value: expect.stringContaining('Sync Complete') })
     ]);
+    expect(built.team.registrationProvider[3].value).toContain('Jan 2, 2026');
   });
 
   it('keeps a legacy provider-specific teamId when it is not the app team id', () => {
