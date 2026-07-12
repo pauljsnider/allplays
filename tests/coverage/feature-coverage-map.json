@@ -628,6 +628,7 @@
                 "notifyRideClaimUpdated",
                 "notifyRideOfferCancelled",
                 "notifyRideOfferCreated",
+                "getFamilyShareSchedule",
                 "revokeHouseholdMemberAccess",
                 "resolveFamilyShareTokenChildren",
                 "sendPracticePacketDueTomorrowReminders"
