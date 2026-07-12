@@ -545,7 +545,7 @@ service cloud.firestore {
       let isLive = data.get('localStreamStatus', '') == 'live';
       return ((!hasLocalStatus &&
                !data.keys().hasAny(['localStreamActive', 'localStreamUpdatedAt', 'localStreamLeaseExpiresAt'])) || (
-               data.localStreamStatus in ['ready', 'live', 'failed'] &&
+               data.localStreamStatus in ['ready', 'starting', 'live', 'failed'] &&
                data.localStreamActive is bool &&
                data.localStreamUpdatedAt is timestamp &&
                data.localStreamUpdatedAt <= request.time + duration.value(1, 'm') &&

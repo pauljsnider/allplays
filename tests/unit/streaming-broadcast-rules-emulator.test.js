@@ -110,6 +110,18 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('streaming broadcast rules
         });
     }
 
+    function startingSession(uid, email, overrides = {}) {
+        const timestamp = nowTimestamp();
+        return readySession({
+            updatedAt: timestamp,
+            updatedBy: uid,
+            localStreamStatus: 'starting',
+            localStreamActive: false,
+            localStreamUpdatedAt: timestamp,
+            ...overrides
+        });
+    }
+
     async function seedTeamAndGame(firestore, teamId, gameId, teamOverrides = {}, gameOverrides = {}) {
         await setDoc(doc(firestore, `teams/${teamId}`), {
             ownerId: 'owner-1',
@@ -141,6 +153,10 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('streaming broadcast rules
     it('allows selected, confirmed-RSVP, and retained legacy helpers on readable games', async () => {
         const selectedDb = authedDb('selected-1', 'selected@example.com');
         await assertSucceeds(getDoc(gameRef(selectedDb, 'selected-team', 'selected-game')));
+        await assertSucceeds(updateDoc(gameRef(selectedDb, 'selected-team', 'selected-game'), {
+            broadcastSession: startingSession('selected-1', 'selected@example.com'),
+            updatedAt: nowTimestamp()
+        }));
         await assertSucceeds(writeLive(selectedDb, 'selected-team', 'selected-game', 'selected-1', 'selected@example.com'));
 
         const confirmedDb = authedDb('confirmed-1', 'confirmed@example.com');

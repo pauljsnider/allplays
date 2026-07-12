@@ -1,8 +1,9 @@
 const endedGameStatuses = new Set(['cancelled', 'canceled', 'completed', 'final', 'deleted']);
 const liveBroadcastStatuses = new Set(['live', 'streaming']);
+const startingBroadcastStatuses = new Set(['starting']);
 const readyBroadcastStatuses = new Set(['ready', 'ready_for_managed_stream']);
 const failedBroadcastStatuses = new Set(['failed', 'error', 'permission_failed']);
-const runtimeBroadcastStatuses = new Set(['ready', 'live', 'failed']);
+const runtimeBroadcastStatuses = new Set(['ready', 'starting', 'live', 'failed']);
 export const BROADCAST_STREAM_HEARTBEAT_MS = 15_000;
 export const BROADCAST_STREAM_LEASE_MS = 45_000;
 
@@ -59,6 +60,13 @@ export function resolveGameDayBroadcastStatus(game = {}, { now = new Date() } = 
         return {
             state: 'stale',
             label: 'The last live device signal expired. Open setup to resume streaming.'
+        };
+    }
+
+    if (startingBroadcastStatuses.has(streamStatus)) {
+        return {
+            state: 'starting',
+            label: 'Device streaming is starting.'
         };
     }
 
