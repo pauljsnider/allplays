@@ -566,6 +566,7 @@
         import { formatRegistrationRosterImportResults, getRegistrationRosterPlayers, hasConfiguredRegistrationProviderMetadata, isExternallyLinkedRosterTeam, planRegistrationRosterImport } from './js/edit-roster-registration-import.js?v=2';
         import { buildRegistrationReviewCsv, buildRegistrationReviewCsvFilename, getDefaultRegistrationReviewCsvColumnKeys, getRegistrationReviewCsvColumnDefinitions, matchesRegistrationReviewScreeningStatus, summarizeRegistrationReviewScreening } from './js/registration-review.js?v=6';
         import { buildRosterPrintHtml } from './js/roster-print.js?v=2';
+        import { normalizePlayerCatalogFields, getPlayerCatalogFieldKeys } from './js/player-field-catalog.js?v=1';
         import { getApp } from './js/vendor/firebase-app.js';
         import { getAI, getGenerativeModel, GoogleAIBackend, Schema } from './js/vendor/firebase-ai.js';
 
@@ -2436,17 +2437,37 @@
                                     player: Schema.object({
                                         properties: {
                                             name: Schema.string(),
-                                            number: Schema.string()
+                                            number: Schema.string(),
+                                            preferredName: Schema.string(),
+                                            position: Schema.string(),
+                                            dob: Schema.string(),
+                                            gender: Schema.string(),
+                                            grade: Schema.string(),
+                                            school: Schema.string(),
+                                            jerseySize: Schema.string(),
+                                            dominantHand: Schema.string(),
+                                            dominantFoot: Schema.string(),
+                                            memberId: Schema.string()
                                         },
-                                        optionalProperties: ["number"]
+                                        optionalProperties: ["number", "preferredName", "position", "dob", "gender", "grade", "school", "jerseySize", "dominantHand", "dominantFoot", "memberId"]
                                     }),
                                     playerId: Schema.string(),
                                     changes: Schema.object({
                                         properties: {
                                             name: Schema.string(),
-                                            number: Schema.string()
+                                            number: Schema.string(),
+                                            preferredName: Schema.string(),
+                                            position: Schema.string(),
+                                            dob: Schema.string(),
+                                            gender: Schema.string(),
+                                            grade: Schema.string(),
+                                            school: Schema.string(),
+                                            jerseySize: Schema.string(),
+                                            dominantHand: Schema.string(),
+                                            dominantFoot: Schema.string(),
+                                            memberId: Schema.string()
                                         },
-                                        optionalProperties: ["name", "number"]
+                                        optionalProperties: ["name", "number", "preferredName", "position", "dob", "gender", "grade", "school", "jerseySize", "dominantHand", "dominantFoot", "memberId"]
                                     }),
                                     reason: Schema.string()
                                 },
@@ -2472,6 +2493,7 @@ PARSING RULES:
 6. Use action="update" with playerId and changes when an extracted player matches an existing player by the same number, same normalized name, or a likely name/number correction
 7. Use action="add" with player object only when no reasonable current player match exists
 8. Never add a second active player for a likely update to an existing player
+9. Capture these optional details when clearly present (leave out when unknown): preferredName, position, dob (as YYYY-MM-DD), gender, grade, school, jerseySize, dominantHand (left/right/both), dominantFoot (left/right/both), memberId. Do NOT extract parent/guardian contacts, phone numbers, emails, addresses, or medical info here.
 
 EXAMPLES:
 - "#10 John Smith" → if no current player matches, action: "add", player: { name: "John Smith", number: "10" }
@@ -2664,12 +2686,20 @@ EXAMPLES:
                         if (op.action === 'add') {
                             const playerData = {
                                 name: op.player.name,
-                                number: op.player.number || ''
+                                number: op.player.number || '',
+                                ...normalizePlayerCatalogFields(op.player)
                             };
                             await addPlayer(currentTeamId, playerData);
                             successCount++;
                         } else if (op.action === 'update') {
-                            await updatePlayer(currentTeamId, op.playerId, op.changes);
+                            const baseChanges = { ...op.changes };
+                            // Drop raw catalog values so only validated/normalized ones are written.
+                            getPlayerCatalogFieldKeys().forEach((key) => { delete baseChanges[key]; });
+                            const changes = {
+                                ...baseChanges,
+                                ...normalizePlayerCatalogFields(op.changes)
+                            };
+                            await updatePlayer(currentTeamId, op.playerId, changes);
                             successCount++;
                         } else if (op.action === 'delete') {
                             await deactivatePlayer(currentTeamId, op.playerId);
