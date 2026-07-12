@@ -86,7 +86,7 @@ export function AssignmentsSection() {
     } finally {
       if (showLoading) setLoading(false);
     }
-  }, [event.id, event.isCancelled, event.isDbGame, event.teamId, syncAssignments]);
+  }, [syncAssignments]);
 
   useEffect(() => {
     setAssignmentStatus(null);
