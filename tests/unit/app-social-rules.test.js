@@ -117,14 +117,17 @@ describe('React app social Firestore rules', () => {
     it('permits accepted friendship creation only during atomic friend invite redemption', () => {
         const source = rulesSource();
 
-        expect(source).toContain('function isFriendInviteAcceptedFriendshipCreateValid(data)');
+        expect(source).toContain('function isFriendInviteAcceptedFriendshipCreateValid(friendshipId, data)');
         expect(source).toContain('let codePath = /databases/$(database)/documents/accessCodes/$(codeId);');
         expect(source).toContain('existsAfter(codePath)');
+        expect(source).toContain('function buildFriendshipId(firstUserId, secondUserId)');
+        expect(source).toContain('data.get(\'memberIds\', []).size() == 2');
+        expect(source).toContain("friendshipId == buildFriendshipId(data.get('requesterId', ''), request.auth.uid)");
         expect(source).toContain("codeAfter.get('type', null) == 'friend_invite'");
         expect(source).toContain("codeAfter.get('generatedBy', '') == data.get('requesterId', '')");
         expect(source).toContain("codeAfter.get('usedBy', '') == request.auth.uid");
-        expect(source).toContain("allow create: if isFriendshipCreatePayloadValid(request.resource.data) ||");
-        expect(source).toContain("isFriendInviteAcceptedFriendshipCreateValid(request.resource.data)");
+        expect(source).toContain("allow create: if isFriendshipCreatePayloadValid(friendshipId, request.resource.data) ||");
+        expect(source).toContain("isFriendInviteAcceptedFriendshipCreateValid(friendshipId, request.resource.data)");
     });
 
     it('locks down top-level users docs and routes discovery through projected public profiles', () => {
