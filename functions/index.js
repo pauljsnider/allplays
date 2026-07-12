@@ -58,6 +58,7 @@ const {
   validateRsvpTokenRedemption,
   buildRsvpTokenAuditPayload
 } = require('./rsvp-token-core.cjs');
+const { isAllowedPublicRsvpOrigin } = require('./public-rsvp-cors-core.cjs');
 const {
   normalizeText,
   resolveTeamEmailRecipients,
@@ -10557,18 +10558,8 @@ exports.notifyPracticePacketAssigned = functions.firestore
   });
 
 function writePublicRsvpCors(req, res) {
-  const allowedOrigins = new Set([
-    'https://allplays.ai',
-    'https://www.allplays.ai',
-    'https://game-flow-c6311.web.app',
-    'https://game-flow-c6311.firebaseapp.com',
-    'http://localhost:8000',
-    'http://127.0.0.1:8000',
-    'http://localhost:8004',
-    'http://127.0.0.1:8004'
-  ]);
   const origin = req.headers.origin;
-  if (allowedOrigins.has(origin)) {
+  if (isAllowedPublicRsvpOrigin(origin)) {
     res.set('Access-Control-Allow-Origin', origin);
     res.set('Vary', 'Origin');
   }
