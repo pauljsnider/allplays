@@ -27,6 +27,7 @@ import {
   Users,
   Zap
 } from 'lucide-react';
+import { AvatarImage } from '../components/AvatarImage';
 import { TeamDetailPageSkeleton } from '../components/PageSkeletons';
 import { DetailLoadErrorState } from '../components/DetailLoadErrorState';
 import { copyPublicText, openPublicUrl, sharePublicUrl } from '../lib/publicActions';
@@ -613,7 +614,7 @@ function TeamHero({ model }: { model: TeamDetailModel }) {
     <section className="app-card overflow-hidden">
       <div className="relative h-32 bg-gray-950 sm:h-44">
         {team.photoUrl ? (
-          <img src={team.photoUrl} alt={`${team.name} team photo`} decoding="async" className="h-full w-full object-cover opacity-90" />
+          <AvatarImage src={team.photoUrl} alt={`${team.name} team photo`} decoding="async" className="h-full w-full object-cover opacity-90" fallback={<div className="flex h-full w-full items-center justify-center bg-[linear-gradient(135deg,#111827_0%,#4338ca_50%,#047857_100%)]"><span className="text-5xl font-black text-white">{getInitials(team.name)}</span></div>} />
         ) : (
           <div className="flex h-full w-full items-center justify-center bg-[linear-gradient(135deg,#111827_0%,#4338ca_50%,#047857_100%)]">
             <span className="text-5xl font-black text-white">{getInitials(team.name)}</span>
@@ -3067,7 +3068,19 @@ function InternalAction({ icon: Icon, label, detail, to }: { icon: LucideIcon; l
 function PlayerPhoto({ name, photoUrl, small = false }: { name: string; photoUrl?: string | null; small?: boolean }) {
   const sizeClass = small ? 'h-8 w-8 text-[10px]' : 'h-11 w-11 text-xs';
   if (photoUrl) {
-    return <img src={photoUrl} alt={`${name} player photo`} className={`${sizeClass} flex-none rounded-full object-cover ring-1 ring-gray-200`} loading="lazy" />;
+    return (
+      <AvatarImage
+        src={photoUrl}
+        alt={`${name} player photo`}
+        loading="lazy"
+        className={`${sizeClass} flex-none rounded-full object-cover ring-1 ring-gray-200`}
+        fallback={(
+          <span className={`${sizeClass} flex flex-none items-center justify-center rounded-full bg-gray-900 font-black text-white`}>
+            {getInitials(name)}
+          </span>
+        )}
+      />
+    );
   }
   return (
     <span className={`${sizeClass} flex flex-none items-center justify-center rounded-full bg-gray-900 font-black text-white`}>

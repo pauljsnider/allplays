@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Camera, Loader2, RefreshCw, Save } from 'lucide-react';
+import { AvatarImage } from '../components/AvatarImage';
 import { loadParentTeamDetailBootstrap, updateTeamSettingsForApp } from '../lib/teamDetailService';
 import { normalizeOptionalHttpUrl, parseTeamLivestreamInput } from '../lib/teamLinks';
 import { useAsyncOperation } from '../lib/useAsyncOperation';
@@ -218,7 +219,7 @@ export function TeamSettings({ auth }: { auth: AuthState }) {
         <form className="mt-5 space-y-4" onSubmit={(event) => void handleSubmit(event)}>
           <div className="flex items-center gap-4">
             <div className="flex h-20 w-20 items-center justify-center overflow-hidden rounded-2xl border border-gray-200 bg-gray-100">
-              {photoPreviewUrl ? <img src={photoPreviewUrl} alt="Team" className="h-full w-full object-cover" /> : <Camera className="h-8 w-8 text-gray-400" aria-hidden="true" />}
+              {photoPreviewUrl ? <AvatarImage src={photoPreviewUrl} alt="Team" className="h-full w-full object-cover" fallback={<Camera className="h-8 w-8 text-gray-400" aria-hidden="true" />} /> : <Camera className="h-8 w-8 text-gray-400" aria-hidden="true" />}
             </div>
             <div>
               <input ref={fileInputRef} className="hidden" type="file" accept="image/*" onChange={handlePhotoChange} />

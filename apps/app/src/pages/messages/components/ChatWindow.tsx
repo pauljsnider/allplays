@@ -40,6 +40,7 @@ import {
   type ChatMessage,
   type ChatTeam
 } from '../../../lib/chatService';
+import { AvatarImage } from '../../../components/AvatarImage';
 import { MessagesPageSkeleton } from '../../../components/PageSkeletons';
 import {
   DEFAULT_TEAM_CONVERSATION_ID,
@@ -248,7 +249,14 @@ export function TeamAvatar({ team }: { team: Pick<ChatTeam, 'name' | 'photoUrl' 
   return (
     <div className="relative flex h-11 w-11 flex-none items-center justify-center overflow-hidden rounded-xl border border-gray-200 bg-primary-50 text-primary-700 shadow-sm">
       {team.photoUrl ? (
-        <img src={team.photoUrl} alt={`${team.name} team photo`} loading="lazy" decoding="async" className="h-full w-full object-cover" />
+        <AvatarImage
+          src={team.photoUrl}
+          alt={`${team.name} team photo`}
+          loading="lazy"
+          decoding="async"
+          className="h-full w-full object-cover"
+          fallback={<span className="text-base font-black">{team.name.charAt(0).toUpperCase()}</span>}
+        />
       ) : (
         <span className="text-base font-black">{team.name.charAt(0).toUpperCase()}</span>
       )}
@@ -2300,17 +2308,18 @@ function normalizeTimestampValue(value: unknown) {
 }
 
 export function MessageAvatar({ message, label }: { message: ChatMessage; label: string }) {
-  if (message.ai) {
-    return <img src="./logo_small.png" alt="ALL PLAYS assistant avatar" className="h-8 w-8 rounded-full border border-indigo-200 object-cover" />;
-  }
-  if (message.senderPhotoUrl) {
-    return <img src={message.senderPhotoUrl} alt={`${label} profile photo`} loading="lazy" decoding="async" className="h-8 w-8 rounded-full object-cover" />;
-  }
-  return (
+  const initialsBadge = (
     <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-200 text-xs font-black text-gray-600">
       {label.charAt(0).toUpperCase()}
     </div>
   );
+  if (message.ai) {
+    return <img src="./logo_small.png" alt="ALL PLAYS assistant avatar" className="h-8 w-8 rounded-full border border-indigo-200 object-cover" />;
+  }
+  if (message.senderPhotoUrl) {
+    return <AvatarImage src={message.senderPhotoUrl} alt={`${label} profile photo`} loading="lazy" decoding="async" className="h-8 w-8 rounded-full object-cover" fallback={initialsBadge} />;
+  }
+  return initialsBadge;
 }
 
 function InlineAttachmentVideo({ src, label }: { src: string; label: string }) {
