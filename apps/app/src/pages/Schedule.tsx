@@ -246,9 +246,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     eventsRef.current = data.events;
     setChildren(data.children);
     setEvents(data.events);
-    if (data.staffTeams) {
-      setStaffTeams(data.staffTeams);
-    }
+    setStaffTeams(data.staffTeams ?? []);
   };
 
   const mergeScheduleResult = (data: { children: ParentScheduleChild[]; events: ParentScheduleEvent[]; }) => {
@@ -271,7 +269,10 @@ export function Schedule({ auth }: { auth: AuthState }) {
       }
     });
     mergedEvents.sort((a, b) => a.date.getTime() - b.date.getTime());
-    applyScheduleResult({ children: mergedChildren, events: mergedEvents });
+    childrenRef.current = mergedChildren;
+    eventsRef.current = mergedEvents;
+    setChildren(mergedChildren);
+    setEvents(mergedEvents);
   };
 
   const buildPastScheduleRangeByTeam = () => {

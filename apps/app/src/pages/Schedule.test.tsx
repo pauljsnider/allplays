@@ -406,6 +406,44 @@ describe('Schedule', () => {
     });
   });
 
+  it('clears zero-event staff teams when the schedule is replaced without staff team data', async () => {
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [],
+      events: [],
+      staffTeams: [{ teamId: 'team-empty', teamName: 'Empty FC' }]
+    });
+
+    const { rerender } = render(
+      <MemoryRouter initialEntries={['/schedule']}>
+        <Routes>
+          <Route path="/schedule" element={<Schedule auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('button', { name: /manage schedule/i })).toBeTruthy();
+
+    rerender(
+      <MemoryRouter initialEntries={['/schedule']}>
+        <Routes>
+          <Route
+            path="/schedule"
+            element={<Schedule auth={{
+              ...auth,
+              user: null,
+              isParent: false,
+              roles: []
+            }} />}
+          />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: /manage schedule/i })).toBeNull();
+    });
+  });
+
   it('routes generic staff card opens to the game hub helper on mobile', () => {
     expect(getGenericEventDetailPath(buildScheduleEvent(1, {
       isTeamStaff: true,
