@@ -50,6 +50,10 @@ export function createBulkAiImageController({
             previewImage.src = typeof result === 'string' ? result : '';
             preview.classList.remove('hidden');
         };
+        reader.onerror = () => {
+            previewImage.removeAttribute('src');
+            preview.classList.remove('hidden');
+        };
         reader.readAsDataURL(file);
     }
 

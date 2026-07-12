@@ -17,6 +17,12 @@ class ImmediateFileReader {
     }
 }
 
+class FailingFileReader {
+    readAsDataURL() {
+        this.onerror?.(new Event('error'));
+    }
+}
+
 function createPasteEvent(items) {
     const event = new Event('paste', { bubbles: true, cancelable: true });
     Object.defineProperty(event, 'clipboardData', {
@@ -49,6 +55,24 @@ function setupController() {
         textInput: document.getElementById('bulk-text-input')
     });
     return controller;
+}
+
+function setupControllerWithReader(FileReaderCtor) {
+    document.body.innerHTML = `
+        <input type="file" id="schedule-image-input" accept="image/*">
+        <div id="schedule-image-preview" class="hidden">
+            <img id="schedule-image-preview-img" alt="Schedule preview" src="data:image/png;base64,old">
+            <button type="button" id="remove-schedule-image">Remove image</button>
+        </div>
+    `;
+
+    return createBulkAiImageController({
+        imageInput: document.getElementById('schedule-image-input'),
+        preview: document.getElementById('schedule-image-preview'),
+        previewImage: document.getElementById('schedule-image-preview-img'),
+        removeButton: document.getElementById('remove-schedule-image'),
+        FileReaderCtor
+    });
 }
 
 function readEditSchedule() {
@@ -105,6 +129,17 @@ describe('edit schedule Bulk AI image clipboard support', () => {
         ]);
 
         expect(getClipboardImageFile(event)).toBe(file);
+    });
+
+    it('keeps the selected image state when preview reading fails', () => {
+        const controller = setupControllerWithReader(FailingFileReader);
+        const file = new File(['schedule image'], 'schedule.png', { type: 'image/png' });
+
+        expect(controller.setBulkAiImage(file)).toBe(true);
+
+        expect(controller.getBulkAiImageFile()).toBe(file);
+        expect(document.getElementById('schedule-image-preview').classList.contains('hidden')).toBe(false);
+        expect(document.getElementById('schedule-image-preview-img').hasAttribute('src')).toBe(false);
     });
 
     it('wires edit-schedule.html to the shared paste/drop image controller', () => {
