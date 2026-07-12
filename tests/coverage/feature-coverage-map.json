@@ -137,6 +137,7 @@
                 "redeemCoParentInvite",
                 "redeemHouseholdInvite",
                 "redeemParentInvite",
+                "rollbackFailedSignupRedemption",
                 "validateAccessCodeForAcceptance"
             ],
             "unitTests": [

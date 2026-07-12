@@ -3089,6 +3089,153 @@ exports.redeemAdminInvite = functions.https.onCall(async (data, context) => {
   return responsePayload;
 });
 
+// How long after a redemption the signup-failure rollback is still allowed.
+// Cleanup runs seconds after the failed signup, so a generous window is safe
+// while still preventing this callable from un-marking long-settled codes.
+const SIGNUP_REDEMPTION_ROLLBACK_WINDOW_MS = 60 * 60 * 1000;
+
+function isRecentSignupRollbackTimestamp(value, nowMs) {
+  if (!value || typeof value.toMillis !== 'function') {
+    return false;
+  }
+  const millis = value.toMillis();
+  return nowMs - millis <= SIGNUP_REDEMPTION_ROLLBACK_WINDOW_MS;
+}
+
+// Rolls back what an invite/access-code redemption wrote when a brand-new
+// signup fails after the redemption already committed (issue #3845). Client
+// cleanup paths call this BEFORE deleting the just-created Firebase Auth user
+// so the invite code is not permanently burned and no ghost parent-linked
+// users/{uid} doc is left behind.
+exports.rollbackFailedSignupRedemption = functions.https.onCall(async (data, context) => {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in before rolling back a failed signup.');
+  }
+
+  const userId = context.auth.uid;
+  const code = String(data?.code || '').trim().toUpperCase();
+  if (!code) {
+    throw new functions.https.HttpsError('invalid-argument', 'Access code is required.');
+  }
+
+  const codeQuerySnap = await firestore.collection('accessCodes').where('code', '==', code).limit(1).get();
+  const codeRef = codeQuerySnap.empty ? null : codeQuerySnap.docs[0].ref;
+  const userRef = firestore.doc(`users/${userId}`);
+  const publicProfileRef = firestore.doc(`publicUserProfiles/${userId}`);
+  let responsePayload = null;
+
+  await firestore.runTransaction(async (transaction) => {
+    const nowMs = Date.now();
+    const [codeSnap, userSnap] = await Promise.all([
+      codeRef ? transaction.get(codeRef) : Promise.resolve(null),
+      transaction.get(userRef)
+    ]);
+
+    const codeData = codeSnap && codeSnap.exists ? codeSnap.data() || {} : null;
+    // Only the account that consumed the code, and only shortly after the
+    // redemption, may un-mark it.
+    const canRollBackCode = Boolean(
+      codeData &&
+      codeData.used === true &&
+      codeData.usedBy === userId &&
+      (!codeData.usedAt || isRecentSignupRollbackTimestamp(codeData.usedAt, nowMs))
+    );
+
+    const userData = userSnap.exists ? userSnap.data() || {} : {};
+    // The users/{uid} doc is deleted only when it clearly belongs to this
+    // failed signup: either the code rollback matched this uid, or the doc
+    // was created within the rollback window.
+    const canDeleteUserDoc = userSnap.exists && (
+      canRollBackCode ||
+      isRecentSignupRollbackTimestamp(userData.createdAt, nowMs)
+    );
+
+    const codeType = codeData ? String(codeData.type || 'standard') : 'standard';
+    const teamId = codeData ? String(codeData.teamId || '').trim() : '';
+    const playerId = codeData ? String(codeData.playerId || '').trim() : '';
+
+    let privateProfileRef = null;
+    let privateProfileSnap = null;
+    if (canRollBackCode && teamId && playerId &&
+        ['parent_invite', 'household_invite', 'coparent_invite'].includes(codeType)) {
+      privateProfileRef = firestore.doc(`teams/${teamId}/players/${playerId}/private/profile`);
+      privateProfileSnap = await transaction.get(privateProfileRef);
+    }
+
+    let membershipRef = null;
+    let membershipSnap = null;
+    if (canRollBackCode && codeType === 'household_invite' &&
+        codeData.organizerUserId && codeData.familyMembershipId) {
+      membershipRef = firestore.doc(`users/${codeData.organizerUserId}/familyMemberships/${codeData.familyMembershipId}`);
+      membershipSnap = await transaction.get(membershipRef);
+    }
+
+    let teamRef = null;
+    let teamSnap = null;
+    if (canRollBackCode && codeType === 'admin_invite' && teamId) {
+      teamRef = firestore.doc(`teams/${teamId}`);
+      teamSnap = await transaction.get(teamRef);
+    }
+
+    const now = admin.firestore.Timestamp.now();
+
+    if (canRollBackCode) {
+      const codeUpdate = {
+        used: false,
+        usedBy: null,
+        usedAt: null
+      };
+      if (codeData.status === 'accepted') {
+        codeUpdate.status = admin.firestore.FieldValue.delete();
+      }
+      transaction.update(codeRef, codeUpdate);
+    }
+
+    if (privateProfileSnap && privateProfileSnap.exists) {
+      const parents = Array.isArray(privateProfileSnap.data()?.parents)
+        ? privateProfileSnap.data().parents
+        : [];
+      const remainingParents = parents.filter((parent) => parent?.userId !== userId);
+      if (remainingParents.length !== parents.length) {
+        transaction.update(privateProfileRef, { parents: remainingParents });
+      }
+    }
+
+    if (membershipSnap && membershipSnap.exists &&
+        String(membershipSnap.data()?.userId || '') === userId) {
+      transaction.update(membershipRef, {
+        status: 'pending',
+        userId: admin.firestore.FieldValue.delete(),
+        acceptedAt: admin.firestore.FieldValue.delete(),
+        updatedAt: now
+      });
+    }
+
+    if (teamSnap && teamSnap.exists) {
+      const invitedEmail = normalizeParentInviteEmail(codeData.email);
+      if (invitedEmail) {
+        transaction.update(teamRef, {
+          adminEmails: admin.firestore.FieldValue.arrayRemove(invitedEmail),
+          updatedAt: now
+        });
+      }
+    }
+
+    if (canDeleteUserDoc) {
+      transaction.delete(userRef);
+      transaction.delete(publicProfileRef);
+    }
+
+    responsePayload = {
+      success: true,
+      codeRolledBack: canRollBackCode,
+      userDocDeleted: canDeleteUserDoc
+    };
+  });
+
+  return responsePayload;
+});
+
 exports.validateAccessCodeForAcceptance = functions.https.onCall(async (data, context) => {
   const code = String(data?.code || '').trim().toUpperCase();
   if (!code) {

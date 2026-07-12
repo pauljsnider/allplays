@@ -461,4 +461,119 @@ describe('executeEmailPasswordSignup', () => {
         expect(deleteAuthUser).toHaveBeenCalledTimes(1);
         expect(dependencies.signOut).toHaveBeenCalledWith(auth);
     });
+
+    it('rolls back the redemption before deleting the auth user when invite linking fails (issue #3845)', async () => {
+        const expectedError = new Error('redemption committed server-side but client saw a failure');
+        const deleteAuthUser = vi.fn().mockResolvedValue(undefined);
+        const rollbackFailedSignupRedemption = vi.fn().mockImplementation(async () => {
+            // Rollback writes need the still-authenticated user; auth deletion must not have happened yet.
+            expect(deleteAuthUser).not.toHaveBeenCalled();
+            return { success: true, codeRolledBack: true, userDocDeleted: true };
+        });
+        const dependencies = createDependencies({
+            createUserWithEmailAndPassword: vi.fn().mockResolvedValue({
+                user: {
+                    uid: 'user-123',
+                    delete: deleteAuthUser
+                }
+            }),
+            redeemParentInvite: vi.fn().mockRejectedValue(expectedError),
+            rollbackFailedSignupRedemption
+        });
+        const auth = { currentUser: null };
+
+        await expect(executeEmailPasswordSignup({
+            email: 'parent@example.com',
+            password: 'password123',
+            activationCode: 'PARENTCODE',
+            auth,
+            dependencies
+        })).rejects.toThrow('redemption committed server-side but client saw a failure');
+
+        expect(rollbackFailedSignupRedemption).toHaveBeenCalledWith('PARENTCODE');
+        expect(deleteAuthUser).toHaveBeenCalledTimes(1);
+        expect(dependencies.signOut).toHaveBeenCalledWith(auth);
+    });
+
+    it('rolls back the redemption when the standard access code claim fails', async () => {
+        const expectedError = new Error('Code already used');
+        const rollbackFailedSignupRedemption = vi.fn().mockResolvedValue({ success: true });
+        const dependencies = createDependencies({
+            validateAccessCode: vi.fn().mockResolvedValue({
+                valid: true,
+                type: 'standard',
+                codeId: 'code-standard-1',
+                data: { code: 'STANDARD1' }
+            }),
+            markAccessCodeAsUsed: vi.fn().mockRejectedValue(expectedError),
+            rollbackFailedSignupRedemption
+        });
+        const auth = { currentUser: null };
+
+        await expect(executeEmailPasswordSignup({
+            email: 'user@example.com',
+            password: 'password123',
+            activationCode: 'STANDARD1',
+            auth,
+            dependencies
+        })).rejects.toThrow('Code already used');
+
+        expect(rollbackFailedSignupRedemption).toHaveBeenCalledWith('STANDARD1');
+    });
+
+    it('does not let a rollback failure mask the original redemption error', async () => {
+        const expectedError = new Error('parent invite link failed');
+        const deleteAuthUser = vi.fn().mockResolvedValue(undefined);
+        const rollbackFailedSignupRedemption = vi.fn().mockRejectedValue(new Error('rollback exploded'));
+        const dependencies = createDependencies({
+            createUserWithEmailAndPassword: vi.fn().mockResolvedValue({
+                user: {
+                    uid: 'user-123',
+                    delete: deleteAuthUser
+                }
+            }),
+            redeemParentInvite: vi.fn().mockRejectedValue(expectedError),
+            rollbackFailedSignupRedemption
+        });
+        const auth = { currentUser: null };
+
+        await expect(executeEmailPasswordSignup({
+            email: 'parent@example.com',
+            password: 'password123',
+            activationCode: 'PARENTCODE',
+            auth,
+            dependencies
+        })).rejects.toThrow('parent invite link failed');
+
+        expect(rollbackFailedSignupRedemption).toHaveBeenCalledWith('PARENTCODE');
+        expect(deleteAuthUser).toHaveBeenCalledTimes(1);
+        expect(dependencies.signOut).toHaveBeenCalledWith(auth);
+    });
+
+    it('does not attempt a redemption rollback when validation fails before any redemption', async () => {
+        const rollbackFailedSignupRedemption = vi.fn();
+        const dependencies = createDependencies({
+            validateAccessCode: vi.fn()
+                .mockResolvedValueOnce({
+                    valid: false,
+                    message: 'Invalid or expired access code'
+                })
+                .mockResolvedValueOnce({
+                    valid: false,
+                    message: 'Invalid access code'
+                }),
+            rollbackFailedSignupRedemption
+        });
+        const auth = { currentUser: null };
+
+        await expect(executeEmailPasswordSignup({
+            email: 'parent@example.com',
+            password: 'password123',
+            activationCode: 'PARENTCODE',
+            auth,
+            dependencies
+        })).rejects.toThrow('Invalid access code');
+
+        expect(rollbackFailedSignupRedemption).not.toHaveBeenCalled();
+    });
 });

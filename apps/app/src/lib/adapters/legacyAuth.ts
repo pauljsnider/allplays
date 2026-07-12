@@ -54,6 +54,10 @@ export type LegacySignupFlowModule = {
   executeEmailPasswordSignup: (...args: any[]) => Promise<unknown>;
 };
 
+export type LegacySignupRollbackModule = {
+  rollbackFailedSignupRedemption: (code: string) => Promise<unknown>;
+};
+
 export type LegacyParentMembershipSync = {
   changed: boolean;
   userUpdate: Record<string, unknown>;
@@ -70,6 +74,7 @@ let authDbPromise: Promise<LegacyAuthDbModule> | null = null;
 let adminInvitePromise: Promise<LegacyAdminInviteModule> | null = null;
 let inviteFlowPromise: Promise<LegacyInviteFlowModule> | null = null;
 let signupFlowPromise: Promise<LegacySignupFlowModule> | null = null;
+let signupRollbackPromise: Promise<LegacySignupRollbackModule> | null = null;
 let parentMembershipUtilsPromise: Promise<LegacyParentMembershipUtilsModule> | null = null;
 
 export function loadLegacyAuthDb() {
@@ -90,6 +95,11 @@ export function loadLegacyInviteFlow() {
 export function loadLegacySignupFlow() {
   signupFlowPromise ||= import('@legacy/signup-flow.js') as Promise<LegacySignupFlowModule>;
   return signupFlowPromise;
+}
+
+export function loadLegacySignupRollback() {
+  signupRollbackPromise ||= import('@legacy/signup-rollback.js') as Promise<LegacySignupRollbackModule>;
+  return signupRollbackPromise;
 }
 
 export function loadLegacyParentMembershipUtils() {

@@ -17,14 +17,27 @@ export async function executeEmailPasswordSignup({
         getTeam,
         getUserProfile,
         sendEmailVerification,
-        signOut
+        signOut,
+        rollbackFailedSignupRedemption
     } = dependencies;
 
     if (!activationCode) {
         throw new Error('Activation code is required');
     }
 
-    async function cleanupFailedParentInviteSignup(createdUser) {
+    async function cleanupFailedParentInviteSignup(createdUser, { rollbackRedemption = false } = {}) {
+        // Roll back anything the redemption already wrote (code marked used,
+        // users/{uid} parent links) BEFORE deleting the auth user — the
+        // rollback callable requires the user to still be authenticated.
+        // Rollback failures must never mask the original signup error.
+        if (rollbackRedemption && typeof rollbackFailedSignupRedemption === 'function') {
+            try {
+                await rollbackFailedSignupRedemption(activationCode);
+            } catch (rollbackError) {
+                console.error('Error rolling back signup redemption:', rollbackError);
+            }
+        }
+
         if (createdUser && typeof createdUser.delete === 'function') {
             try {
                 await createdUser.delete();
@@ -88,7 +101,7 @@ export async function executeEmailPasswordSignup({
             await redeemParentInvite(userId, activationCode, email);
         } catch (e) {
             console.error('Error linking parent:', e);
-            await cleanupFailedParentInviteSignup(userCredential?.user);
+            await cleanupFailedParentInviteSignup(userCredential?.user, { rollbackRedemption: true });
             throw e;
         }
 
@@ -106,7 +119,7 @@ export async function executeEmailPasswordSignup({
             await writeSignupProfile({ email });
         } catch (e) {
             console.error('Error redeeming admin invite:', e);
-            await cleanupFailedParentInviteSignup(userCredential?.user);
+            await cleanupFailedParentInviteSignup(userCredential?.user, { rollbackRedemption: true });
             throw e;
         }
     } else if (validation.type === 'household_invite') {
@@ -118,7 +131,7 @@ export async function executeEmailPasswordSignup({
             await writeSignupProfile({ email });
         } catch (e) {
             console.error('Error redeeming household invite:', e);
-            await cleanupFailedParentInviteSignup(userCredential?.user);
+            await cleanupFailedParentInviteSignup(userCredential?.user, { rollbackRedemption: true });
             throw e;
         }
     } else if (validation.type === 'coparent_invite') {
@@ -130,7 +143,7 @@ export async function executeEmailPasswordSignup({
             await writeSignupProfile({ email });
         } catch (e) {
             console.error('Error redeeming co-parent invite:', e);
-            await cleanupFailedParentInviteSignup(userCredential?.user);
+            await cleanupFailedParentInviteSignup(userCredential?.user, { rollbackRedemption: true });
             throw e;
         }
     } else {
@@ -138,7 +151,7 @@ export async function executeEmailPasswordSignup({
             await markAccessCodeAsUsed(validation.codeId, userId);
         } catch (error) {
             console.error('Error marking code as used:', error);
-            await cleanupFailedParentInviteSignup(userCredential?.user);
+            await cleanupFailedParentInviteSignup(userCredential?.user, { rollbackRedemption: true });
             throw error;
         }
 

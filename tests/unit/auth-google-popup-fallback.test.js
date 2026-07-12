@@ -38,7 +38,7 @@ vi.mock('../../js/db.js?v=92', () => ({
     listMyParentMembershipRequests: vi.fn()
 }));
 
-vi.mock('../../js/signup-flow.js?v=6', () => ({
+vi.mock('../../js/signup-flow.js?v=7', () => ({
     executeEmailPasswordSignup: vi.fn()
 }));
 

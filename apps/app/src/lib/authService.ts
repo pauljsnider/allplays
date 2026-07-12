@@ -25,7 +25,8 @@ import {
   loadLegacyAuthDb,
   loadLegacyInviteFlow,
   loadLegacyParentMembershipUtils,
-  loadLegacySignupFlow
+  loadLegacySignupFlow,
+  loadLegacySignupRollback
 } from './adapters/legacyAuth';
 import { createLogger } from './logger';
 import { clearAppDataCache } from './appDataCache';
@@ -865,6 +866,22 @@ function toAuthUser(user: FirebaseUser, profile: Record<string, unknown>): AuthU
   };
 }
 
+// Best-effort server-side rollback of an invite/access-code redemption before
+// the failed-signup cleanup deletes the auth user (issue #3845). Must run while
+// the user is still authenticated, and must never mask the original error.
+async function rollbackFailedSignupRedemptionSafely(code: string | null | undefined, context: string) {
+  const normalizedCode = normalizeCode(code);
+  if (!normalizedCode) {
+    return;
+  }
+  try {
+    const { rollbackFailedSignupRedemption } = await loadLegacySignupRollback();
+    await rollbackFailedSignupRedemption(normalizedCode);
+  } catch (error) {
+    logger.error('Unable to roll back signup redemption; access code may remain marked used.', { context, error });
+  }
+}
+
 async function cleanupFailedNewUser(user: FirebaseUser | null, context: string) {
   if (user?.delete) {
     try {
@@ -1022,11 +1039,13 @@ export async function signUpWithEmail(email: string, password: string, activatio
   const [
     dbModule,
     { redeemAdminInviteAcceptance },
-    { executeEmailPasswordSignup }
+    { executeEmailPasswordSignup },
+    { rollbackFailedSignupRedemption }
   ] = await Promise.all([
     loadLegacyAuthDb(),
     loadLegacyAdminInvite(),
-    loadLegacySignupFlow()
+    loadLegacySignupFlow(),
+    loadLegacySignupRollback()
   ]);
 
   return executeEmailPasswordSignup({
@@ -1046,7 +1065,8 @@ export async function signUpWithEmail(email: string, password: string, activatio
       getTeam: dbModule.getTeam,
       getUserProfile: dbModule.getUserProfile,
       sendEmailVerification,
-      signOut: firebaseSignOut
+      signOut: firebaseSignOut,
+      rollbackFailedSignupRedemption
     }
   }) as Promise<UserCredential>;
 }
@@ -1146,6 +1166,7 @@ async function processGoogleResult(result: UserCredential | null, activationCode
     });
   } catch (error) {
     window.sessionStorage.removeItem(pendingActivationCodeKey);
+    await rollbackFailedSignupRedemptionSafely(validation.data?.code || code, 'Google activation');
     await cleanupFailedNewUser(result.user, 'Google activation');
     throw error;
   }

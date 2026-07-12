@@ -37,6 +37,10 @@ const legacyInviteFlowMocks = vi.hoisted(() => ({
   createInviteProcessor: vi.fn()
 }));
 
+const legacySignupRollbackMocks = vi.hoisted(() => ({
+  rollbackFailedSignupRedemption: vi.fn()
+}));
+
 const parentMembershipMocks = vi.hoisted(() => ({
   mergeApprovedParentMembershipRequests: vi.fn()
 }));
@@ -84,7 +88,8 @@ vi.mock('./adapters/legacyAuth', () => ({
   loadLegacyAuthDb: vi.fn(async () => legacyAuthMocks),
   loadLegacyInviteFlow: vi.fn(async () => legacyInviteFlowMocks),
   loadLegacyParentMembershipUtils: vi.fn(async () => parentMembershipMocks),
-  loadLegacySignupFlow: vi.fn(async () => legacySignupFlowMocks)
+  loadLegacySignupFlow: vi.fn(async () => legacySignupFlowMocks),
+  loadLegacySignupRollback: vi.fn(async () => legacySignupRollbackMocks)
 }));
 
 vi.mock('./appDataCache', () => ({
@@ -270,7 +275,8 @@ describe('signUpWithEmail', () => {
       activationCode: '85NSBZ7K',
       dependencies: expect.objectContaining({
         markAccessCodeAsUsed: legacyAuthMocks.markAccessCodeAsUsed,
-        validateAccessCode: legacyAuthMocks.validateAccessCode
+        validateAccessCode: legacyAuthMocks.validateAccessCode,
+        rollbackFailedSignupRedemption: legacySignupRollbackMocks.rollbackFailedSignupRedemption
       })
     }));
   });
@@ -381,6 +387,74 @@ describe('signInWithGoogleAccount invite redemption', () => {
 
     expect(legacyAuthMocks.redeemCoParentInvite).toHaveBeenCalledWith('google-user', 'COPO1234', 'coparent@example.com');
     expect(legacyAuthMocks.markAccessCodeAsUsed).not.toHaveBeenCalled();
+  });
+
+  it('rolls back the redemption before deleting the auth user when signup fails after redeeming (issue #3845)', async () => {
+    const deleteMock = vi.fn().mockResolvedValue(undefined);
+    signInWithPopupMock.mockResolvedValue({
+      user: {
+        uid: 'google-user',
+        email: 'parent@example.com',
+        displayName: 'Parent User',
+        photoURL: 'https://example.com/photo.png',
+        metadata: {
+          creationTime: '2026-03-01T11:00:00.000Z',
+          lastSignInTime: '2026-03-01T11:00:00.000Z'
+        },
+        delete: deleteMock
+      }
+    } as any);
+    legacyAuthMocks.validateAccessCode.mockResolvedValue({
+      valid: true,
+      type: 'parent_invite',
+      codeId: 'parent-code-id',
+      data: { code: 'PARENT12' }
+    });
+    // The redemption callable may commit server-side even when the client
+    // sees a failure; a later profile write failure hits the same path.
+    legacyAuthMocks.redeemParentInvite.mockRejectedValue(new Error('redeem failed after commit'));
+    legacySignupRollbackMocks.rollbackFailedSignupRedemption.mockReset();
+    legacySignupRollbackMocks.rollbackFailedSignupRedemption.mockImplementation(async () => {
+      // Rollback must run while the user still exists (before auth deletion).
+      expect(deleteMock).not.toHaveBeenCalled();
+      return { success: true, codeRolledBack: true, userDocDeleted: true };
+    });
+
+    await expect(signInWithGoogleAccount('parent12')).rejects.toThrow('redeem failed after commit');
+
+    expect(legacySignupRollbackMocks.rollbackFailedSignupRedemption).toHaveBeenCalledWith('PARENT12');
+    expect(deleteMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not let a rollback failure mask the original signup error', async () => {
+    const deleteMock = vi.fn().mockResolvedValue(undefined);
+    signInWithPopupMock.mockResolvedValue({
+      user: {
+        uid: 'google-user',
+        email: 'parent@example.com',
+        displayName: 'Parent User',
+        photoURL: 'https://example.com/photo.png',
+        metadata: {
+          creationTime: '2026-03-01T11:00:00.000Z',
+          lastSignInTime: '2026-03-01T11:00:00.000Z'
+        },
+        delete: deleteMock
+      }
+    } as any);
+    legacyAuthMocks.validateAccessCode.mockResolvedValue({
+      valid: true,
+      type: 'parent_invite',
+      codeId: 'parent-code-id',
+      data: { code: 'PARENT12' }
+    });
+    legacyAuthMocks.redeemParentInvite.mockRejectedValue(new Error('original signup error'));
+    legacySignupRollbackMocks.rollbackFailedSignupRedemption.mockReset();
+    legacySignupRollbackMocks.rollbackFailedSignupRedemption.mockRejectedValue(new Error('rollback exploded'));
+
+    await expect(signInWithGoogleAccount('parent12')).rejects.toThrow('original signup error');
+
+    expect(legacySignupRollbackMocks.rollbackFailedSignupRedemption).toHaveBeenCalledWith('PARENT12');
+    expect(deleteMock).toHaveBeenCalledTimes(1);
   });
 });
 

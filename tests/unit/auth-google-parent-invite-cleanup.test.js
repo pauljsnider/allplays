@@ -10,6 +10,7 @@ const redeemHouseholdInviteMock = vi.fn();
 const redeemCoParentInviteMock = vi.fn();
 const updateUserProfileMock = vi.fn();
 const markAccessCodeAsUsedMock = vi.fn();
+const rollbackFailedSignupRedemptionMock = vi.fn();
 
 vi.mock('../../js/firebase.js?v=20', () => ({
     auth: { currentUser: null },
@@ -43,7 +44,7 @@ vi.mock('../../js/db.js?v=92', () => ({
     listMyParentMembershipRequests: vi.fn()
 }));
 
-vi.mock('../../js/signup-flow.js?v=6', () => ({
+vi.mock('../../js/signup-flow.js?v=7', () => ({
     executeEmailPasswordSignup: vi.fn()
 }));
 
@@ -53,6 +54,10 @@ vi.mock('../../js/admin-invite.js?v=6', () => ({
 
 vi.mock('../../js/parent-membership-utils.js?v=2', () => ({
     mergeApprovedParentMembershipRequests: vi.fn(() => ({ changed: false, userUpdate: {} }))
+}));
+
+vi.mock('../../js/signup-rollback.js?v=1', () => ({
+    rollbackFailedSignupRedemption: rollbackFailedSignupRedemptionMock
 }));
 
 describe('loginWithGoogle parent invite failure cleanup', () => {
@@ -179,6 +184,83 @@ describe('loginWithGoogle parent invite failure cleanup', () => {
         expect(deleteMock).toHaveBeenCalledTimes(1);
         expect(signOutMock).toHaveBeenCalledTimes(1);
         expect(sessionStorageMock.removeItem).toHaveBeenCalledWith('pendingActivationCode');
+    });
+
+    it('rolls back the redemption before deleting the auth user when parent invite linking fails (issue #3845)', async () => {
+        const expectedError = new Error('parent invite link failed');
+        const deleteMock = vi.fn().mockResolvedValue(undefined);
+        const result = {
+            user: {
+                uid: 'user-123',
+                email: 'parent@example.com',
+                displayName: 'Parent User',
+                photoURL: 'https://example.com/photo.png',
+                metadata: {
+                    creationTime: '2026-03-01T11:00:00.000Z',
+                    lastSignInTime: '2026-03-01T11:00:00.000Z'
+                },
+                delete: deleteMock
+            }
+        };
+
+        signInWithPopupMock.mockResolvedValue(result);
+        validateAccessCodeMock.mockResolvedValue({
+            valid: true,
+            type: 'parent_invite',
+            data: { code: 'PARENTCODE' }
+        });
+        redeemParentInviteMock.mockRejectedValue(expectedError);
+        signOutMock.mockResolvedValue(undefined);
+        rollbackFailedSignupRedemptionMock.mockImplementation(async () => {
+            // The rollback callable needs the still-authenticated user, so it
+            // must run before the auth account is deleted.
+            expect(deleteMock).not.toHaveBeenCalled();
+            return { success: true, codeRolledBack: true, userDocDeleted: true };
+        });
+
+        const { loginWithGoogle } = await import('../../js/auth.js');
+
+        await expect(loginWithGoogle('PARENTCODE')).rejects.toThrow('parent invite link failed');
+
+        expect(rollbackFailedSignupRedemptionMock).toHaveBeenCalledWith('PARENTCODE');
+        expect(deleteMock).toHaveBeenCalledTimes(1);
+        expect(signOutMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not let a rollback failure mask the original invite error', async () => {
+        const expectedError = new Error('parent invite link failed');
+        const deleteMock = vi.fn().mockResolvedValue(undefined);
+        const result = {
+            user: {
+                uid: 'user-123',
+                email: 'parent@example.com',
+                displayName: 'Parent User',
+                photoURL: 'https://example.com/photo.png',
+                metadata: {
+                    creationTime: '2026-03-01T11:00:00.000Z',
+                    lastSignInTime: '2026-03-01T11:00:00.000Z'
+                },
+                delete: deleteMock
+            }
+        };
+
+        signInWithPopupMock.mockResolvedValue(result);
+        validateAccessCodeMock.mockResolvedValue({
+            valid: true,
+            type: 'parent_invite',
+            data: { code: 'PARENTCODE' }
+        });
+        redeemParentInviteMock.mockRejectedValue(expectedError);
+        signOutMock.mockResolvedValue(undefined);
+        rollbackFailedSignupRedemptionMock.mockRejectedValue(new Error('rollback exploded'));
+
+        const { loginWithGoogle } = await import('../../js/auth.js');
+
+        await expect(loginWithGoogle('PARENTCODE')).rejects.toThrow('parent invite link failed');
+
+        expect(rollbackFailedSignupRedemptionMock).toHaveBeenCalledWith('PARENTCODE');
+        expect(deleteMock).toHaveBeenCalledTimes(1);
+        expect(signOutMock).toHaveBeenCalledTimes(1);
     });
 
     it('signs out and rethrows original invite error when delete fails', async () => {

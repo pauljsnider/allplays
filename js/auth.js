@@ -16,11 +16,26 @@ import {
     updatePassword
 } from './firebase.js?v=20';
 import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, getUserProfile, getUserTeams, getUserByEmail, getTeam, listMyParentMembershipRequests, normalizeParentScopeLinks } from './db.js?v=92';
-import { executeEmailPasswordSignup } from './signup-flow.js?v=6';
+import { executeEmailPasswordSignup } from './signup-flow.js?v=7';
 import { redeemAdminInviteAcceptance, redeemAdminInviteAtomically } from './admin-invite.js?v=6';
 import { mergeApprovedParentMembershipRequests } from './parent-membership-utils.js?v=2';
 import { buildLegacyJoinUrl } from './join-code.js?v=1';
 import { createInviteProcessor } from './accept-invite-flow.js?v=10';
+import { rollbackFailedSignupRedemption } from './signup-rollback.js?v=1';
+
+// Best-effort server-side rollback of a redemption before the failed-signup
+// cleanup deletes the auth user. Must run while the user is still signed in,
+// and must never mask the original signup error.
+async function rollbackRedemptionBeforeCleanup(code, context) {
+    if (!code) {
+        return;
+    }
+    try {
+        await rollbackFailedSignupRedemption(code);
+    } catch (rollbackError) {
+        console.error(`Error rolling back redemption after ${context}:`, rollbackError);
+    }
+}
 
 async function cleanupFailedNewUser(user, context) {
     if (!user) {
@@ -51,6 +66,7 @@ async function linkParentInviteOrRollback(user, parentInviteCode) {
     } catch (inviteLinkError) {
         console.error('Error linking parent:', inviteLinkError);
         clearPendingActivationCode();
+        await rollbackRedemptionBeforeCleanup(parentInviteCode, 'parent invite link failure');
         await cleanupFailedNewUser(user, 'parent invite link failure');
         // Fail closed only for invite-linking errors.
         throw inviteLinkError;
@@ -63,6 +79,7 @@ async function redeemHouseholdInviteOrRollback(user, code) {
     } catch (inviteLinkError) {
         console.error('Error linking household invite:', inviteLinkError);
         clearPendingActivationCode();
+        await rollbackRedemptionBeforeCleanup(code, 'household invite link failure');
         await cleanupFailedNewUser(user, 'household invite link failure');
         throw inviteLinkError;
     }
@@ -74,6 +91,7 @@ async function redeemCoParentInviteOrRollback(user, code) {
     } catch (inviteLinkError) {
         console.error('Error linking co-parent invite:', inviteLinkError);
         clearPendingActivationCode();
+        await rollbackRedemptionBeforeCleanup(code, 'co-parent invite link failure');
         await cleanupFailedNewUser(user, 'co-parent invite link failure');
         throw inviteLinkError;
     }
@@ -113,7 +131,8 @@ export async function signup(email, password, activationCode) {
             getTeam,
             getUserProfile,
             sendEmailVerification,
-            signOut
+            signOut,
+            rollbackFailedSignupRedemption
         }
     });
 }
@@ -251,6 +270,7 @@ async function processGoogleAuthResult(result, activationCode = null) {
             } catch (e) {
                 console.error('Error linking admin invite:', e);
                 clearPendingActivationCode();
+                await rollbackRedemptionBeforeCleanup(validation.data?.code || code, 'admin invite link failure');
                 await cleanupFailedNewUser(result.user, 'admin invite link failure');
                 throw e;
             }
@@ -271,6 +291,7 @@ async function processGoogleAuthResult(result, activationCode = null) {
             } catch (error) {
                 console.error('Error marking code as used:', error);
                 clearPendingActivationCode();
+                await rollbackRedemptionBeforeCleanup(code, 'standard access code claim failure');
                 await cleanupFailedNewUser(result.user, 'standard access code claim failure');
                 throw error;
             }
