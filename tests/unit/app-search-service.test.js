@@ -186,6 +186,7 @@ describe('React app search service', () => {
 
         expect(results.teams).toHaveLength(20);
         expect(results.teams[0].title).toBe('Bears');
+        expect(results.teams[0].route).toBe('/teams/team-1/public');
         expect(results.players).toHaveLength(20);
         expect(results.players[0].title).toBe('#9 Pat Bear');
         expect(results.flat.map((item) => item.kind)).toEqual([
@@ -202,6 +203,23 @@ describe('React app search service', () => {
         expect(defaultResults.actions.map((item) => item.id)).toEqual(['browse-teams', 'dashboard', 'my-teams', 'schedule', 'messages', 'social-feed', 'find-friends', 'create-social-post', 'profile', 'discover-opportunities', 'post-opportunity']);
         expect(defaultResults.teams).toHaveLength(20);
         expect(defaultResults.players).toHaveLength(20);
+    });
+
+    it('routes private-access teams to private detail and public teams to the public-safe profile', () => {
+        const results = computeAppSearchResults({
+            queryText: '',
+            auth,
+            teams: [
+                { id: 'private-team', name: 'Private Team', isPublic: false, fromAppAccess: true },
+                { id: 'public team', name: 'Public Team', isPublic: true }
+            ],
+            players: []
+        });
+
+        expect(results.teams.map((team) => [team.title, team.route])).toEqual([
+            ['Private Team', '/teams/private-team'],
+            ['Public Team', '/teams/public%20team/public']
+        ]);
     });
 
     it('translates help role filters without affecting non-help search results', () => {

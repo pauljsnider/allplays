@@ -892,12 +892,15 @@ function rankTeamsForQuery(teams: AppSearchTeam[], queryText: string) {
 
 function teamToSearchItem(team: AppSearchTeam): AppSearchItem {
   const location = cleanString(team.location);
+  const teamRoute = team.isPublic === true
+    ? `/teams/${encodeURIComponent(team.id)}/public`
+    : `/teams/${encodeURIComponent(team.id)}`;
   return {
     id: `team:${team.id}`,
     kind: 'team',
     title: team.name || 'Team',
     subtitle: [team.sport, team.zip || [team.city, team.state].filter(Boolean).join(', ') || location].filter(Boolean).join(' • '),
-    route: `/teams/${encodeURIComponent(team.id)}`
+    route: teamRoute
   };
 }
 

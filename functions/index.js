@@ -11465,8 +11465,8 @@ function requireOpportunityAuth(context, { verified = false } = {}) {
   return context.auth.uid;
 }
 
-async function getOpportunityCaller(context) {
-  const uid = requireOpportunityAuth(context);
+async function getOpportunityCaller(context, options = {}) {
+  const uid = requireOpportunityAuth(context, options);
   const userSnap = await firestore.doc(`users/${uid}`).get();
   return {
     uid,
@@ -11602,11 +11602,15 @@ exports.listPublicOpportunities = functions.https.onCall(async (data, context = 
   if (cursor) baseQuery = baseQuery.startAfter(cursor.expiresAt, cursor.createdAt, cursor.id);
 
   const items = [];
+  const maxScanDocuments = 500;
+  const scanBatchSize = 100;
+  let scannedDocuments = 0;
   let lastScanned = null;
   let exhausted = false;
   let stoppedBeforeEndOfScan = false;
-  while (items.length < pageSize && !exhausted) {
-    let scanQuery = baseQuery.limit(100);
+  while (items.length < pageSize && !exhausted && scannedDocuments < maxScanDocuments) {
+    const currentBatchSize = Math.min(scanBatchSize, maxScanDocuments - scannedDocuments);
+    let scanQuery = baseQuery.limit(currentBatchSize);
     if (lastScanned) {
       scanQuery = firestore.collection('publicOpportunities')
         .where('status', '==', 'active')
@@ -11615,10 +11619,11 @@ exports.listPublicOpportunities = functions.https.onCall(async (data, context = 
         .orderBy('createdAt', 'desc')
         .orderBy(admin.firestore.FieldPath.documentId(), 'desc')
         .startAfter(lastScanned.data().expiresAt, lastScanned.data().createdAt, lastScanned.id)
-        .limit(100);
+        .limit(currentBatchSize);
     }
     const scan = await scanQuery.get();
-    exhausted = scan.size < 100;
+    scannedDocuments += scan.size;
+    exhausted = scan.size < currentBatchSize;
     for (let index = 0; index < scan.docs.length; index += 1) {
       const docSnap = scan.docs[index];
       lastScanned = docSnap;
@@ -11914,13 +11919,24 @@ async function requireOpportunityInquiry(inquiryId, caller) {
 
 exports.listOpportunityInquiries = functions.https.onCall(async (_data, context = {}) => {
   const caller = await getOpportunityCaller(context);
-  const snap = await firestore.collection('opportunityInquiries')
+  const baseQuery = firestore.collection('opportunityInquiries')
     .where('participantIds', 'array-contains', caller.uid)
-    .orderBy('updatedAt', 'desc')
-    .limit(50)
-    .get();
-  const access = await Promise.all(snap.docs.map((docSnap) => canAccessOpportunityInquiry(caller, docSnap.data() || {})));
-  return { items: snap.docs.filter((_docSnap, index) => access[index]).map((docSnap) => serializeOpportunityInquiry(docSnap)) };
+    .orderBy('updatedAt', 'desc');
+  const items = [];
+  let lastScanned = null;
+  let exhausted = false;
+  while (items.length < 50 && !exhausted) {
+    let query = baseQuery.limit(50);
+    if (lastScanned) query = baseQuery.startAfter(lastScanned).limit(50);
+    const snap = await query.get();
+    exhausted = snap.size < 50;
+    lastScanned = snap.docs.at(-1) || lastScanned;
+    const access = await Promise.all(snap.docs.map((docSnap) => canAccessOpportunityInquiry(caller, docSnap.data() || {})));
+    for (let index = 0; index < snap.docs.length && items.length < 50; index += 1) {
+      if (access[index]) items.push(serializeOpportunityInquiry(snap.docs[index]));
+    }
+  }
+  return { items };
 });
 
 exports.getOpportunityInquiry = functions.https.onCall(async (data, context = {}) => {
@@ -11931,7 +11947,7 @@ exports.getOpportunityInquiry = functions.https.onCall(async (data, context = {}
 });
 
 exports.replyToOpportunityInquiry = functions.https.onCall(async (data, context = {}) => {
-  const caller = await getOpportunityCaller(context);
+  const caller = await getOpportunityCaller(context, { verified: true });
   const { uid } = caller;
   assertOpportunityRateLimit(checkPublicOpportunityMessageRateLimit, context, `reply:${uid}`);
   const body = cleanOpportunityText(data?.message, 1500);

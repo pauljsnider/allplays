@@ -104,6 +104,12 @@ describe('public opportunity callable wiring', () => {
     expect(source).toContain('currentTeamRecipients.has(participantId)');
   });
 
+  it('pages past revoked inquiry rows and requires verified reply authors', () => {
+    expect(source).toMatch(/listOpportunityInquiries[\s\S]*while \(items\.length < 50 && !exhausted\)/);
+    expect(source).toContain('baseQuery.startAfter(lastScanned).limit(50)');
+    expect(source).toMatch(/replyToOpportunityInquiry[\s\S]*getOpportunityCaller\(context, \{ verified: true \}\)/);
+  });
+
   it('shows and loads moderation reports only for protected isAdmin accounts', () => {
     expect(manageSource).toContain('const canModerateReports = auth.user?.isAdmin === true;');
     expect(manageSource).toContain('canModerateReports ? listPublicOpportunityReports() : Promise.resolve([])');
@@ -116,11 +122,12 @@ describe('public opportunity callable wiring', () => {
     expect(source).toContain('managedListingSnaps.forEach');
   });
 
-  it('queries unexpired listings and scans filtered pages through exhaustion', () => {
+  it('queries unexpired listings with a bounded, cursor-resumable filtered scan', () => {
     expect(source).toContain(".where('expiresAt', '>', now)");
     expect(source).toContain(".orderBy('expiresAt', 'desc')");
-    expect(source).toContain('while (items.length < pageSize && !exhausted)');
-    expect(source).not.toContain('page < 5 && items.length < pageSize');
+    expect(source).toContain('const maxScanDocuments = 500;');
+    expect(source).toContain('scannedDocuments < maxScanDocuments');
+    expect(source).toContain('nextCursor: (stoppedBeforeEndOfScan || !exhausted)');
   });
 
   it('hides inactive detail records from public callers while preserving manager access', () => {
