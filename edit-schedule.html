@@ -961,6 +961,7 @@
         import { cancelScheduledGame } from './js/edit-schedule-cancel-game.js?v=3';
         import { applyPracticeRecurrenceFields } from './js/edit-schedule-practice-payload.js?v=1';
         import { savePracticeForm } from './js/edit-schedule-practice-submit.js?v=2';
+        import { getBulkOperationEventType, normalizeBulkPracticeForAdd } from './js/edit-schedule-ai-import.js?v=1';
         import { buildSeasonRecordGameFields, hydrateSeasonRecordFormFields } from './js/edit-schedule-season-record.js?v=1';
         import { normalizeOfficialsDirectory } from './js/officiating-slots.js?v=1';
         import { Timestamp, deleteField, auth } from "./js/firebase.js?v=20";
@@ -4709,11 +4710,13 @@
                             items: Schema.object({
                                 properties: {
                                     action: Schema.string(),
+                                    eventType: Schema.string(),
                                     game: Schema.object({
                                         properties: {
                                             date: Schema.string(),
                                             opponent: Schema.string(),
                                             location: Schema.string(),
+                                            endTime: Schema.string(),
                                             isHome: Schema.boolean(),
                                             kitColor: Schema.string(),
                                             arrivalTime: Schema.string(),
@@ -4730,7 +4733,7 @@
                                             homeScore: Schema.number(),
                                             awayScore: Schema.number()
                                         },
-                                        optionalProperties: ["isHome", "kitColor", "arrivalTime", "notes", "assignments", "status", "homeScore", "awayScore"]
+                                        optionalProperties: ["opponent", "endTime", "isHome", "kitColor", "arrivalTime", "notes", "assignments", "status", "homeScore", "awayScore"]
                                     }),
                                     gameId: Schema.string(),
                                     changes: Schema.object({
@@ -4762,33 +4765,41 @@
                 });
 
                 // Create AI prompt
-                let promptText = `Parse this sports schedule and extract game information.
+                let promptText = `Parse this sports schedule and extract both GAMES and PRACTICES.
 
 CONTEXT:
 - Today: ${now.toISOString().split('T')[0]}
 - Team: ${currentTeam.name}
 - Current games in DB: ${gamesContext.length}
 
-${imageFile ? 'The schedule is provided as an image. Extract all game information from it.' : 'SCHEDULE TEXT:\n' + textInput}
+${imageFile ? 'The schedule is provided as an image. Extract all events (games and practices) from it.' : 'SCHEDULE TEXT:\n' + textInput}
 
 ${textInput && imageFile ? '\nADDITIONAL INSTRUCTIONS:\n' + textInput : ''}
 
 PARSING RULES:
-1. Extract all games from the ${imageFile ? 'image' : 'text'} (look for Date/Time/Home/Away/Location columns or any game entries)
-2. Skip headers, "Week X", "Thanksgiving", and non-game text
-3. Team variations: "${currentTeam.name}", "${currentTeam.name}10", "${currentTeam.name}22" = same team
-4. Opponent: The team that is NOT ${currentTeam.name} (check Home/Away columns)
-5. Date format: Convert to ISO 8601 YYYY-MM-DDTHH:mm:ss (e.g., "2024-12-06T08:30:00")
-   - "11/15" = November 15, "Sat 11/22" = November 22
+1. Extract all events from the ${imageFile ? 'image' : 'text'} (look for Date/Time/Home/Away/Location columns or any game or practice entries)
+2. Skip headers, "Week X", "Thanksgiving", and non-event text
+3. Each operation MUST include eventType: "game" or "practice".
+   - PRACTICE: entries labeled Practice, Training, Workout, or Scrimmage-practice. These have NO opponent. Emit eventType="practice" with date, location, and (if given) an end/finish time in "endTime". Do NOT invent an opponent for a practice.
+   - GAME: entries with an opponent or Home/Away columns. Emit eventType="game".
+4. Team variations: "${currentTeam.name}", "${currentTeam.name}10", "${currentTeam.name}22" = same team
+5. Opponent (games only): The team that is NOT ${currentTeam.name} (check Home/Away columns)
+6. Date format: Convert to ISO 8601 YYYY-MM-DDTHH:mm:ss (e.g., "2024-12-06T08:30:00")
+   - "11/15" = November 15, "Sat 11/22" = November 22, "Mon 13" = the 13th of the current or referenced month
    - Use year ${currentYear} for future dates, ${currentYear + 1} for past dates
-6. Time: "8:30 AM" = 08:30:00, "2:20 PM" = 14:20:00, "12:00 PM" = 12:00:00
-7. Extract extra fields when available:
-   - Home/Away -> isHome (true for home, false for away)
+7. Time: "8:30 AM" = 08:30:00, "2:20 PM" = 14:20:00, "12:00 PM" = 12:00:00, "6:00 PM" = 18:00:00
+8. Extract extra fields when available:
+   - Home/Away -> isHome (true for home, false for away; games only)
    - Kit/Uniform color -> kitColor
    - Arrival/check-in time -> arrivalTime (ISO 8601 datetime)
    - Notes/comments -> notes
    - Assignments (snack, carpool, etc.) -> assignments array: [{ role, value }]
-8. For each game, create an operation with action="add" and game object with date, opponent, location, status="scheduled", homeScore=0, awayScore=0`;
+9. For a game, create action="add", eventType="game", game object with date, opponent, location, status="scheduled", homeScore=0, awayScore=0.
+10. For a practice, create action="add", eventType="practice", game object with date, location, notes, and endTime if known (leave opponent empty).
+
+EXAMPLES:
+- "Sat 11/22 8:30 AM vs Wildcats at Main Field" -> { action:"add", eventType:"game", game:{ date:"${currentYear}-11-22T08:30:00", opponent:"Wildcats", location:"Main Field" } }
+- "Mon 13 Practice At Overland Trail Elementary 6:00 PM" -> { action:"add", eventType:"practice", game:{ date:"${currentYear}-${String(currentMonth).padStart(2,'0')}-13T18:00:00", location:"Overland Trail Elementary" } }`;
 
                 // Call Firebase AI with structured output
                 const firebaseApp = getApp();
@@ -4820,14 +4831,18 @@ PARSING RULES:
 
                 // Store operations and render preview
                 proposedOperations = aiResponse.operations.map((op) => {
+                    const eventType = getBulkOperationEventType(op);
                     if (op.action === 'add' && op.game) {
-                        return { ...op, game: normalizeBulkGameForAdd(op.game) };
+                        if (eventType === 'practice') {
+                            return { ...op, eventType, game: normalizeBulkPracticeForAdd(op.game) };
+                        }
+                        return { ...op, eventType: 'game', game: normalizeBulkGameForAdd(op.game) };
                     }
-                    return op;
+                    return { ...op, eventType };
                 });
 
                 if (proposedOperations.length === 0) {
-                    alert('AI did not find any games to add/update/delete in the text. Please try being more specific with dates and opponents.');
+                    alert('AI did not find any games or practices to add/update/delete in the text. Please try being more specific with dates.');
                 }
 
                 await renderProposedChanges();
@@ -4868,7 +4883,40 @@ PARSING RULES:
             );
 
             list.innerHTML = proposedOperations.map((op, index) => {
-                if (op.action === 'add') {
+                if (op.action === 'add' && getBulkOperationEventType(op) === 'practice') {
+                    const practice = op.game;
+                    const date = new Date(practice.date);
+                    const hasConflict = conflictChecks[index];
+
+                    return `
+                        <div class="border ${hasConflict ? 'border-yellow-400 bg-yellow-50' : 'border-purple-300 bg-purple-50'} rounded-lg p-3" data-index="${index}">
+                            <div class="flex justify-between items-start gap-2">
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2 mb-1">
+                                        <span class="text-xs font-bold text-purple-700 uppercase">${hasConflict ? '⚠️ Add Practice (Conflict)' : '🏋️ Add Practice'}</span>
+                                    </div>
+                                    <div class="text-sm">
+                                        <input type="text" value="${escapeHtml(practice.title || 'Practice')}"
+                                            onchange="updateOperation(${index}, 'title', this.value)"
+                                            class="font-semibold bg-white border border-gray-300 rounded px-2 py-1 w-full mb-1">
+                                        <input type="datetime-local" value="${formatIsoForInput(date)}"
+                                            onchange="updateOperation(${index}, 'date', this.value)"
+                                            class="text-xs bg-white border border-gray-300 rounded px-2 py-1 w-full mb-1">
+                                        <input type="text" value="${escapeHtml(practice.location || '')}" placeholder="Location"
+                                            onchange="updateOperation(${index}, 'location', this.value)"
+                                            class="text-xs bg-white border border-gray-300 rounded px-2 py-1 w-full">
+                                        <textarea rows="2" placeholder="Notes"
+                                            onchange="updateOperation(${index}, 'notes', this.value)"
+                                            class="text-xs bg-white border border-gray-300 rounded px-2 py-1 w-full mt-1">${escapeHtml(practice.notes || '')}</textarea>
+                                    </div>
+                                    ${hasConflict ? `<div class="text-xs text-yellow-700 mt-1">⚠️ Similar event exists within 24 hours</div>` : ''}
+                                </div>
+                                <button onclick="removeOperation(${index})"
+                                    class="text-red-600 hover:text-red-800 text-sm font-bold">✕</button>
+                            </div>
+                        </div>
+                    `;
+                } else if (op.action === 'add') {
                     const game = op.game;
                     const date = new Date(game.date);
                     const dateStr = formatDate(date);
@@ -5027,7 +5075,17 @@ PARSING RULES:
 
                 for (const op of proposedOperations) {
                     try {
-                        if (op.action === 'add') {
+                        if (op.action === 'add' && getBulkOperationEventType(op) === 'practice') {
+                            const normalizedPractice = normalizeBulkPracticeForAdd(op.game);
+                            await addPractice(currentTeamId, {
+                                title: normalizedPractice.title,
+                                date: Timestamp.fromDate(new Date(normalizedPractice.date)),
+                                end: Timestamp.fromDate(new Date(normalizedPractice.end)),
+                                location: normalizedPractice.location,
+                                notes: normalizedPractice.notes
+                            });
+                            successCount++;
+                        } else if (op.action === 'add') {
                             const normalizedGame = normalizeBulkGameForAdd(op.game);
                             const gameData = {
                                 ...normalizedGame,
