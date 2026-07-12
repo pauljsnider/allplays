@@ -81,7 +81,11 @@ export function canRequestRide(offer = {}, parentUserId, childId) {
     if (!parentUserId || !childId) return false;
     if (normalized.driverUserId === parentUserId) return false;
     const existing = findRequestForChild(normalized, parentUserId, childId);
-    if (existing?.status === REQUEST_STATUS_PENDING || existing?.status === REQUEST_STATUS_CONFIRMED || existing?.status === REQUEST_STATUS_WAITLISTED) return false;
+    const existingStatus = (existing?.status || '').toString().toLowerCase();
+    if (existingStatus === REQUEST_STATUS_PENDING || existingStatus === REQUEST_STATUS_CONFIRMED) return false;
+    if (existingStatus === REQUEST_STATUS_WAITLISTED) {
+        return getOfferSeatInfo(normalized).seatsLeft > 0;
+    }
     return true;
 }
 

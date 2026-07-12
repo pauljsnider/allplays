@@ -99,6 +99,20 @@ describe('rideshare helpers', () => {
     expect(canRequestRide(offer, 'parent-2', 'child-2')).toBe(false);
   });
 
+  it('allows a waitlisted parent to re-request only after capacity becomes available', () => {
+    const offer = {
+      status: 'open',
+      driverUserId: 'driver-1',
+      seatCapacity: 3,
+      seatCountConfirmed: 2,
+      requests: [{ parentUserId: 'parent-1', childId: 'child-1', status: 'WAITLISTED' }]
+    };
+
+    expect(canRequestRide(offer, 'parent-1', 'child-1')).toBe(true);
+    expect(canRequestRide({ ...offer, seatCountConfirmed: 3 }, 'parent-1', 'child-1')).toBe(false);
+    expect(canRequestRide({ ...offer, status: 'closed' }, 'parent-1', 'child-1')).toBe(false);
+  });
+
   it('allows ride request on a full offer for waitlist placement', () => {
     const fullOffer = {
       status: 'open',

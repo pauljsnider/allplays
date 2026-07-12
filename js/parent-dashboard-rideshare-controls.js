@@ -1,4 +1,4 @@
-import { canRequestRide, findRequestForChild } from './rideshare-helpers.js';
+import { canRequestRide, findRequestForChild } from './rideshare-helpers.js?v=2';
 
 export function resolveSelectedRideChildId({
     includeChildPicker = false,
