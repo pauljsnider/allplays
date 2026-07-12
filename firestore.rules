@@ -1402,13 +1402,11 @@ service cloud.firestore {
              );
     }
 
-    function isCommunityMatchingPostCreateValid(data) {
-      return isSignedIn() &&
-             data.keys().hasOnly(communityMatchingPostFields()) &&
+    function isCommunityMatchingPostContractValid(data) {
+      return data.keys().hasOnly(communityMatchingPostFields()) &&
              data.get('authorId', '') == request.auth.uid &&
              isMatchingSocialPostType(data.get('type', '')) &&
              data.get('visibility', '') == 'community' &&
-             data.get('status', '') == 'open' &&
              data.get('expiresAt', null) is timestamp &&
              data.get('expiresAt', null) > request.time &&
              data.get('expiresAt', null) <= request.time + duration.value(90, 'd') &&
@@ -1432,6 +1430,12 @@ service cloud.firestore {
              isCommunityMatchingCreateScopeValid(data);
     }
 
+    function isCommunityMatchingPostCreateValid(data) {
+      return isSignedIn() &&
+             data.get('status', '') == 'open' &&
+             isCommunityMatchingPostContractValid(data);
+    }
+
     function isMatchingPostAuthorLifecycleUpdateValid() {
       return resource.data.get('authorId', '') == request.auth.uid &&
              resource.data.get('visibility', '') == 'community' &&
@@ -1447,13 +1451,7 @@ service cloud.firestore {
                'updatedAt'
              ]) &&
              request.resource.data.get('status', '') in ['open', 'filled', 'closed'] &&
-             isNonBlankString(request.resource.data.get('title', '')) &&
-             hasNoContactInfo(request.resource.data.get('caption', '')) &&
-             request.resource.data.get('caption', '').size() <= 600 &&
-             request.resource.data.get('matching', {}) is map &&
-             request.resource.data.get('matching', {}).keys().hasOnly(matchingDetailFields()) &&
-             isNonBlankString(request.resource.data.get('matching', {}).get('sport', '')) &&
-             isNonBlankString(request.resource.data.get('matching', {}).get('ageGroup', ''));
+             isCommunityMatchingPostContractValid(request.resource.data);
     }
 
     function isMatchingResponseTargetPost(postId) {
@@ -1609,6 +1607,7 @@ service cloud.firestore {
 
     function isSocialPostAuthorContentUpdateValid() {
       return resource.data.get('authorId', '') == request.auth.uid &&
+             resource.data.get('visibility', '') != 'community' &&
              isSocialPostScopeImmutable() &&
              request.resource.data.diff(resource.data).affectedKeys().hasOnly([
                'title',

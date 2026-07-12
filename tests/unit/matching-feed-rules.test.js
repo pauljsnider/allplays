@@ -38,6 +38,7 @@ describe('Player/team matching feed Firestore rules', () => {
         expect(source).toContain('function isMatchingSocialPostType(value)');
         expect(source).toContain("return value in ['player_seeking_team', 'team_seeking_players'];");
         expect(source).toContain('function isCommunityMatchingPostCreateValid(data)');
+        expect(source).toContain('function isCommunityMatchingPostContractValid(data)');
         expect(source).toContain("data.get('visibility', '') == 'community' &&");
         expect(source).toContain("data.get('status', '') == 'open' &&");
         expect(source).toContain('data.keys().hasOnly(communityMatchingPostFields())');
@@ -47,7 +48,6 @@ describe('Player/team matching feed Firestore rules', () => {
         expect(source).toContain("hasNoContactInfo(data.get('title', ''))");
         expect(source).toContain("hasNoContactInfo(data.get('detail', ''))");
         expect(source).toContain("hasNoContactInfo(data.get('caption', ''))");
-        expect(source).toContain("hasNoContactInfo(request.resource.data.get('caption', ''))");
         expect(source).toContain("!value.matches('.*[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+[.][A-Za-z]{2,}.*')");
         expect(source).toContain("!value.matches('.*[0-9][0-9() .-]{8,}[0-9].*')");
         expect(source).toContain("data.get('media', []).size() == 0 &&");
@@ -55,6 +55,7 @@ describe('Player/team matching feed Firestore rules', () => {
         expect(source).toContain('isMatchingDetailPayloadValid(data) &&');
         expect(source).toContain('isCommunityMatchingCreateScopeValid(data)');
         expect(source).toContain("!data.keys().hasAny(['authorEmail', 'email', 'phone'])");
+        expect(source).toContain('isCommunityMatchingPostContractValid(data)');
         expect(source).toContain('isCommunityMatchingPostCreateValid(request.resource.data)');
 
         // Community visibility is NOT added to the generic social visibility list.
@@ -107,7 +108,19 @@ describe('Player/team matching feed Firestore rules', () => {
         expect(source).toContain("data.get('visibility', '') == 'community' ||");
         expect(source).toContain('function isMatchingPostAuthorLifecycleUpdateValid()');
         expect(source).toContain("request.resource.data.get('status', '') in ['open', 'filled', 'closed'] &&");
+        expect(source).toContain('isCommunityMatchingPostContractValid(request.resource.data)');
         expect(source).toContain('isMatchingPostAuthorLifecycleUpdateValid()');
+    });
+
+    it('prevents community matching posts from using generic social content updates', () => {
+        const source = rulesSource();
+        const genericUpdateRule = source.match(/function isSocialPostAuthorContentUpdateValid\(\) \{[\s\S]*?\n    \}/);
+        expect(genericUpdateRule?.[0]).toContain("resource.data.get('visibility', '') != 'community'");
+        expect(genericUpdateRule?.[0]).toContain("'media'");
+
+        const matchingLifecycleRule = source.match(/function isMatchingPostAuthorLifecycleUpdateValid\(\) \{[\s\S]*?\n    \}/);
+        expect(matchingLifecycleRule?.[0]).toContain("resource.data.get('visibility', '') == 'community'");
+        expect(matchingLifecycleRule?.[0]).toContain('isCommunityMatchingPostContractValid(request.resource.data)');
     });
 
     it('blocks comments and reactions on community posts', () => {
