@@ -3,14 +3,16 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 describe('parent invite auto-linking', () => {
-    it('auto-accepts existing parent accounts when inviteParent finds a user', () => {
+    it('lets the server decide whether the invited email has an existing account', () => {
         const source = readFileSync(resolve(process.cwd(), 'js/db.js'), 'utf8');
         const inviteIndex = source.indexOf('export async function inviteParent');
         expect(inviteIndex).toBeGreaterThanOrEqual(0);
 
-        const inviteSource = source.slice(inviteIndex, inviteIndex + 3200);
-        expect(inviteSource).toContain('existingUser = await getUserByEmail(normalizedParentEmail);');
-        expect(inviteSource).toContain('autoLinked = await autoAcceptParentInviteForExistingUser');
+        const inviteSource = source.slice(inviteIndex, inviteIndex + 3600);
+        // Regression for #3844: non-global-admin coaches cannot list /users,
+        // so inviteParent must not run a client-side user lookup.
+        expect(inviteSource).not.toContain('getUserByEmail(');
+        expect(inviteSource).toContain('const autoAcceptResult = await autoAcceptParentInviteForExistingUser(accessCodeId);');
         expect(inviteSource).toContain('console.warn(`Could not auto-link existing parent invite:');
         expect(inviteSource).toContain('autoLinked');
     });
@@ -22,24 +24,21 @@ describe('parent invite auto-linking', () => {
 
         const helperSource = source.slice(helperIndex, helperIndex + 900);
         expect(helperSource).toContain("httpsCallable(functions, 'autoAcceptParentInviteForExistingUser')");
-        expect(helperSource).toContain('return Boolean(result?.data?.autoLinked);');
+        expect(helperSource).toContain('const autoLinked = payload.autoLinked === true;');
+        expect(helperSource).toContain('existingUser: payload.existingUser === true || autoLinked');
     });
 
-    it('links the user, player parents list, and accepted invite atomically server-side', () => {
+    it('registers the executable auto-link handler with its production dependencies', () => {
         const source = readFileSync(resolve(process.cwd(), 'functions/index.js'), 'utf8');
         const helperIndex = source.indexOf('exports.autoAcceptParentInviteForExistingUser');
         expect(helperIndex).toBeGreaterThanOrEqual(0);
 
-        const helperSource = source.slice(helperIndex, helperIndex + 6200);
-        expect(helperSource).toContain('firestore.runTransaction(async (transaction) =>');
-        expect(helperSource).toContain('hasTeamAdminAccess({ team, uid: context.auth.uid, email: actorEmail })');
-        expect(helperSource).toContain('parentOf: appendUniqueParentLink');
-        expect(helperSource).toContain('parentTeamIds: appendUniqueValue');
-        expect(helperSource).toContain('parentPlayerKeys: appendUniqueValue');
-        expect(helperSource).toContain('existingParents.push');
-        expect(helperSource).toContain("status: 'accepted'");
-        expect(helperSource).toContain('autoAccepted: true');
-        expect(helperSource).toContain('alreadyLinked');
+        const helperSource = source.slice(helperIndex, helperIndex + 900);
+        expect(helperSource).toContain('functions.https.onCall(createAutoAcceptParentInviteHandler({');
+        expect(helperSource).toContain('firestore,');
+        expect(helperSource).toContain('Timestamp: admin.firestore.Timestamp');
+        expect(helperSource).toContain('HttpsError: functions.https.HttpsError');
+        expect(helperSource).toContain('validateCode: validateAutoAcceptParentInviteCode');
     });
 
     it('shows auto-linked confirmation instead of code-first instructions in roster UI', () => {
