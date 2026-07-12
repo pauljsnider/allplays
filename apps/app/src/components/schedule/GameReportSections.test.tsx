@@ -8,8 +8,19 @@ const gameReportServiceMocks = vi.hoisted(() => ({
   loadGameReportPlays: vi.fn(),
   loadGameReportSections: vi.fn()
 }));
+const liveGameAnnouncerMocks = vi.hoisted(() => ({
+  toggleEnabled: vi.fn()
+}));
 
 vi.mock('../../lib/gameReportService', () => gameReportServiceMocks);
+vi.mock('../../lib/liveGameAnnouncer', () => ({
+  useLiveGameAnnouncer: () => ({
+    supported: true,
+    enabled: false,
+    paused: false,
+    toggleEnabled: liveGameAnnouncerMocks.toggleEnabled
+  })
+}));
 
 afterEach(() => {
   cleanup();
@@ -53,6 +64,38 @@ function buildReport(summary: string, gameOverrides: Record<string, unknown> = {
 }
 
 describe('GameReportSections', () => {
+  it('keeps the empty play state primary and hides audio controls until a play exists', async () => {
+    gameReportServiceMocks.loadGameReportSections.mockResolvedValue(buildReport('Live report.'));
+
+    render(<GameReportSections event={buildEvent()} />);
+
+    await waitFor(() => expect(screen.getByText('Live report.')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Plays' }));
+
+    expect(screen.getByText('No events logged')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Turn on audio announcements' })).toBeNull();
+    expect(screen.queryByLabelText('Play-by-play audio controls')).toBeNull();
+  });
+
+  it('renders plays before the secondary audio control and keeps the toggle behavior', async () => {
+    gameReportServiceMocks.loadGameReportSections.mockResolvedValue(buildReport('Live report.', {}, [
+      { id: 'event-1', text: 'Avery scores', period: 'Q1', clock: '7:42', timestamp: new Date(1717200000 * 1000) }
+    ]));
+
+    render(<GameReportSections event={buildEvent()} />);
+
+    await waitFor(() => expect(screen.getByText('Live report.')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Plays' }));
+
+    const playLog = screen.getByLabelText('Play-by-play log');
+    const audioControls = screen.getByLabelText('Play-by-play audio controls');
+    expect(playLog.compareDocumentPosition(audioControls) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByText('Avery scores')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Turn on audio announcements' }));
+    expect(liveGameAnnouncerMocks.toggleEnabled).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps the active tab and loaded report mounted during same-event live score updates', async () => {
     gameReportServiceMocks.loadGameReportSections.mockResolvedValue(buildReport('First report.'));
 
