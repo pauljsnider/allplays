@@ -317,6 +317,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
   const [videoClipsLoaded, setVideoClipsLoaded] = useState(false);
   const [videoClipsLoading, setVideoClipsLoading] = useState(false);
   const [videoClipsError, setVideoClipsError] = useState<AppServiceError | null>(null);
+  const playerDetailRequestIdRef = useRef(0);
   const athleteProfileRequestKeyRef = useRef('');
   const videoClipsRequestKeyRef = useRef('');
 
@@ -423,6 +424,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
     showLoading?: boolean;
     reloadVideoClips?: boolean;
   } = {}) => {
+    const requestId = ++playerDetailRequestIdRef.current;
     const fullPageLoading = showLoading || data === null;
     if (fullPageLoading) {
       setLoading(true);
@@ -432,9 +434,20 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
     setError(null);
     try {
       const nextData = await loadParentPlayerDetail(auth.user, teamId, playerId);
+      if (playerDetailRequestIdRef.current !== requestId) {
+        return;
+      }
       const nextAthleteProfileLoaded = hasResolvedAthleteProfile(nextData.athleteProfile);
-      setData(nextData);
-      setAthleteProfileLoaded(nextAthleteProfileLoaded);
+      const preserveAthleteProfile = athleteProfileLoaded && !nextAthleteProfileLoaded && !!data
+        && data.child.teamId === nextData.child.teamId
+        && data.child.playerId === nextData.child.playerId;
+      setData((current) => ({
+        ...nextData,
+        athleteProfile: preserveAthleteProfile && current
+          ? current.athleteProfile
+          : nextData.athleteProfile
+      }));
+      setAthleteProfileLoaded(nextAthleteProfileLoaded || preserveAthleteProfile);
       setAthleteProfileError(null);
       setVideoClipsError(null);
       if (reloadVideoClips) {
@@ -444,7 +457,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
           force: true
         });
       }
-      if (athleteProfileLoaded && !nextAthleteProfileLoaded) {
+      if (preserveAthleteProfile) {
         const nextAthleteProfile = await loadAthleteProfile({
           nextTeamId: nextData.child.teamId,
           nextPlayerId: nextData.child.playerId,
@@ -455,11 +468,17 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
         }
       }
     } catch (loadError: any) {
+      if (playerDetailRequestIdRef.current !== requestId) {
+        return;
+      }
       if (fullPageLoading) {
         setData(null);
       }
       setError(toAppServiceError(loadError, 'Unable to load player.'));
     } finally {
+      if (playerDetailRequestIdRef.current !== requestId) {
+        return;
+      }
       if (fullPageLoading) {
         setLoading(false);
       } else {
@@ -471,6 +490,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
   useEffect(() => {
     athleteProfileRequestKeyRef.current = '';
     videoClipsRequestKeyRef.current = '';
+    setRefreshing(false);
     setAthleteProfileLoaded(false);
     setAthleteProfileLoading(false);
     setAthleteProfileError(null);
@@ -487,6 +507,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
       nextTeamId: data.child.teamId,
       nextPlayerId: data.child.playerId
     });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSection, athleteProfileLoaded, athleteProfileLoading, data]);
 
   useEffect(() => {
@@ -933,7 +954,7 @@ function PlayerProfileSection({
       {activePanel === 'athlete' ? (
         athleteProfileLoaded ? (
           <AthleteProfileBuilderCard
-            key={`${data.athleteProfile.profile?.id || 'new'}:${data.athleteProfile.profile?.privacy || 'private'}:${String(data.athleteProfile.shareUrl || '').trim()}`}
+            key={`${data.child.teamId}:${data.child.playerId}`}
             data={data}
             auth={auth}
             onChanged={onChanged}
@@ -1512,6 +1533,10 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
     setClipDrafts(initialClipDrafts);
     setHighlightClipError('');
   }, [initialClipDrafts]);
+
+  useEffect(() => {
+    setPrivacy(existing?.privacy === 'public' ? 'public' : 'private');
+  }, [existing?.privacy]);
 
   const toggleSeasonKey = (seasonKey: string) => {
     setSelectedSeasonKeys((current) => (

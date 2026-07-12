@@ -470,6 +470,65 @@ describe('saveParentAthleteProfileDraft', () => {
     expect(legacyPlayerDbMocks.deleteAthleteProfileMediaByPath).toHaveBeenCalledWith('athlete-profile-media/parent-1/profile-1/putback.mp4');
     expect(legacyPlayerDbMocks.saveAthleteProfile).not.toHaveBeenCalled();
   });
+
+  it('preserves privacy value through the save flow for both public and private', async () => {
+    legacyPlayerDbMocks.saveAthleteProfile.mockImplementation(async (_userId, nextDraft, options) => ({
+      id: options.profileId,
+      ...nextDraft
+    }));
+
+    await saveParentAthleteProfileDraft({
+      user: {
+        uid: 'parent-1',
+        parentOf: [{ teamId: 'team-current', playerId: 'player-current' }]
+      } as any,
+      teamId: 'team-current',
+      playerId: 'player-current',
+      profileId: 'profile-1',
+      draft: {
+        athlete: { name: 'Sam Player' },
+        bio: { position: 'Guard' },
+        privacy: 'public',
+        clips: [],
+        selectedSeasonKeys: ['team-current::player-current']
+      }
+    });
+
+    expect(legacyPlayerDbMocks.saveAthleteProfile).toHaveBeenCalledWith(
+      'parent-1',
+      expect.objectContaining({ privacy: 'public' }),
+      { profileId: 'profile-1' }
+    );
+
+    legacyPlayerDbMocks.saveAthleteProfile.mockClear();
+    legacyPlayerDbMocks.saveAthleteProfile.mockImplementation(async (_userId, nextDraft, options) => ({
+      id: options.profileId,
+      ...nextDraft
+    }));
+
+    await saveParentAthleteProfileDraft({
+      user: {
+        uid: 'parent-1',
+        parentOf: [{ teamId: 'team-current', playerId: 'player-current' }]
+      } as any,
+      teamId: 'team-current',
+      playerId: 'player-current',
+      profileId: 'profile-1',
+      draft: {
+        athlete: { name: 'Sam Player' },
+        bio: { position: 'Guard' },
+        privacy: 'private',
+        clips: [],
+        selectedSeasonKeys: ['team-current::player-current']
+      }
+    });
+
+    expect(legacyPlayerDbMocks.saveAthleteProfile).toHaveBeenCalledWith(
+      'parent-1',
+      expect.objectContaining({ privacy: 'private' }),
+      { profileId: 'profile-1' }
+    );
+  });
 });
 
 

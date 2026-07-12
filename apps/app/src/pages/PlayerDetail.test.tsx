@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -326,6 +326,75 @@ describe('PlayerDetail athlete profile season selection', () => {
       expect(playerServiceMocks.loadParentPlayerVideoClips).toHaveBeenCalledTimes(2);
       expect(playerServiceMocks.loadParentPlayerVideoClips).toHaveBeenLastCalledWith(auth.user, 'team-next', 'player-next');
     });
+  });
+
+  it('ignores a player refresh that completes after navigating to another player', async () => {
+    const staleRefreshDeferred = createDeferred<any>();
+    const currentAthleteProfile = {
+      ...buildDetailData().athleteProfile,
+      profile: {
+        id: 'profile-current',
+        athlete: { name: 'Sam Player', headline: 'Current athlete headline' },
+        bio: {},
+        privacy: 'private',
+        clips: [],
+        seasons: [{ seasonKey: 'team-current::player-current' }]
+      },
+      builderUrl: 'https://allplays.ai/athlete-profile-builder.html?teamId=team-current&playerId=player-current&profileId=profile-current'
+    };
+    const nextAthleteProfileShell = {
+      profile: null,
+      shareUrl: '',
+      builderUrl: 'https://allplays.ai/athlete-profile-builder.html?teamId=team-next&playerId=player-next',
+      seasonOptions: [{
+        seasonKey: 'team-next::player-next',
+        teamId: 'team-next',
+        teamName: 'Next Team',
+        playerId: 'player-next',
+        playerName: 'Jordan Player'
+      }]
+    };
+
+    playerServiceMocks.loadParentPlayerDetail
+      .mockResolvedValueOnce(buildDetailData({ athleteProfile: currentAthleteProfile }))
+      .mockImplementationOnce(() => staleRefreshDeferred.promise)
+      .mockResolvedValueOnce(buildDetailData({
+        child: {
+          teamId: 'team-next',
+          teamName: 'Next Team',
+          playerId: 'player-next',
+          playerName: 'Jordan Player'
+        },
+        player: {
+          id: 'player-next',
+          teamId: 'team-next',
+          teamName: 'Next Team',
+          name: 'Jordan Player',
+          number: '24',
+          photoUrl: ''
+        },
+        team: { id: 'team-next', name: 'Next Team' },
+        athleteProfile: nextAthleteProfileShell
+      }));
+    renderPlayerDetailWithRouteSwitcher();
+
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Athlete Profile' }));
+    expect(await screen.findByDisplayValue('Current athlete headline')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh player' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Next player route' }));
+
+    await screen.findByText('Jordan Player');
+    await act(async () => {
+      staleRefreshDeferred.resolve(buildDetailData({ athleteProfile: currentAthleteProfile }));
+      await staleRefreshDeferred.promise;
+    });
+
+    expect(screen.getByText('Jordan Player')).toBeTruthy();
+    expect(screen.queryByDisplayValue('Current athlete headline')).toBeNull();
+    expect(playerServiceMocks.loadParentPlayerDetail).toHaveBeenLastCalledWith(auth.user, 'team-next', 'player-next');
   });
 
   it('does not auto-retry failed video clip loads until the user retries', async () => {
@@ -1776,5 +1845,85 @@ describe('PlayerDetail custom roster fields', () => {
 
     expect((await screen.findByDisplayValue('Rocket') as HTMLInputElement).disabled).toBe(true);
     expect(screen.queryByRole('button', { name: 'Save Custom Fields' })).toBeNull();
+  });
+
+  it('preserves the privacy toggle state across save and refresh cycles', async () => {
+    const shareUrl = 'https://allplays.ai/athlete-profile.html?profileId=profile-1';
+    const profileRefreshDeferred = createDeferred<any>();
+
+    playerServiceMocks.loadParentPlayerDetail
+      .mockResolvedValueOnce(buildDetailData({
+        athleteProfile: {
+          profile: {
+            id: 'profile-1',
+            athlete: { name: 'Sam Player' },
+            bio: {},
+            privacy: 'private',
+            clips: [],
+            seasons: [{ seasonKey: 'team-current::player-current' }]
+          },
+          shareUrl: '',
+          builderUrl: 'https://allplays.ai/athlete-profile-builder.html?teamId=team-current&playerId=player-current&profileId=profile-1',
+          seasonOptions: buildDetailData().athleteProfile.seasonOptions
+        }
+      }))
+      .mockResolvedValueOnce(buildDetailData());
+
+    playerServiceMocks.loadParentPlayerAthleteProfile.mockImplementationOnce(() => profileRefreshDeferred.promise);
+
+    const refreshedAthleteProfile = {
+      profile: {
+        id: 'profile-1',
+        athlete: { name: 'Sam Player' },
+        bio: {},
+        privacy: 'public',
+        clips: [],
+        seasons: [{ seasonKey: 'team-current::player-current' }]
+      },
+      shareUrl,
+      builderUrl: 'https://allplays.ai/athlete-profile-builder.html?teamId=team-current&playerId=player-current&profileId=profile-1',
+      seasonOptions: buildDetailData().athleteProfile.seasonOptions
+    };
+
+    playerServiceMocks.saveParentAthleteProfileDraft.mockImplementation(async (_args: any) => ({
+      id: 'profile-1',
+      profile: {
+        id: 'profile-1',
+        athlete: { name: 'Sam Player' },
+        bio: {},
+        privacy: 'public',
+        clips: [],
+        seasons: [{ seasonKey: 'team-current::player-current' }]
+      }
+    }));
+
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Athlete Profile' }));
+    await screen.findByText('What others see');
+
+    fireEvent.change(screen.getByLabelText('Headline'), { target: { value: 'Draft headline' } });
+    fireEvent.click(screen.getByRole('button', { name: 'public' }));
+    expect(screen.getByRole('button', { name: 'Publish Athlete Profile' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Publish Athlete Profile' }));
+
+    await waitFor(() => {
+      expect(playerServiceMocks.loadParentPlayerAthleteProfile).toHaveBeenCalledTimes(1);
+    });
+
+    expect(screen.getByDisplayValue('Draft headline')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'public' }).className).toContain('border-primary-300');
+
+    profileRefreshDeferred.resolve(refreshedAthleteProfile);
+
+    await waitFor(() => {
+      const publicBtn = screen.getByRole('button', { name: 'public' });
+      const privateBtn = screen.getByRole('button', { name: 'private' });
+      expect(publicBtn.className).toContain('border-primary-300');
+      expect(privateBtn.className).toContain('border-gray-200');
+    });
   });
 });
