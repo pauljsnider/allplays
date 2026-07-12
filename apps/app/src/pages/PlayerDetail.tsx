@@ -487,6 +487,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
       nextTeamId: data.child.teamId,
       nextPlayerId: data.child.playerId
     });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSection, athleteProfileLoaded, athleteProfileLoading, data]);
 
   useEffect(() => {
@@ -933,7 +934,7 @@ function PlayerProfileSection({
       {activePanel === 'athlete' ? (
         athleteProfileLoaded ? (
           <AthleteProfileBuilderCard
-            key={`${data.athleteProfile.profile?.id || 'new'}:${data.athleteProfile.profile?.privacy || 'private'}:${String(data.athleteProfile.shareUrl || '').trim()}`}
+            key={`${data.athleteProfile.profile?.id || 'new'}:${String(data.athleteProfile.shareUrl || '').trim()}`}
             data={data}
             auth={auth}
             onChanged={onChanged}
@@ -1512,6 +1513,10 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
     setClipDrafts(initialClipDrafts);
     setHighlightClipError('');
   }, [initialClipDrafts]);
+
+  useEffect(() => {
+    setPrivacy(existing?.privacy === 'public' ? 'public' : 'private');
+  }, [existing?.privacy]);
 
   const toggleSeasonKey = (seasonKey: string) => {
     setSelectedSeasonKeys((current) => (
