@@ -19,6 +19,7 @@ export function buildFriendInviteAccessCodeData({
     generatedBy,
     email = '',
     phone = '',
+    inviterProfile = {},
     now,
     expiresAt
 }) {
@@ -28,11 +29,23 @@ export function buildFriendInviteAccessCodeData({
         generatedBy,
         email: normalizeFriendInviteContact(email),
         phone: normalizeFriendInviteContact(phone),
+        inviterProfile: buildFriendInviteInviterProfile(inviterProfile),
         createdAt: now,
         expiresAt,
         used: false,
         usedBy: null,
         usedAt: null
+    };
+}
+
+export function buildFriendInviteInviterProfile(profile = {}) {
+    return {
+        displayName: normalizeFriendInviteContact(profile.displayName || profile.fullName || profile.name),
+        fullName: normalizeFriendInviteContact(profile.fullName || profile.displayName || profile.name),
+        photoUrl: normalizeFriendInviteContact(profile.photoUrl),
+        discoveryTeamIds: Array.isArray(profile.discoveryTeamIds)
+            ? profile.discoveryTeamIds.map(value => String(value || '').trim()).filter(Boolean)
+            : []
     };
 }
 

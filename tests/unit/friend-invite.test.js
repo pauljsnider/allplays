@@ -3,6 +3,7 @@ import {
     FRIEND_INVITE_TYPE,
     buildAcceptedFriendshipData,
     buildFriendInviteAccessCodeData,
+    buildFriendInviteInviterProfile,
     buildFriendshipId,
     getSharedTeamContext
 } from '../../js/friend-invite.js';
@@ -22,6 +23,12 @@ describe('friend invite helpers', () => {
             generatedBy: 'inviter-1',
             email: ' friend@example.com ',
             phone: '',
+            inviterProfile: {
+                fullName: ' Invite Sender ',
+                email: 'sender@example.com',
+                parentTeamIds: ['private-team'],
+                discoveryTeamIds: ['team-1', '']
+            },
             now,
             expiresAt
         })).toEqual({
@@ -30,11 +37,33 @@ describe('friend invite helpers', () => {
             generatedBy: 'inviter-1',
             email: 'friend@example.com',
             phone: null,
+            inviterProfile: {
+                displayName: 'Invite Sender',
+                fullName: 'Invite Sender',
+                photoUrl: null,
+                discoveryTeamIds: ['team-1']
+            },
             createdAt: now,
             expiresAt,
             used: false,
             usedBy: null,
             usedAt: null
+        });
+    });
+
+    it('keeps friend invite inviter profiles public and presentation-only', () => {
+        expect(buildFriendInviteInviterProfile({
+            displayName: ' Sender ',
+            fullName: 'Sender Full',
+            photoUrl: ' https://example.com/avatar.png ',
+            email: 'private@example.com',
+            parentOf: [{ teamId: 'secret-team' }],
+            discoveryTeamIds: ['team-1', ' team-2 ']
+        })).toEqual({
+            displayName: 'Sender',
+            fullName: 'Sender Full',
+            photoUrl: 'https://example.com/avatar.png',
+            discoveryTeamIds: ['team-1', 'team-2']
         });
     });
 

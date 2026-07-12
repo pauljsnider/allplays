@@ -97,6 +97,7 @@ import {
     FRIEND_INVITE_TYPE,
     buildAcceptedFriendshipData,
     buildFriendInviteAccessCodeData,
+    buildFriendInviteInviterProfile,
     buildFriendshipId,
     getDisplayName
 } from './friend-invite.js?v=1';
@@ -4366,12 +4367,19 @@ async function createUniqueAccessCode(accessCodeData, preferredCode) {
 export async function createAccessCode(userId, email, phone, code, options = {}) {
     const type = options.type || 'standard';
     const now = Timestamp.now();
+    const friendInviteInviterProfile = type === FRIEND_INVITE_TYPE
+        ? await getUserProfile(userId).catch(() => ({})) || {}
+        : {};
     const accessCodeData = type === FRIEND_INVITE_TYPE
         ? buildFriendInviteAccessCodeData({
             code,
             generatedBy: userId,
             email,
             phone,
+            inviterProfile: {
+                ...friendInviteInviterProfile,
+                discoveryTeamIds: derivePublicProfileTeamIds(friendInviteInviterProfile)
+            },
             now,
             expiresAt: options.expiresAt || Timestamp.fromMillis(Date.now() + 7 * 24 * 60 * 60 * 1000)
         })
@@ -5068,11 +5076,9 @@ export async function redeemFriendInvite(userId, code, fallbackEmail = null) {
 
         const friendshipId = buildFriendshipId(inviterId, userId);
         const friendshipRef = doc(db, "friendships", friendshipId);
-        const inviterRef = doc(db, "users", inviterId);
         const inviteeRef = doc(db, "users", userId);
-        const [friendshipSnapshot, inviterSnapshot, inviteeSnapshot] = await Promise.all([
+        const [friendshipSnapshot, inviteeSnapshot] = await Promise.all([
             transaction.get(friendshipRef),
-            transaction.get(inviterRef),
             transaction.get(inviteeRef)
         ]);
 
@@ -5085,7 +5091,7 @@ export async function redeemFriendInvite(userId, code, fallbackEmail = null) {
         }
 
         const now = Timestamp.now();
-        const inviterProfile = inviterSnapshot.exists() ? (inviterSnapshot.data() || {}) : {};
+        const inviterProfile = buildFriendInviteInviterProfile(codeData.inviterProfile || {});
         const inviteeProfile = inviteeSnapshot.exists() ? (inviteeSnapshot.data() || {}) : {};
         const inviteeEmail = String(inviteeProfile.email || fallbackEmail || auth.currentUser?.email || '').trim();
 

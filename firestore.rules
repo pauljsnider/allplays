@@ -95,10 +95,10 @@ service cloud.firestore {
 
     function isFriendInviteAccessCodePayloadValid(data) {
       return data.keys().hasOnly([
-               'code', 'type', 'generatedBy', 'email', 'phone', 'createdAt', 'expiresAt', 'used', 'usedBy', 'usedAt'
+               'code', 'type', 'generatedBy', 'email', 'phone', 'inviterProfile', 'createdAt', 'expiresAt', 'used', 'usedBy', 'usedAt'
              ]) &&
              data.keys().hasAll([
-               'code', 'type', 'generatedBy', 'createdAt', 'expiresAt', 'used', 'usedBy', 'usedAt'
+               'code', 'type', 'generatedBy', 'inviterProfile', 'createdAt', 'expiresAt', 'used', 'usedBy', 'usedAt'
              ]) &&
              data.type == 'friend_invite' &&
              data.code is string &&
@@ -106,12 +106,23 @@ service cloud.firestore {
              data.generatedBy == request.auth.uid &&
              (!('email' in data) || data.email == null || data.email is string) &&
              (!('phone' in data) || data.phone == null || data.phone is string) &&
+             isFriendInviteInviterProfileValid(data.inviterProfile) &&
              data.createdAt is timestamp &&
              data.expiresAt is timestamp &&
              data.expiresAt > request.time &&
              data.used == false &&
              data.usedBy == null &&
              data.usedAt == null;
+    }
+
+    function isFriendInviteInviterProfileValid(data) {
+      return data is map &&
+             data.keys().hasOnly(['displayName', 'fullName', 'photoUrl', 'discoveryTeamIds']) &&
+             (!data.keys().hasAny(['displayName']) || data.displayName == null || data.displayName is string) &&
+             (!data.keys().hasAny(['fullName']) || data.fullName == null || data.fullName is string) &&
+             (!data.keys().hasAny(['photoUrl']) || data.photoUrl == null || data.photoUrl is string) &&
+             data.get('discoveryTeamIds', []) is list &&
+             !data.keys().hasAny(['email', 'phone', 'parentOf', 'parentTeamIds', 'parentPlayerKeys']);
     }
 
     function isAdminInvitePayloadValid(data) {
@@ -1475,6 +1486,44 @@ service cloud.firestore {
              data.get('status', '') == 'pending';
     }
 
+    function isFriendInviteAcceptedFriendshipCreateValid(data) {
+      let codeId = data.get('inviteCodeId', '');
+      let codePath = /databases/$(database)/documents/accessCodes/$(codeId);
+      let codeAfter = getAfter(codePath).data;
+      return isSignedIn() &&
+             codeId is string &&
+             codeId != '' &&
+             existsAfter(codePath) &&
+             data.keys().hasOnly([
+               'requesterId', 'recipientId', 'memberIds', 'status',
+               'sharedTeamIds', 'sharedTeamNames', 'blockedBy',
+               'source', 'inviteCodeId', 'createdAt', 'acceptedAt',
+               'respondedAt', 'updatedAt'
+             ]) &&
+             data.get('requesterId', '') is string &&
+             data.get('requesterId', '') != request.auth.uid &&
+             data.get('recipientId', '') == request.auth.uid &&
+             data.get('memberIds', []) is list &&
+             request.auth.uid in data.get('memberIds', []) &&
+             data.get('requesterId', '') in data.get('memberIds', []) &&
+             data.get('status', '') == 'accepted' &&
+             data.get('source', '') == 'friend_invite' &&
+             data.get('inviteCodeId', '') == codeId &&
+             data.get('sharedTeamIds', []) is list &&
+             data.get('sharedTeamNames', []) is list &&
+             data.get('blockedBy', []) is list &&
+             data.get('blockedBy', []).size() == 0 &&
+             data.get('createdAt', request.time) is timestamp &&
+             data.get('acceptedAt', request.time) is timestamp &&
+             data.get('respondedAt', request.time) is timestamp &&
+             data.get('updatedAt', request.time) is timestamp &&
+             codeAfter.get('type', null) == 'friend_invite' &&
+             codeAfter.get('generatedBy', '') == data.get('requesterId', '') &&
+             codeAfter.get('used', false) == true &&
+             codeAfter.get('usedBy', '') == request.auth.uid &&
+             codeAfter.get('usedAt', null) is timestamp;
+    }
+
 
     function canReadTeamMediaFolder(teamId, folderData) {
       return isTeamOwnerOrAdmin(teamId) ||
@@ -2155,7 +2204,8 @@ service cloud.firestore {
 
     match /friendships/{friendshipId} {
       allow read: if canAccessFriendship(resource.data) || isGlobalAdmin();
-      allow create: if isFriendshipCreatePayloadValid(request.resource.data);
+      allow create: if isFriendshipCreatePayloadValid(request.resource.data) ||
+                    isFriendInviteAcceptedFriendshipCreateValid(request.resource.data);
       allow update: if (canAccessFriendship(resource.data) || isGlobalAdmin()) &&
                     request.resource.data.get('memberIds', []) == resource.data.get('memberIds', []) &&
                     request.resource.data.get('status', '') in ['pending', 'accepted', 'declined', 'removed', 'blocked'];

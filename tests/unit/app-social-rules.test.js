@@ -114,6 +114,19 @@ describe('React app social Firestore rules', () => {
         expect(source).toContain("request.resource.data.get('status', '') in ['pending', 'accepted', 'declined', 'removed', 'blocked']");
     });
 
+    it('permits accepted friendship creation only during atomic friend invite redemption', () => {
+        const source = rulesSource();
+
+        expect(source).toContain('function isFriendInviteAcceptedFriendshipCreateValid(data)');
+        expect(source).toContain('let codePath = /databases/$(database)/documents/accessCodes/$(codeId);');
+        expect(source).toContain('existsAfter(codePath)');
+        expect(source).toContain("codeAfter.get('type', null) == 'friend_invite'");
+        expect(source).toContain("codeAfter.get('generatedBy', '') == data.get('requesterId', '')");
+        expect(source).toContain("codeAfter.get('usedBy', '') == request.auth.uid");
+        expect(source).toContain("allow create: if isFriendshipCreatePayloadValid(request.resource.data) ||");
+        expect(source).toContain("isFriendInviteAcceptedFriendshipCreateValid(request.resource.data)");
+    });
+
     it('locks down top-level users docs and routes discovery through projected public profiles', () => {
         const source = rulesSource();
 
