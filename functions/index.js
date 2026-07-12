@@ -11676,6 +11676,12 @@ async function setOpportunityLifecycleStatus(data, context, mode) {
   const caller = await getOpportunityCaller(context);
   const { listingRef, listingSnap, listing } = await requireOpportunityListing(data?.listingId);
   if (!(await canManageOpportunity(caller, listing))) throwOpportunityError('permission-denied', 'You cannot manage this opportunity.');
+  if (listing.status === 'removed') {
+    throwOpportunityError('failed-precondition', 'A moderated listing can only be restored by a platform admin.');
+  }
+  if (mode === 'renew' && listing.kind !== 'player_seeking_team') {
+    await resolveOpportunityTeam({ kind: listing.kind, teamId: listing.teamId }, caller);
+  }
   const now = admin.firestore.Timestamp.now();
   const update = mode === 'renew'
     ? { status: 'active', expiresAt: admin.firestore.Timestamp.fromDate(buildOpportunityExpiry(now.toMillis())), updatedAt: now }
@@ -11879,7 +11885,13 @@ exports.moderatePublicOpportunity = functions.https.onCall(async (data, context 
   if (!isOpportunityPlatformAdmin(caller)) throwOpportunityError('permission-denied', 'Platform admin access is required.');
   const action = data?.action === 'restore' ? 'restore' : data?.action === 'remove' ? 'remove' : '';
   if (!action) throwOpportunityError('invalid-argument', 'Choose remove or restore.');
-  const { listingRef } = await requireOpportunityListing(data?.listingId);
+  const { listingRef, listing } = await requireOpportunityListing(data?.listingId);
+  if (action === 'restore' && listing.kind !== 'player_seeking_team') {
+    const teamSnap = await firestore.doc(`teams/${listing.teamId}`).get();
+    if (!teamSnap.exists || teamSnap.data()?.isPublic !== true) {
+      throwOpportunityError('failed-precondition', 'The linked team must be public before this listing can be restored.');
+    }
+  }
   const now = admin.firestore.Timestamp.now();
   const update = action === 'remove'
     ? { status: 'removed', moderatedBy: caller.uid, moderatedAt: now, updatedAt: now }

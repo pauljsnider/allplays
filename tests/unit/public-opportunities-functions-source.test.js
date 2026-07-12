@@ -41,4 +41,12 @@ describe('public opportunity callable wiring', () => {
     expect(source).toContain('exports.closePublicOpportunitiesForPrivateTeam');
     expect(source).toContain("closedReason: 'team_not_public'");
   });
+
+  it('prevents authors from reviving moderated or no-longer-authorized team listings', () => {
+    expect(source).toMatch(/setOpportunityLifecycleStatus[\s\S]*listing\.status === 'removed'[\s\S]*can only be restored by a platform admin/);
+    expect(source).toContain("mode === 'renew' && listing.kind !== 'player_seeking_team'");
+    expect(source).toContain('await resolveOpportunityTeam({ kind: listing.kind, teamId: listing.teamId }, caller);');
+    expect(source).toContain("action === 'restore' && listing.kind !== 'player_seeking_team'");
+    expect(source).toContain('The linked team must be public before this listing can be restored.');
+  });
 });
