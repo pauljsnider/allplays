@@ -380,13 +380,50 @@ async function installModuleMocks(page) {
                 update(ref, data) {
                     operations.push({ type: 'update', path: ref.path, data: clone(data) });
                 },
+                delete(ref) {
+                    const store = loadStore();
+                    store.batchDeleteCalls = store.batchDeleteCalls || [];
+                    store.batchDeleteCalls.push(ref.path);
+                    saveStore(store);
+
+                    if (store.batchDeleteFailurePath === ref.path) {
+                        throw new Error(store.batchDeleteFailureMessage || 'Injected replacement delete failure');
+                    }
+
+                    operations.push({ type: 'delete', path: ref.path });
+                },
                 async commit() {
                     const store = loadStore();
                     store.commitCalls = (store.commitCalls || 0) + 1;
                     store.batchOps = store.batchOps || [];
                     store.batchOps.push(...operations.map((operation) => clone(operation)));
 
+                    if (store.commitFailureMessage) {
+                        saveStore(store);
+                        throw new Error(store.commitFailureMessage);
+                    }
+
                     operations.forEach((operation) => {
+                        if (operation.type === 'delete') {
+                            const parts = String(operation.path || '').split('/');
+                            const collectionName = parts[parts.length - 2];
+                            const docId = parts[parts.length - 1];
+
+                            if (collectionName === 'events') {
+                                delete (store.events || {})[docId];
+                            }
+                            if (collectionName === 'aggregatedStats') {
+                                delete (store.aggregatedStats || {})[docId];
+                            }
+                            if (collectionName === 'liveEvents') {
+                                delete (store.liveEvents || {})[docId];
+                            }
+                            if (collectionName === 'privatePlayerStats') {
+                                delete (store.privatePlayerStats || {})[docId];
+                            }
+                            return;
+                        }
+
                         if (operation.path.includes('/aggregatedStats/')) {
                             const playerId = operation.path.split('/').pop();
                             store.aggregatedStats = store.aggregatedStats || {};
@@ -913,7 +950,8 @@ test('respects overwrite confirmation and renders rewritten stats on the game re
 
     store = await page.evaluate((storeKey) => JSON.parse(localStorage.getItem(storeKey) || '{}'), STORE_KEY);
     expect(store.confirmResults).toEqual([false, true]);
-    expect(store.deleteCalls).toEqual([
+    expect(store.deleteCalls).toEqual([]);
+    expect(store.batchDeleteCalls).toEqual([
         'teams/team-1/games/game-1/events/oldEvent',
         'teams/team-1/games/game-1/aggregatedStats/legacyPlayer',
         'teams/team-1/games/game-1/liveEvents/oldLiveEvent',
@@ -963,4 +1001,118 @@ test('respects overwrite confirmation and renders rewritten stats on the game re
     await expect(page.locator('#opponent-stats-body')).toContainText('9');
     await expect(page.locator('#opponent-stats-body tr').first().locator('td').nth(3)).toContainText('—');
     await expect(page.locator('#opponent-stats-body tr').first().locator('td').nth(4)).toContainText('—');
+});
+
+test('preserves existing tracked stats when replacement batch commit fails', async ({ page, baseURL }) => {
+    await seedScenario(page, baseURL, createScenario({
+        aggregatedStats: {
+            legacyPlayer: {
+                playerName: 'Old Player',
+                playerNumber: '99',
+                stats: { pts: 99, reb: 1, ast: 1, fouls: 5 }
+            }
+        },
+        events: {
+            oldEvent: { type: 'score', timestamp: 1 }
+        },
+        liveEvents: {
+            oldLiveEvent: { type: 'assist', timestamp: 2 }
+        },
+        privatePlayerStats: {
+            oldPrivateStat: { playerId: 'p1', notes: 'private stale data' }
+        },
+        confirmResponses: [true],
+        commitFailureMessage: 'Injected replacement commit failure'
+    }));
+
+    await analyzeStatsheet(page, baseURL);
+    await page.locator('#home-rows tr').nth(1).locator('input[data-field="include"]').check();
+    await page.locator('#home-rows tr').nth(1).locator('select[data-field="mappedPlayerId"]').selectOption('p2');
+    await page.locator('#apply-btn').click();
+
+    await expect(page.locator('#apply-status')).toHaveText('Error: Injected replacement commit failure');
+    await expect(page.locator('#apply-btn')).toBeEnabled();
+    await expect(page.locator('#summary-section')).toHaveClass(/hidden/);
+
+    const store = await page.evaluate((storeKey) => JSON.parse(localStorage.getItem(storeKey) || '{}'), STORE_KEY);
+    expect(store.alerts).toContain('Failed to save stats: Injected replacement commit failure');
+    expect(store.confirmResults).toEqual([true]);
+    expect(store.deleteCalls).toEqual([]);
+    expect(store.batchDeleteCalls).toEqual([
+        'teams/team-1/games/game-1/events/oldEvent',
+        'teams/team-1/games/game-1/aggregatedStats/legacyPlayer',
+        'teams/team-1/games/game-1/liveEvents/oldLiveEvent',
+        'teams/team-1/games/game-1/privatePlayerStats/oldPrivateStat'
+    ]);
+    expect(store.commitCalls).toBe(1);
+    expect(store.events.oldEvent.type).toBe('score');
+    expect(store.liveEvents.oldLiveEvent.type).toBe('assist');
+    expect(store.privatePlayerStats.oldPrivateStat.notes).toBe('private stale data');
+    expect(store.aggregatedStats).toEqual({
+        legacyPlayer: {
+            playerName: 'Old Player',
+            playerNumber: '99',
+            stats: { pts: 99, reb: 1, ast: 1, fouls: 5 }
+        }
+    });
+    expect(store.game.status).toBe('scheduled');
+    expect(store.game.homeScore).toBe(0);
+    expect(store.game.awayScore).toBe(0);
+});
+
+test('stops replacement without committing new stats when staging a delete fails', async ({ page, baseURL }) => {
+    await seedScenario(page, baseURL, createScenario({
+        aggregatedStats: {
+            legacyPlayer: {
+                playerName: 'Old Player',
+                playerNumber: '99',
+                stats: { pts: 99, reb: 1, ast: 1, fouls: 5 }
+            }
+        },
+        events: {
+            oldEvent: { type: 'score', timestamp: 1 }
+        },
+        liveEvents: {
+            oldLiveEvent: { type: 'assist', timestamp: 2 }
+        },
+        privatePlayerStats: {
+            oldPrivateStat: { playerId: 'p1', notes: 'private stale data' }
+        },
+        confirmResponses: [true],
+        batchDeleteFailurePath: 'teams/team-1/games/game-1/liveEvents/oldLiveEvent',
+        batchDeleteFailureMessage: 'Injected replacement delete failure'
+    }));
+
+    await analyzeStatsheet(page, baseURL);
+    await page.locator('#home-rows tr').nth(1).locator('input[data-field="include"]').check();
+    await page.locator('#home-rows tr').nth(1).locator('select[data-field="mappedPlayerId"]').selectOption('p2');
+    await page.locator('#apply-btn').click();
+
+    await expect(page.locator('#apply-status')).toHaveText('Error: Injected replacement delete failure');
+    await expect(page.locator('#apply-btn')).toBeEnabled();
+    await expect(page.locator('#summary-section')).toHaveClass(/hidden/);
+
+    const store = await page.evaluate((storeKey) => JSON.parse(localStorage.getItem(storeKey) || '{}'), STORE_KEY);
+    expect(store.alerts).toContain('Failed to save stats: Injected replacement delete failure');
+    expect(store.confirmResults).toEqual([true]);
+    expect(store.commitCalls).toBe(0);
+    expect(store.batchOps).toEqual([]);
+    expect(store.batchDeleteCalls).toEqual([
+        'teams/team-1/games/game-1/events/oldEvent',
+        'teams/team-1/games/game-1/aggregatedStats/legacyPlayer',
+        'teams/team-1/games/game-1/liveEvents/oldLiveEvent'
+    ]);
+    expect(store.events.oldEvent.type).toBe('score');
+    expect(store.liveEvents.oldLiveEvent.type).toBe('assist');
+    expect(store.privatePlayerStats.oldPrivateStat.notes).toBe('private stale data');
+    expect(store.aggregatedStats).toEqual({
+        legacyPlayer: {
+            playerName: 'Old Player',
+            playerNumber: '99',
+            stats: { pts: 99, reb: 1, ast: 1, fouls: 5 }
+        }
+    });
+    expect(store.game.status).toBe('scheduled');
+    expect(store.game.homeScore).toBe(0);
+    expect(store.game.awayScore).toBe(0);
 });
