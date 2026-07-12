@@ -78,6 +78,42 @@ describe('parent dashboard rideshare controls', () => {
         });
     });
 
+    it('shows Request Spot for a waitlisted child when the open offer has capacity', () => {
+        const offer = {
+            id: 'offer-1',
+            status: 'open',
+            driverUserId: 'driver-1',
+            seatCapacity: 3,
+            seatCountConfirmed: 2,
+            requests: [
+                { id: 'req-a', parentUserId: 'parent-1', childId: 'child-a', childName: 'Child A', status: 'waitlisted' }
+            ]
+        };
+
+        expect(getRideOfferUiState({
+            offer,
+            parentUserId: 'parent-1',
+            selectedChildId: 'child-a',
+            selectedChildName: 'Child A'
+        })).toMatchObject({
+            canRequest: true,
+            showRequestButton: true,
+            showCancelButton: true,
+            statusText: 'Your request for Child A: waitlisted'
+        });
+
+        expect(getRideOfferUiState({
+            offer: { ...offer, seatCountConfirmed: 3 },
+            parentUserId: 'parent-1',
+            selectedChildId: 'child-a',
+            selectedChildName: 'Child A'
+        })).toMatchObject({
+            canRequest: false,
+            showRequestButton: false,
+            showCancelButton: true
+        });
+    });
+
     it('requests a ride for child B and preserves the picker selection before rerender', async () => {
         const requestRideSpot = vi.fn().mockResolvedValue('parent-1__child-b');
         const refreshRideshareForEvent = vi.fn().mockResolvedValue(undefined);
