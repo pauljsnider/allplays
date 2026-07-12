@@ -1632,19 +1632,7 @@ function MoreTab({ model, auth, staffPermissionsLoading, staffPermissionsError, 
         </div>
       </section>
 
-      {model.team.registrationProvider.length ? (
-        <section className="app-card p-4">
-          <div className="text-sm font-black text-gray-950">Registration provider</div>
-          <div className="mt-3 grid gap-2 sm:grid-cols-2">
-            {model.team.registrationProvider.map((row) => (
-              <div key={row.label} className="rounded-xl border border-blue-100 bg-blue-50 p-3">
-                <div className="text-[11px] font-black uppercase tracking-[0.04em] text-blue-700">{row.label}</div>
-                <div className="mt-1 break-all text-sm font-black text-gray-950">{row.value}</div>
-              </div>
-            ))}
-          </div>
-        </section>
-      ) : null}
+      {model.team.registrationProvider.length ? <RegistrationProviderCard rows={model.team.registrationProvider} /> : null}
 
       {sponsorsLoading ? <InlineDeferredLoading copy="Loading local attractions and sponsors…" /> : null}
       {!sponsorsLoading && sponsorsError ? <InlineDeferredError title="Sponsors unavailable" message={sponsorsError} /> : null}
@@ -2177,6 +2165,47 @@ function FanFeedCard({ model }: { model: TeamDetailModel }) {
           {status ? <div className={`mt-2 text-xs font-black ${status.success ? 'text-emerald-700' : 'text-rose-700'}`} role="status">{status.message}</div> : null}
         </div>
       </div>
+    </section>
+  );
+}
+
+function RegistrationProviderCard({ rows }: { rows: TeamDetailModel['team']['registrationProvider'] }) {
+  const [copyStatus, setCopyStatus] = useState<{ label: string; success: boolean } | null>(null);
+
+  async function copyValue(label: string, value: string) {
+    const result = await copyPublicText(value);
+    setCopyStatus({ label, success: result === 'copied' });
+  }
+
+  return (
+    <section className="app-card p-4">
+      <div className="text-sm font-black text-gray-950">Registration provider</div>
+      <div className="mt-1 text-xs font-semibold leading-5 text-gray-500">This team syncs registrations from an external provider.</div>
+      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+        {rows.map((row) => (
+          <div key={row.label} className="rounded-xl border border-blue-100 bg-blue-50 p-3">
+            <div className="text-[11px] font-black uppercase tracking-[0.04em] text-blue-700">{row.label}</div>
+            <div className="mt-1 flex items-center justify-between gap-2">
+              <div className="min-w-0 break-all text-sm font-black text-gray-950">{row.value}</div>
+              {row.copyable ? (
+                <button
+                  type="button"
+                  className="flex-none rounded-lg border border-blue-200 bg-white px-2 py-1 text-[11px] font-black text-blue-700 hover:bg-blue-100"
+                  aria-label={`Copy ${row.label}`}
+                  onClick={() => void copyValue(row.label, row.value)}
+                >
+                  Copy
+                </button>
+              ) : null}
+            </div>
+          </div>
+        ))}
+      </div>
+      {copyStatus ? (
+        <div className={`mt-2 text-xs font-bold ${copyStatus.success ? 'text-emerald-700' : 'text-rose-700'}`}>
+          {copyStatus.success ? `${copyStatus.label} copied.` : `Unable to copy ${copyStatus.label}.`}
+        </div>
+      ) : null}
     </section>
   );
 }

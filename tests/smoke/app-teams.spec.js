@@ -764,7 +764,7 @@ test.describe('mobile My Teams', () => {
         await expect(page.getByText('Tournament bracket')).toBeVisible();
         await expect(page.getByText('Open official bracket.')).toBeVisible();
         await expect(page.getByText('League page')).toBeVisible();
-        await expect(page.getByText('Sports Connect')).toBeVisible();
+        await expect(page.getByText('Sports Connect', { exact: true })).toBeVisible();
         await expect(page.getByText('Pizza Place')).toBeVisible();
         await page.getByRole('link', { name: /Watch stream/ }).click();
         await expect.poll(() => page.evaluate(() => window.__openedPublicUrls.at(-1))).toBe('https://youtube.example.test/watch');

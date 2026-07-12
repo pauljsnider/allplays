@@ -266,7 +266,7 @@ export type TeamDetailModel = {
     websiteUrl: string;
     editTeamUrl: string;
     mediaUrl: string;
-    registrationProvider: Array<{ label: string; value: string }>;
+    registrationProvider: Array<{ label: string; value: string; copyable?: boolean }>;
     scheduleNotifications: TeamScheduleNotificationSettings;
   };
   players: TeamDetailPlayer[];
@@ -1661,7 +1661,7 @@ export function buildTeamDetailModel({
       websiteUrl: getPublicHashUrl('team.html', teamId),
       editTeamUrl: getPublicHashUrl('edit-team.html', teamId),
       mediaUrl: getPublicHashUrl('team-media.html', teamId),
-      registrationProvider: getRegistrationProviderDetails(team, teamId),
+      registrationProvider: getRegistrationProviderDetails(team),
       scheduleNotifications: normalizeTeamScheduleNotifications(team?.scheduleNotifications)
     },
     players: normalizedPlayers,
@@ -2197,15 +2197,51 @@ function normalizeSponsorList(sponsors: any[]): TeamDetailSponsor[] {
     .filter((sponsor) => sponsor.id || sponsor.name);
 }
 
-function getRegistrationProviderDetails(team: Record<string, any>, teamId: string) {
+function getRegistrationProviderDetails(team: Record<string, any>) {
   const source = team?.registrationSource || team?.registrationProvider || {};
+  const lastSyncStatus = cleanString(source.lastSyncStatus || source.syncStatus);
+  const lastSyncTime = formatRegistrationProviderSyncTime(source.lastSyncedAt || source.lastSyncAt || source.syncedAt || source.updatedAt);
+  const appTeamId = cleanString(team?.id || team?.teamId);
+  const externalTeamId = cleanString(source.externalTeamId || source.externalTeamID || source.providerTeamId || source.providerTeamID || source.sourceTeamId);
+  const sourceTeamId = cleanString(source.teamId);
+  const providerTeamId = sourceTeamId && sourceTeamId !== appTeamId && sourceTeamId !== externalTeamId
+    ? sourceTeamId
+    : '';
   const rows = [
     { label: 'Provider', value: cleanString(source.provider || source.providerName) },
-    { label: 'External Team ID', value: cleanString(source.externalTeamId) },
-    { label: 'Team ID', value: cleanString(source.teamId || teamId) },
-    { label: 'Last Sync', value: cleanString(source.lastSyncStatus || source.syncStatus) }
+    { label: 'External team ID', value: externalTeamId, copyable: true },
+    { label: 'Provider team ID', value: providerTeamId, copyable: true },
+    { label: 'Last sync', value: formatRegistrationProviderSyncDetail(lastSyncStatus, lastSyncTime) }
   ].filter((row) => row.value);
   return rows;
+}
+
+function formatRegistrationProviderSyncDetail(status: string, time: string) {
+  const friendlyStatus = humanizeRegistrationProviderStatus(status);
+  if (friendlyStatus && time) return `${friendlyStatus} - ${time}`;
+  return friendlyStatus || time;
+}
+
+function humanizeRegistrationProviderStatus(status: string) {
+  const value = cleanString(status);
+  if (!value) return '';
+  return value
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function formatRegistrationProviderSyncTime(value: any) {
+  const date = toNullableDate(value);
+  if (!date) return '';
+  return date.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit'
+  });
 }
 
 function getStreamUrl(team: Record<string, any>) {
@@ -2247,6 +2283,18 @@ function toDate(value: any) {
   if (typeof value?.seconds === 'number') return new Date(value.seconds * 1000);
   const date = new Date(value || Date.now());
   return Number.isNaN(date.getTime()) ? new Date() : date;
+}
+
+function toNullableDate(value: any) {
+  if (!value) return null;
+  const date = value instanceof Date
+    ? value
+    : typeof value?.toDate === 'function'
+      ? value.toDate()
+      : typeof value?.seconds === 'number'
+        ? new Date(value.seconds * 1000)
+        : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
 }
 
 function toNullableNumber(value: any) {
