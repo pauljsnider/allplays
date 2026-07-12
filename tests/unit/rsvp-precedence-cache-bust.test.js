@@ -18,7 +18,7 @@ describe('RSVP precedence cache delivery', () => {
             'parent-dashboard.html': 'db.js?v=92',
             'team.html': 'db.js?v=91',
             'team-chat.html': 'db.js?v=94',
-            'js/auth.js': 'db.js?v=92',
+            'js/auth.js': 'db.js?v=94',
             'js/team-media.js': 'db.js?v=91'
         };
 

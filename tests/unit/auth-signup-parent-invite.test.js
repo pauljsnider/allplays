@@ -42,7 +42,7 @@ const authEmailMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../js/firebase.js?v=20', () => firebaseMocks);
-vi.mock('../../js/db.js?v=92', () => dbMocks);
+vi.mock('../../js/db.js?v=94', () => dbMocks);
 vi.mock('../../js/auth-email.js?v=1', () => authEmailMocks);
 vi.mock('../../js/admin-invite.js?v=6', () => ({
     redeemAdminInviteAcceptance: vi.fn()

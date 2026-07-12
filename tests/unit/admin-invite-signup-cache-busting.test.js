@@ -34,10 +34,11 @@ describe('admin invite signup cache busting', () => {
     it('pins fresh module versions for the admin invite signup path', () => {
         const authSource = readFileSync(resolve(process.cwd(), 'js/auth.js'), 'utf8');
 
-        expect(authSource).toContain("import { executeEmailPasswordSignup } from './signup-flow.js?v=7';");
-        expect(authSource).not.toContain("./signup-flow.js?v=6");
+        expect(authSource).toContain("import { executeEmailPasswordSignup } from './signup-flow.js?v=8';");
+        expect(authSource).not.toContain("./signup-flow.js?v=7");
         expect(authSource).toContain("import { redeemAdminInviteAcceptance, redeemAdminInviteAtomically } from './admin-invite.js?v=6';");
-        expect(authSource).toContain("from './db.js?v=92';");
+        expect(authSource).toContain("from './db.js?v=94';");
+        expect(authSource).not.toContain("from './db.js?v=93';");
     });
 
     it('pins fresh invite acceptance module versions for admin invite redemption', () => {
