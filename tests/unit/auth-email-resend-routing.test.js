@@ -84,4 +84,18 @@ describe('authentication email delivery routing', () => {
             expect(workflowSource).toContain('npm run test:functions:auth-email');
         }
     });
+
+    it('enables the password-reset retry policy before the non-destructive production deploy', () => {
+        const productionSource = read('.github/workflows/deploy-prod.yml');
+        const firebaseDeployCommands = productionSource
+            .split('\n')
+            .map(line => line.trim())
+            .filter(line => line.startsWith('run: npx firebase-tools@14.25.0 deploy'));
+
+        expect(firebaseDeployCommands).toEqual([
+            'run: npx firebase-tools@14.25.0 deploy --only functions:processPasswordResetEmailRequest --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive --force',
+            'run: npx firebase-tools@14.25.0 deploy --only hosting,firestore:rules,firestore:indexes,functions --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive'
+        ]);
+        expect(productionSource.match(/--force/g)).toHaveLength(1);
+    });
 });
