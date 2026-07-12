@@ -93,6 +93,13 @@ import {
     shouldIncludeTeamInLiveOrUpcoming,
     shouldIncludeTeamInReplay
 } from './team-visibility.js?v=2';
+import {
+    FRIEND_INVITE_TYPE,
+    buildAcceptedFriendshipData,
+    buildFriendInviteAccessCodeData,
+    buildFriendshipId,
+    getDisplayName
+} from './friend-invite.js?v=1';
 
 export async function normalizeParentScopeLinks(parentLinks = []) {
     const activeLinks = [];
@@ -4356,17 +4363,28 @@ async function createUniqueAccessCode(accessCodeData, preferredCode) {
     throw new Error('Could not generate a unique invite code. Please try again.');
 }
 
-export async function createAccessCode(userId, email, phone, code) {
-    const accessCodeData = {
-        type: 'standard',
-        generatedBy: userId,
-        email: email || null,
-        phone: phone || null,
-        createdAt: Timestamp.now(),
-        used: false,
-        usedBy: null,
-        usedAt: null
-    };
+export async function createAccessCode(userId, email, phone, code, options = {}) {
+    const type = options.type || 'standard';
+    const now = Timestamp.now();
+    const accessCodeData = type === FRIEND_INVITE_TYPE
+        ? buildFriendInviteAccessCodeData({
+            code,
+            generatedBy: userId,
+            email,
+            phone,
+            now,
+            expiresAt: options.expiresAt || Timestamp.fromMillis(Date.now() + 7 * 24 * 60 * 60 * 1000)
+        })
+        : {
+            type,
+            generatedBy: userId,
+            email: email || null,
+            phone: phone || null,
+            createdAt: now,
+            used: false,
+            usedBy: null,
+            usedAt: null
+        };
     return createUniqueAccessCode(accessCodeData, code);
 }
 
@@ -5014,6 +5032,88 @@ export async function redeemHouseholdInvite(userId, code) {
         playerName: payload.playerName || null,
         playerNum: payload.playerNum ?? null
     };
+}
+
+export async function redeemFriendInvite(userId, code, fallbackEmail = null) {
+    const normalizedCode = String(code || '').trim().toUpperCase();
+    if (!userId || !normalizedCode) {
+        throw new Error('User and invite code are required');
+    }
+
+    const codeRef = doc(db, "accessCodes", normalizedCode);
+    return runTransaction(db, async (transaction) => {
+        const codeSnapshot = await transaction.get(codeRef);
+        if (!codeSnapshot.exists()) {
+            throw new Error('Invalid or used friend invite');
+        }
+
+        const codeData = codeSnapshot.data() || {};
+        if (codeData.type !== FRIEND_INVITE_TYPE) {
+            throw new Error('Not a friend invite code');
+        }
+        if (codeData.used) {
+            throw new Error('Code already used');
+        }
+        if (isAccessCodeExpired(codeData.expiresAt)) {
+            throw new Error('Code has expired');
+        }
+
+        const inviterId = String(codeData.generatedBy || '').trim();
+        if (!inviterId) {
+            throw new Error('Friend invite is missing an inviter');
+        }
+        if (inviterId === userId) {
+            throw new Error('You cannot redeem your own friend invite');
+        }
+
+        const friendshipId = buildFriendshipId(inviterId, userId);
+        const friendshipRef = doc(db, "friendships", friendshipId);
+        const inviterRef = doc(db, "users", inviterId);
+        const inviteeRef = doc(db, "users", userId);
+        const [friendshipSnapshot, inviterSnapshot, inviteeSnapshot] = await Promise.all([
+            transaction.get(friendshipRef),
+            transaction.get(inviterRef),
+            transaction.get(inviteeRef)
+        ]);
+
+        const existingFriendship = friendshipSnapshot.exists() ? (friendshipSnapshot.data() || {}) : {};
+        if (
+            existingFriendship.status === 'blocked' ||
+            (Array.isArray(existingFriendship.blockedBy) && existingFriendship.blockedBy.length > 0)
+        ) {
+            throw new Error('This friendship cannot be updated from an invite');
+        }
+
+        const now = Timestamp.now();
+        const inviterProfile = inviterSnapshot.exists() ? (inviterSnapshot.data() || {}) : {};
+        const inviteeProfile = inviteeSnapshot.exists() ? (inviteeSnapshot.data() || {}) : {};
+        const inviteeEmail = String(inviteeProfile.email || fallbackEmail || auth.currentUser?.email || '').trim();
+
+        transaction.set(friendshipRef, buildAcceptedFriendshipData({
+            inviterId,
+            inviteeId: userId,
+            inviterProfile,
+            inviteeProfile: {
+                ...inviteeProfile,
+                email: inviteeProfile.email || inviteeEmail || null
+            },
+            existingFriendship,
+            now,
+            inviteCodeId: normalizedCode
+        }), { merge: true });
+        transaction.update(codeRef, {
+            used: true,
+            usedBy: userId,
+            usedAt: now
+        });
+
+        return {
+            success: true,
+            friendshipId,
+            inviterId,
+            inviterName: getDisplayName(inviterProfile)
+        };
+    });
 }
 
 export async function rollbackParentInviteRedemption(userId, code) {

@@ -955,7 +955,16 @@
             }
         });
 
-        // Generate Access Code
+        function buildInviteLink(code, type = 'friend_invite') {
+            const normalizedCode = String(code || '').trim().toUpperCase();
+            const normalizedType = String(type || '').trim().toLowerCase();
+            if (normalizedType === 'friend_invite' || normalizedType === 'friend') {
+                return `${window.location.origin}/accept-invite.html?code=${encodeURIComponent(normalizedCode)}&type=friend`;
+            }
+            return buildLegacyJoinUrl(normalizedCode, normalizedType || 'standard', window.location.origin);
+        }
+
+        // Generate Friend Invite
         document.getElementById('generate-code-btn').addEventListener('click', async () => {
             const email = document.getElementById('access-code-email').value.trim();
             const phone = document.getElementById('access-code-phone').value.trim();
@@ -972,7 +981,7 @@
                 status.textContent = 'Generating...';
                 status.className = 'text-sm text-gray-500';
 
-                const { code } = await createAccessCode(currentUser.uid, email, phone);
+                const { code } = await createAccessCode(currentUser.uid, email, phone, undefined, { type: 'friend_invite' });
 
                 // Display the generated code
                 document.getElementById('generated-code-text').textContent = code;
@@ -1015,7 +1024,7 @@
         // Copy Signup Link for newly generated code
         document.getElementById('copy-link-btn').addEventListener('click', async () => {
             const code = document.getElementById('generated-code-text').textContent;
-            const signupUrl = buildLegacyJoinUrl(code, 'standard', window.location.origin);
+            const signupUrl = buildInviteLink(code, 'friend_invite');
             try {
                 await navigator.clipboard.writeText(signupUrl);
                 const btn = document.getElementById('copy-link-btn');
@@ -1047,7 +1056,7 @@
 
         // Copy Signup Link for Historical Code - Global function for onclick handler
         window.copyHistoryLink = async function (code) {
-            const signupUrl = buildLegacyJoinUrl(code, 'standard', window.location.origin);
+            const signupUrl = buildInviteLink(code, 'friend_invite');
             try {
                 await navigator.clipboard.writeText(signupUrl);
                 const buttons = document.querySelectorAll('button[onclick*="copyHistoryLink"]');

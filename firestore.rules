@@ -93,6 +93,27 @@ service cloud.firestore {
              data.usedAt == null;
     }
 
+    function isFriendInviteAccessCodePayloadValid(data) {
+      return data.keys().hasOnly([
+               'code', 'type', 'generatedBy', 'email', 'phone', 'createdAt', 'expiresAt', 'used', 'usedBy', 'usedAt'
+             ]) &&
+             data.keys().hasAll([
+               'code', 'type', 'generatedBy', 'createdAt', 'expiresAt', 'used', 'usedBy', 'usedAt'
+             ]) &&
+             data.type == 'friend_invite' &&
+             data.code is string &&
+             data.code.size() > 0 &&
+             data.generatedBy == request.auth.uid &&
+             (!('email' in data) || data.email == null || data.email is string) &&
+             (!('phone' in data) || data.phone == null || data.phone is string) &&
+             data.createdAt is timestamp &&
+             data.expiresAt is timestamp &&
+             data.expiresAt > request.time &&
+             data.used == false &&
+             data.usedBy == null &&
+             data.usedAt == null;
+    }
+
     function isAdminInvitePayloadValid(data) {
       return data.keys().hasOnly([
                'code', 'type', 'teamId', 'teamName', 'email', 'generatedBy',
@@ -224,6 +245,25 @@ service cloud.firestore {
              request.resource.data.usedBy == request.auth.uid &&
              request.resource.data.usedAt is timestamp;
     }
+
+    function isFriendInviteRedemptionUpdate() {
+      return resource.data.get('type', null) == 'friend_invite' &&
+             request.resource.data.get('type', resource.data.get('type', null)) == 'friend_invite' &&
+             request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'usedBy', 'usedAt']) &&
+             resource.data.used == false &&
+             resource.data.generatedBy != request.auth.uid &&
+             resource.data.get('revoked', false) != true &&
+             resource.data.get('active', true) != false &&
+             resource.data.get('status', 'active') != 'removed' &&
+             resource.data.get('status', 'active') != 'cancelled' &&
+             resource.data.get('status', 'active') != 'revoked' &&
+             resource.data.expiresAt is timestamp &&
+             resource.data.expiresAt > request.time &&
+             request.resource.data.used == true &&
+             request.resource.data.usedBy == request.auth.uid &&
+             request.resource.data.usedAt is timestamp;
+    }
+
 
     function isParentInviteRevocationUpdate() {
       return resource.data.get('type', null) == 'parent_invite' &&
@@ -2290,6 +2330,9 @@ service cloud.firestore {
                           request.resource.data.code == codeId) ||
                          (request.resource.data.get('type', null) == 'household_invite' &&
                           isHouseholdInviteAccessCodePayloadValid(request.resource.data) &&
+                          request.resource.data.code == codeId) ||
+                         (request.resource.data.get('type', null) == 'friend_invite' &&
+                          isFriendInviteAccessCodePayloadValid(request.resource.data) &&
                           request.resource.data.code == codeId)
                        );
       // Only allow the code generator to update/delete, OR allow system to mark as used during signup
@@ -2304,6 +2347,7 @@ service cloud.firestore {
                         isParentInviteRevocationUpdate() ||
                         isHouseholdInviteRedemptionUpdate() ||
                         isHouseholdInviteRevocationUpdate() ||
+                        isFriendInviteRedemptionUpdate() ||
                         // Allow standard activation-code redemption without raw document reads.
                         isStandardAccessCodeRedemptionUpdate() ||
                         (resource.data.get('type', null) != 'admin_invite' &&

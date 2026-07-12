@@ -27,6 +27,7 @@ const dbMocks = vi.hoisted(() => ({
     redeemHouseholdInvite: vi.fn(),
     redeemCoParentInvite: vi.fn(),
     rollbackParentInviteRedemption: vi.fn(),
+    redeemFriendInvite: vi.fn(),
     getTeam: vi.fn(),
     addTeamAdminEmail: vi.fn(),
     getUserProfile: vi.fn(),

@@ -9,6 +9,7 @@ export async function executeEmailPasswordSignup({
         validateAccessCode,
         createUserWithEmailAndPassword,
         redeemParentInvite,
+        redeemFriendInvite,
         redeemAdminInviteAcceptance,
         redeemHouseholdInvite,
         redeemCoParentInvite,
@@ -104,6 +105,18 @@ export async function executeEmailPasswordSignup({
 
         // Best-effort profile write after invite redemption.
         await writeSignupProfile({ email });
+    } else if (validation.type === 'friend_invite') {
+        try {
+            if (typeof redeemFriendInvite !== 'function') {
+                throw new Error('Missing friend invite redemption handler');
+            }
+            await redeemFriendInvite(userId, validation.data?.code || activationCode, email);
+            await writeSignupProfile({ email });
+        } catch (e) {
+            console.error('Error linking friend invite:', e);
+            await cleanupFailedParentInviteSignup(userCredential?.user);
+            throw e;
+        }
     } else if (validation.type === 'admin_invite') {
         try {
             await redeemAdminInviteAcceptance({
