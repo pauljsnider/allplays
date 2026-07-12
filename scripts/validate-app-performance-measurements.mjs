@@ -41,6 +41,7 @@ export const REQUIRED_METRICS = [
 ];
 
 const SHA_PATTERN = /^[0-9a-f]{7,40}$/i;
+const PLACEHOLDER_EVIDENCE_PATTERN = /^[_\W]*(?:tbd|todo|placeholder|pending|to[_\W]*be[_\W]*determined)[_\W]*$/i;
 
 export async function readMeasurementArtifact(filePath) {
   const raw = await readFile(filePath, 'utf8');
@@ -114,8 +115,8 @@ function validateFixture(fixture, errors) {
       if (!Number.isInteger(value) || value < 0) {
         errors.push(`fixture.${field} must be a non-negative integer.`);
       }
-    } else if (!isNonEmptyString(value)) {
-      errors.push(`fixture.${field} must be a non-empty string.`);
+    } else {
+      validateEvidenceString(value, `fixture.${field}`, errors);
     }
   }
 }
@@ -166,9 +167,7 @@ function validateEnvironment(environment, profileId, errors) {
   }
 
   for (const field of REQUIRED_ENVIRONMENT_FIELDS) {
-    if (!isNonEmptyString(environment[field])) {
-      errors.push(`profile ${profileId} environment.${field} must be a non-empty string.`);
-    }
+    validateEvidenceString(environment[field], `profile ${profileId} environment.${field}`, errors);
   }
 }
 
@@ -282,6 +281,14 @@ function validateSha(value, field, errors) {
 
 function isNonEmptyString(value) {
   return typeof value === 'string' && value.trim().length > 0;
+}
+
+function validateEvidenceString(value, field, errors) {
+  if (!isNonEmptyString(value)) {
+    errors.push(`${field} must be a non-empty string.`);
+  } else if (PLACEHOLDER_EVIDENCE_PATTERN.test(value.trim())) {
+    errors.push(`${field} must be real evidence, not a placeholder.`);
+  }
 }
 
 function formatMs(value) {

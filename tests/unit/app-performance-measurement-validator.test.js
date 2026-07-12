@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+    REQUIRED_ENVIRONMENT_FIELDS,
     REQUIRED_METRICS,
     REQUIRED_PROFILES,
     buildMarkdownSummary,
@@ -107,6 +108,34 @@ describe('app performance measurement validator', () => {
         expect(result.errors).toContain('profile desktop-web after.runs must include at least 3 clean runs.');
         expect(result.errors).toContain('profile desktop-web after.runs contains duplicate run 1.');
         expect(result.errors).toContain('profile desktop-web after.runs[0].coldStartHomeTtiMs must be a number >= 1.');
+    });
+
+    it('rejects placeholder fixture account and environment evidence strings', () => {
+        const fixtureArtifact = buildArtifact({
+            fixture: {
+                ...buildArtifact().fixture,
+                testAccount: '_tbd_'
+            }
+        });
+
+        expect(validateMeasurementArtifact(fixtureArtifact).errors).toContain(
+            'fixture.testAccount must be real evidence, not a placeholder.'
+        );
+
+        for (const field of REQUIRED_ENVIRONMENT_FIELDS) {
+            const artifact = buildArtifact();
+            artifact.profiles[0] = {
+                ...artifact.profiles[0],
+                environment: {
+                    ...artifact.profiles[0].environment,
+                    [field]: '_tbd_'
+                }
+            };
+
+            expect(validateMeasurementArtifact(artifact).errors).toContain(
+                `profile desktop-web environment.${field} must be real evidence, not a placeholder.`
+            );
+        }
     });
 
     it('keeps the validator aligned with all issue 2050 metrics', () => {
