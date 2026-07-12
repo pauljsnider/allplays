@@ -146,7 +146,7 @@ describe('team calendar subscription feed', () => {
 
     it('builds private feeds from stored game summaries without fallback RSVP scans', () => {
         const feedStart = functionsSource.indexOf('exports.teamCalendarFeed = functions.https.onRequest');
-        const feedEnd = functionsSource.indexOf('exports.resolveFamilyShareTokenChildren', feedStart);
+        const feedEnd = functionsSource.indexOf('\n});', feedStart) + '\n});'.length;
         const teamCalendarFeedSource = functionsSource.slice(feedStart, feedEnd);
 
         expect(teamCalendarFeedSource).toContain('getCalendarFeedGamesQuery(teamId).get()');
