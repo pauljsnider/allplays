@@ -348,4 +348,64 @@ describe('accept invite flow', () => {
         await expect(processInvite('user-2', 'ABCD1234')).rejects.toThrow('Code already used');
         expect(deps.markAccessCodeAsUsed).not.toHaveBeenCalled();
     });
+
+    it('explains standard signup codes to signed-in users without consuming them (#3843)', async () => {
+        const deps = {
+            validateAccessCode: vi.fn(async () => ({
+                valid: true,
+                codeId: 'code-std-1',
+                type: 'standard',
+                data: { code: 'ABCD1234', type: 'standard' }
+            })),
+            redeemParentInvite: vi.fn(),
+            markAccessCodeAsUsed: vi.fn()
+        };
+
+        const processInvite = createInviteProcessor(deps);
+
+        await expect(processInvite('user-3', 'ABCD1234', 'signedin@example.com')).rejects.toThrow(
+            "This is a signup code for creating a new account. You're already signed in — share this code with someone new instead of opening it yourself."
+        );
+        expect(deps.markAccessCodeAsUsed).not.toHaveBeenCalled();
+        expect(deps.redeemParentInvite).not.toHaveBeenCalled();
+    });
+
+    it('treats a missing invite type like a standard signup code', async () => {
+        const deps = {
+            validateAccessCode: vi.fn(async () => ({
+                valid: true,
+                codeId: 'code-std-2',
+                data: { code: 'EFGH5678' }
+            })),
+            redeemParentInvite: vi.fn(),
+            markAccessCodeAsUsed: vi.fn()
+        };
+
+        const processInvite = createInviteProcessor(deps);
+
+        await expect(processInvite('user-4', 'EFGH5678')).rejects.toThrow(
+            /signup code for creating a new account/
+        );
+        expect(deps.markAccessCodeAsUsed).not.toHaveBeenCalled();
+    });
+
+    it('names the invite type in the unsupported-type error', async () => {
+        const deps = {
+            validateAccessCode: vi.fn(async () => ({
+                valid: true,
+                codeId: 'code-odd-1',
+                type: 'mystery_invite',
+                data: {}
+            })),
+            redeemParentInvite: vi.fn(),
+            markAccessCodeAsUsed: vi.fn()
+        };
+
+        const processInvite = createInviteProcessor(deps);
+
+        await expect(processInvite('user-5', 'WXYZ9012')).rejects.toThrow(
+            "This invite code type isn't supported here (mystery_invite). Ask whoever sent it for a new invite link."
+        );
+        expect(deps.markAccessCodeAsUsed).not.toHaveBeenCalled();
+    });
 });
