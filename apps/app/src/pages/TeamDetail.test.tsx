@@ -1378,6 +1378,53 @@ describe('TeamDetail', () => {
     })));
   });
 
+  it('hides the registration provider card when the team has no registration source', async () => {
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1?tab=more']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('Team links')).toBeTruthy();
+    expect(screen.queryByText('Registration provider')).toBeNull();
+  });
+
+  it('shows registration provider context and copies id values when a provider is configured', async () => {
+    const { copyPublicText } = await import('../lib/publicActions');
+    vi.mocked(copyPublicText).mockResolvedValue('copied');
+    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue({
+      ...model,
+      team: {
+        ...model.team,
+        registrationProvider: [
+          { label: 'Provider', value: 'LeagueApps' },
+          { label: 'Provider team ID', value: 'provider-team-7', copyable: true }
+        ]
+      }
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1?tab=more']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('Registration provider')).toBeTruthy();
+    expect(screen.getByText('This team syncs registrations from an external provider.')).toBeTruthy();
+    expect(screen.getByText('LeagueApps')).toBeTruthy();
+    expect(screen.getByText('provider-team-7')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Copy Provider' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Copy Provider team ID' }));
+
+    await waitFor(() => expect(copyPublicText).toHaveBeenCalledWith('provider-team-7'));
+    expect(await screen.findByText('Provider team ID copied.')).toBeTruthy();
+  });
+
   it('loads roster invite summaries only once per roster visit when the result is empty', async () => {
     const managedModel = {
       ...model,
