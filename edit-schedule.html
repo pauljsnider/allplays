@@ -652,7 +652,7 @@
                                     <label class="block text-sm font-semibold text-gray-800 mb-1">
                                         Upload schedule image (optional)
                                     </label>
-                                    <p class="text-xs text-gray-600 mb-2">Screenshot or photo of the schedule. You can still add text instructions below to guide the AI (e.g., “only home games”).</p>
+                                    <p class="text-xs text-gray-600 mb-2">Upload, paste (Ctrl/Cmd+V), or drop a screenshot or photo of the schedule. You can still add text instructions below to guide the AI (e.g., “only home games”).</p>
                                     <input type="file" id="schedule-image-input" accept="image/*"
                                         class="w-full text-sm text-gray-700 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100">
                                     <div id="schedule-image-preview" class="hidden mt-3">
@@ -4060,21 +4060,63 @@
         });
 
         // Image upload and preview handlers
+        function setBulkAiImage(file) {
+            if (!file || !file.type || !file.type.startsWith('image/')) return;
+            const imageInput = document.getElementById('schedule-image-input');
+            const dataTransfer = new DataTransfer();
+            dataTransfer.items.add(file);
+            imageInput.files = dataTransfer.files;
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                document.getElementById('schedule-image-preview-img').src = event.target.result;
+                document.getElementById('schedule-image-preview').classList.remove('hidden');
+            };
+            reader.readAsDataURL(file);
+        }
+
         document.getElementById('schedule-image-input').addEventListener('change', (e) => {
             const file = e.target.files[0];
             if (file) {
-                const reader = new FileReader();
-                reader.onload = (event) => {
-                    document.getElementById('schedule-image-preview-img').src = event.target.result;
-                    document.getElementById('schedule-image-preview').classList.remove('hidden');
-                };
-                reader.readAsDataURL(file);
+                setBulkAiImage(file);
             }
         });
 
         document.getElementById('remove-schedule-image').addEventListener('click', () => {
             document.getElementById('schedule-image-input').value = '';
             document.getElementById('schedule-image-preview').classList.add('hidden');
+        });
+
+        // Paste or drop a schedule image anywhere on the Bulk AI tab
+        const bulkAiTabContent = document.getElementById('content-bulk-ai');
+        bulkAiTabContent.addEventListener('paste', (e) => {
+            const items = e.clipboardData && e.clipboardData.items;
+            if (!items) return;
+            for (const item of items) {
+                if (item.type && item.type.startsWith('image/')) {
+                    const file = item.getAsFile();
+                    if (file) {
+                        e.preventDefault();
+                        setBulkAiImage(file);
+                    }
+                    return;
+                }
+            }
+        });
+
+        bulkAiTabContent.addEventListener('dragover', (e) => {
+            if (e.dataTransfer && Array.from(e.dataTransfer.types).includes('Files')) {
+                e.preventDefault();
+            }
+        });
+
+        bulkAiTabContent.addEventListener('drop', (e) => {
+            const files = e.dataTransfer && e.dataTransfer.files;
+            if (!files) return;
+            const file = Array.from(files).find((f) => f.type && f.type.startsWith('image/'));
+            if (file) {
+                e.preventDefault();
+                setBulkAiImage(file);
+            }
         });
 
         // Helper function to convert file to generative part for Gemini
