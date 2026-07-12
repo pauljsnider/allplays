@@ -28,6 +28,7 @@ import {
   getTeam,
   getVisiblePlayerTrackingSummary,
   grantScorekeeperAccess,
+  grantTeamMediaManagerAccess,
   grantVideographerAccess,
   hasFullTeamAccess,
   inviteAdmin,
@@ -43,6 +44,7 @@ import {
   queueInviteEmail,
   reactivatePlayer,
   revokeScorekeeperAccess,
+  revokeTeamMediaManagerAccess,
   revokeVideographerAccess,
   selectAnalyticsConfig,
   sendInviteEmail,
@@ -212,6 +214,7 @@ export type TeamStaffPermissionsSummary = {
   }>;
   scorekeepingMode: string;
   scorekeeperGrantTargets: TeamScorekeeperGrantTarget[];
+  teamMediaManagerGrantTargets: TeamScorekeeperGrantTarget[];
   videographerGrantTargets: TeamScorekeeperGrantTarget[];
   hasAnyStaff: boolean;
 };
@@ -850,6 +853,7 @@ function collectRelevantTeamMemberUserIds(team: any, players: any[] = []) {
 
   addUserId(team?.ownerId);
   getSelectedPermissionIds(team, 'scorekeeping').forEach(addUserId);
+  getSelectedPermissionIds(team, 'teamMediaManagement').forEach(addUserId);
   getSelectedPermissionIds(team, 'videography').forEach(addUserId);
 
   (Array.isArray(players) ? players : []).forEach((player) => {
@@ -1207,6 +1211,24 @@ export async function revokeScorekeeperAccessForApp(teamId: string, memberUserId
   if (!normalizedTeamId) throw new Error('Team ID is required.');
   if (!normalizedUserId) throw new Error('Team member user ID is required.');
   await revokeScorekeeperAccess(normalizedTeamId, normalizedUserId);
+  invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
+}
+
+export async function grantTeamMediaManagerAccessForApp(teamId: string, memberUserId: string) {
+  const normalizedTeamId = cleanString(teamId);
+  const normalizedUserId = cleanString(memberUserId);
+  if (!normalizedTeamId) throw new Error('Team ID is required.');
+  if (!normalizedUserId) throw new Error('Team member user ID is required.');
+  await grantTeamMediaManagerAccess(normalizedTeamId, normalizedUserId);
+  invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
+}
+
+export async function revokeTeamMediaManagerAccessForApp(teamId: string, memberUserId: string) {
+  const normalizedTeamId = cleanString(teamId);
+  const normalizedUserId = cleanString(memberUserId);
+  if (!normalizedTeamId) throw new Error('Team ID is required.');
+  if (!normalizedUserId) throw new Error('Team member user ID is required.');
+  await revokeTeamMediaManagerAccess(normalizedTeamId, normalizedUserId);
   invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
 }
 
@@ -1861,6 +1883,7 @@ function buildTeamStaffPermissionsSummary({
     ...buildTeamStaffPermissionsViewModel({ ...team, id: teamId }, pendingAdminInvites),
     scorekeepingMode: cleanString(team?.teamPermissions?.scorekeeping?.mode),
     scorekeeperGrantTargets: buildPermissionGrantTargets(team, players, 'scorekeeping', confirmedTeamMembers, teamId),
+    teamMediaManagerGrantTargets: buildPermissionGrantTargets(team, players, 'teamMediaManagement', confirmedTeamMembers, teamId),
     videographerGrantTargets: buildPermissionGrantTargets(team, players, 'videography', confirmedTeamMembers, teamId)
   };
 }

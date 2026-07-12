@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { hasFullTeamAccess, hasScorekeepingTeamAccess, hasStreamTeamAccess, hasVideographerTeamAccess, hasTeamMediaAccess, getTeamAccessInfo, normalizeTeamPermissions } from '../../js/team-access.js';
+import { hasFullTeamAccess, hasScorekeepingTeamAccess, hasStreamTeamAccess, hasTeamMediaManagementAccess, hasVideographerTeamAccess, hasTeamMediaAccess, getTeamAccessInfo, normalizeTeamPermissions } from '../../js/team-access.js';
 
 const TEAM = {
   id: 'team-1',
@@ -194,10 +194,12 @@ describe('team access helpers', () => {
     expect(normalizeTeamPermissions({
       scorekeeping: { mode: 'selected', memberIds: [' user-1 ', 'user-1', '', null, 'user-2'] },
       streaming: { mode: 'all_confirmed', memberIds: ['user-3'] },
+      teamMediaManagement: { mode: 'selected', memberIds: [' media-1 ', 'media-1'] },
       videography: { mode: 'selected', memberIds: [' video-1 ', 'video-1'] }
     })).toEqual({
       scorekeeping: { mode: 'selected', memberIds: ['user-1', 'user-2'] },
       streaming: { mode: 'all_confirmed', memberIds: [] },
+      teamMediaManagement: { mode: 'selected', memberIds: ['media-1'] },
       videography: { mode: 'selected', memberIds: ['video-1'] }
     });
 
@@ -213,6 +215,7 @@ describe('team access helpers', () => {
     expect(normalizeTeamPermissions()).toEqual({
       scorekeeping: { mode: 'all_confirmed', memberIds: [] },
       streaming: { mode: 'all_confirmed', memberIds: [] },
+      teamMediaManagement: { mode: 'selected', memberIds: [] },
       videography: { mode: 'selected', memberIds: [] }
     });
   });
@@ -269,6 +272,26 @@ describe('team access helpers', () => {
     expect(hasTeamMediaAccess({ uid: 'legacy-media-user', mediaUploadTeamIds: ['team-1'] }, TEAM)).toBe(true);
     expect(hasFullTeamAccess({ uid: 'media-user', teamMediaUploadTeamIds: ['team-1'] }, TEAM)).toBe(false);
     expect(getTeamAccessInfo({ uid: 'media-user', teamMediaUploadTeamIds: ['team-1'] }, TEAM)).toEqual({
+      hasAccess: true,
+      accessLevel: 'media',
+      exitUrl: 'team.html#teamId=team-1'
+    });
+  });
+
+  it('returns media access for selected Team Media managers without granting full access', () => {
+    const team = {
+      ...TEAM,
+      teamPermissions: {
+        teamMediaManagement: { mode: 'selected', memberIds: [' media-manager '] }
+      }
+    };
+
+    expect(hasTeamMediaManagementAccess({ uid: 'media-manager' }, team)).toBe(true);
+    expect(hasTeamMediaAccess({ uid: 'media-manager' }, team)).toBe(true);
+    expect(hasFullTeamAccess({ uid: 'media-manager' }, team)).toBe(false);
+    expect(hasTeamMediaManagementAccess({ uid: 'other-user' }, team)).toBe(false);
+    expect(hasTeamMediaManagementAccess({ uid: 'coach-only', coachOf: ['team-1'] }, TEAM)).toBe(false);
+    expect(getTeamAccessInfo({ uid: 'media-manager' }, team)).toEqual({
       hasAccess: true,
       accessLevel: 'media',
       exitUrl: 'team.html#teamId=team-1'

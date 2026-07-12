@@ -32,10 +32,12 @@ vi.mock('../../js/db.js', () => ({
     updateEvent: vi.fn(),
     updateGame: vi.fn(),
     grantScorekeeperAccess: vi.fn(),
+    grantTeamMediaManagerAccess: vi.fn(),
     grantVideographerAccess: vi.fn(),
     inviteAdmin: vi.fn(),
     addTeamAdminEmail: vi.fn(),
     revokeScorekeeperAccess: vi.fn(),
+    revokeTeamMediaManagerAccess: vi.fn(),
     revokeVideographerAccess: vi.fn(),
     deactivatePlayer: vi.fn(),
     reactivatePlayer: vi.fn(),
@@ -84,9 +86,9 @@ vi.mock('../../apps/app/src/lib/authService.ts', () => ({
     getNativeAuthIdToken: vi.fn()
 }));
 
-import { __resetTeamDetailBaseSnapshotCacheForTests, addRosterPlayerForApp, buildAdminAcceptInviteUrl, buildPublicTeamGamesIcsUrl, buildRosterParentInviteSummaries, buildTeamDetailModel, canExposePublicFanFeed, createRosterParentInviteForApp, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadRosterFieldDefinitionsForApp, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamRosterParentInvites, loadTeamStaffPermissions, reactivateRosterPlayerForApp, revokeScorekeeperAccessForApp, revokeTeamAdminAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp, updateTeamSettingsForApp } from '../../apps/app/src/lib/teamDetailService.ts';
+import { __resetTeamDetailBaseSnapshotCacheForTests, addRosterPlayerForApp, buildAdminAcceptInviteUrl, buildPublicTeamGamesIcsUrl, buildRosterParentInviteSummaries, buildTeamDetailModel, canExposePublicFanFeed, createRosterParentInviteForApp, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantTeamMediaManagerAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadRosterFieldDefinitionsForApp, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamRosterParentInvites, loadTeamStaffPermissions, reactivateRosterPlayerForApp, revokeScorekeeperAccessForApp, revokeTeamAdminAccessForApp, revokeTeamMediaManagerAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp, updateTeamSettingsForApp } from '../../apps/app/src/lib/teamDetailService.ts';
 import { collection, doc, getDoc, getDocs, query, where } from '../../js/firebase.js';
-import { addPlayer, getAggregatedStatsForGames, getAdSpaceSponsors, getAllUsers, getConfigs, getEvents, getGames, getLocalAttractionSponsors, getPlayerTrackingStatuses, getPlayers, getPlayersWithPrivateRosterContacts, getPublicTrackingItems, getRosterFieldDefinitions, getTeam, grantScorekeeperAccess, grantVideographerAccess, inviteAdmin, inviteParent, addTeamAdminEmail, revokeScorekeeperAccess, revokeVideographerAccess, deactivatePlayer, reactivatePlayer, setPlayerPrivateRosterProfileFields, updateEvent, updateGame, updateTeam, uploadPlayerPhoto, uploadTeamPhoto } from '../../js/db.js';
+import { addPlayer, getAggregatedStatsForGames, getAdSpaceSponsors, getAllUsers, getConfigs, getEvents, getGames, getLocalAttractionSponsors, getPlayerTrackingStatuses, getPlayers, getPlayersWithPrivateRosterContacts, getPublicTrackingItems, getRosterFieldDefinitions, getTeam, grantScorekeeperAccess, grantTeamMediaManagerAccess, grantVideographerAccess, inviteAdmin, inviteParent, addTeamAdminEmail, revokeScorekeeperAccess, revokeTeamMediaManagerAccess, revokeVideographerAccess, deactivatePlayer, reactivatePlayer, setPlayerPrivateRosterProfileFields, updateEvent, updateGame, updateTeam, uploadPlayerPhoto, uploadTeamPhoto } from '../../js/db.js';
 import { sendInviteEmail } from '../../js/auth.js';
 import { queueInviteEmail } from '../../js/invite-email.js';
 import { buildPlayerLeaderboardSnapshot } from '../../js/stat-leaderboards.js';
@@ -630,6 +632,8 @@ describe('React app team detail model', () => {
     it('wraps scorekeeper and roster active-state mutations with app validation', async () => {
         grantScorekeeperAccess.mockResolvedValue(undefined);
         revokeScorekeeperAccess.mockResolvedValue(undefined);
+        grantTeamMediaManagerAccess.mockResolvedValue(undefined);
+        revokeTeamMediaManagerAccess.mockResolvedValue(undefined);
         grantVideographerAccess.mockResolvedValue(undefined);
         revokeVideographerAccess.mockResolvedValue(undefined);
         deactivatePlayer.mockResolvedValue(undefined);
@@ -637,6 +641,8 @@ describe('React app team detail model', () => {
 
         await grantScorekeeperAccessForApp(' team-1 ', ' member-1 ');
         await revokeScorekeeperAccessForApp('team-1', 'member-1');
+        await grantTeamMediaManagerAccessForApp(' team-1 ', ' member-media ');
+        await revokeTeamMediaManagerAccessForApp('team-1', 'member-media');
         await grantVideographerAccessForApp(' team-1 ', ' member-2 ');
         await revokeVideographerAccessForApp('team-1', 'member-2');
         await deactivateRosterPlayerForApp(' team-1 ', ' player-1 ');
@@ -644,22 +650,28 @@ describe('React app team detail model', () => {
 
         expect(grantScorekeeperAccess).toHaveBeenCalledWith('team-1', 'member-1');
         expect(revokeScorekeeperAccess).toHaveBeenCalledWith('team-1', 'member-1');
+        expect(grantTeamMediaManagerAccess).toHaveBeenCalledWith('team-1', 'member-media');
+        expect(revokeTeamMediaManagerAccess).toHaveBeenCalledWith('team-1', 'member-media');
         expect(grantVideographerAccess).toHaveBeenCalledWith('team-1', 'member-2');
         expect(revokeVideographerAccess).toHaveBeenCalledWith('team-1', 'member-2');
         expect(deactivatePlayer).toHaveBeenCalledWith('team-1', 'player-1');
         expect(reactivatePlayer).toHaveBeenCalledWith('team-1', 'player-1');
 
         grantScorekeeperAccess.mockClear();
+        grantTeamMediaManagerAccess.mockClear();
         grantVideographerAccess.mockClear();
         deactivatePlayer.mockClear();
         reactivatePlayer.mockClear();
         await expect(grantScorekeeperAccessForApp('', 'member-1')).rejects.toThrow('Team ID is required.');
         await expect(grantScorekeeperAccessForApp('team-1', '')).rejects.toThrow('Team member user ID is required.');
+        await expect(grantTeamMediaManagerAccessForApp('', 'member-1')).rejects.toThrow('Team ID is required.');
+        await expect(grantTeamMediaManagerAccessForApp('team-1', '')).rejects.toThrow('Team member user ID is required.');
         await expect(grantVideographerAccessForApp('', 'member-1')).rejects.toThrow('Team ID is required.');
         await expect(grantVideographerAccessForApp('team-1', '')).rejects.toThrow('Team member user ID is required.');
         await expect(deactivateRosterPlayerForApp('', 'player-1')).rejects.toThrow('Team ID is required.');
         await expect(reactivateRosterPlayerForApp('team-1', '')).rejects.toThrow('Player ID is required.');
         expect(grantScorekeeperAccess).not.toHaveBeenCalled();
+        expect(grantTeamMediaManagerAccess).not.toHaveBeenCalled();
         expect(grantVideographerAccess).not.toHaveBeenCalled();
         expect(deactivatePlayer).not.toHaveBeenCalled();
         expect(reactivatePlayer).not.toHaveBeenCalled();

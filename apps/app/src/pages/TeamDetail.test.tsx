@@ -15,6 +15,7 @@ const teamDetailServiceMocks = vi.hoisted(() => ({
   createRosterParentInviteForApp: vi.fn(),
   deactivateRosterPlayerForApp: vi.fn(),
   grantScorekeeperAccessForApp: vi.fn(),
+  grantTeamMediaManagerAccessForApp: vi.fn(),
   grantVideographerAccessForApp: vi.fn(),
   inviteTeamAdminForApp: vi.fn(),
   loadParentTeamDetail: vi.fn(),
@@ -28,6 +29,7 @@ const teamDetailServiceMocks = vi.hoisted(() => ({
   reactivateRosterPlayerForApp: vi.fn(),
   revokeScorekeeperAccessForApp: vi.fn(),
   revokeTeamAdminAccessForApp: vi.fn(),
+  revokeTeamMediaManagerAccessForApp: vi.fn(),
   revokeVideographerAccessForApp: vi.fn(),
   saveTeamScheduleNotificationsForApp: vi.fn(),
   saveTeamTrackingItemForApp: vi.fn(),
@@ -244,6 +246,8 @@ describe('TeamDetail', () => {
     teamDetailServiceMocks.grantScorekeeperAccessForApp.mockResolvedValue({ success: true });
     teamDetailServiceMocks.revokeScorekeeperAccessForApp.mockResolvedValue({ success: true });
     teamDetailServiceMocks.revokeTeamAdminAccessForApp.mockResolvedValue({ success: true });
+    teamDetailServiceMocks.grantTeamMediaManagerAccessForApp.mockResolvedValue({ success: true });
+    teamDetailServiceMocks.revokeTeamMediaManagerAccessForApp.mockResolvedValue({ success: true });
     teamDetailServiceMocks.grantVideographerAccessForApp.mockResolvedValue({ success: true });
     teamDetailServiceMocks.revokeVideographerAccessForApp.mockResolvedValue({ success: true });
     teamDetailServiceMocks.saveTeamScheduleNotificationsForApp.mockResolvedValue(model.team.scheduleNotifications);
@@ -1578,6 +1582,7 @@ describe('TeamDetail', () => {
         helperPermissions: [],
         scorekeepingMode: 'selected',
         scorekeeperGrantTargets: [],
+        teamMediaManagerGrantTargets: [],
         videographerGrantTargets: [],
         hasAnyStaff: true
       }
@@ -1640,6 +1645,7 @@ describe('TeamDetail', () => {
         helperPermissions: [],
         scorekeepingMode: 'selected',
         scorekeeperGrantTargets: [],
+        teamMediaManagerGrantTargets: [],
         videographerGrantTargets: [],
         hasAnyStaff: true
       }

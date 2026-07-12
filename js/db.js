@@ -212,7 +212,7 @@ import {
     loadVolunteerScreeningTargetRegistrations
 } from './volunteer-screening-access.js?v=2';
 import { buildTournamentGroupOverrideKey, buildTournamentPoolOverrideKey, matchesTournamentStandingsGroup } from './tournament-standings.js?v=4';
-import { buildBulkDeleteUpdates, buildMoveUpdates, buildReorderUpdates, isSafeTeamMediaUrl, isSupportedTeamMediaDocument, isSupportedTeamMediaImage, normalizeTeamMediaFolderDraft, normalizeTeamMediaVideoDraft, normalizeAlbumVisibility, sortByMediaOrder } from './team-media-utils.js?v=4';
+import { buildBulkDeleteUpdates, buildMoveUpdates, buildReorderUpdates, isSafeTeamMediaUrl, isSupportedTeamMediaDocument, isSupportedTeamMediaImage, normalizeTeamMediaFolderDraft, normalizeTeamMediaVideoDraft, normalizeAlbumVisibility, sortByMediaOrder } from './team-media-utils.js?v=5';
 import { getApp } from './vendor/firebase-app.js';
 import {
     computeOfficiatingCoverageStatus,
@@ -2357,6 +2357,31 @@ export async function revokeVideographerAccess(teamId, memberUserId) {
     const docRef = doc(db, "teams", teamId);
     await updateDoc(docRef, {
         'teamPermissions.videography.memberIds': arrayRemove(normalizedUserId),
+        updatedAt: Timestamp.now()
+    });
+}
+
+export async function grantTeamMediaManagerAccess(teamId, memberUserId) {
+    const normalizedUserId = String(memberUserId || '').trim();
+    if (!teamId) throw new Error('Missing team for Team Media manager access');
+    if (!normalizedUserId) throw new Error('Team member user ID is required');
+
+    const docRef = doc(db, "teams", teamId);
+    await updateDoc(docRef, {
+        'teamPermissions.teamMediaManagement.mode': 'selected',
+        'teamPermissions.teamMediaManagement.memberIds': arrayUnion(normalizedUserId),
+        updatedAt: Timestamp.now()
+    });
+}
+
+export async function revokeTeamMediaManagerAccess(teamId, memberUserId) {
+    const normalizedUserId = String(memberUserId || '').trim();
+    if (!teamId) throw new Error('Missing team for Team Media manager access');
+    if (!normalizedUserId) throw new Error('Team member user ID is required');
+
+    const docRef = doc(db, "teams", teamId);
+    await updateDoc(docRef, {
+        'teamPermissions.teamMediaManagement.memberIds': arrayRemove(normalizedUserId),
         updatedAt: Timestamp.now()
     });
 }

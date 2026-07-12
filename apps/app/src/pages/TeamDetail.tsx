@@ -37,7 +37,7 @@ import { getEventDetailPath } from '../lib/homeLogic';
 import { buildPrivateTeamCalendarFeedUrl, getAppleCalendarFeedUrl, getGoogleCalendarFeedUrl } from '../lib/parentToolsService';
 import { createStaffRsvpReminderPreviewLoader, sendStaffRsvpReminder, type StaffRsvpReminderSendResult } from '../lib/scheduleService';
 import type { ParentScheduleEvent, StaffRsvpReminderPreview } from '../lib/scheduleLogic';
-import { addRosterPlayerForApp, archiveTeamTrackingItemForApp, buildPublicTeamGamesIcsUrl, canExposePublicFanFeed, createRosterParentInviteForApp, createStatTrackerConfigForApp, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadParentTeamDetailBootstrap, loadRosterFieldDefinitionsForApp, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamRosterParentInvites, loadTeamStaffPermissions, loadTeamTrackingAdmin, reactivateRosterPlayerForApp, revokeScorekeeperAccessForApp, revokeTeamAdminAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp, saveTeamTrackingItemForApp, setPlayerTrackingStatusForApp, updateStatTrackerConfigForApp, type CreateRosterParentInviteForAppResult, type InviteTeamAdminForAppResult, type TeamDetailEvent, type TeamDetailModel, type TeamDetailPlayer, type TeamRosterFieldDefinition, type TeamRosterParentInviteSummary, type TeamScorekeeperGrantTarget, type TeamTrackingAdminItem } from '../lib/teamDetailService';
+import { addRosterPlayerForApp, archiveTeamTrackingItemForApp, buildPublicTeamGamesIcsUrl, canExposePublicFanFeed, createRosterParentInviteForApp, createStatTrackerConfigForApp, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantTeamMediaManagerAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadParentTeamDetailBootstrap, loadRosterFieldDefinitionsForApp, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamRosterParentInvites, loadTeamStaffPermissions, loadTeamTrackingAdmin, reactivateRosterPlayerForApp, revokeScorekeeperAccessForApp, revokeTeamAdminAccessForApp, revokeTeamMediaManagerAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp, saveTeamTrackingItemForApp, setPlayerTrackingStatusForApp, updateStatTrackerConfigForApp, type CreateRosterParentInviteForAppResult, type InviteTeamAdminForAppResult, type TeamDetailEvent, type TeamDetailModel, type TeamDetailPlayer, type TeamRosterFieldDefinition, type TeamRosterParentInviteSummary, type TeamScorekeeperGrantTarget, type TeamTrackingAdminItem } from '../lib/teamDetailService';
 import { buildStatTrackerConfigPayload, createBlankStatTrackerConfigColumnDraft, createEmptyStatTrackerConfigDraft, createStatTrackerConfigDraft, createStatTrackerConfigDraftFromPreset, getStatTrackerConfigPresetCatalog, validateStatTrackerConfigDraft, type StatTrackerConfigDraft } from '../lib/statTrackerConfigEditor';
 import { useViewLoadTimer } from '../lib/viewLoadTiming';
 import type { AuthState } from '../lib/types';
@@ -2295,6 +2295,7 @@ function StaffPermissionsCard({ model, auth, onInviteSuccess }: { model: TeamDet
   const [copyStatus, setCopyStatus] = useState<{ kind: 'code' | 'link'; success: boolean } | null>(null);
   if (!summary) return null;
   const scorekeeperGrantTargets = summary.scorekeeperGrantTargets || [];
+  const teamMediaManagerGrantTargets = summary.teamMediaManagerGrantTargets || [];
   const videographerGrantTargets = summary.videographerGrantTargets || [];
   const isAllConfirmedScorekeeping = summary.scorekeepingMode === 'all_confirmed';
   const existingEmails = getStaffPermissionEmails(summary);
@@ -2416,12 +2417,33 @@ function StaffPermissionsCard({ model, auth, onInviteSuccess }: { model: TeamDet
     }
   }
 
+  async function toggleTeamMediaManagerGrant(memberUserId: string, isGranted: boolean) {
+    if (!memberUserId || grantingUserId) return;
+    setGrantingUserId(memberUserId);
+    setGrantStatus(null);
+    setResult(null);
+    setCopyStatus(null);
+    try {
+      if (isGranted) {
+        await revokeTeamMediaManagerAccessForApp(model.team.id, memberUserId);
+      } else {
+        await grantTeamMediaManagerAccessForApp(model.team.id, memberUserId);
+      }
+      setGrantStatus({ success: true, message: isGranted ? 'Team Media manager access revoked.' : 'Team Media manager access granted.' });
+      await onInviteSuccess();
+    } catch (grantError: any) {
+      setGrantStatus({ success: false, message: grantError?.message || 'Unable to update Team Media manager access.' });
+    } finally {
+      setGrantingUserId(null);
+    }
+  }
+
   return (
     <section className="app-card p-4">
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="text-sm font-black text-gray-950">Team Staff &amp; Permissions</div>
-          <div className="mt-1 text-xs font-semibold leading-5 text-gray-500">Owners and platform admins can manage team admins here in the app. Scoped helpers only cover game-day jobs like scorekeeping, Stream &amp; Score, video, and volunteer tasks.</div>
+          <div className="mt-1 text-xs font-semibold leading-5 text-gray-500">Owners and platform admins can manage team admins here in the app. Scoped helpers cover scorekeeping, Stream &amp; Score, Team Media, video, and volunteer tasks.</div>
         </div>
       </div>
 
@@ -2502,6 +2524,20 @@ function StaffPermissionsCard({ model, auth, onInviteSuccess }: { model: TeamDet
           emptyText="No videographer helper grant."
           grantLabel="Grant videographer"
           revokeLabel="Revoke videographer"
+        />
+      ) : null}
+
+      {teamMediaManagerGrantTargets.length ? (
+        <PermissionGrantPanel
+          title="Team Media manager access"
+          description="Grant an existing linked team member album, visibility, upload, video-link, and media moderation access without full roster, schedule, or settings admin rights."
+          targets={teamMediaManagerGrantTargets}
+          grantingUserId={grantingUserId}
+          onToggle={toggleTeamMediaManagerGrant}
+          grantedText="Can manage albums, visibility, uploads, and video links."
+          emptyText="No Team Media manager grant."
+          grantLabel="Grant media manager"
+          revokeLabel="Revoke media manager"
         />
       ) : null}
 

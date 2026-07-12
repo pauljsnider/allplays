@@ -28,7 +28,7 @@ describe('team media page wiring', () => {
         const page = fs.readFileSync(path.join(repoRoot, 'team-media.html'), 'utf8');
         const source = fs.readFileSync(path.join(repoRoot, 'js/team-media.js'), 'utf8');
 
-        expect(page).toContain('src="js/team-media.js?v=13"');
+        expect(page).toContain('src="js/team-media.js?v=14"');
         expect(page).toContain('Add album');
         expect(page).toContain('Upload files');
         expect(page).toContain('Save video link');
@@ -67,11 +67,12 @@ describe('team media page wiring', () => {
         const rules = fs.readFileSync(path.join(repoRoot, 'firestore.rules'), 'utf8');
         expect(rules).toContain('match /mediaFolders/{folderId}');
         expect(rules).toContain('allow read: if canReadTeamMediaFolder(teamId, resource.data);');
-        expect(rules).toContain('allow create, delete: if isTeamOwnerOrAdmin(teamId);');
-        expect(rules).toContain('allow update: if isTeamOwnerOrAdmin(teamId) || isTeamMediaUploadCounterUpdate(teamId);');
+        expect(rules).toContain('allow create, delete: if canManageTeamMedia(teamId);');
+        expect(rules).toContain('allow update: if canManageTeamMedia(teamId) || isTeamMediaUploadCounterUpdate(teamId);');
         expect(rules).toContain('allow read: if canReadTeamMediaItem(teamId, resource.data);');
-        expect(rules).toContain('allow create: if isTeamOwnerOrAdmin(teamId) || isTeamMediaUploadCreate(teamId, request.resource.data);');
-        expect(rules).toContain('allow update: if isTeamOwnerOrAdmin(teamId) || isOwnTeamMediaUploadSoftDelete(teamId) || isTeamMediaTitleUpdate(teamId);');
+        expect(rules).toContain('allow create: if canManageTeamMedia(teamId) || isTeamMediaUploadCreate(teamId, request.resource.data);');
+        expect(rules).toContain('allow update: if canManageTeamMedia(teamId) || isOwnTeamMediaUploadSoftDelete(teamId) || isTeamMediaTitleUpdate(teamId);');
+        expect(rules).toContain("teamPermission(teamId, 'teamMediaManagement').get('mode', '') == 'selected'");
         expect(rules).toContain("folderData.get('visibility', 'team') == 'team'");
         expect(rules).toContain("get(folderPath).data.get('visibility', 'team') == 'team'");
         expect(rules).toContain("teamId in get(userPath).data.get('teamMediaUploadTeamIds', [])");
@@ -90,14 +91,15 @@ describe('team media page wiring', () => {
         expect(storageRules).toContain('allow get: if canReadTeamMediaObject(teamId, folderId);');
         expect(storageRules).toContain("firestore.get(folderPath).data.get('visibility', 'team') == 'team'");
         expect(storageRules).toContain('canCreateTeamMediaUpload(teamId, folderId)');
-        expect(storageRules).toContain('(isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId)');
+        expect(storageRules).toContain('(canManageTeamMedia(teamId) || request.auth.uid == userId)');
+        expect(storageRules).toContain("teamPermission(teamId, 'teamMediaManagement').get('mode', '') == 'selected'");
         expect(storageRules).toContain("teamId in firestore.get(userPath).data.get('teamMediaUploadTeamIds', [])");
         expect(storageRules).toContain('canUploadTeamMediaFolder(teamId, folderId)');
         expect(storageRules).toContain('isAllowedTeamMediaUploadType(request.resource.contentType)');
         expect(storageRules).toContain('application/pdf');
         expect(storageRules).toContain('function canDeleteOwnTeamMediaObject(teamId, folderId, userId)');
         expect(storageRules).toContain('(hasTeamMediaUploadGrant(teamId) && canUploadTeamMediaFolder(teamId, folderId))');
-        expect(storageRules).toContain('allow delete: if isTeamOwnerOrAdmin(teamId) ||\n        canDeleteOwnTeamMediaObject(teamId, folderId, userId);');
+        expect(storageRules).toContain('allow delete: if canManageTeamMedia(teamId) ||\n        canDeleteOwnTeamMediaObject(teamId, folderId, userId);');
         expect(storageRules).not.toContain('allow delete: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;');
     });
 

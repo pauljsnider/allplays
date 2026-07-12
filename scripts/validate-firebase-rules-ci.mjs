@@ -113,10 +113,14 @@ export function validateFirebaseRulesCi() {
     if (aggregatedStatsRules.includes('allow read: if true;')) {
         throw new Error('Firestore aggregated stats read rules must not allow unconditional public reads.');
     }
-    assertIncludes(firestoreRules, 'allow create, update, delete: if isTeamOwnerOrAdmin(teamId);', 'Firestore media folder write rules');
-    assertIncludes(firestoreRules, 'allow create: if isTeamOwnerOrAdmin(teamId) || isTeamMediaUploadCreate(teamId, request.resource.data);', 'Firestore media item create rules');
-    assertIncludes(firestoreRules, 'allow update: if isTeamOwnerOrAdmin(teamId) || isOwnTeamMediaUploadSoftDelete(teamId) || isTeamMediaTitleUpdate(teamId);', 'Firestore media item update rules');
-    assertIncludes(firestoreRules, 'allow delete: if isTeamOwnerOrAdmin(teamId);', 'Firestore media item delete rules');
+    assertIncludes(firestoreRules, 'function canManageTeamMedia(teamId)', 'Firestore team media manager helper');
+    assertIncludes(firestoreRules, "teamPermission(teamId, 'teamMediaManagement').get('mode', '') == 'selected'", 'Firestore team media manager selected permission');
+    assertIncludes(firestoreRules, "request.auth.uid in teamPermission(teamId, 'teamMediaManagement').get('memberIds', [])", 'Firestore team media manager member ID check');
+    assertIncludes(firestoreRules, 'allow create, delete: if canManageTeamMedia(teamId);', 'Firestore media folder create/delete rules');
+    assertIncludes(firestoreRules, 'allow update: if canManageTeamMedia(teamId) || isTeamMediaUploadCounterUpdate(teamId);', 'Firestore media folder update rules');
+    assertIncludes(firestoreRules, 'allow create: if canManageTeamMedia(teamId) || isTeamMediaUploadCreate(teamId, request.resource.data);', 'Firestore media item create rules');
+    assertIncludes(firestoreRules, 'allow update: if canManageTeamMedia(teamId) || isOwnTeamMediaUploadSoftDelete(teamId) || isTeamMediaTitleUpdate(teamId);', 'Firestore media item update rules');
+    assertIncludes(firestoreRules, 'allow delete: if canManageTeamMedia(teamId);', 'Firestore media item delete rules');
     assertIncludes(firestoreRules, 'match /adminBilling/{billingId}', 'Firestore team fee admin billing rules');
     assertIncludes(firestoreRules, 'allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);', 'Firestore team fee admin billing admin-only rules');
     assertIncludes(firestoreRules, 'match /rsvpNotes/{rsvpId}', 'Firestore restricted RSVP note rules');
@@ -147,7 +151,10 @@ export function validateFirebaseRulesCi() {
     assertIncludes(storageRules, 'function canDeleteOwnChatAttachment(teamId, conversationId, userId)', 'Chat fallback scoped Storage delete helper');
     assertIncludes(storageRules, 'function canDeleteOwnTeamScopedUpload(teamId, userId)', 'Team scoped Storage delete helper');
     assertIncludes(storageRules, '(hasTeamMediaUploadGrant(teamId) && canUploadTeamMediaFolder(teamId, folderId))', 'Team media current upload grant delete scope');
-    assertIncludes(teamMediaRules, 'allow delete: if isTeamOwnerOrAdmin(teamId) ||\n        canDeleteOwnTeamMediaObject(teamId, folderId, userId);', 'Team media scoped Storage delete rules');
+    assertIncludes(storageRules, 'function canManageTeamMedia(teamId)', 'Storage team media manager helper');
+    assertIncludes(storageRules, "teamPermission(teamId, 'teamMediaManagement').get('mode', '') == 'selected'", 'Storage team media manager selected permission');
+    assertIncludes(storageRules, "request.auth.uid in teamPermission(teamId, 'teamMediaManagement').get('memberIds', [])", 'Storage team media manager member ID check');
+    assertIncludes(teamMediaRules, 'allow delete: if canManageTeamMedia(teamId) ||\n        canDeleteOwnTeamMediaObject(teamId, folderId, userId);', 'Team media scoped Storage delete rules');
     assertIncludes(chatFallbackRules, 'allow delete: if isTeamOwnerOrAdmin(teamId) ||\n        canDeleteOwnChatAttachment(teamId, conversationId, userId);', 'Chat fallback scoped Storage delete rules');
     for (const [label, block] of [
         ['Legacy chat fallback scoped Storage delete rules', legacyChatFallbackRules],

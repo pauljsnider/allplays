@@ -13,8 +13,10 @@ const teamDetailMocks = vi.hoisted(() => ({
     loadTeamDetailSponsors: vi.fn(),
     loadTeamStaffPermissions: vi.fn(),
     grantScorekeeperAccessForApp: vi.fn(),
+    grantTeamMediaManagerAccessForApp: vi.fn(),
     grantVideographerAccessForApp: vi.fn(),
     revokeScorekeeperAccessForApp: vi.fn(),
+    revokeTeamMediaManagerAccessForApp: vi.fn(),
     revokeVideographerAccessForApp: vi.fn(),
     inviteTeamAdminForApp: vi.fn(),
     saveTeamScheduleNotificationsForApp: vi.fn(),
@@ -168,8 +170,10 @@ beforeEach(() => {
     teamDetailMocks.loadTeamDetailInsights.mockResolvedValue({ leaderboards: [], trackingSummaries: [] });
     teamDetailMocks.loadTeamDetailSponsors.mockResolvedValue({ sponsors: [] });
     teamDetailMocks.grantScorekeeperAccessForApp.mockResolvedValue(undefined);
+    teamDetailMocks.grantTeamMediaManagerAccessForApp.mockResolvedValue(undefined);
     teamDetailMocks.grantVideographerAccessForApp.mockResolvedValue(undefined);
     teamDetailMocks.revokeScorekeeperAccessForApp.mockResolvedValue(undefined);
+    teamDetailMocks.revokeTeamMediaManagerAccessForApp.mockResolvedValue(undefined);
     teamDetailMocks.revokeVideographerAccessForApp.mockResolvedValue(undefined);
     teamDetailMocks.inviteTeamAdminForApp.mockResolvedValue({
         email: 'newcoach@example.com',
@@ -327,6 +331,30 @@ describe('React app TeamDetail staff permissions overview', () => {
         expect(teamDetailMocks.revokeScorekeeperAccessForApp).toHaveBeenCalledWith('team-1', 'scorekeeper-1');
         expect(teamDetailMocks.loadParentTeamDetail).toHaveBeenCalledTimes(2);
         expect(container.textContent).toContain('Scorekeeper access revoked.');
+    });
+
+    it('grants Team Media manager access to an existing linked team member and refreshes staff state', async () => {
+        const { container } = await renderTeamDetail({
+            staff: [{ label: 'owner@example.com', role: 'Owner' }],
+            pendingInvites: [],
+            helperPermissions: [],
+            scorekeeperGrantTargets: [],
+            teamMediaManagerGrantTargets: [
+                { userId: 'parent-1', name: 'Parent One', email: 'parent@example.com', playerNames: ['Sam Wing'], isGranted: false }
+            ],
+            videographerGrantTargets: [],
+            hasAnyStaff: true
+        });
+
+        await clickButton(container, 'More');
+
+        expect(container.textContent).toContain('Team Media manager access');
+        expect(container.textContent).toContain('No Team Media manager grant. Linked to Sam Wing.');
+        await clickButton(container, 'Grant media manager');
+
+        expect(teamDetailMocks.grantTeamMediaManagerAccessForApp).toHaveBeenCalledWith('team-1', 'parent-1');
+        expect(teamDetailMocks.loadParentTeamDetail).toHaveBeenCalledTimes(2);
+        expect(container.textContent).toContain('Team Media manager access granted.');
     });
 
     it('disables individual scorekeeper grants when all confirmed members can score games', async () => {

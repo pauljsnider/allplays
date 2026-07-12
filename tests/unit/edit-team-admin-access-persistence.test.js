@@ -231,6 +231,7 @@ function createEnvironment(initialState, overrides = {}) {
         'scorekeeping-member-list',
         'streamingAccessMode',
         'streaming-member-list',
+        'teamMediaManagement-member-list',
         'videography-member-list',
         'streamAccessMode',
         'stream-volunteer-panel',
@@ -385,7 +386,7 @@ function extractEditTeamModule() {
             'const { normalizeYouTubeEmbedUrl } = deps.liveStreamUtils;'
         )
         .replace(
-            "import { hasFullTeamAccess, normalizeAdminEmailList, normalizeStreamVolunteerEmailList, normalizeTeamPermissions } from './js/team-access.js?v=3';",
+            "import { hasFullTeamAccess, normalizeAdminEmailList, normalizeStreamVolunteerEmailList, normalizeTeamPermissions } from './js/team-access.js?v=4';",
             'const { hasFullTeamAccess, normalizeAdminEmailList, normalizeStreamVolunteerEmailList, normalizeTeamPermissions } = deps.teamAccess;'
         )
         .replace(
@@ -762,6 +763,7 @@ describe('edit team admin access persistence', () => {
             expect(env.state.updateCalls[0].teamData.teamPermissions).toMatchObject({
                 scorekeeping: { mode: 'selected', memberIds: [] },
                 streaming: { mode: 'all_confirmed', memberIds: [] },
+                teamMediaManagement: { mode: 'selected', memberIds: [] },
                 videography: { mode: 'selected', memberIds: [] }
             });
         } finally {
@@ -787,6 +789,7 @@ describe('edit team admin access persistence', () => {
                 teamPermissions: {
                     scorekeeping: { mode: 'selected', memberIds: ['parent-1'] },
                     streaming: { mode: 'selected', memberIds: [] },
+                    teamMediaManagement: { mode: 'selected', memberIds: [] },
                     videography: { mode: 'selected', memberIds: [] }
                 }
             },
@@ -824,6 +827,8 @@ describe('edit team admin access persistence', () => {
             expect(env.elements.get('scorekeeping-member-list').textContent).toContain('Jordan Parent');
             expect(env.elements.get('scorekeeping-member-list').textContent).toContain('jordan@example.com');
             expect(env.elements.get('scorekeeping-member-list').textContent).toContain('Casey Guardian');
+            expect(env.elements.get('teamMediaManagement-member-list').textContent).toContain('Jordan Parent');
+            expect(env.elements.get('teamMediaManagement-member-list').textContent).toContain('Casey Guardian');
             expect(env.elements.get('scorekeeping-member-list').innerHTML.match(/value="parent-1"/g)).toHaveLength(1);
             expect(env.elements.get('scorekeeping-member-list').innerHTML).toContain('value="parent-1" checked');
         } finally {
@@ -849,6 +854,7 @@ describe('edit team admin access persistence', () => {
                 teamPermissions: {
                     scorekeeping: { mode: 'selected', memberIds: ['parent-private'] },
                     streaming: { mode: 'selected', memberIds: [] },
+                    teamMediaManagement: { mode: 'selected', memberIds: [] },
                     videography: { mode: 'selected', memberIds: [] }
                 }
             },
@@ -890,6 +896,8 @@ describe('edit team admin access persistence', () => {
             expect(env.elements.get('scorekeeping-member-list').textContent).toContain('Private Parent');
             expect(env.elements.get('scorekeeping-member-list').textContent).toContain('private@example.com');
             expect(env.elements.get('scorekeeping-member-list').textContent).toContain('Public Parent');
+            expect(env.elements.get('teamMediaManagement-member-list').textContent).toContain('Private Parent');
+            expect(env.elements.get('teamMediaManagement-member-list').textContent).toContain('Public Parent');
             expect(env.elements.get('scorekeeping-member-list').innerHTML).toContain('value="parent-private" checked');
         } finally {
             env.cleanup();
@@ -945,6 +953,7 @@ describe('edit team admin access persistence', () => {
                 teamPermissions: {
                     scorekeeping: { mode: 'all_confirmed', memberIds: [] },
                     streaming: { mode: 'all_confirmed', memberIds: [] },
+                    teamMediaManagement: { mode: 'selected', memberIds: [] },
                     videography: { mode: 'selected', memberIds: [] }
                 },
                 bracketUrl: 'https://example.com/bracket',

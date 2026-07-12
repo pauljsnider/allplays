@@ -409,6 +409,11 @@
                             <div id="streaming-member-list" class="mt-3 space-y-2 text-sm"></div>
                         </div>
                         <div class="bg-white border border-emerald-200 rounded p-3">
+                            <label class="block text-sm font-semibold text-gray-800 mb-1">Team Media Management</label>
+                            <p class="text-xs text-gray-500 mb-2">Selected confirmed members can create albums, set visibility, add video links, upload files, and moderate media without full team admin access.</p>
+                            <div id="teamMediaManagement-member-list" class="mt-3 space-y-2 text-sm"></div>
+                        </div>
+                        <div class="bg-white border border-emerald-200 rounded p-3">
                             <label class="block text-sm font-semibold text-gray-800 mb-1">Videographer Access</label>
                             <p class="text-xs text-gray-500 mb-2">Selected confirmed members can use live-game camera/media tools. This does not grant Staff/admin access.</p>
                             <div id="videography-member-list" class="mt-3 space-y-2 text-sm"></div>
@@ -582,7 +587,7 @@
         import { checkAuth, sendInviteEmail } from './js/auth.js?v=50';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
         import { normalizeYouTubeEmbedUrl } from './js/live-stream-utils.js?v=1';
-        import { hasFullTeamAccess, normalizeAdminEmailList, normalizeStreamVolunteerEmailList, normalizeTeamPermissions } from './js/team-access.js?v=3';
+        import { hasFullTeamAccess, normalizeAdminEmailList, normalizeStreamVolunteerEmailList, normalizeTeamPermissions } from './js/team-access.js?v=4';
         import { processPendingAdminInvites, buildAdminInviteFollowUp, inviteExistingTeamAdmin, loadPendingAdminInviteEmails } from './js/edit-team-admin-invites.js?v=5';
         import { buildRolloverAccessPreview, buildStaffAdminRolloverUpdate } from './js/rollover-access.js?v=1';
         import { buildRosterRolloverPreviewRows } from './js/roster-rollover-preview.js?v=1';
@@ -1357,7 +1362,7 @@
 
         function renderPermissionMemberList(kind) {
             const list = document.getElementById(`${kind}-member-list`);
-            const mode = kind === 'videography' ? 'selected' : document.getElementById(`${kind}AccessMode`).value;
+            const mode = ['teamMediaManagement', 'videography'].includes(kind) ? 'selected' : document.getElementById(`${kind}AccessMode`).value;
             const selectedIds = new Set(getPermissionState(kind).memberIds);
             if (!list) return;
 
@@ -1428,6 +1433,7 @@
                 modeSelect.value = getPermissionState(kind).mode;
                 renderPermissionMemberList(kind);
             });
+            renderPermissionMemberList('teamMediaManagement');
             renderPermissionMemberList('videography');
             document.getElementById('team-permissions-empty').classList.toggle('hidden', confirmedTeamMembers.length > 0);
         }

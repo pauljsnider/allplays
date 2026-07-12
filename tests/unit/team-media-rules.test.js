@@ -80,11 +80,14 @@ describe('team media Firestore rules', () => {
         const uploadCreateRule = teamMediaUploadCreateRule();
 
         expect(mediaRules).toContain('allow read: if canReadTeamMediaFolder(teamId, resource.data);');
-        expect(mediaRules).toContain('allow create, delete: if isTeamOwnerOrAdmin(teamId);');
-        expect(mediaRules).toContain('allow update: if isTeamOwnerOrAdmin(teamId) || isTeamMediaUploadCounterUpdate(teamId);');
+        expect(mediaRules).toContain('allow create, delete: if canManageTeamMedia(teamId);');
+        expect(mediaRules).toContain('allow update: if canManageTeamMedia(teamId) || isTeamMediaUploadCounterUpdate(teamId);');
         expect(mediaRules).toContain('allow read: if canReadTeamMediaItem(teamId, resource.data);');
-        expect(mediaRules).toContain('allow create: if isTeamOwnerOrAdmin(teamId) || isTeamMediaUploadCreate(teamId, request.resource.data);');
-        expect(mediaRules).toContain('allow update: if isTeamOwnerOrAdmin(teamId) || isOwnTeamMediaUploadSoftDelete(teamId) || isTeamMediaTitleUpdate(teamId);');
+        expect(mediaRules).toContain('allow create: if canManageTeamMedia(teamId) || isTeamMediaUploadCreate(teamId, request.resource.data);');
+        expect(mediaRules).toContain('allow update: if canManageTeamMedia(teamId) || isOwnTeamMediaUploadSoftDelete(teamId) || isTeamMediaTitleUpdate(teamId);');
+        expect(rules).toContain('function canManageTeamMedia(teamId) {');
+        expect(rules).toContain("teamPermission(teamId, 'teamMediaManagement').get('mode', '') == 'selected'");
+        expect(rules).toContain("request.auth.uid in teamPermission(teamId, 'teamMediaManagement').get('memberIds', [])");
         expect(rules).toContain("teamId in get(userPath).data.get('teamMediaUploadTeamIds', [])");
         expect(rules).toContain("teamId in get(userPath).data.get('mediaUploadTeamIds', [])");
         expect(rules).toContain('function isTeamMediaUploadCounterUpdate(teamId) {');
@@ -94,7 +97,7 @@ describe('team media Firestore rules', () => {
         expect(uploadCreateRule).toContain('canUploadTeamMediaFolder(teamId, data.folderId)');
         expect(uploadCreateRule).toContain("data.type in ['photo', 'file']");
         expect(uploadCreateRule).toContain('isAllowedTeamMediaUploadType(data.mimeType)');
-        expect(mediaRules).toContain('allow delete: if isTeamOwnerOrAdmin(teamId);');
+        expect(mediaRules).toContain('allow delete: if canManageTeamMedia(teamId);');
     });
 
     it('allows delegated storage-backed uploads without persisted download URLs', () => {

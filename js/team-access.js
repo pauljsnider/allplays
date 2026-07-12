@@ -136,6 +136,22 @@ export function hasVideographerTeamAccess(user, team) {
   return normalizeMemberIdList(permissions.videography.memberIds).includes(String(user.uid || '').trim());
 }
 
+/**
+ * Check whether a user can manage Team Media without broad team admin access.
+ * Team Media managers can organize albums, private visibility, video links, and media moderation.
+ */
+export function hasTeamMediaManagementAccess(user, team) {
+  if (!user || !team) return false;
+  if (hasFullTeamAccess(user, team)) return true;
+
+  const normalizedUserId = String(user.uid || '').trim();
+  const normalizedTeamId = String(team.id || '').trim();
+  if (!normalizedUserId || !normalizedTeamId || !team.teamPermissions?.teamMediaManagement) return false;
+
+  const permissions = normalizeTeamPermissions(team.teamPermissions);
+  return normalizeMemberIdList(permissions.teamMediaManagement.memberIds).includes(normalizedUserId);
+}
+
 function hasTeamMediaUploadGrant(user, teamId) {
   const normalizedTeamId = String(teamId || '').trim();
   if (!user || !normalizedTeamId) return false;
@@ -150,7 +166,7 @@ function hasTeamMediaUploadGrant(user, teamId) {
  */
 export function hasTeamMediaAccess(user, team) {
   if (!user || !team) return false;
-  if (hasFullTeamAccess(user, team)) return true;
+  if (hasTeamMediaManagementAccess(user, team)) return true;
   return hasTeamMediaUploadGrant(user, team.id);
 }
 
@@ -241,6 +257,7 @@ export function normalizeTeamPermissions(teamPermissions = {}) {
   return {
     scorekeeping: normalizeCapabilityPermission(teamPermissions.scorekeeping),
     streaming: normalizeCapabilityPermission(teamPermissions.streaming),
-    videography: normalizeSelectedMemberPermission(teamPermissions.videography)
+    videography: normalizeSelectedMemberPermission(teamPermissions.videography),
+    teamMediaManagement: normalizeSelectedMemberPermission(teamPermissions.teamMediaManagement)
   };
 }

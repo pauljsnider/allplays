@@ -24,7 +24,7 @@ describe('team media entry point', () => {
         const pageJs = readRepoFile('js/team-media.js');
         const rules = readRepoFile('firestore.rules');
 
-        expect(pageHtml).toContain('<script type="module" src="js/team-media.js?v=13"></script>');
+        expect(pageHtml).toContain('<script type="module" src="js/team-media.js?v=14"></script>');
         expect(pageHtml).toContain('id="team-media-upload-panel"');
         expect(pageHtml).toContain('id="team-media-admin-panel"');
         expect(pageHtml).toContain('id="bulk-actions"');
@@ -67,7 +67,8 @@ describe('team media entry point', () => {
         expect(rules).toContain('match /mediaFolders/{folderId}');
         expect(rules).toContain('allow read: if canReadTeamMediaFolder(teamId, resource.data);');
         expect(rules).toContain('allow read: if canReadTeamMediaItem(teamId, resource.data);');
-        expect(rules).toContain('allow create: if isTeamOwnerOrAdmin(teamId) || isTeamMediaUploadCreate(teamId, request.resource.data);');
-        expect(rules).toContain('allow update: if isTeamOwnerOrAdmin(teamId) || isOwnTeamMediaUploadSoftDelete(teamId) || isTeamMediaTitleUpdate(teamId);');
+        expect(rules).toContain('allow create: if canManageTeamMedia(teamId) || isTeamMediaUploadCreate(teamId, request.resource.data);');
+        expect(rules).toContain('allow update: if canManageTeamMedia(teamId) || isOwnTeamMediaUploadSoftDelete(teamId) || isTeamMediaTitleUpdate(teamId);');
+        expect(rules).toContain("teamPermission(teamId, 'teamMediaManagement').get('mode', '') == 'selected'");
     });
 });
