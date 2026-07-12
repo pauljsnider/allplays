@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { Loader2, Send } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
 import { Status } from '../components/TeamSummaryPrimitives';
@@ -14,14 +14,14 @@ export function OpportunityInquiry({ auth }: { auth: AuthState }) {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setError('');
     try { setInquiry(await getOpportunityInquiry(inquiryId)); }
     catch (loadError: any) { setError(loadError?.message || 'Unable to load this inquiry.'); }
     finally { setLoading(false); }
-  };
+  }, [inquiryId]);
 
-  useEffect(() => { void load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [inquiryId]);
+  useEffect(() => { void load(); }, [load]);
 
   const reply = async (event: FormEvent) => {
     event.preventDefault();

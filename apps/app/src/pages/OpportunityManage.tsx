@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, Inbox, Loader2, Plus, RefreshCw } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { OpportunityCard } from '../components/OpportunityCard';
@@ -28,9 +28,16 @@ export function OpportunityManage({ auth }: { auth: AuthState }) {
   const [status, setStatus] = useState('');
   const isPlatformAdmin = auth.isPlatformAdmin || auth.user?.isPlatformAdmin || auth.user?.isAdmin;
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     setError('');
+    if (!auth.user?.uid) {
+      setListings([]);
+      setInquiries([]);
+      setReports([]);
+      setLoading(false);
+      return;
+    }
     try {
       const [nextListings, nextInquiries, nextReports] = await Promise.all([
         listMyPublicOpportunities(),
@@ -45,9 +52,9 @@ export function OpportunityManage({ auth }: { auth: AuthState }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [auth.user?.uid, isPlatformAdmin]);
 
-  useEffect(() => { void load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [auth.user?.uid]);
+  useEffect(() => { void load(); }, [load]);
 
   const lifecycle = async (item: PublicOpportunity, action: 'close' | 'renew') => {
     setBusyId(item.id);
