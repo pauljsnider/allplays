@@ -474,6 +474,29 @@ describe('roster CSV import planning', () => {
         expect(JSON.stringify(plan.operations[0].payload)).not.toContain('AAU-42');
     });
 
+    it('preserves DOB when a duplicate standard Birth Date column is blank', () => {
+        const standardFields = mergeStandardRosterFieldDefinitions([]);
+        const plan = planRosterCsvImport({
+            fields: standardFields,
+            csvText: 'Name,Number,DOB,Birth Date\nAvery Lee,4,2014-02-03,'
+        });
+
+        expect(plan.errors).toEqual([]);
+        expect(plan.operations[0]).toMatchObject({
+            privateRosterFields: { birthDate: '2014-02-03' }
+        });
+    });
+
+    it('does not duplicate standard fields already represented by built-in template aliases', () => {
+        const template = buildFullRosterCsvTemplate(mergeStandardRosterFieldDefinitions([]));
+        const headers = template.trim().split('\n')[0].split(',');
+
+        expect(headers).toContain('DOB');
+        expect(headers).not.toContain('Birth Date');
+        expect(headers.filter((header) => header === 'Position')).toHaveLength(1);
+        expect(headers.filter((header) => header === 'Gender')).toHaveLength(1);
+    });
+
     it('describes parent and guardian contact columns in the roster CSV import UI', () => {
         const page = readFileSync('edit-roster.html', 'utf8');
         const dbSource = readFileSync('js/db.js', 'utf8');

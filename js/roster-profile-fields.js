@@ -248,6 +248,10 @@ function parseRosterCsvFieldValue(field, rawValue) {
     return { value };
 }
 
+function isBlankRosterImportValue(value) {
+    return value === null || value === undefined || (typeof value === 'string' && value.trim() === '');
+}
+
 function getRosterFieldVisibility(field = {}) {
     return normalizeVisibility(field.visibility || field.defaultVisibility);
 }
@@ -592,6 +596,26 @@ function getRosterParentContactDedupeKey(contact = {}) {
     return `name:${normalizeRosterContactString(contact.name).toLowerCase()}:${normalizeRosterContactString(contact.relation).toLowerCase()}`;
 }
 
+export function mergeRosterParentContacts(existingContacts = [], importedContacts = [], options = {}) {
+    const merged = [];
+    const seen = new Set();
+    [
+        ...(Array.isArray(existingContacts) ? existingContacts : []),
+        ...(Array.isArray(importedContacts) ? importedContacts : [])
+    ].forEach((contact) => {
+        const normalized = normalizeRosterParentContact(contact, options);
+        if (!normalized) return;
+        const key = getRosterParentContactDedupeKey(normalized);
+        if (seen.has(key)) return;
+        seen.add(key);
+        merged.push({
+            ...(contact && typeof contact === 'object' ? contact : {}),
+            ...normalized
+        });
+    });
+    return merged;
+}
+
 export function collectRosterParentContacts(player = {}, options = {}) {
     const includeImported = options.includeImported !== false;
     const includeFamilyContacts = options.includeFamilyContacts === true;
@@ -731,7 +755,12 @@ export function buildFullRosterCsvTemplate(fields = []) {
         'Guardian 2 Name', 'Guardian 2 Relation', 'Guardian 2 Email', 'Guardian 2 Phone'
     ];
     const builtInHeaderKeys = new Set(builtInHeaders.map(normalizeHeaderKey));
+    const builtInProfileFieldKeys = new Set(builtInHeaders
+        .map((header) => getProfileHeaderMapping(normalizeHeaderKey(header), header))
+        .filter((mapping) => mapping?.profileField)
+        .map((mapping) => mapping.profileField));
     const customHeaders = normalizeRosterFieldDefinitions(fields)
+        .filter((field) => !(isStandardRosterField(field) && builtInProfileFieldKeys.has(field.key)))
         .map((field) => field.label)
         .filter((label) => !builtInHeaderKeys.has(normalizeHeaderKey(label)))
         .filter(Boolean);
@@ -889,7 +918,7 @@ export function planRosterCsvImport({ csvText = '', fields = [], existingPlayers
         const profileValuesForMerge = { ...profileValues };
         standardFieldByKey.forEach((field, key) => {
             if (!Object.prototype.hasOwnProperty.call(profileValues, key)) return;
-            if (!Object.prototype.hasOwnProperty.call(parsedValues, key)) {
+            if (!Object.prototype.hasOwnProperty.call(parsedValues, key) || isBlankRosterImportValue(parsedValues[key])) {
                 const parsed = parseRosterCsvFieldValue(field, profileValues[key]);
                 if (parsed.error) {
                     errors.push(`Row ${rowNumber}: ${parsed.error}`);

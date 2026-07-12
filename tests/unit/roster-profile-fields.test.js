@@ -4,6 +4,7 @@ import {
     collectRosterParentContacts,
     getStandardRosterFieldDefinitions,
     getRosterProfileValues,
+    mergeRosterParentContacts,
     mergeStandardRosterFieldDefinitions,
     normalizeRosterFieldDefinitions,
     splitRosterProfileValuesByVisibility,
@@ -178,6 +179,26 @@ describe('roster profile fields', () => {
             'pat@example.com',
             'robin@example.com',
             '555-0101'
+        ]);
+    });
+
+    it('merges imported parent contacts without dropping existing private metadata', () => {
+        const merged = mergeRosterParentContacts(
+            [
+                { name: 'Pat Parent', email: 'Pat@Example.com', relation: 'Parent', source: 'registration', registrationId: 'reg-1' },
+                { name: 'Robin Lee', phone: '555-0102', relation: 'Guardian', source: 'registration' }
+            ],
+            [
+                { name: 'Pat AI', email: 'pat@example.com', phone: '555-9999', relation: 'Parent', source: 'roster-ai' },
+                { name: 'Dana Lee', email: 'dana@example.com', relation: 'Parent', source: 'roster-ai' }
+            ],
+            { defaultRelation: 'Parent' }
+        );
+
+        expect(merged).toEqual([
+            expect.objectContaining({ name: 'Pat Parent', email: 'pat@example.com', relation: 'Parent', source: 'registration', registrationId: 'reg-1' }),
+            expect.objectContaining({ name: 'Robin Lee', phone: '555-0102', relation: 'Guardian', source: 'registration' }),
+            expect.objectContaining({ name: 'Dana Lee', email: 'dana@example.com', relation: 'Parent', source: 'roster-ai' })
         ]);
     });
 });
