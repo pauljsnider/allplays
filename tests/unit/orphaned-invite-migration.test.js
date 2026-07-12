@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 const source = readFileSync('_migration/fix-orphaned-invite-redemptions.js', 'utf8');
 const readme = readFileSync('_migration/MIGRATION-README.md', 'utf8');
+const rootPackage = JSON.parse(readFileSync('package.json', 'utf8'));
 
 describe('orphaned invite redemption migration safety', () => {
     it('defaults to a dry run and refuses unscoped apply mode', () => {
@@ -24,6 +25,10 @@ describe('orphaned invite redemption migration safety', () => {
         expect(result.status).not.toBe(0);
         expect(output).toContain('Apply mode requires an explicit --code value');
         expect(output).not.toContain('ERR_MODULE_NOT_FOUND');
+    });
+
+    it('declares firebase-admin at the repo root so direct node migration commands can resolve it', () => {
+        expect(rootPackage.devDependencies?.['firebase-admin']).toBe('^12.7.0');
     });
 
     it('documents a scoped dry run before the matching apply command', () => {
