@@ -116,5 +116,39 @@ jobs:
           printf '%s' '${{ secrets.FIREBASE_SERVICE_ACCOUNT_GAME_FLOW_C6311 }}' > "$credentials_file"
           echo "GOOGLE_APPLICATION_CREDENTIALS=$credentials_file" >> "$GITHUB_ENV"
 
+      - name: Enable password-reset retry policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! jq -e '.functions == {"source":"functions"}' "$FIREBASE_PROD_CONFIG" >/dev/null; then
+            echo "Refusing retry-policy migration for an unexpected Functions deploy source." >&2
+            exit 1
+          fi
+
+          expected_functions_hash="102aad7b6547759d0fa8e5c85d06d2a704cd3768690ce889649efb34600b56a8"
+          functions_hash="$(git ls-files -z functions | sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)"
+          retry_status="$({
+            npx firebase-tools@14.25.0 functions:list --project game-flow-c6311 --json
+          } | jq -er '
+            [.result[] | select(
+              .id == "processPasswordResetEmailRequest" and
+              .region == "us-central1"
+            )] |
+            if length == 0 then "missing"
+            elif length > 1 then error("duplicate password-reset workers")
+            elif .[0].eventTrigger.retry == true then "enabled"
+            else "disabled"
+            end
+          ')"
+
+          if [[ "$retry_status" == "enabled" ]]; then
+            echo "Password-reset retry policy is already enabled."
+          elif [[ "$functions_hash" == "$expected_functions_hash" ]]; then
+            npx firebase-tools@14.25.0 deploy --only functions:processPasswordResetEmailRequest --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive --force
+          else
+            echo "Refusing forced retry-policy migration for unreviewed Functions source." >&2
+            exit 1
+          fi
+
       - name: Deploy Firebase production
         run: npx firebase-tools@14.25.0 deploy --only hosting,firestore:rules,firestore:indexes,functions --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive
