@@ -152,6 +152,11 @@ describe('buildMatchingDetails validation', () => {
     expect(() => buildMatchingDetails(teamDraft({ signupUrl: 'https://evil.example.com/join' }))).toThrow(/allplays/i);
   });
 
+  it('rejects contact details in allplays.ai signup links', () => {
+    expect(() => buildMatchingDetails(teamDraft({ signupUrl: 'https://allplays.ai/signup?email=child@example.com' }))).toThrow(/emails and phone/i);
+    expect(() => buildMatchingDetails(teamDraft({ signupUrl: 'https://allplays.ai/signup?phone=614-555-0142' }))).toThrow(/emails and phone/i);
+  });
+
   it('rejects signup links on player posts', () => {
     expect(() => buildMatchingDetails(playerDraft({ signupUrl: 'https://allplays.ai/signup' }))).toThrow(/team posts/i);
   });

@@ -1315,6 +1315,7 @@ service cloud.firestore {
              (
                value is string &&
                value.size() <= 240 &&
+               hasNoContactInfo(value) &&
                value.matches('https://(www[.])?allplays[.]ai/.*')
              );
     }

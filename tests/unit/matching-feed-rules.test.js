@@ -86,6 +86,8 @@ describe('Player/team matching feed Firestore rules', () => {
         expect(source).toContain("isNonBlankString(matching.get('ageGroup', ''))");
         expect(source).toContain("isAllowedMatchingSignupUrl(matching.get('signupUrl', ''))");
         expect(source).toContain("hasNoContactInfo(matching.get('playerFirstName', ''))");
+        const signupUrlGuard = source.match(/function isAllowedMatchingSignupUrl\(value\) \{[\s\S]*?\n    \}/)?.[0];
+        expect(signupUrlGuard).toContain('hasNoContactInfo(value)');
     });
 
     it('requires an existing team and admin rights for team_seeking_players posts', () => {

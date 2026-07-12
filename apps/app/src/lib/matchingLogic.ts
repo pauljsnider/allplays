@@ -189,6 +189,9 @@ export function buildMatchingDetails(draft: MatchingPostDraft): MatchingDetails 
         if (signupUrl && !matchingSignupUrlPattern.test(signupUrl)) {
             throw new Error('Signup links must be ALL PLAYS links (https://allplays.ai/...).');
         }
+        if (containsContactInfo(signupUrl)) {
+            throw new Error('Remove emails and phone numbers from the signup link.');
+        }
     }
 
     const description = compact(draft.description);
