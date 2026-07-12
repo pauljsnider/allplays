@@ -9,6 +9,7 @@ import {
     getCalendarScheduleEntries,
     getScheduleEventDetailPath,
     getNextRideConfirmedSeatCount,
+    getManageableScheduleTeamOptions,
     getOpenScheduleAssignments,
     getParentScheduleTeamOptions,
     getPracticePacketRows,
@@ -64,6 +65,21 @@ describe('React app parent schedule logic', () => {
             url: 'https://example.com/team.ics?token=abc',
             error: null
         });
+    });
+
+    it('derives manageable teams from staff team ids with event flags as a fallback', () => {
+        const teamOptions = getParentScheduleTeamOptions([
+            event({ teamId: 'team-2', teamName: 'Wolves', isTeamStaff: true }),
+            event({ teamId: 'team-3', teamName: 'Hawks', isTeamStaff: false })
+        ], [
+            { teamId: 'team-1', teamName: 'Bears', playerId: 'staff-team-team-1' }
+        ]);
+
+        expect(getManageableScheduleTeamOptions(teamOptions, [], ['team-1']).map((team) => team.teamId)).toEqual(['team-1']);
+        expect(getManageableScheduleTeamOptions(teamOptions, [
+            event({ teamId: 'team-2', teamName: 'Wolves', isTeamStaff: true }),
+            event({ teamId: 'team-3', teamName: 'Hawks', isTeamStaff: false })
+        ]).map((team) => team.teamId)).toEqual(['team-2']);
     });
 
     it('keeps parent task-targeted event detail routes explicit', () => {

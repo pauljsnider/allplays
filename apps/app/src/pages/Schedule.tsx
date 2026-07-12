@@ -29,6 +29,7 @@ import {
   getScheduleEventDetailPath,
   getWindowedCalendarScheduleEntries,
   getWindowedPracticePacketRows,
+  getManageableScheduleTeamOptions,
   getScheduleTitle,
   getScheduleTournamentInfo,
   getScheduleMapHref,
@@ -171,6 +172,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const [timeRange, setTimeRange] = useState<ScheduleTimeRange>(() => getScheduleTimeRangeFromQuery(searchParams.get('range')) || 'all');
   const [children, setChildren] = useState<ParentScheduleChild[]>([]);
   const [events, setEvents] = useState<ParentScheduleEvent[]>([]);
+  const [staffTeamIds, setStaffTeamIds] = useState<string[]>([]);
   const [scheduleLoadError, setScheduleLoadError] = useState<AppServiceError | null>(null);
   const {
     loading: scheduleReadLoading,
@@ -235,18 +237,21 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const pastHistoryLoadedRef = useRef(false);
   const childrenRef = useRef<ParentScheduleChild[]>([]);
   const eventsRef = useRef<ParentScheduleEvent[]>([]);
+  const staffTeamIdsRef = useRef<string[]>([]);
   const trackerConfigCacheRef = useRef<Record<string, ScheduleStatTrackerConfigOption[]>>({});
   const trackerConfigRequestPromiseRef = useRef<Record<string, Promise<ScheduleStatTrackerConfigOption[]>>>({});
   const [trackerConfigRequestedTeamIds, setTrackerConfigRequestedTeamIds] = useState<Record<string, true>>({});
 
-  const applyScheduleResult = (data: { children: ParentScheduleChild[]; events: ParentScheduleEvent[]; }) => {
+  const applyScheduleResult = (data: { children: ParentScheduleChild[]; events: ParentScheduleEvent[]; staffTeamIds?: string[]; }) => {
     childrenRef.current = data.children;
     eventsRef.current = data.events;
+    staffTeamIdsRef.current = data.staffTeamIds || [];
     setChildren(data.children);
     setEvents(data.events);
+    setStaffTeamIds(data.staffTeamIds || []);
   };
 
-  const mergeScheduleResult = (data: { children: ParentScheduleChild[]; events: ParentScheduleEvent[]; }) => {
+  const mergeScheduleResult = (data: { children: ParentScheduleChild[]; events: ParentScheduleEvent[]; staffTeamIds?: string[]; }) => {
     const mergedChildren = [...childrenRef.current];
     const childKeys = new Set(mergedChildren.map((child) => `${child.teamId}::${child.playerId}`));
     data.children.forEach((child) => {
@@ -266,7 +271,8 @@ export function Schedule({ auth }: { auth: AuthState }) {
       }
     });
     mergedEvents.sort((a, b) => a.date.getTime() - b.date.getTime());
-    applyScheduleResult({ children: mergedChildren, events: mergedEvents });
+    const mergedStaffTeamIds = Array.from(new Set([...staffTeamIdsRef.current, ...(data.staffTeamIds || [])]));
+    applyScheduleResult({ children: mergedChildren, events: mergedEvents, staffTeamIds: mergedStaffTeamIds });
   };
 
   const buildPastScheduleRangeByTeam = () => {
@@ -317,7 +323,8 @@ export function Schedule({ auth }: { auth: AuthState }) {
         });
         return {
           children: result.children,
-          events: result.events.filter((event) => !beforeKeys.has(event.eventKey))
+          events: result.events.filter((event) => !beforeKeys.has(event.eventKey)),
+          staffTeamIds: result.staffTeamIds
         };
       },
       {
@@ -328,7 +335,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
             setPastHistoryHasMore(false);
             return;
           }
-          mergeScheduleResult({ children: result.children, events: result.events });
+          mergeScheduleResult(result);
           setPastHistoryHasMore(true);
         }
       }
@@ -454,7 +461,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
           const mappedError = toAppServiceError(loadError, 'Unable to load schedule.');
           setScheduleLoadError(mappedError);
           if (!hasExistingSchedule) {
-            applyScheduleResult({ children: [], events: [] });
+            applyScheduleResult({ children: [], events: [], staffTeamIds: [] });
           }
           setLoadedScheduleUserId(auth.user?.uid || null);
           timer.end({
@@ -477,7 +484,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     setPastHistoryHasMore(false);
     if (!auth.user?.uid) {
       setLoadedScheduleUserId(null);
-      applyScheduleResult({ children: [], events: [] });
+      applyScheduleResult({ children: [], events: [], staffTeamIds: [] });
       return;
     }
     hasStartedInitialScheduleLoadRef.current = true;
@@ -618,8 +625,8 @@ export function Schedule({ auth }: { auth: AuthState }) {
     rideRequests: windowedListEntries.rideRequests
   }), [counts.packetsReady, counts.rsvpNeeded, windowedListEntries.nextEvent, windowedListEntries.openAssignments, windowedListEntries.rideRequests]);
   const manageableTeamOptions = useMemo(() => (
-    teamOptions.filter((team) => events.some((event) => event.teamId === team.teamId && event.isTeamStaff === true))
-  ), [events, teamOptions]);
+    getManageableScheduleTeamOptions(teamOptions, events, staffTeamIds)
+  ), [events, staffTeamIds, teamOptions]);
   const [selectedStaffManageTeamId, setSelectedStaffManageTeamId] = useState('');
   const hasManageableScheduleTeams = manageableTeamOptions.length > 0;
   const selectedCalendarTeam = useMemo(() => {

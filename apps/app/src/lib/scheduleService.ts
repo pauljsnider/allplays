@@ -193,6 +193,7 @@ type ParentScopeLink = ParentScheduleChild & {
 export type ParentScheduleLoadResult = {
   children: ParentScheduleChild[];
   events: ParentScheduleEvent[];
+  staffTeamIds?: string[];
   isPartial?: boolean;
 };
 
@@ -3696,7 +3697,8 @@ async function buildParentScheduleTeamChildren(user: AuthUser, profile: Record<s
     }
   });
 
-  return { children, byTeam, staffTeams };
+  const scheduleChildren = [...byTeam.values()].flat();
+  return { children: scheduleChildren, byTeam, staffTeams };
 }
 
 /**
@@ -3973,7 +3975,12 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
       eventRows: events.length,
       isPartial
     });
-    return { children, events, isPartial };
+    return {
+      children,
+      events,
+      staffTeamIds: staffTeams.map((team: any) => compactString(team?.id)).filter(Boolean),
+      isPartial
+    };
   } catch (error: any) {
     timer.end({ hydrateDetails, expandStaffPlayers, error: error?.message || 'Unable to load parent schedule.' });
     throw error;

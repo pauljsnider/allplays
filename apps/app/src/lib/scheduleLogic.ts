@@ -260,6 +260,18 @@ export type ParentScheduleTeamOption = {
   calendarUrls: string[];
 };
 
+export function getManageableScheduleTeamOptions(
+  teamOptions: ParentScheduleTeamOption[],
+  events: ParentScheduleEvent[],
+  staffTeamIds: string[] = []
+): ParentScheduleTeamOption[] {
+  const staffTeamIdSet = new Set(staffTeamIds.map((teamId) => String(teamId || '').trim()).filter(Boolean));
+  return teamOptions.filter((team) => (
+    staffTeamIdSet.has(team.teamId)
+    || events.some((event) => event.teamId === team.teamId && event.isTeamStaff === true)
+  ));
+}
+
 export type PracticePacketScheduleRow = {
   event: ParentScheduleEvent;
   completedChildIds: string[];

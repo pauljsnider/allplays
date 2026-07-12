@@ -1045,6 +1045,56 @@ describe('Schedule', () => {
     expect(screen.queryByRole('button', { name: 'New tournament block' })).toBeNull();
   });
 
+  it('shows staff tools for an empty staff team schedule and refreshes after creating the first game', async () => {
+    scheduleServiceMocks.loadParentSchedule
+      .mockResolvedValueOnce({
+        children: [
+          { playerId: 'staff-team-team-1', playerName: 'Team schedule', teamId: 'team-1', teamName: 'Bears', isLinkedParentChild: false }
+        ],
+        events: [],
+        staffTeamIds: ['team-1']
+      })
+      .mockResolvedValueOnce({
+        children: [
+          { playerId: 'staff-team-team-1', playerName: 'Team schedule', teamId: 'team-1', teamName: 'Bears', isLinkedParentChild: false }
+        ],
+        events: [
+          buildScheduleEvent(1, {
+            childId: 'staff-team-team-1',
+            childName: 'Team schedule',
+            isLinkedParentChild: false,
+            isTeamStaff: true,
+            opponent: 'Falcons'
+          })
+        ],
+        staffTeamIds: ['team-1']
+      });
+    scheduleServiceMocks.createScheduledGameForApp.mockResolvedValueOnce('game-1');
+
+    renderSchedule();
+
+    expect(await screen.findByText('No events in this filter')).toBeTruthy();
+    expect(screen.getByLabelText('Team filter').innerHTML).toContain('Bears');
+
+    fireEvent.click(await screen.findByRole('button', { name: /manage schedule/i }));
+
+    expect(await screen.findByRole('heading', { name: 'Add game for Bears' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Add practice for Bears' })).toBeTruthy();
+
+    fireEvent.change(screen.getAllByLabelText('Opponent')[0], { target: { value: 'Falcons' } });
+    fireEvent.change(screen.getAllByLabelText('Location')[0], { target: { value: 'Main Gym' } });
+    fireEvent.click(screen.getByRole('button', { name: /^create game$/i }));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.createScheduledGameForApp).toHaveBeenCalledWith('team-1', expect.objectContaining({
+        opponent: 'Falcons',
+        location: 'Main Gym'
+      }), auth.user);
+      expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
+    });
+    expect(await screen.findByText('Game created and schedule refreshed.')).toBeTruthy();
+  });
+
   it('opens the tournament shell from a staff action and cancels without creating data', async () => {
     scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(buildStaffScheduleResult());
 
@@ -1324,7 +1374,7 @@ describe('Schedule', () => {
       expect(scheduleServiceMocks.loadScheduleStatTrackerConfigsForApp).toHaveBeenCalledTimes(1);
       expect(scheduleServiceMocks.loadScheduleStatTrackerConfigsForApp).toHaveBeenCalledWith('team-1', auth.user);
     });
-    expect(screen.getByLabelText('Tracker config')).toBeDisabled();
+    expect((screen.getByLabelText('Tracker config') as HTMLSelectElement).disabled).toBe(true);
     expect(screen.getByRole('option', { name: 'Loading tracker configs' })).toBeTruthy();
 
     if (!resolveConfigLoad) {
@@ -1335,6 +1385,6 @@ describe('Schedule', () => {
     ]);
 
     expect((await screen.findAllByRole('option', { name: 'Basketball Standard' })).length).toBeGreaterThan(0);
-    expect(screen.getByLabelText('Tracker config')).not.toBeDisabled();
+    expect((screen.getByLabelText('Tracker config') as HTMLSelectElement).disabled).toBe(false);
   });
 });
