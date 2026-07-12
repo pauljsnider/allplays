@@ -419,7 +419,8 @@ describe('bulk AI roster update wiring', () => {
         expect(source).toContain('operations: Schema.array({');
         expect(source).toContain('action: Schema.string()');
         expect(source).toContain('playerId: Schema.string()');
-        expect(source).toContain('changes: Schema.object({');
+        expect(source).toContain('const changesSchema = buildBulkAiPlayerSchema(Schema, { requireName: false });');
+        expect(source).toContain('changes: changesSchema');
         expect(source).toContain('responseMimeType: "application/json"');
         expect(source).toContain('responseSchema: jsonSchema');
     });

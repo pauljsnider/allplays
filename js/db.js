@@ -2737,11 +2737,17 @@ async function mergePlayerPrivateProfileParents(teamId, players = []) {
             const privateProfile = await getPlayerPrivateProfile(teamId, player.id);
             const privateParents = Array.isArray(privateProfile?.parents) ? privateProfile.parents : [];
             if (privateParents.length === 0) return player;
-            return {
+            const privateRosterFields = privateProfile?.rosterFields && typeof privateProfile.rosterFields === 'object'
+                ? privateProfile.rosterFields
+                : null;
+            const mergedPlayer = {
                 ...player,
-                privateProfileRosterFields: privateProfile?.rosterFields && typeof privateProfile.rosterFields === 'object' ? privateProfile.rosterFields : {},
                 privateProfileParents: privateParents
             };
+            if (privateRosterFields && Object.keys(privateRosterFields).length > 0) {
+                mergedPlayer.privateProfileRosterFields = privateRosterFields;
+            }
+            return mergedPlayer;
         } catch (error) {
             if (error?.code === 'permission-denied') return player;
             throw error;
