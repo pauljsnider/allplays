@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -328,8 +328,8 @@ describe('PlayerDetail athlete profile season selection', () => {
     });
   });
 
-  it('does not preserve an athlete profile when navigating to another player', async () => {
-    const nextProfileDeferred = createDeferred<any>();
+  it('ignores a player refresh that completes after navigating to another player', async () => {
+    const staleRefreshDeferred = createDeferred<any>();
     const currentAthleteProfile = {
       ...buildDetailData().athleteProfile,
       profile: {
@@ -357,6 +357,7 @@ describe('PlayerDetail athlete profile season selection', () => {
 
     playerServiceMocks.loadParentPlayerDetail
       .mockResolvedValueOnce(buildDetailData({ athleteProfile: currentAthleteProfile }))
+      .mockImplementationOnce(() => staleRefreshDeferred.promise)
       .mockResolvedValueOnce(buildDetailData({
         child: {
           teamId: 'team-next',
@@ -375,8 +376,6 @@ describe('PlayerDetail athlete profile season selection', () => {
         team: { id: 'team-next', name: 'Next Team' },
         athleteProfile: nextAthleteProfileShell
       }));
-    playerServiceMocks.loadParentPlayerAthleteProfile.mockImplementationOnce(() => nextProfileDeferred.promise);
-
     renderPlayerDetailWithRouteSwitcher();
 
     await screen.findByText('Sam Player');
@@ -384,14 +383,18 @@ describe('PlayerDetail athlete profile season selection', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Athlete Profile' }));
     expect(await screen.findByDisplayValue('Current athlete headline')).toBeTruthy();
 
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh player' }));
     fireEvent.click(screen.getByRole('button', { name: 'Next player route' }));
 
     await screen.findByText('Jordan Player');
-    await waitFor(() => {
-      expect(playerServiceMocks.loadParentPlayerAthleteProfile).toHaveBeenCalledWith(auth.user, 'team-next', 'player-next');
+    await act(async () => {
+      staleRefreshDeferred.resolve(buildDetailData({ athleteProfile: currentAthleteProfile }));
+      await staleRefreshDeferred.promise;
     });
+
+    expect(screen.getByText('Jordan Player')).toBeTruthy();
     expect(screen.queryByDisplayValue('Current athlete headline')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Save Athlete Profile' })).toBeNull();
+    expect(playerServiceMocks.loadParentPlayerDetail).toHaveBeenLastCalledWith(auth.user, 'team-next', 'player-next');
   });
 
   it('does not auto-retry failed video clip loads until the user retries', async () => {
