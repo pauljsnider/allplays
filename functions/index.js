@@ -2139,7 +2139,7 @@ exports.cleanupFailedInviteSignup = functions.https.onCall(async (data, context)
 exports.cleanupInviteSignupOnAuthDelete = functions.auth.user().onDelete(async (user) => {
   const userId = String(user?.uid || '').trim();
   if (!userId) return null;
-  await cleanupFailedInviteSignupForUser(userId);
+  await cleanupFailedInviteSignupForUser(userId, { authUserRecord: user });
   return null;
 });
 
@@ -2266,6 +2266,18 @@ function isRecentFailedSignupInviteRedemption(codeData = {}, userId, nowMillis =
     nowMillis - usedAtMillis <= FAILED_INVITE_SIGNUP_CLEANUP_WINDOW_MS;
 }
 
+function isRecentFailedSignupAuthDate(value, nowMillis = Date.now()) {
+  const millis = Date.parse(String(value || ''));
+  return Number.isFinite(millis) &&
+    nowMillis - millis >= 0 &&
+    nowMillis - millis <= FAILED_INVITE_SIGNUP_CLEANUP_WINDOW_MS;
+}
+
+function isRecentFailedSignupAuthUserRecord(userRecord, nowMillis = Date.now()) {
+  return isRecentFailedSignupAuthDate(userRecord?.metadata?.creationTime, nowMillis) ||
+    isRecentFailedSignupAuthDate(userRecord?.metadata?.createdAt, nowMillis);
+}
+
 function filterInviteCleanupParentLinks(parentOf, cleanupPlayerKeys) {
   return (Array.isArray(parentOf) ? parentOf : []).filter((link) => {
     const key = link?.teamId && link?.playerId ? `${link.teamId}::${link.playerId}` : '';
@@ -2303,6 +2315,23 @@ async function cleanupFailedInviteSignupForUser(userId, options = {}) {
     : firestore.collection('accessCodes').where('usedBy', '==', normalizedUserId);
   const initialCodeSnap = await codeQuery.limit(10).get();
   if (initialCodeSnap.empty) {
+    return { recovered: false, inviteCount: 0, userDeleted: false };
+  }
+
+  const cleanupRequestedAtMs = Date.now();
+  let authUserRecentlyCreated = isRecentFailedSignupAuthUserRecord(options.authUserRecord, cleanupRequestedAtMs);
+  if (!authUserRecentlyCreated && !options.authUserRecord) {
+    try {
+      const authUserRecord = await admin.auth().getUser(normalizedUserId);
+      authUserRecentlyCreated = isRecentFailedSignupAuthUserRecord(authUserRecord, cleanupRequestedAtMs);
+    } catch (error) {
+      functions.logger.warn('Unable to verify recent auth user for failed invite cleanup.', {
+        userId: normalizedUserId,
+        error
+      });
+    }
+  }
+  if (!authUserRecentlyCreated) {
     return { recovered: false, inviteCount: 0, userDeleted: false };
   }
 

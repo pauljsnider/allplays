@@ -27,8 +27,8 @@ afterEach(() => {
 });
 
 describe('pages bundle staging', () => {
-    it('does not track dependency install directories in the repository', () => {
-        const trackedDependencyDirs = execFileSync('git', [
+    it('does not track generated dependency directories', () => {
+        const trackedFiles = execFileSync('git', [
             'ls-files',
             '--',
             'node_modules',
@@ -38,7 +38,7 @@ describe('pages bundle staging', () => {
             encoding: 'utf8'
         }).trim();
 
-        expect(trackedDependencyDirs).toBe('');
+        expect(trackedFiles).toBe('');
     });
 
     it('stages the legacy root and React app without publishing source or config files', () => {

@@ -81,11 +81,17 @@ describe('access code atomic redemption guard', () => {
         const callableSource = source.slice(callableIndex, callableIndex + 900);
         expect(callableSource).toContain('context.auth?.uid');
         expect(callableSource).toContain('cleanupFailedInviteSignupForUser(userId, { code })');
+        expect(callableSource).toContain('cleanupFailedInviteSignupForUser(userId, { authUserRecord: user })');
 
         const helperIndex = source.indexOf('async function cleanupFailedInviteSignupForUser');
         expect(helperIndex).toBeGreaterThanOrEqual(0);
-        const helperSource = source.slice(helperIndex, helperIndex + 5200);
+        const nextHelperIndex = source.indexOf('\nfunction hashAccountMergePreviewToken', helperIndex);
+        expect(nextHelperIndex).toBeGreaterThan(helperIndex);
+        const helperSource = source.slice(helperIndex, nextHelperIndex);
         expect(helperSource).toContain("firestore.collection('accessCodes').where('usedBy', '==', normalizedUserId)");
+        expect(helperSource).toContain('admin.auth().getUser(normalizedUserId)');
+        expect(helperSource).toContain('isRecentFailedSignupAuthUserRecord');
+        expect(helperSource).toContain('if (!authUserRecentlyCreated)');
         expect(helperSource).toContain('isRecentFailedSignupInviteRedemption(data, normalizedUserId, nowMillis)');
         expect(helperSource).toContain('used: false');
         expect(helperSource).toContain('usedBy: null');
@@ -102,7 +108,9 @@ describe('access code atomic redemption guard', () => {
 
         const helperIndex = source.indexOf('async function cleanupFailedInviteSignupForUser');
         expect(helperIndex).toBeGreaterThanOrEqual(0);
-        const helperSource = source.slice(helperIndex, helperIndex + 6200);
+        const nextHelperIndex = source.indexOf('\nfunction hashAccountMergePreviewToken', helperIndex);
+        expect(nextHelperIndex).toBeGreaterThan(helperIndex);
+        const helperSource = source.slice(helperIndex, nextHelperIndex);
 
         const deleteBranchIndex = helperSource.indexOf('if (userDeleted) {');
         const keepBranchIndex = helperSource.indexOf('} else if (userSnap.exists) {');
