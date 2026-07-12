@@ -7803,7 +7803,8 @@ exports._internal = {
   runWithConcurrencyLimit,
   syncNotificationRecipientForTeamUser,
   syncNotificationRecipientsForUserChange,
-  syncNotificationRecipientsForTeamChange
+  syncNotificationRecipientsForTeamChange,
+  isAllowedPublicRsvpOrigin
 };
 
 exports.sweepStaleNotificationDeviceTokens = functions.pubsub
@@ -10546,6 +10547,18 @@ exports.notifyPracticePacketCompleted = functions.firestore
 const PUBLIC_RSVP_TOKEN_TTL_DAYS = 14;
 const PUBLIC_RSVP_EMAIL_BATCH_WRITE_LIMIT = 500;
 const PUBLIC_RSVP_RESPONSES = new Set(['going', 'maybe', 'not_going']);
+const PUBLIC_RSVP_ALLOWED_ORIGINS = new Set([
+  'https://allplays.ai',
+  'https://www.allplays.ai',
+  'https://game-flow-c6311.web.app',
+  'https://game-flow-c6311.firebaseapp.com',
+  'http://localhost:8000',
+  'http://127.0.0.1:8000',
+  'http://localhost:8004',
+  'http://127.0.0.1:8004'
+]);
+const PUBLIC_RSVP_LOCAL_DEV_ORIGIN_PATTERN = /^http:\/\/(?:localhost|127\.0\.0\.1):\d+$/;
+const PUBLIC_RSVP_PREVIEW_ORIGIN_PATTERN = /^https:\/\/game-flow-c6311--[a-z0-9-]+\.web\.app$/;
 
 exports.notifyPracticePacketAssigned = functions.firestore
   .document('teams/{teamId}/practiceSessions/{sessionId}')
@@ -10556,19 +10569,17 @@ exports.notifyPracticePacketAssigned = functions.firestore
     return null;
   });
 
+function isAllowedPublicRsvpOrigin(origin) {
+  const normalizedOrigin = String(origin || '').trim();
+  if (!normalizedOrigin) return false;
+  return PUBLIC_RSVP_ALLOWED_ORIGINS.has(normalizedOrigin)
+    || PUBLIC_RSVP_LOCAL_DEV_ORIGIN_PATTERN.test(normalizedOrigin)
+    || PUBLIC_RSVP_PREVIEW_ORIGIN_PATTERN.test(normalizedOrigin);
+}
+
 function writePublicRsvpCors(req, res) {
-  const allowedOrigins = new Set([
-    'https://allplays.ai',
-    'https://www.allplays.ai',
-    'https://game-flow-c6311.web.app',
-    'https://game-flow-c6311.firebaseapp.com',
-    'http://localhost:8000',
-    'http://127.0.0.1:8000',
-    'http://localhost:8004',
-    'http://127.0.0.1:8004'
-  ]);
   const origin = req.headers.origin;
-  if (allowedOrigins.has(origin)) {
+  if (isAllowedPublicRsvpOrigin(origin)) {
     res.set('Access-Control-Allow-Origin', origin);
     res.set('Vary', 'Origin');
   }
