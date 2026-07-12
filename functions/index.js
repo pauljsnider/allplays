@@ -189,6 +189,8 @@ const firestore = admin.firestore();
 const INVITE_EMAIL_TYPES = new Set(['parent_invite', 'household_invite', 'coparent_invite']);
 const EMAIL_LINK_INVITE_TYPES = new Set(['parent_invite', 'household_invite', 'coparent_invite', 'admin_invite']);
 const AUTH_EMAIL_COOLDOWN_MS = 60 * 1000;
+const FAILED_INVITE_SIGNUP_CLEANUP_WINDOW_MS = 30 * 60 * 1000;
+const FAILED_INVITE_SIGNUP_CLEANUP_TYPES = new Set(['parent_invite', 'household_invite', 'coparent_invite']);
 const TEAM_MEDIA_NOTIFICATION_BATCH_WINDOW_MS = 60 * 60 * 1000;
 const TEAM_MEDIA_NOTIFICATION_DISPATCH_LIMIT = 50;
 const FIRESTORE_BATCH_SAFE_WRITE_LIMIT = 450;
@@ -2120,6 +2122,27 @@ exports.queueParentInviteEmail = functions.firestore
     return null;
   });
 
+exports.cleanupFailedInviteSignup = functions.https.onCall(async (data, context) => {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in before cleaning up a failed invite signup.');
+  }
+
+  const userId = normalizeFirestoreId(data?.userId || context.auth.uid, 'userId');
+  if (userId !== context.auth.uid) {
+    throw new functions.https.HttpsError('permission-denied', 'You can only clean up your own failed signup.');
+  }
+
+  const code = String(data?.code || '').trim().toUpperCase();
+  return cleanupFailedInviteSignupForUser(userId, { code });
+});
+
+exports.cleanupInviteSignupOnAuthDelete = functions.auth.user().onDelete(async (user) => {
+  const userId = String(user?.uid || '').trim();
+  if (!userId) return null;
+  await cleanupFailedInviteSignupForUser(userId);
+  return null;
+});
+
 function validateAutoAcceptParentInviteCode(data = {}) {
   if (!data || data.type !== 'parent_invite') {
     throw new functions.https.HttpsError('failed-precondition', 'Not a parent invite code.');
@@ -2210,6 +2233,181 @@ function doesHouseholdInviteFamilyMembershipMatch(codeData = {}, membershipData 
     && normalizeParentInviteEmail(membershipData?.email) === normalizeParentInviteEmail(codeData?.email)
     && String(membershipData?.teamId || '').trim() === String(codeData?.teamId || '').trim()
     && String(membershipData?.playerId || '').trim() === String(codeData?.playerId || '').trim();
+}
+
+function firestoreTimestampToMillis(value) {
+  if (!value) return null;
+  if (typeof value.toMillis === 'function') return value.toMillis();
+  if (typeof value.toDate === 'function') {
+    const date = value.toDate();
+    return date instanceof Date ? date.getTime() : null;
+  }
+  if (typeof value.seconds === 'number') return value.seconds * 1000;
+  if (value instanceof Date) return value.getTime();
+  const millis = Number(value);
+  return Number.isFinite(millis) ? millis : null;
+}
+
+function getInviteCleanupPlayerKey(codeData = {}) {
+  const teamId = String(codeData.teamId || '').trim();
+  const playerId = String(codeData.playerId || '').trim();
+  return teamId && playerId ? `${teamId}::${playerId}` : '';
+}
+
+function isRecentFailedSignupInviteRedemption(codeData = {}, userId, nowMillis = Date.now()) {
+  const type = String(codeData.type || '').trim();
+  if (!FAILED_INVITE_SIGNUP_CLEANUP_TYPES.has(type)) return false;
+  if (codeData.used !== true || String(codeData.usedBy || '').trim() !== userId) return false;
+  if (codeData.revoked === true || codeData.autoAccepted === true) return false;
+  if (!getInviteCleanupPlayerKey(codeData)) return false;
+  const usedAtMillis = firestoreTimestampToMillis(codeData.usedAt);
+  return Number.isFinite(usedAtMillis) &&
+    nowMillis - usedAtMillis >= 0 &&
+    nowMillis - usedAtMillis <= FAILED_INVITE_SIGNUP_CLEANUP_WINDOW_MS;
+}
+
+function filterInviteCleanupParentLinks(parentOf, cleanupPlayerKeys) {
+  return (Array.isArray(parentOf) ? parentOf : []).filter((link) => {
+    const key = link?.teamId && link?.playerId ? `${link.teamId}::${link.playerId}` : '';
+    return !cleanupPlayerKeys.has(key);
+  });
+}
+
+function shouldDeleteFailedSignupUserProfile(userData = {}, cleanupPlayerKeys, cleanupTeamIds) {
+  const roles = Array.isArray(userData.roles) ? userData.roles.map((role) => String(role || '').trim()).filter(Boolean) : [];
+  if (roles.some((role) => role !== 'parent')) return false;
+  if (Array.isArray(userData.coachOf) && userData.coachOf.length > 0) return false;
+  if (userData.isAdmin === true || userData.isPlatformAdmin === true || userData.platformAdmin === true) return false;
+
+  const parentOf = Array.isArray(userData.parentOf) ? userData.parentOf : [];
+  const parentPlayerKeys = Array.isArray(userData.parentPlayerKeys) ? userData.parentPlayerKeys : [];
+  const parentTeamIds = Array.isArray(userData.parentTeamIds) ? userData.parentTeamIds : [];
+  const parentOfOnlyCleanupLinks = parentOf.every((link) => {
+    const key = link?.teamId && link?.playerId ? `${link.teamId}::${link.playerId}` : '';
+    return key && cleanupPlayerKeys.has(key);
+  });
+  const parentPlayerKeysOnlyCleanupLinks = parentPlayerKeys.every((key) => cleanupPlayerKeys.has(String(key || '').trim()));
+  const parentTeamIdsOnlyCleanupLinks = parentTeamIds.every((teamId) => cleanupTeamIds.has(String(teamId || '').trim()));
+  return parentOfOnlyCleanupLinks && parentPlayerKeysOnlyCleanupLinks && parentTeamIdsOnlyCleanupLinks;
+}
+
+async function cleanupFailedInviteSignupForUser(userId, options = {}) {
+  const normalizedUserId = String(userId || '').trim();
+  if (!normalizedUserId) {
+    throw new functions.https.HttpsError('invalid-argument', 'A user id is required for invite signup cleanup.');
+  }
+
+  const normalizedCode = String(options.code || '').trim().toUpperCase();
+  const codeQuery = normalizedCode
+    ? firestore.collection('accessCodes').where('code', '==', normalizedCode)
+    : firestore.collection('accessCodes').where('usedBy', '==', normalizedUserId);
+  const initialCodeSnap = await codeQuery.limit(10).get();
+  if (initialCodeSnap.empty) {
+    return { recovered: false, inviteCount: 0, userDeleted: false };
+  }
+
+  let result = { recovered: false, inviteCount: 0, userDeleted: false };
+  await firestore.runTransaction(async (transaction) => {
+    const nowMillis = Date.now();
+    const now = admin.firestore.Timestamp.fromMillis(nowMillis);
+    const codeSnaps = await Promise.all(initialCodeSnap.docs.map((codeDoc) => transaction.get(codeDoc.ref)));
+    const eligibleCodes = codeSnaps
+      .filter((codeSnap) => codeSnap.exists)
+      .map((codeSnap) => ({ snap: codeSnap, data: codeSnap.data() || {} }))
+      .filter(({ data }) => isRecentFailedSignupInviteRedemption(data, normalizedUserId, nowMillis));
+
+    if (!eligibleCodes.length) {
+      result = { recovered: false, inviteCount: 0, userDeleted: false };
+      return;
+    }
+
+    const userRef = firestore.doc(`users/${normalizedUserId}`);
+    const publicProfileRef = firestore.doc(`publicUserProfiles/${normalizedUserId}`);
+    const cleanupPlayerKeys = new Set(eligibleCodes.map(({ data }) => getInviteCleanupPlayerKey(data)).filter(Boolean));
+    const cleanupTeamIds = new Set(eligibleCodes.map(({ data }) => String(data.teamId || '').trim()).filter(Boolean));
+    const privateProfileRefs = [...cleanupPlayerKeys].map((playerKey) => {
+      const [teamId, playerId] = playerKey.split('::');
+      return firestore.doc(`teams/${teamId}/players/${playerId}/private/profile`);
+    });
+    const membershipRefs = eligibleCodes
+      .map(({ data }) => {
+        const organizerUserId = String(data.organizerUserId || '').trim();
+        const familyMembershipId = String(data.familyMembershipId || '').trim();
+        return organizerUserId && familyMembershipId
+          ? firestore.doc(`users/${organizerUserId}/familyMemberships/${familyMembershipId}`)
+          : null;
+      })
+      .filter(Boolean);
+
+    const [userSnap, ...relatedSnaps] = await Promise.all([
+      transaction.get(userRef),
+      ...privateProfileRefs.map((ref) => transaction.get(ref)),
+      ...membershipRefs.map((ref) => transaction.get(ref))
+    ]);
+    const privateProfileSnaps = relatedSnaps.slice(0, privateProfileRefs.length);
+    const membershipSnaps = relatedSnaps.slice(privateProfileRefs.length);
+    const userData = userSnap.exists ? userSnap.data() || {} : {};
+    const remainingParentOf = filterInviteCleanupParentLinks(userData.parentOf, cleanupPlayerKeys);
+    const remainingParentPlayerKeys = uniqueNonEmptyStrings(remainingParentOf.map((link) => (
+      link?.teamId && link?.playerId ? `${link.teamId}::${link.playerId}` : ''
+    )));
+    const remainingParentTeamIds = uniqueNonEmptyStrings(remainingParentOf.map((link) => link?.teamId));
+    const userDeleted = userSnap.exists && shouldDeleteFailedSignupUserProfile(userData, cleanupPlayerKeys, cleanupTeamIds);
+
+    eligibleCodes.forEach(({ snap }) => {
+      transaction.update(snap.ref, {
+        used: false,
+        usedBy: null,
+        usedAt: null,
+        status: admin.firestore.FieldValue.delete(),
+        failedSignupRecoveredAt: now,
+        failedSignupRecoveredBy: normalizedUserId
+      });
+    });
+
+    privateProfileSnaps.forEach((privateProfileSnap) => {
+      if (!privateProfileSnap.exists) return;
+      const privateProfile = privateProfileSnap.data() || {};
+      const parents = Array.isArray(privateProfile.parents) ? privateProfile.parents : [];
+      const filteredParents = parents.filter((parent) => String(parent?.userId || '').trim() !== normalizedUserId);
+      transaction.set(privateProfileSnap.ref, {
+        parents: filteredParents,
+        updatedAt: now
+      }, { merge: true });
+    });
+
+    membershipSnaps.forEach((membershipSnap) => {
+      if (!membershipSnap.exists) return;
+      const membership = membershipSnap.data() || {};
+      if (String(membership.userId || '').trim() !== normalizedUserId) return;
+      transaction.set(membershipSnap.ref, {
+        status: 'pending',
+        userId: admin.firestore.FieldValue.delete(),
+        acceptedAt: admin.firestore.FieldValue.delete(),
+        updatedAt: now
+      }, { merge: true });
+    });
+
+    transaction.delete(publicProfileRef);
+    if (userDeleted) {
+      transaction.delete(userRef);
+    } else if (userSnap.exists) {
+      const remainingRoles = Array.isArray(userData.roles)
+        ? userData.roles.filter((role) => role !== 'parent' || remainingParentOf.length > 0)
+        : [];
+      transaction.set(userRef, {
+        parentOf: remainingParentOf,
+        parentTeamIds: remainingParentTeamIds,
+        parentPlayerKeys: remainingParentPlayerKeys,
+        roles: remainingRoles,
+        updatedAt: now
+      }, { merge: true });
+    }
+
+    result = { recovered: true, inviteCount: eligibleCodes.length, userDeleted };
+  });
+
+  return result;
 }
 
 function hashAccountMergePreviewToken(token) {

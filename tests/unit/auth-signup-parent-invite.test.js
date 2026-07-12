@@ -26,6 +26,7 @@ const dbMocks = vi.hoisted(() => ({
     redeemParentInvite: vi.fn(),
     redeemHouseholdInvite: vi.fn(),
     redeemCoParentInvite: vi.fn(),
+    rollbackParentInviteRedemption: vi.fn(),
     getTeam: vi.fn(),
     addTeamAdminEmail: vi.fn(),
     getUserProfile: vi.fn(),
@@ -125,6 +126,7 @@ describe('auth signup parent invite failure handling', () => {
         expect(signupSection).toBeTruthy();
         expect(signupSection).toContain('return executeEmailPasswordSignup');
         expect(signupSection).toContain('redeemParentInvite');
+        expect(signupSection).toContain('rollbackParentInviteRedemption');
         expect(signupSection).toContain('updateUserProfile');
         expect(signupSection).toContain('markAccessCodeAsUsed');
         expect(signupSection).toContain('sendVerificationEmail: queueCurrentUserVerificationEmail');

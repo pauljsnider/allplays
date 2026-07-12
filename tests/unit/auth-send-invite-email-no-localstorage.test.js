@@ -24,6 +24,7 @@ vi.mock('../../js/db.js?v=92', () => ({
     redeemParentInvite: vi.fn(),
     redeemHouseholdInvite: vi.fn(),
     redeemCoParentInvite: vi.fn(),
+    rollbackParentInviteRedemption: vi.fn(),
     getTeam: vi.fn(),
     addTeamAdminEmail: vi.fn(),
     getUserProfile: vi.fn(),

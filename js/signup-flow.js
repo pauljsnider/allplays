@@ -14,6 +14,7 @@ export async function executeEmailPasswordSignup({
         redeemCoParentInvite,
         updateUserProfile,
         markAccessCodeAsUsed,
+        rollbackParentInviteRedemption,
         getTeam,
         getUserProfile,
         sendVerificationEmail,
@@ -24,7 +25,16 @@ export async function executeEmailPasswordSignup({
         throw new Error('Activation code is required');
     }
 
-    async function cleanupFailedParentInviteSignup(createdUser) {
+    async function cleanupFailedParentInviteSignup(createdUser, options = {}) {
+        const rollbackCode = String(options.inviteCode || '').trim().toUpperCase();
+        if (createdUser?.uid && rollbackCode && typeof rollbackParentInviteRedemption === 'function') {
+            try {
+                await rollbackParentInviteRedemption(createdUser.uid, rollbackCode);
+            } catch (rollbackError) {
+                console.error('Error rolling back failed signup invite redemption:', rollbackError);
+            }
+        }
+
         if (createdUser && typeof createdUser.delete === 'function') {
             try {
                 await createdUser.delete();
@@ -88,7 +98,7 @@ export async function executeEmailPasswordSignup({
             await redeemParentInvite(userId, activationCode, email);
         } catch (e) {
             console.error('Error linking parent:', e);
-            await cleanupFailedParentInviteSignup(userCredential?.user);
+            await cleanupFailedParentInviteSignup(userCredential?.user, { inviteCode: validation.data?.code || activationCode });
             throw e;
         }
 
@@ -118,7 +128,7 @@ export async function executeEmailPasswordSignup({
             await writeSignupProfile({ email });
         } catch (e) {
             console.error('Error redeeming household invite:', e);
-            await cleanupFailedParentInviteSignup(userCredential?.user);
+            await cleanupFailedParentInviteSignup(userCredential?.user, { inviteCode: validation.data?.code || activationCode });
             throw e;
         }
     } else if (validation.type === 'coparent_invite') {
@@ -130,7 +140,7 @@ export async function executeEmailPasswordSignup({
             await writeSignupProfile({ email });
         } catch (e) {
             console.error('Error redeeming co-parent invite:', e);
-            await cleanupFailedParentInviteSignup(userCredential?.user);
+            await cleanupFailedParentInviteSignup(userCredential?.user, { inviteCode: validation.data?.code || activationCode });
             throw e;
         }
     } else {

@@ -36,6 +36,21 @@ describe('access code atomic redemption guard', () => {
         expect(afterFunction).not.toContain('parentPlayerKeys: arrayUnion');
     });
 
+    it('routes failed signup invite recovery through a callable instead of browser rollback writes', () => {
+        const dbSourcePath = resolve(process.cwd(), 'js/db.js');
+        const source = readFileSync(dbSourcePath, 'utf8');
+
+        const fnAnchor = 'export async function rollbackParentInviteRedemption';
+        const fnIndex = source.indexOf(fnAnchor);
+        expect(fnIndex).toBeGreaterThanOrEqual(0);
+
+        const afterFunction = source.slice(fnIndex, fnIndex + 900);
+        expect(afterFunction).toContain("httpsCallable(functions, 'cleanupFailedInviteSignup')");
+        expect(afterFunction).not.toContain('collection(db, "accessCodes")');
+        expect(afterFunction).not.toContain('updateDoc(codeDoc.ref');
+        expect(afterFunction).not.toContain('syncPublicUserProfile(userId)');
+    });
+
     it('claims parent invite codes and membership grants atomically in the privileged callable', () => {
         const functionsSourcePath = resolve(process.cwd(), 'functions/index.js');
         const source = readFileSync(functionsSourcePath, 'utf8');
@@ -55,5 +70,30 @@ describe('access code atomic redemption guard', () => {
         expect(afterFunction).toContain('parentPlayerKeys: nextUserData.parentPlayerKeys');
         expect(afterFunction).toContain('admin.firestore.FieldValue.arrayUnion');
         expect(afterFunction).toContain("status: 'accepted'");
+    });
+
+    it('recovers recent failed invite signups through a privileged callable and auth-delete trigger', () => {
+        const functionsSourcePath = resolve(process.cwd(), 'functions/index.js');
+        const source = readFileSync(functionsSourcePath, 'utf8');
+
+        const callableIndex = source.indexOf('exports.cleanupFailedInviteSignup');
+        expect(callableIndex).toBeGreaterThanOrEqual(0);
+        const callableSource = source.slice(callableIndex, callableIndex + 900);
+        expect(callableSource).toContain('context.auth?.uid');
+        expect(callableSource).toContain('cleanupFailedInviteSignupForUser(userId, { code })');
+
+        const helperIndex = source.indexOf('async function cleanupFailedInviteSignupForUser');
+        expect(helperIndex).toBeGreaterThanOrEqual(0);
+        const helperSource = source.slice(helperIndex, helperIndex + 5200);
+        expect(helperSource).toContain("firestore.collection('accessCodes').where('usedBy', '==', normalizedUserId)");
+        expect(helperSource).toContain('isRecentFailedSignupInviteRedemption(data, normalizedUserId, nowMillis)');
+        expect(helperSource).toContain('used: false');
+        expect(helperSource).toContain('usedBy: null');
+        expect(helperSource).toContain('usedAt: null');
+        expect(helperSource).toContain('transaction.delete(publicProfileRef)');
+        expect(helperSource).toContain('transaction.delete(userRef)');
+        expect(helperSource).toContain("parents.filter((parent) => String(parent?.userId || '').trim() !== normalizedUserId)");
+
+        expect(source).toContain('exports.cleanupInviteSignupOnAuthDelete = functions.auth.user().onDelete');
     });
 });

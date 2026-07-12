@@ -19,6 +19,7 @@ export type LegacyAuthDbModule = {
   redeemParentInvite: (userId: string, code: string, email?: string | null) => Promise<unknown>;
   redeemHouseholdInvite: (...args: any[]) => Promise<unknown>;
   redeemCoParentInvite: (...args: any[]) => Promise<unknown>;
+  rollbackParentInviteRedemption: (userId: string, code: string) => Promise<unknown>;
   redeemAdminInviteAtomically: (...args: any[]) => Promise<unknown>;
   markAccessCodeAsUsed: (codeId: string, userId: string) => Promise<unknown>;
   updateUserProfile: (userId: string, profile: Record<string, unknown>) => Promise<unknown>;

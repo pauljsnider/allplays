@@ -21,6 +21,7 @@ const legacyAuthMocks = vi.hoisted(() => ({
   redeemHouseholdInvite: vi.fn(),
   redeemCoParentInvite: vi.fn(),
   markAccessCodeAsUsed: vi.fn(),
+  rollbackParentInviteRedemption: vi.fn(),
   getTeam: vi.fn()
 }));
 
@@ -279,6 +280,8 @@ describe('signInWithGoogleAccount invite redemption', () => {
     legacyAuthMocks.validateAccessCode.mockReset();
     legacyAuthMocks.redeemHouseholdInvite.mockReset();
     legacyAuthMocks.redeemCoParentInvite.mockReset();
+    legacyAuthMocks.rollbackParentInviteRedemption.mockReset();
+    legacyAuthMocks.rollbackParentInviteRedemption.mockResolvedValue(undefined);
     legacyAuthMocks.markAccessCodeAsUsed.mockReset();
     legacyAuthMocks.updateUserProfile.mockReset();
     legacyAuthMocks.updateUserProfile.mockResolvedValue(undefined);
@@ -367,6 +370,37 @@ describe('signInWithGoogleAccount invite redemption', () => {
 
     expect(legacyAuthMocks.redeemCoParentInvite).toHaveBeenCalledWith('google-user', 'COPO1234', 'coparent@example.com');
     expect(legacyAuthMocks.markAccessCodeAsUsed).not.toHaveBeenCalled();
+  });
+
+  it('releases a consumed parent invite before deleting a failed new Google signup', async () => {
+    const deleteUser = vi.fn().mockResolvedValue(undefined);
+    signInWithPopupMock.mockResolvedValue({
+      user: {
+        uid: 'google-user',
+        email: 'parent@example.com',
+        displayName: 'Google User',
+        photoURL: 'https://example.com/photo.png',
+        metadata: {
+          creationTime: '2026-03-01T11:00:00.000Z',
+          lastSignInTime: '2026-03-01T11:00:00.000Z'
+        },
+        delete: deleteUser
+      }
+    } as any);
+    legacyAuthMocks.validateAccessCode.mockResolvedValue({
+      valid: true,
+      type: 'parent_invite',
+      codeId: 'parent-code-id',
+      data: { code: 'PARENT12' }
+    });
+    legacyAuthMocks.redeemParentInvite.mockResolvedValue({ success: true });
+    legacyAuthMocks.updateUserProfile.mockRejectedValue(new Error('profile write failed'));
+
+    await expect(signInWithGoogleAccount('parent12')).rejects.toThrow('profile write failed');
+
+    expect(legacyAuthMocks.rollbackParentInviteRedemption).toHaveBeenCalledWith('google-user', 'PARENT12');
+    expect(deleteUser).toHaveBeenCalledTimes(1);
+    expect(legacyAuthMocks.rollbackParentInviteRedemption.mock.invocationCallOrder[0]).toBeLessThan(deleteUser.mock.invocationCallOrder[0]);
   });
 });
 

@@ -10,6 +10,7 @@ const redeemHouseholdInviteMock = vi.fn();
 const redeemCoParentInviteMock = vi.fn();
 const updateUserProfileMock = vi.fn();
 const markAccessCodeAsUsedMock = vi.fn();
+const rollbackParentInviteRedemptionMock = vi.fn();
 
 vi.mock('../../js/firebase.js?v=20', () => ({
     auth: { currentUser: null },
@@ -36,6 +37,7 @@ vi.mock('../../js/db.js?v=92', () => ({
     redeemParentInvite: redeemParentInviteMock,
     redeemHouseholdInvite: redeemHouseholdInviteMock,
     redeemCoParentInvite: redeemCoParentInviteMock,
+    rollbackParentInviteRedemption: rollbackParentInviteRedemptionMock,
     getUserProfile: vi.fn(),
     getUserTeams: vi.fn(),
     getUserByEmail: vi.fn(),
@@ -176,7 +178,9 @@ describe('loginWithGoogle parent invite failure cleanup', () => {
         expect(redeemParentInviteMock).toHaveBeenCalledWith('user-123', 'PARENTCODE', 'parent@example.com');
         expect(updateUserProfileMock).not.toHaveBeenCalled();
         expect(markAccessCodeAsUsedMock).not.toHaveBeenCalled();
+        expect(rollbackParentInviteRedemptionMock).toHaveBeenCalledWith('user-123', 'PARENTCODE');
         expect(deleteMock).toHaveBeenCalledTimes(1);
+        expect(rollbackParentInviteRedemptionMock.mock.invocationCallOrder[0]).toBeLessThan(deleteMock.mock.invocationCallOrder[0]);
         expect(signOutMock).toHaveBeenCalledTimes(1);
         expect(sessionStorageMock.removeItem).toHaveBeenCalledWith('pendingActivationCode');
     });
@@ -212,6 +216,7 @@ describe('loginWithGoogle parent invite failure cleanup', () => {
 
         await expect(loginWithGoogle('PARENTCODE')).rejects.toThrow('parent invite link failed');
 
+        expect(rollbackParentInviteRedemptionMock).toHaveBeenCalledWith('user-123', 'PARENTCODE');
         expect(deleteMock).toHaveBeenCalledTimes(1);
         expect(signOutMock).toHaveBeenCalledTimes(1);
         expect(sessionStorageMock.removeItem).toHaveBeenCalledWith('pendingActivationCode');
