@@ -402,14 +402,20 @@ describe('buildTeamDetailModel registration provider details', () => {
       team: {
         id: 'team-1',
         name: 'Bears',
-        sport: 'Basketball'
+        sport: 'Basketball',
+        registrationSource: {
+          providerName: 'Sports Connect',
+          teamId: 'team-1'
+        }
       },
       players: [],
       configs: [],
       games: []
     });
 
-    expect(built.team.registrationProvider).toEqual([]);
+    expect(built.team.registrationProvider).toEqual([
+      { label: 'Provider', value: 'Sports Connect' }
+    ]);
   });
 
   it('returns provider registration details with human labels and friendly sync state', () => {
@@ -423,7 +429,7 @@ describe('buildTeamDetailModel registration provider details', () => {
         registrationSource: {
           providerName: 'LeagueApps',
           externalTeamId: 'league-team-22',
-          teamId: 'provider-team-44',
+          teamId: 'team-1',
           lastSyncStatus: 'sync_complete',
           lastSyncedAt: syncedAt
         }
@@ -436,10 +442,32 @@ describe('buildTeamDetailModel registration provider details', () => {
     expect(built.team.registrationProvider).toEqual([
       { label: 'Provider', value: 'LeagueApps' },
       { label: 'External team ID', value: 'league-team-22', copyable: true },
-      { label: 'Provider team ID', value: 'provider-team-44', copyable: true },
       expect.objectContaining({ label: 'Last sync', value: expect.stringContaining('Sync Complete') })
     ]);
-    expect(built.team.registrationProvider[3].value).toContain('Jan 2, 2026');
+    expect(built.team.registrationProvider[2].value).toContain('Jan 2, 2026');
+  });
+
+  it('keeps a legacy provider-specific teamId when it is not the app team id', () => {
+    const built = buildTeamDetailModel({
+      teamId: 'team-1',
+      team: {
+        id: 'team-1',
+        name: 'Bears',
+        sport: 'Basketball',
+        registrationSource: {
+          providerName: 'LeagueApps',
+          teamId: 'provider-team-44'
+        }
+      },
+      players: [],
+      configs: [],
+      games: []
+    });
+
+    expect(built.team.registrationProvider).toEqual([
+      { label: 'Provider', value: 'LeagueApps' },
+      { label: 'Provider team ID', value: 'provider-team-44', copyable: true }
+    ]);
   });
 });
 
