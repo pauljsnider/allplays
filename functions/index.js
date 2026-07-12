@@ -11726,6 +11726,33 @@ exports.listManagedPublicOpportunityTeams = functions.https.onCall(async (_data,
   return { items: Array.from(teams.values()).sort((a, b) => a.name.localeCompare(b.name)) };
 });
 
+exports.getPublicTeamProfile = functions.https.onCall(async (data, context = {}) => {
+  assertOpportunityRateLimit(checkPublicOpportunityBrowseRateLimit, context, 'team-profile');
+  let teamId;
+  try {
+    teamId = normalizeFirestoreId(data?.teamId, 'teamId');
+  } catch (error) {
+    throwOpportunityError('invalid-argument', error.message);
+  }
+  const teamSnap = await firestore.doc(`teams/${teamId}`).get();
+  const team = teamSnap.data() || {};
+  if (!teamSnap.exists || team.isPublic !== true || team.active === false) {
+    throwOpportunityError('not-found', 'Public team not found.');
+  }
+  return {
+    item: {
+      id: teamSnap.id,
+      name: cleanOpportunityText(team.name, 100),
+      sport: cleanOpportunityText(team.sport, 60) || null,
+      description: cleanOpportunityText(team.description, 1000) || null,
+      photoUrl: cleanOpportunityText(team.photoUrl, 1000) || null,
+      city: cleanOpportunityText(team.city, 80) || null,
+      state: cleanOpportunityText(team.state, 40) || null,
+      zip: cleanOpportunityText(team.zip, 10) || null
+    }
+  };
+});
+
 exports.reportPublicOpportunity = functions.https.onCall(async (data, context = {}) => {
   const uid = requireOpportunityAuth(context);
   assertOpportunityRateLimit(checkPublicOpportunityWriteRateLimit, context, `report:${uid}`);
@@ -11759,7 +11786,7 @@ async function resolveOpportunityRecipients(listing) {
 }
 
 exports.createOpportunityInquiry = functions.https.onCall(async (data, context = {}) => {
-  const uid = requireOpportunityAuth(context);
+  const uid = requireOpportunityAuth(context, { verified: true });
   assertOpportunityRateLimit(checkPublicOpportunityMessageRateLimit, context, `inquiry:${uid}`);
   const body = cleanOpportunityText(data?.message, 1500);
   if (!body) throwOpportunityError('invalid-argument', 'Write a message first.');

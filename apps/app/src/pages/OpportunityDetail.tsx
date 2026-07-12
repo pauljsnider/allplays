@@ -111,7 +111,7 @@ export function OpportunityDetail({ auth }: { auth: AuthState }) {
         <div className="flex flex-wrap gap-2 border-t border-gray-100 bg-gray-50 p-4">
           <button type="button" className="primary-button !min-h-10 !px-4" onClick={openContact} disabled={item.status !== 'active'}><MessageCircle className="h-4 w-4" />{auth.user ? 'Send private inquiry' : 'Sign in to contact'}</button>
           <button type="button" className="ghost-button !min-h-10 !px-4" onClick={() => void report()}><AlertTriangle className="h-4 w-4" />Report</button>
-          {item.teamId ? <Link className="ghost-button !min-h-10 !px-4" to={`/teams/${encodeURIComponent(item.teamId)}`}>View public team</Link> : null}
+          {item.teamId ? <Link className="ghost-button !min-h-10 !px-4" to={`/teams/${encodeURIComponent(item.teamId)}/public`}>View public team</Link> : null}
         </div>
       </article>
 

@@ -1,4 +1,4 @@
-import { discoverPublicTeams, getPublicTeamRosterCount, type PublicTeamRosterCount } from './adapters/legacyPublicTeamsDb';
+import { discoverPublicTeams, getPublicTeamProfile, getPublicTeamRosterCount, type PublicTeamRosterCount } from './adapters/legacyPublicTeamsDb';
 import { type ParentHomeTeam } from './homeLogic';
 
 const PUBLIC_ROSTER_COUNT_CONCURRENCY = 6;
@@ -6,6 +6,18 @@ const PUBLIC_ROSTER_COUNT_CONCURRENCY = 6;
 export type PublicTeamsPage = {
     teams: ParentHomeTeam[];
     nextCursor: unknown | null;
+};
+
+export type PublicTeamProfile = {
+    id: string;
+    name: string;
+    sport: string | null;
+    description: string | null;
+    photoUrl: string | null;
+    city: string | null;
+    state: string | null;
+    zip: string | null;
+    location: string | null;
 };
 
 function normalizePublicTeamSearchText(value: string | null | undefined): string {
@@ -127,4 +139,22 @@ export async function getPublicTeamsPage({ searchText, locationFilter, cursor = 
 export async function getPublicTeamsByLocation(locationFilter?: string): Promise<ParentHomeTeam[]> {
     const result = await getPublicTeamsPage({ searchText: locationFilter });
     return result.teams;
+}
+
+export async function getPublicTeamDetail(teamId: string): Promise<PublicTeamProfile> {
+    const normalizedTeamId = String(teamId || '').trim();
+    if (!normalizedTeamId) throw new Error('Team ID is required.');
+    const team = await getPublicTeamProfile(normalizedTeamId);
+    if (!team?.id || !team?.name) throw new Error('Public team not found.');
+    return {
+        id: String(team.id),
+        name: String(team.name),
+        sport: team.sport ? String(team.sport) : null,
+        description: team.description ? String(team.description) : null,
+        photoUrl: team.photoUrl ? String(team.photoUrl) : null,
+        city: team.city ? String(team.city) : null,
+        state: team.state ? String(team.state) : null,
+        zip: team.zip ? String(team.zip) : null,
+        location: teamLocation(team)
+    };
 }

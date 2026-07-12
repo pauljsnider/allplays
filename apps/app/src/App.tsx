@@ -38,6 +38,7 @@ const PlayerDetail = lazy(() => import('./pages/PlayerDetail').then((module) => 
 const PrivateAiChat = lazy(() => import('./pages/PrivateAiChat').then((module) => ({ default: module.PrivateAiChat })));
 const Profile = lazy(() => import('./pages/Profile').then((module) => ({ default: module.Profile })));
 const PublicTeamsBrowse = lazy(() => import('./pages/PublicTeamsBrowse').then((module) => ({ default: module.PublicTeamsBrowse })));
+const PublicTeamDetail = lazy(() => import('./pages/PublicTeamDetail').then((module) => ({ default: module.PublicTeamDetail })));
 const Discover = lazy(() => import('./pages/Discover').then((module) => ({ default: module.Discover })));
 const OpportunityDetail = lazy(() => import('./pages/OpportunityDetail').then((module) => ({ default: module.OpportunityDetail })));
 const OpportunityForm = lazy(() => import('./pages/OpportunityForm').then((module) => ({ default: module.OpportunityForm })));
@@ -240,7 +241,8 @@ export default function App() {
         <Route path="/ai" element={<Protected auth={auth}><PrivateAiChat auth={auth} /></Protected>} />
         <Route path="/teams" element={<Protected auth={auth}><Teams auth={auth} /></Protected>} />
         <Route path="/teams/browse" element={<PublicPage auth={auth}><PublicTeamsBrowse /></PublicPage>} />
-        <Route path="/teams/:teamId" element={<PublicPage auth={auth}><TeamDetail auth={auth} /></PublicPage>} />
+        <Route path="/teams/:teamId/public" element={<PublicPage auth={auth}><PublicTeamDetail /></PublicPage>} />
+        <Route path="/teams/:teamId" element={auth.user || auth.loading ? <Protected auth={auth}><TeamDetail auth={auth} /></Protected> : <PublicPage auth={auth}><PublicTeamDetail /></PublicPage>} />
         <Route path="/teams/:teamId/edit" element={<Protected auth={auth}><TeamSettings auth={auth} /></Protected>} />
         <Route path="/teams/:teamId/certificates" element={<Protected auth={auth}><TeamCertificates auth={auth} /></Protected>} />
         <Route path="/teams/:teamId/drills" element={<Protected auth={auth}><TeamDrills auth={auth} /></Protected>} />

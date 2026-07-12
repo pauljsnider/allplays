@@ -19,6 +19,7 @@ describe('public opportunity callable wiring', () => {
       'getOpportunityInquiry',
       'listMyPublicOpportunities',
       'listManagedPublicOpportunityTeams',
+      'getPublicTeamProfile',
       'listPublicOpportunityReports',
       'moderatePublicOpportunity'
     ].forEach((name) => expect(source).toContain(`exports.${name}`));
@@ -49,5 +50,11 @@ describe('public opportunity callable wiring', () => {
     expect(source).toContain('await resolveOpportunityTeam({ kind: listing.kind, teamId: listing.teamId }, caller);');
     expect(source).toContain("action === 'restore' && listing.kind !== 'player_seeking_team'");
     expect(source).toContain('The linked team must be active and public before this listing can be restored.');
+  });
+
+  it('requires verified inquiry senders and allow-lists public team profiles', () => {
+    expect(source).toMatch(/createOpportunityInquiry[\s\S]*requireOpportunityAuth\(context, \{ verified: true \}\)/);
+    expect(source).toContain('exports.getPublicTeamProfile');
+    expect(source).toContain("description: cleanOpportunityText(team.description, 1000) || null");
   });
 });
