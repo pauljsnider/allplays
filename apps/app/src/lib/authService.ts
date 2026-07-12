@@ -33,6 +33,7 @@ import type { AuthUser, UserRole } from './types';
 
 export const firebaseAuth = auth;
 export const passwordResetConfirmationMessage = "If an account exists for that email, we've sent a reset link.";
+export const verificationContinueUrl = 'https://allplays.ai/app/#/verify-pending';
 
 const pendingActivationCodeKey = 'pendingActivationCode';
 const pendingInviteCodeKey = 'allplays-app-pending-invite-code';
@@ -1215,14 +1216,24 @@ export async function sendResetEmail(email: string) {
   }
 }
 
+export function getVerificationActionCodeSettings() {
+  return {
+    url: verificationContinueUrl,
+    handleCodeInApp: true
+  };
+}
+
 export async function resendVerificationEmail() {
   const user = getCurrentFirebaseUser();
+  const actionCodeSettings = getVerificationActionCodeSettings();
   if (!user) {
     const idToken = await getNativeAuthIdToken();
     if (idToken) {
       await callFirebaseAuthRest('accounts:sendOobCode', {
         requestType: 'VERIFY_EMAIL',
-        idToken
+        idToken,
+        continueUrl: actionCodeSettings.url,
+        canHandleCodeInApp: actionCodeSettings.handleCodeInApp
       });
       return;
     }
@@ -1232,7 +1243,7 @@ export async function resendVerificationEmail() {
   if (typeof user.reload === 'function') {
     await user.reload();
   }
-  await sendEmailVerification(user);
+  await sendEmailVerification(user, actionCodeSettings);
 }
 
 async function refreshNativeFallbackVerification() {

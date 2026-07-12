@@ -71,6 +71,7 @@ const notificationPreferenceGroups = NOTIFICATION_PREFERENCE_GROUPS as readonly 
 }[];
 const collapsedInviteCount = 3;
 const logger = createLogger('profile');
+const verificationResendCooldownMs = 60 * 1000;
 const profileSections: Array<{ id: ProfileSectionId; label: string }> = [
   { id: 'account', label: 'Account' },
   { id: 'alerts', label: 'Alerts' },
@@ -134,6 +135,7 @@ export function Profile({ auth }: { auth: AuthState }) {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
+  const [verificationResendCoolingDown, setVerificationResendCoolingDown] = useState(false);
   const [profileStatus, setProfileStatus] = useState<Status | null>(null);
   const [verificationStatus, setVerificationStatus] = useState<Status | null>(null);
   const [notificationStatus, setNotificationStatus] = useState<Status | null>(null);
@@ -162,6 +164,16 @@ export function Profile({ auth }: { auth: AuthState }) {
   const photoUrlRef = useRef('');
   const photoChangedRef = useRef(false);
   const selectedTeamIdRef = useRef('');
+
+  useEffect(() => {
+    if (!verificationResendCoolingDown) return undefined;
+
+    const timeout = window.setTimeout(() => {
+      setVerificationResendCoolingDown(false);
+    }, verificationResendCooldownMs);
+
+    return () => window.clearTimeout(timeout);
+  }, [verificationResendCoolingDown]);
 
   const revokeOwnedPhotoPreviewUrl = () => {
     const activePreviewUrl = ownedPhotoPreviewUrlRef.current;
@@ -830,9 +842,16 @@ export function Profile({ auth }: { auth: AuthState }) {
 
     try {
       await resendVerificationEmail();
-      setVerificationStatus({ message: 'Verification email sent. Check your inbox.', tone: 'success' });
-    } catch (error) {
-      setVerificationStatus({ message: describeAuthError(error), tone: 'error' });
+      setVerificationResendCoolingDown(true);
+      const destination = user?.email ? ` to ${user.email}` : '';
+      setVerificationStatus({ message: `Verification email sent${destination}. It can take a couple of minutes; check spam too.`, tone: 'success' });
+    } catch (error: any) {
+      if (error?.code === 'auth/too-many-requests') {
+        setVerificationResendCoolingDown(true);
+        setVerificationStatus({ message: 'Too many attempts. Try again in a few minutes.', tone: 'error' });
+      } else {
+        setVerificationStatus({ message: describeAuthError(error), tone: 'error' });
+      }
     } finally {
       setBusy('');
     }
@@ -1574,9 +1593,9 @@ export function Profile({ auth }: { auth: AuthState }) {
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
             {!user.emailVerified ? (
-              <button type="button" className="secondary-button" onClick={resendVerification} disabled={busy === 'verification'}>
+              <button type="button" className="secondary-button" onClick={resendVerification} disabled={busy === 'verification' || verificationResendCoolingDown}>
                 {busy === 'verification' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Send className="h-4 w-4" aria-hidden="true" />}
-                Resend email
+                {verificationResendCoolingDown && busy !== 'verification' ? 'Resend available soon' : 'Resend email'}
               </button>
             ) : null}
             <button type="button" className="ghost-button" onClick={refreshVerification} disabled={busy === 'refresh-verification'}>

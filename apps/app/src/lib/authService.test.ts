@@ -1,7 +1,15 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const authState = vi.hoisted(() => ({
+const authState = vi.hoisted((): {
+  currentUser: any;
+  app: {
+    options: {
+      apiKey: string;
+    };
+    name: string;
+  };
+} => ({
   currentUser: null,
   app: {
     options: {
@@ -100,6 +108,7 @@ vi.mock('./logger', () => ({
 }));
 
 import {
+  sendEmailVerification,
   sendPasswordResetEmail,
   signInWithPopup,
   signInWithRedirect
@@ -111,6 +120,7 @@ import {
   hydrateFirebaseUser,
   isValidAuthEmail,
   observeFirebaseUser,
+  resendVerificationEmail,
   sendResetEmail,
   signInWithEmail,
   signInWithGoogleAccount,
@@ -165,6 +175,87 @@ describe('sendResetEmail', () => {
     sendPasswordResetEmailMock.mockRejectedValue(error);
 
     await expect(sendResetEmail('player@example.com')).rejects.toBe(error);
+  });
+});
+
+describe('resendVerificationEmail', () => {
+  const sendEmailVerificationMock = vi.mocked(sendEmailVerification);
+  const verificationSettings = {
+    url: 'https://allplays.ai/app/#/verify-pending',
+    handleCodeInApp: true
+  };
+  const localStorageEntries = new Map<string, string>();
+
+  function installTestLocalStorage() {
+    localStorageEntries.clear();
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      value: {
+        getItem: vi.fn((key: string) => localStorageEntries.get(key) || null),
+        setItem: vi.fn((key: string, value: string) => {
+          localStorageEntries.set(key, String(value));
+        }),
+        removeItem: vi.fn((key: string) => {
+          localStorageEntries.delete(key);
+        })
+      }
+    });
+  }
+
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+    installTestLocalStorage();
+    authState.currentUser = null;
+    sendEmailVerificationMock.mockReset();
+  });
+
+  afterEach(() => {
+    authState.currentUser = null;
+    vi.unstubAllGlobals();
+  });
+
+  it('sends web verification emails with the branded app return URL', async () => {
+    const user = {
+      uid: 'user-1',
+      email: 'player@example.com',
+      reload: vi.fn(async () => undefined)
+    };
+    authState.currentUser = user;
+    sendEmailVerificationMock.mockResolvedValue(undefined);
+
+    await resendVerificationEmail();
+
+    expect(user.reload).toHaveBeenCalledTimes(1);
+    expect(sendEmailVerificationMock).toHaveBeenCalledWith(user, verificationSettings);
+  });
+
+  it('includes the same continue URL when native REST sends the verification email', async () => {
+    const fetchMock = vi.fn(async (_url: RequestInfo | URL, _request?: RequestInit) => ({
+      ok: true,
+      json: async () => ({})
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    window.localStorage.setItem('allplays-native-auth-session', JSON.stringify({
+      uid: 'native-user',
+      email: 'player@example.com',
+      idToken: 'native-id-token',
+      refreshToken: 'native-refresh-token',
+      expirationTime: Date.now() + 10 * 60 * 1000,
+      apiKey: 'test-api-key',
+      provider: 'rest'
+    }));
+
+    await resendVerificationEmail();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, request] = fetchMock.mock.calls[0] as [RequestInfo | URL, RequestInit];
+    expect(String(url)).toContain('accounts:sendOobCode');
+    expect(JSON.parse(String((request as RequestInit).body))).toMatchObject({
+      requestType: 'VERIFY_EMAIL',
+      idToken: 'native-id-token',
+      continueUrl: verificationSettings.url,
+      canHandleCodeInApp: verificationSettings.handleCodeInApp
+    });
   });
 });
 

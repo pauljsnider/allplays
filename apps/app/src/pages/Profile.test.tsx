@@ -216,6 +216,32 @@ describe('Profile', () => {
     expect(sectionGrid?.className).not.toContain('min-w-max');
   });
 
+  it('shows delivery context and cooldown after resending verification email', async () => {
+    authServiceMocks.resendVerificationEmail.mockResolvedValueOnce(undefined);
+
+    renderProfile('/profile?section=security');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Resend email' }));
+
+    expect(await screen.findByText('Verification email sent to parent@example.com. It can take a couple of minutes; check spam too.')).toBeTruthy();
+    const cooldownButton = screen.getByRole('button', { name: 'Resend available soon' });
+    expect((cooldownButton as HTMLButtonElement).disabled).toBe(true);
+    expect(authServiceMocks.resendVerificationEmail).toHaveBeenCalledTimes(1);
+  });
+
+  it('maps verification resend throttling to a retry-later message and cooldown', async () => {
+    authServiceMocks.resendVerificationEmail.mockRejectedValueOnce({ code: 'auth/too-many-requests' });
+
+    renderProfile('/profile?section=security');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Resend email' }));
+
+    expect(await screen.findByText('Too many attempts. Try again in a few minutes.')).toBeTruthy();
+    const cooldownButton = screen.getByRole('button', { name: 'Resend available soon' });
+    expect((cooldownButton as HTMLButtonElement).disabled).toBe(true);
+    expect(authServiceMocks.describeAuthError).not.toHaveBeenCalled();
+  });
+
   it('disables account merge while parent team eligibility is loading', async () => {
     const parentTeamsRequest = createDeferredPromise<Array<{ id: string; name: string }>>();
     profileServiceMocks.loadParentTeams.mockImplementation(() => parentTeamsRequest.promise);
