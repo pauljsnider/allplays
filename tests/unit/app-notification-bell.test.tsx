@@ -355,6 +355,7 @@ describe('Notification bell in AppShell', () => {
 
         fireEvent.click(screen.getByTestId('app-shell-notifications-trigger'));
         await waitFor(() => screen.getByRole('dialog', { name: 'Notifications' }));
+        await waitFor(() => screen.getByTestId('notification-item-notif-fail'));
 
         fireEvent.click(screen.getByTestId('notification-item-notif-fail'));
 
