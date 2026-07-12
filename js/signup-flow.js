@@ -26,7 +26,7 @@ export async function executeEmailPasswordSignup({
         throw new Error('Activation code is required');
     }
 
-    async function cleanupFailedParentInviteSignup(createdUser, options = {}) {
+    async function cleanupFailedSignup(createdUser, options = {}) {
         const rollbackCode = String(options.inviteCode || '').trim().toUpperCase();
         if (createdUser?.uid && rollbackCode && typeof rollbackParentInviteRedemption === 'function') {
             try {
@@ -48,7 +48,7 @@ export async function executeEmailPasswordSignup({
             try {
                 await signOut(auth);
             } catch (signOutError) {
-                console.error('Error signing out after failed parent invite:', signOutError);
+                console.error('Error signing out after failed invite signup:', signOutError);
             }
         }
     }
@@ -72,12 +72,12 @@ export async function executeEmailPasswordSignup({
         try {
             validation = await validateAccessCode(activationCode);
         } catch (error) {
-            await cleanupFailedParentInviteSignup(userCredential?.user);
+            await cleanupFailedSignup(userCredential?.user);
             throw error;
         }
 
         if (!validation.valid) {
-            await cleanupFailedParentInviteSignup(userCredential?.user);
+            await cleanupFailedSignup(userCredential?.user);
             throw new Error(validation.message || 'Invalid activation code');
         }
     }
@@ -99,7 +99,7 @@ export async function executeEmailPasswordSignup({
             await redeemParentInvite(userId, activationCode, email);
         } catch (e) {
             console.error('Error linking parent:', e);
-            await cleanupFailedParentInviteSignup(userCredential?.user, { inviteCode: validation.data?.code || activationCode });
+            await cleanupFailedSignup(userCredential?.user, { inviteCode: validation.data?.code || activationCode });
             throw e;
         }
 
@@ -114,7 +114,7 @@ export async function executeEmailPasswordSignup({
             await writeSignupProfile({ email });
         } catch (e) {
             console.error('Error linking friend invite:', e);
-            await cleanupFailedParentInviteSignup(userCredential?.user);
+            await cleanupFailedSignup(userCredential?.user);
             throw e;
         }
     } else if (validation.type === 'admin_invite') {
@@ -129,7 +129,7 @@ export async function executeEmailPasswordSignup({
             await writeSignupProfile({ email });
         } catch (e) {
             console.error('Error redeeming admin invite:', e);
-            await cleanupFailedParentInviteSignup(userCredential?.user);
+            await cleanupFailedSignup(userCredential?.user);
             throw e;
         }
     } else if (validation.type === 'household_invite') {
@@ -141,7 +141,7 @@ export async function executeEmailPasswordSignup({
             await writeSignupProfile({ email });
         } catch (e) {
             console.error('Error redeeming household invite:', e);
-            await cleanupFailedParentInviteSignup(userCredential?.user, { inviteCode: validation.data?.code || activationCode });
+            await cleanupFailedSignup(userCredential?.user, { inviteCode: validation.data?.code || activationCode });
             throw e;
         }
     } else if (validation.type === 'coparent_invite') {
@@ -153,7 +153,7 @@ export async function executeEmailPasswordSignup({
             await writeSignupProfile({ email });
         } catch (e) {
             console.error('Error redeeming co-parent invite:', e);
-            await cleanupFailedParentInviteSignup(userCredential?.user, { inviteCode: validation.data?.code || activationCode });
+            await cleanupFailedSignup(userCredential?.user, { inviteCode: validation.data?.code || activationCode });
             throw e;
         }
     } else {
@@ -161,7 +161,7 @@ export async function executeEmailPasswordSignup({
             await markAccessCodeAsUsed(validation.codeId, userId);
         } catch (error) {
             console.error('Error marking code as used:', error);
-            await cleanupFailedParentInviteSignup(userCredential?.user);
+            await cleanupFailedSignup(userCredential?.user);
             throw error;
         }
 

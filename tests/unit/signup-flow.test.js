@@ -459,6 +459,7 @@ describe('executeEmailPasswordSignup', () => {
 
         expect(deleteAuthUser).toHaveBeenCalledTimes(1);
         expect(dependencies.signOut).toHaveBeenCalledTimes(1);
+        expect(dependencies.rollbackParentInviteRedemption).not.toHaveBeenCalled();
         expect(dependencies.updateUserProfile).not.toHaveBeenCalled();
         expect(dependencies.markAccessCodeAsUsed).not.toHaveBeenCalled();
         expect(dependencies.sendVerificationEmail).not.toHaveBeenCalled();
