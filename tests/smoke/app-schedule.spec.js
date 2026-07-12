@@ -822,6 +822,52 @@ async function mockScheduleModules(page, options = {}) {
                     window.__scheduleCalls.assignments.push({ action: 'release', role });
                 }
 
+                export async function createScheduleAssignment(event, user, input = {}) {
+                    const role = String(input.role || '').trim();
+                    if (!role) throw new Error('Role is required.');
+                    if (getAssignments().some((assignment) => String(assignment.role || '').toLowerCase() === role.toLowerCase())) {
+                        throw new Error('An assignment with that role already exists.');
+                    }
+                    const assignment = {
+                        role,
+                        value: input.claimable === false ? String(input.value || '').trim() : '',
+                        claimable: input.claimable !== false,
+                        claim: null
+                    };
+                    window.__mockAssignments = getAssignments().concat(assignment);
+                    window.__scheduleCalls.assignments.push({ action: 'create', role, userId: user?.uid || null, input });
+                    return getAssignments();
+                }
+
+                export async function updateScheduleAssignment(event, user, currentRole, input = {}) {
+                    const role = String(input.role || '').trim();
+                    if (!role) throw new Error('Role is required.');
+                    const currentKey = String(currentRole || '').trim().toLowerCase();
+                    const index = getAssignments().findIndex((assignment) => String(assignment.role || '').toLowerCase() === currentKey);
+                    if (index < 0) throw new Error('Assignment not found.');
+                    if (getAssignments().some((assignment, assignmentIndex) => assignmentIndex !== index && String(assignment.role || '').toLowerCase() === role.toLowerCase())) {
+                        throw new Error('An assignment with that role already exists.');
+                    }
+                    const assignment = {
+                        role,
+                        value: input.claimable === false ? String(input.value || '').trim() : '',
+                        claimable: input.claimable !== false,
+                        claim: null
+                    };
+                    window.__mockAssignments = getAssignments().map((item, assignmentIndex) => assignmentIndex === index ? assignment : item);
+                    window.__scheduleCalls.assignments.push({ action: 'update', currentRole, role, userId: user?.uid || null, input });
+                    return getAssignments();
+                }
+
+                export async function removeScheduleAssignment(event, user, role) {
+                    const roleKey = String(role || '').trim().toLowerCase();
+                    const before = getAssignments().length;
+                    window.__mockAssignments = getAssignments().filter((assignment) => String(assignment.role || '').toLowerCase() !== roleKey);
+                    if (window.__mockAssignments.length === before) throw new Error('Assignment not found.');
+                    window.__scheduleCalls.assignments.push({ action: 'remove', role, userId: user?.uid || null });
+                    return getAssignments();
+                }
+
                 export async function loadParentScheduleRideOffers() {
                     if (${JSON.stringify(rideshareLoadError)}) {
                         throw new Error(${JSON.stringify(rideshareLoadError)});
