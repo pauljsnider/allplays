@@ -32,7 +32,7 @@ describe('team media page wiring', () => {
         expect(page).toContain('Add album');
         expect(page).toContain('Upload files');
         expect(page).toContain('Save video link');
-        expect(source).toContain("from './db.js?v=95'");
+        expect(source).toContain("from './db.js?v=96'");
         expect(source).toContain('normalizeTeamMediaVideoDraft');
         expect(source).toContain("import { checkAuth } from './auth.js?v=50';");
         expect(source).toContain('checkAuth(async (user) => {');
@@ -51,7 +51,7 @@ describe('team media page wiring', () => {
         const source = fs.readFileSync(path.join(repoRoot, 'js/team-media.js'), 'utf8');
         const dbImportVersion = source.match(/from '\.\/db\.js\?v=(\d+)'/)?.[1];
 
-        expect(dbImportVersion).toBe('95');
+        expect(dbImportVersion).toBe('96');
 
         for (const testFile of [
             'tests/unit/team-media-item-rename.test.js',

@@ -20,7 +20,7 @@ describe('RSVP precedence cache delivery', () => {
             'team-chat.html': 'db.js?v=94',
             'js/auth.js': 'db.js?v=95',
             'profile.html': 'db.js?v=95',
-            'js/team-media.js': 'db.js?v=95'
+            'js/team-media.js': 'db.js?v=96'
         };
 
         for (const [path, expectedVersion] of Object.entries(runtimeSources)) {
