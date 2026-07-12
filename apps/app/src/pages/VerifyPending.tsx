@@ -1,12 +1,16 @@
 import { useState } from 'react';
-import { Link, Navigate, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { CheckCircle2, LogOut, Mail, Send } from 'lucide-react';
 import { AuthFrame } from '../components/AuthFrame';
 import { getRouteForUser, reloadCurrentUser, resendVerificationEmail } from '../lib/authService';
 import type { AuthState } from '../lib/types';
+import { getSafeAuthNextRoute } from '../lib/authNextRoute';
 
 export function VerifyPending({ auth }: { auth: AuthState }) {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const nextRoute = getSafeAuthNextRoute(searchParams.get('next'));
+  const continueRoute = nextRoute || getRouteForUser(auth.user);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -24,7 +28,7 @@ export function VerifyPending({ auth }: { auth: AuthState }) {
       await reloadCurrentUser(); // Ensure native session is refreshed
       const refreshedUser = await auth.refresh();
       if (refreshedUser?.emailVerified === true) {
-        navigate(getRouteForUser(refreshedUser), { replace: true });
+        navigate(nextRoute || getRouteForUser(refreshedUser), { replace: true });
         return;
       }
       setShowSecondaryOptions(true);
@@ -52,7 +56,7 @@ export function VerifyPending({ auth }: { auth: AuthState }) {
   };
 
   return (
-    <AuthFrame eyebrow="Verify" backTo={getRouteForUser(auth.user)} backLabel="Back to dashboard">
+    <AuthFrame eyebrow="Verify" backTo={continueRoute} backLabel="Back">
       <div className="text-center">
         <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-primary-50 text-primary-700">
           {auth.user?.emailVerified ? <CheckCircle2 className="h-8 w-8" aria-hidden="true" /> : <Mail className="h-8 w-8" aria-hidden="true" />}
@@ -71,7 +75,7 @@ export function VerifyPending({ auth }: { auth: AuthState }) {
 
       <div className="mt-4 grid gap-2">
         {auth.user?.emailVerified ? (
-          <Link to={getRouteForUser(auth.user)} className="primary-button justify-center">
+          <Link to={continueRoute} className="primary-button justify-center">
             Continue to dashboard
           </Link>
         ) : (
@@ -92,7 +96,7 @@ export function VerifyPending({ auth }: { auth: AuthState }) {
             </button>
             {showSecondaryOptions ? (
               <div className="mt-3 grid gap-2">
-                <Link to={getRouteForUser(auth.user)} className="secondary-button justify-center">
+                <Link to={continueRoute} className="secondary-button justify-center">
                   Continue without verifying
                 </Link>
                 <button type="button" className="ghost-button justify-center" onClick={resend} disabled={busy}>

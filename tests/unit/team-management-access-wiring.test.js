@@ -18,6 +18,8 @@ describe('team management page access wiring', () => {
         expect(rules).toContain('function isGlobalAdmin()');
         expect(rules).toContain('function isOwnerUserCreatePayloadValid(data)');
         expect(rules).toContain('function isOwnerUserUpdatePayloadValid()');
+        expect(rules).toContain("data.get('isPlatformAdmin', false) != true");
+        expect(rules).toContain("affectedKeys().hasAny(['isAdmin', 'isPlatformAdmin'])");
         expect(rules).toContain("(isOwner(userId) && isOwnerUserCreatePayloadValid(request.resource.data))");
         expect(rules).toContain("(isOwner(userId) && isOwnerUserUpdatePayloadValid())");
         expect(rules).toContain("(isOwner(userId) && resource.data.get('isAdmin', false) != true)");

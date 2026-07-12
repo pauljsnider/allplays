@@ -2,12 +2,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const dbMocks = vi.hoisted(() => ({
     discoverPublicTeams: vi.fn(),
+    getPublicTeamProfile: vi.fn(),
     getPublicTeamRosterCount: vi.fn()
 }));
 
 vi.mock('./adapters/legacyPublicTeamsDb', () => dbMocks);
 
-import { getPublicTeamsByLocation, getPublicTeamsPage } from './publicTeamsService';
+import { getPublicTeamDetail, getPublicTeamsByLocation, getPublicTeamsPage } from './publicTeamsService';
 
 describe('publicTeamsService', () => {
     beforeEach(() => {
@@ -243,5 +244,33 @@ describe('publicTeamsService', () => {
             teams: [],
             nextCursor: null
         });
+    });
+
+    it('maps only the allow-listed callable profile fields for public detail', async () => {
+        dbMocks.getPublicTeamProfile.mockResolvedValue({
+            id: 'team-public-1',
+            name: 'Austin Bats',
+            sport: 'Baseball',
+            description: 'Community baseball team.',
+            photoUrl: 'https://example.com/team.png',
+            city: 'Austin',
+            state: 'TX',
+            zip: '78701',
+            ownerId: 'private-owner',
+            adminEmails: ['private@example.com']
+        });
+
+        await expect(getPublicTeamDetail('team-public-1')).resolves.toEqual({
+            id: 'team-public-1',
+            name: 'Austin Bats',
+            sport: 'Baseball',
+            description: 'Community baseball team.',
+            photoUrl: 'https://example.com/team.png',
+            city: 'Austin',
+            state: 'TX',
+            zip: '78701',
+            location: 'Austin, TX'
+        });
+        expect(dbMocks.getPublicTeamProfile).toHaveBeenCalledWith('team-public-1');
     });
 });

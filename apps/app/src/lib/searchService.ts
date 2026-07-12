@@ -139,7 +139,7 @@ export function buildAppSearchActions(auth: Pick<AuthState, 'user' | 'isAdmin' |
       kind: 'action',
       title: 'Browse Teams',
       subtitle: 'Explore public teams on ALL PLAYS',
-      ...(auth.user ? { route: '/teams/browse' } : { href: 'https://allplays.ai/teams.html' })
+      route: '/teams/browse'
     }
   ];
 
@@ -158,6 +158,13 @@ export function buildAppSearchActions(auth: Pick<AuthState, 'user' | 'isAdmin' |
         title: 'Get Started',
         subtitle: 'Create an account',
         route: '/auth?mode=signup'
+      },
+      {
+        id: 'discover-opportunities',
+        kind: 'action',
+        title: 'Discover Opportunities',
+        subtitle: 'Sports jobs, roster openings, volunteers, and players looking for teams',
+        route: '/discover'
       }
     );
     return actions;
@@ -219,6 +226,20 @@ export function buildAppSearchActions(auth: Pick<AuthState, 'user' | 'isAdmin' |
       title: 'Profile',
       subtitle: 'Account settings and notifications',
       route: '/profile'
+    },
+    {
+      id: 'discover-opportunities',
+      kind: 'action',
+      title: 'Discover Opportunities',
+      subtitle: 'Sports jobs, roster openings, volunteers, and players looking for teams',
+      route: '/discover'
+    },
+    {
+      id: 'post-opportunity',
+      kind: 'action',
+      title: 'Post Public Opportunity',
+      subtitle: 'Publish a sports job, team opening, volunteer role, or looking-for-team post',
+      route: '/discover/new'
     }
   );
 
@@ -381,7 +402,10 @@ export async function searchAppTeams(queryText: string, appAccessTeams: AppSearc
     const localTeamsById = new Map(appAccessTeams.map((team) => [team.id, team]));
     publicTeams.forEach((team) => {
       if (canUserDiscoverTeamInAppSearch(team, user)) {
-        localTeamsById.set(team.id, team);
+        const existingTeam = localTeamsById.get(team.id);
+        localTeamsById.set(team.id, existingTeam?.fromAppAccess
+          ? { ...team, fromAppAccess: true }
+          : team);
       }
     });
 
@@ -726,7 +750,7 @@ async function loadDirectAccessSearchTeams(user: AuthUser): Promise<AppSearchTea
     });
   });
 
-  return normalizeTeams(Array.from(teamsById.values()));
+  return normalizeTeams(Array.from(teamsById.values())).map((team) => ({ ...team, fromAppAccess: true }));
 }
 
 function buildParentHomeSearchTeam(homeTeam: any, baseTeam?: AppSearchTeam): AppSearchTeam {
@@ -871,12 +895,15 @@ function rankTeamsForQuery(teams: AppSearchTeam[], queryText: string) {
 
 function teamToSearchItem(team: AppSearchTeam): AppSearchItem {
   const location = cleanString(team.location);
+  const teamRoute = team.isPublic === true && !team.fromAppAccess
+    ? `/teams/${encodeURIComponent(team.id)}/public`
+    : `/teams/${encodeURIComponent(team.id)}`;
   return {
     id: `team:${team.id}`,
     kind: 'team',
     title: team.name || 'Team',
     subtitle: [team.sport, team.zip || [team.city, team.state].filter(Boolean).join(', ') || location].filter(Boolean).join(' • '),
-    route: `/teams/${encodeURIComponent(team.id)}`
+    route: teamRoute
   };
 }
 
@@ -890,6 +917,7 @@ function normalizeTeams(teams: any[]): AppSearchTeam[] {
       city: cleanString(team?.city),
       state: cleanString(team?.state),
       isPublic: team?.isPublic,
+      fromAppAccess: team?.fromAppAccess === true,
       active: team?.active,
       archived: team?.archived,
       status: cleanString(team?.status),

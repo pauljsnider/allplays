@@ -38,6 +38,12 @@ const PlayerDetail = lazy(() => import('./pages/PlayerDetail').then((module) => 
 const PrivateAiChat = lazy(() => import('./pages/PrivateAiChat').then((module) => ({ default: module.PrivateAiChat })));
 const Profile = lazy(() => import('./pages/Profile').then((module) => ({ default: module.Profile })));
 const PublicTeamsBrowse = lazy(() => import('./pages/PublicTeamsBrowse').then((module) => ({ default: module.PublicTeamsBrowse })));
+const PublicTeamDetail = lazy(() => import('./pages/PublicTeamDetail').then((module) => ({ default: module.PublicTeamDetail })));
+const Discover = lazy(() => import('./pages/Discover').then((module) => ({ default: module.Discover })));
+const OpportunityDetail = lazy(() => import('./pages/OpportunityDetail').then((module) => ({ default: module.OpportunityDetail })));
+const OpportunityForm = lazy(() => import('./pages/OpportunityForm').then((module) => ({ default: module.OpportunityForm })));
+const OpportunityManage = lazy(() => import('./pages/OpportunityManage').then((module) => ({ default: module.OpportunityManage })));
+const OpportunityInquiry = lazy(() => import('./pages/OpportunityInquiry').then((module) => ({ default: module.OpportunityInquiry })));
 const ResetPassword = lazy(() => import('./pages/ResetPassword').then((module) => ({ default: module.ResetPassword })));
 const Schedule = lazy(() => import('./pages/Schedule').then((module) => ({ default: module.Schedule })));
 const ScheduleEventDetail = lazy(() => import('./pages/ScheduleEventDetail').then((module) => ({ default: module.ScheduleEventDetail })));
@@ -218,6 +224,12 @@ export default function App() {
         <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/verify-pending" element={<VerifyPending auth={auth} />} />
         <Route path="/registration" element={<AppShell auth={auth}><RegistrationDetail auth={auth} publicAccess /></AppShell>} />
+        <Route path="/discover" element={<PublicPage auth={auth}><Discover auth={auth} /></PublicPage>} />
+        <Route path="/discover/opportunities/:listingId" element={<PublicPage auth={auth}><OpportunityDetail auth={auth} /></PublicPage>} />
+        <Route path="/discover/new" element={<Protected auth={auth}><OpportunityForm auth={auth} /></Protected>} />
+        <Route path="/discover/opportunities/:listingId/edit" element={<Protected auth={auth}><OpportunityForm auth={auth} /></Protected>} />
+        <Route path="/discover/manage" element={<Protected auth={auth}><OpportunityManage auth={auth} /></Protected>} />
+        <Route path="/discover/inquiries/:inquiryId" element={<Protected auth={auth}><OpportunityInquiry auth={auth} /></Protected>} />
         <Route path="/" element={auth.user ? <Navigate to={signedInDefaultRoute} replace /> : auth.loading ? <LoadingScreen /> : <AppShell auth={auth}><Home auth={auth} /></AppShell>} />
         <Route path="/home" element={auth.user || auth.loading ? <Protected auth={auth}><Home auth={auth} /></Protected> : <AppShell auth={auth}><Home auth={auth} /></AppShell>} />
         <Route path="/officials" element={<Protected auth={auth}><Officials auth={auth} /></Protected>} />
@@ -228,8 +240,9 @@ export default function App() {
         <Route path="/messages/:teamId" element={<Protected auth={auth}><Messages auth={auth} /></Protected>} />
         <Route path="/ai" element={<Protected auth={auth}><PrivateAiChat auth={auth} /></Protected>} />
         <Route path="/teams" element={<Protected auth={auth}><Teams auth={auth} /></Protected>} />
-        <Route path="/teams/browse" element={<Protected auth={auth}><PublicTeamsBrowse /></Protected>} />
-        <Route path="/teams/:teamId" element={<Protected auth={auth}><TeamDetail auth={auth} /></Protected>} />
+        <Route path="/teams/browse" element={<PublicPage auth={auth}><PublicTeamsBrowse /></PublicPage>} />
+        <Route path="/teams/:teamId/public" element={<PublicPage auth={auth}><PublicTeamDetail /></PublicPage>} />
+        <Route path="/teams/:teamId" element={auth.user || auth.loading ? <Protected auth={auth}><TeamDetail auth={auth} /></Protected> : <PublicPage auth={auth}><PublicTeamDetail /></PublicPage>} />
         <Route path="/teams/:teamId/edit" element={<Protected auth={auth}><TeamSettings auth={auth} /></Protected>} />
         <Route path="/teams/:teamId/certificates" element={<Protected auth={auth}><TeamCertificates auth={auth} /></Protected>} />
         <Route path="/teams/:teamId/drills" element={<Protected auth={auth}><TeamDrills auth={auth} /></Protected>} />
@@ -256,6 +269,25 @@ export default function App() {
         </div>
       ) : null}
     </Suspense>
+  );
+}
+
+function PublicPage({ auth, children }: { auth: AuthState; children: ReactNode }) {
+  const location = useLocation();
+  const navigate = useNavigate();
+  if (auth.loading && !auth.user) return <LoadingScreen />;
+  return (
+    <AppShell auth={auth}>
+      <ErrorBoundary
+        name={`public-route:${location.pathname}`}
+        resetKey={`${location.pathname}${location.search}`}
+        onGoHome={() => navigate('/discover', { replace: true })}
+      >
+        <Suspense fallback={<ProtectedRouteLoadingState pathname={location.pathname} />}>
+          {children}
+        </Suspense>
+      </ErrorBoundary>
+    </AppShell>
   );
 }
 

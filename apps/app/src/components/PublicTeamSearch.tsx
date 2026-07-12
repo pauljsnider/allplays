@@ -4,8 +4,6 @@ import { Search, XCircle, Loader2, Users } from 'lucide-react';
 import { type ParentHomeTeam } from '../lib/homeLogic';
 import { TeamAvatar, TeamLauncherChip, Status } from './TeamSummaryPrimitives';
 import { getPublicTeamsPage } from '../lib/publicTeamsService';
-import { openPublicUrl } from '../lib/publicActions';
-import { getTeamWebsiteHashHref } from '../lib/teamNavigation';
 import { resolveZip } from '../lib/utils';
 
 type PendingSearchMode = 'browse' | 'search';
@@ -114,15 +112,8 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
     setNextCursor(null);
   };
 
-  const handleOpenTeam = useCallback(async (team: ParentHomeTeam) => {
-    if (team.appAccess) {
-      navigate(`/teams/${encodeURIComponent(team.teamId)}`);
-      return;
-    }
-
-    if (team.webAccess) {
-      await openPublicUrl(getTeamWebsiteHashHref('team.html', team.teamId));
-    }
+  const handleOpenTeam = useCallback((team: ParentHomeTeam) => {
+    navigate(`/teams/${encodeURIComponent(team.teamId)}/public`);
   }, [navigate]);
 
   useEffect(() => {
@@ -157,7 +148,7 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
       <div className="flex items-center justify-between gap-3">
         <div>
           <h2 className="text-xl font-black text-gray-950 sm:text-2xl">Discover Public Teams</h2>
-          <p className="mt-1 text-xs font-semibold text-gray-500 sm:text-sm">Browse public teams and open their team page in read-only mode.</p>
+          <p className="mt-1 text-xs font-semibold text-gray-500 sm:text-sm">Browse public teams and open their public-safe profile.</p>
         </div>
         {showBackLink ? (
           <Link to="/teams" className="ghost-button !min-h-10 !px-3 text-sm">
@@ -287,15 +278,13 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
 }
 
 function PublicTeamCard({ team, onOpenTeam }: { team: ParentHomeTeam; onOpenTeam: (team: ParentHomeTeam) => void | Promise<void> }) {
-  const isActionable = Boolean(team.appAccess || team.webAccess);
-  const actionLabel = team.appAccess ? 'View team' : 'Open website team page';
   const hasRosterCount = typeof team.publicRosterCount === 'number';
   const rosterCountLabel = hasRosterCount
     ? `${team.publicRosterCount}${team.publicRosterCountCapped ? '+' : ''} player${team.publicRosterCount === 1 && !team.publicRosterCountCapped ? '' : 's'}`
     : 'Roster count unavailable';
 
   return (
-    <article className={`min-w-0 rounded-2xl border bg-white p-3 shadow-sm ${isActionable ? 'border-gray-200' : 'border-gray-200/80 bg-gray-50'}`}>
+    <article className="min-w-0 rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
       <div className="flex min-w-0 items-center gap-3">
         <TeamAvatar name={team.teamName} photoUrl={team.photoUrl} />
         <span className="min-w-0 flex-1">
@@ -307,21 +296,15 @@ function PublicTeamCard({ team, onOpenTeam }: { team: ParentHomeTeam; onOpenTeam
         </span>
       </div>
 
-      {isActionable ? (
-        <button
-          type="button"
-          className="primary-button mt-3 w-full justify-center !min-h-10 text-sm"
-          onClick={() => {
-            void onOpenTeam(team);
-          }}
-        >
-          {actionLabel}
-        </button>
-      ) : (
-        <div className="mt-3 rounded-xl border border-dashed border-gray-300 bg-white/70 px-3 py-2 text-xs font-semibold text-gray-500">
-          Team page is not available in the app yet.
-        </div>
-      )}
+      <button
+        type="button"
+        className="primary-button mt-3 w-full justify-center !min-h-10 text-sm"
+        onClick={() => {
+          void onOpenTeam(team);
+        }}
+      >
+        View public team
+      </button>
     </article>
   );
 }
