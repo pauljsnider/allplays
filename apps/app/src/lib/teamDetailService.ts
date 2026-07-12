@@ -2199,10 +2199,16 @@ function normalizeSponsorList(sponsors: any[]): TeamDetailSponsor[] {
 
 function getRegistrationProviderDetails(team: Record<string, any>) {
   const source = team?.registrationSource || team?.registrationProvider || {};
+  const appTeamId = cleanString(team?.id || team?.teamId);
+  const externalTeamId = cleanString(source.externalTeamId || source.externalTeamID || source.providerTeamId || source.providerTeamID || source.sourceTeamId);
+  const sourceTeamId = cleanString(source.teamId);
+  const providerTeamId = sourceTeamId && sourceTeamId !== appTeamId && sourceTeamId !== externalTeamId
+    ? sourceTeamId
+    : '';
   const rows = [
     { label: 'Provider', value: cleanString(source.provider || source.providerName) },
-    { label: 'External team ID', value: cleanString(source.externalTeamId), copyable: true },
-    { label: 'Provider team ID', value: cleanString(source.teamId), copyable: true },
+    { label: 'External team ID', value: externalTeamId, copyable: true },
+    { label: 'Provider team ID', value: providerTeamId, copyable: true },
     { label: 'Last sync', value: cleanString(source.lastSyncStatus || source.syncStatus) }
   ].filter((row) => row.value);
   return rows;

@@ -409,6 +409,25 @@ describe('buildTeamDetailModel registration provider', () => {
     expect(built.team.registrationProvider).toEqual([]);
   });
 
+  it('does not expose the app team id as a registration provider value', () => {
+    const built = buildTeamDetailModel({
+      teamId: 'team-1',
+      team: {
+        id: 'team-1',
+        name: 'Bears',
+        sport: 'Basketball',
+        registrationSource: {
+          providerName: 'Sports Connect',
+          teamId: 'team-1'
+        }
+      }
+    });
+
+    expect(built.team.registrationProvider).toEqual([
+      { label: 'Provider', value: 'Sports Connect' }
+    ]);
+  });
+
   it('returns human-labeled rows with copyable ids when a registration source is configured', () => {
     const built = buildTeamDetailModel({
       teamId: 'team-1',
@@ -430,6 +449,26 @@ describe('buildTeamDetailModel registration provider', () => {
       { label: 'External team ID', value: 'ext-42', copyable: true },
       { label: 'Provider team ID', value: 'provider-team-7', copyable: true },
       { label: 'Last sync', value: 'Synced' }
+    ]);
+  });
+
+  it('keeps a legacy provider-specific teamId when it is not the app team id', () => {
+    const built = buildTeamDetailModel({
+      teamId: 'team-1',
+      team: {
+        id: 'team-1',
+        name: 'Bears',
+        sport: 'Basketball',
+        registrationSource: {
+          providerName: 'LeagueApps',
+          teamId: 'provider-team-44'
+        }
+      }
+    });
+
+    expect(built.team.registrationProvider).toEqual([
+      { label: 'Provider', value: 'LeagueApps' },
+      { label: 'Provider team ID', value: 'provider-team-44', copyable: true }
     ]);
   });
 });
