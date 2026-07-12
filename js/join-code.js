@@ -14,7 +14,9 @@ const JOIN_CODE_TYPE_ALIASES = new Map([
     ['coparent', 'coparent'],
     ['co_parent', 'coparent'],
     ['co-parent', 'coparent'],
-    ['coparent_invite', 'coparent']
+    ['coparent_invite', 'coparent'],
+    ['friend', 'friend'],
+    ['friend_invite', 'friend']
 ]);
 
 export function normalizeJoinCode(value) {
