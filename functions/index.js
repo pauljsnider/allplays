@@ -150,6 +150,7 @@ const {
   normalizeOpportunityFilters,
   normalizeOpportunityInput,
   getEffectiveOpportunityStatus,
+  isOpportunityTeamDiscoverable,
   matchesOpportunityFilters,
   serializePublicOpportunity,
   buildOpportunityExpiry
@@ -11560,7 +11561,7 @@ async function resolveOpportunityTeam(input, caller) {
   const teamSnap = await firestore.doc(`teams/${input.teamId}`).get();
   if (!teamSnap.exists) throwOpportunityError('not-found', 'Team not found.');
   const team = teamSnap.data() || {};
-  if (team.isPublic !== true || team.active === false) {
+  if (!isOpportunityTeamDiscoverable(team)) {
     throwOpportunityError('failed-precondition', 'Only active public teams can publish public opportunities.');
   }
   if (!hasTeamAdminAccess({ team, user: caller.user, uid: caller.uid, email: caller.email })) {
@@ -11755,7 +11756,7 @@ exports.listManagedPublicOpportunityTeams = functions.https.onCall(async (_data,
   const teams = new Map();
   managedTeams.forEach((docSnap) => {
     const team = docSnap.data() || {};
-    if (team.isPublic !== true || team.active === false) return;
+    if (!isOpportunityTeamDiscoverable(team)) return;
     teams.set(docSnap.id, {
       id: docSnap.id,
       name: cleanOpportunityText(team.name, 100),
@@ -11778,7 +11779,7 @@ exports.getPublicTeamProfile = functions.https.onCall(async (data, context = {})
   }
   const teamSnap = await firestore.doc(`teams/${teamId}`).get();
   const team = teamSnap.data() || {};
-  if (!teamSnap.exists || team.isPublic !== true || team.active === false) {
+  if (!teamSnap.exists || !isOpportunityTeamDiscoverable(team)) {
     throwOpportunityError('not-found', 'Public team not found.');
   }
   return {
@@ -11957,17 +11958,20 @@ exports.moderatePublicOpportunity = functions.https.onCall(async (data, context 
   const action = data?.action === 'restore' ? 'restore' : data?.action === 'remove' ? 'remove' : '';
   if (!action) throwOpportunityError('invalid-argument', 'Choose remove or restore.');
   const { listingRef, listing } = await requireOpportunityListing(data?.listingId);
-  if (action === 'restore' && listing.kind !== 'player_seeking_team') {
+  const restoringRemovedListing = action === 'restore' && listing.status === 'removed';
+  if (restoringRemovedListing && listing.kind !== 'player_seeking_team') {
     const teamSnap = await firestore.doc(`teams/${listing.teamId}`).get();
     const team = teamSnap.data() || {};
-    if (!teamSnap.exists || team.isPublic !== true || team.active === false) {
+    if (!teamSnap.exists || !isOpportunityTeamDiscoverable(team)) {
       throwOpportunityError('failed-precondition', 'The linked team must be active and public before this listing can be restored.');
     }
   }
   const now = admin.firestore.Timestamp.now();
   const update = action === 'remove'
     ? { status: 'removed', moderatedBy: caller.uid, moderatedAt: now, updatedAt: now }
-    : { status: 'active', expiresAt: admin.firestore.Timestamp.fromDate(buildOpportunityExpiry(now.toMillis())), moderatedBy: caller.uid, moderatedAt: now, updatedAt: now };
+    : restoringRemovedListing
+      ? { status: 'active', expiresAt: admin.firestore.Timestamp.fromDate(buildOpportunityExpiry(now.toMillis())), moderatedBy: caller.uid, moderatedAt: now, updatedAt: now }
+      : { moderatedBy: caller.uid, moderatedAt: now, updatedAt: now };
   await listingRef.update(update);
   const reportsSnap = await firestore.collection('publicOpportunityReports').where('listingId', '==', listingRef.id).limit(100).get();
   const batch = firestore.batch();
@@ -11981,8 +11985,8 @@ exports.closePublicOpportunitiesForPrivateTeam = functions.firestore
   .onWrite(async (change, context) => {
     const before = change.before.exists ? change.before.data() || {} : null;
     const after = change.after.exists ? change.after.data() || {} : null;
-    const wasDiscoverable = before?.isPublic === true && before?.active !== false;
-    const isDiscoverable = after?.isPublic === true && after?.active !== false;
+    const wasDiscoverable = isOpportunityTeamDiscoverable(before);
+    const isDiscoverable = isOpportunityTeamDiscoverable(after);
     if (!wasDiscoverable || isDiscoverable) return null;
 
     const now = admin.firestore.Timestamp.now();

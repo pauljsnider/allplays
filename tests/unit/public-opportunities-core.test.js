@@ -7,6 +7,8 @@ const {
   buildOpportunityExpiry,
   containsUnsafePublicContact,
   getEffectiveOpportunityStatus,
+  isOpportunityTeamActive,
+  isOpportunityTeamDiscoverable,
   matchesOpportunityFilters,
   normalizeOpportunityInput,
   serializePublicOpportunity
@@ -28,6 +30,17 @@ const teamInput = {
 };
 
 describe('public sports opportunity core', () => {
+  it('uses the shared active/public semantics for eligible teams', () => {
+    expect(isOpportunityTeamActive({})).toBe(true);
+    expect(isOpportunityTeamActive({ active: false })).toBe(false);
+    expect(isOpportunityTeamActive({ archived: true })).toBe(false);
+    expect(isOpportunityTeamActive({ status: 'ARCHIVED' })).toBe(false);
+    expect(isOpportunityTeamActive({ status: 'inactive' })).toBe(false);
+    expect(isOpportunityTeamActive({ status: 'disabled' })).toBe(false);
+    expect(isOpportunityTeamDiscoverable({ isPublic: true, status: 'active' })).toBe(true);
+    expect(isOpportunityTeamDiscoverable({ isPublic: false, status: 'active' })).toBe(false);
+  });
+
   it('normalizes valid team opportunities and enforces a linked team', () => {
     expect(normalizeOpportunityInput(teamInput)).toEqual(expect.objectContaining({
       kind: 'coach_or_staff',

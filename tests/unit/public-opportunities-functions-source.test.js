@@ -28,8 +28,7 @@ describe('public opportunity callable wiring', () => {
   it('server-verifies publishing roles, verified email, expiration, rate limits, and private notifications', () => {
     expect(source).toContain("context.auth.token?.email_verified !== true");
     expect(source).toContain('hasTeamAdminAccess({ team, user: caller.user, uid: caller.uid, email: caller.email })');
-    expect(source).toContain("team.isPublic !== true");
-    expect(source).toContain("team.active === false");
+    expect(source).toContain('isOpportunityTeamDiscoverable(team)');
     expect(source).toContain("status: 'active'");
     expect(source).toContain('buildOpportunityExpiry(now.toMillis())');
     expect(source).toContain('checkPublicOpportunityBrowseRateLimit');
@@ -48,8 +47,20 @@ describe('public opportunity callable wiring', () => {
     expect(source).toMatch(/setOpportunityLifecycleStatus[\s\S]*listing\.status === 'removed'[\s\S]*can only be restored by a platform admin/);
     expect(source).toContain("mode === 'renew' && listing.kind !== 'player_seeking_team'");
     expect(source).toContain('await resolveOpportunityTeam({ kind: listing.kind, teamId: listing.teamId }, caller);');
-    expect(source).toContain("action === 'restore' && listing.kind !== 'player_seeking_team'");
+    expect(source).toContain("restoringRemovedListing && listing.kind !== 'player_seeking_team'");
     expect(source).toContain('The linked team must be active and public before this listing can be restored.');
+  });
+
+  it('preserves owner lifecycle state when reports are dismissed', () => {
+    expect(source).toContain("const restoringRemovedListing = action === 'restore' && listing.status === 'removed'");
+    expect(source).toMatch(/restoringRemovedListing[\s\S]*\? \{ status: 'active', expiresAt:[\s\S]*: \{ moderatedBy:/);
+  });
+
+  it('uses full active-team semantics for publishing, profiles, restoration, and automatic closure', () => {
+    expect(source).toContain('isOpportunityTeamDiscoverable,');
+    expect(source).toMatch(/resolveOpportunityTeam[\s\S]*!isOpportunityTeamDiscoverable\(team\)/);
+    expect(source).toContain('const wasDiscoverable = isOpportunityTeamDiscoverable(before);');
+    expect(source).toContain('const isDiscoverable = isOpportunityTeamDiscoverable(after);');
   });
 
   it('requires verified inquiry senders and allow-lists public team profiles', () => {

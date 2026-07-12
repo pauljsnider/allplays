@@ -21,6 +21,17 @@ function normalizeLocationKey(value, maxLength = 120) {
   return normalizeKey(value, maxLength).replace(/[^a-z0-9]+/g, ' ').trim();
 }
 
+function isOpportunityTeamActive(team) {
+  const status = String(team?.status || '').trim().toLowerCase();
+  return team?.active !== false &&
+    team?.archived !== true &&
+    !['archived', 'inactive', 'disabled'].includes(status);
+}
+
+function isOpportunityTeamDiscoverable(team) {
+  return team?.isPublic === true && isOpportunityTeamActive(team);
+}
+
 function normalizeOpportunityFilters(value = {}) {
   return {
     kind: OPPORTUNITY_KINDS.has(value.kind) ? value.kind : '',
@@ -188,6 +199,8 @@ module.exports = {
   cleanText,
   normalizeKey,
   normalizeLocationKey,
+  isOpportunityTeamActive,
+  isOpportunityTeamDiscoverable,
   normalizeOpportunityFilters,
   normalizeOpportunityInput,
   containsUnsafePublicContact,
