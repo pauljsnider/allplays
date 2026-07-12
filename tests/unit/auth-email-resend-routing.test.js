@@ -1,15 +1,9 @@
-import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 function read(path) {
     return readFileSync(resolve(process.cwd(), path), 'utf8');
-}
-
-function sha256(value) {
-    return createHash('sha256').update(value).digest('hex');
 }
 
 describe('authentication email delivery routing', () => {
@@ -91,7 +85,7 @@ describe('authentication email delivery routing', () => {
         }
     });
 
-    it('enables the password-reset retry policy before the non-destructive production deploy', () => {
+    it('bounds the normal non-destructive production deploy to three attempts', () => {
         const productionSource = read('.github/workflows/deploy-prod.yml');
         const firebaseDeployCommands = productionSource
             .split('\n')
@@ -99,32 +93,35 @@ describe('authentication email delivery routing', () => {
             .filter(line => /^(run: )?npx firebase-tools@14\.25\.0 deploy/.test(line));
 
         expect(firebaseDeployCommands).toEqual([
-            'npx firebase-tools@14.25.0 deploy --only functions:processPasswordResetEmailRequest --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive --force',
-            'run: npx firebase-tools@14.25.0 deploy --only hosting,firestore:rules,firestore:indexes,functions --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive'
+            'npx firebase-tools@14.25.0 deploy --only hosting,firestore:rules,firestore:indexes,functions --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive 2>&1 | tee "$deploy_log"'
         ]);
-        expect(productionSource).toContain('npx firebase-tools@14.25.0 functions:list');
-        expect(productionSource).toContain('.eventTrigger.retry == true');
-        expect(productionSource).toContain('jq -e \'\.functions == {"source":"functions"}\' "$FIREBASE_PROD_CONFIG"');
-        expect(productionSource).toContain('Refusing retry-policy migration for an unexpected Functions deploy source.');
-        expect(productionSource).toContain('expected_functions_hash="102aad7b6547759d0fa8e5c85d06d2a704cd3768690ce889649efb34600b56a8"');
-        expect(productionSource).toContain('elif [[ "$functions_hash" == "$expected_functions_hash" ]]');
-        expect(productionSource).toContain('Refusing forced retry-policy migration for unreviewed Functions source.');
-        expect(productionSource.match(/--force/g)).toHaveLength(1);
+        expect(productionSource.match(/--force/g) ?? []).toHaveLength(0);
+        expect(productionSource).toContain('max_attempts=3');
+        expect(productionSource).toContain('for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do');
+        expect(productionSource).toContain('if (( attempt == max_attempts )); then');
+        expect(productionSource).toContain('retry_delay_seconds=$((15 * (2 ** (attempt - 1))))');
     });
 
-    it('pins the forced migration to the reviewed tracked Functions tree', () => {
+    it('retries only transient production deploy failures and fails fast otherwise', () => {
         const productionSource = read('.github/workflows/deploy-prod.yml');
-        const approvedHash = productionSource.match(/expected_functions_hash="([a-f0-9]{64})"/)?.[1];
-        const trackedFunctionFiles = execFileSync('git', ['ls-files', 'functions'], { encoding: 'utf8' })
-            .trim()
-            .split('\n')
-            .filter(Boolean)
-            .sort();
-        const functionsManifest = trackedFunctionFiles
-            .map(path => `${sha256(readFileSync(resolve(process.cwd(), path)))}  ${path}\n`)
-            .join('');
+        const deployStepStart = productionSource.indexOf('      - name: Deploy Firebase production');
+        const deployStep = productionSource.slice(deployStepStart);
+        const transientGuard = 'if ! grep -Eiq "$transient_pattern" "$deploy_log"; then';
+        const attemptLimitGuard = 'if (( attempt == max_attempts )); then';
+        const retryDelay = 'retry_delay_seconds=$((15 * (2 ** (attempt - 1))))';
+        const nonTransientBranch = deployStep.slice(
+            deployStep.indexOf(transientGuard),
+            deployStep.indexOf(attemptLimitGuard)
+        );
 
-        expect(trackedFunctionFiles).not.toHaveLength(0);
-        expect(approvedHash).toBe(sha256(functionsManifest));
+        expect(deployStepStart).toBeGreaterThan(-1);
+        expect(deployStep).toContain("transient_pattern='(^|[^[:alnum:]])(429|500|502|503|504)([^[:alnum:]]|$)|service[[:space:]_-]+unavailable|econnreset|connection[[:space:]_-]+reset|network[[:space:]_-]+reset|etimedout|timed[[:space:]_-]+out|timeout'");
+        expect(deployStep).toContain('2>&1 | tee "$deploy_log"');
+        expect(deployStep).toContain('deploy_status="${PIPESTATUS[0]}"');
+        expect(deployStep).toContain(transientGuard);
+        expect(deployStep.indexOf(transientGuard)).toBeLessThan(deployStep.indexOf(attemptLimitGuard));
+        expect(deployStep.indexOf(attemptLimitGuard)).toBeLessThan(deployStep.indexOf(retryDelay));
+        expect(nonTransientBranch).toContain('failed with a non-transient error; not retrying.');
+        expect(nonTransientBranch).toContain('exit "$deploy_status"');
     });
 });
