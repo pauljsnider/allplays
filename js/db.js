@@ -2115,7 +2115,24 @@ export async function createTeam(teamData) {
         teamData.deactivatedBy = null;
     }
     const docRef = await addDoc(collection(db, "teams"), teamData);
+    if (teamData.ownerId) {
+        await grantCoachRoleForTeam(teamData.ownerId, docRef.id);
+    }
     return docRef.id;
+}
+
+export async function grantCoachRoleForTeam(userId, teamId) {
+    if (!userId || !teamId) return false;
+    try {
+        await setDoc(doc(db, "users", userId), {
+            coachOf: arrayUnion(teamId),
+            roles: arrayUnion('coach')
+        }, { merge: true });
+        return true;
+    } catch (error) {
+        console.warn('Unable to grant coach role for team owner:', error);
+        return false;
+    }
 }
 
 export async function updateTeam(teamId, teamData) {
