@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 
 const functionsSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
+const require = createRequire(import.meta.url);
+const { appendUniqueParentLink, appendUniqueValue } = require('../../functions/parent-invite-auto-link-core.cjs');
 
 function getFunctionSource(functionName) {
     const start = functionsSource.indexOf(`function ${functionName}`);
@@ -14,18 +17,14 @@ function getFunctionSource(functionName) {
 }
 
 function loadHelpers() {
-    const appendUniqueParentLinkSource = getFunctionSource('appendUniqueParentLink');
-    const appendUniqueValueSource = getFunctionSource('appendUniqueValue');
     const uniqueNonEmptyStringsSource = getFunctionSource('uniqueNonEmptyStrings');
     const buildApprovedParentMembershipUserUpdateSource = getFunctionSource('buildApprovedParentMembershipUserUpdate');
 
-    return new Function(`
-        ${appendUniqueParentLinkSource}
-        ${appendUniqueValueSource}
+    return new Function('appendUniqueParentLink', 'appendUniqueValue', `
         ${uniqueNonEmptyStringsSource}
         ${buildApprovedParentMembershipUserUpdateSource}
         return { buildApprovedParentMembershipUserUpdate };
-    `)();
+    `)(appendUniqueParentLink, appendUniqueValue);
 }
 
 describe('buildApprovedParentMembershipUserUpdate', () => {

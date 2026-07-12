@@ -28,23 +28,17 @@ describe('parent invite auto-linking', () => {
         expect(helperSource).toContain('existingUser: payload.existingUser === true || autoLinked');
     });
 
-    it('links the user, player parents list, and accepted invite atomically server-side', () => {
+    it('registers the executable auto-link handler with its production dependencies', () => {
         const source = readFileSync(resolve(process.cwd(), 'functions/index.js'), 'utf8');
         const helperIndex = source.indexOf('exports.autoAcceptParentInviteForExistingUser');
         expect(helperIndex).toBeGreaterThanOrEqual(0);
 
-        const helperSource = source.slice(helperIndex, helperIndex + 7000);
-        expect(helperSource).toContain('firestore.runTransaction(async (transaction) =>');
-        expect(helperSource).toContain('hasTeamAdminAccess({ team, user: actor, uid: context.auth.uid, email: actorEmail })');
-        expect(helperSource).toContain("return { autoLinked: false, existingUser: false, reason: 'no-existing-user' };");
-        expect(helperSource).toContain('return { autoLinked: true, existingUser: true, userId: userRef.id };');
-        expect(helperSource).toContain('parentOf: appendUniqueParentLink');
-        expect(helperSource).toContain('parentTeamIds: appendUniqueValue');
-        expect(helperSource).toContain('parentPlayerKeys: appendUniqueValue');
-        expect(helperSource).toContain('existingParents.push');
-        expect(helperSource).toContain("status: 'accepted'");
-        expect(helperSource).toContain('autoAccepted: true');
-        expect(helperSource).toContain('alreadyLinked');
+        const helperSource = source.slice(helperIndex, helperIndex + 900);
+        expect(helperSource).toContain('functions.https.onCall(createAutoAcceptParentInviteHandler({');
+        expect(helperSource).toContain('firestore,');
+        expect(helperSource).toContain('Timestamp: admin.firestore.Timestamp');
+        expect(helperSource).toContain('HttpsError: functions.https.HttpsError');
+        expect(helperSource).toContain('validateCode: validateAutoAcceptParentInviteCode');
     });
 
     it('shows auto-linked confirmation instead of code-first instructions in roster UI', () => {
