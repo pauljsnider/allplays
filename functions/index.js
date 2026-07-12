@@ -11503,6 +11503,28 @@ function decodeOpportunityCursor(value) {
   }
 }
 
+function encodeOpportunityInquiryCursor(docSnap) {
+  if (!docSnap) return null;
+  return Buffer.from(JSON.stringify({
+    updatedAt: docSnap.data()?.updatedAt?.toMillis?.() || 0,
+    id: docSnap.id
+  }), 'utf8').toString('base64url');
+}
+
+function decodeOpportunityInquiryCursor(value) {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(String(value), 'base64url').toString('utf8'));
+    if (!parsed.id || !Number.isFinite(Number(parsed.updatedAt))) return null;
+    return {
+      id: String(parsed.id),
+      updatedAt: admin.firestore.Timestamp.fromMillis(Number(parsed.updatedAt))
+    };
+  } catch {
+    return null;
+  }
+}
+
 function serializeOpportunityMessage(docSnap) {
   const data = docSnap.data() || {};
   return {
@@ -11917,26 +11939,50 @@ async function requireOpportunityInquiry(inquiryId, caller) {
   return { ref, snap, inquiry };
 }
 
-exports.listOpportunityInquiries = functions.https.onCall(async (_data, context = {}) => {
+exports.listOpportunityInquiries = functions.https.onCall(async (data, context = {}) => {
   const caller = await getOpportunityCaller(context);
-  const baseQuery = firestore.collection('opportunityInquiries')
+  const cursor = decodeOpportunityInquiryCursor(data?.cursor);
+  let baseQuery = firestore.collection('opportunityInquiries')
     .where('participantIds', 'array-contains', caller.uid)
-    .orderBy('updatedAt', 'desc');
+    .orderBy('updatedAt', 'desc')
+    .orderBy(admin.firestore.FieldPath.documentId(), 'desc');
+  if (cursor) baseQuery = baseQuery.startAfter(cursor.updatedAt, cursor.id);
   const items = [];
+  const maxScanDocuments = 500;
+  let scannedDocuments = 0;
   let lastScanned = null;
   let exhausted = false;
-  while (items.length < 50 && !exhausted) {
-    let query = baseQuery.limit(50);
-    if (lastScanned) query = baseQuery.startAfter(lastScanned).limit(50);
+  let stoppedBeforeEndOfScan = false;
+  while (items.length < 50 && !exhausted && scannedDocuments < maxScanDocuments) {
+    const batchSize = Math.min(50, maxScanDocuments - scannedDocuments);
+    let query = baseQuery.limit(batchSize);
+    if (lastScanned) {
+      query = firestore.collection('opportunityInquiries')
+        .where('participantIds', 'array-contains', caller.uid)
+        .orderBy('updatedAt', 'desc')
+        .orderBy(admin.firestore.FieldPath.documentId(), 'desc')
+        .startAfter(lastScanned.data().updatedAt, lastScanned.id)
+        .limit(batchSize);
+    }
     const snap = await query.get();
-    exhausted = snap.size < 50;
-    lastScanned = snap.docs.at(-1) || lastScanned;
+    exhausted = snap.size < batchSize;
     const access = await Promise.all(snap.docs.map((docSnap) => canAccessOpportunityInquiry(caller, docSnap.data() || {})));
-    for (let index = 0; index < snap.docs.length && items.length < 50; index += 1) {
+    for (let index = 0; index < snap.docs.length; index += 1) {
+      lastScanned = snap.docs[index];
+      scannedDocuments += 1;
       if (access[index]) items.push(serializeOpportunityInquiry(snap.docs[index]));
+      if (items.length >= 50) {
+        stoppedBeforeEndOfScan = index < snap.docs.length - 1;
+        break;
+      }
     }
   }
-  return { items };
+  return {
+    items,
+    nextCursor: (stoppedBeforeEndOfScan || !exhausted) && lastScanned
+      ? encodeOpportunityInquiryCursor(lastScanned)
+      : null
+  };
 });
 
 exports.getOpportunityInquiry = functions.https.onCall(async (data, context = {}) => {

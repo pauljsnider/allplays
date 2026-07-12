@@ -60,9 +60,8 @@ export async function createOpportunityInquiry(listingId: string, message: strin
   return result.inquiry;
 }
 
-export async function listOpportunityInquiries() {
-  const result = await call<{ items: OpportunityInquiry[] }>('listOpportunityInquiries');
-  return result.items;
+export async function listOpportunityInquiries(cursor = '') {
+  return call<{ items: OpportunityInquiry[]; nextCursor: string | null }>('listOpportunityInquiries', cursor ? { cursor } : {});
 }
 
 export async function getOpportunityInquiry(inquiryId: string) {

@@ -1,6 +1,8 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+// @vitest-environment jsdom
+
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { Link, MemoryRouter, Route, Routes } from 'react-router-dom';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Discover } from './Discover';
 import { OpportunityDetail } from './OpportunityDetail';
 import type { AuthState } from '../lib/types';
@@ -68,11 +70,13 @@ beforeEach(() => {
   opportunityMocks.getPublicOpportunity.mockResolvedValue(listing);
 });
 
+afterEach(() => cleanup());
+
 describe('public Discover experience', () => {
   it('lets anonymous visitors browse opportunities and switch to teams', async () => {
     render(<MemoryRouter initialEntries={['/discover']}><Discover auth={signedOutAuth} /></MemoryRouter>);
     expect(await screen.findByText('Assistant coach wanted')).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Sign in to post' })).toHaveAttribute('href', '/auth?next=%2Fdiscover%2Fnew');
+    expect(screen.getByRole('link', { name: 'Sign in to post' }).getAttribute('href')).toBe('/auth?next=%2Fdiscover%2Fnew');
     fireEvent.click(screen.getByRole('button', { name: /Teams/ }));
     expect(await screen.findByText('Public team finder')).toBeTruthy();
   });
@@ -108,5 +112,24 @@ describe('public Discover experience', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send inquiry' }));
     await waitFor(() => expect(opportunityMocks.createOpportunityInquiry).toHaveBeenCalledWith('listing-1', 'Is this role still open?'));
     expect(await screen.findByText('Private inquiry thread')).toBeTruthy();
+  });
+
+  it('clears the prior opportunity when a new route fails to load', async () => {
+    opportunityMocks.getPublicOpportunity.mockImplementation((listingId: string) => listingId === 'listing-1'
+      ? Promise.resolve(listing)
+      : Promise.reject(new Error('Opportunity not found.')));
+    render(
+      <MemoryRouter initialEntries={['/discover/opportunities/listing-1']}>
+        <Link to="/discover/opportunities/missing-listing">Next opportunity</Link>
+        <Routes>
+          <Route path="/discover/opportunities/:listingId" element={<OpportunityDetail auth={signedOutAuth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Assistant coach wanted' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('link', { name: 'Next opportunity' }));
+    expect(await screen.findByText('Opportunity not found.')).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Assistant coach wanted' })).toBeNull();
   });
 });

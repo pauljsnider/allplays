@@ -21,9 +21,11 @@ export function OpportunityManage({ auth }: { auth: AuthState }) {
   const [tab, setTab] = useState<ManageTab>('listings');
   const [listings, setListings] = useState<PublicOpportunity[]>([]);
   const [inquiries, setInquiries] = useState<OpportunityInquiry[]>([]);
+  const [inquiryCursor, setInquiryCursor] = useState<string | null>(null);
   const [reports, setReports] = useState<OpportunityReport[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState('');
+  const [loadingMoreInquiries, setLoadingMoreInquiries] = useState(false);
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
   const canModerateReports = auth.user?.isAdmin === true;
@@ -34,18 +36,21 @@ export function OpportunityManage({ auth }: { auth: AuthState }) {
     if (!auth.user?.uid) {
       setListings([]);
       setInquiries([]);
+      setInquiryCursor(null);
       setReports([]);
       setLoading(false);
       return;
     }
     try {
-      const [nextListings, nextInquiries, nextReports] = await Promise.all([
+      setInquiryCursor(null);
+      const [nextListings, inquiryPage, nextReports] = await Promise.all([
         listMyPublicOpportunities(),
         listOpportunityInquiries(),
         canModerateReports ? listPublicOpportunityReports() : Promise.resolve([])
       ]);
       setListings(nextListings);
-      setInquiries(nextInquiries);
+      setInquiries(inquiryPage.items);
+      setInquiryCursor(inquiryPage.nextCursor);
       setReports(nextReports);
     } catch (loadError: any) {
       setError(loadError?.message || 'Unable to load opportunity management.');
@@ -55,6 +60,21 @@ export function OpportunityManage({ auth }: { auth: AuthState }) {
   }, [auth.user?.uid, canModerateReports]);
 
   useEffect(() => { void load(); }, [load]);
+
+  const loadMoreInquiries = async () => {
+    if (!inquiryCursor || loadingMoreInquiries) return;
+    setLoadingMoreInquiries(true);
+    setError('');
+    try {
+      const page = await listOpportunityInquiries(inquiryCursor);
+      setInquiries((current) => [...current, ...page.items.filter((item) => !current.some((existing) => existing.id === item.id))]);
+      setInquiryCursor(page.nextCursor);
+    } catch (loadError: any) {
+      setError(loadError?.message || 'Unable to load more inquiries.');
+    } finally {
+      setLoadingMoreInquiries(false);
+    }
+  };
 
   const lifecycle = async (item: PublicOpportunity, action: 'close' | 'renew') => {
     setBusyId(item.id);
@@ -97,7 +117,7 @@ export function OpportunityManage({ auth }: { auth: AuthState }) {
       {status ? <Status tone="success" message={status} /> : null}
       {loading ? <div className="app-card p-8 text-center"><Loader2 className="mx-auto h-7 w-7 animate-spin text-primary-600" /></div> : null}
       {!loading && tab === 'listings' ? listings.length ? <div className="grid gap-3 lg:grid-cols-2">{listings.map((item) => <div key={item.id} className="space-y-2"><OpportunityCard item={item} /><div className="flex gap-2 px-1"><Link to={`/discover/opportunities/${item.id}/edit`} className="ghost-button flex-1 justify-center !min-h-9 text-xs">Edit</Link>{item.status === 'active' ? <button type="button" className="ghost-button flex-1 justify-center !min-h-9 text-xs" disabled={busyId === item.id} onClick={() => void lifecycle(item, 'close')}>Close</button> : item.status === 'removed' ? <span className="flex flex-1 items-center justify-center text-xs font-black text-rose-700">Removed by moderation</span> : <button type="button" className="primary-button flex-1 justify-center !min-h-9 text-xs" disabled={busyId === item.id} onClick={() => void lifecycle(item, 'renew')}>Renew 30 days</button>}</div></div>)}</div> : <Empty icon={Plus} title="No listings yet" detail="Post a team opening, sports job, volunteer role, or guardian-safe looking-for-team listing." /> : null}
-      {!loading && tab === 'inquiries' ? inquiries.length ? <div className="space-y-3">{inquiries.map((inquiry) => <Link key={inquiry.id} to={`/discover/inquiries/${inquiry.id}`} className="app-card flex items-center gap-3 p-4"><div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-50 text-primary-700"><Inbox className="h-5 w-5" /></div><span className="min-w-0 flex-1"><span className="block truncate text-sm font-black text-gray-950">{inquiry.listingTitle}</span><span className="mt-1 block text-xs font-semibold text-gray-500">Private inquiry · {inquiry.status}</span></span><span className="text-primary-700">›</span></Link>)}</div> : <Empty icon={Inbox} title="No inquiries" detail="Private responses to your listings—and inquiries you send—will appear here." /> : null}
+      {!loading && tab === 'inquiries' ? inquiries.length ? <div className="space-y-3">{inquiries.map((inquiry) => <Link key={inquiry.id} to={`/discover/inquiries/${inquiry.id}`} className="app-card flex items-center gap-3 p-4"><div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-50 text-primary-700"><Inbox className="h-5 w-5" /></div><span className="min-w-0 flex-1"><span className="block truncate text-sm font-black text-gray-950">{inquiry.listingTitle}</span><span className="mt-1 block text-xs font-semibold text-gray-500">Private inquiry · {inquiry.status}</span></span><span className="text-primary-700">›</span></Link>)}{inquiryCursor ? <button type="button" className="ghost-button mx-auto" disabled={loadingMoreInquiries} onClick={() => void loadMoreInquiries()}>{loadingMoreInquiries ? <Loader2 className="h-4 w-4 animate-spin" /> : null}Load more inquiries</button> : null}</div> : <Empty icon={Inbox} title="No inquiries" detail="Private responses to your listings—and inquiries you send—will appear here." /> : null}
       {!loading && tab === 'reports' ? reports.length ? <div className="space-y-3">{reports.map((report) => <article key={report.id} className="app-card p-4"><div className="flex items-start gap-3"><AlertTriangle className="h-5 w-5 flex-none text-amber-600" /><div className="min-w-0 flex-1"><div className="text-sm font-black text-gray-950">{report.listingTitle}</div><div className="mt-1 text-sm font-semibold text-gray-600">{report.reason}</div><div className="mt-3 flex gap-2"><Link to={`/discover/opportunities/${report.listingId}`} className="ghost-button !min-h-9 text-xs">Review</Link><button type="button" className="primary-button !min-h-9 text-xs" disabled={busyId === report.id} onClick={() => void moderate(report, 'remove')}>Remove listing</button><button type="button" className="ghost-button !min-h-9 text-xs" disabled={busyId === report.id} onClick={() => void moderate(report, 'restore')}>Dismiss &amp; restore</button></div></div></div></article>)}</div> : <Empty icon={AlertTriangle} title="No open reports" detail="Reported public opportunities will appear here for platform review." /> : null}
     </div>
   );

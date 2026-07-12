@@ -371,13 +371,13 @@ test('public opportunity reads strip private fields and resume from returned cur
     assert.deepEqual(secondPage.items.map((item) => item.id), ['older']);
 });
 
-test('revoked team admins lose private inquiry access without starving older valid threads', async () => {
+test('revoked team admins lose private inquiry access with bounded, resumable stale-row scans', async () => {
     const seed = {
         'users/former-admin': { email: 'former@example.com', isAdmin: false },
         'teams/team-1': { ownerId: 'current-owner', adminEmails: ['current@example.com'] }
     };
-    for (let index = 0; index < 50; index += 1) {
-        seed[`opportunityInquiries/stale-${String(index).padStart(2, '0')}`] = {
+    for (let index = 0; index < 500; index += 1) {
+        seed[`opportunityInquiries/stale-${String(index).padStart(3, '0')}`] = {
             senderId: `sender-${index}`,
             teamId: 'team-1',
             participantIds: ['former-admin', `sender-${index}`],
@@ -398,10 +398,14 @@ test('revoked team admins lose private inquiry access without starving older val
     const { callables } = loadCallables(seed);
     const context = authContext('former-admin', { email: 'former@example.com' });
 
-    const inbox = await callables.listOpportunityInquiries({}, context);
-    assert.deepEqual(inbox.items.map((item) => item.id), ['valid-individual']);
+    const firstPage = await callables.listOpportunityInquiries({}, context);
+    assert.deepEqual(firstPage.items, []);
+    assert.equal(typeof firstPage.nextCursor, 'string');
+    const secondPage = await callables.listOpportunityInquiries({ cursor: firstPage.nextCursor }, context);
+    assert.deepEqual(secondPage.items.map((item) => item.id), ['valid-individual']);
+    assert.equal(secondPage.nextCursor, null);
     await assert.rejects(
-        callables.getOpportunityInquiry({ inquiryId: 'stale-00' }, context),
+        callables.getOpportunityInquiry({ inquiryId: 'stale-000' }, context),
         (error) => error.code === 'permission-denied'
     );
 });

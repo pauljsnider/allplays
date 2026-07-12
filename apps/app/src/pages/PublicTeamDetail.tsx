@@ -13,10 +13,11 @@ export function PublicTeamDetail() {
   useEffect(() => {
     let active = true;
     setLoading(true);
+    setTeam(null);
     setError('');
     getPublicTeamDetail(teamId)
       .then((item) => { if (active) setTeam(item); })
-      .catch((loadError: any) => { if (active) setError(loadError?.message || 'Unable to load this public team.'); })
+      .catch((loadError: any) => { if (active) { setTeam(null); setError(loadError?.message || 'Unable to load this public team.'); } })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [teamId]);

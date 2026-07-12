@@ -26,9 +26,11 @@ export function OpportunityDetail({ auth }: { auth: AuthState }) {
   useEffect(() => {
     let active = true;
     setLoading(true);
+    setItem(null);
+    setError('');
     getPublicOpportunity(listingId)
       .then((result) => { if (active) setItem(result); })
-      .catch((loadError: any) => { if (active) setError(loadError?.message || 'Unable to load this opportunity.'); })
+      .catch((loadError: any) => { if (active) { setItem(null); setError(loadError?.message || 'Unable to load this opportunity.'); } })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [listingId]);

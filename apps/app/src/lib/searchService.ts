@@ -402,7 +402,10 @@ export async function searchAppTeams(queryText: string, appAccessTeams: AppSearc
     const localTeamsById = new Map(appAccessTeams.map((team) => [team.id, team]));
     publicTeams.forEach((team) => {
       if (canUserDiscoverTeamInAppSearch(team, user)) {
-        localTeamsById.set(team.id, team);
+        const existingTeam = localTeamsById.get(team.id);
+        localTeamsById.set(team.id, existingTeam?.fromAppAccess
+          ? { ...team, fromAppAccess: true }
+          : team);
       }
     });
 
@@ -747,7 +750,7 @@ async function loadDirectAccessSearchTeams(user: AuthUser): Promise<AppSearchTea
     });
   });
 
-  return normalizeTeams(Array.from(teamsById.values()));
+  return normalizeTeams(Array.from(teamsById.values())).map((team) => ({ ...team, fromAppAccess: true }));
 }
 
 function buildParentHomeSearchTeam(homeTeam: any, baseTeam?: AppSearchTeam): AppSearchTeam {
@@ -892,7 +895,7 @@ function rankTeamsForQuery(teams: AppSearchTeam[], queryText: string) {
 
 function teamToSearchItem(team: AppSearchTeam): AppSearchItem {
   const location = cleanString(team.location);
-  const teamRoute = team.isPublic === true
+  const teamRoute = team.isPublic === true && !team.fromAppAccess
     ? `/teams/${encodeURIComponent(team.id)}/public`
     : `/teams/${encodeURIComponent(team.id)}`;
   return {

@@ -205,12 +205,13 @@ describe('React app search service', () => {
         expect(defaultResults.players).toHaveLength(20);
     });
 
-    it('routes private-access teams to private detail and public teams to the public-safe profile', () => {
+    it('routes app-access teams to private detail and public-only teams to the public-safe profile', () => {
         const results = computeAppSearchResults({
             queryText: '',
             auth,
             teams: [
                 { id: 'private-team', name: 'Private Team', isPublic: false, fromAppAccess: true },
+                { id: 'accessible-public', name: 'Accessible Public Team', isPublic: true, fromAppAccess: true },
                 { id: 'public team', name: 'Public Team', isPublic: true }
             ],
             players: []
@@ -218,6 +219,7 @@ describe('React app search service', () => {
 
         expect(results.teams.map((team) => [team.title, team.route])).toEqual([
             ['Private Team', '/teams/private-team'],
+            ['Accessible Public Team', '/teams/accessible-public'],
             ['Public Team', '/teams/public%20team/public']
         ]);
     });

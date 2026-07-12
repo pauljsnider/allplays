@@ -105,8 +105,8 @@ describe('public opportunity callable wiring', () => {
   });
 
   it('pages past revoked inquiry rows and requires verified reply authors', () => {
-    expect(source).toMatch(/listOpportunityInquiries[\s\S]*while \(items\.length < 50 && !exhausted\)/);
-    expect(source).toContain('baseQuery.startAfter(lastScanned).limit(50)');
+    expect(source).toMatch(/listOpportunityInquiries[\s\S]*const maxScanDocuments = 500/);
+    expect(source).toContain('encodeOpportunityInquiryCursor(lastScanned)');
     expect(source).toMatch(/replyToOpportunityInquiry[\s\S]*getOpportunityCaller\(context, \{ verified: true \}\)/);
   });
 
