@@ -26,14 +26,16 @@ describe('edit schedule bulk AI image paste wiring', () => {
         expect(changeHandler[0]).toContain('setBulkAiImage(file)');
     });
 
-    it('wires a paste listener on the Bulk AI tab that consumes clipboard images', () => {
+    it('wires a document paste listener that consumes clipboard images while Bulk AI is active', () => {
         const source = readEditSchedule();
 
         expect(source).toContain("getElementById('content-bulk-ai')");
         const pasteHandler = source.match(
-            /bulkAiTabContent\.addEventListener\('paste'[\s\S]*?\n {8}\}\);/
+            /function handleBulkAiImagePaste\(e\) \{[\s\S]*?\n {8}\}/
         );
         expect(pasteHandler).not.toBeNull();
+        expect(source).toContain("document.addEventListener('paste', handleBulkAiImagePaste)");
+        expect(pasteHandler[0]).toContain("bulkAiTabContent.classList.contains('hidden')");
         expect(pasteHandler[0]).toContain('clipboardData');
         expect(pasteHandler[0]).toContain('getAsFile()');
         expect(pasteHandler[0]).toContain('setBulkAiImage(file)');

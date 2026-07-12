@@ -4086,9 +4086,8 @@
             document.getElementById('schedule-image-preview').classList.add('hidden');
         });
 
-        // Paste or drop a schedule image anywhere on the Bulk AI tab
-        const bulkAiTabContent = document.getElementById('content-bulk-ai');
-        bulkAiTabContent.addEventListener('paste', (e) => {
+        function handleBulkAiImagePaste(e) {
+            if (bulkAiTabContent.classList.contains('hidden')) return;
             const items = e.clipboardData && e.clipboardData.items;
             if (!items) return;
             for (const item of items) {
@@ -4101,7 +4100,11 @@
                     return;
                 }
             }
-        });
+        }
+
+        // Paste or drop a schedule image anywhere while the Bulk AI tab is active
+        const bulkAiTabContent = document.getElementById('content-bulk-ai');
+        document.addEventListener('paste', handleBulkAiImagePaste);
 
         bulkAiTabContent.addEventListener('dragover', (e) => {
             if (e.dataTransfer && Array.from(e.dataTransfer.types).includes('Files')) {
