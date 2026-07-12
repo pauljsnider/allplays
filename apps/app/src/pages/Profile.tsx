@@ -136,6 +136,7 @@ export function Profile({ auth }: { auth: AuthState }) {
   const [busy, setBusy] = useState('');
   const [profileStatus, setProfileStatus] = useState<Status | null>(null);
   const [verificationStatus, setVerificationStatus] = useState<Status | null>(null);
+  const [resendCooldown, setResendCooldown] = useState(0);
   const [notificationStatus, setNotificationStatus] = useState<Status | null>(null);
   const [notificationTeamsError, setNotificationTeamsError] = useState('');
   const [notificationPreferenceErrorsByTeamId, setNotificationPreferenceErrorsByTeamId] = useState<Record<string, string>>({});
@@ -824,13 +825,24 @@ export function Profile({ auth }: { auth: AuthState }) {
     }
   };
 
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const timer = setTimeout(() => setResendCooldown((seconds) => Math.max(0, seconds - 1)), 1000);
+    return () => clearTimeout(timer);
+  }, [resendCooldown]);
+
   const resendVerification = async () => {
+    if (resendCooldown > 0) return;
     setBusy('verification');
     setVerificationStatus(null);
 
     try {
       await resendVerificationEmail();
-      setVerificationStatus({ message: 'Verification email sent. Check your inbox.', tone: 'success' });
+      setVerificationStatus({
+        message: `Verification email sent to ${user?.email || 'your inbox'}. It can take a couple of minutes — check spam too.`,
+        tone: 'success'
+      });
+      setResendCooldown(60);
     } catch (error) {
       setVerificationStatus({ message: describeAuthError(error), tone: 'error' });
     } finally {
@@ -1574,9 +1586,9 @@ export function Profile({ auth }: { auth: AuthState }) {
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
             {!user.emailVerified ? (
-              <button type="button" className="secondary-button" onClick={resendVerification} disabled={busy === 'verification'}>
+              <button type="button" className="secondary-button" onClick={resendVerification} disabled={busy === 'verification' || resendCooldown > 0}>
                 {busy === 'verification' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Send className="h-4 w-4" aria-hidden="true" />}
-                Resend email
+                {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : 'Resend email'}
               </button>
             ) : null}
             <button type="button" className="ghost-button" onClick={refreshVerification} disabled={busy === 'refresh-verification'}>
