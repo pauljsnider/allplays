@@ -2,10 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { buildGameDayRsvpBreakdown } from '../../js/game-day-rsvp-breakdown.js';
 import {
     buildRsvpFallbackPlayerIdsByUser,
-    extractPlayerIdsFromParentScope
+    extractPlayerIdsFromParentScope,
+    uniqueNonEmptyIds
 } from '../../js/rsvp-player-fallback.js';
 
 describe('RSVP player fallback attribution', () => {
+    it('accepts only string document ids', () => {
+        expect(uniqueNonEmptyIds([' player-1 ', 'player-1', 42, { id: 'player-2' }, null])).toEqual(['player-1']);
+    });
+
     it('maps a user-level parent RSVP through parentPlayerKeys', async () => {
         const rsvps = [
             { id: 'parent-1', userId: 'parent-1', response: 'going', respondedAt: '2026-07-01T12:00:00.000Z' }

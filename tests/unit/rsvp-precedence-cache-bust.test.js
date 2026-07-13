@@ -27,7 +27,7 @@ describe('RSVP precedence cache delivery', () => {
             expect(readRepoFile(path)).toContain(expectedVersion);
         }
         expect(dbSource).toContain("from './rsvp-summary.js?v=2';");
-        expect(dbSource).toContain("from './game-day-rsvp-breakdown.js?v=2';");
+        expect(dbSource).toContain("from './game-day-rsvp-breakdown.js?v=3';");
         expect(breakdownSource).toContain("from './rsvp-summary.js?v=2';");
     });
 

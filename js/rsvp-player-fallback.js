@@ -1,5 +1,5 @@
 function compactId(value) {
-    return String(value || '').trim();
+    return typeof value === 'string' ? value.trim() : '';
 }
 
 export function uniqueNonEmptyIds(values) {

@@ -45,7 +45,7 @@ import {
 } from './parent-membership-utils.js?v=2';
 import { buildCoachOverrideRsvpDocId, shouldDeleteLegacyRsvpForOverride } from './rsvp-doc-ids.js';
 import { computeEffectiveRsvpSummary } from './rsvp-summary.js?v=2';
-import { buildGameDayRsvpBreakdown } from './game-day-rsvp-breakdown.js?v=2';
+import { buildGameDayRsvpBreakdown } from './game-day-rsvp-breakdown.js?v=3';
 import {
     buildRsvpFallbackPlayerIdsByUser,
     extractDirectRsvpPlayerIds,

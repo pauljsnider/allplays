@@ -30,6 +30,51 @@ function resolveRsvpPlayerIds(rsvp, fallbackByUser) {
     return uid ? uniqueNonEmptyIds(fallbackByUser.get(uid) || []) : [];
 }
 
+function toMillis(value) {
+    if (!value) return 0;
+    if (typeof value?.toMillis === 'function') return value.toMillis();
+    if (value instanceof Date) return value.getTime();
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? 0 : parsed.getTime();
+}
+
+function buildUnmatchedResponders(responses, fallbackByUser) {
+    const latestByResponder = new Map();
+    responses.forEach((rsvp, sequence) => {
+        const response = normalizeRsvpResponse(rsvp?.response);
+        if (response === 'not_responded' || resolveRsvpPlayerIds(rsvp, fallbackByUser).length > 0) return;
+
+        const responderUserId = String(rsvp?.userId || rsvp?.id || '').trim();
+        const responderName = String(
+            rsvp?.displayName
+            || rsvp?.responderDisplayName
+            || rsvp?.email
+            || responderUserId
+            || 'Unknown responder'
+        ).trim();
+        const responderKey = responderUserId || responderName;
+        const respondedAtMillis = toMillis(rsvp?.respondedAt);
+        const existing = latestByResponder.get(responderKey);
+        if (existing && (
+            respondedAtMillis < existing.respondedAtMillis
+            || (respondedAtMillis === existing.respondedAtMillis && sequence < existing.sequence)
+        )) return;
+
+        latestByResponder.set(responderKey, {
+            responderUserId: responderUserId || null,
+            responderName,
+            response,
+            respondedAt: rsvp?.respondedAt || null,
+            respondedAtMillis,
+            sequence
+        });
+    });
+
+    return Array.from(latestByResponder.values())
+        .sort((a, b) => b.respondedAtMillis - a.respondedAtMillis || b.sequence - a.sequence)
+        .map(({ respondedAtMillis: _respondedAtMillis, sequence: _sequence, ...entry }) => entry);
+}
+
 export function buildGameDayRsvpBreakdown({ players, rsvps, fallbackByUser = new Map() }) {
     const roster = Array.isArray(players) ? players : [];
     const responses = Array.isArray(rsvps) ? rsvps : [];
@@ -100,6 +145,7 @@ export function buildGameDayRsvpBreakdown({ players, rsvps, fallbackByUser = new
 
     return {
         grouped,
+        unmatchedResponders: buildUnmatchedResponders(responses, fallbackByUser),
         counts: {
             going: grouped.going.length,
             maybe: grouped.maybe.length,

@@ -107,4 +107,25 @@ describe('StaffRsvpBreakdownPanel', () => {
         expect(screen.queryByTestId('staff-rsvp-row-p1')).toBeNull();
         expect(screen.getByRole('button', { name: 'Show responded players (1 going · 0 maybe · 0 out · 0 missing)' }).getAttribute('aria-expanded')).toBe('false');
     });
+
+    it('shows saved responses that could not be linked to a roster player', () => {
+        renderPanel({
+            grouped: {
+                going: [],
+                maybe: [],
+                not_going: [],
+                not_responded: [{ playerId: 'p1', playerName: 'Avery Smith', playerNumber: '1', response: 'not_responded' }]
+            },
+            unmatchedResponders: [{
+                responderUserId: 'parent-1',
+                responderName: 'dad@allplays.ai',
+                response: 'going',
+                respondedAt: '2026-07-13T12:00:00.000Z'
+            }],
+            counts: { going: 0, maybe: 0, notGoing: 0, notResponded: 1, total: 1 }
+        });
+
+        expect(screen.getByTestId('staff-rsvp-unmatched-responders')).toBeTruthy();
+        expect(screen.getByText('Answered by dad@allplays.ai — not linked to a player (Going).')).toBeTruthy();
+    });
 });

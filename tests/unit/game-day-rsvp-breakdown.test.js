@@ -2,6 +2,39 @@ import { describe, expect, it } from 'vitest';
 import { buildGameDayRsvpBreakdown } from '../../js/game-day-rsvp-breakdown.js';
 
 describe('game day RSVP breakdown', () => {
+    it('preserves the latest identity for a response that cannot be linked to a player', () => {
+        const breakdown = buildGameDayRsvpBreakdown({
+            players: [{ id: 'p1', name: 'Avery', number: '7' }],
+            rsvps: [
+                {
+                    id: 'parent-1',
+                    userId: 'parent-1',
+                    displayName: 'dad@allplays.ai',
+                    response: 'maybe',
+                    respondedAt: '2026-03-29T02:00:00.000Z'
+                },
+                {
+                    id: 'parent-1',
+                    userId: 'parent-1',
+                    displayName: 'Dad Example',
+                    response: 'going',
+                    respondedAt: '2026-03-29T02:05:00.000Z'
+                }
+            ],
+            fallbackByUser: new Map()
+        });
+
+        expect(breakdown.unmatchedResponders).toEqual([{
+            responderUserId: 'parent-1',
+            responderName: 'Dad Example',
+            response: 'going',
+            respondedAt: '2026-03-29T02:05:00.000Z'
+        }]);
+        expect(breakdown.grouped.not_responded).toEqual([
+            expect.objectContaining({ playerId: 'p1', response: 'not_responded' })
+        ]);
+    });
+
     it('keeps the latest stored write for a player after parent and coach overwrite each other', () => {
         const breakdown = buildGameDayRsvpBreakdown({
             players: [

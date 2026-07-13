@@ -293,6 +293,13 @@ export type StaffScheduleRsvpRow = {
   responderUserId?: string | null;
 };
 
+export type StaffScheduleUnmatchedRsvpResponder = {
+  responderUserId: string | null;
+  responderName: string;
+  response: RsvpResponse;
+  respondedAt?: unknown;
+};
+
 export type StaffScheduleRsvpBreakdown = {
   grouped: {
     going: StaffScheduleRsvpRow[];
@@ -300,6 +307,7 @@ export type StaffScheduleRsvpBreakdown = {
     not_going: StaffScheduleRsvpRow[];
     not_responded: StaffScheduleRsvpRow[];
   };
+  unmatchedResponders?: StaffScheduleUnmatchedRsvpResponder[];
   counts: Required<ScheduleRsvpSummary>;
 };
 
@@ -4129,9 +4137,18 @@ function normalizeStaffScheduleRsvpBreakdown(value: any): StaffScheduleRsvpBreak
     not_going: normalizeRows(grouped.not_going, 'not_going'),
     not_responded: normalizeRows(grouped.not_responded, 'not_responded')
   };
+  const unmatchedResponders = (Array.isArray(value?.unmatchedResponders) ? value.unmatchedResponders : [])
+    .map((entry: any): StaffScheduleUnmatchedRsvpResponder => ({
+      responderUserId: compactString(entry?.responderUserId) || null,
+      responderName: compactString(entry?.responderName) || compactString(entry?.responderUserId) || 'Unknown responder',
+      response: normalizeRsvpResponse(entry?.response),
+      respondedAt: entry?.respondedAt || null
+    }))
+    .filter((entry: StaffScheduleUnmatchedRsvpResponder) => entry.response !== 'not_responded');
 
   return {
     grouped: normalizedGrouped,
+    unmatchedResponders,
     counts: {
       going: normalizedGrouped.going.length,
       maybe: normalizedGrouped.maybe.length,
