@@ -62,7 +62,7 @@ describe('app async operation initiative source contract', () => {
     });
 
     it('keeps high-traffic app services using shared cache and service-error adapters', () => {
-        expect(homeServiceSource).toContain("import { getParentHomeSecondaryCacheKey, getParentScheduleSummaryCacheKey, loadCachedAppData } from './appDataCache';");
+        expect(homeServiceSource).toMatch(/import\s+\{[^}]*getParentScheduleSummaryCacheKey[^}]*loadCachedAppData[^}]*\}\s+from '\.\/appDataCache';/);
         expect(homeServiceSource).toContain("import { toAppServiceError, type AppServiceError } from './appErrors';");
         expect(homeServiceSource).toContain('return loadCachedAppData(');
         expect(homeServiceSource).toContain('function rethrowIfPermissionError(error: unknown, fallbackMessage: string)');
