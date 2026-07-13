@@ -4,6 +4,7 @@ import {
   getDefaultStatConfigForSport,
   getStatConfigPresetOptions
 } from './adapters/legacyTeamCreation';
+import { clearAppDataCache, getTeamsSummaryBootstrapCacheKey } from './appDataCache';
 import type { AuthUser } from './types';
 
 export type CreateTeamForAppInput = {
@@ -53,6 +54,8 @@ export async function createTeamForApp(user: AuthUser | null, input: CreateTeamF
   if (!teamId) {
     throw new Error('Team could not be created.');
   }
+
+  clearAppDataCache(getTeamsSummaryBootstrapCacheKey(user.uid));
 
   try {
     const defaultStatConfig = getDefaultStatConfigForSport(sport);
