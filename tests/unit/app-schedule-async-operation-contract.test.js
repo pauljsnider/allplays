@@ -42,7 +42,7 @@ describe('Schedule async operation contract', () => {
     });
 
     it('keeps resume refresh and first meaningful render on the shared loading state', () => {
-        expect(scheduleSource).toContain('useRefreshOnResume(() => { void refreshSchedule(true); }, { enabled: Boolean(auth.user?.uid) });');
+        expect(scheduleSource).toMatch(/useRefreshOnResume\(\s*async \(\) => \{\s*await refreshSchedule\(true\);/);
         expect(scheduleSource).toContain("recordFirstMeaningfulRender('schedule');");
         expect(scheduleSource).toContain('if (!hasStartedInitialScheduleLoadRef.current || scheduleReadLoading || isInitialScheduleLoad) {');
     });

@@ -500,7 +500,12 @@ export function Schedule({ auth }: { auth: AuthState }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filter, hasLoadedSchedule]);
 
-  useRefreshOnResume(() => { void refreshSchedule(true); }, { enabled: Boolean(auth.user?.uid) });
+  useRefreshOnResume(
+    async () => {
+      await refreshSchedule(true);
+    },
+    { enabled: Boolean(auth.user?.uid) }
+  );
 
   useEffect(() => {
     if (!hasStartedInitialScheduleLoadRef.current || scheduleReadLoading || isInitialScheduleLoad) {

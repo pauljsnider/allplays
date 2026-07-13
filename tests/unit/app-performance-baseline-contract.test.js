@@ -57,6 +57,20 @@ describe('app performance baseline contract', () => {
         expect(messages).toContain("startScreenMountTimer('messages'");
     });
 
+    it('returns each page refresh promise to the canonical warm-resume timer', () => {
+        const home = readRepoFile('apps/app/src/pages/Home.tsx');
+        const schedule = readRepoFile('apps/app/src/pages/Schedule.tsx');
+        const messages = readRepoFile('apps/app/src/pages/Messages.tsx');
+
+        expect(home).toMatch(/useRefreshOnResume\(\s*async \(\) => \{\s*await refreshHome\(\{ force: true \}\);/);
+        expect(home).toContain('let secondaryLoadPromise: Promise<unknown> = Promise.resolve();');
+        expect(home).toContain('secondaryLoadPromise = runSecondaryLoad(');
+        expect(home).toContain('await secondaryLoadPromise;');
+        expect(home).not.toContain('void runSecondaryLoad(');
+        expect(schedule).toMatch(/useRefreshOnResume\(\s*async \(\) => \{\s*await refreshSchedule\(true\);/);
+        expect(messages).toMatch(/useRefreshOnResume\(\s*async \(\) => \{\s*if \(shouldLoadInbox\) await refreshInbox\(\);/);
+    });
+
     it('keeps startup, initial Home load, and handled load-failure telemetry wired', () => {
         const telemetry = readRepoFile('apps/app/src/lib/telemetry.ts');
         const main = readRepoFile('apps/app/src/main.tsx');

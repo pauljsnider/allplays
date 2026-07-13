@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { Link, MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Home } from './Home';
@@ -39,6 +39,10 @@ const uxTimingMocks = vi.hoisted(() => ({
   startUxTimer: vi.fn(() => ({ end: vi.fn(), cancel: vi.fn() }))
 }));
 
+const refreshOnResumeMocks = vi.hoisted(() => ({
+  callback: null as null | (() => void | Promise<void>)
+}));
+
 vi.mock('../components/PageSkeletons', () => ({
   HomePageSkeleton: () => <div>Loading Home</div>
 }));
@@ -47,6 +51,11 @@ vi.mock('../lib/socialService', () => socialServiceMocks);
 vi.mock('../lib/scheduleService', () => scheduleServiceMocks);
 vi.mock('../lib/opportunityService', () => opportunityServiceMocks);
 vi.mock('../lib/uxTiming', () => uxTimingMocks);
+vi.mock('../lib/useRefreshOnResume', () => ({
+  useRefreshOnResume: vi.fn((callback: () => void | Promise<void>) => {
+    refreshOnResumeMocks.callback = callback;
+  })
+}));
 vi.mock('lucide-react', () => {
   const Icon = () => null;
   return {
@@ -335,6 +344,7 @@ function renderHome(auth: AuthState, initialEntry = '/home') {
 describe('Home', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    refreshOnResumeMocks.callback = null;
     Object.defineProperty(window, 'scrollTo', {
       value: vi.fn(),
       writable: true
@@ -374,6 +384,57 @@ describe('Home', () => {
     await waitFor(() => {
       expect(uxTimingMocks.recordFirstMeaningfulRender).toHaveBeenCalledWith('home');
     });
+  });
+
+  it('keeps the resume refresh pending through secondary Home and social hydration', async () => {
+    renderHome(signedInAuth);
+
+    await waitFor(() => {
+      expect(socialServiceMocks.loadSocialHome).toHaveBeenCalledTimes(1);
+    });
+
+    let resolveSecondary!: (value: typeof baseHome) => void;
+    let resolveSocial!: (value: typeof baseSocial) => void;
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValueOnce({ home: baseHome, schedule: [] });
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveSecondary = resolve;
+    }));
+    socialServiceMocks.loadSocialHome.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveSocial = resolve;
+    }));
+
+    const resumeRefresh = refreshOnResumeMocks.callback;
+    if (!resumeRefresh) throw new Error('Expected Home to register a resume refresh callback.');
+
+    let refreshSettled = false;
+    let refreshPromise!: Promise<void>;
+    await act(async () => {
+      refreshPromise = Promise.resolve(resumeRefresh()).then(() => {
+        refreshSettled = true;
+      });
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(homeServiceMocks.loadParentHomeSummaryBootstrap).toHaveBeenCalledTimes(2);
+      expect(homeServiceMocks.loadParentHomeWithSecondaryData).toHaveBeenCalledTimes(2);
+    });
+    expect(refreshSettled).toBe(false);
+
+    await act(async () => {
+      resolveSecondary(baseHome);
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(socialServiceMocks.loadSocialHome).toHaveBeenCalledTimes(2);
+    });
+    expect(refreshSettled).toBe(false);
+
+    await act(async () => {
+      resolveSocial(baseSocial);
+      await refreshPromise;
+    });
+    expect(refreshSettled).toBe(true);
   });
 
   it('renders the feed for signed-out users without crashing', async () => {

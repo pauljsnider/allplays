@@ -185,8 +185,8 @@ export function Messages({ auth }: { auth: AuthState }) {
   }, [auth.user?.uid, shouldLoadInbox, inboxLoadRouteKey]);
 
   useRefreshOnResume(
-    () => {
-      if (shouldLoadInbox) void refreshInbox();
+    async () => {
+      if (shouldLoadInbox) await refreshInbox();
     },
     { enabled: Boolean(auth.user?.uid) && shouldLoadInbox }
   );
