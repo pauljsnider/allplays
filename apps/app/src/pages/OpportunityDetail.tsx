@@ -5,6 +5,7 @@ import { Status } from '../components/TeamSummaryPrimitives';
 import {
   formatOpportunityDate,
   formatOpportunityLocation,
+  getOpportunityInquiryStarterMessages,
   getOpportunityKindLabel,
   type PublicOpportunity
 } from '../lib/opportunityLogic';
@@ -21,7 +22,7 @@ export function OpportunityDetail({ auth }: { auth: AuthState }) {
   const [message, setMessage] = useState('');
   const [sending, setSending] = useState(false);
   const [status, setStatus] = useState('');
-  const [contactOpen, setContactOpen] = useState(searchParams.get('contact') === '1');
+  const [contactOpen, setContactOpen] = useState(Boolean(auth.user) && searchParams.get('contact') === '1');
 
   useEffect(() => {
     let active = true;
@@ -77,6 +78,7 @@ export function OpportunityDetail({ auth }: { auth: AuthState }) {
   if (error && !item) return <Status tone="error" message={error} />;
   if (!item) return null;
   const location = formatOpportunityLocation(item);
+  const inquiryStarters = getOpportunityInquiryStarterMessages(item.kind);
 
   return (
     <div className="mx-auto max-w-3xl space-y-4">
@@ -117,10 +119,19 @@ export function OpportunityDetail({ auth }: { auth: AuthState }) {
         </div>
       </article>
 
-      {contactOpen && item.status === 'active' ? <form className="app-card p-4 sm:p-5" onSubmit={submitInquiry}>
+      {contactOpen && Boolean(auth.user) && item.status === 'active' ? <form className="app-card p-4 sm:p-5" onSubmit={submitInquiry}>
         <h2 className="app-section-title">Private inquiry</h2>
         <p className="mt-1 text-xs font-semibold leading-5 text-gray-500">Your message is visible only to you and the listing owner or team administrators. Contact details are never shown on the public listing.</p>
-        <textarea className="auth-input mt-3 min-h-32" value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Introduce yourself and ask about the opportunity. Do not include sensitive information." required />
+        <div className="mt-4" role="group" aria-label="Starter messages">
+          <div className="app-label">Start with a message</div>
+          <div className="mt-2 grid gap-2 sm:grid-cols-3">
+            {inquiryStarters.map((starter) => {
+              const selected = message === starter;
+              return <button key={starter} type="button" className={`min-h-10 rounded-xl border px-3 py-2 text-left text-sm font-bold transition ${selected ? 'border-primary-300 bg-primary-50 text-primary-800' : 'border-gray-200 bg-white text-gray-700 hover:border-primary-200 hover:bg-primary-50'}`} onClick={() => setMessage(starter)} aria-pressed={selected}>{starter}</button>;
+            })}
+          </div>
+        </div>
+        <textarea className="auth-input mt-3 min-h-32" aria-label="Inquiry message" value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Introduce yourself and ask about the opportunity. Do not include sensitive information." required />
         <div className="mt-3 flex justify-end gap-2"><button type="button" className="ghost-button" onClick={() => setContactOpen(false)}>Cancel</button><button type="submit" className="primary-button" disabled={sending || !message.trim()}>{sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <MessageCircle className="h-4 w-4" />}Send inquiry</button></div>
       </form> : null}
     </div>

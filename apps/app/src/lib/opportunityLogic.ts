@@ -105,8 +105,23 @@ export const compensationOptions: Array<{ id: CompensationType; label: string }>
   { id: 'either', label: 'Paid or volunteer' }
 ];
 
+const opportunityInquiryKindStarters: Record<OpportunityKind, string> = {
+  team_seeking_players: 'What player positions or experience are you looking for?',
+  coach_or_staff: 'What experience or qualifications are you looking for?',
+  official_or_volunteer: 'What dates and responsibilities need coverage?',
+  player_seeking_team: "Could you share more about the player's availability and team preferences?"
+};
+
 export function getOpportunityKindLabel(kind: OpportunityKind) {
   return opportunityKinds.find((entry) => entry.id === kind)?.label || 'Opportunity';
+}
+
+export function getOpportunityInquiryStarterMessages(kind: OpportunityKind) {
+  return [
+    'Is this opportunity still available?',
+    'What are the next steps?',
+    opportunityInquiryKindStarters[kind]
+  ];
 }
 
 export function formatOpportunityLocation(item: Pick<PublicOpportunity, 'city' | 'state' | 'zip'>) {

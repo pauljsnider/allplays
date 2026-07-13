@@ -83,7 +83,7 @@ describe('public Discover experience', () => {
 
   it('keeps public contact details private and routes anonymous contact through sign-in', async () => {
     render(
-      <MemoryRouter initialEntries={['/discover/opportunities/listing-1']}>
+      <MemoryRouter initialEntries={['/discover/opportunities/listing-1?contact=1']}>
         <Routes>
           <Route path="/discover/opportunities/:listingId" element={<OpportunityDetail auth={signedOutAuth} />} />
           <Route path="/auth" element={<div>Sign-in route</div>} />
@@ -92,6 +92,7 @@ describe('public Discover experience', () => {
     );
     expect(await screen.findByRole('heading', { name: 'Assistant coach wanted' })).toBeTruthy();
     expect(screen.queryByText(/user@example.com/)).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Private inquiry' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Sign in to contact' }));
     expect(await screen.findByText('Sign-in route')).toBeTruthy();
   });
@@ -108,9 +109,16 @@ describe('public Discover experience', () => {
     );
     await screen.findByRole('heading', { name: 'Assistant coach wanted' });
     fireEvent.click(screen.getByRole('button', { name: 'Send private inquiry' }));
-    fireEvent.change(screen.getByPlaceholderText(/Introduce yourself/), { target: { value: 'Is this role still open?' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Send inquiry' }));
-    await waitFor(() => expect(opportunityMocks.createOpportunityInquiry).toHaveBeenCalledWith('listing-1', 'Is this role still open?'));
+    const starter = 'What experience or qualifications are you looking for?';
+    const submit = screen.getByRole('button', { name: 'Send inquiry' }) as HTMLButtonElement;
+    fireEvent.click(screen.getByRole('button', { name: starter }));
+    const message = screen.getByRole('textbox', { name: 'Inquiry message' }) as HTMLTextAreaElement;
+    expect(message.value).toBe(starter);
+    expect(message.disabled).toBe(false);
+    expect(message.readOnly).toBe(false);
+    expect(submit.disabled).toBe(false);
+    fireEvent.click(submit);
+    await waitFor(() => expect(opportunityMocks.createOpportunityInquiry).toHaveBeenCalledWith('listing-1', starter));
     expect(await screen.findByText('Private inquiry thread')).toBeTruthy();
   });
 
