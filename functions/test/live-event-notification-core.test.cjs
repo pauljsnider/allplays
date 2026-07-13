@@ -2,10 +2,13 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
 const {
+  LIVE_EVENT_NOTIFICATION_MAX_AGE_MS,
   buildBigMomentLiveEventNotification,
   buildLiveEventNotificationDedupKey,
+  buildLiveScoreStateNotificationDedupKey,
   classifyBigMomentLiveEvent,
-  getLiveEventActorUid
+  getLiveEventActorUid,
+  isLiveEventNotificationFresh
 } = require('../live-event-notification-core.cjs');
 
 describe('big-moment live event notifications', () => {
@@ -67,5 +70,24 @@ describe('big-moment live event notifications', () => {
     assert.equal(buildLiveEventNotificationDedupKey({}, ''), '');
     assert.equal(getLiveEventActorUid({ actorUid: 'actor-1', createdBy: 'actor-2' }), 'actor-1');
     assert.equal(getLiveEventActorUid({ createdBy: 'actor-2' }), 'actor-2');
+  });
+
+  it('builds a shared score-state dedup key only from complete nonnegative scores', () => {
+    assert.equal(buildLiveScoreStateNotificationDedupKey({ homeScore: 12, awayScore: 8 }), 'score-state:12:8');
+    assert.equal(buildLiveScoreStateNotificationDedupKey({ homeScore: '12', awayScore: '8' }), 'score-state:12:8');
+    assert.equal(buildLiveScoreStateNotificationDedupKey({ homeScore: null, awayScore: 8 }), '');
+    assert.equal(buildLiveScoreStateNotificationDedupKey({ homeScore: '', awayScore: 8 }), '');
+    assert.equal(buildLiveScoreStateNotificationDedupKey({ homeScore: -1, awayScore: 8 }), '');
+    assert.equal(buildLiveScoreStateNotificationDedupKey({ homeScore: 12 }), '');
+  });
+
+  it('accepts only fresh event timestamps and rejects missing, stale, or future-dated events', () => {
+    const now = Date.parse('2026-07-13T12:00:00.000Z');
+    assert.equal(isLiveEventNotificationFresh({ createdAt: new Date(now - 1000) }, now), true);
+    assert.equal(isLiveEventNotificationFresh({ createdAt: { seconds: (now - 1000) / 1000 } }, now), true);
+    assert.equal(isLiveEventNotificationFresh({ createdAt: new Date(now - LIVE_EVENT_NOTIFICATION_MAX_AGE_MS).toISOString() }, now), true);
+    assert.equal(isLiveEventNotificationFresh({ createdAt: now - LIVE_EVENT_NOTIFICATION_MAX_AGE_MS - 1 }, now), false);
+    assert.equal(isLiveEventNotificationFresh({ createdAt: now + (60 * 1000) + 1 }, now), false);
+    assert.equal(isLiveEventNotificationFresh({}, now), false);
   });
 });

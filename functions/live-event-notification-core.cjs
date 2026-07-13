@@ -10,6 +10,9 @@ const FOOTBALL_SCORE_LABELS = Object.freeze({
   twopointconversion: 'Two-point conversion'
 });
 
+const LIVE_EVENT_NOTIFICATION_MAX_AGE_MS = 10 * 60 * 1000;
+const LIVE_EVENT_NOTIFICATION_FUTURE_TOLERANCE_MS = 60 * 1000;
+
 function compactLiveEventText(value, maxLength = 120) {
   const normalized = String(value ?? '')
     .replace(/[\u0000-\u001f\u007f]+/g, ' ')
@@ -24,17 +27,28 @@ function normalizeLiveEventToken(value) {
 }
 
 function getFiniteLiveEventNumber(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'string' && !value.trim()) return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function getLiveEventScoreSnapshot(event = {}) {
+  if (!Object.prototype.hasOwnProperty.call(event, 'homeScore') || !Object.prototype.hasOwnProperty.call(event, 'awayScore')) {
+    return null;
+  }
+  const homeScore = getFiniteLiveEventNumber(event.homeScore);
+  const awayScore = getFiniteLiveEventNumber(event.awayScore);
+  if (homeScore === null || awayScore === null || homeScore < 0 || awayScore < 0) return null;
+  return {
+    homeScore: Object.is(homeScore, -0) ? 0 : homeScore,
+    awayScore: Object.is(awayScore, -0) ? 0 : awayScore
+  };
+}
+
 function getLiveEventScore(event = {}) {
-  const hasHomeScore = Object.prototype.hasOwnProperty.call(event, 'homeScore');
-  const hasAwayScore = Object.prototype.hasOwnProperty.call(event, 'awayScore');
-  const homeScore = hasHomeScore ? getFiniteLiveEventNumber(event.homeScore) : null;
-  const awayScore = hasAwayScore ? getFiniteLiveEventNumber(event.awayScore) : null;
-  if (homeScore === null || awayScore === null) return '';
-  return `${Math.max(0, homeScore)}–${Math.max(0, awayScore)}`;
+  const score = getLiveEventScoreSnapshot(event);
+  return score ? `${score.homeScore}–${score.awayScore}` : '';
 }
 
 function getLiveEventPlayerName(event = {}) {
@@ -108,14 +122,63 @@ function buildLiveEventNotificationDedupKey(event = {}, documentId = '') {
   return identity ? `live-event:${identity}` : '';
 }
 
+function buildLiveScoreStateNotificationDedupKey(score = {}) {
+  const snapshot = getLiveEventScoreSnapshot(score);
+  return snapshot ? `score-state:${snapshot.homeScore}:${snapshot.awayScore}` : '';
+}
+
+function getLiveEventTimestampMillis(value) {
+  if (typeof value?.toMillis === 'function') {
+    const millis = value.toMillis();
+    return Number.isFinite(millis) ? millis : null;
+  }
+  if (value instanceof Date) {
+    const millis = value.getTime();
+    return Number.isFinite(millis) ? millis : null;
+  }
+  if (value && typeof value === 'object' && Number.isFinite(Number(value.seconds))) {
+    const nanos = Number(value.nanoseconds ?? value.nanos ?? 0);
+    return (Number(value.seconds) * 1000) + (Number.isFinite(nanos) ? Math.floor(nanos / 1e6) : 0);
+  }
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value === 'string' && value.trim()) {
+    const millis = Date.parse(value);
+    return Number.isFinite(millis) ? millis : null;
+  }
+  return null;
+}
+
+function isLiveEventNotificationFresh(
+  event = {},
+  nowMillis = Date.now(),
+  maxAgeMillis = LIVE_EVENT_NOTIFICATION_MAX_AGE_MS
+) {
+  const createdAtMillis = getLiveEventTimestampMillis(event.createdAt);
+  const normalizedNowMillis = Number(nowMillis);
+  const normalizedMaxAgeMillis = Number(maxAgeMillis);
+  if (
+    createdAtMillis === null
+    || !Number.isFinite(normalizedNowMillis)
+    || !Number.isFinite(normalizedMaxAgeMillis)
+    || normalizedMaxAgeMillis < 0
+  ) {
+    return false;
+  }
+  const ageMillis = normalizedNowMillis - createdAtMillis;
+  return ageMillis >= -LIVE_EVENT_NOTIFICATION_FUTURE_TOLERANCE_MS && ageMillis <= normalizedMaxAgeMillis;
+}
+
 function getLiveEventActorUid(event = {}) {
   return compactLiveEventText(event.actorUid || event.createdBy, 160) || null;
 }
 
 module.exports = {
+  LIVE_EVENT_NOTIFICATION_MAX_AGE_MS,
   buildBigMomentLiveEventNotification,
   buildLiveEventNotificationDedupKey,
+  buildLiveScoreStateNotificationDedupKey,
   classifyBigMomentLiveEvent,
   compactLiveEventText,
-  getLiveEventActorUid
+  getLiveEventActorUid,
+  isLiveEventNotificationFresh
 };

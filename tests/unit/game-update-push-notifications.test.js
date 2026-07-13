@@ -114,14 +114,16 @@ describe('game schedule update push notifications', () => {
 
     it('deduplicates live score sends by the before/after score transition before delivering notifications', async () => {
         const sendCategoryNotification = vi.fn(async () => ({ successCount: 1, failureCount: 0 }));
-        const checkAndSetNotificationDedup = vi.fn(async () => true);
-        const hasRecentBigMomentLiveEventForScore = vi.fn(async () => false);
+        const checkAndSetNotificationDedupKeys = vi.fn(async () => true);
+        const hasRecentBigMomentLiveEventForScoreState = vi.fn(async () => false);
+        const buildLiveScoreStateNotificationDedupKey = vi.fn(() => 'score-state:2:0');
         const handler = new Function(
             'functions',
             'detectGameNotificationCategory',
             'sendCategoryNotification',
-            'checkAndSetNotificationDedup',
-            'hasRecentBigMomentLiveEventForScore',
+            'checkAndSetNotificationDedupKeys',
+            'hasRecentBigMomentLiveEventForScoreState',
+            'buildLiveScoreStateNotificationDedupKey',
             'toNumericScore',
             'buildScheduleUpdateNotificationPayload',
             `const exports = {};
@@ -138,8 +140,9 @@ return exports.notifyGameUpdated;`
             },
             () => 'liveScore',
             sendCategoryNotification,
-            checkAndSetNotificationDedup,
-            hasRecentBigMomentLiveEventForScore,
+            checkAndSetNotificationDedupKeys,
+            hasRecentBigMomentLiveEventForScoreState,
+            buildLiveScoreStateNotificationDedupKey,
             (value) => Number(value || 0),
             () => ({ title: 'unused', body: 'unused' })
         );
@@ -151,11 +154,16 @@ return exports.notifyGameUpdated;`
             params: { teamId: 'team-1', gameId: 'game-7' }
         });
 
-        expect(checkAndSetNotificationDedup).toHaveBeenCalledWith(
+        expect(hasRecentBigMomentLiveEventForScoreState).toHaveBeenCalledWith(
+            'team-1',
+            'game-7',
+            'score-state:2:0'
+        );
+        expect(checkAndSetNotificationDedupKeys).toHaveBeenCalledWith(
             'team-1',
             'liveScore',
             'game-7',
-            'score:1:0->2:0'
+            ['score:1:0->2:0', 'score-state:2:0']
         );
         expect(sendCategoryNotification).toHaveBeenCalledWith(expect.objectContaining({
             teamId: 'team-1',

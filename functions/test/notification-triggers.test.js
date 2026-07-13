@@ -631,7 +631,7 @@ test('notifyGameUpdated suppresses generic liveScore when a matching big-moment 
             playerName: 'Ava Cole',
             homeScore: 12,
             awayScore: 8,
-            createdAt: '2026-06-28T12:00:00.000Z'
+            createdAt: new Date().toISOString()
         });
 
         const ref = env.firestoreState.doc('teams/team-1/games/game-2');
@@ -644,6 +644,39 @@ test('notifyGameUpdated suppresses generic liveScore when a matching big-moment 
         assert.equal(env.counts.dedupTransactions, 0);
         assert.equal(env.messagingCalls.length, 0);
         assert.equal(env.auditWrites.length, 0);
+    } finally {
+        cleanup();
+    }
+});
+
+test('notifyGameUpdated does not let a stale matching live event suppress a current score push', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        parentUserIds: ['parent-1'],
+        indexedTargets: [
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { liveScore: true } }
+        ]
+    });
+
+    try {
+        await env.firestoreState.doc('teams/team-1/games/game-stale/liveEvents/stale-event').set({
+            type: 'stat',
+            statKey: 'PTS',
+            value: 2,
+            homeScore: 12,
+            awayScore: 8,
+            createdAt: new Date(Date.now() - (11 * 60 * 1000)).toISOString()
+        });
+
+        const gameRef = env.firestoreState.doc('teams/team-1/games/game-stale');
+        const result = await moduleExports.notifyGameUpdated(
+            makeChange(gameRef, { homeScore: 10, awayScore: 8 }, { homeScore: 12, awayScore: 8, updatedBy: 'coach-1' }),
+            { params: { teamId: 'team-1', gameId: 'game-stale' } }
+        );
+
+        assert.equal(result?.successCount, 1);
+        assert.equal(env.messagingCalls.length, 1);
+        assert.equal(env.messagingCalls[0].title, 'Live score update');
     } finally {
         cleanup();
     }
@@ -673,6 +706,7 @@ test('notifyLiveEventCreated sends one deduped big-moment notification to eligib
             period: 'Q4',
             homeScore: 55,
             awayScore: 53,
+            createdAt: new Date().toISOString(),
             createdBy: 'coach-1',
             description: 'Ava hit a three while discussing a private sideline note'
         });
@@ -697,6 +731,48 @@ test('notifyLiveEventCreated sends one deduped big-moment notification to eligib
         assert.deepEqual(env.auditWrites[0].value.targetUserIds.sort(), ['assistant-1', 'parent-1']);
         assert.equal(env.auditWrites[0].value.dedupGuardApplied, false);
         assert.equal(env.dedupWrites.some((write) => write.value?.dedupKey === 'live-event:doc-event-1'), true);
+        assert.equal(env.dedupWrites.some((write) => write.value?.dedupKey === 'score-state:55:53'), true);
+    } finally {
+        cleanup();
+    }
+});
+
+test('notifyLiveEventCreated shares a score-state claim with an earlier generic liveScore send', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        parentUserIds: ['parent-1'],
+        indexedTargets: [
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { liveScore: true } }
+        ]
+    });
+
+    try {
+        const gameRef = env.firestoreState.doc('teams/team-1/games/game-race');
+        const gameChange = makeChange(
+            gameRef,
+            { homeScore: 10, awayScore: 8 },
+            { homeScore: 12, awayScore: 8, updatedBy: 'coach-1' }
+        );
+        await moduleExports.notifyGameUpdated(gameChange, { params: { teamId: 'team-1', gameId: 'game-race' } });
+
+        const eventRef = env.firestoreState.doc('teams/team-1/games/game-race/liveEvents/event-late');
+        const eventResult = await moduleExports.notifyLiveEventCreated(makeSnapshot(eventRef, {
+            type: 'stat',
+            statKey: 'PTS',
+            value: 2,
+            playerName: 'Ava Cole',
+            homeScore: 12,
+            awayScore: 8,
+            createdAt: new Date().toISOString(),
+            createdBy: 'coach-1'
+        }), { params: { teamId: 'team-1', gameId: 'game-race', eventId: 'event-late' } });
+
+        assert.equal(eventResult, null);
+        assert.equal(env.messagingCalls.length, 1);
+        assert.equal(env.messagingCalls[0].title, 'Live score update');
+        assert.equal(env.dedupWrites.some((write) => write.value?.dedupKey === 'score:10:8->12:8'), true);
+        assert.equal(env.dedupWrites.some((write) => write.value?.dedupKey === 'score-state:12:8'), true);
+        assert.equal(env.dedupWrites.some((write) => write.value?.dedupKey === 'live-event:event-late'), false);
     } finally {
         cleanup();
     }
@@ -722,7 +798,14 @@ test('notifyLiveEventCreated ignores routine, generic, and reversed live events'
             { type: 'note', text: 'Routine note' },
             { type: 'stat', statKey: 'rebounds', value: 1 },
             { type: 'stat', statKey: 'pts', value: -2 },
-            { type: 'baseball', baseballAction: 'single' }
+            { type: 'baseball', baseballAction: 'single' },
+            { type: 'goal', homeScore: 2, awayScore: 1 },
+            {
+                type: 'goal',
+                homeScore: 2,
+                awayScore: 1,
+                createdAt: new Date(Date.now() - (11 * 60 * 1000)).toISOString()
+            }
         ];
 
         for (const [index, event] of ignoredEvents.entries()) {

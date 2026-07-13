@@ -140,7 +140,9 @@ const {
 const {
   buildBigMomentLiveEventNotification,
   buildLiveEventNotificationDedupKey,
-  getLiveEventActorUid
+  buildLiveScoreStateNotificationDedupKey,
+  getLiveEventActorUid,
+  isLiveEventNotificationFresh
 } = require('./live-event-notification-core.cjs');
 const {
   getStaleNotificationTokenCutoffMillis
@@ -7654,22 +7656,55 @@ async function checkAndSetNotificationDedup(teamId, category, gameId, dedupKey =
   return result;
 }
 
-async function hasRecentBigMomentLiveEventForScore(teamId, gameId, after = {}) {
+async function checkAndSetNotificationDedupKeys(teamId, category, gameId, dedupKeys = []) {
+  const normalizedDedupKeys = [...new Set((Array.isArray(dedupKeys) ? dedupKeys : [dedupKeys])
+    .map((dedupKey) => String(dedupKey || '').trim())
+    .filter(Boolean))];
+  if (!normalizedDedupKeys.length) return false;
+
+  const dedupEntries = normalizedDedupKeys.map((dedupKey) => ({
+    dedupKey,
+    ref: buildNotificationDedupRef(teamId, category, buildNotificationDedupIdentity(gameId, dedupKey))
+  }));
+  return firestore.runTransaction(async (txn) => {
+    const snapshots = await Promise.all(dedupEntries.map(({ ref }) => txn.get(ref)));
+    const hasFreshClaim = snapshots.some((snapshot) => {
+      if (!snapshot.exists) return false;
+      const sentAt = snapshot.data()?.sentAt?.toMillis?.() || 0;
+      return Date.now() - sentAt < NOTIFICATION_DEDUP_WINDOW_MS;
+    });
+    if (hasFreshClaim) return false;
+
+    dedupEntries.forEach(({ dedupKey, ref }) => {
+      txn.set(ref, {
+        teamId,
+        category,
+        gameId: gameId || null,
+        dedupKey,
+        sentAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+    });
+    return true;
+  });
+}
+
+async function hasRecentBigMomentLiveEventForScoreState(teamId, gameId, scoreStateDedupKey) {
   const normalizedTeamId = String(teamId || '').trim();
   const normalizedGameId = String(gameId || '').trim();
-  if (!normalizedTeamId || !normalizedGameId) return false;
+  const normalizedScoreStateDedupKey = String(scoreStateDedupKey || '').trim();
+  if (!normalizedTeamId || !normalizedGameId || !normalizedScoreStateDedupKey) return false;
 
-  const homeScore = toNumericScore(after.homeScore);
-  const awayScore = toNumericScore(after.awayScore);
+  const nowMillis = Date.now();
   try {
     const liveEventsSnap = await firestore.collection(`teams/${normalizedTeamId}/games/${normalizedGameId}/liveEvents`)
       .orderBy('createdAt', 'desc')
-      .limit(8)
+      .limit(25)
       .get();
     return liveEventsSnap.docs.some((docSnap) => {
       const event = docSnap.data() || {};
       if (!buildBigMomentLiveEventNotification(event)) return false;
-      return toNumericScore(event.homeScore) === homeScore && toNumericScore(event.awayScore) === awayScore;
+      if (!isLiveEventNotificationFresh(event, nowMillis)) return false;
+      return buildLiveScoreStateNotificationDedupKey(event) === normalizedScoreStateDedupKey;
     });
   } catch (error) {
     functions.logger.warn('Failed to check live events before live score notification', {
@@ -10326,16 +10361,21 @@ exports.notifyGameUpdated = functions.firestore
 
     if (category === 'liveScore') {
       const liveScoreDedupKey = `score:${toNumericScore(before.homeScore)}:${toNumericScore(before.awayScore)}->${toNumericScore(after.homeScore)}:${toNumericScore(after.awayScore)}`;
-      if (await hasRecentBigMomentLiveEventForScore(teamId, gameId, after)) {
+      const liveScoreStateDedupKey = buildLiveScoreStateNotificationDedupKey(after);
+      if (await hasRecentBigMomentLiveEventForScoreState(teamId, gameId, liveScoreStateDedupKey)) {
         functions.logger.info('Notification dedup: skipping generic live score send for live event-backed score', {
           teamId,
           category,
           gameId,
-          dedupKey: liveScoreDedupKey
+          dedupKey: liveScoreDedupKey,
+          scoreStateDedupKey: liveScoreStateDedupKey
         });
         return null;
       }
-      const canSendLiveScore = await checkAndSetNotificationDedup(teamId, category, gameId, liveScoreDedupKey);
+      const canSendLiveScore = await checkAndSetNotificationDedupKeys(teamId, category, gameId, [
+        liveScoreDedupKey,
+        liveScoreStateDedupKey
+      ]);
       if (!canSendLiveScore) {
         functions.logger.info('Notification dedup: skipping duplicate live score send', {
           teamId,
@@ -10380,16 +10420,26 @@ exports.notifyLiveEventCreated = functions.firestore
 
     const payload = buildBigMomentLiveEventNotification(event);
     if (!payload) return null;
+    if (!isLiveEventNotificationFresh(event)) {
+      functions.logger.info('Notification recency: skipping stale or undated live event', {
+        teamId,
+        gameId,
+        eventId: documentEventId
+      });
+      return null;
+    }
 
     const dedupKey = buildLiveEventNotificationDedupKey(event, documentEventId);
     if (!dedupKey) return null;
-    const canSend = await checkAndSetNotificationDedup(teamId, 'liveScore', gameId, dedupKey);
+    const scoreStateDedupKey = buildLiveScoreStateNotificationDedupKey(event);
+    const canSend = await checkAndSetNotificationDedupKeys(teamId, 'liveScore', gameId, [dedupKey, scoreStateDedupKey]);
     if (!canSend) {
       functions.logger.info('Notification dedup: skipping duplicate live event send', {
         teamId,
         gameId,
         eventId: documentEventId,
-        dedupKey
+        dedupKey,
+        scoreStateDedupKey
       });
       return null;
     }
