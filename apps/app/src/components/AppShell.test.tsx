@@ -593,6 +593,25 @@ describe('AppShell', () => {
     expect(publicActionMocks.openPublicUrl).not.toHaveBeenCalled();
   });
 
+  it('routes Create team through the native app flow', async () => {
+    render(
+      <MemoryRouter initialEntries={['/home']}>
+        <Routes>
+          <Route path="/home" element={<AppShell auth={signedInAuth}><div>Home</div></AppShell>} />
+          <Route path="/teams/new" element={<AppShell auth={signedInAuth}><div>Native create team</div></AppShell>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Create team/ }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Native create team')).toBeTruthy();
+    });
+    expect(publicActionMocks.openPublicUrl).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['desktop web', true],
     ['mobile', false],

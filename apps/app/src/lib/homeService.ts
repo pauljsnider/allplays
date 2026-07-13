@@ -8,7 +8,12 @@ import {
   type ParentHomeModel
 } from './homeLogic';
 import { createLogger } from './logger';
-import { getParentHomeSecondaryCacheKey, getParentScheduleSummaryCacheKey, loadCachedAppData } from './appDataCache';
+import {
+  getParentHomeSecondaryCacheKey,
+  getParentScheduleSummaryCacheKey,
+  getTeamsSummaryBootstrapCacheKey,
+  loadCachedAppData
+} from './appDataCache';
 import { toAppServiceError, type AppServiceError } from './appErrors';
 import {
   hydrateParentScheduleDetails,
@@ -110,7 +115,7 @@ export async function loadParentTeamsSummaryBootstrap(
   }
 
   return loadCachedAppData(
-    `teams-summary-bootstrap:${user.uid}`,
+    getTeamsSummaryBootstrapCacheKey(user.uid),
     async () => {
       const timer = startUxTimer('teams summary load');
       try {

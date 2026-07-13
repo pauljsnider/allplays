@@ -637,7 +637,8 @@ describe('React app shell search', () => {
 
         await clickButton(container, 'Add');
         await clickButton(container, 'Create team');
-        expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://allplays.ai/dashboard.html');
+        expect(container.querySelector('[data-testid="route"]').textContent).toBe('/teams/new');
+        expect(publicActionMocks.openPublicUrl).not.toHaveBeenCalledWith('https://allplays.ai/dashboard.html');
     });
 
     it('supports Cmd/Ctrl+K and Enter keyboard navigation', async () => {

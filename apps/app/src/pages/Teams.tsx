@@ -655,7 +655,8 @@ function EmptyTeams() {
         <div className="min-w-0 flex-1">
           <div className="text-sm font-black text-gray-900">No teams available</div>
           <div className="mt-1 text-xs font-semibold leading-5 text-gray-500">Team access appears after an invite is accepted, a parent link is approved, or staff access is granted.</div>
-          <div className="mt-3 grid gap-2 sm:grid-cols-3">
+          <div className="mt-3 grid gap-2 sm:grid-cols-4">
+            <Link to="/teams/new" className="primary-button justify-center !min-h-9 text-xs">Create team</Link>
             <Link to="/accept-invite" className="secondary-button justify-center !min-h-9 text-xs">Accept invite</Link>
             <Link to="/home" className="ghost-button justify-center !min-h-9 text-xs">Back to Home</Link>
             <Link to="/teams/browse" className="ghost-button justify-center !min-h-9 text-xs">

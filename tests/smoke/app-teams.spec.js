@@ -551,6 +551,37 @@ async function mockPublicTeamsBrowseModule(page, { slowSearch = false } = {}) {
     });
 }
 
+async function mockTeamCreationModule(page) {
+    await page.addInitScript(() => {
+        window.__createdTeams = [];
+    });
+
+    await page.route(/\/src\/lib\/teamCreationService\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                export function getCreateTeamSportOptions() {
+                    return ['Basketball', 'Soccer', 'Baseball', 'Softball'];
+                }
+
+                export async function createTeamForApp(user, input) {
+                    window.__createdTeams.push({
+                        userId: user?.uid || '',
+                        ownerEmail: user?.email || '',
+                        input
+                    });
+                    return {
+                        teamId: 'team-created',
+                        defaultStatConfigCreated: true,
+                        defaultStatConfigError: null
+                    };
+                }
+            `
+        });
+    });
+}
+
 test.describe('mobile My Teams', () => {
     test.use({ viewport: { width: 390, height: 844 }, hasTouch: true });
 
@@ -616,11 +647,41 @@ test.describe('mobile My Teams', () => {
         await waitForTeamsRoute(page, emptyHeading, { requireSearchInput: false });
         const emptyState = page.locator('section').filter({ hasText: 'No teams available' });
         await expect(page.getByText('No teams available')).toBeVisible();
+        await expect(page.getByRole('link', { name: 'Create team' })).toHaveAttribute('href', '#/teams/new');
         await expect(page.getByRole('link', { name: 'Accept invite' })).toHaveAttribute('href', '#/accept-invite');
         await emptyState.getByRole('link', { name: 'Browse teams' }).click();
         await expect(page).toHaveURL(/#\/teams\/browse$/);
         await expect.poll(() => page.evaluate(() => window.__openedPublicUrls)).toEqual([]);
         await expect(page.getByText(/^Loading teams$/)).toHaveCount(0);
+    });
+
+    test('creates a team from the native app flow', async ({ page, baseURL }) => {
+        await mockTeamsModules(page, { scenario: 'empty' });
+        await mockTeamCreationModule(page);
+        await page.goto(appUrl(baseURL, '/teams?scenario=empty'), { waitUntil: 'domcontentloaded' });
+
+        await waitForTeamsRoute(page, page.getByRole('heading', { name: 'No teams linked yet' }), { requireSearchInput: false });
+        await page.getByRole('link', { name: 'Create team' }).click();
+
+        await expect(page).toHaveURL(/#\/teams\/new$/);
+        await expect(page.getByRole('heading', { name: 'Create team' })).toBeVisible();
+        await page.getByPlaceholder('Team name').fill('KC Current U12');
+        await page.getByLabel('Sport').selectOption('Soccer');
+        await page.getByPlaceholder('66210').fill('66210-1234');
+        await page.getByLabel('Public team').uncheck();
+        await page.getByRole('button', { name: 'Create team' }).click();
+
+        await expect(page).toHaveURL(/#\/teams\/team-created$/);
+        await expect.poll(() => page.evaluate(() => window.__createdTeams.at(-1))).toEqual({
+            userId: 'user-1',
+            ownerEmail: 'parent@example.com',
+            input: {
+                name: 'KC Current U12',
+                sport: 'Soccer',
+                zip: '66210-1234',
+                isPublic: false
+            }
+        });
     });
 
     test('browse teams paginates searched results on mobile without clearing the query', async ({ page, baseURL }) => {
