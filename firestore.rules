@@ -1522,10 +1522,12 @@ service cloud.firestore {
     function isFriendInviteAcceptedFriendshipCreateValid(friendshipId, data) {
       let codeId = data.get('inviteCodeId', '');
       let codePath = /databases/$(database)/documents/accessCodes/$(codeId);
+      let codeBefore = get(codePath).data;
       let codeAfter = getAfter(codePath).data;
       return isSignedIn() &&
              codeId is string &&
              codeId != '' &&
+             exists(codePath) &&
              existsAfter(codePath) &&
              data.keys().hasOnly([
                'requesterId', 'recipientId', 'memberIds', 'status',
@@ -1552,6 +1554,11 @@ service cloud.firestore {
              data.get('acceptedAt', request.time) is timestamp &&
              data.get('respondedAt', request.time) is timestamp &&
              data.get('updatedAt', request.time) is timestamp &&
+             codeBefore.get('type', null) == 'friend_invite' &&
+             codeBefore.get('generatedBy', '') == data.get('requesterId', '') &&
+             codeBefore.get('used', false) == false &&
+             codeBefore.get('usedBy', null) == null &&
+             codeBefore.get('usedAt', null) == null &&
              codeAfter.get('type', null) == 'friend_invite' &&
              codeAfter.get('generatedBy', '') == data.get('requesterId', '') &&
              codeAfter.get('used', false) == true &&
@@ -1562,10 +1569,12 @@ service cloud.firestore {
     function isFriendInviteAcceptedFriendshipUpdateValid(friendshipId) {
       let codeId = request.resource.data.get('inviteCodeId', '');
       let codePath = /databases/$(database)/documents/accessCodes/$(codeId);
+      let codeBefore = get(codePath).data;
       let codeAfter = getAfter(codePath).data;
       return isSignedIn() &&
              codeId is string &&
              codeId != '' &&
+             exists(codePath) &&
              existsAfter(codePath) &&
              canAccessFriendship(resource.data) &&
              resource.data.get('status', '') != 'blocked' &&
@@ -1594,6 +1603,12 @@ service cloud.firestore {
              request.resource.data.get('acceptedAt', request.time) is timestamp &&
              request.resource.data.get('respondedAt', request.time) is timestamp &&
              request.resource.data.get('updatedAt', request.time) is timestamp &&
+             codeBefore.get('type', null) == 'friend_invite' &&
+             codeBefore.get('generatedBy', '') in request.resource.data.get('memberIds', []) &&
+             codeBefore.get('generatedBy', '') != request.auth.uid &&
+             codeBefore.get('used', false) == false &&
+             codeBefore.get('usedBy', null) == null &&
+             codeBefore.get('usedAt', null) == null &&
              codeAfter.get('type', null) == 'friend_invite' &&
              codeAfter.get('used', false) == true &&
              codeAfter.get('usedBy', '') == request.auth.uid &&
