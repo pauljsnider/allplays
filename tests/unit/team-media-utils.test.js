@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
     canManageTeamMedia,
     canViewTeamMediaFolder,
@@ -26,7 +29,15 @@ import {
     sortByMediaOrder
 } from '../../js/team-media-utils.js';
 
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+
 describe('team media management permissions', () => {
+    it('cache-busts team access imports for media management access changes', () => {
+        const source = readFileSync(path.join(repoRoot, 'js/team-media-utils.js'), 'utf8');
+
+        expect(source).toContain("import { hasTeamMediaManagementAccess } from './team-access.js?v=4';");
+    });
+
     it('allows owners, admins, platform admins, and selected media managers to see management controls', () => {
         const team = {
             id: 'team-1',
