@@ -89,6 +89,8 @@ describe('app performance baseline documentation', () => {
             '`throttled-4g-web`',
             '`mid-range-android`',
             '`iphone`',
+            'descriptive\n  `label`',
+            'positive safe-integer `run` number',
             '`coldStartHomeTtiMs`',
             '`warmResumeMs`',
             '`entryChunkGzipBytes`',

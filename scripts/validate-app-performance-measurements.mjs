@@ -223,7 +223,7 @@ function validatePhase(phaseData, profile, phase, artifact, errors) {
 
   validateSha(phaseData.sha, `${context}.sha`, errors);
   const expectedSha = phase === 'before' ? artifact.baselineSha : artifact.afterSha;
-  if (normalizeSha(expectedSha) && normalizeSha(phaseData.sha) !== normalizeSha(expectedSha)) {
+  if (normalizeSha(expectedSha) && !shaValuesOverlap(phaseData.sha, expectedSha)) {
     errors.push(`${context}.sha must match ${phase === 'before' ? 'baselineSha' : 'afterSha'}.`);
   }
 

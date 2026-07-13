@@ -163,7 +163,7 @@ describe('app performance measurement validator', () => {
         expect(result.errors).toContain('profile desktop-web before.runs[0].readsHomeMount must be a safe integer.');
     });
 
-    it('requires distinct build SHAs and compares phase SHAs case-insensitively', () => {
+    it('requires distinct build SHAs and compares phase SHAs case- and prefix-insensitively', () => {
         const sameBuild = buildArtifact({
             baselineSha: 'ABCDEF012345',
             afterSha: 'abcdef0'
@@ -182,6 +182,13 @@ describe('app performance measurement validator', () => {
         expect(validateMeasurementArtifact(casingOnly).errors).not.toContain(
             'profile desktop-web before.sha must match baselineSha.'
         );
+
+        const mixedLength = buildArtifact();
+        mixedLength.profiles[0].before.sha = baselineSha.slice(0, 7).toUpperCase();
+        mixedLength.profiles[0].after.sha = afterSha.slice(0, 7).toUpperCase();
+        const mixedLengthErrors = validateMeasurementArtifact(mixedLength).errors;
+        expect(mixedLengthErrors).not.toContain('profile desktop-web before.sha must match baselineSha.');
+        expect(mixedLengthErrors).not.toContain('profile desktop-web after.sha must match afterSha.');
     });
 
     it('requires real ISO timestamps with timezones and bounds raw run cost', () => {

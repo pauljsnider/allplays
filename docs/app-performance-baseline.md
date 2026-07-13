@@ -114,13 +114,15 @@ The JSON artifact must include:
 - `issue: 2050`, `baselineSha`, `afterSha`, and a shared `fixture` with
   `testAccount`, `teamOrOrganization`, `homeTeamCount`, `scheduleEventCount`,
   and `messageThreadCount`.
-- Four `profiles`: `desktop-web`, `throttled-4g-web`, `mid-range-android`, and
-  `iphone`, each with exact hardware, OS, runtime, browser/WebView, network, and
-  CPU notes.
+- Four `profiles` whose `id` is `desktop-web`, `throttled-4g-web`,
+  `mid-range-android`, or `iphone`. Each profile must also include a descriptive
+  `label` plus exact hardware, OS, runtime, browser/WebView, network, and CPU
+  notes.
 - `before` and `after` phases for every profile. Each phase must use the
   matching SHA, include an ISO `capturedAt` timestamp with a timezone, and
   include 3–100 clean raw `runs`.
-- Every run must include `coldStartHomeTtiMs`, `warmResumeMs`,
+- Every run must include a unique positive safe-integer `run` number plus
+  `coldStartHomeTtiMs`, `warmResumeMs`,
   `readsHomeMount`, `readsScheduleMount`, `readsMessagesMount`,
   `entryChunkGzipBytes`, `rsvpTapLatencyMs`, and `chatSendLatencyMs`.
 - Fixture volume counts must be positive safe integers so an empty account
