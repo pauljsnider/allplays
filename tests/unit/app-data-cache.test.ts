@@ -11,6 +11,7 @@ async function loadCacheModule() {
 
 describe('appDataCache', () => {
   let localStorageMock: Storage & {
+    removeItem: ReturnType<typeof vi.fn>;
     setItem: ReturnType<typeof vi.fn>;
   };
 
@@ -157,10 +158,70 @@ describe('appDataCache', () => {
     expect(secondCache.getCachedAppData('user:b')).toEqual({ user: 'b' });
   });
 
+  it('invalidates one cached key in memory and persisted storage', async () => {
+    const firstCache = await loadCacheModule();
+    const loader = vi.fn()
+      .mockResolvedValueOnce({ version: 1 })
+      .mockResolvedValueOnce({ version: 2 });
+
+    await firstCache.loadCachedAppData('schedule:key', loader, { ttlMs: 60_000 });
+    await firstCache.loadCachedAppData('other:key', async () => ({ other: true }), { ttlMs: 60_000 });
+
+    firstCache.invalidateCachedAppData('schedule:key');
+
+    expect(firstCache.getCachedAppData('schedule:key')).toBeNull();
+    expect(window.localStorage.getItem('allplays:appDataCache:schedule%3Akey')).toBeNull();
+    expect(window.localStorage.getItem('allplays:appDataCache:other%3Akey')).toContain('other');
+    await expect(firstCache.loadCachedAppData('schedule:key', loader, { ttlMs: 60_000 })).resolves.toEqual({ version: 2 });
+    expect(loader).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps cache invalidation best-effort when storage removal fails', async () => {
+    const cache = await loadCacheModule();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const loader = vi.fn()
+      .mockResolvedValueOnce({ version: 1 })
+      .mockResolvedValueOnce({ version: 2 });
+
+    await cache.loadCachedAppData('schedule:key', loader, { ttlMs: 60_000 });
+    localStorageMock.removeItem.mockImplementation(() => {
+      throw new DOMException('Storage disabled', 'SecurityError');
+    });
+
+    expect(() => cache.invalidateCachedAppData('schedule:key')).not.toThrow();
+    expect(cache.getCachedAppData('schedule:key')).toBeNull();
+    await expect(cache.loadCachedAppData('schedule:key', loader, { ttlMs: 60_000 })).resolves.toEqual({ version: 2 });
+    expect(loader).toHaveBeenCalledTimes(2);
+  });
+
+  it('prevents an invalidated in-flight key from repopulating without dropping unrelated loads', async () => {
+    const cache = await loadCacheModule();
+    let resolveSchedule: ((value: { schedule: string }) => void) | null = null;
+    let resolveOther: ((value: { other: string }) => void) | null = null;
+    const scheduleLoad = cache.loadCachedAppData('schedule:key', () => new Promise((resolve) => {
+      resolveSchedule = resolve;
+    }));
+    const otherLoad = cache.loadCachedAppData('other:key', () => new Promise((resolve) => {
+      resolveOther = resolve;
+    }));
+
+    cache.invalidateCachedAppData('schedule:key');
+    resolveSchedule?.({ schedule: 'stale' });
+    resolveOther?.({ other: 'fresh' });
+
+    await expect(scheduleLoad).resolves.toEqual({ schedule: 'stale' });
+    await expect(otherLoad).resolves.toEqual({ other: 'fresh' });
+    expect(cache.getCachedAppData('schedule:key')).toBeNull();
+    expect(cache.getCachedAppData('other:key')).toEqual({ other: 'fresh' });
+    expect(window.localStorage.getItem('allplays:appDataCache:schedule%3Akey')).toBeNull();
+    expect(window.localStorage.getItem('allplays:appDataCache:other%3Akey')).toContain('fresh');
+  });
+
   it('uses one shared key for parent schedule summaries across pages', async () => {
     const cache = await loadCacheModule();
 
     expect(cache.getParentScheduleSummaryCacheKey('parent-1')).toBe('app-schedule-summary:parent-1');
+    expect(cache.getParentHomeSecondaryCacheKey('parent-1')).toBe('home-secondary:parent-1');
   });
 
   it('routes handled cache failures through the shared logger', () => {

@@ -12,6 +12,7 @@ const defaultMaxStaleMs = 24 * 60 * 60 * 1000;
 const storagePrefix = 'allplays:appDataCache:';
 const cache = new Map<string, CacheEntry<unknown>>();
 let cacheInvalidationVersion = 0;
+const cacheKeyInvalidationVersions = new Map<string, number>();
 const logger = createLogger('app-data-cache');
 
 type LoadCachedAppDataOptions<T> = {
@@ -32,6 +33,10 @@ type StoredCacheEntry = {
 
 export function getParentScheduleSummaryCacheKey(userId: string) {
   return `app-schedule-summary:${userId}`;
+}
+
+export function getParentHomeSecondaryCacheKey(userId: string) {
+  return `home-secondary:${userId}`;
 }
 
 export function getCachedAppData<T>(key: string, { maxStaleMs = defaultMaxStaleMs }: { maxStaleMs?: number } = {}): T | null {
@@ -99,6 +104,12 @@ export function clearAppDataCache(prefix = '') {
   removeStoredCacheEntries(prefix);
 }
 
+export function invalidateCachedAppData(key: string) {
+  cacheKeyInvalidationVersions.set(key, getCacheKeyInvalidationVersion(key) + 1);
+  cache.delete(key);
+  removeStoredCacheEntry(key);
+}
+
 function loadAndStoreCachedAppData<T>(
   key: string,
   loader: () => Promise<T>,
@@ -111,8 +122,12 @@ function loadAndStoreCachedAppData<T>(
   }: { ttlMs: number; persist: boolean; onRefresh?: (value: T) => void; shouldCache?: (value: T) => boolean }
 ) {
   const loadInvalidationVersion = cacheInvalidationVersion;
+  const loadKeyInvalidationVersion = getCacheKeyInvalidationVersion(key);
   const promise = loader().then((value) => {
-    if (loadInvalidationVersion !== cacheInvalidationVersion) {
+    if (
+      loadInvalidationVersion !== cacheInvalidationVersion
+      || loadKeyInvalidationVersion !== getCacheKeyInvalidationVersion(key)
+    ) {
       const current = cache.get(key);
       if (current?.promise === promise) {
         if (existing && hasCachedValue(existing)) {
@@ -177,6 +192,10 @@ function loadAndStoreCachedAppData<T>(
   return promise;
 }
 
+function getCacheKeyInvalidationVersion(key: string) {
+  return cacheKeyInvalidationVersions.get(key) ?? 0;
+}
+
 function hydrateMemoryCache<T>(key: string, now: number, maxStaleMs: number) {
   const existing = cache.get(key) as CacheEntry<T> | undefined;
   if (existing) return existing;
@@ -188,6 +207,8 @@ function hydrateMemoryCache<T>(key: string, now: number, maxStaleMs: number) {
 }
 
 function readStoredCacheEntry<T>(key: string, now: number, maxStaleMs: number): CacheEntry<T> | null {
+  if (getCacheKeyInvalidationVersion(key) > 0) return null;
+
   const storage = getCacheStorage();
   if (!storage) return null;
 
@@ -241,13 +262,27 @@ function removeStoredCacheEntries(prefix: string) {
   const storage = getCacheStorage();
   if (!storage) return;
 
-  for (let index = storage.length - 1; index >= 0; index -= 1) {
-    const key = storage.key(index);
-    if (!key?.startsWith(storagePrefix)) continue;
-    const cacheKey = fromStorageKey(key);
-    if (!prefix || cacheKey.startsWith(prefix)) {
-      storage.removeItem(key);
+  try {
+    for (let index = storage.length - 1; index >= 0; index -= 1) {
+      const key = storage.key(index);
+      if (!key?.startsWith(storagePrefix)) continue;
+      const cacheKey = fromStorageKey(key);
+      if (!prefix || cacheKey.startsWith(prefix)) {
+        storage.removeItem(key);
+      }
     }
+  } catch (error) {
+    logger.warn('Unable to remove cached data.', { error });
+  }
+}
+
+function removeStoredCacheEntry(key: string) {
+  const storage = getCacheStorage();
+  if (!storage) return;
+  try {
+    storage.removeItem(toStorageKey(key));
+  } catch (error) {
+    logger.warn('Unable to remove cached data.', { error });
   }
 }
 

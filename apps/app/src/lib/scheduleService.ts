@@ -128,7 +128,7 @@ import {
 } from './scheduleLogic';
 import type { AutoFilledLineupPlayer, GamePlanPublishPayloadInput } from './gameDayLineupPublish';
 import { DEFAULT_TEAM_CONVERSATION_ID } from './chatLogic';
-import { getCachedAppData, getParentScheduleSummaryCacheKey, loadCachedAppData } from './appDataCache';
+import { getCachedAppData, getParentHomeSecondaryCacheKey, getParentScheduleSummaryCacheKey, invalidateCachedAppData, loadCachedAppData } from './appDataCache';
 import { toAppServiceError } from './appErrors';
 import { createLogger } from './logger';
 import { getNativeRestDedupKey, loadDedupedNativeRestRequest, shouldDedupNativeRestRequest } from './nativeRestDedup';
@@ -149,6 +149,26 @@ const parentSchedulePlayerConcurrency = 8;
 const scheduleHydrationCacheTtlMs = 30 * 1000;
 const parentHomeHydrationLookAheadMs = 14 * 24 * 60 * 60 * 1000;
 const parentHomeHydrationLookBehindMs = 12 * 60 * 60 * 1000;
+
+function getScheduleEventHydrationCacheKey(teamId: string, eventId: string) {
+  return `event-details:${teamId}:${eventId}`;
+}
+
+function invalidateParentScheduleCaches(
+  user: AuthUser | null | undefined,
+  event?: Pick<ParentScheduleEvent, 'teamId' | 'id'> | null
+) {
+  const userId = compactString(user?.uid);
+  if (userId) {
+    invalidateCachedAppData(getParentScheduleSummaryCacheKey(userId));
+    invalidateCachedAppData(getParentHomeSecondaryCacheKey(userId));
+  }
+  const teamId = compactString(event?.teamId);
+  const eventId = compactString(event?.id);
+  if (teamId && eventId) {
+    invalidateCachedAppData(getScheduleEventHydrationCacheKey(teamId, eventId));
+  }
+}
 // Default games window for schedule views: ~13 months covers the current and
 // previous season so the "Past Events" filter still shows recent history before
 // an explicit full-history load. Tune here if season length assumptions change.
@@ -1882,6 +1902,7 @@ export async function createScheduledGameForApp(
   if (options.requireCreatedId && !createdId) {
     throw new Error('Tournament game save failed because no game id was returned.');
   }
+  invalidateParentScheduleCaches(user);
   return createdId;
 }
 
@@ -1946,6 +1967,7 @@ export async function updateScheduledGameForApp(teamId: string, gameId: string, 
     logScheduleWarning('Falling back to REST scheduled game update.', 'scheduled-game-update', error, { fallback: 'rest', teamId: normalizedTeamId, gameId: normalizedGameId });
     await nativePatchDocument(`teams/${encodeURIComponent(normalizedTeamId)}/games/${encodeURIComponent(normalizedGameId)}`, payload);
   }
+  invalidateParentScheduleCaches(user);
   return { updated: true, eventId: normalizedGameId };
 }
 
@@ -2041,7 +2063,9 @@ export async function createScheduledPracticeForApp(teamId: string, input: Sched
   const payload = buildScheduledPracticePayload(input, user as AuthUser);
 
   try {
-    return await withTimeout(Promise.resolve(addPractice(normalizedTeamId, payload)), 'Scheduled practice create');
+    const createdId = await withTimeout(Promise.resolve(addPractice(normalizedTeamId, payload)), 'Scheduled practice create');
+    invalidateParentScheduleCaches(user);
+    return createdId;
   } catch (error) {
     if (!isNativeRuntime()) throw error;
     logScheduleWarning('Falling back to REST scheduled practice create.', 'scheduled-practice-create', error, { fallback: 'rest', teamId: normalizedTeamId });
@@ -2049,6 +2073,7 @@ export async function createScheduledPracticeForApp(teamId: string, input: Sched
       ...buildNativePracticePatchPayload(input, user as AuthUser),
       createdAt: new Date()
     });
+    invalidateParentScheduleCaches(user);
     return doc?.id || '';
   }
 }
@@ -2082,6 +2107,7 @@ export async function updateScheduledPracticeForApp(teamId: string, input: Sched
         updatedBy: (user as AuthUser).uid
       });
     }
+    invalidateParentScheduleCaches(user);
     return { updated: true, scope, eventId: occurrence.masterId, instanceDate: occurrence.instanceDate };
   }
 
@@ -2103,6 +2129,7 @@ export async function updateScheduledPracticeForApp(teamId: string, input: Sched
       updatedBy: (user as AuthUser).uid
     });
   }
+  invalidateParentScheduleCaches(user);
   return { updated: true, scope, eventId: normalizedEventId };
 }
 
@@ -2124,6 +2151,7 @@ export async function revertScheduledPracticeOccurrenceForApp(teamId: string, ev
       updatedBy: (user as AuthUser).uid
     });
   }
+  invalidateParentScheduleCaches(user);
   return { reverted: true, eventId: occurrence.masterId, instanceDate: occurrence.instanceDate };
 }
 
@@ -2177,7 +2205,9 @@ export async function createScheduleImportGame(teamId: string, row: ScheduleImpo
   if (!payload.opponent) throw new Error('Game rows require an opponent.');
 
   try {
-    return await withTimeout(Promise.resolve(addGame(normalizedTeamId, payload)), 'Schedule import game create');
+    const createdId = await withTimeout(Promise.resolve(addGame(normalizedTeamId, payload)), 'Schedule import game create');
+    invalidateParentScheduleCaches(user);
+    return createdId;
   } catch (error) {
     if (!isNativeRuntime()) throw error;
     logScheduleWarning('Falling back to REST schedule import game create.', 'schedule-import-game-create', error, { fallback: 'rest', teamId: normalizedTeamId });
@@ -2185,6 +2215,7 @@ export async function createScheduleImportGame(teamId: string, row: ScheduleImpo
       ...payload,
       createdAt: new Date()
     });
+    invalidateParentScheduleCaches(user);
     return doc?.id || '';
   }
 }
@@ -2215,7 +2246,9 @@ export async function createScheduleImportPractice(teamId: string, row: Schedule
   const payload = buildScheduleImportPracticePayload(row, user as AuthUser);
 
   try {
-    return await withTimeout(Promise.resolve(addPractice(normalizedTeamId, payload)), 'Schedule import practice create');
+    const createdId = await withTimeout(Promise.resolve(addPractice(normalizedTeamId, payload)), 'Schedule import practice create');
+    invalidateParentScheduleCaches(user);
+    return createdId;
   } catch (error) {
     if (!isNativeRuntime()) throw error;
     logScheduleWarning('Falling back to REST schedule import practice create.', 'schedule-import-practice-create', error, { fallback: 'rest', teamId: normalizedTeamId });
@@ -2223,6 +2256,7 @@ export async function createScheduleImportPractice(teamId: string, row: Schedule
       ...payload,
       createdAt: new Date()
     });
+    invalidateParentScheduleCaches(user);
     return doc?.id || '';
   }
 }
@@ -3628,7 +3662,7 @@ function shouldEagerlyHydrateParentHomeEvent(event: ParentScheduleEvent, nowMs =
 
 function loadCachedEventHydrationDetails(teamId: string, gameId: string) {
   return loadCachedAppData(
-    `event-details:${teamId}:${gameId}`,
+    getScheduleEventHydrationCacheKey(teamId, gameId),
     async () => {
       const results = await Promise.allSettled([
         loadRsvps(teamId, gameId),
@@ -4162,6 +4196,7 @@ export async function submitStaffScheduleRsvpOverride(event: ParentScheduleEvent
     await nativeSubmitRsvpForPlayer(event.teamId, event.id, user!, normalizedPlayerId, response, '', event.availabilityNoteVisibility === 'team' ? 'team' : 'admins');
   }
 
+  invalidateParentScheduleCaches(user, event);
   return {
     playerId: normalizedPlayerId,
     response
@@ -4180,18 +4215,22 @@ export async function submitParentScheduleRsvp(event: ParentScheduleEvent, user:
   }
 
   try {
-    return await withTimeout(Promise.resolve(submitRsvpForPlayer(event.teamId, event.id, user.uid, {
+    const result = await withTimeout(Promise.resolve(submitRsvpForPlayer(event.teamId, event.id, user.uid, {
       displayName: user.displayName || user.email,
       playerId: event.childId,
       response,
       note: compactString(note) || null
     })), 'RSVP submit');
+    invalidateParentScheduleCaches(user, event);
+    return result;
   } catch (error) {
     if (!isNativeRuntime()) {
       throw error;
     }
     logScheduleWarning('Falling back to REST RSVP submit.', 'parent-rsvp-submit', error, { fallback: 'rest', teamId: event.teamId, gameId: event.id, childId: event.childId });
-    return nativeSubmitRsvpForPlayer(event.teamId, event.id, user, event.childId, response, note, event.availabilityNoteVisibility === 'team' ? 'team' : 'admins');
+    const result = await nativeSubmitRsvpForPlayer(event.teamId, event.id, user, event.childId, response, note, event.availabilityNoteVisibility === 'team' ? 'team' : 'admins');
+    invalidateParentScheduleCaches(user, event);
+    return result;
   }
 }
 
@@ -4224,18 +4263,22 @@ export async function submitParentScheduleRsvpForChildren(events: ParentSchedule
   }
 
   try {
-    return await withTimeout(Promise.resolve(submitRsvp(firstEvent.teamId, firstEvent.id, user.uid, {
+    const result = await withTimeout(Promise.resolve(submitRsvp(firstEvent.teamId, firstEvent.id, user.uid, {
       displayName: user.displayName || user.email,
       playerIds: childIds,
       response,
       note: compactString(note) || null
     })), 'Family RSVP submit');
+    invalidateParentScheduleCaches(user, firstEvent);
+    return result;
   } catch (error) {
     if (!isNativeRuntime()) {
       throw error;
     }
     logScheduleWarning('Falling back to REST family RSVP submit.', 'parent-family-rsvp-submit', error, { fallback: 'rest', teamId: firstEvent.teamId, gameId: firstEvent.id, childIds });
-    return nativeSubmitRsvpForChildren(firstEvent.teamId, firstEvent.id, user, childIds, response, note, firstEvent.availabilityNoteVisibility === 'team' ? 'team' : 'admins');
+    const result = await nativeSubmitRsvpForChildren(firstEvent.teamId, firstEvent.id, user, childIds, response, note, firstEvent.availabilityNoteVisibility === 'team' ? 'team' : 'admins');
+    invalidateParentScheduleCaches(user, firstEvent);
+    return result;
   }
 }
 
@@ -5742,6 +5785,7 @@ export async function cancelScheduledGameForApp(event: ParentScheduleEvent, user
 
   const notificationError = notificationFailures.length > 0 ? notificationFailures.join('; ') : null;
 
+  invalidateParentScheduleCaches(user);
   return {
     cancelled: true,
     notificationError
@@ -5782,6 +5826,7 @@ export async function cancelPracticeOccurrenceForApp(event: ParentScheduleEvent,
     });
   }
 
+  invalidateParentScheduleCaches(user);
   return {
     cancelled: true,
     masterId: occurrence.masterId,
