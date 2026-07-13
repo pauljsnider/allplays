@@ -11,6 +11,7 @@ async function loadCacheModule() {
 
 describe('appDataCache', () => {
   let localStorageMock: Storage & {
+    removeItem: ReturnType<typeof vi.fn>;
     setItem: ReturnType<typeof vi.fn>;
   };
 
@@ -172,6 +173,24 @@ describe('appDataCache', () => {
     expect(window.localStorage.getItem('allplays:appDataCache:schedule%3Akey')).toBeNull();
     expect(window.localStorage.getItem('allplays:appDataCache:other%3Akey')).toContain('other');
     await expect(firstCache.loadCachedAppData('schedule:key', loader, { ttlMs: 60_000 })).resolves.toEqual({ version: 2 });
+    expect(loader).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps cache invalidation best-effort when storage removal fails', async () => {
+    const cache = await loadCacheModule();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const loader = vi.fn()
+      .mockResolvedValueOnce({ version: 1 })
+      .mockResolvedValueOnce({ version: 2 });
+
+    await cache.loadCachedAppData('schedule:key', loader, { ttlMs: 60_000 });
+    localStorageMock.removeItem.mockImplementation(() => {
+      throw new DOMException('Storage disabled', 'SecurityError');
+    });
+
+    expect(() => cache.invalidateCachedAppData('schedule:key')).not.toThrow();
+    expect(cache.getCachedAppData('schedule:key')).toBeNull();
+    await expect(cache.loadCachedAppData('schedule:key', loader, { ttlMs: 60_000 })).resolves.toEqual({ version: 2 });
     expect(loader).toHaveBeenCalledTimes(2);
   });
 

@@ -207,6 +207,8 @@ function hydrateMemoryCache<T>(key: string, now: number, maxStaleMs: number) {
 }
 
 function readStoredCacheEntry<T>(key: string, now: number, maxStaleMs: number): CacheEntry<T> | null {
+  if (getCacheKeyInvalidationVersion(key) > 0) return null;
+
   const storage = getCacheStorage();
   if (!storage) return null;
 
@@ -260,20 +262,28 @@ function removeStoredCacheEntries(prefix: string) {
   const storage = getCacheStorage();
   if (!storage) return;
 
-  for (let index = storage.length - 1; index >= 0; index -= 1) {
-    const key = storage.key(index);
-    if (!key?.startsWith(storagePrefix)) continue;
-    const cacheKey = fromStorageKey(key);
-    if (!prefix || cacheKey.startsWith(prefix)) {
-      storage.removeItem(key);
+  try {
+    for (let index = storage.length - 1; index >= 0; index -= 1) {
+      const key = storage.key(index);
+      if (!key?.startsWith(storagePrefix)) continue;
+      const cacheKey = fromStorageKey(key);
+      if (!prefix || cacheKey.startsWith(prefix)) {
+        storage.removeItem(key);
+      }
     }
+  } catch (error) {
+    logger.warn('Unable to remove cached data.', { error });
   }
 }
 
 function removeStoredCacheEntry(key: string) {
   const storage = getCacheStorage();
   if (!storage) return;
-  storage.removeItem(toStorageKey(key));
+  try {
+    storage.removeItem(toStorageKey(key));
+  } catch (error) {
+    logger.warn('Unable to remove cached data.', { error });
+  }
 }
 
 function getCacheStorage() {
