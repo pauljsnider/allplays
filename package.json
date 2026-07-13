@@ -23,6 +23,7 @@
     "app:dev": "npm --prefix apps/app run dev",
     "app:build": "npm --prefix apps/app run build && node scripts/verify-app-bundle-visualizer.mjs",
     "app:preview": "npm --prefix apps/app run preview",
+    "app:validate-performance-measurements": "node scripts/validate-app-performance-measurements.mjs",
     "mobile:serve": "npm run app:dev",
     "mobile:sync": "npm run app:build && npx cap sync",
     "mobile:build:ios": "npm run mobile:sync && DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build",

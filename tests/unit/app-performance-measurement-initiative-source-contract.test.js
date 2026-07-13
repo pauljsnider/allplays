@@ -7,8 +7,10 @@ function readSource(path) {
 
 const packageSource = readSource('package.json');
 const appPackageSource = readSource('apps/app/package.json');
+const ciSource = readSource('.github/workflows/ci.yml');
 const baselineDocSource = readSource('docs/app-performance-baseline.md');
 const bundleSizeScriptSource = readSource('scripts/check-app-bundle-size.mjs');
+const measurementValidatorSource = readSource('scripts/validate-app-performance-measurements.mjs');
 const uxTimingSource = readSource('apps/app/src/lib/uxTiming.ts');
 const telemetrySource = readSource('apps/app/src/lib/telemetry.ts');
 const mainSource = readSource('apps/app/src/main.tsx');
@@ -30,6 +32,8 @@ describe('app performance measurement initiative source contract', () => {
             'Entry chunk size (gzip)',
             'RSVP tap latency',
             'Chat send latency',
+            'Raw evidence contract',
+            'app:validate-performance-measurements',
             'paste',
             'the completed table into #2050 before closing it'
         ].forEach((snippet) => {
@@ -44,12 +48,34 @@ describe('app performance measurement initiative source contract', () => {
         expect(packageSource).toContain('"app:build": "npm --prefix apps/app run build && node scripts/verify-app-bundle-visualizer.mjs"');
         expect(packageSource).toContain('"app:preview": "npm --prefix apps/app run preview"');
         expect(packageSource).toContain('"app:check-bundle-size": "node scripts/check-app-bundle-size.mjs"');
+        expect(packageSource).toContain('"app:validate-performance-measurements": "node scripts/validate-app-performance-measurements.mjs"');
         expect(appPackageSource).toContain('"preview": "vite preview --host 0.0.0.0"');
+        expect(ciSource).toContain('Validate app performance evidence when present');
+        expect(ciSource).toContain('npm run app:validate-performance-measurements -- docs/app-performance-measurements.json');
 
         expect(bundleSizeScriptSource).toContain("const defaultEntryBudgetBytes = 1_420_000;");
         expect(bundleSizeScriptSource).toContain('process.env.APP_ENTRY_CHUNK_LIMIT_BYTES');
         expect(bundleSizeScriptSource).toContain('Unable to find the app entry chunk');
         expect(bundleSizeScriptSource).toContain('App entry chunk ${path.relative(repoRoot, entryChunkPath)} is ${entrySizeKb} KB');
+
+        [
+            'desktop-web',
+            'throttled-4g-web',
+            'mid-range-android',
+            'iphone',
+            'coldStartHomeTtiMs',
+            'warmResumeMs',
+            'readsHomeMount',
+            'readsScheduleMount',
+            'readsMessagesMount',
+            'entryChunkGzipBytes',
+            'rsvpTapLatencyMs',
+            'chatSendLatencyMs'
+        ].forEach((snippet) => {
+            expect(measurementValidatorSource).toContain(snippet);
+        });
+        expect(measurementValidatorSource).toContain('MAX_ARTIFACT_BYTES');
+        expect(measurementValidatorSource).toContain('MAX_RUNS_PER_PHASE');
     });
 
     it('keeps canonical UX timing labels flowing through telemetry', () => {

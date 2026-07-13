@@ -28,7 +28,9 @@ describe('app performance baseline documentation', () => {
             '| Mid-range Android |',
             '| iPhone |',
             'DevTools "Slow 4G" plus 4x CPU throttle',
-            'Numbers are medians of 3 runs'
+            'Numbers are medians of 3 runs',
+            'Raw evidence contract',
+            'npm run app:validate-performance-measurements -- docs/app-performance-measurements.json'
         ].forEach((needle) => {
             expect(doc).toContain(needle);
         });
@@ -73,6 +75,30 @@ describe('app performance baseline documentation', () => {
             'RSVP timing validation uses the',
             'lab action "open a Schedule event and tap Going"',
             'telemetry event filtered to label `rsvp tap latency`'
+        ].forEach((needle) => {
+            expect(doc).toContain(needle);
+        });
+    });
+
+    it('requires validated raw run evidence before issue closure', () => {
+        [
+            '`issue: 2050`',
+            '`baselineSha`',
+            '`afterSha`',
+            '`desktop-web`',
+            '`throttled-4g-web`',
+            '`mid-range-android`',
+            '`iphone`',
+            'descriptive\n  `label`',
+            'positive safe-integer `run` number',
+            '`coldStartHomeTtiMs`',
+            '`warmResumeMs`',
+            '`entryChunkGzipBytes`',
+            'The validator rejects placeholders',
+            'positive safe integers',
+            'synthetic or anonymized fixture identifier',
+            'Never commit passwords',
+            'CI automatically validates'
         ].forEach((needle) => {
             expect(doc).toContain(needle);
         });
