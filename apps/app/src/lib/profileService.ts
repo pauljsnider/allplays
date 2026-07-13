@@ -407,7 +407,7 @@ async function nativeCreateAccessCode(userId: string, email: string, phone: stri
         body: JSON.stringify({
           fields: {
             code: encodeFirestoreValue(candidateCode),
-            type: encodeFirestoreValue('standard'),
+            type: encodeFirestoreValue('friend_invite'),
             generatedBy: encodeFirestoreValue(userId),
             email: encodeFirestoreValue(email || null),
             phone: encodeFirestoreValue(phone || null),
@@ -588,7 +588,7 @@ export async function saveNotificationDeviceToken(userId: string, input: Notific
 export async function createProfileAccessCode(userId: string, email: string, phone: string) {
   const code = generateAccessCode();
   try {
-    const result = await withTimeout(Promise.resolve(createAccessCode(userId, email, phone, code)), 'Invite code create', primaryDataTimeoutMs);
+    const result = await withTimeout(Promise.resolve(createAccessCode(userId, email, phone, code, { type: 'friend_invite' })), 'Invite code create', primaryDataTimeoutMs);
     return String(result?.code || code).trim().toUpperCase();
   } catch (error) {
     logProfileWarning('Falling back to REST invite code create.', 'invite-code-create', error, { userId });

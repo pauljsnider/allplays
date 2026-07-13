@@ -74,7 +74,9 @@ describe('createProfileAccessCode', () => {
         dbMocks.createAccessCode.mockResolvedValue({ id: 'SECOND45', code: 'SECOND45' });
 
         await expect(createProfileAccessCode('user-1', 'friend@example.com', '')).resolves.toBe('SECOND45');
-        expect(dbMocks.createAccessCode).toHaveBeenCalledWith('user-1', 'friend@example.com', '', 'FIRST123');
+        expect(dbMocks.createAccessCode).toHaveBeenCalledWith('user-1', 'friend@example.com', '', 'FIRST123', {
+            type: 'friend_invite'
+        });
     });
 
     it('uses the code as the Firestore document id in the native REST fallback', async () => {
@@ -92,7 +94,10 @@ describe('createProfileAccessCode', () => {
 
         expect(fetchMock).toHaveBeenCalledWith(
             expect.stringContaining('/accessCodes/FIRST123?currentDocument.exists=false'),
-            expect.objectContaining({ method: 'PATCH' })
+            expect.objectContaining({
+                method: 'PATCH',
+                body: expect.stringContaining('"friend_invite"')
+            })
         );
     });
 });
