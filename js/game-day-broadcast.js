@@ -1,10 +1,12 @@
 const endedGameStatuses = new Set(['cancelled', 'canceled', 'completed', 'final', 'deleted']);
 const liveBroadcastStatuses = new Set(['live', 'streaming']);
+const startingBroadcastStatuses = new Set(['starting']);
 const readyBroadcastStatuses = new Set(['ready', 'ready_for_managed_stream']);
 const failedBroadcastStatuses = new Set(['failed', 'error', 'permission_failed']);
-const runtimeBroadcastStatuses = new Set(['ready', 'live', 'failed']);
+const runtimeBroadcastStatuses = new Set(['ready', 'starting', 'live', 'failed']);
 export const BROADCAST_STREAM_HEARTBEAT_MS = 15_000;
 export const BROADCAST_STREAM_LEASE_MS = 45_000;
+export const BROADCAST_STREAM_STARTING_TIMEOUT_MS = 60_000;
 
 function toTimeMs(value) {
     if (value instanceof Date) return value.getTime();
@@ -47,6 +49,7 @@ export function resolveGameDayBroadcastStatus(game = {}, { now = new Date() } = 
         session.localStreamStatus || session.runtimeStatus || session.streamStatus || session.status || ''
     ).trim().toLowerCase();
     const leaseExpiresAtMs = toTimeMs(session.localStreamLeaseExpiresAt);
+    const streamUpdatedAtMs = toTimeMs(session.localStreamUpdatedAt || session.updatedAt);
     const nowMs = toTimeMs(now) ?? Date.now();
     if (liveBroadcastStatuses.has(streamStatus) && leaseExpiresAtMs !== null && leaseExpiresAtMs > nowMs) {
         return {
@@ -59,6 +62,19 @@ export function resolveGameDayBroadcastStatus(game = {}, { now = new Date() } = 
         return {
             state: 'stale',
             label: 'The last live device signal expired. Open setup to resume streaming.'
+        };
+    }
+
+    if (startingBroadcastStatuses.has(streamStatus)) {
+        if (streamUpdatedAtMs === null || nowMs - streamUpdatedAtMs > BROADCAST_STREAM_STARTING_TIMEOUT_MS) {
+            return {
+                state: 'stale',
+                label: 'The device stream start timed out. Open setup to retry streaming.'
+            };
+        }
+        return {
+            state: 'starting',
+            label: 'Device streaming is starting.'
         };
     }
 
@@ -88,6 +104,12 @@ export function buildBroadcastRuntimeSession({ existingSession, status, user = {
         !existingSession.provider || !existingSession.permissions || !existingSession.createdAt) return null;
     const safeStatus = String(status || '').trim().toLowerCase();
     if (!runtimeBroadcastStatuses.has(safeStatus)) return null;
+    const requiresReadySetup = ['ready', 'starting', 'live'].includes(safeStatus);
+    if (requiresReadySetup && (
+        existingSession.status !== 'ready_for_managed_stream' ||
+        existingSession.permissions?.camera !== true ||
+        existingSession.permissions?.microphone !== true
+    )) return null;
     const updatedAt = now instanceof Date ? new Date(now.getTime()) : new Date(now);
     if (Number.isNaN(updatedAt.getTime())) return null;
     const session = {

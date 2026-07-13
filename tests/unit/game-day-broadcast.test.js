@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
     BROADCAST_STREAM_HEARTBEAT_MS,
     BROADCAST_STREAM_LEASE_MS,
+    BROADCAST_STREAM_STARTING_TIMEOUT_MS,
     buildBroadcastRuntimeSession,
     buildGameDayBroadcastSetupUrl,
     canOpenGameDayBroadcastSetup,
@@ -27,7 +28,7 @@ describe('Game Day broadcast entry', () => {
         expect(canOpenGameDayBroadcastSetup({ status: 'scheduled', liveStatus: 'final' })).toBe(false);
     });
 
-    it('distinguishes setup-required, setup-ready, leased-live, stale, retry, and ended states', () => {
+    it('distinguishes setup-required, setup-ready, starting, leased-live, stale, retry, and ended states', () => {
         const now = new Date('2026-07-11T20:00:00.000Z');
         expect(resolveGameDayBroadcastStatus({ status: 'scheduled' })).toEqual({
             state: 'setup_required',
@@ -37,6 +38,35 @@ describe('Game Day broadcast entry', () => {
             status: 'scheduled',
             broadcastSession: { managedStreamReady: true }
         })).toMatchObject({ state: 'ready' });
+        expect(resolveGameDayBroadcastStatus({
+            status: 'scheduled',
+            broadcastSession: {
+                managedStreamReady: true,
+                localStreamStatus: 'starting',
+                localStreamUpdatedAt: new Date('2026-07-11T19:59:50.000Z')
+            }
+        }, { now })).toEqual({ state: 'starting', label: 'Device streaming is starting.' });
+        expect(resolveGameDayBroadcastStatus({
+            status: 'scheduled',
+            broadcastSession: {
+                managedStreamReady: true,
+                localStreamStatus: 'starting',
+                localStreamUpdatedAt: new Date('2026-07-11T19:58:59.000Z')
+            }
+        }, { now })).toEqual({
+            state: 'stale',
+            label: 'The device stream start timed out. Open setup to retry streaming.'
+        });
+        expect(resolveGameDayBroadcastStatus({
+            status: 'scheduled',
+            broadcastSession: {
+                managedStreamReady: true,
+                localStreamStatus: 'starting'
+            }
+        }, { now })).toEqual({
+            state: 'stale',
+            label: 'The device stream start timed out. Open setup to retry streaming.'
+        });
         expect(resolveGameDayBroadcastStatus({
             status: 'scheduled',
             broadcastSession: {
@@ -94,8 +124,29 @@ describe('Game Day broadcast entry', () => {
             updatedAt: new Date('2026-07-11T20:00:00.000Z'),
             updatedBy: 'streamer-1'
         });
+        expect(buildBroadcastRuntimeSession({
+            existingSession: {
+                id: 'broadcast-1',
+                name: 'Game broadcast setup',
+                status: 'ready_for_managed_stream',
+                provider: { type: 'managed_setup', name: 'ALL PLAYS managed setup' },
+                permissions: { camera: true, microphone: true },
+                createdAt: '2026-07-11T19:00:00.000Z'
+            },
+            status: 'starting',
+            user: { uid: 'streamer-1' },
+            now: new Date('2026-07-11T20:00:30.000Z')
+        })).toMatchObject({
+            status: 'ready_for_managed_stream',
+            localStreamStatus: 'starting',
+            localStreamActive: false,
+            localStreamUpdatedAt: new Date('2026-07-11T20:00:30.000Z'),
+            updatedAt: new Date('2026-07-11T20:00:30.000Z'),
+            updatedBy: 'streamer-1'
+        });
         expect(BROADCAST_STREAM_LEASE_MS).toBeLessThanOrEqual(60_000);
         expect(BROADCAST_STREAM_HEARTBEAT_MS).toBeLessThan(BROADCAST_STREAM_LEASE_MS);
+        expect(BROADCAST_STREAM_STARTING_TIMEOUT_MS).toBeGreaterThanOrEqual(BROADCAST_STREAM_LEASE_MS);
         expect(buildBroadcastRuntimeSession({
             existingSession: {
                 id: 'broadcast-1',
@@ -112,13 +163,56 @@ describe('Game Day broadcast entry', () => {
         })).not.toHaveProperty('localStreamLeaseExpiresAt');
         expect(buildBroadcastRuntimeSession({ existingSession: {}, status: 'external-live' })).toBeNull();
     });
+
+    it('requires verified camera and microphone setup before ready, starting, or live runtime states', () => {
+        const invalidSessions = [
+            {
+                id: 'broadcast-1',
+                name: 'Game broadcast setup',
+                status: 'permission_failed',
+                provider: { type: 'managed_setup', name: 'ALL PLAYS managed setup' },
+                permissions: { camera: false, microphone: false },
+                createdAt: '2026-07-11T19:00:00.000Z'
+            },
+            {
+                id: 'broadcast-1',
+                name: 'Game broadcast setup',
+                status: 'ready_for_managed_stream',
+                provider: { type: 'managed_setup', name: 'ALL PLAYS managed setup' },
+                permissions: { camera: true, microphone: false },
+                createdAt: '2026-07-11T19:00:00.000Z'
+            }
+        ];
+
+        for (const existingSession of invalidSessions) {
+            for (const status of ['ready', 'starting', 'live']) {
+                expect(buildBroadcastRuntimeSession({
+                    existingSession,
+                    status,
+                    user: { uid: 'streamer-1' }
+                })).toBeNull();
+            }
+            expect(buildBroadcastRuntimeSession({
+                existingSession,
+                status: 'failed',
+                user: { uid: 'streamer-1' }
+            })).toMatchObject({ localStreamStatus: 'failed', localStreamActive: false });
+        }
+    });
 });
 
 describe('Game Day broadcast wiring', () => {
+    it('keeps starting behind the same verified setup rule as ready and live', () => {
+        const rulesSource = readFileSync(resolve(process.cwd(), 'firestore.rules'), 'utf8');
+
+        expect(rulesSource).toContain("!(data.localStreamStatus in ['ready', 'starting', 'live'])");
+        expect(rulesSource).toMatch(/localStreamStatus in \['ready', 'starting', 'live'\][\s\S]*data\.status == 'ready_for_managed_stream'[\s\S]*data\.permissions\.camera == true[\s\S]*data\.permissions\.microphone == true/);
+    });
+
     it('uses the shared deep link for coaches, videographers, and Stream & Score helpers', () => {
         const gameDaySource = readFileSync(resolve(process.cwd(), 'game-day.html'), 'utf8');
 
-        expect(gameDaySource).toContain("from './js/game-day-broadcast.js?v=3'");
+        expect(gameDaySource).toContain("from './js/game-day-broadcast.js?v=5'");
         expect(gameDaySource.match(/data-game-day-broadcast-card/g)?.length).toBeGreaterThanOrEqual(2);
         expect(gameDaySource).toContain('renderLimitedVideographerAccess(accessInfo)');
         expect(gameDaySource).toContain('renderLimitedStreamAndScoreAccess(accessInfo)');
@@ -134,6 +228,8 @@ describe('Game Day broadcast wiring', () => {
         expect(liveGameSource).toContain("els.nativeCameraPanel?.scrollIntoView({ block: 'start' })");
         expect(liveGameSource).toContain('els.nativeCameraBeginStreamBtn.addEventListener(\'click\', beginNativeBroadcastStream)');
         expect(liveGameSource).toContain('await saveBroadcastRuntimeStatus(BROADCAST_STREAM_STATUSES.LIVE)');
+        expect(liveGameSource).toContain('state.nativeBroadcastStatus === BROADCAST_STREAM_STATUSES.STARTING');
+        expect(liveGameSource).toContain('state.nativeBroadcastStatus === BROADCAST_STREAM_STATUSES.LIVE');
         expect(liveGameSource).toContain('startBroadcastHeartbeat();');
         expect(liveGameSource).toContain('Failed to renew device stream lease:');
         expect(liveGameSource.match(/async function beginNativeBroadcastStream\(\)/g)).toHaveLength(1);

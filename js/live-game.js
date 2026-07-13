@@ -39,7 +39,7 @@ import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai
 import { getApp } from './vendor/firebase-app.js';
 import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, renderViewerLineupSections, renderOpponentStatsCards, applyResetEventState, applyViewerEventToState, shouldResetViewerFromGameDoc, collectVisibleLiveEventsSequentially } from './live-game-state.js?v=6';
 import { getDefaultLivePeriod } from './live-sport-config.js?v=2';
-import { BROADCAST_STREAM_HEARTBEAT_MS, buildBroadcastRuntimeSession } from './game-day-broadcast.js?v=3';
+import { BROADCAST_STREAM_HEARTBEAT_MS, buildBroadcastRuntimeSession } from './game-day-broadcast.js?v=5';
 
 const state = {
   teamId: null,
@@ -545,6 +545,15 @@ function startBroadcastHeartbeat() {
   }, BROADCAST_STREAM_HEARTBEAT_MS);
 }
 
+async function saveAbortedNativeBroadcastStart(status, warningMessage) {
+  stopBroadcastHeartbeat();
+  try {
+    await saveBroadcastRuntimeStatus(status);
+  } catch (saveError) {
+    console.warn(warningMessage, saveError);
+  }
+}
+
 function stopNativeCameraPreview() {
   stopBroadcastHeartbeat();
   if (state.nativeCameraStream) {
@@ -658,6 +667,10 @@ async function startNativeCameraPreview() {
 
 async function beginNativeBroadcastStream() {
   if (!userCanUseNativeCamera()) return;
+  if (
+    state.nativeBroadcastStatus === BROADCAST_STREAM_STATUSES.STARTING ||
+    state.nativeBroadcastStatus === BROADCAST_STREAM_STATUSES.LIVE
+  ) return;
   const stream = state.nativeCameraStream;
   const readiness = getNativeCameraReadiness();
   if (!readiness.cameraReady || !readiness.microphoneReady || !stream) {
@@ -670,17 +683,31 @@ async function beginNativeBroadcastStream() {
   setNativeBroadcastStatus(BROADCAST_STREAM_STATUSES.STARTING);
   setNativeCameraStatus('Starting the live device stream...');
   try {
+    await saveBroadcastRuntimeStatus(BROADCAST_STREAM_STATUSES.STARTING);
     if (!els.nativeCameraPreview) throw new Error('Camera preview is unavailable.');
     if (els.nativeCameraPreview.srcObject !== stream) {
       els.nativeCameraPreview.srcObject = stream;
     }
     await els.nativeCameraPreview.play();
-    if (state.nativeCameraStream !== stream || els.nativeCameraPreview.srcObject !== stream) return;
+    if (state.nativeCameraStream !== stream || els.nativeCameraPreview.srcObject !== stream) {
+      await saveAbortedNativeBroadcastStart(
+        BROADCAST_STREAM_STATUSES.READY,
+        'Failed to clear aborted device stream start status:'
+      );
+      if (state.nativeBroadcastStatus === BROADCAST_STREAM_STATUSES.STARTING) {
+        setNativeBroadcastStatus(BROADCAST_STREAM_STATUSES.READY);
+      }
+      return;
+    }
     const postPlayReadiness = getNativeCameraReadiness();
     if (!postPlayReadiness.cameraReady || !postPlayReadiness.microphoneReady) {
       const message = 'Camera and microphone are no longer ready. Retry to restore setup and start again.';
       setNativeBroadcastStatus(BROADCAST_STREAM_STATUSES.FAILED, message);
       setNativeCameraStatus(message, 'error');
+      await saveAbortedNativeBroadcastStart(
+        BROADCAST_STREAM_STATUSES.FAILED,
+        'Failed to save aborted device stream failure status:'
+      );
       return;
     }
     await saveBroadcastRuntimeStatus(BROADCAST_STREAM_STATUSES.LIVE);

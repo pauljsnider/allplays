@@ -1364,7 +1364,10 @@ test('selected streaming helper follows the broadcast setup deep link and recove
     await expect(page.locator('#native-camera-begin-stream-btn')).toBeEnabled();
     await expect(page.locator('#native-broadcast-state')).toHaveAttribute('data-state', 'ready');
 
-    await page.locator('#native-camera-begin-stream-btn').click();
+    await page.locator('#native-camera-begin-stream-btn').evaluate((button) => {
+        button.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        button.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
     await expect(page.locator('#native-broadcast-state')).toHaveAttribute('data-state', 'failed');
     await expect(page.locator('#native-broadcast-error')).toBeVisible();
     await expect(page.locator('#native-broadcast-error')).toContainText('retry without refreshing');
@@ -1388,11 +1391,13 @@ test('selected streaming helper follows the broadcast setup deep link and recove
         const sessions = window.__LIVE_GAME_UPDATE_CALLS__.map((updates) => updates.broadcastSession).filter(Boolean);
         return {
             checkingCount: sessions.filter((session) => session.status === 'checking_permissions').length,
+            startingCount: sessions.filter((session) => session.localStreamStatus === 'starting').length,
             localStatuses: sessions.map((session) => session.localStreamStatus).filter(Boolean),
             finalSession: sessions.at(-1)
         };
     })).toMatchObject({
         checkingCount: 2,
+        startingCount: 3,
         localStatuses: expect.arrayContaining(['ready', 'failed', 'live']),
         finalSession: {
             status: 'ready_for_managed_stream',
