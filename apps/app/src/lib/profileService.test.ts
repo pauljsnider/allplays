@@ -79,6 +79,13 @@ describe('createProfileAccessCode', () => {
         });
     });
 
+    it('rejects untargeted friend invites before creating an unreadable access code', async () => {
+        await expect(createProfileAccessCode('user-1', '  ', '')).rejects.toThrow('Enter an email or phone number for the invite.');
+
+        expect(dbMocks.generateAccessCode).not.toHaveBeenCalled();
+        expect(dbMocks.createAccessCode).not.toHaveBeenCalled();
+    });
+
     it('uses the code as the Firestore document id in the native REST fallback', async () => {
         dbMocks.generateAccessCode.mockReturnValue('FIRST123');
         dbMocks.createAccessCode.mockRejectedValue(new Error('SDK unavailable'));
@@ -116,7 +123,7 @@ describe('createProfileAccessCode', () => {
         });
         vi.stubGlobal('fetch', fetchMock);
 
-        await expect(createProfileAccessCode('user-1', '', '')).resolves.toBe('FIRST123');
+        await expect(createProfileAccessCode('user-1', '', '555-0100')).resolves.toBe('FIRST123');
 
         const patchCall = fetchMock.mock.calls.find(([, init]) => init?.method === 'PATCH');
         const patchBody = JSON.parse(String(patchCall?.[1]?.body || '{}'));

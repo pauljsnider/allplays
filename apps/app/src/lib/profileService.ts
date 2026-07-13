@@ -616,13 +616,19 @@ export async function saveNotificationDeviceToken(userId: string, input: Notific
 }
 
 export async function createProfileAccessCode(userId: string, email: string, phone: string) {
+  const normalizedEmail = String(email || '').trim();
+  const normalizedPhone = String(phone || '').trim();
+  if (!normalizedEmail && !normalizedPhone) {
+    throw new Error('Enter an email or phone number for the invite.');
+  }
+
   const code = generateAccessCode();
   try {
-    const result = await withTimeout(Promise.resolve(createAccessCode(userId, email, phone, code, { type: 'friend_invite' })), 'Invite code create', primaryDataTimeoutMs);
+    const result = await withTimeout(Promise.resolve(createAccessCode(userId, normalizedEmail, normalizedPhone, code, { type: 'friend_invite' })), 'Invite code create', primaryDataTimeoutMs);
     return String(result?.code || code).trim().toUpperCase();
   } catch (error) {
     logProfileWarning('Falling back to REST invite code create.', 'invite-code-create', error, { userId });
-    return nativeCreateAccessCode(userId, email, phone, code);
+    return nativeCreateAccessCode(userId, normalizedEmail, normalizedPhone, code);
   }
 }
 
