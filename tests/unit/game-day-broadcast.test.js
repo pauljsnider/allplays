@@ -163,9 +163,52 @@ describe('Game Day broadcast entry', () => {
         })).not.toHaveProperty('localStreamLeaseExpiresAt');
         expect(buildBroadcastRuntimeSession({ existingSession: {}, status: 'external-live' })).toBeNull();
     });
+
+    it('requires verified camera and microphone setup before ready, starting, or live runtime states', () => {
+        const invalidSessions = [
+            {
+                id: 'broadcast-1',
+                name: 'Game broadcast setup',
+                status: 'permission_failed',
+                provider: { type: 'managed_setup', name: 'ALL PLAYS managed setup' },
+                permissions: { camera: false, microphone: false },
+                createdAt: '2026-07-11T19:00:00.000Z'
+            },
+            {
+                id: 'broadcast-1',
+                name: 'Game broadcast setup',
+                status: 'ready_for_managed_stream',
+                provider: { type: 'managed_setup', name: 'ALL PLAYS managed setup' },
+                permissions: { camera: true, microphone: false },
+                createdAt: '2026-07-11T19:00:00.000Z'
+            }
+        ];
+
+        for (const existingSession of invalidSessions) {
+            for (const status of ['ready', 'starting', 'live']) {
+                expect(buildBroadcastRuntimeSession({
+                    existingSession,
+                    status,
+                    user: { uid: 'streamer-1' }
+                })).toBeNull();
+            }
+            expect(buildBroadcastRuntimeSession({
+                existingSession,
+                status: 'failed',
+                user: { uid: 'streamer-1' }
+            })).toMatchObject({ localStreamStatus: 'failed', localStreamActive: false });
+        }
+    });
 });
 
 describe('Game Day broadcast wiring', () => {
+    it('keeps starting behind the same verified setup rule as ready and live', () => {
+        const rulesSource = readFileSync(resolve(process.cwd(), 'firestore.rules'), 'utf8');
+
+        expect(rulesSource).toContain("!(data.localStreamStatus in ['ready', 'starting', 'live'])");
+        expect(rulesSource).toMatch(/localStreamStatus in \['ready', 'starting', 'live'\][\s\S]*data\.status == 'ready_for_managed_stream'[\s\S]*data\.permissions\.camera == true[\s\S]*data\.permissions\.microphone == true/);
+    });
+
     it('uses the shared deep link for coaches, videographers, and Stream & Score helpers', () => {
         const gameDaySource = readFileSync(resolve(process.cwd(), 'game-day.html'), 'utf8');
 
@@ -185,6 +228,8 @@ describe('Game Day broadcast wiring', () => {
         expect(liveGameSource).toContain("els.nativeCameraPanel?.scrollIntoView({ block: 'start' })");
         expect(liveGameSource).toContain('els.nativeCameraBeginStreamBtn.addEventListener(\'click\', beginNativeBroadcastStream)');
         expect(liveGameSource).toContain('await saveBroadcastRuntimeStatus(BROADCAST_STREAM_STATUSES.LIVE)');
+        expect(liveGameSource).toContain('state.nativeBroadcastStatus === BROADCAST_STREAM_STATUSES.STARTING');
+        expect(liveGameSource).toContain('state.nativeBroadcastStatus === BROADCAST_STREAM_STATUSES.LIVE');
         expect(liveGameSource).toContain('startBroadcastHeartbeat();');
         expect(liveGameSource).toContain('Failed to renew device stream lease:');
         expect(liveGameSource.match(/async function beginNativeBroadcastStream\(\)/g)).toHaveLength(1);

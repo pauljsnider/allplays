@@ -580,7 +580,7 @@ service cloud.firestore {
              (data.status != 'ready_for_managed_stream' ||
                (data.permissions.camera == true && data.permissions.microphone == true)) &&
              (!data.keys().hasAny(['localStreamStatus']) ||
-               !(data.localStreamStatus in ['ready', 'live']) ||
+               !(data.localStreamStatus in ['ready', 'starting', 'live']) ||
                (data.status == 'ready_for_managed_stream' &&
                 data.permissions.camera == true &&
                 data.permissions.microphone == true)) &&

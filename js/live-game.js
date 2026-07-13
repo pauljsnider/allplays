@@ -667,6 +667,10 @@ async function startNativeCameraPreview() {
 
 async function beginNativeBroadcastStream() {
   if (!userCanUseNativeCamera()) return;
+  if (
+    state.nativeBroadcastStatus === BROADCAST_STREAM_STATUSES.STARTING ||
+    state.nativeBroadcastStatus === BROADCAST_STREAM_STATUSES.LIVE
+  ) return;
   const stream = state.nativeCameraStream;
   const readiness = getNativeCameraReadiness();
   if (!readiness.cameraReady || !readiness.microphoneReady || !stream) {

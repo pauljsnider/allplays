@@ -184,6 +184,17 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('streaming broadcast rules
         await assertFails(writeLive(selectedDb, 'selected-team', 'selected-game', 'selected-1', 'selected@example.com'));
     });
 
+    it('denies starting until camera and microphone setup is verified', async () => {
+        const selectedDb = authedDb('selected-1', 'selected@example.com');
+        await assertFails(updateDoc(gameRef(selectedDb, 'selected-team', 'selected-game'), {
+            broadcastSession: startingSession('selected-1', 'selected@example.com', {
+                status: 'permission_failed',
+                permissions: { camera: false, microphone: false }
+            }),
+            updatedAt: nowTimestamp()
+        }));
+    });
+
     it('denies extra top-level fields, malformed sessions, clears, spoofed attribution, and protected-field changes', async () => {
         const selectedDb = authedDb('selected-1', 'selected@example.com');
         await assertFails(writeLive(selectedDb, 'selected-team', 'selected-game', 'selected-1', 'selected@example.com', { homeScore: 99 }));

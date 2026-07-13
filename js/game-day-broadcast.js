@@ -104,6 +104,12 @@ export function buildBroadcastRuntimeSession({ existingSession, status, user = {
         !existingSession.provider || !existingSession.permissions || !existingSession.createdAt) return null;
     const safeStatus = String(status || '').trim().toLowerCase();
     if (!runtimeBroadcastStatuses.has(safeStatus)) return null;
+    const requiresReadySetup = ['ready', 'starting', 'live'].includes(safeStatus);
+    if (requiresReadySetup && (
+        existingSession.status !== 'ready_for_managed_stream' ||
+        existingSession.permissions?.camera !== true ||
+        existingSession.permissions?.microphone !== true
+    )) return null;
     const updatedAt = now instanceof Date ? new Date(now.getTime()) : new Date(now);
     if (Number.isNaN(updatedAt.getTime())) return null;
     const session = {
