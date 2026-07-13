@@ -23,7 +23,7 @@
         </ul>
         <div class="mt-4 flex flex-wrap gap-2" aria-label="Watch navigation">
           <a
-            class="inline-flex items-center rounded-md bg-blue-700 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-800"
+            class="hidden inline-flex items-center rounded-md bg-blue-700 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-800"
             href="team.html"
             data-help-context-link
             data-guide-id="watch-game"
@@ -32,10 +32,12 @@
           >Team Page</a>
           <a
             class="inline-flex items-center rounded-md bg-blue-700 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-800"
-            href="live-game.html"
+            href="team.html"
+            hidden
             data-help-context-link
             data-guide-id="watch-game"
             data-quick-link-label="Game Viewer"
+            data-required-context="teamId,gameId"
             data-route-template="live-game.html#teamId={teamId}&gameId={gameId}"
           >Game Viewer</a>
         </div>
@@ -96,7 +98,20 @@
         .replaceAll('{gameId}', encodeURIComponent(values.gameId)));
 
       document.querySelectorAll('[data-help-context-link]').forEach((link) => {
+        const requiredContext = (link.dataset.requiredContext || '')
+          .split(',')
+          .map((key) => key.trim())
+          .filter(Boolean);
+
+        if (requiredContext.some((key) => !values[key])) {
+          link.hidden = true;
+          link.classList.add('hidden');
+          return;
+        }
+
         link.href = resolveRouteTemplate(link.dataset.routeTemplate || link.getAttribute('href'));
+        link.hidden = false;
+        link.classList.remove('hidden');
       });
     })();
   </script>

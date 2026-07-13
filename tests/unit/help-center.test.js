@@ -128,17 +128,21 @@ describe('help center deep workflow coverage', () => {
 
     it('removes empty Help Watch Chat context parameters from CTA links', () => {
         const document = renderHelpWatchChat('https://allplays.test/help-watch-chat.html?role=parent');
+        const gameViewerLink = document.querySelector('[data-quick-link-label="Game Viewer"]');
 
         expect(document.querySelector('[data-quick-link-label="Team Page"]')?.getAttribute('href')).toBe('team.html');
-        expect(document.querySelector('[data-quick-link-label="Game Viewer"]')?.getAttribute('href')).toBe('live-game.html');
+        expect(gameViewerLink?.hidden).toBe(true);
+        expect(gameViewerLink?.getAttribute('href')).toBe('team.html');
         expect(document.querySelector('[data-quick-link-label="Open Team Chat"]')?.getAttribute('href')).toBe('team-chat.html');
     });
 
     it('keeps team context when Help Watch Chat links have no game context', () => {
         const document = renderHelpWatchChat('https://allplays.test/help-watch-chat.html?context=team&teamId=team-123&role=parent');
+        const gameViewerLink = document.querySelector('[data-quick-link-label="Game Viewer"]');
 
         expect(document.querySelector('[data-quick-link-label="Team Page"]')?.getAttribute('href')).toBe('team.html#teamId=team-123');
-        expect(document.querySelector('[data-quick-link-label="Game Viewer"]')?.getAttribute('href')).toBe('live-game.html#teamId=team-123');
+        expect(gameViewerLink?.hidden).toBe(true);
+        expect(gameViewerLink?.getAttribute('href')).toBe('team.html');
         expect(document.querySelector('[data-quick-link-label="Open Team Chat"]')?.getAttribute('href')).toBe('team-chat.html#teamId=team-123');
     });
 
@@ -152,6 +156,7 @@ describe('help center deep workflow coverage', () => {
         const encodedGameId = encodeURIComponent(gameId);
 
         expect(document.querySelector('[data-quick-link-label="Team Page"]')?.getAttribute('href')).toBe(`team.html#teamId=${encodedTeamId}`);
+        expect(document.querySelector('[data-quick-link-label="Game Viewer"]')).not.toHaveProperty('hidden', true);
         expect(document.querySelector('[data-quick-link-label="Game Viewer"]')?.getAttribute('href')).toBe(`live-game.html#teamId=${encodedTeamId}&gameId=${encodedGameId}`);
         expect(document.querySelector('[data-quick-link-label="Open Team Chat"]')?.getAttribute('href')).toBe(`team-chat.html#teamId=${encodedTeamId}`);
     });
