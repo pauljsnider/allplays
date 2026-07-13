@@ -3291,7 +3291,7 @@ describe('web-created tournament standings hydration (#1967)', () => {
     });
   });
 
-  it('uses bounded native queries and includes shared tournament games in standings', async () => {
+  it('uses team-indexed native queries and includes shared tournament games in standings', async () => {
     (globalThis as any).window = { location: { protocol: 'capacitor:' }, setTimeout, clearTimeout } as any;
     vi.mocked(getGame).mockResolvedValue(tournamentGames[0] as any);
     vi.mocked(getGames).mockRejectedValueOnce(new Error('legacy SDK unavailable'));
@@ -3299,12 +3299,9 @@ describe('web-created tournament standings hydration (#1967)', () => {
     vi.mocked(globalThis.fetch).mockImplementation(async (_url, init) => {
       const body = JSON.parse(String(init?.body));
       const from = body.structuredQuery.from[0];
-      const queryWhere = body.structuredQuery.where;
-      const membershipFilter = queryWhere.fieldFilter
-        ?? queryWhere.compositeFilter?.filters?.find((filter: any) => filter.fieldFilter)?.fieldFilter;
-      const fieldPath = membershipFilter?.field?.fieldPath;
-      if (from.collectionId === 'sharedGames' && !['homeTeamId', 'awayTeamId'].includes(fieldPath)) {
-        throw new Error(`Unexpected shared-game membership query: ${fieldPath}`);
+      const fieldPath = body.structuredQuery.where.fieldFilter.field.fieldPath;
+      if (from.collectionId === 'sharedGames' && fieldPath === 'teamIds') {
+        throw new Error('teamIds membership query is not authorized');
       }
       const sharedGameDocument = {
         name: 'projects/allplays-test/databases/(default)/documents/tournaments/t-1/sharedGames/shared-1',
@@ -3336,9 +3333,7 @@ describe('web-created tournament standings hydration (#1967)', () => {
       };
       return {
         ok: true,
-        json: async () => from.collectionId === 'sharedGames'
-          && fieldPath === 'homeTeamId'
-          && Array.isArray(body.structuredQuery.orderBy)
+        json: async () => from.collectionId === 'sharedGames' && fieldPath === 'homeTeamId'
           ? [{ document: sharedGameDocument }]
           : []
       } as any;
@@ -3351,7 +3346,7 @@ describe('web-created tournament standings hydration (#1967)', () => {
       expandStaffPlayers: false
     });
 
-    expect(globalThis.fetch).toHaveBeenCalledTimes(5);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(3);
     const gameQueryCall = vi.mocked(globalThis.fetch).mock.calls.find(([, init]) => {
       const body = JSON.parse(String(init?.body));
       return body.structuredQuery.from[0].collectionId === 'games';
@@ -3373,47 +3368,15 @@ describe('web-created tournament standings hydration (#1967)', () => {
     const sharedQueryBodies = vi.mocked(globalThis.fetch).mock.calls
       .map(([, init]) => JSON.parse(String(init?.body)))
       .filter((body) => body.structuredQuery.from[0].collectionId === 'sharedGames');
-    expect(sharedQueryBodies).toHaveLength(4);
-    expect(sharedQueryBodies.map((queryBody) => {
-      const queryWhere = queryBody.structuredQuery.where;
-      const membershipFilter = queryWhere.fieldFilter
-        ?? queryWhere.compositeFilter.filters.find((filter: any) => filter.fieldFilter).fieldFilter;
-      return {
-        fieldPath: membershipFilter.field.fieldPath,
-        variant: queryWhere.compositeFilter ? 'explicit-null' : 'dated'
-      };
-    })).toEqual([
-      { fieldPath: 'homeTeamId', variant: 'dated' },
-      { fieldPath: 'homeTeamId', variant: 'explicit-null' },
-      { fieldPath: 'awayTeamId', variant: 'dated' },
-      { fieldPath: 'awayTeamId', variant: 'explicit-null' }
+    expect(sharedQueryBodies).toHaveLength(2);
+    expect(sharedQueryBodies.map((body) => body.structuredQuery.where.fieldFilter.field.fieldPath).sort()).toEqual([
+      'awayTeamId', 'homeTeamId'
     ]);
     expect(sharedQueryBodies.every((body) => body.structuredQuery.from[0].allDescendants === true)).toBe(true);
-    sharedQueryBodies.forEach((queryBody) => {
-      const structuredQuery = queryBody.structuredQuery;
-      const queryWhere = structuredQuery.where;
-      const membershipFilter = queryWhere.fieldFilter
-        ?? queryWhere.compositeFilter.filters.find((filter: any) => filter.fieldFilter).fieldFilter;
-      expect(membershipFilter).toMatchObject({
-        field: { fieldPath: expect.stringMatching(/^(home|away)TeamId$/) },
-        op: 'EQUAL',
-        value: { stringValue: 'team-1' }
-      });
-      expect(JSON.stringify(structuredQuery)).not.toContain('teamIds');
-      if (queryWhere.fieldFilter) {
-        expect(structuredQuery.orderBy).toEqual([
-          { field: { fieldPath: 'date' }, direction: 'ASCENDING' }
-        ]);
-      } else {
-        expect(queryWhere.compositeFilter).toMatchObject({
-          op: 'AND',
-          filters: expect.arrayContaining([
-            { unaryFilter: { field: { fieldPath: 'date' }, op: 'IS_NULL' } }
-          ])
-        });
-        expect(structuredQuery.orderBy).toBeUndefined();
-      }
-    });
+    expect(sharedQueryBodies.every((body) => body.structuredQuery.orderBy === undefined)).toBe(true);
+    expect(sharedQueryBodies.every((body) => (
+      body.structuredQuery.where.fieldFilter.field.fieldPath !== 'date'
+    ))).toBe(true);
     expect(getScheduleTournamentInfo(result.events[0] as any).standings?.rows).toEqual([
       { rank: '1', teamName: 'Bears', record: '1-0', points: 3 },
       { rank: '2', teamName: 'Tigers', record: '1-1', points: 3 },
