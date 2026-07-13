@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
     canManageTeamMedia,
     canViewTeamMediaFolder,
@@ -26,13 +29,30 @@ import {
     sortByMediaOrder
 } from '../../js/team-media-utils.js';
 
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+
 describe('team media management permissions', () => {
-    it('allows only owners, admins, and platform admins to see management controls', () => {
-        const team = { ownerId: 'coach-1', adminEmails: ['admin@example.com'] };
+    it('cache-busts team access imports for media management access changes', () => {
+        const source = readFileSync(path.join(repoRoot, 'js/team-media-utils.js'), 'utf8');
+
+        expect(source).toContain("import { hasTeamMediaManagementAccess } from './team-access.js?v=4';");
+    });
+
+    it('allows owners, admins, platform admins, and selected media managers to see management controls', () => {
+        const team = {
+            id: 'team-1',
+            ownerId: 'coach-1',
+            adminEmails: ['admin@example.com'],
+            teamPermissions: {
+                teamMediaManagement: { mode: 'selected', memberIds: ['media-manager'] }
+            }
+        };
 
         expect(canManageTeamMedia({ uid: 'coach-1', email: 'coach@example.com' }, team)).toBe(true);
         expect(canManageTeamMedia({ uid: 'parent-1', email: 'admin@example.com' }, team)).toBe(true);
         expect(canManageTeamMedia({ uid: 'global-1', email: 'other@example.com', isAdmin: true }, team)).toBe(true);
+        expect(canManageTeamMedia({ uid: 'media-manager', email: 'manager@example.com' }, team)).toBe(true);
+        expect(canManageTeamMedia({ uid: 'coach-only', coachOf: ['team-1'] }, team)).toBe(false);
         expect(canManageTeamMedia({ uid: 'parent-1', email: 'parent@example.com' }, team)).toBe(false);
         expect(canManageTeamMedia(null, team)).toBe(false);
     });
@@ -43,6 +63,13 @@ describe('team media management permissions', () => {
         expect(canContributeTeamMedia({ uid: 'coach-1', email: 'coach@example.com' }, team)).toBe(true);
         expect(canContributeTeamMedia({ uid: 'parent-1', parentTeamIds: ['team-1'] }, team)).toBe(false);
         expect(canContributeTeamMedia({ uid: 'parent-2', parentOf: [{ teamId: 'team-1' }] }, team)).toBe(false);
+        expect(canContributeTeamMedia({
+            uid: 'media-manager',
+            teamPermissions: {},
+        }, {
+            ...team,
+            teamPermissions: { teamMediaManagement: { mode: 'selected', memberIds: ['media-manager'] } }
+        })).toBe(true);
         expect(canContributeTeamMedia({ uid: 'parent-3', teamMediaUploadTeamIds: ['team-1'] }, team)).toBe(true);
         expect(canContributeTeamMedia({ uid: 'parent-4', mediaUploadTeamIds: ['team-1'] }, team)).toBe(true);
         expect(canContributeTeamMedia({ uid: 'other-1', teamMediaUploadTeamIds: ['other-team'] }, team)).toBe(false);

@@ -18,6 +18,8 @@ const teamDetailMocks = vi.hoisted(() => ({
     reactivateRosterPlayerForApp: vi.fn(),
     grantScorekeeperAccessForApp: vi.fn(),
     revokeScorekeeperAccessForApp: vi.fn(),
+    grantTeamMediaManagerAccessForApp: vi.fn(),
+    revokeTeamMediaManagerAccessForApp: vi.fn(),
     grantVideographerAccessForApp: vi.fn(),
     revokeVideographerAccessForApp: vi.fn(),
     inviteTeamAdminForApp: vi.fn(),
@@ -55,6 +57,8 @@ vi.mock('../../apps/app/src/lib/teamDetailService.ts', () => ({
     reactivateRosterPlayerForApp: teamDetailMocks.reactivateRosterPlayerForApp,
     grantScorekeeperAccessForApp: teamDetailMocks.grantScorekeeperAccessForApp,
     revokeScorekeeperAccessForApp: teamDetailMocks.revokeScorekeeperAccessForApp,
+    grantTeamMediaManagerAccessForApp: teamDetailMocks.grantTeamMediaManagerAccessForApp,
+    revokeTeamMediaManagerAccessForApp: teamDetailMocks.revokeTeamMediaManagerAccessForApp,
     grantVideographerAccessForApp: teamDetailMocks.grantVideographerAccessForApp,
     revokeVideographerAccessForApp: teamDetailMocks.revokeVideographerAccessForApp,
     inviteTeamAdminForApp: teamDetailMocks.inviteTeamAdminForApp,
@@ -301,6 +305,8 @@ beforeEach(() => {
     teamDetailMocks.reactivateRosterPlayerForApp.mockResolvedValue(undefined);
     teamDetailMocks.grantScorekeeperAccessForApp.mockResolvedValue(undefined);
     teamDetailMocks.revokeScorekeeperAccessForApp.mockResolvedValue(undefined);
+    teamDetailMocks.grantTeamMediaManagerAccessForApp.mockResolvedValue(undefined);
+    teamDetailMocks.revokeTeamMediaManagerAccessForApp.mockResolvedValue(undefined);
     teamDetailMocks.grantVideographerAccessForApp.mockResolvedValue(undefined);
     teamDetailMocks.revokeVideographerAccessForApp.mockResolvedValue(undefined);
     teamDetailMocks.inviteTeamAdminForApp.mockResolvedValue({ status: 'sent', email: 'coach@example.com' });
@@ -578,6 +584,7 @@ describe('React app TeamDetail page', () => {
                 helperPermissions: [],
                 scorekeepingMode: '',
                 scorekeeperGrantTargets: [],
+                teamMediaManagerGrantTargets: [],
                 videographerGrantTargets: [],
                 hasAnyStaff: true
             });

@@ -39,7 +39,7 @@ describe('team management page access wiring', () => {
 
     it('uses shared full-access helper in edit team page', () => {
         const html = readRepoFile('edit-team.html');
-        expect(html).toContain("from './js/team-access.js?v=3'");
+        expect(html).toContain("from './js/team-access.js?v=4'");
         expect(html).toContain('hasFullTeamAccess(');
     });
 

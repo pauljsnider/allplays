@@ -279,6 +279,14 @@ async function mockTeamsModules(page, { scenario = '', managedTeam = false, rost
                     return { success: true };
                 }
 
+                export async function grantTeamMediaManagerAccessForApp() {
+                    return { success: true };
+                }
+
+                export async function revokeTeamMediaManagerAccessForApp() {
+                    return { success: true };
+                }
+
                 export async function saveTeamTrackingItemForApp() {
                     return 'tracking-item-1';
                 }

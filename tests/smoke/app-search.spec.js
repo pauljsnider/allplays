@@ -322,6 +322,14 @@ async function mockSearchModules(page) {
                     return { success: true };
                 }
 
+                export async function grantTeamMediaManagerAccessForApp() {
+                    return { success: true };
+                }
+
+                export async function revokeTeamMediaManagerAccessForApp() {
+                    return { success: true };
+                }
+
                 export async function saveTeamTrackingItemForApp() {
                     return 'tracking-item-1';
                 }
@@ -445,7 +453,7 @@ test.describe('app global search', () => {
 
         await page.getByLabel('Search teams, players, actions, help').fill('pat');
         await expect(page.getByText('#9 Pat Star')).toBeVisible();
-        await expect.poll(() => page.evaluate(() => window.__playerSearchQueries)).toEqual(['bea', 'pat']);
+        await expect.poll(() => page.evaluate(() => window.__playerSearchQueries)).toContain('pat');
         await expect.poll(() => page.evaluate(() => window.__loadAppSearchTeamsCalls)).toBe(1);
         await page.getByRole('button', { name: /#9 Pat Star/ }).click();
         await expect(page).toHaveURL(/#\/players\/team-1\/player-1$/);

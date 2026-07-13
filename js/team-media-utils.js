@@ -1,4 +1,4 @@
-import { hasFullTeamAccess } from './team-access.js';
+import { hasTeamMediaManagementAccess } from './team-access.js?v=4';
 
 const VIDEO_HOST_PATTERNS = [
     /(^|\.)youtube\.com$/,
@@ -66,7 +66,7 @@ function getSafeVideoUrl(value) {
 }
 
 export function canManageTeamMedia(user, team) {
-    return hasFullTeamAccess(user, team);
+    return hasTeamMediaManagementAccess(user, team);
 }
 
 export function normalizeAlbumVisibility(value) {
@@ -170,7 +170,7 @@ export function hasTeamMediaUploadGrant(user, teamId) {
 
 export function canContributeTeamMedia(user, team) {
     if (!user || !team) return false;
-    if (hasFullTeamAccess(user, team)) return true;
+    if (canManageTeamMedia(user, team)) return true;
     const teamId = String(team.id || '').trim();
     if (!teamId) return false;
     return hasTeamMediaUploadGrant(user, teamId);
