@@ -1139,6 +1139,8 @@ async function processGoogleResult(result: UserCredential | null, activationCode
       await dbModule.redeemHouseholdInvite(result.user.uid, validation.data?.code || code);
     } else if (validation.type === 'coparent_invite') {
       await dbModule.redeemCoParentInvite(result.user.uid, validation.data?.code || code, result.user.email);
+    } else if (validation.type === 'friend_invite') {
+      await dbModule.redeemFriendInvite(result.user.uid, validation.data?.code || code, result.user.email);
     } else if (validation.type === 'admin_invite') {
       const { redeemAdminInviteAcceptance } = await loadLegacyAdminInvite();
       await redeemAdminInviteAcceptance({

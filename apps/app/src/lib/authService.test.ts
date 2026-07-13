@@ -18,6 +18,7 @@ const legacyAuthMocks = vi.hoisted(() => ({
   getUserTeams: vi.fn(),
   validateAccessCode: vi.fn(),
   redeemParentInvite: vi.fn(),
+  redeemFriendInvite: vi.fn(),
   redeemHouseholdInvite: vi.fn(),
   redeemCoParentInvite: vi.fn(),
   markAccessCodeAsUsed: vi.fn(),
@@ -280,6 +281,7 @@ describe('signInWithGoogleAccount invite redemption', () => {
     legacyAuthMocks.validateAccessCode.mockReset();
     legacyAuthMocks.redeemHouseholdInvite.mockReset();
     legacyAuthMocks.redeemCoParentInvite.mockReset();
+    legacyAuthMocks.redeemFriendInvite.mockReset();
     legacyAuthMocks.rollbackParentInviteRedemption.mockReset();
     legacyAuthMocks.rollbackParentInviteRedemption.mockResolvedValue(undefined);
     legacyAuthMocks.markAccessCodeAsUsed.mockReset();
@@ -369,6 +371,22 @@ describe('signInWithGoogleAccount invite redemption', () => {
     await signInWithGoogleAccount('copo1234');
 
     expect(legacyAuthMocks.redeemCoParentInvite).toHaveBeenCalledWith('google-user', 'COPO1234', 'coparent@example.com');
+    expect(legacyAuthMocks.markAccessCodeAsUsed).not.toHaveBeenCalled();
+  });
+
+  it('redeems friend invites with the Google account email for new users', async () => {
+    mockNewGoogleUser('friend@example.com');
+    legacyAuthMocks.validateAccessCode.mockResolvedValue({
+      valid: true,
+      type: 'friend_invite',
+      codeId: 'friend-code-id',
+      data: { code: 'FRIEND12' }
+    });
+    legacyAuthMocks.redeemFriendInvite.mockResolvedValue({ success: true });
+
+    await signInWithGoogleAccount('friend12');
+
+    expect(legacyAuthMocks.redeemFriendInvite).toHaveBeenCalledWith('google-user', 'FRIEND12', 'friend@example.com');
     expect(legacyAuthMocks.markAccessCodeAsUsed).not.toHaveBeenCalled();
   });
 
