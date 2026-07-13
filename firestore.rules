@@ -1405,6 +1405,14 @@ service cloud.firestore {
              request.auth.uid in data.get('memberIds', []);
     }
 
+    function canGetMissingFriendship(friendshipId) {
+      let friendshipPath = /databases/$(database)/documents/friendships/$(friendshipId);
+      return isSignedIn() &&
+             !exists(friendshipPath) &&
+             (friendshipId.matches('^' + request.auth.uid + '__.+$') ||
+              friendshipId.matches('^.+__' + request.auth.uid + '$'));
+    }
+
     function currentUserPublicProfileTeamIds() {
       let userPath = /databases/$(database)/documents/users/$(request.auth.uid);
       return isSignedIn() && exists(userPath)
@@ -2274,7 +2282,10 @@ service cloud.firestore {
     }
 
     match /friendships/{friendshipId} {
-      allow read: if canAccessFriendship(resource.data) || isGlobalAdmin();
+      allow get: if canGetMissingFriendship(friendshipId) ||
+                    canAccessFriendship(resource.data) ||
+                    isGlobalAdmin();
+      allow list: if canAccessFriendship(resource.data) || isGlobalAdmin();
       allow create: if isFriendshipCreatePayloadValid(friendshipId, request.resource.data) ||
                     isFriendInviteAcceptedFriendshipCreateValid(friendshipId, request.resource.data);
       allow update: if isFriendInviteAcceptedFriendshipUpdateValid(friendshipId) ||
