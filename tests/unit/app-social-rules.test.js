@@ -111,7 +111,7 @@ describe('React app social Firestore rules', () => {
         expect(source).toContain("request.auth.uid in data.get('visibleUserIds', [])");
         expect(source).toContain("data.get('teamId', '') != '' &&");
         expect(source).toContain("isTeamOwnerOrAdmin(data.get('teamId', ''))");
-        expect(source).toContain("request.resource.data.get('status', '') in ['pending', 'accepted', 'declined', 'removed', 'blocked']");
+        expect(source).toContain('function isFriendshipMemberUpdatePayloadValid()');
     });
 
     it('permits accepted friendship creation only during atomic friend invite redemption', () => {
@@ -128,6 +128,17 @@ describe('React app social Firestore rules', () => {
         expect(source).toContain("codeAfter.get('usedBy', '') == request.auth.uid");
         expect(source).toContain("allow create: if isFriendshipCreatePayloadValid(friendshipId, request.resource.data) ||");
         expect(source).toContain("isFriendInviteAcceptedFriendshipCreateValid(friendshipId, request.resource.data)");
+    });
+
+    it('prevents member updates from reactivating blocked friendships', () => {
+        const source = rulesSource();
+
+        expect(source).toContain("resource.data.get('status', '') != 'blocked'");
+        expect(source).toContain("request.resource.data.diff(resource.data).affectedKeys().hasOnly([\n               'requesterId',");
+        expect(source).toContain("request.resource.data.get('blockedBy', resource.data.get('blockedBy', [])) == resource.data.get('blockedBy', [])");
+        expect(source).toContain("request.resource.data.get('status', '') == 'blocked'");
+        expect(source).toContain("request.auth.uid in request.resource.data.get('blockedBy', [])");
+        expect(source).toContain('allow update: if isFriendshipMemberUpdatePayloadValid() ||');
     });
 
     it('excludes friend invites from the owner update fallback after redemption', () => {

@@ -141,11 +141,13 @@ describe('access code atomic redemption guard', () => {
 
         const afterFunction = source.slice(fnIndex, fnIndex + 5000);
         expect(afterFunction).toContain('runTransaction(db, async (transaction) =>');
+        expect(afterFunction).toContain('const friendshipSnapshot = await transaction.get(friendshipRef);');
+        expect(afterFunction).toContain("existingFriendship.status === 'blocked'");
+        expect(afterFunction).toContain('existingFriendship.blockedBy.length > 0');
+        expect(afterFunction).toContain('existingFriendship,');
         expect(afterFunction).toContain('transaction.set(friendshipRef');
         expect(afterFunction).toContain('transaction.update(codeRef');
         expect(afterFunction).toContain('buildFriendInviteInviterProfile(codeData.inviterProfile || {})');
-        expect(afterFunction).not.toContain('transaction.get(friendshipRef)');
-        expect(afterFunction).not.toContain('friendshipSnapshot');
         expect(afterFunction).not.toContain('doc(db, "users", inviterId)');
     });
 });

@@ -5077,7 +5077,13 @@ export async function redeemFriendInvite(userId, code, fallbackEmail = null) {
         const friendshipId = buildFriendshipId(inviterId, userId);
         const friendshipRef = doc(db, "friendships", friendshipId);
         const inviteeRef = doc(db, "users", userId);
+        const friendshipSnapshot = await transaction.get(friendshipRef);
         const inviteeSnapshot = await transaction.get(inviteeRef);
+        const existingFriendship = friendshipSnapshot.exists() ? (friendshipSnapshot.data() || {}) : {};
+        if (existingFriendship.status === 'blocked' ||
+            (Array.isArray(existingFriendship.blockedBy) && existingFriendship.blockedBy.length > 0)) {
+            throw new Error('This friend invite cannot be redeemed for a blocked friendship');
+        }
 
         const now = Timestamp.now();
         const inviterProfile = buildFriendInviteInviterProfile(codeData.inviterProfile || {});
@@ -5092,6 +5098,7 @@ export async function redeemFriendInvite(userId, code, fallbackEmail = null) {
                 ...inviteeProfile,
                 email: inviteeProfile.email || inviteeEmail || null
             },
+            existingFriendship,
             now,
             inviteCodeId: normalizedCode
         }));
