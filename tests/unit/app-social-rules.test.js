@@ -157,6 +157,8 @@ describe('React app social Firestore rules', () => {
 
         expect(source).toContain("resource.data.get('status', '') != 'blocked'");
         expect(source).toContain("request.resource.data.diff(resource.data).affectedKeys().hasOnly([\n               'requesterId',");
+        expect(source).toContain("request.resource.data.get('requesterId', '') == resource.data.get('requesterId', '')");
+        expect(source).toContain("request.resource.data.get('recipientId', '') == resource.data.get('recipientId', '')");
         expect(source).toContain("request.resource.data.get('blockedBy', resource.data.get('blockedBy', [])) == resource.data.get('blockedBy', [])");
         expect(source).toContain("request.resource.data.get('status', '') == 'blocked'");
         expect(source).toContain("request.auth.uid in request.resource.data.get('blockedBy', [])");
@@ -684,6 +686,35 @@ describe('React app social Firestore rules', () => {
             });
 
             await assertFails(getDoc(doc(authenticatedDb(attackerId), 'friendships', friendshipId)));
+        });
+
+        it('denies member updates that rewrite requester or recipient list keys', async () => {
+            const requesterId = 'friend-key-requester';
+            const recipientId = 'friend-key-recipient';
+            const friendshipId = [requesterId, recipientId].sort().join('__');
+            const recipientDb = authenticatedDb(recipientId);
+
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                await setDoc(doc(context.firestore(), 'friendships', friendshipId), {
+                    requesterId,
+                    recipientId,
+                    memberIds: [requesterId, recipientId].sort(),
+                    status: 'accepted',
+                    sharedTeamIds: [],
+                    sharedTeamNames: [],
+                    blockedBy: []
+                });
+            });
+
+            await assertFails(updateDoc(doc(recipientDb, 'friendships', friendshipId), {
+                requesterId: recipientId
+            }));
+            await assertFails(updateDoc(doc(recipientDb, 'friendships', friendshipId), {
+                recipientId: requesterId
+            }));
+            await assertSucceeds(updateDoc(doc(recipientDb, 'friendships', friendshipId), {
+                status: 'removed'
+            }));
         });
 
         it('lists friendships through requester and recipient equality queries only', async () => {

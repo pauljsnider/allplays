@@ -1637,6 +1637,8 @@ service cloud.firestore {
                'sharedTeamIds', 'sharedTeamNames', 'blockedBy',
                'respondedAt', 'createdAt', 'updatedAt'
              ]) &&
+             request.resource.data.get('requesterId', '') == resource.data.get('requesterId', '') &&
+             request.resource.data.get('recipientId', '') == resource.data.get('recipientId', '') &&
              request.resource.data.get('memberIds', []) == resource.data.get('memberIds', []) &&
              request.resource.data.get('status', '') in ['pending', 'accepted', 'declined', 'removed', 'blocked'] &&
              (
