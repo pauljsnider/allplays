@@ -71,11 +71,28 @@ describe('edit config schema workflow', () => {
         expect(source).toContain('edit-btn');
     });
 
+    it('offers a base sport option for every editable standard preset', () => {
+        const source = readEditConfigSource();
+        const dom = new JSDOM(source);
+        const baseTypeValues = Array.from(dom.window.document.querySelectorAll('#baseType option'))
+            .map((option) => option.value);
+
+        expect(baseTypeValues).toEqual(expect.arrayContaining([
+            'Basketball',
+            'Soccer',
+            'Baseball',
+            'Softball',
+            'Football',
+            'Volleyball',
+            'Custom'
+        ]));
+    });
+
     it('wires the edit-config page to load owned-team schemas and support updates', () => {
         const source = readEditConfigSource();
 
         expect(source).toContain("getUserTeams, getConfigs, createConfig, updateConfig, deleteConfig, resetTeamStatConfigs");
-        expect(source).toContain("from './js/stat-config-presets.js?v=1'");
+        expect(source).toContain("from './js/stat-config-presets.js?v=2'");
         expect(source).toContain('loadImportConfigs()');
         expect(source).toContain('await updateConfig(currentTeamId, editingConfigId');
         expect(source).toContain('await resetTeamStatConfigs(currentTeamId);');

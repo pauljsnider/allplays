@@ -1,5 +1,23 @@
 import { normalizeStatTrackerConfig } from './stat-leaderboards.js?v=2';
 
+const DIAMOND_STAT_COLUMNS = ['AB', 'H', 'R', 'RBI', 'BB', 'FP'];
+
+function createDiamondSportConfig(sport) {
+    return {
+        name: `${sport} Standard`,
+        baseType: sport,
+        columns: [...DIAMOND_STAT_COLUMNS],
+        statDefinitions: [
+            { label: 'AB', acronym: 'AB', group: 'Batting' },
+            { label: 'H', acronym: 'H', group: 'Batting', topStat: true },
+            { label: 'R', acronym: 'R', group: 'Batting', topStat: true },
+            { label: 'RBI', acronym: 'RBI', group: 'Batting', topStat: true },
+            { label: 'BB', acronym: 'BB', group: 'Plate Discipline', topStat: true },
+            { label: 'FP', acronym: 'FP', group: 'Fielding', topStat: true }
+        ]
+    };
+}
+
 const PRESET_DEFINITIONS = [
     {
         id: 'blank',
@@ -54,19 +72,14 @@ const PRESET_DEFINITIONS = [
     {
         id: 'baseball',
         label: 'Baseball Standard',
-        description: 'Core hitting, pitching, and fielding stats.',
-        config: {
-            name: 'Baseball Standard',
-            baseType: 'Baseball',
-            columns: ['R', 'H', 'RBI', 'SB', 'SO'],
-            statDefinitions: [
-                { label: 'R', acronym: 'R', group: 'Batting', topStat: true },
-                { label: 'H', acronym: 'H', group: 'Batting', topStat: true },
-                { label: 'RBI', acronym: 'RBI', group: 'Batting', topStat: true },
-                { label: 'SB', acronym: 'SB', group: 'Base Running', topStat: true },
-                { label: 'SO', acronym: 'SO', group: 'Pitching', rankingOrder: 'asc' }
-            ]
-        }
+        description: 'At-bats, hits, runs, RBI, walks, and fielding plays.',
+        config: createDiamondSportConfig('Baseball')
+    },
+    {
+        id: 'softball',
+        label: 'Softball Standard',
+        description: 'At-bats, hits, runs, RBI, walks, and fielding plays.',
+        config: createDiamondSportConfig('Softball')
     },
     {
         id: 'football',
