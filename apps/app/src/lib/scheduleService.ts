@@ -150,11 +150,24 @@ const scheduleHydrationCacheTtlMs = 30 * 1000;
 const parentHomeHydrationLookAheadMs = 14 * 24 * 60 * 60 * 1000;
 const parentHomeHydrationLookBehindMs = 12 * 60 * 60 * 1000;
 
-function invalidateParentScheduleCaches(user: AuthUser | null | undefined) {
+function getScheduleEventHydrationCacheKey(teamId: string, eventId: string) {
+  return `event-details:${teamId}:${eventId}`;
+}
+
+function invalidateParentScheduleCaches(
+  user: AuthUser | null | undefined,
+  event?: Pick<ParentScheduleEvent, 'teamId' | 'id'> | null
+) {
   const userId = compactString(user?.uid);
-  if (!userId) return;
-  invalidateCachedAppData(getParentScheduleSummaryCacheKey(userId));
-  invalidateCachedAppData(getParentHomeSecondaryCacheKey(userId));
+  if (userId) {
+    invalidateCachedAppData(getParentScheduleSummaryCacheKey(userId));
+    invalidateCachedAppData(getParentHomeSecondaryCacheKey(userId));
+  }
+  const teamId = compactString(event?.teamId);
+  const eventId = compactString(event?.id);
+  if (teamId && eventId) {
+    invalidateCachedAppData(getScheduleEventHydrationCacheKey(teamId, eventId));
+  }
 }
 // Default games window for schedule views: ~13 months covers the current and
 // previous season so the "Past Events" filter still shows recent history before
@@ -3649,7 +3662,7 @@ function shouldEagerlyHydrateParentHomeEvent(event: ParentScheduleEvent, nowMs =
 
 function loadCachedEventHydrationDetails(teamId: string, gameId: string) {
   return loadCachedAppData(
-    `event-details:${teamId}:${gameId}`,
+    getScheduleEventHydrationCacheKey(teamId, gameId),
     async () => {
       const results = await Promise.allSettled([
         loadRsvps(teamId, gameId),
@@ -4183,7 +4196,7 @@ export async function submitStaffScheduleRsvpOverride(event: ParentScheduleEvent
     await nativeSubmitRsvpForPlayer(event.teamId, event.id, user!, normalizedPlayerId, response, '', event.availabilityNoteVisibility === 'team' ? 'team' : 'admins');
   }
 
-  invalidateParentScheduleCaches(user);
+  invalidateParentScheduleCaches(user, event);
   return {
     playerId: normalizedPlayerId,
     response
@@ -4208,7 +4221,7 @@ export async function submitParentScheduleRsvp(event: ParentScheduleEvent, user:
       response,
       note: compactString(note) || null
     })), 'RSVP submit');
-    invalidateParentScheduleCaches(user);
+    invalidateParentScheduleCaches(user, event);
     return result;
   } catch (error) {
     if (!isNativeRuntime()) {
@@ -4216,7 +4229,7 @@ export async function submitParentScheduleRsvp(event: ParentScheduleEvent, user:
     }
     logScheduleWarning('Falling back to REST RSVP submit.', 'parent-rsvp-submit', error, { fallback: 'rest', teamId: event.teamId, gameId: event.id, childId: event.childId });
     const result = await nativeSubmitRsvpForPlayer(event.teamId, event.id, user, event.childId, response, note, event.availabilityNoteVisibility === 'team' ? 'team' : 'admins');
-    invalidateParentScheduleCaches(user);
+    invalidateParentScheduleCaches(user, event);
     return result;
   }
 }
@@ -4256,7 +4269,7 @@ export async function submitParentScheduleRsvpForChildren(events: ParentSchedule
       response,
       note: compactString(note) || null
     })), 'Family RSVP submit');
-    invalidateParentScheduleCaches(user);
+    invalidateParentScheduleCaches(user, firstEvent);
     return result;
   } catch (error) {
     if (!isNativeRuntime()) {
@@ -4264,7 +4277,7 @@ export async function submitParentScheduleRsvpForChildren(events: ParentSchedule
     }
     logScheduleWarning('Falling back to REST family RSVP submit.', 'parent-family-rsvp-submit', error, { fallback: 'rest', teamId: firstEvent.teamId, gameId: firstEvent.id, childIds });
     const result = await nativeSubmitRsvpForChildren(firstEvent.teamId, firstEvent.id, user, childIds, response, note, firstEvent.availabilityNoteVisibility === 'team' ? 'team' : 'admins');
-    invalidateParentScheduleCaches(user);
+    invalidateParentScheduleCaches(user, firstEvent);
     return result;
   }
 }

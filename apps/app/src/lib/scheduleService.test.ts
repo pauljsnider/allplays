@@ -2326,7 +2326,8 @@ describe('parent family RSVP submission', () => {
     });
     expect(invalidateCachedAppData).toHaveBeenNthCalledWith(1, 'app-schedule-summary:parent-1');
     expect(invalidateCachedAppData).toHaveBeenNthCalledWith(2, 'home-secondary:parent-1');
-    expect(invalidateCachedAppData).toHaveBeenCalledTimes(2);
+    expect(invalidateCachedAppData).toHaveBeenNthCalledWith(3, 'event-details:team-1:game-1');
+    expect(invalidateCachedAppData).toHaveBeenCalledTimes(3);
   });
 
   it('keeps cached schedule data when a single-child RSVP write fails', async () => {
@@ -2368,7 +2369,8 @@ describe('parent family RSVP submission', () => {
     });
     expect(invalidateCachedAppData).toHaveBeenNthCalledWith(1, 'app-schedule-summary:parent-1');
     expect(invalidateCachedAppData).toHaveBeenNthCalledWith(2, 'home-secondary:parent-1');
-    expect(invalidateCachedAppData).toHaveBeenCalledTimes(2);
+    expect(invalidateCachedAppData).toHaveBeenNthCalledWith(3, 'event-details:team-1:game-1');
+    expect(invalidateCachedAppData).toHaveBeenCalledTimes(3);
     expect(mocks.runTransactionMock).not.toHaveBeenCalled();
     expect(submitRsvpForPlayer).not.toHaveBeenCalled();
   });
@@ -2609,7 +2611,8 @@ describe('staff RSVP management', () => {
     }));
     expect(invalidateCachedAppData).toHaveBeenNthCalledWith(1, 'app-schedule-summary:coach-1');
     expect(invalidateCachedAppData).toHaveBeenNthCalledWith(2, 'home-secondary:coach-1');
-    expect(invalidateCachedAppData).toHaveBeenCalledTimes(2);
+    expect(invalidateCachedAppData).toHaveBeenNthCalledWith(3, 'event-details:team-1:game-1');
+    expect(invalidateCachedAppData).toHaveBeenCalledTimes(3);
     expect(submitRsvpForPlayer).not.toHaveBeenCalledWith('team-1', 'game-1', 'coach-1', expect.objectContaining({
       playerId: 'child-event-player'
     }));
