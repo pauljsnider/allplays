@@ -42,9 +42,15 @@ function createAssignmentFormFromAssignment(assignment: ScheduleAssignment): Sch
   };
 }
 
+function getAssignmentEventKey(event: { teamId: string; id: string }) {
+  return `${event.teamId}::${event.id}`;
+}
+
 export function AssignmentsSection() {
   const { auth, event, updateEvents } = useScheduleEventDetailContext();
   const eventRef = useRef(event);
+  const eventGenerationRef = useRef(0);
+  const refreshRequestRef = useRef(0);
   const [assignments, setAssignments] = useState<ScheduleAssignment[]>(() => cloneScheduleAssignments(event.assignments));
   const [loading, setLoading] = useState(true);
   const [busyRole, setBusyRole] = useState<string | null>(null);
@@ -74,39 +80,74 @@ export function AssignmentsSection() {
     eventRef.current = event;
   });
 
+  useEffect(() => {
+    eventGenerationRef.current += 1;
+  }, [event.id, event.teamId]);
+
   const refreshAssignments = useCallback(async (showLoading = true) => {
+    const requestId = ++refreshRequestRef.current;
+    const targetEvent = eventRef.current;
+    const targetEventKey = getAssignmentEventKey(targetEvent);
+    const isCurrentRequest = () => (
+      refreshRequestRef.current === requestId
+      && getAssignmentEventKey(eventRef.current) === targetEventKey
+    );
     if (showLoading) setLoading(true);
     setAssignmentError(null);
-    const event = eventRef.current;
     try {
-      syncAssignments(await loadParentScheduleAssignments(event));
+      const loaded = await loadParentScheduleAssignments(targetEvent);
+      if (!isCurrentRequest()) return;
+      syncAssignments(loaded);
     } catch (error: any) {
+      if (!isCurrentRequest()) return;
       setAssignmentError(error?.message || 'Unable to load assignments.');
-      setAssignments(cloneScheduleAssignments(event.assignments));
+      setAssignments(cloneScheduleAssignments(targetEvent.assignments));
     } finally {
-      if (showLoading) setLoading(false);
+      if (showLoading && isCurrentRequest()) setLoading(false);
     }
   }, [syncAssignments]);
 
   useEffect(() => {
+    refreshRequestRef.current += 1;
+    setAssignments(cloneScheduleAssignments(eventRef.current.assignments));
+    setBusyRole(null);
     setAssignmentStatus(null);
+    setAssignmentError(null);
+    setAssignmentForm(createEmptyAssignmentForm());
+    setEditingRole(null);
+    setShowAssignmentForm(false);
     refreshAssignments();
   }, [refreshAssignments]);
 
-  const runAssignmentAction = async (role: string, action: () => Promise<void>, successMessage: string, options: { refresh?: boolean } = {}) => {
+  const runAssignmentAction = async <T,>(
+    role: string,
+    action: () => Promise<T>,
+    successMessage: string,
+    options: { refresh?: boolean; onSuccess?: (result: T) => void | Promise<void> } = {}
+  ) => {
+    const targetEventKey = getAssignmentEventKey(eventRef.current);
+    const targetEventGeneration = eventGenerationRef.current;
+    const isCurrentEvent = () => (
+      eventGenerationRef.current === targetEventGeneration
+      && getAssignmentEventKey(eventRef.current) === targetEventKey
+    );
     setBusyRole(role);
     setAssignmentStatus(null);
     setAssignmentError(null);
     try {
-      await action();
+      const result = await action();
+      if (!isCurrentEvent()) return;
+      await options.onSuccess?.(result);
       if (options.refresh !== false) {
         await refreshAssignments(false);
       }
+      if (!isCurrentEvent()) return;
       setAssignmentStatus(successMessage);
     } catch (error: any) {
+      if (!isCurrentEvent()) return;
       setAssignmentError(error?.message || 'Unable to update assignment.');
     } finally {
-      setBusyRole(null);
+      if (isCurrentEvent()) setBusyRole(null);
     }
   };
 
@@ -164,15 +205,17 @@ export function AssignmentsSection() {
     const isEditing = Boolean(editingRole);
     void runAssignmentAction(
       assignmentFormBusyKey,
-      async () => {
-        const nextAssignments = isEditing
-          ? await updateScheduleAssignment(event, currentUser, editingRole!, assignmentForm)
-          : await createScheduleAssignment(event, currentUser, assignmentForm);
-        syncAssignments(nextAssignments);
-        resetAssignmentForm();
-      },
+      () => isEditing
+        ? updateScheduleAssignment(event, currentUser, editingRole!, assignmentForm)
+        : createScheduleAssignment(event, currentUser, assignmentForm),
       isEditing ? `${role} updated.` : `${role} added.`,
-      { refresh: false }
+      {
+        refresh: false,
+        onSuccess: (nextAssignments) => {
+          syncAssignments(nextAssignments);
+          resetAssignmentForm();
+        }
+      }
     );
   };
 
@@ -182,13 +225,15 @@ export function AssignmentsSection() {
     if (!currentUser || !role) return;
     return runAssignmentAction(
       role,
-      async () => {
-        const nextAssignments = await removeScheduleAssignment(event, currentUser, role);
-        syncAssignments(nextAssignments);
-        if (editingRole && editingRole === role) resetAssignmentForm();
-      },
+      () => removeScheduleAssignment(event, currentUser, role),
       `${role} removed.`,
-      { refresh: false }
+      {
+        refresh: false,
+        onSuccess: (nextAssignments) => {
+          syncAssignments(nextAssignments);
+          if (editingRole && editingRole === role) resetAssignmentForm();
+        }
+      }
     );
   };
 
@@ -362,6 +407,7 @@ function AssignmentForm({
           Task
           <input
             type="text"
+            maxLength={80}
             className="mt-1 min-h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-900 outline-none transition focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
             value={role}
             onChange={(event) => onChange({ ...form, role: event.target.value })}
@@ -374,6 +420,7 @@ function AssignmentForm({
             Assigned to
             <input
               type="text"
+              maxLength={100}
               className="mt-1 min-h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-900 outline-none transition focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
               value={value}
               onChange={(event) => onChange({ ...form, value: event.target.value })}

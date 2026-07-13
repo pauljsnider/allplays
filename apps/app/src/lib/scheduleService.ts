@@ -2948,6 +2948,12 @@ function normalizeAssignmentRoleKey(role: unknown) {
   return normalizeAssignmentRole(role).toLowerCase();
 }
 
+function assertAssignmentRoleCanBeClaimDocumentId(role: string) {
+  if (role.includes('/') || role === '.' || role === '..' || /^__.*__$/.test(role)) {
+    throw new Error('Task name contains unsupported characters.');
+  }
+}
+
 function assertAssignmentEvent(event: ParentScheduleEvent) {
   if (!event.isDbGame) {
     throw new Error('Assignments open after this event is tracked in the schedule.');
@@ -2979,6 +2985,9 @@ function normalizeScheduleAssignmentInput(input: ScheduleAssignmentInput): Sched
     throw new Error('Role is required.');
   }
   const claimable = input?.claimable === true;
+  if (claimable) {
+    assertAssignmentRoleCanBeClaimDocumentId(role);
+  }
   const value = claimable ? '' : compactString(input?.value).slice(0, 100);
   return {
     role,
@@ -6232,6 +6241,7 @@ export async function claimParentScheduleAssignmentSlot(event: ParentScheduleEve
   if (!trimmedRole) {
     throw new Error('Role is required.');
   }
+  assertAssignmentRoleCanBeClaimDocumentId(trimmedRole);
   const name = String(user.displayName || user.email || 'Parent').trim();
   if (!name) {
     throw new Error('Name is required.');
@@ -6252,6 +6262,7 @@ export async function releaseParentScheduleAssignmentClaim(event: ParentSchedule
   if (!trimmedRole) {
     throw new Error('Role is required.');
   }
+  assertAssignmentRoleCanBeClaimDocumentId(trimmedRole);
 
   try {
     await withTimeout(Promise.resolve(releaseAssignmentClaim(event.teamId, event.id, trimmedRole)), 'Assignment release');

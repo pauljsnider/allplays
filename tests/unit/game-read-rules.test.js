@@ -23,6 +23,12 @@ const eventsRules = eventsMatch?.[0] || '';
 const aggregatedStatsRules = aggregatedStatsMatch?.[0] || '';
 
 describe('game Firestore read rules', () => {
+    it('keeps staff assignment-array updates on the team-admin game write path', () => {
+        expect(teamGamesRules).toContain('allow update: if !isBroadcastSessionOnlyUpdate() &&');
+        expect(teamGamesRules).toContain('(isTeamOwnerOrAdmin(teamId) ||');
+        expect(teamGamesRules).toContain('allow update: if isBroadcastSessionOnlyUpdate() && isTeamOwnerOrAdmin(teamId);');
+    });
+
     it('replaces unconditional game reads with shared visibility helpers', () => {
         expect(rules).toContain('function canReadGameDocument(teamId, gameId, data)');
         expect(rules).toContain('function canReadGameSubcollectionDocument(teamId, gameId)');

@@ -307,6 +307,7 @@ describe('React app schedule assignment service integration', () => {
     it('rejects invalid assignment actions before hitting the data layer', async () => {
         await expect(claimParentScheduleAssignmentSlot(event({ isDbGame: false }), user(), 'Snacks')).rejects.toThrow('tracked');
         await expect(claimParentScheduleAssignmentSlot(event(), user(), '   ')).rejects.toThrow('Role is required');
+        await expect(claimParentScheduleAssignmentSlot(event(), user(), 'Setup / cleanup')).rejects.toThrow('unsupported characters');
         await expect(releaseParentScheduleAssignmentClaim(event({ isCancelled: true }), 'Snacks')).rejects.toThrow('cancelled');
         expect(dbMocks.claimAssignmentSlot).not.toHaveBeenCalled();
         expect(dbMocks.releaseAssignmentClaim).not.toHaveBeenCalled();
@@ -405,5 +406,43 @@ describe('React app schedule assignment service integration', () => {
         )).rejects.toThrow('team owners and admins');
 
         expect(dbMocks.updateGame).not.toHaveBeenCalled();
+    });
+
+    it('rejects task names that cannot safely identify assignment claim documents', async () => {
+        const adminUser = user({ uid: 'coach-1', email: 'coach@example.com' });
+
+        for (const role of ['Setup / cleanup', '.', '..', '__reserved__']) {
+            await expect(createScheduleAssignment(
+                event({ assignments: [], isTeamAdmin: true }),
+                adminUser,
+                { role, claimable: true }
+            )).rejects.toThrow('unsupported characters');
+        }
+
+        expect(dbMocks.updateGame).not.toHaveBeenCalled();
+        expect(dbMocks.releaseAssignmentClaim).not.toHaveBeenCalled();
+    });
+
+    it('keeps legacy static task names editable even when they are not valid claim document IDs', async () => {
+        const adminUser = user({ uid: 'coach-1', email: 'coach@example.com' });
+        dbMocks.updateGame.mockResolvedValue(undefined);
+        dbMocks.releaseAssignmentClaim.mockResolvedValue(undefined);
+        dbMocks.getAssignmentClaims.mockResolvedValue({});
+
+        await expect(updateScheduleAssignment(
+            event({
+                assignments: [{ role: 'Setup / cleanup', value: 'Jamie', claimable: false }],
+                isTeamAdmin: true
+            }),
+            adminUser,
+            'Setup / cleanup',
+            { role: 'Setup / cleanup', value: 'Taylor', claimable: false }
+        )).resolves.toEqual([
+            expect.objectContaining({ role: 'Setup / cleanup', value: 'Taylor', claimable: false })
+        ]);
+
+        expect(dbMocks.updateGame).toHaveBeenCalledWith('team-1', 'game-1', {
+            assignments: [{ role: 'Setup / cleanup', value: 'Taylor', claimable: false }]
+        });
     });
 });
