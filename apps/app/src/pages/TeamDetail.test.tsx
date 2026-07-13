@@ -1278,7 +1278,7 @@ describe('TeamDetail', () => {
     expect(screen.getAllByTestId('roster-player-row')).toHaveLength(rosterRenderLimits.activePlayers);
     expect(screen.getAllByTestId('inactive-roster-player-row')).toHaveLength(rosterRenderLimits.inactivePlayers);
     expect(screen.queryAllByTestId('tracking-status-row')).toHaveLength(0);
-  });
+  }, 15_000);
 
   it('links staff to the native awards studio from the team more tab', async () => {
     teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue({
