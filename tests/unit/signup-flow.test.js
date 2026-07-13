@@ -20,6 +20,7 @@ function createDependencies(overrides = {}) {
         redeemCoParentInvite: vi.fn().mockResolvedValue(undefined),
         updateUserProfile: vi.fn().mockResolvedValue(undefined),
         markAccessCodeAsUsed: vi.fn().mockResolvedValue(undefined),
+        rollbackParentInviteRedemption: vi.fn().mockResolvedValue(undefined),
         getTeam: vi.fn().mockResolvedValue({ id: 'team-42', name: 'Blue Rockets' }),
         addTeamAdminEmail: vi.fn().mockResolvedValue(undefined),
         getUserProfile: vi.fn().mockResolvedValue({ email: 'newadmin@example.com' }),
@@ -113,7 +114,9 @@ describe('executeEmailPasswordSignup', () => {
 
         expect(dependencies.createUserWithEmailAndPassword).toHaveBeenCalledTimes(1);
         expect(dependencies.redeemParentInvite).toHaveBeenCalledWith('user-123', 'PARENTCODE', 'attacker@example.com');
+        expect(dependencies.rollbackParentInviteRedemption).toHaveBeenCalledWith('user-123', 'PARENTCODE');
         expect(deleteAuthUser).toHaveBeenCalledTimes(1);
+        expect(dependencies.rollbackParentInviteRedemption.mock.invocationCallOrder[0]).toBeLessThan(deleteAuthUser.mock.invocationCallOrder[0]);
         expect(dependencies.signOut).toHaveBeenCalledWith(auth);
         expect(dependencies.updateUserProfile).not.toHaveBeenCalled();
         expect(dependencies.sendVerificationEmail).not.toHaveBeenCalled();
@@ -207,7 +210,9 @@ describe('executeEmailPasswordSignup', () => {
 
         expect(dependencies.updateUserProfile).not.toHaveBeenCalled();
         expect(dependencies.sendVerificationEmail).not.toHaveBeenCalled();
+        expect(dependencies.rollbackParentInviteRedemption).toHaveBeenCalledWith('user-123', 'PARENTCODE');
         expect(deleteAuthUser).toHaveBeenCalledTimes(1);
+        expect(dependencies.rollbackParentInviteRedemption.mock.invocationCallOrder[0]).toBeLessThan(deleteAuthUser.mock.invocationCallOrder[0]);
         expect(dependencies.signOut).toHaveBeenCalledTimes(1);
         expect(dependencies.signOut).toHaveBeenCalledWith(auth);
     });

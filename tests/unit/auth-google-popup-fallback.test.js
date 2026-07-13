@@ -24,13 +24,14 @@ vi.mock('../../js/firebase.js?v=20', () => ({
     updatePassword: vi.fn()
 }));
 
-vi.mock('../../js/db.js?v=92', () => ({
+vi.mock('../../js/db.js?v=94', () => ({
     validateAccessCode: validateAccessCodeMock,
     markAccessCodeAsUsed: markAccessCodeAsUsedMock,
     updateUserProfile: vi.fn(),
     redeemParentInvite: vi.fn(),
     redeemHouseholdInvite: vi.fn(),
     redeemCoParentInvite: vi.fn(),
+    rollbackParentInviteRedemption: vi.fn(),
     getUserProfile: vi.fn(),
     getUserTeams: vi.fn(),
     getUserByEmail: vi.fn(),
@@ -38,7 +39,7 @@ vi.mock('../../js/db.js?v=92', () => ({
     listMyParentMembershipRequests: vi.fn()
 }));
 
-vi.mock('../../js/signup-flow.js?v=7', () => ({
+vi.mock('../../js/signup-flow.js?v=8', () => ({
     executeEmailPasswordSignup: vi.fn()
 }));
 

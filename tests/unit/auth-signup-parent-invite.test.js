@@ -26,6 +26,7 @@ const dbMocks = vi.hoisted(() => ({
     redeemParentInvite: vi.fn(),
     redeemHouseholdInvite: vi.fn(),
     redeemCoParentInvite: vi.fn(),
+    rollbackParentInviteRedemption: vi.fn(),
     getTeam: vi.fn(),
     addTeamAdminEmail: vi.fn(),
     getUserProfile: vi.fn(),
@@ -41,7 +42,7 @@ const authEmailMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../js/firebase.js?v=20', () => firebaseMocks);
-vi.mock('../../js/db.js?v=92', () => dbMocks);
+vi.mock('../../js/db.js?v=94', () => dbMocks);
 vi.mock('../../js/auth-email.js?v=1', () => authEmailMocks);
 vi.mock('../../js/admin-invite.js?v=6', () => ({
     redeemAdminInviteAcceptance: vi.fn()
@@ -125,6 +126,7 @@ describe('auth signup parent invite failure handling', () => {
         expect(signupSection).toBeTruthy();
         expect(signupSection).toContain('return executeEmailPasswordSignup');
         expect(signupSection).toContain('redeemParentInvite');
+        expect(signupSection).toContain('rollbackParentInviteRedemption');
         expect(signupSection).toContain('updateUserProfile');
         expect(signupSection).toContain('markAccessCodeAsUsed');
         expect(signupSection).toContain('sendVerificationEmail: queueCurrentUserVerificationEmail');

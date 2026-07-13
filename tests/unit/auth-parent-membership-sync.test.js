@@ -25,6 +25,7 @@ const dbMocks = vi.hoisted(() => ({
     redeemParentInvite: vi.fn(),
     redeemHouseholdInvite: vi.fn(),
     redeemCoParentInvite: vi.fn(),
+    rollbackParentInviteRedemption: vi.fn(),
     getUserProfile: vi.fn(),
     getUserTeams: vi.fn(),
     getUserByEmail: vi.fn(),
@@ -35,8 +36,8 @@ const dbMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../js/firebase.js?v=20', () => firebaseMocks);
-vi.mock('../../js/db.js?v=92', () => dbMocks);
-vi.mock('../../js/signup-flow.js?v=7', () => ({
+vi.mock('../../js/db.js?v=94', () => dbMocks);
+vi.mock('../../js/signup-flow.js?v=8', () => ({
     executeEmailPasswordSignup: vi.fn()
 }));
 vi.mock('../../js/admin-invite.js?v=6', () => ({

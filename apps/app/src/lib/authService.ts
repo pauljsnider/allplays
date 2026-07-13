@@ -864,7 +864,19 @@ function toAuthUser(user: FirebaseUser, profile: Record<string, unknown>): AuthU
   };
 }
 
-async function cleanupFailedNewUser(user: FirebaseUser | null, context: string) {
+async function cleanupFailedNewUser(user: FirebaseUser | null, context: string, options: { activationCode?: string | null } = {}) {
+  const activationCode = normalizeCode(options.activationCode);
+  if (user?.uid && activationCode) {
+    try {
+      const dbModule = await loadLegacyAuthDb();
+      if (typeof dbModule.rollbackParentInviteRedemption === 'function') {
+        await dbModule.rollbackParentInviteRedemption(user.uid, activationCode);
+      }
+    } catch (rollbackError) {
+      logger.error('Error rolling back invite redemption after auth operation.', { context, error: rollbackError });
+    }
+  }
+
   if (user?.delete) {
     try {
       await user.delete();
@@ -1041,6 +1053,7 @@ export async function signUpWithEmail(email: string, password: string, activatio
       redeemParentInvite: dbModule.redeemParentInvite,
       redeemHouseholdInvite: dbModule.redeemHouseholdInvite,
       redeemCoParentInvite: dbModule.redeemCoParentInvite,
+      rollbackParentInviteRedemption: dbModule.rollbackParentInviteRedemption,
       redeemAdminInviteAcceptance,
       updateUserProfile: dbModule.updateUserProfile,
       markAccessCodeAsUsed: dbModule.markAccessCodeAsUsed,
@@ -1147,7 +1160,7 @@ async function processGoogleResult(result: UserCredential | null, activationCode
     });
   } catch (error) {
     window.sessionStorage.removeItem(pendingActivationCodeKey);
-    await cleanupFailedNewUser(result.user, 'Google activation');
+    await cleanupFailedNewUser(result.user, 'Google activation', { activationCode: validation.data?.code || code });
     throw error;
   }
 

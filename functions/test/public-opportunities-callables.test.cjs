@@ -194,6 +194,7 @@ function makeFunctionsStub() {
         onCreate: (fn) => fn,
         onUpdate: (fn) => fn,
         onWrite: (fn) => fn,
+        onDelete: (fn) => fn,
         onRun: (fn) => fn,
         document() { return this; },
         schedule() { return this; },
@@ -207,6 +208,7 @@ function makeFunctionsStub() {
         config: () => ({ stripe: { secret_key: 'sk_test_123', app_url: 'https://allplays.test' } }),
         https: { HttpsError, onCall: (fn) => fn, onRequest: (fn) => fn },
         firestore: { document: () => triggerChain },
+        auth: { user: () => triggerChain },
         pubsub: { schedule: () => triggerChain },
         runWith: () => triggerChain,
         logger: { error() {}, warn() {}, info() {} }

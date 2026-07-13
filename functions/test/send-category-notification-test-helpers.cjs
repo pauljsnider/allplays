@@ -51,6 +51,9 @@ function makeFunctionsStub() {
         firestore: {
             document: () => triggerChain
         },
+        auth: {
+            user: () => triggerChain
+        },
         pubsub: {
             schedule: () => triggerChain
         },

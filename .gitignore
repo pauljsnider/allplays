@@ -64,6 +64,8 @@ serviceAccountKey*.json
 _migration/*
 !_migration/
 !_migration/migrate-player-private-profile.js
+!_migration/fix-orphaned-invite-redemptions.js
+!_migration/MIGRATION-README.md
 migrate_admin.js
 verify_admin.js
 
