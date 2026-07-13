@@ -83,14 +83,45 @@ describe('createProfileAccessCode', () => {
         dbMocks.generateAccessCode.mockReturnValue('FIRST123');
         dbMocks.createAccessCode.mockRejectedValue(new Error('SDK unavailable'));
         vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token');
-        const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => (
-            init?.method === 'PATCH'
-                ? { ok: true, status: 200, json: async () => ({}) }
-                : { ok: false, status: 404, json: async () => ({ error: { message: 'not found' } }) }
-        ));
+        const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = String(input);
+
+            if (init?.method === 'PATCH') {
+                return { ok: true, status: 200, json: async () => ({}) };
+            }
+
+            if (url.endsWith('/documents/users/user-1')) {
+                return {
+                    ok: true,
+                    status: 200,
+                    json: async () => ({
+                        name: 'projects/demo-project/databases/(default)/documents/users/user-1',
+                        fields: {
+                            displayName: { stringValue: 'Pat Parent' },
+                            photoUrl: { stringValue: 'https://example.com/pat.jpg' },
+                            parentTeamIds: {
+                                arrayValue: {
+                                    values: [
+                                        { stringValue: 'team-1' },
+                                        { stringValue: 'team-2' }
+                                    ]
+                                }
+                            }
+                        }
+                    })
+                };
+            }
+
+            return { ok: false, status: 404, json: async () => ({ error: { message: 'not found' } }) };
+        });
         vi.stubGlobal('fetch', fetchMock);
 
         await expect(createProfileAccessCode('user-1', '', '')).resolves.toBe('FIRST123');
+
+        const patchCall = fetchMock.mock.calls.find(([, init]) => init?.method === 'PATCH');
+        const patchBody = JSON.parse(String(patchCall?.[1]?.body || '{}'));
+        const fields = patchBody.fields || {};
+        const inviterProfileFields = fields.inviterProfile?.mapValue?.fields || {};
 
         expect(fetchMock).toHaveBeenCalledWith(
             expect.stringContaining('/accessCodes/FIRST123?currentDocument.exists=false'),
@@ -99,6 +130,15 @@ describe('createProfileAccessCode', () => {
                 body: expect.stringContaining('"friend_invite"')
             })
         );
+        expect(inviterProfileFields.displayName).toEqual({ stringValue: 'Pat Parent' });
+        expect(inviterProfileFields.fullName).toEqual({ stringValue: 'Pat Parent' });
+        expect(inviterProfileFields.photoUrl).toEqual({ stringValue: 'https://example.com/pat.jpg' });
+        expect(inviterProfileFields.discoveryTeamIds?.arrayValue?.values).toEqual([
+            { stringValue: 'team-1' },
+            { stringValue: 'team-2' }
+        ]);
+        expect(Number.isNaN(Date.parse(String(fields.expiresAt?.timestampValue || '')))).toBe(false);
+        expect(new Date(String(fields.expiresAt.timestampValue)).getTime()).toBeGreaterThan(Date.now());
     });
 });
 
