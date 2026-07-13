@@ -311,6 +311,12 @@ export type StaffScheduleRsvpBreakdown = {
   counts: Required<ScheduleRsvpSummary>;
 };
 
+export type ScheduleAssignmentInput = {
+  role?: string | null;
+  value?: string | null;
+  claimable?: boolean | null;
+};
+
 type FirestoreDocument = FirestoreDecodedDocument;
 
 export type StaffRsvpReminderSendResult = StaffRsvpReminderPreview & {
@@ -2938,6 +2944,16 @@ function normalizeAssignmentRole(role: unknown) {
   return String(role || '').trim();
 }
 
+function normalizeAssignmentRoleKey(role: unknown) {
+  return normalizeAssignmentRole(role).toLowerCase();
+}
+
+function assertAssignmentRoleCanBeClaimDocumentId(role: string) {
+  if (role.includes('/') || role === '.' || role === '..' || /^__.*__$/.test(role)) {
+    throw new Error('Task name contains unsupported characters.');
+  }
+}
+
 function assertAssignmentEvent(event: ParentScheduleEvent) {
   if (!event.isDbGame) {
     throw new Error('Assignments open after this event is tracked in the schedule.');
@@ -2947,10 +2963,57 @@ function assertAssignmentEvent(event: ParentScheduleEvent) {
   }
 }
 
+function assertAssignmentManagementEvent(event: ParentScheduleEvent, user: AuthUser | null) {
+  assertAssignmentEvent(event);
+  if (!user?.uid) {
+    throw new Error('Sign in before managing assignments.');
+  }
+  if (!event.isTeamAdmin) {
+    throw new Error('Only team owners and admins can manage assignments.');
+  }
+}
+
 function normalizeAssignments(assignments: any[]): ScheduleAssignment[] {
   return (Array.isArray(assignments) ? assignments : [])
     .map((assignment) => normalizeScheduleAssignment(assignment))
     .filter((assignment) => assignment.role || assignment.value);
+}
+
+function normalizeScheduleAssignmentInput(input: ScheduleAssignmentInput): ScheduleAssignment {
+  const role = normalizeAssignmentRole(input?.role).slice(0, 80);
+  if (!role) {
+    throw new Error('Role is required.');
+  }
+  const claimable = input?.claimable === true;
+  if (claimable) {
+    assertAssignmentRoleCanBeClaimDocumentId(role);
+  }
+  const value = claimable ? '' : compactString(input?.value).slice(0, 100);
+  return {
+    role,
+    value,
+    claimable,
+    claim: null
+  };
+}
+
+function toPersistedScheduleAssignment(assignment: ScheduleAssignment): ScheduleAssignment {
+  const normalized = normalizeScheduleAssignment(assignment);
+  return {
+    role: normalized.role,
+    value: normalized.claimable ? '' : normalized.value,
+    claimable: normalized.claimable === true
+  };
+}
+
+function assertUniqueAssignmentRole(assignments: ScheduleAssignment[], role: string, ignoreIndex = -1) {
+  const nextKey = normalizeAssignmentRoleKey(role);
+  const duplicateIndex = assignments.findIndex((assignment, index) => (
+    index !== ignoreIndex && normalizeAssignmentRoleKey(assignment.role) === nextKey
+  ));
+  if (duplicateIndex >= 0) {
+    throw new Error('An assignment with that role already exists.');
+  }
 }
 
 function summarizeRsvps(rsvps: any[]): ScheduleRsvpSummary {
@@ -6076,12 +6139,109 @@ export async function loadParentScheduleAssignments(event: ParentScheduleEvent) 
   return normalizeAssignments(mergeAssignmentsWithClaims(assignments, claims) as ScheduleAssignment[]);
 }
 
+async function persistScheduleAssignments(event: ParentScheduleEvent, assignments: ScheduleAssignment[]) {
+  const persistedAssignments = normalizeAssignments(assignments)
+    .map(toPersistedScheduleAssignment);
+  const payload = { assignments: persistedAssignments };
+
+  try {
+    await withTimeout(Promise.resolve(updateGame(event.teamId, event.id, payload)), 'Assignment save');
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    logScheduleWarning('Falling back to REST assignment updateGame.', 'assignment-update', error, { fallback: 'rest', teamId: event.teamId, gameId: event.id });
+    await nativePatchDocument(`teams/${encodeURIComponent(event.teamId)}/games/${encodeURIComponent(event.id)}`, payload);
+  }
+
+  return persistedAssignments;
+}
+
+async function clearScheduleAssignmentClaim(event: ParentScheduleEvent, role: string, operation: string) {
+  const trimmedRole = normalizeAssignmentRole(role);
+  if (!trimmedRole) return;
+
+  try {
+    await withTimeout(Promise.resolve(releaseAssignmentClaim(event.teamId, event.id, trimmedRole)), 'Assignment claim cleanup');
+  } catch (error) {
+    if (isNativeRuntime()) {
+      try {
+        await nativeReleaseAssignment(event, trimmedRole);
+        return;
+      } catch (nativeError) {
+        logScheduleWarning('Unable to clear assignment claim during native assignment management.', operation, nativeError, { teamId: event.teamId, gameId: event.id, role: trimmedRole });
+        return;
+      }
+    }
+    logScheduleWarning('Unable to clear assignment claim during assignment management.', operation, error, { teamId: event.teamId, gameId: event.id, role: trimmedRole });
+  }
+}
+
+async function reloadPersistedScheduleAssignments(event: ParentScheduleEvent, assignments: ScheduleAssignment[]) {
+  return loadParentScheduleAssignments({ ...event, assignments });
+}
+
+export async function createScheduleAssignment(event: ParentScheduleEvent, user: AuthUser | null, input: ScheduleAssignmentInput) {
+  assertAssignmentManagementEvent(event, user);
+  const currentAssignments = normalizeAssignments(event.assignments);
+  const nextAssignment = normalizeScheduleAssignmentInput(input);
+  const nextRole = nextAssignment.role || '';
+  assertUniqueAssignmentRole(currentAssignments, nextRole);
+
+  const persistedAssignments = await persistScheduleAssignments(event, [...currentAssignments, nextAssignment]);
+  await clearScheduleAssignmentClaim(event, nextRole, 'assignment-create-claim-cleanup');
+  return reloadPersistedScheduleAssignments(event, persistedAssignments);
+}
+
+export async function updateScheduleAssignment(event: ParentScheduleEvent, user: AuthUser | null, currentRole: string, input: ScheduleAssignmentInput) {
+  assertAssignmentManagementEvent(event, user);
+  const currentAssignments = normalizeAssignments(event.assignments);
+  const currentKey = normalizeAssignmentRoleKey(currentRole);
+  const assignmentIndex = currentAssignments.findIndex((assignment) => normalizeAssignmentRoleKey(assignment.role) === currentKey);
+  if (assignmentIndex < 0) {
+    throw new Error('Assignment not found.');
+  }
+
+  const previousAssignment = currentAssignments[assignmentIndex];
+  const nextAssignment = normalizeScheduleAssignmentInput(input);
+  const nextRole = nextAssignment.role || '';
+  assertUniqueAssignmentRole(currentAssignments, nextRole, assignmentIndex);
+
+  const nextAssignments = currentAssignments.map((assignment, index) => (
+    index === assignmentIndex ? nextAssignment : assignment
+  ));
+  const persistedAssignments = await persistScheduleAssignments(event, nextAssignments);
+
+  const roleChanged = normalizeAssignmentRole(previousAssignment.role || currentRole) !== normalizeAssignmentRole(nextRole);
+  if (roleChanged) {
+    await clearScheduleAssignmentClaim(event, previousAssignment.role || currentRole, 'assignment-update-old-claim-cleanup');
+    await clearScheduleAssignmentClaim(event, nextRole, 'assignment-update-new-claim-cleanup');
+  } else if (!nextAssignment.claimable || nextAssignment.value) {
+    await clearScheduleAssignmentClaim(event, nextRole, 'assignment-update-claim-cleanup');
+  }
+
+  return reloadPersistedScheduleAssignments(event, persistedAssignments);
+}
+
+export async function removeScheduleAssignment(event: ParentScheduleEvent, user: AuthUser | null, role: string) {
+  assertAssignmentManagementEvent(event, user);
+  const currentAssignments = normalizeAssignments(event.assignments);
+  const currentKey = normalizeAssignmentRoleKey(role);
+  const nextAssignments = currentAssignments.filter((assignment) => normalizeAssignmentRoleKey(assignment.role) !== currentKey);
+  if (nextAssignments.length === currentAssignments.length) {
+    throw new Error('Assignment not found.');
+  }
+
+  const persistedAssignments = await persistScheduleAssignments(event, nextAssignments);
+  await clearScheduleAssignmentClaim(event, role, 'assignment-remove-claim-cleanup');
+  return reloadPersistedScheduleAssignments(event, persistedAssignments);
+}
+
 export async function claimParentScheduleAssignmentSlot(event: ParentScheduleEvent, user: AuthUser, role: string) {
   assertAssignmentEvent(event);
   const trimmedRole = normalizeAssignmentRole(role);
   if (!trimmedRole) {
     throw new Error('Role is required.');
   }
+  assertAssignmentRoleCanBeClaimDocumentId(trimmedRole);
   const name = String(user.displayName || user.email || 'Parent').trim();
   if (!name) {
     throw new Error('Name is required.');
@@ -6102,6 +6262,7 @@ export async function releaseParentScheduleAssignmentClaim(event: ParentSchedule
   if (!trimmedRole) {
     throw new Error('Role is required.');
   }
+  assertAssignmentRoleCanBeClaimDocumentId(trimmedRole);
 
   try {
     await withTimeout(Promise.resolve(releaseAssignmentClaim(event.teamId, event.id, trimmedRole)), 'Assignment release');

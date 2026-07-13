@@ -618,6 +618,13 @@ async function mockHomePlayerModules(page) {
                 export async function submitParentScheduleRsvpForChildren() { return { response: 'going' }; }
                 export async function claimParentScheduleAssignmentSlot() { return { role: 'Volunteer' }; }
                 export async function releaseParentScheduleAssignmentClaim() {}
+                export async function createScheduleAssignment(_event, _user, input = {}) {
+                    return [{ role: String(input.role || 'Volunteer'), value: String(input.value || ''), claimable: input.claimable !== false, claim: null }];
+                }
+                export async function updateScheduleAssignment(_event, _user, _currentRole, input = {}) {
+                    return [{ role: String(input.role || 'Volunteer'), value: String(input.value || ''), claimable: input.claimable !== false, claim: null }];
+                }
+                export async function removeScheduleAssignment() { return []; }
                 export async function createParentScheduleRideOffer() { return { id: 'ride-1' }; }
                 export async function requestParentScheduleRideSpot() { return { id: 'ride-request-1' }; }
                 export async function updateParentScheduleRideRequestStatus() {}

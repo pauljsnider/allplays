@@ -107,7 +107,8 @@ describe('ScheduleEventDetail decomposition initiative source contract', () => {
 
         expect(assignmentsSectionSource).toContain('export function AssignmentsSection');
         expect(assignmentsSectionSource).toContain('const { auth, event, updateEvents } = useScheduleEventDetailContext();');
-        expect(assignmentsSectionSource).toContain('loadParentScheduleAssignments(event)');
+        expect(assignmentsSectionSource).toContain('const targetEvent = eventRef.current;');
+        expect(assignmentsSectionSource).toContain('loadParentScheduleAssignments(targetEvent)');
         expect(assignmentsSectionSource).toContain('claimParentScheduleAssignmentSlot(event, auth.user!, role)');
         expect(assignmentsSectionSource).toContain('releaseParentScheduleAssignmentClaim(event, role)');
         expect(assignmentsSectionSource).toContain('<AssignmentCard');

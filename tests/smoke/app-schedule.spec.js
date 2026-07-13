@@ -201,6 +201,7 @@ async function mockScheduleModules(page, options = {}) {
                         rideshareSummary: overrides.rideshareSummary || { offerCount: 1, seatsLeft: 2, requests: 1, pending: 1, confirmed: 0, isFull: false },
                         assignments: overrides.assignments || getAssignments(),
                         isTeamStaff: overrides.isTeamStaff === true,
+                        isTeamAdmin: overrides.isTeamAdmin === true || overrides.isTeamStaff === true,
                         availabilityLocked: false,
                         availabilityCutoffLabel: 'No cutoff',
                         availabilityPreferences: { cutoffMinutesBeforeStart: 0, noteVisibility: 'team' },
@@ -822,6 +823,52 @@ async function mockScheduleModules(page, options = {}) {
                     window.__scheduleCalls.assignments.push({ action: 'release', role });
                 }
 
+                export async function createScheduleAssignment(event, user, input = {}) {
+                    const role = String(input.role || '').trim();
+                    if (!role) throw new Error('Role is required.');
+                    if (getAssignments().some((assignment) => String(assignment.role || '').toLowerCase() === role.toLowerCase())) {
+                        throw new Error('An assignment with that role already exists.');
+                    }
+                    const assignment = {
+                        role,
+                        value: input.claimable === false ? String(input.value || '').trim() : '',
+                        claimable: input.claimable !== false,
+                        claim: null
+                    };
+                    window.__mockAssignments = getAssignments().concat(assignment);
+                    window.__scheduleCalls.assignments.push({ action: 'create', role, userId: user?.uid || null, input });
+                    return getAssignments();
+                }
+
+                export async function updateScheduleAssignment(event, user, currentRole, input = {}) {
+                    const role = String(input.role || '').trim();
+                    if (!role) throw new Error('Role is required.');
+                    const currentKey = String(currentRole || '').trim().toLowerCase();
+                    const index = getAssignments().findIndex((assignment) => String(assignment.role || '').toLowerCase() === currentKey);
+                    if (index < 0) throw new Error('Assignment not found.');
+                    if (getAssignments().some((assignment, assignmentIndex) => assignmentIndex !== index && String(assignment.role || '').toLowerCase() === role.toLowerCase())) {
+                        throw new Error('An assignment with that role already exists.');
+                    }
+                    const assignment = {
+                        role,
+                        value: input.claimable === false ? String(input.value || '').trim() : '',
+                        claimable: input.claimable !== false,
+                        claim: null
+                    };
+                    window.__mockAssignments = getAssignments().map((item, assignmentIndex) => assignmentIndex === index ? assignment : item);
+                    window.__scheduleCalls.assignments.push({ action: 'update', currentRole, role, userId: user?.uid || null, input });
+                    return getAssignments();
+                }
+
+                export async function removeScheduleAssignment(event, user, role) {
+                    const roleKey = String(role || '').trim().toLowerCase();
+                    const before = getAssignments().length;
+                    window.__mockAssignments = getAssignments().filter((assignment) => String(assignment.role || '').toLowerCase() !== roleKey);
+                    if (window.__mockAssignments.length === before) throw new Error('Assignment not found.');
+                    window.__scheduleCalls.assignments.push({ action: 'remove', role, userId: user?.uid || null });
+                    return getAssignments();
+                }
+
                 export async function loadParentScheduleRideOffers() {
                     if (${JSON.stringify(rideshareLoadError)}) {
                         throw new Error(${JSON.stringify(rideshareLoadError)});
@@ -1241,7 +1288,7 @@ test('tournament game keeps RSVP, tracking, finalization, and reports on the sha
     await expect(page.getByText(/Pool: Pool A/).first()).toBeVisible();
 
     const availabilitySection = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Availability' }) });
-    await availabilitySection.getByRole('button', { name: 'Going' }).click();
+    await availabilitySection.getByRole('button', { name: 'Going', exact: true }).click();
     await expect(page.getByText('2 children marked going.')).toBeVisible();
     expect(await page.evaluate(() => window.__scheduleCalls.rsvps)).toEqual([
         { eventKey: 'game-1-player-1', childId: 'player-1', userId: 'user-1', response: 'going', note: '' },
@@ -1774,6 +1821,58 @@ test('app schedule assignments supports parent sign up and release', async ({ pa
     await expect(assignmentsSection.getByText('4 posted · 1 open')).toBeVisible();
     await expect(snacksCard.getByRole('button', { name: 'Sign up' })).toBeVisible();
     expect(await page.evaluate(() => window.__scheduleCalls.assignments.some((call) => call.action === 'release' && call.role === 'Snacks'))).toBe(true);
+});
+
+test('app schedule lets team staff create, edit, and remove assignments', async ({ page, baseURL }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await mockScheduleModules(page, { isCoach: true, staffManageable: true });
+    await page.goto(appUrl(baseURL, '/schedule/team-1/game-1?childId=player-1&section=assignments'), { waitUntil: 'domcontentloaded' });
+
+    const assignmentsSection = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Assignments' }) });
+    await waitForScheduleRoute(page, assignmentsSection.getByText('4 posted · 1 open'));
+
+    await assignmentsSection.getByRole('button', { name: 'Add assignment' }).click();
+    const addForm = assignmentsSection.getByRole('form', { name: 'Add assignment' });
+    await addForm.getByLabel('Task').fill('Team photos');
+    await addForm.getByRole('button', { name: 'Add assignment' }).click();
+
+    await expect(assignmentsSection.getByText('Team photos added.')).toBeVisible();
+    const createdCard = assignmentsSection.locator('article').filter({ hasText: 'Team photos' });
+    await expect(createdCard).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.__scheduleCalls.assignments.find((call) => call.action === 'create'))).toMatchObject({
+        action: 'create',
+        role: 'Team photos',
+        userId: 'user-1',
+        input: { role: 'Team photos', value: '', claimable: true }
+    });
+
+    await createdCard.getByRole('button', { name: 'Edit' }).click();
+    const editForm = assignmentsSection.getByRole('form', { name: 'Edit assignment Team photos' });
+    await editForm.getByLabel('Task').fill('Scorebook backup');
+    await editForm.getByLabel('Let parents sign up').uncheck();
+    await editForm.getByLabel('Assigned to').fill('Jamie');
+    await editForm.getByRole('button', { name: 'Save assignment' }).click();
+
+    await expect(assignmentsSection.getByText('Scorebook backup updated.')).toBeVisible();
+    await assignmentsSection.getByRole('button', { name: 'Show filled assignments (3)' }).click();
+    const updatedCard = assignmentsSection.locator('article').filter({ hasText: 'Scorebook backup' });
+    await expect(updatedCard.getByText('Scorebook backup: Jamie')).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.__scheduleCalls.assignments.find((call) => call.action === 'update'))).toMatchObject({
+        action: 'update',
+        currentRole: 'Team photos',
+        role: 'Scorebook backup',
+        userId: 'user-1',
+        input: { role: 'Scorebook backup', value: 'Jamie', claimable: false }
+    });
+
+    await updatedCard.getByRole('button', { name: 'Remove' }).click();
+    await expect(assignmentsSection.getByText('Scorebook backup removed.')).toBeVisible();
+    await expect(updatedCard).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => window.__scheduleCalls.assignments.find((call) => call.action === 'remove'))).toMatchObject({
+        action: 'remove',
+        role: 'Scorebook backup',
+        userId: 'user-1'
+    });
 });
 
 test('app schedule keeps filters compact on phone', async ({ page, baseURL }) => {

@@ -10,6 +10,7 @@ const scheduleServiceMocks = vi.hoisted(() => ({
   cancelPracticeOccurrenceForApp: vi.fn(),
   cancelScheduledGameForApp: vi.fn(),
   claimParentScheduleAssignmentSlot: vi.fn(),
+  createScheduleAssignment: vi.fn(),
   createParentScheduleRideOffer: vi.fn(),
   loadScheduleStatTrackerConfigsForApp: vi.fn<(...args: any[]) => Promise<any[]>>(() => Promise.resolve([{ id: 'cfg-basketball', name: 'Basketball' }])),
   loadParentPracticePacket: vi.fn(),
@@ -44,6 +45,7 @@ const scheduleServiceMocks = vi.hoisted(() => ({
   markParentPracticePacketComplete: vi.fn(),
   publishGamePlanForApp: vi.fn(),
   releaseParentScheduleAssignmentClaim: vi.fn(),
+  removeScheduleAssignment: vi.fn(),
   requestParentScheduleRideSpot: vi.fn(),
   sendStaffRsvpReminder: vi.fn(),
   setParentScheduleRideOfferStatus: vi.fn(),
@@ -51,6 +53,7 @@ const scheduleServiceMocks = vi.hoisted(() => ({
   submitParentScheduleRsvpForChildren: vi.fn(),
   submitStaffScheduleRsvpOverride: vi.fn(),
   summarizeParentScheduleRideOffers: vi.fn(() => ({ offerCount: 0, seatsLeft: 0, requests: 0, pending: 0, confirmed: 0, isFull: false })),
+  updateScheduleAssignment: vi.fn(),
   loadHomeScoringPlayers: vi.fn(),
   publishLiveScoreUpdateEvent: vi.fn(),
   recordPlayerGameStat: vi.fn(),
@@ -245,6 +248,8 @@ import {
   shouldShowLiveScoreControls,
   shouldPersistLineupDraft
 } from './ScheduleEventDetail';
+import { AssignmentsSection } from '../components/schedule/AssignmentsSection';
+import { ScheduleEventDetailProvider } from './schedule/ScheduleEventDetailContext';
 import type { PracticeTimelineBlock } from '../lib/practiceTimelineService';
 import type { AuthState } from '../lib/types';
 
@@ -1331,6 +1336,121 @@ describe('ScheduleEventDetail rideshare permissions', () => {
 });
 
 describe('ScheduleEventDetail assignments', () => {
+  it('ignores a stale assignment response after the mounted section switches events', async () => {
+    let resolveFirstLoad: ((assignments: any[]) => void) | null = null;
+    scheduleServiceMocks.loadParentScheduleAssignments.mockImplementation(async (event) => {
+      if (event.id === 'game-1') {
+        return new Promise<any[]>((resolve) => {
+          resolveFirstLoad = resolve;
+        });
+      }
+      return [{ role: 'Second game task', value: 'Taylor', claimable: false, claim: null }];
+    });
+
+    const updateEvents = vi.fn();
+    const firstEvent = buildEvent({ id: 'game-1', assignments: [] });
+    const secondEvent = buildEvent({
+      eventKey: 'team-1::game-2::player-1::2026-06-05T18:00:00.000Z::game',
+      id: 'game-2',
+      assignments: []
+    });
+    const providerValue = (event: any) => ({
+      auth,
+      event,
+      childEvents: [event],
+      refreshEvent: vi.fn(),
+      updateEvents
+    });
+
+    const rendered = render(
+      <ScheduleEventDetailProvider value={providerValue(firstEvent)}>
+        <AssignmentsSection />
+      </ScheduleEventDetailProvider>
+    );
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.loadParentScheduleAssignments).toHaveBeenCalledWith(firstEvent);
+    });
+
+    rendered.rerender(
+      <ScheduleEventDetailProvider value={providerValue(secondEvent)}>
+        <AssignmentsSection />
+      </ScheduleEventDetailProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Second game task: Taylor')).toBeTruthy();
+    });
+
+    await act(async () => {
+      resolveFirstLoad?.([{ role: 'Stale first game task', value: 'Jordan', claimable: false, claim: null }]);
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByText('Stale first game task: Jordan')).toBeNull();
+    expect(screen.getByText('Second game task: Taylor')).toBeTruthy();
+  });
+
+  it('ignores a completed management action after the mounted section switches events', async () => {
+    let resolveCreate: ((assignments: any[]) => void) | null = null;
+    scheduleServiceMocks.loadParentScheduleAssignments.mockImplementation(async (event) => (
+      event.id === 'game-1'
+        ? []
+        : [{ role: 'Second game task', value: 'Taylor', claimable: false, claim: null }]
+    ));
+    scheduleServiceMocks.createScheduleAssignment.mockImplementation(() => (
+      new Promise<any[]>((resolve) => {
+        resolveCreate = resolve;
+      })
+    ));
+
+    const updateEvents = vi.fn();
+    const firstEvent = buildEvent({ id: 'game-1', isTeamAdmin: true, assignments: [] });
+    const secondEvent = buildEvent({
+      eventKey: 'team-1::game-2::player-1::2026-06-05T18:00:00.000Z::game',
+      id: 'game-2',
+      isTeamAdmin: true,
+      assignments: []
+    });
+    const providerValue = (event: any) => ({
+      auth,
+      event,
+      childEvents: [event],
+      refreshEvent: vi.fn(),
+      updateEvents
+    });
+
+    const rendered = render(
+      <ScheduleEventDetailProvider value={providerValue(firstEvent)}>
+        <AssignmentsSection />
+      </ScheduleEventDetailProvider>
+    );
+
+    await waitFor(() => expect(screen.getByText('No assignments yet')).toBeTruthy());
+    const addButtons = screen.getAllByRole('button', { name: 'Add assignment' });
+    fireEvent.click(addButtons[addButtons.length - 1]);
+    const form = screen.getByRole('form', { name: 'Add assignment' });
+    fireEvent.change(within(form).getByLabelText('Task'), { target: { value: 'First game task' } });
+    fireEvent.click(within(form).getByRole('button', { name: 'Add assignment' }));
+
+    await waitFor(() => expect(scheduleServiceMocks.createScheduleAssignment).toHaveBeenCalled());
+    rendered.rerender(
+      <ScheduleEventDetailProvider value={providerValue(secondEvent)}>
+        <AssignmentsSection />
+      </ScheduleEventDetailProvider>
+    );
+    await waitFor(() => expect(screen.getByText('Second game task: Taylor')).toBeTruthy());
+
+    await act(async () => {
+      resolveCreate?.([{ role: 'First game task', value: '', claimable: true, claim: null }]);
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByText('First game task')).toBeNull();
+    expect(screen.queryByText('First game task added.')).toBeNull();
+    expect(screen.getByText('Second game task: Taylor')).toBeTruthy();
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     liveGameReactionsServiceMocks.canUseLiveGameReactions.mockReturnValue(true);
@@ -1398,6 +1518,123 @@ describe('ScheduleEventDetail assignments', () => {
     const warning = await within(tray).findByText('Score autosaved. Live play-by-play post failed.');
     expect(warning.className).toContain('text-amber-700');
     expect(warning.className).not.toContain('text-rose-700');
+  });
+
+  it('keeps the empty Tasks tab visible for team admins before assignments exist', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        isDbGame: false,
+        isTeamAdmin: true,
+        assignments: []
+      })],
+      children: []
+    });
+    scheduleServiceMocks.loadParentScheduleAssignments.mockResolvedValue([]);
+
+    renderScheduleEventDetailWithLocation();
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Assignments' }).length).toBeGreaterThan(0);
+    });
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Assignments' })[0]);
+
+    await waitFor(() => {
+      expect(screen.getByText('No assignments yet')).toBeTruthy();
+    });
+    expect(screen.queryByRole('button', { name: 'Add assignment' })).toBeNull();
+  });
+
+  it('lets team admins add and edit assignments from the empty state', async () => {
+    const createdAssignments = [{ role: 'Snacks', value: '', claimable: true, claim: null }];
+    const updatedAssignments = [{ role: 'Scorebook', value: 'Jamie', claimable: false, claim: null }];
+
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({ isTeamAdmin: true, assignments: [] })],
+      children: []
+    });
+    scheduleServiceMocks.loadParentScheduleAssignments.mockResolvedValue([]);
+    scheduleServiceMocks.createScheduleAssignment.mockResolvedValue(createdAssignments);
+    scheduleServiceMocks.updateScheduleAssignment.mockResolvedValue(updatedAssignments);
+    scheduleServiceMocks.removeScheduleAssignment.mockResolvedValue([]);
+
+    renderScheduleEventDetailWithLocation('/schedule/team-1/game-1?childId=player-1&section=assignments');
+
+    await waitFor(() => {
+      expect(screen.getByText('No assignments yet')).toBeTruthy();
+    });
+
+    const addButtons = screen.getAllByRole('button', { name: 'Add assignment' });
+    fireEvent.click(addButtons[addButtons.length - 1]);
+
+    const addForm = screen.getByRole('form', { name: 'Add assignment' });
+    fireEvent.change(within(addForm).getByLabelText('Task'), { target: { value: 'Snacks' } });
+    fireEvent.click(within(addForm).getByRole('button', { name: 'Add assignment' }));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.createScheduleAssignment).toHaveBeenCalled();
+    });
+    expect(scheduleServiceMocks.createScheduleAssignment.mock.calls[0][1]).toBe(auth.user);
+    expect(scheduleServiceMocks.createScheduleAssignment.mock.calls[0][2]).toEqual({
+      role: 'Snacks',
+      value: '',
+      claimable: true
+    });
+    expect(screen.getByText('Snacks added.')).toBeTruthy();
+    expect(screen.getByText('Snacks')).toBeTruthy();
+
+    const snacksCard = screen.getByText('Snacks').closest('article') as HTMLElement;
+    fireEvent.click(within(snacksCard).getByRole('button', { name: 'Edit' }));
+
+    const editForm = screen.getByRole('form', { name: 'Edit assignment Snacks' });
+    fireEvent.change(within(editForm).getByLabelText('Task'), { target: { value: 'Scorebook' } });
+    fireEvent.click(within(editForm).getByLabelText('Let parents sign up'));
+    fireEvent.change(within(editForm).getByLabelText('Assigned to'), { target: { value: 'Jamie' } });
+    fireEvent.click(within(editForm).getByRole('button', { name: 'Save assignment' }));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.updateScheduleAssignment).toHaveBeenCalled();
+    });
+    expect(scheduleServiceMocks.updateScheduleAssignment.mock.calls[0][1]).toBe(auth.user);
+    expect(scheduleServiceMocks.updateScheduleAssignment.mock.calls[0][2]).toBe('Snacks');
+    expect(scheduleServiceMocks.updateScheduleAssignment.mock.calls[0][3]).toEqual({
+      role: 'Scorebook',
+      value: 'Jamie',
+      claimable: false
+    });
+    expect(screen.getByText('Scorebook updated.')).toBeTruthy();
+    expect(screen.getByText('Scorebook: Jamie')).toBeTruthy();
+
+    const scorebookCard = screen.getByText('Scorebook: Jamie').closest('article') as HTMLElement;
+    fireEvent.click(within(scorebookCard).getByRole('button', { name: 'Remove' }));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.removeScheduleAssignment).toHaveBeenCalled();
+    });
+    expect(scheduleServiceMocks.removeScheduleAssignment.mock.calls[0][1]).toBe(auth.user);
+    expect(scheduleServiceMocks.removeScheduleAssignment.mock.calls[0][2]).toBe('Scorebook');
+    expect(screen.getByText('Scorebook removed.')).toBeTruthy();
+    expect(screen.getByText('No assignments yet')).toBeTruthy();
+  });
+
+  it('hides assignment management controls for non-admin viewers', async () => {
+    const assignments = [{ role: 'Snacks', value: '', claimable: true, claim: null }];
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({ isTeamAdmin: false, assignments })],
+      children: []
+    });
+    scheduleServiceMocks.loadParentScheduleAssignments.mockResolvedValue(assignments);
+
+    renderScheduleEventDetailWithLocation('/schedule/team-1/game-1?childId=player-1&section=assignments');
+
+    await waitFor(() => {
+      expect(screen.getByText('1 posted · 1 open')).toBeTruthy();
+    });
+
+    expect(screen.queryByRole('button', { name: 'Add assignment' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Remove' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Sign up' })).toBeTruthy();
   });
 
   it('surfaces sticky autosave failures and retries through the existing manual save path', async () => {
