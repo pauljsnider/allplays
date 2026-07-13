@@ -19,7 +19,7 @@ export type CreateTeamForAppResult = {
   defaultStatConfigError: string | null;
 };
 
-const fallbackSportOptions = ['Basketball', 'Soccer', 'Baseball', 'Football', 'Volleyball'];
+const fallbackSportOptions = ['Basketball', 'Soccer', 'Baseball', 'Softball', 'Football', 'Volleyball'];
 
 export function getCreateTeamSportOptions() {
   const presetSports = getStatConfigPresetOptions()
@@ -54,16 +54,16 @@ export async function createTeamForApp(user: AuthUser | null, input: CreateTeamF
     throw new Error('Team could not be created.');
   }
 
-  const defaultStatConfig = getDefaultStatConfigForSport(sport);
-  if (!defaultStatConfig) {
-    return {
-      teamId,
-      defaultStatConfigCreated: false,
-      defaultStatConfigError: null
-    };
-  }
-
   try {
+    const defaultStatConfig = getDefaultStatConfigForSport(sport);
+    if (!defaultStatConfig) {
+      return {
+        teamId,
+        defaultStatConfigCreated: false,
+        defaultStatConfigError: null
+      };
+    }
+
     await createConfig(teamId, defaultStatConfig);
     return {
       teamId,

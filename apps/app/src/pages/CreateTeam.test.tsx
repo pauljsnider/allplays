@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import '@testing-library/jest-dom/vitest';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useParams } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CreateTeam } from './CreateTeam';
@@ -113,6 +114,38 @@ describe('CreateTeam', () => {
     fireEvent.click(openTeamButton);
 
     expect(teamCreationMocks.createTeamForApp).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText('Team detail: team-new')).toBeTruthy();
+  });
+
+  it('starts only one team write for duplicate submissions in the same render turn', async () => {
+    let finishCreation!: (result: {
+      teamId: string;
+      defaultStatConfigCreated: boolean;
+      defaultStatConfigError: null;
+    }) => void;
+    teamCreationMocks.createTeamForApp.mockReturnValueOnce(new Promise((resolve) => {
+      finishCreation = resolve;
+    }));
+    const { container } = renderCreateTeam();
+
+    fireEvent.change(screen.getByPlaceholderText('Team name'), { target: { value: 'One Team' } });
+    const form = container.querySelector('form');
+    expect(form).not.toBeNull();
+
+    await act(async () => {
+      form?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      form?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+
+    expect(teamCreationMocks.createTeamForApp).toHaveBeenCalledTimes(1);
+
+    finishCreation({
+      teamId: 'team-new',
+      defaultStatConfigCreated: true,
+      defaultStatConfigError: null
+    });
+
     expect(await screen.findByText('Team detail: team-new')).toBeTruthy();
   });
 

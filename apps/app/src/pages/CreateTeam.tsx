@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from 'react';
+import { useMemo, useRef, useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, CheckCircle2, Loader2, Save, Shield, Users } from 'lucide-react';
 import { createTeamForApp, getCreateTeamSportOptions } from '../lib/teamCreationService';
@@ -19,12 +19,17 @@ export function CreateTeam({ auth }: { auth: AuthState }) {
   const [saveError, setSaveError] = useState('');
   const [statConfigWarning, setStatConfigWarning] = useState('');
   const [createdTeamId, setCreatedTeamId] = useState('');
+  const submissionInFlightRef = useRef(false);
+  const completedTeamIdRef = useRef('');
   const createdTeamPath = createdTeamId ? `/teams/${encodeURIComponent(createdTeamId)}` : '';
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (createdTeamPath) {
-      navigate(createdTeamPath, { replace: true });
+    if (completedTeamIdRef.current) {
+      navigate(`/teams/${encodeURIComponent(completedTeamIdRef.current)}`, { replace: true });
+      return;
+    }
+    if (submissionInFlightRef.current) {
       return;
     }
 
@@ -46,6 +51,7 @@ export function CreateTeam({ auth }: { auth: AuthState }) {
       return;
     }
 
+    submissionInFlightRef.current = true;
     setSaving(true);
     try {
       const result = await createTeamForApp(auth.user, {
@@ -54,6 +60,7 @@ export function CreateTeam({ auth }: { auth: AuthState }) {
         zip: form.zip,
         isPublic: form.isPublic
       });
+      completedTeamIdRef.current = result.teamId;
       if (result.defaultStatConfigError) {
         setCreatedTeamId(result.teamId);
         setStatConfigWarning(`Team created, but the default stat config could not be added: ${result.defaultStatConfigError}`);
@@ -70,6 +77,7 @@ export function CreateTeam({ auth }: { auth: AuthState }) {
         setSaveError(message);
       }
     } finally {
+      submissionInFlightRef.current = false;
       setSaving(false);
     }
   }

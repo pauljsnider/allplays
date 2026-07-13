@@ -74,6 +74,25 @@ describe('createTeamForApp', () => {
     expect(legacyMocks.createTeam).toHaveBeenCalledTimes(1);
   });
 
+  it('returns the created team id when preset resolution fails after the team write', async () => {
+    legacyMocks.getDefaultStatConfigForSport.mockImplementationOnce(() => {
+      throw new Error('preset unavailable');
+    });
+
+    await expect(createTeamForApp(user, {
+      name: 'Team',
+      sport: 'Basketball',
+      zip: '12345',
+      isPublic: true
+    })).resolves.toEqual({
+      teamId: 'team-new',
+      defaultStatConfigCreated: false,
+      defaultStatConfigError: 'preset unavailable'
+    });
+    expect(legacyMocks.createTeam).toHaveBeenCalledTimes(1);
+    expect(legacyMocks.createConfig).not.toHaveBeenCalled();
+  });
+
   it('skips default stat config creation when no sport preset exists', async () => {
     legacyMocks.getDefaultStatConfigForSport.mockReturnValueOnce(null);
 
@@ -88,6 +107,24 @@ describe('createTeamForApp', () => {
     expect(legacyMocks.createConfig).not.toHaveBeenCalled();
   });
 
+  it('does not attempt config creation when the team write fails or returns no id', async () => {
+    legacyMocks.createTeam.mockRejectedValueOnce(new Error('team write failed'));
+
+    await expect(createTeamForApp(user, {
+      name: 'Team',
+      sport: 'Soccer'
+    })).rejects.toThrow('team write failed');
+    expect(legacyMocks.createConfig).not.toHaveBeenCalled();
+
+    legacyMocks.createTeam.mockResolvedValueOnce('  ');
+
+    await expect(createTeamForApp(user, {
+      name: 'Team',
+      sport: 'Soccer'
+    })).rejects.toThrow('Team could not be created.');
+    expect(legacyMocks.createConfig).not.toHaveBeenCalled();
+  });
+
   it('validates required creator and team fields before writing', async () => {
     await expect(createTeamForApp(null, { name: 'Team', sport: 'Soccer' })).rejects.toThrow('Sign in to create a team.');
     await expect(createTeamForApp(user, { name: ' ', sport: 'Soccer' })).rejects.toThrow('Team name is required.');
@@ -99,5 +136,18 @@ describe('createTeamForApp', () => {
 describe('getCreateTeamSportOptions', () => {
   it('derives unique sports from default stat config presets', () => {
     expect(getCreateTeamSportOptions()).toEqual(['Basketball', 'Soccer']);
+  });
+
+  it('keeps every built-in sport available when the preset catalog is empty', () => {
+    legacyMocks.getStatConfigPresetOptions.mockReturnValueOnce([]);
+
+    expect(getCreateTeamSportOptions()).toEqual([
+      'Basketball',
+      'Soccer',
+      'Baseball',
+      'Softball',
+      'Football',
+      'Volleyball'
+    ]);
   });
 });
