@@ -128,7 +128,7 @@ import {
 } from './scheduleLogic';
 import type { AutoFilledLineupPlayer, GamePlanPublishPayloadInput } from './gameDayLineupPublish';
 import { DEFAULT_TEAM_CONVERSATION_ID } from './chatLogic';
-import { getCachedAppData, getParentScheduleSummaryCacheKey, invalidateCachedAppData, loadCachedAppData } from './appDataCache';
+import { getCachedAppData, getParentHomeSecondaryCacheKey, getParentScheduleSummaryCacheKey, invalidateCachedAppData, loadCachedAppData } from './appDataCache';
 import { toAppServiceError } from './appErrors';
 import { createLogger } from './logger';
 import { getNativeRestDedupKey, loadDedupedNativeRestRequest, shouldDedupNativeRestRequest } from './nativeRestDedup';
@@ -149,10 +149,6 @@ const parentSchedulePlayerConcurrency = 8;
 const scheduleHydrationCacheTtlMs = 30 * 1000;
 const parentHomeHydrationLookAheadMs = 14 * 24 * 60 * 60 * 1000;
 const parentHomeHydrationLookBehindMs = 12 * 60 * 60 * 1000;
-
-function getParentHomeSecondaryCacheKey(userId: string) {
-  return `home-secondary:${userId}`;
-}
 
 function invalidateParentScheduleCaches(user: AuthUser | null | undefined) {
   const userId = compactString(user?.uid);

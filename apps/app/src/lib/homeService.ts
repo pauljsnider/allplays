@@ -8,7 +8,7 @@ import {
   type ParentHomeModel
 } from './homeLogic';
 import { createLogger } from './logger';
-import { getParentScheduleSummaryCacheKey, loadCachedAppData } from './appDataCache';
+import { getParentHomeSecondaryCacheKey, getParentScheduleSummaryCacheKey, loadCachedAppData } from './appDataCache';
 import { toAppServiceError, type AppServiceError } from './appErrors';
 import {
   hydrateParentScheduleDetails,
@@ -157,7 +157,7 @@ export async function loadParentHomeWithSecondaryData(
   }
 
   const onPartial = typeof options.onPartial === 'function' ? options.onPartial : null;
-  const cacheKey = `home-secondary:${user.uid}`;
+  const cacheKey = getParentHomeSecondaryCacheKey(user.uid);
   return loadCachedAppData(cacheKey, async () => {
     const schedule = options.schedule || await loadParentScheduleSummary(user, { force: options.force });
     const { children, events } = schedule;

@@ -209,6 +209,7 @@ vi.mock('./appDataCache', () => ({
   loadCachedAppData: vi.fn((_key: string, loader: () => Promise<unknown>) => loader()),
   clearAppDataCache: vi.fn(),
   invalidateCachedAppData: vi.fn(),
+  getParentHomeSecondaryCacheKey: (userId: string) => `home-secondary:${userId}`,
   getParentScheduleSummaryCacheKey: (userId: string) => `app-schedule-summary:${userId}`
 }));
 
@@ -219,7 +220,7 @@ import { getCachedAppData, invalidateCachedAppData, loadCachedAppData } from './
 import { mapScheduleEventRecord } from './firestore/mappers';
 import { loadProfileDocument } from './profileService';
 import { getScheduleTournamentInfo } from './scheduleLogic';
-import { adjustGameScore, buildPlayerScoringLiveEvent, buildSingleGameTournamentLegacySchedulePayload, claimOfficialAssignmentItem, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, flushPendingLivePublishOperations, hydrateParentScheduleDetails, loadOfficialAssignments, loadParentSchedule, loadParentScheduleChildren, loadParentScheduleEventDetail, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitParentScheduleRsvpForChildren, submitStaffScheduleRsvpOverride, TournamentBlockPartialSaveError, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
+import { adjustGameScore, buildPlayerScoringLiveEvent, buildSingleGameTournamentLegacySchedulePayload, claimOfficialAssignmentItem, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, flushPendingLivePublishOperations, hydrateParentScheduleDetails, loadOfficialAssignments, loadParentSchedule, loadParentScheduleChildren, loadParentScheduleEventDetail, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitParentScheduleRsvp, submitParentScheduleRsvpForChildren, submitStaffScheduleRsvpOverride, TournamentBlockPartialSaveError, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
 
 function playerSnapshot(id: string, data: Record<string, unknown> | null) {
   return {
@@ -2311,6 +2312,32 @@ describe('parent family RSVP submission', () => {
     } as any;
   });
 
+  it('invalidates schedule and Home caches after a single-child RSVP succeeds', async () => {
+    const summary = { going: 1, maybe: 0, notGoing: 0, notResponded: 0, total: 1 };
+    vi.mocked(submitRsvpForPlayer).mockResolvedValue(summary as any);
+
+    await expect(submitParentScheduleRsvp(baseEvent, user as any, 'going', 'On time')).resolves.toEqual(summary);
+
+    expect(submitRsvpForPlayer).toHaveBeenCalledWith('team-1', 'game-1', 'parent-1', {
+      displayName: 'Parent One',
+      playerId: 'player-1',
+      response: 'going',
+      note: 'On time'
+    });
+    expect(invalidateCachedAppData).toHaveBeenNthCalledWith(1, 'app-schedule-summary:parent-1');
+    expect(invalidateCachedAppData).toHaveBeenNthCalledWith(2, 'home-secondary:parent-1');
+    expect(invalidateCachedAppData).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps cached schedule data when a single-child RSVP write fails', async () => {
+    const writeError = new Error('RSVP write failed');
+    vi.mocked(submitRsvpForPlayer).mockRejectedValueOnce(writeError);
+
+    await expect(submitParentScheduleRsvp(baseEvent, user as any, 'maybe')).rejects.toBe(writeError);
+
+    expect(invalidateCachedAppData).not.toHaveBeenCalled();
+  });
+
   afterEach(() => {
     if (previousWindow === undefined) {
       delete (globalThis as any).window;
@@ -2356,6 +2383,7 @@ describe('parent family RSVP submission', () => {
     ], user as any, 'maybe')).rejects.toBe(commitError);
 
     expect(submitRsvp).toHaveBeenCalledTimes(1);
+    expect(invalidateCachedAppData).not.toHaveBeenCalled();
     expect(mocks.runTransactionMock).not.toHaveBeenCalled();
   });
 
