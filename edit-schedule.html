@@ -2403,6 +2403,9 @@
                         const breakdown = await getRsvpBreakdownByPlayer(currentTeamId, gameId);
                         if (requestToken !== currentRsvpRequestToken) return;
                         const { grouped, counts, players, rsvps } = breakdown;
+                        const unmatchedResponders = Array.isArray(breakdown.unmatchedResponders)
+                            ? breakdown.unmatchedResponders
+                            : [];
                         const notRespondedIds = new Set(grouped.not_responded.map((r) => String(r.playerId)));
                         const recipients = buildAvailabilityReminderRecipients(players, rsvps);
                         const emailPreview = buildAvailabilityReminderEmailPreview(players, rsvps, notRespondedIds);
@@ -2425,6 +2428,17 @@
                                 return `<div class="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs"><div class="font-semibold text-amber-900">${name}${jersey}</div><div class="mt-1 text-amber-700">No eligible parent or guardian email</div></div>`;
                             }).join('')
                             : '<p class="text-xs text-gray-400">Everyone has responded. No RSVP email follow-up recipients.</p>';
+                        const renderUnmatchedResponderRows = (rows) => rows.map((row) => {
+                            const name = escapeHtml(row.responderName || row.responderUserId || 'Unknown responder');
+                            const response = row.response === 'going'
+                                ? 'Going'
+                                : row.response === 'maybe'
+                                    ? 'Maybe'
+                                    : row.response === 'not_going'
+                                        ? "Can't Go"
+                                        : 'Unknown';
+                            return `<div class="text-xs py-0.5">${name} — ${response}</div>`;
+                        }).join('');
                         const emailPreviewSummary = `${emailPreview.eligibleEmailCount} eligible parent/guardian ${emailPreview.eligibleEmailCount === 1 ? 'email' : 'emails'} across ${recipients.playerCount} no-response ${recipients.playerCount === 1 ? 'player' : 'players'}.`;
                         content.innerHTML = `
                             <div class="space-y-4">
@@ -2444,6 +2458,13 @@
                                     <h4 class="text-sm font-bold text-gray-700 mb-2">Not Responded (${counts.notResponded})</h4>
                                     ${renderRows(grouped.not_responded)}
                                 </div>
+                                ${unmatchedResponders.length ? `
+                                    <div class="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-amber-900">
+                                        <h4 class="text-sm font-bold mb-1">Unmatched parent responses (${unmatchedResponders.length})</h4>
+                                        ${renderUnmatchedResponderRows(unmatchedResponders)}
+                                        <p class="mt-1 text-xs text-amber-700">These responses could not be linked to roster players.</p>
+                                    </div>
+                                ` : ''}
                                 <div class="border-t border-gray-200 pt-4">
                                     <h4 class="text-sm font-bold text-indigo-700 mb-1">RSVP email recipient preview</h4>
                                     <p class="text-xs text-gray-500 mb-3">${emailPreviewSummary}</p>

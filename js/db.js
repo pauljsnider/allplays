@@ -2798,11 +2798,21 @@ function playerHasRosterContactFields(player = {}) {
 
 function playerHasRosterParentUserIds(player = {}) {
     const parents = Array.isArray(player?.parents) ? player.parents : [];
-    return Boolean(
-        parents.some((parent) => String(parent?.userId || parent?.uid || parent?.parentUserId || parent?.accountUserId || '').trim()) ||
-        String(player?.parentUserId || '').trim() ||
-        String(player?.guardianUserId || '').trim()
-    );
+    const meaningfulParents = parents.filter((parent) => Boolean(
+        String(parent?.userId || parent?.uid || parent?.parentUserId || parent?.accountUserId || '').trim() ||
+        String(parent?.email || parent?.name || parent?.phone || parent?.relation || '').trim()
+    ));
+    const parentUserId = String(player?.parentUserId || '').trim();
+    const guardianUserId = String(player?.guardianUserId || '').trim();
+    const everyParentHasUserId = meaningfulParents.every((parent) => Boolean(
+        String(parent?.userId || parent?.uid || parent?.parentUserId || parent?.accountUserId || '').trim()
+    ));
+    const parentEmailIsLinked = !String(player?.parentEmail || '').trim() || Boolean(parentUserId);
+    const guardianEmailIsLinked = !String(player?.guardianEmail || '').trim() || Boolean(guardianUserId);
+    const hasAnyUserId = meaningfulParents.some((parent) => Boolean(
+        String(parent?.userId || parent?.uid || parent?.parentUserId || parent?.accountUserId || '').trim()
+    )) || Boolean(parentUserId) || Boolean(guardianUserId);
+    return hasAnyUserId && everyParentHasUserId && parentEmailIsLinked && guardianEmailIsLinked;
 }
 
 async function mergePlayerPrivateProfileParents(teamId, players = []) {

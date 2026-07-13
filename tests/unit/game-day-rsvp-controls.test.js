@@ -108,16 +108,47 @@ describe('game day RSVP controls', () => {
             response: 'not_going'
         });
     });
+
+    it('renders escaped identities for responses that are not linked to roster players', () => {
+        const documentRef = createDocumentRef();
+        const controller = createGameDayRsvpController({
+            state: {
+                rsvpBreakdown: {
+                    going: [],
+                    maybe: [],
+                    not_going: [],
+                    not_responded: [],
+                    unmatchedResponders: [{
+                        responderUserId: 'parent-1',
+                        responderName: '<Parent One>',
+                        response: 'maybe'
+                    }]
+                }
+            },
+            documentRef,
+            escapeHtml: (value) => String(value ?? '').replaceAll('<', '&lt;').replaceAll('>', '&gt;'),
+            submitRsvpForPlayer: vi.fn(),
+            loadRsvps: vi.fn()
+        });
+
+        controller.renderRsvpPanel();
+
+        const html = documentRef.getElementById('rsvp-panel').innerHTML;
+        expect(html).toContain('Unmatched parent responses (1)');
+        expect(html).toContain('&lt;Parent One&gt; — Maybe');
+        expect(html).not.toContain('<Parent One>');
+    });
 });
 
 describe('game day RSVP wiring', () => {
     it('imports the RSVP controller helper and exports the click handler from that controller', () => {
         const source = readFileSync(resolve(process.cwd(), 'game-day.html'), 'utf8');
 
-        expect(source).toContain("import { createGameDayRsvpController } from './js/game-day-rsvp-controls.js?v=1';");
+        expect(source).toContain("import { createGameDayRsvpController } from './js/game-day-rsvp-controls.js?v=2';");
         expect(source).toContain('const gameDayRsvpController = createGameDayRsvpController({');
         expect(source).toContain('window.setCoachPlayerRsvp = gameDayRsvpController.setCoachPlayerRsvp;');
         expect(source).toContain('gameDayRsvpController.renderRsvpPanel();');
+        expect(source).toContain('unmatchedResponders: Array.isArray(breakdown.unmatchedResponders)');
     });
 
     it('loads RSVP context for all-confirmed streaming team permissions', () => {

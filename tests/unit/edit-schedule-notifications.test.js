@@ -98,6 +98,15 @@ describe('edit schedule notification wiring', () => {
         expect(source).toContain('eligible parent/guardian');
     });
 
+    it('renders escaped unmatched responder identities in the staff RSVP modal', () => {
+        const source = readEditSchedule();
+
+        expect(source).toContain('const unmatchedResponders = Array.isArray(breakdown.unmatchedResponders)');
+        expect(source).toContain("escapeHtml(row.responderName || row.responderUserId || 'Unknown responder')");
+        expect(source).toContain('Unmatched parent responses (${unmatchedResponders.length})');
+        expect(source).toContain('These responses could not be linked to roster players.');
+    });
+
     it('renders the inherited reminder window from team settings', () => {
         const source = readEditSchedule();
 

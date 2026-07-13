@@ -21,6 +21,7 @@ export function createGameDayRsvpController({
         const maybe = Array.isArray(breakdown.maybe) ? breakdown.maybe : [];
         const notGoing = Array.isArray(breakdown.not_going) ? breakdown.not_going : [];
         const noResponse = Array.isArray(breakdown.not_responded) ? breakdown.not_responded : [];
+        const unmatchedResponders = Array.isArray(breakdown.unmatchedResponders) ? breakdown.unmatchedResponders : [];
 
         const rowActions = (player, currentResponse) => {
             const mkBtn = (label, response, activeClass, idleClass) => `
@@ -53,11 +54,29 @@ export function createGameDayRsvpController({
             </div>`;
         };
 
+        const unmatchedSection = unmatchedResponders.length
+            ? `<div class="mb-2 rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs text-amber-900">
+                <div class="font-semibold">Unmatched parent responses (${unmatchedResponders.length})</div>
+                <div class="mt-1 space-y-0.5">${unmatchedResponders.map((responder) => {
+                    const responseLabel = responder.response === 'going'
+                        ? 'Going'
+                        : responder.response === 'maybe'
+                            ? 'Maybe'
+                            : responder.response === 'not_going'
+                                ? 'Not Going'
+                                : 'Unknown';
+                    return `<div>${escapeHtml(responder.responderName || responder.responderUserId || 'Unknown responder')} — ${responseLabel}</div>`;
+                }).join('')}</div>
+                <div class="mt-1 text-[11px] text-amber-700">This response could not be linked to a roster player.</div>
+            </div>`
+            : '';
+
         el.innerHTML =
             section('Going', 'text-green-600', going) +
             section('Maybe', 'text-amber-600', maybe) +
             section('Not Going', 'text-red-500', notGoing) +
             section('No Response', 'text-gray-400', noResponse) +
+            unmatchedSection +
             '<div id="coach-rsvp-status" class="text-[11px] text-gray-400 mt-2"></div>';
     }
 

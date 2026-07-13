@@ -521,7 +521,7 @@
         } from './js/game-day-wrapup.js?v=2';
         import { pickBestGameId, normalizeGameDayUrl } from './js/game-day-entry.js?v=1';
         import { buildGameDayBroadcastSetupUrl, resolveGameDayBroadcastStatus } from './js/game-day-broadcast.js?v=3';
-        import { createGameDayRsvpController } from './js/game-day-rsvp-controls.js?v=1';
+        import { createGameDayRsvpController } from './js/game-day-rsvp-controls.js?v=2';
         import {
             buildOnFieldMap as buildLiveOnFieldMap,
             syncGameDayLiveState,
@@ -1309,7 +1309,12 @@
         async function loadRsvps() {
             try {
                 const breakdown = await getRsvpBreakdownByPlayer(state.teamId, state.gameId);
-                state.rsvpBreakdown = breakdown?.grouped || breakdown || null;
+                state.rsvpBreakdown = breakdown?.grouped
+                    ? {
+                        ...breakdown.grouped,
+                        unmatchedResponders: Array.isArray(breakdown.unmatchedResponders) ? breakdown.unmatchedResponders : []
+                    }
+                    : breakdown || null;
                 markAiChatContextDirty();
                 gameDayRsvpController.renderRsvpPanel();
                 return true;
