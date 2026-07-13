@@ -45,7 +45,12 @@ export async function updateGame(teamId, gameId, gameData) {
 }
 export async function updateTeam() {}
 export async function deleteGame() {}
-export async function addPractice() { return 'practice-created'; }
+export async function addPractice(teamId, practiceData) {
+    const testState = state();
+    testState.addPracticeCalls = testState.addPracticeCalls || [];
+    testState.addPracticeCalls.push({ teamId, practiceData });
+    return 'practice-created';
+}
 export async function updateEvent() {}
 export async function deleteEvent() {}
 export async function getConfigs() { return []; }
@@ -245,16 +250,33 @@ export function getApp() {
 }
 `,
     '/js/vendor/firebase-ai.js': `
+const state = () => window.__editScheduleTestState || {};
+
 export function getAI() {
     return {};
 }
 
 export function getGenerativeModel() {
-    return {};
+    return {
+        async generateContent(promptParts) {
+            state().aiPromptParts = promptParts;
+            return {
+                response: {
+                    text: () => JSON.stringify({ operations: state().aiOperations || [] })
+                }
+            };
+        }
+    };
 }
 
-export const GoogleAIBackend = {};
-export const Schema = {};
+export class GoogleAIBackend {}
+export const Schema = {
+    array: (value) => value,
+    boolean: () => ({}),
+    number: () => ({}),
+    object: (value) => value,
+    string: () => ({})
+};
 `,
     '/js/tournament-brackets.js': `
 export function buildPoolStandingsIndex() {
@@ -595,6 +617,51 @@ test.describe('edit schedule Bulk AI image input', () => {
         expect(imagePastePrevented).toBe(true);
         await expect(page.locator('#schedule-image-preview')).toBeVisible();
         await expect(page.locator('#schedule-image-preview-img')).toHaveAttribute('src', /^data:image\/png;base64,/);
+    });
+
+    test('previews and applies a recognized practice through the practice persistence path', async ({ page }) => {
+        await page.addInitScript((state) => {
+            window.__editScheduleTestState = state;
+            window.HTMLElement.prototype.scrollIntoView = function scrollIntoView() {};
+        }, buildState({
+            aiOperations: [{
+                action: 'add',
+                game: {
+                    eventType: 'practice',
+                    date: '2030-05-13T18:00:00',
+                    endTime: '2030-05-13T19:30:00',
+                    title: 'Practice',
+                    location: 'Overland Trail Elementary',
+                    assignments: [{ role: 'Snack', value: 'Taylor family' }]
+                }
+            }]
+        }));
+        page.on('dialog', (dialog) => dialog.accept());
+
+        await page.goto(`${serverOrigin}/edit-schedule.html#teamId=team-1`, { waitUntil: 'domcontentloaded' });
+        await page.locator('#tab-bulk-ai').click();
+        await page.locator('#bulk-text-input').fill('Mon 13\n- Practice\n- At Overland Trail Elementary\n- 6:00 PM');
+        await page.locator('#process-ai-btn').click();
+
+        const proposedChange = page.locator('#proposed-changes-list');
+        await expect(proposedChange).toContainText('Add Practice');
+        await expect(proposedChange.locator('input[placeholder="Location"]')).toHaveValue('Overland Trail Elementary');
+        await expect(proposedChange.locator('input[placeholder^="Assignments"]')).toHaveValue('Snack:Taylor family');
+
+        const promptText = await page.evaluate(() => window.__editScheduleTestState.aiPromptParts[0]);
+        expect(promptText).toContain('extract game and practice information');
+        expect(promptText).toContain('eventType="practice"');
+
+        await page.locator('#apply-changes-btn').click();
+        const practiceCall = await page.waitForFunction(() => window.__editScheduleTestState?.addPracticeCalls?.[0])
+            .then((handle) => handle.jsonValue());
+        expect(practiceCall.teamId).toBe('team-1');
+        expect(practiceCall.practiceData).toMatchObject({
+            title: 'Practice',
+            location: 'Overland Trail Elementary',
+            assignments: [{ role: 'Snack', value: 'Taylor family' }],
+            source: 'bulk_ai'
+        });
     });
 });
 
