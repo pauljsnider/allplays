@@ -58,6 +58,12 @@ export async function inviteParent(teamId, playerId, number, email, relation) {
     return { code: 'INVITE123', teamName: 'Test Team', playerName: 'Avery Lee', existingUser: false, autoLinked: false };
 }
 export async function removeParentFromPlayer() {}
+export async function getUsersByParentPlayerKey() {
+    return [];
+}
+export async function getUsersByParentTeamId() {
+    return [];
+}
 export async function getAllUsers() {
     return [];
 }

@@ -204,6 +204,12 @@ export async function inviteParent() {
     return {};
 }
 export async function removeParentFromPlayer() {}
+export async function getUsersByParentPlayerKey() {
+    return [];
+}
+export async function getUsersByParentTeamId() {
+    return [];
+}
 export async function getAllUsers() {
     throw permissionDenied();
 }
