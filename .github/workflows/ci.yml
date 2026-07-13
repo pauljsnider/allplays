@@ -62,6 +62,14 @@ jobs:
             sleep 15
           done
 
+      - name: Validate app performance evidence when present
+        run: |
+          if [ -f docs/app-performance-measurements.json ]; then
+            npm run app:validate-performance-measurements -- docs/app-performance-measurements.json
+          else
+            echo "No app performance measurement artifact to validate."
+          fi
+
       - name: Run unit tests
         run: npm run test:unit:ci
 

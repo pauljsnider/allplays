@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { pathToFileURL } from 'node:url';
@@ -11,6 +11,9 @@ export const REQUIRED_PROFILES = [
 ];
 
 export const REQUIRED_PHASES = ['before', 'after'];
+
+export const MAX_ARTIFACT_BYTES = 5 * 1024 * 1024;
+export const MAX_RUNS_PER_PHASE = 100;
 
 export const REQUIRED_FIXTURE_FIELDS = [
   'testAccount',
@@ -41,9 +44,20 @@ export const REQUIRED_METRICS = [
 ];
 
 const SHA_PATTERN = /^[0-9a-f]{7,40}$/i;
-const PLACEHOLDER_EVIDENCE_PATTERN = /^[_\W]*(?:tbd|todo|placeholder|pending|to[_\W]*be[_\W]*determined)[_\W]*$/i;
+const ISO_TIMESTAMP_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|([+-])(\d{2}):(\d{2}))$/;
+const PLACEHOLDER_EVIDENCE_PATTERN = /^[\s_<>{}\[\]()*`'".\-:]*?(?:tbd|todo|placeholder|pending|unknown|n\s*\/?\s*a|not[\s_-]*available|to[\s_-]*be[\s_-]*determined|fill[\s_-]*(?:me|in))(?=$|[\s_\W])/i;
+const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/;
+const SENSITIVE_FIELD_NAME_PATTERN = /(?:^|_)(?:password|passcode|secret|token|credential|credentials|api_key|access_key|private_key)(?:$|_)/;
 
 export async function readMeasurementArtifact(filePath) {
+  const fileStats = await stat(filePath);
+  if (!fileStats.isFile()) {
+    throw new Error(`${filePath} must be a regular JSON file.`);
+  }
+  if (fileStats.size > MAX_ARTIFACT_BYTES) {
+    throw new Error(`${filePath} exceeds the ${MAX_ARTIFACT_BYTES}-byte performance evidence limit.`);
+  }
+
   const raw = await readFile(filePath, 'utf8');
   try {
     return JSON.parse(raw);
@@ -56,12 +70,22 @@ export function validateMeasurementArtifact(artifact) {
   const errors = [];
   const normalized = normalizeArtifact(artifact);
 
+  if (normalized !== artifact) {
+    errors.push('artifact must be a JSON object.');
+  }
+  if (containsSensitiveField(normalized)) {
+    errors.push('artifact must not include password, secret, token, credential, or private-key fields.');
+  }
+
   if (normalized.issue !== 2050) {
     errors.push('issue must be 2050.');
   }
 
   validateSha(normalized.baselineSha, 'baselineSha', errors);
   validateSha(normalized.afterSha, 'afterSha', errors);
+  if (shaValuesOverlap(normalized.baselineSha, normalized.afterSha)) {
+    errors.push('baselineSha and afterSha must identify different commits.');
+  }
   validateFixture(normalized.fixture, errors);
   validateProfiles(normalized.profiles, normalized, errors);
 
@@ -81,7 +105,7 @@ export function buildMarkdownSummary(summary) {
     for (const phase of REQUIRED_PHASES) {
       const medians = profile.phases[phase].medians;
       lines.push([
-        profile.label,
+        formatMarkdownCell(profile.label),
         phase,
         formatMs(medians.coldStartHomeTtiMs),
         formatMs(medians.warmResumeMs),
@@ -99,7 +123,20 @@ export function buildMarkdownSummary(summary) {
 }
 
 function normalizeArtifact(artifact) {
-  return artifact && typeof artifact === 'object' ? artifact : {};
+  return artifact && typeof artifact === 'object' && !Array.isArray(artifact) ? artifact : {};
+}
+
+function containsSensitiveField(value, seen = new WeakSet()) {
+  if (!value || typeof value !== 'object' || seen.has(value)) return false;
+  seen.add(value);
+
+  return Object.entries(value).some(([key, nestedValue]) => {
+    const normalizedKey = key
+      .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+      .replace(/[^a-z0-9]+/gi, '_')
+      .toLowerCase();
+    return SENSITIVE_FIELD_NAME_PATTERN.test(normalizedKey) || containsSensitiveField(nestedValue, seen);
+  });
 }
 
 function validateFixture(fixture, errors) {
@@ -112,8 +149,8 @@ function validateFixture(fixture, errors) {
     const value = fixture[field];
     const isCountField = field.endsWith('Count');
     if (isCountField) {
-      if (!Number.isInteger(value) || value < 0) {
-        errors.push(`fixture.${field} must be a non-negative integer.`);
+      if (!Number.isSafeInteger(value) || value < 1) {
+        errors.push(`fixture.${field} must be a positive safe integer.`);
       }
     } else {
       validateEvidenceString(value, `fixture.${field}`, errors);
@@ -124,6 +161,13 @@ function validateFixture(fixture, errors) {
 function validateProfiles(profiles, artifact, errors) {
   if (!Array.isArray(profiles)) {
     errors.push('profiles must be an array.');
+    return;
+  }
+
+  if (profiles.length !== REQUIRED_PROFILES.length) {
+    errors.push(`profiles must contain exactly ${REQUIRED_PROFILES.length} entries.`);
+  }
+  if (profiles.length > REQUIRED_PROFILES.length) {
     return;
   }
 
@@ -149,9 +193,7 @@ function validateProfile(profile, artifact, errors) {
   if (!REQUIRED_PROFILES.includes(id)) {
     errors.push(`profile ${id} must use one of: ${REQUIRED_PROFILES.join(', ')}.`);
   }
-  if (!isNonEmptyString(profile?.label)) {
-    errors.push(`profile ${id} must include a non-empty label.`);
-  }
+  validateEvidenceString(profile?.label, `profile ${id} label`, errors);
 
   validateEnvironment(profile?.environment, id, errors);
 
@@ -181,14 +223,12 @@ function validatePhase(phaseData, profile, phase, artifact, errors) {
 
   validateSha(phaseData.sha, `${context}.sha`, errors);
   const expectedSha = phase === 'before' ? artifact.baselineSha : artifact.afterSha;
-  if (isNonEmptyString(expectedSha) && phaseData.sha !== expectedSha) {
+  if (normalizeSha(expectedSha) && normalizeSha(phaseData.sha) !== normalizeSha(expectedSha)) {
     errors.push(`${context}.sha must match ${phase === 'before' ? 'baselineSha' : 'afterSha'}.`);
   }
 
-  if (!isNonEmptyString(phaseData.capturedAt)) {
-    errors.push(`${context}.capturedAt must be an ISO timestamp string.`);
-  } else if (Number.isNaN(Date.parse(phaseData.capturedAt))) {
-    errors.push(`${context}.capturedAt must be parseable as a date.`);
+  if (!isValidIsoTimestamp(phaseData.capturedAt)) {
+    errors.push(`${context}.capturedAt must be a valid ISO timestamp with a timezone.`);
   }
 
   if (!Array.isArray(phaseData.runs)) {
@@ -197,6 +237,10 @@ function validatePhase(phaseData, profile, phase, artifact, errors) {
   }
   if (phaseData.runs.length < 3) {
     errors.push(`${context}.runs must include at least 3 clean runs.`);
+  }
+  if (phaseData.runs.length > MAX_RUNS_PER_PHASE) {
+    errors.push(`${context}.runs must not exceed ${MAX_RUNS_PER_PHASE} runs.`);
+    return;
   }
 
   const runNumbers = new Set();
@@ -216,8 +260,8 @@ function validateRun(run, context, errors) {
     errors.push(`${context} must be an object.`);
     return;
   }
-  if (!Number.isInteger(run.run) || run.run <= 0) {
-    errors.push(`${context}.run must be a positive integer.`);
+  if (!Number.isSafeInteger(run.run) || run.run <= 0) {
+    errors.push(`${context}.run must be a positive safe integer.`);
   }
 
   for (const metric of REQUIRED_METRICS) {
@@ -226,8 +270,8 @@ function validateRun(run, context, errors) {
       errors.push(`${context}.${metric.key} must be a number >= ${metric.min}.`);
       continue;
     }
-    if (metric.integer && !Number.isInteger(value)) {
-      errors.push(`${context}.${metric.key} must be an integer.`);
+    if (metric.integer && !Number.isSafeInteger(value)) {
+      errors.push(`${context}.${metric.key} must be a safe integer.`);
     }
   }
 }
@@ -279,6 +323,42 @@ function validateSha(value, field, errors) {
   }
 }
 
+function normalizeSha(value) {
+  return isNonEmptyString(value) && SHA_PATTERN.test(value)
+    ? value.toLowerCase()
+    : '';
+}
+
+function shaValuesOverlap(left, right) {
+  const normalizedLeft = normalizeSha(left);
+  const normalizedRight = normalizeSha(right);
+  if (!normalizedLeft || !normalizedRight) return false;
+  return normalizedLeft.startsWith(normalizedRight) || normalizedRight.startsWith(normalizedLeft);
+}
+
+function isValidIsoTimestamp(value) {
+  if (!isNonEmptyString(value)) return false;
+  const match = ISO_TIMESTAMP_PATTERN.exec(value);
+  if (!match || Number.isNaN(Date.parse(value))) return false;
+
+  const [, yearText, monthText, dayText, hourText, minuteText, secondText, , offsetHourText, offsetMinuteText] = match;
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const hour = Number(hourText);
+  const minute = Number(minuteText);
+  const second = Number(secondText);
+  const offsetHour = offsetHourText === undefined ? 0 : Number(offsetHourText);
+  const offsetMinute = offsetMinuteText === undefined ? 0 : Number(offsetMinuteText);
+  const daysInMonth = month >= 1 && month <= 12
+    ? new Date(Date.UTC(year, month, 0)).getUTCDate()
+    : 0;
+
+  return day >= 1 && day <= daysInMonth &&
+    hour <= 23 && minute <= 59 && second <= 59 &&
+    offsetHour <= 23 && offsetMinute <= 59;
+}
+
 function isNonEmptyString(value) {
   return typeof value === 'string' && value.trim().length > 0;
 }
@@ -288,7 +368,16 @@ function validateEvidenceString(value, field, errors) {
     errors.push(`${field} must be a non-empty string.`);
   } else if (PLACEHOLDER_EVIDENCE_PATTERN.test(value.trim())) {
     errors.push(`${field} must be real evidence, not a placeholder.`);
+  } else if (CONTROL_CHARACTER_PATTERN.test(value)) {
+    errors.push(`${field} must be a single-line string without control characters.`);
   }
+}
+
+function formatMarkdownCell(value) {
+  return String(value)
+    .replace(/\\/g, '\\\\')
+    .replace(/\|/g, '\\|')
+    .replace(/[\r\n]+/g, ' ');
 }
 
 function formatMs(value) {
@@ -296,7 +385,7 @@ function formatMs(value) {
 }
 
 function formatCount(value) {
-  return `${Math.round(value)}`;
+  return Number.isInteger(value) ? `${value}` : value.toFixed(1);
 }
 
 function formatBytes(value) {

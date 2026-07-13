@@ -118,15 +118,22 @@ The JSON artifact must include:
   `iphone`, each with exact hardware, OS, runtime, browser/WebView, network, and
   CPU notes.
 - `before` and `after` phases for every profile. Each phase must use the
-  matching SHA, include a `capturedAt` timestamp, and include at least 3 clean
-  raw `runs`.
+  matching SHA, include an ISO `capturedAt` timestamp with a timezone, and
+  include 3–100 clean raw `runs`.
 - Every run must include `coldStartHomeTtiMs`, `warmResumeMs`,
   `readsHomeMount`, `readsScheduleMount`, `readsMessagesMount`,
   `entryChunkGzipBytes`, `rsvpTapLatencyMs`, and `chatSendLatencyMs`.
+- Fixture volume counts must be positive safe integers so an empty account
+  cannot masquerade as representative Home, Schedule, or Messages evidence.
+- Use a synthetic or anonymized fixture identifier. Never commit passwords,
+  access tokens, production user identifiers, or private team/member data in
+  the artifact; the validator rejects sensitive-looking field names.
 
 The validator rejects placeholders and missing profile/phase coverage, then
 prints a markdown median summary that can be pasted into the final comparison
-table and the GitHub issue.
+table and the GitHub issue. CI automatically validates
+`docs/app-performance-measurements.json` whenever that evidence file is
+committed.
 
 ## Baseline template
 

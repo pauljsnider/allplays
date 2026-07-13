@@ -1,10 +1,16 @@
 import { describe, expect, it } from 'vitest';
+import { mkdtemp, rm, truncate, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import {
+    MAX_ARTIFACT_BYTES,
+    MAX_RUNS_PER_PHASE,
     REQUIRED_ENVIRONMENT_FIELDS,
     REQUIRED_METRICS,
     REQUIRED_PROFILES,
     buildMarkdownSummary,
+    readMeasurementArtifact,
     validateMeasurementArtifact
 } from '../../scripts/validate-app-performance-measurements.mjs';
 
@@ -104,7 +110,7 @@ describe('app performance measurement validator', () => {
         expect(result.errors).toContain('profiles must include throttled-4g-web.');
         expect(result.errors).toContain('profiles must include mid-range-android.');
         expect(result.errors).toContain('profiles must include iphone.');
-        expect(result.errors).toContain('profile desktop-web after.capturedAt must be parseable as a date.');
+        expect(result.errors).toContain('profile desktop-web after.capturedAt must be a valid ISO timestamp with a timezone.');
         expect(result.errors).toContain('profile desktop-web after.runs must include at least 3 clean runs.');
         expect(result.errors).toContain('profile desktop-web after.runs contains duplicate run 1.');
         expect(result.errors).toContain('profile desktop-web after.runs[0].coldStartHomeTtiMs must be a number >= 1.');
@@ -135,6 +141,98 @@ describe('app performance measurement validator', () => {
             expect(validateMeasurementArtifact(artifact).errors).toContain(
                 `profile desktop-web environment.${field} must be real evidence, not a placeholder.`
             );
+        }
+    });
+
+    it('rejects descriptive placeholders, empty fixtures, and unsafe integer evidence', () => {
+        const artifact = buildArtifact();
+        artifact.fixture.testAccount = 'TBD - choose a synthetic account';
+        artifact.fixture.accessToken = 'must-not-be-committed';
+        artifact.fixture.homeTeamCount = 0;
+        artifact.fixture.scheduleEventCount = Number.MAX_SAFE_INTEGER + 1;
+        artifact.profiles[0].environment.hardware = 'unknown device';
+        artifact.profiles[0].before.runs[0].readsHomeMount = Number.MAX_SAFE_INTEGER + 1;
+
+        const result = validateMeasurementArtifact(artifact);
+
+        expect(result.errors).toContain('fixture.testAccount must be real evidence, not a placeholder.');
+        expect(result.errors).toContain('artifact must not include password, secret, token, credential, or private-key fields.');
+        expect(result.errors).toContain('fixture.homeTeamCount must be a positive safe integer.');
+        expect(result.errors).toContain('fixture.scheduleEventCount must be a positive safe integer.');
+        expect(result.errors).toContain('profile desktop-web environment.hardware must be real evidence, not a placeholder.');
+        expect(result.errors).toContain('profile desktop-web before.runs[0].readsHomeMount must be a safe integer.');
+    });
+
+    it('requires distinct build SHAs and compares phase SHAs case-insensitively', () => {
+        const sameBuild = buildArtifact({
+            baselineSha: 'ABCDEF012345',
+            afterSha: 'abcdef0'
+        });
+        sameBuild.profiles.forEach((profile) => {
+            profile.before.sha = 'abcdef012345';
+            profile.after.sha = 'ABCDEF0';
+        });
+
+        expect(validateMeasurementArtifact(sameBuild).errors).toContain(
+            'baselineSha and afterSha must identify different commits.'
+        );
+
+        const casingOnly = buildArtifact();
+        casingOnly.profiles[0].before.sha = baselineSha.toUpperCase();
+        expect(validateMeasurementArtifact(casingOnly).errors).not.toContain(
+            'profile desktop-web before.sha must match baselineSha.'
+        );
+    });
+
+    it('requires real ISO timestamps with timezones and bounds raw run cost', () => {
+        const artifact = buildArtifact();
+        artifact.profiles[0].before.capturedAt = '2026-02-30T12:00:00Z';
+        artifact.profiles[0].after.capturedAt = '2026-07-12T13:00:00';
+        artifact.profiles[1].before.runs = Array.from(
+            { length: MAX_RUNS_PER_PHASE + 1 },
+            (_, index) => buildRun(index + 1)
+        );
+
+        const result = validateMeasurementArtifact(artifact);
+
+        expect(result.errors).toContain('profile desktop-web before.capturedAt must be a valid ISO timestamp with a timezone.');
+        expect(result.errors).toContain('profile desktop-web after.capturedAt must be a valid ISO timestamp with a timezone.');
+        expect(result.errors).toContain(`profile throttled-4g-web before.runs must not exceed ${MAX_RUNS_PER_PHASE} runs.`);
+    });
+
+    it('escapes profile labels before emitting a paste-ready markdown table', () => {
+        const artifact = buildArtifact();
+        artifact.profiles[0].label = 'Desktop | primary';
+        const result = validateMeasurementArtifact(artifact);
+
+        expect(result.errors).toEqual([]);
+        expect(buildMarkdownSummary(result.summary)).toContain('| Desktop \\| primary | before |');
+    });
+
+    it('preserves half-count medians for an even number of read samples', () => {
+        const artifact = buildArtifact();
+        artifact.profiles[0].before.runs = [1, 2, 3, 4].map((run) => buildRun(run, {
+            readsHomeMount: run
+        }));
+        const result = validateMeasurementArtifact(artifact);
+
+        expect(result.errors).toEqual([]);
+        expect(result.summary.profiles[0].phases.before.medians.readsHomeMount).toBe(2.5);
+        expect(buildMarkdownSummary(result.summary)).toContain('| desktop-web | before | 1803ms | 643ms | 2.5 |');
+    });
+
+    it('rejects oversized raw evidence files before loading them into memory', async () => {
+        const tempDir = await mkdtemp(join(tmpdir(), 'allplays-performance-evidence-'));
+        const artifactPath = join(tempDir, 'measurements.json');
+        try {
+            await writeFile(artifactPath, '{}');
+            await truncate(artifactPath, MAX_ARTIFACT_BYTES + 1);
+
+            await expect(readMeasurementArtifact(artifactPath)).rejects.toThrow(
+                `exceeds the ${MAX_ARTIFACT_BYTES}-byte performance evidence limit`
+            );
+        } finally {
+            await rm(tempDir, { recursive: true, force: true });
         }
     });
 

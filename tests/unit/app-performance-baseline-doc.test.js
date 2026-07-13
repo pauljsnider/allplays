@@ -92,7 +92,11 @@ describe('app performance baseline documentation', () => {
             '`coldStartHomeTtiMs`',
             '`warmResumeMs`',
             '`entryChunkGzipBytes`',
-            'The validator rejects placeholders'
+            'The validator rejects placeholders',
+            'positive safe integers',
+            'synthetic or anonymized fixture identifier',
+            'Never commit passwords',
+            'CI automatically validates'
         ].forEach((needle) => {
             expect(doc).toContain(needle);
         });

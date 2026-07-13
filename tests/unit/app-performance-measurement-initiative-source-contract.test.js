@@ -7,6 +7,7 @@ function readSource(path) {
 
 const packageSource = readSource('package.json');
 const appPackageSource = readSource('apps/app/package.json');
+const ciSource = readSource('.github/workflows/ci.yml');
 const baselineDocSource = readSource('docs/app-performance-baseline.md');
 const bundleSizeScriptSource = readSource('scripts/check-app-bundle-size.mjs');
 const measurementValidatorSource = readSource('scripts/validate-app-performance-measurements.mjs');
@@ -49,6 +50,8 @@ describe('app performance measurement initiative source contract', () => {
         expect(packageSource).toContain('"app:check-bundle-size": "node scripts/check-app-bundle-size.mjs"');
         expect(packageSource).toContain('"app:validate-performance-measurements": "node scripts/validate-app-performance-measurements.mjs"');
         expect(appPackageSource).toContain('"preview": "vite preview --host 0.0.0.0"');
+        expect(ciSource).toContain('Validate app performance evidence when present');
+        expect(ciSource).toContain('npm run app:validate-performance-measurements -- docs/app-performance-measurements.json');
 
         expect(bundleSizeScriptSource).toContain("const defaultEntryBudgetBytes = 1_420_000;");
         expect(bundleSizeScriptSource).toContain('process.env.APP_ENTRY_CHUNK_LIMIT_BYTES');
@@ -71,6 +74,8 @@ describe('app performance measurement initiative source contract', () => {
         ].forEach((snippet) => {
             expect(measurementValidatorSource).toContain(snippet);
         });
+        expect(measurementValidatorSource).toContain('MAX_ARTIFACT_BYTES');
+        expect(measurementValidatorSource).toContain('MAX_RUNS_PER_PHASE');
     });
 
     it('keeps canonical UX timing labels flowing through telemetry', () => {
