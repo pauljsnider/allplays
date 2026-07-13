@@ -57,6 +57,15 @@ describe('homepage shared game discovery queries', () => {
                 collectionGroup: override.collectionGroup,
                 indexes: override.indexes.map((index) => `${index.order}:${index.queryScope}`)
             }));
+        const sharedMembershipFieldOverrides = indexConfig.fieldOverrides
+            .filter((override) => (
+                override.collectionGroup === 'sharedGames'
+                && ['homeTeamId', 'awayTeamId'].includes(override.fieldPath)
+            ))
+            .map((override) => ({
+                fieldPath: override.fieldPath,
+                indexes: override.indexes.map((index) => `${index.order}:${index.queryScope}`)
+            }));
 
         expect(sharedGameIndexes).toContain('type:ASCENDING,date:ASCENDING');
         expect(sharedGameIndexes).toContain('liveStatus:ASCENDING,date:DESCENDING');
@@ -71,5 +80,23 @@ describe('homepage shared game discovery queries', () => {
             collectionGroup: 'sharedGames',
             indexes: ['ASCENDING:COLLECTION_GROUP', 'DESCENDING:COLLECTION_GROUP']
         });
+        expect(sharedMembershipFieldOverrides).toEqual([
+            {
+                fieldPath: 'homeTeamId',
+                indexes: [
+                    'ASCENDING:COLLECTION',
+                    'DESCENDING:COLLECTION',
+                    'ASCENDING:COLLECTION_GROUP'
+                ]
+            },
+            {
+                fieldPath: 'awayTeamId',
+                indexes: [
+                    'ASCENDING:COLLECTION',
+                    'DESCENDING:COLLECTION',
+                    'ASCENDING:COLLECTION_GROUP'
+                ]
+            }
+        ]);
     });
 });
