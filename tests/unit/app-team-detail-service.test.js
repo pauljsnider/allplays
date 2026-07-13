@@ -95,7 +95,9 @@ import { getVisiblePlayerTrackingSummary } from '../../js/player-tracking-summar
 beforeEach(() => {
     __resetTeamDetailBaseSnapshotCacheForTests();
     vi.clearAllMocks();
-    getPlayersWithPrivateRosterContacts.mockImplementation((...args) => getPlayers(...args));
+    getPlayersWithPrivateRosterContacts.mockImplementation((teamId, options = {}) => (
+        Array.isArray(options.players) ? options.players : getPlayers(teamId, options)
+    ));
     getDoc.mockResolvedValue({
         id: '',
         exists: () => false,
@@ -1121,6 +1123,49 @@ describe('React app team detail model', () => {
         expect(getAllUsers).not.toHaveBeenCalled();
         expect(buildPlayerLeaderboardSnapshot).not.toHaveBeenCalled();
         expect(getVisiblePlayerTrackingSummary).not.toHaveBeenCalled();
+    });
+
+    it('keeps private roster contacts behind manager access across shared base-cache reuse', async () => {
+        const publicPlayers = [{ id: 'player-1', name: 'Pat Star', active: true }];
+        getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', ownerId: 'coach-1', adminEmails: [] });
+        getPlayers.mockResolvedValue(publicPlayers);
+        getPlayersWithPrivateRosterContacts.mockResolvedValue([{
+            ...publicPlayers[0],
+            privateProfileParents: [{ userId: 'parent-1', email: 'private@example.com', relation: 'Parent' }]
+        }]);
+        getGames.mockResolvedValue([]);
+        getConfigs.mockResolvedValue([]);
+
+        const firstParentModel = await loadParentTeamDetail(
+            'team-1',
+            { uid: 'parent-1', email: 'parent@example.com', roles: ['parent'] },
+            { includeDeferredData: false }
+        );
+        expect(getPlayersWithPrivateRosterContacts).not.toHaveBeenCalled();
+        expect(firstParentModel.players[0]).not.toHaveProperty('parentContacts');
+
+        const managerModel = await loadParentTeamDetail(
+            'team-1',
+            { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'] },
+            { includeDeferredData: false }
+        );
+        const laterParentModel = await loadParentTeamDetail(
+            'team-1',
+            { uid: 'parent-1', email: 'parent@example.com', roles: ['parent'] },
+            { includeDeferredData: false }
+        );
+
+        expect(getPlayersWithPrivateRosterContacts).toHaveBeenCalledTimes(1);
+        expect(getPlayersWithPrivateRosterContacts).toHaveBeenCalledWith('team-1', {
+            includeInactive: true,
+            players: publicPlayers
+        });
+        expect(managerModel.players[0].parentContacts).toEqual([
+            expect.objectContaining({ userId: 'parent-1', email: 'private@example.com', relation: 'Parent' })
+        ]);
+        expect(laterParentModel.players[0]).not.toHaveProperty('parentContacts');
+        expect(getTeam).toHaveBeenCalledTimes(1);
+        expect(getPlayers).toHaveBeenCalledTimes(1);
     });
 
     it('reuses the initial base snapshot for deferred insights and staff permissions', async () => {

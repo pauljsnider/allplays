@@ -121,7 +121,10 @@ import { computeNativeStandings } from '../../../../js/native-standings.js';
 import { hasFullTeamAccess } from '../../../../js/team-access.js';
 
 beforeEach(() => {
-  dbMocks.getPlayersWithPrivateRosterContacts.mockImplementation((...args: any[]) => dbMocks.getPlayers(...args));
+  vi.mocked(hasFullTeamAccess).mockImplementation(() => true);
+  dbMocks.getPlayersWithPrivateRosterContacts.mockImplementation((_teamId: string, options: any = {}) => (
+    Array.isArray(options.players) ? options.players : dbMocks.getPlayers(_teamId, options)
+  ));
 });
 
 describe('createStatTrackerConfigForApp', () => {
@@ -134,7 +137,9 @@ describe('createStatTrackerConfigForApp', () => {
       configurable: true
     });
     dbMocks.getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1' });
-    dbMocks.getPlayersWithPrivateRosterContacts.mockImplementation((...args: any[]) => dbMocks.getPlayers(...args));
+    dbMocks.getPlayersWithPrivateRosterContacts.mockImplementation((_teamId: string, options: any = {}) => (
+      Array.isArray(options.players) ? options.players : dbMocks.getPlayers(_teamId, options)
+    ));
     dbMocks.getPlayers.mockResolvedValue([]);
     dbMocks.getGames.mockResolvedValue([]);
     dbMocks.getConfigs.mockResolvedValue([]);
@@ -167,7 +172,9 @@ describe('updateTeamSettingsForApp', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     dbMocks.getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', photoUrl: 'https://img.example.test/team.png' });
-    dbMocks.getPlayersWithPrivateRosterContacts.mockImplementation((...args: any[]) => dbMocks.getPlayers(...args));
+    dbMocks.getPlayersWithPrivateRosterContacts.mockImplementation((_teamId: string, options: any = {}) => (
+      Array.isArray(options.players) ? options.players : dbMocks.getPlayers(_teamId, options)
+    ));
     dbMocks.getPlayers.mockResolvedValue([]);
     dbMocks.getGames.mockResolvedValue([]);
     dbMocks.getConfigs.mockResolvedValue([]);
@@ -220,8 +227,11 @@ describe('updateTeamSettingsForApp', () => {
 describe('team detail bootstrap loading', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(hasFullTeamAccess).mockImplementation((user: any, team: any) => user?.uid === team?.ownerId);
     dbMocks.getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', name: 'Bears', sport: 'Basketball' });
-    dbMocks.getPlayersWithPrivateRosterContacts.mockImplementation((...args: any[]) => dbMocks.getPlayers(...args));
+    dbMocks.getPlayersWithPrivateRosterContacts.mockImplementation((_teamId: string, options: any = {}) => (
+      Array.isArray(options.players) ? options.players : dbMocks.getPlayers(_teamId, options)
+    ));
     dbMocks.getPlayers.mockResolvedValue([{ id: 'player-1', name: 'Pat Star', active: true }]);
     dbMocks.getGames.mockResolvedValue([{ id: 'game-1', type: 'game', status: 'scheduled' }]);
     dbMocks.getConfigs.mockResolvedValue([{ id: 'config-1', name: 'Config' }]);
@@ -249,6 +259,42 @@ describe('team detail bootstrap loading', () => {
     expect(dbMocks.getPlayers).toHaveBeenCalledTimes(1);
     expect(dbMocks.getGames).toHaveBeenCalledTimes(1);
     expect(dbMocks.getConfigs).toHaveBeenCalledTimes(1);
+  });
+
+  it('never hydrates or returns private roster contacts for a non-manager', async () => {
+    dbMocks.getPlayers.mockResolvedValue([{
+      id: 'player-1',
+      name: 'Pat Star',
+      active: true,
+      privateProfileParents: [{ userId: 'parent-1', email: 'private@example.com', relation: 'Parent' }]
+    }]);
+
+    const model = await loadParentTeamDetailBootstrap('team-1', { uid: 'parent-1' } as any);
+
+    expect(dbMocks.getPlayersWithPrivateRosterContacts).not.toHaveBeenCalled();
+    expect(model.players[0]).not.toHaveProperty('parentContacts');
+  });
+
+  it('scopes privileged roster contacts to managers and never reuses them for a later non-manager view', async () => {
+    const publicPlayers = [{ id: 'player-1', name: 'Pat Star', active: true }];
+    dbMocks.getPlayers.mockResolvedValue(publicPlayers);
+    dbMocks.getPlayersWithPrivateRosterContacts.mockResolvedValue([{
+      ...publicPlayers[0],
+      privateProfileParents: [{ userId: 'parent-1', email: 'private@example.com', relation: 'Parent' }]
+    }]);
+
+    const managerModel = await loadParentTeamDetailBootstrap('team-1', { uid: 'owner-1' } as any);
+    const nonManagerModel = await loadParentTeamDetailBootstrap('team-1', { uid: 'parent-1' } as any);
+
+    expect(dbMocks.getPlayersWithPrivateRosterContacts).toHaveBeenCalledTimes(1);
+    expect(dbMocks.getPlayersWithPrivateRosterContacts).toHaveBeenCalledWith('team-1', {
+      includeInactive: true,
+      players: publicPlayers
+    });
+    expect(managerModel.players[0].parentContacts).toEqual([
+      { userId: 'parent-1', email: 'private@example.com', relation: 'Parent' }
+    ]);
+    expect(nonManagerModel.players[0]).not.toHaveProperty('parentContacts');
   });
 });
 

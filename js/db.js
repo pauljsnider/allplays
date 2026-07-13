@@ -2701,7 +2701,9 @@ export async function getPlayers(teamId, options = {}) {
 }
 
 export async function getPlayersWithPrivateRosterContacts(teamId, options = {}) {
-    const players = await getPlayers(teamId, options);
+    const players = Array.isArray(options.players)
+        ? options.players
+        : await getPlayers(teamId, options);
     return Promise.all(players.map(async (player) => {
         if (!player?.id) return player;
         try {
