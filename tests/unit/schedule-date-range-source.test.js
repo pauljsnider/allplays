@@ -67,12 +67,23 @@ describe('schedule date range source contracts', () => {
         const getGamesSource = extractSource(dbSource, 'export async function getGames', 'export async function getAggregatedStatsForGames');
         const sharedGamesSource = extractSource(dbSource, 'async function getSharedGamesForTeam', 'async function hasSharedGameUsingConfig');
         const groupedLoadSource = extractSource(appSource, 'async function loadTournamentScheduleStandingsGames', 'async function loadRawTeam');
+        const nativeSharedGamesSource = extractSource(
+            appSource,
+            'async function nativeQuerySharedTournamentScheduleDocuments',
+            'async function nativeQueryTournamentScheduleGroupDocuments'
+        );
 
         expect(groupedLoadSource).toContain('loadGames(teamId, { tournamentGroups: [...groups.values()] })');
         expect(groupedLoadSource).not.toContain('.map((tournamentGroup) => loadGames');
         expect(sharedGamesSource).toContain("where('homeTeamId', '==', teamId)");
         expect(sharedGamesSource).toContain("where('awayTeamId', '==', teamId)");
         expect(sharedGamesSource).not.toContain("where('teamIds', 'array-contains', teamId)");
+        expect(sharedGamesSource).toContain(': [query(sharedGamesRef, teamConstraint)]');
+        expect(nativeSharedGamesSource).toContain("{ fieldPath: 'homeTeamId', op: 'EQUAL' }");
+        expect(nativeSharedGamesSource).toContain("{ fieldPath: 'awayTeamId', op: 'EQUAL' }");
+        expect(nativeSharedGamesSource).not.toContain("fieldPath: 'teamIds'");
+        expect(nativeSharedGamesSource).not.toContain("fieldPath: 'date'");
+        expect(nativeSharedGamesSource).not.toContain('orderBy:');
         expect((getGamesSource.match(/getSharedGamesForTeam\(teamId/g) || [])).toHaveLength(1);
         expect(getGamesSource).toContain('getSharedGamesForTeam(teamId, { startDate, endDate, requireComplete: hasTournamentGroup })');
         expect(getGamesSource).toContain('if (hasTournamentGroup) throw error;');
@@ -81,11 +92,6 @@ describe('schedule date range source contracts', () => {
     it('applies the requested date window to scoped shared-game queries without unscoped fallback reads', () => {
         const sharedGamesSource = extractSource(dbSource, 'async function getSharedGamesForTeam', 'async function hasSharedGameUsingConfig');
         const getGamesSource = extractSource(dbSource, 'export async function getGames', 'export async function getAggregatedStatsForGames');
-        const nativeSharedGamesSource = extractSource(
-            appSource,
-            'async function nativeQuerySharedTournamentScheduleDocuments',
-            'async function nativeQueryTournamentScheduleGroupDocuments'
-        );
 
         expect(sharedGamesSource).toContain("where('date', '>=', Timestamp.fromDate(startDate))");
         expect(sharedGamesSource).toContain("where('date', '<=', Timestamp.fromDate(endDate))");
@@ -98,12 +104,6 @@ describe('schedule date range source contracts', () => {
         expect(sharedGamesSource).not.toContain("getDocs(query(sharedGamesRef, where('date', '==', null)))");
         expect(sharedGamesSource).toContain('.filter((game) => isGameWithinDateRange(game, startDate, endDate))');
         expect(getGamesSource).toContain('getSharedGamesForTeam(teamId, { startDate, endDate, requireComplete: hasTournamentGroup })');
-        expect(nativeSharedGamesSource).toContain("{ fieldPath: 'homeTeamId', op: 'EQUAL' }");
-        expect(nativeSharedGamesSource).toContain("{ fieldPath: 'awayTeamId', op: 'EQUAL' }");
-        expect(nativeSharedGamesSource).not.toContain("fieldPath: 'teamIds'");
-        expect(nativeSharedGamesSource).toContain("orderBy: [{ field: { fieldPath: 'date' }, direction: 'ASCENDING' }]");
-        expect(nativeSharedGamesSource).toContain("{ unaryFilter: { field: { fieldPath: 'date' }, op: 'IS_NULL' } }");
-        expect(nativeSharedGamesSource).toContain('Promise.all(structuredQueries.map((structuredQuery) => (');
     });
 
     it('does not fall back to unscoped shared-game collection-group date scans when compound queries reject', async () => {
@@ -159,8 +159,13 @@ describe('schedule date range source contracts', () => {
         ]);
     });
 
-    it('keeps full-history reads on the four-query index-build bridge', async () => {
+    it('keeps complete tournament reads on team indexes so missing-date legacy games remain visible', async () => {
         const calls = [];
+        const sharedGameDoc = {
+            id: 'shared-1',
+            ref: { path: 'tournaments/tournament-1/sharedGames/shared-1' },
+            data: () => ({ homeTeamId: 'team-123', awayTeamId: 'team-456', status: 'completed' })
+        };
         const getSharedGamesForTeam = buildGetSharedGamesForTeam({
             db: {},
             collectionGroup: vi.fn((_db, name) => ({ type: 'collectionGroup', name })),
@@ -170,27 +175,22 @@ describe('schedule date range source contracts', () => {
             Timestamp: { fromDate: (date) => ({ date }) },
             getDocs: vi.fn(async (queryRef) => {
                 calls.push(queryRef);
-                return { docs: [] };
+                const teamConstraint = queryRef.constraints.find((constraint) => constraint.type === 'where');
+                return { docs: teamConstraint?.field === 'homeTeamId' ? [sharedGameDoc] : [] };
             }),
             isGameWithinDateRange: () => true
         });
 
-        await expect(getSharedGamesForTeam('team-123', { requireComplete: true })).resolves.toEqual([]);
-
-        expect(calls.map((queryRef) => ({
-            membershipField: queryRef.constraints.find((constraint) => (
-                constraint.type === 'where' && ['homeTeamId', 'awayTeamId'].includes(constraint.field)
-            ))?.field,
-            hasDateOrder: queryRef.constraints.some((constraint) => constraint.type === 'orderBy' && constraint.field === 'date'),
-            hasExplicitNull: queryRef.constraints.some((constraint) => (
-                constraint.type === 'where' && constraint.field === 'date' && constraint.op === '==' && constraint.value === null
-            )),
-            hasTeamIds: queryRef.constraints.some((constraint) => constraint.field === 'teamIds')
-        }))).toEqual([
-            { membershipField: 'homeTeamId', hasDateOrder: true, hasExplicitNull: false, hasTeamIds: false },
-            { membershipField: 'homeTeamId', hasDateOrder: false, hasExplicitNull: true, hasTeamIds: false },
-            { membershipField: 'awayTeamId', hasDateOrder: true, hasExplicitNull: false, hasTeamIds: false },
-            { membershipField: 'awayTeamId', hasDateOrder: false, hasExplicitNull: true, hasTeamIds: false }
+        await expect(getSharedGamesForTeam('team-123', { requireComplete: true })).resolves.toEqual([
+            expect.objectContaining({ id: 'shared-1', homeTeamId: 'team-123' })
         ]);
+        expect(calls).toHaveLength(2);
+        expect(calls.map((queryRef) => queryRef.constraints[0].field)).toEqual([
+            'homeTeamId', 'awayTeamId'
+        ]);
+        expect(calls.every((queryRef) => queryRef.constraints.length === 1)).toBe(true);
+        expect(calls.some((queryRef) => queryRef.constraints.some((constraint) => (
+            constraint.type === 'orderBy' || constraint.field === 'date'
+        )))).toBe(false);
     });
 });

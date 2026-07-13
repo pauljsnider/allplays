@@ -335,14 +335,16 @@ async function getSharedGamesForTeam(teamId, options = {}) {
         where('homeTeamId', '==', teamId),
         where('awayTeamId', '==', teamId)
     ];
-    // Until the team-only collection-group indexes finish building, use the
-    // already-deployed team+date composites for both dated and explicit-null
-    // documents. The follow-up switches full-history reads to the team-only
-    // indexes so truly missing date fields are retained as well.
-    const queries = teamConstraints.flatMap((teamConstraint) => [
-        query(sharedGamesRef, teamConstraint, ...orderedDateConstraints),
-        query(sharedGamesRef, teamConstraint, where('date', '==', null))
-    ]);
+    const queries = teamConstraints.flatMap((teamConstraint) => (
+        dateConstraints.length > 0
+            ? [
+                query(sharedGamesRef, teamConstraint, ...orderedDateConstraints),
+                query(sharedGamesRef, teamConstraint, where('date', '==', null))
+            ]
+            // Full-history reads intentionally use the team-only collection-group
+            // indexes so legacy documents with no date field remain visible.
+            : [query(sharedGamesRef, teamConstraint)]
+    ));
 
     const snapshots = await Promise.allSettled(queries.map((q) => getDocs(q)));
     if (requireComplete) {

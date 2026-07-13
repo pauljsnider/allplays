@@ -986,42 +986,28 @@ async function nativeQuerySharedTournamentScheduleDocuments(
   teamId: string,
   groups: TournamentScheduleGroupQuery[]
 ): Promise<ScheduleEventFirestoreRecord[]> {
+  // Full-history tournament reads intentionally use the team-only
+  // collection-group indexes. Adding orderBy(date) would silently exclude
+  // legacy shared games where the date field is absent.
   const membershipQueries = [
     { fieldPath: 'homeTeamId', op: 'EQUAL' },
     { fieldPath: 'awayTeamId', op: 'EQUAL' }
   ] as const;
-  const structuredQueries = membershipQueries.flatMap(({ fieldPath, op }) => {
-    const membershipFilter = {
-      fieldFilter: {
-        field: { fieldPath },
-        op,
-        value: encodeFirestoreValue(teamId)
-      }
-    };
-    return [
-      {
-        from: [{ collectionId: 'sharedGames', allDescendants: true }],
-        where: membershipFilter,
-        orderBy: [{ field: { fieldPath: 'date' }, direction: 'ASCENDING' }]
-      },
-      {
-        from: [{ collectionId: 'sharedGames', allDescendants: true }],
-        where: {
-          compositeFilter: {
-            op: 'AND',
-            filters: [
-              membershipFilter,
-              { unaryFilter: { field: { fieldPath: 'date' }, op: 'IS_NULL' } }
-            ]
-          }
-        }
-      }
-    ];
-  });
-  const payloads = await Promise.all(structuredQueries.map((structuredQuery) => (
+  const payloads = await Promise.all(membershipQueries.map(({ fieldPath, op }) => (
     nativeFirestoreRequest(':runQuery', {
       method: 'POST',
-      body: JSON.stringify({ structuredQuery })
+      body: JSON.stringify({
+        structuredQuery: {
+          from: [{ collectionId: 'sharedGames', allDescendants: true }],
+          where: {
+            fieldFilter: {
+              field: { fieldPath },
+              op,
+              value: encodeFirestoreValue(teamId)
+            }
+          }
+        }
+      })
     })
   )));
 
