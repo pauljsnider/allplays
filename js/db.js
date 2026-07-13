@@ -2152,7 +2152,31 @@ export async function grantCoachRoleForTeam(userId, teamId) {
     }
 }
 
+function getSelectedTeamMediaManagerIds(teamPermissions = {}) {
+    const permission = teamPermissions?.teamMediaManagement;
+    if (!permission || permission.mode !== 'selected') return [];
+    return Array.from(new Set((Array.isArray(permission.memberIds) ? permission.memberIds : [])
+        .map((memberUserId) => String(memberUserId || '').trim())
+        .filter(Boolean)));
+}
+
+async function assertTeamMediaManagerPermissionUpdateCleared(teamId, teamData = {}) {
+    const nextPermissions = teamData?.teamPermissions;
+    if (!nextPermissions || !Object.prototype.hasOwnProperty.call(nextPermissions, 'teamMediaManagement')) return;
+
+    const teamRef = doc(db, "teams", teamId);
+    const teamSnap = await getDoc(teamRef);
+    const existingIds = new Set(getSelectedTeamMediaManagerIds(teamSnap.exists() ? teamSnap.data()?.teamPermissions : {}));
+    const addedIds = getSelectedTeamMediaManagerIds(nextPermissions)
+        .filter((memberUserId) => !existingIds.has(memberUserId));
+
+    for (const memberUserId of addedIds) {
+        await assertVolunteerScreeningClearedForTeamGrant(teamId, { userId: memberUserId });
+    }
+}
+
 export async function updateTeam(teamId, teamData) {
+    await assertTeamMediaManagerPermissionUpdateCleared(teamId, teamData);
     teamData.updatedAt = Timestamp.now();
     const docRef = doc(db, "teams", teamId);
     if (teamData.registrationSource === null) {

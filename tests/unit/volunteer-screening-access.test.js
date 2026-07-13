@@ -158,4 +158,20 @@ describe('volunteer screening access guard', () => {
         expect(screeningLoaderSource).not.toContain('getDocs(registrationsRef)');
         expect(screeningLoaderSource).not.toContain('getDocs(collection(db, `teams/${normalizedTeamId}/registrationForms/${formId}/registrations`))');
     });
+
+    it('screens Team Media managers added through the legacy whole-team update path', () => {
+        const dbSource = fs.readFileSync('js/db.js', 'utf8');
+        const updateTeamStart = dbSource.indexOf('export async function updateTeam(teamId, teamData)');
+        const updateTeamEnd = dbSource.indexOf('\nexport async function ', updateTeamStart + 1);
+        const updateTeamSource = dbSource.slice(updateTeamStart, updateTeamEnd);
+        const permissionGuardStart = dbSource.indexOf('async function assertTeamMediaManagerPermissionUpdateCleared');
+        const permissionGuardEnd = dbSource.indexOf('\nexport async function updateTeam', permissionGuardStart);
+        const permissionGuardSource = dbSource.slice(permissionGuardStart, permissionGuardEnd);
+
+        expect(updateTeamSource).toContain('await assertTeamMediaManagerPermissionUpdateCleared(teamId, teamData);');
+        expect(permissionGuardSource).toContain("Object.prototype.hasOwnProperty.call(nextPermissions, 'teamMediaManagement')");
+        expect(permissionGuardSource).toContain('const existingIds = new Set(getSelectedTeamMediaManagerIds(');
+        expect(permissionGuardSource).toContain('.filter((memberUserId) => !existingIds.has(memberUserId))');
+        expect(permissionGuardSource).toContain('await assertVolunteerScreeningClearedForTeamGrant(teamId, { userId: memberUserId });');
+    });
 });
