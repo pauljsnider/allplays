@@ -18,7 +18,7 @@ describe('access code Firestore rules', () => {
         expect(rules).toContain("request.auth.token.email.lower() == data.email.lower()");
         expect(rules).toContain("request.auth.token.phone_number == data.phone");
         expect(rules).toContain('isTeamOwnerOrAdmin(data.teamId)');
-        expect(accessCodeRules).toContain('allow get: if resource == null || canReadAccessCode(resource.data);');
+        expect(accessCodeRules).toContain('allow get: if resource == null || canReadAccessCode(resource.data) || canGetPhoneOnlyFriendInviteAccessCode(resource.data);');
         expect(accessCodeRules).toContain('allow list: if canReadAccessCode(resource.data);');
         expect(accessCodeRules).not.toContain('allow read: if true;');
     });

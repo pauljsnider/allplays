@@ -219,11 +219,21 @@ describe('Profile invites', () => {
     await waitFor(() => expect(publicActionsMocks.sharePublicUrl).toHaveBeenCalledWith(expect.objectContaining({
       title: 'ALL PLAYS invite for coach@example.com',
       text: 'Use this ALL PLAYS invite link for coach@example.com.',
-      url: expect.stringContaining('/app#/accept-invite?code=NEWMVP42'),
-      clipboardText: expect.stringContaining('/app#/accept-invite?code=NEWMVP42')
+      url: expect.stringContaining('/app#/accept-invite?code=NEWMVP42&type=friend'),
+      clipboardText: expect.stringContaining('/app#/accept-invite?code=NEWMVP42&type=friend')
     })));
-    expect(screen.getByText(/\/app#\/accept-invite\?code=NEWMVP42/)).toBeTruthy();
+    expect(screen.getByText(/\/app#\/accept-invite\?code=NEWMVP42&type=friend/)).toBeTruthy();
     expect(await screen.findByText('Share sheet opened.')).toBeTruthy();
+  });
+
+  it('requires an email or phone before generating a friend invite', async () => {
+    renderProfile();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Invites' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Generate invite link' }));
+
+    expect(await screen.findByText('Enter an email or phone number for the invite.')).toBeTruthy();
+    expect(profileServiceMocks.createProfileAccessCode).not.toHaveBeenCalled();
   });
 
   it('shows active invite share actions, hides them for used codes, and surfaces copied and cancelled statuses', async () => {

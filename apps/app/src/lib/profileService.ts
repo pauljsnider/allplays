@@ -376,6 +376,30 @@ function getNotificationDeviceId(token: string) {
   return `device_${Date.now()}`;
 }
 
+function normalizeFriendInviteContact(value: unknown) {
+  const normalized = String(value || '').trim();
+  return normalized || null;
+}
+
+function uniquePublicProfileStrings(values: unknown[] = []) {
+  return [...new Set(values.map((value) => String(value || '').trim()).filter(Boolean))];
+}
+
+function buildNativeFriendInviteInviterProfile(profile: Record<string, any> = {}) {
+  const parentOfTeamIds = Array.isArray(profile.parentOf)
+    ? profile.parentOf.map((link: any) => link?.teamId)
+    : [];
+  const parentTeamIds = Array.isArray(profile.parentTeamIds)
+    ? profile.parentTeamIds
+    : [];
+  return {
+    displayName: normalizeFriendInviteContact(profile.displayName || profile.fullName || profile.name),
+    fullName: normalizeFriendInviteContact(profile.fullName || profile.displayName || profile.name),
+    photoUrl: normalizeFriendInviteContact(profile.photoUrl),
+    discoveryTeamIds: uniquePublicProfileStrings([...parentOfTeamIds, ...parentTeamIds])
+  };
+}
+
 async function nativeSaveNotificationDeviceToken(userId: string, input: NotificationDeviceTokenInput) {
   const token = String(input.token || '').trim();
   if (!token) {
@@ -394,6 +418,9 @@ async function nativeSaveNotificationDeviceToken(userId: string, input: Notifica
 }
 
 async function nativeCreateAccessCode(userId: string, email: string, phone: string, code: string) {
+  const inviterProfile = buildNativeFriendInviteInviterProfile(
+    (await nativeGetDocument(`users/${encodeURIComponent(userId)}`).catch(() => null) as Record<string, any> | null) || {}
+  );
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const candidateCode = String(attempt === 0 ? code : generateAccessCode()).trim().toUpperCase();
     const existing = await nativeGetDocument(`accessCodes/${encodeURIComponent(candidateCode)}`).catch(() => null) as Record<string, unknown> | null;
@@ -402,16 +429,19 @@ async function nativeCreateAccessCode(userId: string, email: string, phone: stri
     }
 
     try {
+      const now = new Date();
       await nativeFirestoreRequest(`/accessCodes/${encodeURIComponent(candidateCode)}?currentDocument.exists=false`, {
         method: 'PATCH',
         body: JSON.stringify({
           fields: {
             code: encodeFirestoreValue(candidateCode),
-            type: encodeFirestoreValue('standard'),
+            type: encodeFirestoreValue('friend_invite'),
             generatedBy: encodeFirestoreValue(userId),
             email: encodeFirestoreValue(email || null),
             phone: encodeFirestoreValue(phone || null),
-            createdAt: encodeFirestoreValue(new Date()),
+            inviterProfile: encodeFirestoreValue(inviterProfile),
+            createdAt: encodeFirestoreValue(now),
+            expiresAt: encodeFirestoreValue(new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)),
             used: encodeFirestoreValue(false),
             usedBy: encodeFirestoreValue(null),
             usedAt: encodeFirestoreValue(null)
@@ -586,13 +616,19 @@ export async function saveNotificationDeviceToken(userId: string, input: Notific
 }
 
 export async function createProfileAccessCode(userId: string, email: string, phone: string) {
+  const normalizedEmail = String(email || '').trim();
+  const normalizedPhone = String(phone || '').trim();
+  if (!normalizedEmail && !normalizedPhone) {
+    throw new Error('Enter an email or phone number for the invite.');
+  }
+
   const code = generateAccessCode();
   try {
-    const result = await withTimeout(Promise.resolve(createAccessCode(userId, email, phone, code)), 'Invite code create', primaryDataTimeoutMs);
+    const result = await withTimeout(Promise.resolve(createAccessCode(userId, normalizedEmail, normalizedPhone, code, { type: 'friend_invite' })), 'Invite code create', primaryDataTimeoutMs);
     return String(result?.code || code).trim().toUpperCase();
   } catch (error) {
     logProfileWarning('Falling back to REST invite code create.', 'invite-code-create', error, { userId });
-    return nativeCreateAccessCode(userId, email, phone, code);
+    return nativeCreateAccessCode(userId, normalizedEmail, normalizedPhone, code);
   }
 }
 

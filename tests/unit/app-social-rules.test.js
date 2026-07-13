@@ -5,7 +5,17 @@ import {
     assertSucceeds,
     initializeTestEnvironment
 } from '@firebase/rules-unit-testing';
-import { doc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
+import {
+    collection,
+    doc,
+    getDoc,
+    getDocs,
+    runTransaction,
+    serverTimestamp,
+    setDoc,
+    Timestamp,
+    updateDoc
+} from 'firebase/firestore';
 
 function rulesSource() {
     return readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
@@ -111,7 +121,75 @@ describe('React app social Firestore rules', () => {
         expect(source).toContain("request.auth.uid in data.get('visibleUserIds', [])");
         expect(source).toContain("data.get('teamId', '') != '' &&");
         expect(source).toContain("isTeamOwnerOrAdmin(data.get('teamId', ''))");
-        expect(source).toContain("request.resource.data.get('status', '') in ['pending', 'accepted', 'declined', 'removed', 'blocked']");
+        expect(source).toContain('function isFriendshipMemberUpdatePayloadValid()');
+    });
+
+    it('permits accepted friendship creation only during atomic friend invite redemption', () => {
+        const source = rulesSource();
+
+        expect(source).toContain('function isFriendInviteAcceptedFriendshipCreateValid(friendshipId, data)');
+        expect(source).toContain('function isFriendInviteAcceptedFriendshipUpdateValid(friendshipId)');
+        expect(source).toContain('let codePath = /databases/$(database)/documents/accessCodes/$(codeId);');
+        expect(source).toContain('let codeBefore = get(codePath).data;');
+        expect(source).toContain('exists(codePath)');
+        expect(source).toContain('existsAfter(codePath)');
+        expect(source).toContain('function buildFriendshipId(firstUserId, secondUserId)');
+        expect(source).toContain('data.get(\'memberIds\', []).size() == 2');
+        expect(source).toContain("friendshipId == buildFriendshipId(data.get('requesterId', ''), request.auth.uid)");
+        expect(source).toContain("codeBefore.get('used', false) == false");
+        expect(source).toContain("codeBefore.get('usedBy', null) == null");
+        expect(source).toContain("codeBefore.get('usedAt', null) == null");
+        expect(source).toContain("codeAfter.get('type', null) == 'friend_invite'");
+        expect(source).toContain("codeAfter.get('generatedBy', '') == data.get('requesterId', '')");
+        expect(source).toContain("codeAfter.get('usedBy', '') == request.auth.uid");
+        expect(source).toContain("allow create: if isFriendshipCreatePayloadValid(friendshipId, request.resource.data) ||");
+        expect(source).toContain("isFriendInviteAcceptedFriendshipCreateValid(friendshipId, request.resource.data)");
+        expect(source).toContain("allow update: if isFriendInviteAcceptedFriendshipUpdateValid(friendshipId) ||");
+        expect(source).toContain("request.resource.data.get('source', '') == 'friend_invite'");
+        expect(source).toContain("request.resource.data.get('inviteCodeId', '') == codeId");
+        expect(source).toContain("friendshipId == buildFriendshipId(codeAfter.get('generatedBy', ''), request.auth.uid)");
+    });
+
+    it('prevents member updates from reactivating blocked friendships', () => {
+        const source = rulesSource();
+
+        expect(source).toContain("resource.data.get('status', '') != 'blocked'");
+        expect(source).toContain("request.resource.data.diff(resource.data).affectedKeys().hasOnly([\n               'requesterId',");
+        expect(source).toContain("request.resource.data.get('blockedBy', resource.data.get('blockedBy', [])) == resource.data.get('blockedBy', [])");
+        expect(source).toContain("request.resource.data.get('status', '') == 'blocked'");
+        expect(source).toContain("request.auth.uid in request.resource.data.get('blockedBy', [])");
+        expect(source).toContain('isFriendInviteAcceptedFriendshipUpdateValid(friendshipId) ||\n                    isFriendshipMemberUpdatePayloadValid() ||');
+    });
+
+    it('excludes friend invites from the owner update fallback after redemption', () => {
+        const source = rulesSource();
+
+        expect(source).toContain("isFriendInviteRedemptionUpdate() ||");
+        expect(source).toContain("resource.data.get('type', null) != 'friend_invite' &&");
+    });
+
+    it('allows only direct GET reads for phone-only friend invite code redemption', () => {
+        const source = rulesSource();
+
+        expect(source).toContain('function canGetPhoneOnlyFriendInviteAccessCode(data)');
+        expect(source).toContain("data.get('type', null) == 'friend_invite'");
+        expect(source).toContain("data.get('email', null) == null");
+        expect(source).toContain("data.get('phone', null) is string");
+        expect(source).toContain("data.get('used', false) == false");
+        expect(source).toContain("data.get('expiresAt', null) > request.time");
+        expect(source).toContain('allow get: if resource == null || canReadAccessCode(resource.data) || canGetPhoneOnlyFriendInviteAccessCode(resource.data);');
+        expect(source).toContain('allow list: if canReadAccessCode(resource.data);');
+    });
+
+    it('limits missing friendship reads to exact participant GET paths', () => {
+        const source = rulesSource();
+
+        expect(source).toContain('function canGetMissingFriendship(friendshipId)');
+        expect(source).toContain('!exists(friendshipPath)');
+        expect(source).toContain("friendshipId.matches('^' + request.auth.uid + '__.+$')");
+        expect(source).toContain("friendshipId.matches('^.+__' + request.auth.uid + '$')");
+        expect(source).toContain('allow get: if canGetMissingFriendship(friendshipId) ||');
+        expect(source).toContain('allow list: if canAccessFriendship(resource.data) || isGlobalAdmin();');
     });
 
     it('locks down top-level users docs and routes discovery through projected public profiles', () => {
@@ -198,7 +276,7 @@ describe('React app social Firestore rules', () => {
                     rules: rulesSource()
                 }
             });
-        });
+        }, 30_000);
 
         beforeEach(async () => {
             await testEnv.clearFirestore();
@@ -304,6 +382,303 @@ describe('React app social Firestore rules', () => {
                 parentTeamIds: ['team-1'],
                 parentPlayerKeys: ['team-1::player-1']
             }));
+        });
+    });
+
+    describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('friend invite rules engine coverage', () => {
+        let testEnv;
+
+        beforeAll(async () => {
+            testEnv = await initializeTestEnvironment({
+                projectId: `allplays-friend-invite-rules-${Date.now()}`,
+                firestore: {
+                    rules: rulesSource()
+                }
+            });
+        }, 30_000);
+
+        beforeEach(async () => {
+            await testEnv.clearFirestore();
+        });
+
+        afterAll(async () => {
+            await testEnv?.cleanup();
+        });
+
+        function authenticatedDb(uid) {
+            return testEnv.authenticatedContext(uid, { email: `${uid}@example.com` }).firestore();
+        }
+
+        function accessCodePayload({ codeId, inviterId, inviteeId, email = `${inviteeId}@example.com`, phone = null }) {
+            return {
+                code: codeId,
+                type: 'friend_invite',
+                generatedBy: inviterId,
+                email,
+                phone,
+                inviterProfile: {
+                    displayName: 'Invite Sender',
+                    fullName: 'Invite Sender',
+                    photoUrl: null,
+                    discoveryTeamIds: []
+                },
+                createdAt: Timestamp.fromMillis(Date.now() - 60_000),
+                expiresAt: Timestamp.fromMillis(Date.now() + 86_400_000),
+                used: false,
+                usedBy: null,
+                usedAt: null
+            };
+        }
+
+        function acceptedFriendshipPayload({
+            codeId,
+            inviterId,
+            inviteeId,
+            existingFriendship = {},
+            blockedBy = []
+        }) {
+            const now = Timestamp.now();
+            return {
+                requesterId: existingFriendship.requesterId || inviterId,
+                recipientId: existingFriendship.recipientId || inviteeId,
+                memberIds: existingFriendship.memberIds || [inviterId, inviteeId].sort(),
+                status: 'accepted',
+                sharedTeamIds: [],
+                sharedTeamNames: [],
+                blockedBy,
+                source: 'friend_invite',
+                inviteCodeId: codeId,
+                createdAt: existingFriendship.createdAt || now,
+                acceptedAt: now,
+                respondedAt: now,
+                updatedAt: now
+            };
+        }
+
+        async function seedInvite({ codeId, inviterId, inviteeId, email, phone, friendship = null }) {
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                const db = context.firestore();
+                await setDoc(
+                    doc(db, 'accessCodes', codeId),
+                    accessCodePayload({ codeId, inviterId, inviteeId, email, phone })
+                );
+                await setDoc(doc(db, 'users', inviteeId), {
+                    email: `${inviteeId}@example.com`,
+                    isAdmin: false
+                });
+                if (friendship) {
+                    await setDoc(
+                        doc(db, 'friendships', [inviterId, inviteeId].sort().join('__')),
+                        friendship
+                    );
+                }
+            });
+        }
+
+        async function redeemInviteTransaction(db, { codeId, inviterId, inviteeId, blockedBy = [] }) {
+            const codeRef = doc(db, 'accessCodes', codeId);
+            const friendshipRef = doc(db, 'friendships', [inviterId, inviteeId].sort().join('__'));
+
+            return runTransaction(db, async (transaction) => {
+                const codeSnapshot = await transaction.get(codeRef);
+                const friendshipSnapshot = await transaction.get(friendshipRef);
+                const existingFriendship = friendshipSnapshot.exists()
+                    ? friendshipSnapshot.data()
+                    : {};
+                const acceptedFriendship = acceptedFriendshipPayload({
+                    codeId,
+                    inviterId,
+                    inviteeId,
+                    existingFriendship,
+                    blockedBy
+                });
+
+                if (friendshipSnapshot.exists()) {
+                    transaction.update(friendshipRef, acceptedFriendship);
+                } else {
+                    transaction.set(friendshipRef, acceptedFriendship);
+                }
+                transaction.update(codeRef, {
+                    used: true,
+                    usedBy: inviteeId,
+                    usedAt: Timestamp.now()
+                });
+
+                return codeSnapshot.exists();
+            });
+        }
+
+        it('allows an exact path participant to read a missing doc and atomically create a friendship', async () => {
+            const inviterId = 'inviter-first';
+            const inviteeId = 'invitee-first';
+            const codeId = 'FRIENDFIRST';
+            const inviteeDb = authenticatedDb(inviteeId);
+            const friendshipId = [inviterId, inviteeId].sort().join('__');
+            const friendshipRef = doc(inviteeDb, 'friendships', friendshipId);
+
+            await seedInvite({ codeId, inviterId, inviteeId });
+
+            const missingSnapshot = await assertSucceeds(getDoc(friendshipRef));
+            expect(missingSnapshot.exists()).toBe(false);
+            await assertFails(getDoc(doc(authenticatedDb('unrelated-user'), 'friendships', friendshipId)));
+            await assertFails(getDocs(collection(inviteeDb, 'friendships')));
+
+            await assertSucceeds(redeemInviteTransaction(inviteeDb, { codeId, inviterId, inviteeId }));
+
+            const createdSnapshot = await assertSucceeds(getDoc(friendshipRef));
+            expect(createdSnapshot.data()).toMatchObject({
+                memberIds: [inviteeId, inviterId],
+                status: 'accepted',
+                source: 'friend_invite',
+                inviteCodeId: codeId
+            });
+        });
+
+        it('denies friendship creation from an already redeemed friend invite code', async () => {
+            const inviterId = 'inviter-used-code';
+            const inviteeId = 'invitee-used-code';
+            const codeId = 'FRIENDUSED';
+            const inviteeDb = authenticatedDb(inviteeId);
+            const friendshipId = [inviterId, inviteeId].sort().join('__');
+            const friendshipRef = doc(inviteeDb, 'friendships', friendshipId);
+
+            await seedInvite({ codeId, inviterId, inviteeId });
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                await updateDoc(doc(context.firestore(), 'accessCodes', codeId), {
+                    used: true,
+                    usedBy: inviteeId,
+                    usedAt: Timestamp.now()
+                });
+            });
+
+            await assertFails(setDoc(friendshipRef, acceptedFriendshipPayload({
+                codeId,
+                inviterId,
+                inviteeId
+            })));
+
+            const missingSnapshot = await assertSucceeds(getDoc(friendshipRef));
+            expect(missingSnapshot.exists()).toBe(false);
+        });
+
+        it('allows direct code reads for phone-only friend invites without opening collection list reads', async () => {
+            const inviterId = 'inviter-phone';
+            const inviteeId = 'invitee-phone';
+            const codeId = 'FRIENDPHONE';
+            const inviteeDb = authenticatedDb(inviteeId);
+
+            await seedInvite({
+                codeId,
+                inviterId,
+                inviteeId,
+                email: null,
+                phone: '+15555550123'
+            });
+
+            const codeSnapshot = await assertSucceeds(getDoc(doc(inviteeDb, 'accessCodes', codeId)));
+            expect(codeSnapshot.data()).toMatchObject({
+                type: 'friend_invite',
+                email: null,
+                phone: '+15555550123',
+                used: false
+            });
+            await assertFails(getDocs(collection(inviteeDb, 'accessCodes')));
+            await assertSucceeds(redeemInviteTransaction(inviteeDb, { codeId, inviterId, inviteeId }));
+        });
+
+        it('allows a member to read and atomically accept an existing pending friendship', async () => {
+            const inviterId = 'inviter-pending';
+            const inviteeId = 'invitee-pending';
+            const codeId = 'FRIENDPENDING';
+            const inviteeDb = authenticatedDb(inviteeId);
+            const friendshipId = [inviterId, inviteeId].sort().join('__');
+            const createdAt = Timestamp.fromMillis(Date.now() - 60_000);
+            const pendingFriendship = {
+                requesterId: inviterId,
+                recipientId: inviteeId,
+                memberIds: [inviterId, inviteeId].sort(),
+                status: 'pending',
+                sharedTeamIds: [],
+                sharedTeamNames: [],
+                blockedBy: [],
+                createdAt,
+                respondedAt: createdAt,
+                updatedAt: createdAt
+            };
+
+            await seedInvite({ codeId, inviterId, inviteeId, friendship: pendingFriendship });
+
+            await assertSucceeds(getDoc(doc(inviteeDb, 'friendships', friendshipId)));
+            await assertSucceeds(redeemInviteTransaction(inviteeDb, { codeId, inviterId, inviteeId }));
+
+            const updatedSnapshot = await assertSucceeds(getDoc(doc(inviteeDb, 'friendships', friendshipId)));
+            expect(updatedSnapshot.data()).toMatchObject({
+                status: 'accepted',
+                source: 'friend_invite',
+                inviteCodeId: codeId,
+                createdAt
+            });
+        });
+
+        it('denies blocked friendship redemption and leaves both documents unchanged', async () => {
+            const inviterId = 'inviter-blocked';
+            const inviteeId = 'invitee-blocked';
+            const codeId = 'FRIENDBLOCKED';
+            const inviteeDb = authenticatedDb(inviteeId);
+            const friendshipId = [inviterId, inviteeId].sort().join('__');
+            const createdAt = Timestamp.fromMillis(Date.now() - 60_000);
+            const blockedFriendship = {
+                requesterId: inviterId,
+                recipientId: inviteeId,
+                memberIds: [inviterId, inviteeId].sort(),
+                status: 'blocked',
+                sharedTeamIds: [],
+                sharedTeamNames: [],
+                blockedBy: [inviterId],
+                createdAt,
+                respondedAt: createdAt,
+                updatedAt: createdAt
+            };
+
+            await seedInvite({ codeId, inviterId, inviteeId, friendship: blockedFriendship });
+
+            await assertFails(redeemInviteTransaction(inviteeDb, {
+                codeId,
+                inviterId,
+                inviteeId,
+                blockedBy: []
+            }));
+
+            const friendshipSnapshot = await assertSucceeds(
+                getDoc(doc(inviteeDb, 'friendships', friendshipId))
+            );
+            const codeSnapshot = await assertSucceeds(getDoc(doc(inviteeDb, 'accessCodes', codeId)));
+            expect(friendshipSnapshot.data()).toMatchObject({
+                status: 'blocked',
+                blockedBy: [inviterId]
+            });
+            expect(codeSnapshot.data()).toMatchObject({
+                used: false,
+                usedBy: null,
+                usedAt: null
+            });
+        });
+
+        it('does not expose existing non-member friendships through deterministic path GETs', async () => {
+            const attackerId = 'attacker-user';
+            const otherId = 'other-user';
+            const friendshipId = [attackerId, otherId].sort().join('__');
+
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                await setDoc(doc(context.firestore(), 'friendships', friendshipId), {
+                    requesterId: 'member-a',
+                    recipientId: 'member-b',
+                    memberIds: ['member-a', 'member-b'],
+                    status: 'accepted'
+                });
+            });
+
+            await assertFails(getDoc(doc(authenticatedDb(attackerId), 'friendships', friendshipId)));
         });
     });
 

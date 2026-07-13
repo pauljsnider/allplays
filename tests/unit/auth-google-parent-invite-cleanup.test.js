@@ -8,6 +8,7 @@ const validateAccessCodeMock = vi.fn();
 const redeemParentInviteMock = vi.fn();
 const redeemHouseholdInviteMock = vi.fn();
 const redeemCoParentInviteMock = vi.fn();
+const redeemFriendInviteMock = vi.fn();
 const updateUserProfileMock = vi.fn();
 const markAccessCodeAsUsedMock = vi.fn();
 const rollbackParentInviteRedemptionMock = vi.fn();
@@ -30,7 +31,7 @@ vi.mock('../../js/firebase.js?v=20', () => ({
     updatePassword: vi.fn()
 }));
 
-vi.mock('../../js/db.js?v=94', () => ({
+vi.mock('../../js/db.js?v=95', () => ({
     validateAccessCode: validateAccessCodeMock,
     markAccessCodeAsUsed: markAccessCodeAsUsedMock,
     updateUserProfile: updateUserProfileMock,
@@ -38,19 +39,22 @@ vi.mock('../../js/db.js?v=94', () => ({
     redeemHouseholdInvite: redeemHouseholdInviteMock,
     redeemCoParentInvite: redeemCoParentInviteMock,
     rollbackParentInviteRedemption: rollbackParentInviteRedemptionMock,
+    redeemFriendInvite: redeemFriendInviteMock,
     getUserProfile: vi.fn(),
     getUserTeams: vi.fn(),
     getUserByEmail: vi.fn(),
     getTeam: vi.fn(),
-    listMyParentMembershipRequests: vi.fn()
+    listMyParentMembershipRequests: vi.fn(),
+    normalizeParentScopeLinks: vi.fn()
 }));
 
-vi.mock('../../js/signup-flow.js?v=8', () => ({
+vi.mock('../../js/signup-flow.js?v=9', () => ({
     executeEmailPasswordSignup: vi.fn()
 }));
 
 vi.mock('../../js/admin-invite.js?v=6', () => ({
-    redeemAdminInviteAcceptance: vi.fn()
+    redeemAdminInviteAcceptance: vi.fn(),
+    redeemAdminInviteAtomically: vi.fn()
 }));
 
 vi.mock('../../js/parent-membership-utils.js?v=2', () => ({
@@ -143,6 +147,36 @@ describe('loginWithGoogle parent invite failure cleanup', () => {
 
         expect(redeemCoParentInviteMock).toHaveBeenCalledWith('user-456', 'COPO1234', 'coparent@example.com');
         expect(markAccessCodeAsUsedMock).not.toHaveBeenCalled();
+    });
+
+    it('redeems friend invites for an existing Google user', async () => {
+        const result = {
+            user: {
+                uid: 'user-friend',
+                email: 'friend@example.com',
+                metadata: {
+                    creationTime: '2026-03-01T11:00:00.000Z',
+                    lastSignInTime: '2026-07-12T22:00:00.000Z'
+                }
+            }
+        };
+
+        signInWithPopupMock.mockResolvedValue(result);
+        validateAccessCodeMock.mockResolvedValue({
+            valid: true,
+            type: 'friend_invite',
+            codeId: 'code-friend-1',
+            data: { code: 'FRIEND12' }
+        });
+        redeemFriendInviteMock.mockResolvedValue({ success: true });
+
+        const { loginWithGoogle } = await import('../../js/auth.js');
+
+        await loginWithGoogle('FRIEND12');
+
+        expect(redeemFriendInviteMock).toHaveBeenCalledWith('user-friend', 'FRIEND12', 'friend@example.com');
+        expect(markAccessCodeAsUsedMock).not.toHaveBeenCalled();
+        expect(rollbackParentInviteRedemptionMock).not.toHaveBeenCalled();
     });
 
     it('deletes auth user, signs out, and rethrows when parent invite linking fails', async () => {

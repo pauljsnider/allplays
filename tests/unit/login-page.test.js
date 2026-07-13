@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { createLoginRedirectCoordinator, createLoginAuthStateManager, shouldInitializeSignupMode, getGoogleAuthModeForLoginPage } from '../../js/login-page.js';
 
 function createCoordinator({
@@ -72,6 +73,13 @@ describe('login page Google mode selection', () => {
 });
 
 describe('login page redirect coordination', () => {
+    it('loads the cache-busted login page module that knows friend invite redirects', () => {
+        const html = readFileSync(new URL('../../login.html', import.meta.url), 'utf8');
+
+        expect(html).toContain("import * as loginPageModule from './js/login-page.js?v=8';");
+        expect(html).not.toContain("import * as loginPageModule from './js/login-page.js?v=7';");
+    });
+
     it('treats invite type values case-insensitively when code is present', () => {
         const { coordinator } = createCoordinator({
             search: '?code=ab12cd34&type= Admin ',
@@ -103,6 +111,17 @@ describe('login page redirect coordination', () => {
         expect(coordinator.shouldRedeemInviteFromLogin).toBe(true);
         expect(coordinator.getPostAuthRedirect({ uid: 'user-1' }, coordinator.shouldRedeemInviteFromLogin))
             .toBe('accept-invite.html?code=AB12CD34&type=coparent_invite');
+    });
+
+    it('redeems friend invite links after login', () => {
+        const { coordinator } = createCoordinator({
+            search: '?code=frnd1234&type=friend',
+            defaultRedirect: 'dashboard.html'
+        });
+
+        expect(coordinator.shouldRedeemInviteFromLogin).toBe(true);
+        expect(coordinator.getPostAuthRedirect({ uid: 'user-1' }, coordinator.shouldRedeemInviteFromLogin))
+            .toBe('accept-invite.html?code=FRND1234&type=friend');
     });
 
     it('redeems type-less 8-character invite links after login', () => {

@@ -155,7 +155,7 @@ export function Profile({ auth }: { auth: AuthState }) {
   const [accessCodesHasMore, setAccessCodesHasMore] = useState(false);
   const [parentLinkedTeamsLoaded, setParentLinkedTeamsLoaded] = useState(false);
   const [loadedNotificationTeamId, setLoadedNotificationTeamId] = useState('');
-  const [generatedInviteMetadata, setGeneratedInviteMetadata] = useState<{ email: string; phone: string }>({ email: '', phone: '' });
+  const [generatedInviteMetadata, setGeneratedInviteMetadata] = useState<{ email: string; phone: string; type: string }>({ email: '', phone: '', type: 'friend_invite' });
   const ownedPhotoPreviewUrlRef = useRef<string | null>(null);
   const photoInputRef = useRef<HTMLInputElement | null>(null);
   const photoSelectionIdRef = useRef(0);
@@ -175,7 +175,7 @@ export function Profile({ auth }: { auth: AuthState }) {
   const displayName = fullName || user?.displayName || profile.displayName || user?.email || 'ALL PLAYS User';
   const showPasswordSection = profile.signInMethod === 'emailLink' && !profile.hasPassword;
   const updatedAt = useMemo(() => formatTimestamp(profile.updatedAt), [profile.updatedAt]);
-  const signupLink = generatedCode ? buildSignupLink(generatedCode) : '';
+  const signupLink = generatedCode ? buildSignupLink(generatedCode, 'friend_invite') : '';
   const visibleAccessCodes = inviteHistoryExpanded ? accessCodes : accessCodes.slice(0, collapsedInviteCount);
   const hiddenAccessCodeCount = Math.max(0, accessCodes.length - visibleAccessCodes.length);
   const canRequestAccountMerge = auth.isParent && parentLinkedTeamsLoaded && parentLinkedTeams.length > 0;
@@ -1131,9 +1131,14 @@ export function Profile({ auth }: { auth: AuthState }) {
     try {
       const nextInviteEmail = inviteEmail.trim();
       const nextInvitePhone = invitePhone.trim();
+      if (!nextInviteEmail && !nextInvitePhone) {
+        setInviteStatus({ message: 'Enter an email or phone number for the invite.', tone: 'error' });
+        return;
+      }
+
       const code = await createProfileAccessCode(user.uid, nextInviteEmail, nextInvitePhone);
       setGeneratedCode(code);
-      setGeneratedInviteMetadata({ email: nextInviteEmail, phone: nextInvitePhone });
+      setGeneratedInviteMetadata({ email: nextInviteEmail, phone: nextInvitePhone, type: 'friend_invite' });
       setInviteEmail('');
       setInvitePhone('');
       setAccessCodes((current) => [{
@@ -1141,6 +1146,7 @@ export function Profile({ auth }: { auth: AuthState }) {
         code,
         email: nextInviteEmail || null,
         phone: nextInvitePhone || null,
+        type: 'friend_invite',
         used: false,
         createdAt: new Date()
       }, ...current.filter((entry) => entry.code !== code)]);
@@ -1664,7 +1670,7 @@ export function Profile({ auth }: { auth: AuthState }) {
         <form className="mt-4 space-y-3" onSubmit={createInviteCode}>
           <details className="rounded-xl border border-gray-200 bg-gray-50 p-3">
             <summary className="cursor-pointer text-sm font-black text-gray-700">Advanced: add recipient label</summary>
-            <p className="mt-2 text-xs font-semibold leading-5 text-gray-500">Optional only. Use these fields to annotate invite history; the app does not send the invite.</p>
+            <p className="mt-2 text-xs font-semibold leading-5 text-gray-500">Add an email or phone number to label and target the invite; the app does not send it.</p>
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
               <input className="auth-input" type="email" value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} placeholder="coach@example.com" aria-label="Invite email label" />
               <input className="auth-input" type="tel" value={invitePhone} onChange={(event) => setInvitePhone(event.target.value)} placeholder="(555) 123-4567" aria-label="Invite phone label" />

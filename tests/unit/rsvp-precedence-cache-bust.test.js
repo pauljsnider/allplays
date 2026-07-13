@@ -10,7 +10,7 @@ describe('RSVP precedence cache delivery', () => {
         const dbSource = readRepoFile('js/db.js');
         const breakdownSource = readRepoFile('js/game-day-rsvp-breakdown.js');
         const runtimeSources = {
-            'accept-invite.html': 'db.js?v=91',
+            'accept-invite.html': 'db.js?v=95',
             'calendar.html': 'db.js?v=91',
             'edit-schedule.html': 'db.js?v=91',
             'game-day.html': 'db.js?v=91',
@@ -18,7 +18,8 @@ describe('RSVP precedence cache delivery', () => {
             'parent-dashboard.html': 'db.js?v=92',
             'team.html': 'db.js?v=91',
             'team-chat.html': 'db.js?v=94',
-            'js/auth.js': 'db.js?v=94',
+            'js/auth.js': 'db.js?v=95',
+            'profile.html': 'db.js?v=95',
             'js/team-media.js': 'db.js?v=91'
         };
 
@@ -32,16 +33,17 @@ describe('RSVP precedence cache delivery', () => {
 
     it('versions every deployed auth consumer after auth adopts the fresh db key', () => {
         const authConsumers = {
-            'accept-invite.html': 'auth.js?v=49',
-            'dashboard.html': 'auth.js?v=49',
-            'edit-team.html': 'auth.js?v=49',
-            'login.html': 'auth.js?v=49',
-            'parent-dashboard.html': 'auth.js?v=49',
-            'js/admin.js': 'auth.js?v=49',
-            'js/live-game.js': 'auth.js?v=49',
-            'js/live-tracker.js': 'auth.js?v=49',
-            'js/team-media.js': 'auth.js?v=49',
-            'js/utils.js': 'auth.js?v=49'
+            'accept-invite.html': 'auth.js?v=50',
+            'dashboard.html': 'auth.js?v=50',
+            'edit-team.html': 'auth.js?v=50',
+            'login.html': 'auth.js?v=50',
+            'profile.html': 'auth.js?v=50',
+            'parent-dashboard.html': 'auth.js?v=50',
+            'js/admin.js': 'auth.js?v=50',
+            'js/live-game.js': 'auth.js?v=50',
+            'js/live-tracker.js': 'auth.js?v=50',
+            'js/team-media.js': 'auth.js?v=50',
+            'js/utils.js': 'auth.js?v=50'
         };
 
         for (const [path, expectedVersion] of Object.entries(authConsumers)) {

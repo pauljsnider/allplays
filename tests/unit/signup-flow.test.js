@@ -15,6 +15,7 @@ function createDependencies(overrides = {}) {
             }
         }),
         redeemParentInvite: vi.fn().mockResolvedValue(undefined),
+        redeemFriendInvite: vi.fn().mockResolvedValue(undefined),
         redeemAdminInviteAcceptance: vi.fn().mockResolvedValue(undefined),
         redeemHouseholdInvite: vi.fn().mockResolvedValue(undefined),
         redeemCoParentInvite: vi.fn().mockResolvedValue(undefined),
@@ -387,6 +388,81 @@ describe('executeEmailPasswordSignup', () => {
         }));
         expect(dependencies.markAccessCodeAsUsed).not.toHaveBeenCalled();
         expect(dependencies.sendVerificationEmail).toHaveBeenCalledTimes(1);
+    });
+
+    it('routes friend invite signup through friend redemption and not generic code consumption', async () => {
+        const dependencies = createDependencies({
+            validateAccessCode: vi.fn().mockResolvedValue({
+                valid: true,
+                type: 'friend_invite',
+                codeId: 'code-friend-1',
+                data: { code: 'FRIEND12' }
+            })
+        });
+        const reload = vi.fn().mockResolvedValue(undefined);
+        const auth = {
+            currentUser: {
+                email: 'friend@example.com',
+                reload
+            }
+        };
+
+        await executeEmailPasswordSignup({
+            email: 'friend@example.com',
+            password: 'password123',
+            activationCode: 'FRIEND12',
+            auth,
+            dependencies
+        });
+
+        expect(dependencies.redeemFriendInvite).toHaveBeenCalledWith('user-123', 'FRIEND12', 'friend@example.com');
+        expect(dependencies.markAccessCodeAsUsed).not.toHaveBeenCalled();
+        expect(dependencies.updateUserProfile).toHaveBeenCalledWith('user-123', expect.objectContaining({
+            email: 'friend@example.com',
+            emailVerificationRequired: true
+        }));
+        expect(dependencies.sendVerificationEmail).toHaveBeenCalledTimes(1);
+    });
+
+    it('rolls back auth account and rethrows when friend invite redemption fails', async () => {
+        const expectedError = new Error('friend redemption failed');
+        const deleteAuthUser = vi.fn().mockResolvedValue(undefined);
+        const dependencies = createDependencies({
+            validateAccessCode: vi.fn().mockResolvedValue({
+                valid: true,
+                type: 'friend_invite',
+                codeId: 'code-friend-2',
+                data: { code: 'FRIEND34' }
+            }),
+            createUserWithEmailAndPassword: vi.fn().mockResolvedValue({
+                user: {
+                    uid: 'user-123',
+                    delete: deleteAuthUser
+                }
+            }),
+            redeemFriendInvite: vi.fn().mockRejectedValue(expectedError)
+        });
+        const auth = {
+            currentUser: {
+                email: 'friend@example.com',
+                reload: vi.fn().mockResolvedValue(undefined)
+            }
+        };
+
+        await expect(executeEmailPasswordSignup({
+            email: 'friend@example.com',
+            password: 'password123',
+            activationCode: 'FRIEND34',
+            auth,
+            dependencies
+        })).rejects.toThrow('friend redemption failed');
+
+        expect(deleteAuthUser).toHaveBeenCalledTimes(1);
+        expect(dependencies.signOut).toHaveBeenCalledTimes(1);
+        expect(dependencies.rollbackParentInviteRedemption).not.toHaveBeenCalled();
+        expect(dependencies.updateUserProfile).not.toHaveBeenCalled();
+        expect(dependencies.markAccessCodeAsUsed).not.toHaveBeenCalled();
+        expect(dependencies.sendVerificationEmail).not.toHaveBeenCalled();
     });
 
     it('rolls back auth account and rethrows when admin invite redemption fails', async () => {

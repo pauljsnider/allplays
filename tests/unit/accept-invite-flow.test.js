@@ -22,6 +22,7 @@ describe('already-redeemed invite handling (#1808)', () => {
         expect(getInviteDashboardUrl('household')).toBe('parent-dashboard.html');
         expect(getInviteDashboardUrl('admin')).toBe('dashboard.html');
         expect(getInviteDashboardUrl('admin_invite')).toBe('dashboard.html');
+        expect(getInviteDashboardUrl('friend_invite')).toBe('/app/#/home?section=friends');
         expect(getInviteDashboardUrl('standard')).toBe('dashboard.html');
         expect(getInviteDashboardUrl(undefined)).toBe('parent-dashboard.html');
     });
@@ -366,6 +367,58 @@ describe('accept invite flow', () => {
             'This invite was sent to invited@example.com. Sign in with that email to accept it.'
         );
         expect(deps.redeemAdminInviteAtomically).not.toHaveBeenCalled();
+    });
+
+    it('redeems friend invites into the app friends route', async () => {
+        const deps = {
+            validateAccessCode: vi.fn(async () => ({
+                valid: true,
+                codeId: 'code-friend-1',
+                type: 'friend_invite',
+                data: {
+                    code: 'FRIEND12',
+                    generatedBy: 'inviter-1'
+                }
+            })),
+            redeemParentInvite: vi.fn(),
+            redeemFriendInvite: vi.fn().mockResolvedValue({
+                success: true,
+                friendshipId: 'invitee-1__inviter-1',
+                inviterName: 'Taylor Coach'
+            }),
+            markAccessCodeAsUsed: vi.fn()
+        };
+
+        const processInvite = createInviteProcessor(deps);
+        const result = await processInvite('invitee-1', 'FRIEND12', 'friend@example.com');
+
+        expect(result).toEqual({
+            success: true,
+            message: "You're now connected with Taylor Coach on ALL PLAYS!",
+            redirectUrl: '/app/#/home?section=friends'
+        });
+        expect(deps.redeemFriendInvite).toHaveBeenCalledWith('invitee-1', 'FRIEND12', 'friend@example.com');
+        expect(deps.markAccessCodeAsUsed).not.toHaveBeenCalled();
+    });
+
+    it('fails closed when friend invite redemption is unavailable', async () => {
+        const deps = {
+            validateAccessCode: vi.fn(async () => ({
+                valid: true,
+                codeId: 'code-friend-2',
+                type: 'friend_invite',
+                data: { code: 'FRIEND34' }
+            })),
+            redeemParentInvite: vi.fn(),
+            markAccessCodeAsUsed: vi.fn()
+        };
+
+        const processInvite = createInviteProcessor(deps);
+
+        await expect(processInvite('invitee-2', 'FRIEND34')).rejects.toThrow(
+            'Missing friend invite redemption handler'
+        );
+        expect(deps.markAccessCodeAsUsed).not.toHaveBeenCalled();
     });
 
     it('does not mark code when validation fails', async () => {

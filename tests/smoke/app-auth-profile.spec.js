@@ -698,6 +698,8 @@ test('profile exposes account, notification, invite, verification, password, upl
     await expect(page.getByText('Invite codes')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Show more codes' })).toBeVisible();
     await expect(page.getByText('Advanced: add recipient label')).toBeVisible();
+    await page.getByText('Advanced: add recipient label').click();
+    await page.getByLabel('Invite email label').fill('friend@example.com');
     await page.getByRole('button', { name: 'Generate invite link' }).click();
     await expect(page.getByText('Generated invite link')).toBeVisible();
     const shareInviteLink = page.getByRole('button', { name: 'Share invite link' });
@@ -763,10 +765,10 @@ test('profile exposes account, notification, invite, verification, password, upl
             { userId: 'user-1', teamId: 'team-1', preferences: { liveChat: true, liveScore: true, schedule: true } },
             { userId: 'user-1', teamId: 'team-1', preferences: { liveChat: false, liveScore: true, schedule: true } }
         ],
-        accessCodes: [{ userId: 'user-1', email: '', phone: '' }],
+        accessCodes: [{ userId: 'user-1', email: 'friend@example.com', phone: '' }],
         shares: [expect.objectContaining({
-            title: 'ALL PLAYS invite link',
-            text: 'Use this ALL PLAYS invite link to join ALL PLAYS.',
+            title: 'ALL PLAYS invite for friend@example.com',
+            text: 'Use this ALL PLAYS invite link for friend@example.com.',
             url: expect.stringContaining('/app#/accept-invite?code=NEWMVP42'),
             clipboardText: expect.stringContaining('/app#/accept-invite?code=NEWMVP42')
         })],

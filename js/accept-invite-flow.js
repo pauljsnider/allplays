@@ -20,6 +20,9 @@ export function isInviteAlreadyRedeemedError(error) {
 /** Dashboard a successful redemption of this invite type would land on. */
 export function getInviteDashboardUrl(inviteType) {
     const normalized = String(inviteType || '').trim().toLowerCase();
+    if (normalized === 'friend' || normalized === 'friend_invite') {
+        return '/app/#/home?section=friends';
+    }
     if (normalized === 'admin' || normalized === 'admin_invite' || normalized === 'standard' || normalized === 'site') {
         return 'dashboard.html';
     }
@@ -88,7 +91,8 @@ export async function processInviteCode(userId, code, deps, authEmail = null) {
         markAccessCodeAsUsed,
         redeemAdminInviteAtomically,
         redeemHouseholdInvite,
-        redeemCoParentInvite
+        redeemCoParentInvite,
+        redeemFriendInvite
     } = deps;
 
     const validation = await validateAccessCode(code);
@@ -209,6 +213,19 @@ export async function processInviteCode(userId, code, deps, authEmail = null) {
             success: true,
             message: `You've been added as an admin of ${redeemResult.teamName || team?.name || 'the team'}!`,
             redirectUrl: 'dashboard.html'
+        };
+    }
+
+    if (validation.type === 'friend_invite') {
+        if (typeof redeemFriendInvite !== 'function') {
+            throw new Error('Missing friend invite redemption handler');
+        }
+
+        const redeemResult = await redeemFriendInvite(userId, code, authEmail);
+        return {
+            success: true,
+            message: `You're now connected with ${redeemResult?.inviterName || 'your friend'} on ALL PLAYS!`,
+            redirectUrl: '/app/#/home?section=friends'
         };
     }
 

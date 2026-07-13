@@ -15,6 +15,7 @@ describe('shared join-code contract', () => {
         expect(normalizeJoinCodeType('admin_invite')).toBe('admin');
         expect(normalizeJoinCodeType('household_invite')).toBe('household');
         expect(normalizeJoinCodeType('coparent_invite')).toBe('coparent');
+        expect(normalizeJoinCodeType('friend_invite')).toBe('friend');
     });
 
     it('builds the same accept-invite entry point for every code type', () => {
@@ -23,6 +24,7 @@ describe('shared join-code contract', () => {
         expect(buildLegacyJoinUrl('abcd1234', 'admin_invite')).toBe('accept-invite.html?code=ABCD1234&type=admin');
         expect(buildLegacyJoinUrl('abcd1234', 'household_invite')).toBe('accept-invite.html?code=ABCD1234&type=household');
         expect(buildLegacyJoinUrl('abcd1234', 'coparent_invite')).toBe('accept-invite.html?code=ABCD1234&type=coparent');
+        expect(buildLegacyJoinUrl('abcd1234', 'friend_invite')).toBe('accept-invite.html?code=ABCD1234&type=friend');
     });
 
     it('generates secure eight-character codes from the non-ambiguous alphabet', () => {

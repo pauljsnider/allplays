@@ -12,11 +12,11 @@ import {
     signInWithEmailLink,
     updatePassword
 } from './firebase.js?v=20';
-import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, rollbackParentInviteRedemption, getUserProfile, getUserTeams, getTeam, listMyParentMembershipRequests, normalizeParentScopeLinks } from './db.js?v=94';
-import { executeEmailPasswordSignup } from './signup-flow.js?v=8';
+import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, redeemFriendInvite, rollbackParentInviteRedemption, getUserProfile, getUserTeams, getTeam, listMyParentMembershipRequests, normalizeParentScopeLinks } from './db.js?v=95';
+import { executeEmailPasswordSignup } from './signup-flow.js?v=9';
 import { redeemAdminInviteAcceptance, redeemAdminInviteAtomically } from './admin-invite.js?v=6';
 import { mergeApprovedParentMembershipRequests } from './parent-membership-utils.js?v=2';
-import { createInviteProcessor } from './accept-invite-flow.js?v=10';
+import { createInviteProcessor } from './accept-invite-flow.js?v=11';
 import {
     queueCurrentUserVerificationEmail,
     queueInviteSignInEmail,
@@ -89,6 +89,17 @@ async function redeemCoParentInviteOrRollback(user, code) {
     }
 }
 
+async function linkFriendInviteOrRollback(user, friendInviteCode) {
+    try {
+        await redeemFriendInvite(user.uid, friendInviteCode, user.email);
+    } catch (inviteLinkError) {
+        console.error('Error linking friend invite:', inviteLinkError);
+        clearPendingActivationCode();
+        await cleanupFailedNewUser(user, 'friend invite link failure');
+        throw inviteLinkError;
+    }
+}
+
 export async function login(email, password) {
     const userCredential = await signInWithEmailAndPassword(auth, email, password);
 
@@ -115,6 +126,7 @@ export async function signup(email, password, activationCode) {
             validateAccessCode,
             createUserWithEmailAndPassword,
             redeemParentInvite,
+            redeemFriendInvite,
             redeemAdminInviteAcceptance,
             redeemHouseholdInvite,
             redeemCoParentInvite,
@@ -250,6 +262,19 @@ async function processGoogleAuthResult(result, activationCode = null) {
             } catch (e) {
                 console.error('Error creating user profile after co-parent invite redeem:', e);
             }
+        } else if (validation.type === 'friend_invite') {
+            await linkFriendInviteOrRollback(result.user, validation.data?.code || code);
+
+            try {
+                await updateUserProfile(userId, {
+                    email: result.user.email,
+                    fullName: result.user.displayName,
+                    photoUrl: result.user.photoURL,
+                    createdAt: new Date()
+                });
+            } catch (e) {
+                console.error('Error creating user profile after friend invite redeem:', e);
+            }
         } else if (validation.type === 'admin_invite') {
             try {
                 await redeemAdminInviteAcceptance({
@@ -309,6 +334,7 @@ async function processGoogleAuthResult(result, activationCode = null) {
                 redeemParentInvite,
                 redeemHouseholdInvite,
                 redeemCoParentInvite,
+                redeemFriendInvite,
                 redeemAdminInviteAtomically,
                 getTeam,
                 getUserProfile,

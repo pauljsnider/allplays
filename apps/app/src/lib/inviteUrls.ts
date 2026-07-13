@@ -17,7 +17,9 @@ const inviteTypeAliases: Record<string, string> = {
     coparent: 'coparent',
     co_parent: 'coparent',
     'co-parent': 'coparent',
-    coparent_invite: 'coparent'
+    coparent_invite: 'coparent',
+    friend: 'friend',
+    friend_invite: 'friend'
 };
 
 export function normalizeAppInviteType(inviteType?: string | null) {

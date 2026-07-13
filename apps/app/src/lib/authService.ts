@@ -1051,6 +1051,7 @@ export async function signUpWithEmail(email: string, password: string, activatio
       validateAccessCode: dbModule.validateAccessCode,
       createUserWithEmailAndPassword,
       redeemParentInvite: dbModule.redeemParentInvite,
+      redeemFriendInvite: dbModule.redeemFriendInvite,
       redeemHouseholdInvite: dbModule.redeemHouseholdInvite,
       redeemCoParentInvite: dbModule.redeemCoParentInvite,
       rollbackParentInviteRedemption: dbModule.rollbackParentInviteRedemption,
@@ -1138,6 +1139,8 @@ async function processGoogleResult(result: UserCredential | null, activationCode
       await dbModule.redeemHouseholdInvite(result.user.uid, validation.data?.code || code);
     } else if (validation.type === 'coparent_invite') {
       await dbModule.redeemCoParentInvite(result.user.uid, validation.data?.code || code, result.user.email);
+    } else if (validation.type === 'friend_invite') {
+      await dbModule.redeemFriendInvite(result.user.uid, validation.data?.code || code, result.user.email);
     } else if (validation.type === 'admin_invite') {
       const { redeemAdminInviteAcceptance } = await loadLegacyAdminInvite();
       await redeemAdminInviteAcceptance({
@@ -1352,6 +1355,7 @@ export async function redeemInviteForUser(userId: string, code: string, authEmai
   const processInvite = createInviteProcessor({
     validateAccessCode: dbModule.validateAccessCode,
     redeemParentInvite: dbModule.redeemParentInvite,
+    redeemFriendInvite: dbModule.redeemFriendInvite,
     redeemHouseholdInvite: dbModule.redeemHouseholdInvite,
     redeemCoParentInvite: dbModule.redeemCoParentInvite,
     redeemAdminInviteAtomically,

@@ -60,6 +60,23 @@ service cloud.firestore {
               isGlobalAdmin());
     }
 
+    function canGetPhoneOnlyFriendInviteAccessCode(data) {
+      return isSignedIn() &&
+             data.get('type', null) == 'friend_invite' &&
+             data.get('email', null) == null &&
+             data.get('phone', null) is string &&
+             data.get('phone', '') != '' &&
+             data.get('generatedBy', '') != request.auth.uid &&
+             data.get('used', false) == false &&
+             data.get('revoked', false) != true &&
+             data.get('active', true) != false &&
+             data.get('status', 'active') != 'removed' &&
+             data.get('status', 'active') != 'cancelled' &&
+             data.get('status', 'active') != 'revoked' &&
+             data.get('expiresAt', null) is timestamp &&
+             data.get('expiresAt', null) > request.time;
+    }
+
     function canReadRegistrationSource(data) {
       return isSignedIn() &&
              (isGlobalAdmin() ||
@@ -91,6 +108,38 @@ service cloud.firestore {
              data.used == false &&
              data.usedBy == null &&
              data.usedAt == null;
+    }
+
+    function isFriendInviteAccessCodePayloadValid(data) {
+      return data.keys().hasOnly([
+               'code', 'type', 'generatedBy', 'email', 'phone', 'inviterProfile', 'createdAt', 'expiresAt', 'used', 'usedBy', 'usedAt'
+             ]) &&
+             data.keys().hasAll([
+               'code', 'type', 'generatedBy', 'inviterProfile', 'createdAt', 'expiresAt', 'used', 'usedBy', 'usedAt'
+             ]) &&
+             data.type == 'friend_invite' &&
+             data.code is string &&
+             data.code.size() > 0 &&
+             data.generatedBy == request.auth.uid &&
+             (!('email' in data) || data.email == null || data.email is string) &&
+             (!('phone' in data) || data.phone == null || data.phone is string) &&
+             isFriendInviteInviterProfileValid(data.inviterProfile) &&
+             data.createdAt is timestamp &&
+             data.expiresAt is timestamp &&
+             data.expiresAt > request.time &&
+             data.used == false &&
+             data.usedBy == null &&
+             data.usedAt == null;
+    }
+
+    function isFriendInviteInviterProfileValid(data) {
+      return data is map &&
+             data.keys().hasOnly(['displayName', 'fullName', 'photoUrl', 'discoveryTeamIds']) &&
+             (!data.keys().hasAny(['displayName']) || data.displayName == null || data.displayName is string) &&
+             (!data.keys().hasAny(['fullName']) || data.fullName == null || data.fullName is string) &&
+             (!data.keys().hasAny(['photoUrl']) || data.photoUrl == null || data.photoUrl is string) &&
+             data.get('discoveryTeamIds', []) is list &&
+             !data.keys().hasAny(['email', 'phone', 'parentOf', 'parentTeamIds', 'parentPlayerKeys']);
     }
 
     function isAdminInvitePayloadValid(data) {
@@ -224,6 +273,25 @@ service cloud.firestore {
              request.resource.data.usedBy == request.auth.uid &&
              request.resource.data.usedAt is timestamp;
     }
+
+    function isFriendInviteRedemptionUpdate() {
+      return resource.data.get('type', null) == 'friend_invite' &&
+             request.resource.data.get('type', resource.data.get('type', null)) == 'friend_invite' &&
+             request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'usedBy', 'usedAt']) &&
+             resource.data.used == false &&
+             resource.data.generatedBy != request.auth.uid &&
+             resource.data.get('revoked', false) != true &&
+             resource.data.get('active', true) != false &&
+             resource.data.get('status', 'active') != 'removed' &&
+             resource.data.get('status', 'active') != 'cancelled' &&
+             resource.data.get('status', 'active') != 'revoked' &&
+             resource.data.expiresAt is timestamp &&
+             resource.data.expiresAt > request.time &&
+             request.resource.data.used == true &&
+             request.resource.data.usedBy == request.auth.uid &&
+             request.resource.data.usedAt is timestamp;
+    }
+
 
     function isParentInviteRevocationUpdate() {
       return resource.data.get('type', null) == 'parent_invite' &&
@@ -1354,6 +1422,14 @@ service cloud.firestore {
              request.auth.uid in data.get('memberIds', []);
     }
 
+    function canGetMissingFriendship(friendshipId) {
+      let friendshipPath = /databases/$(database)/documents/friendships/$(friendshipId);
+      return isSignedIn() &&
+             !exists(friendshipPath) &&
+             (friendshipId.matches('^' + request.auth.uid + '__.+$') ||
+              friendshipId.matches('^.+__' + request.auth.uid + '$'));
+    }
+
     function currentUserPublicProfileTeamIds() {
       let userPath = /databases/$(database)/documents/users/$(request.auth.uid);
       return isSignedIn() && exists(userPath)
@@ -1424,15 +1500,139 @@ service cloud.firestore {
               data.email.lower() == request.auth.token.email.lower());
     }
 
-    function isFriendshipCreatePayloadValid(data) {
+    function buildFriendshipId(firstUserId, secondUserId) {
+      return firstUserId < secondUserId
+        ? firstUserId + "__" + secondUserId
+        : secondUserId + "__" + firstUserId;
+    }
+
+    function isFriendshipCreatePayloadValid(friendshipId, data) {
       return isSignedIn() &&
              data.get('requesterId', '') == request.auth.uid &&
              data.get('recipientId', '') is string &&
              data.get('recipientId', '') != request.auth.uid &&
              data.get('memberIds', []) is list &&
+             data.get('memberIds', []).size() == 2 &&
              request.auth.uid in data.get('memberIds', []) &&
              data.get('recipientId', '') in data.get('memberIds', []) &&
+             friendshipId == buildFriendshipId(request.auth.uid, data.get('recipientId', '')) &&
              data.get('status', '') == 'pending';
+    }
+
+    function isFriendInviteAcceptedFriendshipCreateValid(friendshipId, data) {
+      let codeId = data.get('inviteCodeId', '');
+      let codePath = /databases/$(database)/documents/accessCodes/$(codeId);
+      let codeBefore = get(codePath).data;
+      let codeAfter = getAfter(codePath).data;
+      return isSignedIn() &&
+             codeId is string &&
+             codeId != '' &&
+             exists(codePath) &&
+             existsAfter(codePath) &&
+             data.keys().hasOnly([
+               'requesterId', 'recipientId', 'memberIds', 'status',
+               'sharedTeamIds', 'sharedTeamNames', 'blockedBy',
+               'source', 'inviteCodeId', 'createdAt', 'acceptedAt',
+               'respondedAt', 'updatedAt'
+             ]) &&
+             data.get('requesterId', '') is string &&
+             data.get('requesterId', '') != request.auth.uid &&
+             data.get('recipientId', '') == request.auth.uid &&
+             data.get('memberIds', []) is list &&
+             data.get('memberIds', []).size() == 2 &&
+             request.auth.uid in data.get('memberIds', []) &&
+             data.get('requesterId', '') in data.get('memberIds', []) &&
+             friendshipId == buildFriendshipId(data.get('requesterId', ''), request.auth.uid) &&
+             data.get('status', '') == 'accepted' &&
+             data.get('source', '') == 'friend_invite' &&
+             data.get('inviteCodeId', '') == codeId &&
+             data.get('sharedTeamIds', []) is list &&
+             data.get('sharedTeamNames', []) is list &&
+             data.get('blockedBy', []) is list &&
+             data.get('blockedBy', []).size() == 0 &&
+             data.get('createdAt', request.time) is timestamp &&
+             data.get('acceptedAt', request.time) is timestamp &&
+             data.get('respondedAt', request.time) is timestamp &&
+             data.get('updatedAt', request.time) is timestamp &&
+             codeBefore.get('type', null) == 'friend_invite' &&
+             codeBefore.get('generatedBy', '') == data.get('requesterId', '') &&
+             codeBefore.get('used', false) == false &&
+             codeBefore.get('usedBy', null) == null &&
+             codeBefore.get('usedAt', null) == null &&
+             codeAfter.get('type', null) == 'friend_invite' &&
+             codeAfter.get('generatedBy', '') == data.get('requesterId', '') &&
+             codeAfter.get('used', false) == true &&
+             codeAfter.get('usedBy', '') == request.auth.uid &&
+             codeAfter.get('usedAt', null) is timestamp;
+    }
+
+    function isFriendInviteAcceptedFriendshipUpdateValid(friendshipId) {
+      let codeId = request.resource.data.get('inviteCodeId', '');
+      let codePath = /databases/$(database)/documents/accessCodes/$(codeId);
+      let codeBefore = get(codePath).data;
+      let codeAfter = getAfter(codePath).data;
+      return isSignedIn() &&
+             codeId is string &&
+             codeId != '' &&
+             exists(codePath) &&
+             existsAfter(codePath) &&
+             canAccessFriendship(resource.data) &&
+             resource.data.get('status', '') != 'blocked' &&
+             !(resource.data.get('blockedBy', []) is list && resource.data.get('blockedBy', []).size() > 0) &&
+             request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+               'requesterId', 'recipientId', 'memberIds', 'status',
+               'sharedTeamIds', 'sharedTeamNames', 'blockedBy',
+               'source', 'inviteCodeId', 'createdAt', 'acceptedAt',
+               'respondedAt', 'updatedAt'
+             ]) &&
+             request.resource.data.get('requesterId', '') == resource.data.get('requesterId', '') &&
+             request.resource.data.get('recipientId', '') == resource.data.get('recipientId', '') &&
+             request.resource.data.get('memberIds', []) == resource.data.get('memberIds', []) &&
+             request.auth.uid in request.resource.data.get('memberIds', []) &&
+             codeAfter.get('generatedBy', '') in request.resource.data.get('memberIds', []) &&
+             codeAfter.get('generatedBy', '') != request.auth.uid &&
+             friendshipId == buildFriendshipId(codeAfter.get('generatedBy', ''), request.auth.uid) &&
+             request.resource.data.get('status', '') == 'accepted' &&
+             request.resource.data.get('source', '') == 'friend_invite' &&
+             request.resource.data.get('inviteCodeId', '') == codeId &&
+             request.resource.data.get('sharedTeamIds', []) is list &&
+             request.resource.data.get('sharedTeamNames', []) is list &&
+             request.resource.data.get('blockedBy', []) is list &&
+             request.resource.data.get('blockedBy', []).size() == 0 &&
+             request.resource.data.get('createdAt', request.time) == resource.data.get('createdAt', request.time) &&
+             request.resource.data.get('acceptedAt', request.time) is timestamp &&
+             request.resource.data.get('respondedAt', request.time) is timestamp &&
+             request.resource.data.get('updatedAt', request.time) is timestamp &&
+             codeBefore.get('type', null) == 'friend_invite' &&
+             codeBefore.get('generatedBy', '') in request.resource.data.get('memberIds', []) &&
+             codeBefore.get('generatedBy', '') != request.auth.uid &&
+             codeBefore.get('used', false) == false &&
+             codeBefore.get('usedBy', null) == null &&
+             codeBefore.get('usedAt', null) == null &&
+             codeAfter.get('type', null) == 'friend_invite' &&
+             codeAfter.get('used', false) == true &&
+             codeAfter.get('usedBy', '') == request.auth.uid &&
+             codeAfter.get('usedAt', null) is timestamp;
+    }
+
+    function isFriendshipMemberUpdatePayloadValid() {
+      return canAccessFriendship(resource.data) &&
+             resource.data.get('status', '') != 'blocked' &&
+             request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+               'requesterId', 'recipientId', 'memberIds', 'status',
+               'sharedTeamIds', 'sharedTeamNames', 'blockedBy',
+               'respondedAt', 'createdAt', 'updatedAt'
+             ]) &&
+             request.resource.data.get('memberIds', []) == resource.data.get('memberIds', []) &&
+             request.resource.data.get('status', '') in ['pending', 'accepted', 'declined', 'removed', 'blocked'] &&
+             (
+               request.resource.data.get('blockedBy', resource.data.get('blockedBy', [])) == resource.data.get('blockedBy', []) ||
+               (
+                 request.resource.data.get('status', '') == 'blocked' &&
+                 request.resource.data.get('blockedBy', []) is list &&
+                 request.auth.uid in request.resource.data.get('blockedBy', [])
+               )
+             );
     }
 
 
@@ -2114,11 +2314,17 @@ service cloud.firestore {
     }
 
     match /friendships/{friendshipId} {
-      allow read: if canAccessFriendship(resource.data) || isGlobalAdmin();
-      allow create: if isFriendshipCreatePayloadValid(request.resource.data);
-      allow update: if (canAccessFriendship(resource.data) || isGlobalAdmin()) &&
-                    request.resource.data.get('memberIds', []) == resource.data.get('memberIds', []) &&
-                    request.resource.data.get('status', '') in ['pending', 'accepted', 'declined', 'removed', 'blocked'];
+      allow get: if canGetMissingFriendship(friendshipId) ||
+                    canAccessFriendship(resource.data) ||
+                    isGlobalAdmin();
+      allow list: if canAccessFriendship(resource.data) || isGlobalAdmin();
+      allow create: if isFriendshipCreatePayloadValid(friendshipId, request.resource.data) ||
+                    isFriendInviteAcceptedFriendshipCreateValid(friendshipId, request.resource.data);
+      allow update: if isFriendInviteAcceptedFriendshipUpdateValid(friendshipId) ||
+                    isFriendshipMemberUpdatePayloadValid() ||
+                    (isGlobalAdmin() &&
+                     request.resource.data.get('memberIds', []) == resource.data.get('memberIds', []) &&
+                     request.resource.data.get('status', '') in ['pending', 'accepted', 'declined', 'removed', 'blocked']);
       allow delete: if canAccessFriendship(resource.data) || isGlobalAdmin();
     }
 
@@ -2266,7 +2472,7 @@ service cloud.firestore {
 
     // Access codes
 	    match /accessCodes/{codeId} {
-      allow get: if resource == null || canReadAccessCode(resource.data);
+      allow get: if resource == null || canReadAccessCode(resource.data) || canGetPhoneOnlyFriendInviteAccessCode(resource.data);
       allow list: if canReadAccessCode(resource.data);
       allow create: if isSignedIn() &&
                        request.resource.data.generatedBy == request.auth.uid &&
@@ -2290,6 +2496,9 @@ service cloud.firestore {
                           request.resource.data.code == codeId) ||
                          (request.resource.data.get('type', null) == 'household_invite' &&
                           isHouseholdInviteAccessCodePayloadValid(request.resource.data) &&
+                          request.resource.data.code == codeId) ||
+                         (request.resource.data.get('type', null) == 'friend_invite' &&
+                          isFriendInviteAccessCodePayloadValid(request.resource.data) &&
                           request.resource.data.code == codeId)
                        );
       // Only allow the code generator to update/delete, OR allow system to mark as used during signup
@@ -2304,12 +2513,14 @@ service cloud.firestore {
                         isParentInviteRevocationUpdate() ||
                         isHouseholdInviteRedemptionUpdate() ||
                         isHouseholdInviteRevocationUpdate() ||
+                        isFriendInviteRedemptionUpdate() ||
                         // Allow standard activation-code redemption without raw document reads.
                         isStandardAccessCodeRedemptionUpdate() ||
                         (resource.data.get('type', null) != 'admin_invite' &&
                          resource.data.get('type', null) != 'parent_invite' &&
                          resource.data.get('type', null) != 'household_invite' &&
                          resource.data.get('type', null) != 'coparent_invite' &&
+                         resource.data.get('type', null) != 'friend_invite' &&
                          resource.data.generatedBy == request.auth.uid &&
                          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['revoked', 'revokedAt', 'used', 'updatedAt'])));
 	      allow delete: if isSignedIn() && resource.data.generatedBy == request.auth.uid;

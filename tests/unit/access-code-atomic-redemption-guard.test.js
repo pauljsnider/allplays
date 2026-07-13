@@ -130,4 +130,24 @@ describe('access code atomic redemption guard', () => {
         expect(keepBranchSource).toContain('trustedEmail: userData.email || null');
         expect(keepBranchSource).toContain('}), { merge: true });');
     });
+
+    it('creates friend relationships in the same transaction that claims the code', () => {
+        const dbSourcePath = resolve(process.cwd(), 'js/db.js');
+        const source = readFileSync(dbSourcePath, 'utf8');
+
+        const fnAnchor = 'export async function redeemFriendInvite';
+        const fnIndex = source.indexOf(fnAnchor);
+        expect(fnIndex).toBeGreaterThanOrEqual(0);
+
+        const afterFunction = source.slice(fnIndex, fnIndex + 5000);
+        expect(afterFunction).toContain('runTransaction(db, async (transaction) =>');
+        expect(afterFunction).toContain('const friendshipSnapshot = await transaction.get(friendshipRef);');
+        expect(afterFunction).toContain("existingFriendship.status === 'blocked'");
+        expect(afterFunction).toContain('existingFriendship.blockedBy.length > 0');
+        expect(afterFunction).toContain('existingFriendship,');
+        expect(afterFunction).toContain('transaction.set(friendshipRef');
+        expect(afterFunction).toContain('transaction.update(codeRef');
+        expect(afterFunction).toContain('buildFriendInviteInviterProfile(codeData.inviterProfile || {})');
+        expect(afterFunction).not.toContain('doc(db, "users", inviterId)');
+    });
 });

@@ -83,7 +83,9 @@ const REDEEMABLE_INVITE_TYPES = new Set([
     'coparent',
     'co_parent',
     'co-parent',
-    'coparent_invite'
+    'coparent_invite',
+    'friend',
+    'friend_invite'
 ]);
 
 export function createLoginRedirectCoordinator({
