@@ -52,6 +52,13 @@ type LegacyRsvpBreakdownRow = LegacyRecord & {
     response?: string;
 };
 
+type LegacyUnmatchedRsvpResponder = LegacyRecord & {
+    responderUserId?: string | null;
+    responderName?: string;
+    response?: string;
+    respondedAt?: unknown;
+};
+
 export type LegacyGameDayRsvpBreakdown = {
     grouped: {
         going: LegacyRsvpBreakdownRow[];
@@ -59,6 +66,7 @@ export type LegacyGameDayRsvpBreakdown = {
         not_going: LegacyRsvpBreakdownRow[];
         not_responded: LegacyRsvpBreakdownRow[];
     };
+    unmatchedResponders: LegacyUnmatchedRsvpResponder[];
     counts: Record<string, number>;
 };
 
@@ -235,6 +243,7 @@ export function buildGameDayRsvpBreakdown(input: { players: unknown[]; rsvps: un
             not_going: normalizeArray(breakdown.grouped?.not_going),
             not_responded: normalizeArray(breakdown.grouped?.not_responded)
         },
+        unmatchedResponders: normalizeArray(breakdown.unmatchedResponders),
         counts: normalizeRecord<Record<string, number>>(breakdown.counts)
     };
 }

@@ -293,6 +293,13 @@ export type StaffScheduleRsvpRow = {
   responderUserId?: string | null;
 };
 
+export type StaffScheduleUnmatchedRsvpResponder = {
+  responderUserId: string | null;
+  responderName: string;
+  response: RsvpResponse;
+  respondedAt?: unknown;
+};
+
 export type StaffScheduleRsvpBreakdown = {
   grouped: {
     going: StaffScheduleRsvpRow[];
@@ -300,6 +307,7 @@ export type StaffScheduleRsvpBreakdown = {
     not_going: StaffScheduleRsvpRow[];
     not_responded: StaffScheduleRsvpRow[];
   };
+  unmatchedResponders?: StaffScheduleUnmatchedRsvpResponder[];
   counts: Required<ScheduleRsvpSummary>;
 };
 
@@ -4129,9 +4137,18 @@ function normalizeStaffScheduleRsvpBreakdown(value: any): StaffScheduleRsvpBreak
     not_going: normalizeRows(grouped.not_going, 'not_going'),
     not_responded: normalizeRows(grouped.not_responded, 'not_responded')
   };
+  const unmatchedResponders = (Array.isArray(value?.unmatchedResponders) ? value.unmatchedResponders : [])
+    .map((entry: any): StaffScheduleUnmatchedRsvpResponder => ({
+      responderUserId: compactString(entry?.responderUserId) || null,
+      responderName: compactString(entry?.responderName) || compactString(entry?.responderUserId) || 'Unknown responder',
+      response: normalizeRsvpResponse(entry?.response),
+      respondedAt: entry?.respondedAt || null
+    }))
+    .filter((entry: StaffScheduleUnmatchedRsvpResponder) => entry.response !== 'not_responded');
 
   return {
     grouped: normalizedGrouped,
+    unmatchedResponders,
     counts: {
       going: normalizedGrouped.going.length,
       maybe: normalizedGrouped.maybe.length,
@@ -4140,6 +4157,23 @@ function normalizeStaffScheduleRsvpBreakdown(value: any): StaffScheduleRsvpBreak
       total: normalizedGrouped.going.length + normalizedGrouped.maybe.length + normalizedGrouped.not_going.length + normalizedGrouped.not_responded.length
     }
   };
+}
+
+function buildRosterRsvpFallbackByUser(players: any[] = []) {
+  const fallbackByUser = new Map<string, string[]>();
+  (Array.isArray(players) ? players : []).forEach((player) => {
+    const playerId = compactString(player?.id || player?.playerId);
+    if (!playerId) return;
+    getPlayerParentUserIds(player).forEach((userId) => {
+      const normalizedUserId = compactString(userId);
+      if (!normalizedUserId) return;
+      fallbackByUser.set(normalizedUserId, uniqueNonEmptyStrings([
+        ...(fallbackByUser.get(normalizedUserId) || []),
+        playerId
+      ]));
+    });
+  });
+  return fallbackByUser;
 }
 
 async function loadStaffRsvpEventData(event: ParentScheduleEvent): Promise<StaffRsvpEventData> {
@@ -4158,8 +4192,9 @@ async function loadStaffRsvpEventData(event: ParentScheduleEvent): Promise<Staff
       loadPlayers(event.teamId),
       loadRsvps(event.teamId, event.id)
     ]);
+    const fallbackByUser = buildRosterRsvpFallbackByUser(players);
     return {
-      breakdown: normalizeStaffScheduleRsvpBreakdown(buildGameDayRsvpBreakdown({ players, rsvps })),
+      breakdown: normalizeStaffScheduleRsvpBreakdown(buildGameDayRsvpBreakdown({ players, rsvps, fallbackByUser })),
       reminderPreview: buildStaffRsvpReminderPreview(players, rsvps)
     };
   }

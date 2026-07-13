@@ -61,6 +61,19 @@ export function StaffRsvpBreakdownPanel({ breakdown, loading, error, submittingP
           {formatRsvpSummary(breakdown.counts)}
         </span>
       </div>
+      {breakdown.unmatchedResponders?.length ? (
+        <div data-testid="staff-rsvp-unmatched-responders" className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+          <div className="font-black">Unmatched parent responses</div>
+          <div className="mt-1 font-semibold leading-5">These responses were saved, but their accounts are not linked to a player on this team.</div>
+          <ul className="mt-2 space-y-1 font-bold">
+            {breakdown.unmatchedResponders.map((responder, index) => (
+              <li key={`${responder.responderUserId || responder.responderName}-${index}`}>
+                Answered by {responder.responderName} — not linked to a player ({rsvpLabels[responder.response]}).
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       {hasMissingPlayers && respondedPlayerCount > 0 ? (
         <button
           type="button"

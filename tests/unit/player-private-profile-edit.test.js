@@ -114,12 +114,14 @@ function buildDbProfileUpdateHelpers() {
 function buildPrivateParentMergeHelpers() {
     const source = readDbSource();
     const hasContactsSource = extractFunction(source, 'function playerHasRosterContactFields(');
+    const hasParentUserIdsSource = extractFunction(source, 'function playerHasRosterParentUserIds(');
     const mergeSource = extractFunction(source, 'async function mergePlayerPrivateProfileParents(')
         .replace('async function mergePlayerPrivateProfileParents', 'async function mergePlayerPrivateProfileParents');
 
     const factory = new Function('deps', `
         const { getPlayerPrivateProfile } = deps;
         ${hasContactsSource}
+        ${hasParentUserIdsSource}
         ${mergeSource}
         return { playerHasRosterContactFields, mergePlayerPrivateProfileParents };
     `);
@@ -326,5 +328,29 @@ describe('player profile private doc writes', () => {
         ]);
         expect(deps.getPlayerPrivateProfile).toHaveBeenCalledTimes(1);
         expect(deps.getPlayerPrivateProfile).toHaveBeenCalledWith('team-1', 'player-private');
+    });
+
+    it('hydrates a mixed public parent list when one contact is missing its user attribution', async () => {
+        const { deps, mergePlayerPrivateProfileParents } = buildPrivateParentMergeHelpers();
+        deps.getPlayerPrivateProfile.mockResolvedValue({
+            parents: [
+                { userId: 'parent-1', email: 'one@example.com' },
+                { userId: 'parent-2', email: 'two@example.com' }
+            ]
+        });
+
+        const [player] = await mergePlayerPrivateProfileParents('team-1', [{
+            id: 'player-mixed',
+            parents: [
+                { userId: 'parent-1', email: 'one@example.com' },
+                { email: 'two@example.com' }
+            ]
+        }]);
+
+        expect(deps.getPlayerPrivateProfile).toHaveBeenCalledWith('team-1', 'player-mixed');
+        expect(player.privateProfileParents).toEqual([
+            { userId: 'parent-1', email: 'one@example.com' },
+            { userId: 'parent-2', email: 'two@example.com' }
+        ]);
     });
 });

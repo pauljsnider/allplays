@@ -11,12 +11,12 @@ describe('RSVP precedence cache delivery', () => {
         const breakdownSource = readRepoFile('js/game-day-rsvp-breakdown.js');
         const runtimeSources = {
             'accept-invite.html': 'db.js?v=95',
-            'calendar.html': 'db.js?v=91',
-            'edit-schedule.html': 'db.js?v=91',
-            'game-day.html': 'db.js?v=91',
+            'calendar.html': 'db.js?v=96',
+            'edit-schedule.html': 'db.js?v=96',
+            'game-day.html': 'db.js?v=96',
             'login.html': 'db.js?v=91',
-            'parent-dashboard.html': 'db.js?v=92',
-            'team.html': 'db.js?v=91',
+            'parent-dashboard.html': 'db.js?v=96',
+            'team.html': 'db.js?v=96',
             'team-chat.html': 'db.js?v=94',
             'js/auth.js': 'db.js?v=95',
             'profile.html': 'db.js?v=95',
@@ -27,7 +27,7 @@ describe('RSVP precedence cache delivery', () => {
             expect(readRepoFile(path)).toContain(expectedVersion);
         }
         expect(dbSource).toContain("from './rsvp-summary.js?v=2';");
-        expect(dbSource).toContain("from './game-day-rsvp-breakdown.js?v=2';");
+        expect(dbSource).toContain("from './game-day-rsvp-breakdown.js?v=3';");
         expect(breakdownSource).toContain("from './rsvp-summary.js?v=2';");
     });
 

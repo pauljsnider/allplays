@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-    buildGameDayRsvpBreakdown: vi.fn(() => ({ grouped: {}, counts: {} })),
+    buildGameDayRsvpBreakdown: vi.fn(() => ({ grouped: {}, counts: {}, unmatchedResponders: [] as unknown[] })),
     expandRecurrence: vi.fn(),
     getSubstitutionOptions: vi.fn()
 }));
@@ -132,5 +132,23 @@ describe('legacyScheduleHelpers', () => {
             rsvps: [],
             fallbackByUser
         });
+    });
+
+    it('preserves unmatched responders returned by the legacy breakdown helper', () => {
+        mocks.buildGameDayRsvpBreakdown.mockReturnValueOnce({
+            grouped: {},
+            counts: {},
+            unmatchedResponders: [{
+                responderUserId: 'parent-1',
+                responderName: 'Parent One',
+                response: 'going'
+            }]
+        });
+
+        expect(buildGameDayRsvpBreakdown({ players: [], rsvps: [] }).unmatchedResponders).toEqual([{
+            responderUserId: 'parent-1',
+            responderName: 'Parent One',
+            response: 'going'
+        }]);
     });
 });
