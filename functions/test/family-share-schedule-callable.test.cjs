@@ -53,6 +53,7 @@ function makeFirestore(seed = {}) {
         return {
           id: path.split('/').pop(),
           exists: value !== undefined,
+          ref: { path },
           data: () => clone(value)
         };
       },
@@ -71,6 +72,7 @@ function makeFirestore(seed = {}) {
             return {
               id: entryPath.split('/').pop(),
               exists: true,
+              ref: { path: entryPath },
               data: () => clone(value)
             };
           });
@@ -79,7 +81,33 @@ function makeFirestore(seed = {}) {
     };
   }
 
-  return { doc, collection };
+  function collectionGroup(name, conditions = []) {
+    const group = {
+      where(field, operator, expected) {
+        return collectionGroup(name, [...conditions, { field, operator, expected }]);
+      },
+      async get() {
+        const docs = [...state.entries()]
+          .filter(([entryPath]) => entryPath.split('/').at(-2) === name)
+          .filter(([, value]) => conditions.every(({ field, operator, expected }) => {
+            const actual = value?.[field];
+            if (operator === '==') return actual === expected;
+            if (operator === 'array-contains') return Array.isArray(actual) && actual.includes(expected);
+            throw new Error(`Unsupported fake query operator: ${operator}`);
+          }))
+          .map(([entryPath, value]) => ({
+            id: entryPath.split('/').pop(),
+            exists: true,
+            ref: { path: entryPath },
+            data: () => clone(value)
+          }));
+        return { docs, size: docs.length, empty: docs.length === 0 };
+      }
+    };
+    return group;
+  }
+
+  return { doc, collection, collectionGroup };
 }
 
 function makeFunctionsStub() {
@@ -228,6 +256,68 @@ test('family share schedule callable validates bearer token and projects private
       awayScore: 2
     }
   ]);
+});
+
+test('family share schedule callable includes organization shared games for scoped teams', async () => {
+  const tokenId = 'dddddddddddddddddddddddddddddddddddddddd';
+  const callables = loadCallables({
+    [`familyShareTokens/${tokenId}`]: {
+      active: true,
+      ownerUserId: 'parent-1',
+      children: [
+        { teamId: 'private-team', playerId: 'player-1', playerName: 'Sam Player' }
+      ]
+    },
+    'users/parent-1': {
+      parentPlayerKeys: ['private-team::player-1']
+    },
+    'teams/private-team': {
+      name: 'Bears',
+      isPublic: false
+    },
+    'teams/private-team/players/player-1': {
+      name: 'Sam Player'
+    },
+    'teams/private-team/games/local-game': {
+      type: 'game',
+      date: new FakeTimestamp(Date.parse('2026-07-13T18:00:00Z')),
+      opponent: 'Tigers',
+      location: 'Private Field'
+    },
+    'organizations/org-1/sharedGames/shared-game': {
+      date: new FakeTimestamp(Date.parse('2026-07-14T19:00:00Z')),
+      location: 'Org Field',
+      homeTeamId: 'private-team',
+      homeTeamName: 'Bears',
+      awayTeamId: 'away-team',
+      awayTeamName: 'Wolves',
+      teamIds: ['private-team', 'away-team'],
+      assignments: [{ private: true }]
+    }
+  });
+
+  const result = await callables.getFamilyShareSchedule({ tokenId }, {});
+  const games = result.teams[0].games;
+
+  assert.equal(games.length, 2);
+  assert.deepEqual(games[1], {
+    id: 'shared_organizations%2Forg-1%2FsharedGames%2Fshared-game',
+    gameId: 'shared_organizations%2Forg-1%2FsharedGames%2Fshared-game',
+    type: 'game',
+    date: '2026-07-14T19:00:00.000Z',
+    location: 'Org Field',
+    opponent: 'Wolves',
+    sharedGameId: 'shared-game',
+    sharedGamePath: 'organizations/org-1/sharedGames/shared-game',
+    teamId: 'private-team',
+    opponentTeamId: 'away-team',
+    opponentTeamName: 'Wolves',
+    opponentTeamPhoto: null,
+    isHome: true,
+    isSharedGame: true,
+    competitionType: 'tournament',
+    countsTowardSeasonRecord: true
+  });
 });
 
 test('family share schedule callable rejects client-stored teams outside the token owner parent scope', async () => {

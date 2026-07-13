@@ -5040,7 +5040,17 @@ const FAMILY_SHARE_GAME_PROJECTION_FIELDS = [
   'status',
   'calendarEventUid',
   'homeScore',
-  'awayScore'
+  'awayScore',
+  'sharedGameId',
+  'sharedGamePath',
+  'teamId',
+  'opponentTeamId',
+  'opponentTeamName',
+  'opponentTeamPhoto',
+  'isHome',
+  'isSharedGame',
+  'competitionType',
+  'countsTowardSeasonRecord'
 ];
 
 function normalizeFamilyShareText(value) {
@@ -5202,6 +5212,91 @@ function serializeFamilyShareGame(docSnap) {
   return game;
 }
 
+function getFamilyShareSharedGamePath(docSnap) {
+  return normalizeFamilyShareText(docSnap?.ref?.path) || `sharedGames/${normalizeFamilyShareText(docSnap?.id)}`;
+}
+
+function buildFamilyShareSharedGameSyntheticId(sharedGamePath) {
+  return `shared_${encodeURIComponent(sharedGamePath)}`;
+}
+
+function getFamilyShareDisplayTeamName(teamName, placeholderName) {
+  return normalizeFamilyShareText(teamName) || normalizeFamilyShareText(placeholderName) || 'TBD';
+}
+
+function projectFamilyShareSharedGameForTeam(docSnap, teamId) {
+  const data = docSnap.data() || {};
+  const isHome = normalizeFamilyShareText(data.homeTeamId) === teamId;
+  const isAway = normalizeFamilyShareText(data.awayTeamId) === teamId;
+  if (!isHome && !isAway) return null;
+
+  const sharedGamePath = getFamilyShareSharedGamePath(docSnap);
+  const opponentTeamId = isHome
+    ? normalizeFamilyShareText(data.awayTeamId) || null
+    : normalizeFamilyShareText(data.homeTeamId) || null;
+  const opponentTeamName = isHome
+    ? getFamilyShareDisplayTeamName(data.awayTeamName, data.awayPlaceholderName)
+    : getFamilyShareDisplayTeamName(data.homeTeamName, data.homePlaceholderName);
+  const opponentTeamPhoto = isHome
+    ? normalizeFamilyShareText(data.awayTeamPhoto) || null
+    : normalizeFamilyShareText(data.homeTeamPhoto) || null;
+
+  return {
+    ...data,
+    type: data.type || 'game',
+    sharedGameId: normalizeFamilyShareText(docSnap.id) || null,
+    sharedGamePath,
+    teamId,
+    opponent: opponentTeamName,
+    opponentTeamId,
+    opponentTeamName,
+    opponentTeamPhoto,
+    isHome,
+    isSharedGame: true,
+    competitionType: data.competitionType || 'tournament',
+    countsTowardSeasonRecord: data.countsTowardSeasonRecord !== false
+  };
+}
+
+async function loadFamilyShareSharedGamesForTeam(teamId) {
+  if (typeof firestore.collectionGroup !== 'function') return [];
+  const sharedGamesRef = firestore.collectionGroup('sharedGames');
+  const queries = [
+    sharedGamesRef.where('homeTeamId', '==', teamId),
+    sharedGamesRef.where('awayTeamId', '==', teamId),
+    sharedGamesRef.where('teamIds', 'array-contains', teamId)
+  ];
+  const snapshots = await Promise.allSettled(queries.map((query) => query.get()));
+  snapshots
+    .filter((result) => result.status === 'rejected')
+    .forEach((result) => {
+      functions.logger.warn('Failed to load shared family share games for team', {
+        teamId,
+        error: result.reason?.message || String(result.reason)
+      });
+    });
+
+  const docsByPath = new Map();
+  snapshots.forEach((result) => {
+    if (result.status !== 'fulfilled') return;
+    result.value.docs.forEach((docSnap) => {
+      docsByPath.set(getFamilyShareSharedGamePath(docSnap), docSnap);
+    });
+  });
+
+  return [...docsByPath.values()]
+    .map((docSnap) => {
+      const projected = projectFamilyShareSharedGameForTeam(docSnap, teamId);
+      if (!projected) return null;
+      const sharedGamePath = projected.sharedGamePath || getFamilyShareSharedGamePath(docSnap);
+      return serializeFamilyShareGame({
+        id: buildFamilyShareSharedGameSyntheticId(sharedGamePath),
+        data: () => projected
+      });
+    })
+    .filter(Boolean);
+}
+
 async function loadFamilyShareScheduleTeams(children) {
   const teamIds = [...new Set(children.map((child) => child.teamId).filter(Boolean))];
   const teams = await Promise.all(teamIds.map(async (teamId) => {
@@ -5210,7 +5305,10 @@ async function loadFamilyShareScheduleTeams(children) {
     const team = teamSnap.data() || {};
     if (!isFamilyShareTeamActive(team)) return null;
 
-    const gamesSnap = await firestore.collection(`teams/${teamId}/games`).get();
+    const [gamesSnap, sharedGames] = await Promise.all([
+      firestore.collection(`teams/${teamId}/games`).get(),
+      loadFamilyShareSharedGamesForTeam(teamId)
+    ]);
     return {
       teamId,
       teamName: normalizeFamilyShareText(team.name) || children.find((child) => child.teamId === teamId)?.teamName || 'Team',
@@ -5219,7 +5317,10 @@ async function loadFamilyShareScheduleTeams(children) {
           .map(normalizeFamilyShareText)
           .filter(Boolean)
         : [],
-      games: gamesSnap.docs.map(serializeFamilyShareGame)
+      games: [
+        ...gamesSnap.docs.map(serializeFamilyShareGame),
+        ...sharedGames
+      ]
     };
   }));
   return teams.filter(Boolean);

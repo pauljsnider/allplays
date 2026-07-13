@@ -317,9 +317,9 @@
             assertEquals(decodeURIComponent(parsed.hash.split('/family/')[1] || ''), token, 'Token should be recoverable from URL');
         });
 
-        test('Share URL construction', 'path is always /family.html', () => {
+        test('Share URL construction', 'path is the app shell route', () => {
             const url = buildFamilyShareUrl('https://allplays.app', 'tok');
-            assertTrue(new URL(url).pathname === '/family.html', 'Pathname should be /family.html');
+            assertTrue(new URL(url).pathname === '/app/', 'Pathname should be /app/');
         });
 
         test('Share URL construction', 'different tokens produce different URLs', () => {
