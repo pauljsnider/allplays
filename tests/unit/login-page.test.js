@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { createLoginRedirectCoordinator, createLoginAuthStateManager, shouldInitializeSignupMode, getGoogleAuthModeForLoginPage } from '../../js/login-page.js';
 
 function createCoordinator({
@@ -72,6 +73,13 @@ describe('login page Google mode selection', () => {
 });
 
 describe('login page redirect coordination', () => {
+    it('loads the cache-busted login page module that knows friend invite redirects', () => {
+        const html = readFileSync(new URL('../../login.html', import.meta.url), 'utf8');
+
+        expect(html).toContain("import * as loginPageModule from './js/login-page.js?v=8';");
+        expect(html).not.toContain("import * as loginPageModule from './js/login-page.js?v=7';");
+    });
+
     it('treats invite type values case-insensitively when code is present', () => {
         const { coordinator } = createCoordinator({
             search: '?code=ab12cd34&type= Admin ',

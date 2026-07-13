@@ -1051,6 +1051,7 @@ export async function signUpWithEmail(email: string, password: string, activatio
       validateAccessCode: dbModule.validateAccessCode,
       createUserWithEmailAndPassword,
       redeemParentInvite: dbModule.redeemParentInvite,
+      redeemFriendInvite: dbModule.redeemFriendInvite,
       redeemHouseholdInvite: dbModule.redeemHouseholdInvite,
       redeemCoParentInvite: dbModule.redeemCoParentInvite,
       rollbackParentInviteRedemption: dbModule.rollbackParentInviteRedemption,
@@ -1352,6 +1353,7 @@ export async function redeemInviteForUser(userId: string, code: string, authEmai
   const processInvite = createInviteProcessor({
     validateAccessCode: dbModule.validateAccessCode,
     redeemParentInvite: dbModule.redeemParentInvite,
+    redeemFriendInvite: dbModule.redeemFriendInvite,
     redeemHouseholdInvite: dbModule.redeemHouseholdInvite,
     redeemCoParentInvite: dbModule.redeemCoParentInvite,
     redeemAdminInviteAtomically,

@@ -163,6 +163,19 @@ describe('React app social Firestore rules', () => {
         expect(source).toContain("resource.data.get('type', null) != 'friend_invite' &&");
     });
 
+    it('allows only direct GET reads for phone-only friend invite code redemption', () => {
+        const source = rulesSource();
+
+        expect(source).toContain('function canGetPhoneOnlyFriendInviteAccessCode(data)');
+        expect(source).toContain("data.get('type', null) == 'friend_invite'");
+        expect(source).toContain("data.get('email', null) == null");
+        expect(source).toContain("data.get('phone', null) is string");
+        expect(source).toContain("data.get('used', false) == false");
+        expect(source).toContain("data.get('expiresAt', null) > request.time");
+        expect(source).toContain('allow get: if resource == null || canReadAccessCode(resource.data) || canGetPhoneOnlyFriendInviteAccessCode(resource.data);');
+        expect(source).toContain('allow list: if canReadAccessCode(resource.data);');
+    });
+
     it('limits missing friendship reads to exact participant GET paths', () => {
         const source = rulesSource();
 
@@ -391,13 +404,13 @@ describe('React app social Firestore rules', () => {
             return testEnv.authenticatedContext(uid, { email: `${uid}@example.com` }).firestore();
         }
 
-        function accessCodePayload({ codeId, inviterId, inviteeId }) {
+        function accessCodePayload({ codeId, inviterId, inviteeId, email = `${inviteeId}@example.com`, phone = null }) {
             return {
                 code: codeId,
                 type: 'friend_invite',
                 generatedBy: inviterId,
-                email: `${inviteeId}@example.com`,
-                phone: null,
+                email,
+                phone,
                 inviterProfile: {
                     displayName: 'Invite Sender',
                     fullName: 'Invite Sender',
@@ -437,12 +450,12 @@ describe('React app social Firestore rules', () => {
             };
         }
 
-        async function seedInvite({ codeId, inviterId, inviteeId, friendship = null }) {
+        async function seedInvite({ codeId, inviterId, inviteeId, email, phone, friendship = null }) {
             await testEnv.withSecurityRulesDisabled(async (context) => {
                 const db = context.firestore();
                 await setDoc(
                     doc(db, 'accessCodes', codeId),
-                    accessCodePayload({ codeId, inviterId, inviteeId })
+                    accessCodePayload({ codeId, inviterId, inviteeId, email, phone })
                 );
                 await setDoc(doc(db, 'users', inviteeId), {
                     email: `${inviteeId}@example.com`,
@@ -514,6 +527,31 @@ describe('React app social Firestore rules', () => {
                 source: 'friend_invite',
                 inviteCodeId: codeId
             });
+        });
+
+        it('allows direct code reads for phone-only friend invites without opening collection list reads', async () => {
+            const inviterId = 'inviter-phone';
+            const inviteeId = 'invitee-phone';
+            const codeId = 'FRIENDPHONE';
+            const inviteeDb = authenticatedDb(inviteeId);
+
+            await seedInvite({
+                codeId,
+                inviterId,
+                inviteeId,
+                email: null,
+                phone: '+15555550123'
+            });
+
+            const codeSnapshot = await assertSucceeds(getDoc(doc(inviteeDb, 'accessCodes', codeId)));
+            expect(codeSnapshot.data()).toMatchObject({
+                type: 'friend_invite',
+                email: null,
+                phone: '+15555550123',
+                used: false
+            });
+            await assertFails(getDocs(collection(inviteeDb, 'accessCodes')));
+            await assertSucceeds(redeemInviteTransaction(inviteeDb, { codeId, inviterId, inviteeId }));
         });
 
         it('allows a member to read and atomically accept an existing pending friendship', async () => {

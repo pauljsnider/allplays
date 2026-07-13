@@ -17,6 +17,7 @@ export type LegacyAccessCodeValidation = {
 export type LegacyAuthDbModule = {
   validateAccessCode: (code: string, options?: LegacyAccessCodeValidationOptions) => Promise<LegacyAccessCodeValidation>;
   redeemParentInvite: (userId: string, code: string, email?: string | null) => Promise<unknown>;
+  redeemFriendInvite: (...args: any[]) => Promise<unknown>;
   redeemHouseholdInvite: (...args: any[]) => Promise<unknown>;
   redeemCoParentInvite: (...args: any[]) => Promise<unknown>;
   rollbackParentInviteRedemption: (userId: string, code: string) => Promise<unknown>;

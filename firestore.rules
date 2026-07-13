@@ -60,6 +60,23 @@ service cloud.firestore {
               isGlobalAdmin());
     }
 
+    function canGetPhoneOnlyFriendInviteAccessCode(data) {
+      return isSignedIn() &&
+             data.get('type', null) == 'friend_invite' &&
+             data.get('email', null) == null &&
+             data.get('phone', null) is string &&
+             data.get('phone', '') != '' &&
+             data.get('generatedBy', '') != request.auth.uid &&
+             data.get('used', false) == false &&
+             data.get('revoked', false) != true &&
+             data.get('active', true) != false &&
+             data.get('status', 'active') != 'removed' &&
+             data.get('status', 'active') != 'cancelled' &&
+             data.get('status', 'active') != 'revoked' &&
+             data.get('expiresAt', null) is timestamp &&
+             data.get('expiresAt', null) > request.time;
+    }
+
     function canReadRegistrationSource(data) {
       return isSignedIn() &&
              (isGlobalAdmin() ||
@@ -2440,7 +2457,7 @@ service cloud.firestore {
 
     // Access codes
 	    match /accessCodes/{codeId} {
-      allow get: if resource == null || canReadAccessCode(resource.data);
+      allow get: if resource == null || canReadAccessCode(resource.data) || canGetPhoneOnlyFriendInviteAccessCode(resource.data);
       allow list: if canReadAccessCode(resource.data);
       allow create: if isSignedIn() &&
                        request.resource.data.generatedBy == request.auth.uid &&
