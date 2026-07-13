@@ -1430,6 +1430,12 @@ service cloud.firestore {
              request.auth.uid in data.get('memberIds', []);
     }
 
+    function canListFriendship(data) {
+      return isSignedIn() &&
+             (data.get('requesterId', '') == request.auth.uid ||
+              data.get('recipientId', '') == request.auth.uid);
+    }
+
     function canGetMissingFriendship(friendshipId) {
       let friendshipPath = /databases/$(database)/documents/friendships/$(friendshipId);
       return isSignedIn() &&
@@ -2332,7 +2338,7 @@ service cloud.firestore {
       allow get: if canGetMissingFriendship(friendshipId) ||
                     canAccessFriendship(resource.data) ||
                     isGlobalAdmin();
-      allow list: if canAccessFriendship(resource.data) || isGlobalAdmin();
+      allow list: if canListFriendship(resource.data) || isGlobalAdmin();
       allow create: if isFriendshipCreatePayloadValid(friendshipId, request.resource.data) ||
                     isFriendInviteAcceptedFriendshipCreateValid(friendshipId, request.resource.data);
       allow update: if isFriendInviteAcceptedFriendshipUpdateValid(friendshipId) ||

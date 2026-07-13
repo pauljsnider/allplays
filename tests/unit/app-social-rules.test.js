@@ -10,11 +10,13 @@ import {
     doc,
     getDoc,
     getDocs,
+    query,
     runTransaction,
     serverTimestamp,
     setDoc,
     Timestamp,
-    updateDoc
+    updateDoc,
+    where
 } from 'firebase/firestore';
 
 function rulesSource() {
@@ -189,7 +191,10 @@ describe('React app social Firestore rules', () => {
         expect(source).toContain("friendshipId.matches('^' + request.auth.uid + '__.+$')");
         expect(source).toContain("friendshipId.matches('^.+__' + request.auth.uid + '$')");
         expect(source).toContain('allow get: if canGetMissingFriendship(friendshipId) ||');
-        expect(source).toContain('allow list: if canAccessFriendship(resource.data) || isGlobalAdmin();');
+        expect(source).toContain('function canListFriendship(data)');
+        expect(source).toContain("data.get('requesterId', '') == request.auth.uid");
+        expect(source).toContain("data.get('recipientId', '') == request.auth.uid");
+        expect(source).toContain('allow list: if canListFriendship(resource.data) || isGlobalAdmin();');
     });
 
     it('locks down top-level users docs and routes discovery through projected public profiles', () => {
@@ -679,6 +684,54 @@ describe('React app social Firestore rules', () => {
             });
 
             await assertFails(getDoc(doc(authenticatedDb(attackerId), 'friendships', friendshipId)));
+        });
+
+        it('lists friendships through requester and recipient equality queries only', async () => {
+            const userId = 'friend-list-user';
+            const userDb = authenticatedDb(userId);
+
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                const db = context.firestore();
+                await setDoc(doc(db, 'friendships', 'friend-a__friend-list-user'), {
+                    requesterId: 'friend-a',
+                    recipientId: userId,
+                    memberIds: ['friend-a', userId],
+                    status: 'pending'
+                });
+                await setDoc(doc(db, 'friendships', 'friend-b__friend-list-user'), {
+                    requesterId: userId,
+                    recipientId: 'friend-b',
+                    memberIds: [userId, 'friend-b'],
+                    status: 'accepted'
+                });
+                await setDoc(doc(db, 'friendships', 'friend-c__friend-d'), {
+                    requesterId: 'friend-c',
+                    recipientId: 'friend-d',
+                    memberIds: ['friend-c', 'friend-d'],
+                    status: 'accepted'
+                });
+            });
+
+            const requested = await assertSucceeds(getDocs(query(
+                collection(userDb, 'friendships'),
+                where('requesterId', '==', userId)
+            )));
+            const received = await assertSucceeds(getDocs(query(
+                collection(userDb, 'friendships'),
+                where('recipientId', '==', userId)
+            )));
+
+            expect(requested.docs.map((entry) => entry.id)).toEqual(['friend-b__friend-list-user']);
+            expect(received.docs.map((entry) => entry.id)).toEqual(['friend-a__friend-list-user']);
+            await assertFails(getDocs(collection(userDb, 'friendships')));
+            await assertFails(getDocs(query(
+                collection(userDb, 'friendships'),
+                where('memberIds', 'array-contains', userId)
+            )));
+            await assertFails(getDocs(query(
+                collection(userDb, 'friendships'),
+                where('requesterId', '==', 'friend-c')
+            )));
         });
     });
 
