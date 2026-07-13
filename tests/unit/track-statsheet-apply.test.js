@@ -103,7 +103,7 @@ describe('track statsheet apply helpers', () => {
                     }
                 },
                 status: 'completed',
-                liveStatus: 'completed',
+                liveStatus: 'scheduled',
                 liveHasData: false,
                 liveClockMs: 0,
                 liveClockRunning: false,
@@ -158,7 +158,7 @@ describe('track statsheet apply helpers', () => {
                     }
                 },
                 status: 'completed',
-                liveStatus: 'completed',
+                liveStatus: 'scheduled',
                 liveHasData: false,
                 liveClockMs: 0,
                 liveClockRunning: false,
@@ -201,7 +201,7 @@ describe('track statsheet apply helpers', () => {
         ]);
     });
 
-    it('atomically clears mutable tracked state while preserving immutable live event history', () => {
+    it('atomically clears mutable tracked state while removing stale replay eligibility', () => {
         expect(trackStatsheetSource).toContain("const privateStatsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/privatePlayerStats`));");
         expect(trackStatsheetSource).toContain("const liveEventsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/liveEvents`));");
         expect(trackStatsheetSource).toContain('const FIRESTORE_BATCH_WRITE_LIMIT = 500;');
@@ -214,7 +214,8 @@ describe('track statsheet apply helpers', () => {
         expect(trackStatsheetSource).not.toMatch(/liveEventsSnap\.docs\.forEach\(docItem => batch\.delete/);
         expect(trackStatsheetSource).toContain('const commitPromise = batch.commit();');
         expect(buildTrackStatsheetApplyPlan().gameUpdate).toMatchObject({
-            liveStatus: 'completed',
+            status: 'completed',
+            liveStatus: 'scheduled',
             liveHasData: false,
             liveClockMs: 0,
             liveClockRunning: false,

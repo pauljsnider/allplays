@@ -984,6 +984,8 @@ test('respects overwrite confirmation and renders rewritten stats on the game re
             path: 'teams/team-1/games/game-1',
             data: expect.objectContaining({
                 status: 'completed',
+                liveStatus: 'scheduled',
+                liveHasData: false,
                 homeScore: 19,
                 awayScore: 24
             })
