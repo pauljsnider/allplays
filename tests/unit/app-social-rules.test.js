@@ -118,6 +118,7 @@ describe('React app social Firestore rules', () => {
         const source = rulesSource();
 
         expect(source).toContain('function isFriendInviteAcceptedFriendshipCreateValid(friendshipId, data)');
+        expect(source).toContain('function isFriendInviteAcceptedFriendshipUpdateValid(friendshipId)');
         expect(source).toContain('let codePath = /databases/$(database)/documents/accessCodes/$(codeId);');
         expect(source).toContain('existsAfter(codePath)');
         expect(source).toContain('function buildFriendshipId(firstUserId, secondUserId)');
@@ -128,6 +129,10 @@ describe('React app social Firestore rules', () => {
         expect(source).toContain("codeAfter.get('usedBy', '') == request.auth.uid");
         expect(source).toContain("allow create: if isFriendshipCreatePayloadValid(friendshipId, request.resource.data) ||");
         expect(source).toContain("isFriendInviteAcceptedFriendshipCreateValid(friendshipId, request.resource.data)");
+        expect(source).toContain("allow update: if isFriendInviteAcceptedFriendshipUpdateValid(friendshipId) ||");
+        expect(source).toContain("request.resource.data.get('source', '') == 'friend_invite'");
+        expect(source).toContain("request.resource.data.get('inviteCodeId', '') == codeId");
+        expect(source).toContain("friendshipId == buildFriendshipId(codeAfter.get('generatedBy', ''), request.auth.uid)");
     });
 
     it('prevents member updates from reactivating blocked friendships', () => {
@@ -138,7 +143,7 @@ describe('React app social Firestore rules', () => {
         expect(source).toContain("request.resource.data.get('blockedBy', resource.data.get('blockedBy', [])) == resource.data.get('blockedBy', [])");
         expect(source).toContain("request.resource.data.get('status', '') == 'blocked'");
         expect(source).toContain("request.auth.uid in request.resource.data.get('blockedBy', [])");
-        expect(source).toContain('allow update: if isFriendshipMemberUpdatePayloadValid() ||');
+        expect(source).toContain('isFriendInviteAcceptedFriendshipUpdateValid(friendshipId) ||\n                    isFriendshipMemberUpdatePayloadValid() ||');
     });
 
     it('excludes friend invites from the owner update fallback after redemption', () => {

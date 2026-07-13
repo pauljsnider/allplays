@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
     FRIEND_INVITE_TYPE,
     buildAcceptedFriendshipData,
@@ -139,5 +140,18 @@ describe('friend invite helpers', () => {
             createdAt: 'existing-created-at',
             acceptedAt: now
         });
+    });
+
+    it('updates existing deterministic friendship docs during invite redemption', () => {
+        const source = readFileSync(new URL('../../js/db.js', import.meta.url), 'utf8');
+        const redemptionStart = source.indexOf('export async function redeemFriendInvite');
+        const existingBranch = source.indexOf('if (friendshipSnapshot.exists())', redemptionStart);
+        const updateCall = source.indexOf('transaction.update(friendshipRef, acceptedFriendshipData);', existingBranch);
+        const createBranch = source.indexOf('transaction.set(friendshipRef, acceptedFriendshipData);', existingBranch);
+
+        expect(redemptionStart).toBeGreaterThan(-1);
+        expect(existingBranch).toBeGreaterThan(redemptionStart);
+        expect(updateCall).toBeGreaterThan(existingBranch);
+        expect(createBranch).toBeGreaterThan(updateCall);
     });
 });

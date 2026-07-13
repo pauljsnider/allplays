@@ -5090,7 +5090,7 @@ export async function redeemFriendInvite(userId, code, fallbackEmail = null) {
         const inviteeProfile = inviteeSnapshot.exists() ? (inviteeSnapshot.data() || {}) : {};
         const inviteeEmail = String(inviteeProfile.email || fallbackEmail || auth.currentUser?.email || '').trim();
 
-        transaction.set(friendshipRef, buildAcceptedFriendshipData({
+        const acceptedFriendshipData = buildAcceptedFriendshipData({
             inviterId,
             inviteeId: userId,
             inviterProfile,
@@ -5101,7 +5101,12 @@ export async function redeemFriendInvite(userId, code, fallbackEmail = null) {
             existingFriendship,
             now,
             inviteCodeId: normalizedCode
-        }));
+        });
+        if (friendshipSnapshot.exists()) {
+            transaction.update(friendshipRef, acceptedFriendshipData);
+        } else {
+            transaction.set(friendshipRef, acceptedFriendshipData);
+        }
         transaction.update(codeRef, {
             used: true,
             usedBy: userId,
