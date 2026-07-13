@@ -103,7 +103,7 @@ describe('track statsheet apply helpers', () => {
                     }
                 },
                 status: 'completed',
-                liveStatus: 'completed',
+                liveStatus: 'scheduled',
                 liveHasData: false,
                 liveClockMs: 0,
                 liveClockRunning: false,
@@ -158,7 +158,7 @@ describe('track statsheet apply helpers', () => {
                     }
                 },
                 status: 'completed',
-                liveStatus: 'completed',
+                liveStatus: 'scheduled',
                 liveHasData: false,
                 liveClockMs: 0,
                 liveClockRunning: false,
@@ -201,12 +201,21 @@ describe('track statsheet apply helpers', () => {
         ]);
     });
 
-    it('clears tracked, live, and private player state when replacing previously tracked game data', () => {
+    it('atomically clears mutable tracked state while removing stale replay eligibility', () => {
         expect(trackStatsheetSource).toContain("const privateStatsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/privatePlayerStats`));");
         expect(trackStatsheetSource).toContain("const liveEventsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/liveEvents`));");
-        expect(trackStatsheetSource).toMatch(/if \(eventsSnap\.size > 0 \|\| statsSnap\.size > 0 \|\| liveEventsSnap\.size > 0 \|\| privateStatsSnap\.size > 0\) \{[\s\S]*await Promise\.all\(eventsSnap\.docs\.map\(docItem => deleteDoc\(docItem\.ref\)\)\);[\s\S]*await Promise\.all\(statsSnap\.docs\.map\(docItem => deleteDoc\(docItem\.ref\)\)\);[\s\S]*await Promise\.all\(liveEventsSnap\.docs\.map\(docItem => deleteDoc\(docItem\.ref\)\)\);[\s\S]*await Promise\.all\(privateStatsSnap\.docs\.map\(docItem => deleteDoc\(docItem\.ref\)\)\);/);
+        expect(trackStatsheetSource).toContain('const FIRESTORE_BATCH_WRITE_LIMIT = 500;');
+        expect(trackStatsheetSource).toContain('const replacementCleanupWriteCount = eventsSnap.size + statsSnap.size + privateStatsSnap.size;');
+        expect(trackStatsheetSource).toContain('const hasExistingTrackedData = replacementCleanupWriteCount > 0 || liveEventsSnap.size > 0;');
+        expect(trackStatsheetSource).toContain('const replacementWriteCount = replacementCleanupWriteCount + applyPlan.aggregatedStatsWrites.length + 1;');
+        expect(trackStatsheetSource).toMatch(/if \(replacementWriteCount > FIRESTORE_BATCH_WRITE_LIMIT\) \{[\s\S]*Existing game data was not changed\.[\s\S]*\}[\s\S]*const batch = writeBatch\(db\);/);
+        expect(trackStatsheetSource).toContain('const batch = writeBatch(db);');
+        expect(trackStatsheetSource).toMatch(/if \(hasExistingTrackedData\) \{[\s\S]*applyStatus\.textContent = 'Preparing replacement stats…';[\s\S]*eventsSnap\.docs\.forEach\(docItem => batch\.delete\(docItem\.ref\)\);[\s\S]*statsSnap\.docs\.forEach\(docItem => batch\.delete\(docItem\.ref\)\);[\s\S]*privateStatsSnap\.docs\.forEach\(docItem => batch\.delete\(docItem\.ref\)\);[\s\S]*\}/);
+        expect(trackStatsheetSource).not.toMatch(/liveEventsSnap\.docs\.forEach\(docItem => batch\.delete/);
+        expect(trackStatsheetSource).toContain('const commitPromise = batch.commit();');
         expect(buildTrackStatsheetApplyPlan().gameUpdate).toMatchObject({
-            liveStatus: 'completed',
+            status: 'completed',
+            liveStatus: 'scheduled',
             liveHasData: false,
             liveClockMs: 0,
             liveClockRunning: false,

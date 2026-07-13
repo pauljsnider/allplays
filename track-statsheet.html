@@ -198,7 +198,7 @@
   <div id="footer-container"></div>
 
   <script type="module">
-    import { getTeam, getGame, getPlayers, getConfigs, collection, getDocs, deleteDoc, uploadStatSheetPhoto } from './js/db.js?v=91';
+    import { getTeam, getGame, getPlayers, getConfigs, collection, getDocs, uploadStatSheetPhoto } from './js/db.js?v=91';
     import { db } from './js/firebase.js?v=20';
     import { writeBatch, doc, setDoc } from './js/firebase.js?v=20';
     import { renderHeader, renderFooter, getUrlParams, escapeHtml, formatDate } from './js/utils.js?v=15';
@@ -208,6 +208,8 @@
     import { validateTrackStatsheetApplyRows, buildTrackStatsheetApplyPlan } from './js/track-statsheet-apply.js?v=5';
     import { getApp } from './js/vendor/firebase-app.js';
     import { getAI, getGenerativeModel, GoogleAIBackend, Schema } from './js/vendor/firebase-ai.js';
+
+    const FIRESTORE_BATCH_WRITE_LIMIT = 500;
 
     renderFooter(document.getElementById('footer-container'));
 
@@ -784,17 +786,16 @@ RETURN JSON:
         const statsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`));
         const liveEventsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/liveEvents`));
         const privateStatsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/privatePlayerStats`));
-        if (eventsSnap.size > 0 || statsSnap.size > 0 || liveEventsSnap.size > 0 || privateStatsSnap.size > 0) {
+        // liveEvents are append-only under Firestore rules. Keep that audit history
+        // while replacing the mutable tracker state in one atomic commit.
+        const replacementCleanupWriteCount = eventsSnap.size + statsSnap.size + privateStatsSnap.size;
+        const hasExistingTrackedData = replacementCleanupWriteCount > 0 || liveEventsSnap.size > 0;
+        if (hasExistingTrackedData) {
           const confirmClear = confirm('This game already has tracked data. Replace it with the stat sheet results?');
           if (!confirmClear) {
             applyStatus.textContent = 'Cancelled.';
             return;
           }
-          applyStatus.textContent = 'Clearing existing stats…';
-          await Promise.all(eventsSnap.docs.map(docItem => deleteDoc(docItem.ref)));
-          await Promise.all(statsSnap.docs.map(docItem => deleteDoc(docItem.ref)));
-          await Promise.all(liveEventsSnap.docs.map(docItem => deleteDoc(docItem.ref)));
-          await Promise.all(privateStatsSnap.docs.map(docItem => deleteDoc(docItem.ref)));
         }
 
         const applyPlan = buildTrackStatsheetApplyPlan({
@@ -807,7 +808,18 @@ RETURN JSON:
           statSheetPhotoUrl: statSheetUrl
         });
 
+        const replacementWriteCount = replacementCleanupWriteCount + applyPlan.aggregatedStatsWrites.length + 1;
+        if (replacementWriteCount > FIRESTORE_BATCH_WRITE_LIMIT) {
+          throw new Error(`Replacement requires ${replacementWriteCount} writes, which exceeds the ${FIRESTORE_BATCH_WRITE_LIMIT}-write Firestore batch limit. Existing game data was not changed.`);
+        }
+
         const batch = writeBatch(db);
+        if (hasExistingTrackedData) {
+          applyStatus.textContent = 'Preparing replacement stats…';
+          eventsSnap.docs.forEach(docItem => batch.delete(docItem.ref));
+          statsSnap.docs.forEach(docItem => batch.delete(docItem.ref));
+          privateStatsSnap.docs.forEach(docItem => batch.delete(docItem.ref));
+        }
         applyPlan.aggregatedStatsWrites.forEach(({ playerId, data }) => {
           const statsRef = doc(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`, playerId);
           batch.set(statsRef, data);

@@ -97,7 +97,7 @@ export function buildTrackStatsheetApplyPlan({
             awayScore: Number(awayScore || 0) || 0,
             opponentStats,
             status: 'completed',
-            liveStatus: 'completed',
+            liveStatus: 'scheduled',
             liveHasData: false,
             liveClockMs: 0,
             liveClockRunning: false,
