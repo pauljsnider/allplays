@@ -961,7 +961,7 @@
         import { cancelScheduledGame } from './js/edit-schedule-cancel-game.js?v=3';
         import { applyPracticeRecurrenceFields } from './js/edit-schedule-practice-payload.js?v=1';
         import { savePracticeForm } from './js/edit-schedule-practice-submit.js?v=2';
-        import { buildBulkAiPracticePayload, normalizeBulkAiAssignments, normalizeBulkAiEventForAdd, normalizeBulkAiIsHome } from './js/edit-schedule-ai-import.js?v=1';
+        import { buildBulkAiPracticePayload, createBulkAiImageController, normalizeBulkAiAssignments, normalizeBulkAiEventForAdd, normalizeBulkAiIsHome } from './js/edit-schedule-ai-import.js?v=2';
         import { buildSeasonRecordGameFields, hydrateSeasonRecordFormFields } from './js/edit-schedule-season-record.js?v=1';
         import { normalizeOfficialsDirectory } from './js/officiating-slots.js?v=1';
         import { Timestamp, deleteField, auth } from "./js/firebase.js?v=20";
@@ -972,7 +972,6 @@
         import { buildTournamentGroupOverrideKey, buildTournamentPoolStandings, buildTournamentPoolOverrideKey } from './js/tournament-standings.js?v=4';
         import { SCHEDULE_CSV_IMPORT_FIELDS, buildScheduleImportPreview, inferScheduleCsvMapping, normalizeScheduleImportDraft, parseCsvText } from './js/schedule-csv-import.js?v=2';
         import { buildRegistrationScheduleImportPreview, formatRegistrationImportResults, getRegistrationScheduleEvents, isExternallyLinkedRegistrationTeam, planRegistrationScheduleImport } from './js/edit-schedule-registration-import.js?v=4';
-        import { createBulkAiImageController } from './js/edit-schedule-ai-import.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -4809,7 +4808,7 @@ PARSING RULES:
                 });
 
                 if (proposedOperations.length === 0) {
-                    alert('AI did not find any games to add/update/delete in the text. Please try being more specific with dates and opponents.');
+                    alert('AI did not find any games or practices in the schedule. Please try being more specific with dates, times, and event details.');
                 }
 
                 await renderProposedChanges();
@@ -4886,7 +4885,7 @@ PARSING RULES:
                                         ${isPractice ? `<input type="datetime-local" value="${formatIsoForInput(game.endTime)}"
                                             onchange="updateOperation(${index}, 'endTime', this.value)"
                                             class="text-xs bg-white border border-gray-300 rounded px-2 py-1 w-full mb-1">` : ''}
-                                        <input type="text" value="${game.location || ''}" placeholder="Location"
+                                        <input type="text" value="${escapeHtml(game.location || '')}" placeholder="Location"
                                             onchange="updateOperation(${index}, 'location', this.value)"
                                             class="text-xs bg-white border border-gray-300 rounded px-2 py-1 w-full">
                                         ${isPractice ? '' : `<select onchange="updateOperation(${index}, 'isHome', this.value)"
@@ -4904,7 +4903,7 @@ PARSING RULES:
                                         <textarea rows="2" placeholder="Notes"
                                             onchange="updateOperation(${index}, 'notes', this.value)"
                                             class="text-xs bg-white border border-gray-300 rounded px-2 py-1 w-full mt-1">${escapeHtml(game.notes || '')}</textarea>
-                                        <input type="text" value="${formatAssignmentsForInput(game.assignments)}" placeholder="Assignments: Role:Value; Role2:Value2"
+                                        <input type="text" value="${escapeHtml(formatAssignmentsForInput(game.assignments))}" placeholder="Assignments: Role:Value; Role2:Value2"
                                             onchange="updateOperation(${index}, 'assignments', this.value)"
                                             class="text-xs bg-white border border-gray-300 rounded px-2 py-1 w-full mt-1">
                                     </div>

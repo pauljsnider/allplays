@@ -192,7 +192,8 @@ describe('edit schedule Bulk AI image clipboard support', () => {
         const source = readEditSchedule();
         const helperSource = readHelperSource();
 
-        expect(source).toContain("import { createBulkAiImageController } from './js/edit-schedule-ai-import.js?v=1';");
+        expect(source).toContain('createBulkAiImageController');
+        expect(source).toContain("from './js/edit-schedule-ai-import.js?v=2';");
         expect(source).toContain('Upload, paste (Ctrl/Cmd+V), or drop a screenshot of the schedule.');
         expect(source).toContain("container: document.getElementById('content-bulk-ai')");
         expect(source).toContain("textInput: document.getElementById('bulk-text-input')");

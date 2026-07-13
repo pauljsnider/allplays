@@ -86,6 +86,36 @@ describe('edit schedule bulk AI import', () => {
         });
     });
 
+    it('rejects practice end times that are invalid or not after the start', () => {
+        const dependencies = {
+            Timestamp,
+            getDefaultEndTime: defaultEndTime
+        };
+
+        expect(() => buildBulkAiPracticePayload({
+            eventType: 'practice',
+            date: '2026-07-13T18:00:00',
+            endTime: 'not-a-date'
+        }, dependencies)).toThrow('Practice end time must be a valid date.');
+
+        expect(() => buildBulkAiPracticePayload({
+            eventType: 'practice',
+            date: '2026-07-13T18:00:00',
+            endTime: '2026-07-13T17:59:00'
+        }, dependencies)).toThrow('Practice end time must be after the start time.');
+    });
+
+    it('rejects an invalid optional practice arrival time', () => {
+        expect(() => buildBulkAiPracticePayload({
+            eventType: 'practice',
+            date: '2026-07-13T18:00:00',
+            arrivalTime: 'not-a-date'
+        }, {
+            Timestamp,
+            getDefaultEndTime: defaultEndTime
+        })).toThrow('Practice arrival time must be a valid date.');
+    });
+
     it('keeps practice rules in the inline AI prompt and response schema', () => {
         const source = readFileSync(new URL('../../edit-schedule.html', import.meta.url), 'utf8');
 
@@ -94,5 +124,6 @@ describe('edit schedule bulk AI import', () => {
         expect(source).toContain('"eventType": "practice"');
         expect(source).toContain('buildBulkAiPracticePayload(normalizedGame');
         expect(source).toContain('await addPractice(currentTeamId, practiceData);');
+        expect(source).toContain("from './js/edit-schedule-ai-import.js?v=2';");
     });
 });

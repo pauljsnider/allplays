@@ -230,6 +230,17 @@ export function buildBulkAiPracticePayload(event, {
         throw new Error('Practice date is required.');
     }
     const endDate = normalized.endTime ? new Date(normalized.endTime) : getDefaultEndTime(startDate, 'practice');
+    if (!(endDate instanceof Date) || Number.isNaN(endDate.getTime())) {
+        throw new Error('Practice end time must be a valid date.');
+    }
+    if (endDate.getTime() <= startDate.getTime()) {
+        throw new Error('Practice end time must be after the start time.');
+    }
+
+    const arrivalDate = normalized.arrivalTime ? new Date(normalized.arrivalTime) : null;
+    if (arrivalDate && Number.isNaN(arrivalDate.getTime())) {
+        throw new Error('Practice arrival time must be a valid date.');
+    }
 
     return {
         title: normalized.title || 'Practice',
@@ -237,7 +248,7 @@ export function buildBulkAiPracticePayload(event, {
         end: Timestamp.fromDate(endDate),
         location: normalized.location || '',
         notes: normalized.notes,
-        arrivalTime: normalized.arrivalTime ? Timestamp.fromDate(new Date(normalized.arrivalTime)) : null,
+        arrivalTime: arrivalDate ? Timestamp.fromDate(arrivalDate) : null,
         assignments: normalized.assignments,
         source: 'bulk_ai',
         sourceMetadata: {
