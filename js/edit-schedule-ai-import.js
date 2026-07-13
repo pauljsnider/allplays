@@ -202,11 +202,15 @@ export function normalizeBulkAiEventForAdd(event) {
     }
 
     const normalizedIsHome = normalizeBulkAiIsHome(event?.isHome);
+    const opponent = event?.opponent ? String(event.opponent).trim() : '';
+    if (!opponent) {
+        throw new Error('Game opponent is required.');
+    }
     const rawKitColor = typeof event?.kitColor === 'string' ? event.kitColor.trim() : '';
     const kitColor = rawKitColor || (normalizedIsHome === true ? 'Home kit' : (normalizedIsHome === false ? 'Away kit' : 'TBD kit'));
     return {
         ...normalized,
-        opponent: event?.opponent ? String(event.opponent).trim() : '',
+        opponent,
         isHome: normalizedIsHome,
         kitColor,
         arrivalTime: event?.arrivalTime ? String(event.arrivalTime).trim() : null,

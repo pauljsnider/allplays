@@ -86,6 +86,21 @@ describe('edit schedule bulk AI import', () => {
         });
     });
 
+    it('rejects game add operations without an opponent', () => {
+        expect(() => normalizeBulkAiEventForAdd({
+            eventType: 'game',
+            date: '2026-04-02T18:30:00',
+            location: 'Main Field'
+        })).toThrow('Game opponent is required.');
+
+        expect(() => normalizeBulkAiEventForAdd({
+            eventType: 'game',
+            date: '2026-04-02T18:30:00',
+            opponent: '   ',
+            location: 'Main Field'
+        })).toThrow('Game opponent is required.');
+    });
+
     it('rejects practice end times that are invalid or not after the start', () => {
         const dependencies = {
             Timestamp,
@@ -121,6 +136,7 @@ describe('edit schedule bulk AI import', () => {
 
         expect(source).toContain('eventType: Schema.string()');
         expect(source).toContain('Practice", "Training", or practice-style scrimmage have no opponent');
+        expect(source).toContain('If a game opponent cannot be extracted, do not emit an add operation for that game.');
         expect(source).toContain('"eventType": "practice"');
         expect(source).toContain('buildBulkAiPracticePayload(normalizedGame');
         expect(source).toContain('await addPractice(currentTeamId, practiceData);');

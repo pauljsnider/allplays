@@ -4756,6 +4756,7 @@ PARSING RULES:
 4. Event type:
    - Entries labeled "Practice", "Training", or practice-style scrimmage have no opponent. Emit eventType="practice" with title="Practice" unless another practice title is shown.
    - Games have an opponent. Emit eventType="game" and set opponent to the team that is NOT ${currentTeam.name} (check Home/Away columns).
+   - If a game opponent cannot be extracted, do not emit an add operation for that game.
 5. Date format: Convert to ISO 8601 YYYY-MM-DDTHH:mm:ss (e.g., "2024-12-06T08:30:00")
    - "11/15" = November 15, "Sat 11/22" = November 22
    - Use year ${currentYear} for future dates, ${currentYear + 1} for past dates
