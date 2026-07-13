@@ -1,19 +1,21 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 
 const migrationSource = readFileSync(new URL('../../_migration/backfill-player-parent-links-from-users.js', import.meta.url), 'utf8');
 
 function getFunctionSource(functionName) {
-    const start = migrationSource.indexOf(`function ${functionName}`) !== -1
-        ? migrationSource.indexOf(`function ${functionName}`)
-        : migrationSource.indexOf(`export function ${functionName}`);
-    expect(start).toBeGreaterThanOrEqual(0);
-    const nextFunction = migrationSource.indexOf('\nfunction ', start + 1);
-    const nextAsyncFunction = migrationSource.indexOf('\nasync function ', start + 1);
-    const nextExportFunction = migrationSource.indexOf('\nexport function ', start + 1);
-    const candidates = [nextFunction, nextAsyncFunction, nextExportFunction].filter((value) => value !== -1);
-    const end = candidates.length > 0 ? Math.min(...candidates) : migrationSource.length;
-    return migrationSource.slice(start, end);
+    const signature = migrationSource.indexOf(`function ${functionName}`);
+    expect(signature).toBeGreaterThanOrEqual(0);
+    const start = migrationSource.lastIndexOf('\n', signature) + 1;
+    const parametersEnd = migrationSource.indexOf(')', signature);
+    const bodyStart = migrationSource.indexOf('{', parametersEnd + 1);
+    let depth = 0;
+    for (let index = bodyStart; index < migrationSource.length; index += 1) {
+        if (migrationSource[index] === '{') depth += 1;
+        if (migrationSource[index] === '}') depth -= 1;
+        if (depth === 0) return migrationSource.slice(start, index + 1);
+    }
+    throw new Error(`Could not extract ${functionName}`);
 }
 
 function loadBuildPlayerParentBackfillUpdate() {
@@ -30,6 +32,26 @@ function loadBuildPlayerParentBackfillUpdate() {
         ${getParentEntryKeySource}
         ${buildUpdateSource}
         return buildPlayerParentBackfillUpdate;
+    `)();
+}
+
+function loadApplyPlayerParentBackfill() {
+    const compactStringSource = getFunctionSource('compactString');
+    const compactEmailSource = getFunctionSource('compactEmail');
+    const getParentEntryKeySource = getFunctionSource('getParentEntryKey');
+    const buildUpdateSource = getFunctionSource('buildPlayerParentBackfillUpdate')
+        .replace('export function buildPlayerParentBackfillUpdate', 'function buildPlayerParentBackfillUpdate');
+    const applyBackfillSource = getFunctionSource('applyPlayerParentBackfill')
+        .replace('export async function applyPlayerParentBackfill', 'async function applyPlayerParentBackfill');
+
+    return new Function(`
+        const FieldValue = { serverTimestamp: () => 'server-timestamp' };
+        ${compactStringSource}
+        ${compactEmailSource}
+        ${getParentEntryKeySource}
+        ${buildUpdateSource}
+        ${applyBackfillSource}
+        return applyPlayerParentBackfill;
     `)();
 }
 
@@ -78,5 +100,62 @@ describe('backfill player parent links from users', () => {
         expect(migrationSource).toContain('--email');
         expect(migrationSource).toContain('--team');
         expect(migrationSource).toContain("db.doc(`teams/${teamId}/players/${playerId}`)");
+    });
+
+    it('uses a transaction in apply mode so concurrent parent additions are preserved', async () => {
+        const applyPlayerParentBackfill = loadApplyPlayerParentBackfill();
+        const playerRef = { get: vi.fn() };
+        const transaction = {
+            get: vi.fn().mockResolvedValue({
+                exists: true,
+                data: () => ({ parents: [{ userId: 'concurrent-parent', relation: 'Parent' }] })
+            }),
+            set: vi.fn()
+        };
+        const db = {
+            runTransaction: vi.fn(async (callback) => callback(transaction))
+        };
+
+        const result = await applyPlayerParentBackfill({
+            db,
+            playerRef,
+            parentEntry: { userId: 'new-parent', email: 'new@example.com', relation: 'Guardian' },
+            apply: true
+        });
+
+        expect(playerRef.get).not.toHaveBeenCalled();
+        expect(db.runTransaction).toHaveBeenCalledTimes(1);
+        expect(transaction.get).toHaveBeenCalledWith(playerRef);
+        expect(transaction.set).toHaveBeenCalledWith(playerRef, {
+            parents: [
+                { userId: 'concurrent-parent', relation: 'Parent' },
+                {
+                    userId: 'new-parent',
+                    email: 'new@example.com',
+                    name: '',
+                    relation: 'Guardian',
+                    status: 'active',
+                    source: 'parentOf-backfill'
+                }
+            ],
+            updatedAt: 'server-timestamp'
+        }, { merge: true });
+        expect(result.changed).toBe(true);
+    });
+
+    it('keeps dry runs write-free and rejects missing Firestore dependencies', async () => {
+        const applyPlayerParentBackfill = loadApplyPlayerParentBackfill();
+        const playerRef = {
+            get: vi.fn().mockResolvedValue({ exists: false })
+        };
+        const db = { runTransaction: vi.fn() };
+
+        await expect(applyPlayerParentBackfill({ db: null, playerRef })).rejects.toThrow('Firestore and player reference are required.');
+        await expect(applyPlayerParentBackfill({ db, playerRef })).resolves.toEqual({
+            missing: true,
+            changed: false,
+            additions: []
+        });
+        expect(db.runTransaction).not.toHaveBeenCalled();
     });
 });

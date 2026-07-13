@@ -112,6 +112,34 @@ export function buildPlayerParentBackfillUpdate(playerData = {}, parentEntries =
     };
 }
 
+export async function applyPlayerParentBackfill({ db, playerRef, parentEntry, apply = false } = {}) {
+    if (!db || !playerRef) {
+        throw new Error('Firestore and player reference are required.');
+    }
+
+    const buildResult = (playerSnap) => {
+        if (!playerSnap.exists) {
+            return { missing: true, changed: false, additions: [] };
+        }
+        return {
+            missing: false,
+            ...buildPlayerParentBackfillUpdate(playerSnap.data() || {}, [parentEntry])
+        };
+    };
+
+    if (!apply) {
+        return buildResult(await playerRef.get());
+    }
+
+    return db.runTransaction(async (transaction) => {
+        const result = buildResult(await transaction.get(playerRef));
+        if (result.changed) {
+            transaction.set(playerRef, result.playerUpdate, { merge: true });
+        }
+        return result;
+    });
+}
+
 async function resolveOnlyUid() {
     if (!onlyEmail) return '';
     try {
@@ -151,23 +179,21 @@ async function main() {
             const teamId = compactString(link.teamId);
             const playerId = compactString(link.playerId);
             const playerRef = db.doc(`teams/${teamId}/players/${playerId}`);
-            const playerSnap = await playerRef.get();
-            if (!playerSnap.exists) {
+            const update = await applyPlayerParentBackfill({
+                db,
+                playerRef,
+                parentEntry: buildPlayerParentEntry({ uid: user.id, userData: user.data, link }),
+                apply: APPLY
+            });
+            if (update.missing) {
                 console.log(`  ! missing player ${teamId}/${playerId}; skipping user ${user.id}`);
                 continue;
             }
-
-            const update = buildPlayerParentBackfillUpdate(playerSnap.data() || {}, [
-                buildPlayerParentEntry({ uid: user.id, userData: user.data, link })
-            ]);
             if (!update.changed) continue;
 
             playersChanged += 1;
             linksAdded += update.additions.length;
             console.log(`  ${teamId}/${playerId}: +${update.additions.length} parent link(s) from ${user.data.email || user.id}`);
-            if (APPLY) {
-                await playerRef.set(update.playerUpdate, { merge: true });
-            }
         }
     }
 
