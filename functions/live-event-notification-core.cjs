@@ -153,18 +153,19 @@ function isLiveEventNotificationFresh(
   nowMillis = Date.now(),
   maxAgeMillis = LIVE_EVENT_NOTIFICATION_MAX_AGE_MS
 ) {
-  const createdAtMillis = getLiveEventTimestampMillis(event.createdAt);
+  const eventOriginMillis = getLiveEventTimestampMillis(event.clientCreatedAt) ??
+    getLiveEventTimestampMillis(event.createdAt);
   const normalizedNowMillis = Number(nowMillis);
   const normalizedMaxAgeMillis = Number(maxAgeMillis);
   if (
-    createdAtMillis === null
+    eventOriginMillis === null
     || !Number.isFinite(normalizedNowMillis)
     || !Number.isFinite(normalizedMaxAgeMillis)
     || normalizedMaxAgeMillis < 0
   ) {
     return false;
   }
-  const ageMillis = normalizedNowMillis - createdAtMillis;
+  const ageMillis = normalizedNowMillis - eventOriginMillis;
   return ageMillis >= -LIVE_EVENT_NOTIFICATION_FUTURE_TOLERANCE_MS && ageMillis <= normalizedMaxAgeMillis;
 }
 

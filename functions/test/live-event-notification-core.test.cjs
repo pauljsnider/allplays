@@ -90,4 +90,16 @@ describe('big-moment live event notifications', () => {
     assert.equal(isLiveEventNotificationFresh({ createdAt: now + (60 * 1000) + 1 }, now), false);
     assert.equal(isLiveEventNotificationFresh({}, now), false);
   });
+
+  it('prefers the client event creation time over the eventual Firestore write time', () => {
+    const now = Date.parse('2026-07-13T12:00:00.000Z');
+    assert.equal(isLiveEventNotificationFresh({
+      clientCreatedAt: new Date(now - LIVE_EVENT_NOTIFICATION_MAX_AGE_MS - 1).toISOString(),
+      createdAt: new Date(now - 1000).toISOString()
+    }, now), false);
+    assert.equal(isLiveEventNotificationFresh({
+      clientCreatedAt: new Date(now - 1000).toISOString(),
+      createdAt: new Date(now - LIVE_EVENT_NOTIFICATION_MAX_AGE_MS - 1).toISOString()
+    }, now), true);
+  });
 });

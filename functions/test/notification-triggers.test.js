@@ -778,6 +778,38 @@ test('notifyLiveEventCreated shares a score-state claim with an earlier generic 
     }
 });
 
+test('notifyLiveEventCreated skips retried live events whose client creation time is stale', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        parentUserIds: ['parent-1'],
+        indexedTargets: [
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { liveScore: true } }
+        ]
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/games/game-retry/liveEvents/retried-event');
+        const result = await moduleExports.notifyLiveEventCreated(makeSnapshot(ref, {
+            type: 'stat',
+            statKey: 'PTS',
+            value: 2,
+            playerName: 'Ava Cole',
+            homeScore: 12,
+            awayScore: 8,
+            clientCreatedAt: new Date(Date.now() - (11 * 60 * 1000)).toISOString(),
+            createdAt: new Date().toISOString(),
+            createdBy: 'coach-1'
+        }), { params: { teamId: 'team-1', gameId: 'game-retry', eventId: 'retried-event' } });
+
+        assert.equal(result, null);
+        assert.equal(env.counts.dedupTransactions, 0);
+        assert.equal(env.messagingCalls.length, 0);
+        assert.equal(env.auditWrites.length, 0);
+    } finally {
+        cleanup();
+    }
+});
+
 test('notifyLiveEventCreated ignores routine, generic, and reversed live events', async () => {
     const { moduleExports, env, cleanup } = loadNotificationInternals({
         teamDoc: { ownerId: 'coach-1', adminEmails: [] },
