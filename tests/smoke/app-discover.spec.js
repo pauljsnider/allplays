@@ -71,4 +71,21 @@ test.describe('public sports Discover', () => {
     await expect.poll(() => page.evaluate(() => window.__opportunityCreates.length)).toBe(1);
     await expect(page).toHaveURL(/#\/discover\/opportunities\/listing-1$/);
   });
+
+  test('lets signed-in users send a starter message from opportunity detail', async ({ page, baseURL }) => {
+    await mockDiscoverModules(page, { signedIn: true });
+    await page.goto(appUrl(baseURL, '/discover/opportunities/listing-1'), { waitUntil: 'domcontentloaded' });
+    await page.getByRole('button', { name: 'Send private inquiry' }).click();
+
+    const starter = 'Is this opportunity still available?';
+    await page.getByRole('button', { name: starter }).click();
+    await expect(page.getByRole('textbox', { name: 'Inquiry message' })).toHaveValue(starter);
+    await expect(page.getByRole('button', { name: 'Send inquiry' })).toBeEnabled();
+    await page.getByRole('button', { name: 'Send inquiry' }).click();
+
+    await expect.poll(() => page.evaluate(() => window.__opportunityInquiries)).toEqual([
+      { id: 'listing-1', message: starter }
+    ]);
+    await expect(page).toHaveURL(/#\/discover\/inquiries\/inquiry-1$/);
+  });
 });
