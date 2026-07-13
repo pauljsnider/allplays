@@ -51,6 +51,8 @@ export const getTeamMediaItemsPage = (...args: any[]) => callLegacyDb('getTeamMe
 export const canAccessTeamChat = (...args: any[]) => callLegacyDb('canAccessTeamChat', args);
 export const listCertificatesForPlayer = (...args: any[]) => callLegacyDb('listCertificatesForPlayer', args);
 export const listFamilyShareTokens = (...args: any[]) => callLegacyDb('listFamilyShareTokens', args);
+export const getFamilyShareToken = (...args: any[]) => callLegacyDb('getFamilyShareToken', args);
+export const resolveFamilyShareTokenChildren = (...args: any[]) => callLegacyDb('resolveFamilyShareTokenChildren', args);
 export const listMyParentMembershipRequests = (...args: any[]) => callLegacyDb('listMyParentMembershipRequests', args);
 export const listParentTeamFeeRecipients = (...args: any[]) => callLegacyDb('listParentTeamFeeRecipients', args);
 export const listTeamRegistrationForms = (...args: any[]) => callLegacyDb('listTeamRegistrationForms', args);

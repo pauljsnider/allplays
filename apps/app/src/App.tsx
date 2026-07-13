@@ -40,6 +40,7 @@ const Profile = lazy(() => import('./pages/Profile').then((module) => ({ default
 const PublicTeamsBrowse = lazy(() => import('./pages/PublicTeamsBrowse').then((module) => ({ default: module.PublicTeamsBrowse })));
 const PublicTeamDetail = lazy(() => import('./pages/PublicTeamDetail').then((module) => ({ default: module.PublicTeamDetail })));
 const Discover = lazy(() => import('./pages/Discover').then((module) => ({ default: module.Discover })));
+const FamilyShare = lazy(() => import('./pages/FamilyShare').then((module) => ({ default: module.FamilyShare })));
 const OpportunityDetail = lazy(() => import('./pages/OpportunityDetail').then((module) => ({ default: module.OpportunityDetail })));
 const OpportunityForm = lazy(() => import('./pages/OpportunityForm').then((module) => ({ default: module.OpportunityForm })));
 const OpportunityManage = lazy(() => import('./pages/OpportunityManage').then((module) => ({ default: module.OpportunityManage })));
@@ -224,6 +225,7 @@ export default function App() {
         <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/verify-pending" element={<VerifyPending auth={auth} />} />
         <Route path="/registration" element={<AppShell auth={auth}><RegistrationDetail auth={auth} publicAccess /></AppShell>} />
+        <Route path="/family/:token" element={<PublicPage auth={auth}><FamilyShare /></PublicPage>} />
         <Route path="/discover" element={<PublicPage auth={auth}><Discover auth={auth} /></PublicPage>} />
         <Route path="/discover/opportunities/:listingId" element={<PublicPage auth={auth}><OpportunityDetail auth={auth} /></PublicPage>} />
         <Route path="/discover/new" element={<Protected auth={auth}><OpportunityForm auth={auth} /></Protected>} />

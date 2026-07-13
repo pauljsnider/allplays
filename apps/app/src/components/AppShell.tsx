@@ -679,12 +679,12 @@ function buildAddWorkflows(): AddWorkflow[] {
     },
     {
       id: 'invite-family',
-      label: 'Invite family',
-      detail: 'Co-parent and caregiver access',
+      label: 'Share with family',
+      detail: 'Create a private family schedule link',
       section: 'Player',
-      icon: UserPlus,
+      icon: Share2,
       kind: 'native',
-      href: '/parent-tools/access'
+      href: '/parent-tools/share'
     },
     {
       id: 'profile-builder',

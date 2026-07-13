@@ -630,7 +630,7 @@ describe('React app shell search', () => {
         await clickButton(container, 'More workflows');
         expect(container.textContent).toContain('Add player');
         expect(container.textContent).toContain('Game or practice');
-        expect(container.textContent).toContain('Invite family');
+        expect(container.textContent).toContain('Share with family');
 
         await clickButton(container, 'Join with code');
         expect(container.querySelector('[data-testid="route"]').textContent).toBe('/accept-invite');

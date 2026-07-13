@@ -189,9 +189,9 @@ test('parent dashboard creates family share links with hydrated children and ext
     await expect(page.locator('#share-link-workflow-status')).toContainText('Link created and copied to clipboard.');
     await expect(page.locator('#share-links-list')).toContainText('Grandparents');
     await expect(page.locator('#share-links-list')).toContainText('Extra Calendars (1)');
-    await expect(page.locator('#share-links-list a', { hasText: 'Open' })).toHaveAttribute('href', `${baseURL}/family.html?token=token-created`);
+    await expect(page.locator('#share-links-list a', { hasText: 'Open' })).toHaveAttribute('href', `${baseURL}/app/#/family/token-created`);
     await expect.poll(() => page.evaluate(() => window.__familyShareWorkflow.copied)).toEqual([
-        `${baseURL}/family.html?token=token-created`
+        `${baseURL}/app/#/family/token-created`
     ]);
     await expect.poll(() => page.evaluate(() => window.__familyShareWorkflow.listCalls.length)).toBeGreaterThanOrEqual(2);
 });

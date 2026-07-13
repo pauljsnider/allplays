@@ -35,6 +35,7 @@
                 "workflow-choose-home-dashboard.html",
                 "workflow-communication.html",
                 "workflow-fees-payments.html",
+                "workflow-family-sharing.html",
                 "workflow-game-day.html",
                 "workflow-getting-started.html",
                 "workflow-join-team.html",
@@ -606,6 +607,7 @@
                 "family.html"
             ],
             "appPages": [
+                "apps/app/src/pages/FamilyShare.tsx",
                 "apps/app/src/pages/ParentTools.tsx",
                 "apps/app/src/pages/parent-tools/AccessTool.tsx",
                 "apps/app/src/pages/parent-tools/CalendarTool.tsx",
@@ -626,6 +628,7 @@
                 "notifyRideClaimUpdated",
                 "notifyRideOfferCancelled",
                 "notifyRideOfferCreated",
+                "getFamilyShareSchedule",
                 "revokeHouseholdMemberAccess",
                 "resolveFamilyShareTokenChildren",
                 "sendPracticePacketDueTomorrowReminders"
@@ -644,12 +647,16 @@
                 "tests/unit/family-share-token-rules.test.js"
             ],
             "integrationTests": [
+                "apps/app/src/pages/FamilyShare.test.tsx",
                 "apps/app/src/pages/ParentTools.test.tsx",
                 "apps/app/src/pages/parent-tools/async-pattern-regression.test.ts",
+                "apps/app/src/lib/familyShareViewerService.test.ts",
+                "apps/app/src/lib/parentFamilyShareService.test.ts",
                 "tests/unit/app-parent-tools-integration.test.jsx",
                 "tests/unit/app-parent-tools-registration.test.jsx"
             ],
             "workflowTests": [
+                "tests/smoke/app-family-share.spec.js",
                 "tests/smoke/app-parent-tools.spec.js",
                 "tests/smoke/parent-dashboard-family-share.spec.js"
             ],

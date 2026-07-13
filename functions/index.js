@@ -5019,12 +5019,77 @@ exports.teamCalendarFeed = functions.https.onRequest(async (req, res) => {
   }
 });
 
-exports.resolveFamilyShareTokenChildren = functions.https.onCall(async (data) => {
-  const tokenId = String(data?.tokenId || '').trim();
+const FAMILY_SHARE_GAME_PROJECTION_FIELDS = [
+  'type',
+  'date',
+  'end',
+  'endDate',
+  'startTime',
+  'endTime',
+  'endDayOffset',
+  'instanceDate',
+  'masterId',
+  'occurrenceId',
+  'isSeriesMaster',
+  'recurrence',
+  'exDates',
+  'overrides',
+  'title',
+  'opponent',
+  'location',
+  'status',
+  'calendarEventUid',
+  'homeScore',
+  'awayScore',
+  'sharedGameId',
+  'sharedGamePath',
+  'teamId',
+  'opponentTeamId',
+  'opponentTeamName',
+  'opponentTeamPhoto',
+  'isHome',
+  'isSharedGame',
+  'competitionType',
+  'countsTowardSeasonRecord'
+];
+
+function normalizeFamilyShareText(value) {
+  return value == null ? '' : String(value).trim();
+}
+
+function requireFamilyShareTokenId(data) {
+  const tokenId = normalizeFamilyShareText(data?.tokenId);
   if (!/^[a-f0-9]{40}$/i.test(tokenId)) {
     throw new functions.https.HttpsError('invalid-argument', 'A valid family share token is required.');
   }
+  return tokenId;
+}
 
+function normalizeFamilyShareCallableChildren(children = []) {
+  const seen = new Set();
+  return (Array.isArray(children) ? children : [])
+    .map((child = {}) => {
+      const teamId = normalizeFamilyShareText(child.teamId);
+      const playerId = normalizeFamilyShareText(child.playerId || child.childId);
+      return {
+        teamId,
+        teamName: normalizeFamilyShareText(child.teamName || child.team),
+        playerId,
+        playerName: normalizeFamilyShareText(child.playerName || child.childName || child.name) || 'Player',
+        playerNumber: normalizeFamilyShareText(child.playerNumber ?? child.number),
+        playerPhotoUrl: normalizeFamilyShareText(child.playerPhotoUrl || child.photoUrl) || null
+      };
+    })
+    .filter((child) => {
+      if (!child.teamId || !child.playerId) return false;
+      const key = `${child.teamId}::${child.playerId}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+async function loadReadableFamilyShareToken(tokenId) {
   const tokenSnap = await firestore.doc(`familyShareTokens/${tokenId}`).get();
   if (!tokenSnap.exists) {
     throw new functions.https.HttpsError('not-found', 'Family share token not found.');
@@ -5034,18 +5099,18 @@ exports.resolveFamilyShareTokenChildren = functions.https.onCall(async (data) =>
   if (!isFamilyShareTokenReadable(token)) {
     throw new functions.https.HttpsError('permission-denied', 'Family share token is no longer active.');
   }
+  return token;
+}
 
-  const ownerUserId = String(token.ownerUserId || '').trim();
-  if (!ownerUserId) {
-    return { children: [] };
-  }
+async function resolveReadableFamilyShareChildren(token) {
+  const storedChildren = normalizeFamilyShareCallableChildren(token.children);
+  const ownerUserId = normalizeFamilyShareText(token.ownerUserId);
+  if (!ownerUserId) return [];
 
   const ownerSnap = await firestore.doc(`users/${ownerUserId}`).get();
-  if (!ownerSnap.exists) {
-    return { children: [] };
-  }
+  if (!ownerSnap.exists) return [];
 
-  const children = await resolveFamilyShareChildrenFromOwnerProfile(ownerSnap.data() || {}, {
+  const ownerChildren = normalizeFamilyShareCallableChildren(await resolveFamilyShareChildrenFromOwnerProfile(ownerSnap.data() || {}, {
     loadTeam: async (teamId) => {
       const teamSnap = await firestore.doc(`teams/${teamId}`).get();
       return teamSnap.exists ? { id: teamSnap.id, ...(teamSnap.data() || {}) } : null;
@@ -5054,9 +5119,223 @@ exports.resolveFamilyShareTokenChildren = functions.https.onCall(async (data) =>
       const playerSnap = await firestore.doc(`teams/${teamId}/players/${playerId}`).get();
       return playerSnap.exists ? { id: playerSnap.id, ...(playerSnap.data() || {}) } : null;
     }
+  }));
+
+  // Token documents are written by clients, so their child/team IDs are only a
+  // requested subset. Never use them as proof that the token owner can read a
+  // private schedule; intersect them with the owner's live parent scope.
+  if (!storedChildren.length) return ownerChildren;
+  const storedKeys = new Set(storedChildren.map((child) => `${child.teamId}::${child.playerId}`));
+  return ownerChildren.filter((child) => storedKeys.has(`${child.teamId}::${child.playerId}`));
+}
+
+function isFamilyShareTeamActive(team = {}) {
+  const status = normalizeFamilyShareText(team.status).toLowerCase();
+  return team.active !== false &&
+    team.archived !== true &&
+    !['archived', 'inactive', 'disabled'].includes(status);
+}
+
+function serializeFamilyShareValue(value) {
+  if (!value) return value ?? null;
+  if (typeof value.toDate === 'function') {
+    const date = value.toDate();
+    return Number.isNaN(date?.getTime?.()) ? null : date.toISOString();
+  }
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value.toISOString();
+  }
+  if (Array.isArray(value)) return value.map(serializeFamilyShareValue);
+  if (typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, serializeFamilyShareValue(entry)])
+    );
+  }
+  return value;
+}
+
+function serializeFamilyShareRecurrence(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const recurrence = {};
+  const freq = normalizeFamilyShareText(value.freq).toLowerCase();
+  if (['daily', 'weekly'].includes(freq)) recurrence.freq = freq;
+  const interval = Math.floor(Number(value.interval));
+  if (Number.isFinite(interval) && interval > 0) recurrence.interval = Math.min(interval, 3660);
+  const count = Math.floor(Number(value.count));
+  if (Number.isFinite(count) && count > 0) recurrence.count = Math.min(count, 3660);
+  if (Array.isArray(value.byDays)) {
+    recurrence.byDays = [...new Set(value.byDays
+      .map((day) => normalizeFamilyShareText(day).toUpperCase())
+      .filter((day) => ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'].includes(day)))]
+      .slice(0, 7);
+  }
+  if (value.until) recurrence.until = serializeFamilyShareValue(value.until);
+  return recurrence;
+}
+
+function serializeFamilyShareOverrides(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value)
+    .filter(([dateKey, override]) => /^\d{4}-\d{2}-\d{2}$/.test(dateKey) && override && typeof override === 'object' && !Array.isArray(override))
+    .slice(0, 1000)
+    .map(([dateKey, override]) => {
+      const safeOverride = {};
+      ['title', 'location', 'startTime', 'endTime'].forEach((field) => {
+        if (Object.hasOwn(override, field)) safeOverride[field] = normalizeFamilyShareText(override[field]);
+      });
+      return [dateKey, safeOverride];
+    }));
+}
+
+function serializeFamilyShareGame(docSnap) {
+  const data = docSnap.data() || {};
+  const game = {
+    id: docSnap.id,
+    gameId: docSnap.id
+  };
+  FAMILY_SHARE_GAME_PROJECTION_FIELDS.forEach((field) => {
+    if (Object.hasOwn(data, field)) {
+      if (field === 'recurrence') {
+        game[field] = serializeFamilyShareRecurrence(data[field]);
+      } else if (field === 'overrides') {
+        game[field] = serializeFamilyShareOverrides(data[field]);
+      } else if (field === 'exDates') {
+        game[field] = (Array.isArray(data[field]) ? data[field] : [])
+          .map(normalizeFamilyShareText)
+          .filter((dateKey) => /^\d{4}-\d{2}-\d{2}$/.test(dateKey))
+          .slice(0, 1000);
+      } else {
+        game[field] = serializeFamilyShareValue(data[field]);
+      }
+    }
+  });
+  return game;
+}
+
+function getFamilyShareSharedGamePath(docSnap) {
+  return normalizeFamilyShareText(docSnap?.ref?.path) || `sharedGames/${normalizeFamilyShareText(docSnap?.id)}`;
+}
+
+function buildFamilyShareSharedGameSyntheticId(sharedGamePath) {
+  return `shared_${encodeURIComponent(sharedGamePath)}`;
+}
+
+function getFamilyShareDisplayTeamName(teamName, placeholderName) {
+  return normalizeFamilyShareText(teamName) || normalizeFamilyShareText(placeholderName) || 'TBD';
+}
+
+function projectFamilyShareSharedGameForTeam(docSnap, teamId) {
+  const data = docSnap.data() || {};
+  const isHome = normalizeFamilyShareText(data.homeTeamId) === teamId;
+  const isAway = normalizeFamilyShareText(data.awayTeamId) === teamId;
+  if (!isHome && !isAway) return null;
+
+  const sharedGamePath = getFamilyShareSharedGamePath(docSnap);
+  const opponentTeamId = isHome
+    ? normalizeFamilyShareText(data.awayTeamId) || null
+    : normalizeFamilyShareText(data.homeTeamId) || null;
+  const opponentTeamName = isHome
+    ? getFamilyShareDisplayTeamName(data.awayTeamName, data.awayPlaceholderName)
+    : getFamilyShareDisplayTeamName(data.homeTeamName, data.homePlaceholderName);
+  const opponentTeamPhoto = isHome
+    ? normalizeFamilyShareText(data.awayTeamPhoto) || null
+    : normalizeFamilyShareText(data.homeTeamPhoto) || null;
+
+  return {
+    ...data,
+    type: data.type || 'game',
+    sharedGameId: normalizeFamilyShareText(docSnap.id) || null,
+    sharedGamePath,
+    teamId,
+    opponent: opponentTeamName,
+    opponentTeamId,
+    opponentTeamName,
+    opponentTeamPhoto,
+    isHome,
+    isSharedGame: true,
+    competitionType: data.competitionType || 'tournament',
+    countsTowardSeasonRecord: data.countsTowardSeasonRecord !== false
+  };
+}
+
+async function loadFamilyShareSharedGamesForTeam(teamId) {
+  if (typeof firestore.collectionGroup !== 'function') return [];
+  const sharedGamesRef = firestore.collectionGroup('sharedGames');
+  const queries = [
+    sharedGamesRef.where('homeTeamId', '==', teamId),
+    sharedGamesRef.where('awayTeamId', '==', teamId),
+    sharedGamesRef.where('teamIds', 'array-contains', teamId)
+  ];
+  const snapshots = await Promise.allSettled(queries.map((query) => query.get()));
+  snapshots
+    .filter((result) => result.status === 'rejected')
+    .forEach((result) => {
+      functions.logger.warn('Failed to load shared family share games for team', {
+        teamId,
+        error: result.reason?.message || String(result.reason)
+      });
+    });
+
+  const docsByPath = new Map();
+  snapshots.forEach((result) => {
+    if (result.status !== 'fulfilled') return;
+    result.value.docs.forEach((docSnap) => {
+      docsByPath.set(getFamilyShareSharedGamePath(docSnap), docSnap);
+    });
   });
 
-  return { children };
+  return [...docsByPath.values()]
+    .map((docSnap) => {
+      const projected = projectFamilyShareSharedGameForTeam(docSnap, teamId);
+      if (!projected) return null;
+      const sharedGamePath = projected.sharedGamePath || getFamilyShareSharedGamePath(docSnap);
+      return serializeFamilyShareGame({
+        id: buildFamilyShareSharedGameSyntheticId(sharedGamePath),
+        data: () => projected
+      });
+    })
+    .filter(Boolean);
+}
+
+async function loadFamilyShareScheduleTeams(children) {
+  const teamIds = [...new Set(children.map((child) => child.teamId).filter(Boolean))];
+  const teams = await Promise.all(teamIds.map(async (teamId) => {
+    const teamSnap = await firestore.doc(`teams/${teamId}`).get();
+    if (!teamSnap.exists) return null;
+    const team = teamSnap.data() || {};
+    if (!isFamilyShareTeamActive(team)) return null;
+
+    const [gamesSnap, sharedGames] = await Promise.all([
+      firestore.collection(`teams/${teamId}/games`).get(),
+      loadFamilyShareSharedGamesForTeam(teamId)
+    ]);
+    return {
+      teamId,
+      teamName: normalizeFamilyShareText(team.name) || children.find((child) => child.teamId === teamId)?.teamName || 'Team',
+      calendarUrls: team.isPublic === true
+        ? (Array.isArray(team.calendarUrls) ? team.calendarUrls : [])
+          .map(normalizeFamilyShareText)
+          .filter(Boolean)
+        : [],
+      games: [
+        ...gamesSnap.docs.map(serializeFamilyShareGame),
+        ...sharedGames
+      ]
+    };
+  }));
+  return teams.filter(Boolean);
+}
+
+exports.resolveFamilyShareTokenChildren = functions.https.onCall(async (data) => {
+  const token = await loadReadableFamilyShareToken(requireFamilyShareTokenId(data));
+  return { children: await resolveReadableFamilyShareChildren(token) };
+});
+
+exports.getFamilyShareSchedule = functions.https.onCall(async (data) => {
+  const token = await loadReadableFamilyShareToken(requireFamilyShareTokenId(data));
+  const children = await resolveReadableFamilyShareChildren(token);
+  const teams = await loadFamilyShareScheduleTeams(children);
+  return { children, teams };
 });
 
 exports.fetchCalendarIcs = functions

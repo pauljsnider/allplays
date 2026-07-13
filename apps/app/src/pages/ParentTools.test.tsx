@@ -688,7 +688,7 @@ describe('ParentTools access', () => {
                 {
                     id: 'token-1',
                     label: 'Grandma',
-                    url: 'https://allplays.ai/family.html?token=token-1',
+                    url: 'https://allplays.ai/app/#/family/token-1',
                     childCount: 1,
                     extraCalendarUrls: []
                 }
@@ -704,7 +704,7 @@ describe('ParentTools access', () => {
 
         expect(await screen.findByText('Unable to revoke family share link.')).toBeTruthy();
         expect(screen.getByText('Grandma')).toBeTruthy();
-        expect(screen.getByText('https://allplays.ai/family.html?token=token-1')).toBeTruthy();
+        expect(screen.getByText('https://allplays.ai/app/#/family/token-1')).toBeTruthy();
         expect(screen.getByRole('button', { name: 'Copy' })).toBeTruthy();
     });
 
@@ -727,7 +727,7 @@ describe('ParentTools access', () => {
                 {
                     id: 'token-1',
                     label: 'Grandma',
-                    url: 'https://allplays.ai/family.html?token=token-1',
+                    url: 'https://allplays.ai/app/#/family/token-1',
                     childCount: 1,
                     extraCalendarUrls: []
                 }
@@ -735,7 +735,7 @@ describe('ParentTools access', () => {
         });
         parentToolsServiceMocks.createParentFamilyShare.mockResolvedValue({
             tokenId: 'token-2',
-            url: 'https://allplays.ai/family.html?token=token-2'
+            url: 'https://allplays.ai/app/#/family/token-2'
         });
 
         renderParentTools(['/parent-tools/share'], false, linkedAuth);
@@ -745,7 +745,7 @@ describe('ParentTools access', () => {
         fireEvent.change(screen.getByPlaceholderText('Optional external calendar feed URLs, one per line'), { target: { value: 'https://calendar.example.test/feed.ics' } });
         fireEvent.click(screen.getByRole('button', { name: 'Create share link' }));
 
-        expect(await screen.findByText('https://allplays.ai/family.html?token=token-2')).toBeTruthy();
+        expect(await screen.findByText('https://allplays.ai/app/#/family/token-2')).toBeTruthy();
         expect(screen.getByText('Copy is not available in this browser.')).toBeTruthy();
         expect(parentToolsServiceMocks.createParentFamilyShare).toHaveBeenCalledWith(linkedAuth.user, 'Aunt Chris', ['https://calendar.example.test/feed.ics']);
         expect(parentToolsServiceMocks.loadFamilyShareModel).toHaveBeenCalledTimes(2);
@@ -758,7 +758,7 @@ describe('ParentTools access', () => {
             expect(sharePublicUrl).toHaveBeenCalledWith({
                 title: 'ALL PLAYS family page',
                 text: 'Aunt Chris',
-                url: 'https://allplays.ai/family.html?token=token-2'
+                url: 'https://allplays.ai/app/#/family/token-2'
             });
         });
     });
@@ -774,7 +774,7 @@ describe('ParentTools access', () => {
         const createdToken = {
             id: 'token-2',
             label: 'Aunt Chris',
-            url: 'https://allplays.ai/family.html?token=token-2',
+            url: 'https://allplays.ai/app/#/family/token-2',
             childCount: 1,
             extraCalendarUrls: []
         };
@@ -838,7 +838,7 @@ describe('ParentTools access', () => {
                 {
                     id: 'token-9',
                     label: 'Other family',
-                    url: 'https://allplays.ai/family.html?token=token-9',
+                    url: 'https://allplays.ai/app/#/family/token-9',
                     childCount: 1,
                     extraCalendarUrls: []
                 }
@@ -846,7 +846,7 @@ describe('ParentTools access', () => {
         }));
         parentToolsServiceMocks.createParentFamilyShare.mockResolvedValue({
             tokenId: 'token-2',
-            url: 'https://allplays.ai/family.html?token=token-2'
+            url: 'https://allplays.ai/app/#/family/token-2'
         });
 
         const view = renderParentTools(['/parent-tools/share'], false, linkedAuth);
@@ -855,7 +855,7 @@ describe('ParentTools access', () => {
         fireEvent.change(screen.getByPlaceholderText('Label, like Grandma or babysitter'), { target: { value: 'Aunt Chris' } });
         fireEvent.click(screen.getByRole('button', { name: 'Create share link' }));
 
-        expect(await screen.findByText('https://allplays.ai/family.html?token=token-2')).toBeTruthy();
+        expect(await screen.findByText('https://allplays.ai/app/#/family/token-2')).toBeTruthy();
 
         view.rerender(
             <MemoryRouter initialEntries={['/parent-tools/share']}>
@@ -867,11 +867,11 @@ describe('ParentTools access', () => {
 
         await waitFor(() => {
             expect(parentToolsServiceMocks.loadFamilyShareModel).toHaveBeenCalledWith(otherLinkedAuth.user);
-            expect(screen.queryByText('https://allplays.ai/family.html?token=token-2')).toBeNull();
+            expect(screen.queryByText('https://allplays.ai/app/#/family/token-2')).toBeNull();
             expect(screen.queryByText('New family link')).toBeNull();
         });
         expect(await screen.findByText('Other family')).toBeTruthy();
-        expect(screen.getByText('https://allplays.ai/family.html?token=token-9')).toBeTruthy();
+        expect(screen.getByText('https://allplays.ai/app/#/family/token-9')).toBeTruthy();
     });
 
     it('opens reusable team fee checkout links when legacy fee payloads omit paymentAction', async () => {

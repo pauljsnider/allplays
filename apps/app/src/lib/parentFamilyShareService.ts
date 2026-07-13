@@ -46,8 +46,18 @@ function getLegacyUrl(path: string, params: Record<string, string> = {}) {
     return url.toString();
 }
 
-function getFamilyShareUrl(tokenId: string) {
+function getAppUrl(hashPath: string) {
+    const url = new URL('app/', legacyOrigin);
+    url.hash = hashPath.startsWith('/') ? hashPath : `/${hashPath}`;
+    return url.toString();
+}
+
+export function getLegacyFamilyShareUrl(tokenId: string) {
     return getLegacyUrl('family.html', { token: tokenId });
+}
+
+export function getFamilyShareUrl(tokenId: string) {
+    return getAppUrl(`/family/${encodeURIComponent(tokenId)}`);
 }
 
 function normalizeFamilyChildren(children: any[]) {
