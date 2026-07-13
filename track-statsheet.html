@@ -786,8 +786,10 @@ RETURN JSON:
         const statsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`));
         const liveEventsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/liveEvents`));
         const privateStatsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/privatePlayerStats`));
-        const replacementCleanupWriteCount = eventsSnap.size + statsSnap.size + liveEventsSnap.size + privateStatsSnap.size;
-        const hasExistingTrackedData = replacementCleanupWriteCount > 0;
+        // liveEvents are append-only under Firestore rules. Keep that audit history
+        // while replacing the mutable tracker state in one atomic commit.
+        const replacementCleanupWriteCount = eventsSnap.size + statsSnap.size + privateStatsSnap.size;
+        const hasExistingTrackedData = replacementCleanupWriteCount > 0 || liveEventsSnap.size > 0;
         if (hasExistingTrackedData) {
           const confirmClear = confirm('This game already has tracked data. Replace it with the stat sheet results?');
           if (!confirmClear) {
@@ -816,7 +818,6 @@ RETURN JSON:
           applyStatus.textContent = 'Preparing replacement stats…';
           eventsSnap.docs.forEach(docItem => batch.delete(docItem.ref));
           statsSnap.docs.forEach(docItem => batch.delete(docItem.ref));
-          liveEventsSnap.docs.forEach(docItem => batch.delete(docItem.ref));
           privateStatsSnap.docs.forEach(docItem => batch.delete(docItem.ref));
         }
         applyPlan.aggregatedStatsWrites.forEach(({ playerId, data }) => {

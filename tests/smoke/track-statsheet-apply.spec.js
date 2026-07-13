@@ -62,10 +62,10 @@ function createScenario(overrides = {}) {
     };
 }
 
-function createLiveEvents(count) {
+function createTrackedEvents(count) {
     return Object.fromEntries(Array.from({ length: count }, (_, index) => {
         const eventNumber = String(index + 1).padStart(3, '0');
-        return [`largeLiveEvent${eventNumber}`, { type: 'touch', timestamp: index + 1 }];
+        return [`largeEvent${eventNumber}`, { type: 'touch', timestamp: index + 1 }];
     }));
 }
 
@@ -961,12 +961,13 @@ test('respects overwrite confirmation and renders rewritten stats on the game re
     expect(store.batchDeleteCalls).toEqual([
         'teams/team-1/games/game-1/events/oldEvent',
         'teams/team-1/games/game-1/aggregatedStats/legacyPlayer',
-        'teams/team-1/games/game-1/liveEvents/oldLiveEvent',
         'teams/team-1/games/game-1/privatePlayerStats/oldPrivateStat'
     ]);
     expect(store.commitCalls).toBe(1);
     expect(store.events).toEqual({});
-    expect(store.liveEvents).toEqual({});
+    expect(store.liveEvents).toEqual({
+        oldLiveEvent: { type: 'assist', timestamp: 2 }
+    });
     expect(store.privatePlayerStats).toEqual({});
     expect(Object.keys(store.aggregatedStats)).toEqual(['p1', 'p2']);
     expect(store.batchOps).toEqual(expect.arrayContaining([
@@ -1048,7 +1049,6 @@ test('preserves existing tracked stats when replacement batch commit fails', asy
     expect(store.batchDeleteCalls).toEqual([
         'teams/team-1/games/game-1/events/oldEvent',
         'teams/team-1/games/game-1/aggregatedStats/legacyPlayer',
-        'teams/team-1/games/game-1/liveEvents/oldLiveEvent',
         'teams/team-1/games/game-1/privatePlayerStats/oldPrivateStat'
     ]);
     expect(store.commitCalls).toBe(1);
@@ -1078,10 +1078,10 @@ test('preflights oversized replacement cleanup before staging batch deletes', as
                 stats: { pts: 99, reb: 1, ast: 1, fouls: 5 }
             }
         },
-        events: {
-            oldEvent: { type: 'score', timestamp: 1 }
+        events: createTrackedEvents(498),
+        liveEvents: {
+            oldLiveEvent: { type: 'assist', timestamp: 2 }
         },
-        liveEvents: createLiveEvents(497),
         privatePlayerStats: {
             oldPrivateStat: { playerId: 'p1', notes: 'private stale data' }
         },
@@ -1104,9 +1104,9 @@ test('preflights oversized replacement cleanup before staging batch deletes', as
     expect(store.batchOps).toEqual([]);
     expect(store.batchDeleteCalls || []).toEqual([]);
     expect(store.deleteCalls).toEqual([]);
-    expect(Object.keys(store.liveEvents)).toHaveLength(497);
-    expect(store.liveEvents.largeLiveEvent497.type).toBe('touch');
-    expect(store.events.oldEvent.type).toBe('score');
+    expect(Object.keys(store.events)).toHaveLength(498);
+    expect(store.events.largeEvent498.type).toBe('touch');
+    expect(store.liveEvents.oldLiveEvent.type).toBe('assist');
     expect(store.privatePlayerStats.oldPrivateStat.notes).toBe('private stale data');
     expect(store.aggregatedStats).toEqual({
         legacyPlayer: {
@@ -1139,7 +1139,7 @@ test('stops replacement without committing new stats when staging a delete fails
             oldPrivateStat: { playerId: 'p1', notes: 'private stale data' }
         },
         confirmResponses: [true],
-        batchDeleteFailurePath: 'teams/team-1/games/game-1/liveEvents/oldLiveEvent',
+        batchDeleteFailurePath: 'teams/team-1/games/game-1/privatePlayerStats/oldPrivateStat',
         batchDeleteFailureMessage: 'Injected replacement delete failure'
     }));
 
@@ -1160,7 +1160,7 @@ test('stops replacement without committing new stats when staging a delete fails
     expect(store.batchDeleteCalls).toEqual([
         'teams/team-1/games/game-1/events/oldEvent',
         'teams/team-1/games/game-1/aggregatedStats/legacyPlayer',
-        'teams/team-1/games/game-1/liveEvents/oldLiveEvent'
+        'teams/team-1/games/game-1/privatePlayerStats/oldPrivateStat'
     ]);
     expect(store.events.oldEvent.type).toBe('score');
     expect(store.liveEvents.oldLiveEvent.type).toBe('assist');
