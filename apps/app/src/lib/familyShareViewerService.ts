@@ -112,8 +112,9 @@ export async function loadFamilyShareView(tokenId: string): Promise<FamilyShareV
   }
 
   const scheduleProjection = await loadFamilyShareScheduleProjection(normalizedTokenId);
-  const projectedChildren = normalizeFamilyShareChildren(scheduleProjection?.children);
-  const children = projectedChildren.length ? projectedChildren : await resolveTokenChildren(normalizedTokenId, token);
+  const children = scheduleProjection === null
+    ? await resolveTokenChildren(normalizedTokenId, token)
+    : scheduleProjection.children;
   const calendarWarnings: string[] = [];
   const events = await buildCombinedFamilySchedule(
     children,

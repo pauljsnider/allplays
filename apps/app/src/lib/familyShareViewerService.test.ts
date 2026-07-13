@@ -148,6 +148,44 @@ describe('familyShareViewerService', () => {
     ]);
   });
 
+  it('honors a successful empty server projection without trusting stored token children', async () => {
+    const scheduleCallable = vi.fn(async () => ({
+      data: {
+        children: [],
+        teams: []
+      }
+    }));
+    familyShareMocks.httpsCallable.mockReturnValue(scheduleCallable);
+    familyShareMocks.getFamilyShareToken.mockResolvedValue({
+      id: 'token-with-revoked-scope',
+      label: 'Former family access',
+      active: true,
+      children: [
+        { teamId: 'team-private', teamName: 'Bears', playerId: 'player-1', playerName: 'Sam Player' }
+      ]
+    });
+    scheduleDbMocks.getTeam.mockResolvedValue({ id: 'team-private', name: 'Bears', calendarUrls: [] });
+    scheduleDbMocks.getGames.mockResolvedValue([
+      {
+        id: 'private-game-1',
+        type: 'game',
+        date: new Date('2026-07-13T18:00:00Z'),
+        opponent: 'Tigers',
+        status: 'scheduled'
+      }
+    ]);
+
+    const model = await loadFamilyShareView('token-with-revoked-scope');
+
+    expect(scheduleCallable).toHaveBeenCalledWith({ tokenId: 'token-with-revoked-scope' });
+    expect(model.children).toEqual([]);
+    expect(model.teams).toEqual([]);
+    expect(model.events).toEqual([]);
+    expect(familyShareMocks.resolveFamilyShareTokenChildren).not.toHaveBeenCalled();
+    expect(scheduleDbMocks.getTeam).not.toHaveBeenCalled();
+    expect(scheduleDbMocks.getGames).not.toHaveBeenCalled();
+  });
+
   it('resolves legacy callable children when older tokens do not store children', async () => {
     familyShareMocks.getFamilyShareToken.mockResolvedValue({
       id: 'token-legacy',
