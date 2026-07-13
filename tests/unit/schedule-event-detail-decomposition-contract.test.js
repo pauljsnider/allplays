@@ -204,7 +204,8 @@ describe('ScheduleEventDetail decomposition contract', () => {
 
         expect(section).toContain('export function AssignmentsSection');
         expect(section).toContain('useScheduleEventDetailContext()');
-        expect(section).toContain('loadParentScheduleAssignments(event)');
+        expect(section).toContain('const targetEvent = eventRef.current;');
+        expect(section).toContain('loadParentScheduleAssignments(targetEvent)');
         expect(section).toContain('claimParentScheduleAssignmentSlot(event, auth.user!, role)');
         expect(section).toContain('releaseParentScheduleAssignmentClaim(event, role)');
         expect(section).toContain('<AssignmentCard');
