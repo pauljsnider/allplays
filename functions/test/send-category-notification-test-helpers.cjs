@@ -547,6 +547,44 @@ function buildNotificationTestEnv({
             };
         }
 
+        const liveEventsMatch = path.match(/^teams\/([^/]+)\/games\/([^/]+)\/liveEvents$/);
+        if (liveEventsMatch) {
+            const getLiveEventDocs = () => {
+                const prefix = `${path}/`;
+                return Array.from(docStore.entries())
+                    .filter(([docPath]) => docPath.startsWith(prefix) && !docPath.slice(prefix.length).includes('/'))
+                    .map(([docPath, data]) => makeDocSnapshot({
+                        id: docPath.slice(prefix.length),
+                        ref: doc(docPath),
+                        data,
+                        exists: true
+                    }));
+            };
+            const sortByField = (docs, field, direction = 'asc') => docs.sort((left, right) => {
+                const leftMillis = comparableMillis(left.data()?.[field]);
+                const rightMillis = comparableMillis(right.data()?.[field]);
+                const leftValue = Number.isFinite(leftMillis) ? leftMillis : 0;
+                const rightValue = Number.isFinite(rightMillis) ? rightMillis : 0;
+                return direction === 'desc' ? rightValue - leftValue : leftValue - rightValue;
+            });
+            return {
+                async get() {
+                    return makeQuerySnapshot(getLiveEventDocs());
+                },
+                orderBy(field, direction = 'asc') {
+                    return {
+                        limit(limitCount) {
+                            return {
+                                async get() {
+                                    return makeQuerySnapshot(sortByField(getLiveEventDocs(), field, direction).slice(0, limitCount));
+                                }
+                            };
+                        }
+                    };
+                }
+            };
+        }
+
         if (path === `teams/${teamId}/notificationAudit`) {
             return {
                 async add(value) {

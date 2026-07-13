@@ -342,12 +342,14 @@ describe('live tracker retry queue persistence', () => {
         page.setContext({ teamId: 'team-1', gameId: 'game-9' });
         await page.broadcastEvent({ type: 'stat', statKey: 'pts', value: 2 });
 
-        const queuedEvent = {
+        const queuedEvent = attempts[0];
+        expect(queuedEvent).toMatchObject({
             type: 'stat',
             statKey: 'pts',
             value: 2,
             eventId: 'live-event-1'
-        };
+        });
+        expect(Date.parse(queuedEvent.clientCreatedAt)).toBeGreaterThan(0);
         expect(attempts).toEqual([queuedEvent]);
         expect(page.liveState.eventQueue).toEqual([queuedEvent]);
         expect(readPersistedLiveTrackerQueue(page.storage, 'team-1', 'game-9')).toEqual([queuedEvent]);
@@ -380,21 +382,25 @@ describe('live tracker retry queue persistence', () => {
         page.scheduleRetry({ resetBackoff: true });
         await page.flushOneTimer();
 
-        const queuedSecondEvent = {
+        const queuedSecondEvent = attempts[1];
+        expect(queuedSecondEvent).toMatchObject({
             ...secondEvent,
             eventId: 'live-event-2'
-        };
+        });
+        expect(Date.parse(queuedSecondEvent.clientCreatedAt)).toBeGreaterThan(0);
         expect(attempts).toEqual([
-            { ...firstEvent, eventId: 'live-event-1' },
+            attempts[0],
             queuedSecondEvent
         ]);
+        expect(attempts[0]).toMatchObject({ ...firstEvent, eventId: 'live-event-1' });
+        expect(Date.parse(attempts[0].clientCreatedAt)).toBeGreaterThan(0);
         expect(page.liveState.eventQueue).toEqual([queuedSecondEvent]);
         expect(readPersistedLiveTrackerQueue(page.storage, 'team-1', 'game-9')).toEqual([queuedSecondEvent]);
 
         await page.flushOneTimer();
 
         expect(attempts).toEqual([
-            { ...firstEvent, eventId: 'live-event-1' },
+            attempts[0],
             queuedSecondEvent,
             queuedSecondEvent
         ]);
@@ -480,11 +486,13 @@ describe('live tracker retry queue persistence', () => {
 
         await page.retryPendingFinalizationNow({ resetBackoff: true });
 
+        expect(operations[0]).toMatchObject({
+            type: 'live-event',
+            event: { type: 'stat', statKey: 'pts', value: 2, eventId: 'live-event-1' }
+        });
+        expect(Date.parse(operations[0].event.clientCreatedAt)).toBeGreaterThan(0);
         expect(operations).toEqual([
-            {
-                type: 'live-event',
-                event: { type: 'stat', statKey: 'pts', value: 2, eventId: 'live-event-1' }
-            },
+            operations[0],
             {
                 type: 'finalization',
                 finishPlan: pendingFinish.finishPlan

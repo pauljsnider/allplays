@@ -138,6 +138,13 @@ const {
   buildNotificationDeliveryOptions
 } = require('./notification-delivery-metadata.cjs');
 const {
+  buildBigMomentLiveEventNotification,
+  buildLiveEventNotificationDedupKey,
+  buildLiveScoreStateNotificationDedupKey,
+  getLiveEventActorUid,
+  isLiveEventNotificationFresh
+} = require('./live-event-notification-core.cjs');
+const {
   getStaleNotificationTokenCutoffMillis
 } = require('./notification-token-sweep-core.cjs');
 const {
@@ -7649,6 +7656,66 @@ async function checkAndSetNotificationDedup(teamId, category, gameId, dedupKey =
   return result;
 }
 
+async function checkAndSetNotificationDedupKeys(teamId, category, gameId, dedupKeys = []) {
+  const normalizedDedupKeys = [...new Set((Array.isArray(dedupKeys) ? dedupKeys : [dedupKeys])
+    .map((dedupKey) => String(dedupKey || '').trim())
+    .filter(Boolean))];
+  if (!normalizedDedupKeys.length) return false;
+
+  const dedupEntries = normalizedDedupKeys.map((dedupKey) => ({
+    dedupKey,
+    ref: buildNotificationDedupRef(teamId, category, buildNotificationDedupIdentity(gameId, dedupKey))
+  }));
+  return firestore.runTransaction(async (txn) => {
+    const snapshots = await Promise.all(dedupEntries.map(({ ref }) => txn.get(ref)));
+    const hasFreshClaim = snapshots.some((snapshot) => {
+      if (!snapshot.exists) return false;
+      const sentAt = snapshot.data()?.sentAt?.toMillis?.() || 0;
+      return Date.now() - sentAt < NOTIFICATION_DEDUP_WINDOW_MS;
+    });
+    if (hasFreshClaim) return false;
+
+    dedupEntries.forEach(({ dedupKey, ref }) => {
+      txn.set(ref, {
+        teamId,
+        category,
+        gameId: gameId || null,
+        dedupKey,
+        sentAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+    });
+    return true;
+  });
+}
+
+async function hasRecentBigMomentLiveEventForScoreState(teamId, gameId, scoreStateDedupKey) {
+  const normalizedTeamId = String(teamId || '').trim();
+  const normalizedGameId = String(gameId || '').trim();
+  const normalizedScoreStateDedupKey = String(scoreStateDedupKey || '').trim();
+  if (!normalizedTeamId || !normalizedGameId || !normalizedScoreStateDedupKey) return false;
+
+  const nowMillis = Date.now();
+  try {
+    const liveEventsSnap = await firestore.collection(`teams/${normalizedTeamId}/games/${normalizedGameId}/liveEvents`)
+      .orderBy('createdAt', 'desc')
+      .limit(25)
+      .get();
+    return liveEventsSnap.docs.some((docSnap) => {
+      const event = docSnap.data() || {};
+      if (!buildBigMomentLiveEventNotification(event)) return false;
+      if (!isLiveEventNotificationFresh(event, nowMillis)) return false;
+      return buildLiveScoreStateNotificationDedupKey(event) === normalizedScoreStateDedupKey;
+    });
+  } catch (error) {
+    functions.logger.warn('Failed to check live events before live score notification', {
+      teamId: normalizedTeamId,
+      gameId: normalizedGameId,
+      error: error?.message || String(error || 'Unknown error')
+    });
+    return false;
+  }
+}
+
 
 function mergeNotificationWebpushOptions(baseWebpush = {}, deliveryOptions = {}) {
   if (!deliveryOptions?.webpush) return baseWebpush;
@@ -10294,7 +10361,21 @@ exports.notifyGameUpdated = functions.firestore
 
     if (category === 'liveScore') {
       const liveScoreDedupKey = `score:${toNumericScore(before.homeScore)}:${toNumericScore(before.awayScore)}->${toNumericScore(after.homeScore)}:${toNumericScore(after.awayScore)}`;
-      const canSendLiveScore = await checkAndSetNotificationDedup(teamId, category, gameId, liveScoreDedupKey);
+      const liveScoreStateDedupKey = buildLiveScoreStateNotificationDedupKey(after);
+      if (await hasRecentBigMomentLiveEventForScoreState(teamId, gameId, liveScoreStateDedupKey)) {
+        functions.logger.info('Notification dedup: skipping generic live score send for live event-backed score', {
+          teamId,
+          category,
+          gameId,
+          dedupKey: liveScoreDedupKey,
+          scoreStateDedupKey: liveScoreStateDedupKey
+        });
+        return null;
+      }
+      const canSendLiveScore = await checkAndSetNotificationDedupKeys(teamId, category, gameId, [
+        liveScoreDedupKey,
+        liveScoreStateDedupKey
+      ]);
       if (!canSendLiveScore) {
         functions.logger.info('Notification dedup: skipping duplicate live score send', {
           teamId,
@@ -10325,6 +10406,53 @@ exports.notifyGameUpdated = functions.firestore
       title: payload.title,
       body: payload.body,
       actorUid
+    });
+  });
+
+exports.notifyLiveEventCreated = functions.firestore
+  .document('teams/{teamId}/games/{gameId}/liveEvents/{eventId}')
+  .onCreate(async (snapshot, context) => {
+    const event = snapshot.data() || {};
+    const teamId = String(context.params?.teamId || '').trim();
+    const gameId = String(context.params?.gameId || '').trim();
+    const documentEventId = String(context.params?.eventId || snapshot.id || '').trim();
+    if (!teamId || !gameId || !documentEventId) return null;
+
+    const payload = buildBigMomentLiveEventNotification(event);
+    if (!payload) return null;
+    if (!isLiveEventNotificationFresh(event)) {
+      functions.logger.info('Notification recency: skipping stale or undated live event', {
+        teamId,
+        gameId,
+        eventId: documentEventId
+      });
+      return null;
+    }
+
+    const dedupKey = buildLiveEventNotificationDedupKey(event, documentEventId);
+    if (!dedupKey) return null;
+    const scoreStateDedupKey = buildLiveScoreStateNotificationDedupKey(event);
+    const canSend = await checkAndSetNotificationDedupKeys(teamId, 'liveScore', gameId, [dedupKey, scoreStateDedupKey]);
+    if (!canSend) {
+      functions.logger.info('Notification dedup: skipping duplicate live event send', {
+        teamId,
+        gameId,
+        eventId: documentEventId,
+        dedupKey,
+        scoreStateDedupKey
+      });
+      return null;
+    }
+
+    return sendCategoryNotification({
+      teamId,
+      gameId,
+      eventId: documentEventId,
+      category: 'liveScore',
+      title: payload.title,
+      body: payload.body,
+      actorUid: getLiveEventActorUid(event),
+      dedupKey
     });
   });
 

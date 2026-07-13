@@ -3019,8 +3019,14 @@ service cloud.firestore {
 
         // Live Events subcollection - for real-time game broadcasting
         match /liveEvents/{eventId} {
+          function hasValidLiveEventAttribution(data) {
+            return (!data.keys().hasAny(['createdBy']) || data.createdBy == null || data.createdBy == request.auth.uid) &&
+                   (!data.keys().hasAny(['actorUid']) || data.actorUid == null || data.actorUid == request.auth.uid);
+          }
+
           allow read: if canReadGameSubcollectionDocument(teamId, gameId);
-          allow create: if isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId);  // Stat tracker writes
+          allow create: if (isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId)) &&
+                           hasValidLiveEventAttribution(request.resource.data);  // Stat tracker writes
           allow update, delete: if false;  // Events are immutable
         }
 

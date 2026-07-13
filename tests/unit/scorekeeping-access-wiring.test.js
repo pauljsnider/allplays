@@ -43,5 +43,9 @@ describe('scorekeeping access wiring', () => {
         const privatePlayerStatsRule = rules.match(/match \/privatePlayerStats\/\{statId\} \{[\s\S]*?\n        \}/)?.[0] || '';
         expect(privatePlayerStatsRule).toContain('allow read, create, update: if isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId);');
         expect(privatePlayerStatsRule).toContain('allow delete: if isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId);');
+        const liveEventsRule = rules.match(/match \/liveEvents\/\{eventId\} \{[\s\S]*?\n        \}/)?.[0] || '';
+        expect(liveEventsRule).toContain('hasValidLiveEventAttribution(request.resource.data)');
+        expect(liveEventsRule).toContain("data.createdBy == request.auth.uid");
+        expect(liveEventsRule).toContain("data.actorUid == request.auth.uid");
     });
 });

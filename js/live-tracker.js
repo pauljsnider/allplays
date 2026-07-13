@@ -116,12 +116,15 @@ function createLiveEventId() {
 function withStableLiveEventId(eventData) {
   const event = (eventData && typeof eventData === 'object') ? eventData : {};
   const existingId = typeof event.eventId === 'string' ? event.eventId.trim() : '';
+  const clientCreatedAt = event.clientCreatedAt || new Date().toISOString();
   if (existingId) {
-    return existingId === event.eventId ? event : { ...event, eventId: existingId };
+    if (existingId === event.eventId && event.clientCreatedAt) return event;
+    return { ...event, eventId: existingId, clientCreatedAt };
   }
   return {
     ...event,
-    eventId: createLiveEventId()
+    eventId: createLiveEventId(),
+    clientCreatedAt
   };
 }
 

@@ -565,13 +565,17 @@
                 "apps/app/src/pages/GameDetail.tsx",
                 "apps/app/src/pages/StandardTracker.tsx"
             ],
-            "cloudFunctions": [],
+            "cloudFunctions": [
+                "notifyLiveEventCreated"
+            ],
             "unitTests": [
                 "tests/unit/app-baseball-scorekeeping-service.test.ts",
                 "tests/unit/app-game-report-service.test.js",
                 "tests/unit/app-live-game-announcer.test.js",
                 "tests/unit/db-tracking-items.test.js",
                 "tests/unit/game-day-entry.test.js",
+                "functions/test/live-event-notification-core.test.cjs",
+                "functions/test/notification-triggers.test.js",
                 "tests/unit/live-game-replay-init.test.js",
                 "tests/unit/live-tracker-opponent-stats.test.js",
                 "tests/unit/scoreboard-widget.test.js",
