@@ -2414,6 +2414,7 @@ service cloud.firestore {
                          resource.data.get('type', null) != 'parent_invite' &&
                          resource.data.get('type', null) != 'household_invite' &&
                          resource.data.get('type', null) != 'coparent_invite' &&
+                         resource.data.get('type', null) != 'friend_invite' &&
                          resource.data.generatedBy == request.auth.uid &&
                          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['revoked', 'revokedAt', 'used', 'updatedAt'])));
 	      allow delete: if isSignedIn() && resource.data.generatedBy == request.auth.uid;

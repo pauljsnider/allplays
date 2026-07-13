@@ -130,6 +130,13 @@ describe('React app social Firestore rules', () => {
         expect(source).toContain("isFriendInviteAcceptedFriendshipCreateValid(friendshipId, request.resource.data)");
     });
 
+    it('excludes friend invites from the owner update fallback after redemption', () => {
+        const source = rulesSource();
+
+        expect(source).toContain("isFriendInviteRedemptionUpdate() ||");
+        expect(source).toContain("resource.data.get('type', null) != 'friend_invite' &&");
+    });
+
     it('locks down top-level users docs and routes discovery through projected public profiles', () => {
         const source = rulesSource();
 

@@ -5077,18 +5077,7 @@ export async function redeemFriendInvite(userId, code, fallbackEmail = null) {
         const friendshipId = buildFriendshipId(inviterId, userId);
         const friendshipRef = doc(db, "friendships", friendshipId);
         const inviteeRef = doc(db, "users", userId);
-        const [friendshipSnapshot, inviteeSnapshot] = await Promise.all([
-            transaction.get(friendshipRef),
-            transaction.get(inviteeRef)
-        ]);
-
-        const existingFriendship = friendshipSnapshot.exists() ? (friendshipSnapshot.data() || {}) : {};
-        if (
-            existingFriendship.status === 'blocked' ||
-            (Array.isArray(existingFriendship.blockedBy) && existingFriendship.blockedBy.length > 0)
-        ) {
-            throw new Error('This friendship cannot be updated from an invite');
-        }
+        const inviteeSnapshot = await transaction.get(inviteeRef);
 
         const now = Timestamp.now();
         const inviterProfile = buildFriendInviteInviterProfile(codeData.inviterProfile || {});
@@ -5103,10 +5092,9 @@ export async function redeemFriendInvite(userId, code, fallbackEmail = null) {
                 ...inviteeProfile,
                 email: inviteeProfile.email || inviteeEmail || null
             },
-            existingFriendship,
             now,
             inviteCodeId: normalizedCode
-        }), { merge: true });
+        }));
         transaction.update(codeRef, {
             used: true,
             usedBy: userId,

@@ -144,6 +144,8 @@ describe('access code atomic redemption guard', () => {
         expect(afterFunction).toContain('transaction.set(friendshipRef');
         expect(afterFunction).toContain('transaction.update(codeRef');
         expect(afterFunction).toContain('buildFriendInviteInviterProfile(codeData.inviterProfile || {})');
+        expect(afterFunction).not.toContain('transaction.get(friendshipRef)');
+        expect(afterFunction).not.toContain('friendshipSnapshot');
         expect(afterFunction).not.toContain('doc(db, "users", inviterId)');
     });
 });
