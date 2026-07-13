@@ -200,7 +200,7 @@ describe('React app social service', () => {
                     media: []
                 }]);
             }
-            if (whereClause?.field === 'memberIds') {
+            if (whereClause?.field === 'recipientId') {
                 return snapshot([{
                     id: 'friend-1__user-1',
                     memberIds: ['friend-1', 'user-1'],
@@ -228,6 +228,70 @@ describe('React app social service', () => {
         expect(model.incomingRequests).toEqual([expect.objectContaining({ userId: 'friend-1', name: 'Jamie Friend' })]);
         expect(model.suggestions).toEqual([expect.objectContaining({ userId: 'friend-2', name: 'Morgan Parent' })]);
         expect(model.metrics.feedItems).toBeGreaterThanOrEqual(2);
+        expect(firebaseMocks.where).toHaveBeenCalledWith('requesterId', '==', 'user-1');
+        expect(firebaseMocks.where).toHaveBeenCalledWith('recipientId', '==', 'user-1');
+        expect(firebaseMocks.where).not.toHaveBeenCalledWith('memberIds', 'array-contains', 'user-1');
+    });
+
+    it('merges requested and received friendship queries without duplicate friends', async () => {
+        const { loadFriendships } = await import('../../apps/app/src/lib/socialService.ts');
+        const friendship = {
+            id: 'friend-1__user-1',
+            memberIds: ['friend-1', 'user-1'],
+            requesterId: 'user-1',
+            recipientId: 'friend-1',
+            status: 'accepted',
+            sharedTeamIds: [],
+            sharedTeamNames: []
+        };
+        firebaseMocks.getDocs.mockResolvedValue(snapshot([friendship]));
+        firebaseMocks.getDoc.mockResolvedValue({
+            id: 'friend-1',
+            exists: () => true,
+            data: () => ({ displayName: 'Jamie Friend' })
+        });
+
+        const friends = await loadFriendships(user);
+
+        expect(firebaseMocks.getDocs).toHaveBeenCalledTimes(2);
+        expect(friends).toEqual([expect.objectContaining({ userId: 'friend-1', name: 'Jamie Friend' })]);
+        expect(firebaseMocks.getDoc).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not drop received requests when the requested query reaches its limit', async () => {
+        const { loadFriendships } = await import('../../apps/app/src/lib/socialService.ts');
+        const requested = Array.from({ length: 50 }, (_, index) => ({
+            id: `friend-${index}__user-1`,
+            memberIds: [`friend-${index}`, 'user-1'],
+            requesterId: 'user-1',
+            recipientId: `friend-${index}`,
+            status: 'pending'
+        }));
+        const received = {
+            id: 'friend-incoming__user-1',
+            memberIds: ['friend-incoming', 'user-1'],
+            requesterId: 'friend-incoming',
+            recipientId: 'user-1',
+            status: 'pending'
+        };
+        firebaseMocks.getDocs
+            .mockResolvedValueOnce(snapshot(requested))
+            .mockResolvedValueOnce(snapshot([received]));
+        firebaseMocks.getDoc.mockImplementation(async (ref) => ({
+            id: ref.path[1],
+            exists: () => true,
+            data: () => ({ displayName: ref.path[1] })
+        }));
+
+        const friends = await loadFriendships(user);
+
+        expect(friends).toHaveLength(51);
+        expect(friends).toContainEqual(expect.objectContaining({
+            userId: 'friend-incoming',
+            status: 'pending',
+            requesterId: 'friend-incoming',
+            recipientId: 'user-1'
+        }));
     });
 
     it('searches public profiles by hashed email and shared discovery teams', async () => {

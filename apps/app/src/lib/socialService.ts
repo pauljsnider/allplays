@@ -210,13 +210,27 @@ export async function loadVisibleSocialPosts(user: AuthUser, home: ParentHomeMod
 
 export async function loadFriendships(user: AuthUser): Promise<SocialFriend[]> {
   if (!user?.uid) return [];
-  const friendshipQuery = query(
+  const requestedFriendshipsQuery = query(
     collection(db, 'friendships'),
-    where('memberIds', 'array-contains', user.uid),
+    where('requesterId', '==', user.uid),
     limit(50)
   );
-  const snapshot = await withTimeout(getDocs(friendshipQuery), 'Friendships');
-  const friendships = snapshotToDocs(snapshot);
+  const receivedFriendshipsQuery = query(
+    collection(db, 'friendships'),
+    where('recipientId', '==', user.uid),
+    limit(50)
+  );
+  const snapshots = await withTimeout(Promise.all([
+    getDocs(requestedFriendshipsQuery),
+    getDocs(receivedFriendshipsQuery)
+  ]), 'Friendships');
+  const friendshipDocs = new Map<string, FirestoreDoc>();
+  snapshots.forEach((snapshot) => {
+    snapshotToDocs(snapshot).forEach((friendship) => friendshipDocs.set(friendship.id, friendship));
+  });
+  // Keep both bounded result sets. Applying a second global limit here could
+  // hide incoming requests whenever a user already has 50 outgoing records.
+  const friendships = [...friendshipDocs.values()];
   const friendDocs = await Promise.all(friendships.map(async (friendship) => {
     const otherUserId = (friendship.memberIds || []).find((id: string) => id !== user.uid);
     if (!otherUserId) return null;
