@@ -3659,6 +3659,7 @@ service cloud.firestore {
       // Owner can update (e.g., revoke) their own tokens.
       allow update: if isSignedIn() &&
                        resource.data.ownerUserId == request.auth.uid &&
+                       request.resource.data.ownerUserId == resource.data.ownerUserId &&
                        request.resource.data.expiresAt is timestamp &&
                        request.resource.data.expiresAt > request.time;
       allow delete: if isSignedIn() &&

@@ -97,6 +97,7 @@ function makeFunctionsStub() {
     onCreate: (fn) => fn,
     onUpdate: (fn) => fn,
     onWrite: (fn) => fn,
+    onDelete: (fn) => fn,
     onRun: (fn) => fn,
     document() { return this; },
     schedule() { return this; },
@@ -108,6 +109,7 @@ function makeFunctionsStub() {
 
   return {
     config: () => ({ stripe: { secret_key: 'sk_test_123', app_url: 'https://allplays.test' } }),
+    auth: { user: () => triggerChain },
     https: { HttpsError, onCall: (fn) => fn, onRequest: (fn) => fn },
     firestore: { document: () => triggerChain },
     pubsub: { schedule: () => triggerChain },
@@ -168,15 +170,22 @@ test('family share schedule callable validates bearer token and projects private
   const callables = loadCallables({
     [`familyShareTokens/${tokenId}`]: {
       active: true,
+      ownerUserId: 'parent-1',
       children: [
         { teamId: 'private-team', teamName: 'Old Bears', playerId: 'player-1', playerName: 'Sam Player' }
       ]
+    },
+    'users/parent-1': {
+      parentPlayerKeys: ['private-team::player-1']
     },
     'teams/private-team': {
       name: 'Bears',
       isPublic: false,
       calendarUrls: ['https://calendar.example.test/team.ics'],
       adminEmails: ['coach@example.test']
+    },
+    'teams/private-team/players/player-1': {
+      name: 'Sam Player'
     },
     'teams/private-team/games/game-1': {
       type: 'game',
@@ -196,7 +205,7 @@ test('family share schedule callable validates bearer token and projects private
   assert.deepEqual(result.children, [
     {
       teamId: 'private-team',
-      teamName: 'Old Bears',
+      teamName: 'Bears',
       playerId: 'player-1',
       playerName: 'Sam Player',
       playerNumber: '',
@@ -219,6 +228,100 @@ test('family share schedule callable validates bearer token and projects private
       awayScore: 2
     }
   ]);
+});
+
+test('family share schedule callable rejects client-stored teams outside the token owner parent scope', async () => {
+  const tokenId = 'cccccccccccccccccccccccccccccccccccccccc';
+  const callables = loadCallables({
+    [`familyShareTokens/${tokenId}`]: {
+      active: true,
+      ownerUserId: 'parent-1',
+      children: [
+        { teamId: 'private-team', playerId: 'player-1', playerName: 'Target Player' }
+      ]
+    },
+    'users/parent-1': {
+      parentPlayerKeys: ['owned-team::owned-player']
+    },
+    'teams/owned-team': { name: 'Owned Team' },
+    'teams/owned-team/players/owned-player': { name: 'Owned Player' },
+    'teams/private-team': { name: 'Private Team', isPublic: false },
+    'teams/private-team/players/player-1': { name: 'Target Player' },
+    'teams/private-team/games/private-game': {
+      date: new FakeTimestamp(Date.parse('2026-07-13T18:00:00Z')),
+      opponent: 'Secret Opponent',
+      location: 'Private Field'
+    }
+  });
+
+  const result = await callables.getFamilyShareSchedule({ tokenId }, {});
+
+  assert.deepEqual(result, { children: [], teams: [] });
+});
+
+test('family share schedule callable strips private nested fields from recurring-game projections', async () => {
+  const tokenId = 'dddddddddddddddddddddddddddddddddddddddd';
+  const callables = loadCallables({
+    [`familyShareTokens/${tokenId}`]: {
+      active: true,
+      ownerUserId: 'parent-1',
+      children: [{ teamId: 'team-1', playerId: 'player-1' }]
+    },
+    'users/parent-1': { parentPlayerKeys: ['team-1::player-1'] },
+    'teams/team-1': { name: 'Bears', isPublic: false },
+    'teams/team-1/players/player-1': { name: 'Sam Player' },
+    'teams/team-1/games/series-1': {
+      type: 'practice',
+      date: new FakeTimestamp(Date.parse('2026-07-13T18:00:00Z')),
+      startTime: '18:00',
+      endTime: '19:30',
+      endDayOffset: 0,
+      isSeriesMaster: true,
+      recurrence: {
+        freq: 'weekly',
+        interval: 1,
+        byDays: ['MO'],
+        until: new FakeTimestamp(Date.parse('2026-08-31T23:59:59Z')),
+        staffRule: 'do not expose'
+      },
+      exDates: ['2026-07-27'],
+      overrides: {
+        '2026-07-20': {
+          title: 'Evening practice',
+          location: 'Main Gym',
+          startTime: '18:30',
+          notes: 'Private coach note',
+          assignments: [{ userId: 'coach-1' }]
+        }
+      },
+      internalNotes: 'Staff only',
+      assignments: [{ userId: 'coach-1' }]
+    }
+  });
+
+  const result = await callables.getFamilyShareSchedule({ tokenId }, {});
+  const projectedGame = result.teams[0].games[0];
+
+  assert.equal(projectedGame.startTime, '18:00');
+  assert.equal(projectedGame.endTime, '19:30');
+  assert.equal(projectedGame.endDayOffset, 0);
+  assert.deepEqual(projectedGame.recurrence, {
+    freq: 'weekly',
+    interval: 1,
+    byDays: ['MO'],
+    until: '2026-08-31T23:59:59.000Z'
+  });
+  assert.deepEqual(projectedGame.overrides, {
+    '2026-07-20': {
+      title: 'Evening practice',
+      location: 'Main Gym',
+      startTime: '18:30'
+    }
+  });
+  assert.equal('notes' in projectedGame.overrides['2026-07-20'], false);
+  assert.equal('assignments' in projectedGame.overrides['2026-07-20'], false);
+  assert.equal('internalNotes' in projectedGame, false);
+  assert.equal('assignments' in projectedGame, false);
 });
 
 test('family share schedule callable rejects inactive bearer tokens before schedule projection', async () => {

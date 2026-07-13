@@ -5024,6 +5024,9 @@ const FAMILY_SHARE_GAME_PROJECTION_FIELDS = [
   'date',
   'end',
   'endDate',
+  'startTime',
+  'endTime',
+  'endDayOffset',
   'instanceDate',
   'masterId',
   'occurrenceId',
@@ -5091,15 +5094,13 @@ async function loadReadableFamilyShareToken(tokenId) {
 
 async function resolveReadableFamilyShareChildren(token) {
   const storedChildren = normalizeFamilyShareCallableChildren(token.children);
-  if (storedChildren.length) return storedChildren;
-
   const ownerUserId = normalizeFamilyShareText(token.ownerUserId);
   if (!ownerUserId) return [];
 
   const ownerSnap = await firestore.doc(`users/${ownerUserId}`).get();
   if (!ownerSnap.exists) return [];
 
-  return normalizeFamilyShareCallableChildren(await resolveFamilyShareChildrenFromOwnerProfile(ownerSnap.data() || {}, {
+  const ownerChildren = normalizeFamilyShareCallableChildren(await resolveFamilyShareChildrenFromOwnerProfile(ownerSnap.data() || {}, {
     loadTeam: async (teamId) => {
       const teamSnap = await firestore.doc(`teams/${teamId}`).get();
       return teamSnap.exists ? { id: teamSnap.id, ...(teamSnap.data() || {}) } : null;
@@ -5109,6 +5110,13 @@ async function resolveReadableFamilyShareChildren(token) {
       return playerSnap.exists ? { id: playerSnap.id, ...(playerSnap.data() || {}) } : null;
     }
   }));
+
+  // Token documents are written by clients, so their child/team IDs are only a
+  // requested subset. Never use them as proof that the token owner can read a
+  // private schedule; intersect them with the owner's live parent scope.
+  if (!storedChildren.length) return ownerChildren;
+  const storedKeys = new Set(storedChildren.map((child) => `${child.teamId}::${child.playerId}`));
+  return ownerChildren.filter((child) => storedKeys.has(`${child.teamId}::${child.playerId}`));
 }
 
 function isFamilyShareTeamActive(team = {}) {
@@ -5136,6 +5144,39 @@ function serializeFamilyShareValue(value) {
   return value;
 }
 
+function serializeFamilyShareRecurrence(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const recurrence = {};
+  const freq = normalizeFamilyShareText(value.freq).toLowerCase();
+  if (['daily', 'weekly'].includes(freq)) recurrence.freq = freq;
+  const interval = Math.floor(Number(value.interval));
+  if (Number.isFinite(interval) && interval > 0) recurrence.interval = Math.min(interval, 3660);
+  const count = Math.floor(Number(value.count));
+  if (Number.isFinite(count) && count > 0) recurrence.count = Math.min(count, 3660);
+  if (Array.isArray(value.byDays)) {
+    recurrence.byDays = [...new Set(value.byDays
+      .map((day) => normalizeFamilyShareText(day).toUpperCase())
+      .filter((day) => ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'].includes(day)))]
+      .slice(0, 7);
+  }
+  if (value.until) recurrence.until = serializeFamilyShareValue(value.until);
+  return recurrence;
+}
+
+function serializeFamilyShareOverrides(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value)
+    .filter(([dateKey, override]) => /^\d{4}-\d{2}-\d{2}$/.test(dateKey) && override && typeof override === 'object' && !Array.isArray(override))
+    .slice(0, 1000)
+    .map(([dateKey, override]) => {
+      const safeOverride = {};
+      ['title', 'location', 'startTime', 'endTime'].forEach((field) => {
+        if (Object.hasOwn(override, field)) safeOverride[field] = normalizeFamilyShareText(override[field]);
+      });
+      return [dateKey, safeOverride];
+    }));
+}
+
 function serializeFamilyShareGame(docSnap) {
   const data = docSnap.data() || {};
   const game = {
@@ -5144,7 +5185,18 @@ function serializeFamilyShareGame(docSnap) {
   };
   FAMILY_SHARE_GAME_PROJECTION_FIELDS.forEach((field) => {
     if (Object.hasOwn(data, field)) {
-      game[field] = serializeFamilyShareValue(data[field]);
+      if (field === 'recurrence') {
+        game[field] = serializeFamilyShareRecurrence(data[field]);
+      } else if (field === 'overrides') {
+        game[field] = serializeFamilyShareOverrides(data[field]);
+      } else if (field === 'exDates') {
+        game[field] = (Array.isArray(data[field]) ? data[field] : [])
+          .map(normalizeFamilyShareText)
+          .filter((dateKey) => /^\d{4}-\d{2}-\d{2}$/.test(dateKey))
+          .slice(0, 1000);
+      } else {
+        game[field] = serializeFamilyShareValue(data[field]);
+      }
     }
   });
   return game;

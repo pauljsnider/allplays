@@ -28,6 +28,10 @@ describe('family share token Firestore rules', () => {
         expect(familyShareTokenRules).toContain("request.resource.data.expiresAt > request.time");
     });
 
+    it('prevents token owners from reassigning bearer tokens to another user', () => {
+        expect(familyShareTokenRules).toContain('request.resource.data.ownerUserId == resource.data.ownerUserId');
+    });
+
     it('still reserves revoked-token access for owners and global admins', () => {
         expect(familyShareTokenRules).toContain("isSignedIn() && resource.data.ownerUserId == request.auth.uid");
         expect(familyShareTokenRules).toContain('isGlobalAdmin()');
