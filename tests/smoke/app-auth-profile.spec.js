@@ -698,6 +698,7 @@ test('profile exposes account, notification, invite, verification, password, upl
     await expect(page.getByText('Invite codes')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Show more codes' })).toBeVisible();
     await expect(page.getByText('Advanced: add recipient label')).toBeVisible();
+    await page.getByText('Advanced: add recipient label').click();
     await page.getByLabel('Invite email label').fill('friend@example.com');
     await page.getByRole('button', { name: 'Generate invite link' }).click();
     await expect(page.getByText('Generated invite link')).toBeVisible();
