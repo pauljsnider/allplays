@@ -554,7 +554,7 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getPlayers, getPlayersWithPrivateRosterContacts, addPlayer, applyRosterCsvImportOperations, deactivatePlayer, reactivatePlayer, getGames, uploadPlayerPhoto, updatePlayer, setPlayerPrivateRosterProfileFields, inviteParent, removeParentFromPlayer, getUnreadChatCount, listTeamParentMembershipRequests, approveParentMembershipRequest, denyParentMembershipRequest, getRosterFieldDefinitions, saveRosterFieldDefinition, disableRosterFieldDefinition, reorderRosterFieldDefinitions, listTeamRegistrationForms, listTeamRegistrationReviews, approveTeamRegistration, rejectTeamRegistration, extendTeamRegistrationOffer, acceptTeamRegistrationOffer, releaseTeamRegistrationWaitlist, listTeamTrackingItems, createTeamTrackingItem, listTeamTrackingStatuses, setTeamTrackingStatus } from './js/db.js?v=94';
+        import { getTeam, getPlayers, getPlayersWithPrivateRosterContacts, getUsersByParentPlayerKey, getUsersByParentTeamId, addPlayer, applyRosterCsvImportOperations, deactivatePlayer, reactivatePlayer, getGames, uploadPlayerPhoto, updatePlayer, setPlayerPrivateRosterProfileFields, inviteParent, removeParentFromPlayer, getUnreadChatCount, listTeamParentMembershipRequests, approveParentMembershipRequest, denyParentMembershipRequest, getRosterFieldDefinitions, saveRosterFieldDefinition, disableRosterFieldDefinition, reorderRosterFieldDefinitions, listTeamRegistrationForms, listTeamRegistrationReviews, approveTeamRegistration, rejectTeamRegistration, extendTeamRegistrationOffer, acceptTeamRegistrationOffer, releaseTeamRegistrationWaitlist, listTeamTrackingItems, createTeamTrackingItem, listTeamTrackingStatuses, setTeamTrackingStatus } from './js/db.js?v=94';
         import { buildFullRosterCsvTemplate, buildRosterFieldDefinitionPayload, collectRosterParentContacts, collectRosterProfileValues, getRosterProfileValues, mergeRosterParentContacts, mergeStandardRosterFieldDefinitions, normalizeRosterFieldDefinitions, planRosterCsvImport, renderRosterProfileFields, splitRosterProfileValuesByVisibility, summarizeRosterContactInviteResults, validateRosterProfileValues } from './js/roster-profile-fields.js?v=6';
         import { buildTrackingStatusPayload, mergeTrackingStatusRows, normalizeTrackingItemDraft, summarizeTrackingStatus } from './js/tracking-status-admin.js?v=2';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=15';
@@ -1046,7 +1046,7 @@
                         playerId = await addPlayer(currentTeamId, operation.payload);
                     }
                     if (operation.privateRosterFields || operation.privateFamilyContacts) {
-                        await setPlayerPrivateRosterProfileFields(currentTeamId, playerId, operation.privateRosterFields || {}, operation.privateFamilyContacts || {});
+                        await setPlayerPrivateRosterProfileFields(currentTeamId, playerId, operation.privateRosterFields, operation.privateFamilyContacts || {});
                     }
                 }
 
@@ -1070,7 +1070,7 @@
         async function refreshRosterFieldDefinitions() {
             const rawFields = await getRosterFieldDefinitions(currentTeamId, currentTeam);
             rosterFieldDefinitionDrafts = normalizeRosterFieldDefinitions(rawFields, { includeInactive: true });
-            rosterFieldDefinitions = mergeStandardRosterFieldDefinitions(rosterFieldDefinitionDrafts.filter((field) => field.active !== false));
+            rosterFieldDefinitions = mergeStandardRosterFieldDefinitions(rosterFieldDefinitionDrafts);
             renderRosterProfileFields(document.getElementById('roster-profile-fields'), rosterFieldDefinitions);
             renderRosterFieldSettings();
         }
@@ -1503,6 +1503,24 @@
             }
         }
 
+        function buildLegacyParentContactsFromUsers(users = [], playerId = '') {
+            return (Array.isArray(users) ? users : [])
+                .filter((user) => {
+                    const links = Array.isArray(user?.parentOf) ? user.parentOf : [];
+                    const keys = Array.isArray(user?.parentPlayerKeys) ? user.parentPlayerKeys : [];
+                    return links.some((link) => link?.teamId === currentTeamId && link?.playerId === playerId) ||
+                        keys.includes(`${currentTeamId}::${playerId}`);
+                })
+                .map((user) => ({
+                    userId: user.id || user.uid || '',
+                    name: user.displayName || user.fullName || user.name || user.email || 'Parent',
+                    email: user.email || '',
+                    phone: user.phone || user.phoneNumber || '',
+                    relation: 'Parent',
+                    source: 'legacy-user-link'
+                }));
+        }
+
         async function loadRoster() {
             const tbody = document.getElementById('roster-list');
             try {
@@ -1554,6 +1572,37 @@
                     includeFamilyContacts: false
                 });
                 if (contacts.length) parentsByPlayerId.set(player.id, contacts);
+            });
+            const legacyTeamParentUsers = await loadOptionalRosterData(
+                'legacy parent users for roster team',
+                () => getUsersByParentTeamId(currentTeamId),
+                []
+            );
+            const legacyParentResults = [];
+            for (let i = 0; i < players.length; i += 10) {
+                const batch = players.slice(i, i + 10);
+                legacyParentResults.push(...await Promise.all(batch.map(async (player) => {
+                    const playerId = String(player?.id || '').trim();
+                    if (!playerId) return { playerId, contacts: [] };
+                    const users = await loadOptionalRosterData(
+                        `legacy parent users for ${playerId}`,
+                        () => getUsersByParentPlayerKey(`${currentTeamId}::${playerId}`),
+                        []
+                    );
+                    return { playerId, contacts: buildLegacyParentContactsFromUsers([...legacyTeamParentUsers, ...users], playerId) };
+                })));
+            }
+            legacyParentResults.forEach(({ playerId, contacts }) => {
+                if (!playerId || contacts.length === 0) return;
+                const existing = parentsByPlayerId.get(playerId) || [];
+                const seen = new Set(existing.map((contact) => normalizeEmail(contact.email) || contact.userId).filter(Boolean));
+                contacts.forEach((contact) => {
+                    const key = normalizeEmail(contact.email) || contact.userId;
+                    if (key && seen.has(key)) return;
+                    existing.push(contact);
+                    if (key) seen.add(key);
+                });
+                parentsByPlayerId.set(playerId, existing);
             });
             const pendingRequestsByPlayerId = new Map();
             (membershipRequests || [])
@@ -2817,7 +2866,7 @@ EXAMPLES:
                             };
                             const playerId = await addPlayer(currentTeamId, playerData);
                             if (hasBulkAiPrivateProfilePayload(payload)) {
-                                await setPlayerPrivateRosterProfileFields(currentTeamId, playerId, payload.privateRosterFields || {}, payload.privateFamilyContacts || {});
+                                await setPlayerPrivateRosterProfileFields(currentTeamId, playerId, payload.privateRosterFields, payload.privateFamilyContacts || {});
                             }
                             successCount++;
                         } else if (op.action === 'update') {
@@ -2827,7 +2876,7 @@ EXAMPLES:
                             const playerData = { ...payload.playerData };
                             await updatePlayer(currentTeamId, op.playerId, playerData);
                             if (hasBulkAiPrivateProfilePayload(payload)) {
-                                await setPlayerPrivateRosterProfileFields(currentTeamId, op.playerId, payload.privateRosterFields || {}, privateFamilyContacts || {});
+                                await setPlayerPrivateRosterProfileFields(currentTeamId, op.playerId, payload.privateRosterFields, privateFamilyContacts || {});
                             }
                             successCount++;
                         } else if (op.action === 'delete') {

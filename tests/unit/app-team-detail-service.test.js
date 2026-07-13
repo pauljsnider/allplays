@@ -376,6 +376,7 @@ describe('React app team detail model', () => {
             number: ' 9 ',
             photoFile,
             rosterFieldValues: {
+                position: 'Forward',
                 grad_year: '2028',
                 captain: true,
                 medical_notes: 'Peanut allergy'
@@ -387,8 +388,10 @@ describe('React app team detail model', () => {
             name: 'Pat Star',
             number: '9',
             photoUrl: 'https://img.example.test/player-1.png',
+            position: 'Forward',
             profile: {
                 customFields: {
+                    position: 'Forward',
                     grad_year: '2028',
                     captain: true
                 }
@@ -403,8 +406,10 @@ describe('React app team detail model', () => {
                 name: 'Pat Star',
                 number: '9',
                 photoUrl: 'https://img.example.test/player-1.png',
+                position: 'Forward',
                 profile: {
                     customFields: {
+                        position: 'Forward',
                         grad_year: '2028',
                         captain: true
                     }
@@ -515,6 +520,30 @@ describe('React app team detail model', () => {
                 latestPendingCode: ''
             }
         ]);
+    });
+
+    it('adds confirmed parent links that are not already represented by roster contacts', () => {
+        const summaries = buildRosterParentInviteSummaries({
+            teamId: 'team-1',
+            players: [
+                {
+                    id: 'player-1',
+                    name: 'Pat Star',
+                    parents: [{ userId: 'parent-1', email: 'parent1@example.com' }]
+                }
+            ],
+            pendingParentInvites: [],
+            confirmedTeamMembers: [
+                { id: 'parent-1', email: 'parent1@example.com', parentPlayerKeys: ['team-1::player-1'] },
+                { id: 'parent-2', email: 'parent2@example.com', parentOf: [{ teamId: 'team-1', playerId: 'player-1' }] }
+            ]
+        });
+
+        expect(summaries[0]).toMatchObject({
+            playerId: 'player-1',
+            status: 'accepted',
+            acceptedParentCount: 2
+        });
     });
 
     it('loads roster parent invites from targeted linked users instead of scanning all users', async () => {

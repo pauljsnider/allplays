@@ -162,6 +162,14 @@ describe('roster profile fields', () => {
         expect(merged.find((field) => field.key === 'favoriteSnack')).toMatchObject({ label: 'Favorite Snack', visibility: 'parents' });
     });
 
+    it('preserves inactive overrides for standard roster fields', () => {
+        const merged = mergeStandardRosterFieldDefinitions([
+            { key: 'position', label: 'Position', type: 'text', visibility: 'public', active: false }
+        ]);
+
+        expect(merged.some((field) => field.key === 'position')).toBe(false);
+    });
+
     it('collects linked and private roster parent contacts without treating imports as accepted links', () => {
         const player = {
             parents: [{ userId: 'parent-1', name: 'Pat Parent', email: 'pat@example.com', relation: 'Dad', source: 'parent_invite' }],

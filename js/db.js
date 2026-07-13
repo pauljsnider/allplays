@@ -2110,6 +2110,14 @@ export async function getUsersByParentPlayerKey(parentPlayerKey) {
     return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 }
 
+export async function getUsersByParentTeamId(teamId) {
+    const normalizedTeamId = String(teamId || '').trim();
+    if (!normalizedTeamId) return [];
+    const q = query(collection(db, "users"), where("parentTeamIds", "array-contains", normalizedTeamId), limit(100));
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+}
+
 export async function createTeam(teamData) {
     teamData.createdAt = Timestamp.now();
     teamData.updatedAt = Timestamp.now();
@@ -2805,9 +2813,11 @@ export async function updatePlayer(teamId, playerId, playerData) {
 
 export async function setPlayerPrivateRosterProfileFields(teamId, playerId, rosterFields = {}, extraData = {}) {
     const privateProfileUpdate = {
-        rosterFields,
         updatedAt: Timestamp.now()
     };
+    if (rosterFields && typeof rosterFields === 'object' && Object.keys(rosterFields).length > 0) {
+        privateProfileUpdate.rosterFields = rosterFields;
+    }
     if (Array.isArray(extraData?.parents)) {
         privateProfileUpdate.parents = extraData.parents;
     }
@@ -2858,9 +2868,11 @@ export async function applyRosterCsvImportOperations(teamId, operations = []) {
 
         if (operation.privateRosterFields || operation.privateFamilyContacts) {
             const privateProfileUpdate = {
-                rosterFields: operation.privateRosterFields || {},
                 updatedAt: Timestamp.now()
             };
+            if (operation.privateRosterFields && Object.keys(operation.privateRosterFields).length > 0) {
+                privateProfileUpdate.rosterFields = operation.privateRosterFields;
+            }
             if (Array.isArray(operation.privateFamilyContacts?.parents)) {
                 privateProfileUpdate.parents = operation.privateFamilyContacts.parents;
             }

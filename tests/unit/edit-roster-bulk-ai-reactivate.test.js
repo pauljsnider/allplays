@@ -48,6 +48,6 @@ describe('edit roster Bulk AI proposed changes preview', () => {
         expect(source).toContain('function mergeBulkAiPrivateFamilyContactsForUpdate');
         expect(source).toContain('existingPlayer.privateProfileParents || []');
         expect(applySource).toContain('const privateFamilyContacts = mergeBulkAiPrivateFamilyContactsForUpdate(existingPlayer, payload.privateFamilyContacts);');
-        expect(applySource).toContain('setPlayerPrivateRosterProfileFields(currentTeamId, op.playerId, payload.privateRosterFields || {}, privateFamilyContacts || {})');
+        expect(applySource).toContain('setPlayerPrivateRosterProfileFields(currentTeamId, op.playerId, payload.privateRosterFields, privateFamilyContacts || {})');
     });
 });

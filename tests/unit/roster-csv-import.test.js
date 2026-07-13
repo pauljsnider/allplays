@@ -505,7 +505,7 @@ describe('roster CSV import planning', () => {
         expect(page).toContain('parent/guardian/contact columns such as Parent Email or Guardian Phone');
         expect(page).toContain('Name,Number,Position,DOB,Parent Name,Parent Email,Grade');
         expect(page).toContain('download-roster-template-btn');
-        expect(page).toContain('mergeStandardRosterFieldDefinitions(rosterFieldDefinitionDrafts.filter');
+        expect(page).toContain('mergeStandardRosterFieldDefinitions(rosterFieldDefinitionDrafts)');
         expect(page).toContain('splitRosterProfileValuesByVisibility(rosterFieldDefinitions, profileValues)');
         expect(page).toContain('roster-csv-send-invites');
         expect(page).toContain('csv-import-preview');
@@ -517,9 +517,17 @@ describe('roster CSV import planning', () => {
         expect(page).toContain('applyRosterCsvImportOperations(currentTeamId, plan.operations)');
         expect(dbSource).toContain('export async function applyRosterCsvImportOperations');
         expect(dbSource).toContain('export async function getPlayersWithPrivateRosterContacts');
+        expect(dbSource).toContain('export async function getUsersByParentPlayerKey');
+        expect(dbSource).toContain('export async function getUsersByParentTeamId');
         expect(page).toContain('getPlayersWithPrivateRosterContacts(currentTeamId, { includeInactive: true })');
+        expect(page).toContain('getUsersByParentTeamId(currentTeamId)');
+        expect(page).toContain('players.slice(i, i + 10)');
+        expect(page).toContain('getUsersByParentPlayerKey(`${currentTeamId}::${playerId}`)');
+        expect(page).toContain('buildLegacyParentContactsFromUsers');
         expect(page).not.toContain('getAllUsers()');
         expect(dbSource).toContain("if (plannedOperations.length > 200)");
+        expect(dbSource).toContain("if (rosterFields && typeof rosterFields === 'object' && Object.keys(rosterFields).length > 0)");
+        expect(dbSource).toContain("if (operation.privateRosterFields && Object.keys(operation.privateRosterFields).length > 0)");
         expect(dbSource).toContain('await batch.commit();');
     });
 

@@ -1146,6 +1146,7 @@ export async function addRosterPlayerForApp(teamId: string, user: AuthUser | nul
     throw new Error(validationErrors.join('\n'));
   }
   const { publicValues, privateValues } = splitRosterProfileValuesByVisibility(rosterFields, rosterFieldValues);
+  const position = cleanString(publicValues.position);
 
   let photoUrl: string | null = null;
   if (input?.photoFile) {
@@ -1157,6 +1158,7 @@ export async function addRosterPlayerForApp(teamId: string, user: AuthUser | nul
     name,
     number: cleanString(input?.number),
     photoUrl,
+    ...(position ? { position } : {}),
     profile: {
       customFields: publicValues
     }
@@ -1762,7 +1764,8 @@ export function buildRosterParentInviteSummaries({
 }): TeamRosterParentInviteSummary[] {
   const normalizedTeamId = cleanString(teamId);
   const acceptedCounts = new Map<string, number>();
-  const playerIdsWithRosterContacts = new Set<string>();
+  const acceptedParentKeysByPlayerId = new Map<string, Set<string>>();
+  const getAcceptedParentKey = (contact: any) => cleanString(contact?.userId || contact?.uid || contact?.id || contact?.email).toLowerCase();
   (Array.isArray(players) ? players : []).forEach((player) => {
     const playerId = cleanString(player?.id || player?.playerId);
     if (!playerId) return;
@@ -1772,15 +1775,21 @@ export function buildRosterParentInviteSummaries({
     });
     if (contacts.length > 0) {
       acceptedCounts.set(playerId, contacts.length);
-      playerIdsWithRosterContacts.add(playerId);
+      acceptedParentKeysByPlayerId.set(playerId, new Set(contacts.map(getAcceptedParentKey).filter(Boolean)));
     }
   });
 
   (Array.isArray(confirmedTeamMembers) ? confirmedTeamMembers : []).forEach((member) => {
     const linkedPlayerIds = getAcceptedParentPlayerIds(member, normalizedTeamId);
+    const parentKey = getAcceptedParentKey(member);
     linkedPlayerIds.forEach((playerId) => {
-      if (playerIdsWithRosterContacts.has(playerId)) return;
+      const parentKeys = acceptedParentKeysByPlayerId.get(playerId) || new Set<string>();
+      if (parentKey && parentKeys.has(parentKey)) return;
       acceptedCounts.set(playerId, (acceptedCounts.get(playerId) || 0) + 1);
+      if (parentKey) {
+        parentKeys.add(parentKey);
+        acceptedParentKeysByPlayerId.set(playerId, parentKeys);
+      }
     });
   });
 
@@ -1952,7 +1961,7 @@ function normalizePlayer(player: any, linked: Set<string>, includeParentContacts
     name: cleanString(player?.name || player?.playerName) || 'Player',
     number: cleanString(player?.number),
     photoUrl: getFirstUrl(player?.photoUrl, player?.imageUrl, player?.headshotUrl),
-    position: cleanString(player?.position || player?.primaryPosition),
+    position: cleanString(player?.position || player?.primaryPosition || player?.profile?.customFields?.position || player?.customFields?.position),
     isLinked: linked.has(id),
     active: player?.active !== false
   };
