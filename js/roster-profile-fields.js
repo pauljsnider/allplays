@@ -1,6 +1,19 @@
 const SUPPORTED_TYPES = new Set(['text', 'menu', 'checkbox', 'date']);
 const SUPPORTED_VISIBILITY = new Set(['public', 'team', 'parents', 'admins']);
 
+export const STANDARD_ROSTER_FIELD_DEFINITIONS = Object.freeze([
+    { key: 'preferredName', label: 'Preferred Name', type: 'text', visibility: 'public', section: 'Identity', sortOrder: 10, standard: true },
+    { key: 'position', label: 'Position', type: 'text', visibility: 'public', section: 'Roster', sortOrder: 20, standard: true },
+    { key: 'alternateNumber', label: 'Alternate Number', type: 'text', visibility: 'public', section: 'Roster', sortOrder: 30, standard: true },
+    { key: 'birthDate', label: 'Birth Date', type: 'date', visibility: 'team', section: 'Identity', sortOrder: 40, standard: true },
+    { key: 'gender', label: 'Gender', type: 'text', visibility: 'team', section: 'Identity', sortOrder: 50, standard: true },
+    { key: 'grade', label: 'Grade', type: 'text', visibility: 'team', section: 'School', sortOrder: 60, standard: true },
+    { key: 'school', label: 'School', type: 'text', visibility: 'team', section: 'School', sortOrder: 70, standard: true },
+    { key: 'jerseySize', label: 'Jersey Size', type: 'text', visibility: 'parents', section: 'Uniform', sortOrder: 80, standard: true },
+    { key: 'memberId', label: 'Member ID', type: 'text', visibility: 'admins', section: 'Admin', sortOrder: 90, standard: true },
+    { key: 'dominantHandFoot', label: 'Dominant Hand/Foot', type: 'text', visibility: 'team', section: 'Sport', sortOrder: 100, standard: true }
+]);
+
 function slugify(value) {
     return String(value || '')
         .trim()
@@ -58,7 +71,8 @@ export function buildRosterFieldDefinitionPayload(field = {}, fallbackOrder = 0)
         description: String(field.description || field.helpText || '').trim(),
         visibility: normalizeVisibility(field.visibility || field.defaultVisibility),
         active: field.active !== false,
-        sortOrder: Number.isFinite(Number(field.sortOrder ?? field.order)) ? Number(field.sortOrder ?? field.order) : fallbackOrder
+        sortOrder: Number.isFinite(Number(field.sortOrder ?? field.order)) ? Number(field.sortOrder ?? field.order) : fallbackOrder,
+        ...(field.standard === true ? { standard: true } : {})
     };
 }
 
@@ -79,12 +93,32 @@ export function normalizeRosterFieldDefinitions(fields = [], options = {}) {
         .sort((a, b) => a.sortOrder - b.sortOrder || a.label.localeCompare(b.label));
 }
 
+export function getStandardRosterFieldDefinitions(options = {}) {
+    return normalizeRosterFieldDefinitions(STANDARD_ROSTER_FIELD_DEFINITIONS, options);
+}
+
+export function mergeStandardRosterFieldDefinitions(fields = [], options = {}) {
+    const includeInactive = options.includeInactive === true;
+    const byKey = new Map();
+    getStandardRosterFieldDefinitions({ includeInactive: true }).forEach((field) => {
+        byKey.set(field.key, field);
+    });
+    normalizeRosterFieldDefinitions(fields, { includeInactive: true }).forEach((field) => {
+        byKey.set(field.key, field);
+    });
+    return Array.from(byKey.values())
+        .filter((field) => includeInactive || field.active !== false)
+        .sort((a, b) => a.sortOrder - b.sortOrder || a.label.localeCompare(b.label));
+}
+
 export function getRosterProfileValues(player = {}) {
     return {
         ...(player?.rosterFieldValues || {}),
         ...(player?.customFields || {}),
         ...(player?.profile?.rosterFields || {}),
-        ...(player?.profile?.customFields || {})
+        ...(player?.profile?.customFields || {}),
+        ...(player?.privateRosterFields || {}),
+        ...(player?.privateProfileRosterFields || {})
     };
 }
 
@@ -214,6 +248,10 @@ function parseRosterCsvFieldValue(field, rawValue) {
     return { value };
 }
 
+function isBlankRosterImportValue(value) {
+    return value === null || value === undefined || (typeof value === 'string' && value.trim() === '');
+}
+
 function getRosterFieldVisibility(field = {}) {
     return normalizeVisibility(field.visibility || field.defaultVisibility);
 }
@@ -225,6 +263,10 @@ function isPublicRosterField(field = {}) {
 function isPrivateRosterField(field = {}, { includeAdminPrivate = true } = {}) {
     const visibility = getRosterFieldVisibility(field);
     return visibility === 'team' || visibility === 'parents' || (includeAdminPrivate && visibility === 'admins');
+}
+
+function isStandardRosterField(field = {}) {
+    return field.standard === true;
 }
 
 export function splitRosterProfileValuesByVisibility(fields = [], values = {}, options = {}) {
@@ -282,16 +324,38 @@ const CONTACT_FIELD_ALIASES = new Map([
 ]);
 
 const PROFILE_HEADER_ALIASES = new Map([
+    ['preferredname', { profileField: 'preferredName' }],
+    ['nickname', { profileField: 'preferredName' }],
+    ['nick', { profileField: 'preferredName' }],
     ['position', { profileField: 'position' }],
     ['primaryposition', { profileField: 'position' }],
     ['playerposition', { profileField: 'position' }],
     ['pos', { profileField: 'position' }],
+    ['alternatenumber', { profileField: 'alternateNumber' }],
+    ['altnumber', { profileField: 'alternateNumber' }],
+    ['altjersey', { profileField: 'alternateNumber' }],
+    ['altjerseynumber', { profileField: 'alternateNumber' }],
     ['birthdate', { profileField: 'birthDate' }],
     ['dateofbirth', { profileField: 'birthDate' }],
     ['dob', { profileField: 'birthDate' }],
     ['birthday', { profileField: 'birthDate' }],
     ['gender', { profileField: 'gender' }],
     ['sex', { profileField: 'gender' }],
+    ['grade', { profileField: 'grade' }],
+    ['gradeyear', { profileField: 'grade' }],
+    ['school', { profileField: 'school' }],
+    ['schoolname', { profileField: 'school' }],
+    ['jerseysize', { profileField: 'jerseySize' }],
+    ['uniformsize', { profileField: 'jerseySize' }],
+    ['shirtsize', { profileField: 'jerseySize' }],
+    ['memberid', { profileField: 'memberId' }],
+    ['membershipid', { profileField: 'memberId' }],
+    ['leagueid', { profileField: 'memberId' }],
+    ['associationid', { profileField: 'memberId' }],
+    ['dominanthand', { profileField: 'dominantHandFoot' }],
+    ['dominantfoot', { profileField: 'dominantHandFoot' }],
+    ['dominantside', { profileField: 'dominantHandFoot' }],
+    ['handfoot', { profileField: 'dominantHandFoot' }],
     ['street', { profileField: 'address', addressField: 'street' }],
     ['streetaddress', { profileField: 'address', addressField: 'street' }],
     ['address', { profileField: 'address', addressField: 'address1' }],
@@ -477,6 +541,119 @@ function mergeImportedContacts(existingContacts = [], importedContacts = []) {
     return merged;
 }
 
+function normalizeRosterContactString(value) {
+    return String(value || '').trim();
+}
+
+function normalizeRosterContactEmail(value) {
+    return normalizeRosterContactString(value).toLowerCase();
+}
+
+function getRosterContactUserId(contact = {}) {
+    return normalizeRosterContactString(
+        contact.userId ||
+        contact.uid ||
+        contact.authUid ||
+        contact.accountUserId ||
+        contact.memberUserId
+    );
+}
+
+export function normalizeRosterParentContact(contact = {}, options = {}) {
+    const userId = getRosterContactUserId(contact);
+    const email = normalizeRosterContactEmail(contact.email || contact.parentEmail || contact.guardianEmail);
+    const phone = normalizeRosterContactString(contact.phone || contact.parentPhone || contact.guardianPhone);
+    const name = normalizeRosterContactString(
+        contact.name ||
+        contact.displayName ||
+        contact.fullName ||
+        contact.parentName ||
+        contact.guardianName ||
+        email
+    );
+    const relation = normalizeRosterContactString(contact.relation || contact.relationship || options.defaultRelation || 'Parent');
+    const status = normalizeRosterContactString(contact.status);
+    const source = normalizeRosterContactString(contact.source || contact.accessSource || options.source);
+    const storage = normalizeRosterContactString(options.storage || contact.storage);
+
+    if (!userId && !email && !phone && !name) return null;
+    return {
+        ...(userId ? { userId } : {}),
+        ...(name ? { name } : {}),
+        ...(email ? { email } : {}),
+        ...(phone ? { phone } : {}),
+        relation: relation || 'Parent',
+        ...(status ? { status } : {}),
+        ...(source ? { source } : {}),
+        ...(storage ? { storage } : {})
+    };
+}
+
+function getRosterParentContactDedupeKey(contact = {}) {
+    if (contact.userId) return `user:${contact.userId}`;
+    if (contact.email) return `email:${contact.email}`;
+    if (contact.phone) return `phone:${contact.phone}`;
+    return `name:${normalizeRosterContactString(contact.name).toLowerCase()}:${normalizeRosterContactString(contact.relation).toLowerCase()}`;
+}
+
+export function mergeRosterParentContacts(existingContacts = [], importedContacts = [], options = {}) {
+    const merged = [];
+    const seen = new Set();
+    [
+        ...(Array.isArray(existingContacts) ? existingContacts : []),
+        ...(Array.isArray(importedContacts) ? importedContacts : [])
+    ].forEach((contact) => {
+        const normalized = normalizeRosterParentContact(contact, options);
+        if (!normalized) return;
+        const key = getRosterParentContactDedupeKey(normalized);
+        if (seen.has(key)) return;
+        seen.add(key);
+        merged.push({
+            ...(contact && typeof contact === 'object' ? contact : {}),
+            ...normalized
+        });
+    });
+    return merged;
+}
+
+export function collectRosterParentContacts(player = {}, options = {}) {
+    const includeImported = options.includeImported !== false;
+    const includeFamilyContacts = options.includeFamilyContacts === true;
+    const includeHousehold = options.includeHousehold !== false;
+    const candidates = [
+        ...(Array.isArray(player?.parents) ? player.parents.map((contact) => ({ contact, storage: 'player' })) : []),
+        ...(Array.isArray(player?.guardians) ? player.guardians.map((contact) => ({ contact, storage: 'player' })) : []),
+        ...(Array.isArray(player?.privateProfileParents) ? player.privateProfileParents.map((contact) => ({ contact, storage: 'private' })) : [])
+    ];
+
+    if (includeFamilyContacts) {
+        candidates.push(
+            ...(Array.isArray(player?.contacts) ? player.contacts.map((contact) => ({ contact, storage: 'player' })) : []),
+            ...(Array.isArray(player?.privateProfileContacts) ? player.privateProfileContacts.map((contact) => ({ contact, storage: 'private' })) : [])
+        );
+    }
+
+    const contacts = [];
+    const seen = new Set();
+    candidates.forEach(({ contact, storage }) => {
+        const normalized = normalizeRosterParentContact(contact, { storage });
+        if (!normalized) return;
+        if (!includeImported && ['roster-csv', 'roster-ai', 'registration'].includes(normalized.source)) return;
+        const isHousehold = normalized.source === 'household' ||
+            normalized.storage === 'household' ||
+            contact?.accessSource === 'household' ||
+            contact?.organizerUserId ||
+            contact?.invitedByUserId ||
+            contact?.inviterUserId;
+        if (!includeHousehold && isHousehold) return;
+        const key = getRosterParentContactDedupeKey(normalized);
+        if (seen.has(key)) return;
+        seen.add(key);
+        contacts.push(normalized);
+    });
+    return contacts;
+}
+
 function collectExistingRosterContacts(existing = {}, primaryKeys = [], fallbackKey = '') {
     const contacts = primaryKeys.flatMap((key) => Array.isArray(existing?.[key]) ? existing[key] : []);
     if (contacts.length > 0 || !fallbackKey || !Array.isArray(existing?.[fallbackKey])) return contacts;
@@ -578,7 +755,12 @@ export function buildFullRosterCsvTemplate(fields = []) {
         'Guardian 2 Name', 'Guardian 2 Relation', 'Guardian 2 Email', 'Guardian 2 Phone'
     ];
     const builtInHeaderKeys = new Set(builtInHeaders.map(normalizeHeaderKey));
+    const builtInProfileFieldKeys = new Set(builtInHeaders
+        .map((header) => getProfileHeaderMapping(normalizeHeaderKey(header), header))
+        .filter((mapping) => mapping?.profileField)
+        .map((mapping) => mapping.profileField));
     const customHeaders = normalizeRosterFieldDefinitions(fields)
+        .filter((field) => !(isStandardRosterField(field) && builtInProfileFieldKeys.has(field.key)))
         .map((field) => field.label)
         .filter((label) => !builtInHeaderKeys.has(normalizeHeaderKey(label)))
         .filter(Boolean);
@@ -614,9 +796,11 @@ export function planRosterCsvImport({ csvText = '', fields = [], existingPlayers
 
     const headers = rows[0].map((header) => String(header || '').trim());
     const fieldByHeader = new Map();
+    const standardFieldByKey = new Map();
     normalizedFields.forEach((field) => {
         fieldByHeader.set(normalizeHeaderKey(field.key), field);
         fieldByHeader.set(normalizeHeaderKey(field.label), field);
+        if (isStandardRosterField(field)) standardFieldByKey.set(field.key, field);
     });
 
     const coreAliases = new Map([
@@ -731,6 +915,20 @@ export function planRosterCsvImport({ csvText = '', fields = [], existingPlayers
             }
         });
 
+        const profileValuesForMerge = { ...profileValues };
+        standardFieldByKey.forEach((field, key) => {
+            if (!Object.prototype.hasOwnProperty.call(profileValues, key)) return;
+            if (!Object.prototype.hasOwnProperty.call(parsedValues, key) || isBlankRosterImportValue(parsedValues[key])) {
+                const parsed = parseRosterCsvFieldValue(field, profileValues[key]);
+                if (parsed.error) {
+                    errors.push(`Row ${rowNumber}: ${parsed.error}`);
+                } else {
+                    parsedValues[key] = parsed.value;
+                }
+            }
+            delete profileValuesForMerge[key];
+        });
+
         validateRosterProfileValues(normalizedFields, parsedValues).forEach((error) => {
             errors.push(`Row ${rowNumber}: ${error}`);
         });
@@ -753,7 +951,7 @@ export function planRosterCsvImport({ csvText = '', fields = [], existingPlayers
             if (!isPublicRosterField(field)) delete retainedCustomFields[field.key];
         });
         const profile = {
-            ...mergeProfileImportValues(existingProfile, profileValues, addressValues),
+            ...mergeProfileImportValues(existingProfile, profileValuesForMerge, addressValues),
             customFields: {
                 ...retainedCustomFields,
                 ...publicValues
@@ -762,6 +960,7 @@ export function planRosterCsvImport({ csvText = '', fields = [], existingPlayers
         const payload = { name, profile };
         if (hasNumberColumn) payload.number = number;
         if (Object.prototype.hasOwnProperty.call(profileValues, 'position')) payload.position = profileValues.position;
+        if (standardFieldByKey.has('position') && Object.prototype.hasOwnProperty.call(publicValues, 'position')) payload.position = publicValues.position;
         const existingGuardianContacts = collectExistingRosterContacts(existing, ['guardians', 'parents', 'privateProfileParents'], 'familyContacts');
         const existingFamilyContacts = collectExistingRosterContacts(existing, ['contacts', 'privateProfileContacts']);
         const mergedGuardians = mergeImportedContacts(existingGuardianContacts, contactPlan.guardians);
@@ -814,13 +1013,17 @@ export function renderRosterProfileFields(container, fields = [], values = {}) {
 
     container.classList.remove('hidden');
 
-    const heading = document.createElement('div');
-    heading.className = 'pt-2 border-t border-gray-200';
-    const title = document.createElement('h3');
-    title.className = 'text-sm font-semibold text-gray-900';
-    title.textContent = 'Roster Profile Fields';
-    heading.appendChild(title);
-    container.appendChild(heading);
+    const details = document.createElement('details');
+    details.className = 'rounded-md border border-gray-200 bg-gray-50 p-3';
+    const summary = document.createElement('summary');
+    summary.className = 'cursor-pointer text-sm font-semibold text-gray-900';
+    summary.textContent = 'More details';
+    details.appendChild(summary);
+
+    const fieldsWrap = document.createElement('div');
+    fieldsWrap.className = 'mt-3 space-y-4';
+    details.appendChild(fieldsWrap);
+    container.appendChild(details);
 
     fields.forEach((field) => {
         const { wrapper, label } = createBaseField(field);
@@ -866,6 +1069,6 @@ export function renderRosterProfileFields(container, fields = [], values = {}) {
         if (field.type !== 'checkbox') {
             wrapper.appendChild(input);
         }
-        container.appendChild(wrapper);
+        fieldsWrap.appendChild(wrapper);
     });
 }

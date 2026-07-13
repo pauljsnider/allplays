@@ -2110,6 +2110,14 @@ export async function getUsersByParentPlayerKey(parentPlayerKey) {
     return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 }
 
+export async function getUsersByParentTeamId(teamId) {
+    const normalizedTeamId = String(teamId || '').trim();
+    if (!normalizedTeamId) return [];
+    const q = query(collection(db, "users"), where("parentTeamIds", "array-contains", normalizedTeamId), limit(100));
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+}
+
 export async function createTeam(teamData) {
     teamData.createdAt = Timestamp.now();
     teamData.updatedAt = Timestamp.now();
@@ -2701,13 +2709,16 @@ export async function getPlayers(teamId, options = {}) {
 }
 
 export async function getPlayersWithPrivateRosterContacts(teamId, options = {}) {
-    const players = await getPlayers(teamId, options);
+    const players = Array.isArray(options.players)
+        ? options.players
+        : await getPlayers(teamId, options);
     return Promise.all(players.map(async (player) => {
         if (!player?.id) return player;
         try {
             const privateProfile = await getPlayerPrivateProfile(teamId, player.id);
             return {
                 ...player,
+                privateProfileRosterFields: privateProfile?.rosterFields && typeof privateProfile.rosterFields === 'object' ? privateProfile.rosterFields : {},
                 privateProfileParents: Array.isArray(privateProfile?.parents) ? privateProfile.parents : [],
                 privateProfileContacts: Array.isArray(privateProfile?.contacts) ? privateProfile.contacts : []
             };
@@ -2736,10 +2747,17 @@ async function mergePlayerPrivateProfileParents(teamId, players = []) {
             const privateProfile = await getPlayerPrivateProfile(teamId, player.id);
             const privateParents = Array.isArray(privateProfile?.parents) ? privateProfile.parents : [];
             if (privateParents.length === 0) return player;
-            return {
+            const privateRosterFields = privateProfile?.rosterFields && typeof privateProfile.rosterFields === 'object'
+                ? privateProfile.rosterFields
+                : null;
+            const mergedPlayer = {
                 ...player,
                 privateProfileParents: privateParents
             };
+            if (privateRosterFields && Object.keys(privateRosterFields).length > 0) {
+                mergedPlayer.privateProfileRosterFields = privateRosterFields;
+            }
+            return mergedPlayer;
         } catch (error) {
             if (error?.code === 'permission-denied') return player;
             throw error;
@@ -2795,9 +2813,11 @@ export async function updatePlayer(teamId, playerId, playerData) {
 
 export async function setPlayerPrivateRosterProfileFields(teamId, playerId, rosterFields = {}, extraData = {}) {
     const privateProfileUpdate = {
-        rosterFields,
         updatedAt: Timestamp.now()
     };
+    if (rosterFields && typeof rosterFields === 'object' && Object.keys(rosterFields).length > 0) {
+        privateProfileUpdate.rosterFields = rosterFields;
+    }
     if (Array.isArray(extraData?.parents)) {
         privateProfileUpdate.parents = extraData.parents;
     }
@@ -2848,9 +2868,11 @@ export async function applyRosterCsvImportOperations(teamId, operations = []) {
 
         if (operation.privateRosterFields || operation.privateFamilyContacts) {
             const privateProfileUpdate = {
-                rosterFields: operation.privateRosterFields || {},
                 updatedAt: Timestamp.now()
             };
+            if (operation.privateRosterFields && Object.keys(operation.privateRosterFields).length > 0) {
+                privateProfileUpdate.rosterFields = operation.privateRosterFields;
+            }
             if (Array.isArray(operation.privateFamilyContacts?.parents)) {
                 privateProfileUpdate.parents = operation.privateFamilyContacts.parents;
             }

@@ -2910,6 +2910,7 @@ function PlayerRow({
 
   const effectiveStatus = inviteResult?.status || inviteSummary?.status || 'none';
   const statusLabel = effectiveStatus === 'accepted' ? 'Accepted' : effectiveStatus === 'pending' ? 'Pending invite' : 'No parent linked';
+  const parentContacts = Array.isArray(player.parentContacts) ? player.parentContacts : [];
   const statusClassName = effectiveStatus === 'accepted'
     ? 'bg-emerald-50 text-emerald-700'
     : effectiveStatus === 'pending'
@@ -2996,6 +2997,23 @@ function PlayerRow({
           </button>
         ) : null}
       </div>
+      {canManageTeam && parentContacts.length > 0 ? (
+        <div className="mt-3 space-y-1 rounded-lg border border-white/80 bg-white px-3 py-2">
+          {parentContacts.map((contact, index) => {
+            const label = contact.name || contact.email || contact.phone || 'Family contact';
+            const relation = contact.relation || 'Parent';
+            const key = contact.userId || contact.email || contact.phone || `${player.id}-contact-${index}`;
+            return (
+              <div key={key} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+                <span className="font-black text-gray-900">{label}</span>
+                <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.04em] text-gray-600">{relation}</span>
+                {contact.email ? <a className="font-semibold text-primary-700" href={`mailto:${contact.email}`}>{contact.email}</a> : null}
+                {contact.phone ? <a className="font-semibold text-primary-700" href={`tel:${contact.phone}`}>{contact.phone}</a> : null}
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
       {canManageTeam ? (
         <div className="mt-3 rounded-lg border border-white/80 bg-white p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">

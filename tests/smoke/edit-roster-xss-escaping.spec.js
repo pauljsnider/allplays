@@ -44,6 +44,8 @@ export async function updatePlayer() {}
 export async function setPlayerPrivateRosterProfileFields() {}
 export async function inviteParent() { return {}; }
 export async function removeParentFromPlayer() {}
+export async function getUsersByParentPlayerKey() { return []; }
+export async function getUsersByParentTeamId() { return []; }
 export async function getAllUsers() { return []; }
 export async function getUnreadChatCount() { return 0; }
 export async function getRosterFieldDefinitions() { return []; }

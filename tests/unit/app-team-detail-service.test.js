@@ -21,6 +21,7 @@ vi.mock('../../js/db.js', () => ({
     inviteParent: vi.fn(),
     getLocalAttractionSponsors: vi.fn(),
     getPlayers: vi.fn(),
+    getPlayersWithPrivateRosterContacts: vi.fn(),
     getPlayerTrackingStatuses: vi.fn(),
     getPublicTrackingItems: vi.fn(),
     getRosterFieldDefinitions: vi.fn(),
@@ -85,7 +86,7 @@ vi.mock('../../apps/app/src/lib/authService.ts', () => ({
 
 import { __resetTeamDetailBaseSnapshotCacheForTests, addRosterPlayerForApp, buildAdminAcceptInviteUrl, buildPublicTeamGamesIcsUrl, buildRosterParentInviteSummaries, buildTeamDetailModel, canExposePublicFanFeed, createRosterParentInviteForApp, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadRosterFieldDefinitionsForApp, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamRosterParentInvites, loadTeamStaffPermissions, reactivateRosterPlayerForApp, revokeScorekeeperAccessForApp, revokeTeamAdminAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp, updateTeamSettingsForApp } from '../../apps/app/src/lib/teamDetailService.ts';
 import { collection, doc, getDoc, getDocs, query, where } from '../../js/firebase.js';
-import { addPlayer, getAggregatedStatsForGames, getAdSpaceSponsors, getAllUsers, getConfigs, getEvents, getGames, getLocalAttractionSponsors, getPlayerTrackingStatuses, getPlayers, getPublicTrackingItems, getRosterFieldDefinitions, getTeam, grantScorekeeperAccess, grantVideographerAccess, inviteAdmin, inviteParent, addTeamAdminEmail, revokeScorekeeperAccess, revokeVideographerAccess, deactivatePlayer, reactivatePlayer, setPlayerPrivateRosterProfileFields, updateEvent, updateGame, updateTeam, uploadPlayerPhoto, uploadTeamPhoto } from '../../js/db.js';
+import { addPlayer, getAggregatedStatsForGames, getAdSpaceSponsors, getAllUsers, getConfigs, getEvents, getGames, getLocalAttractionSponsors, getPlayerTrackingStatuses, getPlayers, getPlayersWithPrivateRosterContacts, getPublicTrackingItems, getRosterFieldDefinitions, getTeam, grantScorekeeperAccess, grantVideographerAccess, inviteAdmin, inviteParent, addTeamAdminEmail, revokeScorekeeperAccess, revokeVideographerAccess, deactivatePlayer, reactivatePlayer, setPlayerPrivateRosterProfileFields, updateEvent, updateGame, updateTeam, uploadPlayerPhoto, uploadTeamPhoto } from '../../js/db.js';
 import { sendInviteEmail } from '../../js/auth.js';
 import { queueInviteEmail } from '../../js/invite-email.js';
 import { buildPlayerLeaderboardSnapshot } from '../../js/stat-leaderboards.js';
@@ -94,6 +95,9 @@ import { getVisiblePlayerTrackingSummary } from '../../js/player-tracking-summar
 beforeEach(() => {
     __resetTeamDetailBaseSnapshotCacheForTests();
     vi.clearAllMocks();
+    getPlayersWithPrivateRosterContacts.mockImplementation((teamId, options = {}) => (
+        Array.isArray(options.players) ? options.players : getPlayers(teamId, options)
+    ));
     getDoc.mockResolvedValue({
         id: '',
         exists: () => false,
@@ -310,7 +314,11 @@ describe('React app team detail model', () => {
 
         const fields = await loadRosterFieldDefinitionsForApp('team-1', { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'] });
         expect(getRosterFieldDefinitions).toHaveBeenCalledWith('team-1', expect.objectContaining({ id: 'team-1' }));
-        expect(fields).toEqual([
+        expect(fields).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                key: 'position',
+                label: 'Position'
+            }),
             expect.objectContaining({
                 key: 'grad_year',
                 label: 'Grad Year',
@@ -318,7 +326,7 @@ describe('React app team detail model', () => {
                 options: [{ value: '2028', label: '2028' }],
                 required: true
             })
-        ]);
+        ]));
     });
 
     it('splits private roster fields out of the public player doc when creating roster players', async () => {
@@ -368,6 +376,7 @@ describe('React app team detail model', () => {
             number: ' 9 ',
             photoFile,
             rosterFieldValues: {
+                position: 'Forward',
                 grad_year: '2028',
                 captain: true,
                 medical_notes: 'Peanut allergy'
@@ -379,8 +388,10 @@ describe('React app team detail model', () => {
             name: 'Pat Star',
             number: '9',
             photoUrl: 'https://img.example.test/player-1.png',
+            position: 'Forward',
             profile: {
                 customFields: {
+                    position: 'Forward',
                     grad_year: '2028',
                     captain: true
                 }
@@ -395,8 +406,10 @@ describe('React app team detail model', () => {
                 name: 'Pat Star',
                 number: '9',
                 photoUrl: 'https://img.example.test/player-1.png',
+                position: 'Forward',
                 profile: {
                     customFields: {
+                        position: 'Forward',
                         grad_year: '2028',
                         captain: true
                     }
@@ -471,6 +484,66 @@ describe('React app team detail model', () => {
                 latestPendingCode: ''
             }
         ]);
+    });
+
+    it('counts accepted roster parents from player private contact data without requiring users queries', () => {
+        const summaries = buildRosterParentInviteSummaries({
+            teamId: 'team-1',
+            players: [
+                {
+                    id: 'player-1',
+                    name: 'Pat Star',
+                    privateProfileParents: [{ userId: 'parent-1', name: 'Pat Parent', email: 'pat@example.com', relation: 'Dad' }]
+                },
+                {
+                    id: 'player-2',
+                    name: 'Sam Wing',
+                    privateProfileParents: [{ name: 'Robin Import', email: 'robin@example.com', relation: 'Guardian', source: 'roster-csv' }]
+                }
+            ],
+            pendingParentInvites: []
+        });
+
+        expect(summaries).toEqual([
+            {
+                playerId: 'player-1',
+                status: 'accepted',
+                acceptedParentCount: 1,
+                pendingInviteCount: 0,
+                latestPendingCode: ''
+            },
+            {
+                playerId: 'player-2',
+                status: 'none',
+                acceptedParentCount: 0,
+                pendingInviteCount: 0,
+                latestPendingCode: ''
+            }
+        ]);
+    });
+
+    it('adds confirmed parent links that are not already represented by roster contacts', () => {
+        const summaries = buildRosterParentInviteSummaries({
+            teamId: 'team-1',
+            players: [
+                {
+                    id: 'player-1',
+                    name: 'Pat Star',
+                    parents: [{ userId: 'parent-1', email: 'parent1@example.com' }]
+                }
+            ],
+            pendingParentInvites: [],
+            confirmedTeamMembers: [
+                { id: 'parent-1', email: 'parent1@example.com', parentPlayerKeys: ['team-1::player-1'] },
+                { id: 'parent-2', email: 'parent2@example.com', parentOf: [{ teamId: 'team-1', playerId: 'player-1' }] }
+            ]
+        });
+
+        expect(summaries[0]).toMatchObject({
+            playerId: 'player-1',
+            status: 'accepted',
+            acceptedParentCount: 2
+        });
     });
 
     it('loads roster parent invites from targeted linked users instead of scanning all users', async () => {
@@ -1079,6 +1152,49 @@ describe('React app team detail model', () => {
         expect(getAllUsers).not.toHaveBeenCalled();
         expect(buildPlayerLeaderboardSnapshot).not.toHaveBeenCalled();
         expect(getVisiblePlayerTrackingSummary).not.toHaveBeenCalled();
+    });
+
+    it('keeps private roster contacts behind manager access across shared base-cache reuse', async () => {
+        const publicPlayers = [{ id: 'player-1', name: 'Pat Star', active: true }];
+        getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', ownerId: 'coach-1', adminEmails: [] });
+        getPlayers.mockResolvedValue(publicPlayers);
+        getPlayersWithPrivateRosterContacts.mockResolvedValue([{
+            ...publicPlayers[0],
+            privateProfileParents: [{ userId: 'parent-1', email: 'private@example.com', relation: 'Parent' }]
+        }]);
+        getGames.mockResolvedValue([]);
+        getConfigs.mockResolvedValue([]);
+
+        const firstParentModel = await loadParentTeamDetail(
+            'team-1',
+            { uid: 'parent-1', email: 'parent@example.com', roles: ['parent'] },
+            { includeDeferredData: false }
+        );
+        expect(getPlayersWithPrivateRosterContacts).not.toHaveBeenCalled();
+        expect(firstParentModel.players[0]).not.toHaveProperty('parentContacts');
+
+        const managerModel = await loadParentTeamDetail(
+            'team-1',
+            { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'] },
+            { includeDeferredData: false }
+        );
+        const laterParentModel = await loadParentTeamDetail(
+            'team-1',
+            { uid: 'parent-1', email: 'parent@example.com', roles: ['parent'] },
+            { includeDeferredData: false }
+        );
+
+        expect(getPlayersWithPrivateRosterContacts).toHaveBeenCalledTimes(1);
+        expect(getPlayersWithPrivateRosterContacts).toHaveBeenCalledWith('team-1', {
+            includeInactive: true,
+            players: publicPlayers
+        });
+        expect(managerModel.players[0].parentContacts).toEqual([
+            expect.objectContaining({ userId: 'parent-1', email: 'private@example.com', relation: 'Parent' })
+        ]);
+        expect(laterParentModel.players[0]).not.toHaveProperty('parentContacts');
+        expect(getTeam).toHaveBeenCalledTimes(1);
+        expect(getPlayers).toHaveBeenCalledTimes(1);
     });
 
     it('reuses the initial base snapshot for deferred insights and staff permissions', async () => {

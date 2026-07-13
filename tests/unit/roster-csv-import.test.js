@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { buildFullRosterCsvTemplate, planRosterCsvImport, splitRosterProfileValuesByVisibility, summarizeRosterContactInviteResults } from '../../js/roster-profile-fields.js';
+import { buildFullRosterCsvTemplate, mergeStandardRosterFieldDefinitions, planRosterCsvImport, splitRosterProfileValuesByVisibility, summarizeRosterContactInviteResults } from '../../js/roster-profile-fields.js';
 
 describe('roster CSV import planning', () => {
     const fields = [
@@ -448,6 +448,55 @@ describe('roster CSV import planning', () => {
         });
     });
 
+    it('uses the standard optional field catalog for CSV parity with manual roster entry', () => {
+        const standardFields = mergeStandardRosterFieldDefinitions([]);
+        const plan = planRosterCsvImport({
+            fields: standardFields,
+            csvText: 'Name,Number,Preferred Name,Position,DOB,Gender,Grade,School,Jersey Size,Member ID\nAvery Lee,4,Rocket,Forward,2014-02-03,Female,6,Lincoln,YM,AAU-42'
+        });
+
+        expect(plan.errors).toEqual([]);
+        expect(plan.operations[0]).toMatchObject({
+            payload: {
+                name: 'Avery Lee',
+                number: '4',
+                position: 'Forward',
+                profile: { customFields: { preferredName: 'Rocket', position: 'Forward' } }
+            },
+            privateRosterFields: {
+                birthDate: '2014-02-03',
+                gender: 'Female',
+                grade: '6',
+                school: 'Lincoln',
+                jerseySize: 'YM'
+            }
+        });
+        expect(JSON.stringify(plan.operations[0].payload)).not.toContain('AAU-42');
+    });
+
+    it('preserves DOB when a duplicate standard Birth Date column is blank', () => {
+        const standardFields = mergeStandardRosterFieldDefinitions([]);
+        const plan = planRosterCsvImport({
+            fields: standardFields,
+            csvText: 'Name,Number,DOB,Birth Date\nAvery Lee,4,2014-02-03,'
+        });
+
+        expect(plan.errors).toEqual([]);
+        expect(plan.operations[0]).toMatchObject({
+            privateRosterFields: { birthDate: '2014-02-03' }
+        });
+    });
+
+    it('does not duplicate standard fields already represented by built-in template aliases', () => {
+        const template = buildFullRosterCsvTemplate(mergeStandardRosterFieldDefinitions([]));
+        const headers = template.trim().split('\n')[0].split(',');
+
+        expect(headers).toContain('DOB');
+        expect(headers).not.toContain('Birth Date');
+        expect(headers.filter((header) => header === 'Position')).toHaveLength(1);
+        expect(headers.filter((header) => header === 'Gender')).toHaveLength(1);
+    });
+
     it('describes parent and guardian contact columns in the roster CSV import UI', () => {
         const page = readFileSync('edit-roster.html', 'utf8');
         const dbSource = readFileSync('js/db.js', 'utf8');
@@ -456,6 +505,8 @@ describe('roster CSV import planning', () => {
         expect(page).toContain('parent/guardian/contact columns such as Parent Email or Guardian Phone');
         expect(page).toContain('Name,Number,Position,DOB,Parent Name,Parent Email,Grade');
         expect(page).toContain('download-roster-template-btn');
+        expect(page).toContain('mergeStandardRosterFieldDefinitions(rosterFieldDefinitionDrafts)');
+        expect(page).toContain('splitRosterProfileValuesByVisibility(rosterFieldDefinitions, profileValues)');
         expect(page).toContain('roster-csv-send-invites');
         expect(page).toContain('csv-import-preview');
         expect(page).toContain('renderRosterCsvReview(plan)');
@@ -466,8 +517,17 @@ describe('roster CSV import planning', () => {
         expect(page).toContain('applyRosterCsvImportOperations(currentTeamId, plan.operations)');
         expect(dbSource).toContain('export async function applyRosterCsvImportOperations');
         expect(dbSource).toContain('export async function getPlayersWithPrivateRosterContacts');
+        expect(dbSource).toContain('export async function getUsersByParentPlayerKey');
+        expect(dbSource).toContain('export async function getUsersByParentTeamId');
         expect(page).toContain('getPlayersWithPrivateRosterContacts(currentTeamId, { includeInactive: true })');
+        expect(page).toContain('getUsersByParentTeamId(currentTeamId)');
+        expect(page).toContain('players.slice(i, i + 10)');
+        expect(page).toContain('getUsersByParentPlayerKey(`${currentTeamId}::${playerId}`)');
+        expect(page).toContain('buildLegacyParentContactsFromUsers');
+        expect(page).not.toContain('getAllUsers()');
         expect(dbSource).toContain("if (plannedOperations.length > 200)");
+        expect(dbSource).toContain("if (rosterFields && typeof rosterFields === 'object' && Object.keys(rosterFields).length > 0)");
+        expect(dbSource).toContain("if (operation.privateRosterFields && Object.keys(operation.privateRosterFields).length > 0)");
         expect(dbSource).toContain('await batch.commit();');
     });
 

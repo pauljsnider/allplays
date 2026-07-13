@@ -122,8 +122,17 @@ export function buildRosterFieldDefinitionPayload(field = {}, index = 0) {
 export function collectRosterProfileValues() {
     return {};
 }
+export function collectRosterParentContacts() {
+    return [];
+}
 export function getRosterProfileValues() {
     return {};
+}
+export function mergeRosterParentContacts(existing = [], incoming = []) {
+    return [...(Array.isArray(existing) ? existing : []), ...(Array.isArray(incoming) ? incoming : [])];
+}
+export function mergeStandardRosterFieldDefinitions(fields = []) {
+    return Array.isArray(fields) ? fields : [];
 }
 export function normalizeRosterFieldDefinitions(fields = []) {
     return Array.isArray(fields) ? fields : [];
@@ -136,6 +145,9 @@ export function renderRosterProfileFields(container) {
 }
 export function summarizeRosterContactInviteResults() {
     return { sent: 0, linked: 0, codeCreated: 0, failed: 0 };
+}
+export function splitRosterProfileValuesByVisibility(_fields = [], values = {}) {
+    return { publicValues: values || {}, privateValues: {} };
 }
 export function validateRosterProfileValues() {
     return [];
@@ -192,6 +204,12 @@ export async function inviteParent() {
     return {};
 }
 export async function removeParentFromPlayer() {}
+export async function getUsersByParentPlayerKey() {
+    return [];
+}
+export async function getUsersByParentTeamId() {
+    return [];
+}
 export async function getAllUsers() {
     throw permissionDenied();
 }

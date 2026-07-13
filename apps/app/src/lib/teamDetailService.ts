@@ -5,6 +5,7 @@ import {
   buildTeamStaffPermissionsViewModel,
   buildTrackingStatusPayload,
   calculateSeasonRecord,
+  collectRosterParentContacts,
   collection,
   computeNativeStandings,
   createConfig,
@@ -21,6 +22,7 @@ import {
   getLocalAttractionSponsors,
   getPlayerTrackingStatuses,
   getPlayers,
+  getPlayersWithPrivateRosterContacts,
   getPublicTrackingItems,
   getRosterFieldDefinitions,
   getTeam,
@@ -32,8 +34,8 @@ import {
   inviteExistingTeamAdmin,
   inviteParent,
   listSeasonLabels,
+  mergeStandardRosterFieldDefinitions,
   normalizeAdminEmailList,
-  normalizeRosterFieldDefinitions,
   normalizeScheduleNotificationSettings,
   normalizeStatTrackerConfig,
   normalizeTrackingStatus,
@@ -76,6 +78,18 @@ export type TeamDetailPlayer = {
   position: string;
   isLinked: boolean;
   active: boolean;
+  parentContacts?: TeamRosterParentContact[];
+};
+
+export type TeamRosterParentContact = {
+  userId?: string;
+  name?: string;
+  email?: string;
+  phone?: string;
+  relation: string;
+  status?: string;
+  source?: string;
+  storage?: string;
 };
 
 export type TeamScorekeeperGrantTarget = {
@@ -356,6 +370,7 @@ type TeamDetailBaseSnapshot = {
 type FirestoreDocument = Record<string, any> & { id: string };
 
 const teamDetailBaseSnapshotCache = new Map<string, TeamDetailBaseSnapshot>();
+const privilegedTeamPlayersCache = new Map<string, Promise<any[]>>();
 type RelevantTeamMembersCacheEntry = {
   inviteStateKey: string;
   parentInviteStateKey: string;
@@ -371,12 +386,18 @@ const relevantTeamMembersCache = new Map<string, RelevantTeamMembersCacheEntry>(
 
 export function __resetTeamDetailBaseSnapshotCacheForTests() {
   teamDetailBaseSnapshotCache.clear();
+  privilegedTeamPlayersCache.clear();
   relevantTeamMembersCache.clear();
 }
 
 function invalidateTeamDetailBaseSnapshotCache(teamId: string) {
   const normalizedTeamId = cleanString(teamId);
   teamDetailBaseSnapshotCache.delete(normalizedTeamId);
+  for (const cacheKey of privilegedTeamPlayersCache.keys()) {
+    if (cacheKey.startsWith(`${normalizedTeamId}::`)) {
+      privilegedTeamPlayersCache.delete(cacheKey);
+    }
+  }
   for (const cacheKey of relevantTeamMembersCache.keys()) {
     if (cacheKey === normalizedTeamId || cacheKey.startsWith(`${normalizedTeamId}::`)) {
       relevantTeamMembersCache.delete(cacheKey);
@@ -642,6 +663,32 @@ async function loadTeamPlayers(teamId: string) {
     () => Promise.resolve(getPlayers(teamId, { includeInactive: true })),
     async () => nativeListCollection(`teams/${encodeURIComponent(teamId)}/players`)
   );
+}
+
+async function loadPrivilegedTeamPlayers(teamId: string, user: AuthUser | null, team: any, publicPlayers: any[]) {
+  if (!hasFullTeamAccess(user, team)) return publicPlayers;
+
+  const normalizedTeamId = cleanString(teamId);
+  const actorId = cleanString(user?.uid);
+  if (!normalizedTeamId || !actorId) return publicPlayers;
+
+  const cacheKey = `${normalizedTeamId}::${actorId}`;
+  const cachedPlayers = privilegedTeamPlayersCache.get(cacheKey);
+  if (cachedPlayers) return cachedPlayers;
+
+  const playersPromise = readWithNativeFallback(
+    `private roster contacts ${normalizedTeamId}`,
+    () => Promise.resolve(getPlayersWithPrivateRosterContacts(normalizedTeamId, {
+      includeInactive: true,
+      players: publicPlayers
+    })),
+    () => Promise.resolve(publicPlayers)
+  ).catch((error) => {
+    privilegedTeamPlayersCache.delete(cacheKey);
+    throw error;
+  });
+  privilegedTeamPlayersCache.set(cacheKey, playersPromise);
+  return playersPromise;
 }
 
 async function loadTeamGames(teamId: string) {
@@ -1077,7 +1124,7 @@ export async function loadRosterFieldDefinitionsForApp(teamId: string, user: Aut
     throw new Error('You do not have permission to manage roster players for this team.');
   }
 
-  return normalizeRosterFieldDefinitions(await getRosterFieldDefinitions(normalizedTeamId, team)) as TeamRosterFieldDefinition[];
+  return mergeStandardRosterFieldDefinitions(await getRosterFieldDefinitions(normalizedTeamId, team)) as TeamRosterFieldDefinition[];
 }
 
 export async function addRosterPlayerForApp(teamId: string, user: AuthUser | null, input: CreateRosterPlayerForAppInput) {
@@ -1099,6 +1146,7 @@ export async function addRosterPlayerForApp(teamId: string, user: AuthUser | nul
     throw new Error(validationErrors.join('\n'));
   }
   const { publicValues, privateValues } = splitRosterProfileValuesByVisibility(rosterFields, rosterFieldValues);
+  const position = cleanString(publicValues.position);
 
   let photoUrl: string | null = null;
   if (input?.photoFile) {
@@ -1110,6 +1158,7 @@ export async function addRosterPlayerForApp(teamId: string, user: AuthUser | nul
     name,
     number: cleanString(input?.number),
     photoUrl,
+    ...(position ? { position } : {}),
     profile: {
       customFields: publicValues
     }
@@ -1343,9 +1392,11 @@ export async function loadParentTeamDetail(
   options: { includeDeferredData?: boolean } = {}
 ): Promise<TeamDetailModel> {
   const includeDeferredData = options.includeDeferredData === true;
-  const { team, players, games, configs } = await loadTeamDetailBaseSnapshot(teamId, { includeGamesAndConfigs: true });
+  const { team, players: publicPlayers, games, configs } = await loadTeamDetailBaseSnapshot(teamId, { includeGamesAndConfigs: true });
 
   if (!team) throw new Error('Team not found.');
+
+  const players = await loadPrivilegedTeamPlayers(teamId, user, team, publicPlayers);
 
   const linkedPlayerIds = getLinkedPlayerIds(user, teamId, players);
   const completedGameIds = (Array.isArray(games) ? games : [])
@@ -1387,9 +1438,11 @@ export async function loadParentTeamDetail(
 }
 
 export async function loadParentTeamDetailBootstrap(teamId: string, user: AuthUser | null): Promise<TeamDetailModel> {
-  const { team, players } = await loadTeamDetailBaseSnapshot(teamId, { includeGamesAndConfigs: false });
+  const { team, players: publicPlayers } = await loadTeamDetailBaseSnapshot(teamId, { includeGamesAndConfigs: false });
 
   if (!team) throw new Error('Team not found.');
+
+  const players = await loadPrivilegedTeamPlayers(teamId, user, team, publicPlayers);
 
   const linkedPlayerIds = getLinkedPlayerIds(user, teamId, players);
 
@@ -1446,9 +1499,11 @@ export async function loadTeamDetailSponsors(teamId: string): Promise<TeamDetail
 }
 
 export async function loadTeamStaffPermissions(teamId: string, user: AuthUser | null): Promise<TeamStaffPermissionsSummary | null> {
-  const { team, players } = await loadTeamDetailBaseSnapshot(teamId);
+  const { team, players: publicPlayers } = await loadTeamDetailBaseSnapshot(teamId);
 
   if (!team || !hasFullTeamAccess(user, team)) return null;
+
+  const players = await loadPrivilegedTeamPlayers(teamId, user, team, publicPlayers);
 
   const pendingAdminInvites = await loadPendingAdminInvites(teamId).catch(() => []);
   const confirmedTeamMembers = await loadRelevantTeamMembers({
@@ -1467,9 +1522,11 @@ export async function loadTeamStaffPermissions(teamId: string, user: AuthUser | 
 }
 
 export async function loadTeamRosterParentInvites(teamId: string, user: AuthUser | null): Promise<TeamRosterParentInviteSummary[]> {
-  const { team, players } = await loadTeamDetailBaseSnapshot(teamId);
+  const { team, players: publicPlayers } = await loadTeamDetailBaseSnapshot(teamId);
 
   if (!team || !hasFullTeamAccess(user, team)) return [];
+
+  const players = await loadPrivilegedTeamPlayers(teamId, user, team, publicPlayers);
 
   const pendingParentInvites = await loadPendingParentInvites(teamId).catch(() => []);
   const confirmedTeamMembers = await loadRelevantTeamMembers({
@@ -1626,8 +1683,9 @@ export function buildTeamDetailModel({
   includeStaffPermissions?: boolean;
   includeInsights?: boolean;
 }): TeamDetailModel {
-  const normalizedPlayers = normalizePlayers(players, linkedPlayerIds);
-  const normalizedInactivePlayers = normalizePlayers(players, linkedPlayerIds, { inactiveOnly: true });
+  const canManageTeam = hasFullTeamAccess(user, team);
+  const normalizedPlayers = normalizePlayers(players, linkedPlayerIds, { includeParentContacts: canManageTeam });
+  const normalizedInactivePlayers = normalizePlayers(players, linkedPlayerIds, { inactiveOnly: true, includeParentContacts: canManageTeam });
   const normalizedStatTrackerConfigs = buildTeamStatTrackerConfigs(configs, games);
   const normalizedEvents = normalizeEvents(games, normalizedStatTrackerConfigs.byId);
   const seasonLabels = listSeasonLabels(games);
@@ -1638,7 +1696,6 @@ export function buildTeamDetailModel({
   const standings = buildStandings(team, games);
   const leaderboards = includeInsights ? buildLeaderboards(configs, normalizedPlayers, seasonStatsByPlayerId, team?.sport) : [];
   const trackingSummaries = includeInsights ? buildTrackingSummaries(normalizedPlayers, linkedPlayerIds, trackingItems, trackingStatuses) : [];
-  const canManageTeam = hasFullTeamAccess(user, team);
   const canManageAdmins = canManageTeamAdmins(user, team);
   const staffPermissions = canManageTeam && includeStaffPermissions
     ? buildTeamStaffPermissionsSummary({ teamId, team, players, pendingAdminInvites, confirmedTeamMembers })
@@ -1707,11 +1764,32 @@ export function buildRosterParentInviteSummaries({
 }): TeamRosterParentInviteSummary[] {
   const normalizedTeamId = cleanString(teamId);
   const acceptedCounts = new Map<string, number>();
+  const acceptedParentKeysByPlayerId = new Map<string, Set<string>>();
+  const getAcceptedParentKey = (contact: any) => cleanString(contact?.userId || contact?.uid || contact?.id || contact?.email).toLowerCase();
+  (Array.isArray(players) ? players : []).forEach((player) => {
+    const playerId = cleanString(player?.id || player?.playerId);
+    if (!playerId) return;
+    const contacts = collectRosterParentContacts(player, {
+      includeImported: false,
+      includeFamilyContacts: false
+    });
+    if (contacts.length > 0) {
+      acceptedCounts.set(playerId, contacts.length);
+      acceptedParentKeysByPlayerId.set(playerId, new Set(contacts.map(getAcceptedParentKey).filter(Boolean)));
+    }
+  });
 
   (Array.isArray(confirmedTeamMembers) ? confirmedTeamMembers : []).forEach((member) => {
     const linkedPlayerIds = getAcceptedParentPlayerIds(member, normalizedTeamId);
+    const parentKey = getAcceptedParentKey(member);
     linkedPlayerIds.forEach((playerId) => {
+      const parentKeys = acceptedParentKeysByPlayerId.get(playerId) || new Set<string>();
+      if (parentKey && parentKeys.has(parentKey)) return;
       acceptedCounts.set(playerId, (acceptedCounts.get(playerId) || 0) + 1);
+      if (parentKey) {
+        parentKeys.add(parentKey);
+        acceptedParentKeysByPlayerId.set(playerId, parentKeys);
+      }
     });
   });
 
@@ -1866,27 +1944,34 @@ function buildTeamTrackingAdminItem(item: ReturnType<typeof normalizeTeamTrackin
   };
 }
 
-function normalizePlayers(players: any[], linkedPlayerIds: string[], options: { inactiveOnly?: boolean } = {}): TeamDetailPlayer[] {
+function normalizePlayers(players: any[], linkedPlayerIds: string[], options: { inactiveOnly?: boolean; includeParentContacts?: boolean } = {}): TeamDetailPlayer[] {
   const linked = new Set(linkedPlayerIds);
   const inactiveOnly = options.inactiveOnly === true;
   return (Array.isArray(players) ? players : [])
     .filter((player) => inactiveOnly ? player?.active === false : player?.active !== false)
-    .map((player) => normalizePlayer(player, linked))
+    .map((player) => normalizePlayer(player, linked, options.includeParentContacts === true))
     .filter((player) => player.id)
     .sort((a, b) => sortByNumberThenName(a, b));
 }
 
-function normalizePlayer(player: any, linked: Set<string>): TeamDetailPlayer {
+function normalizePlayer(player: any, linked: Set<string>, includeParentContacts = false): TeamDetailPlayer {
   const id = cleanString(player?.id || player?.playerId);
-  return {
+  const normalizedPlayer: TeamDetailPlayer = {
     id,
     name: cleanString(player?.name || player?.playerName) || 'Player',
     number: cleanString(player?.number),
     photoUrl: getFirstUrl(player?.photoUrl, player?.imageUrl, player?.headshotUrl),
-    position: cleanString(player?.position || player?.primaryPosition),
+    position: cleanString(player?.position || player?.primaryPosition || player?.profile?.customFields?.position || player?.customFields?.position),
     isLinked: linked.has(id),
     active: player?.active !== false
   };
+  if (includeParentContacts) {
+    normalizedPlayer.parentContacts = collectRosterParentContacts(player, {
+      includeImported: true,
+      includeFamilyContacts: true
+    }) as TeamRosterParentContact[];
+  }
+  return normalizedPlayer;
 }
 
 function buildPermissionGrantTargets(team: Record<string, any>, players: any[], permissionKey: string, confirmedTeamMembers: any[] = [], teamId = ''): TeamScorekeeperGrantTarget[] {
@@ -2315,6 +2400,8 @@ function normalizeTeamZip(value: unknown) {
 function normalizeRosterFieldValuesForSave(fields: TeamRosterFieldDefinition[], values: Record<string, unknown>) {
   const normalizedValues: Record<string, unknown> = {};
   fields.forEach((field) => {
+    const hasValue = Object.prototype.hasOwnProperty.call(values || {}, field.key);
+    if (!field.required && !hasValue) return;
     const rawValue = values?.[field.key];
     if (field.type === 'checkbox') {
       normalizedValues[field.key] = rawValue === true;

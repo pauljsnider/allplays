@@ -48,6 +48,10 @@ describe('issue 1963 roster AI import source contract', () => {
         expect(editRosterSource).toContain("op.action === 'reactivate'");
         expect(editRosterSource).toContain('await deactivatePlayer(currentTeamId, op.playerId);');
         expect(editRosterSource).toContain('await reactivatePlayer(currentTeamId, op.playerId);');
+        expect(editRosterSource).toContain('buildBulkAiPlayerSchema');
+        expect(editRosterSource).toContain('parentEmail: Schema.string()');
+        expect(editRosterSource).toContain("source: 'roster-ai'");
+        expect(editRosterSource).toContain('hasBulkAiPrivateProfilePayload(payload)');
         expect(editRosterBulkAiReactivateTestSource).toContain('renders reactivate operations before they can be applied');
         expect(editRosterBulkAiReactivateTestSource).toContain('renders explicit deactivate operations as the same reviewable deactivation card as delete operations');
     });

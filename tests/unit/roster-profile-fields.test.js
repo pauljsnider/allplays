@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
     buildRosterFieldDefinitionPayload,
+    collectRosterParentContacts,
+    getStandardRosterFieldDefinitions,
     getRosterProfileValues,
+    mergeRosterParentContacts,
+    mergeStandardRosterFieldDefinitions,
     normalizeRosterFieldDefinitions,
     splitRosterProfileValuesByVisibility,
     validateRosterProfileValues
@@ -57,6 +61,7 @@ describe('roster profile fields', () => {
         expect(getRosterProfileValues({ profile: { customFields: { position: 'Guard' } } })).toEqual({ position: 'Guard' });
         expect(getRosterProfileValues({ customFields: { position: 'Forward' } })).toEqual({ position: 'Forward' });
         expect(getRosterProfileValues({ rosterFieldValues: { grade: '6' } })).toEqual({ grade: '6' });
+        expect(getRosterProfileValues({ privateProfileRosterFields: { birthDate: '2014-02-03' } })).toEqual({ birthDate: '2014-02-03' });
     });
 
     it('uses editable profile custom fields over imported roster field values', () => {
@@ -134,5 +139,74 @@ describe('roster profile fields', () => {
 
         expect(normalizeRosterFieldDefinitions(fields).map((field) => field.key)).toEqual(['active']);
         expect(normalizeRosterFieldDefinitions(fields, { includeInactive: true }).map((field) => field.key)).toEqual(['active', 'disabled']);
+    });
+
+    it('provides standard optional roster fields and lets team definitions override them', () => {
+        expect(getStandardRosterFieldDefinitions().map((field) => field.key)).toEqual(expect.arrayContaining([
+            'preferredName',
+            'position',
+            'birthDate',
+            'gender',
+            'grade',
+            'school',
+            'jerseySize',
+            'memberId'
+        ]));
+
+        const merged = mergeStandardRosterFieldDefinitions([
+            { key: 'position', label: 'Primary Position', type: 'text', visibility: 'team', sortOrder: 2 },
+            { key: 'favoriteSnack', label: 'Favorite Snack', type: 'text', visibility: 'parents', sortOrder: 3 }
+        ]);
+
+        expect(merged.find((field) => field.key === 'position')).toMatchObject({ label: 'Primary Position', visibility: 'team' });
+        expect(merged.find((field) => field.key === 'favoriteSnack')).toMatchObject({ label: 'Favorite Snack', visibility: 'parents' });
+    });
+
+    it('preserves inactive overrides for standard roster fields', () => {
+        const merged = mergeStandardRosterFieldDefinitions([
+            { key: 'position', label: 'Position', type: 'text', visibility: 'public', active: false }
+        ]);
+
+        expect(merged.some((field) => field.key === 'position')).toBe(false);
+    });
+
+    it('collects linked and private roster parent contacts without treating imports as accepted links', () => {
+        const player = {
+            parents: [{ userId: 'parent-1', name: 'Pat Parent', email: 'pat@example.com', relation: 'Dad', source: 'parent_invite' }],
+            privateProfileParents: [
+                { userId: 'parent-1', email: 'pat@example.com', relation: 'Dad' },
+                { name: 'Robin Import', email: 'robin@example.com', relation: 'Guardian', source: 'roster-csv' }
+            ],
+            privateProfileContacts: [{ name: 'Aunt Kim', phone: '555-0101', relation: 'Emergency Contact', source: 'roster-ai' }]
+        };
+
+        expect(collectRosterParentContacts(player, { includeImported: false })).toEqual([
+            expect.objectContaining({ userId: 'parent-1', name: 'Pat Parent', email: 'pat@example.com', relation: 'Dad' })
+        ]);
+        expect(collectRosterParentContacts(player, { includeFamilyContacts: true }).map((contact) => contact.email || contact.phone)).toEqual([
+            'pat@example.com',
+            'robin@example.com',
+            '555-0101'
+        ]);
+    });
+
+    it('merges imported parent contacts without dropping existing private metadata', () => {
+        const merged = mergeRosterParentContacts(
+            [
+                { name: 'Pat Parent', email: 'Pat@Example.com', relation: 'Parent', source: 'registration', registrationId: 'reg-1' },
+                { name: 'Robin Lee', phone: '555-0102', relation: 'Guardian', source: 'registration' }
+            ],
+            [
+                { name: 'Pat AI', email: 'pat@example.com', phone: '555-9999', relation: 'Parent', source: 'roster-ai' },
+                { name: 'Dana Lee', email: 'dana@example.com', relation: 'Parent', source: 'roster-ai' }
+            ],
+            { defaultRelation: 'Parent' }
+        );
+
+        expect(merged).toEqual([
+            expect.objectContaining({ name: 'Pat Parent', email: 'pat@example.com', relation: 'Parent', source: 'registration', registrationId: 'reg-1' }),
+            expect.objectContaining({ name: 'Robin Lee', phone: '555-0102', relation: 'Guardian', source: 'registration' }),
+            expect.objectContaining({ name: 'Dana Lee', email: 'dana@example.com', relation: 'Parent', source: 'roster-ai' })
+        ]);
     });
 });

@@ -419,7 +419,8 @@ describe('bulk AI roster update wiring', () => {
         expect(source).toContain('operations: Schema.array({');
         expect(source).toContain('action: Schema.string()');
         expect(source).toContain('playerId: Schema.string()');
-        expect(source).toContain('changes: Schema.object({');
+        expect(source).toContain('const changesSchema = buildBulkAiPlayerSchema(Schema, { requireName: false });');
+        expect(source).toContain('changes: changesSchema');
         expect(source).toContain('responseMimeType: "application/json"');
         expect(source).toContain('responseSchema: jsonSchema');
     });
@@ -460,7 +461,7 @@ describe('registration roster import wiring', () => {
         expect(source).toContain('selectedOperationIds');
         expect(source).toContain('Conflicted rows are skipped automatically');
         expect(source).toContain('fields: rosterFieldDefinitions');
-        expect(source).toContain('setPlayerPrivateRosterProfileFields(currentTeamId, playerId, operation.privateRosterFields || {}, operation.privateFamilyContacts || {})');
+        expect(source).toContain('setPlayerPrivateRosterProfileFields(currentTeamId, playerId, operation.privateRosterFields, operation.privateFamilyContacts || {})');
         expect(source).toContain('function getPlayerImportSourceType');
         expect(source).toContain('player.registrationSource?.externalPlayerId');
         expect(source).toContain('player.externalPlayerId');

@@ -554,8 +554,8 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getPlayers, getPlayersWithPrivateRosterContacts, addPlayer, applyRosterCsvImportOperations, deactivatePlayer, reactivatePlayer, getGames, uploadPlayerPhoto, updatePlayer, setPlayerPrivateRosterProfileFields, inviteParent, removeParentFromPlayer, getAllUsers, getUnreadChatCount, listTeamParentMembershipRequests, approveParentMembershipRequest, denyParentMembershipRequest, getRosterFieldDefinitions, saveRosterFieldDefinition, disableRosterFieldDefinition, reorderRosterFieldDefinitions, listTeamRegistrationForms, listTeamRegistrationReviews, approveTeamRegistration, rejectTeamRegistration, extendTeamRegistrationOffer, acceptTeamRegistrationOffer, releaseTeamRegistrationWaitlist, listTeamTrackingItems, createTeamTrackingItem, listTeamTrackingStatuses, setTeamTrackingStatus } from './js/db.js?v=93';
-        import { buildFullRosterCsvTemplate, buildRosterFieldDefinitionPayload, collectRosterProfileValues, getRosterProfileValues, normalizeRosterFieldDefinitions, planRosterCsvImport, renderRosterProfileFields, summarizeRosterContactInviteResults, validateRosterProfileValues } from './js/roster-profile-fields.js?v=4';
+        import { getTeam, getPlayers, getPlayersWithPrivateRosterContacts, getUsersByParentPlayerKey, getUsersByParentTeamId, addPlayer, applyRosterCsvImportOperations, deactivatePlayer, reactivatePlayer, getGames, uploadPlayerPhoto, updatePlayer, setPlayerPrivateRosterProfileFields, inviteParent, removeParentFromPlayer, getUnreadChatCount, listTeamParentMembershipRequests, approveParentMembershipRequest, denyParentMembershipRequest, getRosterFieldDefinitions, saveRosterFieldDefinition, disableRosterFieldDefinition, reorderRosterFieldDefinitions, listTeamRegistrationForms, listTeamRegistrationReviews, approveTeamRegistration, rejectTeamRegistration, extendTeamRegistrationOffer, acceptTeamRegistrationOffer, releaseTeamRegistrationWaitlist, listTeamTrackingItems, createTeamTrackingItem, listTeamTrackingStatuses, setTeamTrackingStatus } from './js/db.js?v=94';
+        import { buildFullRosterCsvTemplate, buildRosterFieldDefinitionPayload, collectRosterParentContacts, collectRosterProfileValues, getRosterProfileValues, mergeRosterParentContacts, mergeStandardRosterFieldDefinitions, normalizeRosterFieldDefinitions, planRosterCsvImport, renderRosterProfileFields, splitRosterProfileValuesByVisibility, summarizeRosterContactInviteResults, validateRosterProfileValues } from './js/roster-profile-fields.js?v=6';
         import { buildTrackingStatusPayload, mergeTrackingStatusRows, normalizeTrackingItemDraft, summarizeTrackingStatus } from './js/tracking-status-admin.js?v=2';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=15';
         import { checkAuth } from './js/auth.js?v=50';
@@ -1046,7 +1046,7 @@
                         playerId = await addPlayer(currentTeamId, operation.payload);
                     }
                     if (operation.privateRosterFields || operation.privateFamilyContacts) {
-                        await setPlayerPrivateRosterProfileFields(currentTeamId, playerId, operation.privateRosterFields || {}, operation.privateFamilyContacts || {});
+                        await setPlayerPrivateRosterProfileFields(currentTeamId, playerId, operation.privateRosterFields, operation.privateFamilyContacts || {});
                     }
                 }
 
@@ -1070,7 +1070,7 @@
         async function refreshRosterFieldDefinitions() {
             const rawFields = await getRosterFieldDefinitions(currentTeamId, currentTeam);
             rosterFieldDefinitionDrafts = normalizeRosterFieldDefinitions(rawFields, { includeInactive: true });
-            rosterFieldDefinitions = rosterFieldDefinitionDrafts.filter((field) => field.active !== false);
+            rosterFieldDefinitions = mergeStandardRosterFieldDefinitions(rosterFieldDefinitionDrafts);
             renderRosterProfileFields(document.getElementById('roster-profile-fields'), rosterFieldDefinitions);
             renderRosterFieldSettings();
         }
@@ -1503,6 +1503,24 @@
             }
         }
 
+        function buildLegacyParentContactsFromUsers(users = [], playerId = '') {
+            return (Array.isArray(users) ? users : [])
+                .filter((user) => {
+                    const links = Array.isArray(user?.parentOf) ? user.parentOf : [];
+                    const keys = Array.isArray(user?.parentPlayerKeys) ? user.parentPlayerKeys : [];
+                    return links.some((link) => link?.teamId === currentTeamId && link?.playerId === playerId) ||
+                        keys.includes(`${currentTeamId}::${playerId}`);
+                })
+                .map((user) => ({
+                    userId: user.id || user.uid || '',
+                    name: user.displayName || user.fullName || user.name || user.email || 'Parent',
+                    email: user.email || '',
+                    phone: user.phone || user.phoneNumber || '',
+                    relation: 'Parent',
+                    source: 'legacy-user-link'
+                }));
+        }
+
         async function loadRoster() {
             const tbody = document.getElementById('roster-list');
             try {
@@ -1523,13 +1541,12 @@
                 return;
             }
 
-            const [games, allUsers, membershipRequests, forms] = await Promise.all([
+            const [games, membershipRequests, forms] = await Promise.all([
                 loadOptionalRosterData('games for roster links', () => getGames(currentTeamId), []),
-                loadOptionalRosterData('parent profiles for roster', () => getAllUsers(), []),
                 loadOptionalRosterData('parent membership requests for roster', () => listTeamParentMembershipRequests(currentTeamId), []),
                 loadOptionalRosterData('registration forms for roster', () => listTeamRegistrationForms(currentTeamId), [])
             ]);
-            latestRosterStaffEntries = buildRosterStaffEntries(currentTeam, [...(allUsers || []), currentUser].filter(Boolean));
+            latestRosterStaffEntries = buildRosterStaffEntries(currentTeam, [currentUser].filter(Boolean));
             renderRosterStaffSection(latestRosterStaffEntries);
             latestRosterPlayers = players;
             registrationForms = forms || [];
@@ -1548,21 +1565,44 @@
                 return bDate - aDate;
             })[0]?.id || null;
 
-            // Build parent lookup from user profiles (single source of truth)
             const parentsByPlayerId = new Map();
-            (allUsers || []).forEach(user => {
-                const links = (user.parentOf || []).filter(link => link.teamId === currentTeamId);
-                if (!links.length) return;
-                links.forEach(link => {
-                    const existing = parentsByPlayerId.get(link.playerId) || [];
-                    existing.push({
-                        userId: user.id,
-                        email: user.email || 'Pending',
-                        name: user.fullName || user.displayName || user.email || 'Parent',
-                        relation: link.relation || null
-                    });
-                    parentsByPlayerId.set(link.playerId, existing);
+            players.forEach((player) => {
+                const contacts = collectRosterParentContacts(player, {
+                    includeImported: false,
+                    includeFamilyContacts: false
                 });
+                if (contacts.length) parentsByPlayerId.set(player.id, contacts);
+            });
+            const legacyTeamParentUsers = await loadOptionalRosterData(
+                'legacy parent users for roster team',
+                () => getUsersByParentTeamId(currentTeamId),
+                []
+            );
+            const legacyParentResults = [];
+            for (let i = 0; i < players.length; i += 10) {
+                const batch = players.slice(i, i + 10);
+                legacyParentResults.push(...await Promise.all(batch.map(async (player) => {
+                    const playerId = String(player?.id || '').trim();
+                    if (!playerId) return { playerId, contacts: [] };
+                    const users = await loadOptionalRosterData(
+                        `legacy parent users for ${playerId}`,
+                        () => getUsersByParentPlayerKey(`${currentTeamId}::${playerId}`),
+                        []
+                    );
+                    return { playerId, contacts: buildLegacyParentContactsFromUsers([...legacyTeamParentUsers, ...users], playerId) };
+                })));
+            }
+            legacyParentResults.forEach(({ playerId, contacts }) => {
+                if (!playerId || contacts.length === 0) return;
+                const existing = parentsByPlayerId.get(playerId) || [];
+                const seen = new Set(existing.map((contact) => normalizeEmail(contact.email) || contact.userId).filter(Boolean));
+                contacts.forEach((contact) => {
+                    const key = normalizeEmail(contact.email) || contact.userId;
+                    if (key && seen.has(key)) return;
+                    existing.push(contact);
+                    if (key) seen.add(key);
+                });
+                parentsByPlayerId.set(playerId, existing);
             });
             const pendingRequestsByPlayerId = new Map();
             (membershipRequests || [])
@@ -1594,7 +1634,7 @@
                     ...(Array.isArray(p.contacts) ? p.contacts : []),
                     ...(Array.isArray(p.privateProfileParents) ? p.privateProfileParents : []),
                     ...(Array.isArray(p.privateProfileContacts) ? p.privateProfileContacts : [])
-                ].filter((contact) => contact?.source === 'roster-csv' && contact?.email);
+                ].filter((contact) => ['roster-csv', 'roster-ai'].includes(contact?.source) && contact?.email);
                 const linkedParentEmails = new Set(profileParents.map((parent) => normalizeEmail(parent.email)).filter(Boolean));
                 const pendingRequests = pendingRequestsByPlayerId.get(p.id) || [];
                 const importSourceType = getPlayerImportSourceType(p);
@@ -1606,14 +1646,16 @@
                                 <div class="mt-1 flex flex-wrap gap-1 text-xs">
                                     ${profileParents.map(parent => `
                                         <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-gray-200 bg-gray-50 text-gray-600">
-                                            <span>${escapeHtml(parent.email)}</span>
+                                            <span>${escapeHtml(parent.name || parent.email || 'Parent')}</span>
                                             ${parent.relation ? `<span class="text-gray-400">(${escapeHtml(parent.relation)})</span>` : ''}
-                                            <button type="button"
+                                            ${parent.email ? `<span class="text-gray-400">${escapeHtml(parent.email)}</span>` : ''}
+                                            ${parent.phone ? `<span class="text-gray-400">${escapeHtml(parent.phone)}</span>` : ''}
+                                            ${parent.userId ? `<button type="button"
                                                 class="remove-parent-btn text-[10px] text-red-500 hover:text-red-700 ml-1"
-                                                data-player-id="${p.id}"
-                                                data-parent-id="${parent.userId}">
+                                                data-player-id="${escapeHtml(p.id)}"
+                                                data-parent-id="${escapeHtml(parent.userId)}">
                                                 ✕
-                                            </button>
+                                            </button>` : ''}
                                         </span>
                                     `).join('')}
                                 </div>
@@ -1635,7 +1677,7 @@
                             ` : '';
                 const importedContactBlock = importedFamilyContacts.length > 0 ? `
                                 <div class="mt-2 rounded-lg border border-indigo-200 bg-indigo-50 p-2">
-                                    <div class="text-[11px] font-bold uppercase tracking-wide text-indigo-800">Imported family contacts</div>
+                                    <div class="text-[11px] font-bold uppercase tracking-wide text-indigo-800">Family contacts</div>
                                     <div class="mt-2 space-y-1">
                                         ${importedFamilyContacts.map((contact) => {
                                             const linked = linkedParentEmails.has(normalizeEmail(contact.email));
@@ -2259,6 +2301,7 @@
             const removePhoto = document.getElementById('removePhoto').checked;
             const profileValues = collectRosterProfileValues(document.getElementById('roster-profile-fields'), rosterFieldDefinitions);
             const validationErrors = validateRosterProfileValues(rosterFieldDefinitions, profileValues);
+            const { publicValues, privateValues } = splitRosterProfileValuesByVisibility(rosterFieldDefinitions, profileValues);
 
             if (validationErrors.length) {
                 alert(validationErrors.join('\n'));
@@ -2287,27 +2330,27 @@
                     photoUrl = await uploadPlayerPhoto(file);
                 }
 
-                if (editingPlayerId) {
-                    await updatePlayer(currentTeamId, editingPlayerId, {
-                        name,
-                        number,
-                        photoUrl,
-                        profile: { ...(editingPlayerProfile || {}), customFields: profileValues }
-                    });
-                } else {
-                    await addPlayer(currentTeamId, {
-                        name,
-                        number,
-                        photoUrl,
-                        profile: { customFields: profileValues }
-                    });
+                const playerData = {
+                    name,
+                    number,
+                    photoUrl,
+                    profile: { ...(editingPlayerProfile || {}), customFields: publicValues }
+                };
+                if (Object.prototype.hasOwnProperty.call(publicValues, 'position')) {
+                    playerData.position = publicValues.position;
                 }
+
+                const savedPlayerId = editingPlayerId || await addPlayer(currentTeamId, playerData);
+                if (editingPlayerId) {
+                    await updatePlayer(currentTeamId, editingPlayerId, playerData);
+                }
+                await setPlayerPrivateRosterProfileFields(currentTeamId, savedPlayerId, privateValues);
 
                 resetForm();
                 loadRoster();
             } catch (error) {
                 console.error(error);
-                alert('Error adding player.');
+                alert('Error saving player.');
             }
         });
 
@@ -2316,6 +2359,51 @@
         let proposedOperations = [];
         let bulkAiModulesPromise = null;
         let bulkAiModules = null;
+        const bulkAiProfileFieldAliases = {
+            preferredName: 'preferredName',
+            nickname: 'preferredName',
+            position: 'position',
+            alternateNumber: 'alternateNumber',
+            birthDate: 'birthDate',
+            dateOfBirth: 'birthDate',
+            dob: 'birthDate',
+            gender: 'gender',
+            grade: 'grade',
+            school: 'school',
+            jerseySize: 'jerseySize',
+            uniformSize: 'jerseySize',
+            memberId: 'memberId',
+            dominantHandFoot: 'dominantHandFoot',
+            dominantHand: 'dominantHandFoot',
+            dominantFoot: 'dominantHandFoot'
+        };
+        const bulkAiOptionalPlayerProperties = [
+            'number',
+            'preferredName',
+            'nickname',
+            'position',
+            'alternateNumber',
+            'birthDate',
+            'dateOfBirth',
+            'dob',
+            'gender',
+            'grade',
+            'school',
+            'jerseySize',
+            'uniformSize',
+            'memberId',
+            'dominantHandFoot',
+            'dominantHand',
+            'dominantFoot',
+            'parentName',
+            'parentRelation',
+            'parentEmail',
+            'parentPhone',
+            'guardianName',
+            'guardianRelation',
+            'guardianEmail',
+            'guardianPhone'
+        ];
 
         async function loadBulkAiModules() {
             if (bulkAiModules) return bulkAiModules;
@@ -2332,6 +2420,121 @@
                 });
             }
             return bulkAiModulesPromise;
+        }
+
+        function buildBulkAiPlayerSchema(Schema, { requireName = true } = {}) {
+            const properties = {
+                name: Schema.string(),
+                number: Schema.string(),
+                preferredName: Schema.string(),
+                nickname: Schema.string(),
+                position: Schema.string(),
+                alternateNumber: Schema.string(),
+                birthDate: Schema.string(),
+                dateOfBirth: Schema.string(),
+                dob: Schema.string(),
+                gender: Schema.string(),
+                grade: Schema.string(),
+                school: Schema.string(),
+                jerseySize: Schema.string(),
+                uniformSize: Schema.string(),
+                memberId: Schema.string(),
+                dominantHandFoot: Schema.string(),
+                dominantHand: Schema.string(),
+                dominantFoot: Schema.string(),
+                parentName: Schema.string(),
+                parentRelation: Schema.string(),
+                parentEmail: Schema.string(),
+                parentPhone: Schema.string(),
+                guardianName: Schema.string(),
+                guardianRelation: Schema.string(),
+                guardianEmail: Schema.string(),
+                guardianPhone: Schema.string()
+            };
+            return Schema.object({
+                properties,
+                optionalProperties: requireName ? bulkAiOptionalPlayerProperties : ['name', ...bulkAiOptionalPlayerProperties]
+            });
+        }
+
+        function extractBulkAiProfileValues(draft = {}) {
+            const values = {};
+            Object.entries(bulkAiProfileFieldAliases).forEach(([draftKey, fieldKey]) => {
+                if (!Object.prototype.hasOwnProperty.call(draft || {}, draftKey)) return;
+                const value = String(draft[draftKey] ?? '').trim();
+                if (value) values[fieldKey] = value;
+            });
+            return values;
+        }
+
+        function getBulkAiFamilyContact(draft = {}) {
+            const name = String(draft.parentName || draft.guardianName || '').trim();
+            const email = String(draft.parentEmail || draft.guardianEmail || '').trim().toLowerCase();
+            const phone = String(draft.parentPhone || draft.guardianPhone || '').trim();
+            const relation = String(draft.parentRelation || draft.guardianRelation || 'Parent').trim() || 'Parent';
+            if (!name && !email && !phone) return null;
+            return {
+                name,
+                email,
+                phone,
+                relation,
+                source: 'roster-ai'
+            };
+        }
+
+        function buildBulkAiRosterSavePayload(draft = {}, existingProfile = {}) {
+            const profileValues = extractBulkAiProfileValues(draft);
+            const validationErrors = validateRosterProfileValues(rosterFieldDefinitions, profileValues);
+            if (validationErrors.length) {
+                throw new Error(validationErrors.join('\n'));
+            }
+            const { publicValues, privateValues } = splitRosterProfileValuesByVisibility(rosterFieldDefinitions, profileValues);
+            const playerData = {};
+            if (Object.prototype.hasOwnProperty.call(draft, 'name')) playerData.name = String(draft.name || '').trim();
+            if (Object.prototype.hasOwnProperty.call(draft, 'number')) playerData.number = String(draft.number || '').trim();
+            if (Object.keys(publicValues).length > 0) {
+                playerData.profile = {
+                    ...(existingProfile || {}),
+                    customFields: {
+                        ...((existingProfile || {}).customFields || {}),
+                        ...publicValues
+                    }
+                };
+                if (Object.prototype.hasOwnProperty.call(publicValues, 'position')) {
+                    playerData.position = publicValues.position;
+                }
+            }
+            const familyContact = getBulkAiFamilyContact(draft);
+            return {
+                playerData,
+                privateRosterFields: privateValues,
+                privateFamilyContacts: familyContact ? { parents: [familyContact] } : null
+            };
+        }
+
+        function mergeBulkAiPrivateFamilyContactsForUpdate(existingPlayer = {}, privateFamilyContacts = null) {
+            if (!privateFamilyContacts) return privateFamilyContacts;
+            const mergedContacts = {};
+            if (Array.isArray(privateFamilyContacts.parents)) {
+                mergedContacts.parents = mergeRosterParentContacts(
+                    existingPlayer.privateProfileParents || [],
+                    privateFamilyContacts.parents,
+                    { defaultRelation: 'Parent' }
+                );
+            }
+            if (Array.isArray(privateFamilyContacts.contacts)) {
+                mergedContacts.contacts = mergeRosterParentContacts(
+                    existingPlayer.privateProfileContacts || [],
+                    privateFamilyContacts.contacts,
+                    { defaultRelation: 'Contact' }
+                );
+            }
+            return Object.keys(mergedContacts).length > 0 ? mergedContacts : privateFamilyContacts;
+        }
+
+        function hasBulkAiPrivateProfilePayload(payload = {}) {
+            return Object.keys(payload.privateRosterFields || {}).length > 0 ||
+                Boolean(payload.privateFamilyContacts);
         }
 
         // Tab switching
@@ -2427,27 +2630,17 @@
                 const { getAI, getGenerativeModel, GoogleAIBackend, Schema } = firebaseAiModule;
 
                 // Define JSON schema for structured output
+                const playerSchema = buildBulkAiPlayerSchema(Schema);
+                const changesSchema = buildBulkAiPlayerSchema(Schema, { requireName: false });
                 const jsonSchema = Schema.object({
                     properties: {
                         operations: Schema.array({
                             items: Schema.object({
                                 properties: {
                                     action: Schema.string(),
-                                    player: Schema.object({
-                                        properties: {
-                                            name: Schema.string(),
-                                            number: Schema.string()
-                                        },
-                                        optionalProperties: ["number"]
-                                    }),
+                                    player: playerSchema,
                                     playerId: Schema.string(),
-                                    changes: Schema.object({
-                                        properties: {
-                                            name: Schema.string(),
-                                            number: Schema.string()
-                                        },
-                                        optionalProperties: ["name", "number"]
-                                    }),
+                                    changes: changesSchema,
                                     reason: Schema.string()
                                 },
                                 optionalProperties: ["player", "playerId", "changes", "reason"]
@@ -2466,18 +2659,21 @@ ${textInput ? `\nADDITIONAL INSTRUCTIONS:\n${textInput}\n` : ''}
 PARSING RULES:
 1. Extract ALL players ${imageFile ? 'from the image' : 'from the text'} (look for Name and Number patterns)
 2. Number formats: "#10", "10", "#10 Name", "Name - 10", "Name (10)", etc.
-3. Skip headers, blank lines, team names, and non-player text
-4. If no number is provided, leave it empty
-5. Compare each extracted player to the current player records before choosing an action
-6. Use action="update" with playerId and changes when an extracted player matches an existing player by the same number, same normalized name, or a likely name/number correction
-7. Use action="add" with player object only when no reasonable current player match exists
-8. Never add a second active player for a likely update to an existing player
+3. Also extract optional player fields when visible: preferred name/nickname, position, alternate number, DOB/birth date, gender, grade, school, jersey or uniform size, member ID, dominant hand/foot
+4. Extract parent/guardian contact columns when visible: name, relation, email, and phone. Put those on parentName/parentRelation/parentEmail/parentPhone or guardianName/guardianRelation/guardianEmail/guardianPhone.
+5. Skip headers, blank lines, team names, and non-player text
+6. If no number is provided, leave it empty
+7. Compare each extracted player to the current player records before choosing an action
+8. Use action="update" with playerId and changes when an extracted player matches an existing player by the same number, same normalized name, or a likely name/number correction
+9. Use action="add" with player object only when no reasonable current player match exists
+10. Never add a second active player for a likely update to an existing player
 
 EXAMPLES:
 - "#10 John Smith" → if no current player matches, action: "add", player: { name: "John Smith", number: "10" }
 - "23 Jane Doe" → if current player #23 is "Jane Do", action: "update", playerId: current id, changes: { name: "Jane Doe", number: "23" }
 - "Sarah Johnson - 15" → if current player #15 is "Sarah Jones", action: "update", playerId: current id, changes: { name: "Sarah Johnson", number: "15" }
-- "Mike Wilson" → if no current player matches, action: "add", player: { name: "Mike Wilson", number: "" }`;
+- "Mike Wilson" → if no current player matches, action: "add", player: { name: "Mike Wilson", number: "" }
+- "Avery Lee, #4, Forward, DOB 2014-02-03, Parent Pat Lee pat@example.com" → player: { name: "Avery Lee", number: "4", position: "Forward", birthDate: "2014-02-03", parentName: "Pat Lee", parentEmail: "pat@example.com" }`;
 
                 // Call Firebase AI with structured output
                 const firebaseApp = getApp();
@@ -2662,14 +2858,26 @@ EXAMPLES:
                 for (const op of proposedOperations) {
                     try {
                         if (op.action === 'add') {
+                            const payload = buildBulkAiRosterSavePayload(op.player || {});
                             const playerData = {
                                 name: op.player.name,
-                                number: op.player.number || ''
+                                number: op.player.number || '',
+                                ...payload.playerData
                             };
-                            await addPlayer(currentTeamId, playerData);
+                            const playerId = await addPlayer(currentTeamId, playerData);
+                            if (hasBulkAiPrivateProfilePayload(payload)) {
+                                await setPlayerPrivateRosterProfileFields(currentTeamId, playerId, payload.privateRosterFields, payload.privateFamilyContacts || {});
+                            }
                             successCount++;
                         } else if (op.action === 'update') {
-                            await updatePlayer(currentTeamId, op.playerId, op.changes);
+                            const existingPlayer = latestRosterPlayers.find((player) => player.id === op.playerId) || {};
+                            const payload = buildBulkAiRosterSavePayload(op.changes || {}, existingPlayer.profile || {});
+                            const privateFamilyContacts = mergeBulkAiPrivateFamilyContactsForUpdate(existingPlayer, payload.privateFamilyContacts);
+                            const playerData = { ...payload.playerData };
+                            await updatePlayer(currentTeamId, op.playerId, playerData);
+                            if (hasBulkAiPrivateProfilePayload(payload)) {
+                                await setPlayerPrivateRosterProfileFields(currentTeamId, op.playerId, payload.privateRosterFields, privateFamilyContacts || {});
+                            }
                             successCount++;
                         } else if (op.action === 'delete') {
                             await deactivatePlayer(currentTeamId, op.playerId);
