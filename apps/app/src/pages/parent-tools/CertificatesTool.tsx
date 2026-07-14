@@ -109,7 +109,7 @@ function CertificateCard({ card, isRequested }: { card: ParentCertificateCard; i
                     {card.narrative || card.description ? <div className="mt-2 line-clamp-2 text-sm font-semibold leading-5 text-gray-600">{card.narrative || card.description}</div> : null}
                 </div>
             </div>
-            <div className={`mt-3 grid gap-2 ${isRequested ? 'grid-cols-1' : 'grid-cols-2'}`}>
+            <div className="mt-3 grid grid-cols-2 gap-2">
                 <button type="button" className={`${isRequested ? 'primary-button' : 'secondary-button'} justify-center text-xs`} onClick={() => openPublicUrl(card.url)}>
                     <ExternalLink className="h-4 w-4" aria-hidden="true" />
                     {isRequested ? 'View award' : 'Open'}

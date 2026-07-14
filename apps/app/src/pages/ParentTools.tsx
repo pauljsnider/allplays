@@ -1,4 +1,4 @@
-import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type LazyExoticComponent, type ReactNode } from 'react';
+import { lazy, memo, Suspense, useCallback, useEffect, useRef, useState, type ComponentType, type LazyExoticComponent, type ReactNode } from 'react';
 import { Award, CalendarDays, ChevronLeft, DollarSign, Loader2, Share2, Shield, Ticket, Users, type LucideIcon } from 'lucide-react';
 import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import type { AuthState } from '../lib/types';
@@ -106,7 +106,9 @@ export function ParentTools({ auth }: { auth: AuthState }) {
     const activeTool = validToolIds.has(toolId as ParentToolId) ? toolId as ParentToolId : null;
     const hasLinkedPlayers = hasParentToolLinks(auth);
     const parentUserFingerprint = getParentUserFingerprint(auth);
-    const panelAuth = useMemo(() => auth, [parentUserFingerprint]);
+    const latestAuthRef = useRef(auth);
+    latestAuthRef.current = auth;
+    const [panelAuth, setPanelAuth] = useState(auth);
     const visibleTools = hasLinkedPlayers ? tools : tools.filter((tool) => tool.id === 'access');
     const visibleToolIds = new Set(visibleTools.map((tool) => tool.id));
     const isLockedDeepLink = Boolean(activeTool && !visibleToolIds.has(activeTool));
@@ -124,6 +126,10 @@ export function ParentTools({ auth }: { auth: AuthState }) {
     useEffect(() => {
         activeToolRef.current = activeTool;
     }, [activeTool]);
+
+    useEffect(() => {
+        setPanelAuth(latestAuthRef.current);
+    }, [parentUserFingerprint]);
 
     useEffect(() => {
         if (!activeTool) return;
