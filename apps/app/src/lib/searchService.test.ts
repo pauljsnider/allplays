@@ -205,4 +205,43 @@ describe('searchService app search caches', () => {
     await searchAppTeams(uniqueQuery(0), [], null);
     expect(publicTeamsServiceMocks.getPublicTeamsPage.mock.calls.filter(([options]) => options.searchText === uniqueQuery(0))).toHaveLength(2);
   });
+
+  it('uses lightweight public team pages and caches normalized search metadata', async () => {
+    publicTeamsServiceMocks.getPublicTeamsPage.mockResolvedValue({
+      teams: [{
+        teamId: 'team-austin',
+        teamName: 'Austin Bats',
+        sport: 'Baseball',
+        photoUrl: 'https://example.com/team.png',
+        city: 'Austin',
+        state: 'TX',
+        zip: '78701',
+        location: 'Austin, TX',
+        isPublic: true
+      }],
+      nextCursor: null
+    });
+
+    await expect(searchAppTeams('Austin', [], null)).resolves.toEqual([
+      expect.objectContaining({
+        id: 'team-austin',
+        name: 'Austin Bats',
+        sport: 'Baseball',
+        photoUrl: 'https://example.com/team.png',
+        city: 'Austin',
+        state: 'TX',
+        zip: '78701',
+        location: 'Austin, TX',
+        isPublic: true
+      })
+    ]);
+    await searchAppTeams(' Austin ', [], null);
+
+    expect(publicTeamsServiceMocks.getPublicTeamsPage).toHaveBeenCalledTimes(1);
+    expect(publicTeamsServiceMocks.getPublicTeamsPage).toHaveBeenCalledWith({
+      searchText: 'Austin',
+      pageSize: 20,
+      includeRosterCounts: false
+    });
+  });
 });

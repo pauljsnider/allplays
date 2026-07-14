@@ -8,6 +8,14 @@ export type PublicTeamsPage = {
     nextCursor: unknown | null;
 };
 
+type PublicTeamsPageOptions = {
+    searchText?: string;
+    locationFilter?: string;
+    cursor?: unknown | null;
+    pageSize?: number;
+    includeRosterCounts?: boolean;
+};
+
 export type PublicTeamProfile = {
     id: string;
     name: string;
@@ -119,7 +127,7 @@ function matchesPublicTeamSearch(team: { name?: string | null; city?: string | n
     return searchTokens.every((token) => combinedFields.includes(token));
 }
 
-export async function getPublicTeamsPage({ searchText, locationFilter, cursor = null, pageSize = 24 }: { searchText?: string; locationFilter?: string; cursor?: unknown | null; pageSize?: number } = {}): Promise<PublicTeamsPage> {
+export async function getPublicTeamsPage({ searchText, locationFilter, cursor = null, pageSize = 24, includeRosterCounts = true }: PublicTeamsPageOptions = {}): Promise<PublicTeamsPage> {
     const normalizedSearchText = String(searchText ?? locationFilter ?? '').trim();
     const result = await discoverPublicTeams({
         searchText: normalizedSearchText,
@@ -128,7 +136,9 @@ export async function getPublicTeamsPage({ searchText, locationFilter, cursor = 
     });
     const matchingTeams = result.teams
         .filter((team: { name?: string | null; city?: string | null; state?: string | null; zip?: string | null }) => matchesPublicTeamSearch(team, normalizedSearchText));
-    const teams = await mapPublicTeamsWithRosterCounts(matchingTeams);
+    const teams = includeRosterCounts
+        ? await mapPublicTeamsWithRosterCounts(matchingTeams)
+        : matchingTeams.map((team: PublicTeamSearchResult) => mapPublicTeam(team, null));
 
     return {
         teams,

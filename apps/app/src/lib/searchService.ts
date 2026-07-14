@@ -629,7 +629,11 @@ async function getCachedPublicTeamSearchResults(queryText: string, user: AuthUse
   }
   if (cachedEntry?.promise) return cachedEntry.promise;
 
-  const promise = getPublicTeamsPage({ searchText: queryText, pageSize: teamSearchQueryLimit })
+  const promise = getPublicTeamsPage({
+    searchText: queryText,
+    pageSize: teamSearchQueryLimit,
+    includeRosterCounts: false
+  })
     .then((result) => {
       const teams = normalizePublicTeamSearchResults(result?.teams || []);
       setBoundedCompletedSearchCacheEntry(publicTeamSearchCache, cacheKey, { teams }, publicTeamSearchCacheMaxEntries);
