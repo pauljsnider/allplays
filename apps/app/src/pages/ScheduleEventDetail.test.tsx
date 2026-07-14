@@ -939,6 +939,18 @@ describe('ScheduleEventDetail family RSVP path', () => {
     cleanup();
   });
 
+  it('syncs the selected child availability note before paint', () => {
+    let source = '';
+    try {
+      source = readFileSync('src/pages/ScheduleEventDetail.tsx', 'utf8');
+    } catch {
+      source = readFileSync('apps/app/src/pages/ScheduleEventDetail.tsx', 'utf8');
+    }
+
+    expect(source).toMatch(/useLayoutEffect\(\(\) => \{\s*setAvailabilityNote\(selectedEvent\?\.myRsvpNote \|\| ''\);\s*\}, \[selectedEvent\?\.eventKey, selectedEvent\?\.myRsvpNote\]\);/);
+    expect(source).not.toMatch(/useEffect\(\(\) => \{\s*setAvailabilityNote\(selectedEvent\?\.myRsvpNote \|\| ''\);/);
+  });
+
   it('shows the family response first when linked children have no saved notes', async () => {
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
       events: [
