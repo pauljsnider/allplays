@@ -92,7 +92,7 @@ describe('ScheduleEventDetail decomposition contract', () => {
         expect(page).toContain("import { useStaffRsvpBreakdown } from '../hooks/schedule/useStaffRsvpBreakdown';");
         expect(page).toContain("import { RideshareSection } from '../components/schedule/RideshareSection';");
         expect(page).toContain('<ScheduleEventDetailProvider value={{');
-        expect(page).toContain('const rsvpWorkflow = useScheduleEventRsvp({ availabilityNote, applyToAllChildren: useFamilyRsvp });');
+        expect(page).toContain('const rsvpWorkflow = useScheduleEventRsvp({ availabilityNote, applyToAllChildren: useFamilyRsvp, sharedNoteExplicitlyChosen });');
         expect(page).toContain("const staffRsvpEventScopeKey = `${event.teamId}:${event.id}`;");
         expect(page).toContain('const staffRsvpLoader = useMemo(() => createStaffRsvpAvailabilityLoader(staffRsvpEventScopeKey), [staffRsvpEventScopeKey]);');
         expect(page).toContain('const staffRsvp = useStaffRsvpBreakdown(staffRsvpLoader);');
