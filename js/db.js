@@ -5398,6 +5398,25 @@ function deriveTeamFeeAdminBillingPayload(recipientUpdates = {}, ledgerEntries =
     };
 }
 
+function createTeamFeeLedgerEntryId(prefix = 'ledger') {
+    if (globalThis.crypto?.randomUUID) {
+        return `${prefix}_${globalThis.crypto.randomUUID()}`;
+    }
+    return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function addManualPaymentLedgerEntryIds(ledgerEntries = []) {
+    return ledgerEntries.map((entry) => {
+        if (entry?.type !== 'offline_payment' || entry.ledgerEntryId) {
+            return entry;
+        }
+        return {
+            ...entry,
+            ledgerEntryId: createTeamFeeLedgerEntryId('offline_payment')
+        };
+    });
+}
+
 export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updates = {}) {
     if (!teamId || !batchId || !recipientId) {
         throw new Error('Missing fee recipient context.');
@@ -5407,7 +5426,9 @@ export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updat
     const adminBillingRef = doc(db, 'teams', teamId, 'feeBatches', batchId, 'feeRecipients', recipientId, 'adminBilling', 'latest');
     const { ledgerEntries = [], adminBilling = null, ...unsafeRecipientUpdates } = updates;
     const recipientUpdates = sanitizeTeamFeeRecipientValue(unsafeRecipientUpdates, { topLevel: true });
-    const safeLedgerEntries = Array.isArray(ledgerEntries) ? sanitizeTeamFeeRecipientValue(ledgerEntries) : [];
+    const safeLedgerEntries = Array.isArray(ledgerEntries)
+        ? addManualPaymentLedgerEntryIds(sanitizeTeamFeeRecipientValue(ledgerEntries))
+        : [];
     const isManualPaymentUpdate = Object.prototype.hasOwnProperty.call(recipientUpdates, 'manualPayment')
         || safeLedgerEntries.some((entry) => entry?.type === 'offline_payment');
     const isCancellationUpdate = recipientUpdates.status === 'canceled'
