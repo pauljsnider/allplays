@@ -1593,12 +1593,14 @@ describe('ScheduleEventDetail assignments', () => {
   });
 
   it('warns when a score autosaves but the live play-by-play post fails', async () => {
+    const publishError = new Error('Live post unavailable');
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
       events: [buildEvent({ liveStatus: 'live', status: 'live', canUpdateScore: true, homeScore: 41, awayScore: 38 })],
       children: []
     });
     scheduleServiceMocks.updateGameScore.mockResolvedValue({ homeScore: 42, awayScore: 38 });
-    scheduleServiceMocks.publishLiveScoreUpdateEvent.mockRejectedValue(new Error('Live post unavailable'));
+    scheduleServiceMocks.publishLiveScoreUpdateEvent.mockRejectedValue(publishError);
 
     renderScheduleEventDetailWithRouteControls();
 
@@ -1612,6 +1614,11 @@ describe('ScheduleEventDetail assignments', () => {
     const warning = await within(tray).findByText('Score autosaved. Live play-by-play post failed.');
     expect(warning.className).toContain('text-amber-700');
     expect(warning.className).not.toContain('text-rose-700');
+    expect(consoleWarn).toHaveBeenCalledWith(
+      '[schedule-event-detail] Score saved but live play-by-play posting failed:',
+      publishError
+    );
+    consoleWarn.mockRestore();
   });
 
   it('keeps the empty Tasks tab visible for team admins before assignments exist', async () => {
@@ -1956,6 +1963,8 @@ describe('ScheduleEventDetail assignments', () => {
   });
 
   it('keeps foul entry disabled when foul history fails to load', async () => {
+    const historyError = new Error('History unavailable');
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
       events: [buildEvent({
         liveStatus: 'live',
@@ -1968,7 +1977,7 @@ describe('ScheduleEventDetail assignments', () => {
     scheduleServiceMocks.loadHomeScoringPlayers.mockResolvedValue([
       { id: 'p1', name: 'Avery Smith', number: '12', points: 10, fouls: 1 }
     ]);
-    scheduleServiceMocks.loadGameDayLiveEventsForApp.mockRejectedValue(new Error('History unavailable'));
+    scheduleServiceMocks.loadGameDayLiveEventsForApp.mockRejectedValue(historyError);
     scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp.mockResolvedValue({ availablePlayers: [], goingPlayers: [], gamePlan: null });
     scheduleHubMocks.buildGameHubDestinations.mockReturnValue([]);
 
@@ -1984,6 +1993,11 @@ describe('ScheduleEventDetail assignments', () => {
     fireEvent.click(addFoulButton);
 
     expect(scheduleServiceMocks.recordPlayerGameStat).not.toHaveBeenCalled();
+    expect(consoleWarn).toHaveBeenCalledWith(
+      '[schedule-event-detail] Unable to load foul tracker state:',
+      historyError
+    );
+    consoleWarn.mockRestore();
   });
 
   it('invalidates the shared scoring roster once when switching game hub events', async () => {
@@ -2416,6 +2430,7 @@ describe('ScheduleEventDetail assignments', () => {
   });
 
   it('keeps mobile live chat pinned to latest messages unless the viewer scrolls up', async () => {
+    const originalScrollIntoView = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollIntoView');
     const frameCallbacks = new Map<number, FrameRequestCallback>();
     let nextFrameId = 1;
     const requestFrame = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
@@ -2578,6 +2593,15 @@ describe('ScheduleEventDetail assignments', () => {
     expect(cancelFrame).toHaveBeenCalledWith(pendingFrameId);
     expect(frameCallbacks.size).toBe(0);
     expect(metrics.setScrollTop).not.toHaveBeenCalled();
+
+    requestFrame.mockRestore();
+    cancelFrame.mockRestore();
+    setTimeoutSpy.mockRestore();
+    if (originalScrollIntoView) {
+      Object.defineProperty(Element.prototype, 'scrollIntoView', originalScrollIntoView);
+    } else {
+      delete (Element.prototype as { scrollIntoView?: Element['scrollIntoView'] }).scrollIntoView;
+    }
   });
 
   it('shows the locked live chat notice and disables the composer when chat is unavailable', async () => {
@@ -4224,13 +4248,15 @@ describe('ScheduleEventDetail wrap-up', () => {
   });
 
   it('completes wrap-up even when AI analysis fails', async () => {
+    const aiError = new Error('AI unavailable');
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
       events: [buildEvent({ isTeamStaff: true, canUpdateScore: true, homeScore: 51, awayScore: 47 })],
       children: []
     });
     scheduleServiceMocks.updateGameScore.mockResolvedValue({ homeScore: 51, awayScore: 47 });
     scheduleServiceMocks.completeGameWrapupForApp.mockResolvedValue({ status: 'completed', liveStatus: 'completed' });
-    gameWrapupServiceMocks.generateGameWrapupArtifactsForApp.mockRejectedValue(new Error('AI unavailable'));
+    gameWrapupServiceMocks.generateGameWrapupArtifactsForApp.mockRejectedValue(aiError);
 
     renderScheduleEventDetail();
 
@@ -4269,15 +4295,19 @@ describe('ScheduleEventDetail wrap-up', () => {
     await waitFor(() => {
       expect(screen.getByText('Wrap-up saved. AI analysis failed, so you can retry by running wrap-up again.')).toBeTruthy();
     });
+    expect(consoleWarn).toHaveBeenCalledWith('[schedule-event-detail] Wrap-up AI failed:', aiError);
+    consoleWarn.mockRestore();
   });
 
   it('warns when wrap-up saves but the live score post fails', async () => {
+    const publishError = new Error('Live feed unavailable');
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
       events: [buildEvent({ isTeamStaff: true, canUpdateScore: true, homeScore: 51, awayScore: 47 })],
       children: []
     });
     scheduleServiceMocks.updateGameScore.mockResolvedValue({ homeScore: 52, awayScore: 47 });
-    scheduleServiceMocks.publishLiveScoreUpdateEvent.mockRejectedValue(new Error('Live feed unavailable'));
+    scheduleServiceMocks.publishLiveScoreUpdateEvent.mockRejectedValue(publishError);
     scheduleServiceMocks.completeGameWrapupForApp.mockResolvedValue({ status: 'completed', liveStatus: 'completed' });
     gameWrapupServiceMocks.generateGameWrapupArtifactsForApp.mockResolvedValue({
       summary: 'Bears finished strong.',
@@ -4298,6 +4328,11 @@ describe('ScheduleEventDetail wrap-up', () => {
       expect(screen.getByText('Wrap-up saved, but the live score post failed. You can retry by running wrap-up again.')).toBeTruthy();
     });
     expect(scheduleServiceMocks.completeGameWrapupForApp).toHaveBeenCalled();
+    expect(consoleWarn).toHaveBeenCalledWith(
+      '[schedule-event-detail] Wrap-up score saved but live play-by-play posting failed:',
+      publishError
+    );
+    consoleWarn.mockRestore();
   });
 
   it('allows wrap-up to skip AI generation and still complete', async () => {
