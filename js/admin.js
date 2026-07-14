@@ -39,10 +39,11 @@ import {
 import { buildAdminTeamOfficialsSummary } from './admin-team-officials.js?v=1';
 import {
     hasAdminGlobalSearchTerm,
+    loadCompleteAdminSearchCollection,
     normalizeAdminSearchTerm,
     selectAdminItemById,
     selectAdminSearchCollection
-} from './admin-search.js?v=1';
+} from './admin-search.js?v=2';
 import {
     buildTrackedWorkflowLoadSummary,
     buildTelemetryPerformanceSummary,
@@ -150,9 +151,12 @@ function resetGlobalAdminSearchCollections() {
 async function ensureGlobalAdminTeamsForSearch() {
     if (globalSearchTeamsLoaded) return globalSearchTeams;
     if (!globalSearchTeamsPromise) {
-        globalSearchTeamsPromise = getAdminTeamsPage({ pageSize: 100 })
-            .then((page) => {
-                globalSearchTeams = Array.isArray(page?.teams) ? page.teams : [];
+        globalSearchTeamsPromise = loadCompleteAdminSearchCollection({
+            fetchPage: getAdminTeamsPage,
+            itemsKey: 'teams'
+        })
+            .then((teams) => {
+                globalSearchTeams = teams;
                 globalSearchTeamsLoaded = true;
                 return globalSearchTeams;
             })
@@ -166,9 +170,12 @@ async function ensureGlobalAdminTeamsForSearch() {
 async function ensureGlobalAdminUsersForSearch() {
     if (globalSearchUsersLoaded) return globalSearchUsers;
     if (!globalSearchUsersPromise) {
-        globalSearchUsersPromise = getAdminUsersPage({ pageSize: 100 })
-            .then((page) => {
-                globalSearchUsers = Array.isArray(page?.users) ? page.users : [];
+        globalSearchUsersPromise = loadCompleteAdminSearchCollection({
+            fetchPage: getAdminUsersPage,
+            itemsKey: 'users'
+        })
+            .then((users) => {
+                globalSearchUsers = users;
                 globalSearchUsersLoaded = true;
                 return globalSearchUsers;
             })
