@@ -1329,11 +1329,8 @@ function LiveGameChatPanel({ auth, event }: { auth: AuthState; event: ParentSche
   const [sending, setSending] = useState(false);
   const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
   const messagesScrollRef = useRef<HTMLDivElement | null>(null);
-  const messagesContentRef = useRef<HTMLDivElement | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const stickToLatestRef = useRef(true);
   const shouldFollowLatestRef = useRef(true);
-  const scheduledScrollTimeoutsRef = useRef<number[]>([]);
 
   useEffect(() => {
     void loadLiveGameChatModule().then(setChatModule);
@@ -1348,39 +1345,22 @@ function LiveGameChatPanel({ auth, event }: { auth: AuthState; event: ParentSche
     const container = messagesScrollRef.current;
     if (!container) return;
 
-    const nextHeight = Math.max(container.scrollHeight, messagesContentRef.current?.scrollHeight || 0);
-    container.scrollTop = Math.max(0, nextHeight - container.clientHeight);
-    if (typeof messagesEndRef.current?.scrollIntoView === 'function') {
-      messagesEndRef.current.scrollIntoView({ block: 'end', behavior: 'auto' });
-    }
+    container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
     stickToLatestRef.current = true;
   }, []);
 
-  const clearScheduledScrolls = useCallback(() => {
-    scheduledScrollTimeoutsRef.current.forEach((timerId) => window.clearTimeout(timerId));
-    scheduledScrollTimeoutsRef.current = [];
-  }, []);
+  const followLatestIfNeeded = useCallback(() => {
+    const container = messagesScrollRef.current;
+    if (!container) return;
+    if (stickToLatestRef.current || isLiveGameChatNearBottom(container)) {
+      scrollToLatest();
+    }
+  }, [scrollToLatest]);
 
-  const scheduleScrollToLatest = useCallback(() => {
-    clearScheduledScrolls();
-    const followIfNeeded = () => {
-      const container = messagesScrollRef.current;
-      if (!container) return;
-      if (stickToLatestRef.current || isLiveGameChatNearBottom(container)) {
-        scrollToLatest();
-      }
-    };
-
-    followIfNeeded();
-    [120, 300, 700].forEach((delay) => {
-      let timerId = 0;
-      timerId = window.setTimeout(() => {
-        scheduledScrollTimeoutsRef.current = scheduledScrollTimeoutsRef.current.filter((id) => id !== timerId);
-        followIfNeeded();
-      }, delay);
-      scheduledScrollTimeoutsRef.current.push(timerId);
-    });
-  }, [clearScheduledScrolls, scrollToLatest]);
+  const scrollScheduler = useMemo(
+    () => createLiveGameChatScrollScheduler(followLatestIfNeeded),
+    [followLatestIfNeeded]
+  );
 
   const handleMessagesScroll = useCallback(() => {
     stickToLatestRef.current = isLiveGameChatNearBottom(messagesScrollRef.current);
@@ -1388,10 +1368,10 @@ function LiveGameChatPanel({ auth, event }: { auth: AuthState; event: ParentSche
 
   useLayoutEffect(() => {
     if (!messages.length || !shouldFollowLatestRef.current) return;
-    scheduleScrollToLatest();
-  }, [latestMessageId, messages.length, scheduleScrollToLatest]);
+    scrollScheduler.schedule();
+  }, [latestMessageId, messages.length, scrollScheduler]);
 
-  useEffect(() => clearScheduledScrolls, [clearScheduledScrolls]);
+  useEffect(() => () => scrollScheduler.cancel(), [scrollScheduler]);
 
   useEffect(() => {
     if (!chatModule || !event.isDbGame || !event.teamId || !event.id) return undefined;
@@ -1410,9 +1390,10 @@ function LiveGameChatPanel({ auth, event }: { auth: AuthState; event: ParentSche
     });
 
     return () => {
+      scrollScheduler.cancel();
       unsubscribe?.();
     };
-  }, [chatModule, event.id, event.isDbGame, event.teamId]);
+  }, [chatModule, event.id, event.isDbGame, event.teamId, scrollScheduler]);
 
   const sendMessage = async (submitEvent: FormEvent) => {
     submitEvent.preventDefault();
@@ -1458,7 +1439,7 @@ function LiveGameChatPanel({ auth, event }: { auth: AuthState; event: ParentSche
           data-testid="live-game-chat-messages"
           onScroll={handleMessagesScroll}
         >
-          <div ref={messagesContentRef} className="space-y-2">
+          <div className="space-y-2">
             {loading ? (
               <div className="text-sm font-semibold text-gray-500">Loading live chat…</div>
             ) : messages.length ? messages.map((message) => (
@@ -1472,7 +1453,6 @@ function LiveGameChatPanel({ auth, event }: { auth: AuthState; event: ParentSche
             )) : (
               <div className="text-sm font-semibold text-gray-500">No messages yet. Start the game-day chat.</div>
             )}
-            <div ref={messagesEndRef} aria-hidden="true" />
           </div>
         </div>
 
@@ -4476,6 +4456,31 @@ function GameHubDestinationCard({ destination, onShare }: {
 
 function sortLiveGameChatMessages(messages: LiveGameChatMessage[]) {
   return [...messages].sort((left, right) => getLiveGameChatTimestampValue(left.createdAt) - getLiveGameChatTimestampValue(right.createdAt));
+}
+
+export function createLiveGameChatScrollScheduler(
+  adjustScroll: () => void,
+  requestFrame: (callback: FrameRequestCallback) => number = (callback) => window.requestAnimationFrame(callback),
+  cancelFrame: (frameId: number) => void = (frameId) => window.cancelAnimationFrame(frameId)
+) {
+  let pendingFrameId: number | null = null;
+
+  return {
+    schedule() {
+      if (pendingFrameId !== null) {
+        cancelFrame(pendingFrameId);
+      }
+      pendingFrameId = requestFrame(() => {
+        pendingFrameId = null;
+        adjustScroll();
+      });
+    },
+    cancel() {
+      if (pendingFrameId === null) return;
+      cancelFrame(pendingFrameId);
+      pendingFrameId = null;
+    }
+  };
 }
 
 export function isLiveGameChatNearBottom(

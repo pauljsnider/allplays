@@ -233,6 +233,7 @@ vi.mock('../lib/statsheetImportService', () => statsheetImportServiceMocks);
 
 import {
   ScheduleEventDetail,
+  createLiveGameChatScrollScheduler,
   isLiveGameChatNearBottom,
   loadGameDayLineupBuilderModule,
   loadGameReportSectionsModule,
@@ -382,6 +383,10 @@ function installScrollMetrics(
   element: HTMLElement,
   metrics: { scrollHeight: number; clientHeight: number }
 ) {
+  let scrollTop = element.scrollTop;
+  const setScrollTop = vi.fn((value: number) => {
+    scrollTop = value;
+  });
   Object.defineProperty(element, 'scrollHeight', {
     configurable: true,
     get: () => metrics.scrollHeight
@@ -390,7 +395,12 @@ function installScrollMetrics(
     configurable: true,
     get: () => metrics.clientHeight
   });
-  return metrics;
+  Object.defineProperty(element, 'scrollTop', {
+    configurable: true,
+    get: () => scrollTop,
+    set: setScrollTop
+  });
+  return Object.assign(metrics, { setScrollTop });
 }
 
 function buildLiveChatMessages(count: number) {
@@ -489,6 +499,38 @@ describe('ScheduleEventDetail deferred game hub loaders', () => {
 });
 
 describe('ScheduleEventDetail live chat scroll helpers', () => {
+  it('coalesces repeated scroll requests into one animation-frame adjustment', () => {
+    const callbacks = new Map<number, FrameRequestCallback>();
+    const adjustScroll = vi.fn();
+    const requestFrame = vi.fn((callback: FrameRequestCallback) => {
+      const frameId = callbacks.size + 1;
+      callbacks.set(frameId, callback);
+      return frameId;
+    });
+    const cancelFrame = vi.fn((frameId: number) => callbacks.delete(frameId));
+    const scheduler = createLiveGameChatScrollScheduler(adjustScroll, requestFrame, cancelFrame);
+
+    scheduler.schedule();
+    scheduler.schedule();
+
+    expect(callbacks.size).toBe(1);
+    callbacks.values().next().value?.(0);
+    expect(adjustScroll).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancels pending live-chat scroll work during cleanup', () => {
+    const adjustScroll = vi.fn();
+    const requestFrame = vi.fn(() => 42);
+    const cancelFrame = vi.fn();
+    const scheduler = createLiveGameChatScrollScheduler(adjustScroll, requestFrame, cancelFrame);
+
+    scheduler.schedule();
+    scheduler.cancel();
+
+    expect(cancelFrame).toHaveBeenCalledWith(42);
+    expect(adjustScroll).not.toHaveBeenCalled();
+  });
+
   it('treats live chat positions within 96 pixels of the bottom as near bottom', () => {
     expect(isLiveGameChatNearBottom(null)).toBe(true);
     expect(isLiveGameChatNearBottom({ scrollHeight: 1000, clientHeight: 400, scrollTop: 504 })).toBe(true);
@@ -2374,6 +2416,22 @@ describe('ScheduleEventDetail assignments', () => {
   });
 
   it('keeps mobile live chat pinned to latest messages unless the viewer scrolls up', async () => {
+    const frameCallbacks = new Map<number, FrameRequestCallback>();
+    let nextFrameId = 1;
+    const requestFrame = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      const frameId = nextFrameId++;
+      frameCallbacks.set(frameId, callback);
+      return frameId;
+    });
+    const cancelFrame = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((frameId) => {
+      frameCallbacks.delete(frameId);
+    });
+    const setTimeoutSpy = vi.spyOn(window, 'setTimeout');
+    const flushAnimationFrame = async () => {
+      const callbacks = [...frameCallbacks.values()];
+      frameCallbacks.clear();
+      await act(async () => callbacks.forEach((callback) => callback(performance.now())));
+    };
     let chatCallback: (messages: Array<{ id: string; text?: string | null; senderName?: string | null; createdAt?: unknown }>) => void = () => {};
     liveGameChatServiceMocks.subscribeToLiveGameChat.mockImplementation((_teamId, _gameId, callback) => {
       chatCallback = callback;
@@ -2385,7 +2443,7 @@ describe('ScheduleEventDetail assignments', () => {
       children: []
     });
 
-    renderScheduleEventDetail();
+    const { unmount } = renderScheduleEventDetail();
 
     await waitFor(() => {
       expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0);
@@ -2399,23 +2457,39 @@ describe('ScheduleEventDetail assignments', () => {
 
     const scroller = screen.getByTestId('live-game-chat-messages') as HTMLDivElement;
     const metrics = installScrollMetrics(scroller, { scrollHeight: 520, clientHeight: 160 });
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(Element.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: scrollIntoView
+    });
+    frameCallbacks.clear();
+    requestFrame.mockClear();
+    cancelFrame.mockClear();
+    scrollIntoView.mockClear();
+    setTimeoutSpy.mockClear();
 
     await act(async () => {
       chatCallback(buildLiveChatMessages(8));
     });
-    await waitFor(() => {
-      expect(scroller.scrollTop).toBe(360);
-    });
+    expect(requestFrame).toHaveBeenCalledTimes(1);
+    await flushAnimationFrame();
+    expect(scroller.scrollTop).toBe(360);
+    expect(metrics.setScrollTop).toHaveBeenCalledTimes(1);
+    expect(setTimeoutSpy).not.toHaveBeenCalled();
+    expect(scrollIntoView).not.toHaveBeenCalled();
 
     scroller.scrollTop = 330;
     fireEvent.scroll(scroller);
+    metrics.setScrollTop.mockClear();
+    requestFrame.mockClear();
     metrics.scrollHeight = 600;
     await act(async () => {
       chatCallback(buildLiveChatMessages(9));
     });
-    await waitFor(() => {
-      expect(scroller.scrollTop).toBe(440);
-    });
+    expect(requestFrame).toHaveBeenCalledTimes(1);
+    await flushAnimationFrame();
+    expect(scroller.scrollTop).toBe(440);
+    expect(metrics.setScrollTop).toHaveBeenCalledTimes(1);
 
     fireEvent.change(screen.getByLabelText('Live chat message'), { target: { value: "Let's go Bears" } });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
@@ -2436,15 +2510,17 @@ describe('ScheduleEventDetail assignments', () => {
       }
     ];
     metrics.scrollHeight = 680;
+    metrics.setScrollTop.mockClear();
     await act(async () => {
       chatCallback(messagesWithSentEcho);
     });
-    await waitFor(() => {
-      expect(scroller.scrollTop).toBe(520);
-    });
+    await flushAnimationFrame();
+    expect(scroller.scrollTop).toBe(520);
+    expect(metrics.setScrollTop).toHaveBeenCalledTimes(1);
 
     scroller.scrollTop = 160;
     fireEvent.scroll(scroller);
+    metrics.setScrollTop.mockClear();
     metrics.scrollHeight = 760;
     await act(async () => {
       chatCallback([
@@ -2461,10 +2537,12 @@ describe('ScheduleEventDetail assignments', () => {
       expect(screen.getByTestId('live-chat-message-m11')).toBeTruthy();
     });
     expect(scroller.scrollTop).toBe(160);
+    expect(metrics.setScrollTop).not.toHaveBeenCalled();
 
     scroller.scrollTop = 590;
     fireEvent.scroll(scroller);
     metrics.scrollHeight = 840;
+    metrics.setScrollTop.mockClear();
     await act(async () => {
       chatCallback([
         ...messagesWithSentEcho,
@@ -2482,9 +2560,24 @@ describe('ScheduleEventDetail assignments', () => {
         }
       ]);
     });
-    await waitFor(() => {
-      expect(scroller.scrollTop).toBe(680);
+    await flushAnimationFrame();
+    expect(scroller.scrollTop).toBe(680);
+    expect(metrics.setScrollTop).toHaveBeenCalledTimes(1);
+
+    metrics.setScrollTop.mockClear();
+    await act(async () => {
+      chatCallback([...buildLiveChatMessages(12), {
+        id: 'm13',
+        text: 'Pending during close',
+        senderName: 'Parent 13',
+        createdAt: '2026-06-04T18:13:00.000Z'
+      }]);
     });
+    const pendingFrameId = nextFrameId - 1;
+    unmount();
+    expect(cancelFrame).toHaveBeenCalledWith(pendingFrameId);
+    expect(frameCallbacks.size).toBe(0);
+    expect(metrics.setScrollTop).not.toHaveBeenCalled();
   });
 
   it('shows the locked live chat notice and disables the composer when chat is unavailable', async () => {
