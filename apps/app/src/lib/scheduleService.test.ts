@@ -47,6 +47,7 @@ vi.mock('./adapters/legacyScheduleDb', () => ({
   getRsvpSummaries: vi.fn(),
   getTeam: vi.fn(),
   getTeams: vi.fn(),
+  getStaffTeams: vi.fn(),
   addGame: vi.fn(),
   addPractice: vi.fn(),
   buildSingleLegacyTournamentGameDocument: vi.fn((games: Array<Record<string, unknown> | null | undefined>, tournament: Record<string, unknown>) => {
@@ -213,7 +214,7 @@ vi.mock('./appDataCache', () => ({
   getParentScheduleSummaryCacheKey: (userId: string) => `app-schedule-summary:${userId}`
 }));
 
-import { addGame, addPractice, broadcastLiveEvent, buildSingleLegacyTournamentGameDocument, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, claimOpenOfficiatingSlot, clearOccurrenceOverride, releaseAssignmentClaim, respondToOfficiatingAssignment, updateEvent, updateGame, updateOccurrence, getAssignmentClaims, getGame, getGames, getPlayers, getPracticeSession, getPracticeSessions, getRsvpBreakdownByPlayer, getRsvpSummaries, getRsvps, getTeam, getTeams, listRideOffersForEvent, submitRsvp, submitRsvpForPlayer, updatePracticeAttendance, getDoc, getDocs } from './adapters/legacyScheduleDb';
+import { addGame, addPractice, broadcastLiveEvent, buildSingleLegacyTournamentGameDocument, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, claimOpenOfficiatingSlot, clearOccurrenceOverride, releaseAssignmentClaim, respondToOfficiatingAssignment, updateEvent, updateGame, updateOccurrence, getAssignmentClaims, getGame, getGames, getPlayers, getPracticeSession, getPracticeSessions, getRsvpBreakdownByPlayer, getRsvpSummaries, getRsvps, getStaffTeams, getTeam, getTeams, listRideOffersForEvent, submitRsvp, submitRsvpForPlayer, updatePracticeAttendance, getDoc, getDocs } from './adapters/legacyScheduleDb';
 import { getNativeAuthIdToken } from './authService';
 import { expandRecurrence, fetchAndParseCalendar, isTeamActive, mergeAssignmentsWithClaims } from './adapters/legacyScheduleHelpers';
 import { getCachedAppData, invalidateCachedAppData, loadCachedAppData } from './appDataCache';
@@ -376,6 +377,38 @@ describe('parent schedule child scope', () => {
     expect(schedule.children).toEqual([
       { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Avery Lee', isLinkedParentChild: true }
     ]);
+  });
+
+  it('uses scoped staff discovery and excludes inactive affiliated teams', async () => {
+    const coachUser = { uid: 'coach-1', email: ' Coach@Example.com ', roles: ['coach'], coachOf: ['team-coach', 'team-coach'] } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [] } as any);
+    vi.mocked(getStaffTeams).mockResolvedValue([
+      { id: 'team-owner', name: 'Owner Team', ownerId: 'coach-1', active: true },
+      { id: 'team-admin', name: 'Admin Team', adminEmails: ['coach@example.com'], active: true },
+      { id: 'team-coach', name: 'Coach Team', active: true },
+      { id: 'team-inactive', name: 'Inactive Team', ownerId: 'coach-1', active: false }
+    ] as any);
+    vi.mocked(getTeam).mockImplementation(async (teamId: string) => ({
+      'team-owner': { id: 'team-owner', name: 'Owner Team', ownerId: 'coach-1', active: true },
+      'team-admin': { id: 'team-admin', name: 'Admin Team', adminEmails: ['coach@example.com'], active: true },
+      'team-coach': { id: 'team-coach', name: 'Coach Team', active: true }
+    }[teamId] || null) as any);
+    vi.mocked(getGames).mockResolvedValue([] as any);
+    vi.mocked(getPracticeSessions).mockResolvedValue([] as any);
+
+    const schedule = await loadParentSchedule(coachUser, { hydrateDetails: false, expandStaffPlayers: false });
+
+    expect(getStaffTeams).toHaveBeenCalledWith({
+      userId: 'coach-1',
+      email: ' Coach@Example.com ',
+      coachTeamIds: ['team-coach', 'team-coach'],
+      includeAll: false
+    });
+    expect(getTeams).not.toHaveBeenCalled();
+    expect(schedule.children).toEqual([]);
+    expect(new Set(schedule.events.map((event) => event.teamId))).toEqual(new Set());
+    expect(getTeam).not.toHaveBeenCalledWith('team-inactive');
+    expect(getGames).toHaveBeenCalledTimes(3);
   });
 });
 

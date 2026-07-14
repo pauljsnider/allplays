@@ -150,6 +150,44 @@ export async function getTeams(options?: { includePrivate?: boolean }) {
     return await Promise.resolve(options === undefined ? legacyGetTeams() : legacyGetTeams(options));
 }
 
+export type StaffTeamsQuery = {
+    userId: string;
+    email?: string | null;
+    coachTeamIds?: string[];
+    includeAll?: boolean;
+};
+
+export async function getStaffTeams({ userId, email, coachTeamIds = [], includeAll = false }: StaffTeamsQuery) {
+    if (includeAll) {
+        return await Promise.resolve(legacyGetTeams({ includePrivate: true }));
+    }
+
+    const teamsRef = legacyFirebaseCollection(legacyFirebaseDb, 'teams');
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    const uniqueCoachTeamIds = [...new Set(coachTeamIds.map((teamId) => String(teamId || '').trim()).filter(Boolean))];
+    const emptySnapshot = { docs: [] };
+    const [ownedSnapshot, adminSnapshot, coachSnapshots] = await Promise.all([
+        userId
+            ? legacyFirebaseGetDocs(legacyFirebaseQuery(teamsRef, legacyFirebaseWhere('ownerId', '==', userId)))
+            : Promise.resolve(emptySnapshot),
+        normalizedEmail
+            ? legacyFirebaseGetDocs(legacyFirebaseQuery(teamsRef, legacyFirebaseWhere('adminEmails', 'array-contains', normalizedEmail)))
+            : Promise.resolve(emptySnapshot),
+        Promise.all(uniqueCoachTeamIds.map((teamId) => (
+            legacyFirebaseGetDoc(legacyFirebaseDoc(legacyFirebaseDb, 'teams', teamId)).catch(() => null)
+        )))
+    ]);
+
+    const teamsById = new Map<string, Record<string, unknown>>();
+    [...ownedSnapshot.docs, ...adminSnapshot.docs, ...coachSnapshots]
+        .filter((snapshot): snapshot is NonNullable<typeof snapshot> => Boolean(snapshot && ('exists' in snapshot ? snapshot.exists() : true)))
+        .forEach((snapshot) => {
+            const id = String(snapshot.id || '').trim();
+            if (id) teamsById.set(id, { id, ...snapshot.data() });
+        });
+    return [...teamsById.values()];
+}
+
 export class LegacyTournamentGameAdapterValidationError extends Error {
     readonly code = 'legacy-tournament-game-adapter-validation-error';
     readonly field: string;

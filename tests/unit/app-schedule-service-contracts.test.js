@@ -91,6 +91,16 @@ const firebaseMocks = vi.hoisted(() => {
                     data: () => player
                 };
             }
+            if (teamIndex >= 0) {
+                const teamId = pathParts[teamIndex + 1];
+                const team = await dbMocks.getTeam(teamId);
+                if (!team) return makeMissingSnapshot(teamId);
+                return {
+                    id: teamId,
+                    exists: () => true,
+                    data: () => team
+                };
+            }
             return makeMissingSnapshot();
         }),
         getDocs: vi.fn(async () => ({ docs: [] })),
@@ -434,6 +444,15 @@ afterEach(() => {
 });
 
 describe('React app schedule service contract integration', () => {
+    it('keeps ordinary staff discovery on the scoped adapter instead of the team catalog', () => {
+        const staffTeamSource = getScheduleServiceSlice('async function loadStaffTeams', 'async function saveTeamCalendarUrls');
+
+        expect(staffTeamSource).toContain('getStaffTeams({');
+        expect(staffTeamSource).not.toContain('getTeams(');
+        expect(staffTeamSource).toContain("nativeRunQuery('teams', 'ownerId', 'EQUAL', user.uid)");
+        expect(staffTeamSource).toContain("nativeRunQuery('teams', 'adminEmails', 'ARRAY_CONTAINS', normalizeEmail(user.email))");
+    });
+
     it('routes parent schedule event detail reads through typed schedule mappers', () => {
         const importSource = scheduleServiceSource.slice(0, scheduleServiceSource.indexOf('type StaffRsvpReminderContext'));
         const nativeMapperSource = getScheduleServiceSlice('async function nativeGetScheduleEventDocument', 'const nativeDeleteFieldSentinel');
@@ -715,6 +734,7 @@ describe('React app schedule service contract integration', () => {
 
         expect(dbMocks.getPlayers).not.toHaveBeenCalled();
         expect(dbMocks.getGames).not.toHaveBeenCalled();
+        expect(dbMocks.getTeams).not.toHaveBeenCalled();
         expect(result.events).toHaveLength(1);
         expect(result.events[0]).toMatchObject({
             id: 'game-1',
