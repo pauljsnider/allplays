@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppSearchDialog } from './AppSearchDialog';
+import { Modal } from './Modal';
 import type { AppSearchPlayer, AppSearchTeam } from '../lib/searchService';
 import type { AuthState } from '../lib/types';
 
@@ -169,6 +170,36 @@ describe('AppSearchDialog', () => {
 
     unmount();
     expect(document.body.style.overflow).toBe('clip');
+  });
+
+  it('keeps body scrolling locked when an overlapping modal closes before search', () => {
+    const onClose = vi.fn();
+    const { rerender } = render(
+      <MemoryRouter>
+        <AppSearchDialog auth={auth} open={true} onClose={onClose} />
+        <Modal ariaLabel="Add workflow" onClose={vi.fn()}>
+          <button type="button">Close add workflow</button>
+        </Modal>
+      </MemoryRouter>
+    );
+
+    expect(document.body.style.overflow).toBe('hidden');
+
+    rerender(
+      <MemoryRouter>
+        <AppSearchDialog auth={auth} open={true} onClose={onClose} />
+      </MemoryRouter>
+    );
+
+    expect(document.body.style.overflow).toBe('hidden');
+
+    rerender(
+      <MemoryRouter>
+        <AppSearchDialog auth={auth} open={false} onClose={onClose} />
+      </MemoryRouter>
+    );
+
+    expect(document.body.style.overflow).toBe('');
   });
 
   it('uses mobile search hints and clears the query without closing or losing focus', async () => {

@@ -6,6 +6,7 @@ import { derivePrimaryHelpRole } from '../lib/helpRoles';
 import { isNativeRuntime } from '../lib/nativeRuntime';
 import { openPublicUrl } from '../lib/publicActions';
 import { preloadSearchRoute } from '../lib/searchRoutePreload';
+import { lockBodyScroll } from '../lib/bodyScrollLock';
 import {
   computeAppSearchResults,
   getImmediateAppTeamSearchResults,
@@ -60,12 +61,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
 
   useEffect(() => {
     if (!open) return;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-
-    return () => {
-      document.body.style.overflow = previousOverflow;
-    };
+    return lockBodyScroll();
   }, [open]);
 
   const clearScheduledPlayerSearch = () => {

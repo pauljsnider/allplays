@@ -1,4 +1,5 @@
 import { useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react';
+import { lockBodyScroll } from '../lib/bodyScrollLock';
 import { APP_BACK_DISMISS_EVENT } from '../lib/nativeBackButton';
 
 const focusableSelector = [
@@ -35,8 +36,7 @@ export function Modal({
 
   useEffect(() => {
     previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
+    const releaseBodyScrollLock = lockBodyScroll();
     const frame = window.requestAnimationFrame(() => {
       const focusable = getFocusableElements(dialogRef.current);
       (focusable[0] || dialogRef.current)?.focus();
@@ -49,7 +49,7 @@ export function Modal({
     return () => {
       window.cancelAnimationFrame(frame);
       window.removeEventListener(APP_BACK_DISMISS_EVENT, handleNativeBackDismiss);
-      document.body.style.overflow = previousOverflow;
+      releaseBodyScrollLock();
       previousFocusRef.current?.focus?.();
     };
   }, []);
