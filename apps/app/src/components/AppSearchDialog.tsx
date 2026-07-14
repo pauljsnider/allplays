@@ -6,6 +6,7 @@ import { derivePrimaryHelpRole } from '../lib/helpRoles';
 import { isNativeRuntime } from '../lib/nativeRuntime';
 import { openPublicUrl } from '../lib/publicActions';
 import { preloadSearchRoute } from '../lib/searchRoutePreload';
+import { lockBodyScroll } from '../lib/bodyScrollLock';
 import {
   computeAppSearchResults,
   getImmediateAppTeamSearchResults,
@@ -57,6 +58,11 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
   );
   const helpResults = results.help ?? [];
   const flatResults = results.flat ?? [...results.actions, ...results.teams, ...helpResults, ...results.players];
+
+  useEffect(() => {
+    if (!open) return;
+    return lockBodyScroll();
+  }, [open]);
 
   const clearScheduledPlayerSearch = () => {
     if (playerSearchTimeoutRef.current === null) return;

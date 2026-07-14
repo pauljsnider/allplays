@@ -490,6 +490,47 @@ test.describe('app global search', () => {
         await page.getByRole('button', { name: 'Close search' }).click();
         await expect(page.getByRole('dialog', { name: 'Search teams, players, actions, and help' })).toBeHidden();
     });
+
+    test('mobile search contains result overscroll and restores page scrolling', async ({ page, baseURL }) => {
+        await mockSearchModules(page);
+        await gotoAppRoute(page, baseURL, '/home');
+        const searchTrigger = await waitForSearchTrigger(page);
+
+        const startingScrollY = await page.evaluate(() => {
+            const spacer = document.createElement('div');
+            spacer.setAttribute('data-testid', 'search-scroll-spacer');
+            spacer.style.height = '1600px';
+            document.body.appendChild(spacer);
+            window.scrollTo(0, 400);
+            return window.scrollY;
+        });
+        expect(startingScrollY).toBeGreaterThan(0);
+
+        await searchTrigger.evaluate((button) => button.click());
+        await expect(page.getByRole('dialog', { name: 'Search teams, players, actions, and help' })).toBeVisible();
+        await expect.poll(() => page.evaluate(() => document.body.style.overflow)).toBe('hidden');
+
+        const resultsScroller = page.locator('.app-search-panel > .overflow-y-auto');
+        await resultsScroller.evaluate((element) => {
+            element.scrollTop = element.scrollHeight;
+        });
+        const scrollerBox = await resultsScroller.boundingBox();
+        expect(scrollerBox).not.toBeNull();
+        await page.mouse.move(scrollerBox.x + scrollerBox.width / 2, scrollerBox.y + scrollerBox.height / 2);
+        await page.mouse.wheel(0, 1200);
+        await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(startingScrollY);
+
+        await resultsScroller.evaluate((element) => {
+            element.scrollTop = 0;
+        });
+        await page.mouse.wheel(0, -1200);
+        await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(startingScrollY);
+
+        await page.getByRole('button', { name: 'Close search' }).click();
+        await expect.poll(() => page.evaluate(() => document.body.style.overflow)).toBe('');
+        await page.evaluate(() => window.scrollBy(0, 100));
+        await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(startingScrollY);
+    });
 });
 
 test.describe('desktop app global search', () => {
