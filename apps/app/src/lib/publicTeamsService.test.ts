@@ -35,6 +35,44 @@ describe('publicTeamsService', () => {
         expect(dbMocks.getPublicTeamRosterCount).toHaveBeenCalledWith('team-roster-1');
     });
 
+    it('maps lightweight public team pages without waiting for roster counts', async () => {
+        dbMocks.discoverPublicTeams.mockResolvedValue({
+            teams: [{
+                id: 'team-search-1',
+                name: 'Austin Bats',
+                sport: 'Baseball',
+                photoUrl: 'https://example.com/team.png',
+                city: 'Austin',
+                state: 'TX',
+                zip: '78701',
+                appAccess: true,
+                webAccess: false
+            }],
+            nextCursor: 'cursor-2'
+        });
+        dbMocks.getPublicTeamRosterCount.mockImplementation(() => new Promise(() => {}));
+
+        await expect(getPublicTeamsPage({ searchText: 'Austin', includeRosterCounts: false })).resolves.toEqual({
+            teams: [expect.objectContaining({
+                teamId: 'team-search-1',
+                teamName: 'Austin Bats',
+                sport: 'Baseball',
+                photoUrl: 'https://example.com/team.png',
+                location: 'Austin, TX',
+                city: 'Austin',
+                state: 'TX',
+                zip: '78701',
+                appAccess: true,
+                webAccess: false,
+                isPublic: true,
+                publicRosterCount: null,
+                publicRosterCountCapped: false
+            })],
+            nextCursor: 'cursor-2'
+        });
+        expect(dbMocks.getPublicTeamRosterCount).not.toHaveBeenCalled();
+    });
+
     it('omits a roster count when public aggregation access is denied', async () => {
         dbMocks.discoverPublicTeams.mockResolvedValue({
             teams: [{ id: 'team-legacy-private-fields', name: 'Legacy Team', zip: '64131' }],
