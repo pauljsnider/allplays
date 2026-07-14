@@ -100,10 +100,11 @@ export function TeamRsvpToolsDisclosure({ summary, children }: {
   );
 }
 
-export function QuickAvailabilityPanel({ event, rsvp, canSubmitRsvp, submitting, availabilityNote, onAvailabilityNoteChange, onSubmit, question }: {
+export function QuickAvailabilityPanel({ event, rsvp, canSubmitRsvp, canEditAvailabilityNote = canSubmitRsvp, submitting, availabilityNote, onAvailabilityNoteChange, onSubmit, question }: {
   event: ParentScheduleEvent;
   rsvp: RsvpResponse;
   canSubmitRsvp: boolean;
+  canEditAvailabilityNote?: boolean;
   submitting: RsvpResponse | null;
   availabilityNote: string;
   onAvailabilityNoteChange: (note: string) => void;
@@ -149,7 +150,7 @@ export function QuickAvailabilityPanel({ event, rsvp, canSubmitRsvp, submitting,
             className="mt-2 min-h-8 rounded-full border border-gray-200 bg-white px-3 text-xs font-black text-gray-700 transition hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-60"
             aria-expanded={isNoteEditorOpen}
             aria-controls={`availability-note-${event.eventKey}-${event.childId}`}
-            disabled={!canSubmitRsvp || (isNoteEditorOpen && noteSaveState.isDirty)}
+            disabled={!canEditAvailabilityNote || (isNoteEditorOpen && noteSaveState.isDirty)}
             onClick={() => setIsNoteEditorOpen((current) => !current)}
           >
             {isNoteEditorOpen ? 'Hide note' : hasSavedNote ? 'Edit note' : 'Add note'}
@@ -163,7 +164,7 @@ export function QuickAvailabilityPanel({ event, rsvp, canSubmitRsvp, submitting,
                   className="auth-input min-h-16 resize-none !px-3 !py-2 text-xs font-semibold"
                   value={availabilityNote}
                   onChange={(changeEvent) => onAvailabilityNoteChange(changeEvent.target.value)}
-                  disabled={!canSubmitRsvp}
+                  disabled={!canEditAvailabilityNote}
                   placeholder="Optional note for coaches, rides, or arrival details"
                   rows={2}
                   maxLength={280}

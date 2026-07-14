@@ -47,7 +47,11 @@ function waitForVisibleState() {
   });
 }
 
-export function useScheduleEventRsvp({ availabilityNote, applyToAllChildren = false }: { availabilityNote: string; applyToAllChildren?: boolean }) {
+export function useScheduleEventRsvp({ availabilityNote, applyToAllChildren = false, sharedNoteExplicitlyChosen = false }: {
+  availabilityNote: string;
+  applyToAllChildren?: boolean;
+  sharedNoteExplicitlyChosen?: boolean;
+}) {
   const { auth, event, childEvents, updateEvents } = useScheduleEventDetailContext();
   const [submitting, setSubmitting] = useState<RsvpResponse | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -58,10 +62,12 @@ export function useScheduleEventRsvp({ availabilityNote, applyToAllChildren = fa
   ));
   const targetEvents = applyToAllChildren && event.isLinkedParentChild === true ? matchingChildEvents : [event];
   const canSubmit = targetEvents.length > 0 && targetEvents.every(canSubmitScheduleEventRsvp);
+  const savedNotesDiffer = new Set(targetEvents.map((targetEvent) => String(targetEvent.myRsvpNote || '').trim())).size > 1;
+  const requiresSharedNoteChoice = applyToAllChildren && targetEvents.length > 1 && savedNotesDiffer && !sharedNoteExplicitlyChosen;
 
   const submit = async (response: Exclude<RsvpResponse, 'not_responded'>) => {
     const currentUser = auth.user;
-    if (!currentUser || !canSubmit) return;
+    if (!currentUser || !canSubmit || requiresSharedNoteChoice) return;
 
     const interaction = startInteractionTimer(UX_TIMING.rsvpTap, { response });
     const previousStateByChildId = new Map(targetEvents.map((targetEvent) => [targetEvent.childId, {
@@ -148,6 +154,7 @@ export function useScheduleEventRsvp({ availabilityNote, applyToAllChildren = fa
 
   return {
     canSubmit,
+    requiresSharedNoteChoice,
     submitting,
     message,
     error,

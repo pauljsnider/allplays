@@ -59,13 +59,18 @@ function buildEvent(overrides: Record<string, unknown> = {}) {
     } as any;
 }
 
-function RsvpProbe({ availabilityNote, applyToAllChildren = false }: { availabilityNote: string; applyToAllChildren?: boolean }) {
-    const workflow = useScheduleEventRsvp({ availabilityNote, applyToAllChildren });
+function RsvpProbe({ availabilityNote, applyToAllChildren = false, sharedNoteExplicitlyChosen = false }: {
+    availabilityNote: string;
+    applyToAllChildren?: boolean;
+    sharedNoteExplicitlyChosen?: boolean;
+}) {
+    const workflow = useScheduleEventRsvp({ availabilityNote, applyToAllChildren, sharedNoteExplicitlyChosen });
     const { event, childEvents } = useScheduleEventDetailContext();
 
     return (
         <div>
             <div data-testid="can-submit">{String(workflow.canSubmit)}</div>
+            <div data-testid="requires-shared-note-choice">{String(workflow.requiresSharedNoteChoice)}</div>
             <div data-testid="current-rsvp">{String(event.myRsvp)}</div>
             <div data-testid="current-note">{String(event.myRsvpNote || '')}</div>
             <div data-testid="submitting">{String(workflow.submitting || '')}</div>
@@ -83,7 +88,7 @@ function RsvpProbe({ availabilityNote, applyToAllChildren = false }: { availabil
     );
 }
 
-function renderProbe(availabilityNote = 'Running late', options: { events?: any[]; applyToAllChildren?: boolean } = {}) {
+function renderProbe(availabilityNote = 'Running late', options: { events?: any[]; applyToAllChildren?: boolean; sharedNoteExplicitlyChosen?: boolean } = {}) {
     function Harness() {
         const [events, setEvents] = useState(options.events || [buildEvent()]);
 
@@ -97,7 +102,11 @@ function renderProbe(availabilityNote = 'Running late', options: { events?: any[
                     updateEvents: (updater) => setEvents((current) => updater(current))
                 }}
             >
-                <RsvpProbe availabilityNote={availabilityNote} applyToAllChildren={options.applyToAllChildren} />
+                <RsvpProbe
+                    availabilityNote={availabilityNote}
+                    applyToAllChildren={options.applyToAllChildren}
+                    sharedNoteExplicitlyChosen={options.sharedNoteExplicitlyChosen}
+                />
             </ScheduleEventDetailProvider>
         );
     }
@@ -202,6 +211,35 @@ describe('useScheduleEventRsvp', () => {
             expect.objectContaining({ childId: 'player-1', myRsvp: 'going', myRsvpNote: 'Both need a ride', rsvpSummary: summary }),
             expect.objectContaining({ childId: 'player-2', myRsvp: 'going', myRsvpNote: 'Both need a ride', rsvpSummary: summary })
         ]);
+    });
+
+    it('requires an explicit shared note choice before replacing differing child notes', async () => {
+        vi.mocked(submitParentScheduleRsvpForChildren).mockResolvedValue(null as any);
+        const events = [
+            buildEvent({ myRsvpNote: 'Arriving late' }),
+            buildEvent({
+                eventKey: 'team-1::game-1::player-2',
+                childId: 'player-2',
+                childName: 'Sam Lee',
+                myRsvpNote: 'Needs a ride'
+            })
+        ];
+
+        const firstRender = renderProbe('Arriving late', { events, applyToAllChildren: true });
+        expect(screen.getByTestId('requires-shared-note-choice').textContent).toBe('true');
+        fireEvent.click(screen.getByRole('button', { name: 'Submit going' }));
+        expect(submitParentScheduleRsvpForChildren).not.toHaveBeenCalled();
+        firstRender.unmount();
+
+        renderProbe('Shared family note', { events, applyToAllChildren: true, sharedNoteExplicitlyChosen: true });
+        fireEvent.click(screen.getByRole('button', { name: 'Submit going' }));
+
+        await waitFor(() => expect(submitParentScheduleRsvpForChildren).toHaveBeenCalledWith(
+            expect.any(Array),
+            auth.user,
+            'going',
+            'Shared family note'
+        ));
     });
 
     it('excludes staff-expanded roster rows from family RSVP writes', async () => {

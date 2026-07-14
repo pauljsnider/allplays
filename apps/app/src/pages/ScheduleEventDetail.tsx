@@ -1057,13 +1057,16 @@ function AvailabilitySection({ event, rsvp, availabilityNote, onAvailabilityNote
   onSelectSection: (sectionId: EventDetailSectionId) => void;
 }) {
   const { childEvents } = useScheduleEventDetailContext();
-  const [individualMode, setIndividualMode] = useState(false);
-  useEffect(() => {
-    setIndividualMode(false);
-  }, [event.id, event.teamId]);
   const matchingChildEvents = childEvents.filter((childEvent) => (
     childEvent.teamId === event.teamId && childEvent.id === event.id && Boolean(childEvent.childId) && childEvent.isLinkedParentChild === true
   ));
+  const savedNotesDiffer = new Set(matchingChildEvents.map((childEvent) => String(childEvent.myRsvpNote || '').trim())).size > 1;
+  const [individualMode, setIndividualMode] = useState(savedNotesDiffer);
+  const [sharedNoteExplicitlyChosen, setSharedNoteExplicitlyChosen] = useState(!savedNotesDiffer);
+  useEffect(() => {
+    setIndividualMode(savedNotesDiffer);
+    setSharedNoteExplicitlyChosen(!savedNotesDiffer);
+  }, [event.id, event.teamId, savedNotesDiffer]);
   const familyRsvpAvailable = event.isLinkedParentChild === true && matchingChildEvents.length > 1 && matchingChildEvents.every((childEvent) => (
     childEvent.isDbGame && !childEvent.isCancelled && !childEvent.availabilityLocked
   ));
@@ -1078,7 +1081,7 @@ function AvailabilitySection({ event, rsvp, availabilityNote, onAvailabilityNote
   const familyQuestion = familyNames.length === 2
     ? `Are ${familyNames[0]} and ${familyNames[1]} going?`
     : `Are all ${familyNames.length} children going?`;
-  const rsvpWorkflow = useScheduleEventRsvp({ availabilityNote, applyToAllChildren: useFamilyRsvp });
+  const rsvpWorkflow = useScheduleEventRsvp({ availabilityNote, applyToAllChildren: useFamilyRsvp, sharedNoteExplicitlyChosen });
   const staffRsvpEventScopeKey = `${event.teamId}:${event.id}`;
   const staffRsvpLoader = useMemo(() => createStaffRsvpAvailabilityLoader(staffRsvpEventScopeKey), [staffRsvpEventScopeKey]);
   const staffRsvp = useStaffRsvpBreakdown(staffRsvpLoader);
@@ -1101,29 +1104,63 @@ function AvailabilitySection({ event, rsvp, availabilityNote, onAvailabilityNote
           <div className="min-w-0">
             <div className="text-xs font-black text-primary-900">{useFamilyRsvp ? 'Family response' : `Responding for ${event.childName}`}</div>
             <div className="mt-0.5 text-xs font-semibold text-primary-700">
-              {useFamilyRsvp ? `One choice updates ${familyNames.join(' and ')}.` : 'Use the player switcher above to choose a child.'}
+              {useFamilyRsvp
+                ? savedNotesDiffer
+                  ? 'Choose one shared note before responding together.'
+                  : `One choice updates ${familyNames.join(' and ')}.`
+                : savedNotesDiffer
+                  ? 'Saved notes differ, so responses start separately. Use the player switcher above to choose a child.'
+                  : 'Use the player switcher above to choose a child.'}
             </div>
           </div>
           <button
             type="button"
             className="min-h-8 rounded-full border border-primary-200 bg-white px-3 text-xs font-black text-primary-700 transition hover:border-primary-300 hover:bg-primary-100"
-            onClick={() => setIndividualMode((current) => !current)}
+            onClick={() => {
+              if (useFamilyRsvp) {
+                setIndividualMode(true);
+                return;
+              }
+              if (savedNotesDiffer) {
+                onAvailabilityNoteChange('');
+                setSharedNoteExplicitlyChosen(false);
+              }
+              setIndividualMode(false);
+            }}
           >
             {useFamilyRsvp ? 'Set individually' : 'Respond together'}
           </button>
         </div>
       ) : null}
       {rsvpWorkflow.canSubmit ? (
-        <QuickAvailabilityPanel
-          event={event}
-          rsvp={visibleRsvp}
-          canSubmitRsvp
-          submitting={rsvpWorkflow.submitting}
-          availabilityNote={availabilityNote}
-          onAvailabilityNoteChange={onAvailabilityNoteChange}
-          onSubmit={rsvpWorkflow.submit}
-          question={useFamilyRsvp ? familyQuestion : undefined}
-        />
+        <>
+          {rsvpWorkflow.requiresSharedNoteChoice ? (
+            <div className="border-b border-amber-200 bg-amber-50 px-3 py-2.5 text-xs font-semibold text-amber-900 sm:px-4">
+              Enter a shared note below, or{' '}
+              <button
+                type="button"
+                className="font-black underline underline-offset-2"
+                onClick={() => setSharedNoteExplicitlyChosen(true)}
+              >
+                use no shared note
+              </button>.
+            </div>
+          ) : null}
+          <QuickAvailabilityPanel
+            event={event}
+            rsvp={visibleRsvp}
+            canSubmitRsvp={!rsvpWorkflow.requiresSharedNoteChoice}
+            canEditAvailabilityNote={rsvpWorkflow.canSubmit}
+            submitting={rsvpWorkflow.submitting}
+            availabilityNote={availabilityNote}
+            onAvailabilityNoteChange={(note) => {
+              onAvailabilityNoteChange(note);
+              if (useFamilyRsvp && savedNotesDiffer) setSharedNoteExplicitlyChosen(true);
+            }}
+            onSubmit={rsvpWorkflow.submit}
+            question={useFamilyRsvp ? familyQuestion : undefined}
+          />
+        </>
       ) : (
         <ReadOnlyAvailabilityPanel event={event} rsvp={visibleRsvp} />
       )}
