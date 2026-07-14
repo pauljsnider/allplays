@@ -126,6 +126,7 @@ const auth: AuthState = {
 describe('AppSearchDialog', () => {
   afterEach(() => {
     cleanup();
+    document.body.style.overflow = '';
     vi.clearAllTimers();
     vi.useRealTimers();
     vi.restoreAllMocks();
@@ -139,6 +140,35 @@ describe('AppSearchDialog', () => {
     searchAppTeamsMock.mockImplementation(async (_query, teams) => teams);
     searchAppPlayersMock.mockResolvedValue([]);
     preloadSearchRouteMock.mockImplementation(async () => true);
+  });
+
+  it('locks body scrolling while open and restores the prior overflow after close or unmount', () => {
+    const onClose = vi.fn();
+    document.body.style.overflow = 'clip';
+    const { rerender, unmount } = render(
+      <MemoryRouter>
+        <AppSearchDialog auth={auth} open={true} onClose={onClose} />
+      </MemoryRouter>
+    );
+
+    expect(document.body.style.overflow).toBe('hidden');
+
+    rerender(
+      <MemoryRouter>
+        <AppSearchDialog auth={auth} open={false} onClose={onClose} />
+      </MemoryRouter>
+    );
+    expect(document.body.style.overflow).toBe('clip');
+
+    rerender(
+      <MemoryRouter>
+        <AppSearchDialog auth={auth} open={true} onClose={onClose} />
+      </MemoryRouter>
+    );
+    expect(document.body.style.overflow).toBe('hidden');
+
+    unmount();
+    expect(document.body.style.overflow).toBe('clip');
   });
 
   it('uses mobile search hints and clears the query without closing or losing focus', async () => {

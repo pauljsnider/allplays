@@ -58,6 +58,16 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
   const helpResults = results.help ?? [];
   const flatResults = results.flat ?? [...results.actions, ...results.teams, ...helpResults, ...results.players];
 
+  useEffect(() => {
+    if (!open) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [open]);
+
   const clearScheduledPlayerSearch = () => {
     if (playerSearchTimeoutRef.current === null) return;
     window.clearTimeout(playerSearchTimeoutRef.current);
