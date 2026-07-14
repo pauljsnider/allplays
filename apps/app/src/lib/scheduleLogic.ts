@@ -1017,7 +1017,8 @@ export function canRequestScheduleRide(offer: Partial<ScheduleRideOffer>, parent
   if (normalized.driverUserId === parentUserId) return false;
   const existing = findScheduleRideRequestForChild(normalized, parentUserId, childId);
   if (existing?.status === 'pending' || existing?.status === 'confirmed') return false;
-  return getScheduleRideSeatInfo(normalized).seatsLeft > 0;
+  if (existing?.status === 'waitlisted') return getScheduleRideSeatInfo(normalized).seatsLeft > 0;
+  return true;
 }
 
 export function getNextRideConfirmedSeatCount(currentSeatCount: number, currentStatus: unknown, nextStatus: unknown) {

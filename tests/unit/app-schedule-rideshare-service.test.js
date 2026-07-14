@@ -348,6 +348,13 @@ describe('React app schedule rideshare service integration', () => {
             if (method === 'POST' && href.endsWith('/teams/team-1/games/game-1/rideOffers')) {
                 return restOk(firestoreDoc('teams/team-1/games/game-1/rideOffers/offer-native', {}));
             }
+            if (method === 'GET' && href.includes('/teams/team-1/games/legacy-game-1/rideOffers/offer-1') && !href.includes('/requests/')) {
+                return restOk(firestoreDoc('teams/team-1/games/legacy-game-1/rideOffers/offer-1', {
+                    seatCapacity: 3,
+                    seatCountConfirmed: 1,
+                    status: 'open'
+                }));
+            }
             if (method === 'GET' && href.includes('/teams/team-1/games/legacy-game-1/rideOffers/offer-1/requests/user-1__player-1')) {
                 return restError(404, 'not found');
             }
@@ -385,6 +392,44 @@ describe('React app schedule rideshare service integration', () => {
             childName: { stringValue: 'Pat' },
             status: { stringValue: 'pending' }
         });
+    });
+
+    it('waitlists native REST fallback ride requests when the offer is full', async () => {
+        installWindow('capacitor:');
+        dbMocks.requestRideSpot.mockRejectedValue(new Error('web request failed'));
+
+        const fetchMock = vi.fn(async (url, init = {}) => {
+            const href = String(url);
+            const method = init.method || 'GET';
+            if (method === 'GET' && href.includes('/teams/team-1/games/legacy-game-1/rideOffers/offer-1') && !href.includes('/requests/')) {
+                return restOk(firestoreDoc('teams/team-1/games/legacy-game-1/rideOffers/offer-1', {
+                    seatCapacity: 2,
+                    seatCountConfirmed: 2,
+                    status: 'open'
+                }));
+            }
+            if (method === 'GET' && href.includes('/teams/team-1/games/legacy-game-1/rideOffers/offer-1/requests/user-1__player-1')) {
+                return restError(404, 'not found');
+            }
+            if (method === 'PATCH' && href.includes('/teams/team-1/games/legacy-game-1/rideOffers/offer-1/requests/user-1__player-1')) {
+                return restOk({});
+            }
+            return restError();
+        });
+        vi.stubGlobal('fetch', fetchMock);
+
+        const requestId = await requestParentScheduleRideSpot(
+            event(),
+            offer({ seatCapacity: 2, seatCountConfirmed: 2 }),
+            user(),
+            { childId: 'player-1', childName: 'Pat' }
+        );
+
+        expect(requestId).toBe('user-1__player-1');
+        const requestPatchCall = fetchMock.mock.calls.find(([url, init]) =>
+            String(url).includes('/requests/user-1__player-1') && init?.method === 'PATCH'
+        );
+        expect(parseBody(requestPatchCall).fields.status).toEqual({ stringValue: 'waitlisted' });
     });
 
     it('updates, closes, and cancels rides through native Firestore REST fallback with seat count protection', async () => {

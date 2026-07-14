@@ -271,6 +271,12 @@ describe('React app parent schedule logic', () => {
         expect(canRequestScheduleRide(offer, 'parent-1', 'player-1')).toBe(false);
         expect(canRequestScheduleRide(offer, 'parent-3', 'player-3')).toBe(true);
         expect(canRequestScheduleRide(offer, 'driver-1', 'player-3')).toBe(false);
+        expect(canRequestScheduleRide({ ...offer, seatCountConfirmed: 3, requests: [] }, 'parent-3', 'player-3')).toBe(true);
+        expect(canRequestScheduleRide({
+            ...offer,
+            seatCountConfirmed: 3,
+            requests: [{ id: 'request-3', parentUserId: 'parent-3', childId: 'player-3', status: 'waitlisted' }]
+        }, 'parent-3', 'player-3')).toBe(false);
     });
 
     it('keeps confirmed seat counts stable when ride requests change status', () => {
