@@ -218,7 +218,7 @@ describe('updateTeamFeeRecipient manual payment validation', () => {
             expect.objectContaining({
                 amountPaidCents: 2500,
                 remainingBalanceCents: 0,
-                paymentLedger: [{ type: 'offline_payment', amountCents: 1000 }],
+                paymentLedger: [expect.objectContaining({ type: 'offline_payment', amountCents: 1000 })],
                 hasAdminBilling: true,
                 updatedAt: 'server-ts'
             })
@@ -235,7 +235,8 @@ describe('updateTeamFeeRecipient manual payment validation', () => {
             }),
             { merge: true }
         );
-        expect(arrayUnion).toHaveBeenCalledWith({ type: 'offline_payment', amountCents: 1000 });
+        expect(arrayUnion).toHaveBeenCalledWith(expect.objectContaining({ type: 'offline_payment', amountCents: 1000 }));
+        expect(arrayUnion.mock.calls[0][0].ledgerEntryId).toMatch(/^offline_payment_/);
     });
 
     it('stores admin billing metadata outside the parent-readable recipient document for non-transactional updates', async () => {
@@ -280,6 +281,97 @@ describe('updateTeamFeeRecipient manual payment validation', () => {
             }),
             { merge: true }
         );
+    });
+
+    it('recomputes manual payment totals from the latest recipient state', async () => {
+        const transactionUpdate = vi.fn();
+        const runTransaction = vi.fn(async (_db, handler) => handler({
+            get: vi.fn(async () => ({
+                exists: () => true,
+                data: () => ({ amountDueCents: 10000, amountPaidCents: 6000 })
+            })),
+            update: transactionUpdate,
+            set: vi.fn()
+        }));
+        const updateTeamFeeRecipient = buildUpdateTeamFeeRecipient({
+            doc: vi.fn((_db, ...parts) => ({ path: parts.join('/') })),
+            updateDoc: vi.fn(),
+            runTransaction,
+            serverTimestamp: vi.fn(() => 'server-ts'),
+            arrayUnion: vi.fn((...entries) => entries),
+            deleteField: vi.fn(() => 'deleted'),
+            setDoc: vi.fn()
+        });
+
+        await updateTeamFeeRecipient('team-1', 'batch-1', 'recipient-1', {
+            status: 'partial',
+            amountPaidCents: 4000,
+            remainingBalanceCents: 6000,
+            paidAt: null,
+            manualPayment: { amountPaidCents: 4000, paidAt: '2026-07-14' },
+            ledgerEntries: [{ type: 'offline_payment', amountCents: 4000, paymentDate: '2026-07-14' }]
+        });
+
+        expect(transactionUpdate).toHaveBeenCalledWith(
+            { path: 'teams/team-1/feeBatches/batch-1/feeRecipients/recipient-1' },
+            expect.objectContaining({
+                status: 'paid',
+                amountPaidCents: 10000,
+                remainingBalanceCents: 0,
+                paidAt: '2026-07-14',
+                paymentLedger: [expect.objectContaining({ type: 'offline_payment', amountCents: 4000, paymentDate: '2026-07-14' })]
+            })
+        );
+    });
+
+    it('adds unique ids to identical manual payment ledger entries before arrayUnion', async () => {
+        const transactionUpdates = [];
+        const runTransaction = vi.fn(async (_db, handler) => {
+            const paidCents = runTransaction.mock.calls.length === 1 ? 0 : 1000;
+            return handler({
+                get: vi.fn(async () => ({
+                    exists: () => true,
+                    data: () => ({ amountDueCents: 5000, amountPaidCents: paidCents })
+                })),
+                update: vi.fn((_ref, payload) => transactionUpdates.push(payload)),
+                set: vi.fn()
+            });
+        });
+        const updateTeamFeeRecipient = buildUpdateTeamFeeRecipient({
+            doc: vi.fn((_db, ...parts) => ({ path: parts.join('/') })),
+            updateDoc: vi.fn(),
+            runTransaction,
+            serverTimestamp: vi.fn(() => 'server-ts'),
+            arrayUnion: vi.fn((...entries) => entries),
+            deleteField: vi.fn(() => 'deleted'),
+            setDoc: vi.fn()
+        });
+        const paymentUpdate = {
+            manualPayment: { amountPaidCents: 1000, paidAt: '2026-07-14' },
+            ledgerEntries: [{ type: 'offline_payment', amountCents: 1000, paymentDate: '2026-07-14' }]
+        };
+
+        await updateTeamFeeRecipient('team-1', 'batch-1', 'recipient-1', paymentUpdate);
+        await updateTeamFeeRecipient('team-1', 'batch-1', 'recipient-1', paymentUpdate);
+
+        expect(transactionUpdates[0].paymentLedger[0]).toEqual(expect.objectContaining({
+            type: 'offline_payment',
+            amountCents: 1000,
+            paymentDate: '2026-07-14'
+        }));
+        expect(transactionUpdates[1].paymentLedger[0]).toEqual(expect.objectContaining({
+            type: 'offline_payment',
+            amountCents: 1000,
+            paymentDate: '2026-07-14'
+        }));
+        expect(transactionUpdates[0].paymentLedger[0].ledgerEntryId).toMatch(/^offline_payment_/);
+        expect(transactionUpdates[1].paymentLedger[0].ledgerEntryId).toMatch(/^offline_payment_/);
+        expect(transactionUpdates[0].paymentLedger[0].ledgerEntryId).not.toBe(transactionUpdates[1].paymentLedger[0].ledgerEntryId);
+        expect(transactionUpdates[1]).toEqual(expect.objectContaining({
+            amountPaidCents: 2000,
+            remainingBalanceCents: 3000,
+            status: 'partial'
+        }));
     });
 
     it('strips private billing and staff fields from recipient updates before parent-readable writes', async () => {
