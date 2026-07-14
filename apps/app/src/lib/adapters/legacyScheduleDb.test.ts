@@ -288,4 +288,14 @@ describe('legacyScheduleDb staff team reads', () => {
         expect(where).toHaveBeenCalledWith('ownerId', '==', 'parent-1');
         expect(getDoc).not.toHaveBeenCalled();
     });
+
+    it('propagates owner and admin query failures so native callers can use the REST fallback', async () => {
+        const queryError = new Error('web sdk unavailable');
+        vi.mocked(getDocs).mockRejectedValueOnce(queryError);
+
+        await expect(getStaffTeams({ userId: 'coach-1', email: 'coach@example.com', coachTeamIds: [] })).rejects.toThrow('web sdk unavailable');
+
+        expect(getDocs).toHaveBeenCalledTimes(2);
+        expect(getDoc).not.toHaveBeenCalled();
+    });
 });

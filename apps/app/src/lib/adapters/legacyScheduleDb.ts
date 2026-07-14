@@ -168,10 +168,10 @@ export async function getStaffTeams({ userId, email, coachTeamIds = [], includeA
     const emptySnapshot = { docs: [] };
     const [ownedSnapshot, adminSnapshot, coachSnapshots] = await Promise.all([
         userId
-            ? legacyFirebaseGetDocs(legacyFirebaseQuery(teamsRef, legacyFirebaseWhere('ownerId', '==', userId))).catch(() => emptySnapshot)
+            ? legacyFirebaseGetDocs(legacyFirebaseQuery(teamsRef, legacyFirebaseWhere('ownerId', '==', userId)))
             : Promise.resolve(emptySnapshot),
         normalizedEmail
-            ? legacyFirebaseGetDocs(legacyFirebaseQuery(teamsRef, legacyFirebaseWhere('adminEmails', 'array-contains', normalizedEmail))).catch(() => emptySnapshot)
+            ? legacyFirebaseGetDocs(legacyFirebaseQuery(teamsRef, legacyFirebaseWhere('adminEmails', 'array-contains', normalizedEmail)))
             : Promise.resolve(emptySnapshot),
         Promise.all(uniqueCoachTeamIds.map((teamId) => (
             legacyFirebaseGetDoc(legacyFirebaseDoc(legacyFirebaseDb, 'teams', teamId)).catch(() => null)
