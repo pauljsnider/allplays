@@ -972,7 +972,9 @@ describe('ScheduleEventDetail family RSVP path', () => {
     expect(screen.getByRole('button', { name: 'Going' })).toBeDisabled();
     expect(screen.queryByDisplayValue('Arriving late')).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: 'use no shared note' }));
+    const sharedNote = screen.getByRole('textbox', { name: 'Availability note' });
+    expect(sharedNote).not.toBeDisabled();
+    fireEvent.change(sharedNote, { target: { value: 'Both need a ride' } });
     expect(screen.getByRole('button', { name: 'Going' })).not.toBeDisabled();
   });
 

@@ -1150,6 +1150,7 @@ function AvailabilitySection({ event, rsvp, availabilityNote, onAvailabilityNote
             event={event}
             rsvp={visibleRsvp}
             canSubmitRsvp={!rsvpWorkflow.requiresSharedNoteChoice}
+            canEditAvailabilityNote={rsvpWorkflow.canSubmit}
             submitting={rsvpWorkflow.submitting}
             availabilityNote={availabilityNote}
             onAvailabilityNoteChange={(note) => {
