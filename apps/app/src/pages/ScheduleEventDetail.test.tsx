@@ -897,7 +897,7 @@ describe('ScheduleEventDetail family RSVP path', () => {
     cleanup();
   });
 
-  it('shows the family response first and defers child-specific controls', async () => {
+  it('shows the family response first when linked children have no saved notes', async () => {
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
       events: [
         buildEvent({ childId: 'player-1', childName: 'Avery Smith' }),
@@ -924,6 +924,56 @@ describe('ScheduleEventDetail family RSVP path', () => {
 
     fireEvent.click(within(screen.getByTestId('event-player-switcher')).getByRole('button', { name: 'Sam Lee' }));
     await waitFor(() => expect(screen.getByText('Is Sam Lee going?')).toBeTruthy());
+  });
+
+  it('shows the family response first when linked children have matching saved notes', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [
+        buildEvent({ childId: 'player-1', childName: 'Avery Smith', myRsvpNote: 'Both need a ride' }),
+        buildEvent({
+          eventKey: 'team-1::game-1::player-2::2026-06-04T18:00:00.000Z::game',
+          childId: 'player-2',
+          childName: 'Sam Lee',
+          myRsvpNote: 'Both need a ride'
+        })
+      ],
+      children: []
+    });
+
+    renderScheduleEventDetail();
+
+    expect(await screen.findByText('Family response')).toBeTruthy();
+    expect(screen.getByText('One choice updates Avery Smith and Sam Lee.')).toBeTruthy();
+    expect(screen.getByDisplayValue('Both need a ride')).toBeTruthy();
+  });
+
+  it('defaults to the selected child when linked children have different saved notes', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [
+        buildEvent({ childId: 'player-1', childName: 'Avery Smith', myRsvpNote: 'Arriving late' }),
+        buildEvent({
+          eventKey: 'team-1::game-1::player-2::2026-06-04T18:00:00.000Z::game',
+          childId: 'player-2',
+          childName: 'Sam Lee',
+          myRsvpNote: 'Needs a ride'
+        })
+      ],
+      children: []
+    });
+
+    renderScheduleEventDetail();
+
+    expect(await screen.findByText('Responding for Avery Smith')).toBeTruthy();
+    expect(screen.getByText(/Saved notes differ, so responses start separately/)).toBeTruthy();
+    expect(await screen.findByDisplayValue('Arriving late')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Respond together' }));
+    expect(screen.getByText('Choose one shared note before responding together.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Going' })).toBeDisabled();
+    expect(screen.queryByDisplayValue('Arriving late')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'use no shared note' }));
+    expect(screen.getByRole('button', { name: 'Going' })).not.toBeDisabled();
   });
 
   it('keeps the existing child-specific path for a single child', async () => {
