@@ -5477,16 +5477,27 @@ export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updat
 
             if (isManualPaymentUpdate) {
                 const remainingBalanceCents = Math.max(0, amountDueCents - priorPaidCents);
+                const offlinePaymentEntry = safeLedgerEntries.find((entry) => entry?.type === 'offline_payment');
                 const manualPaymentAmountRaw = recipientUpdates.manualPayment?.amountPaidCents
-                    ?? safeLedgerEntries.find((entry) => entry?.type === 'offline_payment')?.amountCents;
+                    ?? offlinePaymentEntry?.amountCents;
                 const manualPaymentAmountCents = Number(manualPaymentAmountRaw);
 
-                if (!Number.isFinite(manualPaymentAmountCents)) {
+                if (!Number.isFinite(manualPaymentAmountCents) || manualPaymentAmountCents <= 0) {
                     throw new Error('Manual payment amount is required.');
                 }
                 if (manualPaymentAmountCents > remainingBalanceCents) {
                     throw new Error('Manual payment amount cannot exceed the remaining balance.');
                 }
+
+                const amountPaidCents = priorPaidCents + manualPaymentAmountCents;
+                const updatedRemainingBalanceCents = Math.max(0, amountDueCents - amountPaidCents);
+                const status = updatedRemainingBalanceCents === 0 ? 'paid' : 'partial';
+                updatePayload.amountPaidCents = amountPaidCents;
+                updatePayload.remainingBalanceCents = updatedRemainingBalanceCents;
+                updatePayload.status = status;
+                updatePayload.paidAt = status === 'paid'
+                    ? (recipientUpdates.manualPayment?.paidAt ?? offlinePaymentEntry?.paymentDate ?? serverTimestamp())
+                    : null;
             }
 
             if (isCancellationUpdate && priorPaidCents > 0) {

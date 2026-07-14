@@ -282,6 +282,47 @@ describe('updateTeamFeeRecipient manual payment validation', () => {
         );
     });
 
+    it('recomputes manual payment totals from the latest recipient state', async () => {
+        const transactionUpdate = vi.fn();
+        const runTransaction = vi.fn(async (_db, handler) => handler({
+            get: vi.fn(async () => ({
+                exists: () => true,
+                data: () => ({ amountDueCents: 10000, amountPaidCents: 6000 })
+            })),
+            update: transactionUpdate,
+            set: vi.fn()
+        }));
+        const updateTeamFeeRecipient = buildUpdateTeamFeeRecipient({
+            doc: vi.fn((_db, ...parts) => ({ path: parts.join('/') })),
+            updateDoc: vi.fn(),
+            runTransaction,
+            serverTimestamp: vi.fn(() => 'server-ts'),
+            arrayUnion: vi.fn((...entries) => entries),
+            deleteField: vi.fn(() => 'deleted'),
+            setDoc: vi.fn()
+        });
+
+        await updateTeamFeeRecipient('team-1', 'batch-1', 'recipient-1', {
+            status: 'partial',
+            amountPaidCents: 4000,
+            remainingBalanceCents: 6000,
+            paidAt: null,
+            manualPayment: { amountPaidCents: 4000, paidAt: '2026-07-14' },
+            ledgerEntries: [{ type: 'offline_payment', amountCents: 4000, paymentDate: '2026-07-14' }]
+        });
+
+        expect(transactionUpdate).toHaveBeenCalledWith(
+            { path: 'teams/team-1/feeBatches/batch-1/feeRecipients/recipient-1' },
+            expect.objectContaining({
+                status: 'paid',
+                amountPaidCents: 10000,
+                remainingBalanceCents: 0,
+                paidAt: '2026-07-14',
+                paymentLedger: [{ type: 'offline_payment', amountCents: 4000, paymentDate: '2026-07-14' }]
+            })
+        );
+    });
+
     it('strips private billing and staff fields from recipient updates before parent-readable writes', async () => {
         const updateDoc = vi.fn(async () => undefined);
         const updateTeamFeeRecipient = buildUpdateTeamFeeRecipient({
