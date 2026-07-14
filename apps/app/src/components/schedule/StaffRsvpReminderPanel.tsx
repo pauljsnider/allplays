@@ -49,6 +49,21 @@ export function StaffRsvpReminderPanel({ refreshToken = 0, staffRsvpLoader }: { 
   if (loading && !preview) {
     return <div className="mt-3 rounded-xl border border-gray-200 bg-white p-3 text-sm font-semibold text-gray-600">Loading staff RSVP reminder preview…</div>;
   }
+  if (error && !preview) {
+    return (
+      <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 p-3">
+        <div className="text-sm font-black text-gray-950">Staff RSVP reminder</div>
+        <div className="mt-1 text-xs font-bold text-rose-700">{error}</div>
+        <button
+          type="button"
+          className="mt-2 text-xs font-black text-primary-700 underline underline-offset-2"
+          onClick={refreshPreview}
+        >
+          Retry preview
+        </button>
+      </div>
+    );
+  }
   if (!preview || preview.missingPlayerCount <= 0) return null;
 
   const playersWithoutEmail = preview.players.filter((player) => (

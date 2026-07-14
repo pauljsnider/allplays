@@ -221,4 +221,23 @@ describe('StaffRsvpReminderPanel', () => {
         });
         expect(screen.queryByText('Staff RSVP reminder')).toBeNull();
     });
+
+    it('shows a recoverable error when preview loading fails', async () => {
+        const staffRsvpLoader = createStaffRsvpLoader();
+        staffRsvpLoader.loadReminderPreview
+            .mockRejectedValueOnce(new Error('Preview service unavailable.'))
+            .mockResolvedValueOnce(preview);
+
+        renderPanel({}, staffRsvpLoader);
+
+        expect(await screen.findByText('Preview service unavailable.')).toBeVisible();
+        const retryButton = screen.getByRole('button', { name: 'Retry preview' });
+        expect(retryButton).toBeVisible();
+
+        fireEvent.click(retryButton);
+
+        expect(await screen.findByRole('button', { name: 'Send reminder' })).toBeVisible();
+        expect(staffRsvpLoader.loadReminderPreview).toHaveBeenCalledTimes(2);
+        expect(screen.queryByText('Preview service unavailable.')).toBeNull();
+    });
 });
