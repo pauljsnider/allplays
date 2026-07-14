@@ -78,6 +78,31 @@ function renderPanel(eventOverrides: Record<string, unknown> = {}, staffRsvpLoad
     };
 }
 
+function TestPanel({
+    eventOverrides = {},
+    refreshToken = 0,
+    staffRsvpLoader
+}: {
+    eventOverrides?: Record<string, unknown>;
+    refreshToken?: number;
+    staffRsvpLoader: ReturnType<typeof createStaffRsvpLoader>;
+}) {
+    const event = buildEvent(eventOverrides);
+    return (
+        <ScheduleEventDetailProvider
+            value={{
+                auth,
+                event,
+                childEvents: [event],
+                refreshEvent: vi.fn(),
+                updateEvents: vi.fn()
+            }}
+        >
+            <StaffRsvpReminderPanel refreshToken={refreshToken} staffRsvpLoader={staffRsvpLoader} />
+        </ScheduleEventDetailProvider>
+    );
+}
+
 describe('StaffRsvpReminderPanel', () => {
     afterEach(() => {
         cleanup();
@@ -220,5 +245,56 @@ describe('StaffRsvpReminderPanel', () => {
             expect(staffRsvpLoader.loadReminderPreview).toHaveBeenCalled();
         });
         expect(screen.queryByText('Staff RSVP reminder')).toBeNull();
+    });
+
+    it('loads the latest event object when the reminder preview refreshes', async () => {
+        const staffRsvpLoader = createStaffRsvpLoader();
+        staffRsvpLoader.loadReminderPreview.mockResolvedValue(preview);
+
+        const { rerender } = render(
+            <TestPanel
+                eventOverrides={{ location: 'Field 1' }}
+                staffRsvpLoader={staffRsvpLoader}
+            />
+        );
+
+        await waitFor(() => {
+            expect(staffRsvpLoader.loadReminderPreview).toHaveBeenCalledTimes(1);
+        });
+
+        rerender(
+            <TestPanel
+                eventOverrides={{ location: 'Field 2' }}
+                refreshToken={1}
+                staffRsvpLoader={staffRsvpLoader}
+            />
+        );
+
+        await waitFor(() => {
+            expect(staffRsvpLoader.loadReminderPreview).toHaveBeenCalledTimes(2);
+        });
+        expect(staffRsvpLoader.loadReminderPreview).toHaveBeenLastCalledWith(
+            expect.objectContaining({ location: 'Field 2' }),
+            auth.user
+        );
+    });
+
+    it('shows a recoverable error when preview loading fails', async () => {
+        const staffRsvpLoader = createStaffRsvpLoader();
+        staffRsvpLoader.loadReminderPreview
+            .mockRejectedValueOnce(new Error('Preview service unavailable.'))
+            .mockResolvedValueOnce(preview);
+
+        renderPanel({}, staffRsvpLoader);
+
+        expect(await screen.findByText('Preview service unavailable.')).toBeVisible();
+        const retryButton = screen.getByRole('button', { name: 'Retry preview' });
+        expect(retryButton).toBeVisible();
+
+        fireEvent.click(retryButton);
+
+        expect(await screen.findByRole('button', { name: 'Send reminder' })).toBeVisible();
+        expect(staffRsvpLoader.loadReminderPreview).toHaveBeenCalledTimes(2);
+        expect(screen.queryByText('Preview service unavailable.')).toBeNull();
     });
 });
