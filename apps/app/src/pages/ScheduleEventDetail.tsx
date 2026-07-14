@@ -458,7 +458,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
     return events.find((event) => event.childId === selectedChildId) || events[0];
   }, [events, selectedChildId]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     setAvailabilityNote(selectedEvent?.myRsvpNote || '');
   }, [selectedEvent?.eventKey, selectedEvent?.myRsvpNote]);
 
