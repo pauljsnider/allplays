@@ -534,6 +534,13 @@
             return hashParams.get('teamId') || searchParams.get('teamId');
         }
 
+        function getConversationIdFromUrl() {
+            const hashParams = new URLSearchParams(window.location.hash.replace('#', ''));
+            const searchParams = new URLSearchParams(window.location.search);
+            return hashParams.get('conversationId') || hashParams.get('conversation') ||
+                searchParams.get('conversationId') || searchParams.get('conversation');
+        }
+
         // Initialize
         checkAuth(async (user) => {
             if (!user) {
@@ -550,6 +557,7 @@
                 window.location.href = 'dashboard.html';
                 return;
             }
+            selectedConversationId = getConversationIdFromUrl() || DEFAULT_TEAM_CONVERSATION_ID;
 
             try {
                 // Load team
@@ -1556,7 +1564,8 @@
             try {
                 conversations = await getChatConversations(teamId, currentUser, {
                     team: currentTeam,
-                    canModerate
+                    canModerate,
+                    activeConversationId: selectedConversationId
                 });
             } catch (error) {
                 console.warn('Failed to load chat conversations; falling back to team-wide channel:', error);
