@@ -14,7 +14,7 @@ describe('staff RSVP panel decomposition contract', () => {
         expect(detailSource).toContain("const staffRsvpEventScopeKey = `${event.teamId}:${event.id}`;");
         expect(detailSource).toContain('const staffRsvpLoader = useMemo(() => createStaffRsvpAvailabilityLoader(staffRsvpEventScopeKey), [staffRsvpEventScopeKey]);');
         expect(detailSource).toContain('const staffRsvp = useStaffRsvpBreakdown(staffRsvpLoader);');
-        expect(detailSource).toContain('const rsvpWorkflow = useScheduleEventRsvp({ availabilityNote, applyToAllChildren: useFamilyRsvp });');
+        expect(detailSource).toContain('const rsvpWorkflow = useScheduleEventRsvp({ availabilityNote, applyToAllChildren: useFamilyRsvp, sharedNoteExplicitlyChosen });');
     });
 
     it('keeps staff override rows in the reusable schedule component', () => {

@@ -58,7 +58,7 @@ describe('ScheduleEventDetail decomposition initiative source contract', () => {
 
     it('keeps parent RSVP mutation, optimistic update, and rollback logic in useScheduleEventRsvp', () => {
         expect(detailSource).toContain("import { useScheduleEventRsvp } from '../hooks/schedule/useScheduleEventRsvp';");
-        expect(detailSource).toContain('const rsvpWorkflow = useScheduleEventRsvp({ availabilityNote, applyToAllChildren: useFamilyRsvp });');
+        expect(detailSource).toContain('const rsvpWorkflow = useScheduleEventRsvp({ availabilityNote, applyToAllChildren: useFamilyRsvp, sharedNoteExplicitlyChosen });');
         expect(detailSource).not.toMatch(/const\s+\[rsvpSubmitting\b/);
         expect(detailSource).not.toMatch(/submitParentScheduleRsvp\(/);
 
