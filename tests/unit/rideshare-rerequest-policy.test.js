@@ -17,7 +17,7 @@ function extractRequestRideSpotSection(source) {
 }
 
 describe('rideshare re-request policy', () => {
-    it('re-requests existing declined or waitlisted requests as a controlled update', () => {
+    it('assigns pending or waitlisted status from current capacity', () => {
         const source = extractRequestRideSpotSection(readFile('js/db.js'));
 
         expect(source).toContain('export async function requestRideSpot(teamId, gameId, offerId, payload = {}) {');
@@ -29,25 +29,30 @@ describe('rideshare re-request policy', () => {
         expect(source).toContain("if (existingStatus && existingStatus !== RIDE_REQUEST_STATUS.DECLINED && existingStatus !== RIDE_REQUEST_STATUS.WAITLISTED)");
         expect(source).toContain('const seatCapacity = toNonNegativeInteger(offer.seatCapacity, 0);');
         expect(source).toContain('const currentSeatCountConfirmed = toNonNegativeInteger(offer.seatCountConfirmed, 0);');
-        expect(source).toContain("if (currentSeatCountConfirmed >= seatCapacity) throw new Error('Offer is full.');");
+        expect(source).toContain('const requestStatus = currentSeatCountConfirmed >= seatCapacity');
+        expect(source).toContain('? RIDE_REQUEST_STATUS.WAITLISTED');
+        expect(source).toContain(': RIDE_REQUEST_STATUS.PENDING;');
         expect(source).toContain('tx.update(requestRef, requestPayload);');
         expect(source).toContain('tx.set(requestRef, {');
-        expect(source).toContain('status: RIDE_REQUEST_STATUS.PENDING');
+        expect(source).toContain('status: requestStatus');
         expect(source).toContain('requestedAt: requestedAt');
         expect(source).toContain('respondedAt: null');
         expect(source).not.toContain('}, { merge: true });');
     });
 
-    it('allows parents to move declined or waitlisted requests back to pending in firestore rules', () => {
+    it('matches request status permissions to current offer capacity in firestore rules', () => {
         const rules = readFile('firestore.rules');
 
         expect(rules).toContain('resource.data.status in [\'declined\', \'waitlisted\']');
-        expect(rules).toContain('request.resource.data.status == \'pending\'');
+        expect(rules).toContain("request.resource.data.status in ['pending', 'waitlisted']");
         expect(rules).toContain('request.resource.data.respondedAt == null');
         expect(rules).toContain('isParentForPlayer(teamId, resource.data.childId)');
         expect(rules).toContain('request.resource.data.diff(resource.data).affectedKeys().hasOnly([\'childName\', \'status\', \'requestedAt\', \'respondedAt\', \'updatedAt\'])');
         expect(rules).toContain('function isRideshareOfferAcceptingRequests(teamId, gameId, offerId)');
         expect(rules).toContain('get(offerPath).data.seatCountConfirmed < get(offerPath).data.seatCapacity');
         expect(rules).toContain('isRideshareOfferAcceptingRequests(teamId, gameId, offerId)');
+        expect(rules).toContain('function isRideshareOfferFull(teamId, gameId, offerId)');
+        expect(rules).toContain("request.resource.data.status == 'waitlisted'");
+        expect(rules).toContain('isRideshareOfferFull(teamId, gameId, offerId)');
     });
 });
