@@ -32,6 +32,22 @@ const lazyToolPanels = Object.fromEntries(
     tools.map((tool) => [tool.id, lazy(() => loadParentToolPanel(tool.id))])
 ) as Record<ParentToolId, LazyExoticComponent<ComponentType<ParentToolPanelProps>>>;
 
+export function getHorizontalScrollTarget(
+    currentScrollLeft: number,
+    containerLeft: number,
+    containerRight: number,
+    activeTabLeft: number,
+    activeTabRight: number
+) {
+    if (activeTabLeft < containerLeft) {
+        return currentScrollLeft - (containerLeft - activeTabLeft);
+    }
+    if (activeTabRight > containerRight) {
+        return currentScrollLeft + (activeTabRight - containerRight);
+    }
+    return currentScrollLeft;
+}
+
 function trackParentToolRender(toolId: ParentToolId) {
     completeParentCoreWorkflowTimer(toolId === 'fees' ? 'fees' : 'parent_tools', {
         targetPage: toolId === 'fees' ? 'fees' : 'parent_tools',
@@ -99,12 +115,34 @@ export function ParentTools({ auth }: { auth: AuthState }) {
     const [visitedTools, setVisitedTools] = useState<ParentToolId[]>(() => activeTool ? [activeTool] : ['access']);
     const [toolRefreshVersions, setToolRefreshVersions] = useState<Record<ParentToolId, number>>(initialToolRefreshVersions);
     const [staleTools, setStaleTools] = useState<Set<ParentToolId>>(() => new Set());
+    const navRef = useRef<HTMLDivElement | null>(null);
+    const tabRefs = useRef<Partial<Record<ParentToolId, HTMLButtonElement | null>>>({});
     const activeToolRef = useRef<ParentToolId | null>(activeTool);
     const visitedToolsRef = useRef<ParentToolId[]>(visitedTools);
     const staleToolsRef = useRef(staleTools);
 
     useEffect(() => {
         activeToolRef.current = activeTool;
+    }, [activeTool]);
+
+    useEffect(() => {
+        if (!activeTool) return;
+        const nav = navRef.current;
+        const activeTab = tabRefs.current[activeTool];
+        if (!nav || !activeTab) return;
+
+        const navRect = nav.getBoundingClientRect();
+        const activeTabRect = activeTab.getBoundingClientRect();
+        const nextScrollLeft = getHorizontalScrollTarget(
+            nav.scrollLeft,
+            navRect.left,
+            navRect.right,
+            activeTabRect.left,
+            activeTabRect.right
+        );
+        if (nextScrollLeft !== nav.scrollLeft) {
+            nav.scrollLeft = nextScrollLeft;
+        }
     }, [activeTool]);
 
     useEffect(() => {
@@ -135,9 +173,6 @@ export function ParentTools({ auth }: { auth: AuthState }) {
 
     const setTool = useCallback((nextTool: ParentToolId) => {
         navigate(`/parent-tools/${nextTool}`);
-        window.requestAnimationFrame(() => {
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-        });
     }, [navigate]);
 
     const handleAccessChanged = useCallback(() => {
@@ -177,7 +212,7 @@ export function ParentTools({ auth }: { auth: AuthState }) {
                 </section>
             ) : null}
 
-            <div className="parent-tools-nav sticky top-24 z-30 -mx-1 overflow-x-auto bg-gray-50/95 py-2 backdrop-blur">
+            <div ref={navRef} className="parent-tools-nav sticky top-24 z-30 -mx-1 overflow-x-auto bg-gray-50/95 py-2 backdrop-blur">
                 <div className="grid min-w-max gap-1 rounded-2xl border border-gray-200 bg-white p-1 shadow-sm" style={{ gridTemplateColumns: `repeat(${visibleTools.length}, minmax(0, 1fr))` }}>
                     {visibleTools.map((tool) => {
                         const Icon = tool.icon;
@@ -185,6 +220,7 @@ export function ParentTools({ auth }: { auth: AuthState }) {
                         return (
                             <button
                                 key={tool.id}
+                                ref={(button) => { tabRefs.current[tool.id] = button; }}
                                 type="button"
                                 className={`flex min-h-10 items-center justify-center gap-1.5 rounded-xl px-3 text-xs font-black transition sm:text-sm ${active ? 'bg-primary-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-950'}`}
                                 onClick={() => setTool(tool.id)}

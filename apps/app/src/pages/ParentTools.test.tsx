@@ -3,7 +3,7 @@ import { useCallback, useState } from 'react';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ParentTools, type ParentToolId } from './ParentTools';
+import { getHorizontalScrollTarget, ParentTools, type ParentToolId } from './ParentTools';
 import type { AuthState } from '../lib/types';
 import { getNativeBackTarget } from '../lib/nativeBackButton';
 import { openPublicUrl, sharePublicUrl } from '../lib/publicActions';
@@ -184,6 +184,20 @@ function RefreshingParentToolsRoute() {
     return <ParentTools auth={authState} />;
 }
 
+describe('getHorizontalScrollTarget', () => {
+    it('scrolls left only enough to reveal a tab left of the visible window', () => {
+        expect(getHorizontalScrollTarget(240, 0, 390, -80, 20)).toBe(160);
+    });
+
+    it('keeps the current position when the active tab is fully visible', () => {
+        expect(getHorizontalScrollTarget(240, 0, 390, 120, 220)).toBe(240);
+    });
+
+    it('scrolls right only enough to reveal a tab right of the visible window', () => {
+        expect(getHorizontalScrollTarget(240, 0, 390, 380, 480)).toBe(330);
+    });
+});
+
 describe('ParentTools access', () => {
     beforeEach(() => {
         vi.clearAllMocks();
@@ -231,6 +245,7 @@ describe('ParentTools access', () => {
     });
 
     afterEach(() => {
+        vi.restoreAllMocks();
         delete globalThis.__ALLPLAYS_PARENT_TOOLS_RENDER_TRACKER__;
         delete globalThis.__ALLPLAYS_PARENT_TOOLS_PANEL_LOAD_TRACKER__;
         Reflect.deleteProperty(navigator, 'clipboard');
@@ -476,6 +491,50 @@ describe('ParentTools access', () => {
         expect(screen.getByRole('button', { name: 'Share' })).toBeTruthy();
         expect(screen.getByRole('button', { name: 'Register' })).toBeTruthy();
         expect(screen.getByRole('button', { name: 'Awards' })).toBeTruthy();
+    });
+
+    it('reveals the active tab on deep links without moving an already visible Access tab', async () => {
+        vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+            if (this.classList.contains('parent-tools-nav')) {
+                return { left: 0, right: 390, top: 96, bottom: 144, width: 390, height: 48, x: 0, y: 96, toJSON: () => ({}) };
+            }
+            if (this.textContent === 'Awards') {
+                return { left: 540, right: 620, top: 100, bottom: 140, width: 80, height: 40, x: 540, y: 100, toJSON: () => ({}) };
+            }
+            return { left: 0, right: 80, top: 100, bottom: 140, width: 80, height: 40, x: 0, y: 100, toJSON: () => ({}) };
+        });
+
+        const awardsView = renderParentTools(['/parent-tools/certificates'], false, linkedAuth);
+        const awardsNav = document.querySelector('.parent-tools-nav') as HTMLDivElement;
+        await waitFor(() => expect(awardsNav.scrollLeft).toBe(230));
+        expect(screen.getByRole('button', { name: 'Awards' })).toHaveAttribute('aria-pressed', 'true');
+        awardsView.unmount();
+
+        renderParentTools(['/parent-tools/access'], false, linkedAuth);
+        await screen.findByText('Request player access');
+        expect((document.querySelector('.parent-tools-nav') as HTMLDivElement).scrollLeft).toBe(0);
+    });
+
+    it('reveals newly active nonadjacent tabs without scrolling the window', async () => {
+        parentToolsServiceMocks.loadParentCertificates.mockResolvedValue([]);
+        const windowScrollTo = vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined);
+        vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+            if (this.classList.contains('parent-tools-nav')) {
+                return { left: 0, right: 390, top: 96, bottom: 144, width: 390, height: 48, x: 0, y: 96, toJSON: () => ({}) };
+            }
+            if (this.textContent === 'Awards') {
+                return { left: 540, right: 620, top: 100, bottom: 140, width: 80, height: 40, x: 540, y: 100, toJSON: () => ({}) };
+            }
+            return { left: 0, right: 80, top: 100, bottom: 140, width: 80, height: 40, x: 0, y: 100, toJSON: () => ({}) };
+        });
+
+        renderParentTools(['/parent-tools/access'], false, linkedAuth);
+        await screen.findByText('Request player access');
+        fireEvent.click(screen.getByRole('button', { name: 'Awards' }));
+
+        await waitFor(() => expect(screen.getByRole('button', { name: 'Awards' })).toHaveAttribute('aria-pressed', 'true'));
+        expect((document.querySelector('.parent-tools-nav') as HTMLDivElement).scrollLeft).toBe(230);
+        expect(windowScrollTo).not.toHaveBeenCalled();
     });
 
     it('treats indexed parent player links as unlocked parent tools access', async () => {
