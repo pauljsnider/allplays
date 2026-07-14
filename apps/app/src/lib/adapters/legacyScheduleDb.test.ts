@@ -62,8 +62,9 @@ vi.mock('@legacy/firebase.js', () => ({
     where: vi.fn()
 }));
 
-import { addGame as legacyAddGame, getConfigs as legacyGetConfigs } from '@legacy/db.js';
-import { addGame, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, buildSingleLegacyTournamentGameDocument, getConfigs, LegacyTournamentGameAdapterValidationError } from './legacyScheduleDb';
+import { addGame as legacyAddGame, getConfigs as legacyGetConfigs, getTeams as legacyGetTeams } from '@legacy/db.js';
+import { collection, doc, getDoc, getDocs, query, where } from '@legacy/firebase.js';
+import { addGame, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, buildSingleLegacyTournamentGameDocument, getConfigs, getStaffTeams, LegacyTournamentGameAdapterValidationError } from './legacyScheduleDb';
 
 const buildValidLegacyGamePayload = (overrides: Record<string, unknown> = {}) => ({
     type: 'game',
@@ -233,5 +234,58 @@ describe('legacyScheduleDb tracker config reads', () => {
         ]);
 
         expect(legacyGetConfigs).toHaveBeenCalledWith('team-1', { limit: 100 });
+    });
+});
+
+describe('legacyScheduleDb staff team reads', () => {
+    const snapshot = (id: string, data: Record<string, unknown>) => ({
+        id,
+        exists: () => true,
+        data: () => data
+    });
+
+    beforeEach(() => {
+        vi.mocked(collection).mockReturnValue({ path: 'teams' } as never);
+        vi.mocked(query).mockImplementation((base: unknown, ...constraints: unknown[]) => ({ base, constraints }) as never);
+        vi.mocked(where).mockImplementation((field: string, operation: string, value: unknown) => ({ field, operation, value }) as never);
+        vi.mocked(doc).mockImplementation((...parts: unknown[]) => ({ path: parts.filter((part) => typeof part === 'string').join('/') }) as never);
+    });
+
+    it('merges owner, normalized admin email, and unique coach team reads without a catalog load', async () => {
+        vi.mocked(getDocs)
+            .mockResolvedValueOnce({ docs: [snapshot('team-owner', { name: 'Owner' }), snapshot('team-shared', { name: 'Owner copy' })] } as never)
+            .mockResolvedValueOnce({ docs: [snapshot('team-admin', { name: 'Admin' }), snapshot('team-shared', { name: 'Admin copy' })] } as never);
+        vi.mocked(getDoc)
+            .mockResolvedValueOnce(snapshot('team-coach', { name: 'Coach' }) as never)
+            .mockRejectedValueOnce(new Error('Missing or insufficient permissions.'));
+
+        const teams = await getStaffTeams({
+            userId: 'user-1',
+            email: '  STAFF@EXAMPLE.COM ',
+            coachTeamIds: ['team-coach', 'team-coach', 'team-inaccessible']
+        });
+
+        expect(teams).toEqual([
+            { id: 'team-owner', name: 'Owner' },
+            { id: 'team-shared', name: 'Admin copy' },
+            { id: 'team-admin', name: 'Admin' },
+            { id: 'team-coach', name: 'Coach' }
+        ]);
+        expect(getDocs).toHaveBeenCalledTimes(2);
+        expect(where).toHaveBeenCalledWith('ownerId', '==', 'user-1');
+        expect(where).toHaveBeenCalledWith('adminEmails', 'array-contains', 'staff@example.com');
+        expect(getDoc).toHaveBeenCalledTimes(2);
+        expect(legacyGetTeams).not.toHaveBeenCalled();
+    });
+
+    it('skips the admin-email query and direct reads when affiliations are empty', async () => {
+        vi.mocked(getDocs).mockResolvedValueOnce({ docs: [] } as never);
+
+        await expect(getStaffTeams({ userId: 'parent-1', email: '   ', coachTeamIds: [] })).resolves.toEqual([]);
+
+        expect(getDocs).toHaveBeenCalledTimes(1);
+        expect(where).toHaveBeenCalledTimes(1);
+        expect(where).toHaveBeenCalledWith('ownerId', '==', 'parent-1');
+        expect(getDoc).not.toHaveBeenCalled();
     });
 });

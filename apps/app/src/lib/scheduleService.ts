@@ -12,7 +12,7 @@ import {
   getRsvps,
   getRsvpBreakdownByPlayer,
   getTeam,
-  getTeams,
+  getStaffTeams,
   addGame,
   addPractice,
   buildLegacyTournamentGameDocuments,
@@ -1514,12 +1514,14 @@ async function loadStaffTeams(user: AuthUser) {
     'staff teams',
     async () => {
       const coachTeamIds = Array.isArray(user.coachOf) ? user.coachOf.map(compactString).filter(Boolean) : [];
-      const [visibleTeams, coachTeams] = await Promise.all([
-        getTeams({ includePrivate: (user as any).isAdmin === true }),
-        Promise.all(coachTeamIds.map((teamId) => getTeam(teamId).catch(() => null)))
-      ]);
+      const visibleTeams = await getStaffTeams({
+        userId: user.uid,
+        email: user.email,
+        coachTeamIds,
+        includeAll: (user as any).isAdmin === true
+      });
       const teamsById = new Map<string, any>();
-      [...visibleTeams, ...coachTeams].filter(Boolean).forEach((team: any) => {
+      visibleTeams.filter(Boolean).forEach((team: any) => {
         if (team?.id && isTeamActive(team) && isTeamStaff(team, user)) teamsById.set(team.id, team);
       });
       return [...teamsById.values()];
