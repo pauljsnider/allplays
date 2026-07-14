@@ -31,7 +31,7 @@ export function StaffRsvpReminderPanel({ refreshToken = 0, staffRsvpLoader }: { 
     } finally {
       setLoading(false);
     }
-  }, [auth.user, canLoad, event.eventKey, event.teamId, event.id, staffRsvpLoader]);
+  }, [auth.user, canLoad, event, staffRsvpLoader]);
 
   useEffect(() => {
     setStatus(null);
