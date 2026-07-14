@@ -97,6 +97,7 @@ import { startUxTimer } from './uxTiming';
 import {
   countOpenScheduleAssignments,
   getNextRideConfirmedSeatCount,
+  getScheduleRideSeatInfo,
   getScheduleRideshareSummary,
   getScheduleTitle,
   normalizeScheduleAssignment,
@@ -6743,18 +6744,25 @@ async function nativeCreateRideOfferForEvent(event: ParentScheduleEvent, user: A
 async function nativeRequestRideSpotForChild(event: ParentScheduleEvent, offer: ScheduleRideOffer, user: AuthUser, child: RideRequestChildInput) {
   const gameId = getRideOfferGameId(event, offer);
   const requestId = getRideRequestId(user, child.childId);
+  const offerPath = `teams/${encodeURIComponent(event.teamId)}/games/${encodeURIComponent(gameId)}/rideOffers/${encodeURIComponent(offer.id)}`;
   const requestPath = `teams/${encodeURIComponent(event.teamId)}/games/${encodeURIComponent(gameId)}/rideOffers/${encodeURIComponent(offer.id)}/requests/${encodeURIComponent(requestId)}`;
-  const existing = await nativeGetDocument(requestPath);
+  const [offerDoc, existing] = await Promise.all([
+    nativeGetDocument(offerPath),
+    nativeGetDocument(requestPath)
+  ]);
+  if (!offerDoc) throw new Error('Ride offer not found.');
+  if (normalizeRideOfferStatus(offerDoc.status) !== 'open') throw new Error('Ride offer is closed.');
   const existingStatus = normalizeRideRequestStatus(existing?.status);
   if (existing && existingStatus !== 'declined' && existingStatus !== 'waitlisted') {
     throw new Error('Ride request is already active.');
   }
+  const requestStatus = getScheduleRideSeatInfo({ ...offer, ...offerDoc }).seatsLeft === 0 ? 'waitlisted' : 'pending';
 
   await nativePatchDocument(requestPath, {
     parentUserId: user.uid,
     childId: child.childId,
     childName: child.childName || null,
-    status: 'pending',
+    status: requestStatus,
     requestedAt: new Date(),
     respondedAt: null,
     updatedAt: new Date()

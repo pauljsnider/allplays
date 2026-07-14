@@ -9019,13 +9019,15 @@ export async function requestRideSpot(teamId, gameId, offerId, payload = {}) {
 
         const seatCapacity = toNonNegativeInteger(offer.seatCapacity, 0);
         const currentSeatCountConfirmed = toNonNegativeInteger(offer.seatCountConfirmed, 0);
-        if (currentSeatCountConfirmed >= seatCapacity) throw new Error('Offer is full.');
+        const requestStatus = currentSeatCountConfirmed >= seatCapacity
+            ? RIDE_REQUEST_STATUS.WAITLISTED
+            : RIDE_REQUEST_STATUS.PENDING;
 
         const requestedAt = Timestamp.now();
         const updatedAt = Timestamp.now();
         const requestPayload = {
             childName: childName || null,
-            status: RIDE_REQUEST_STATUS.PENDING,
+            status: requestStatus,
             requestedAt: requestedAt,
             respondedAt: null,
             updatedAt
