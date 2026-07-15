@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Copy, Loader2, RefreshCw, Share2 } from 'lucide-react';
+import { Modal } from '../../components/Modal';
 import { createParentFamilyShare, loadFamilyShareModel, revokeParentFamilyShare, updateParentFamilyShareCalendars, type FamilyShareTokenCard } from '../../lib/parentFamilyShareService';
 import { sharePublicUrl } from '../../lib/publicActions';
 import type { AuthState } from '../../lib/types';
@@ -177,8 +178,14 @@ export function FamilyShareTool({ auth, refreshVersion }: { auth: AuthState; ref
             ))}
 
             {pendingRevokeToken ? (
-                <div className="fixed inset-0 z-50 flex items-end justify-center bg-gray-950/40 px-4 py-5 sm:items-center" role="presentation">
-                    <div className="w-full max-w-sm rounded-2xl bg-white p-4 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="family-share-revoke-title">
+                <Modal
+                    ariaLabelledBy="family-share-revoke-title"
+                    onClose={() => {
+                        if (!saving) setPendingRevokeToken(null);
+                    }}
+                    overlayClassName="z-50 flex items-end justify-center bg-gray-950/40 px-4 py-5 sm:items-center"
+                >
+                    <div className="w-full max-w-sm rounded-2xl bg-white p-4 shadow-2xl">
                         <h3 id="family-share-revoke-title" className="text-base font-black text-gray-950">Revoke this share link?</h3>
                         <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">
                             Anyone using the family share link{pendingRevokeToken.label ? ` for ${pendingRevokeToken.label}` : ''} will lose access.
@@ -191,7 +198,7 @@ export function FamilyShareTool({ auth, refreshVersion }: { auth: AuthState; ref
                             </button>
                         </div>
                     </div>
-                </div>
+                </Modal>
             ) : null}
         </div>
     );

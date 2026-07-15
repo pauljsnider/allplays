@@ -5,7 +5,7 @@ import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getHorizontalScrollTarget, ParentTools, type ParentToolId } from './ParentTools';
 import type { AuthState } from '../lib/types';
-import { getNativeBackTarget } from '../lib/nativeBackButton';
+import { APP_BACK_DISMISS_EVENT, getNativeBackTarget } from '../lib/nativeBackButton';
 import { openPublicUrl, sharePublicUrl } from '../lib/publicActions';
 
 const parentToolsServiceMocks = vi.hoisted(() => ({
@@ -823,6 +823,62 @@ describe('ParentTools access', () => {
         expect(screen.getByRole('button', { name: 'Copy' })).toBeTruthy();
     });
 
+    it('dismisses family share revocation on native Back without leaving Share', async () => {
+        parentToolsServiceMocks.loadFamilyShareModel.mockResolvedValue({
+            children: [{ teamId: 'team-1', playerId: 'player-1', playerName: 'Sam Player' }],
+            tokens: [{
+                id: 'token-1',
+                label: 'Grandma',
+                url: 'https://allplays.ai/app/#/family/token-1',
+                childCount: 1,
+                extraCalendarUrls: []
+            }]
+        });
+
+        renderParentTools(['/parent-tools/share'], false, linkedAuth);
+
+        expect(await screen.findByText('Grandma')).toBeTruthy();
+        fireEvent.click(screen.getByRole('button', { name: 'Revoke' }));
+        expect(await screen.findByRole('dialog', { name: 'Revoke this share link?' })).toBeTruthy();
+
+        const event = new Event(APP_BACK_DISMISS_EVENT, { cancelable: true });
+        fireEvent(window, event);
+
+        expect(event.defaultPrevented).toBe(true);
+        await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Revoke this share link?' })).toBeNull());
+        expect(parentToolsServiceMocks.revokeParentFamilyShare).not.toHaveBeenCalled();
+        expect(screen.getByRole('heading', { name: 'Family share' })).toBeTruthy();
+        expect(screen.getByText('https://allplays.ai/app/#/family/token-1')).toBeTruthy();
+    });
+
+    it('keeps family share revocation open on native Back while saving', async () => {
+        parentToolsServiceMocks.loadFamilyShareModel.mockResolvedValue({
+            children: [{ teamId: 'team-1', playerId: 'player-1', playerName: 'Sam Player' }],
+            tokens: [{
+                id: 'token-1',
+                label: 'Grandma',
+                url: 'https://allplays.ai/app/#/family/token-1',
+                childCount: 1,
+                extraCalendarUrls: []
+            }]
+        });
+        parentToolsServiceMocks.revokeParentFamilyShare.mockImplementationOnce(() => new Promise(() => {}));
+
+        renderParentTools(['/parent-tools/share'], false, linkedAuth);
+
+        expect(await screen.findByText('Grandma')).toBeTruthy();
+        fireEvent.click(screen.getByRole('button', { name: 'Revoke' }));
+        fireEvent.click(await screen.findByRole('button', { name: 'Revoke link' }));
+        await waitFor(() => expect((screen.getByRole('button', { name: 'Revoke link' }) as HTMLButtonElement).disabled).toBe(true));
+
+        const event = new Event(APP_BACK_DISMISS_EVENT, { cancelable: true });
+        fireEvent(window, event);
+
+        expect(event.defaultPrevented).toBe(true);
+        expect(screen.getByRole('dialog', { name: 'Revoke this share link?' })).toBeTruthy();
+        expect(parentToolsServiceMocks.revokeParentFamilyShare).toHaveBeenCalledTimes(1);
+    });
+
     it('shows a created family link when clipboard copy and refresh recovery miss it', async () => {
         Object.defineProperty(navigator, 'clipboard', {
             configurable: true,
@@ -925,6 +981,8 @@ describe('ParentTools access', () => {
 
         await waitFor(() => {
             expect(parentToolsServiceMocks.revokeParentFamilyShare).toHaveBeenCalledWith('token-2');
+            expect(parentToolsServiceMocks.revokeParentFamilyShare).toHaveBeenCalledTimes(1);
+            expect(parentToolsServiceMocks.loadFamilyShareModel).toHaveBeenCalledTimes(3);
             expect(screen.queryByText('New family link')).toBeNull();
             expect(screen.queryByRole('button', { name: 'Copy newly created family link' })).toBeNull();
             expect(screen.queryByRole('button', { name: 'Share newly created family link' })).toBeNull();
