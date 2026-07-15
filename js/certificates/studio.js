@@ -19,9 +19,10 @@ import {
     createCertificate,
     updateCertificate,
     getCertificate,
+    archiveCertificate,
     canAccessCertificates,
     canViewSavedCertificate
-} from '../db.js?v=91';
+} from '../db.js?v=92';
 import { renderHeader, renderFooter, escapeHtml, shareOrCopy } from '../utils.js?v=15';
 import { renderTeamAdminBanner, getTeamAccessInfo } from '../team-admin-banner.js?v=5';
 import { TEMPLATES } from './templates.js?v=2';
@@ -1206,6 +1207,9 @@ function renderSavedItemShell({ type, id, title, meta, timestamp, itemClass }) {
     const openAttr = type === 'batch' ? 'data-open-batch' : 'data-open-certificate';
     const shareAttr = type === 'batch' ? 'data-share-batch' : 'data-share-certificate';
     const shareLabel = type === 'batch' ? 'Share run' : 'Share certificate';
+    const archiveAction = type === 'certificate'
+        ? `<button type="button" data-archive-certificate="${escapeAttr(id)}" class="cert-saved-share-btn ml-3">Archive certificate</button>`
+        : '';
     return `
         <div class="cert-saved-item">
             <button type="button" ${openAttr}="${escapeAttr(id)}" class="${itemClass}">
@@ -1214,6 +1218,7 @@ function renderSavedItemShell({ type, id, title, meta, timestamp, itemClass }) {
                 <div class="mt-1 text-xs text-gray-400">${escapeHtml(formatSavedTime(timestamp))}</div>
             </button>
             <button type="button" ${shareAttr}="${escapeAttr(id)}" class="cert-saved-share-btn">${shareLabel}</button>
+            ${archiveAction}
         </div>
     `;
 }
@@ -1320,6 +1325,9 @@ function bindSidebarEvents(root = document) {
     root.querySelectorAll('[data-share-certificate]').forEach((button) => {
         button.addEventListener('click', () => shareSavedWork('certificate', button.dataset.shareCertificate));
     });
+    root.querySelectorAll('[data-archive-certificate]').forEach((button) => {
+        button.addEventListener('click', () => archiveSavedCertificate(button.dataset.archiveCertificate));
+    });
     root.querySelectorAll('[data-toggle-saved-list]').forEach((button) => {
         button.addEventListener('click', () => {
             const key = button.dataset.toggleSavedList;
@@ -1331,6 +1339,57 @@ function bindSidebarEvents(root = document) {
             }
         });
     });
+}
+
+function getActiveSavedCertificates(certificates = []) {
+    return certificates.filter((certificate) => certificate?.status !== 'archived');
+}
+
+async function listActiveSavedCertificates() {
+    const certificates = await listCertificates(state.teamId, { statuses: ['draft', 'published'] });
+    return getActiveSavedCertificates(certificates);
+}
+
+async function archiveSavedCertificate(certificateId) {
+    const certificate = state.savedCertificates.find((item) => item.id === certificateId);
+    if (!certificate) return;
+    const recipientName = certificate.recipientName || 'this certificate';
+    if (!globalThis.confirm(`Archive the certificate for ${recipientName}? It will no longer appear in saved certificate history or to parents.`)) return;
+
+    try {
+        let batch = state.savedBatches.find((item) => item.id === certificate.batchId)
+            || state.savedBatches.find((item) => (item.generatedCertificateIds || []).includes(certificateId));
+        if (!state.demoMode && certificate.batchId && !batch) {
+            batch = await getCertificateBatch(state.teamId, certificate.batchId);
+        }
+        if (!state.demoMode) {
+            await archiveCertificate(state.teamId, certificateId);
+            if (batch) {
+                await updateCertificateBatch(state.teamId, batch.id, {
+                    generatedCertificateIds: (batch.generatedCertificateIds || []).filter((id) => id !== certificateId)
+                });
+            }
+        }
+        state.savedCertificates = state.savedCertificates.filter((item) => item.id !== certificateId);
+        state.savedBatches = state.savedBatches.map((batch) => ({
+            ...batch,
+            generatedCertificateIds: (batch.generatedCertificateIds || []).filter((id) => id !== certificateId)
+        }));
+
+        const archivedActiveDraft = state.drafts.some((draft) => draft.certificateId === certificateId);
+        state.drafts = state.drafts.filter((draft) => draft.certificateId !== certificateId);
+        if (state.mode === 'saved' || (archivedActiveDraft && !state.drafts.length)) {
+            showSavedWorkMode();
+        } else if (archivedActiveDraft) {
+            state.selectedDraftId = state.drafts[0]?.id || null;
+            renderReview();
+        } else {
+            renderSidebar();
+        }
+        showAlert(`Archived the certificate for ${recipientName}.`, 'success');
+    } catch (error) {
+        showAlert(error?.message || 'Unable to archive the certificate.', 'error');
+    }
 }
 
 async function shareSavedWork(type, id) {
@@ -1530,7 +1589,7 @@ function saveDraftsToLocalHistory(status) {
 }
 
 async function loadCertificatesForSavedBatch(batch) {
-    let certificates = state.savedCertificates.filter((certificate) => certificate.batchId === batch?.id);
+    let certificates = getActiveSavedCertificates(state.savedCertificates.filter((certificate) => certificate.batchId === batch?.id));
     const missingIds = (batch?.generatedCertificateIds || [])
         .filter((id) => id && !certificates.some((certificate) => certificate.id === id));
 
@@ -1538,7 +1597,7 @@ async function loadCertificatesForSavedBatch(batch) {
         for (const id of missingIds) {
             try {
                 const certificate = await getCertificate(state.teamId, id);
-                if (certificate) {
+                if (certificate?.status !== 'archived') {
                     upsertSavedCertificate(certificate);
                     certificates.push(certificate);
                 }
@@ -1608,7 +1667,7 @@ async function openSavedCertificate(certificateId) {
     if (!certificate && !state.demoMode && !state.certificatePersistenceUnavailable) {
         try {
             certificate = await getCertificate(state.teamId, certificateId);
-            if (certificate) upsertSavedCertificate(certificate);
+            if (certificate?.status !== 'archived') upsertSavedCertificate(certificate);
         } catch (error) {
             if (!isPermissionError(error)) throw error;
             state.certificatePersistenceUnavailable = true;
@@ -1616,6 +1675,8 @@ async function openSavedCertificate(certificateId) {
             return;
         }
     }
+
+    if (certificate?.status === 'archived') certificate = null;
 
     if (!certificate) {
         showAlert('Saved certificate could not be found.', 'warning');
@@ -1985,7 +2046,7 @@ async function saveDrafts(status) {
             console.warn('[certificates] Unable to save certificate defaults after save:', error);
             showAlert('Certificates saved, but team defaults could not be updated because of permissions.', 'warning');
         }
-        state.savedCertificates = await loadOptionalCertificateResource('saved certificates', () => listCertificates(state.teamId), state.savedCertificates);
+        state.savedCertificates = await loadOptionalCertificateResource('saved certificates', listActiveSavedCertificates, state.savedCertificates);
         state.savedBatches = await loadOptionalCertificateResource('certificate batches', () => listCertificateBatches(state.teamId), state.savedBatches);
         renderSidebar();
         renderReviewGrid();
@@ -2453,7 +2514,7 @@ async function initAuthenticated(params) {
                 loadOptionalCertificateResource('certificate defaults', () => getCertificateDefaults(state.teamId), null),
                 loadOptionalCertificateResource('certificate assets', () => listCertificateAssets(state.teamId), []),
                 loadOptionalCertificateResource('certificate batches', () => listCertificateBatches(state.teamId), []),
-                loadOptionalCertificateResource('saved certificates', () => listCertificates(state.teamId), [])
+                loadOptionalCertificateResource('saved certificates', listActiveSavedCertificates, [])
             ]);
 
             state.roster = roster;

@@ -36,6 +36,9 @@ function createCertificateStudioHarness() {
         'function getPublishBlockedDrafts',
         'function formatPublishBlockedDraftNames',
         'function guardPublishableDraftDescriptions',
+        'function getActiveSavedCertificates',
+        'async function listActiveSavedCertificates',
+        'async function archiveSavedCertificate',
         'function saveDraftsToLocalHistory',
         'async function openSavedBatch',
         'async function openSavedCertificate',
@@ -100,6 +103,8 @@ function createCertificateStudioHarness() {
         }),
         renderReview: vi.fn(),
         renderReviewGrid: vi.fn(),
+        renderSavedWorkLanding: vi.fn(),
+        showSavedWorkMode: vi.fn(),
         showAlert: vi.fn(),
         renderSidebar: vi.fn(),
         getCertificateBatch: vi.fn(),
@@ -107,6 +112,7 @@ function createCertificateStudioHarness() {
         createCertificateBatch: vi.fn(async () => 'batch-1'),
         createCertificate: vi.fn(async (_teamId, payload) => `created-${payload.playerId || payload.recipientName}`),
         updateCertificate: vi.fn(async () => undefined),
+        archiveCertificate: vi.fn(async () => undefined),
         updateCertificateBatch: vi.fn(async () => undefined),
         setCertificateDefaults: vi.fn(async () => undefined),
         listCertificates: vi.fn(async () => []),
@@ -135,6 +141,8 @@ function createCertificateStudioHarness() {
         const buildSharedFromSavedSource = deps.buildSharedFromSavedSource;
         const renderReview = deps.renderReview;
         const renderReviewGrid = deps.renderReviewGrid;
+        const renderSavedWorkLanding = deps.renderSavedWorkLanding;
+        const showSavedWorkMode = deps.showSavedWorkMode;
         const showAlert = deps.showAlert;
         const renderSidebar = deps.renderSidebar;
         const loadCertificatesForSavedBatch = deps.loadCertificatesForSavedBatch;
@@ -143,6 +151,7 @@ function createCertificateStudioHarness() {
         const createCertificateBatch = deps.createCertificateBatch;
         const createCertificate = deps.createCertificate;
         const updateCertificate = deps.updateCertificate;
+        const archiveCertificate = deps.archiveCertificate;
         const updateCertificateBatch = deps.updateCertificateBatch;
         const setCertificateDefaults = deps.setCertificateDefaults;
         const listCertificates = deps.listCertificates;
@@ -173,6 +182,9 @@ function createCertificateStudioHarness() {
             getPublishBlockedDrafts,
             formatPublishBlockedDraftNames,
             guardPublishableDraftDescriptions,
+            getActiveSavedCertificates,
+            listActiveSavedCertificates,
+            archiveSavedCertificate,
             saveDraftsToLocalHistory,
             saveDrafts,
             openSavedBatch,
@@ -180,7 +192,9 @@ function createCertificateStudioHarness() {
             startCustomCertificate,
             createCertificate,
             updateCertificate,
-            updateCertificateBatch
+            archiveCertificate,
+            updateCertificateBatch,
+            listCertificates
         };
     `)(deps);
 }
@@ -203,11 +217,11 @@ describe('awards and certificates workflow wiring', () => {
         expect(html).toContain('Start new run');
         expect(html).toContain('View saved work');
         expect(html).toContain('Create one-off certificate');
-        expect(html).toContain('./js/certificates/studio.js?v=13');
+        expect(html).toContain('./js/certificates/studio.js?v=15');
         expect(studio).toContain("from './templates.js?v=2'");
         expect(studio).toContain("from './renderer.js?v=2'");
         expect(studio).toContain("from './aiDescriptions.js?v=4'");
-        expect(studio).toContain("from '../db.js?v=91'");
+        expect(studio).toContain("from '../db.js?v=92'");
 
         expect(studio).toContain('Create drafts for selected players');
         expect(studio).toContain('Saved work');
@@ -226,6 +240,7 @@ describe('awards and certificates workflow wiring', () => {
         expect(studio).toContain('data-open-certificate');
         expect(studio).toContain('data-share-batch');
         expect(studio).toContain('data-share-certificate');
+        expect(studio).toContain('data-archive-certificate');
         expect(studio).toContain('data-toggle-saved-list');
         expect(studio).toContain('Show fewer');
         expect(studio).toContain('formatSavedTime');
@@ -272,6 +287,55 @@ describe('awards and certificates workflow wiring', () => {
         expect(firebaseConfig).toContain('"host": "localhost"');
         expect(firebaseConfig).toContain('"port": 8000');
         expect(packageJson).toContain('"serve:firebase"');
+    });
+
+    it('archives a saved certificate and removes it from active studio history', async () => {
+        const harness = createCertificateStudioHarness();
+        vi.stubGlobal('confirm', vi.fn(() => true));
+        harness.state.mode = 'saved';
+        harness.state.savedCertificates = [
+            { id: 'cert-1', batchId: 'batch-1', recipientName: 'Lee Star', status: 'published' },
+            { id: 'cert-2', recipientName: 'Sam Star', status: 'draft' }
+        ];
+        harness.state.savedBatches = [{
+            id: 'batch-1',
+            generatedCertificateIds: ['cert-1', 'cert-2']
+        }];
+
+        try {
+            await harness.archiveSavedCertificate('cert-1');
+
+            expect(harness.archiveCertificate).toHaveBeenCalledWith('team-1', 'cert-1');
+            expect(harness.updateCertificateBatch).toHaveBeenCalledWith('team-1', 'batch-1', {
+                generatedCertificateIds: ['cert-2']
+            });
+            expect(harness.state.savedCertificates.map((certificate) => certificate.id)).toEqual(['cert-2']);
+            expect(harness.state.savedBatches[0].generatedCertificateIds).toEqual(['cert-2']);
+            expect(harness.showAlert).toHaveBeenCalledWith('Archived the certificate for Lee Star.', 'success');
+            expect(harness.getActiveSavedCertificates([
+                { id: 'active', status: 'published' },
+                { id: 'archived', status: 'archived' }
+            ])).toEqual([{ id: 'active', status: 'published' }]);
+        } finally {
+            vi.unstubAllGlobals();
+        }
+    });
+
+    it('queries active certificate statuses before applying the saved-history limit', async () => {
+        const harness = createCertificateStudioHarness();
+        harness.listCertificates.mockResolvedValue([
+            { id: 'draft', status: 'draft' },
+            { id: 'published', status: 'published' },
+            { id: 'archived', status: 'archived' }
+        ]);
+
+        await expect(harness.listActiveSavedCertificates()).resolves.toEqual([
+            { id: 'draft', status: 'draft' },
+            { id: 'published', status: 'published' }
+        ]);
+        expect(harness.listCertificates).toHaveBeenCalledWith('team-1', {
+            statuses: ['draft', 'published']
+        });
     });
 
     it('keeps generate/edit/print local until the coach explicitly saves or publishes', () => {
@@ -571,6 +635,7 @@ describe('awards and certificates workflow wiring', () => {
         });
         expect(db).toContain('export function canAccessCertificates');
         expect(db).toContain('export function canViewSavedCertificate');
+        expect(db).toContain("where('status', 'in', statuses)");
         expect(db).toContain('options.limit || 250');
         expect(db).toContain('options.limit || 100');
 
