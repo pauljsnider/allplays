@@ -207,12 +207,18 @@ const checkStripeWebhookRateLimit = createInMemoryRateLimiter({
   maxRequests: 120,
   maxKeys: 2_000
 });
-const checkPublicRegistrationSubmissionRateLimit = createFirestoreFixedWindowRateLimiter({
-  firestore,
-  collectionName: 'publicRegistrationRateLimits',
-  windowMs: 10 * 60_000,
-  maxRequests: 3
-});
+let checkPublicRegistrationSubmissionRateLimit;
+function getPublicRegistrationSubmissionRateLimit() {
+  if (!checkPublicRegistrationSubmissionRateLimit) {
+    checkPublicRegistrationSubmissionRateLimit = createFirestoreFixedWindowRateLimiter({
+      firestore,
+      collectionName: 'publicRegistrationRateLimits',
+      windowMs: 10 * 60_000,
+      maxRequests: 3
+    });
+  }
+  return checkPublicRegistrationSubmissionRateLimit;
+}
 const checkPublicOpportunityBrowseRateLimit = createInMemoryRateLimiter({
   windowMs: 60_000,
   maxRequests: 120,
@@ -853,7 +859,7 @@ function buildPublicRegistrationRateLimitBoundary(input, context = {}) {
 
 async function assertPublicRegistrationRateLimit(input, context = {}) {
   const boundary = buildPublicRegistrationRateLimitBoundary(input, context);
-  const rateLimit = await checkPublicRegistrationSubmissionRateLimit(boundary);
+  const rateLimit = await getPublicRegistrationSubmissionRateLimit()(boundary);
   if (!rateLimit.allowed) {
     throwPublicRegistrationError('resource-exhausted', 'Too many registration attempts. Please wait a few minutes and try again.', {
       reason: 'rate-limited',

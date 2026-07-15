@@ -2,6 +2,8 @@ const net = require('node:net');
 const crypto = require('node:crypto');
 const { isPrivateIpAddress } = require('./utils/ip-address-validation.js');
 
+const MAX_RATE_LIMIT_BOUNDARY_BYTES = 2_048;
+
 function parsePositiveInteger(value, fallback) {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
@@ -121,7 +123,17 @@ function createFirestoreFixedWindowRateLimiter({
   const rateLimitCollection = firestore.collection(collectionName.trim());
 
   return async function reserveRateLimitSlot(boundary, now = Date.now()) {
-    const normalizedBoundary = String(boundary || 'unknown');
+    if ((typeof boundary !== 'string' && typeof boundary !== 'number')
+      || (typeof boundary === 'number' && !Number.isFinite(boundary))) {
+      throw new TypeError('A string or finite number rate-limit boundary is required.');
+    }
+    const normalizedBoundary = String(boundary).trim();
+    if (!normalizedBoundary) {
+      throw new TypeError('A non-empty rate-limit boundary is required.');
+    }
+    if (Buffer.byteLength(normalizedBoundary, 'utf8') > MAX_RATE_LIMIT_BOUNDARY_BYTES) {
+      throw new RangeError('The rate-limit boundary is too long.');
+    }
     const documentId = crypto.createHash('sha256').update(normalizedBoundary, 'utf8').digest('hex');
     const limitRef = rateLimitCollection.doc(documentId);
 
@@ -131,7 +143,13 @@ function createFirestoreFixedWindowRateLimiter({
       const existingResetAt = Number(existing.resetAt);
       const windowActive = Number.isFinite(existingResetAt) && existingResetAt > now;
       const resetAt = windowActive ? existingResetAt : now + configuredWindowMs;
-      const count = windowActive ? Number(existing.count) + 1 : 1;
+      const existingCount = Number(existing.count);
+      const count = windowActive
+        && Number.isSafeInteger(existingCount)
+        && existingCount >= 0
+        && existingCount < Number.MAX_SAFE_INTEGER
+        ? existingCount + 1
+        : 1;
 
       transaction.set(limitRef, { count, resetAt });
 

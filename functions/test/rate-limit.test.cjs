@@ -161,3 +161,33 @@ test('uses hashed document identifiers without persisting boundary values', asyn
     assert.doesNotMatch(path, /parent@example\.com|203\.0\.113\.10/);
     assert.doesNotMatch(JSON.stringify(data), /parent@example\.com|203\.0\.113\.10/);
 });
+
+test('rejects invalid or oversized durable rate-limit boundaries', async () => {
+    const limiter = createFirestoreFixedWindowRateLimiter({
+        firestore: makeAtomicFirestore(),
+        collectionName: 'publicRegistrationRateLimits'
+    });
+
+    await assert.rejects(limiter('   '), /non-empty rate-limit boundary/);
+    await assert.rejects(limiter({ key: 'boundary' }), /string or finite number rate-limit boundary/);
+    await assert.rejects(limiter('x'.repeat(2_049)), /rate-limit boundary is too long/);
+});
+
+test('recovers an active window with a corrupted count', async () => {
+    const firestore = makeAtomicFirestore();
+    const limiter = createFirestoreFixedWindowRateLimiter({
+        firestore,
+        collectionName: 'publicRegistrationRateLimits',
+        maxRequests: 3
+    });
+
+    await limiter('boundary-a', 1_000);
+    const [path] = firestore.state.keys();
+    firestore.state.set(path, { count: 'corrupt', resetAt: 60_000 });
+
+    const result = await limiter('boundary-a', 2_000);
+
+    assert.equal(result.allowed, true);
+    assert.equal(result.remaining, 2);
+    assert.deepEqual(firestore.state.get(path), { count: 1, resetAt: 60_000 });
+});

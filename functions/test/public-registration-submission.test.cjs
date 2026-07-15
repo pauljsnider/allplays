@@ -333,6 +333,17 @@ test.afterEach(() => {
     stripeState = null;
 });
 
+test('loads unrelated callables without Firestore transaction support', () => {
+    const firestore = makeFirestore();
+    delete firestore.runTransaction;
+    installModuleStubs(firestore);
+
+    const mod = require('../index.js');
+
+    assert.equal(typeof mod.getFamilyShareSchedule, 'function');
+    assert.equal(typeof mod.listPublicOpportunities, 'function');
+});
+
 test('creates exactly one pending registration and reserves matching capacity', async () => {
     const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration(buildSeedState());
 
