@@ -36,6 +36,14 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
                     parentTeamIds: ['team-a'],
                     teamMediaUploadTeamIds: ['team-a']
                 });
+                await firestore.doc('users/member-a-nonparticipant').set({
+                    isAdmin: false,
+                    parentTeamIds: ['team-a']
+                });
+                await firestore.doc('teams/team-a/chatConversations/targeted-a').set({
+                    type: 'group',
+                    participantIds: ['user:member-a']
+                });
 
                 const storage = context.storage();
                 await storage.ref('team-media/team-a/folder-a/owner-a/existing.jpg').put(
@@ -74,6 +82,59 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
             await assertFails(
                 memberStorage.ref('team-media/team-b/folder-b/member-a/new.jpg').put(
                     new Uint8Array([1]),
+                    { contentType: 'image/jpeg' }
+                )
+            );
+        });
+
+        it('enforces team, conversation, uploader, MIME, and 5 MB boundaries for chat uploads', async () => {
+            const memberStorage = testEnv.authenticatedContext('member-a', {
+                email: 'member-a@example.com'
+            }).storage();
+            const nonparticipantStorage = testEnv.authenticatedContext('member-a-nonparticipant', {
+                email: 'nonparticipant@example.com'
+            }).storage();
+
+            await assertSucceeds(
+                memberStorage.ref('stat-sheets/team-chat/team-a/team/member-a/photo.jpg').put(
+                    new Uint8Array([1]),
+                    { contentType: 'image/jpeg' }
+                )
+            );
+            await assertSucceeds(
+                memberStorage.ref('stat-sheets/team-chat/team-a/targeted-a/member-a/video.mp4').put(
+                    new Uint8Array([1]),
+                    { contentType: 'video/mp4' }
+                )
+            );
+            await assertSucceeds(
+                memberStorage.ref('stat-sheets/team-chat/team-a/team/member-a/max-size.jpg').put(
+                    new Uint8Array(5 * 1024 * 1024),
+                    { contentType: 'image/jpeg' }
+                )
+            );
+
+            await assertFails(
+                memberStorage.ref('stat-sheets/team-chat/team-b/team/member-a/cross-team.jpg').put(
+                    new Uint8Array([1]),
+                    { contentType: 'image/jpeg' }
+                )
+            );
+            await assertFails(
+                nonparticipantStorage.ref('stat-sheets/team-chat/team-a/targeted-a/member-a-nonparticipant/photo.jpg').put(
+                    new Uint8Array([1]),
+                    { contentType: 'image/jpeg' }
+                )
+            );
+            await assertFails(
+                memberStorage.ref('stat-sheets/team-chat/team-a/team/member-a/document.txt').put(
+                    new Uint8Array([1]),
+                    { contentType: 'text/plain' }
+                )
+            );
+            await assertFails(
+                memberStorage.ref('stat-sheets/team-chat/team-a/team/member-a/too-large.jpg').put(
+                    new Uint8Array((5 * 1024 * 1024) + 1),
                     { contentType: 'image/jpeg' }
                 )
             );

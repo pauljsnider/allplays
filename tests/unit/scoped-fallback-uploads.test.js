@@ -1,7 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const uploadState = vi.hoisted(() => ({
-    calls: []
+    calls: [],
+    deletions: []
+}));
+
+const imageAuthMocks = vi.hoisted(() => ({
+    ensureImageAuth: vi.fn(),
+    requireImageAuth: vi.fn()
 }));
 
 const firebaseMocks = vi.hoisted(() => ({
@@ -13,7 +19,10 @@ const firebaseMocks = vi.hoisted(() => ({
         }
         return { ref: storageRef };
     }),
-    getDownloadURL: vi.fn(async (storageRef) => `https://cdn.example.test/${storageRef.fullPath}`)
+    getDownloadURL: vi.fn(async (storageRef) => `https://cdn.example.test/${storageRef.fullPath}`),
+    deleteObject: vi.fn(async (storageRef) => {
+        uploadState.deletions.push(storageRef);
+    })
 }));
 
 vi.mock('../../js/firebase.js?v=20', () => ({
@@ -49,21 +58,57 @@ vi.mock('../../js/firebase.js?v=20', () => ({
     ref: firebaseMocks.ref,
     uploadBytes: firebaseMocks.uploadBytes,
     getDownloadURL: firebaseMocks.getDownloadURL,
-    deleteObject: vi.fn()
+    deleteObject: firebaseMocks.deleteObject
 }));
 
 vi.mock('../../js/firebase-images.js?v=9', () => ({
     imageStorage: 'image-storage',
-    ensureImageAuth: vi.fn(),
-    requireImageAuth: vi.fn()
+    ensureImageAuth: imageAuthMocks.ensureImageAuth,
+    requireImageAuth: imageAuthMocks.requireImageAuth
 }));
 
 describe('scoped fallback uploads', () => {
     beforeEach(() => {
         uploadState.calls.length = 0;
+        uploadState.deletions.length = 0;
         vi.restoreAllMocks();
         vi.clearAllMocks();
         vi.spyOn(Date, 'now').mockReturnValue(1700000000000);
+    });
+
+    it('uploads chat attachments directly to the primary scoped path without image-project auth', async () => {
+        const { uploadChatImage } = await import('../../js/db.js?v=91-scoped-fallback-uploads');
+
+        const result = await uploadChatImage('team/alpha', {
+            name: 'family photo (1).png',
+            size: 789,
+            type: 'image/png'
+        }, { conversationId: 'group_user%3Acoach-1' });
+
+        expect(imageAuthMocks.requireImageAuth).not.toHaveBeenCalled();
+        expect(uploadState.calls).toEqual([expect.objectContaining({
+            targetStorage: 'main-storage',
+            fullPath: 'stat-sheets/team-chat/team_alpha/group_user%3Acoach-1/user-42/1700000000000_family_photo_1_.png'
+        })]);
+        expect(result).toEqual(expect.objectContaining({
+            path: 'stat-sheets/team-chat/team_alpha/group_user%3Acoach-1/user-42/1700000000000_family_photo_1_.png'
+        }));
+    });
+
+    it('deletes new scoped chat media from primary storage and legacy chat media from image storage', async () => {
+        const { deleteUploadedChatAttachments } = await import('../../js/db.js?v=91-scoped-fallback-uploads');
+
+        await deleteUploadedChatAttachments([
+            { path: 'stat-sheets/team-chat/team-a/team/user-42/new.jpg' },
+            { path: 'team-photos/legacy.jpg' },
+            { path: 'team-videos/legacy.mp4' }
+        ]);
+
+        expect(uploadState.deletions).toEqual([
+            expect.objectContaining({ targetStorage: 'main-storage', fullPath: 'stat-sheets/team-chat/team-a/team/user-42/new.jpg' }),
+            expect.objectContaining({ targetStorage: 'image-storage', fullPath: 'team-photos/legacy.jpg' }),
+            expect.objectContaining({ targetStorage: 'image-storage', fullPath: 'team-videos/legacy.mp4' })
+        ]);
     });
 
     it('falls back to a team-scoped stat sheet path when image storage rejects the upload', async () => {
