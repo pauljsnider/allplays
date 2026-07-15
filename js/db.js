@@ -6386,8 +6386,13 @@ export async function listCertificates(teamId, options = {}) {
     if (!teamId) return [];
     const certsRef = collection(db, 'teams', teamId, 'certificates');
     const status = String(options.status || '').trim();
+    const statuses = Array.isArray(options.statuses)
+        ? options.statuses.map((value) => String(value || '').trim()).filter(Boolean).slice(0, 10)
+        : [];
     try {
-        const baseQuery = status
+        const baseQuery = statuses.length
+            ? query(certsRef, where('status', 'in', statuses), orderBy('updatedAt', 'desc'), limit(options.limit || 250))
+            : status
             ? query(certsRef, where('status', '==', status), orderBy('updatedAt', 'desc'), limit(options.limit || 250))
             : query(certsRef, orderBy('updatedAt', 'desc'), limit(options.limit || 250));
         const snapshot = await getDocs(baseQuery);
@@ -6396,7 +6401,7 @@ export async function listCertificates(teamId, options = {}) {
         const snapshot = await getDocs(certsRef);
         return snapshot.docs
             .map((certDoc) => ({ id: certDoc.id, ...certDoc.data() }))
-            .filter((cert) => !status || cert.status === status)
+            .filter((cert) => statuses.length ? statuses.includes(cert.status) : (!status || cert.status === status))
             .sort((a, b) => {
                 const aTime = a.updatedAt?.toMillis ? a.updatedAt.toMillis() : 0;
                 const bTime = b.updatedAt?.toMillis ? b.updatedAt.toMillis() : 0;

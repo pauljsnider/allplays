@@ -22,7 +22,7 @@ import {
     archiveCertificate,
     canAccessCertificates,
     canViewSavedCertificate
-} from '../db.js?v=91';
+} from '../db.js?v=92';
 import { renderHeader, renderFooter, escapeHtml, shareOrCopy } from '../utils.js?v=15';
 import { renderTeamAdminBanner, getTeamAccessInfo } from '../team-admin-banner.js?v=5';
 import { TEMPLATES } from './templates.js?v=2';
@@ -1345,6 +1345,11 @@ function getActiveSavedCertificates(certificates = []) {
     return certificates.filter((certificate) => certificate?.status !== 'archived');
 }
 
+async function listActiveSavedCertificates() {
+    const certificates = await listCertificates(state.teamId, { statuses: ['draft', 'published'] });
+    return getActiveSavedCertificates(certificates);
+}
+
 async function archiveSavedCertificate(certificateId) {
     const certificate = state.savedCertificates.find((item) => item.id === certificateId);
     if (!certificate) return;
@@ -1352,8 +1357,18 @@ async function archiveSavedCertificate(certificateId) {
     if (!globalThis.confirm(`Archive the certificate for ${recipientName}? It will no longer appear in saved certificate history or to parents.`)) return;
 
     try {
+        let batch = state.savedBatches.find((item) => item.id === certificate.batchId)
+            || state.savedBatches.find((item) => (item.generatedCertificateIds || []).includes(certificateId));
+        if (!state.demoMode && certificate.batchId && !batch) {
+            batch = await getCertificateBatch(state.teamId, certificate.batchId);
+        }
         if (!state.demoMode) {
             await archiveCertificate(state.teamId, certificateId);
+            if (batch) {
+                await updateCertificateBatch(state.teamId, batch.id, {
+                    generatedCertificateIds: (batch.generatedCertificateIds || []).filter((id) => id !== certificateId)
+                });
+            }
         }
         state.savedCertificates = state.savedCertificates.filter((item) => item.id !== certificateId);
         state.savedBatches = state.savedBatches.map((batch) => ({
@@ -2031,7 +2046,7 @@ async function saveDrafts(status) {
             console.warn('[certificates] Unable to save certificate defaults after save:', error);
             showAlert('Certificates saved, but team defaults could not be updated because of permissions.', 'warning');
         }
-        state.savedCertificates = getActiveSavedCertificates(await loadOptionalCertificateResource('saved certificates', () => listCertificates(state.teamId), state.savedCertificates));
+        state.savedCertificates = await loadOptionalCertificateResource('saved certificates', listActiveSavedCertificates, state.savedCertificates);
         state.savedBatches = await loadOptionalCertificateResource('certificate batches', () => listCertificateBatches(state.teamId), state.savedBatches);
         renderSidebar();
         renderReviewGrid();
@@ -2499,13 +2514,13 @@ async function initAuthenticated(params) {
                 loadOptionalCertificateResource('certificate defaults', () => getCertificateDefaults(state.teamId), null),
                 loadOptionalCertificateResource('certificate assets', () => listCertificateAssets(state.teamId), []),
                 loadOptionalCertificateResource('certificate batches', () => listCertificateBatches(state.teamId), []),
-                loadOptionalCertificateResource('saved certificates', () => listCertificates(state.teamId), [])
+                loadOptionalCertificateResource('saved certificates', listActiveSavedCertificates, [])
             ]);
 
             state.roster = roster;
             state.assets = assets;
             state.savedBatches = batches;
-            state.savedCertificates = getActiveSavedCertificates(certs);
+            state.savedCertificates = certs;
             state.games = games;
             state.shared = await buildSharedDefaults({ team: state.team, defaults, currentUser: state.user });
             const playerId = params.get('playerId');
