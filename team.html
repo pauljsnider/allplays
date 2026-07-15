@@ -3164,9 +3164,18 @@
                 section.innerHTML = '';
                 return;
             }
+            section.classList.remove('hidden');
+            if (currentTeam?.isPublic !== true) {
+                section.innerHTML = `
+                    <div class="bg-white rounded-2xl shadow-md border border-gray-200 p-6">
+                        <h2 class="text-xl font-bold text-gray-900">Scoreboard widget unavailable</h2>
+                        <p class="text-sm text-gray-600 mt-2">This team is private. Make the team public before sharing a scoreboard link or embed.</p>
+                    </div>
+                `;
+                return;
+            }
             const widgetUrl = getScoreboardWidgetUrl();
             const embedCode = buildScoreboardWidgetEmbedCode();
-            section.classList.remove('hidden');
             section.innerHTML = `
                 <div class="bg-white rounded-2xl shadow-md border border-gray-200 p-6">
                     <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">

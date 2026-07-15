@@ -73,6 +73,15 @@ describe('scoreboard widget embed', () => {
         expect(source).toContain('<iframe src="${url}"');
     });
 
+    it('does not offer legacy scoreboard sharing controls for private teams', () => {
+        const source = readPage('team.html');
+
+        expect(source).toContain('if (currentTeam?.isPublic !== true)');
+        expect(source).toContain('Scoreboard widget unavailable');
+        expect(source).toContain('This team is private. Make the team public before sharing a scoreboard link or embed.');
+        expect(source.indexOf('if (currentTeam?.isPublic !== true)')).toBeLessThan(source.indexOf('const widgetUrl = getScoreboardWidgetUrl();', source.indexOf('function renderScoreboardWidgetTools()')));
+    });
+
     it('adds a read-only public widget page backed by team games', () => {
         const source = readPage('widget-scoreboard.html');
 
