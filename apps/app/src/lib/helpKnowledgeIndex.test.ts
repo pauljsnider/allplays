@@ -2,6 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { helpKnowledgeIndex } from './helpKnowledgeIndex';
 
 describe('helpKnowledgeIndex', () => {
+  it('indexes the scorekeeper role filter from the help portal', () => {
+    const helpEntry = helpKnowledgeIndex.find((entry) => entry.id === 'help');
+
+    expect(helpEntry).toBeDefined();
+    expect(helpEntry?.text).toContain(
+      '\nAll roles\nParent\nCoach\nScorekeeper\nAdmin\nMember\nView file-by-file page reference'
+    );
+  });
+
   it('uses app routes instead of legacy auth filenames in app-facing account help', () => {
     const accountEntry = helpKnowledgeIndex.find((entry) => entry.id === 'help-account');
 
