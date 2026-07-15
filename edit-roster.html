@@ -2501,14 +2501,15 @@
                 throw new Error(validationErrors.join('\n'));
             }
             const { publicValues, privateValues } = splitRosterProfileValuesByVisibility(rosterFieldDefinitions, profileValues);
+            const { publicProfile: existingPublicProfile, privateValues: legacyProtectedValues } = splitProtectedRosterProfileValues(existingProfile || {});
             const playerData = {};
             if (Object.prototype.hasOwnProperty.call(draft, 'name')) playerData.name = String(draft.name || '').trim();
             if (Object.prototype.hasOwnProperty.call(draft, 'number')) playerData.number = String(draft.number || '').trim();
-            if (Object.keys(publicValues).length > 0) {
+            if (Object.keys(publicValues).length > 0 || Object.keys(legacyProtectedValues).length > 0) {
                 playerData.profile = {
-                    ...(existingProfile || {}),
+                    ...existingPublicProfile,
                     customFields: {
-                        ...((existingProfile || {}).customFields || {}),
+                        ...(existingPublicProfile.customFields || {}),
                         ...publicValues
                     }
                 };
@@ -2519,7 +2520,7 @@
             const familyContact = getBulkAiFamilyContact(draft);
             return {
                 playerData,
-                privateRosterFields: privateValues,
+                privateRosterFields: { ...legacyProtectedValues, ...privateValues },
                 privateFamilyContacts: familyContact ? { parents: [familyContact] } : null
             };
         }

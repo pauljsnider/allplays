@@ -1,5 +1,8 @@
 const SUPPORTED_TYPES = new Set(['text', 'menu', 'checkbox', 'date']);
 const SUPPORTED_VISIBILITY = new Set(['public', 'team', 'parents', 'admins']);
+const PRIVATE_BUILT_IN_PROFILE_FIELDS = new Set([
+    'birthDate', 'gender', 'grade', 'school', 'jerseySize', 'memberId', 'dominantHandFoot', 'address'
+]);
 
 export const STANDARD_ROSTER_FIELD_DEFINITIONS = Object.freeze([
     { key: 'preferredName', label: 'Preferred Name', type: 'text', visibility: 'public', section: 'Identity', sortOrder: 10, standard: true },
@@ -274,7 +277,9 @@ export function splitRosterProfileValuesByVisibility(fields = [], values = {}, o
     const privateValues = {};
     fields.forEach((field) => {
         if (!Object.prototype.hasOwnProperty.call(values || {}, field.key)) return;
-        if (isPublicRosterField(field)) {
+        if (PRIVATE_BUILT_IN_PROFILE_FIELDS.has(field.key)) {
+            privateValues[field.key] = values[field.key];
+        } else if (isPublicRosterField(field)) {
             publicValues[field.key] = values[field.key];
         } else if (isPrivateRosterField(field, options)) {
             privateValues[field.key] = values[field.key];
@@ -396,10 +401,6 @@ const PROFILE_HEADER_ALIASES = new Map([
     ['nonplayer', { profileField: 'rosterStatus', statusMode: 'nonPlayerFlag' }],
     ['isnonplayer', { profileField: 'rosterStatus', statusMode: 'nonPlayerFlag' }],
     ['notaplayer', { profileField: 'rosterStatus', statusMode: 'nonPlayerFlag' }]
-]);
-
-const PRIVATE_BUILT_IN_PROFILE_FIELDS = new Set([
-    'birthDate', 'gender', 'grade', 'school', 'jerseySize', 'memberId', 'dominantHandFoot', 'address'
 ]);
 
 const ROSTER_STATUS_VALUE_ALIASES = new Map([
@@ -952,12 +953,6 @@ export function planRosterCsvImport({ csvText = '', fields = [], existingPlayers
 
         if (!name) return;
         const { publicValues, privateValues } = splitRosterProfileValuesByVisibility(normalizedFields, parsedValues, { includeAdminPrivate: false });
-        normalizedFields.forEach((field) => {
-            if (!PRIVATE_BUILT_IN_PROFILE_FIELDS.has(field.key)) return;
-            if (!Object.prototype.hasOwnProperty.call(parsedValues, field.key)) return;
-            privateValues[field.key] = parsedValues[field.key];
-            delete publicValues[field.key];
-        });
         PRIVATE_BUILT_IN_PROFILE_FIELDS.forEach((key) => {
             if (!Object.prototype.hasOwnProperty.call(profileValuesForMerge, key)) return;
             privateValues[key] = profileValuesForMerge[key];

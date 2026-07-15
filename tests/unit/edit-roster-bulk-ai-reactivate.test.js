@@ -50,4 +50,12 @@ describe('edit roster Bulk AI proposed changes preview', () => {
         expect(applySource).toContain('const privateFamilyContacts = mergeBulkAiPrivateFamilyContactsForUpdate(existingPlayer, payload.privateFamilyContacts);');
         expect(applySource).toContain('setPlayerPrivateRosterProfileFields(currentTeamId, op.playerId, payload.privateRosterFields, privateFamilyContacts || {})');
     });
+
+    it('migrates legacy protected profile values during Bulk AI saves', () => {
+        const source = readEditRoster();
+
+        expect(source).toContain('const { publicProfile: existingPublicProfile, privateValues: legacyProtectedValues } = splitProtectedRosterProfileValues(existingProfile || {});');
+        expect(source).toContain('Object.keys(publicValues).length > 0 || Object.keys(legacyProtectedValues).length > 0');
+        expect(source).toContain('privateRosterFields: { ...legacyProtectedValues, ...privateValues }');
+    });
 });

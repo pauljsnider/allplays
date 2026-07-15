@@ -51,6 +51,7 @@ import {
   canViewRosterField,
   getRosterProfileValues,
   normalizeRosterFieldDefinitions,
+  splitProtectedRosterProfileValues,
   splitRosterProfileValuesByVisibility,
   validateRosterProfileValues,
   type RosterFieldDefinition,
@@ -386,8 +387,9 @@ export async function savePlayerCustomRosterFieldValues({
   }
 
   const { publicValues, privateValues } = splitRosterProfileValuesByVisibility(normalizedFields, filteredValues);
+  const { publicProfile: existingPublicProfile, privateValues: legacyProtectedValues } = splitProtectedRosterProfileValues(player?.profile || {});
   const nextProfile = {
-    ...(player?.profile || {}),
+    ...existingPublicProfile,
     customFields: publicValues
   };
 
@@ -395,12 +397,12 @@ export async function savePlayerCustomRosterFieldValues({
     updatePlayer(teamId, playerId, {
       profile: nextProfile
     }),
-    setPlayerPrivateRosterProfileFields(teamId, playerId, privateValues)
+    setPlayerPrivateRosterProfileFields(teamId, playerId, { ...legacyProtectedValues, ...privateValues })
   ]);
 
   return {
     profile: nextProfile,
-    privateRosterFields: privateValues,
+    privateRosterFields: { ...legacyProtectedValues, ...privateValues },
     privateProfile
   };
 }

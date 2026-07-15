@@ -56,9 +56,30 @@ const legacyRosterPrivacyMocks = vi.hoisted(() => ({
     ...(player?.profile?.customFields || {})
   })),
   normalizeRosterFieldDefinitions: vi.fn((fields) => fields),
+  splitProtectedRosterProfileValues: vi.fn((profile) => {
+    const protectedKeys = new Set(['birthDate', 'gender', 'grade', 'school', 'jerseySize', 'memberId', 'dominantHandFoot', 'address']);
+    const publicProfile = { ...(profile || {}) };
+    const privateValues: Record<string, unknown> = {};
+    protectedKeys.forEach((key) => {
+      if (Object.prototype.hasOwnProperty.call(publicProfile, key)) {
+        privateValues[key] = publicProfile[key];
+        delete publicProfile[key];
+      }
+    });
+    if (publicProfile.customFields && typeof publicProfile.customFields === 'object') {
+      publicProfile.customFields = { ...publicProfile.customFields };
+      protectedKeys.forEach((key) => {
+        if (Object.prototype.hasOwnProperty.call(publicProfile.customFields, key)) {
+          privateValues[key] = publicProfile.customFields[key];
+          delete publicProfile.customFields[key];
+        }
+      });
+    }
+    return { publicProfile, privateValues };
+  }),
   splitRosterProfileValuesByVisibility: vi.fn((fields, values) => ({
-    publicValues: Object.fromEntries(Object.entries(values || {}).filter(([key]) => fields.find((field: any) => field.key === key && field.visibility === 'public'))),
-    privateValues: Object.fromEntries(Object.entries(values || {}).filter(([key]) => fields.find((field: any) => field.key === key && (field.visibility === 'team' || field.visibility === 'parents'))))
+    publicValues: Object.fromEntries(Object.entries(values || {}).filter(([key]) => fields.find((field: any) => field.key === key && field.visibility === 'public' && !['birthDate', 'gender', 'grade', 'school', 'jerseySize', 'memberId', 'dominantHandFoot', 'address'].includes(key)))),
+    privateValues: Object.fromEntries(Object.entries(values || {}).filter(([key]) => fields.find((field: any) => field.key === key && (['birthDate', 'gender', 'grade', 'school', 'jerseySize', 'memberId', 'dominantHandFoot', 'address'].includes(key) || field.visibility === 'team' || field.visibility === 'parents'))))
   })),
   validateRosterProfileValues: vi.fn(() => [])
 }));
@@ -678,6 +699,35 @@ describe('savePlayerCustomRosterFieldValues', () => {
     expect(legacyPlayerDbMocks.setPlayerPrivateRosterProfileFields).toHaveBeenCalledWith('team-1', 'player-1', {
       birthDate: '2014-02-03',
       jerseySize: 'YS'
+    });
+  });
+
+  it('migrates legacy protected fields and ignores legacy public visibility in app saves', async () => {
+    legacyPlayerDbMocks.getPlayers.mockResolvedValue([{
+      id: 'player-1',
+      profile: {
+        birthDate: '2014-02-03',
+        customFields: { grade: '6', nickname: 'Rocket' }
+      }
+    }]);
+    legacyPlayerDbMocks.getRosterFieldDefinitions.mockResolvedValue([
+      { key: 'nickname', label: 'Nickname', type: 'text', visibility: 'public', sortOrder: 1 },
+      { key: 'grade', label: 'Grade', type: 'text', visibility: 'public', sortOrder: 2 }
+    ]);
+
+    await savePlayerCustomRosterFieldValues({
+      user: { uid: 'coach-1', email: 'coach@example.com' } as any,
+      teamId: 'team-1',
+      playerId: 'player-1',
+      values: { nickname: 'Speedy', grade: '7' }
+    });
+
+    expect(legacyPlayerDbMocks.updatePlayer).toHaveBeenCalledWith('team-1', 'player-1', {
+      profile: { customFields: { nickname: 'Speedy' } }
+    });
+    expect(legacyPlayerDbMocks.setPlayerPrivateRosterProfileFields).toHaveBeenCalledWith('team-1', 'player-1', {
+      birthDate: '2014-02-03',
+      grade: '7'
     });
   });
 

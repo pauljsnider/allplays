@@ -2,6 +2,7 @@ import {
     getRosterProfileValues as legacyGetRosterProfileValues,
     normalizeRosterFieldDefinitions as legacyNormalizeRosterFieldDefinitions,
     splitRosterProfileValuesByVisibility as legacySplitRosterProfileValuesByVisibility,
+    splitProtectedRosterProfileValues as legacySplitProtectedRosterProfileValues,
     validateRosterProfileValues as legacyValidateRosterProfileValues
 } from '@legacy/roster-profile-fields.js';
 import { canViewRosterField as legacyCanViewRosterFieldVisibility } from '@legacy/roster-field-privacy.js';
@@ -173,6 +174,17 @@ export function splitRosterProfileValuesByVisibility(fields: RosterFieldDefiniti
     return {
         publicValues: normalizeRosterProfileValues(result.publicValues),
         privateValues: normalizeRosterProfileValues(result.privateValues)
+    };
+}
+
+export function splitProtectedRosterProfileValues(profile: Record<string, unknown>): {
+    publicProfile: Record<string, any>;
+    privateValues: Record<string, any>;
+} {
+    const result = legacySplitProtectedRosterProfileValues(profile);
+    return {
+        publicProfile: isRecord(result?.publicProfile) ? result.publicProfile : {},
+        privateValues: isRecord(result?.privateValues) ? result.privateValues : {}
     };
 }
 

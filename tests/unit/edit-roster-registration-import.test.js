@@ -301,13 +301,45 @@ describe('registration roster import planning', () => {
         });
 
         expect(plan.results).toMatchObject({ updated: 1, fieldsImported: 4, fieldsSkipped: 0 });
-        expect(plan.operations[0].payload.profile).toBeUndefined();
+        expect(plan.operations[0].payload.profile).toEqual({ customFields: { note: 'keep' } });
         expect(plan.operations[0].privateRosterFields).toEqual({
             grade: '6',
             position: 'pg',
             throwsRight: true,
             birthDate: '2014-02-03'
         });
+    });
+
+    it('routes public-configured protected fields privately and migrates legacy public values', () => {
+        const plan = planRegistrationRosterImport({
+            source: { type: 'sports-connect', id: 'league-1' },
+            fields: [{ key: 'grade', label: 'Grade', type: 'text', visibility: 'public' }],
+            sourcePlayers: [{
+                externalPlayerId: 'ext-1',
+                name: 'Avery Lee',
+                number: '4',
+                answers: { Grade: '7' }
+            }],
+            existingPlayers: [{
+                id: 'player-1',
+                name: 'Avery Lee',
+                number: '3',
+                profile: {
+                    birthDate: '2014-02-03',
+                    customFields: { grade: '6', nickname: 'Rocket' }
+                },
+                sourceMetadata: { sourceType: 'sports-connect', sourceId: 'league-1', externalPlayerId: 'ext-1' }
+            }]
+        });
+
+        expect(plan.operations[0]).toMatchObject({
+            type: 'update',
+            playerId: 'player-1',
+            payload: { profile: { customFields: { nickname: 'Rocket' } } },
+            privateRosterFields: { birthDate: '2014-02-03', grade: '7' }
+        });
+        expect(plan.operations[0].payload.profile).not.toHaveProperty('birthDate');
+        expect(plan.operations[0].payload.profile.customFields).not.toHaveProperty('grade');
     });
 
     it('falls back past empty registration wrappers when mapping configured roster fields', () => {
@@ -369,7 +401,8 @@ describe('registration roster import planning', () => {
 
         expect(plan.results).toMatchObject({ updated: 1, fieldsImported: 0, fieldsSkipped: 3 });
         expect(plan.results.fieldSkipReasons).toEqual({ blank: 1, invalid: 1, unsupported: 1 });
-        expect(plan.operations[0].payload.profile).toBeUndefined();
+        expect(plan.operations[0].payload.profile).toEqual({ customFields: { position: 'pg' } });
+        expect(plan.operations[0].privateRosterFields).toEqual({ grade: '5' });
     });
 
     it('keeps admin-only roster field imports out of the public player profile payload', () => {

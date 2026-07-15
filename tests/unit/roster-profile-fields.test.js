@@ -131,6 +131,23 @@ describe('roster profile fields', () => {
         });
     });
 
+    it('keeps protected built-ins private when legacy definitions mark them public', () => {
+        const fields = normalizeRosterFieldDefinitions([
+            { key: 'nickname', label: 'Nickname', visibility: 'public' },
+            { key: 'grade', label: 'Grade', visibility: 'public' },
+            { key: 'memberId', label: 'Member ID', visibility: 'public' }
+        ]);
+
+        expect(splitRosterProfileValuesByVisibility(fields, {
+            nickname: 'Rocket',
+            grade: '6',
+            memberId: 'AAU-42'
+        })).toEqual({
+            publicValues: { nickname: 'Rocket' },
+            privateValues: { grade: '6', memberId: 'AAU-42' }
+        });
+    });
+
     it('excludes disabled definitions from player forms unless requested', () => {
         const fields = [
             { key: 'active', label: 'Active Field', type: 'text', active: true, sortOrder: 1 },
