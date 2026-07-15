@@ -106,9 +106,25 @@ test('normalizeTargetUrl validates bracketed IPv6 literals without DNS lookup', 
 
     const result = await normalizeTargetUrl('https://[2606:4700:4700::1111]/calendar.ics');
 
-    assert.strictEqual(result.hostname, '[2606:4700:4700::1111]');
+    assert.strictEqual(result.hostname, '2606:4700:4700::1111');
     assert.deepStrictEqual(result.publicIps, ['2606:4700:4700::1111']);
     assert.strictEqual(dnsLookupCalled, false, 'public IPv6 literals should bypass DNS resolution');
+
+    const requestOptionsUsed = [];
+    _setClientModulesForTesting(null, {
+      request: (options) => {
+        requestOptionsUsed.push(options);
+        const mockRequest = createMockRequest();
+        setImmediate(() => mockRequest.emit('error', new Error('expected test stop')));
+        return mockRequest;
+      },
+    });
+    await assert.rejects(
+      fetchWithTimeout(result.url, result.hostname, result.publicIps),
+      { message: 'Calendar fetch failed: expected test stop' }
+    );
+    assert.strictEqual(requestOptionsUsed[0].servername, '2606:4700:4700::1111', 'TLS servername must be unbracketed');
+    assert.strictEqual(requestOptionsUsed[0].headers.Host, '[2606:4700:4700::1111]', 'IPv6 Host header must remain bracketed');
 
     await assert.rejects(
       normalizeTargetUrl('https://[::1]/calendar.ics'),
@@ -127,6 +143,7 @@ test('normalizeTargetUrl validates bracketed IPv6 literals without DNS lookup', 
     );
   } finally {
     dns.lookup = originalDnsLookup;
+    _setClientModulesForTesting(null, null);
   }
 });
 

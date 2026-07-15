@@ -161,7 +161,7 @@ async function normalizeTargetUrl(rawUrl) {
 
   return {
     url: parsed.toString(),
-    hostname: parsed.hostname,
+    hostname: host,
     publicIps: publicIps,
   };
 }
@@ -180,6 +180,7 @@ async function fetchWithTimeout(url, originalHostname, publicIps, timeoutMs = 12
   const parsedUrl = new URL(url);
   const isHttps = parsedUrl.protocol === 'https:';
   const clientModule = isHttps ? _https : _http;
+  const hostHeader = net.isIP(originalHostname) === 6 ? `[${originalHostname}]` : originalHostname;
 
   if (!publicIps || publicIps.length === 0) {
     throw new Error('No public IPs provided for fetch connection after validation.');
@@ -191,7 +192,7 @@ async function fetchWithTimeout(url, originalHostname, publicIps, timeoutMs = 12
       headers: {
         'User-Agent': 'allplays-calendar-fetch/1.0',
         'Accept': 'text/calendar,text/plain,*/*',
-        'Host': originalHostname,
+        'Host': hostHeader,
       },
       signal: controller.signal,
       host: targetIp,
