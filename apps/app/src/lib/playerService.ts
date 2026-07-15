@@ -16,6 +16,7 @@ import {
   saveAthleteProfile,
   setPlayerPrivateRosterProfileFields,
   updatePlayer,
+  updatePlayerWithPrivateRosterProfileFields,
   updatePlayerProfile,
   uploadAthleteProfileMedia,
   uploadPlayerPhoto,
@@ -392,17 +393,22 @@ export async function savePlayerCustomRosterFieldValues({
     ...existingPublicProfile,
     customFields: publicValues
   };
+  const existingPrivateRosterFields = privateProfile?.rosterFields && typeof privateProfile.rosterFields === 'object'
+    ? privateProfile.rosterFields
+    : {};
+  const nextPrivateRosterFields = {
+    ...legacyProtectedValues,
+    ...existingPrivateRosterFields,
+    ...privateValues
+  };
 
-  await Promise.all([
-    updatePlayer(teamId, playerId, {
-      profile: nextProfile
-    }),
-    setPlayerPrivateRosterProfileFields(teamId, playerId, { ...legacyProtectedValues, ...privateValues })
-  ]);
+  await updatePlayerWithPrivateRosterProfileFields(teamId, playerId, {
+    profile: nextProfile
+  }, nextPrivateRosterFields);
 
   return {
     profile: nextProfile,
-    privateRosterFields: { ...legacyProtectedValues, ...privateValues },
+    privateRosterFields: nextPrivateRosterFields,
     privateProfile
   };
 }

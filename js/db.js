@@ -2897,6 +2897,21 @@ export async function setPlayerPrivateRosterProfileFields(teamId, playerId, rost
     await setDoc(doc(db, `teams/${teamId}/players/${playerId}/private/profile`), privateProfileUpdate, { merge: true });
 }
 
+export async function updatePlayerWithPrivateRosterProfileFields(teamId, playerId, playerData, rosterFields = null) {
+    assertNoSensitivePlayerFields(playerData);
+    const updatedAt = Timestamp.now();
+    const batch = writeBatch(db);
+    batch.update(doc(db, `teams/${teamId}/players`, playerId), {
+        ...playerData,
+        updatedAt
+    });
+    batch.set(doc(db, `teams/${teamId}/players/${playerId}/private/profile`), {
+        rosterFields: rosterFields || {},
+        updatedAt
+    }, { merge: true });
+    await batch.commit();
+}
+
 export async function applyRosterCsvImportOperations(teamId, operations = []) {
     const normalizedTeamId = String(teamId || '').trim();
     const plannedOperations = Array.isArray(operations) ? operations : [];

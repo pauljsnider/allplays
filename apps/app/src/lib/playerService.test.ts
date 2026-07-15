@@ -19,6 +19,7 @@ const legacyPlayerDbMocks = vi.hoisted(() => ({
   saveAthleteProfile: vi.fn(),
   setPlayerPrivateRosterProfileFields: vi.fn(),
   updatePlayer: vi.fn(),
+  updatePlayerWithPrivateRosterProfileFields: vi.fn(),
   updatePlayerProfile: vi.fn(),
   uploadAthleteProfileMedia: vi.fn(),
   uploadPlayerPhoto: vi.fn()
@@ -665,6 +666,7 @@ describe('savePlayerCustomRosterFieldValues', () => {
     ]);
     legacyPlayerDbMocks.updatePlayer.mockResolvedValue(undefined);
     legacyPlayerDbMocks.setPlayerPrivateRosterProfileFields.mockResolvedValue(undefined);
+    legacyPlayerDbMocks.updatePlayerWithPrivateRosterProfileFields.mockResolvedValue(undefined);
   });
 
   it('writes only public custom roster values to the public player doc', async () => {
@@ -688,15 +690,14 @@ describe('savePlayerCustomRosterFieldValues', () => {
       }
     });
 
-    expect(legacyPlayerDbMocks.updatePlayer).toHaveBeenCalledWith('team-1', 'player-1', {
+    expect(legacyPlayerDbMocks.updatePlayerWithPrivateRosterProfileFields).toHaveBeenCalledWith('team-1', 'player-1', {
       profile: {
         position: 'Guard',
         customFields: {
           nickname: 'Speedy'
         }
       }
-    });
-    expect(legacyPlayerDbMocks.setPlayerPrivateRosterProfileFields).toHaveBeenCalledWith('team-1', 'player-1', {
+    }, {
       birthDate: '2014-02-03',
       jerseySize: 'YS'
     });
@@ -722,13 +723,27 @@ describe('savePlayerCustomRosterFieldValues', () => {
       values: { nickname: 'Speedy', grade: '7' }
     });
 
-    expect(legacyPlayerDbMocks.updatePlayer).toHaveBeenCalledWith('team-1', 'player-1', {
+    expect(legacyPlayerDbMocks.updatePlayerWithPrivateRosterProfileFields).toHaveBeenCalledWith('team-1', 'player-1', {
       profile: { customFields: { nickname: 'Speedy' } }
-    });
-    expect(legacyPlayerDbMocks.setPlayerPrivateRosterProfileFields).toHaveBeenCalledWith('team-1', 'player-1', {
+    }, {
       birthDate: '2014-02-03',
+      jerseySize: 'YM',
       grade: '7'
     });
+  });
+
+  it('does not fall back to independent writes when the atomic profile migration fails', async () => {
+    legacyPlayerDbMocks.updatePlayerWithPrivateRosterProfileFields.mockRejectedValueOnce(new Error('batch failed'));
+
+    await expect(savePlayerCustomRosterFieldValues({
+      user: { uid: 'coach-1', email: 'coach@example.com' } as any,
+      teamId: 'team-1',
+      playerId: 'player-1',
+      values: { nickname: 'Speedy' }
+    })).rejects.toThrow('batch failed');
+
+    expect(legacyPlayerDbMocks.updatePlayer).not.toHaveBeenCalled();
+    expect(legacyPlayerDbMocks.setPlayerPrivateRosterProfileFields).not.toHaveBeenCalled();
   });
 
   it('rejects custom roster field edits from linked parent-only users', async () => {

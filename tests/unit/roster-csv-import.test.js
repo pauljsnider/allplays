@@ -18,6 +18,8 @@ function extractFunction(source, signature) {
 function buildRosterImportOperationHelper() {
     const source = readFileSync('js/db.js', 'utf8');
     const assertSource = extractFunction(source, 'function assertNoSensitivePlayerFields(');
+    const atomicUpdateSource = extractFunction(source, 'export async function updatePlayerWithPrivateRosterProfileFields(')
+        .replace('export async function updatePlayerWithPrivateRosterProfileFields', 'async function updatePlayerWithPrivateRosterProfileFields');
     const applySource = extractFunction(source, 'export async function applyRosterCsvImportOperations(')
         .replace('export async function applyRosterCsvImportOperations', 'async function applyRosterCsvImportOperations');
     const batch = {
@@ -39,10 +41,11 @@ function buildRosterImportOperationHelper() {
     const factory = new Function('deps', `
         const { Timestamp, db, collection, doc, writeBatch } = deps;
         ${assertSource}
+        ${atomicUpdateSource}
         ${applySource}
-        return applyRosterCsvImportOperations;
+        return { applyRosterCsvImportOperations, updatePlayerWithPrivateRosterProfileFields };
     `);
-    return { applyRosterCsvImportOperations: factory(deps), batch };
+    return { ...factory(deps), batch };
 }
 
 describe('roster CSV import planning', () => {
@@ -545,6 +548,34 @@ describe('roster CSV import planning', () => {
         });
     });
 
+    it('preserves corrected private values over stale legacy public values during CSV migration', () => {
+        const plan = planRosterCsvImport({
+            fields: [],
+            existingPlayers: [{
+                id: 'p1',
+                name: 'Avery Lee',
+                profile: {
+                    birthDate: '2014-02-03',
+                    address: { city: 'Old City', state: 'MO' },
+                    customFields: { grade: '6' }
+                },
+                privateProfileRosterFields: {
+                    birthDate: '2014-03-04',
+                    address: { city: 'New City', state: 'KS' },
+                    grade: '7'
+                }
+            }],
+            csvText: 'Name,Number\nAvery Lee,8'
+        });
+
+        expect(plan.errors).toEqual([]);
+        expect(plan.operations[0].privateRosterFields).toEqual({
+            birthDate: '2014-03-04',
+            address: { city: 'New City', state: 'KS' },
+            grade: '7'
+        });
+    });
+
     it('migrates protected values from every guarded nested legacy profile map', () => {
         const plan = planRosterCsvImport({
             fields: [],
@@ -629,6 +660,29 @@ describe('roster CSV import planning', () => {
                     address: { street: '123 Main' }
                 }
             },
+            { merge: true }
+        );
+        expect(batch.commit).toHaveBeenCalledTimes(1);
+    });
+
+    it('stages app profile migration writes in one batch before a failed commit', async () => {
+        const { updatePlayerWithPrivateRosterProfileFields, batch } = buildRosterImportOperationHelper();
+        batch.commit.mockRejectedValueOnce(new Error('commit failed'));
+
+        await expect(updatePlayerWithPrivateRosterProfileFields(
+            'team-1',
+            'player-1',
+            { profile: { customFields: { nickname: 'Rocket' } } },
+            { birthDate: '2014-02-03' }
+        )).rejects.toThrow('commit failed');
+
+        expect(batch.update).toHaveBeenCalledWith(
+            expect.objectContaining({ path: 'teams/team-1/players/player-1' }),
+            { profile: { customFields: { nickname: 'Rocket' } }, updatedAt: 'now' }
+        );
+        expect(batch.set).toHaveBeenCalledWith(
+            expect.objectContaining({ path: 'teams/team-1/players/player-1/private/profile' }),
+            { rosterFields: { birthDate: '2014-02-03' }, updatedAt: 'now' },
             { merge: true }
         );
         expect(batch.commit).toHaveBeenCalledTimes(1);

@@ -971,6 +971,14 @@ export function planRosterCsvImport({ csvText = '', fields = [], existingPlayers
 
         const existing = matches[0];
         const { publicProfile: existingProfile, privateValues: legacyPrivateValues } = splitProtectedRosterProfileValues(existing?.profile || {});
+        const existingPrivateValues = existing?.privateProfileRosterFields && typeof existing.privateProfileRosterFields === 'object'
+            ? existing.privateProfileRosterFields
+            : {};
+        PRIVATE_BUILT_IN_PROFILE_FIELDS.forEach((key) => {
+            if (Object.prototype.hasOwnProperty.call(existingPrivateValues, key)) {
+                legacyPrivateValues[key] = existingPrivateValues[key];
+            }
+        });
         Object.entries(legacyPrivateValues).forEach(([key, value]) => {
             if (key === 'address' && value && typeof value === 'object' && privateValues.address && typeof privateValues.address === 'object') {
                 privateValues.address = { ...value, ...privateValues.address };
