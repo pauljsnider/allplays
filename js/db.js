@@ -525,48 +525,20 @@ function getRequiredSignedInUserId() {
 }
 
 export async function uploadChatImage(teamId, file, { conversationId = DEFAULT_TEAM_CONVERSATION_ID } = {}) {
-    await requireImageAuth();
-
     const ts = Date.now();
     const userId = getRequiredSignedInUserId();
-    const safeName = String(file.name || 'media').replace(/[^\w.\-]+/g, '_');
-    const safeConversationId = String(conversationId || DEFAULT_TEAM_CONVERSATION_ID)
-        .replace(/[^\w.\-]+/g, '_') || DEFAULT_TEAM_CONVERSATION_ID;
-    const isVideo = String(file.type || '').toLowerCase().startsWith('video/');
-    const mediaFolder = isVideo ? 'team-videos' : 'team-photos';
-    const imagePath = `${mediaFolder}/${ts}_chat_${teamId}_${safeConversationId}_${userId}_${safeName}`;
-
-    try {
-        const storageRef = ref(imageStorage, imagePath);
-        const snapshot = await uploadBytes(storageRef, file);
-        const url = await getDownloadURL(snapshot.ref);
-        return {
-            url,
-            path: imagePath,
-            name: file.name || null,
-            type: file.type || null,
-            size: Number.isFinite(file.size) ? file.size : null,
-            thumbnailUrl: null
-        };
-    } catch (error) {
-        const code = error?.code || '';
-        if (code === 'storage/unauthorized' || code === 'storage/unauthenticated') {
-            console.warn('Image storage denied chat upload, falling back to main storage:', error?.message || error);
-            const fallbackPath = buildChatAttachmentFallbackPath(teamId, conversationId, userId, file.name, ts);
-            const fallbackRef = ref(storage, fallbackPath);
-            const fallbackSnapshot = await uploadBytes(fallbackRef, file);
-            const fallbackUrl = await getDownloadURL(fallbackSnapshot.ref);
-            return {
-                url: fallbackUrl,
-                path: fallbackPath,
-                name: file.name || null,
-                type: file.type || null,
-                size: Number.isFinite(file.size) ? file.size : null,
-                thumbnailUrl: null
-            };
-        }
-        throw error;
-    }
+    const path = buildChatAttachmentFallbackPath(teamId, conversationId, userId, file.name, ts);
+    const storageRef = ref(storage, path);
+    const snapshot = await uploadBytes(storageRef, file);
+    const url = await getDownloadURL(snapshot.ref);
+    return {
+        url,
+        path,
+        name: file.name || null,
+        type: file.type || null,
+        size: Number.isFinite(file.size) ? file.size : null,
+        thumbnailUrl: null
+    };
 }
 
 export async function deleteUploadedChatAttachments(attachments = []) {

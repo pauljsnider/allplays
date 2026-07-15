@@ -48,6 +48,10 @@ const nativeRuntime = vi.hoisted(() => ({
   isNativePlatform: false
 }));
 
+const authServiceMocks = vi.hoisted(() => ({
+  getNativeAuthIdToken: vi.fn()
+}));
+
 const uxTimingMocks = vi.hoisted(() => ({
   endInteraction: vi.fn(),
   startInteractionTimer: vi.fn(() => ({
@@ -67,11 +71,13 @@ vi.mock('./authService', () => ({
   firebaseAuth: {
     app: {
       options: {
-        projectId: 'demo-allplays'
+        projectId: 'demo-allplays',
+        storageBucket: 'primary-allplays-bucket'
       }
-    }
+    },
+    currentUser: { uid: 'user-1' }
   },
-  getNativeAuthIdToken: vi.fn()
+  getNativeAuthIdToken: authServiceMocks.getNativeAuthIdToken
 }));
 
 vi.mock('./uxTiming', () => ({
@@ -135,6 +141,7 @@ beforeEach(() => {
   vi.useRealTimers();
   vi.resetAllMocks();
   nativeRuntime.isNativePlatform = false;
+  authServiceMocks.getNativeAuthIdToken.mockResolvedValue('main-user-id-token');
   uxTimingMocks.startInteractionTimer.mockReturnValue({
     end: uxTimingMocks.endInteraction
   });
@@ -144,6 +151,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 describe('chat Firestore mappers', () => {
@@ -377,6 +385,37 @@ describe('chat Firestore mappers', () => {
 });
 
 describe('sendTeamChatMessage attachment uploads', () => {
+  it('uses the primary bucket and main user token for native chat uploads', async () => {
+    nativeRuntime.isNativePlatform = true;
+    vi.spyOn(Date, 'now').mockReturnValue(1700000000000);
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({
+        name: 'stat-sheets/team-chat/team-1/group_user%3Acoach-1/user-1/1700000000000_arrival_photo.jpg',
+        downloadTokens: 'download-token'
+      })
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const photo = new File(['photo'], 'arrival photo.jpg', { type: 'image/jpeg' });
+
+    const { uploadTeamChatAttachment } = await import('./chatService');
+    const attachment = await uploadTeamChatAttachment('team-1', photo, 'group_user%3Acoach-1');
+
+    expect(authServiceMocks.getNativeAuthIdToken).toHaveBeenCalledWith(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, request] = fetchMock.mock.calls[0];
+    expect(url).toContain('/v0/b/primary-allplays-bucket/o?uploadType=media');
+    expect(decodeURIComponent(url)).toContain('name=stat-sheets/team-chat/team-1/group_user%3Acoach-1/user-1/1700000000000_arrival_photo.jpg');
+    expect(request).toEqual(expect.objectContaining({
+      method: 'POST',
+      headers: expect.objectContaining({ Authorization: 'Bearer main-user-id-token' }),
+      body: photo
+    }));
+    expect(attachment.path).toBe('stat-sheets/team-chat/team-1/group_user%3Acoach-1/user-1/1700000000000_arrival_photo.jpg');
+    expect(fetchMock.mock.calls.flatMap((call) => call.map(String)).join(' ')).not.toContain('identitytoolkit.googleapis.com');
+  });
+
   it('starts multiple uploads before the first resolves and posts attachments in the original order', async () => {
     const first = new File(['first'], 'first.jpg', { type: 'image/jpeg' });
     const second = new File(['second'], 'second.jpg', { type: 'image/jpeg' });

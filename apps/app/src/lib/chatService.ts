@@ -21,7 +21,6 @@ import {
   getUserTeamsWithAccess,
   isTeamActive,
   postChatMessage,
-  resolveImageFirebaseConfig,
   saveStoredTeamEmailDraft,
   saveStoredTeamEmailTemplate,
   sendTeamEmail,
@@ -73,7 +72,6 @@ const chatAttachmentUploadConcurrency = 3;
 const chatPreviewCacheTtlMs = 20 * 1000;
 const deferredInboxPreviewConcurrency = 3;
 export const CHAT_RECIPIENT_PROFILE_LOOKUP_CONCURRENCY = 8;
-const imageUploadSessionKey = 'allplays-chat-image-upload-session';
 const logger = createLogger('chat-service');
 
 export type ChatTeam = {
@@ -175,13 +173,6 @@ export type ChatSubscribeResult = {
 };
 
 type FirestoreDocument = FirestoreDecodedDocument;
-
-type ImageUploadSession = {
-  apiKey: string;
-  idToken: string;
-  refreshToken: string;
-  expirationTime: number;
-};
 
 export const CHAT_AI_RESET_EVENT = 'allplays-chat-ai-reset';
 
@@ -1140,108 +1131,29 @@ export async function loadOlderTeamChatMessages(teamId: string, conversationId: 
   }
 }
 
-function readImageUploadSession(): ImageUploadSession | null {
-  try {
-    const raw = window.localStorage?.getItem(imageUploadSessionKey);
-    return raw ? JSON.parse(raw) as ImageUploadSession : null;
-  } catch {
-    return null;
-  }
-}
-
-function writeImageUploadSession(session: ImageUploadSession) {
-  try {
-    window.localStorage?.setItem(imageUploadSessionKey, JSON.stringify(session));
-  } catch (error) {
-    logger.warn('Unable to persist chat image upload session.', { error });
-  }
-}
-
-async function refreshImageUploadSession(session: ImageUploadSession): Promise<ImageUploadSession> {
-  const response = await withTimeout(fetch(`https://securetoken.googleapis.com/v1/token?key=${encodeURIComponent(session.apiKey)}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded'
-    },
-    body: new URLSearchParams({
-      grant_type: 'refresh_token',
-      refresh_token: session.refreshToken
-    })
-  }), 'Chat media upload auth refresh');
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(payload?.error?.message || 'Chat media upload auth refresh failed.');
-  }
-  const nextSession = {
-    apiKey: session.apiKey,
-    idToken: payload.id_token || session.idToken,
-    refreshToken: payload.refresh_token || session.refreshToken,
-    expirationTime: Date.now() + Math.max(Number.parseInt(payload.expires_in || '3600', 10) - 30, 60) * 1000
-  };
-  writeImageUploadSession(nextSession);
-  return nextSession;
-}
-
-async function createImageUploadSession(apiKey: string): Promise<ImageUploadSession> {
-  const response = await withTimeout(fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${encodeURIComponent(apiKey)}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({ returnSecureToken: true })
-  }), 'Chat media upload auth');
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(payload?.error?.message || 'Chat media upload auth failed.');
-  }
-  const session = {
-    apiKey,
-    idToken: payload.idToken,
-    refreshToken: payload.refreshToken,
-    expirationTime: Date.now() + Math.max(Number.parseInt(payload.expiresIn || '3600', 10) - 30, 60) * 1000
-  };
-  if (!session.idToken || !session.refreshToken) {
-    throw new Error('Chat media upload auth did not return a usable token.');
-  }
-  writeImageUploadSession(session);
-  return session;
-}
-
-async function getImageUploadSession(apiKey: string) {
-  const existing = readImageUploadSession();
-  if (existing?.apiKey === apiKey && existing.expirationTime > Date.now() + 60000) {
-    return existing;
-  }
-  if (existing?.apiKey === apiKey && existing.refreshToken) {
-    try {
-      return await refreshImageUploadSession(existing);
-    } catch (error) {
-      logger.warn('Refreshing chat media upload auth failed.', { error });
-    }
-  }
-  return createImageUploadSession(apiKey);
-}
-
 async function nativeUploadChatMedia(teamId: string, file: File, conversationId = DEFAULT_TEAM_CONVERSATION_ID): Promise<ChatAttachment> {
-  const imageConfig = resolveImageFirebaseConfig();
-  const bucket = imageConfig.storageBucket;
-  if (!imageConfig.apiKey || !bucket) {
-    throw new Error('Image upload Firebase config is missing.');
+  const bucket = firebaseAuth.app?.options?.storageBucket;
+  if (!bucket) {
+    throw new Error('Primary Firebase Storage configuration is missing.');
   }
-  const session = await getImageUploadSession(imageConfig.apiKey);
   const userId = firebaseAuth.currentUser?.uid;
   if (!userId) {
     throw new Error('Sign in before uploading team chat media.');
   }
+  const idToken = await getNativeAuthIdToken(true);
+  if (!idToken) {
+    throw new Error('Native auth token is unavailable.');
+  }
   const safeName = String(file.name || 'media').replace(/[^\w.-]+/g, '_');
+  const safeTeamId = String(teamId || 'unknown-team').replace(/[^\w.-]+/g, '_');
+  const safeConversationId = String(conversationId || DEFAULT_TEAM_CONVERSATION_ID).replace(/[^%\w.-]+/g, '_') || DEFAULT_TEAM_CONVERSATION_ID;
+  const safeUserId = String(userId).replace(/[^\w.-]+/g, '_');
   const isVideo = String(file.type || '').toLowerCase().startsWith('video/');
-  const mediaFolder = isVideo ? 'team-videos' : 'team-photos';
-  const safeConversationId = String(conversationId || DEFAULT_TEAM_CONVERSATION_ID).replace(/[^\w.-]+/g, '_') || DEFAULT_TEAM_CONVERSATION_ID;
-  const path = `${mediaFolder}/${Date.now()}_chat_${teamId}_${safeConversationId}_${userId}_${safeName}`;
+  const path = `stat-sheets/team-chat/${safeTeamId}/${safeConversationId}/${safeUserId}/${Date.now()}_${safeName}`;
   const response = await withTimeout(fetch(`https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o?uploadType=media&name=${encodeURIComponent(path)}`, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${session.idToken}`,
+      Authorization: `Bearer ${idToken}`,
       'Content-Type': file.type || 'application/octet-stream'
     },
     body: file
