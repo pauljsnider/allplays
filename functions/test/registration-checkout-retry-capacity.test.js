@@ -73,7 +73,7 @@ function makeFirestore(seed = {}, options = {}) {
             if (isOp(value, 'delete')) {
                 deleteNested(target, key);
             } else if (isOp(value, 'serverTimestamp')) {
-                setNested(target, key, 'SERVER_TIMESTAMP');
+                setNested(target, key, options.serverTimestampValue ?? 'SERVER_TIMESTAMP');
             } else if (isOp(value, 'increment')) {
                 const current = Number(key.split('.').reduce((acc, part) => (acc == null ? acc : acc[part]), target) || 0);
                 setNested(target, key, current + value.amount);
@@ -379,6 +379,7 @@ test('checkout reserves the registration before Stripe creation so concurrent re
     });
     const loaded = loadCheckoutHandler({
         seed: buildSeedState({ registrationCapacityReleased: false }),
+        firestoreOptions: { serverTimestampValue: Date.now() },
         stripeCreateImpl: async () => {
             stripeCreationStarted();
             await new Promise((resolve) => {
@@ -418,6 +419,41 @@ test('checkout reserves the registration before Stripe creation so concurrent re
     assert.equal(completedRegistration.checkoutStatus, 'open');
     assert.equal(completedRegistration.paymentStatus, 'checkout_open');
     assert.equal(Object.prototype.hasOwnProperty.call(completedRegistration, 'checkoutCreationReservationId'), false);
+});
+
+test('checkout replaces an abandoned creation reservation after its timeout', async () => {
+    let stripeCreateCalls = 0;
+    const staleStartedAtSeconds = Math.floor((Date.now() - (16 * 60 * 1000)) / 1000);
+    const { firestore, createStripeRegistrationCheckout } = loadCheckoutHandler({
+        seed: buildSeedState({
+            registrationCapacityReleased: false,
+            checkoutCreationReservationId: 'abandoned-reservation',
+            checkoutCreationStartedAt: { seconds: staleStartedAtSeconds }
+        }),
+        stripeCreateImpl: async () => {
+            stripeCreateCalls += 1;
+            return {
+                id: 'cs_recovered_reservation',
+                url: 'https://checkout.stripe.com/c/recovered_reservation',
+                payment_status: 'unpaid'
+            };
+        }
+    });
+
+    const result = await createStripeRegistrationCheckout({
+        ...checkoutInput,
+        retryPayment: false
+    });
+
+    assert.equal(stripeCreateCalls, 1);
+    assert.deepEqual(result, {
+        checkoutUrl: 'https://checkout.stripe.com/c/recovered_reservation',
+        sessionId: 'cs_recovered_reservation'
+    });
+    const registration = firestore.snapshot('teams/team-1/registrationForms/form-1/registrations/reg-1');
+    assert.equal(registration.stripeCheckoutSessionId, 'cs_recovered_reservation');
+    assert.equal(Object.prototype.hasOwnProperty.call(registration, 'checkoutCreationReservationId'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(registration, 'checkoutCreationStartedAt'), false);
 });
 
 test('retry checkout preserves an early-bird discount captured at submission time', async () => {

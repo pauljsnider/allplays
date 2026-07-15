@@ -1317,6 +1317,7 @@ function buildRegistrationReminderStopUpdate({ reason = 'resolved', nowIso = '' 
 const REGISTRATION_PAYMENT_REMINDER_QUERY_PAGE_SIZE = PRE_EVENT_REMINDER_QUERY_PAGE_SIZE;
 const REGISTRATION_PAYMENT_REMINDER_MAX_PAGES_PER_RUN = PRE_EVENT_REMINDER_MAX_PAGES_PER_RUN;
 const REGISTRATION_PAYMENT_REMINDER_MAX_RUNTIME_MS = PRE_EVENT_REMINDER_MAX_RUNTIME_MS;
+const REGISTRATION_CHECKOUT_CREATION_RESERVATION_TIMEOUT_MS = 15 * 60 * 1000;
 
 async function processDueRegistrationFailedPaymentReminder(docSnap, { now, nowIso, appUrl }) {
   const registrationRef = docSnap.ref;
@@ -1551,7 +1552,12 @@ async function reserveRegistrationCheckoutCreation(input, options = {}) {
         sessionId: registration.stripeCheckoutSessionId
       };
     }
-    if (String(registration.checkoutCreationReservationId || '').trim()) {
+    const existingReservationId = String(registration.checkoutCreationReservationId || '').trim();
+    const existingReservationStartedAtMillis = firestoreTimestampToMillis(registration.checkoutCreationStartedAt);
+    const existingReservationIsActive = existingReservationId
+      && Number.isFinite(existingReservationStartedAtMillis)
+      && Date.now() - existingReservationStartedAtMillis < REGISTRATION_CHECKOUT_CREATION_RESERVATION_TIMEOUT_MS;
+    if (existingReservationIsActive) {
       throw new functions.https.HttpsError('failed-precondition', 'Registration checkout creation is already in progress.');
     }
 

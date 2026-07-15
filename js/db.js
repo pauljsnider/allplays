@@ -3281,7 +3281,17 @@ export async function rejectTeamRegistration(teamId, formId, registrationId, dec
         }
         const checkoutStatus = String(registration.checkoutStatus || '').trim().toLowerCase();
         const paymentStatus = String(registration.paymentStatus || '').trim().toLowerCase();
-        if (String(registration.checkoutCreationReservationId || '').trim()
+        const checkoutCreationReservationId = String(registration.checkoutCreationReservationId || '').trim();
+        const checkoutCreationStartedAt = registration.checkoutCreationStartedAt;
+        const checkoutCreationStartedAtMs = typeof checkoutCreationStartedAt?.toMillis === 'function'
+            ? checkoutCreationStartedAt.toMillis()
+            : (typeof checkoutCreationStartedAt?.seconds === 'number'
+                ? checkoutCreationStartedAt.seconds * 1000
+                : Number(checkoutCreationStartedAt));
+        const checkoutCreationReservationIsActive = checkoutCreationReservationId
+            && Number.isFinite(checkoutCreationStartedAtMs)
+            && Date.now() - checkoutCreationStartedAtMs < 15 * 60 * 1000;
+        if (checkoutCreationReservationIsActive
             || ['open', 'async_pending'].includes(checkoutStatus)
             || ['checkout_open', 'pending_payment'].includes(paymentStatus)) {
             throw new Error('Registration cannot be rejected while its online payment is still processing');

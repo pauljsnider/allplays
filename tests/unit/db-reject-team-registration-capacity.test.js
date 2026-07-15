@@ -30,7 +30,8 @@ function createHarness({
     waitlisted = 0,
     checkoutStatus = '',
     paymentStatus = '',
-    checkoutCreationReservationId = ''
+    checkoutCreationReservationId = '',
+    checkoutCreationStartedAt = null
 } = {}) {
     const registrationPath = 'teams/team-1/registrationForms/form-1/registrations/reg-1';
     const formPath = 'teams/team-1/registrationForms/form-1';
@@ -41,6 +42,7 @@ function createHarness({
             checkoutStatus,
             paymentStatus,
             checkoutCreationReservationId,
+            checkoutCreationStartedAt,
             selectedOption: { id: 'u10', countKey: 'u10' }
         }],
         [formPath, {
@@ -117,7 +119,7 @@ describe('rejectTeamRegistration capacity release', () => {
     it.each([
         { checkoutStatus: 'open', paymentStatus: 'checkout_open' },
         { checkoutStatus: 'async_pending', paymentStatus: 'pending_payment' },
-        { checkoutCreationReservationId: 'checkout-creation-1' }
+        { checkoutCreationReservationId: 'checkout-creation-1', checkoutCreationStartedAt: Date.now() }
     ])('does not reject or release capacity while Stripe checkout is $checkoutStatus', async (paymentState) => {
         const harness = createHarness(paymentState);
 
@@ -127,6 +129,23 @@ describe('rejectTeamRegistration capacity release', () => {
         expect(harness.state.get(harness.formPath).registrationOptionCounts.u10.enrolled).toBe(1);
         expect(harness.state.get(harness.registrationPath).status).toBe('pending');
         expect(harness.writes).toHaveLength(0);
+    });
+
+    it('allows rejection and releases capacity after a checkout creation reservation expires', async () => {
+        const harness = createHarness({
+            checkoutCreationReservationId: 'abandoned-checkout-creation',
+            checkoutCreationStartedAt: Date.now() - (16 * 60 * 1000)
+        });
+
+        await expect(harness.rejectTeamRegistration('team-1', 'form-1', 'reg-1', 'Abandoned checkout'))
+            .resolves.toEqual({ success: true });
+
+        expect(harness.state.get(harness.formPath).registrationOptionCounts.u10.enrolled).toBe(0);
+        expect(harness.state.get(harness.registrationPath)).toEqual(expect.objectContaining({
+            status: 'rejected',
+            registrationCapacityReleased: true,
+            decisionNote: 'Abandoned checkout'
+        }));
     });
 
     it('is idempotent and never decrements capacity twice', async () => {
