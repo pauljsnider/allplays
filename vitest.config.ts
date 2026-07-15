@@ -28,6 +28,11 @@ function resolveModule(moduleName: string, relativePath = moduleName) {
 }
 
 export default defineConfig({
+  oxc: {
+    decorator: {
+      legacy: true
+    }
+  },
   resolve: {
     alias: {
       react: resolveModule('react'),

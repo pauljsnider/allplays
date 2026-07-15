@@ -14,6 +14,7 @@
       <div *ngFor="let fee of outstandingFees" class="team-fee-item">
         <h3>{{ fee.name }}</h3>
         <p>Amount: {{ fee.amount | currency }}</p>
+        <p *ngIf="fee.dueDate" class="team-fee-due-date">Due {{ fee.dueDate | date:'mediumDate' }}</p>
         <p>Status: <span [class.paid]="fee.isPaid" [class.unpaid]="!fee.isPaid && fee.status !== 'canceled'">{{ fee.status === 'canceled' ? 'Canceled' : fee.isPaid ? 'Paid' : 'Unpaid' }}</span></p>
         <p *ngIf="!fee.canPayOnline && !fee.isPaid && fee.status !== 'canceled' && fee.offlinePaymentInstructions" class="offline-payment-instructions">{{ fee.offlinePaymentInstructions }}</p>
 
