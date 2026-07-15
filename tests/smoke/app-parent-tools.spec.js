@@ -824,6 +824,12 @@ test('awards deep links surface the requested certificate first on mobile', asyn
     await expect(page.getByText('Opened from a notification')).toBeVisible({ timeout: 15000 });
     await expect(page.getByText('Hustle Award', { exact: true })).toBeVisible();
     await expect(page.getByText('Leadership Award', { exact: true })).toHaveCount(0);
+    const activeAwardsTab = page.getByRole('button', { name: 'Awards', exact: true });
+    await expect(activeAwardsTab).toHaveAttribute('aria-pressed', 'true');
+    await expect.poll(async () => {
+        const tabBox = await activeAwardsTab.boundingBox();
+        return Boolean(tabBox && tabBox.x >= 0 && tabBox.x + tabBox.width <= 390);
+    }).toBe(true);
     const requestedAwardCard = page.locator('section.app-card', { hasText: 'Hustle Award' });
     const viewAwardButton = requestedAwardCard.getByRole('button', { name: 'View award' });
     await expect(viewAwardButton).toBeVisible();

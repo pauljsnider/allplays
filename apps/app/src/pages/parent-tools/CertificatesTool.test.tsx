@@ -99,6 +99,7 @@ describe('CertificatesTool deep links', () => {
         const requestedShare = within(requestedCard).getByRole('button', { name: 'Share' });
         expect(viewAward.className).toContain('primary-button');
         expect(requestedShare.className).toContain('secondary-button');
+        expect(viewAward.parentElement?.className).toContain('grid-cols-2');
         fireEvent.click(viewAward);
         expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://allplays.ai/certificates.html#teamId=team-1&certificateId=cert-1');
         expect(parentCertificatesServiceMocks.loadParentCertificates).toHaveBeenCalledWith(auth.user, {
