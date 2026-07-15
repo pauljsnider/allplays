@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { splitProtectedRosterProfileValues } from '../../js/roster-profile-fields.js';
 
 function readPlayerPage() {
     return readFileSync(new URL('../../player.html', import.meta.url), 'utf8');
@@ -7,6 +8,10 @@ function readPlayerPage() {
 
 function readDbSource() {
     return readFileSync(new URL('../../js/db.js', import.meta.url), 'utf8');
+}
+
+function readEditRosterPage() {
+    return readFileSync(new URL('../../edit-roster.html', import.meta.url), 'utf8');
 }
 
 function readFunctionsSource() {
@@ -188,6 +193,32 @@ describe('player private-profile edit payload', () => {
 });
 
 describe('player profile private doc writes', () => {
+    it('migrates legacy protected profile keys before the edit form saves the public player', () => {
+        expect(splitProtectedRosterProfileValues({
+            preferredName: 'Rocket',
+            birthDate: '2014-02-03',
+            address: { city: 'Kansas City' },
+            customFields: { grade: '6', favoriteColor: 'blue' }
+        })).toEqual({
+            publicProfile: {
+                preferredName: 'Rocket',
+                customFields: { favoriteColor: 'blue' }
+            },
+            privateValues: {
+                birthDate: '2014-02-03',
+                address: { city: 'Kansas City' },
+                grade: '6'
+            }
+        });
+
+        const page = readEditRosterPage();
+        expect(page).toContain('splitProtectedRosterProfileValues(editingPlayerProfile || {})');
+        expect(page).toContain('splitProtectedRosterProfileValues({');
+        expect(page).toContain('customFields: publicValues');
+        expect(page).toContain('{ ...legacyProtectedValues, ...currentProtectedValues }');
+        expect(page).toContain('{ ...protectedProfileValues, ...privateValues }');
+    });
+
     it('keeps standard sensitive roster fields out of the public player document helper', () => {
         const source = readDbSource();
         const fnSource = extractFunction(source, 'function assertNoSensitivePlayerFields(');

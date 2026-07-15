@@ -740,10 +740,23 @@ function mergeProfileImportValues(existingProfile = {}, profileValues = {}) {
     };
 }
 
-function omitPrivateBuiltInProfileValues(profile = {}) {
+export function splitProtectedRosterProfileValues(profile = {}) {
     const publicProfile = { ...(profile || {}) };
-    PRIVATE_BUILT_IN_PROFILE_FIELDS.forEach((key) => delete publicProfile[key]);
-    return publicProfile;
+    const privateValues = {};
+    PRIVATE_BUILT_IN_PROFILE_FIELDS.forEach((key) => {
+        if (!Object.prototype.hasOwnProperty.call(publicProfile, key)) return;
+        privateValues[key] = publicProfile[key];
+        delete publicProfile[key];
+    });
+    if (publicProfile.customFields && typeof publicProfile.customFields === 'object') {
+        publicProfile.customFields = { ...publicProfile.customFields };
+        PRIVATE_BUILT_IN_PROFILE_FIELDS.forEach((key) => {
+            if (!Object.prototype.hasOwnProperty.call(publicProfile.customFields, key)) return;
+            privateValues[key] = publicProfile.customFields[key];
+            delete publicProfile.customFields[key];
+        });
+    }
+    return { publicProfile, privateValues };
 }
 
 function escapeRosterCsvCell(value) {
@@ -941,7 +954,8 @@ export function planRosterCsvImport({ csvText = '', fields = [], existingPlayers
         normalizedFields.forEach((field) => {
             if (!PRIVATE_BUILT_IN_PROFILE_FIELDS.has(field.key)) return;
             if (!Object.prototype.hasOwnProperty.call(parsedValues, field.key)) return;
-            if (!isPublicRosterField(field)) privateValues[field.key] = parsedValues[field.key];
+            privateValues[field.key] = parsedValues[field.key];
+            delete publicValues[field.key];
         });
         PRIVATE_BUILT_IN_PROFILE_FIELDS.forEach((key) => {
             if (!Object.prototype.hasOwnProperty.call(profileValuesForMerge, key)) return;
@@ -960,7 +974,14 @@ export function planRosterCsvImport({ csvText = '', fields = [], existingPlayers
         }
 
         const existing = matches[0];
-        const existingProfile = omitPrivateBuiltInProfileValues(existing?.profile || {});
+        const { publicProfile: existingProfile, privateValues: legacyPrivateValues } = splitProtectedRosterProfileValues(existing?.profile || {});
+        Object.entries(legacyPrivateValues).forEach(([key, value]) => {
+            if (key === 'address' && value && typeof value === 'object' && privateValues.address && typeof privateValues.address === 'object') {
+                privateValues.address = { ...value, ...privateValues.address };
+            } else if (!Object.prototype.hasOwnProperty.call(privateValues, key)) {
+                privateValues[key] = value;
+            }
+        });
         const retainedCustomFields = { ...(existingProfile.customFields || {}) };
         PRIVATE_BUILT_IN_PROFILE_FIELDS.forEach((key) => delete retainedCustomFields[key]);
         normalizedFields.forEach((field) => {

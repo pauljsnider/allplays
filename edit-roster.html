@@ -555,7 +555,7 @@
 
     <script type="module">
         import { getTeam, getPlayers, getPlayersWithPrivateRosterContacts, getUsersByParentPlayerKey, getUsersByParentTeamId, addPlayer, applyRosterCsvImportOperations, deactivatePlayer, reactivatePlayer, getGames, uploadPlayerPhoto, updatePlayer, setPlayerPrivateRosterProfileFields, inviteParent, removeParentFromPlayer, getUnreadChatCount, listTeamParentMembershipRequests, approveParentMembershipRequest, denyParentMembershipRequest, getRosterFieldDefinitions, saveRosterFieldDefinition, disableRosterFieldDefinition, reorderRosterFieldDefinitions, listTeamRegistrationForms, listTeamRegistrationReviews, approveTeamRegistration, rejectTeamRegistration, extendTeamRegistrationOffer, acceptTeamRegistrationOffer, releaseTeamRegistrationWaitlist, listTeamTrackingItems, createTeamTrackingItem, listTeamTrackingStatuses, setTeamTrackingStatus } from './js/db.js?v=101';
-        import { buildFullRosterCsvTemplate, buildRosterFieldDefinitionPayload, collectRosterParentContacts, collectRosterProfileValues, getRosterProfileValues, mergeRosterParentContacts, mergeStandardRosterFieldDefinitions, normalizeRosterFieldDefinitions, planRosterCsvImport, renderRosterProfileFields, splitRosterProfileValuesByVisibility, summarizeRosterContactInviteResults, validateRosterProfileValues } from './js/roster-profile-fields.js?v=7';
+        import { buildFullRosterCsvTemplate, buildRosterFieldDefinitionPayload, collectRosterParentContacts, collectRosterProfileValues, getRosterProfileValues, mergeRosterParentContacts, mergeStandardRosterFieldDefinitions, normalizeRosterFieldDefinitions, planRosterCsvImport, renderRosterProfileFields, splitProtectedRosterProfileValues, splitRosterProfileValuesByVisibility, summarizeRosterContactInviteResults, validateRosterProfileValues } from './js/roster-profile-fields.js?v=8';
         import { buildTrackingStatusPayload, mergeTrackingStatusRows, normalizeTrackingItemDraft, summarizeTrackingStatus } from './js/tracking-status-admin.js?v=2';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=15';
         import { checkAuth } from './js/auth.js?v=50';
@@ -2330,11 +2330,17 @@
                     photoUrl = await uploadPlayerPhoto(file);
                 }
 
+                const { publicProfile: existingPublicProfile, privateValues: legacyProtectedValues } = splitProtectedRosterProfileValues(editingPlayerProfile || {});
+                const { publicProfile, privateValues: currentProtectedValues } = splitProtectedRosterProfileValues({
+                    ...existingPublicProfile,
+                    customFields: publicValues
+                });
+                const protectedProfileValues = { ...legacyProtectedValues, ...currentProtectedValues };
                 const playerData = {
                     name,
                     number,
                     photoUrl,
-                    profile: { ...(editingPlayerProfile || {}), customFields: publicValues }
+                    profile: publicProfile
                 };
                 if (Object.prototype.hasOwnProperty.call(publicValues, 'position')) {
                     playerData.position = publicValues.position;
@@ -2344,7 +2350,7 @@
                 if (editingPlayerId) {
                     await updatePlayer(currentTeamId, editingPlayerId, playerData);
                 }
-                await setPlayerPrivateRosterProfileFields(currentTeamId, savedPlayerId, privateValues);
+                await setPlayerPrivateRosterProfileFields(currentTeamId, savedPlayerId, { ...protectedProfileValues, ...privateValues });
 
                 resetForm();
                 loadRoster();

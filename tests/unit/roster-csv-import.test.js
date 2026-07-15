@@ -68,9 +68,9 @@ describe('roster CSV import planning', () => {
             payload: {
                 name: 'Avery Lee',
                 number: '4',
-                profile: { customFields: { grade: '6', throwsRight: true } }
+                profile: { customFields: { throwsRight: true } }
             },
-            privateRosterFields: { birthDate: '2014-02-03' }
+            privateRosterFields: { grade: '6', birthDate: '2014-02-03' }
         });
         expect(plan.operations[0].payload.profile.customFields).not.toHaveProperty('birthDate');
         expect(plan.operations[0].payload.profile.customFields).not.toHaveProperty('medicalNote');
@@ -81,9 +81,9 @@ describe('roster CSV import planning', () => {
             payload: {
                 name: 'Sam Jones',
                 number: '12',
-                profile: { customFields: { grade: '7', throwsRight: false } }
+                profile: { customFields: { throwsRight: false } }
             },
-            privateRosterFields: { birthDate: '2013-09-01' }
+            privateRosterFields: { grade: '7', birthDate: '2013-09-01' }
         });
     });
 
@@ -101,8 +101,9 @@ describe('roster CSV import planning', () => {
             playerId: 'p1',
             payload: {
                 name: 'Avery Lee',
-                profile: { customFields: { grade: '6' } }
-            }
+                profile: { customFields: {} }
+            },
+            privateRosterFields: { grade: '6' }
         });
         expect(plan.operations[0].payload).not.toHaveProperty('number');
     });
@@ -209,11 +210,11 @@ describe('roster CSV import planning', () => {
                 name: 'Avery Lee',
                 profile: {
                     customFields: {
-                        position: 'Forward',
-                        gender: 'Female'
+                        position: 'Forward'
                     }
                 }
-            }
+            },
+            privateRosterFields: { gender: 'Female' }
         });
         expect(plan.operations[0].payload).not.toHaveProperty('position');
         expect(plan.operations[0].payload.profile).not.toHaveProperty('gender');
@@ -499,6 +500,48 @@ describe('roster CSV import planning', () => {
         expect(splitRosterProfileValuesByVisibility(fields, { grade: '6', birthDate: '2014-02-03', medicalNote: 'private' }, { includeAdminPrivate: false })).toEqual({
             publicValues: { grade: '6' },
             privateValues: { birthDate: '2014-02-03' }
+        });
+    });
+
+    it('routes protected standard keys privately even when the team configured them as public', () => {
+        const plan = planRosterCsvImport({
+            fields: [{ key: 'grade', label: 'Grade', type: 'text', visibility: 'public', standard: true, active: true }],
+            csvText: 'Name,Grade\nAvery Lee,6'
+        });
+
+        expect(plan.errors).toEqual([]);
+        expect(plan.operations[0].payload.profile.customFields).not.toHaveProperty('grade');
+        expect(plan.operations[0].privateRosterFields).toEqual({ grade: '6' });
+    });
+
+    it('migrates legacy protected profile values during an unrelated CSV update', () => {
+        const plan = planRosterCsvImport({
+            fields: [],
+            existingPlayers: [{
+                id: 'p1',
+                name: 'Avery Lee',
+                profile: {
+                    preferredName: 'Rocket',
+                    birthDate: '2014-02-03',
+                    address: { city: 'Kansas City', state: 'MO' },
+                    customFields: { grade: '6', favoriteColor: 'blue' }
+                }
+            }],
+            csvText: 'Name,Number\nAvery Lee,8'
+        });
+
+        expect(plan.errors).toEqual([]);
+        expect(plan.operations[0]).toMatchObject({
+            type: 'update',
+            payload: {
+                number: '8',
+                profile: { preferredName: 'Rocket', customFields: { favoriteColor: 'blue' } }
+            },
+            privateRosterFields: {
+                birthDate: '2014-02-03',
+                address: { city: 'Kansas City', state: 'MO' },
+                grade: '6'
+            }
         });
     });
 
