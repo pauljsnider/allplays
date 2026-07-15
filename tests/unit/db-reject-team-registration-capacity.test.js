@@ -29,7 +29,8 @@ function createHarness({
     enrolled = 1,
     waitlisted = 0,
     checkoutStatus = '',
-    paymentStatus = ''
+    paymentStatus = '',
+    checkoutCreationReservationId = ''
 } = {}) {
     const registrationPath = 'teams/team-1/registrationForms/form-1/registrations/reg-1';
     const formPath = 'teams/team-1/registrationForms/form-1';
@@ -39,6 +40,7 @@ function createHarness({
             registrationCapacityReleased,
             checkoutStatus,
             paymentStatus,
+            checkoutCreationReservationId,
             selectedOption: { id: 'u10', countKey: 'u10' }
         }],
         [formPath, {
@@ -114,7 +116,8 @@ describe('rejectTeamRegistration capacity release', () => {
 
     it.each([
         { checkoutStatus: 'open', paymentStatus: 'checkout_open' },
-        { checkoutStatus: 'async_pending', paymentStatus: 'pending_payment' }
+        { checkoutStatus: 'async_pending', paymentStatus: 'pending_payment' },
+        { checkoutCreationReservationId: 'checkout-creation-1' }
     ])('does not reject or release capacity while Stripe checkout is $checkoutStatus', async (paymentState) => {
         const harness = createHarness(paymentState);
 
