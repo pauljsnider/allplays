@@ -114,9 +114,100 @@ async function fetchCalendarIcsWithCache({ cache, cacheKey, forceRefresh = false
   return fetchPromise;
 }
 
+function createCalendarIcsFetchHandler({
+  cache,
+  checkRateLimit,
+  checkForceRefreshRateLimit,
+  isAllowedOrigin,
+  writeCorsHeaders,
+  normalizeTargetUrl,
+  fetchWithTimeout,
+  normalizeIcsText
+}) {
+  return async function fetchCalendarIcsHandler(req, res) {
+    writeCorsHeaders(req, res);
+
+    if (!isAllowedOrigin(req.headers.origin)) {
+      res.status(403).json({ ok: false, error: 'Origin not allowed' });
+      return;
+    }
+
+    if (req.method === 'OPTIONS') {
+      res.status(204).send('');
+      return;
+    }
+
+    if (req.method !== 'GET') {
+      res.status(405).json({ error: 'Method not allowed' });
+      return;
+    }
+
+    const forceRefresh = String(req.query.forceRefresh || '').toLowerCase() === 'true';
+    const rateLimits = [checkRateLimit];
+    if (forceRefresh) {
+      rateLimits.push(checkForceRefreshRateLimit);
+    }
+
+    for (const checkLimit of rateLimits) {
+      const rateLimit = checkLimit(req);
+      if (!rateLimit.allowed) {
+        res.set('Retry-After', String(rateLimit.retryAfterSeconds));
+        res.status(429).json({ ok: false, error: 'Too many calendar fetch requests' });
+        return;
+      }
+    }
+
+    try {
+      const rawUrl = req.query.url;
+      const normalizedUrl = await normalizeTargetUrl(rawUrl);
+
+      const result = await fetchCalendarIcsWithCache({
+        cache,
+        cacheKey: normalizedUrl.url,
+        forceRefresh,
+        fetchIcs: async () => {
+          const response = await fetchWithTimeout(normalizedUrl.url, normalizedUrl.hostname, normalizedUrl.publicIps);
+          if (!response.ok) {
+            const upstreamError = new Error(`Calendar fetch failed: ${response.status} ${response.statusText}`);
+            upstreamError.statusCode = 502;
+            throw upstreamError;
+          }
+
+          const rawText = await response.text();
+          const icsText = normalizeIcsText(rawText);
+
+          if (!icsText.includes('BEGIN:VCALENDAR')) {
+            const invalidIcsError = new Error('Response was not valid ICS');
+            invalidIcsError.statusCode = 502;
+            throw invalidIcsError;
+          }
+
+          return {
+            fetchedAt: new Date().toISOString(),
+            icsText
+          };
+        }
+      });
+
+      res.status(200).json({
+        ok: true,
+        source: result.source,
+        fetchedAt: result.fetchedAt,
+        icsText: result.icsText
+      });
+    } catch (error) {
+      res.status(error?.statusCode || 400).json({
+        ok: false,
+        error: error?.message || 'Unknown error'
+      });
+    }
+  };
+}
+
 module.exports = {
   DEFAULT_TTL_MS,
   DEFAULT_MAX_ENTRIES,
   createCalendarIcsCache,
-  fetchCalendarIcsWithCache
+  fetchCalendarIcsWithCache,
+  createCalendarIcsFetchHandler
 };
