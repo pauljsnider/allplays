@@ -63,6 +63,18 @@ describe('help team-context deep links', () => {
         });
     });
 
+    it('hydrates scorekeeper role and renders only scorekeeper workflows', () => {
+        const document = bootHelpPage('?context=team&teamId=TEAM123&role=scorekeeper');
+
+        expect(document.getElementById('help-role').value).toBe('Scorekeeper');
+        expect(document.getElementById('help-summary').textContent).toBe('3 of 19 workflows');
+        expect(readWorkflowLinks(document).map((link) => path.basename(link.pathname))).toEqual([
+            'help-team-operations.html',
+            'workflow-track-game.html',
+            'workflow-live-tracker.html'
+        ]);
+    });
+
     it('preserves team context on the page-reference link', () => {
         const document = bootHelpPage('?context=team&teamId=TEAM123&role=coach');
 
