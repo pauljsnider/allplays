@@ -127,7 +127,7 @@ function createCalendarIcsFetchHandler({
   return async function fetchCalendarIcsHandler(req, res) {
     writeCorsHeaders(req, res);
 
-    if (!isAllowedOrigin(req.headers.origin)) {
+    if (!isAllowedOrigin(req.headers?.origin)) {
       res.status(403).json({ ok: false, error: 'Origin not allowed' });
       return;
     }
@@ -142,7 +142,7 @@ function createCalendarIcsFetchHandler({
       return;
     }
 
-    const forceRefresh = String(req.query.forceRefresh || '').toLowerCase() === 'true';
+    const forceRefresh = String(req.query?.forceRefresh || '').toLowerCase() === 'true';
     const rateLimits = [checkRateLimit];
     if (forceRefresh) {
       rateLimits.push(checkForceRefreshRateLimit);
@@ -158,7 +158,7 @@ function createCalendarIcsFetchHandler({
     }
 
     try {
-      const rawUrl = req.query.url;
+      const rawUrl = req.query?.url;
       const normalizedUrl = await normalizeTargetUrl(rawUrl);
 
       const result = await fetchCalendarIcsWithCache({

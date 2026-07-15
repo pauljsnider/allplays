@@ -64,15 +64,15 @@ function createHandlerHarness({ maxRequests = 2, maxForceRefreshRequests = 1 } =
     normalizeIcsText: (text) => text
   });
 
-  async function request({ forceRefresh = false, ip = '203.0.113.10' } = {}) {
+  async function request({ forceRefresh = false, ip = '203.0.113.10', headers = {}, query } = {}) {
     const req = {
       method: 'GET',
       ip,
-      headers: {},
-      query: {
+      headers,
+      query: query === undefined ? {
         url: 'https://example.com/calendar.ics',
         ...(forceRefresh ? { forceRefresh: 'true' } : {})
-      }
+      } : query
     };
     const res = createMockResponse();
     await handler(req, res);
@@ -289,4 +289,18 @@ test('calendar handler applies a stricter forceRefresh limit before expensive wo
   assert.strictEqual(rejected.headers['Retry-After'], '60');
   assert.strictEqual(harness.normalizationCount, 1);
   assert.strictEqual(harness.fetchCount, 1);
+});
+
+test('calendar handler safely rejects requests with missing headers and query objects', async () => {
+  const harness = createHandlerHarness();
+
+  const response = await harness.request({ headers: null, query: null });
+
+  assert.strictEqual(response.statusCode, 400);
+  assert.deepStrictEqual(response.body, {
+    ok: false,
+    error: 'A cache key is required'
+  });
+  assert.strictEqual(harness.normalizationCount, 1);
+  assert.strictEqual(harness.fetchCount, 0);
 });

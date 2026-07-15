@@ -7,6 +7,7 @@ function parsePositiveInteger(value, fallback) {
 }
 
 function getHeaderValue(headers = {}, name = '') {
+  headers = headers || {};
   const direct = headers[name] || headers[name.toLowerCase()];
   if (direct !== undefined) {
     return Array.isArray(direct) ? direct[0] : direct;
