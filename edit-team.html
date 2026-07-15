@@ -1514,7 +1514,7 @@
 
             if (initialTeamId) {
                 document.getElementById('roster-rollover-section').classList.add('hidden');
-                const team = await getTeam(initialTeamId);
+                const team = await getTeam(initialTeamId, { includeInactive: true });
                 if (!team) {
                     alert('Team not found or no longer active.');
                     currentTeamId = null;
