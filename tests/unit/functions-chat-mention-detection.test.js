@@ -39,6 +39,33 @@ function getBuildTeamChatNotificationPlan() {
     return new Function('detectMentionedUids', `${slice}; return buildTeamChatNotificationPlan;`)(detectMentionedUids);
 }
 
+function getTeamChatMessageCreatedHandler({ senderProfile, sendNotification }) {
+    const start = functionsSource.indexOf('async function resolveTeamChatSenderLabel(');
+    const end = functionsSource.indexOf('\nexports.notifyTeamChatMessageCreated');
+    const slice = functionsSource.slice(start, end);
+    const firestore = {
+        doc: () => ({
+            get: async () => ({ exists: Boolean(senderProfile), data: () => senderProfile })
+        })
+    };
+    return new Function(
+        'firestore',
+        'normalizeTeamChatConversationId',
+        'isPreEventReminderChatMessage',
+        'buildTeamChatNotificationContext',
+        'buildTeamChatNotificationPlan',
+        'sendDirectTargetsNotification',
+        `${slice}; return handleTeamChatMessageCreated;`
+    )(
+        firestore,
+        (value) => value || 'team',
+        () => false,
+        async () => ({ members: [], mutedUids: [], targetsByCategory: { mentions: [], liveChat: [] } }),
+        () => ({ mentionedUids: [], mentionTargets: [], liveChatTargets: [{ uid: 'recipient-1', token: 'token-1' }] }),
+        sendNotification
+    );
+}
+
 function getNotificationDestinationBuilders() {
     const start = functionsSource.indexOf('function buildScheduleSectionQuery(');
     const end = functionsSource.indexOf('\nfunction normalizeAccessNotificationStatus');
@@ -329,6 +356,27 @@ describe('buildTeamChatNotificationContext', () => {
 });
 
 describe('notifyTeamChatMessageCreated source wiring', () => {
+    it('uses the stored sender profile instead of forged message metadata in delivered titles', async () => {
+        const deliveries = [];
+        const handler = getTeamChatMessageCreatedHandler({
+            senderProfile: { fullName: 'Pat Parent' },
+            sendNotification: async (payload) => {
+                deliveries.push(payload);
+                return { success: true };
+            }
+        });
+        const snapshot = {
+            data: () => ({ text: 'Practice moved', senderId: 'parent-1', senderName: 'Coach Kim' }),
+            ref: { update: async () => {} }
+        };
+
+        await handler(snapshot, { params: { teamId: 'team-1', messageId: 'message-1' } });
+
+        expect(deliveries).toHaveLength(1);
+        expect(deliveries[0].title).toBe('Pat Parent: Team Chat');
+        expect(deliveries[0].title).not.toContain('Coach Kim');
+    });
+
     it('exports the notifyTeamChatMessageCreated Firestore trigger', () => {
         expect(notifyTeamChatMessageCreatedSource).toContain("exports.notifyTeamChatMessageCreated = functions.firestore");
         expect(notifyTeamChatMessageCreatedSource).toContain(".document('teams/{teamId}/chatMessages/{messageId}')");

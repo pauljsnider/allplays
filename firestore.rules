@@ -2067,6 +2067,41 @@ service cloud.firestore {
              data.get('imageSize', null) == null;
     }
 
+    function hasCanonicalChatSenderPresentation(data) {
+      let userPath = /databases/$(database)/documents/users/$(request.auth.uid);
+      let userData = exists(userPath) ? get(userPath).data : {};
+      let senderName = data.get('senderName', null);
+      let senderPhotoUrl = data.get('senderPhotoUrl', null);
+      return isSignedIn() &&
+             (
+               senderName == null ||
+               (
+                 senderName is string &&
+                 senderName.size() > 0 &&
+                 senderName.size() <= 120 &&
+                 senderName in [
+                   request.auth.token.get('name', null),
+                   request.auth.token.get('email', null),
+                   userData.get('displayName', null),
+                   userData.get('fullName', null),
+                   userData.get('name', null)
+                 ]
+               )
+             ) &&
+             (
+               senderPhotoUrl == null ||
+               (
+                 senderPhotoUrl is string &&
+                 senderPhotoUrl.size() <= 2048 &&
+                 senderPhotoUrl.matches('https://.*') &&
+                 senderPhotoUrl in [
+                   request.auth.token.get('picture', null),
+                   userData.get('photoUrl', null)
+                 ]
+               )
+             );
+    }
+
     function isLegacyFullTeamChatMessageCreateValid(teamId, data) {
       return data.keys().hasAll([
                'text', 'senderId', 'attachments', 'createdAt', 'targetType', 'recipientIds'
@@ -2084,14 +2119,12 @@ service cloud.firestore {
              hasValidLegacyChatImageMetadata(data) &&
              (data.text.size() > 0 || data.attachments.size() > 0) &&
              data.senderId == request.auth.uid &&
-             isNullableBoundedChatString(data.get('senderName', null), 120) &&
+             hasCanonicalChatSenderPresentation(data) &&
              (data.get('senderEmail', null) == null ||
               (request.auth.token.email is string &&
                data.senderEmail is string &&
                data.senderEmail.size() <= 320 &&
                data.senderEmail.lower() == request.auth.token.email.lower())) &&
-             isNullableBoundedChatString(data.get('senderPhotoUrl', null), 2048) &&
-             (data.get('senderPhotoUrl', null) == null || data.senderPhotoUrl.matches('https://.*')) &&
              data.createdAt == request.time &&
              data.get('editedAt', null) == null &&
              data.get('deleted', false) == false &&
@@ -2153,14 +2186,12 @@ service cloud.firestore {
              hasValidNestedChatAttachments(teamId, conversationId, data) &&
              (data.text.size() > 0 || data.attachments.size() > 0) &&
              data.senderId == request.auth.uid &&
-             isNullableBoundedChatString(data.get('senderName', null), 120) &&
+             hasCanonicalChatSenderPresentation(data) &&
              (data.get('senderEmail', null) == null ||
               (request.auth.token.email is string &&
                data.senderEmail is string &&
                data.senderEmail.size() <= 320 &&
                data.senderEmail.lower() == request.auth.token.email.lower())) &&
-             isNullableBoundedChatString(data.get('senderPhotoUrl', null), 2048) &&
-             (data.get('senderPhotoUrl', null) == null || data.senderPhotoUrl.matches('https://.*')) &&
              data.get('imageUrl', null) == null &&
              data.get('imagePath', null) == null &&
              data.get('imageName', null) == null &&
