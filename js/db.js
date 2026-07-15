@@ -3261,22 +3261,52 @@ export async function rejectTeamRegistration(teamId, formId, registrationId, dec
     if (!teamId || !formId || !registrationId) {
         throw new Error('Team, form, and registration are required');
     }
+    const formRef = doc(db, `teams/${teamId}/registrationForms`, formId);
     const registrationRef = doc(db, `teams/${teamId}/registrationForms/${formId}/registrations`, registrationId);
-    const registrationSnap = await getDoc(registrationRef);
-    if (!registrationSnap.exists()) throw new Error('Registration not found');
-    const currentStatus = normalizeRegistrationStatus(registrationSnap.data()?.status);
-    if (!['pending', 'waitlisted', 'offer-extended', 'offer-accepted'].includes(currentStatus)) {
-        throw new Error('Only pending, waitlisted, or active offer registrations can be rejected');
-    }
     const now = Timestamp.now();
-    await updateDoc(registrationRef, {
-        status: 'rejected',
-        activeWaitlistDemand: false,
-        decidedAt: now,
-        decidedBy: currentUser.uid,
-        decidedByName: currentUser.displayName || currentUser.email || 'Admin',
-        decisionNote: String(decisionNote || '').trim(),
-        updatedAt: now
+    await runTransaction(db, async (transaction) => {
+        const [registrationSnap, formSnap] = await Promise.all([
+            transaction.get(registrationRef),
+            transaction.get(formRef)
+        ]);
+        if (!registrationSnap.exists()) throw new Error('Registration not found');
+
+        const registration = registrationSnap.data() || {};
+        const currentStatus = normalizeRegistrationStatus(registration.status);
+        if (currentStatus === 'rejected' && registration.registrationCapacityReleased === true) {
+            return;
+        }
+        if (!['pending', 'waitlisted', 'offer-extended', 'offer-accepted'].includes(currentStatus)) {
+            throw new Error('Only pending, waitlisted, or active offer registrations can be rejected');
+        }
+
+        const selectedOption = registration.selectedOption || {};
+        const countKey = String(selectedOption.countKey || selectedOption.id || '').trim();
+        if (countKey && registration.registrationCapacityReleased !== true) {
+            if (!formSnap.exists()) throw new Error('Registration form not found');
+            const optionCounts = formSnap.data()?.registrationOptionCounts?.[countKey];
+            if (!optionCounts || typeof optionCounts !== 'object') {
+                throw new Error('Registration form capacity tracking is not properly configured');
+            }
+            const countField = currentStatus === 'pending' ? 'enrolled' : 'waitlisted';
+            transaction.update(formRef, {
+                [`registrationOptionCounts.${countKey}.${countField}`]: Math.max(0, Number(optionCounts[countField] || 0) - 1),
+                registrationCapacityUpdateId: registrationId,
+                updatedAt: now
+            });
+        }
+
+        transaction.update(registrationRef, {
+            status: 'rejected',
+            activeWaitlistDemand: false,
+            registrationCapacityReleased: true,
+            capacityReleasedAt: now,
+            decidedAt: now,
+            decidedBy: currentUser.uid,
+            decidedByName: currentUser.displayName || currentUser.email || 'Admin',
+            decisionNote: String(decisionNote || '').trim(),
+            updatedAt: now
+        });
     });
     return { success: true };
 }
