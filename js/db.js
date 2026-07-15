@@ -202,7 +202,7 @@ export async function normalizeParentScopeLinks(parentLinks = []) {
 }
 import { normalizeStatTrackerConfig, splitPlayerStatsByVisibility } from './stat-leaderboards.js?v=2';
 import { buildPublishedBracketView } from './bracket-management.js?v=1';
-import { buildRolloverPlayerCopy } from './team-rollover.js?v=3';
+import { buildRolloverPlayerCopy, buildRolloverPrivateRosterFields } from './team-rollover.js?v=4';
 import { isPublicTrackingItem, normalizeTrackingItem, normalizeTrackingStatus } from './player-tracking-summary.js?v=1';
 import {
     buildRegistrationRosterDecision,
@@ -2848,10 +2848,18 @@ export async function copySelectedPlayersForTeamRollover(sourceTeamId, targetTea
     const rolledOverAt = Timestamp.now();
     playersToCopy.forEach((player) => {
         const playerCopy = buildRolloverPlayerCopy(player, sourceId, rolledOverAt);
+        const privateRosterFields = buildRolloverPrivateRosterFields(player);
         assertNoSensitivePlayerFields(playerCopy);
         playerCopy.createdAt = Timestamp.now();
         const targetRef = doc(collection(db, `teams/${targetId}/players`));
         batch.set(targetRef, playerCopy);
+        if (Object.keys(privateRosterFields).length > 0) {
+            const privateProfileRef = doc(db, `teams/${targetId}/players/${targetRef.id}/private/profile`);
+            batch.set(privateProfileRef, {
+                rosterFields: privateRosterFields,
+                updatedAt: rolledOverAt
+            }, { merge: true });
+        }
     });
 
     await batch.commit();

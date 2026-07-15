@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { buildRolloverPlayerCopy } from '../../js/team-rollover.js';
+import { buildRolloverPlayerCopy, buildRolloverPrivateRosterFields } from '../../js/team-rollover.js';
 
 function readDbSource() {
     return readFileSync(new URL('../../js/db.js', import.meta.url), 'utf8');
@@ -50,8 +50,8 @@ function buildRolloverDbHarness({ players = [] } = {}) {
         .replace('export async function copySelectedPlayersForTeamRollover', 'async function copySelectedPlayersForTeamRollover');
     const batch = {
         setCalls: [],
-        set(ref, payload) {
-            this.setCalls.push({ ref, payload });
+        set(ref, payload, options) {
+            this.setCalls.push({ ref, payload, options });
         },
         commit: async () => {
             batch.committed = true;
@@ -60,20 +60,28 @@ function buildRolloverDbHarness({ players = [] } = {}) {
     };
     const deps = {
         buildRolloverPlayerCopy,
+        buildRolloverPrivateRosterFields,
         collection: (_db, path) => ({ path }),
         db: {},
-        doc: (collectionRef) => ({ path: `${collectionRef.path}/auto-${batch.setCalls.length + 1}` }),
+        doc: (...args) => {
+            if (args.length === 1) {
+                deps.nextPlayerId += 1;
+                return { id: `auto-${deps.nextPlayerId}`, path: `${args[0].path}/auto-${deps.nextPlayerId}` };
+            }
+            return { path: args[1] };
+        },
         getPlayers: async () => players,
         Timestamp: { now: () => ({ marker: `ts-${batch.setCalls.length}` }) },
         writeBatch: () => {
             deps.batchCreated = true;
             return batch;
         },
+        nextPlayerId: 0,
         batchCreated: false
     };
 
     const factory = new Function('deps', `
-        const { buildRolloverPlayerCopy, collection, db, doc, getPlayers, Timestamp, writeBatch } = deps;
+        const { buildRolloverPlayerCopy, buildRolloverPrivateRosterFields, collection, db, doc, getPlayers, Timestamp, writeBatch } = deps;
         ${assertFnSource}
         ${copyFnSource}
         return { copySelectedPlayersForTeamRollover };
@@ -90,7 +98,26 @@ describe('team rollover player copy', () => {
     it('loads the rollover sanitizer through a cache-busted db import', () => {
         const source = readDbSource();
 
-        expect(source).toContain("from './team-rollover.js?v=3'");
+        expect(source).toContain("from './team-rollover.js?v=4'");
+    });
+
+    it('collects newly protected roster fields for the target private profile', () => {
+        expect(buildRolloverPrivateRosterFields({
+            birthDate: '2014-02-03',
+            rosterFieldValues: { school: 'Central', medicalInfo: 'do not copy' },
+            customFields: { jerseySize: 'M' },
+            profile: {
+                address: { city: 'Kansas City' },
+                customFields: { grade: '6', memberId: 'AAU-42', favoriteColor: 'blue' }
+            }
+        })).toEqual({
+            birthDate: '2014-02-03',
+            school: 'Central',
+            jerseySize: 'M',
+            address: { city: 'Kansas City' },
+            grade: '6',
+            memberId: 'AAU-42'
+        });
     });
 
     it('preserves supported public player fields with source audit metadata', () => {
@@ -184,6 +211,7 @@ describe('team rollover player copy', () => {
                     name: 'Sam Player',
                     active: true,
                     number: '12',
+                    birthDate: '2014-02-03',
                     parents: [{ userId: 'parent-1', email: 'parent@example.com' }],
                     contacts: [{ name: 'Dana Reed', email: 'dana@example.com', phone: '555-3000', relation: 'Emergency Contact' }],
                     emergencyContact: { name: 'Jane Doe', phone: '555-1234' },
@@ -194,6 +222,7 @@ describe('team rollover player copy', () => {
                         guardianPhone: '555-9999'
                     },
                     profile: {
+                        address: { city: 'Kansas City' },
                         rosterFields: {
                             graduationYear: '2030',
                             emergencyContactPhone: '555-0000'
@@ -224,10 +253,12 @@ describe('team rollover player copy', () => {
             .resolves.toEqual({ copiedCount: 2 });
 
         expect(harness.batch.committed).toBe(true);
-        expect(harness.batch.setCalls).toHaveLength(2);
+        expect(harness.batch.setCalls).toHaveLength(4);
         expect(harness.batch.setCalls.map(call => call.ref.path)).toEqual([
             'teams/team-new/players/auto-1',
-            'teams/team-new/players/auto-2'
+            'teams/team-new/players/auto-1/private/profile',
+            'teams/team-new/players/auto-2',
+            'teams/team-new/players/auto-2/private/profile'
         ]);
         expect(harness.batch.setCalls[0].payload).toMatchObject({
             name: 'Sam Player',
@@ -241,28 +272,50 @@ describe('team rollover player copy', () => {
             sourceTeamId: 'team-old',
             sourcePlayerId: 'player-1'
         });
-        expect(harness.batch.setCalls[1].payload).toMatchObject({
+        expect(harness.batch.setCalls[2].payload).toMatchObject({
             name: 'Taylor Player',
             active: true,
             customFields: {},
             sourceTeamId: 'team-old',
             sourcePlayerId: 'player-2'
         });
+        expect(harness.batch.setCalls[1]).toEqual({
+            ref: { path: 'teams/team-new/players/auto-1/private/profile' },
+            payload: {
+                rosterFields: {
+                    birthDate: '2014-02-03',
+                    school: 'Central',
+                    address: { city: 'Kansas City' }
+                },
+                updatedAt: { marker: 'ts-0' }
+            },
+            options: { merge: true }
+        });
+        expect(harness.batch.setCalls[3]).toEqual({
+            ref: { path: 'teams/team-new/players/auto-2/private/profile' },
+            payload: {
+                rosterFields: { jerseySize: 'M' },
+                updatedAt: { marker: 'ts-0' }
+            },
+            options: { merge: true }
+        });
         expect(harness.batch.setCalls[0].payload).not.toHaveProperty('parents');
         expect(harness.batch.setCalls[0].payload).not.toHaveProperty('contacts');
         expect(harness.batch.setCalls[0].payload).not.toHaveProperty('emergencyContact');
         expect(harness.batch.setCalls[0].payload).not.toHaveProperty('medicalInfo');
+        expect(harness.batch.setCalls[0].payload).not.toHaveProperty('birthDate');
+        expect(harness.batch.setCalls[0].payload.profile).not.toHaveProperty('address');
         expect(harness.batch.setCalls[0].payload.rosterFieldValues).not.toHaveProperty('contacts');
         expect(harness.batch.setCalls[0].payload.rosterFieldValues).not.toHaveProperty('guardianPhone');
         expect(harness.batch.setCalls[0].payload.rosterFieldValues).not.toHaveProperty('school');
         expect(harness.batch.setCalls[0].payload.profile.rosterFields).not.toHaveProperty('emergencyContactPhone');
         expect(harness.batch.setCalls[0].payload.profile.customFields).not.toHaveProperty('householdEmail');
-        expect(harness.batch.setCalls[1].payload).not.toHaveProperty('contactPhone');
-        expect(harness.batch.setCalls[1].payload).not.toHaveProperty('parentEmail');
-        expect(harness.batch.setCalls[1].payload).not.toHaveProperty('householdContact');
-        expect(harness.batch.setCalls[1].payload.customFields).not.toHaveProperty('contactEmail');
-        expect(harness.batch.setCalls[1].payload.customFields).not.toHaveProperty('emergencyContactName');
-        expect(harness.batch.setCalls[1].payload.customFields).not.toHaveProperty('jerseySize');
+        expect(harness.batch.setCalls[2].payload).not.toHaveProperty('contactPhone');
+        expect(harness.batch.setCalls[2].payload).not.toHaveProperty('parentEmail');
+        expect(harness.batch.setCalls[2].payload).not.toHaveProperty('householdContact');
+        expect(harness.batch.setCalls[2].payload.customFields).not.toHaveProperty('contactEmail');
+        expect(harness.batch.setCalls[2].payload.customFields).not.toHaveProperty('emergencyContactName');
+        expect(harness.batch.setCalls[2].payload.customFields).not.toHaveProperty('jerseySize');
     });
 
     it('does not create a partial batch when a selected rollover player is missing', async () => {
