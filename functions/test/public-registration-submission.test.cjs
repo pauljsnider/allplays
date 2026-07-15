@@ -43,6 +43,7 @@ function setNested(target, path, value) {
 function makeFirestore(seed = {}) {
     const state = new Map(Object.entries(clone(seed)));
     let nextAutoId = 1;
+    let nextTransactionError = null;
     const fieldValue = {
         serverTimestamp: () => ({ __op: 'serverTimestamp' }),
         delete: () => ({ __op: 'delete' }),
@@ -124,6 +125,11 @@ function makeFirestore(seed = {}) {
         doc,
         collection,
         async runTransaction(handler) {
+            if (nextTransactionError) {
+                const error = nextTransactionError;
+                nextTransactionError = null;
+                throw error;
+            }
             const transaction = {
                 get: (ref) => ref.get(),
                 set: (ref, value, options) => ref.set(value, options),
@@ -138,6 +144,9 @@ function makeFirestore(seed = {}) {
             return [...state.entries()]
                 .filter(([path]) => path.startsWith('teams/team-1/registrationForms/form-1/registrations/'))
                 .map(([path, data]) => ({ path, data: clone(data) }));
+        },
+        failNextTransaction(error) {
+            nextTransactionError = error;
         },
         FieldValue: fieldValue
     };
@@ -251,6 +260,11 @@ function loadFunctionsModule(seed) {
 function loadSubmitPublicRegistration(seed) {
     delete require.cache[repoIndexPath];
     const firestore = makeFirestore(seed);
+    return loadSubmitPublicRegistrationWithFirestore(firestore);
+}
+
+function loadSubmitPublicRegistrationWithFirestore(firestore) {
+    delete require.cache[repoIndexPath];
     installModuleStubs(firestore);
     const mod = require('../index.js');
     return {
@@ -428,6 +442,46 @@ test('throttles repeated anonymous submissions before reserving more capacity', 
     const formAfterThrottle = firestore.snapshot('teams/team-1/registrationForms/form-1');
     assert.equal(formAfterThrottle.registrationOptionCounts.u10.enrolled, formBeforeThrottle.registrationOptionCounts.u10.enrolled);
     assert.equal(firestore.registrationDocs().length, registrationCountBeforeThrottle);
+});
+
+test('shares submission throttling across independently loaded function handlers', async () => {
+    const firstHandler = loadSubmitPublicRegistration(buildSeedState());
+    const input = buildSubmission();
+
+    await firstHandler.submitPublicRegistration(input, context);
+    await firstHandler.submitPublicRegistration(input, context);
+
+    const secondHandler = loadSubmitPublicRegistrationWithFirestore(firstHandler.firestore);
+    await secondHandler.submitPublicRegistration(input, context);
+    const formBeforeThrottle = firstHandler.firestore.snapshot('teams/team-1/registrationForms/form-1');
+    const registrationCountBeforeThrottle = firstHandler.firestore.registrationDocs().length;
+
+    await assert.rejects(
+        secondHandler.submitPublicRegistration(input, context),
+        (error) => {
+            assert.equal(error.code, 'resource-exhausted');
+            assert.equal(error.details.reason, 'rate-limited');
+            return true;
+        }
+    );
+
+    const formAfterThrottle = firstHandler.firestore.snapshot('teams/team-1/registrationForms/form-1');
+    assert.equal(formAfterThrottle.registrationOptionCounts.u10.enrolled, formBeforeThrottle.registrationOptionCounts.u10.enrolled);
+    assert.equal(firstHandler.firestore.registrationDocs().length, registrationCountBeforeThrottle);
+});
+
+test('does not bypass throttling when the durable reservation fails', async () => {
+    const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration(buildSeedState());
+    firestore.failNextTransaction(new Error('rate-limit store unavailable'));
+
+    await assert.rejects(
+        submitPublicRegistration(buildSubmission(), context),
+        /rate-limit store unavailable/
+    );
+
+    const form = firestore.snapshot('teams/team-1/registrationForms/form-1');
+    assert.equal(form.registrationOptionCounts.u10.enrolled, 0);
+    assert.equal(firestore.registrationDocs().length, 0);
 });
 
 test('throttles forwarded public clients behind a private proxy before reserving more capacity', async () => {
