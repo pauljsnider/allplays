@@ -179,7 +179,7 @@ describe('TeamFeesComponent checkout flow', () => {
     expect(getDoc).toHaveBeenCalled();
     expect(where).toHaveBeenCalledWith('teamId', '==', 'team-real');
     expect(where).toHaveBeenCalledWith('playerId', '==', 'player-real');
-    expect(query).toHaveBeenCalledTimes(4);
+    expect(query).toHaveBeenCalledTimes(5);
     expect(component.teamFees).toEqual([
       {
         id: 'player-real',
