@@ -276,6 +276,7 @@ export type TeamDetailModel = {
     description: string;
     zip: string;
     isPublic: boolean;
+    isExplicitlyPublic: boolean;
     active: boolean;
     leagueUrl: string | null;
     bracketUrl: string | null;
@@ -1733,6 +1734,7 @@ export function buildTeamDetailModel({
       description: cleanString(team?.description),
       zip: cleanString(team?.zip),
       isPublic: team?.isPublic !== false,
+      isExplicitlyPublic: team?.isPublic === true,
       active: team?.active !== false,
       leagueUrl: getFirstUrl(team?.leagueUrl),
       bracketUrl: getFirstUrl(team?.bracketUrl),

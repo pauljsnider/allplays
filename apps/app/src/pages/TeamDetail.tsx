@@ -2215,7 +2215,7 @@ function ScoreboardWidgetCard({ model }: { model: TeamDetailModel }) {
   const embedCode = buildScoreboardWidgetEmbedCode(model.team);
   const [copyStatus, setCopyStatus] = useState<{ kind: 'embed' | 'link'; success: boolean } | null>(null);
 
-  if (!model.team.isPublic) {
+  if (model.team.isExplicitlyPublic !== true) {
     return (
       <section className="app-card p-4">
         <div className="flex items-start gap-3">
