@@ -54,4 +54,31 @@ describe('live game viewer lineup sync', () => {
     expect(rendered.benchHtml).toContain('6 REB');
     expect(rendered.benchHtml).toContain('0 AST');
   });
+
+  it('renders persisted home fouls when configured columns omit FLS', () => {
+    const rendered = renderViewerLineupSections({
+      players: [{ id: 'p1', name: 'Ava', num: '1' }],
+      stats: { p1: { pts: 8, reb: 4, fouls: 5 } },
+      statColumns: ['PTS', 'REB'],
+      onCourt: ['p1'],
+      bench: []
+    });
+
+    expect(rendered.onCourtHtml).toContain('8 PTS');
+    expect(rendered.onCourtHtml).toContain('4 REB');
+    expect(rendered.onCourtHtml).toContain('5 FLS');
+  });
+
+  it.each(['FLS', 'FOULS'])('does not duplicate configured home %s foul alias', (foulColumn) => {
+    const rendered = renderViewerLineupSections({
+      players: [{ id: 'p1', name: 'Ava', num: '1' }],
+      stats: { p1: { pts: 8, fouls: 5 } },
+      statColumns: ['PTS', foulColumn],
+      onCourt: ['p1'],
+      bench: []
+    });
+
+    expect(rendered.onCourtHtml.match(new RegExp(`5 ${foulColumn}`, 'g'))).toHaveLength(1);
+    expect(rendered.onCourtHtml.match(/5 (?:FLS|FOULS)/g)).toHaveLength(1);
+  });
 });

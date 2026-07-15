@@ -55,7 +55,7 @@ describe('RSVP precedence cache delivery', () => {
         const consumerVersions = {
             'admin.html': 'js/admin.js?v=10',
             'certificates.html': 'js/certificates/studio.js?v=13',
-            'live-game.html': 'js/live-game.js?v=16',
+            'live-game.html': 'js/live-game.js?v=17',
             'live-tracker.html': 'js/live-tracker.js?v=2',
             'team-fees.html': 'js/team-fees-admin.js?v=14',
             'team-media.html': 'js/team-media.js?v=14',
@@ -72,5 +72,6 @@ describe('RSVP precedence cache delivery', () => {
         expect(readRepoFile('js/utils.js')).toContain("import('./global-search.js?v=9')");
         expect(readRepoFile('js/db.js')).toContain("from './utils.js?v=15';");
         expect(readRepoFile('parent-dashboard.html')).toContain('js/utils.js?v=15');
+        expect(readRepoFile('js/live-game.js')).toContain("from './live-game-state.js?v=7';");
     });
 });
