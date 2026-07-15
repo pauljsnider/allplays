@@ -79,6 +79,24 @@ test.describe('help topic and workflow pages', () => {
         await expect(page.getByRole('link', { name: 'Team Chat' })).toHaveAttribute('href', 'team-chat.html#teamId=team-123');
     });
 
+    test('help-watch-chat hides team-scoped links without team context', async ({ page, baseURL }) => {
+        await assertPageBootsWithoutFatalErrors(page, {
+            baseURL,
+            path: '/help-watch-chat.html?role=parent',
+            titlePatterns: [/Help/i],
+            skipDefaultForbiddenTexts: true,
+            requiredSelectors: [
+                'a[data-help-context-link][data-quick-link-label="Team Page"]',
+                'a[data-help-context-link][data-quick-link-label="Game Viewer"]',
+                'a[data-help-context-link][data-quick-link-label="Open Team Chat"]'
+            ]
+        });
+
+        await expect(page.locator('a[data-quick-link-label="Team Page"]')).toBeHidden();
+        await expect(page.locator('a[data-quick-link-label="Game Viewer"]')).toBeHidden();
+        await expect(page.locator('a[data-quick-link-label="Open Team Chat"]')).toBeHidden();
+    });
+
     test('Getting Started exposes working account entry points instead of a nonexistent homepage CTA', async ({ page, baseURL }) => {
         await bootWorkflowPage(page, baseURL, '/workflow-getting-started.html');
 
