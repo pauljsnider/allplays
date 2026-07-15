@@ -202,7 +202,7 @@ export async function normalizeParentScopeLinks(parentLinks = []) {
 }
 import { normalizeStatTrackerConfig, splitPlayerStatsByVisibility } from './stat-leaderboards.js?v=2';
 import { buildPublishedBracketView } from './bracket-management.js?v=1';
-import { buildRolloverPlayerCopy } from './team-rollover.js?v=2';
+import { buildRolloverPlayerCopy } from './team-rollover.js?v=3';
 import { isPublicTrackingItem, normalizeTrackingItem, normalizeTrackingStatus } from './player-tracking-summary.js?v=1';
 import {
     buildRegistrationRosterDecision,

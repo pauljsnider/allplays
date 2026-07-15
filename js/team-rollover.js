@@ -10,6 +10,7 @@ const ROLLOVER_OMITTED_PLAYER_FIELDS = new Set([
 ]);
 
 const ROLLOVER_SENSITIVE_PLAYER_FIELDS = new Set([
+    'birthDate', 'gender', 'grade', 'school', 'jerseySize', 'memberId', 'dominantHandFoot', 'address',
     'medicalInfo', 'medical_info', 'medicalNotes', 'medical_notes',
     'emergencyContact', 'emergency_contact', 'emergencyContactName', 'emergencyContactPhone',
     'contacts', 'contact', 'contactInfo', 'contact_info', 'contactEmail', 'contactPhone', 'contactRelation',

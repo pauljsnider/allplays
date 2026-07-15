@@ -90,7 +90,7 @@ describe('team rollover player copy', () => {
     it('loads the rollover sanitizer through a cache-busted db import', () => {
         const source = readDbSource();
 
-        expect(source).toContain("from './team-rollover.js?v=2'");
+        expect(source).toContain("from './team-rollover.js?v=3'");
     });
 
     it('preserves supported public player fields with source audit metadata', () => {
@@ -233,7 +233,7 @@ describe('team rollover player copy', () => {
             name: 'Sam Player',
             active: true,
             number: '12',
-            rosterFieldValues: { school: 'Central' },
+            rosterFieldValues: {},
             profile: {
                 rosterFields: { graduationYear: '2030' },
                 customFields: { throws: 'right' }
@@ -244,7 +244,7 @@ describe('team rollover player copy', () => {
         expect(harness.batch.setCalls[1].payload).toMatchObject({
             name: 'Taylor Player',
             active: true,
-            customFields: { jerseySize: 'M' },
+            customFields: {},
             sourceTeamId: 'team-old',
             sourcePlayerId: 'player-2'
         });
@@ -254,6 +254,7 @@ describe('team rollover player copy', () => {
         expect(harness.batch.setCalls[0].payload).not.toHaveProperty('medicalInfo');
         expect(harness.batch.setCalls[0].payload.rosterFieldValues).not.toHaveProperty('contacts');
         expect(harness.batch.setCalls[0].payload.rosterFieldValues).not.toHaveProperty('guardianPhone');
+        expect(harness.batch.setCalls[0].payload.rosterFieldValues).not.toHaveProperty('school');
         expect(harness.batch.setCalls[0].payload.profile.rosterFields).not.toHaveProperty('emergencyContactPhone');
         expect(harness.batch.setCalls[0].payload.profile.customFields).not.toHaveProperty('householdEmail');
         expect(harness.batch.setCalls[1].payload).not.toHaveProperty('contactPhone');
@@ -261,6 +262,7 @@ describe('team rollover player copy', () => {
         expect(harness.batch.setCalls[1].payload).not.toHaveProperty('householdContact');
         expect(harness.batch.setCalls[1].payload.customFields).not.toHaveProperty('contactEmail');
         expect(harness.batch.setCalls[1].payload.customFields).not.toHaveProperty('emergencyContactName');
+        expect(harness.batch.setCalls[1].payload.customFields).not.toHaveProperty('jerseySize');
     });
 
     it('does not create a partial batch when a selected rollover player is missing', async () => {
