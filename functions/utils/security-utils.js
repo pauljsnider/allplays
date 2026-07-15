@@ -153,7 +153,10 @@ async function normalizeTargetUrl(rawUrl) {
     throw new Error('Only https calendar URLs are allowed');
   }
 
-  const host = parsed.hostname.toLowerCase();
+  const parsedHostname = parsed.hostname.toLowerCase();
+  const host = parsedHostname.startsWith('[') && parsedHostname.endsWith(']')
+    ? parsedHostname.slice(1, -1)
+    : parsedHostname;
   const publicIps = await assertPublicHost(host);
 
   return {

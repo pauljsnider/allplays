@@ -95,6 +95,41 @@ test('normalizeTargetUrl rejects calendar hosts resolving to RFC 6598 shared spa
   }
 });
 
+test('normalizeTargetUrl validates bracketed IPv6 literals without DNS lookup', async () => {
+  const originalDnsLookup = dns.lookup;
+  let dnsLookupCalled = false;
+  try {
+    dns.lookup = async () => {
+      dnsLookupCalled = true;
+      throw new Error('IPv6 literals must not be resolved through DNS');
+    };
+
+    const result = await normalizeTargetUrl('https://[2606:4700:4700::1111]/calendar.ics');
+
+    assert.strictEqual(result.hostname, '[2606:4700:4700::1111]');
+    assert.deepStrictEqual(result.publicIps, ['2606:4700:4700::1111']);
+    assert.strictEqual(dnsLookupCalled, false, 'public IPv6 literals should bypass DNS resolution');
+
+    await assert.rejects(
+      normalizeTargetUrl('https://[::1]/calendar.ics'),
+      { message: 'Blocked host' },
+      'IPv6 loopback literals should remain blocked'
+    );
+    await assert.rejects(
+      normalizeTargetUrl('https://[fe80::1]/calendar.ics'),
+      { message: 'Blocked host address' },
+      'IPv6 link-local literals should remain blocked'
+    );
+    await assert.rejects(
+      normalizeTargetUrl('https://[fd00::1]/calendar.ics'),
+      { message: 'Blocked host address' },
+      'IPv6 unique-local literals should remain blocked'
+    );
+  } finally {
+    dns.lookup = originalDnsLookup;
+  }
+});
+
 test('fetchWithTimeout uses validated IPs and falls back across failures', async () => {
   const originalDnsLookup = dns.lookup;
   const originalSetClientModules = _setClientModulesForTesting;
