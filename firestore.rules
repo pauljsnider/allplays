@@ -745,6 +745,7 @@ service cloud.firestore {
 
     function hasRestrictedRosterFieldValues(data) {
       let restrictedKeys = [
+        'birthDate', 'gender', 'grade', 'school', 'jerseySize', 'memberId', 'dominantHandFoot', 'address',
         'medicalInfo', 'medical_info', 'medicalNotes', 'medical_notes',
         'emergencyContact', 'emergency_contact', 'emergencyContactName', 'emergencyContactPhone',
         'contacts', 'contact', 'contactInfo', 'contact_info', 'contactEmail', 'contactPhone', 'contactRelation',
@@ -752,7 +753,9 @@ service cloud.firestore {
         'guardian', 'guardians', 'guardianEmail', 'guardianPhone', 'guardianRelation',
         'householdContact', 'householdContacts', 'householdEmail', 'householdPhone', 'householdRelation'
       ];
+      let profile = data.get('profile', {});
       return data.keys().hasAny(restrictedKeys) ||
+             (profile is map && profile.keys().hasAny(restrictedKeys)) ||
              hasRestrictedRosterMap(data, 'rosterFieldValues', restrictedKeys) ||
              hasRestrictedRosterMap(data, 'customFields', restrictedKeys) ||
              hasRestrictedRosterMap(data, 'profileFields', restrictedKeys) ||

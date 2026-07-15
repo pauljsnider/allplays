@@ -398,6 +398,10 @@ const PROFILE_HEADER_ALIASES = new Map([
     ['notaplayer', { profileField: 'rosterStatus', statusMode: 'nonPlayerFlag' }]
 ]);
 
+const PRIVATE_BUILT_IN_PROFILE_FIELDS = new Set([
+    'birthDate', 'gender', 'grade', 'school', 'jerseySize', 'memberId', 'dominantHandFoot', 'address'
+]);
+
 const ROSTER_STATUS_VALUE_ALIASES = new Map([
     ['player', 'player'],
     ['athlete', 'player'],
@@ -729,18 +733,17 @@ function getProfileMappingDedupeKey(mapping = {}) {
     return mapping.profileField || '';
 }
 
-function mergeProfileImportValues(existingProfile = {}, profileValues = {}, addressValues = {}) {
-    const nextProfile = {
+function mergeProfileImportValues(existingProfile = {}, profileValues = {}) {
+    return {
         ...existingProfile,
         ...profileValues
     };
-    if (Object.keys(addressValues).length > 0) {
-        nextProfile.address = {
-            ...(existingProfile.address || {}),
-            ...addressValues
-        };
-    }
-    return nextProfile;
+}
+
+function omitPrivateBuiltInProfileValues(profile = {}) {
+    const publicProfile = { ...(profile || {}) };
+    PRIVATE_BUILT_IN_PROFILE_FIELDS.forEach((key) => delete publicProfile[key]);
+    return publicProfile;
 }
 
 function escapeRosterCsvCell(value) {
@@ -935,6 +938,19 @@ export function planRosterCsvImport({ csvText = '', fields = [], existingPlayers
 
         if (!name) return;
         const { publicValues, privateValues } = splitRosterProfileValuesByVisibility(normalizedFields, parsedValues, { includeAdminPrivate: false });
+        normalizedFields.forEach((field) => {
+            if (!PRIVATE_BUILT_IN_PROFILE_FIELDS.has(field.key)) return;
+            if (!Object.prototype.hasOwnProperty.call(parsedValues, field.key)) return;
+            if (!isPublicRosterField(field)) privateValues[field.key] = parsedValues[field.key];
+        });
+        PRIVATE_BUILT_IN_PROFILE_FIELDS.forEach((key) => {
+            if (!Object.prototype.hasOwnProperty.call(profileValuesForMerge, key)) return;
+            privateValues[key] = profileValuesForMerge[key];
+            delete profileValuesForMerge[key];
+        });
+        if (Object.keys(addressValues).length > 0) {
+            privateValues.address = addressValues;
+        }
         const contactPlan = buildRosterCsvContactPlan(contactValues, rowNumber);
         contactPlan.errors.forEach((error) => errors.push(error));
         const matches = existingByName.get(name.toLowerCase()) || [];
@@ -944,14 +960,15 @@ export function planRosterCsvImport({ csvText = '', fields = [], existingPlayers
         }
 
         const existing = matches[0];
-        const existingProfile = existing?.profile || {};
+        const existingProfile = omitPrivateBuiltInProfileValues(existing?.profile || {});
         const retainedCustomFields = { ...(existingProfile.customFields || {}) };
+        PRIVATE_BUILT_IN_PROFILE_FIELDS.forEach((key) => delete retainedCustomFields[key]);
         normalizedFields.forEach((field) => {
             if (!Object.prototype.hasOwnProperty.call(parsedValues, field.key)) return;
             if (!isPublicRosterField(field)) delete retainedCustomFields[field.key];
         });
         const profile = {
-            ...mergeProfileImportValues(existingProfile, profileValuesForMerge, addressValues),
+            ...mergeProfileImportValues(existingProfile, profileValuesForMerge),
             customFields: {
                 ...retainedCustomFields,
                 ...publicValues

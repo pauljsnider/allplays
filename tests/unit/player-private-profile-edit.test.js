@@ -215,6 +215,30 @@ describe('player profile private doc writes', () => {
         })).toThrow('Do not write sensitive fields to public player doc');
     });
 
+    it('rejects protected built-in fields at the top level and under profile maps', () => {
+        const source = readDbSource();
+        const fnSource = extractFunction(source, 'function assertNoSensitivePlayerFields(');
+        const factory = new Function(`${fnSource}; return assertNoSensitivePlayerFields;`);
+        const assertNoSensitivePlayerFields = factory();
+
+        expect(() => assertNoSensitivePlayerFields({ address: { city: 'Kansas City' } }))
+            .toThrow('Do not write sensitive fields to public player doc: address');
+        expect(() => assertNoSensitivePlayerFields({
+            profile: {
+                birthDate: '2014-02-03',
+                address: { street: '123 Main' },
+                customFields: { memberId: 'AAU-42' }
+            }
+        })).toThrow('profile.birthDate, profile.address, profile.customFields.memberId');
+
+        expect(() => assertNoSensitivePlayerFields({
+            name: 'Avery Lee',
+            number: '4',
+            position: 'Forward',
+            profile: { preferredName: 'Rocket', position: 'Forward', alternateNumber: '14' }
+        })).not.toThrow();
+    });
+
     it('rejects sensitive fields passed to the public player document helper', async () => {
         const { updatePlayerProfile } = buildDbProfileUpdateHelpers();
 

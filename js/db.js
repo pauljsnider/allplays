@@ -2562,6 +2562,7 @@ export async function deleteTeam(teamId) {
 function assertNoSensitivePlayerFields(playerData) {
     if (!playerData || typeof playerData !== 'object') return;
     const forbidden = [
+        'birthDate', 'gender', 'grade', 'school', 'jerseySize', 'memberId', 'dominantHandFoot', 'address',
         'medicalInfo', 'medical_info', 'medicalNotes', 'medical_notes',
         'emergencyContact', 'emergency_contact', 'emergencyContactName', 'emergencyContactPhone',
         'contacts', 'contact', 'contactInfo', 'contact_info', 'contactEmail', 'contactPhone', 'contactRelation',
@@ -2571,14 +2572,19 @@ function assertNoSensitivePlayerFields(playerData) {
     ];
     const present = forbidden.filter(k => Object.prototype.hasOwnProperty.call(playerData, k));
     const rosterFieldSources = ['rosterFieldValues', 'customFields', 'profileFields', 'extraFields'];
-    rosterFieldSources.forEach((sourceKey) => {
-        const source = playerData[sourceKey];
+    const inspectSource = (source, sourcePath) => {
         if (!source || typeof source !== 'object') return;
         forbidden.forEach((key) => {
             if (Object.prototype.hasOwnProperty.call(source, key)) {
-                present.push(`${sourceKey}.${key}`);
+                present.push(`${sourcePath}.${key}`);
             }
         });
+    };
+    rosterFieldSources.forEach((sourceKey) => inspectSource(playerData[sourceKey], sourceKey));
+    const profile = playerData.profile;
+    inspectSource(profile, 'profile');
+    rosterFieldSources.forEach((sourceKey) => {
+        inspectSource(profile?.[sourceKey], `profile.${sourceKey}`);
     });
     if (present.length) {
         throw new Error(`Do not write sensitive fields to public player doc: ${present.join(', ')}`);
