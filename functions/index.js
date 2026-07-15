@@ -1317,6 +1317,7 @@ function buildRegistrationReminderStopUpdate({ reason = 'resolved', nowIso = '' 
 const REGISTRATION_PAYMENT_REMINDER_QUERY_PAGE_SIZE = PRE_EVENT_REMINDER_QUERY_PAGE_SIZE;
 const REGISTRATION_PAYMENT_REMINDER_MAX_PAGES_PER_RUN = PRE_EVENT_REMINDER_MAX_PAGES_PER_RUN;
 const REGISTRATION_PAYMENT_REMINDER_MAX_RUNTIME_MS = PRE_EVENT_REMINDER_MAX_RUNTIME_MS;
+const REGISTRATION_CHECKOUT_CREATION_RESERVATION_TIMEOUT_MS = 15 * 60 * 1000;
 
 async function processDueRegistrationFailedPaymentReminder(docSnap, { now, nowIso, appUrl }) {
   const registrationRef = docSnap.ref;
@@ -1516,6 +1517,80 @@ async function reserveRegistrationCheckoutCapacityForRetry(input, options = {}) 
   });
 }
 
+async function reserveRegistrationCheckoutCreation(input, options = {}) {
+  const registrationRef = buildRegistrationRef(input);
+  const checkoutCreationReservationId = String(options.checkoutCreationReservationId || '').trim();
+  const amountCents = Math.max(0, Math.round(Number(options.amountCents || 0) || 0));
+  const now = admin.firestore.FieldValue.serverTimestamp();
+
+  return firestore.runTransaction(async (transaction) => {
+    const registrationSnap = await transaction.get(registrationRef);
+    if (!registrationSnap.exists) {
+      throw new functions.https.HttpsError('not-found', 'Registration not found.');
+    }
+
+    const registration = registrationSnap.data() || {};
+    if (registration.teamId !== input.teamId || registration.formId !== input.formId) {
+      throw new functions.https.HttpsError('failed-precondition', 'Registration does not match the requested form.');
+    }
+    if (registration.status === 'waitlisted') {
+      throw new functions.https.HttpsError('failed-precondition', 'Waitlisted registrations cannot be paid online yet.');
+    }
+    if (registration.status === 'rejected') {
+      throw new functions.https.HttpsError('failed-precondition', 'Rejected registrations cannot be paid online.');
+    }
+    if (registration.paymentStatus === 'paid') {
+      throw new functions.https.HttpsError('failed-precondition', 'This registration has already been paid.');
+    }
+    if (!registrationCheckoutAuthorityMatches(registration, input)) {
+      throw new functions.https.HttpsError('failed-precondition', 'Current public checkout capability is required.');
+    }
+    if (canReuseRegistrationCheckoutSession(registration, amountCents, input)) {
+      return {
+        reserved: false,
+        checkoutUrl: registration.checkoutUrl,
+        sessionId: registration.stripeCheckoutSessionId
+      };
+    }
+    const existingReservationId = String(registration.checkoutCreationReservationId || '').trim();
+    const existingReservationStartedAtMillis = firestoreTimestampToMillis(registration.checkoutCreationStartedAt);
+    const existingReservationIsActive = existingReservationId
+      && Number.isFinite(existingReservationStartedAtMillis)
+      && Date.now() - existingReservationStartedAtMillis < REGISTRATION_CHECKOUT_CREATION_RESERVATION_TIMEOUT_MS;
+    if (existingReservationIsActive) {
+      throw new functions.https.HttpsError('failed-precondition', 'Registration checkout creation is already in progress.');
+    }
+
+    transaction.set(registrationRef, {
+      checkoutCreationReservationId,
+      checkoutCreationStartedAt: now,
+      updatedAt: now
+    }, { merge: true });
+    return {
+      reserved: true,
+      retryCapacityReservationId: String(registration.retryCapacityReservationId || '').trim() || null
+    };
+  });
+}
+
+async function clearRegistrationCheckoutCreationReservation(input, checkoutCreationReservationId) {
+  const registrationRef = buildRegistrationRef(input);
+  const now = admin.firestore.FieldValue.serverTimestamp();
+
+  return firestore.runTransaction(async (transaction) => {
+    const registrationSnap = await transaction.get(registrationRef);
+    if (!registrationSnap.exists) return false;
+    const registration = registrationSnap.data() || {};
+    if (String(registration.checkoutCreationReservationId || '') !== checkoutCreationReservationId) return false;
+    transaction.set(registrationRef, {
+      checkoutCreationReservationId: admin.firestore.FieldValue.delete(),
+      checkoutCreationStartedAt: admin.firestore.FieldValue.delete(),
+      updatedAt: now
+    }, { merge: true });
+    return true;
+  });
+}
+
 async function releaseRegistrationCheckoutCapacity(input, statusUpdate = {}, options = {}) {
   const formRef = buildRegistrationFormRef(input);
   const registrationRef = buildRegistrationRef(input);
@@ -1554,6 +1629,15 @@ async function releaseRegistrationCheckoutCapacity(input, statusUpdate = {}, opt
       retryCapacityReservationId
       && String(registration.retryCapacityReservationId || '').trim() === retryCapacityReservationId
     );
+    const checkoutCreationReservationId = String(options.checkoutCreationReservationId || '').trim();
+    const activeCheckoutCreationReservationId = String(registration.checkoutCreationReservationId || '').trim();
+    if (
+      hasMatchingRetryCapacityReservation
+      && activeCheckoutCreationReservationId
+      && activeCheckoutCreationReservationId !== checkoutCreationReservationId
+    ) {
+      return { released: false, reason: 'checkout-creation-owned-by-another-reservation' };
+    }
     const registrationUpdate = {
       ...statusUpdate,
       retryCapacityReservationId: admin.firestore.FieldValue.delete(),
@@ -4079,6 +4163,9 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
   if (registration.status === 'waitlisted') {
     throw new functions.https.HttpsError('failed-precondition', 'Waitlisted registrations cannot be paid online yet.');
   }
+  if (registration.status === 'rejected') {
+    throw new functions.https.HttpsError('failed-precondition', 'Rejected registrations cannot be paid online.');
+  }
   if (registration.paymentStatus === 'paid') {
     throw new functions.https.HttpsError('failed-precondition', 'This registration has already been paid.');
   }
@@ -4106,6 +4193,36 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
   }
   if (canReuseRegistrationCheckoutSession(registration, amountCents, resolvedInput)) {
     return { checkoutUrl: registration.checkoutUrl, sessionId: registration.stripeCheckoutSessionId };
+  }
+
+  const checkoutCreationReservationId = crypto.randomUUID();
+  let checkoutCreationReservation;
+  try {
+    checkoutCreationReservation = await reserveRegistrationCheckoutCreation(resolvedInput, {
+      checkoutCreationReservationId,
+      amountCents
+    });
+  } catch (error) {
+    if (retryCapacityReservation.reserved) {
+      await releaseRegistrationCheckoutCapacity(resolvedInput, {}, {
+        retryCapacityReservationId: retryCapacityReservation.retryCapacityReservationId,
+        checkoutCreationReservationId,
+        suppressPublicCheckoutCapabilityRotation: true
+      }).catch(() => {});
+    }
+    throw error;
+  }
+  if (!checkoutCreationReservation.reserved) {
+    return {
+      checkoutUrl: checkoutCreationReservation.checkoutUrl,
+      sessionId: checkoutCreationReservation.sessionId
+    };
+  }
+  if (!retryCapacityReservation.reserved && checkoutCreationReservation.retryCapacityReservationId) {
+    retryCapacityReservation = {
+      reserved: true,
+      retryCapacityReservationId: checkoutCreationReservation.retryCapacityReservationId
+    };
   }
 
   const stripe = createStripeClient();
@@ -4142,6 +4259,14 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
       metadata: buildRegistrationCheckoutMetadata({ input: checkoutUrlInput, registration })
     });
   } catch (error) {
+    await clearRegistrationCheckoutCreationReservation(resolvedInput, checkoutCreationReservationId).catch((clearError) => {
+      functions.logger.error('Failed to clear registration checkout creation reservation.', {
+        teamId: resolvedInput.teamId,
+        formId: resolvedInput.formId,
+        registrationId: resolvedInput.registrationId,
+        clearError: clearError?.message || clearError
+      });
+    });
     if (retryCapacityReservation.reserved) {
       try {
         await releaseRegistrationCheckoutCapacity({
@@ -4149,6 +4274,7 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
           publicCheckoutCapability: resolvedInput.publicCheckoutCapability || issuedPublicCheckoutCapability
         }, {}, {
           retryCapacityReservationId: retryCapacityReservation.retryCapacityReservationId,
+          checkoutCreationReservationId,
           suppressPublicCheckoutCapabilityRotation: true
         });
       } catch (releaseError) {
@@ -4164,21 +4290,36 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
   }
 
   const now = admin.firestore.FieldValue.serverTimestamp();
-  await resolvedInput.registrationRef.set({
-    checkoutUrl: session.url,
-    paymentLink: session.url,
-    checkoutStatus: 'open',
-    paymentProvider: 'stripe',
-    paymentStatus: 'checkout_open',
-    stripeCheckoutSessionId: session.id,
-    stripePaymentStatus: session.payment_status || 'unpaid',
-    checkoutAmountCents: amountCents,
-    checkoutAttemptToken: input.checkoutAttemptToken || null,
-    publicCheckoutCapabilityHash: hashPublicCheckoutCapability(issuedPublicCheckoutCapability),
-    checkoutCreatedAt: now,
-    retryCapacityReservationId: admin.firestore.FieldValue.delete(),
-    updatedAt: now
-  }, { merge: true });
+  await firestore.runTransaction(async (transaction) => {
+    const latestSnap = await transaction.get(resolvedInput.registrationRef);
+    if (!latestSnap.exists) {
+      throw new functions.https.HttpsError('not-found', 'Registration not found.');
+    }
+    const latestRegistration = latestSnap.data() || {};
+    if (String(latestRegistration.checkoutCreationReservationId || '') !== checkoutCreationReservationId) {
+      throw new functions.https.HttpsError('aborted', 'Registration checkout creation reservation was lost.');
+    }
+    if (latestRegistration.status === 'rejected') {
+      throw new functions.https.HttpsError('failed-precondition', 'Rejected registrations cannot be paid online.');
+    }
+    transaction.set(resolvedInput.registrationRef, {
+      checkoutUrl: session.url,
+      paymentLink: session.url,
+      checkoutStatus: 'open',
+      paymentProvider: 'stripe',
+      paymentStatus: 'checkout_open',
+      stripeCheckoutSessionId: session.id,
+      stripePaymentStatus: session.payment_status || 'unpaid',
+      checkoutAmountCents: amountCents,
+      checkoutAttemptToken: input.checkoutAttemptToken || null,
+      publicCheckoutCapabilityHash: hashPublicCheckoutCapability(issuedPublicCheckoutCapability),
+      checkoutCreatedAt: now,
+      checkoutCreationReservationId: admin.firestore.FieldValue.delete(),
+      checkoutCreationStartedAt: admin.firestore.FieldValue.delete(),
+      retryCapacityReservationId: admin.firestore.FieldValue.delete(),
+      updatedAt: now
+    }, { merge: true });
+  });
 
   return { checkoutUrl: session.url, sessionId: session.id };
 });

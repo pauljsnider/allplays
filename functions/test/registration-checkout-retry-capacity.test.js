@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, test } from 'node:test';
 import Module, { createRequire } from 'node:module';
+import { readFileSync } from 'node:fs';
 
 const require = createRequire(import.meta.url);
 const repoIndexPath = require.resolve('../index.js');
 const originalModuleLoad = Module._load;
+const dbSource = readFileSync(new URL('../../js/db.js', import.meta.url), 'utf8');
 
 let adminStub = null;
 let functionsStub = null;
@@ -71,7 +73,7 @@ function makeFirestore(seed = {}, options = {}) {
             if (isOp(value, 'delete')) {
                 deleteNested(target, key);
             } else if (isOp(value, 'serverTimestamp')) {
-                setNested(target, key, 'SERVER_TIMESTAMP');
+                setNested(target, key, options.serverTimestampValue ?? 'SERVER_TIMESTAMP');
             } else if (isOp(value, 'increment')) {
                 const current = Number(key.split('.').reduce((acc, part) => (acc == null ? acc : acc[part]), target) || 0);
                 setNested(target, key, current + value.amount);
@@ -286,6 +288,30 @@ function buildSeedState(overrides = {}) {
     };
 }
 
+function buildRejectTeamRegistration(firestore) {
+    const start = dbSource.indexOf('export async function rejectTeamRegistration');
+    const end = dbSource.indexOf('\n/**', start);
+    assert.ok(start >= 0 && end > start);
+    const functionSource = dbSource
+        .slice(start, end)
+        .replace('export async function rejectTeamRegistration', 'return async function rejectTeamRegistration');
+
+    return new Function('auth', 'doc', 'db', 'Timestamp', 'runTransaction', 'normalizeRegistrationStatus', functionSource)(
+        { currentUser: { uid: 'admin-1', displayName: 'Coach' } },
+        (_db, collectionPath, id) => firestore.doc(`${collectionPath}/${id}`),
+        firestore,
+        { now: () => 'NOW' },
+        (db, callback) => db.runTransaction((transaction) => callback({
+            ...transaction,
+            get: async (ref) => {
+                const snapshot = await transaction.get(ref);
+                return { ...snapshot, exists: () => snapshot.exists };
+            }
+        })),
+        (value) => String(value || 'pending').toLowerCase()
+    );
+}
+
 const checkoutInput = {
     teamId: 'team-1',
     formId: 'form-1',
@@ -308,6 +334,126 @@ afterEach(() => {
     adminStub = null;
     functionsStub = null;
     StripeStub = null;
+});
+
+test('rejecting a registration prevents a later public checkout from charging released capacity', async () => {
+    let stripeCreateCalls = 0;
+    const { firestore, createStripeRegistrationCheckout } = loadCheckoutHandler({
+        seed: buildSeedState({
+            status: 'rejected',
+            registrationCapacityReleased: true,
+            publicCheckoutCapabilityHash: ''
+        }),
+        stripeCreateImpl: async () => {
+            stripeCreateCalls += 1;
+            return {
+                id: 'cs_rejected_registration',
+                url: 'https://checkout.stripe.com/c/rejected_registration',
+                payment_status: 'unpaid'
+            };
+        }
+    });
+
+    await assert.rejects(
+        createStripeRegistrationCheckout(checkoutInput),
+        (error) => error?.code === 'failed-precondition'
+            && error?.message === 'Rejected registrations cannot be paid online.'
+    );
+
+    const form = firestore.snapshot('teams/team-1/registrationForms/form-1');
+    const registration = firestore.snapshot('teams/team-1/registrationForms/form-1/registrations/reg-1');
+    assert.equal(stripeCreateCalls, 0);
+    assert.equal(form.registrationOptionCounts.u10.enrolled, 0);
+    assert.equal(registration.status, 'rejected');
+    assert.equal(registration.registrationCapacityReleased, true);
+    assert.equal(Object.prototype.hasOwnProperty.call(registration, 'checkoutStatus'), false);
+});
+
+test('checkout reserves the registration before Stripe creation so concurrent rejection cannot release capacity', async () => {
+    const registrationPath = 'teams/team-1/registrationForms/form-1/registrations/reg-1';
+    let firestore = null;
+    let releaseStripeCreation;
+    let stripeCreationStarted;
+    const stripeCreationBarrier = new Promise((resolve) => {
+        stripeCreationStarted = resolve;
+    });
+    const loaded = loadCheckoutHandler({
+        seed: buildSeedState({ registrationCapacityReleased: false }),
+        firestoreOptions: { serverTimestampValue: Date.now() },
+        stripeCreateImpl: async () => {
+            stripeCreationStarted();
+            await new Promise((resolve) => {
+                releaseStripeCreation = resolve;
+            });
+            return {
+                id: 'cs_concurrent_rejection',
+                url: 'https://checkout.stripe.com/c/concurrent_rejection',
+                payment_status: 'unpaid'
+            };
+        }
+    });
+    firestore = loaded.firestore;
+
+    const checkoutPromise = loaded.createStripeRegistrationCheckout({
+        ...checkoutInput,
+        retryPayment: false
+    });
+    await stripeCreationBarrier;
+
+    const registrationDuringStripeCall = firestore.snapshot(registrationPath);
+    assert.match(registrationDuringStripeCall.checkoutCreationReservationId, /^[0-9a-f-]{36}$/i);
+    assert.equal(registrationDuringStripeCall.status, 'pending');
+    assert.equal(registrationDuringStripeCall.registrationCapacityReleased, false);
+
+    const rejectTeamRegistration = buildRejectTeamRegistration(firestore);
+    await assert.rejects(
+        rejectTeamRegistration('team-1', 'form-1', 'reg-1', 'Concurrent rejection'),
+        /Registration cannot be rejected while its online payment is still processing/
+    );
+    assert.equal(firestore.snapshot(registrationPath).status, 'pending');
+
+    releaseStripeCreation();
+    await checkoutPromise;
+
+    const completedRegistration = firestore.snapshot(registrationPath);
+    assert.equal(completedRegistration.checkoutStatus, 'open');
+    assert.equal(completedRegistration.paymentStatus, 'checkout_open');
+    assert.equal(Object.prototype.hasOwnProperty.call(completedRegistration, 'checkoutCreationReservationId'), false);
+});
+
+test('checkout replaces an abandoned creation reservation after its timeout', async () => {
+    let stripeCreateCalls = 0;
+    const staleStartedAtSeconds = Math.floor((Date.now() - (16 * 60 * 1000)) / 1000);
+    const { firestore, createStripeRegistrationCheckout } = loadCheckoutHandler({
+        seed: buildSeedState({
+            registrationCapacityReleased: false,
+            checkoutCreationReservationId: 'abandoned-reservation',
+            checkoutCreationStartedAt: { seconds: staleStartedAtSeconds }
+        }),
+        stripeCreateImpl: async () => {
+            stripeCreateCalls += 1;
+            return {
+                id: 'cs_recovered_reservation',
+                url: 'https://checkout.stripe.com/c/recovered_reservation',
+                payment_status: 'unpaid'
+            };
+        }
+    });
+
+    const result = await createStripeRegistrationCheckout({
+        ...checkoutInput,
+        retryPayment: false
+    });
+
+    assert.equal(stripeCreateCalls, 1);
+    assert.deepEqual(result, {
+        checkoutUrl: 'https://checkout.stripe.com/c/recovered_reservation',
+        sessionId: 'cs_recovered_reservation'
+    });
+    const registration = firestore.snapshot('teams/team-1/registrationForms/form-1/registrations/reg-1');
+    assert.equal(registration.stripeCheckoutSessionId, 'cs_recovered_reservation');
+    assert.equal(Object.prototype.hasOwnProperty.call(registration, 'checkoutCreationReservationId'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(registration, 'checkoutCreationStartedAt'), false);
 });
 
 test('retry checkout preserves an early-bird discount captured at submission time', async () => {
@@ -461,7 +607,7 @@ test('rolls back reserved capacity when Stripe checkout creation fails', async (
     assert.equal(Object.prototype.hasOwnProperty.call(registration, 'retryCapacityReservationId'), false);
 });
 
-test('does not release an overlapping retry reservation this call did not acquire', async () => {
+test('checkout owner adopts and releases an overlapping retry reservation when Stripe creation fails', async () => {
     const registrationPath = 'teams/team-1/registrationForms/form-1/registrations/reg-1';
     const formPath = 'teams/team-1/registrationForms/form-1';
     const { firestore, createStripeRegistrationCheckout } = loadCheckoutHandler({
@@ -493,9 +639,48 @@ test('does not release an overlapping retry reservation this call did not acquir
     const form = firestore.snapshot(formPath);
     const registration = firestore.snapshot(registrationPath);
 
+    assert.equal(form.registrationOptionCounts.u10.enrolled, 0);
+    assert.equal(registration.registrationCapacityReleased, true);
+    assert.equal(Object.prototype.hasOwnProperty.call(registration, 'retryCapacityReservationId'), false);
+    assert.equal(registration.capacityReleasedAt, 'SERVER_TIMESTAMP');
+});
+
+test('retry losing checkout creation ownership does not release capacity beneath the surviving checkout', async () => {
+    const registrationPath = 'teams/team-1/registrationForms/form-1/registrations/reg-1';
+    const formPath = 'teams/team-1/registrationForms/form-1';
+    let stripeCreateCalls = 0;
+    const { firestore, createStripeRegistrationCheckout } = loadCheckoutHandler({
+        seed: buildSeedState(),
+        firestoreOptions: {
+            onGet: ({ path, count, state }) => {
+                if (path === registrationPath && count === 2) {
+                    const registration = clone(state.get(registrationPath));
+                    registration.checkoutCreationReservationId = 'surviving-checkout-owner';
+                    registration.checkoutCreationStartedAt = Date.now();
+                    state.set(registrationPath, registration);
+                }
+            }
+        },
+        stripeCreateImpl: async () => {
+            stripeCreateCalls += 1;
+            throw new Error('The losing retry must not reach Stripe.');
+        }
+    });
+
+    await assert.rejects(
+        createStripeRegistrationCheckout(checkoutInput),
+        (error) => error?.code === 'failed-precondition'
+            && error?.message === 'Registration checkout creation is already in progress.'
+    );
+
+    const form = firestore.snapshot(formPath);
+    const registration = firestore.snapshot(registrationPath);
+
+    assert.equal(stripeCreateCalls, 0);
     assert.equal(form.registrationOptionCounts.u10.enrolled, 1);
     assert.equal(registration.registrationCapacityReleased, false);
-    assert.equal(registration.retryCapacityReservationId, 'existing-retry-reservation');
+    assert.match(registration.retryCapacityReservationId, /^[0-9a-f-]{36}$/i);
+    assert.equal(registration.checkoutCreationReservationId, 'surviving-checkout-owner');
     assert.equal(Object.prototype.hasOwnProperty.call(registration, 'capacityReleasedAt'), false);
 });
 
