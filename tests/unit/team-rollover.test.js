@@ -113,7 +113,9 @@ describe('team rollover player copy', () => {
             customFields: { jerseySize: 'M' },
             profile: {
                 address: { city: 'Kansas City' },
-                customFields: { grade: '6', memberId: 'AAU-42', favoriteColor: 'blue' }
+                customFields: { grade: '6', memberId: 'AAU-42', favoriteColor: 'blue' },
+                profileFields: { school: 'Lincoln' },
+                extraFields: { jerseySize: 'YM' }
             },
             privateProfileRosterFields: { grade: '7', dominantHandFoot: 'left' }
         })).toEqual({
@@ -123,6 +125,8 @@ describe('team rollover player copy', () => {
             address: { city: 'Kansas City' },
             grade: '7',
             memberId: 'AAU-42',
+            school: 'Lincoln',
+            jerseySize: 'YM',
             dominantHandFoot: 'left'
         });
     });
@@ -168,6 +172,14 @@ describe('team rollover player copy', () => {
                 customFields: {
                     bats: 'right',
                     parentEmail: 'parent@example.com'
+                },
+                profileFields: {
+                    throws: 'right',
+                    school: 'Central'
+                },
+                extraFields: {
+                    favoriteColor: 'blue',
+                    address: { city: 'Kansas City' }
                 }
             },
             createdAt: { old: true },
@@ -190,6 +202,12 @@ describe('team rollover player copy', () => {
                 },
                 customFields: {
                     bats: 'right'
+                },
+                profileFields: {
+                    throws: 'right'
+                },
+                extraFields: {
+                    favoriteColor: 'blue'
                 }
             },
             sourceTeamId: 'team-old',

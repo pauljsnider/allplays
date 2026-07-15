@@ -41,6 +41,11 @@ describe('player Firestore privacy rules', () => {
         expect(rules).toContain("hasRestrictedRosterNestedMap(data, 'profile', 'extraFields', restrictedKeys)");
     });
 
+    it('permits public-only updates to legacy players without permitting protected field mutations', () => {
+        expect(teamPlayerRules).toContain('keepsRestrictedRosterFieldsImmutable()');
+        expect(rules).toContain('request.resource.data.diff(resource.data).affectedKeys().hasAny(restrictedContainers)');
+    });
+
     it('allows linked parents to write household contacts only through the private profile doc', () => {
         expect(rules).not.toContain("affectedKeys().hasOnly(['parents'])");
         expect(rules).toContain("request.resource.data.keys().hasOnly(['emergencyContact', 'medicalInfo', 'parents', 'updatedAt'])");
@@ -127,6 +132,23 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('player privacy rules engi
             number: '4',
             position: 'Forward',
             profile: { preferredName: 'Rocket', position: 'Forward', alternateNumber: '14' }
+        }));
+    });
+
+    it('allows status and public-field updates on legacy docs while keeping protected containers immutable', async () => {
+        const ownerDb = testEnv.authenticatedContext('owner-1', { email: 'owner@example.com' }).firestore();
+
+        await assertSucceeds(updateDoc(doc(ownerDb, 'teams/team-1/players/player-1'), {
+            active: false,
+            deactivatedAt: 'now'
+        }));
+        await assertSucceeds(updateDoc(doc(ownerDb, 'teams/team-1/players/player-1'), {
+            active: true,
+            deactivatedAt: null,
+            number: '8'
+        }));
+        await assertFails(updateDoc(doc(ownerDb, 'teams/team-1/players/player-1'), {
+            profile: { address: { street: '456 Other' } }
         }));
     });
 });

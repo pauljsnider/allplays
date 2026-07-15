@@ -31,6 +31,13 @@ const ROLLOVER_ROSTER_FIELD_SOURCES = new Set([
     'extraFields'
 ]);
 
+const ROLLOVER_PROFILE_ROSTER_FIELD_SOURCES = new Set([
+    'rosterFields',
+    'customFields',
+    'profileFields',
+    'extraFields'
+]);
+
 function omitSensitiveRosterFields(source = {}) {
     const copy = {};
     Object.entries(source).forEach(([key, value]) => {
@@ -48,7 +55,7 @@ function omitSensitiveProfileRosterFields(profile = {}) {
     const copy = {};
     Object.entries(profile).forEach(([key, value]) => {
         if (ROLLOVER_SENSITIVE_PLAYER_FIELDS.has(key)) return;
-        if ((key === 'rosterFields' || key === 'customFields') && isPlainRosterMap(value)) {
+        if (ROLLOVER_PROFILE_ROSTER_FIELD_SOURCES.has(key) && isPlainRosterMap(value)) {
             copy[key] = omitSensitiveRosterFields(value);
             return;
         }
@@ -72,8 +79,9 @@ export function buildRolloverPrivateRosterFields(sourcePlayer = {}) {
     });
     if (isPlainRosterMap(sourcePlayer.profile)) {
         collectPrivateRosterFields(privateRosterFields, sourcePlayer.profile);
-        collectPrivateRosterFields(privateRosterFields, sourcePlayer.profile.rosterFields);
-        collectPrivateRosterFields(privateRosterFields, sourcePlayer.profile.customFields);
+        ROLLOVER_PROFILE_ROSTER_FIELD_SOURCES.forEach((key) => {
+            collectPrivateRosterFields(privateRosterFields, sourcePlayer.profile[key]);
+        });
     }
     collectPrivateRosterFields(privateRosterFields, sourcePlayer.privateProfileRosterFields);
     return privateRosterFields;

@@ -766,6 +766,21 @@ service cloud.firestore {
              hasRestrictedRosterNestedMap(data, 'profile', 'extraFields', restrictedKeys);
     }
 
+    function keepsRestrictedRosterFieldsImmutable() {
+      let restrictedContainers = [
+        'birthDate', 'gender', 'grade', 'school', 'jerseySize', 'memberId', 'dominantHandFoot', 'address',
+        'medicalInfo', 'medical_info', 'medicalNotes', 'medical_notes',
+        'emergencyContact', 'emergency_contact', 'emergencyContactName', 'emergencyContactPhone',
+        'contacts', 'contact', 'contactInfo', 'contact_info', 'contactEmail', 'contactPhone', 'contactRelation',
+        'parents', 'parent', 'parentEmail', 'parentPhone', 'parentRelation',
+        'guardian', 'guardians', 'guardianEmail', 'guardianPhone', 'guardianRelation',
+        'householdContact', 'householdContacts', 'householdEmail', 'householdPhone', 'householdRelation',
+        'rosterFieldValues', 'customFields', 'profileFields', 'extraFields', 'profile'
+      ];
+      return hasRestrictedRosterFieldValues(resource.data) &&
+             !request.resource.data.diff(resource.data).affectedKeys().hasAny(restrictedContainers);
+    }
+
     function isIncentiveCapPayloadValid(data) {
       return data.maxPerGameCents is int &&
              (
@@ -2785,7 +2800,8 @@ service cloud.firestore {
 	        allow create: if isTeamOwnerOrAdmin(teamId) &&
 	                        !hasRestrictedRosterFieldValues(request.resource.data);
 	        allow update: if isTeamOwnerOrAdmin(teamId) &&
-	                        !hasRestrictedRosterFieldValues(request.resource.data);
+	                        (!hasRestrictedRosterFieldValues(request.resource.data) ||
+	                         keepsRestrictedRosterFieldsImmutable());
 	        allow delete: if isTeamOwnerOrAdmin(teamId);
 
 	        // Limited write access for parents (only their linked player):

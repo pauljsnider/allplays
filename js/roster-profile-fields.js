@@ -748,14 +748,15 @@ export function splitProtectedRosterProfileValues(profile = {}) {
         privateValues[key] = publicProfile[key];
         delete publicProfile[key];
     });
-    if (publicProfile.customFields && typeof publicProfile.customFields === 'object') {
-        publicProfile.customFields = { ...publicProfile.customFields };
+    ['rosterFields', 'customFields', 'profileFields', 'extraFields'].forEach((sourceKey) => {
+        if (!publicProfile[sourceKey] || typeof publicProfile[sourceKey] !== 'object') return;
+        publicProfile[sourceKey] = { ...publicProfile[sourceKey] };
         PRIVATE_BUILT_IN_PROFILE_FIELDS.forEach((key) => {
-            if (!Object.prototype.hasOwnProperty.call(publicProfile.customFields, key)) return;
-            privateValues[key] = publicProfile.customFields[key];
-            delete publicProfile.customFields[key];
+            if (!Object.prototype.hasOwnProperty.call(publicProfile[sourceKey], key)) return;
+            privateValues[key] = publicProfile[sourceKey][key];
+            delete publicProfile[sourceKey][key];
         });
-    }
+    });
     return { publicProfile, privateValues };
 }
 

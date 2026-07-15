@@ -545,6 +545,38 @@ describe('roster CSV import planning', () => {
         });
     });
 
+    it('migrates protected values from every guarded nested legacy profile map', () => {
+        const plan = planRosterCsvImport({
+            fields: [],
+            existingPlayers: [{
+                id: 'p1',
+                name: 'Avery Lee',
+                profile: {
+                    rosterFields: { birthDate: '2014-02-03', graduationYear: '2032' },
+                    profileFields: { school: 'Lincoln', bats: 'right' },
+                    extraFields: { address: { city: 'Kansas City' }, favoriteColor: 'blue' }
+                }
+            }],
+            csvText: 'Name,Number\nAvery Lee,8'
+        });
+
+        expect(plan.errors).toEqual([]);
+        expect(plan.operations[0]).toMatchObject({
+            payload: {
+                profile: {
+                    rosterFields: { graduationYear: '2032' },
+                    profileFields: { bats: 'right' },
+                    extraFields: { favoriteColor: 'blue' }
+                }
+            },
+            privateRosterFields: {
+                birthDate: '2014-02-03',
+                school: 'Lincoln',
+                address: { city: 'Kansas City' }
+            }
+        });
+    });
+
     it('uses the standard optional field catalog for CSV parity with manual roster entry', () => {
         const standardFields = mergeStandardRosterFieldDefinitions([]);
         const plan = planRosterCsvImport({
