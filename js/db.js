@@ -2843,10 +2843,19 @@ export async function copySelectedPlayersForTeamRollover(sourceTeamId, targetTea
     if (playersToCopy.length !== selectedIds.size) {
         throw new Error('One or more selected players could not be found on the source team. Refresh and try again.');
     }
+    const playersWithPrivateRosterFields = await Promise.all(playersToCopy.map(async (player) => {
+        const privateProfile = await getPlayerPrivateProfile(sourceId, player.id);
+        return {
+            ...player,
+            privateProfileRosterFields: privateProfile?.rosterFields && typeof privateProfile.rosterFields === 'object'
+                ? privateProfile.rosterFields
+                : {}
+        };
+    }));
 
     const batch = writeBatch(db);
     const rolledOverAt = Timestamp.now();
-    playersToCopy.forEach((player) => {
+    playersWithPrivateRosterFields.forEach((player) => {
         const playerCopy = buildRolloverPlayerCopy(player, sourceId, rolledOverAt);
         const privateRosterFields = buildRolloverPrivateRosterFields(player);
         assertNoSensitivePlayerFields(playerCopy);

@@ -37,6 +37,8 @@ describe('player Firestore privacy rules', () => {
         expect(rules).toContain("profile.keys().hasAny(restrictedKeys)");
         expect(rules).toContain("hasRestrictedRosterNestedMap(data, 'profile', 'rosterFields', restrictedKeys)");
         expect(rules).toContain("hasRestrictedRosterNestedMap(data, 'profile', 'customFields', restrictedKeys)");
+        expect(rules).toContain("hasRestrictedRosterNestedMap(data, 'profile', 'profileFields', restrictedKeys)");
+        expect(rules).toContain("hasRestrictedRosterNestedMap(data, 'profile', 'extraFields', restrictedKeys)");
     });
 
     it('allows linked parents to write household contacts only through the private profile doc', () => {
@@ -71,6 +73,14 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('player privacy rules engi
                 name: 'Sam Lee',
                 profile: { birthDate: '2014-02-03' }
             });
+            await setDoc(doc(db, 'teams/team-1/players/player-3'), {
+                name: 'Jordan Lee',
+                profile: { profileFields: { birthDate: '2014-02-03' } }
+            });
+            await setDoc(doc(db, 'teams/team-1/players/player-4'), {
+                name: 'Riley Lee',
+                profile: { extraFields: { address: { street: '123 Main' } } }
+            });
             await setDoc(doc(db, 'teams/team-1/players/player-1/private/profile'), {
                 rosterFields: { birthDate: '2014-02-03', address: { street: '123 Main' } }
             });
@@ -88,6 +98,8 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('player privacy rules engi
 
         await assertFails(getDoc(doc(anonymousDb, 'teams/team-1/players/player-1')));
         await assertFails(getDoc(doc(anonymousDb, 'teams/team-1/players/player-2')));
+        await assertFails(getDoc(doc(anonymousDb, 'teams/team-1/players/player-3')));
+        await assertFails(getDoc(doc(anonymousDb, 'teams/team-1/players/player-4')));
         await assertSucceeds(getDoc(doc(ownerDb, 'teams/team-1/players/player-1/private/profile')));
         await assertSucceeds(getDoc(doc(parentDb, 'teams/team-1/players/player-1/private/profile')));
     });
@@ -101,6 +113,14 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('player privacy rules engi
         }));
         await assertFails(updateDoc(doc(ownerDb, 'teams/team-1/players/player-1'), {
             profile: { birthDate: '2014-02-03' }
+        }));
+        await assertFails(setDoc(doc(ownerDb, 'teams/team-1/players/rejected-profile-fields'), {
+            name: 'Private Birth Date',
+            profile: { profileFields: { birthDate: '2014-02-03' } }
+        }));
+        await assertFails(setDoc(doc(ownerDb, 'teams/team-1/players/rejected-extra-fields'), {
+            name: 'Private Address',
+            profile: { extraFields: { address: { city: 'Kansas City' } } }
         }));
         await assertSucceeds(setDoc(doc(ownerDb, 'teams/team-1/players/public-safe'), {
             name: 'Public Safe',

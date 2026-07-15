@@ -761,7 +761,9 @@ service cloud.firestore {
              hasRestrictedRosterMap(data, 'profileFields', restrictedKeys) ||
              hasRestrictedRosterMap(data, 'extraFields', restrictedKeys) ||
              hasRestrictedRosterNestedMap(data, 'profile', 'rosterFields', restrictedKeys) ||
-             hasRestrictedRosterNestedMap(data, 'profile', 'customFields', restrictedKeys);
+             hasRestrictedRosterNestedMap(data, 'profile', 'customFields', restrictedKeys) ||
+             hasRestrictedRosterNestedMap(data, 'profile', 'profileFields', restrictedKeys) ||
+             hasRestrictedRosterNestedMap(data, 'profile', 'extraFields', restrictedKeys);
     }
 
     function isIncentiveCapPayloadValid(data) {

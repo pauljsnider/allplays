@@ -43,7 +43,7 @@ function extractFunction(source, signature) {
     throw new Error(`Could not extract function for signature: ${signature}`);
 }
 
-function buildRolloverDbHarness({ players = [] } = {}) {
+function buildRolloverDbHarness({ players = [], privateProfiles = {} } = {}) {
     const source = readDbSource();
     const assertFnSource = extractFunction(source, 'function assertNoSensitivePlayerFields(');
     const copyFnSource = extractFunction(source, 'export async function copySelectedPlayersForTeamRollover(')
@@ -71,17 +71,22 @@ function buildRolloverDbHarness({ players = [] } = {}) {
             return { path: args[1] };
         },
         getPlayers: async () => players,
+        getPlayerPrivateProfile: async (teamId, playerId) => {
+            deps.privateProfileReads.push({ teamId, playerId });
+            return privateProfiles[playerId] || null;
+        },
         Timestamp: { now: () => ({ marker: `ts-${batch.setCalls.length}` }) },
         writeBatch: () => {
             deps.batchCreated = true;
             return batch;
         },
+        privateProfileReads: [],
         nextPlayerId: 0,
         batchCreated: false
     };
 
     const factory = new Function('deps', `
-        const { buildRolloverPlayerCopy, buildRolloverPrivateRosterFields, collection, db, doc, getPlayers, Timestamp, writeBatch } = deps;
+        const { buildRolloverPlayerCopy, buildRolloverPrivateRosterFields, collection, db, doc, getPlayers, getPlayerPrivateProfile, Timestamp, writeBatch } = deps;
         ${assertFnSource}
         ${copyFnSource}
         return { copySelectedPlayersForTeamRollover };
@@ -109,15 +114,36 @@ describe('team rollover player copy', () => {
             profile: {
                 address: { city: 'Kansas City' },
                 customFields: { grade: '6', memberId: 'AAU-42', favoriteColor: 'blue' }
-            }
+            },
+            privateProfileRosterFields: { grade: '7', dominantHandFoot: 'left' }
         })).toEqual({
             birthDate: '2014-02-03',
             school: 'Central',
             jerseySize: 'M',
             address: { city: 'Kansas City' },
-            grade: '6',
-            memberId: 'AAU-42'
+            grade: '7',
+            memberId: 'AAU-42',
+            dominantHandFoot: 'left'
         });
+    });
+
+    it('loads the selected players private roster fields before rollover', async () => {
+        const harness = buildRolloverDbHarness({
+            players: [{ id: 'player-1', name: 'Sam Player', active: true }],
+            privateProfiles: {
+                'player-1': { rosterFields: { birthDate: '2014-02-03', school: 'Central' } }
+            }
+        });
+
+        await expect(harness.copySelectedPlayersForTeamRollover('team-old', 'team-new', ['player-1']))
+            .resolves.toEqual({ copiedCount: 1 });
+
+        expect(harness.deps.privateProfileReads).toEqual([{ teamId: 'team-old', playerId: 'player-1' }]);
+        expect(harness.batch.setCalls[1]).toMatchObject({
+            ref: { path: 'teams/team-new/players/auto-1/private/profile' },
+            payload: { rosterFields: { birthDate: '2014-02-03', school: 'Central' } }
+        });
+        expect(harness.batch.setCalls[0].payload).not.toHaveProperty('privateProfileRosterFields');
     });
 
     it('preserves supported public player fields with source audit metadata', () => {

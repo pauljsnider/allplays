@@ -6,6 +6,7 @@ const ROLLOVER_OMITTED_PLAYER_FIELDS = new Set([
     'sourceTeamId',
     'sourcePlayerId',
     'rolledOverAt',
+    'privateProfileRosterFields',
 
 ]);
 
@@ -74,6 +75,7 @@ export function buildRolloverPrivateRosterFields(sourcePlayer = {}) {
         collectPrivateRosterFields(privateRosterFields, sourcePlayer.profile.rosterFields);
         collectPrivateRosterFields(privateRosterFields, sourcePlayer.profile.customFields);
     }
+    collectPrivateRosterFields(privateRosterFields, sourcePlayer.privateProfileRosterFields);
     return privateRosterFields;
 }
 
