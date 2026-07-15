@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
     assertPreviewDeploySkipHandling,
     extractMatchBlock,
-    validatePreviewDeployCommand
+    validatePreviewDeployCommand,
+    validateProductionDeployCommand
 } from '../../scripts/validate-firebase-rules-ci.mjs';
 
 describe('validate Firebase rules CI helpers', () => {
@@ -58,6 +59,17 @@ service firebase.storage {
       - name: Deploy preview channel
         run: npx --yes firebase-tools@15.22.1 hosting:channel:deploy "$CURRENT_CHANNEL" --project game-flow-c6311 --config "$FIREBASE_PREVIEW_CONFIG"
 `)).toThrow('Preview deploy installed Firebase CLI project/config arguments');
+    });
+
+    it('requires production deploys to release Storage rules with the generated config', () => {
+        const validDeployCommand = `
+            npx firebase-tools@14.25.0 deploy --only hosting,firestore:rules,firestore:indexes,storage,functions --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive
+        `;
+
+        expect(() => validateProductionDeployCommand(validDeployCommand)).not.toThrow();
+        expect(() => validateProductionDeployCommand(validDeployCommand.replace(',storage', ''))).toThrow(
+            'Production Firebase deploy --only list must include storage.'
+        );
     });
 
     it('requires preview deploy release-target outage handling', () => {
