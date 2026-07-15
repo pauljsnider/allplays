@@ -50,6 +50,15 @@ describe('team management page access wiring', () => {
         expect(html).toContain('Team not found or no longer active');
     });
 
+    it('loads inactive teams before applying edit access authorization', () => {
+        const html = readRepoFile('edit-team.html');
+        const loadTeamIndex = html.indexOf('getTeam(initialTeamId, { includeInactive: true })');
+        const authorizeTeamIndex = html.indexOf('hasFullTeamAccess(currentUser, { ...team');
+
+        expect(loadTeamIndex).toBeGreaterThan(-1);
+        expect(authorizeTeamIndex).toBeGreaterThan(loadTeamIndex);
+    });
+
     it('uses shared full-access helper in edit config page', () => {
         const html = readRepoFile('edit-config.html');
         expect(html).toContain("from './js/edit-config-access.js?v=2'");

@@ -102,6 +102,7 @@ describe('edit team Sports Connect registration sync wiring', () => {
         expect(storedSourceHelper).toContain('team?.registrationSource');
         expect(storedSourceHelper).toContain('team?.registrationProvider');
         expect(populateSource).toContain('currentRegistrationSource = getStoredRegistrationSource(team);');
+        expect(refreshSource).toContain('getTeam(currentTeamId, { includeInactive: true })');
         expect(refreshSource).toContain('const storedRegistrationSource = getStoredRegistrationSource(latestTeam || {});');
         expect(refreshSource).toContain('currentRegistrationSource = storedRegistrationSource;');
     });

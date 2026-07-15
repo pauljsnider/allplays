@@ -980,7 +980,7 @@
 
         async function refreshRegistrationSourceFromTeam() {
             if (!currentTeamId) return null;
-            const latestTeam = await getTeam(currentTeamId);
+            const latestTeam = await getTeam(currentTeamId, { includeInactive: true });
             const storedRegistrationSource = getStoredRegistrationSource(latestTeam || {});
             if (storedRegistrationSource) {
                 currentRegistrationSource = storedRegistrationSource;
@@ -1514,7 +1514,7 @@
 
             if (initialTeamId) {
                 document.getElementById('roster-rollover-section').classList.add('hidden');
-                const team = await getTeam(initialTeamId);
+                const team = await getTeam(initialTeamId, { includeInactive: true });
                 if (!team) {
                     alert('Team not found or no longer active.');
                     currentTeamId = null;
