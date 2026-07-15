@@ -126,7 +126,7 @@ jobs:
           for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do
             deploy_log="$RUNNER_TEMP/firebase-prod-deploy-attempt-${attempt}.log"
             set +e
-            npx firebase-tools@14.25.0 deploy --only hosting,firestore:rules,firestore:indexes,functions --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive 2>&1 | tee "$deploy_log"
+            npx firebase-tools@14.25.0 deploy --only hosting,firestore:rules,firestore:indexes,storage,functions --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive 2>&1 | tee "$deploy_log"
             deploy_status="${PIPESTATUS[0]}"
             set -e
 

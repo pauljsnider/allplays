@@ -55,6 +55,28 @@ export function validatePreviewDeployCommand(deployPreview) {
     assertMatches(deployPreview, /\.\/node_modules\/\.bin\/firebase hosting:channel:deploy "\$CURRENT_CHANNEL" --project game-flow-c6311 --config "\$FIREBASE_PREVIEW_CONFIG"/, 'Preview deploy installed Firebase CLI project/config arguments');
 }
 
+export function validateProductionDeployCommand(deployProd) {
+    const deployCommand = (deployProd.match(/^\s*npx firebase-tools@\S+ deploy\b[^\n]*$/m) || [''])[0];
+    if (!deployCommand) {
+        throw new Error('Production Firebase deploy command is missing.');
+    }
+
+    const onlyList = (deployCommand.match(/(?:^|\s)--only(?:=|\s+)([^\s]+)/) || [])[1];
+    if (!onlyList) {
+        throw new Error('Production Firebase deploy --only list is missing.');
+    }
+
+    const deployTargets = new Set(onlyList.split(','));
+    for (const target of ['firestore:rules', 'firestore:indexes', 'storage']) {
+        if (!deployTargets.has(target)) {
+            throw new Error(`Production Firebase deploy --only list must include ${target}.`);
+        }
+    }
+
+    assertMatches(deployCommand, /(?:^|\s)--project game-flow-c6311(?:\s|$)/, 'Production Firebase deploy project');
+    assertMatches(deployCommand, /(?:^|\s)--config "\$FIREBASE_PROD_CONFIG"(?:\s|$)/, 'Production Firebase generated config');
+}
+
 export function validateFirebaseRulesCi() {
     const firebaseJson = JSON.parse(readText('firebase.json'));
     const firestoreRules = readText('firestore.rules');
@@ -134,8 +156,7 @@ export function validateFirebaseRulesCi() {
     assertIncludes(firestoreRules, "data.recipientIds == conversationData.get('participantIds', [])", 'Nested chat conversation participant binding');
     assertIncludes(firestoreRules, 'isNestedChatMessageCreateValid(', 'Nested chat create rules');
 
-    assertIncludes(deployProd, 'firestore:rules', 'Production deploy');
-    assertIncludes(deployProd, 'firestore:indexes', 'Production deploy');
+    validateProductionDeployCommand(deployProd);
     assertMatches(deployProd, /needs:\s*\[\s*unit-tests\s*,\s*regression-guards\s*\]/, 'Production deploy gate');
 
     assertMatches(deployPreview, /needs:\s*\[\s*unit-tests\s*,\s*regression-guards\s*\]/, 'Preview deploy gate');

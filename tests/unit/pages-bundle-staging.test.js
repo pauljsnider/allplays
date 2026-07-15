@@ -92,6 +92,9 @@ describe('pages bundle staging', () => {
             },
             firestore: {
                 rules: 'firestore.rules'
+            },
+            storage: {
+                rules: 'storage.rules'
             }
         }));
 
@@ -102,6 +105,7 @@ describe('pages bundle staging', () => {
         expect(config.hosting.public).toBe(path.resolve(publicDir));
         expect(config.hosting.rewrites).toEqual([{ source: '**', destination: '/index.html' }]);
         expect(config.firestore.rules).toBe('firestore.rules');
+        expect(config.storage.rules).toBe('storage.rules');
     });
 
     it('adds immutable headers only for concrete staged app asset files', () => {
