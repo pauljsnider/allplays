@@ -3279,6 +3279,12 @@ export async function rejectTeamRegistration(teamId, formId, registrationId, dec
         if (!['pending', 'waitlisted', 'offer-extended', 'offer-accepted'].includes(currentStatus)) {
             throw new Error('Only pending, waitlisted, or active offer registrations can be rejected');
         }
+        const checkoutStatus = String(registration.checkoutStatus || '').trim().toLowerCase();
+        const paymentStatus = String(registration.paymentStatus || '').trim().toLowerCase();
+        if (['open', 'async_pending'].includes(checkoutStatus)
+            || ['checkout_open', 'pending_payment'].includes(paymentStatus)) {
+            throw new Error('Registration cannot be rejected while its online payment is still processing');
+        }
 
         const selectedOption = registration.selectedOption || {};
         const countKey = String(selectedOption.countKey || selectedOption.id || '').trim();

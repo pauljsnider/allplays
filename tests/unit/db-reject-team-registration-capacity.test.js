@@ -23,13 +23,22 @@ function buildRejectTeamRegistration(deps) {
     );
 }
 
-function createHarness({ status = 'pending', registrationCapacityReleased = false, enrolled = 1, waitlisted = 0 } = {}) {
+function createHarness({
+    status = 'pending',
+    registrationCapacityReleased = false,
+    enrolled = 1,
+    waitlisted = 0,
+    checkoutStatus = '',
+    paymentStatus = ''
+} = {}) {
     const registrationPath = 'teams/team-1/registrationForms/form-1/registrations/reg-1';
     const formPath = 'teams/team-1/registrationForms/form-1';
     const state = new Map([
         [registrationPath, {
             status,
             registrationCapacityReleased,
+            checkoutStatus,
+            paymentStatus,
             selectedOption: { id: 'u10', countKey: 'u10' }
         }],
         [formPath, {
@@ -101,6 +110,20 @@ describe('rejectTeamRegistration capacity release', () => {
         await harness.rejectTeamRegistration('team-1', 'form-1', 'reg-1');
 
         expect(harness.state.get(harness.formPath).registrationOptionCounts.u10).toEqual({ enrolled: 1, waitlisted: 0 });
+    });
+
+    it.each([
+        { checkoutStatus: 'open', paymentStatus: 'checkout_open' },
+        { checkoutStatus: 'async_pending', paymentStatus: 'pending_payment' }
+    ])('does not reject or release capacity while Stripe checkout is $checkoutStatus', async (paymentState) => {
+        const harness = createHarness(paymentState);
+
+        await expect(harness.rejectTeamRegistration('team-1', 'form-1', 'reg-1'))
+            .rejects.toThrow('Registration cannot be rejected while its online payment is still processing');
+
+        expect(harness.state.get(harness.formPath).registrationOptionCounts.u10.enrolled).toBe(1);
+        expect(harness.state.get(harness.registrationPath).status).toBe('pending');
+        expect(harness.writes).toHaveLength(0);
     });
 
     it('is idempotent and never decrements capacity twice', async () => {
