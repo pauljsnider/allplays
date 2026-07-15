@@ -126,14 +126,18 @@ describe('help center deep workflow coverage', () => {
         });
     });
 
-    it('removes empty Help Watch Chat context parameters from CTA links', () => {
+    it('hides team-scoped Help Watch Chat CTAs without team context', () => {
         const document = renderHelpWatchChat('https://allplays.test/help-watch-chat.html?role=parent');
+        const teamPageLink = document.querySelector('[data-quick-link-label="Team Page"]');
         const gameViewerLink = document.querySelector('[data-quick-link-label="Game Viewer"]');
+        const teamChatLink = document.querySelector('[data-quick-link-label="Open Team Chat"]');
 
-        expect(document.querySelector('[data-quick-link-label="Team Page"]')?.getAttribute('href')).toBe('team.html');
+        expect(teamPageLink?.hidden).toBe(true);
+        expect(teamPageLink?.getAttribute('href')).toBe('team.html');
         expect(gameViewerLink?.hidden).toBe(true);
         expect(gameViewerLink?.getAttribute('href')).toBe('team.html');
-        expect(document.querySelector('[data-quick-link-label="Open Team Chat"]')?.getAttribute('href')).toBe('team-chat.html');
+        expect(teamChatLink?.hidden).toBe(true);
+        expect(teamChatLink?.getAttribute('href')).toBe('team-chat.html');
     });
 
     it('keeps team context when Help Watch Chat links have no game context', () => {
