@@ -2215,6 +2215,22 @@ function ScoreboardWidgetCard({ model }: { model: TeamDetailModel }) {
   const embedCode = buildScoreboardWidgetEmbedCode(model.team);
   const [copyStatus, setCopyStatus] = useState<{ kind: 'embed' | 'link'; success: boolean } | null>(null);
 
+  if (model.team.isExplicitlyPublic !== true) {
+    return (
+      <section className="app-card p-4">
+        <div className="flex items-start gap-3">
+          <div className="flex h-10 w-10 flex-none items-center justify-center rounded-xl bg-gray-100 text-gray-600">
+            <Code2 className="h-5 w-5" aria-hidden="true" />
+          </div>
+          <div>
+            <div className="text-sm font-black text-gray-950">Scoreboard widget unavailable</div>
+            <div className="mt-1 text-xs font-semibold leading-5 text-gray-500">This team is private. Make the team public before sharing a scoreboard link or embed.</div>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
   async function copyValue(kind: 'embed' | 'link', value: string) {
     const result = await copyPublicText(value);
     setCopyStatus({ kind, success: result === 'copied' });

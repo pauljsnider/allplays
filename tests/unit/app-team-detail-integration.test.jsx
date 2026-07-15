@@ -108,6 +108,7 @@ function model() {
             description: 'Fast, parent-friendly team page.',
             zip: '66210',
             isPublic: true,
+            isExplicitlyPublic: true,
             active: true,
             leagueUrl: 'https://league.example.test/standings',
             streamUrl: 'https://youtube.example.test/watch',
@@ -489,6 +490,42 @@ describe('React app TeamDetail page', () => {
         const hidden = await renderTeamDetail();
         await clickButton(hidden.container, 'More');
         expect(hidden.container.textContent).not.toContain('Scoreboard widget');
+    });
+
+    it('does not offer scoreboard sharing controls for a private managed team', async () => {
+        const privateManagerModel = model();
+        privateManagerModel.canManageTeam = true;
+        privateManagerModel.team.isPublic = false;
+        privateManagerModel.team.isExplicitlyPublic = false;
+        teamDetailMocks.loadParentTeamDetailBootstrap.mockResolvedValueOnce(privateManagerModel);
+        teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(privateManagerModel);
+
+        const { container } = await renderTeamDetail();
+
+        await clickButton(container, 'More');
+        expect(container.textContent).toContain('Scoreboard widget unavailable');
+        expect(container.textContent).toContain('This team is private. Make the team public before sharing a scoreboard link or embed.');
+        const widgetCard = Array.from(container.querySelectorAll('section')).find((section) => section.textContent?.includes('Scoreboard widget unavailable'));
+        expect(widgetCard).toBeTruthy();
+        expect(widgetCard.querySelector('#scoreboard-widget-embed')).toBeNull();
+        expect(widgetCard.querySelectorAll('button')).toHaveLength(0);
+    });
+
+    it('does not offer scoreboard sharing controls without explicit public visibility', async () => {
+        const legacyManagerModel = model();
+        legacyManagerModel.canManageTeam = true;
+        legacyManagerModel.team.isPublic = true;
+        legacyManagerModel.team.isExplicitlyPublic = false;
+        teamDetailMocks.loadParentTeamDetailBootstrap.mockResolvedValueOnce(legacyManagerModel);
+        teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(legacyManagerModel);
+
+        const { container } = await renderTeamDetail();
+
+        await clickButton(container, 'More');
+        const widgetCard = Array.from(container.querySelectorAll('section')).find((section) => section.textContent?.includes('Scoreboard widget unavailable'));
+        expect(widgetCard).toBeTruthy();
+        expect(widgetCard.querySelector('#scoreboard-widget-embed')).toBeNull();
+        expect(widgetCard.querySelectorAll('button')).toHaveLength(0);
     });
 
     it('lets team managers load and save reminder timing defaults from the More tab', async () => {
