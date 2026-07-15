@@ -706,6 +706,62 @@ describe('ParentTools access', () => {
         await waitFor(() => expect(parentToolsServiceMocks.loadParentCalendarTools).toHaveBeenNthCalledWith(3, linkedAuth.user, { force: true }));
     });
 
+    it('prioritizes live calendar subscriptions and preserves each feed action', async () => {
+        const privateFeedUrl = 'https://calendar.example.test/team-1.ics?token=private-token';
+        const appleFeedUrl = 'webcal://calendar.example.test/team-1.ics?token=private-token';
+        const googleFeedUrl = `https://calendar.google.com/calendar/render?cid=${encodeURIComponent(privateFeedUrl)}`;
+        const writeText = vi.fn().mockResolvedValue(undefined);
+        Object.defineProperty(navigator, 'clipboard', {
+            configurable: true,
+            value: { writeText }
+        });
+        parentToolsServiceMocks.loadParentCalendarTools.mockResolvedValue({
+            events: [
+                {
+                    id: 'event-1',
+                    teamId: 'team-1',
+                    teamName: 'Bears',
+                    type: 'practice',
+                    date: new Date('2100-06-01T18:00:00Z')
+                }
+            ],
+            teams: [{ teamId: 'team-1', teamName: 'Bears', eventCount: 1 }]
+        });
+        parentToolsServiceMocks.getPrivateTeamCalendarFeedUrl.mockResolvedValue(privateFeedUrl);
+        parentToolsServiceMocks.getAppleCalendarFeedUrl.mockReturnValue(appleFeedUrl);
+        parentToolsServiceMocks.getGoogleCalendarFeedUrl.mockReturnValue(googleFeedUrl);
+
+        renderParentTools(['/parent-tools/calendar'], false, linkedAuth);
+
+        const subscriptionsHeading = await screen.findByRole('heading', { name: 'Keep calendars updated' });
+        const moreOptionsHeading = screen.getByRole('heading', { name: 'More options' });
+        expect(subscriptionsHeading.compareDocumentPosition(moreOptionsHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+        expect(screen.getByText('Subscribe to live games and practices. Schedule changes will sync automatically.')).toBeTruthy();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Apple Calendar' }));
+        await waitFor(() => expect(openPublicUrl).toHaveBeenCalledWith(appleFeedUrl));
+        expect(parentToolsServiceMocks.getAppleCalendarFeedUrl).toHaveBeenCalledWith(privateFeedUrl);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Google Calendar' }));
+        await waitFor(() => expect(openPublicUrl).toHaveBeenCalledWith(googleFeedUrl));
+        expect(parentToolsServiceMocks.getGoogleCalendarFeedUrl).toHaveBeenCalledWith(privateFeedUrl);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Copy private link' }));
+        await waitFor(() => expect(writeText).toHaveBeenCalledWith(privateFeedUrl));
+        expect(parentToolsServiceMocks.getPrivateTeamCalendarFeedUrl).toHaveBeenCalledTimes(3);
+    });
+
+    it('keeps empty-calendar feedback without rendering subscription actions', async () => {
+        renderParentTools(['/parent-tools/calendar'], false, linkedAuth);
+
+        expect(await screen.findByText('No team schedules')).toBeTruthy();
+        expect(screen.getByRole('button', { name: 'Copy agenda' })).toBeTruthy();
+        expect(screen.queryByRole('heading', { name: 'Keep calendars updated' })).toBeNull();
+        expect(screen.queryByRole('button', { name: 'Apple Calendar' })).toBeNull();
+        expect(screen.queryByRole('button', { name: 'Google Calendar' })).toBeNull();
+        expect(screen.queryByRole('button', { name: 'Copy private link' })).toBeNull();
+    });
+
     it('keeps parent tool refresh effects stable during local rerenders', async () => {
         renderParentTools(['/parent-tools/access'], false, linkedAuth);
 

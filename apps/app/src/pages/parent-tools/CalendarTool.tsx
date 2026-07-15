@@ -101,10 +101,47 @@ export function CalendarTool({ auth, refreshVersion }: { auth: AuthState; refres
     return (
         <div className="space-y-3">
             <section className="app-card p-4">
-                <ToolHeader icon={CalendarDays} title="Calendar tools" detail="Download your family schedule or subscribe by team." action={<button type="button" className="ghost-button !min-h-9 text-xs" onClick={() => { void refresh({ force: true }); }} disabled={loading}><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />Refresh</button>} />
+                <ToolHeader icon={CalendarDays} title="Calendar tools" detail="Subscribe to live team schedules or export a one-time snapshot." action={<button type="button" className="ghost-button !min-h-9 text-xs" onClick={() => { void refresh({ force: true }); }} disabled={loading}><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />Refresh</button>} />
                 {error ? <RetryableStatus error={error} fallbackMessage="Unable to load calendar tools." onRetry={loading ? undefined : () => refresh({ force: true })} retrying={loading} /> : null}
                 {message ? <Status tone="success" message={message} /> : null}
-                <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                <div className="mt-3">
+                    <MetricCard label="Events" value={String(events.length)} />
+                </div>
+            </section>
+
+            {!loadError && (loading ? <LoadingBlock label="Loading calendar teams" /> : (
+                teams.length ? (
+                    <section aria-labelledby="calendar-subscriptions-heading">
+                        <div className="mb-3">
+                            <h2 id="calendar-subscriptions-heading" className="text-base font-black text-gray-950">Keep calendars updated</h2>
+                            <p className="mt-1 text-xs font-semibold text-gray-500">Subscribe to live games and practices. Schedule changes will sync automatically.</p>
+                        </div>
+                        <div className="grid gap-3 lg:grid-cols-2">
+                            {teams.map((team) => (
+                                <div key={team.teamId} className="app-card p-4">
+                                    <div className="flex items-start justify-between gap-3">
+                                        <div className="min-w-0">
+                                            <div className="truncate text-sm font-black text-gray-950">{team.teamName}</div>
+                                            <div className="mt-0.5 text-xs font-semibold text-gray-500">{team.eventCount} event{team.eventCount === 1 ? '' : 's'} on this schedule</div>
+                                        </div>
+                                        {busyTeamId === team.teamId ? <Loader2 className="h-5 w-5 animate-spin text-primary-600" aria-hidden="true" /> : <CalendarDays className="h-5 w-5 text-primary-600" aria-hidden="true" />}
+                                    </div>
+                                    <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                                        <button type="button" className="secondary-button !min-h-9 justify-center text-xs" onClick={() => openFeed(team, 'apple')} disabled={busyTeamId === team.teamId}>Apple Calendar</button>
+                                        <button type="button" className="secondary-button !min-h-9 justify-center text-xs" onClick={() => openFeed(team, 'google')} disabled={busyTeamId === team.teamId}>Google Calendar</button>
+                                        <button type="button" className="secondary-button !min-h-9 justify-center text-xs" onClick={() => openFeed(team, 'copy')} disabled={busyTeamId === team.teamId}>Copy private link</button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </section>
+                ) : <div className="app-card p-5 text-center"><CalendarDays className="mx-auto h-8 w-8 text-gray-400" aria-hidden="true" /><div className="mt-3 text-sm font-black text-gray-950">No team schedules</div><div className="mt-1 text-xs font-semibold text-gray-500">Schedules appear after a player or team is linked.</div></div>
+            ))}
+
+            <section className="app-card p-4" aria-labelledby="calendar-more-options-heading">
+                <h2 id="calendar-more-options-heading" className="text-sm font-black text-gray-950">More options</h2>
+                <p className="mt-1 text-xs font-semibold text-gray-500">Download or copy a one-time snapshot of the current schedule.</p>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
                     <button type="button" className="secondary-button justify-center" onClick={() => { void download(); }} disabled={loading || exporting}>
                         {exporting ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Download className="h-4 w-4" aria-hidden="true" />}
                         {exporting ? 'Preparing .ics' : 'Download .ics'}
@@ -113,30 +150,8 @@ export function CalendarTool({ auth, refreshVersion }: { auth: AuthState; refres
                         <Copy className="h-4 w-4" aria-hidden="true" />
                         Copy agenda
                     </button>
-                    <MetricCard label="Events" value={String(events.length)} />
                 </div>
             </section>
-
-            {!loadError && (loading ? <LoadingBlock label="Loading calendar teams" /> : (
-                <section className="grid gap-3 lg:grid-cols-2">
-                    {teams.length ? teams.map((team) => (
-                        <div key={team.teamId} className="app-card p-4">
-                            <div className="flex items-start justify-between gap-3">
-                                <div className="min-w-0">
-                                    <div className="truncate text-sm font-black text-gray-950">{team.teamName}</div>
-                                    <div className="mt-0.5 text-xs font-semibold text-gray-500">{team.eventCount} event{team.eventCount === 1 ? '' : 's'} on this schedule</div>
-                                </div>
-                                {busyTeamId === team.teamId ? <Loader2 className="h-5 w-5 animate-spin text-primary-600" aria-hidden="true" /> : <CalendarDays className="h-5 w-5 text-primary-600" aria-hidden="true" />}
-                            </div>
-                            <div className="mt-3 grid grid-cols-3 gap-2">
-                                <button type="button" className="secondary-button !min-h-9 justify-center text-xs" onClick={() => openFeed(team, 'copy')} disabled={busyTeamId === team.teamId}>Copy</button>
-                                <button type="button" className="secondary-button !min-h-9 justify-center text-xs" onClick={() => openFeed(team, 'apple')} disabled={busyTeamId === team.teamId}>Apple</button>
-                                <button type="button" className="secondary-button !min-h-9 justify-center text-xs" onClick={() => openFeed(team, 'google')} disabled={busyTeamId === team.teamId}>Google</button>
-                            </div>
-                        </div>
-                    )) : <div className="app-card p-5 text-center"><CalendarDays className="mx-auto h-8 w-8 text-gray-400" aria-hidden="true" /><div className="mt-3 text-sm font-black text-gray-950">No team schedules</div><div className="mt-1 text-xs font-semibold text-gray-500">Schedules appear after a player or team is linked.</div></div>}
-                </section>
-            ))}
         </div>
     );
 }
