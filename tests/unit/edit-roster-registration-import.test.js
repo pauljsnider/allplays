@@ -467,7 +467,7 @@ describe('registration roster import wiring', () => {
         expect(source).toContain('id="registration-roster-import-title"');
         expect(source).toContain('Import stored registration roster');
         expect(source).toContain('Preview Import');
-        expect(source).toContain("import { formatRegistrationRosterImportResults, getRegistrationRosterPlayers, hasConfiguredRegistrationProviderMetadata, isExternallyLinkedRosterTeam, planRegistrationRosterImport } from './js/edit-roster-registration-import.js?v=2';");
+        expect(source).toContain("import { formatRegistrationRosterImportResults, getRegistrationRosterPlayers, hasConfiguredRegistrationProviderMetadata, isExternallyLinkedRosterTeam, planRegistrationRosterImport } from './js/edit-roster-registration-import.js?v=3';");
         expect(source).toContain('hasConfiguredRegistrationProviderMetadata(team)');
         expect(source).toContain('Registration provider metadata saved');
         expect(source).toContain('Use Edit Team to re-import from Sports Connect when the snapshot needs a refresh.');
