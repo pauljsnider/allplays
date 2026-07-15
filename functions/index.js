@@ -4079,6 +4079,9 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
   if (registration.status === 'waitlisted') {
     throw new functions.https.HttpsError('failed-precondition', 'Waitlisted registrations cannot be paid online yet.');
   }
+  if (registration.status === 'rejected') {
+    throw new functions.https.HttpsError('failed-precondition', 'Rejected registrations cannot be paid online.');
+  }
   if (registration.paymentStatus === 'paid') {
     throw new functions.https.HttpsError('failed-precondition', 'This registration has already been paid.');
   }

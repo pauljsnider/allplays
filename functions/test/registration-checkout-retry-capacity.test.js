@@ -310,6 +310,39 @@ afterEach(() => {
     StripeStub = null;
 });
 
+test('rejecting a registration prevents a later public checkout from charging released capacity', async () => {
+    let stripeCreateCalls = 0;
+    const { firestore, createStripeRegistrationCheckout } = loadCheckoutHandler({
+        seed: buildSeedState({
+            status: 'rejected',
+            registrationCapacityReleased: true,
+            publicCheckoutCapabilityHash: ''
+        }),
+        stripeCreateImpl: async () => {
+            stripeCreateCalls += 1;
+            return {
+                id: 'cs_rejected_registration',
+                url: 'https://checkout.stripe.com/c/rejected_registration',
+                payment_status: 'unpaid'
+            };
+        }
+    });
+
+    await assert.rejects(
+        createStripeRegistrationCheckout(checkoutInput),
+        (error) => error?.code === 'failed-precondition'
+            && error?.message === 'Rejected registrations cannot be paid online.'
+    );
+
+    const form = firestore.snapshot('teams/team-1/registrationForms/form-1');
+    const registration = firestore.snapshot('teams/team-1/registrationForms/form-1/registrations/reg-1');
+    assert.equal(stripeCreateCalls, 0);
+    assert.equal(form.registrationOptionCounts.u10.enrolled, 0);
+    assert.equal(registration.status, 'rejected');
+    assert.equal(registration.registrationCapacityReleased, true);
+    assert.equal(Object.prototype.hasOwnProperty.call(registration, 'checkoutStatus'), false);
+});
+
 test('retry checkout preserves an early-bird discount captured at submission time', async () => {
     const seed = buildSeedState({
         registrationCapacityReleased: false,
