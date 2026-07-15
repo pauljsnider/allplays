@@ -441,6 +441,65 @@ describe('TeamFeesComponent checkout flow', () => {
     expect(template).toContain('No outstanding team fees');
   });
 
+  it('maps and orders due dates within online and offline fee groups with undated fees last', async () => {
+    const onlineUndated = feeDoc('teams/team-real/feeBatches/batch-online-undated/feeRecipients/online-undated', 'online-undated', {
+      parentUserId: 'parent-123', title: 'Online undated', balanceDueCents: 3000, status: 'unpaid', collectionMode: 'online_stripe'
+    });
+    const offlineLater = feeDoc('teams/team-real/feeBatches/batch-offline-later/feeRecipients/offline-later', 'offline-later', {
+      parentUserId: 'parent-123', title: 'Offline later', balanceDueCents: 4000, status: 'unpaid', collectionMode: 'offline_manual', deadline: '2026-09-15'
+    });
+    const onlineLater = feeDoc('teams/team-real/feeBatches/batch-online-later/feeRecipients/online-later', 'online-later', {
+      parentUserId: 'parent-123', title: 'Online later', balanceDueCents: 5000, status: 'unpaid', collectionMode: 'online_stripe', dueAt: '2026-08-15'
+    });
+    const offlineUndated = feeDoc('teams/team-real/feeBatches/batch-offline-undated/feeRecipients/offline-undated', 'offline-undated', {
+      parentUserId: 'parent-123', title: 'Offline undated', balanceDueCents: 6000, status: 'unpaid', collectionMode: 'offline_manual'
+    });
+    const onlineSooner = feeDoc('teams/team-real/feeBatches/batch-online-sooner/feeRecipients/online-sooner', 'online-sooner', {
+      parentUserId: 'parent-123', title: 'Online sooner', balanceDueCents: 7000, status: 'unpaid', collectionMode: 'online_stripe', dueDate: '2026-07-20'
+    });
+    const offlineSooner = feeDoc('teams/team-real/feeBatches/batch-offline-sooner/feeRecipients/offline-sooner', 'offline-sooner', {
+      parentUserId: 'parent-123', title: 'Offline sooner', balanceDueCents: 8000, status: 'unpaid', collectionMode: 'offline_manual', dueDate: '2026-07-25'
+    });
+    mockGetDocs
+      .mockResolvedValueOnce({ docs: [onlineUndated, offlineLater, onlineLater, offlineUndated, onlineSooner, offlineSooner] })
+      .mockResolvedValueOnce({ docs: [] })
+      .mockResolvedValueOnce({ docs: [] });
+
+    await component.ngOnInit();
+
+    expect(component.outstandingFees.map((fee) => fee.id)).toEqual([
+      'online-sooner',
+      'online-later',
+      'online-undated',
+      'offline-sooner',
+      'offline-later',
+      'offline-undated'
+    ]);
+    expect(component.outstandingFees.map((fee) => fee.dueDate?.getTime() ?? null)).toEqual([
+      new Date(2026, 6, 20).getTime(),
+      new Date(2026, 7, 15).getTime(),
+      null,
+      new Date(2026, 6, 25).getTime(),
+      new Date(2026, 8, 15).getTime(),
+      null
+    ]);
+    expect(template).toContain('Due {{ fee.dueDate | date:\'mediumDate\' }}');
+
+    const originalWindow = globalThis.window;
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: { location: { href: 'https://allplays.test/team-fees' } }
+    });
+
+    await component.handlePayFee(component.outstandingFees[0]);
+
+    expect(stripeService.initiateTeamFeeCheckout).toHaveBeenCalledWith('team-real', 'batch-online-sooner', 'online-sooner');
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: originalWindow
+    });
+  });
+
   it('keeps paid and canceled fees accessible when there are no outstanding balances', async () => {
     const paidFee = feeDoc('teams/team-real/feeBatches/batch-paid/feeRecipients/recipient-paid', 'recipient-paid', {
       parentUserId: 'parent-123',

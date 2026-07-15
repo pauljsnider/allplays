@@ -18,6 +18,7 @@ interface TeamFee {
   collectionMode: string;
   canPayOnline: boolean;
   offlinePaymentInstructions: string;
+  dueDate?: Date;
 }
 
 type ParentPlayerLink = {
@@ -61,6 +62,9 @@ type FeeRecipientData = {
   playerId?: string;
   childId?: string;
   playerKey?: string;
+  dueDate?: unknown;
+  dueAt?: unknown;
+  deadline?: unknown;
 };
 
 
@@ -168,6 +172,29 @@ function getOfflinePaymentInstructions(data: FeeRecipientData): string {
   ).trim();
 }
 
+function normalizeDueDate(data: FeeRecipientData): Date | undefined {
+  for (const value of [data.dueDate, data.dueAt, data.deadline]) {
+    let date: Date;
+    if (value instanceof Date) {
+      date = value;
+    } else if (value && typeof (value as { toDate?: unknown }).toDate === 'function') {
+      date = (value as { toDate: () => Date }).toDate();
+    } else if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      const [year, month, day] = value.split('-').map(Number);
+      date = new Date(year, month - 1, day);
+    } else if (typeof value === 'string') {
+      date = new Date(value);
+    } else if (typeof value === 'number') {
+      date = new Date(value);
+    } else {
+      continue;
+    }
+
+    if (!Number.isNaN(date.getTime())) return date;
+  }
+  return undefined;
+}
+
 function getTeamFeeDisplayPriority(fee: TeamFee): number {
   if (fee.canPayOnline) return 0;
   if (fee.status === 'unpaid') return 1;
@@ -175,7 +202,17 @@ function getTeamFeeDisplayPriority(fee: TeamFee): number {
 }
 
 function sortTeamFeesForDisplay(fees: TeamFee[]): TeamFee[] {
-  return [...fees].sort((feeA, feeB) => getTeamFeeDisplayPriority(feeA) - getTeamFeeDisplayPriority(feeB));
+  return [...fees].sort((feeA, feeB) => {
+    const priorityDifference = getTeamFeeDisplayPriority(feeA) - getTeamFeeDisplayPriority(feeB);
+    if (priorityDifference !== 0) return priorityDifference;
+    if (getTeamFeeDisplayPriority(feeA) === 2) return 0;
+
+    const dueDateA = feeA.dueDate?.getTime();
+    const dueDateB = feeB.dueDate?.getTime();
+    if (dueDateA === undefined) return dueDateB === undefined ? 0 : 1;
+    if (dueDateB === undefined) return -1;
+    return dueDateA - dueDateB;
+  });
 }
 
 @Component({
@@ -291,6 +328,7 @@ export class TeamFeesComponent implements OnInit {
       const isCanceled = isFeeCanceled(data);
       const balanceCents = getFeeBalanceCents(data);
       const canPayOnline = !isPaid && !isCanceled && balanceCents > 0 && isOnlineStripeCollectionMode(collectionMode) && Boolean(teamId && batchId && docSnap.id);
+      const dueDate = normalizeDueDate(data);
 
       feesByPath.set(docSnap.ref.path, {
         id: docSnap.id,
@@ -303,7 +341,8 @@ export class TeamFeesComponent implements OnInit {
         isPaid,
         collectionMode,
         canPayOnline,
-        offlinePaymentInstructions: getOfflinePaymentInstructions(data)
+        offlinePaymentInstructions: getOfflinePaymentInstructions(data),
+        ...(dueDate ? { dueDate } : {})
       });
     });
 
