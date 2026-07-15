@@ -851,6 +851,34 @@ describe('ParentTools access', () => {
         expect(screen.getByText('https://allplays.ai/app/#/family/token-1')).toBeTruthy();
     });
 
+    it('keeps family share revocation open on native Back while saving', async () => {
+        parentToolsServiceMocks.loadFamilyShareModel.mockResolvedValue({
+            children: [{ teamId: 'team-1', playerId: 'player-1', playerName: 'Sam Player' }],
+            tokens: [{
+                id: 'token-1',
+                label: 'Grandma',
+                url: 'https://allplays.ai/app/#/family/token-1',
+                childCount: 1,
+                extraCalendarUrls: []
+            }]
+        });
+        parentToolsServiceMocks.revokeParentFamilyShare.mockImplementationOnce(() => new Promise(() => {}));
+
+        renderParentTools(['/parent-tools/share'], false, linkedAuth);
+
+        expect(await screen.findByText('Grandma')).toBeTruthy();
+        fireEvent.click(screen.getByRole('button', { name: 'Revoke' }));
+        fireEvent.click(await screen.findByRole('button', { name: 'Revoke link' }));
+        await waitFor(() => expect((screen.getByRole('button', { name: 'Revoke link' }) as HTMLButtonElement).disabled).toBe(true));
+
+        const event = new Event(APP_BACK_DISMISS_EVENT, { cancelable: true });
+        fireEvent(window, event);
+
+        expect(event.defaultPrevented).toBe(true);
+        expect(screen.getByRole('dialog', { name: 'Revoke this share link?' })).toBeTruthy();
+        expect(parentToolsServiceMocks.revokeParentFamilyShare).toHaveBeenCalledTimes(1);
+    });
+
     it('shows a created family link when clipboard copy and refresh recovery miss it', async () => {
         Object.defineProperty(navigator, 'clipboard', {
             configurable: true,

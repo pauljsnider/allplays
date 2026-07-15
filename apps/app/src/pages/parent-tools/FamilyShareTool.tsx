@@ -180,7 +180,9 @@ export function FamilyShareTool({ auth, refreshVersion }: { auth: AuthState; ref
             {pendingRevokeToken ? (
                 <Modal
                     ariaLabelledBy="family-share-revoke-title"
-                    onClose={() => setPendingRevokeToken(null)}
+                    onClose={() => {
+                        if (!saving) setPendingRevokeToken(null);
+                    }}
                     overlayClassName="z-50 flex items-end justify-center bg-gray-950/40 px-4 py-5 sm:items-center"
                 >
                     <div className="w-full max-w-sm rounded-2xl bg-white p-4 shadow-2xl">
