@@ -475,24 +475,22 @@ test('throttles repeated anonymous submissions before reserving more capacity', 
     assert.equal(firestore.registrationDocs().length, registrationCountBeforeThrottle);
 });
 
-test('does not allow varying guardian emails to bypass the caller and form limit', async () => {
+test('isolates guardian submission limits for families sharing an IP address', async () => {
     const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration(buildSeedState());
+    const firstGuardian = buildSubmission({ guardian: { email: 'one@example.com' } });
 
-    await submitPublicRegistration(buildSubmission({ guardian: { email: 'one@example.com' } }), context);
-    await submitPublicRegistration(buildSubmission({ guardian: { email: 'two@example.com' } }), context);
-    await submitPublicRegistration(buildSubmission({ guardian: { email: 'three@example.com' } }), context);
+    await submitPublicRegistration(firstGuardian, context);
+    await submitPublicRegistration(firstGuardian, context);
+    await submitPublicRegistration(firstGuardian, context);
 
-    await assert.rejects(
-        submitPublicRegistration(buildSubmission({ guardian: { email: 'four@example.com' } }), context),
-        (error) => {
-            assert.equal(error.code, 'resource-exhausted');
-            assert.equal(error.details.reason, 'rate-limited');
-            return true;
-        }
+    const result = await submitPublicRegistration(
+        buildSubmission({ guardian: { email: 'two@example.com' } }),
+        context
     );
 
-    assert.equal(firestore.rateLimitDocs().length, 1);
-    assert.equal(firestore.registrationDocs().length, 3);
+    assert.equal(result.success, true);
+    assert.equal(firestore.rateLimitDocs().length, 2);
+    assert.equal(firestore.registrationDocs().length, 4);
 });
 
 test('shares submission throttling across independently loaded function handlers', async () => {
