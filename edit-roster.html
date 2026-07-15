@@ -2346,11 +2346,17 @@
                     playerData.position = publicValues.position;
                 }
 
-                const savedPlayerId = editingPlayerId || await addPlayer(currentTeamId, playerData);
                 if (editingPlayerId) {
-                    await updatePlayer(currentTeamId, editingPlayerId, playerData);
+                    await applyRosterCsvImportOperations(currentTeamId, [{
+                        type: 'update',
+                        playerId: editingPlayerId,
+                        payload: playerData,
+                        privateRosterFields: { ...protectedProfileValues, ...privateValues }
+                    }]);
+                } else {
+                    const savedPlayerId = await addPlayer(currentTeamId, playerData);
+                    await setPlayerPrivateRosterProfileFields(currentTeamId, savedPlayerId, { ...protectedProfileValues, ...privateValues });
                 }
-                await setPlayerPrivateRosterProfileFields(currentTeamId, savedPlayerId, { ...protectedProfileValues, ...privateValues });
 
                 resetForm();
                 loadRoster();

@@ -216,7 +216,9 @@ describe('player profile private doc writes', () => {
         expect(page).toContain('splitProtectedRosterProfileValues({');
         expect(page).toContain('customFields: publicValues');
         expect(page).toContain('{ ...legacyProtectedValues, ...currentProtectedValues }');
-        expect(page).toContain('{ ...protectedProfileValues, ...privateValues }');
+        expect(page).toContain("await applyRosterCsvImportOperations(currentTeamId, [{\n                        type: 'update'");
+        expect(page).toContain('privateRosterFields: { ...protectedProfileValues, ...privateValues }');
+        expect(page).not.toContain('await updatePlayer(currentTeamId, editingPlayerId, playerData);');
     });
 
     it('keeps standard sensitive roster fields out of the public player document helper', () => {
