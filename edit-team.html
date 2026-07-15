@@ -980,7 +980,7 @@
 
         async function refreshRegistrationSourceFromTeam() {
             if (!currentTeamId) return null;
-            const latestTeam = await getTeam(currentTeamId);
+            const latestTeam = await getTeam(currentTeamId, { includeInactive: true });
             const storedRegistrationSource = getStoredRegistrationSource(latestTeam || {});
             if (storedRegistrationSource) {
                 currentRegistrationSource = storedRegistrationSource;
