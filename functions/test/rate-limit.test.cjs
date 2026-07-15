@@ -160,6 +160,7 @@ test('uses hashed document identifiers without persisting boundary values', asyn
     assert.match(path, /^publicRegistrationRateLimits\/[a-f0-9]{64}$/);
     assert.doesNotMatch(path, /parent@example\.com|203\.0\.113\.10/);
     assert.doesNotMatch(JSON.stringify(data), /parent@example\.com|203\.0\.113\.10/);
+    assert.equal(data.expiresAt.toISOString(), '1970-01-01T00:01:01.000Z');
 });
 
 test('rejects invalid or oversized durable rate-limit boundaries', async () => {
@@ -189,5 +190,9 @@ test('recovers an active window with a corrupted count', async () => {
 
     assert.equal(result.allowed, true);
     assert.equal(result.remaining, 2);
-    assert.deepEqual(firestore.state.get(path), { count: 1, resetAt: 60_000 });
+    assert.deepEqual(firestore.state.get(path), {
+        count: 1,
+        resetAt: 60_000,
+        expiresAt: new Date(60_000)
+    });
 });

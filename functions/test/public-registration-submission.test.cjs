@@ -145,6 +145,11 @@ function makeFirestore(seed = {}) {
                 .filter(([path]) => path.startsWith('teams/team-1/registrationForms/form-1/registrations/'))
                 .map(([path, data]) => ({ path, data: clone(data) }));
         },
+        rateLimitDocs() {
+            return [...state.entries()]
+                .filter(([path]) => path.startsWith('publicRegistrationRateLimits/'))
+                .map(([path, data]) => ({ path, data: clone(data) }));
+        },
         failNextTransaction(error) {
             nextTransactionError = error;
         },
@@ -344,6 +349,21 @@ test('loads unrelated callables without Firestore transaction support', () => {
     assert.equal(typeof mod.listPublicOpportunities, 'function');
 });
 
+test('rejects nonexistent forms before creating a durable rate-limit document', async () => {
+    const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration({});
+
+    await assert.rejects(
+        submitPublicRegistration(buildSubmission(), context),
+        (error) => {
+            assert.equal(error.code, 'not-found');
+            return true;
+        }
+    );
+
+    assert.equal(firestore.rateLimitDocs().length, 0);
+    assert.equal(firestore.registrationDocs().length, 0);
+});
+
 test('creates exactly one pending registration and reserves matching capacity', async () => {
     const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration(buildSeedState());
 
@@ -453,6 +473,26 @@ test('throttles repeated anonymous submissions before reserving more capacity', 
     const formAfterThrottle = firestore.snapshot('teams/team-1/registrationForms/form-1');
     assert.equal(formAfterThrottle.registrationOptionCounts.u10.enrolled, formBeforeThrottle.registrationOptionCounts.u10.enrolled);
     assert.equal(firestore.registrationDocs().length, registrationCountBeforeThrottle);
+});
+
+test('does not allow varying guardian emails to bypass the caller and form limit', async () => {
+    const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration(buildSeedState());
+
+    await submitPublicRegistration(buildSubmission({ guardian: { email: 'one@example.com' } }), context);
+    await submitPublicRegistration(buildSubmission({ guardian: { email: 'two@example.com' } }), context);
+    await submitPublicRegistration(buildSubmission({ guardian: { email: 'three@example.com' } }), context);
+
+    await assert.rejects(
+        submitPublicRegistration(buildSubmission({ guardian: { email: 'four@example.com' } }), context),
+        (error) => {
+            assert.equal(error.code, 'resource-exhausted');
+            assert.equal(error.details.reason, 'rate-limited');
+            return true;
+        }
+    );
+
+    assert.equal(firestore.rateLimitDocs().length, 1);
+    assert.equal(firestore.registrationDocs().length, 3);
 });
 
 test('shares submission throttling across independently loaded function handlers', async () => {

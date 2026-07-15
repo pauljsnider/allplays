@@ -151,7 +151,11 @@ function createFirestoreFixedWindowRateLimiter({
         ? existingCount + 1
         : 1;
 
-      transaction.set(limitRef, { count, resetAt });
+      transaction.set(limitRef, {
+        count,
+        resetAt,
+        expiresAt: new Date(resetAt)
+      });
 
       return {
         allowed: count <= configuredMaxRequests,

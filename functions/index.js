@@ -839,21 +839,13 @@ function buildPublicPendingRegistrationRecord({ form, input, selectedOption = nu
   return record;
 }
 
-function getHeaderValue(headers = {}, name = '') {
-  const direct = headers[name] || headers[name.toLowerCase()];
-  return Array.isArray(direct) ? direct[0] : String(direct || '');
-}
-
 function buildPublicRegistrationRateLimitBoundary(input, context = {}) {
   const rawRequest = context.rawRequest || {};
   const requestIp = getRequestIp(rawRequest);
-  const appCheck = String(context.app?.appId || getHeaderValue(rawRequest.headers, 'x-firebase-appcheck') || '').trim();
-  const email = String(input.guardian?.email || input.guardian?.guardianEmail || '').trim().toLowerCase();
   return [
     input.teamId,
     input.formId,
-    email || 'no-email',
-    appCheck || requestIp || 'unknown'
+    requestIp || 'unknown'
   ].join('|');
 }
 
@@ -880,9 +872,14 @@ exports.submitPublicRegistration = functions.https.onCall(async (data, context =
     throwPublicRegistrationError('invalid-argument', error.message || 'Invalid registration submission.');
   }
 
+  const formRef = buildRegistrationFormRef(input);
+  const initialFormSnap = await formRef.get();
+  if (!initialFormSnap.exists) {
+    throwPublicRegistrationError('not-found', 'Registration form not found.');
+  }
+
   await assertPublicRegistrationRateLimit(input, context);
 
-  const formRef = buildRegistrationFormRef(input);
   const registrationRef = formRef.collection('registrations').doc();
   let result = null;
 
