@@ -1566,7 +1566,10 @@ async function reserveRegistrationCheckoutCreation(input, options = {}) {
       checkoutCreationStartedAt: now,
       updatedAt: now
     }, { merge: true });
-    return { reserved: true };
+    return {
+      reserved: true,
+      retryCapacityReservationId: String(registration.retryCapacityReservationId || '').trim() || null
+    };
   });
 }
 
@@ -1626,6 +1629,15 @@ async function releaseRegistrationCheckoutCapacity(input, statusUpdate = {}, opt
       retryCapacityReservationId
       && String(registration.retryCapacityReservationId || '').trim() === retryCapacityReservationId
     );
+    const checkoutCreationReservationId = String(options.checkoutCreationReservationId || '').trim();
+    const activeCheckoutCreationReservationId = String(registration.checkoutCreationReservationId || '').trim();
+    if (
+      hasMatchingRetryCapacityReservation
+      && activeCheckoutCreationReservationId
+      && activeCheckoutCreationReservationId !== checkoutCreationReservationId
+    ) {
+      return { released: false, reason: 'checkout-creation-owned-by-another-reservation' };
+    }
     const registrationUpdate = {
       ...statusUpdate,
       retryCapacityReservationId: admin.firestore.FieldValue.delete(),
@@ -4194,6 +4206,7 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
     if (retryCapacityReservation.reserved) {
       await releaseRegistrationCheckoutCapacity(resolvedInput, {}, {
         retryCapacityReservationId: retryCapacityReservation.retryCapacityReservationId,
+        checkoutCreationReservationId,
         suppressPublicCheckoutCapabilityRotation: true
       }).catch(() => {});
     }
@@ -4203,6 +4216,12 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
     return {
       checkoutUrl: checkoutCreationReservation.checkoutUrl,
       sessionId: checkoutCreationReservation.sessionId
+    };
+  }
+  if (!retryCapacityReservation.reserved && checkoutCreationReservation.retryCapacityReservationId) {
+    retryCapacityReservation = {
+      reserved: true,
+      retryCapacityReservationId: checkoutCreationReservation.retryCapacityReservationId
     };
   }
 
@@ -4255,6 +4274,7 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
           publicCheckoutCapability: resolvedInput.publicCheckoutCapability || issuedPublicCheckoutCapability
         }, {}, {
           retryCapacityReservationId: retryCapacityReservation.retryCapacityReservationId,
+          checkoutCreationReservationId,
           suppressPublicCheckoutCapabilityRotation: true
         });
       } catch (releaseError) {

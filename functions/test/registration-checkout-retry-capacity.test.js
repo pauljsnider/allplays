@@ -607,7 +607,7 @@ test('rolls back reserved capacity when Stripe checkout creation fails', async (
     assert.equal(Object.prototype.hasOwnProperty.call(registration, 'retryCapacityReservationId'), false);
 });
 
-test('does not release an overlapping retry reservation this call did not acquire', async () => {
+test('checkout owner adopts and releases an overlapping retry reservation when Stripe creation fails', async () => {
     const registrationPath = 'teams/team-1/registrationForms/form-1/registrations/reg-1';
     const formPath = 'teams/team-1/registrationForms/form-1';
     const { firestore, createStripeRegistrationCheckout } = loadCheckoutHandler({
@@ -639,9 +639,48 @@ test('does not release an overlapping retry reservation this call did not acquir
     const form = firestore.snapshot(formPath);
     const registration = firestore.snapshot(registrationPath);
 
+    assert.equal(form.registrationOptionCounts.u10.enrolled, 0);
+    assert.equal(registration.registrationCapacityReleased, true);
+    assert.equal(Object.prototype.hasOwnProperty.call(registration, 'retryCapacityReservationId'), false);
+    assert.equal(registration.capacityReleasedAt, 'SERVER_TIMESTAMP');
+});
+
+test('retry losing checkout creation ownership does not release capacity beneath the surviving checkout', async () => {
+    const registrationPath = 'teams/team-1/registrationForms/form-1/registrations/reg-1';
+    const formPath = 'teams/team-1/registrationForms/form-1';
+    let stripeCreateCalls = 0;
+    const { firestore, createStripeRegistrationCheckout } = loadCheckoutHandler({
+        seed: buildSeedState(),
+        firestoreOptions: {
+            onGet: ({ path, count, state }) => {
+                if (path === registrationPath && count === 2) {
+                    const registration = clone(state.get(registrationPath));
+                    registration.checkoutCreationReservationId = 'surviving-checkout-owner';
+                    registration.checkoutCreationStartedAt = Date.now();
+                    state.set(registrationPath, registration);
+                }
+            }
+        },
+        stripeCreateImpl: async () => {
+            stripeCreateCalls += 1;
+            throw new Error('The losing retry must not reach Stripe.');
+        }
+    });
+
+    await assert.rejects(
+        createStripeRegistrationCheckout(checkoutInput),
+        (error) => error?.code === 'failed-precondition'
+            && error?.message === 'Registration checkout creation is already in progress.'
+    );
+
+    const form = firestore.snapshot(formPath);
+    const registration = firestore.snapshot(registrationPath);
+
+    assert.equal(stripeCreateCalls, 0);
     assert.equal(form.registrationOptionCounts.u10.enrolled, 1);
     assert.equal(registration.registrationCapacityReleased, false);
-    assert.equal(registration.retryCapacityReservationId, 'existing-retry-reservation');
+    assert.match(registration.retryCapacityReservationId, /^[0-9a-f-]{36}$/i);
+    assert.equal(registration.checkoutCreationReservationId, 'surviving-checkout-owner');
     assert.equal(Object.prototype.hasOwnProperty.call(registration, 'capacityReleasedAt'), false);
 });
 
