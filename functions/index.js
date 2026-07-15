@@ -10000,6 +10000,26 @@ function buildTeamChatNotificationPlan({ text, actorUid = null, recipientContext
   };
 }
 
+async function resolveTeamChatSenderLabel(senderId, legacySenderName) {
+  const normalizedSenderId = String(senderId || '').trim();
+  if (normalizedSenderId) {
+    try {
+      const senderSnap = await firestore.doc(`users/${normalizedSenderId}`).get();
+      if (senderSnap.exists) {
+        const sender = senderSnap.data() || {};
+        const canonicalLabel = String(
+          sender.fullName || sender.displayName || sender.name || sender.email || ''
+        ).trim();
+        if (canonicalLabel) return canonicalLabel.slice(0, 120);
+      }
+    } catch (error) {
+      console.warn('Unable to resolve team chat sender profile', normalizedSenderId, error);
+    }
+  }
+
+  return String(legacySenderName || 'Team').trim().slice(0, 120) || 'Team';
+}
+
 async function handleTeamChatMessageCreated(snapshot, context) {
   const data = snapshot.data() || {};
   const text = String(data.text || '').trim();
@@ -10010,7 +10030,7 @@ async function handleTeamChatMessageCreated(snapshot, context) {
   const teamId = context.params.teamId;
   const actorUid = data.senderId || null;
   const conversationId = normalizeTeamChatConversationId(data.conversationId || context.params.conversationId);
-  const senderName = String(data.senderName || 'Team').trim();
+  const senderName = await resolveTeamChatSenderLabel(actorUid, data.senderName);
   const body = text
     ? (text.length > 120 ? `${text.slice(0, 117)}...` : text)
     : 'sent a photo';

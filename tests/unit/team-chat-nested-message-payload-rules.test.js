@@ -19,6 +19,8 @@ describe('nested team chat message payload contracts', () => {
         expect(rules).toContain("data.keys().hasAll([\n               'text', 'senderId', 'attachments', 'createdAt', 'targetType'");
         expect(rules).toContain("data.keys().hasOnly([\n               'clientMessageId', 'text', 'senderId'");
         expect(rules).toContain('data.senderId == request.auth.uid');
+        expect(rules).toContain('function hasCanonicalChatSenderPresentation(data)');
+        expect(rules).toContain('hasCanonicalChatSenderPresentation(data)');
         expect(rules).toContain('data.senderEmail.lower() == request.auth.token.email.lower()');
         expect(rules).toContain('data.createdAt == request.time');
         expect(rules).toContain("data.get('editedAt', null) == null");
@@ -173,6 +175,8 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
             });
             await setDoc(doc(firestore, 'users/coach-1'), {
                 email: 'coach@example.com',
+                fullName: 'Coach One',
+                photoUrl: 'https://example.com/coach.jpg',
                 isAdmin: false,
                 parentTeamIds: []
             });
@@ -183,6 +187,15 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
             });
             await setDoc(doc(firestore, 'users/parent-1'), {
                 email: 'parent@example.com',
+                fullName: 'Pat Parent',
+                photoUrl: 'https://example.com/parent.jpg',
+                isAdmin: false,
+                parentTeamIds: ['team-1']
+            });
+            await setDoc(doc(firestore, 'users/user-2'), {
+                email: 'user2@example.com',
+                fullName: 'Other Parent',
+                photoUrl: 'https://example.com/other.jpg',
                 isAdmin: false,
                 parentTeamIds: ['team-1']
             });
@@ -327,6 +340,13 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
         delete directWithoutStoredEmail.senderEmail;
 
         await assertSucceeds(setDoc(messageRef(parentDb, directConversationId, 'valid-direct'), directPayload()));
+        await assertSucceeds(setDoc(messageRef(parentDb, directConversationId, 'valid-direct-photo'), directPayload({
+            senderPhotoUrl: 'https://example.com/parent.jpg'
+        })));
+        await assertSucceeds(setDoc(messageRef(parentDb, directConversationId, 'valid-direct-null-presentation'), directPayload({
+            senderName: null,
+            senderPhotoUrl: null
+        })));
         await assertSucceeds(setDoc(messageRef(parentDb, directConversationId, 'valid-direct-no-email'), directWithoutStoredEmail));
         await assertSucceeds(setDoc(messageRef(coachDb, staffConversationId, 'valid-staff'), staffPayload()));
     });
@@ -402,6 +422,13 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
         const attachment = legacyAttachment();
 
         await assertSucceeds(setDoc(legacyMessageRef(parentDb, 'valid-text'), legacyPayload()));
+        await assertSucceeds(setDoc(legacyMessageRef(parentDb, 'valid-canonical-photo'), legacyPayload({
+            senderPhotoUrl: 'https://example.com/parent.jpg'
+        })));
+        await assertSucceeds(setDoc(legacyMessageRef(parentDb, 'valid-null-presentation'), legacyPayload({
+            senderName: null,
+            senderPhotoUrl: null
+        })));
         await assertSucceeds(setDoc(legacyMessageRef(parentDb, 'valid-media'), legacyPayload({
             text: '',
             attachments: [attachment]
@@ -436,6 +463,9 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
             legacyPayload({ attachments: [legacyAttachment({ size: 5 * 1024 * 1024 + 1 })] }),
             legacyPayload({ unexpectedField: true }),
             legacyPayload({ senderId: 'user-2' }),
+            legacyPayload({ senderName: 'Other Parent' }),
+            legacyPayload({ senderPhotoUrl: 'https://example.com/other.jpg' }),
+            legacyPayload({ senderPhotoUrl: 'https://attacker.example/tracker.gif' }),
             legacyPayload({ ai: true, aiName: 'ALL PLAYS' }),
             legacyPayload({ aiMeta: { forged: true } }),
             legacyPayload({ createdAt: Timestamp.fromMillis(1700000000000) }),
@@ -473,6 +503,9 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
             directPayload({ text: '', attachments: [] }),
             directPayload({ senderId: 'user-2' }),
             directPayload({ senderEmail: 'spoofed@example.com' }),
+            directPayload({ senderName: 'Other Parent' }),
+            directPayload({ senderPhotoUrl: 'https://example.com/other.jpg' }),
+            directPayload({ senderPhotoUrl: 'https://attacker.example/tracker.gif' }),
             directPayload({ createdAt: Timestamp.fromMillis(1700000000000) }),
             directPayload({ deleted: true }),
             directPayload({ ai: true, aiName: 'ALL PLAYS' }),
