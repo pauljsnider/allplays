@@ -172,6 +172,20 @@ function renderViewerLineupList({
   }).join('');
 }
 
+export function resolveHomeStatColumns(statColumns = [], stats = {}) {
+  const columns = normalizeLiveStatColumns(statColumns);
+  const hasFoulAlias = columns.some((column) => statKeyMap[column] === 'fouls');
+  const hasFoulStats = Object.values(stats || {}).some((playerStats) => (
+    Object.prototype.hasOwnProperty.call(playerStats || {}, 'fouls')
+  ));
+
+  if (!hasFoulAlias && hasFoulStats) {
+    return [...columns, 'FLS'];
+  }
+
+  return columns;
+}
+
 export function renderViewerLineupSections({
   players = [],
   stats = {},
@@ -181,6 +195,7 @@ export function renderViewerLineupSections({
   lastStatChange = null
 } = {}) {
   const { onCourtIds, benchIds } = resolveViewerLineup({ players, onCourt, bench });
+  const columns = resolveHomeStatColumns(statColumns, stats);
   return {
     onCourtIds,
     benchIds,
@@ -189,7 +204,7 @@ export function renderViewerLineupSections({
       emptyLabel: 'No players currently on field',
       players,
       stats,
-      statColumns,
+      statColumns: columns,
       lastStatChange
     }),
     benchHtml: renderViewerLineupList({
@@ -197,7 +212,7 @@ export function renderViewerLineupSections({
       emptyLabel: 'No players currently on bench',
       players,
       stats,
-      statColumns,
+      statColumns: columns,
       lastStatChange
     })
   };
