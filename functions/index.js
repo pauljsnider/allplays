@@ -3,7 +3,7 @@ const admin = require('firebase-admin');
 const Stripe = require('stripe');
 const crypto = require('node:crypto');
 const { isPrivateIpAddress, isBlockedHostname, assertPublicHost, normalizeTargetUrl, fetchWithTimeout } = require('./utils/security-utils');
-const { createCalendarIcsCache, fetchCalendarIcsWithCache } = require('./calendar-ics-fetch-core.cjs');
+const { createCalendarIcsCache, createCalendarIcsFetchHandler } = require('./calendar-ics-fetch-core.cjs');
 const {
   normalizeTeamPassCheckoutInput,
   isEligibleTeamPassPurchaser,
@@ -231,6 +231,16 @@ const checkPasswordResetEmailRateLimit = createInMemoryRateLimiter({
   windowMs: 10 * 60_000,
   maxRequests: 10,
   maxKeys: 10_000
+});
+const checkCalendarFetchRateLimit = createInMemoryRateLimiter({
+  windowMs: 60_000,
+  maxRequests: 120,
+  maxKeys: 5_000
+});
+const checkCalendarForceRefreshRateLimit = createInMemoryRateLimiter({
+  windowMs: 60_000,
+  maxRequests: 10,
+  maxKeys: 5_000
 });
 
 function getStripeConfig() {
@@ -5348,70 +5358,16 @@ exports.getFamilyShareSchedule = functions.https.onCall(async (data) => {
 exports.fetchCalendarIcs = functions
   .runWith(fetchCalendarRuntime)
   .https
-  .onRequest(async (req, res) => {
-    writeCorsHeaders(req, res);
-
-    if (!isAllowedOrigin(req.headers.origin)) {
-      res.status(403).json({ ok: false, error: 'Origin not allowed' });
-      return;
-    }
-
-    if (req.method === 'OPTIONS') {
-      res.status(204).send('');
-      return;
-    }
-
-    if (req.method !== 'GET') {
-      res.status(405).json({ error: 'Method not allowed' });
-      return;
-    }
-
-    try {
-      const rawUrl = req.query.url;
-      const normalizedUrl = await normalizeTargetUrl(rawUrl);
-      const forceRefresh = String(req.query.forceRefresh || '').toLowerCase() === 'true';
-
-      const result = await fetchCalendarIcsWithCache({
-        cache: calendarIcsCache,
-        cacheKey: normalizedUrl.url,
-        forceRefresh,
-        fetchIcs: async () => {
-          const response = await fetchWithTimeout(normalizedUrl.url, normalizedUrl.hostname, normalizedUrl.publicIps);
-          if (!response.ok) {
-            const upstreamError = new Error(`Calendar fetch failed: ${response.status} ${response.statusText}`);
-            upstreamError.statusCode = 502;
-            throw upstreamError;
-          }
-
-          const rawText = await response.text();
-          const icsText = normalizeIcsText(rawText);
-
-          if (!icsText.includes('BEGIN:VCALENDAR')) {
-            const invalidIcsError = new Error('Response was not valid ICS');
-            invalidIcsError.statusCode = 502;
-            throw invalidIcsError;
-          }
-
-          return {
-            fetchedAt: new Date().toISOString(),
-            icsText
-          };
-        }
-      });
-
-      res.status(200).json({
-        ok: true,
-        source: result.source,
-        fetchedAt: result.fetchedAt,
-        icsText: result.icsText
-      });
-    } catch (error) {
-      res.status(error?.statusCode || 400).json({
-        ok: false,
-        error: error?.message || 'Unknown error'
-      });
-    }
-  });
+  .onRequest(createCalendarIcsFetchHandler({
+    cache: calendarIcsCache,
+    checkRateLimit: checkCalendarFetchRateLimit,
+    checkForceRefreshRateLimit: checkCalendarForceRefreshRateLimit,
+    isAllowedOrigin,
+    writeCorsHeaders,
+    normalizeTargetUrl,
+    fetchWithTimeout,
+    normalizeIcsText
+  }));
 
 function normalizeNotificationPreferences(raw) {
   const source = raw && typeof raw === 'object' ? raw : {};
