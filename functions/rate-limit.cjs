@@ -1,5 +1,8 @@
 const net = require('node:net');
+const crypto = require('node:crypto');
 const { isPrivateIpAddress } = require('./utils/ip-address-validation.js');
+
+const MAX_RATE_LIMIT_BOUNDARY_BYTES = 2_048;
 
 function parsePositiveInteger(value, fallback) {
   const parsed = Number.parseInt(value, 10);
@@ -102,7 +105,69 @@ function createInMemoryRateLimiter({ windowMs = 60_000, maxRequests = 120, maxKe
   };
 }
 
+function createFirestoreFixedWindowRateLimiter({
+  firestore,
+  collectionName,
+  windowMs = 60_000,
+  maxRequests = 120
+} = {}) {
+  if (!firestore || typeof firestore.runTransaction !== 'function') {
+    throw new TypeError('A Firestore instance with transaction support is required.');
+  }
+  if (typeof collectionName !== 'string' || !collectionName.trim()) {
+    throw new TypeError('A Firestore collection name is required.');
+  }
+
+  const configuredWindowMs = parsePositiveInteger(windowMs, 60_000);
+  const configuredMaxRequests = parsePositiveInteger(maxRequests, 120);
+  const rateLimitCollection = firestore.collection(collectionName.trim());
+
+  return async function reserveRateLimitSlot(boundary, now = Date.now()) {
+    if ((typeof boundary !== 'string' && typeof boundary !== 'number')
+      || (typeof boundary === 'number' && !Number.isFinite(boundary))) {
+      throw new TypeError('A string or finite number rate-limit boundary is required.');
+    }
+    const normalizedBoundary = String(boundary).trim();
+    if (!normalizedBoundary) {
+      throw new TypeError('A non-empty rate-limit boundary is required.');
+    }
+    if (Buffer.byteLength(normalizedBoundary, 'utf8') > MAX_RATE_LIMIT_BOUNDARY_BYTES) {
+      throw new RangeError('The rate-limit boundary is too long.');
+    }
+    const documentId = crypto.createHash('sha256').update(normalizedBoundary, 'utf8').digest('hex');
+    const limitRef = rateLimitCollection.doc(documentId);
+
+    return firestore.runTransaction(async (transaction) => {
+      const snapshot = await transaction.get(limitRef);
+      const existing = snapshot.exists ? snapshot.data() || {} : {};
+      const existingResetAt = Number(existing.resetAt);
+      const windowActive = Number.isFinite(existingResetAt) && existingResetAt > now;
+      const resetAt = windowActive ? existingResetAt : now + configuredWindowMs;
+      const existingCount = Number(existing.count);
+      const count = windowActive
+        && Number.isSafeInteger(existingCount)
+        && existingCount >= 0
+        && existingCount < Number.MAX_SAFE_INTEGER
+        ? existingCount + 1
+        : 1;
+
+      transaction.set(limitRef, {
+        count,
+        resetAt,
+        expiresAt: new Date(resetAt)
+      });
+
+      return {
+        allowed: count <= configuredMaxRequests,
+        retryAfterSeconds: Math.max(1, Math.ceil((resetAt - now) / 1000)),
+        remaining: Math.max(0, configuredMaxRequests - count)
+      };
+    });
+  };
+}
+
 module.exports = {
+  createFirestoreFixedWindowRateLimiter,
   createInMemoryRateLimiter,
   getRequestIp
 };

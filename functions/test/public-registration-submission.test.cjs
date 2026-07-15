@@ -43,6 +43,7 @@ function setNested(target, path, value) {
 function makeFirestore(seed = {}) {
     const state = new Map(Object.entries(clone(seed)));
     let nextAutoId = 1;
+    let nextTransactionError = null;
     const fieldValue = {
         serverTimestamp: () => ({ __op: 'serverTimestamp' }),
         delete: () => ({ __op: 'delete' }),
@@ -124,6 +125,11 @@ function makeFirestore(seed = {}) {
         doc,
         collection,
         async runTransaction(handler) {
+            if (nextTransactionError) {
+                const error = nextTransactionError;
+                nextTransactionError = null;
+                throw error;
+            }
             const transaction = {
                 get: (ref) => ref.get(),
                 set: (ref, value, options) => ref.set(value, options),
@@ -138,6 +144,14 @@ function makeFirestore(seed = {}) {
             return [...state.entries()]
                 .filter(([path]) => path.startsWith('teams/team-1/registrationForms/form-1/registrations/'))
                 .map(([path, data]) => ({ path, data: clone(data) }));
+        },
+        rateLimitDocs() {
+            return [...state.entries()]
+                .filter(([path]) => path.startsWith('publicRegistrationRateLimits/'))
+                .map(([path, data]) => ({ path, data: clone(data) }));
+        },
+        failNextTransaction(error) {
+            nextTransactionError = error;
         },
         FieldValue: fieldValue
     };
@@ -251,6 +265,11 @@ function loadFunctionsModule(seed) {
 function loadSubmitPublicRegistration(seed) {
     delete require.cache[repoIndexPath];
     const firestore = makeFirestore(seed);
+    return loadSubmitPublicRegistrationWithFirestore(firestore);
+}
+
+function loadSubmitPublicRegistrationWithFirestore(firestore) {
+    delete require.cache[repoIndexPath];
     installModuleStubs(firestore);
     const mod = require('../index.js');
     return {
@@ -317,6 +336,32 @@ test.afterEach(() => {
     functionsStub = null;
     StripeStub = null;
     stripeState = null;
+});
+
+test('loads unrelated callables without Firestore transaction support', () => {
+    const firestore = makeFirestore();
+    delete firestore.runTransaction;
+    installModuleStubs(firestore);
+
+    const mod = require('../index.js');
+
+    assert.equal(typeof mod.getFamilyShareSchedule, 'function');
+    assert.equal(typeof mod.listPublicOpportunities, 'function');
+});
+
+test('rejects nonexistent forms before creating a durable rate-limit document', async () => {
+    const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration({});
+
+    await assert.rejects(
+        submitPublicRegistration(buildSubmission(), context),
+        (error) => {
+            assert.equal(error.code, 'not-found');
+            return true;
+        }
+    );
+
+    assert.equal(firestore.rateLimitDocs().length, 0);
+    assert.equal(firestore.registrationDocs().length, 0);
 });
 
 test('creates exactly one pending registration and reserves matching capacity', async () => {
@@ -428,6 +473,64 @@ test('throttles repeated anonymous submissions before reserving more capacity', 
     const formAfterThrottle = firestore.snapshot('teams/team-1/registrationForms/form-1');
     assert.equal(formAfterThrottle.registrationOptionCounts.u10.enrolled, formBeforeThrottle.registrationOptionCounts.u10.enrolled);
     assert.equal(firestore.registrationDocs().length, registrationCountBeforeThrottle);
+});
+
+test('isolates guardian submission limits for families sharing an IP address', async () => {
+    const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration(buildSeedState());
+    const firstGuardian = buildSubmission({ guardian: { email: 'one@example.com' } });
+
+    await submitPublicRegistration(firstGuardian, context);
+    await submitPublicRegistration(firstGuardian, context);
+    await submitPublicRegistration(firstGuardian, context);
+
+    const result = await submitPublicRegistration(
+        buildSubmission({ guardian: { email: 'two@example.com' } }),
+        context
+    );
+
+    assert.equal(result.success, true);
+    assert.equal(firestore.rateLimitDocs().length, 2);
+    assert.equal(firestore.registrationDocs().length, 4);
+});
+
+test('shares submission throttling across independently loaded function handlers', async () => {
+    const firstHandler = loadSubmitPublicRegistration(buildSeedState());
+    const input = buildSubmission();
+
+    await firstHandler.submitPublicRegistration(input, context);
+    await firstHandler.submitPublicRegistration(input, context);
+
+    const secondHandler = loadSubmitPublicRegistrationWithFirestore(firstHandler.firestore);
+    await secondHandler.submitPublicRegistration(input, context);
+    const formBeforeThrottle = firstHandler.firestore.snapshot('teams/team-1/registrationForms/form-1');
+    const registrationCountBeforeThrottle = firstHandler.firestore.registrationDocs().length;
+
+    await assert.rejects(
+        secondHandler.submitPublicRegistration(input, context),
+        (error) => {
+            assert.equal(error.code, 'resource-exhausted');
+            assert.equal(error.details.reason, 'rate-limited');
+            return true;
+        }
+    );
+
+    const formAfterThrottle = firstHandler.firestore.snapshot('teams/team-1/registrationForms/form-1');
+    assert.equal(formAfterThrottle.registrationOptionCounts.u10.enrolled, formBeforeThrottle.registrationOptionCounts.u10.enrolled);
+    assert.equal(firstHandler.firestore.registrationDocs().length, registrationCountBeforeThrottle);
+});
+
+test('does not bypass throttling when the durable reservation fails', async () => {
+    const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration(buildSeedState());
+    firestore.failNextTransaction(new Error('rate-limit store unavailable'));
+
+    await assert.rejects(
+        submitPublicRegistration(buildSubmission(), context),
+        /rate-limit store unavailable/
+    );
+
+    const form = firestore.snapshot('teams/team-1/registrationForms/form-1');
+    assert.equal(form.registrationOptionCounts.u10.enrolled, 0);
+    assert.equal(firestore.registrationDocs().length, 0);
 });
 
 test('throttles forwarded public clients behind a private proxy before reserving more capacity', async () => {

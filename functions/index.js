@@ -29,7 +29,7 @@ const {
   buildTeamFeePaidUpdate,
   buildTeamFeeStripeRefundUpdate
 } = require('./team-fees-core.cjs');
-const { createInMemoryRateLimiter, getRequestIp } = require('./rate-limit.cjs');
+const { createFirestoreFixedWindowRateLimiter, createInMemoryRateLimiter, getRequestIp } = require('./rate-limit.cjs');
 const { buildPublicGamesIcs, canExposeEmptyPublicFeed, isPublicFanGame } = require('./public-calendar-core.cjs');
 const { buildCalendarFeedGamesQuery } = require('./calendar-feed-window-core.cjs');
 const {
@@ -207,11 +207,18 @@ const checkStripeWebhookRateLimit = createInMemoryRateLimiter({
   maxRequests: 120,
   maxKeys: 2_000
 });
-const checkPublicRegistrationSubmissionRateLimit = createInMemoryRateLimiter({
-  windowMs: 10 * 60_000,
-  maxRequests: 3,
-  maxKeys: 5_000
-});
+let checkPublicRegistrationSubmissionRateLimit;
+function getPublicRegistrationSubmissionRateLimit() {
+  if (!checkPublicRegistrationSubmissionRateLimit) {
+    checkPublicRegistrationSubmissionRateLimit = createFirestoreFixedWindowRateLimiter({
+      firestore,
+      collectionName: 'publicRegistrationRateLimits',
+      windowMs: 10 * 60_000,
+      maxRequests: 3
+    });
+  }
+  return checkPublicRegistrationSubmissionRateLimit;
+}
 const checkPublicOpportunityBrowseRateLimit = createInMemoryRateLimiter({
   windowMs: 60_000,
   maxRequests: 120,
@@ -850,9 +857,9 @@ function buildPublicRegistrationRateLimitBoundary(input, context = {}) {
   ].join('|');
 }
 
-function assertPublicRegistrationRateLimit(input, context = {}) {
+async function assertPublicRegistrationRateLimit(input, context = {}) {
   const boundary = buildPublicRegistrationRateLimitBoundary(input, context);
-  const rateLimit = checkPublicRegistrationSubmissionRateLimit({ ip: boundary });
+  const rateLimit = await getPublicRegistrationSubmissionRateLimit()(boundary);
   if (!rateLimit.allowed) {
     throwPublicRegistrationError('resource-exhausted', 'Too many registration attempts. Please wait a few minutes and try again.', {
       reason: 'rate-limited',
@@ -873,9 +880,14 @@ exports.submitPublicRegistration = functions.https.onCall(async (data, context =
     throwPublicRegistrationError('invalid-argument', error.message || 'Invalid registration submission.');
   }
 
-  assertPublicRegistrationRateLimit(input, context);
-
   const formRef = buildRegistrationFormRef(input);
+  const initialFormSnap = await formRef.get();
+  if (!initialFormSnap.exists) {
+    throwPublicRegistrationError('not-found', 'Registration form not found.');
+  }
+
+  await assertPublicRegistrationRateLimit(input, context);
+
   const registrationRef = formRef.collection('registrations').doc();
   let result = null;
 
