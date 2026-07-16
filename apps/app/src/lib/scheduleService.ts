@@ -373,7 +373,7 @@ export type StaffPracticePacket = ParentPracticePacket & {
   totalMinutes: number;
 };
 
-export type PracticeAttendanceStatus = 'present' | 'late' | 'absent';
+export type PracticeAttendanceStatus = 'not_marked' | 'present' | 'late' | 'absent';
 
 export type PracticeAttendancePlayer = {
   playerId: string;
@@ -2642,11 +2642,12 @@ function hasHomePacket(session: any) {
 function getPracticeAttendanceSummary(attendance: any) {
   if (!hasRecordedAttendance(attendance)) return null;
   const players: Array<{ status?: string }> = Array.isArray(attendance.players) ? attendance.players : [];
+  const rosterSize = Math.max(players.length, Number.parseInt(attendance?.rosterSize, 10) || 0);
   const present = players.filter((player) => player.status === 'present' || player.status === 'late').length;
   const late = players.filter((player) => player.status === 'late').length;
   const absent = players.filter((player) => player.status === 'absent').length;
   return [
-    `${present}/${players.length} present`,
+    `${present}/${rosterSize} present`,
     late > 0 ? `${late} late` : '',
     absent > 0 ? `${absent} absent` : ''
   ].filter(Boolean).join(', ');
@@ -6284,7 +6285,7 @@ function getPracticePacketSessionId(event: ParentScheduleEvent) {
 }
 
 function normalizePracticeAttendanceStatus(value: unknown): PracticeAttendanceStatus {
-  return value === 'present' || value === 'late' ? value : 'absent';
+  return value === 'present' || value === 'late' || value === 'absent' ? value : 'not_marked';
 }
 
 function assertPracticeAttendanceManagementEvent(event: ParentScheduleEvent, user: AuthUser | null) {
@@ -6401,12 +6402,13 @@ export async function saveStaffPracticeAttendance(event: ParentScheduleEvent, us
       note: compactString(player?.note) || null
     }))
     .filter((player) => player.playerId);
+  const recordedPlayers = players.filter((player) => player.status !== 'not_marked');
 
   const payload = {
-    rosterSize: players.length,
-    checkedInCount: players.filter((player) => player.status === 'present' || player.status === 'late').length,
+    rosterSize: attendance.rosterSize,
+    checkedInCount: recordedPlayers.filter((player) => player.status === 'present' || player.status === 'late').length,
     editedAt: new Date(),
-    players
+    players: recordedPlayers
   };
 
   try {

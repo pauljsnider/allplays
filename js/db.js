@@ -8106,7 +8106,7 @@ export async function updatePracticeAttendance(teamId, sessionId, attendance) {
     const absentCount = players.filter(p => p.status === 'absent').length;
     const lateCount = players.filter(p => p.status === 'late').length;
     const normalized = {
-        rosterSize: players.length,
+        rosterSize: Math.max(players.length, Number.parseInt(attendance?.rosterSize, 10) || 0),
         checkedInCount,
         updatedAt: Timestamp.now(),
         editedAt,
