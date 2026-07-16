@@ -2642,11 +2642,12 @@ function hasHomePacket(session: any) {
 function getPracticeAttendanceSummary(attendance: any) {
   if (!hasRecordedAttendance(attendance)) return null;
   const players: Array<{ status?: string }> = Array.isArray(attendance.players) ? attendance.players : [];
+  const rosterSize = Math.max(players.length, Number.parseInt(attendance?.rosterSize, 10) || 0);
   const present = players.filter((player) => player.status === 'present' || player.status === 'late').length;
   const late = players.filter((player) => player.status === 'late').length;
   const absent = players.filter((player) => player.status === 'absent').length;
   return [
-    `${present}/${players.length} present`,
+    `${present}/${rosterSize} present`,
     late > 0 ? `${late} late` : '',
     absent > 0 ? `${absent} absent` : ''
   ].filter(Boolean).join(', ');

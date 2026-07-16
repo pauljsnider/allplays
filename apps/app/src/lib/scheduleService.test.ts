@@ -2828,14 +2828,14 @@ describe('staff practice attendance', () => {
       id: 'session-1',
       eventId: 'practice-1',
       date: new Date('2026-07-20T18:00:00Z'),
-      attendance: { players: [{ playerId: 'p1', status: 'absent' }] }
+      attendance: { rosterSize: 12, players: [{ playerId: 'p1', status: 'absent' }] }
     }] as any);
 
     const unrecorded = await loadParentSchedule(parent, { hydrateDetails: false, expandStaffPlayers: false });
     const explicitlyAbsent = await loadParentSchedule(parent, { hydrateDetails: false, expandStaffPlayers: false });
 
     expect(unrecorded.events[0].practiceAttendanceSummary).toBeNull();
-    expect(explicitlyAbsent.events[0].practiceAttendanceSummary).toBe('0/1 present, 1 absent');
+    expect(explicitlyAbsent.events[0].practiceAttendanceSummary).toBe('0/12 present, 1 absent');
   });
 
   it('rejects coach-only staff without admin write access', async () => {
