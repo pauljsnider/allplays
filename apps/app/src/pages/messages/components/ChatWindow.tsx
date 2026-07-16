@@ -105,6 +105,13 @@ type FilePreview = {
   url: string;
 };
 
+type ChatComposerDraft = {
+  text: string;
+  filePreviews: FilePreview[];
+  selectedRecipientTarget: ChatTargetType;
+  selectedRecipientIds: string[];
+};
+
 type OptimisticChatMessage = ChatMessage & {
   clientMessageId: string;
   sendStatus: 'pending' | 'failed';
@@ -241,6 +248,10 @@ export function normalizeConversationId(conversationId: string | null | undefine
   return String(conversationId || '').trim() || DEFAULT_TEAM_CONVERSATION_ID;
 }
 
+export function getChatComposerDraftKey(teamId: string, conversationId: string | null | undefined) {
+  return `${encodeURIComponent(String(teamId || '').trim())}|${encodeURIComponent(normalizeConversationId(conversationId))}`;
+}
+
 export function isSelectedConversation(conversationId: string, selectedConversationId: string) {
   return conversationId === selectedConversationId;
 }
@@ -360,6 +371,7 @@ export function ChatWindow({
   const olderLoadAnchorRef = useRef<{ previousScrollHeight: number; previousScrollTop: number } | null>(null);
   const pendingSendRequestsRef = useRef(new Map<string, PendingChatSendRequest>());
   const sendQueueRef = useRef(Promise.resolve());
+  const composerDraftsRef = useRef(new Map<string, ChatComposerDraft>());
 
   const resetChatSelectionState = useCallback(() => {
     setStatus(null);
@@ -395,6 +407,20 @@ export function ChatWindow({
     onTeamReset: resetChatSelectionState
   });
   const effectiveConversationId = normalizeConversationId(selectedConversationId);
+  const activeComposerDraftKey = getChatComposerDraftKey(teamId, effectiveConversationId);
+  const activeComposerDraftKeyRef = useRef(activeComposerDraftKey);
+  const latestComposerDraftRef = useRef<ChatComposerDraft>({
+    text,
+    filePreviews,
+    selectedRecipientTarget,
+    selectedRecipientIds
+  });
+  latestComposerDraftRef.current = {
+    text,
+    filePreviews,
+    selectedRecipientTarget,
+    selectedRecipientIds
+  };
   const activeConversationForRepair = conversations.find((conversation) => conversation.id === effectiveConversationId) || null;
   const activeConversationIsStaff = effectiveConversationId === CANONICAL_STAFF_CONVERSATION_ID
     || isStaffOnlyConversation(activeConversationForRepair);
@@ -798,6 +824,28 @@ export function ChatWindow({
     currentTeamIdRef.current = teamId;
   }, [teamId]);
 
+  useLayoutEffect(() => {
+    if (activeComposerDraftKeyRef.current === activeComposerDraftKey) return;
+    composerDraftsRef.current.set(activeComposerDraftKeyRef.current, {
+      ...latestComposerDraftRef.current,
+      filePreviews: [...latestComposerDraftRef.current.filePreviews],
+      selectedRecipientIds: [...latestComposerDraftRef.current.selectedRecipientIds]
+    });
+    const nextDraft = composerDraftsRef.current.get(activeComposerDraftKey) || {
+      text: '',
+      filePreviews: [],
+      selectedRecipientTarget: 'full_team' as ChatTargetType,
+      selectedRecipientIds: []
+    };
+    activeComposerDraftKeyRef.current = activeComposerDraftKey;
+    latestComposerDraftRef.current = nextDraft;
+    setText(nextDraft.text);
+    setFilePreviews([...nextDraft.filePreviews]);
+    setSelectedRecipientTarget(nextDraft.selectedRecipientTarget);
+    setSelectedRecipientIds([...nextDraft.selectedRecipientIds]);
+    setComposerCursorPosition(undefined);
+  }, [activeComposerDraftKey]);
+
   useEffect(() => {
     setMeasuredMessageHeights({});
     setMessageViewportState({ scrollTop: 0, viewportHeight: 0 });
@@ -915,6 +963,7 @@ export function ChatWindow({
   useEffect(() => {
     mountedRef.current = true;
     lastObservedViewportSignatureRef.current = '';
+    const composerDrafts = composerDraftsRef.current;
 
     return () => {
       mountedRef.current = false;
@@ -922,20 +971,43 @@ export function ChatWindow({
         window.cancelAnimationFrame(scheduledViewportFrameRef.current);
       }
       clearScheduledScrollToLatest();
-      filePreviews.forEach((preview) => URL.revokeObjectURL(preview.url));
+      const previewUrls = new Set(latestComposerDraftRef.current.filePreviews.map((preview) => preview.url));
+      composerDrafts.forEach((draft) => {
+        draft.filePreviews.forEach((preview) => previewUrls.add(preview.url));
+      });
+      previewUrls.forEach((url) => URL.revokeObjectURL(url));
       stopVoiceCapture();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clearScheduledScrollToLatest]);
 
   const switchConversation = (conversationId: string) => {
-    if (!conversationId || conversationId === selectedConversationId) return;
+    const nextConversationId = normalizeConversationId(conversationId);
+    if (!conversationId || nextConversationId === effectiveConversationId) return;
     pendingScrollRef.current = true;
     stickToLatestRef.current = true;
     setShowJumpToLatest(false);
     if (!switchChatConversation(conversationId)) return;
-    setSelectedRecipientTarget('full_team');
-    setSelectedRecipientIds([]);
+    composerDraftsRef.current.set(activeComposerDraftKeyRef.current, {
+      text,
+      filePreviews: [...filePreviews],
+      selectedRecipientTarget,
+      selectedRecipientIds: [...selectedRecipientIds]
+    });
+    const nextDraftKey = getChatComposerDraftKey(teamId, nextConversationId);
+    const nextDraft = composerDraftsRef.current.get(nextDraftKey) || {
+      text: '',
+      filePreviews: [],
+      selectedRecipientTarget: 'full_team' as ChatTargetType,
+      selectedRecipientIds: []
+    };
+    activeComposerDraftKeyRef.current = nextDraftKey;
+    latestComposerDraftRef.current = nextDraft;
+    setText(nextDraft.text);
+    setFilePreviews([...nextDraft.filePreviews]);
+    setSelectedRecipientTarget(nextDraft.selectedRecipientTarget);
+    setSelectedRecipientIds([...nextDraft.selectedRecipientIds]);
+    setComposerCursorPosition(undefined);
     setReactionMessageId('');
     setActionMessageId('');
     closeConversationSheet();
@@ -1214,6 +1286,13 @@ export function ChatWindow({
     pendingScrollRef.current = true;
     pendingSendRequestsRef.current.set(clientMessageId, request);
     setOptimisticMessages((current) => [...current, createOptimisticChatMessage(request)]);
+    composerDraftsRef.current.delete(getChatComposerDraftKey(teamId, request.selectedConversationId));
+    latestComposerDraftRef.current = {
+      text: '',
+      filePreviews: [],
+      selectedRecipientTarget: 'full_team',
+      selectedRecipientIds: []
+    };
     setText('');
     setComposerCursorPosition(undefined);
     setFilePreviews((current) => {
