@@ -2484,14 +2484,18 @@
             };
         }
 
-        function buildBulkAiRosterSavePayload(draft = {}, existingProfile = {}) {
+        function buildBulkAiRosterSavePayload(draft = {}, existingPlayer = {}) {
             const profileValues = extractBulkAiProfileValues(draft);
             const validationErrors = validateRosterProfileValues(rosterFieldDefinitions, profileValues);
             if (validationErrors.length) {
                 throw new Error(validationErrors.join('\n'));
             }
             const { publicValues, privateValues } = splitRosterProfileValuesByVisibility(rosterFieldDefinitions, profileValues);
+            const existingProfile = existingPlayer.profile || {};
             const { publicProfile: existingPublicProfile, privateValues: legacyProtectedValues } = splitProtectedRosterProfileValues(existingProfile || {});
+            const existingPrivateValues = existingPlayer.privateProfileRosterFields && typeof existingPlayer.privateProfileRosterFields === 'object'
+                ? existingPlayer.privateProfileRosterFields
+                : {};
             const playerData = {};
             if (Object.prototype.hasOwnProperty.call(draft, 'name')) playerData.name = String(draft.name || '').trim();
             if (Object.prototype.hasOwnProperty.call(draft, 'number')) playerData.number = String(draft.number || '').trim();
@@ -2510,7 +2514,7 @@
             const familyContact = getBulkAiFamilyContact(draft);
             return {
                 playerData,
-                privateRosterFields: { ...legacyProtectedValues, ...privateValues },
+                privateRosterFields: { ...legacyProtectedValues, ...existingPrivateValues, ...privateValues },
                 privateFamilyContacts: familyContact ? { parents: [familyContact] } : null
             };
         }
@@ -2874,7 +2878,7 @@ EXAMPLES:
                             successCount++;
                         } else if (op.action === 'update') {
                             const existingPlayer = latestRosterPlayers.find((player) => player.id === op.playerId) || {};
-                            const payload = buildBulkAiRosterSavePayload(op.changes || {}, existingPlayer.profile || {});
+                            const payload = buildBulkAiRosterSavePayload(op.changes || {}, existingPlayer);
                             const privateFamilyContacts = mergeBulkAiPrivateFamilyContactsForUpdate(existingPlayer, payload.privateFamilyContacts);
                             const playerData = { ...payload.playerData };
                             await applyRosterCsvImportOperations(currentTeamId, [{

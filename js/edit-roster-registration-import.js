@@ -243,15 +243,29 @@ function collectRegistrationRosterFieldValues(sourcePlayer = {}, fields = [], re
 
 function mergeRosterFieldValuesIntoPayload(payload, fieldValues, fields, existingPlayer = {}) {
     const { publicProfile: existingProfile, privateValues: legacyProfileValues } = splitProtectedRosterProfileValues(existingPlayer?.profile || {});
-    const { publicProfile: existingRosterProfile, privateValues: legacyRosterValues } = splitProtectedRosterProfileValues({
-        customFields: getRosterProfileValues(existingPlayer)
+    const existingPublicRosterValues = getRosterProfileValues({
+        ...existingPlayer,
+        privateRosterFields: {},
+        privateProfileRosterFields: {}
     });
-    const legacyPrivateValues = { ...legacyProfileValues, ...legacyRosterValues };
+    const { publicValues: configuredPublicValues, privateValues: configuredPrivateValues } = splitRosterProfileValuesByVisibility(fields, existingPublicRosterValues);
+    const configuredPrivateKeys = new Set(Object.keys(configuredPrivateValues));
+    const existingCustomFields = Object.fromEntries(
+        Object.entries(existingProfile.customFields || {}).filter(([key]) => !configuredPrivateKeys.has(key))
+    );
+    const existingPrivateValues = existingPlayer?.privateProfileRosterFields && typeof existingPlayer.privateProfileRosterFields === 'object'
+        ? existingPlayer.privateProfileRosterFields
+        : {};
+    const legacyPrivateValues = { ...legacyProfileValues, ...configuredPrivateValues, ...existingPrivateValues };
+    const existingPublicProfile = {
+        ...existingProfile,
+        customFields: { ...existingCustomFields, ...configuredPublicValues }
+    };
 
     if (!Object.keys(fieldValues).length) {
         if (!Object.keys(legacyPrivateValues).length) return { payload, privateRosterFields: null };
         return {
-            payload: { ...payload, profile: existingProfile },
+            payload: { ...payload, profile: existingPublicProfile },
             privateRosterFields: legacyPrivateValues
         };
     }
@@ -261,7 +275,7 @@ function mergeRosterFieldValuesIntoPayload(payload, fieldValues, fields, existin
     const privateRosterFields = Object.keys(mergedPrivateValues).length > 0 ? mergedPrivateValues : null;
     if (Object.keys(publicValues).length === 0) {
         return Object.keys(legacyPrivateValues).length > 0
-            ? { payload: { ...payload, profile: existingProfile }, privateRosterFields }
+            ? { payload: { ...payload, profile: existingPublicProfile }, privateRosterFields }
             : { payload, privateRosterFields };
     }
 
@@ -269,9 +283,9 @@ function mergeRosterFieldValuesIntoPayload(payload, fieldValues, fields, existin
         payload: {
             ...payload,
             profile: {
-                ...existingProfile,
+                ...existingPublicProfile,
                 customFields: {
-                    ...(existingRosterProfile.customFields || {}),
+                    ...(existingPublicProfile.customFields || {}),
                     ...publicValues
                 }
             }

@@ -373,6 +373,29 @@ describe('registration roster import planning', () => {
         });
     });
 
+    it('never copies configured admin-only sidecar fields into the public registration payload', () => {
+        const plan = planRegistrationRosterImport({
+            source: { type: 'sports-connect', id: 'league-1' },
+            fields: [{ key: 'coachNotes', label: 'Coach Notes', type: 'text', visibility: 'admins' }],
+            sourcePlayers: [{
+                externalPlayerId: 'ext-1',
+                name: 'Avery Lee',
+                number: '4'
+            }],
+            existingPlayers: [{
+                id: 'player-1',
+                name: 'Avery Lee',
+                number: '3',
+                profile: { customFields: { coachNotes: 'stale public note', nickname: 'Rocket' } },
+                privateProfileRosterFields: { coachNotes: 'admin only' },
+                sourceMetadata: { sourceType: 'sports-connect', sourceId: 'league-1', externalPlayerId: 'ext-1' }
+            }]
+        });
+
+        expect(plan.operations[0].payload.profile).toEqual({ customFields: { nickname: 'Rocket' } });
+        expect(plan.operations[0].privateRosterFields).toEqual({ coachNotes: 'admin only' });
+    });
+
     it('falls back past empty registration wrappers when mapping configured roster fields', () => {
         const plan = planRegistrationRosterImport({
             source: { type: 'sports-connect', id: 'league-1' },
@@ -432,8 +455,8 @@ describe('registration roster import planning', () => {
 
         expect(plan.results).toMatchObject({ updated: 1, fieldsImported: 0, fieldsSkipped: 3 });
         expect(plan.results.fieldSkipReasons).toEqual({ blank: 1, invalid: 1, unsupported: 1 });
-        expect(plan.operations[0].payload.profile).toEqual({ customFields: { position: 'pg' } });
-        expect(plan.operations[0].privateRosterFields).toEqual({ grade: '5' });
+        expect(plan.operations[0].payload.profile).toEqual({ customFields: {} });
+        expect(plan.operations[0].privateRosterFields).toEqual({ grade: '5', position: 'pg' });
     });
 
     it('keeps admin-only roster field imports out of the public player profile payload', () => {
