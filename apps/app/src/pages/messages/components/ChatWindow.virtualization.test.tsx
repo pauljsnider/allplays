@@ -4,7 +4,7 @@ import * as React from 'react';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ensureStaffChatConversation, type ChatConversation, type ChatMessage } from '../../../lib/chatService';
+import { ensureStaffChatConversation, loadChatRecipientOptions, sendTeamChatMessage, type ChatConversation, type ChatMessage } from '../../../lib/chatService';
 import type { AuthState } from '../../../lib/types';
 import {
   AudienceSheet,
@@ -12,6 +12,7 @@ import {
   areMessagesEquivalent,
   getMessageRevisionSignature,
   getSafeMessageAttachments,
+  getChatComposerDraftKey,
   buildVirtualizedChatLayout,
   buildVirtualizedChatWindow,
   buildVirtualizedChatWindowFromLayout
@@ -294,20 +295,37 @@ vi.mock('../hooks/useChatMessages', async () => {
 vi.mock('./ChatComposer', async () => {
   const React = await import('react');
   return {
-    Composer: ({ canSendTeamEmail, onTeamEmail }: { canSendTeamEmail: boolean; onTeamEmail: () => void }) => {
+    Composer: ({
+      teamName,
+      text,
+      filePreviews,
+      canModerate,
+      canSendTeamEmail,
+      audienceSummary,
+      onTextChange,
+      onSubmit,
+      onAudience,
+      onTeamEmail
+    }: any) => {
       const [showStaffActions, setShowStaffActions] = React.useState(false);
       return (
-        <div className="chat-composer">
+        <form className="chat-composer" onSubmit={onSubmit}>
           Composer
+          <textarea placeholder={`Message ${teamName}`} value={text} onChange={(event) => onTextChange(event.target.value)} />
+          {filePreviews.map((preview: any) => <img key={preview.url} src={preview.url} alt={preview.file.name} />)}
+          <button type="submit" aria-label="Send message">Send</button>
           {canSendTeamEmail ? (
             <>
               <button type="button" onClick={() => setShowStaffActions((current) => !current)} aria-label="Open staff actions">Staff actions</button>
               {showStaffActions ? (
-                <button type="button" onClick={onTeamEmail} aria-label="Open Team Email">Team Email</button>
+                <div role="menu">
+                  {canModerate ? <button type="button" role="menuitem" onClick={onAudience}>Message audience. Current: {audienceSummary}</button> : null}
+                  <button type="button" onClick={onTeamEmail} aria-label="Open Team Email">Team Email</button>
+                </div>
               ) : null}
             </>
           ) : null}
-        </div>
+        </form>
       );
     }
   };
@@ -372,6 +390,13 @@ beforeEach(() => {
     participantIds: [],
     participantRoles: ['staff']
   } as ChatConversation);
+  vi.mocked(loadChatRecipientOptions).mockReset();
+  vi.mocked(loadChatRecipientOptions).mockResolvedValue([]);
+  vi.mocked(sendTeamChatMessage).mockReset();
+  vi.mocked(sendTeamChatMessage).mockResolvedValue({
+    conversationId: 'team',
+    wantsAi: false
+  } as any);
   teamEmailSheetMocks.importModule.mockClear();
   teamEmailSheetMocks.render.mockClear();
 });
@@ -811,6 +836,94 @@ describe('ChatWindow deferred conversation hydration', () => {
 });
 
 describe('ChatWindow conversation switching', () => {
+  it('normalizes team and conversation IDs for composer draft ownership', () => {
+    expect(getChatComposerDraftKey(' team-1 ', '')).toBe(getChatComposerDraftKey('team-1', 'team'));
+    expect(getChatComposerDraftKey('team-1', ' travel-group ')).not.toBe(getChatComposerDraftKey('team-2', 'travel-group'));
+  });
+
+  it('isolates and restores text, attachments, and selected recipients across mobile quick switches', async () => {
+    Object.defineProperty(window.HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: vi.fn()
+    });
+    useStatefulChatSheets = true;
+    mockChatTeamState.conversations = [
+      { id: 'team', type: 'team', name: 'Team chat', participantIds: [], participantRoles: ['team'] },
+      { id: 'travel-group', type: 'group', name: 'Tournament travel', participantIds: ['coach-1', 'parent-1'], participantRoles: ['staff', 'parent'] }
+    ];
+    mockChatTeamState.switchConversation.mockImplementation((conversationId: string) => {
+      mockChatTeamState.selectedConversationId = conversationId;
+      return true;
+    });
+    vi.mocked(loadChatRecipientOptions).mockResolvedValue([
+      { id: 'player-sam', name: 'Sam Player', detail: 'Player' }
+    ]);
+    vi.mocked(sendTeamChatMessage).mockResolvedValue({
+      conversationId: 'travel-group',
+      wantsAi: false
+    } as any);
+    const createObjectURL = vi.fn(() => 'blob:team-photo');
+    const revokeObjectURL = vi.fn();
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL });
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectURL });
+
+    const view = render(
+      <MemoryRouter>
+        <ChatWindow auth={auth} teamId="team-1" />
+      </MemoryRouter>
+    );
+
+    const composer = screen.getByPlaceholderText('Message Bears');
+    fireEvent.change(composer, { target: { value: 'Team-only draft' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Open staff actions' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /Message audience/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Selected members/i }));
+    const samCheckbox = (await screen.findByText('Sam Player')).closest('label')?.querySelector('input') as HTMLInputElement;
+    fireEvent.click(samCheckbox);
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+
+    const photo = new File(['photo'], 'team-photo.png', { type: 'image/png' });
+    const photoInput = view.container.querySelector('input[accept="image/*"]') as HTMLInputElement;
+    fireEvent.change(photoInput, { target: { files: [photo] } });
+    expect(screen.getByAltText('team-photo.png')).toBeVisible();
+
+    fireEvent.click(within(screen.getByTestId('mobile-conversation-chips')).getByRole('button', { name: 'Switch to Tournament travel' }));
+    expect(screen.getByPlaceholderText('Message Bears')).toHaveValue('');
+    expect(screen.queryByAltText('team-photo.png')).toBeNull();
+
+    view.rerender(
+      <MemoryRouter>
+        <ChatWindow auth={auth} teamId="team-1" />
+      </MemoryRouter>
+    );
+    fireEvent.change(screen.getByPlaceholderText('Message Bears'), { target: { value: 'Travel draft' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+
+    await waitFor(() => expect(sendTeamChatMessage).toHaveBeenCalledTimes(1));
+    expect(sendTeamChatMessage).toHaveBeenCalledWith(expect.objectContaining({
+      teamId: 'team-1',
+      text: 'Travel draft',
+      files: [],
+      selectedConversationId: 'travel-group',
+      selectedRecipientTarget: 'full_team',
+      selectedRecipientIds: []
+    }));
+
+    fireEvent.click(within(screen.getByTestId('mobile-conversation-chips')).getByRole('button', { name: 'Switch to Team chat' }));
+    expect(screen.getByPlaceholderText('Message Bears')).toHaveValue('Team-only draft');
+    expect(screen.getByAltText('team-photo.png')).toBeVisible();
+    expect(screen.getByRole('menuitem', { name: /Current:.*Sam Player/i })).toBeVisible();
+
+    view.rerender(
+      <MemoryRouter>
+        <ChatWindow auth={auth} teamId="team-1" />
+      </MemoryRouter>
+    );
+    fireEvent.click(within(screen.getByTestId('mobile-conversation-chips')).getByRole('button', { name: 'Switch to Tournament travel' }));
+    expect(screen.getByPlaceholderText('Message Bears')).toHaveValue('');
+    expect(sendTeamChatMessage).toHaveBeenCalledTimes(1);
+  });
+
   it('repairs an existing staff conversation before quick-switching to it', async () => {
     mockChatTeamState.conversations = [
       { id: 'team', type: 'team', name: 'Team chat', participantIds: [], participantRoles: ['team'] },
