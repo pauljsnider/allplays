@@ -2668,6 +2668,8 @@ function formatFirestoreError(error) {
 
 function handleGameUpdate(gameDoc) {
   if (!gameDoc) return;
+  const gameStatus = String(gameDoc.status || '').trim().toLowerCase();
+  const isCancelled = gameStatus === 'cancelled' || gameStatus === 'canceled';
   state.game = gameDoc;
   refreshVideoPanel();
   renderGameInfo();
@@ -2700,7 +2702,7 @@ function handleGameUpdate(gameDoc) {
     startEngagements();
   }
 
-  if (gameDoc.liveStatus === 'live') {
+  if (gameDoc.liveStatus === 'live' && !isCancelled) {
     if (!state.isLive && !state.isReplay) {
       els.notLiveOverlay?.classList.add('hidden');
       els.endedOverlay?.classList.add('hidden');

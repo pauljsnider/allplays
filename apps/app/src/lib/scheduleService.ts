@@ -5845,6 +5845,7 @@ export async function cancelScheduledGameForApp(event: ParentScheduleEvent, user
 
   const payload: Record<string, unknown> = {
     status: 'cancelled',
+    liveStatus: 'cancelled',
     cancelledAt: new Date(),
     cancelledBy: user.uid
   };

@@ -586,6 +586,16 @@ async function bootReplayPage({ replayEvents }) {
 }
 
 describe('live game replay initialization', () => {
+    it('does not enter live viewer mode for cancelled games with stale live status', () => {
+        const source = readFileSync(new URL('../../js/live-game.js', import.meta.url), 'utf8');
+        const handleUpdateStart = source.indexOf('function handleGameUpdate(gameDoc)');
+        const updateChatStart = source.indexOf('function updateChatAvailability()', handleUpdateStart);
+        const handleUpdateSource = source.slice(handleUpdateStart, updateChatStart);
+
+        expect(handleUpdateSource).toContain("const isCancelled = gameStatus === 'cancelled' || gameStatus === 'canceled';");
+        expect(handleUpdateSource).toContain("if (gameDoc.liveStatus === 'live' && !isCancelled)");
+    });
+
     it('keeps no-reload video refreshes from exposing the generic empty state over media content', () => {
         const source = readFileSync(new URL('../../js/live-game.js', import.meta.url), 'utf8');
         const noReloadStart = source.indexOf('if (!force && !shouldReloadVideoPlayback(state.videoPlayback, nextPlayback)) {');

@@ -228,6 +228,7 @@ describe('React app schedule score updates', () => {
 
         expect(dbMocks.updateGame).toHaveBeenCalledWith('team-1', 'game-1', expect.objectContaining({
             status: 'cancelled',
+            liveStatus: 'cancelled',
             cancelledBy: 'user-1'
         }));
         expect(dbMocks.updateGame.mock.calls[0][2].cancelledAt).toBeInstanceOf(Date);
