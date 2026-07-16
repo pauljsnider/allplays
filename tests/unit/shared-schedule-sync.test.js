@@ -6,8 +6,15 @@ import {
   buildSharedScheduleSourceUpdate,
   buildSharedScheduleDetachUpdate
 } from '../../js/shared-schedule-sync.js';
+import { readFileSync } from 'node:fs';
 
 describe('shared schedule sync helpers', () => {
+  it('cache-busts the shared schedule helper from the deployed db module', () => {
+    const dbSource = readFileSync(new URL('../../js/db.js', import.meta.url), 'utf8');
+
+    expect(dbSource).toContain("from './shared-schedule-sync.js?v=2';");
+  });
+
   it('keeps placeholder tournament fixtures local until a real opponent team is linked', () => {
     expect(shouldMirrorSharedGame({
       type: 'game',

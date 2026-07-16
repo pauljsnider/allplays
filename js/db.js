@@ -75,7 +75,7 @@ import {
     buildMirroredGamePayload,
     buildSharedScheduleSourceUpdate,
     buildSharedScheduleDetachUpdate
-} from './shared-schedule-sync.js';
+} from './shared-schedule-sync.js?v=2';
 import { normalizeTeamNotificationPreferences } from './notification-preferences.js?v=1';
 import { normalizeAdSpaceSponsors, normalizeLocalAttractionSponsors } from './local-attractions.js?v=2';
 import { generateJoinCode, normalizeJoinCode } from './join-code.js?v=1';
