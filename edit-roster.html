@@ -554,8 +554,8 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getPlayers, getPlayersWithPrivateRosterContacts, getUsersByParentPlayerKey, getUsersByParentTeamId, addPlayer, applyRosterCsvImportOperations, deactivatePlayer, reactivatePlayer, getGames, uploadPlayerPhoto, updatePlayer, setPlayerPrivateRosterProfileFields, inviteParent, removeParentFromPlayer, getUnreadChatCount, listTeamParentMembershipRequests, approveParentMembershipRequest, denyParentMembershipRequest, getRosterFieldDefinitions, saveRosterFieldDefinition, disableRosterFieldDefinition, reorderRosterFieldDefinitions, listTeamRegistrationForms, listTeamRegistrationReviews, approveTeamRegistration, rejectTeamRegistration, extendTeamRegistrationOffer, acceptTeamRegistrationOffer, releaseTeamRegistrationWaitlist, listTeamTrackingItems, createTeamTrackingItem, listTeamTrackingStatuses, setTeamTrackingStatus } from './js/db.js?v=100';
-        import { buildFullRosterCsvTemplate, buildRosterFieldDefinitionPayload, collectRosterParentContacts, collectRosterProfileValues, getRosterProfileValues, mergeRosterParentContacts, mergeStandardRosterFieldDefinitions, normalizeRosterFieldDefinitions, planRosterCsvImport, renderRosterProfileFields, splitRosterProfileValuesByVisibility, summarizeRosterContactInviteResults, validateRosterProfileValues } from './js/roster-profile-fields.js?v=6';
+        import { getTeam, getPlayers, getPlayersWithPrivateRosterContacts, getUsersByParentPlayerKey, getUsersByParentTeamId, addPlayer, applyRosterCsvImportOperations, deactivatePlayer, reactivatePlayer, getGames, uploadPlayerPhoto, setPlayerPrivateRosterProfileFields, inviteParent, removeParentFromPlayer, getUnreadChatCount, listTeamParentMembershipRequests, approveParentMembershipRequest, denyParentMembershipRequest, getRosterFieldDefinitions, saveRosterFieldDefinition, disableRosterFieldDefinition, reorderRosterFieldDefinitions, listTeamRegistrationForms, listTeamRegistrationReviews, approveTeamRegistration, rejectTeamRegistration, extendTeamRegistrationOffer, acceptTeamRegistrationOffer, releaseTeamRegistrationWaitlist, listTeamTrackingItems, createTeamTrackingItem, listTeamTrackingStatuses, setTeamTrackingStatus } from './js/db.js?v=101';
+        import { buildFullRosterCsvTemplate, buildRosterFieldDefinitionPayload, collectRosterParentContacts, collectRosterProfileValues, getRosterProfileValues, mergeRosterParentContacts, mergeStandardRosterFieldDefinitions, normalizeRosterFieldDefinitions, planRosterCsvImport, renderRosterProfileFields, splitProtectedRosterProfileValues, splitRosterProfileValuesByVisibility, summarizeRosterContactInviteResults, validateRosterProfileValues } from './js/roster-profile-fields.js?v=8';
         import { buildTrackingStatusPayload, mergeTrackingStatusRows, normalizeTrackingItemDraft, summarizeTrackingStatus } from './js/tracking-status-admin.js?v=2';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=15';
         import { checkAuth } from './js/auth.js?v=50';
@@ -563,7 +563,7 @@
         import { buildLegacyJoinUrl } from './js/join-code.js?v=1';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
         import { hasFullTeamAccess, normalizeTeamPermissions } from './js/team-access.js';
-        import { formatRegistrationRosterImportResults, getRegistrationRosterPlayers, hasConfiguredRegistrationProviderMetadata, isExternallyLinkedRosterTeam, planRegistrationRosterImport } from './js/edit-roster-registration-import.js?v=2';
+        import { formatRegistrationRosterImportResults, getRegistrationRosterPlayers, hasConfiguredRegistrationProviderMetadata, isExternallyLinkedRosterTeam, planRegistrationRosterImport } from './js/edit-roster-registration-import.js?v=3';
         import { buildRegistrationReviewCsv, buildRegistrationReviewCsvFilename, getDefaultRegistrationReviewCsvColumnKeys, getRegistrationReviewCsvColumnDefinitions, matchesRegistrationReviewScreeningStatus, summarizeRegistrationReviewScreening } from './js/registration-review.js?v=6';
         import { buildRosterPrintHtml } from './js/roster-print.js?v=2';
         import { getApp } from './js/vendor/firebase-app.js';
@@ -996,7 +996,7 @@
                 button.disabled = true;
                 button.textContent = 'Previewing...';
                 status.textContent = 'Comparing source roster to current roster...';
-                const existingPlayers = await getPlayers(currentTeamId, { includeInactive: true });
+                const existingPlayers = await getPlayersWithPrivateRosterContacts(currentTeamId, { includeInactive: true });
                 registrationRosterImportPlan = planRegistrationRosterImport({
                     sourcePlayers,
                     existingPlayers,
@@ -1038,17 +1038,7 @@
                     return;
                 }
 
-                for (const operation of selectedOperations) {
-                    let playerId = operation.playerId;
-                    if (operation.type === 'update') {
-                        await updatePlayer(currentTeamId, playerId, operation.payload);
-                    } else if (operation.type === 'add') {
-                        playerId = await addPlayer(currentTeamId, operation.payload);
-                    }
-                    if (operation.privateRosterFields || operation.privateFamilyContacts) {
-                        await setPlayerPrivateRosterProfileFields(currentTeamId, playerId, operation.privateRosterFields, operation.privateFamilyContacts || {});
-                    }
-                }
+                await applyRosterCsvImportOperations(currentTeamId, selectedOperations);
 
                 status.textContent = `Import complete: ${selectedOperations.length} selected safe row${selectedOperations.length === 1 ? '' : 's'} applied from preview. ${formatRegistrationRosterImportResults(registrationRosterImportPlan.results)}.`;
                 if (registrationRosterImportPlan.results.conflicted > 0) {
@@ -2330,21 +2320,33 @@
                     photoUrl = await uploadPlayerPhoto(file);
                 }
 
+                const { publicProfile: existingPublicProfile, privateValues: legacyProtectedValues } = splitProtectedRosterProfileValues(editingPlayerProfile || {});
+                const { publicProfile, privateValues: currentProtectedValues } = splitProtectedRosterProfileValues({
+                    ...existingPublicProfile,
+                    customFields: publicValues
+                });
+                const protectedProfileValues = { ...legacyProtectedValues, ...currentProtectedValues };
                 const playerData = {
                     name,
                     number,
                     photoUrl,
-                    profile: { ...(editingPlayerProfile || {}), customFields: publicValues }
+                    profile: publicProfile
                 };
                 if (Object.prototype.hasOwnProperty.call(publicValues, 'position')) {
                     playerData.position = publicValues.position;
                 }
 
-                const savedPlayerId = editingPlayerId || await addPlayer(currentTeamId, playerData);
                 if (editingPlayerId) {
-                    await updatePlayer(currentTeamId, editingPlayerId, playerData);
+                    await applyRosterCsvImportOperations(currentTeamId, [{
+                        type: 'update',
+                        playerId: editingPlayerId,
+                        payload: playerData,
+                        privateRosterFields: { ...protectedProfileValues, ...privateValues }
+                    }]);
+                } else {
+                    const savedPlayerId = await addPlayer(currentTeamId, playerData);
+                    await setPlayerPrivateRosterProfileFields(currentTeamId, savedPlayerId, { ...protectedProfileValues, ...privateValues });
                 }
-                await setPlayerPrivateRosterProfileFields(currentTeamId, savedPlayerId, privateValues);
 
                 resetForm();
                 loadRoster();
@@ -2482,21 +2484,26 @@
             };
         }
 
-        function buildBulkAiRosterSavePayload(draft = {}, existingProfile = {}) {
+        function buildBulkAiRosterSavePayload(draft = {}, existingPlayer = {}) {
             const profileValues = extractBulkAiProfileValues(draft);
             const validationErrors = validateRosterProfileValues(rosterFieldDefinitions, profileValues);
             if (validationErrors.length) {
                 throw new Error(validationErrors.join('\n'));
             }
             const { publicValues, privateValues } = splitRosterProfileValuesByVisibility(rosterFieldDefinitions, profileValues);
+            const existingProfile = existingPlayer.profile || {};
+            const { publicProfile: existingPublicProfile, privateValues: legacyProtectedValues } = splitProtectedRosterProfileValues(existingProfile || {});
+            const existingPrivateValues = existingPlayer.privateProfileRosterFields && typeof existingPlayer.privateProfileRosterFields === 'object'
+                ? existingPlayer.privateProfileRosterFields
+                : {};
             const playerData = {};
             if (Object.prototype.hasOwnProperty.call(draft, 'name')) playerData.name = String(draft.name || '').trim();
             if (Object.prototype.hasOwnProperty.call(draft, 'number')) playerData.number = String(draft.number || '').trim();
-            if (Object.keys(publicValues).length > 0) {
+            if (Object.keys(publicValues).length > 0 || Object.keys(legacyProtectedValues).length > 0) {
                 playerData.profile = {
-                    ...(existingProfile || {}),
+                    ...existingPublicProfile,
                     customFields: {
-                        ...((existingProfile || {}).customFields || {}),
+                        ...(existingPublicProfile.customFields || {}),
                         ...publicValues
                     }
                 };
@@ -2507,7 +2514,7 @@
             const familyContact = getBulkAiFamilyContact(draft);
             return {
                 playerData,
-                privateRosterFields: privateValues,
+                privateRosterFields: { ...legacyProtectedValues, ...existingPrivateValues, ...privateValues },
                 privateFamilyContacts: familyContact ? { parents: [familyContact] } : null
             };
         }
@@ -2871,13 +2878,18 @@ EXAMPLES:
                             successCount++;
                         } else if (op.action === 'update') {
                             const existingPlayer = latestRosterPlayers.find((player) => player.id === op.playerId) || {};
-                            const payload = buildBulkAiRosterSavePayload(op.changes || {}, existingPlayer.profile || {});
+                            const payload = buildBulkAiRosterSavePayload(op.changes || {}, existingPlayer);
                             const privateFamilyContacts = mergeBulkAiPrivateFamilyContactsForUpdate(existingPlayer, payload.privateFamilyContacts);
                             const playerData = { ...payload.playerData };
-                            await updatePlayer(currentTeamId, op.playerId, playerData);
-                            if (hasBulkAiPrivateProfilePayload(payload)) {
-                                await setPlayerPrivateRosterProfileFields(currentTeamId, op.playerId, payload.privateRosterFields, privateFamilyContacts || {});
-                            }
+                            await applyRosterCsvImportOperations(currentTeamId, [{
+                                type: 'update',
+                                playerId: op.playerId,
+                                payload: playerData,
+                                ...(hasBulkAiPrivateProfilePayload(payload) ? {
+                                    privateRosterFields: payload.privateRosterFields,
+                                    privateFamilyContacts: privateFamilyContacts || {}
+                                } : {})
+                            }]);
                             successCount++;
                         } else if (op.action === 'delete') {
                             await deactivatePlayer(currentTeamId, op.playerId);

@@ -48,6 +48,22 @@ describe('edit roster Bulk AI proposed changes preview', () => {
         expect(source).toContain('function mergeBulkAiPrivateFamilyContactsForUpdate');
         expect(source).toContain('existingPlayer.privateProfileParents || []');
         expect(applySource).toContain('const privateFamilyContacts = mergeBulkAiPrivateFamilyContactsForUpdate(existingPlayer, payload.privateFamilyContacts);');
-        expect(applySource).toContain('setPlayerPrivateRosterProfileFields(currentTeamId, op.playerId, payload.privateRosterFields, privateFamilyContacts || {})');
+        expect(applySource).toContain("await applyRosterCsvImportOperations(currentTeamId, [{");
+        expect(applySource).toContain("type: 'update'");
+        expect(applySource).toContain('privateRosterFields: payload.privateRosterFields');
+        expect(applySource).toContain('privateFamilyContacts: privateFamilyContacts || {}');
+        expect(applySource).not.toContain('await updatePlayer(currentTeamId, op.playerId, playerData);');
+    });
+
+    it('migrates legacy protected profile values during Bulk AI saves', () => {
+        const source = readEditRoster();
+
+        expect(source).toContain('function buildBulkAiRosterSavePayload(draft = {}, existingPlayer = {})');
+        expect(source).toContain('const existingProfile = existingPlayer.profile || {};');
+        expect(source).toContain('const { publicProfile: existingPublicProfile, privateValues: legacyProtectedValues } = splitProtectedRosterProfileValues(existingProfile || {});');
+        expect(source).toContain("const existingPrivateValues = existingPlayer.privateProfileRosterFields && typeof existingPlayer.privateProfileRosterFields === 'object'");
+        expect(source).toContain('Object.keys(publicValues).length > 0 || Object.keys(legacyProtectedValues).length > 0');
+        expect(source).toContain('privateRosterFields: { ...legacyProtectedValues, ...existingPrivateValues, ...privateValues }');
+        expect(source).toContain('buildBulkAiRosterSavePayload(op.changes || {}, existingPlayer)');
     });
 });

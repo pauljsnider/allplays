@@ -16,6 +16,7 @@ import {
   saveAthleteProfile,
   setPlayerPrivateRosterProfileFields,
   updatePlayer,
+  updatePlayerWithPrivateRosterProfileFields,
   updatePlayerProfile,
   uploadAthleteProfileMedia,
   uploadPlayerPhoto,
@@ -51,6 +52,7 @@ import {
   canViewRosterField,
   getRosterProfileValues,
   normalizeRosterFieldDefinitions,
+  splitProtectedRosterProfileValues,
   splitRosterProfileValuesByVisibility,
   validateRosterProfileValues,
   type RosterFieldDefinition,
@@ -386,21 +388,27 @@ export async function savePlayerCustomRosterFieldValues({
   }
 
   const { publicValues, privateValues } = splitRosterProfileValuesByVisibility(normalizedFields, filteredValues);
+  const { publicProfile: existingPublicProfile, privateValues: legacyProtectedValues } = splitProtectedRosterProfileValues(player?.profile || {});
   const nextProfile = {
-    ...(player?.profile || {}),
+    ...existingPublicProfile,
     customFields: publicValues
   };
+  const existingPrivateRosterFields = privateProfile?.rosterFields && typeof privateProfile.rosterFields === 'object'
+    ? privateProfile.rosterFields
+    : {};
+  const nextPrivateRosterFields = {
+    ...legacyProtectedValues,
+    ...existingPrivateRosterFields,
+    ...privateValues
+  };
 
-  await Promise.all([
-    updatePlayer(teamId, playerId, {
-      profile: nextProfile
-    }),
-    setPlayerPrivateRosterProfileFields(teamId, playerId, privateValues)
-  ]);
+  await updatePlayerWithPrivateRosterProfileFields(teamId, playerId, {
+    profile: nextProfile
+  }, nextPrivateRosterFields);
 
   return {
     profile: nextProfile,
-    privateRosterFields: privateValues,
+    privateRosterFields: nextPrivateRosterFields,
     privateProfile
   };
 }

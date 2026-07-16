@@ -1,4 +1,4 @@
-import { getRosterProfileValues, splitRosterProfileValuesByVisibility } from './roster-profile-fields.js';
+import { getRosterProfileValues, splitProtectedRosterProfileValues, splitRosterProfileValuesByVisibility } from './roster-profile-fields.js';
 
 const SUPPORTED_ROSTER_FIELD_TYPES = new Set(['text', 'menu', 'checkbox', 'date']);
 
@@ -242,20 +242,50 @@ function collectRegistrationRosterFieldValues(sourcePlayer = {}, fields = [], re
 }
 
 function mergeRosterFieldValuesIntoPayload(payload, fieldValues, fields, existingPlayer = {}) {
-    if (!Object.keys(fieldValues).length) return { payload, privateRosterFields: null };
+    const { publicProfile: existingProfile, privateValues: legacyProfileValues } = splitProtectedRosterProfileValues(existingPlayer?.profile || {});
+    const existingPublicRosterValues = getRosterProfileValues({
+        ...existingPlayer,
+        privateRosterFields: {},
+        privateProfileRosterFields: {}
+    });
+    const { publicValues: configuredPublicValues, privateValues: configuredPrivateValues } = splitRosterProfileValuesByVisibility(fields, existingPublicRosterValues);
+    const configuredPrivateKeys = new Set(Object.keys(configuredPrivateValues));
+    const existingCustomFields = Object.fromEntries(
+        Object.entries(existingProfile.customFields || {}).filter(([key]) => !configuredPrivateKeys.has(key))
+    );
+    const existingPrivateValues = existingPlayer?.privateProfileRosterFields && typeof existingPlayer.privateProfileRosterFields === 'object'
+        ? existingPlayer.privateProfileRosterFields
+        : {};
+    const legacyPrivateValues = { ...legacyProfileValues, ...configuredPrivateValues, ...existingPrivateValues };
+    const existingPublicProfile = {
+        ...existingProfile,
+        customFields: { ...existingCustomFields, ...configuredPublicValues }
+    };
+
+    if (!Object.keys(fieldValues).length) {
+        if (!Object.keys(legacyPrivateValues).length) return { payload, privateRosterFields: null };
+        return {
+            payload: { ...payload, profile: existingPublicProfile },
+            privateRosterFields: legacyPrivateValues
+        };
+    }
 
     const { publicValues, privateValues } = splitRosterProfileValuesByVisibility(fields, fieldValues);
-    const privateRosterFields = Object.keys(privateValues).length > 0 ? privateValues : null;
-    if (Object.keys(publicValues).length === 0) return { payload, privateRosterFields };
+    const mergedPrivateValues = { ...legacyPrivateValues, ...privateValues };
+    const privateRosterFields = Object.keys(mergedPrivateValues).length > 0 ? mergedPrivateValues : null;
+    if (Object.keys(publicValues).length === 0) {
+        return Object.keys(legacyPrivateValues).length > 0
+            ? { payload: { ...payload, profile: existingPublicProfile }, privateRosterFields }
+            : { payload, privateRosterFields };
+    }
 
-    const existingProfile = existingPlayer?.profile || {};
     return {
         payload: {
             ...payload,
             profile: {
-                ...existingProfile,
+                ...existingPublicProfile,
                 customFields: {
-                    ...getRosterProfileValues(existingPlayer),
+                    ...(existingPublicProfile.customFields || {}),
                     ...publicValues
                 }
             }

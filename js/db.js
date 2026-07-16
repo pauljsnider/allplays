@@ -202,7 +202,7 @@ export async function normalizeParentScopeLinks(parentLinks = []) {
 }
 import { normalizeStatTrackerConfig, splitPlayerStatsByVisibility } from './stat-leaderboards.js?v=2';
 import { buildPublishedBracketView } from './bracket-management.js?v=1';
-import { buildRolloverPlayerCopy } from './team-rollover.js?v=2';
+import { buildRolloverPlayerCopy, buildRolloverPrivateRosterFields } from './team-rollover.js?v=4';
 import { isPublicTrackingItem, normalizeTrackingItem, normalizeTrackingStatus } from './player-tracking-summary.js?v=1';
 import {
     buildRegistrationRosterDecision,
@@ -2562,6 +2562,7 @@ export async function deleteTeam(teamId) {
 function assertNoSensitivePlayerFields(playerData) {
     if (!playerData || typeof playerData !== 'object') return;
     const forbidden = [
+        'birthDate', 'gender', 'grade', 'school', 'jerseySize', 'memberId', 'dominantHandFoot', 'address',
         'medicalInfo', 'medical_info', 'medicalNotes', 'medical_notes',
         'emergencyContact', 'emergency_contact', 'emergencyContactName', 'emergencyContactPhone',
         'contacts', 'contact', 'contactInfo', 'contact_info', 'contactEmail', 'contactPhone', 'contactRelation',
@@ -2571,14 +2572,19 @@ function assertNoSensitivePlayerFields(playerData) {
     ];
     const present = forbidden.filter(k => Object.prototype.hasOwnProperty.call(playerData, k));
     const rosterFieldSources = ['rosterFieldValues', 'customFields', 'profileFields', 'extraFields'];
-    rosterFieldSources.forEach((sourceKey) => {
-        const source = playerData[sourceKey];
+    const inspectSource = (source, sourcePath) => {
         if (!source || typeof source !== 'object') return;
         forbidden.forEach((key) => {
             if (Object.prototype.hasOwnProperty.call(source, key)) {
-                present.push(`${sourceKey}.${key}`);
+                present.push(`${sourcePath}.${key}`);
             }
         });
+    };
+    rosterFieldSources.forEach((sourceKey) => inspectSource(playerData[sourceKey], sourceKey));
+    const profile = playerData.profile;
+    inspectSource(profile, 'profile');
+    rosterFieldSources.forEach((sourceKey) => {
+        inspectSource(profile?.[sourceKey], `profile.${sourceKey}`);
     });
     if (present.length) {
         throw new Error(`Do not write sensitive fields to public player doc: ${present.join(', ')}`);
@@ -2837,15 +2843,32 @@ export async function copySelectedPlayersForTeamRollover(sourceTeamId, targetTea
     if (playersToCopy.length !== selectedIds.size) {
         throw new Error('One or more selected players could not be found on the source team. Refresh and try again.');
     }
+    const playersWithPrivateRosterFields = await Promise.all(playersToCopy.map(async (player) => {
+        const privateProfile = await getPlayerPrivateProfile(sourceId, player.id);
+        return {
+            ...player,
+            privateProfileRosterFields: privateProfile?.rosterFields && typeof privateProfile.rosterFields === 'object'
+                ? privateProfile.rosterFields
+                : {}
+        };
+    }));
 
     const batch = writeBatch(db);
     const rolledOverAt = Timestamp.now();
-    playersToCopy.forEach((player) => {
+    playersWithPrivateRosterFields.forEach((player) => {
         const playerCopy = buildRolloverPlayerCopy(player, sourceId, rolledOverAt);
+        const privateRosterFields = buildRolloverPrivateRosterFields(player);
         assertNoSensitivePlayerFields(playerCopy);
         playerCopy.createdAt = Timestamp.now();
         const targetRef = doc(collection(db, `teams/${targetId}/players`));
         batch.set(targetRef, playerCopy);
+        if (Object.keys(privateRosterFields).length > 0) {
+            const privateProfileRef = doc(db, `teams/${targetId}/players/${targetRef.id}/private/profile`);
+            batch.set(privateProfileRef, {
+                rosterFields: privateRosterFields,
+                updatedAt: rolledOverAt
+            }, { merge: true });
+        }
     });
 
     await batch.commit();
@@ -2872,6 +2895,21 @@ export async function setPlayerPrivateRosterProfileFields(teamId, playerId, rost
         privateProfileUpdate.contacts = extraData.contacts;
     }
     await setDoc(doc(db, `teams/${teamId}/players/${playerId}/private/profile`), privateProfileUpdate, { merge: true });
+}
+
+export async function updatePlayerWithPrivateRosterProfileFields(teamId, playerId, playerData, rosterFields = null) {
+    assertNoSensitivePlayerFields(playerData);
+    const updatedAt = Timestamp.now();
+    const batch = writeBatch(db);
+    batch.update(doc(db, `teams/${teamId}/players`, playerId), {
+        ...playerData,
+        updatedAt
+    });
+    batch.set(doc(db, `teams/${teamId}/players/${playerId}/private/profile`), {
+        rosterFields: rosterFields || {},
+        updatedAt
+    }, { merge: true });
+    await batch.commit();
 }
 
 export async function applyRosterCsvImportOperations(teamId, operations = []) {

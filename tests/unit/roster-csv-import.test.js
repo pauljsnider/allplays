@@ -1,6 +1,52 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { buildFullRosterCsvTemplate, mergeStandardRosterFieldDefinitions, planRosterCsvImport, splitRosterProfileValuesByVisibility, summarizeRosterContactInviteResults } from '../../js/roster-profile-fields.js';
+
+function extractFunction(source, signature) {
+    const start = source.indexOf(signature);
+    expect(start).toBeGreaterThanOrEqual(0);
+    const braceStart = source.indexOf('{', start);
+    let depth = 1;
+    for (let index = braceStart + 1; index < source.length; index += 1) {
+        if (source[index] === '{') depth += 1;
+        if (source[index] === '}') depth -= 1;
+        if (depth === 0) return source.slice(start, index + 1);
+    }
+    throw new Error(`Could not extract ${signature}`);
+}
+
+function buildRosterImportOperationHelper() {
+    const source = readFileSync('js/db.js', 'utf8');
+    const assertSource = extractFunction(source, 'function assertNoSensitivePlayerFields(');
+    const atomicUpdateSource = extractFunction(source, 'export async function updatePlayerWithPrivateRosterProfileFields(')
+        .replace('export async function updatePlayerWithPrivateRosterProfileFields', 'async function updatePlayerWithPrivateRosterProfileFields');
+    const applySource = extractFunction(source, 'export async function applyRosterCsvImportOperations(')
+        .replace('export async function applyRosterCsvImportOperations', 'async function applyRosterCsvImportOperations');
+    const batch = {
+        set: vi.fn(),
+        update: vi.fn(),
+        commit: vi.fn(() => Promise.resolve())
+    };
+    const deps = {
+        Timestamp: { now: vi.fn(() => 'now') },
+        db: {},
+        collection: vi.fn((database, path) => ({ path })),
+        doc: vi.fn((...args) => {
+            if (args.length === 1) return { id: 'generated-player', path: `${args[0].path}/generated-player` };
+            if (args.length === 3) return { id: args[2], path: `${args[1]}/${args[2]}` };
+            return { id: String(args[1]).split('/').pop(), path: args[1] };
+        }),
+        writeBatch: vi.fn(() => batch)
+    };
+    const factory = new Function('deps', `
+        const { Timestamp, db, collection, doc, writeBatch } = deps;
+        ${assertSource}
+        ${atomicUpdateSource}
+        ${applySource}
+        return { applyRosterCsvImportOperations, updatePlayerWithPrivateRosterProfileFields };
+    `);
+    return { ...factory(deps), batch };
+}
 
 describe('roster CSV import planning', () => {
     const fields = [
@@ -25,9 +71,9 @@ describe('roster CSV import planning', () => {
             payload: {
                 name: 'Avery Lee',
                 number: '4',
-                profile: { customFields: { grade: '6', throwsRight: true } }
+                profile: { customFields: { throwsRight: true } }
             },
-            privateRosterFields: { birthDate: '2014-02-03' }
+            privateRosterFields: { grade: '6', birthDate: '2014-02-03' }
         });
         expect(plan.operations[0].payload.profile.customFields).not.toHaveProperty('birthDate');
         expect(plan.operations[0].payload.profile.customFields).not.toHaveProperty('medicalNote');
@@ -38,9 +84,9 @@ describe('roster CSV import planning', () => {
             payload: {
                 name: 'Sam Jones',
                 number: '12',
-                profile: { customFields: { grade: '7', throwsRight: false } }
+                profile: { customFields: { throwsRight: false } }
             },
-            privateRosterFields: { birthDate: '2013-09-01' }
+            privateRosterFields: { grade: '7', birthDate: '2013-09-01' }
         });
     });
 
@@ -58,8 +104,9 @@ describe('roster CSV import planning', () => {
             playerId: 'p1',
             payload: {
                 name: 'Avery Lee',
-                profile: { customFields: { grade: '6' } }
-            }
+                profile: { customFields: {} }
+            },
+            privateRosterFields: { grade: '6' }
         });
         expect(plan.operations[0].payload).not.toHaveProperty('number');
     });
@@ -76,7 +123,7 @@ describe('roster CSV import planning', () => {
         expect(invalid.operations).toEqual([]);
     });
 
-    it('maps common unconfigured player profile columns into the import payload', () => {
+    it('routes protected unconfigured player profile columns into the private profile operation', () => {
         const plan = planRosterCsvImport({
             fields: [],
             existingPlayers: [{
@@ -89,9 +136,9 @@ describe('roster CSV import planning', () => {
                 }
             }],
             csvText: [
-                'Name,Jersey,Position,Date of Birth,Gender,Street,Address1,Address Line 2,City,State,Zip,Roster Status',
-                'Avery Lee,4,Forward,2014-02-03,Female,123 Main,PO Box 8,Apt 2,Kansas City,MO,64110,Player',
-                'Coach Kim,,Coach,,Female,,,,,,,Staff'
+                'Name,Jersey,Preferred Name,Position,Alternate Number,Date of Birth,Gender,Grade,School,Jersey Size,Member ID,Dominant Hand,Street,Address1,Address Line 2,City,State,Zip,Roster Status',
+                'Avery Lee,4,Rocket,Forward,14,2014-02-03,Female,6,Lincoln,YM,AAU-42,Right,123 Main,PO Box 8,Apt 2,Kansas City,MO,64110,Player',
+                'Coach Kim,,,Coach,,,Female,,,,,,,,,,,,Staff'
             ].join('\n')
         });
 
@@ -105,24 +152,35 @@ describe('roster CSV import planning', () => {
                 number: '4',
                 position: 'Forward',
                 profile: {
+                    preferredName: 'Rocket',
                     position: 'Forward',
-                    birthDate: '2014-02-03',
-                    gender: 'Female',
-                    address: {
-                        street: '123 Main',
-                        address1: 'PO Box 8',
-                        address2: 'Apt 2',
-                        city: 'Kansas City',
-                        state: 'MO',
-                        zip: '64110'
-                    },
+                    alternateNumber: '14',
                     rosterStatus: 'player',
                     isStaff: false,
                     nonPlayer: false,
-                    customFields: { grade: '6' }
+                    customFields: {}
+                }
+            },
+            privateRosterFields: {
+                birthDate: '2014-02-03',
+                gender: 'Female',
+                grade: '6',
+                school: 'Lincoln',
+                jerseySize: 'YM',
+                memberId: 'AAU-42',
+                dominantHandFoot: 'Right',
+                address: {
+                    street: '123 Main',
+                    address1: 'PO Box 8',
+                    address2: 'Apt 2',
+                    city: 'Kansas City',
+                    state: 'MO',
+                    zip: '64110'
                 }
             }
         });
+        ['birthDate', 'gender', 'grade', 'school', 'jerseySize', 'memberId', 'dominantHandFoot', 'address']
+            .forEach((key) => expect(plan.operations[0].payload.profile).not.toHaveProperty(key));
         expect(plan.operations[1]).toMatchObject({
             type: 'add',
             payload: {
@@ -130,12 +188,12 @@ describe('roster CSV import planning', () => {
                 position: 'Coach',
                 profile: {
                     position: 'Coach',
-                    gender: 'Female',
                     rosterStatus: 'staff',
                     isStaff: true,
                     nonPlayer: true
                 }
-            }
+            },
+            privateRosterFields: { gender: 'Female' }
         });
     });
 
@@ -155,11 +213,11 @@ describe('roster CSV import planning', () => {
                 name: 'Avery Lee',
                 profile: {
                     customFields: {
-                        position: 'Forward',
-                        gender: 'Female'
+                        position: 'Forward'
                     }
                 }
-            }
+            },
+            privateRosterFields: { gender: 'Female' }
         });
         expect(plan.operations[0].payload).not.toHaveProperty('position');
         expect(plan.operations[0].payload.profile).not.toHaveProperty('gender');
@@ -443,8 +501,110 @@ describe('roster CSV import planning', () => {
 
     it('splits parent-readable private field values away from public player payloads without storing admin-only values', () => {
         expect(splitRosterProfileValuesByVisibility(fields, { grade: '6', birthDate: '2014-02-03', medicalNote: 'private' }, { includeAdminPrivate: false })).toEqual({
-            publicValues: { grade: '6' },
-            privateValues: { birthDate: '2014-02-03' }
+            publicValues: {},
+            privateValues: { grade: '6', birthDate: '2014-02-03' }
+        });
+    });
+
+    it('routes protected standard keys privately even when the team configured them as public', () => {
+        const plan = planRosterCsvImport({
+            fields: [{ key: 'grade', label: 'Grade', type: 'text', visibility: 'public', standard: true, active: true }],
+            csvText: 'Name,Grade\nAvery Lee,6'
+        });
+
+        expect(plan.errors).toEqual([]);
+        expect(plan.operations[0].payload.profile.customFields).not.toHaveProperty('grade');
+        expect(plan.operations[0].privateRosterFields).toEqual({ grade: '6' });
+    });
+
+    it('migrates legacy protected profile values during an unrelated CSV update', () => {
+        const plan = planRosterCsvImport({
+            fields: [],
+            existingPlayers: [{
+                id: 'p1',
+                name: 'Avery Lee',
+                profile: {
+                    preferredName: 'Rocket',
+                    birthDate: '2014-02-03',
+                    address: { city: 'Kansas City', state: 'MO' },
+                    customFields: { grade: '6', favoriteColor: 'blue' }
+                }
+            }],
+            csvText: 'Name,Number\nAvery Lee,8'
+        });
+
+        expect(plan.errors).toEqual([]);
+        expect(plan.operations[0]).toMatchObject({
+            type: 'update',
+            payload: {
+                number: '8',
+                profile: { preferredName: 'Rocket', customFields: { favoriteColor: 'blue' } }
+            },
+            privateRosterFields: {
+                birthDate: '2014-02-03',
+                address: { city: 'Kansas City', state: 'MO' },
+                grade: '6'
+            }
+        });
+    });
+
+    it('preserves corrected private values over stale legacy public values during CSV migration', () => {
+        const plan = planRosterCsvImport({
+            fields: [],
+            existingPlayers: [{
+                id: 'p1',
+                name: 'Avery Lee',
+                profile: {
+                    birthDate: '2014-02-03',
+                    address: { city: 'Old City', state: 'MO' },
+                    customFields: { grade: '6' }
+                },
+                privateProfileRosterFields: {
+                    birthDate: '2014-03-04',
+                    address: { city: 'New City', state: 'KS' },
+                    grade: '7'
+                }
+            }],
+            csvText: 'Name,Number\nAvery Lee,8'
+        });
+
+        expect(plan.errors).toEqual([]);
+        expect(plan.operations[0].privateRosterFields).toEqual({
+            birthDate: '2014-03-04',
+            address: { city: 'New City', state: 'KS' },
+            grade: '7'
+        });
+    });
+
+    it('migrates protected values from every guarded nested legacy profile map', () => {
+        const plan = planRosterCsvImport({
+            fields: [],
+            existingPlayers: [{
+                id: 'p1',
+                name: 'Avery Lee',
+                profile: {
+                    rosterFields: { birthDate: '2014-02-03', graduationYear: '2032' },
+                    profileFields: { school: 'Lincoln', bats: 'right' },
+                    extraFields: { address: { city: 'Kansas City' }, favoriteColor: 'blue' }
+                }
+            }],
+            csvText: 'Name,Number\nAvery Lee,8'
+        });
+
+        expect(plan.errors).toEqual([]);
+        expect(plan.operations[0]).toMatchObject({
+            payload: {
+                profile: {
+                    rosterFields: { graduationYear: '2032' },
+                    profileFields: { bats: 'right' },
+                    extraFields: { favoriteColor: 'blue' }
+                }
+            },
+            privateRosterFields: {
+                birthDate: '2014-02-03',
+                school: 'Lincoln',
+                address: { city: 'Kansas City' }
+            }
         });
     });
 
@@ -468,10 +628,92 @@ describe('roster CSV import planning', () => {
                 gender: 'Female',
                 grade: '6',
                 school: 'Lincoln',
-                jerseySize: 'YM'
+                jerseySize: 'YM',
+                memberId: 'AAU-42'
             }
         });
         expect(JSON.stringify(plan.operations[0].payload)).not.toContain('AAU-42');
+    });
+
+    it('commits the public-safe player and protected private profile in one batch', async () => {
+        const { applyRosterCsvImportOperations, batch } = buildRosterImportOperationHelper();
+
+        await applyRosterCsvImportOperations('team-1', [{
+            type: 'add',
+            payload: { name: 'Avery Lee', number: '4', profile: { preferredName: 'Rocket' } },
+            privateRosterFields: {
+                birthDate: '2014-02-03',
+                address: { street: '123 Main' }
+            }
+        }]);
+
+        expect(batch.set).toHaveBeenNthCalledWith(1,
+            expect.objectContaining({ path: 'teams/team-1/players/generated-player' }),
+            expect.objectContaining({ name: 'Avery Lee', number: '4', active: true, createdAt: 'now' })
+        );
+        expect(batch.set).toHaveBeenNthCalledWith(2,
+            expect.objectContaining({ path: 'teams/team-1/players/generated-player/private/profile' }),
+            {
+                updatedAt: 'now',
+                rosterFields: {
+                    birthDate: '2014-02-03',
+                    address: { street: '123 Main' }
+                }
+            },
+            { merge: true }
+        );
+        expect(batch.commit).toHaveBeenCalledTimes(1);
+    });
+
+    it('stages registration and Bulk AI migration writes in one batch before a failed commit', async () => {
+        const { applyRosterCsvImportOperations, batch } = buildRosterImportOperationHelper();
+        batch.commit.mockRejectedValueOnce(new Error('commit failed'));
+
+        await expect(applyRosterCsvImportOperations('team-1', [{
+            type: 'update',
+            playerId: 'player-1',
+            payload: { profile: { customFields: { nickname: 'Rocket' } } },
+            privateRosterFields: { birthDate: '2014-02-03' },
+            privateFamilyContacts: { parents: [{ email: 'parent@example.com' }] }
+        }])).rejects.toThrow('commit failed');
+
+        expect(batch.update).toHaveBeenCalledWith(
+            expect.objectContaining({ path: 'teams/team-1/players/player-1' }),
+            { profile: { customFields: { nickname: 'Rocket' } }, updatedAt: 'now' }
+        );
+        expect(batch.set).toHaveBeenCalledWith(
+            expect.objectContaining({ path: 'teams/team-1/players/player-1/private/profile' }),
+            {
+                updatedAt: 'now',
+                rosterFields: { birthDate: '2014-02-03' },
+                parents: [{ email: 'parent@example.com' }]
+            },
+            { merge: true }
+        );
+        expect(batch.commit).toHaveBeenCalledTimes(1);
+    });
+
+    it('stages app profile migration writes in one batch before a failed commit', async () => {
+        const { updatePlayerWithPrivateRosterProfileFields, batch } = buildRosterImportOperationHelper();
+        batch.commit.mockRejectedValueOnce(new Error('commit failed'));
+
+        await expect(updatePlayerWithPrivateRosterProfileFields(
+            'team-1',
+            'player-1',
+            { profile: { customFields: { nickname: 'Rocket' } } },
+            { birthDate: '2014-02-03' }
+        )).rejects.toThrow('commit failed');
+
+        expect(batch.update).toHaveBeenCalledWith(
+            expect.objectContaining({ path: 'teams/team-1/players/player-1' }),
+            { profile: { customFields: { nickname: 'Rocket' } }, updatedAt: 'now' }
+        );
+        expect(batch.set).toHaveBeenCalledWith(
+            expect.objectContaining({ path: 'teams/team-1/players/player-1/private/profile' }),
+            { rosterFields: { birthDate: '2014-02-03' }, updatedAt: 'now' },
+            { merge: true }
+        );
+        expect(batch.commit).toHaveBeenCalledTimes(1);
     });
 
     it('preserves DOB when a duplicate standard Birth Date column is blank', () => {

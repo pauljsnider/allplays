@@ -301,13 +301,99 @@ describe('registration roster import planning', () => {
         });
 
         expect(plan.results).toMatchObject({ updated: 1, fieldsImported: 4, fieldsSkipped: 0 });
-        expect(plan.operations[0].payload.profile).toBeUndefined();
+        expect(plan.operations[0].payload.profile).toEqual({ customFields: { note: 'keep' } });
         expect(plan.operations[0].privateRosterFields).toEqual({
             grade: '6',
             position: 'pg',
             throwsRight: true,
             birthDate: '2014-02-03'
         });
+    });
+
+    it('routes public-configured protected fields privately and migrates legacy public values', () => {
+        const plan = planRegistrationRosterImport({
+            source: { type: 'sports-connect', id: 'league-1' },
+            fields: [{ key: 'grade', label: 'Grade', type: 'text', visibility: 'public' }],
+            sourcePlayers: [{
+                externalPlayerId: 'ext-1',
+                name: 'Avery Lee',
+                number: '4',
+                answers: { Grade: '7' }
+            }],
+            existingPlayers: [{
+                id: 'player-1',
+                name: 'Avery Lee',
+                number: '3',
+                profile: {
+                    birthDate: '2014-02-03',
+                    customFields: { grade: '6', nickname: 'Rocket' }
+                },
+                sourceMetadata: { sourceType: 'sports-connect', sourceId: 'league-1', externalPlayerId: 'ext-1' }
+            }]
+        });
+
+        expect(plan.operations[0]).toMatchObject({
+            type: 'update',
+            playerId: 'player-1',
+            payload: { profile: { customFields: { nickname: 'Rocket' } } },
+            privateRosterFields: { birthDate: '2014-02-03', grade: '7' }
+        });
+        expect(plan.operations[0].payload.profile).not.toHaveProperty('birthDate');
+        expect(plan.operations[0].payload.profile.customFields).not.toHaveProperty('grade');
+    });
+
+    it('preserves corrected private values over stale legacy public values during unrelated registration imports', () => {
+        const plan = planRegistrationRosterImport({
+            source: { type: 'sports-connect', id: 'league-1' },
+            fields: [],
+            sourcePlayers: [{
+                externalPlayerId: 'ext-1',
+                name: 'Avery Lee',
+                number: '4'
+            }],
+            existingPlayers: [{
+                id: 'player-1',
+                name: 'Avery Lee',
+                number: '3',
+                profile: {
+                    birthDate: '2014-02-03',
+                    customFields: { grade: '6' }
+                },
+                privateProfileRosterFields: {
+                    birthDate: '2014-03-04',
+                    grade: '7'
+                },
+                sourceMetadata: { sourceType: 'sports-connect', sourceId: 'league-1', externalPlayerId: 'ext-1' }
+            }]
+        });
+
+        expect(plan.operations[0].privateRosterFields).toEqual({
+            birthDate: '2014-03-04',
+            grade: '7'
+        });
+    });
+
+    it('never copies configured admin-only sidecar fields into the public registration payload', () => {
+        const plan = planRegistrationRosterImport({
+            source: { type: 'sports-connect', id: 'league-1' },
+            fields: [{ key: 'coachNotes', label: 'Coach Notes', type: 'text', visibility: 'admins' }],
+            sourcePlayers: [{
+                externalPlayerId: 'ext-1',
+                name: 'Avery Lee',
+                number: '4'
+            }],
+            existingPlayers: [{
+                id: 'player-1',
+                name: 'Avery Lee',
+                number: '3',
+                profile: { customFields: { coachNotes: 'stale public note', nickname: 'Rocket' } },
+                privateProfileRosterFields: { coachNotes: 'admin only' },
+                sourceMetadata: { sourceType: 'sports-connect', sourceId: 'league-1', externalPlayerId: 'ext-1' }
+            }]
+        });
+
+        expect(plan.operations[0].payload.profile).toEqual({ customFields: { nickname: 'Rocket' } });
+        expect(plan.operations[0].privateRosterFields).toEqual({ coachNotes: 'admin only' });
     });
 
     it('falls back past empty registration wrappers when mapping configured roster fields', () => {
@@ -369,7 +455,8 @@ describe('registration roster import planning', () => {
 
         expect(plan.results).toMatchObject({ updated: 1, fieldsImported: 0, fieldsSkipped: 3 });
         expect(plan.results.fieldSkipReasons).toEqual({ blank: 1, invalid: 1, unsupported: 1 });
-        expect(plan.operations[0].payload.profile).toBeUndefined();
+        expect(plan.operations[0].payload.profile).toEqual({ customFields: {} });
+        expect(plan.operations[0].privateRosterFields).toEqual({ grade: '5', position: 'pg' });
     });
 
     it('keeps admin-only roster field imports out of the public player profile payload', () => {
@@ -434,7 +521,7 @@ describe('registration roster import wiring', () => {
         expect(source).toContain('id="registration-roster-import-title"');
         expect(source).toContain('Import stored registration roster');
         expect(source).toContain('Preview Import');
-        expect(source).toContain("import { formatRegistrationRosterImportResults, getRegistrationRosterPlayers, hasConfiguredRegistrationProviderMetadata, isExternallyLinkedRosterTeam, planRegistrationRosterImport } from './js/edit-roster-registration-import.js?v=2';");
+        expect(source).toContain("import { formatRegistrationRosterImportResults, getRegistrationRosterPlayers, hasConfiguredRegistrationProviderMetadata, isExternallyLinkedRosterTeam, planRegistrationRosterImport } from './js/edit-roster-registration-import.js?v=3';");
         expect(source).toContain('hasConfiguredRegistrationProviderMetadata(team)');
         expect(source).toContain('Registration provider metadata saved');
         expect(source).toContain('Use Edit Team to re-import from Sports Connect when the snapshot needs a refresh.');
@@ -461,7 +548,10 @@ describe('registration roster import wiring', () => {
         expect(source).toContain('selectedOperationIds');
         expect(source).toContain('Conflicted rows are skipped automatically');
         expect(source).toContain('fields: rosterFieldDefinitions');
-        expect(source).toContain('setPlayerPrivateRosterProfileFields(currentTeamId, playerId, operation.privateRosterFields, operation.privateFamilyContacts || {})');
+        expect(source).toContain('const existingPlayers = await getPlayersWithPrivateRosterContacts(currentTeamId, { includeInactive: true });');
+        expect(source).not.toContain('const existingPlayers = await getPlayers(currentTeamId, { includeInactive: true });');
+        expect(source).toContain('await applyRosterCsvImportOperations(currentTeamId, selectedOperations);');
+        expect(source).not.toContain('await updatePlayer(currentTeamId, playerId, operation.payload);');
         expect(source).toContain('function getPlayerImportSourceType');
         expect(source).toContain('player.registrationSource?.externalPlayerId');
         expect(source).toContain('player.externalPlayerId');

@@ -6,10 +6,12 @@ const ROLLOVER_OMITTED_PLAYER_FIELDS = new Set([
     'sourceTeamId',
     'sourcePlayerId',
     'rolledOverAt',
+    'privateProfileRosterFields',
 
 ]);
 
 const ROLLOVER_SENSITIVE_PLAYER_FIELDS = new Set([
+    'birthDate', 'gender', 'grade', 'school', 'jerseySize', 'memberId', 'dominantHandFoot', 'address',
     'medicalInfo', 'medical_info', 'medicalNotes', 'medical_notes',
     'emergencyContact', 'emergency_contact', 'emergencyContactName', 'emergencyContactPhone',
     'contacts', 'contact', 'contactInfo', 'contact_info', 'contactEmail', 'contactPhone', 'contactRelation',
@@ -18,8 +20,19 @@ const ROLLOVER_SENSITIVE_PLAYER_FIELDS = new Set([
     'householdContact', 'householdContacts', 'householdEmail', 'householdPhone', 'householdRelation'
 ]);
 
+const ROLLOVER_PRIVATE_ROSTER_FIELDS = new Set([
+    'birthDate', 'gender', 'grade', 'school', 'jerseySize', 'memberId', 'dominantHandFoot', 'address'
+]);
+
 const ROLLOVER_ROSTER_FIELD_SOURCES = new Set([
     'rosterFieldValues',
+    'customFields',
+    'profileFields',
+    'extraFields'
+]);
+
+const ROLLOVER_PROFILE_ROSTER_FIELD_SOURCES = new Set([
+    'rosterFields',
     'customFields',
     'profileFields',
     'extraFields'
@@ -41,13 +54,37 @@ function isPlainRosterMap(value) {
 function omitSensitiveProfileRosterFields(profile = {}) {
     const copy = {};
     Object.entries(profile).forEach(([key, value]) => {
-        if ((key === 'rosterFields' || key === 'customFields') && isPlainRosterMap(value)) {
+        if (ROLLOVER_SENSITIVE_PLAYER_FIELDS.has(key)) return;
+        if (ROLLOVER_PROFILE_ROSTER_FIELD_SOURCES.has(key) && isPlainRosterMap(value)) {
             copy[key] = omitSensitiveRosterFields(value);
             return;
         }
         copy[key] = value;
     });
     return copy;
+}
+
+function collectPrivateRosterFields(target, source = {}) {
+    if (!isPlainRosterMap(source)) return;
+    Object.entries(source).forEach(([key, value]) => {
+        if (ROLLOVER_PRIVATE_ROSTER_FIELDS.has(key)) target[key] = value;
+    });
+}
+
+export function buildRolloverPrivateRosterFields(sourcePlayer = {}) {
+    const privateRosterFields = {};
+    collectPrivateRosterFields(privateRosterFields, sourcePlayer);
+    ROLLOVER_ROSTER_FIELD_SOURCES.forEach((key) => {
+        collectPrivateRosterFields(privateRosterFields, sourcePlayer[key]);
+    });
+    if (isPlainRosterMap(sourcePlayer.profile)) {
+        collectPrivateRosterFields(privateRosterFields, sourcePlayer.profile);
+        ROLLOVER_PROFILE_ROSTER_FIELD_SOURCES.forEach((key) => {
+            collectPrivateRosterFields(privateRosterFields, sourcePlayer.profile[key]);
+        });
+    }
+    collectPrivateRosterFields(privateRosterFields, sourcePlayer.privateProfileRosterFields);
+    return privateRosterFields;
 }
 
 export function buildRolloverPlayerCopy(sourcePlayer, sourceTeamId, rolledOverAt) {

@@ -6,6 +6,15 @@ function readEditTeamSource() {
     return readFileSync(new URL('../../edit-team.html', import.meta.url), 'utf8');
 }
 
+describe('edit team rollover cache delivery', () => {
+    it('loads rollover writes from the current cache-busted db module', () => {
+        const source = readEditTeamSource();
+
+        expect(source).toContain("from './js/db.js?v=101';");
+        expect(source).not.toContain("from './js/db.js?v=96';");
+    });
+});
+
 class FakeClassList {
     constructor() {
         this.values = new Set();

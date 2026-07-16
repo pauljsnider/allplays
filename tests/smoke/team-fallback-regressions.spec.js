@@ -143,6 +143,9 @@ export function planRosterCsvImport() {
 export function renderRosterProfileFields(container) {
     if (container) container.innerHTML = '';
 }
+export function splitProtectedRosterProfileValues(profile = {}) {
+    return { publicProfile: profile || {}, privateValues: {} };
+}
 export function summarizeRosterContactInviteResults() {
     return { sent: 0, linked: 0, codeCreated: 0, failed: 0 };
 }

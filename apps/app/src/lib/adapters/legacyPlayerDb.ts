@@ -16,6 +16,7 @@ import {
     saveAthleteProfile as legacySaveAthleteProfile,
     setPlayerPrivateRosterProfileFields as legacySetPlayerPrivateRosterProfileFields,
     updatePlayer as legacyUpdatePlayer,
+    updatePlayerWithPrivateRosterProfileFields as legacyUpdatePlayerWithPrivateRosterProfileFields,
     updatePlayerProfile as legacyUpdatePlayerProfile,
     uploadAthleteProfileMedia as legacyUploadAthleteProfileMedia,
     uploadPlayerPhoto as legacyUploadPlayerPhoto
@@ -111,6 +112,10 @@ export async function updatePlayer(teamId: string, playerId: string, payload: Re
 
 export async function setPlayerPrivateRosterProfileFields(teamId: string, playerId: string, values: Record<string, unknown>) {
     return await Promise.resolve(legacySetPlayerPrivateRosterProfileFields(teamId, playerId, values));
+}
+
+export async function updatePlayerWithPrivateRosterProfileFields(teamId: string, playerId: string, payload: Record<string, unknown>, values: Record<string, unknown>) {
+    return await Promise.resolve(legacyUpdatePlayerWithPrivateRosterProfileFields(teamId, playerId, payload, values));
 }
 
 export async function updatePlayerProfile(teamId: string, playerId: string, payload: Record<string, unknown>) {

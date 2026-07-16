@@ -745,6 +745,7 @@ service cloud.firestore {
 
     function hasRestrictedRosterFieldValues(data) {
       let restrictedKeys = [
+        'birthDate', 'gender', 'grade', 'school', 'jerseySize', 'memberId', 'dominantHandFoot', 'address',
         'medicalInfo', 'medical_info', 'medicalNotes', 'medical_notes',
         'emergencyContact', 'emergency_contact', 'emergencyContactName', 'emergencyContactPhone',
         'contacts', 'contact', 'contactInfo', 'contact_info', 'contactEmail', 'contactPhone', 'contactRelation',
@@ -752,13 +753,32 @@ service cloud.firestore {
         'guardian', 'guardians', 'guardianEmail', 'guardianPhone', 'guardianRelation',
         'householdContact', 'householdContacts', 'householdEmail', 'householdPhone', 'householdRelation'
       ];
+      let profile = data.get('profile', {});
       return data.keys().hasAny(restrictedKeys) ||
+             (profile is map && profile.keys().hasAny(restrictedKeys)) ||
              hasRestrictedRosterMap(data, 'rosterFieldValues', restrictedKeys) ||
              hasRestrictedRosterMap(data, 'customFields', restrictedKeys) ||
              hasRestrictedRosterMap(data, 'profileFields', restrictedKeys) ||
              hasRestrictedRosterMap(data, 'extraFields', restrictedKeys) ||
              hasRestrictedRosterNestedMap(data, 'profile', 'rosterFields', restrictedKeys) ||
-             hasRestrictedRosterNestedMap(data, 'profile', 'customFields', restrictedKeys);
+             hasRestrictedRosterNestedMap(data, 'profile', 'customFields', restrictedKeys) ||
+             hasRestrictedRosterNestedMap(data, 'profile', 'profileFields', restrictedKeys) ||
+             hasRestrictedRosterNestedMap(data, 'profile', 'extraFields', restrictedKeys);
+    }
+
+    function keepsRestrictedRosterFieldsImmutable() {
+      let restrictedContainers = [
+        'birthDate', 'gender', 'grade', 'school', 'jerseySize', 'memberId', 'dominantHandFoot', 'address',
+        'medicalInfo', 'medical_info', 'medicalNotes', 'medical_notes',
+        'emergencyContact', 'emergency_contact', 'emergencyContactName', 'emergencyContactPhone',
+        'contacts', 'contact', 'contactInfo', 'contact_info', 'contactEmail', 'contactPhone', 'contactRelation',
+        'parents', 'parent', 'parentEmail', 'parentPhone', 'parentRelation',
+        'guardian', 'guardians', 'guardianEmail', 'guardianPhone', 'guardianRelation',
+        'householdContact', 'householdContacts', 'householdEmail', 'householdPhone', 'householdRelation',
+        'rosterFieldValues', 'customFields', 'profileFields', 'extraFields', 'profile'
+      ];
+      return hasRestrictedRosterFieldValues(resource.data) &&
+             !request.resource.data.diff(resource.data).affectedKeys().hasAny(restrictedContainers);
     }
 
     function isIncentiveCapPayloadValid(data) {
@@ -2780,7 +2800,8 @@ service cloud.firestore {
 	        allow create: if isTeamOwnerOrAdmin(teamId) &&
 	                        !hasRestrictedRosterFieldValues(request.resource.data);
 	        allow update: if isTeamOwnerOrAdmin(teamId) &&
-	                        !hasRestrictedRosterFieldValues(request.resource.data);
+	                        (!hasRestrictedRosterFieldValues(request.resource.data) ||
+	                         keepsRestrictedRosterFieldsImmutable());
 	        allow delete: if isTeamOwnerOrAdmin(teamId);
 
 	        // Limited write access for parents (only their linked player):
