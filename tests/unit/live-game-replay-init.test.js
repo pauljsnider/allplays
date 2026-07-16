@@ -248,7 +248,7 @@ function buildModuleSource() {
             'const { checkAuth } = deps.auth;'
         )
         .replace(
-            "import { isViewerChatEnabled } from './live-game-chat.js?v=1';",
+            "import { isViewerChatEnabled } from './live-game-chat.js?v=2';",
             'const { isViewerChatEnabled } = deps.liveGameChat;'
         )
         .replace(
@@ -315,7 +315,7 @@ const runModule = new AsyncFunction(
     moduleSource
 );
 
-async function bootReplayPage({ replayEvents }) {
+async function bootReplayPage({ replayEvents = [], game: gameOverrides = {}, replay = true } = {}) {
     const { document, ensureElement } = createEnvironment();
     const storage = new Map();
     const sessionStorage = {
@@ -326,7 +326,7 @@ async function bootReplayPage({ replayEvents }) {
             storage.set(key, String(value));
         }
     };
-    const location = new URL('https://allplays.example/live-game.html?teamId=T1&gameId=G1&replay=true');
+    const location = new URL(`https://allplays.example/live-game.html?teamId=T1&gameId=G1&replay=${replay}`);
     const window = {
         document,
         location,
@@ -351,20 +351,24 @@ async function bootReplayPage({ replayEvents }) {
         period: 'Final',
         recordedVideo: null,
         streamUrl: '',
-        sport: 'basketball'
+        sport: 'basketball',
+        ...gameOverrides
     };
     const replayStartRebaseCalls = [];
+    const subscribeLiveChat = vi.fn(() => () => {});
+    const subscribeReactions = vi.fn(() => () => {});
+    const trackViewerPresence = vi.fn(() => () => {});
     const deps = {
         db: {
             getTeam: async () => ({ id: 'T1', name: 'Raptors', sport: 'basketball' }),
             getGame: async () => game,
             getPlayers: async () => [],
             subscribeLiveEvents: () => () => {},
-            subscribeLiveChat: () => () => {},
+            subscribeLiveChat,
             postLiveChatMessage: async () => {},
-            subscribeReactions: () => () => {},
+            subscribeReactions,
             sendReaction: async () => {},
-            trackViewerPresence: () => () => {},
+            trackViewerPresence,
             getLiveEvents: async () => replayEvents,
             getLiveChatHistory: async () => [],
             getLiveReactions: async () => [],
@@ -374,7 +378,7 @@ async function bootReplayPage({ replayEvents }) {
             uploadGameClip: async () => ({ url: '' })
         },
         utils: {
-            getUrlParams: () => ({ teamId: 'T1', gameId: 'G1', replay: 'true' }),
+            getUrlParams: () => ({ teamId: 'T1', gameId: 'G1', replay: String(replay) }),
             escapeHtml: (value) => String(value ?? ''),
             renderHeader() {},
             renderFooter() {},
@@ -575,6 +579,7 @@ async function bootReplayPage({ replayEvents }) {
         awayScore: ensureElement('away-score'),
         chatInput: ensureElement('chat-input'),
         chatLockedNotice: ensureElement('chat-locked-notice'),
+        engagementSubscriptions: { subscribeLiveChat, subscribeReactions, trackViewerPresence },
         replayControls: ensureElement('replay-controls'),
         replayStartRebaseCalls,
         seekReplay: moduleInstance.seekReplay,
@@ -587,6 +592,24 @@ async function bootReplayPage({ replayEvents }) {
 }
 
 describe('live game replay initialization', () => {
+    it('does not start engagement subscriptions for an initially cancelled stale-live game', async () => {
+        const page = await bootReplayPage({
+            replay: false,
+            game: {
+                date: new Date(),
+                status: 'cancelled',
+                liveStatus: 'live'
+            }
+        });
+
+        expect(page.state.isLive).toBe(false);
+        expect(page.state.chatEnabled).toBe(false);
+        expect(page.chatInput.disabled).toBe(true);
+        expect(page.engagementSubscriptions.subscribeLiveChat).not.toHaveBeenCalled();
+        expect(page.engagementSubscriptions.subscribeReactions).not.toHaveBeenCalled();
+        expect(page.engagementSubscriptions.trackViewerPresence).not.toHaveBeenCalled();
+    });
+
     it('stops an active viewer when a stale-live game is cancelled', async () => {
         const page = await bootReplayPage({ replayEvents: [] });
         const unsubscribers = [vi.fn(), vi.fn(), vi.fn(), vi.fn(), vi.fn()];

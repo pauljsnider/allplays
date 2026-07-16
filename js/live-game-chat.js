@@ -14,6 +14,8 @@ function isSameDay(left, right) {
 
 export function isViewerChatEnabled(game, { isReplay = false, now = new Date() } = {}) {
   if (isReplay) return false;
+  const gameStatus = String(game?.status || '').trim().toLowerCase();
+  if (gameStatus === 'cancelled' || gameStatus === 'canceled') return false;
   if (game?.liveStatus === 'live') return true;
   const gameDate = toDate(game?.date);
   return isSameDay(gameDate, now);

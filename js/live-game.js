@@ -22,7 +22,7 @@ import { hasFullTeamAccess } from './team-access.js?v=1';
 import { buildScoreLinkedClipRecord, isScoredPlayEvent, validateGameClipFile } from './game-clips.js?v=1';
 import { computePanelVisibility } from './live-stream-utils.js?v=1';
 import { checkAuth } from './auth.js?v=50';
-import { isViewerChatEnabled } from './live-game-chat.js?v=1';
+import { isViewerChatEnabled } from './live-game-chat.js?v=2';
 import { createPlayAnnouncer } from './live-game-announcer.js?v=1';
 import {
   buildReplaySessionState,
@@ -2714,7 +2714,7 @@ function handleGameUpdate(gameDoc) {
     renderScoreboard();
   }
 
-  if (!state.isReplay) {
+  if (!state.isReplay && !isCancelled) {
     startEngagements();
   }
 
@@ -2727,7 +2727,7 @@ function handleGameUpdate(gameDoc) {
   } else if (gameDoc.liveStatus === 'completed') {
     showEndedOverlay();
   } else {
-    if (isCancelled && state.isLive) {
+    if (isCancelled && (state.isLive || state.engagementsActive || state.liveEventsActive)) {
       stopLiveMode();
     }
     showNotLiveOverlay();

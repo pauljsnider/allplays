@@ -19,4 +19,15 @@ describe('live game chat availability', () => {
     const game = { date: new Date(2026, 1, 23, 23, 30, 0), liveStatus: 'live' };
     expect(isViewerChatEnabled(game, { now })).toBe(true);
   });
+
+  it('disables chat for a cancelled same-day game with stale live status', () => {
+    const now = new Date(2026, 1, 24, 18, 0, 0);
+    const game = {
+      date: new Date(2026, 1, 24, 1, 0, 0),
+      status: 'cancelled',
+      liveStatus: 'live'
+    };
+
+    expect(isViewerChatEnabled(game, { now })).toBe(false);
+  });
 });
