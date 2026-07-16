@@ -2670,7 +2670,9 @@ function handleGameUpdate(gameDoc) {
   if (!gameDoc) return;
   const gameStatus = String(gameDoc.status || '').trim().toLowerCase();
   const isCancelled = gameStatus === 'cancelled' || gameStatus === 'canceled';
-  state.game = gameDoc;
+  state.game = isCancelled && gameDoc.liveStatus === 'live'
+    ? { ...gameDoc, liveStatus: 'cancelled' }
+    : gameDoc;
   refreshVideoPanel();
   renderGameInfo();
   const resetAt = getTimestampMs(gameDoc.liveResetAt) || 0;

@@ -128,6 +128,23 @@ describe('shared schedule sync helpers', () => {
     expect(payload.notes).toBeNull();
   });
 
+  it('propagates cancelled live status to the mirrored fixture', () => {
+    const payload = buildMirroredGamePayload({
+      sourceTeamId: 'team-alpha',
+      sourceTeam: { name: 'Alpha FC' },
+      sourceGameId: 'game-123',
+      sourceGame: {
+        type: 'game',
+        opponentTeamId: 'team-bravo',
+        status: 'cancelled',
+        liveStatus: 'cancelled'
+      },
+      sharedScheduleId: 'shared_team-alpha_game-123'
+    });
+
+    expect(payload.liveStatus).toBe('cancelled');
+  });
+
 
   it('does not mirror team-scoped stat tracker config ids across shared schedules', () => {
     const payload = buildMirroredGamePayload({

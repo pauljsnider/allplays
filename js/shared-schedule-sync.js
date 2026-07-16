@@ -46,6 +46,7 @@ export function buildMirroredGamePayload({
     homeScore: Number(sourceGame.awayScore) || 0,
     awayScore: Number(sourceGame.homeScore) || 0,
     status: sourceGame.status || 'scheduled',
+    liveStatus: sourceGame.liveStatus || null,
     competitionType: sourceGame.competitionType || 'league',
     seasonLabel: sourceGame.seasonLabel || null,
     countsTowardSeasonRecord: sourceGame.countsTowardSeasonRecord !== false,

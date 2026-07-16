@@ -593,6 +593,8 @@ describe('live game replay initialization', () => {
         const handleUpdateSource = source.slice(handleUpdateStart, updateChatStart);
 
         expect(handleUpdateSource).toContain("const isCancelled = gameStatus === 'cancelled' || gameStatus === 'canceled';");
+        expect(handleUpdateSource).toMatch(/state\.game = isCancelled && gameDoc\.liveStatus === 'live'[\s\S]*\? \{ \.\.\.gameDoc, liveStatus: 'cancelled' \}/);
+        expect(handleUpdateSource.indexOf("liveStatus: 'cancelled'")).toBeLessThan(handleUpdateSource.indexOf('refreshVideoPanel();'));
         expect(handleUpdateSource).toContain("if (gameDoc.liveStatus === 'live' && !isCancelled)");
     });
 
