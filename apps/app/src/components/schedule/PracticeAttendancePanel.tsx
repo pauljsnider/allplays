@@ -35,7 +35,7 @@ export function PracticeAttendancePanel({ attendance, loading, saving, savingPla
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0">
                   <div className="text-sm font-black text-gray-950">{player.playerNumber ? `#${player.playerNumber} ` : ''}{player.displayName}</div>
-                  <div className="mt-1 text-xs font-bold text-gray-500">{player.status === 'absent' ? 'Absent' : player.status === 'late' ? 'Late' : 'Present'}</div>
+                  <div className="mt-1 text-xs font-bold text-gray-500">{player.status === 'not_marked' ? 'Not marked' : player.status === 'absent' ? 'Absent' : player.status === 'late' ? 'Late' : 'Present'}</div>
                 </div>
                 <div className="grid grid-cols-3 gap-1.5 sm:min-w-[220px]">
                   {(['present', 'late', 'absent'] as const).map((status) => (

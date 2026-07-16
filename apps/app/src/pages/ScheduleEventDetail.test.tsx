@@ -3809,7 +3809,7 @@ describe('ScheduleEventDetail practice attendance', () => {
       checkedInCount: 1,
       players: [
         { playerId: 'p1', displayName: 'Avery Smith', playerNumber: '1', status: 'present', checkedInAt: new Date('2026-06-04T17:55:00Z') },
-        { playerId: 'p2', displayName: 'Blake Jones', playerNumber: '2', status: 'absent', checkedInAt: null }
+        { playerId: 'p2', displayName: 'Blake Jones', playerNumber: '2', status: 'not_marked', checkedInAt: null }
       ]
     });
     scheduleServiceMocks.saveStaffPracticeAttendance.mockResolvedValue({
@@ -3913,8 +3913,8 @@ describe('ScheduleEventDetail practice attendance', () => {
       rosterSize: 2,
       checkedInCount: 0,
       players: [
-        { playerId: 'p1', displayName: 'Avery Smith', playerNumber: '1', status: 'absent', checkedInAt: null },
-        { playerId: 'p2', displayName: 'Blake Jones', playerNumber: '2', status: 'absent', checkedInAt: null }
+        { playerId: 'p1', displayName: 'Avery Smith', playerNumber: '1', status: 'not_marked', checkedInAt: null },
+        { playerId: 'p2', displayName: 'Blake Jones', playerNumber: '2', status: 'not_marked', checkedInAt: null }
       ]
     });
     scheduleServiceMocks.saveStaffPracticeAttendance.mockImplementation((_, __, payload) => new Promise((resolve) => {
@@ -3945,7 +3945,7 @@ describe('ScheduleEventDetail practice attendance', () => {
           checkedInCount: 1,
           players: [
             expect.objectContaining({ playerId: 'p1', status: 'present' }),
-            expect.objectContaining({ playerId: 'p2', status: 'absent' })
+            expect.objectContaining({ playerId: 'p2', status: 'not_marked' })
           ]
         })
       );
@@ -3959,6 +3959,56 @@ describe('ScheduleEventDetail practice attendance', () => {
     await waitFor(() => {
       expect(screen.getByText('Avery Smith marked present.')).toBeTruthy();
     });
+  });
+
+  it('rolls an explicit absent selection back to not marked when saving fails', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        id: 'practice-1',
+        eventKey: 'team-1::practice-1::staff-team-team-1::2026-06-04T18:00:00.000Z::practice',
+        type: 'practice',
+        childId: 'staff-team-team-1',
+        childName: 'Team schedule',
+        isTeamAdmin: true,
+        isTeamStaff: true,
+        practiceSessionId: 'session-1'
+      })],
+      children: []
+    });
+    scheduleServiceMocks.loadParentPracticePacket.mockResolvedValue(null);
+    scheduleServiceMocks.loadStaffPracticeAttendance.mockResolvedValue({
+      sessionId: 'session-1',
+      teamId: 'team-1',
+      eventId: 'practice-1',
+      rosterSize: 1,
+      checkedInCount: 0,
+      players: [
+        { playerId: 'p1', displayName: 'Avery Smith', playerNumber: '1', status: 'not_marked', checkedInAt: null }
+      ]
+    });
+    scheduleServiceMocks.saveStaffPracticeAttendance.mockRejectedValue(new Error('Save failed'));
+
+    renderScheduleEventDetail();
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'More' }).length).toBeGreaterThan(0));
+    fireEvent.click(screen.getAllByRole('button', { name: 'More' })[0]);
+    await waitFor(() => expect(screen.getByText('Not marked')).toBeTruthy());
+
+    const row = screen.getByTestId('practice-attendance-row-p1');
+    fireEvent.click(within(row).getByRole('button', { name: 'Absent' }));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.saveStaffPracticeAttendance).toHaveBeenCalledWith(
+        expect.any(Object),
+        auth.user,
+        expect.objectContaining({
+          checkedInCount: 0,
+          players: [expect.objectContaining({ playerId: 'p1', status: 'absent' })]
+        })
+      );
+    });
+    await waitFor(() => expect(screen.getByText('Save failed')).toBeTruthy());
+    expect(within(row).getByText('Not marked')).toBeTruthy();
+    expect(screen.getByText('0/1 checked in')).toBeTruthy();
   });
 });
 

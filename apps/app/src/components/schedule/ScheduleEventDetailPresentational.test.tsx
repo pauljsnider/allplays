@@ -26,7 +26,7 @@ function buildAttendance(overrides: Partial<StaffPracticeAttendance> = {}): Staf
     checkedInCount: 1,
     players: [
       { playerId: 'p1', displayName: 'Avery Smith', playerNumber: '1', status: 'present', checkedInAt: new Date('2026-06-04T17:55:00.000Z') },
-      { playerId: 'p2', displayName: 'Blake Jones', playerNumber: '2', status: 'absent', checkedInAt: null }
+      { playerId: 'p2', displayName: 'Blake Jones', playerNumber: '2', status: 'not_marked', checkedInAt: null }
     ],
     ...overrides
   };
@@ -187,8 +187,10 @@ describe('ScheduleEventDetail presentational components', () => {
 
     expect(screen.getByText('1/2 checked in')).toBeTruthy();
     expect(screen.getByText('#2 Blake Jones')).toBeTruthy();
+    expect(screen.getByText('Not marked')).toBeTruthy();
 
     const row = screen.getByTestId('practice-attendance-row-p2');
+    expect(within(row).getByRole('button', { name: 'Absent' }).className).not.toContain('bg-amber-100');
     fireEvent.click(within(row).getByRole('button', { name: 'Late' }));
 
     expect(onSelectStatus).toHaveBeenCalledWith(attendance.players[1], 'late');

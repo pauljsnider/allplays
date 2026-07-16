@@ -2728,7 +2728,7 @@ describe('staff practice attendance', () => {
     vi.clearAllMocks();
   });
 
-  it('loads roster-backed attendance and defaults unrecorded players to absent', async () => {
+  it('loads roster-backed attendance and keeps unrecorded players not marked', async () => {
     vi.mocked(getPracticeSession).mockResolvedValue({
       id: 'session-1',
       attendance: {
@@ -2755,23 +2755,24 @@ describe('staff practice attendance', () => {
     expect(result.players).toEqual([
       expect.objectContaining({ playerId: 'p1', status: 'present' }),
       expect.objectContaining({ playerId: 'p2', status: 'late' }),
-      expect.objectContaining({ playerId: 'p3', status: 'absent' })
+      expect.objectContaining({ playerId: 'p3', status: 'not_marked' })
     ]);
   });
 
-  it('persists normalized present, late, and absent statuses through practice attendance updates', async () => {
+  it('persists only explicit attendance statuses and excludes not-marked players', async () => {
     vi.mocked(updatePracticeAttendance).mockResolvedValue(undefined as any);
 
     const result = await saveStaffPracticeAttendance(event, user as any, {
       sessionId: 'session-1',
       teamId: 'team-1',
       eventId: 'practice-1',
-      rosterSize: 3,
+      rosterSize: 4,
       checkedInCount: 1,
       players: [
         { playerId: 'p1', displayName: 'Avery Smith', playerNumber: '1', status: 'present' },
         { playerId: 'p2', displayName: 'Blake Jones', playerNumber: '2', status: 'late' },
-        { playerId: 'p3', displayName: 'Casey Brown', playerNumber: '3', status: 'absent' }
+        { playerId: 'p3', displayName: 'Casey Brown', playerNumber: '3', status: 'absent' },
+        { playerId: 'p4', displayName: 'Devon Green', playerNumber: '4', status: 'not_marked' }
       ]
     });
 
@@ -2779,7 +2780,7 @@ describe('staff practice attendance', () => {
       'team-1',
       'session-1',
       expect.objectContaining({
-        rosterSize: 3,
+        rosterSize: 4,
         checkedInCount: 2,
         players: [
           expect.objectContaining({ playerId: 'p1', status: 'present' }),
@@ -2788,7 +2789,53 @@ describe('staff practice attendance', () => {
         ]
       })
     );
+    expect(updatePracticeAttendance).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({
+        players: expect.arrayContaining([expect.objectContaining({ playerId: 'p4' })])
+      })
+    );
     expect(result.checkedInCount).toBe(2);
+    expect(result.players).toEqual(expect.arrayContaining([
+      expect.objectContaining({ playerId: 'p4', status: 'not_marked' })
+    ]));
+  });
+
+  it('summarizes only explicitly recorded absences for schedule events', async () => {
+    const parent = {
+      uid: 'parent-1',
+      email: 'parent@example.com',
+      roles: ['parent'],
+      parentOf: [{ teamId: 'team-1', playerId: 'p1', playerName: 'Avery Smith', teamName: 'Bears' }]
+    } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: parent.parentOf } as any);
+    vi.mocked(getTeams).mockResolvedValue([] as any);
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-1', name: 'Bears', active: true } as any);
+    vi.mocked(getDoc).mockResolvedValue(playerSnapshot('p1', { id: 'p1', name: 'Avery Smith', active: true }) as any);
+    vi.mocked(getGames).mockResolvedValue([{
+      id: 'practice-1',
+      type: 'practice',
+      date: new Date('2026-07-20T18:00:00Z'),
+      title: 'Practice'
+    }] as any);
+    vi.mocked(getPracticeSessions).mockResolvedValueOnce([{
+      id: 'session-1',
+      eventId: 'practice-1',
+      date: new Date('2026-07-20T18:00:00Z'),
+      attendance: { players: [] }
+    }] as any).mockResolvedValueOnce([{
+      id: 'session-1',
+      eventId: 'practice-1',
+      date: new Date('2026-07-20T18:00:00Z'),
+      attendance: { players: [{ playerId: 'p1', status: 'absent' }] }
+    }] as any);
+
+    const unrecorded = await loadParentSchedule(parent, { hydrateDetails: false, expandStaffPlayers: false });
+    const explicitlyAbsent = await loadParentSchedule(parent, { hydrateDetails: false, expandStaffPlayers: false });
+
+    expect(unrecorded.events[0].practiceAttendanceSummary).toBeNull();
+    expect(explicitlyAbsent.events[0].practiceAttendanceSummary).toBe('0/1 present, 1 absent');
   });
 
   it('rejects coach-only staff without admin write access', async () => {
