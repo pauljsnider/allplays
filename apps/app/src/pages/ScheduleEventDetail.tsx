@@ -194,13 +194,14 @@ import { useStaffRsvpBreakdown } from '../hooks/schedule/useStaffRsvpBreakdown';
 export { getAvailabilityNoteSaveState } from '../components/schedule/AvailabilityPanels';
 
 type EventDetailSectionId = ScheduleEventDetailSectionId;
-export type GameHubPanelId = 'chat' | 'reactions' | 'wrapup' | 'statsheet' | 'lineup' | 'substitutions' | 'report';
+export type GameHubPanelId = 'foul' | 'chat' | 'reactions' | 'wrapup' | 'statsheet' | 'lineup' | 'substitutions' | 'report';
 type HomeScoringPlayersUpdater = (players: ScheduleHomeScoringPlayer[]) => ScheduleHomeScoringPlayer[];
 
 const eventDetailSectionIds = new Set<EventDetailSectionId>(['availability', 'rideshare', 'assignments', 'game']);
-const gameHubPanelIds = new Set<GameHubPanelId>(['chat', 'reactions', 'wrapup', 'statsheet', 'lineup', 'substitutions', 'report']);
+const gameHubPanelIds = new Set<GameHubPanelId>(['foul', 'chat', 'reactions', 'wrapup', 'statsheet', 'lineup', 'substitutions', 'report']);
 
 const gameHubPanelDetails: Record<GameHubPanelId, { label: string; elementId: string }> = {
+  foul: { label: 'Foul tracker', elementId: 'game-hub-foul-panel' },
   chat: { label: 'Live chat', elementId: 'game-hub-chat-panel' },
   reactions: { label: 'Live reactions', elementId: 'game-hub-reactions-panel' },
   wrapup: { label: 'Post-game wrap-up', elementId: 'game-hub-wrapup-panel' },
@@ -1605,12 +1606,13 @@ function GameHubSection({ auth, event, childEvents, requestedPanel, onPanelChang
   const standardTrackerHref = `/schedule/${encodeURIComponent(event.teamId)}/${encodeURIComponent(event.id)}/track`;
   const availablePanelIds = useMemo(() => {
     const panels: GameHubPanelId[] = [];
+    if (canUpdateScore) panels.push('foul');
     if (!isPractice) panels.push('reactions', 'chat');
     if (canWrapup) panels.push('wrapup', 'statsheet');
     if (canPublishLineup) panels.push('lineup', 'substitutions');
     if (!isPractice) panels.push('report');
     return panels;
-  }, [canPublishLineup, canWrapup, isPractice]);
+  }, [canPublishLineup, canUpdateScore, canWrapup, isPractice]);
   const requestedPanelAvailable = requestedPanel && availablePanelIds.includes(requestedPanel)
     ? requestedPanel
     : null;
@@ -1815,13 +1817,21 @@ function GameHubSection({ auth, event, childEvents, requestedPanel, onPanelChang
             />
           ) : null}
           {canUpdateScore ? (
-            <GameDayFoulTrackerPanel
-              auth={auth}
-              event={event}
-              homePlayers={homeScoringPlayers}
-              loadingHomePlayers={loadingHomeScoringPlayers}
-              onHomePlayersUpdated={updateHomeScoringPlayers}
-            />
+            <LazyGameHubPanel
+              panelId="game-hub-foul-panel"
+              title="Foul tracker"
+              description="Load foul history only when the scorekeeper needs it."
+              open={Boolean(openPanels.foul)}
+              onToggle={() => togglePanel('foul')}
+            >
+              <GameDayFoulTrackerPanel
+                auth={auth}
+                event={event}
+                homePlayers={homeScoringPlayers}
+                loadingHomePlayers={loadingHomeScoringPlayers}
+                onHomePlayersUpdated={updateHomeScoringPlayers}
+              />
+            </LazyGameHubPanel>
           ) : null}
 
           {!isPractice ? (
