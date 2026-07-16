@@ -825,6 +825,7 @@ describe('ScheduleEventDetail route state', () => {
   });
 
   it.each([
+    ['foul', 'foul'],
     ['chat', 'chat'],
     [' ReAcTiOnS ', 'reactions'],
     ['wrapup', 'wrapup'],
@@ -1916,13 +1917,13 @@ describe('ScheduleEventDetail assignments', () => {
 
       await waitFor(() => {
         expect(screen.getByRole('button', { name: '#12 Avery Smith plus 2 points' })).toBeTruthy();
-        expect(screen.getByText('0 team fouls this period')).toBeTruthy();
       });
+      expect(screen.getByRole('button', { name: 'Foul tracker' }).getAttribute('aria-expanded')).toBe('false');
+      expect(screen.queryByTestId('game-day-foul-panel')).toBeNull();
+      expect(scheduleServiceMocks.loadGameDayLiveEventsForApp).not.toHaveBeenCalled();
 
       const liveScoreEditor = screen.getByTestId('live-score-editor');
-      const foulTrackerPanel = screen.getByTestId('game-day-foul-panel');
       const scoreEditorMarkup = liveScoreEditor.innerHTML;
-      const foulTrackerMarkup = foulTrackerPanel.innerHTML;
 
       await act(async () => {
         await new Promise((resolve) => window.setTimeout(resolve, 2_100));
@@ -1934,9 +1935,9 @@ describe('ScheduleEventDetail assignments', () => {
       expect(updatedHeaderClock).toBe(updatedPanelClock);
       expect(updatedHeaderClock).toBeGreaterThanOrEqual((initialHeaderClock ?? 0) + 1);
       expect(screen.getByTestId('live-score-editor').innerHTML).toBe(scoreEditorMarkup);
-      expect(screen.getByTestId('game-day-foul-panel').innerHTML).toBe(foulTrackerMarkup);
+      expect(screen.queryByTestId('game-day-foul-panel')).toBeNull();
       expect(scheduleServiceMocks.loadHomeScoringPlayers).toHaveBeenCalledTimes(1);
-      expect(scheduleServiceMocks.loadGameDayLiveEventsForApp).toHaveBeenCalledTimes(1);
+      expect(scheduleServiceMocks.loadGameDayLiveEventsForApp).not.toHaveBeenCalled();
     } finally {
       setIntervalSpy.mockRestore();
     }
@@ -1965,6 +1966,13 @@ describe('ScheduleEventDetail assignments', () => {
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: '#12 Avery Smith plus 2 points' })).toBeTruthy();
+    });
+    expect(screen.queryByTestId('game-day-foul-panel')).toBeNull();
+    expect(scheduleServiceMocks.loadGameDayLiveEventsForApp).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Foul tracker' }));
+
+    await waitFor(() => {
       expect(screen.getByRole('button', { name: '#12 Avery Smith add foul' })).toBeTruthy();
       expect(screen.getByText('6 team fouls this period')).toBeTruthy();
     });
@@ -1994,6 +2002,8 @@ describe('ScheduleEventDetail assignments', () => {
     scheduleHubMocks.buildGameHubDestinations.mockReturnValue([]);
 
     renderScheduleEventDetailWithRouteControls();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Foul tracker' }));
 
     await waitFor(() => {
       expect(screen.getByText('Foul history could not be loaded. Refresh before recording fouls.')).toBeTruthy();
@@ -2045,22 +2055,29 @@ describe('ScheduleEventDetail assignments', () => {
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: '#12 Avery Smith plus 2 points' })).toBeTruthy();
-      expect(screen.getByRole('button', { name: '#12 Avery Smith add foul' })).toBeTruthy();
     });
+    expect(screen.queryByTestId('game-day-foul-panel')).toBeNull();
+    expect(scheduleServiceMocks.loadGameDayLiveEventsForApp).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole('button', { name: 'Switch game' }));
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: '#7 Jordan Lee plus 2 points' })).toBeTruthy();
+    });
+    expect(screen.queryByTestId('game-day-foul-panel')).toBeNull();
+    expect(scheduleServiceMocks.loadGameDayLiveEventsForApp).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Foul tracker' }));
+
+    await waitFor(() => {
       expect(screen.getByRole('button', { name: '#7 Jordan Lee add foul' })).toBeTruthy();
     });
 
     expect(scheduleServiceMocks.loadHomeScoringPlayers).toHaveBeenCalledTimes(2);
     expect(scheduleServiceMocks.loadHomeScoringPlayers).toHaveBeenNthCalledWith(1, 'team-1', 'game-1');
     expect(scheduleServiceMocks.loadHomeScoringPlayers).toHaveBeenNthCalledWith(2, 'team-1', 'game-2');
-    expect(scheduleServiceMocks.loadGameDayLiveEventsForApp).toHaveBeenCalledTimes(2);
-    expect(scheduleServiceMocks.loadGameDayLiveEventsForApp).toHaveBeenNthCalledWith(1, 'team-1', 'game-1');
-    expect(scheduleServiceMocks.loadGameDayLiveEventsForApp).toHaveBeenNthCalledWith(2, 'team-1', 'game-2');
+    expect(scheduleServiceMocks.loadGameDayLiveEventsForApp).toHaveBeenCalledTimes(1);
+    expect(scheduleServiceMocks.loadGameDayLiveEventsForApp).toHaveBeenCalledWith('team-1', 'game-2');
   });
 
   it('preserves dirty game schedule edits when same-event score updates refresh the event object', async () => {
@@ -2336,6 +2353,8 @@ describe('ScheduleEventDetail assignments', () => {
 
     renderScheduleEventDetailWithRouteControls();
 
+    fireEvent.click(await screen.findByRole('button', { name: 'Foul tracker' }));
+
     await waitFor(() => {
       expect(screen.getByTestId('game-day-foul-panel')).toBeTruthy();
     });
@@ -2352,6 +2371,14 @@ describe('ScheduleEventDetail assignments', () => {
     });
     expect(screen.getByLabelText('Team foul bonus state').textContent).toContain('Q1 · Bonus');
     expect(screen.getByText('7 team fouls this period')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Foul tracker' }));
+    expect(screen.getByRole('button', { name: 'Foul tracker' }).getAttribute('aria-expanded')).toBe('false');
+    expect(screen.getByTestId('game-day-foul-panel').closest('[hidden]')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Foul tracker' }));
+    expect(screen.getByRole('button', { name: 'Undo last foul' })).toHaveProperty('disabled', false);
+    expect(scheduleServiceMocks.loadGameDayLiveEventsForApp).toHaveBeenCalledTimes(1);
 
     fireEvent.click(screen.getByRole('button', { name: 'Undo last foul' }));
 
@@ -2699,6 +2726,7 @@ describe('ScheduleEventDetail assignments', () => {
     expect(screen.getByRole('button', { name: 'Home score up' })).toBeTruthy();
     expect(liveGameChatServiceMocks.subscribeToLiveGameChat).not.toHaveBeenCalled();
     expect(liveGameReactionsServiceMocks.subscribeToLiveGameReactions).not.toHaveBeenCalled();
+    expect(scheduleServiceMocks.loadGameDayLiveEventsForApp).not.toHaveBeenCalled();
     expect(scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp).not.toHaveBeenCalled();
     expect(gameReportServiceMocks.loadGameReportSections).not.toHaveBeenCalled();
 
@@ -2982,7 +3010,7 @@ describe('ScheduleEventDetail assignments', () => {
 
     await waitFor(() => {
       expect(scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp).toHaveBeenCalledTimes(1);
-      expect(scheduleServiceMocks.loadGameDayLiveEventsForApp).toHaveBeenCalledTimes(2);
+      expect(scheduleServiceMocks.loadGameDayLiveEventsForApp).toHaveBeenCalledTimes(1);
       expect(screen.getByLabelText('Out')).toBeTruthy();
       expect(screen.getByLabelText('In')).toBeTruthy();
     });
