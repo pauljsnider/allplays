@@ -996,7 +996,7 @@
                 button.disabled = true;
                 button.textContent = 'Previewing...';
                 status.textContent = 'Comparing source roster to current roster...';
-                const existingPlayers = await getPlayers(currentTeamId, { includeInactive: true });
+                const existingPlayers = await getPlayersWithPrivateRosterContacts(currentTeamId, { includeInactive: true });
                 registrationRosterImportPlan = planRegistrationRosterImport({
                     sourcePlayers,
                     existingPlayers,

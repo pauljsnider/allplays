@@ -342,6 +342,37 @@ describe('registration roster import planning', () => {
         expect(plan.operations[0].payload.profile.customFields).not.toHaveProperty('grade');
     });
 
+    it('preserves corrected private values over stale legacy public values during unrelated registration imports', () => {
+        const plan = planRegistrationRosterImport({
+            source: { type: 'sports-connect', id: 'league-1' },
+            fields: [],
+            sourcePlayers: [{
+                externalPlayerId: 'ext-1',
+                name: 'Avery Lee',
+                number: '4'
+            }],
+            existingPlayers: [{
+                id: 'player-1',
+                name: 'Avery Lee',
+                number: '3',
+                profile: {
+                    birthDate: '2014-02-03',
+                    customFields: { grade: '6' }
+                },
+                privateProfileRosterFields: {
+                    birthDate: '2014-03-04',
+                    grade: '7'
+                },
+                sourceMetadata: { sourceType: 'sports-connect', sourceId: 'league-1', externalPlayerId: 'ext-1' }
+            }]
+        });
+
+        expect(plan.operations[0].privateRosterFields).toEqual({
+            birthDate: '2014-03-04',
+            grade: '7'
+        });
+    });
+
     it('falls back past empty registration wrappers when mapping configured roster fields', () => {
         const plan = planRegistrationRosterImport({
             source: { type: 'sports-connect', id: 'league-1' },
@@ -494,6 +525,8 @@ describe('registration roster import wiring', () => {
         expect(source).toContain('selectedOperationIds');
         expect(source).toContain('Conflicted rows are skipped automatically');
         expect(source).toContain('fields: rosterFieldDefinitions');
+        expect(source).toContain('const existingPlayers = await getPlayersWithPrivateRosterContacts(currentTeamId, { includeInactive: true });');
+        expect(source).not.toContain('const existingPlayers = await getPlayers(currentTeamId, { includeInactive: true });');
         expect(source).toContain('await applyRosterCsvImportOperations(currentTeamId, selectedOperations);');
         expect(source).not.toContain('await updatePlayer(currentTeamId, playerId, operation.payload);');
         expect(source).toContain('function getPlayerImportSourceType');
