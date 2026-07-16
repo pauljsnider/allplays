@@ -665,6 +665,34 @@ describe('roster CSV import planning', () => {
         expect(batch.commit).toHaveBeenCalledTimes(1);
     });
 
+    it('stages registration and Bulk AI migration writes in one batch before a failed commit', async () => {
+        const { applyRosterCsvImportOperations, batch } = buildRosterImportOperationHelper();
+        batch.commit.mockRejectedValueOnce(new Error('commit failed'));
+
+        await expect(applyRosterCsvImportOperations('team-1', [{
+            type: 'update',
+            playerId: 'player-1',
+            payload: { profile: { customFields: { nickname: 'Rocket' } } },
+            privateRosterFields: { birthDate: '2014-02-03' },
+            privateFamilyContacts: { parents: [{ email: 'parent@example.com' }] }
+        }])).rejects.toThrow('commit failed');
+
+        expect(batch.update).toHaveBeenCalledWith(
+            expect.objectContaining({ path: 'teams/team-1/players/player-1' }),
+            { profile: { customFields: { nickname: 'Rocket' } }, updatedAt: 'now' }
+        );
+        expect(batch.set).toHaveBeenCalledWith(
+            expect.objectContaining({ path: 'teams/team-1/players/player-1/private/profile' }),
+            {
+                updatedAt: 'now',
+                rosterFields: { birthDate: '2014-02-03' },
+                parents: [{ email: 'parent@example.com' }]
+            },
+            { merge: true }
+        );
+        expect(batch.commit).toHaveBeenCalledTimes(1);
+    });
+
     it('stages app profile migration writes in one batch before a failed commit', async () => {
         const { updatePlayerWithPrivateRosterProfileFields, batch } = buildRosterImportOperationHelper();
         batch.commit.mockRejectedValueOnce(new Error('commit failed'));

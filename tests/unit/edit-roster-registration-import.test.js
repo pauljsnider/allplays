@@ -494,7 +494,8 @@ describe('registration roster import wiring', () => {
         expect(source).toContain('selectedOperationIds');
         expect(source).toContain('Conflicted rows are skipped automatically');
         expect(source).toContain('fields: rosterFieldDefinitions');
-        expect(source).toContain('setPlayerPrivateRosterProfileFields(currentTeamId, playerId, operation.privateRosterFields, operation.privateFamilyContacts || {})');
+        expect(source).toContain('await applyRosterCsvImportOperations(currentTeamId, selectedOperations);');
+        expect(source).not.toContain('await updatePlayer(currentTeamId, playerId, operation.payload);');
         expect(source).toContain('function getPlayerImportSourceType');
         expect(source).toContain('player.registrationSource?.externalPlayerId');
         expect(source).toContain('player.externalPlayerId');

@@ -48,7 +48,11 @@ describe('edit roster Bulk AI proposed changes preview', () => {
         expect(source).toContain('function mergeBulkAiPrivateFamilyContactsForUpdate');
         expect(source).toContain('existingPlayer.privateProfileParents || []');
         expect(applySource).toContain('const privateFamilyContacts = mergeBulkAiPrivateFamilyContactsForUpdate(existingPlayer, payload.privateFamilyContacts);');
-        expect(applySource).toContain('setPlayerPrivateRosterProfileFields(currentTeamId, op.playerId, payload.privateRosterFields, privateFamilyContacts || {})');
+        expect(applySource).toContain("await applyRosterCsvImportOperations(currentTeamId, [{");
+        expect(applySource).toContain("type: 'update'");
+        expect(applySource).toContain('privateRosterFields: payload.privateRosterFields');
+        expect(applySource).toContain('privateFamilyContacts: privateFamilyContacts || {}');
+        expect(applySource).not.toContain('await updatePlayer(currentTeamId, op.playerId, playerData);');
     });
 
     it('migrates legacy protected profile values during Bulk AI saves', () => {

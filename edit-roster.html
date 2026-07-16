@@ -554,7 +554,7 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getPlayers, getPlayersWithPrivateRosterContacts, getUsersByParentPlayerKey, getUsersByParentTeamId, addPlayer, applyRosterCsvImportOperations, deactivatePlayer, reactivatePlayer, getGames, uploadPlayerPhoto, updatePlayer, setPlayerPrivateRosterProfileFields, inviteParent, removeParentFromPlayer, getUnreadChatCount, listTeamParentMembershipRequests, approveParentMembershipRequest, denyParentMembershipRequest, getRosterFieldDefinitions, saveRosterFieldDefinition, disableRosterFieldDefinition, reorderRosterFieldDefinitions, listTeamRegistrationForms, listTeamRegistrationReviews, approveTeamRegistration, rejectTeamRegistration, extendTeamRegistrationOffer, acceptTeamRegistrationOffer, releaseTeamRegistrationWaitlist, listTeamTrackingItems, createTeamTrackingItem, listTeamTrackingStatuses, setTeamTrackingStatus } from './js/db.js?v=101';
+        import { getTeam, getPlayers, getPlayersWithPrivateRosterContacts, getUsersByParentPlayerKey, getUsersByParentTeamId, addPlayer, applyRosterCsvImportOperations, deactivatePlayer, reactivatePlayer, getGames, uploadPlayerPhoto, setPlayerPrivateRosterProfileFields, inviteParent, removeParentFromPlayer, getUnreadChatCount, listTeamParentMembershipRequests, approveParentMembershipRequest, denyParentMembershipRequest, getRosterFieldDefinitions, saveRosterFieldDefinition, disableRosterFieldDefinition, reorderRosterFieldDefinitions, listTeamRegistrationForms, listTeamRegistrationReviews, approveTeamRegistration, rejectTeamRegistration, extendTeamRegistrationOffer, acceptTeamRegistrationOffer, releaseTeamRegistrationWaitlist, listTeamTrackingItems, createTeamTrackingItem, listTeamTrackingStatuses, setTeamTrackingStatus } from './js/db.js?v=101';
         import { buildFullRosterCsvTemplate, buildRosterFieldDefinitionPayload, collectRosterParentContacts, collectRosterProfileValues, getRosterProfileValues, mergeRosterParentContacts, mergeStandardRosterFieldDefinitions, normalizeRosterFieldDefinitions, planRosterCsvImport, renderRosterProfileFields, splitProtectedRosterProfileValues, splitRosterProfileValuesByVisibility, summarizeRosterContactInviteResults, validateRosterProfileValues } from './js/roster-profile-fields.js?v=8';
         import { buildTrackingStatusPayload, mergeTrackingStatusRows, normalizeTrackingItemDraft, summarizeTrackingStatus } from './js/tracking-status-admin.js?v=2';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=15';
@@ -1038,17 +1038,7 @@
                     return;
                 }
 
-                for (const operation of selectedOperations) {
-                    let playerId = operation.playerId;
-                    if (operation.type === 'update') {
-                        await updatePlayer(currentTeamId, playerId, operation.payload);
-                    } else if (operation.type === 'add') {
-                        playerId = await addPlayer(currentTeamId, operation.payload);
-                    }
-                    if (operation.privateRosterFields || operation.privateFamilyContacts) {
-                        await setPlayerPrivateRosterProfileFields(currentTeamId, playerId, operation.privateRosterFields, operation.privateFamilyContacts || {});
-                    }
-                }
+                await applyRosterCsvImportOperations(currentTeamId, selectedOperations);
 
                 status.textContent = `Import complete: ${selectedOperations.length} selected safe row${selectedOperations.length === 1 ? '' : 's'} applied from preview. ${formatRegistrationRosterImportResults(registrationRosterImportPlan.results)}.`;
                 if (registrationRosterImportPlan.results.conflicted > 0) {
@@ -2887,10 +2877,15 @@ EXAMPLES:
                             const payload = buildBulkAiRosterSavePayload(op.changes || {}, existingPlayer.profile || {});
                             const privateFamilyContacts = mergeBulkAiPrivateFamilyContactsForUpdate(existingPlayer, payload.privateFamilyContacts);
                             const playerData = { ...payload.playerData };
-                            await updatePlayer(currentTeamId, op.playerId, playerData);
-                            if (hasBulkAiPrivateProfilePayload(payload)) {
-                                await setPlayerPrivateRosterProfileFields(currentTeamId, op.playerId, payload.privateRosterFields, privateFamilyContacts || {});
-                            }
+                            await applyRosterCsvImportOperations(currentTeamId, [{
+                                type: 'update',
+                                playerId: op.playerId,
+                                payload: playerData,
+                                ...(hasBulkAiPrivateProfilePayload(payload) ? {
+                                    privateRosterFields: payload.privateRosterFields,
+                                    privateFamilyContacts: privateFamilyContacts || {}
+                                } : {})
+                            }]);
                             successCount++;
                         } else if (op.action === 'delete') {
                             await deactivatePlayer(currentTeamId, op.playerId);
