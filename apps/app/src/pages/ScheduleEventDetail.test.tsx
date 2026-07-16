@@ -2372,6 +2372,14 @@ describe('ScheduleEventDetail assignments', () => {
     expect(screen.getByLabelText('Team foul bonus state').textContent).toContain('Q1 · Bonus');
     expect(screen.getByText('7 team fouls this period')).toBeTruthy();
 
+    fireEvent.click(screen.getByRole('button', { name: 'Foul tracker' }));
+    expect(screen.getByRole('button', { name: 'Foul tracker' }).getAttribute('aria-expanded')).toBe('false');
+    expect(screen.getByTestId('game-day-foul-panel').closest('[hidden]')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Foul tracker' }));
+    expect(screen.getByRole('button', { name: 'Undo last foul' })).toHaveProperty('disabled', false);
+    expect(scheduleServiceMocks.loadGameDayLiveEventsForApp).toHaveBeenCalledTimes(1);
+
     fireEvent.click(screen.getByRole('button', { name: 'Undo last foul' }));
 
     await waitFor(() => {

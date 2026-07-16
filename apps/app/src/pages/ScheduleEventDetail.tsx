@@ -1507,6 +1507,7 @@ function LazyGameHubPanel({
   description,
   open,
   onToggle,
+  keepMounted = false,
   children
 }: {
   panelId: string;
@@ -1514,8 +1515,15 @@ function LazyGameHubPanel({
   description: string;
   open: boolean;
   onToggle: () => void;
+  keepMounted?: boolean;
   children: ReactNode;
 }) {
+  const [hasOpened, setHasOpened] = useState(open);
+
+  useEffect(() => {
+    if (open) setHasOpened(true);
+  }, [open]);
+
   return (
     <div className="mt-3">
       <button
@@ -1532,7 +1540,9 @@ function LazyGameHubPanel({
         </div>
         <ChevronDown className={`h-4 w-4 flex-none text-gray-500 transition ${open ? 'rotate-180' : ''}`} aria-hidden="true" />
       </button>
-      {open ? <div id={panelId} className="scroll-mt-40">{children}</div> : null}
+      {open || (keepMounted && hasOpened) ? (
+        <div id={panelId} className="scroll-mt-40" hidden={!open}>{children}</div>
+      ) : null}
     </div>
   );
 }
@@ -1823,6 +1833,7 @@ function GameHubSection({ auth, event, childEvents, requestedPanel, onPanelChang
               description="Load foul history only when the scorekeeper needs it."
               open={Boolean(openPanels.foul)}
               onToggle={() => togglePanel('foul')}
+              keepMounted
             >
               <GameDayFoulTrackerPanel
                 auth={auth}
