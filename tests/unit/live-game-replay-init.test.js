@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { isViewerChatEnabled } from '../../js/live-game-chat.js';
 
@@ -293,7 +293,7 @@ function buildModuleSource() {
         )
         .replace(
             "init().catch(error => {\n  console.error('Live game init failed:', error);\n  const feed = document.querySelector('#plays-feed');\n  if (feed) feed.innerHTML = '<div class=\"text-sand/60 text-center py-6\">Something went wrong loading the game. Try refreshing the page.</div>';\n});",
-            "const __initPromise = init().catch(error => {\n  console.error('Live game init failed:', error);\n  const feed = document.querySelector('#plays-feed');\n  if (feed) feed.innerHTML = '<div class=\"text-sand/60 text-center py-6\">Something went wrong loading the game. Try refreshing the page.</div>';\n});\nreturn { state, els, initPromise: __initPromise, seekReplay };"
+            "const __initPromise = init().catch(error => {\n  console.error('Live game init failed:', error);\n  const feed = document.querySelector('#plays-feed');\n  if (feed) feed.innerHTML = '<div class=\"text-sand/60 text-center py-6\">Something went wrong loading the game. Try refreshing the page.</div>';\n});\nreturn { state, els, initPromise: __initPromise, seekReplay, handleGameUpdate };"
         );
 }
 
@@ -578,6 +578,7 @@ async function bootReplayPage({ replayEvents }) {
         replayControls: ensureElement('replay-controls'),
         replayStartRebaseCalls,
         seekReplay: moduleInstance.seekReplay,
+        handleGameUpdate: moduleInstance.handleGameUpdate,
         opponentStats: ensureElement('opponent-stats'),
         lineupOnCourt: ensureElement('lineup-oncourt'),
         lineupBench: ensureElement('lineup-bench'),
@@ -586,16 +587,27 @@ async function bootReplayPage({ replayEvents }) {
 }
 
 describe('live game replay initialization', () => {
-    it('does not enter live viewer mode for cancelled games with stale live status', () => {
-        const source = readFileSync(new URL('../../js/live-game.js', import.meta.url), 'utf8');
-        const handleUpdateStart = source.indexOf('function handleGameUpdate(gameDoc)');
-        const updateChatStart = source.indexOf('function updateChatAvailability()', handleUpdateStart);
-        const handleUpdateSource = source.slice(handleUpdateStart, updateChatStart);
+    it('stops an active viewer when a stale-live game is cancelled', async () => {
+        const page = await bootReplayPage({ replayEvents: [] });
+        const unsubscribers = [vi.fn(), vi.fn(), vi.fn(), vi.fn(), vi.fn()];
+        page.state.isReplay = false;
+        page.state.isLive = true;
+        page.state.engagementsActive = true;
+        page.state.liveEventsActive = true;
+        page.state.unsubscribers = unsubscribers;
 
-        expect(handleUpdateSource).toContain("const isCancelled = gameStatus === 'cancelled' || gameStatus === 'canceled';");
-        expect(handleUpdateSource).toMatch(/state\.game = isCancelled && gameDoc\.liveStatus === 'live'[\s\S]*\? \{ \.\.\.gameDoc, liveStatus: 'cancelled' \}/);
-        expect(handleUpdateSource.indexOf("liveStatus: 'cancelled'")).toBeLessThan(handleUpdateSource.indexOf('refreshVideoPanel();'));
-        expect(handleUpdateSource).toContain("if (gameDoc.liveStatus === 'live' && !isCancelled)");
+        page.handleGameUpdate({
+            ...page.state.game,
+            status: 'cancelled',
+            liveStatus: 'live'
+        });
+
+        expect(page.state.isLive).toBe(false);
+        expect(page.state.game.liveStatus).toBe('cancelled');
+        expect(page.state.engagementsActive).toBe(false);
+        expect(page.state.liveEventsActive).toBe(false);
+        expect(page.state.unsubscribers).toEqual([]);
+        unsubscribers.forEach(unsubscribe => expect(unsubscribe).toHaveBeenCalledOnce());
     });
 
     it('keeps no-reload video refreshes from exposing the generic empty state over media content', () => {

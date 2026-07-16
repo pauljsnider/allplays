@@ -2247,6 +2247,20 @@ function startLiveEvents() {
   state.unsubscribers.push(unsubEvents);
 }
 
+function stopLiveMode() {
+  state.isLive = false;
+  state.unsubscribers.forEach(unsub => {
+    try {
+      unsub();
+    } catch {
+      // ignore
+    }
+  });
+  state.unsubscribers = [];
+  state.engagementsActive = false;
+  state.liveEventsActive = false;
+}
+
 function showNotLiveOverlay() {
   els.notLiveOverlay?.classList.remove('hidden');
   els.endedOverlay?.classList.add('hidden');
@@ -2713,6 +2727,9 @@ function handleGameUpdate(gameDoc) {
   } else if (gameDoc.liveStatus === 'completed') {
     showEndedOverlay();
   } else {
+    if (isCancelled && state.isLive) {
+      stopLiveMode();
+    }
     showNotLiveOverlay();
   }
 
