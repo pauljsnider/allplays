@@ -29,6 +29,20 @@ const homeSecondaryTtlMs = 30 * 1000;
 const teamsSummaryTtlMs = 30 * 1000;
 const logger = createLogger('home');
 
+type ParentHomeSummaryBootstrapResult = {
+  home: ParentHomeModel;
+  schedule: ParentScheduleLoadResult;
+};
+
+type ParentHomeSummaryOptions = {
+  force?: boolean;
+  scheduleScope?: ParentScheduleScope;
+};
+
+type ParentHomeSummaryBootstrapOptions = ParentHomeSummaryOptions & {
+  onPartial?: (result: ParentHomeSummaryBootstrapResult) => void;
+};
+
 function rethrowIfPermissionError(error: unknown, fallbackMessage: string) {
   const appError = toAppServiceError(error, fallbackMessage);
   if (appError.type === 'permission') {
@@ -68,7 +82,7 @@ export async function loadParentHome(user: AuthUser | null): Promise<ParentHomeM
 
 export async function loadParentHomeSummary(
   user: AuthUser | null,
-  options: { force?: boolean; scheduleScope?: ParentScheduleScope } = {}
+  options: ParentHomeSummaryOptions = {}
 ): Promise<ParentHomeModel> {
   const summary = await loadParentHomeSummaryBootstrap(user, options);
   return summary.home;
@@ -76,8 +90,8 @@ export async function loadParentHomeSummary(
 
 export async function loadParentHomeSummaryBootstrap(
   user: AuthUser | null,
-  options: { force?: boolean; scheduleScope?: ParentScheduleScope } = {}
-): Promise<{ home: ParentHomeModel; schedule: ParentScheduleLoadResult }> {
+  options: ParentHomeSummaryBootstrapOptions = {}
+): Promise<ParentHomeSummaryBootstrapResult> {
   if (!user?.uid) {
     const schedule = { children: [], events: [] };
     return {
@@ -86,16 +100,23 @@ export async function loadParentHomeSummaryBootstrap(
     };
   }
 
-  const schedule = await loadParentScheduleSummary(user, options);
-  return {
+  const toBootstrapResult = (schedule: ParentScheduleLoadResult): ParentHomeSummaryBootstrapResult => ({
     home: buildParentHomeModel({
       children: schedule.children,
       events: schedule.events,
-      inboxTeams: [],
+      inboxTeams: normalizeStaffTeams(schedule),
       fees: []
     }),
     schedule
-  };
+  });
+  const schedule = await loadParentScheduleSummary(user, {
+    force: options.force,
+    scheduleScope: options.scheduleScope,
+    ...(options.onPartial ? {
+      onPartial: (partialSchedule) => options.onPartial?.(toBootstrapResult(partialSchedule))
+    } : {})
+  });
+  return toBootstrapResult(schedule);
 }
 
 export async function loadParentTeamsSummary(user: AuthUser | null, options: { force?: boolean } = {}): Promise<ParentHomeModel> {
@@ -238,7 +259,7 @@ export async function loadParentHomeWithSecondaryData(
 
 export async function loadParentScheduleSummary(
   user: AuthUser | null,
-  options: { force?: boolean; scheduleScope?: ParentScheduleScope } = {}
+  options: ParentHomeSummaryOptions & { onPartial?: (schedule: ParentScheduleLoadResult) => void } = {}
 ): Promise<ParentScheduleLoadResult> {
   if (!user?.uid) return { children: [], events: [] };
   return loadCachedAppData(
@@ -246,7 +267,8 @@ export async function loadParentScheduleSummary(
     () => loadParentSchedule(user, {
       hydrateDetails: false,
       expandStaffPlayers: false,
-      parentScope: options.scheduleScope
+      parentScope: options.scheduleScope,
+      ...(options.onPartial ? { onPartial: options.onPartial } : {})
     }),
     {
       ttlMs: homeSummaryTtlMs,
@@ -254,6 +276,15 @@ export async function loadParentScheduleSummary(
       shouldCache: (result) => result?.isPartial !== true
     }
   );
+}
+
+function normalizeStaffTeams(schedule: ParentScheduleLoadResult): ParentHomeInboxTeam[] {
+  return (schedule.staffTeams || []).map((team) => ({
+    id: team.teamId,
+    name: team.teamName,
+    role: 'Coach',
+    unreadCount: 0
+  }));
 }
 
 function normalizeInboxTeams(teams: any[]): ParentHomeInboxTeam[] {
