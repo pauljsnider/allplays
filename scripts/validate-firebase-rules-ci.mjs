@@ -56,7 +56,8 @@ export function validatePreviewDeployCommand(deployPreview) {
 }
 
 export function validateProductionDeployCommand(deployProd) {
-    const deployCommand = (deployProd.match(/^\s*npx firebase-tools@\S+ deploy\b[^\n]*$/m) || [''])[0];
+    const deployCommands = Array.from(deployProd.matchAll(/^\s*npx firebase-tools@\S+ deploy\b[^\n]*$/gm), match => match[0]);
+    const deployCommand = deployCommands.find(command => /--only(?:=|\s+)hosting,/.test(command)) || '';
     if (!deployCommand) {
         throw new Error('Production Firebase deploy command is missing.');
     }
@@ -67,18 +68,28 @@ export function validateProductionDeployCommand(deployProd) {
     }
 
     const deployTargets = new Set(onlyList.split(','));
-    for (const target of ['firestore:rules', 'firestore:indexes', 'storage']) {
+    for (const target of ['firestore:rules', 'firestore:indexes']) {
         if (!deployTargets.has(target)) {
             throw new Error(`Production Firebase deploy --only list must include ${target}.`);
         }
     }
 
+    const storageDeployCommand = deployCommands.find(command => /--only(?:=|\s+)storage(?:\s|$)/.test(command)) || '';
+    assertMatches(storageDeployCommand, /--project game-flow-c6311(?:\s|$)/, 'Production Storage rules deploy project');
+    assertMatches(storageDeployCommand, /--config "\$FIREBASE_PROD_CONFIG"(?:\s|$)/, 'Production Storage rules generated config');
+    assertIncludes(deployProd, 'fetch-depth: 0', 'Production Storage rules change history');
+    assertIncludes(deployProd, 'git diff --quiet "${{ github.event.before }}" "${{ github.sha }}" -- storage.rules', 'Production Storage rules change detection');
+    assertIncludes(deployProd, 'STORAGE_RULES_CHANGED: ${{ steps.storage_rules.outputs.changed }}', 'Production Storage rules change output');
+    assertIncludes(deployProd, "sed -E 's/\\x1B\\[[0-9;]*[[:alpha:]]//g' \"$storage_log\" > \"$storage_plain_log\"", 'Production Storage rules ANSI log normalization');
+    assertIncludes(deployProd, '[[ "$STORAGE_RULES_CHANGED" != "true" ]]', 'Production Storage rules unchanged-only skip');
+    assertIncludes(deployProd, 'exit "$storage_status"', 'Production Storage rules changed failure');
     assertMatches(deployCommand, /(?:^|\s)--project game-flow-c6311(?:\s|$)/, 'Production Firebase deploy project');
     assertMatches(deployCommand, /(?:^|\s)--config "\$FIREBASE_PROD_CONFIG"(?:\s|$)/, 'Production Firebase generated config');
 }
 
 export function validateFirebaseRulesCi() {
     const firebaseJson = JSON.parse(readText('firebase.json'));
+    const firestoreIndexes = JSON.parse(readText('firestore.indexes.json'));
     const firestoreRules = readText('firestore.rules');
     const storageRules = readText('storage.rules');
     const teamMediaRules = extractMatchBlock(storageRules, 'match /team-media/{teamId}/{folderId}/{userId}/{fileName}');
@@ -102,6 +113,14 @@ export function validateFirebaseRulesCi() {
 
     if (firebaseJson.firestore?.indexes !== 'firestore.indexes.json') {
         throw new Error('firebase.json must deploy firestore.indexes.json.');
+    }
+    const authEmailDeliveryTtl = (firestoreIndexes.fieldOverrides || []).some((override) =>
+        override.collectionGroup === 'authEmailDeliveries' &&
+        override.fieldPath === 'expiresAt' &&
+        override.ttl === true
+    );
+    if (!authEmailDeliveryTtl) {
+        throw new Error('Authentication email deliveries must keep an expiresAt TTL policy.');
     }
 
     if (firebaseJson.storage?.rules !== 'storage.rules') {

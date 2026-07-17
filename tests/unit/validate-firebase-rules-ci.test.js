@@ -61,14 +61,32 @@ service firebase.storage {
 `)).toThrow('Preview deploy installed Firebase CLI project/config arguments');
     });
 
-    it('requires production deploys to release Storage rules with the generated config', () => {
+    it('skips an unavailable Storage service only when rules are unchanged', () => {
         const validDeployCommand = `
-            npx firebase-tools@14.25.0 deploy --only hosting,firestore:rules,firestore:indexes,storage,functions --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Detect Storage rules changes
+        id: storage_rules
+        run: git diff --quiet "\${{ github.event.before }}" "\${{ github.sha }}" -- storage.rules
+      - name: Deploy Firebase Storage rules when available
+        env:
+          STORAGE_RULES_CHANGED: \${{ steps.storage_rules.outputs.changed }}
+        run: |
+          npx firebase-tools@14.25.0 deploy --only storage --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive
+          sed -E 's/\\x1B\\[[0-9;]*[[:alpha:]]//g' "$storage_log" > "$storage_plain_log"
+          if [[ "$STORAGE_RULES_CHANGED" != "true" ]]; then exit 0; fi
+          exit "$storage_status"
+            npx firebase-tools@14.25.0 deploy --only hosting,firestore:rules,firestore:indexes,functions --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive
         `;
 
         expect(() => validateProductionDeployCommand(validDeployCommand)).not.toThrow();
-        expect(() => validateProductionDeployCommand(validDeployCommand.replace(',storage', ''))).toThrow(
-            'Production Firebase deploy --only list must include storage.'
+        expect(() => validateProductionDeployCommand(validDeployCommand.replace('[[ "$STORAGE_RULES_CHANGED" != "true" ]]', '[[ true ]]'))).toThrow(
+            'Production Storage rules unchanged-only skip'
+        );
+        expect(() => validateProductionDeployCommand(validDeployCommand.replace("sed -E 's/\\x1B\\[[0-9;]*[[:alpha:]]//g' \"$storage_log\" > \"$storage_plain_log\"", ''))).toThrow(
+            'Production Storage rules ANSI log normalization'
         );
     });
 
