@@ -85,6 +85,9 @@ jobs:
       - name: Run authentication email functions coverage
         run: npm run test:functions:auth-email
 
+      - name: Run team email functions coverage
+        run: npm run test:functions:team-email
+
   app-quality:
     runs-on: ubuntu-latest
 
