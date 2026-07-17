@@ -245,7 +245,9 @@ function createResendAuthEmailDelivery({
 
   async function sendFirebasePasswordReset(email) {
     if (!firebaseWebApiKey || typeof fetchImpl !== 'function') {
-      throw new Error('Firebase password-reset fallback is not configured.');
+      const error = new Error('Firebase password-reset fallback is not configured.');
+      error.definitiveFailure = true;
+      throw error;
     }
     const response = await fetchImpl(
       `https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=${encodeURIComponent(firebaseWebApiKey)}`,
@@ -265,6 +267,7 @@ function createResendAuthEmailDelivery({
       const error = new Error(result?.error?.message || `Firebase fallback failed with HTTP ${response.status}.`);
       error.code = result?.error?.message || `http-${response.status}`;
       error.statusCode = response.status;
+      error.definitiveFailure = true;
       throw error;
     }
     return result;
@@ -344,11 +347,12 @@ function createResendAuthEmailDelivery({
 
       const fallbackLeaseExpired = delivery.fallbackState === 'claimed' &&
         claimedAtMillis - timestampMillis(delivery.fallbackClaimedAt) >= FALLBACK_LEASE_MS;
+      const fallbackCanBeClaimed = ['not_requested', 'failed'].includes(delivery.fallbackState) ||
+        (delivery.fallbackState === 'claimed' && fallbackLeaseExpired);
       const shouldFallback = FALLBACK_EVENTS.has(eventType) &&
         delivery.type === 'auth_password_reset' &&
         eventAtMillis >= currentEventMillis &&
-        !['sent'].includes(delivery.fallbackState) &&
-        (delivery.fallbackState !== 'claimed' || fallbackLeaseExpired);
+        fallbackCanBeClaimed;
       if (shouldFallback) {
         update.fallbackState = 'claimed';
         update.fallbackClaimedAt = claimedAt;
@@ -358,8 +362,10 @@ function createResendAuthEmailDelivery({
         FALLBACK_EVENTS.has(eventType) &&
         delivery.type === 'auth_password_reset' &&
         eventAtMillis >= currentEventMillis &&
-        delivery.fallbackState === 'claimed' &&
-        !fallbackLeaseExpired
+        (
+          (delivery.fallbackState === 'claimed' && !fallbackLeaseExpired) ||
+          delivery.fallbackState === 'sending'
+        )
       ) {
         fallbackInProgress = true;
       }
@@ -399,18 +405,27 @@ function createResendAuthEmailDelivery({
     }
 
     if (fallback) {
+      await deliveryRef.set({
+        fallbackState: 'sending',
+        fallbackSendingAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp()
+      }, { merge: true });
       try {
         await sendFirebasePasswordReset(fallback.email);
-        await deliveryRef.set({
-          fallbackState: 'sent',
-          fallbackProvider: 'firebase-auth',
-          fallbackSentAt: FieldValue.serverTimestamp(),
-          fallbackLastError: FieldValue.delete(),
-          recipient: FieldValue.delete(),
-          recipientRedactedAt: FieldValue.serverTimestamp(),
-          updatedAt: FieldValue.serverTimestamp()
-        }, { merge: true });
       } catch (error) {
+        if (!error?.definitiveFailure) {
+          await webhookRef.set({
+            status: 'indeterminate',
+            error: serializeError(error),
+            updatedAt: FieldValue.serverTimestamp()
+          }, { merge: true });
+          logger.error('Firebase password-reset fallback outcome is indeterminate; automatic resend is blocked.', {
+            deliveryId,
+            providerMessageId,
+            code: error?.code || error?.name || null
+          });
+          throw error;
+        }
         await deliveryRef.set({
           fallbackState: 'failed',
           fallbackLastError: serializeError(error),
@@ -421,6 +436,30 @@ function createResendAuthEmailDelivery({
           error: serializeError(error),
           updatedAt: FieldValue.serverTimestamp()
         }, { merge: true });
+        throw error;
+      }
+
+      try {
+        await deliveryRef.set({
+          fallbackState: 'sent',
+          fallbackProvider: 'firebase-auth',
+          fallbackSentAt: FieldValue.serverTimestamp(),
+          fallbackLastError: FieldValue.delete(),
+          recipient: FieldValue.delete(),
+          recipientRedactedAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp()
+        }, { merge: true });
+      } catch (error) {
+        await webhookRef.set({
+          status: 'indeterminate',
+          error: serializeError(error),
+          updatedAt: FieldValue.serverTimestamp()
+        }, { merge: true });
+        logger.error('Firebase password-reset fallback was accepted but its sent state could not be persisted.', {
+          deliveryId,
+          providerMessageId,
+          code: error?.code || error?.name || null
+        });
         throw error;
       }
     }

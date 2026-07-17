@@ -46,8 +46,14 @@ function createFakeFirestore(options = {}) {
     async get() {
       return snapshotFor(this);
     },
-    async set(value, options = {}) {
-      applyWrite(this.path, value, options.merge === true);
+    async set(value, setOptions = {}) {
+      const injectedError = options.failSet?.({
+        path: this.path,
+        value: clone(value),
+        options: setOptions
+      });
+      if (injectedError) throw injectedError;
+      applyWrite(this.path, value, setOptions.merge === true);
     },
     async update(value) {
       applyWrite(this.path, value, true);
@@ -368,6 +374,45 @@ test('bounce opens an alert and sends the Firebase password-reset fallback only 
   assert.equal(delivery.fallbackState, 'sent');
   assert.equal(delivery.fallbackAttemptCount, 1);
   assert.equal(harness.db.has('emailDeliveryAlerts/resend-message-1_email_bounced'), true);
+});
+
+test('an accepted Firebase fallback is not resent when persisting sent state fails', async () => {
+  let rejectedSentWrite = false;
+  const db = createFakeFirestore({
+    failSet({ path, value }) {
+      if (
+        !rejectedSentWrite &&
+        path === 'authEmailDeliveries/indeterminate-fallback' &&
+        value.fallbackState === 'sent'
+      ) {
+        rejectedSentWrite = true;
+        return new Error('sent state write failed');
+      }
+      return null;
+    }
+  });
+  const harness = createHarness({ db });
+  await harness.service.send({ deliveryId: 'indeterminate-fallback', job: buildJob() });
+  const event = {
+    type: 'email.bounced',
+    created_at: '2026-07-17T12:05:00.000Z',
+    data: { email_id: 'resend-message-1' }
+  };
+
+  await assert.rejects(
+    harness.service.processVerifiedWebhook(event, 'indeterminate-first'),
+    /sent state write failed/
+  );
+  assert.equal(harness.fetches.length, 1);
+  assert.equal(harness.db.get('authEmailDeliveries/indeterminate-fallback').fallbackState, 'sending');
+  assert.equal(harness.db.get('resendWebhookEvents/indeterminate-first').status, 'indeterminate');
+
+  await assert.rejects(
+    harness.service.processVerifiedWebhook(event, 'indeterminate-retry'),
+    (error) => error.code === 'fallback-in-progress'
+  );
+  assert.equal(harness.fetches.length, 1);
+  assert.equal(harness.db.get('authEmailDeliveries/indeterminate-fallback').fallbackState, 'sending');
 });
 
 test('an out-of-order old bounce cannot override delivery or trigger fallback', async () => {
