@@ -4,6 +4,7 @@ import {
     storage,
     collection,
     doc,
+    addDoc,
     setDoc,
     getDoc,
     Timestamp,

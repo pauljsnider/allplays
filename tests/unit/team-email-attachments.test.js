@@ -14,8 +14,17 @@ describe('team email attachments', () => {
         expect(source).toContain('Number.isFinite(size) && size > 0 ? size : 0');
         expect(source).toContain('attachmentTotalBytes: getTeamEmailAttachmentTotalBytes(attachments)');
         expect(source).toContain('saveTeamEmailDraft');
+        expect(source).toMatch(/collection,\s+doc,\s+addDoc,\s+setDoc,/);
+        expect(source).toContain("await addDoc(collection(db, 'teams', cleanTeamId, 'emailDrafts')");
         expect(source).not.toContain('queueTeamEmailSend');
         expect(source).not.toContain("collection(db, 'teams', cleanTeamId, 'emailSends')");
+    });
+
+    it('preserves selected recipients when sending a legacy draft without a target type', () => {
+        const source = readRepoFile('functions/index.js');
+
+        expect(source).toContain("const hasRequestedTargetType = data?.targetType !== undefined && data?.targetType !== null && data?.targetType !== '';");
+        expect(source).toContain("targetType = draftTargetType || (!hasRequestedTargetType && draftRecipientIds.length > 0 ? 'individuals' : targetType);");
     });
 
     it('checks manager access before attachment and draft operations', () => {

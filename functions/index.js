@@ -10354,6 +10354,7 @@ exports.sendTeamEmail = functions.https.onCall(async (data, context) => {
   const draftId = normalizeText(data?.draftId, 160);
   let rawSubject = String(data?.subject || '').trim();
   let rawBody = String(data?.body || '').trim();
+  const hasRequestedTargetType = data?.targetType !== undefined && data?.targetType !== null && data?.targetType !== '';
   let targetType = data?.targetType || 'full_team';
   let recipientIds = Array.isArray(data?.recipientIds) ? data.recipientIds : [];
   let requestedAttachments = Array.isArray(data?.attachments) ? data.attachments : [];
@@ -10371,8 +10372,10 @@ exports.sendTeamEmail = functions.https.onCall(async (data, context) => {
     const draft = draftSnap.data() || {};
     rawSubject = rawSubject || String(draft.subject || '').trim();
     rawBody = rawBody || String(draft.body || '').trim();
-    targetType = ['full_team', 'staff', 'individuals'].includes(draft.targetType) ? draft.targetType : targetType;
-    recipientIds = Array.isArray(draft.recipientIds) && draft.recipientIds.length > 0 ? draft.recipientIds : recipientIds;
+    const draftTargetType = ['full_team', 'staff', 'individuals'].includes(draft.targetType) ? draft.targetType : null;
+    const draftRecipientIds = Array.isArray(draft.recipientIds) ? draft.recipientIds : [];
+    targetType = draftTargetType || (!hasRequestedTargetType && draftRecipientIds.length > 0 ? 'individuals' : targetType);
+    recipientIds = draftRecipientIds.length > 0 ? draftRecipientIds : recipientIds;
     requestedAttachments = Array.isArray(draft.attachments) ? draft.attachments : requestedAttachments;
   }
 
