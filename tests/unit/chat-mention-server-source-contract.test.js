@@ -6,7 +6,7 @@ const functionsSource = readFileSync(new URL('../../functions/index.js', import.
 describe('server-side chat mention notification contract', () => {
     it('detects mentions on the server and records mentionedUids on the message document', () => {
         expect(functionsSource).toContain('function buildTeamChatNotificationPlan({ text, actorUid = null, recipientContext })');
-        expect(functionsSource).toContain('detectMentionedUids(text, mentionMembers, { allowReservedMentions: actorIsStaff })');
+        expect(functionsSource).toContain('detectMentionedUids(text, members, { allowReservedMentions: actorIsStaff })');
         expect(functionsSource).toContain('const mentionedUids = notificationPlan.mentionedUids;');
         expect(functionsSource).toContain('await snapshot.ref.update({ mentionedUids });');
     });
@@ -24,6 +24,7 @@ describe('server-side chat mention notification contract', () => {
         expect(functionsSource).toContain('const mutedSet = new Set(Array.isArray(context.mutedUids) ? context.mutedUids : []);');
         expect(functionsSource).toContain('&& !mentionedSet.has(target.uid)');
         expect(functionsSource).toContain('&& !mutedSet.has(target.uid)');
+        expect(functionsSource).toContain('liveChatInboxUids');
     });
 
     it('wires the same handler for default and per-conversation chat messages', () => {

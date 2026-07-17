@@ -8217,6 +8217,7 @@ async function registerScheduleImportBatchEvent({ teamId, gameId, game, batch })
 
 async function sendDirectTargetsNotification({
   targets,
+  inboxUids = [],
   category,
   title,
   body,
@@ -8231,7 +8232,12 @@ async function sendDirectTargetsNotification({
   appRouteOverride = null,
   timeSensitive = false
 }) {
-  if (!targets.length) return null;
+  const pushTargets = Array.isArray(targets) ? targets : [];
+  const inboxTargets = getUniqueNotificationInboxTargets([
+    ...pushTargets,
+    ...(Array.isArray(inboxUids) ? inboxUids : []).map((uid) => ({ uid }))
+  ]);
+  if (!pushTargets.length && !inboxTargets.length) return null;
 
   const link = linkOverride || buildNotificationLink({ category, teamId, gameId, eventId: eventId || gameId, batchId, recipientId, conversationId, childId });
   const appRoute = appRouteOverride || buildNotificationAppRoute({ category, teamId, gameId, eventId: eventId || gameId, batchId, recipientId, conversationId, childId });
@@ -8260,8 +8266,8 @@ async function sendDirectTargetsNotification({
   let successCount = 0;
   let failureCount = 0;
 
-  for (let i = 0; i < targets.length; i += maxMulticastTokens) {
-    const targetChunk = targets.slice(i, i + maxMulticastTokens);
+  for (let i = 0; i < pushTargets.length; i += maxMulticastTokens) {
+    const targetChunk = pushTargets.slice(i, i + maxMulticastTokens);
     const sendResult = await admin.messaging().sendEachForMulticast({
       tokens: targetChunk.map((target) => target.token),
       notification: { title, body },
@@ -8289,7 +8295,7 @@ async function sendDirectTargetsNotification({
   }
 
   const inboxResult = await writeNotificationInboxRecords({
-    targets,
+    targets: inboxTargets,
     category,
     title,
     body,
@@ -8307,7 +8313,7 @@ async function sendDirectTargetsNotification({
     body,
     link,
     appRoute,
-    targets,
+    targets: inboxTargets,
     successCount,
     failureCount,
     inboxResult,
@@ -10195,26 +10201,27 @@ function buildTeamChatNotificationPlan({ text, actorUid = null, recipientContext
     mutedUids: [],
     targetsByCategory: { mentions: [], liveChat: [] }
   };
+  const members = Array.isArray(context.members) ? context.members : [];
   const mentionTargets = dedupeNotificationTargetsByUserDevice(context.targetsByCategory?.mentions);
   const liveChatTargets = dedupeNotificationTargetsByUserDevice(context.targetsByCategory?.liveChat);
-  const mentionEligibleUids = new Set(mentionTargets.map((target) => target.uid));
-  const mentionMembers = Array.isArray(context.members)
-    ? context.members.filter((member) => mentionEligibleUids.has(member.uid))
-    : [];
   const actorIsStaff = Boolean(
     actorUid
-    && Array.isArray(context.members)
-    && context.members.some((member) => member.uid === actorUid && Array.isArray(member.roles) && member.roles.includes('staff'))
+    && members.some((member) => member.uid === actorUid && Array.isArray(member.roles) && member.roles.includes('staff'))
   );
   const mentionedUids = text
-    ? detectMentionedUids(text, mentionMembers, { allowReservedMentions: actorIsStaff }).filter((uid) => uid !== actorUid)
+    ? detectMentionedUids(text, members, { allowReservedMentions: actorIsStaff }).filter((uid) => uid !== actorUid)
     : [];
   const mentionedSet = new Set(mentionedUids);
   const mutedSet = new Set(Array.isArray(context.mutedUids) ? context.mutedUids : []);
+  const liveChatInboxUids = members
+    .map((member) => String(member?.uid || '').trim())
+    .filter((uid) => uid && uid !== actorUid && !mentionedSet.has(uid) && !mutedSet.has(uid));
 
   return {
     mentionedUids,
+    mentionInboxUids: mentionedUids,
     mentionTargets: mentionTargets.filter((target) => target.uid !== actorUid && mentionedSet.has(target.uid)),
+    liveChatInboxUids,
     liveChatTargets: liveChatTargets.filter((target) => (
       target.uid !== actorUid
       && !mentionedSet.has(target.uid)
@@ -10278,9 +10285,10 @@ async function handleTeamChatMessageCreated(snapshot, context) {
     await snapshot.ref.update({ mentionedUids });
   }
 
-  if (mentionedUids.length && notificationPlan.mentionTargets.length) {
+  if (mentionedUids.length) {
     results.push(await sendDirectTargetsNotification({
       targets: notificationPlan.mentionTargets,
+      inboxUids: notificationPlan.mentionInboxUids,
       category: 'mentions',
       title: `${senderName} mentioned you`,
       body,
@@ -10289,12 +10297,13 @@ async function handleTeamChatMessageCreated(snapshot, context) {
     }));
   }
 
-  if (!notificationPlan.liveChatTargets.length) {
+  if (!notificationPlan.liveChatTargets.length && !notificationPlan.liveChatInboxUids.length) {
     return results.length ? results : null;
   }
 
   results.push(await sendDirectTargetsNotification({
     targets: notificationPlan.liveChatTargets,
+    inboxUids: notificationPlan.liveChatInboxUids,
     category: 'liveChat',
     title: `${senderName}: Team Chat`,
     body,
@@ -10619,11 +10628,34 @@ exports.sendTeamEmail = functions.https.onCall(async (data, context) => {
     throw new functions.https.HttpsError('internal', 'Some email delivery jobs could not be queued. Check sent history for partial failure details.');
   }
 
+  const directRecipientUids = recipients.flatMap((recipient) => (
+    Array.isArray(recipient.userIds) ? recipient.userIds : []
+  ));
+  const emailRecipientUids = await getUserIdsByEmails(recipients.map((recipient) => recipient.email));
+  const inboxRecipientUids = Array.from(new Set([...directRecipientUids, ...emailRecipientUids]
+    .map((uid) => String(uid || '').trim())
+    .filter((uid) => uid && uid !== context.auth.uid)));
+  const inboxResult = await writeNotificationInboxRecords({
+    targets: inboxRecipientUids.map((uid) => ({ uid })),
+    category: 'team_email',
+    title: `Team email: ${subject}`,
+    body: truncateNotificationBody(body),
+    appRoute: buildNotificationAppRoute({
+      category: 'liveChat',
+      teamId,
+      conversationId: 'team'
+    }),
+    teamId,
+    conversationId: 'team'
+  });
+
   return {
     messageId: messageRef.id,
     status: 'sent',
     recipientCount: recipients.length,
-    delivery: messagePayload.delivery
+    delivery: messagePayload.delivery,
+    inboxWriteCount: inboxResult.writeCount,
+    inboxFailureCount: inboxResult.failureCount
   };
 });
 

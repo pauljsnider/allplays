@@ -899,6 +899,54 @@ test('notifyTeamChatMessageCreated sends mentions and liveChat only to enabled r
     }
 });
 
+test('notifyTeamChatMessageCreated writes inbox items for members without push devices', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        parentUserIds: ['parent-1', 'parent-2'],
+        userDocs: {
+            'coach-1': { displayName: 'Coach Prime' },
+            'parent-1': { displayName: 'Jamie Parent' },
+            'parent-2': { displayName: 'Taylor Parent' }
+        },
+        indexedTargets: []
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/chatMessages/message-no-devices');
+        const snapshot = makeSnapshot(ref, {
+            text: 'Nice work @Jamie',
+            senderId: 'coach-1',
+            senderName: 'Coach Prime',
+            conversationId: 'team'
+        });
+
+        const result = await moduleExports.notifyTeamChatMessageCreated(snapshot, {
+            params: { teamId: 'team-1', messageId: 'message-no-devices' }
+        });
+
+        assert.equal(result.length, 2);
+        assert.equal(env.messagingCalls.length, 0);
+        assert.deepEqual(env.updatedDocs, [{
+            path: 'teams/team-1/chatMessages/message-no-devices',
+            value: { mentionedUids: ['parent-1'] }
+        }]);
+        assert.deepEqual(env.inboxWrites.map((write) => ({
+            uid: write.uid,
+            category: write.value.category
+        })).sort((left, right) => left.uid.localeCompare(right.uid)), [
+            { uid: 'parent-1', category: 'mentions' },
+            { uid: 'parent-2', category: 'liveChat' }
+        ]);
+        assert.equal(env.inboxWrites.some((write) => write.uid === 'coach-1'), false);
+        assert.deepEqual(env.auditWrites.map((entry) => entry.value.targetUserIds).sort(), [
+            ['parent-1'],
+            ['parent-2']
+        ]);
+    } finally {
+        cleanup();
+    }
+});
+
 test('notifyTeamChatMessageCreated honors conversation mutes while preserving direct mentions', async () => {
     const { moduleExports, env, cleanup } = loadNotificationInternals({
         teamDoc: { ownerId: 'coach-1', adminEmails: ['assistant@example.com'] },
@@ -955,6 +1003,8 @@ test('notifyTeamChatMessageCreated honors conversation mutes while preserving di
             'mentions:parent-token'
         ]);
         assert.equal(env.messagingCalls.some((call) => call.tokens.includes('parent-2-token')), false);
+        assert.equal(env.inboxWrites.some((write) => write.uid === 'parent-2'), false);
+        assert.deepEqual(env.inboxWrites.map((write) => write.uid).sort(), ['coach-2', 'parent-1']);
         assert.equal(env.messagingCalls.every((call) => call.data.conversationId === 'thread-7'), true);
         assert.deepEqual(env.updatedDocs, [{ path: 'teams/team-1/chatMessages/message-2', value: { mentionedUids: ['parent-1'] } }]);
     } finally {

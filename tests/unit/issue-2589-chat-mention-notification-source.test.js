@@ -10,9 +10,9 @@ describe('issue 2589 chat mention notification source contract', () => {
         expect(functionsSource).toContain('const teamChatMentionStartRegex =');
         expect(functionsSource).toContain('function detectMentionedUids(text, members, options = {})');
         expect(functionsSource).toContain('const { allowReservedMentions = false } = options || {};');
-        expect(functionsSource).toContain('const mentionEligibleUids = new Set(mentionTargets.map((target) => target.uid));');
-        expect(functionsSource).toContain('const mentionMembers = Array.isArray(context.members)');
-        expect(functionsSource).toContain('detectMentionedUids(text, mentionMembers, { allowReservedMentions: actorIsStaff }).filter((uid) => uid !== actorUid)');
+        expect(functionsSource).toContain('const members = Array.isArray(context.members) ? context.members : [];');
+        expect(functionsSource).toContain('detectMentionedUids(text, members, { allowReservedMentions: actorIsStaff }).filter((uid) => uid !== actorUid)');
+        expect(functionsSource).toContain('mentionInboxUids: mentionedUids');
     });
 
     it('keeps mention pushes separate from regular live-chat pushes', () => {
