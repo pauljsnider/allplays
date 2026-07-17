@@ -1,6 +1,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { resolveTeamEmailRecipients, buildTeamEmailMailJob } = require('../team-email-core.cjs');
+const {
+  resolveTeamEmailRecipients,
+  findUnknownTeamEmailRecipientIds,
+  buildVerifiedTeamEmailAttachmentRecord,
+  buildTeamEmailMailJob
+} = require('../team-email-core.cjs');
 
 test('resolveTeamEmailRecipients deduplicates enabled roster contacts without leaking disabled contacts', () => {
   const recipients = resolveTeamEmailRecipients({
@@ -50,6 +55,59 @@ test('resolveTeamEmailRecipients limits individual sends to selected recipients'
   assert.deepEqual(recipients.map((recipient) => recipient.email), ['extra@example.com', 'two@example.com']);
 });
 
+test('resolveTeamEmailRecipients limits staff sends to current owner and admin data', () => {
+  const recipients = resolveTeamEmailRecipients({
+    targetType: 'staff',
+    team: { ownerId: 'owner-1', adminEmails: ['coach@example.com'] },
+    ownerUser: { email: 'owner@example.com' },
+    players: [{ id: 'p1', parents: [{ email: 'parent@example.com' }] }]
+  });
+
+  assert.deepEqual(recipients.map((recipient) => recipient.email), ['coach@example.com', 'owner@example.com']);
+});
+
+test('findUnknownTeamEmailRecipientIds rejects external, stale, and cross-team selectors', () => {
+  const unknown = findUnknownTeamEmailRecipientIds({
+    recipientIds: ['player:p1', 'user:u1', 'email:parent@example.com', 'email:external@example.com', 'player:stale'],
+    players: [
+      { id: 'p1', parents: [{ email: 'parent@example.com', userId: 'u1' }] },
+      { id: 'stale', active: false, parents: [{ email: 'stale@example.com', userId: 'u2' }] }
+    ]
+  });
+
+  assert.deepEqual(unknown, ['email:external@example.com', 'player:stale']);
+});
+
+test('findUnknownTeamEmailRecipientIds rejects malformed individual selectors', () => {
+  const unknown = findUnknownTeamEmailRecipientIds({
+    recipientIds: ['email:not-an-email', 'player:', 'user:'],
+    players: [{ id: 'p1', parents: [{ email: 'parent@example.com', userId: 'u1' }] }]
+  });
+
+  assert.deepEqual(unknown, ['email:not-an-email', 'player:', 'user:']);
+  assert.deepEqual(resolveTeamEmailRecipients({
+    targetType: 'individuals',
+    recipientIds: ['email:not-an-email', 'player:', 'user:'],
+    players: [{ id: 'p1', parents: [{ email: 'parent@example.com', userId: 'u1' }] }]
+  }), []);
+});
+
+test('buildVerifiedTeamEmailAttachmentRecord ignores falsified caller metadata', () => {
+  const attachment = buildVerifiedTeamEmailAttachmentRecord({
+    name: 'plan.pdf',
+    storagePath: 'team-email-attachments/team1/draft1/coach1/plan.pdf',
+    size: 1,
+    contentType: 'text/plain'
+  }, {
+    name: 'team-email-attachments/team1/draft1/coach1/plan.pdf',
+    size: '2097152',
+    contentType: 'application/pdf'
+  });
+
+  assert.equal(attachment.size, 2097152);
+  assert.equal(attachment.contentType, 'application/pdf');
+});
+
 test('buildTeamEmailMailJob keeps recipient email only in backend mail job', () => {
   const job = buildTeamEmailMailJob({
     email: 'parent@example.com',
@@ -57,12 +115,16 @@ test('buildTeamEmailMailJob keeps recipient email only in backend mail job', () 
     body: 'Line 1\nLine 2',
     teamId: 'team1',
     messageId: 'message1',
-    senderUid: 'coach1'
+    senderUid: 'coach1',
+    attachments: [{ name: 'plan.pdf', storagePath: 'team-email-attachments/team1/draft/coach1/plan.pdf', size: 1024 }],
+    attachmentTotalBytes: 1024
   });
 
   assert.deepEqual(job.to, ['parent@example.com']);
   assert.equal(job.message.subject, 'Practice update');
   assert.equal(job.metadata.type, 'team_email');
   assert.equal(job.metadata.teamEmailMessageId, 'message1');
+  assert.equal(job.metadata.attachments[0].name, 'plan.pdf');
+  assert.equal(job.metadata.attachmentTotalBytes, 1024);
   assert.match(job.message.html, /Line 1<br>Line 2/);
 });

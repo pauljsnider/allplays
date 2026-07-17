@@ -94,7 +94,8 @@ function resolveTeamEmailRecipients({ targetType = 'full_team', recipientIds = [
     return serializeRecipients(recipientsByEmail);
   }
 
-  if (targetType === 'individuals' && selectedIds.size > 0) {
+  if (targetType === 'individuals') {
+    if (selectedIds.size === 0) return [];
     activePlayers.forEach((player) => {
       const playerId = String(player.id || player.playerId || '');
       const playerSelector = normalizeRecipientSelector(`player:${playerId}`);
@@ -128,7 +129,57 @@ function resolveTeamEmailRecipients({ targetType = 'full_team', recipientIds = [
   return serializeRecipients(recipientsByEmail);
 }
 
-function buildTeamEmailMailJob({ email, subject, body, teamId, messageId, senderUid }) {
+function findUnknownTeamEmailRecipientIds({ recipientIds = [], players = [] } = {}) {
+  const requestedIds = Array.from(new Set((Array.isArray(recipientIds) ? recipientIds : [])
+    .map((recipientId) => {
+      const rawRecipientId = String(recipientId || '').trim();
+      return normalizeRecipientSelector(rawRecipientId) || rawRecipientId;
+    })
+    .filter(Boolean)));
+  const eligibleIds = new Set();
+
+  players.filter((player) => player && player.active !== false).forEach((player) => {
+    const playerId = String(player.id || player.playerId || '').trim();
+    if (playerId) {
+      eligibleIds.add(playerId);
+      eligibleIds.add(`player:${playerId}`);
+    }
+    const contacts = [
+      ...(Array.isArray(player.parents) ? player.parents : []),
+      ...(Array.isArray(player.guardians) ? player.guardians : []),
+      ...(Array.isArray(player.familyContacts) ? player.familyContacts : [])
+    ];
+    contacts.filter(isEmailEnabledContact).forEach((contact) => {
+      const userId = String(contact?.userId || '').trim();
+      const email = normalizeEmail(contact?.email);
+      if (userId) {
+        eligibleIds.add(userId);
+        eligibleIds.add(`user:${userId}`);
+      }
+      if (email) eligibleIds.add(`email:${email}`);
+    });
+  });
+
+  return requestedIds.filter((recipientId) => !eligibleIds.has(recipientId));
+}
+
+function buildVerifiedTeamEmailAttachmentRecord(attachment, objectMetadata) {
+  const storagePath = String(attachment?.storagePath || '').trim();
+  const objectName = String(objectMetadata?.name || '').trim();
+  const size = Number(objectMetadata?.size);
+  const contentType = String(objectMetadata?.contentType || 'application/octet-stream').trim();
+  if (!storagePath || objectName !== storagePath || !Number.isFinite(size) || size <= 0 || contentType.length > 160) {
+    throw new Error('Team email attachment metadata could not be verified.');
+  }
+  return {
+    name: String(attachment?.name || '').trim(),
+    storagePath,
+    contentType,
+    size
+  };
+}
+
+function buildTeamEmailMailJob({ email, subject, body, teamId, messageId, senderUid, attachments = [], attachmentTotalBytes = 0 }) {
   const safeBody = normalizeText(body, 20000);
   const html = safeBody
     .split(/\n{2,}/)
@@ -145,7 +196,9 @@ function buildTeamEmailMailJob({ email, subject, body, teamId, messageId, sender
       teamId,
       teamEmailMessageId: messageId,
       type: 'team_email',
-      senderUid
+      senderUid,
+      attachments,
+      attachmentTotalBytes
     }
   };
 }
@@ -155,5 +208,7 @@ module.exports = {
   normalizeEmail,
   isEmailEnabledContact,
   resolveTeamEmailRecipients,
+  findUnknownTeamEmailRecipientIds,
+  buildVerifiedTeamEmailAttachmentRecord,
   buildTeamEmailMailJob
 };

@@ -62,6 +62,8 @@ const { isAllowedPublicRsvpOrigin } = require('./public-rsvp-cors-core.cjs');
 const {
   normalizeText,
   resolveTeamEmailRecipients,
+  findUnknownTeamEmailRecipientIds,
+  buildVerifiedTeamEmailAttachmentRecord,
   buildTeamEmailMailJob
 } = require('./team-email-core.cjs');
 const {
@@ -10351,10 +10353,12 @@ async function requireTeamEmailSender(teamId, context) {
 exports.sendTeamEmail = functions.https.onCall(async (data, context) => {
   const teamId = normalizeText(data?.teamId, 160);
   const draftId = normalizeText(data?.draftId, 160);
-  let subject = normalizeText(data?.subject, 160);
-  let body = normalizeText(data?.body, 20000);
-  let targetType = ['full_team', 'staff', 'individuals'].includes(data?.targetType) ? data.targetType : 'full_team';
+  let rawSubject = String(data?.subject || '').trim();
+  let rawBody = String(data?.body || '').trim();
+  const hasRequestedTargetType = data?.targetType !== undefined && data?.targetType !== null && data?.targetType !== '';
+  let targetType = data?.targetType || 'full_team';
   let recipientIds = Array.isArray(data?.recipientIds) ? data.recipientIds : [];
+  let requestedAttachments = Array.isArray(data?.attachments) ? data.attachments : [];
 
   if (!teamId) {
     throw new functions.https.HttpsError('invalid-argument', 'Team is required.');
@@ -10362,22 +10366,44 @@ exports.sendTeamEmail = functions.https.onCall(async (data, context) => {
 
   const { team, user } = await requireTeamEmailSender(teamId, context);
   if (draftId) {
-    const draftSnap = await firestore.doc(`teams/${teamId}/teamEmailDrafts/${draftId}`).get();
+    const draftSnap = await firestore.doc(`teams/${teamId}/emailDrafts/${draftId}`).get();
     if (!draftSnap.exists) {
       throw new functions.https.HttpsError('not-found', 'Email draft not found.');
     }
     const draft = draftSnap.data() || {};
-    subject = subject || normalizeText(draft.subject, 160);
-    body = body || normalizeText(draft.body, 20000);
-    targetType = ['full_team', 'staff', 'individuals'].includes(draft.targetType) ? draft.targetType : targetType;
-    recipientIds = Array.isArray(draft.recipientIds) && draft.recipientIds.length > 0 ? draft.recipientIds : recipientIds;
+    rawSubject = rawSubject || String(draft.subject || '').trim();
+    rawBody = rawBody || String(draft.body || '').trim();
+    const draftTargetType = ['full_team', 'staff', 'individuals'].includes(draft.targetType) ? draft.targetType : null;
+    const draftRecipientIds = Array.isArray(draft.recipientIds) ? draft.recipientIds : [];
+    targetType = draftTargetType || (!hasRequestedTargetType && draftRecipientIds.length > 0 ? 'individuals' : targetType);
+    recipientIds = draftRecipientIds.length > 0 ? draftRecipientIds : recipientIds;
+    requestedAttachments = Array.isArray(draft.attachments) ? draft.attachments : requestedAttachments;
   }
 
-  if (!subject || !body) {
+  if (!['full_team', 'staff', 'individuals'].includes(targetType)) {
+    throw new functions.https.HttpsError('invalid-argument', 'Unknown team email audience.');
+  }
+  if (!rawSubject || !rawBody) {
     throw new functions.https.HttpsError('invalid-argument', 'Subject and message are required.');
   }
+  if (rawSubject.length > 160 || rawBody.length > 20000) {
+    throw new functions.https.HttpsError('invalid-argument', 'Subject or message exceeds the allowed length.');
+  }
+  const subject = normalizeText(rawSubject, 160);
+  const body = normalizeText(rawBody, 20000);
+  recipientIds = Array.from(new Set(recipientIds.map((id) => String(id || '').trim()).filter(Boolean)));
   if (targetType === 'individuals' && recipientIds.length === 0) {
     throw new functions.https.HttpsError('invalid-argument', 'Select at least one recipient.');
+  }
+  if (recipientIds.length > 400) {
+    throw new functions.https.HttpsError('invalid-argument', 'Team email is limited to 400 selected recipients.');
+  }
+
+  let attachmentSummary;
+  try {
+    attachmentSummary = await normalizeTeamEmailAttachmentsForDelivery(teamId, requestedAttachments);
+  } catch (error) {
+    throw new functions.https.HttpsError('invalid-argument', error?.message || 'Invalid team email attachments.');
   }
 
   const [playersSnap, ownerSnap] = await Promise.all([
@@ -10386,9 +10412,18 @@ exports.sendTeamEmail = functions.https.onCall(async (data, context) => {
   ]);
   const players = playersSnap.docs.map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) }));
   const ownerUser = ownerSnap?.exists ? ownerSnap.data() || {} : null;
+  if (targetType === 'individuals') {
+    const unknownRecipientIds = findUnknownTeamEmailRecipientIds({ recipientIds, players });
+    if (unknownRecipientIds.length > 0) {
+      throw new functions.https.HttpsError('invalid-argument', 'One or more selected recipients are no longer eligible for this team. Refresh and try again.');
+    }
+  }
   const recipients = resolveTeamEmailRecipients({ targetType, recipientIds, players, team, ownerUser });
   if (recipients.length === 0) {
     throw new functions.https.HttpsError('failed-precondition', 'No email-enabled recipients were found for that audience.');
+  }
+  if (recipients.length > 400) {
+    throw new functions.https.HttpsError('resource-exhausted', 'Team email is limited to 400 eligible recipients.');
   }
 
   const now = admin.firestore.FieldValue.serverTimestamp();
@@ -10402,7 +10437,9 @@ exports.sendTeamEmail = functions.https.onCall(async (data, context) => {
       body,
       teamId,
       messageId: messageRef.id,
-      senderUid: context.auth.uid
+      senderUid: context.auth.uid,
+      attachments: attachmentSummary.attachments,
+      attachmentTotalBytes: attachmentSummary.totalBytes
     })
   }));
   const messagePayload = {
@@ -10413,6 +10450,8 @@ exports.sendTeamEmail = functions.https.onCall(async (data, context) => {
     targetType,
     draftId: draftId || null,
     recipientCount: recipients.length,
+    attachments: attachmentSummary.attachments,
+    attachmentTotalBytes: attachmentSummary.totalBytes,
     recipientSummary: recipients.map((recipient) => ({
       playerIds: recipient.playerIds,
       userIds: recipient.userIds,
@@ -10438,7 +10477,7 @@ exports.sendTeamEmail = functions.https.onCall(async (data, context) => {
   const firstBatch = firestore.batch();
   firstBatch.set(messageRef, messagePayload);
   if (draftId) {
-    firstBatch.set(firestore.doc(`teams/${teamId}/teamEmailDrafts/${draftId}`), {
+    firstBatch.set(firestore.doc(`teams/${teamId}/emailDrafts/${draftId}`), {
       status: 'sent',
       sentMessageId: messageRef.id,
       sentAt: now,
@@ -12067,14 +12106,13 @@ exports.collectTelemetry = functions
   });
 
 const TEAM_EMAIL_ATTACHMENT_LIMIT_BYTES = 20 * 1024 * 1024;
+const TEAM_EMAIL_ATTACHMENT_LIMIT_COUNT = 10;
 
 function normalizeTeamEmailAttachmentRecord(attachment) {
   const name = String(attachment?.name || attachment?.fileName || '').trim();
   const storagePath = String(attachment?.storagePath || attachment?.path || '').trim();
-  const contentType = String(attachment?.contentType || attachment?.type || 'application/octet-stream').trim();
-  const size = Number(attachment?.size || attachment?.bytes || 0);
-  if (!name || !storagePath || !Number.isFinite(size) || size <= 0) return null;
-  return { name, storagePath, contentType, size };
+  if (!name || name.length > 240 || !storagePath || storagePath.length > 1024) return null;
+  return { name, storagePath };
 }
 
 function isTeamEmailAttachmentPathForTeam(teamId, storagePath) {
@@ -12086,86 +12124,27 @@ function isTeamEmailAttachmentPathForTeam(teamId, storagePath) {
     parts.slice(2).every(Boolean);
 }
 
-function normalizeTeamEmailAttachmentsForDelivery(teamId, attachments) {
+async function normalizeTeamEmailAttachmentsForDelivery(teamId, attachments) {
   const rawAttachments = Array.isArray(attachments) ? attachments : [];
+  if (rawAttachments.length > TEAM_EMAIL_ATTACHMENT_LIMIT_COUNT) {
+    throw new Error('Team email is limited to 10 attachments.');
+  }
   const normalized = rawAttachments.map(normalizeTeamEmailAttachmentRecord).filter(Boolean);
   if (normalized.length !== rawAttachments.length ||
       normalized.some((attachment) => !isTeamEmailAttachmentPathForTeam(teamId, attachment.storagePath))) {
     throw new Error('Team email attachments must reference files for the same team.');
   }
-  const totalBytes = normalized.reduce((sum, attachment) => sum + attachment.size, 0);
+  const bucket = admin.storage().bucket();
+  const verified = await Promise.all(normalized.map(async (attachment) => {
+    const [objectMetadata] = await bucket.file(attachment.storagePath).getMetadata();
+    return buildVerifiedTeamEmailAttachmentRecord(attachment, objectMetadata);
+  }));
+  const totalBytes = verified.reduce((sum, attachment) => sum + attachment.size, 0);
   if (totalBytes > TEAM_EMAIL_ATTACHMENT_LIMIT_BYTES) {
     throw new Error('Team email attachments exceed the 20 MB limit.');
   }
-  return { attachments: normalized, totalBytes };
+  return { attachments: verified, totalBytes };
 }
-
-function buildTeamEmailMailDocId(teamId, sendId) {
-  const safeTeamId = String(teamId || '').replace(/[^\w.-]+/g, '_').slice(0, 240);
-  const safeSendId = String(sendId || '').replace(/[^\w.-]+/g, '_').slice(0, 240);
-  return `teamEmail_${safeTeamId}_${safeSendId}`;
-}
-
-exports.queueTeamEmailDelivery = functions.firestore
-  .document('teams/{teamId}/emailSends/{sendId}')
-  .onCreate(async (snap, context) => {
-    const { teamId, sendId } = context.params;
-    const send = snap.data() || {};
-    const recipients = Array.isArray(send.recipients)
-      ? send.recipients.map((email) => String(email || '').trim()).filter(Boolean)
-      : [];
-    const subject = String(send.subject || '').trim();
-    const body = String(send.body || '').trim();
-    let attachmentSummary;
-    try {
-      attachmentSummary = normalizeTeamEmailAttachmentsForDelivery(teamId, send.attachments);
-    } catch (error) {
-      await snap.ref.set({
-        status: 'failed',
-        failureReason: error?.message || 'Invalid team email attachments.',
-        updatedAt: admin.firestore.FieldValue.serverTimestamp()
-      }, { merge: true });
-      return;
-    }
-    const { attachments, totalBytes } = attachmentSummary;
-
-    if (!recipients.length || !subject || !body) {
-      await snap.ref.set({
-        status: 'failed',
-        failureReason: 'Missing recipients, subject, or body.',
-        updatedAt: admin.firestore.FieldValue.serverTimestamp()
-      }, { merge: true });
-      return;
-    }
-
-    const mailRef = firestore.collection('mail').doc(buildTeamEmailMailDocId(teamId, sendId));
-    await mailRef.set({
-      to: recipients,
-      message: {
-        subject,
-        text: body
-      },
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      metadata: {
-        type: 'team_email',
-        teamId,
-        sendId,
-        draftId: send.draftId || null,
-        attachments,
-        attachmentTotalBytes: totalBytes,
-        createdBy: send.createdBy || null,
-        createdByEmail: send.createdByEmail || null
-      }
-    });
-
-    await snap.ref.set({
-      status: 'queued',
-      attachmentTotalBytes: totalBytes,
-      mailJobId: mailRef.id,
-      queuedAt: admin.firestore.FieldValue.serverTimestamp(),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
-    }, { merge: true });
-  });
 
 // Public sports opportunity board. Public responses are serialized through an
 // explicit allow-list; Firestore rules deny direct client access to the source

@@ -6,7 +6,7 @@ function readRepoFile(relativePath) {
 }
 
 describe('team email attachments', () => {
-    it('enforces the combined 20 MB limit before drafts or sends are persisted', () => {
+    it('enforces the combined 20 MB limit before drafts are persisted', () => {
         const source = readRepoFile('js/team-email-attachments.js');
 
         expect(source).toContain('TEAM_EMAIL_ATTACHMENT_LIMIT_BYTES = 20 * 1024 * 1024');
@@ -14,10 +14,20 @@ describe('team email attachments', () => {
         expect(source).toContain('Number.isFinite(size) && size > 0 ? size : 0');
         expect(source).toContain('attachmentTotalBytes: getTeamEmailAttachmentTotalBytes(attachments)');
         expect(source).toContain('saveTeamEmailDraft');
-        expect(source).toContain('queueTeamEmailSend');
+        expect(source).toMatch(/collection,\s+doc,\s+addDoc,\s+setDoc,/);
+        expect(source).toContain("await addDoc(collection(db, 'teams', cleanTeamId, 'emailDrafts')");
+        expect(source).not.toContain('queueTeamEmailSend');
+        expect(source).not.toContain("collection(db, 'teams', cleanTeamId, 'emailSends')");
     });
 
-    it('checks manager access before attachment draft and send operations', () => {
+    it('preserves selected recipients when sending a legacy draft without a target type', () => {
+        const source = readRepoFile('functions/index.js');
+
+        expect(source).toContain("const hasRequestedTargetType = data?.targetType !== undefined && data?.targetType !== null && data?.targetType !== '';");
+        expect(source).toContain("targetType = draftTargetType || (!hasRequestedTargetType && draftRecipientIds.length > 0 ? 'individuals' : targetType);");
+    });
+
+    it('checks manager access before attachment and draft operations', () => {
         const source = readRepoFile('js/team-email-attachments.js');
 
         expect(source).toContain('async function assertTeamEmailManagerAccess(teamId, user = auth.currentUser)');
@@ -28,16 +38,26 @@ describe('team email attachments', () => {
         expect(source).toContain('isTeamEmailAttachmentPathForTeam(teamId, path)');
     });
 
-    it('carries storage metadata into delivery jobs and sent history', () => {
+    it('validates same-team attachment references in the callable delivery path', () => {
         const source = readRepoFile('functions/index.js');
 
-        expect(source).toContain("document('teams/{teamId}/emailSends/{sendId}')");
-        expect(source).toContain("type: 'team_email'");
-        expect(source).toContain('attachments,');
-        expect(source).toContain('attachmentTotalBytes: totalBytes');
+        expect(source).toContain('exports.sendTeamEmail = functions.https.onCall');
+        expect(source).not.toContain('exports.queueTeamEmailDelivery');
+        expect(source).not.toContain("document('teams/{teamId}/emailSends/{sendId}')");
+        expect(source).toContain('findUnknownTeamEmailRecipientIds({ recipientIds, players })');
+        expect(source.indexOf('findUnknownTeamEmailRecipientIds({ recipientIds, players })'))
+            .toBeLessThan(source.indexOf('const recipients = resolveTeamEmailRecipients'));
+        expect(source).toContain('Team email is limited to 400 eligible recipients.');
+        expect(source).toContain('await normalizeTeamEmailAttachmentsForDelivery(teamId, requestedAttachments)');
+        expect(source).toContain('bucket.file(attachment.storagePath).getMetadata()');
+        expect(source).toContain('buildVerifiedTeamEmailAttachmentRecord(attachment, objectMetadata)');
+        expect(source).toContain('attachments: attachmentSummary.attachments');
+        expect(source).toContain('attachmentTotalBytes: attachmentSummary.totalBytes');
         expect(source).toContain('function isTeamEmailAttachmentPathForTeam(teamId, storagePath)');
-        expect(source).toContain('buildTeamEmailMailDocId(teamId, sendId)');
-        expect(source).toContain('mailJobId: mailRef.id');
+        expect(source).toContain('TEAM_EMAIL_ATTACHMENT_LIMIT_COUNT = 10');
+
+        const coreSource = readRepoFile('functions/team-email-core.cjs');
+        expect(coreSource).toContain("type: 'team_email'");
     });
 
     it('limits draft/send docs and attachment files to team coaches and admins', () => {
@@ -49,8 +69,7 @@ describe('team email attachments', () => {
         expect(firestoreRules).toContain("'authorName', 'status', 'createdAt', 'updatedAt', 'attachments', 'attachmentTotalBytes'");
         expect(firestoreRules).toContain("request.resource.data.attachments is list");
         expect(firestoreRules).toContain("request.resource.data.attachmentTotalBytes is number");
-        expect(firestoreRules).toContain('request.resource.data.teamId == teamId');
-        expect(firestoreRules).toContain('request.resource.data.createdBy == request.auth.uid');
+        expect(firestoreRules).toContain('allow create, update, delete: if false;');
         expect(storageRules).toContain('match /team-email-attachments/{teamId}/{draftId}/{userId}/{fileName}');
         expect(storageRules).toContain('allow get: if isTeamOwnerOrAdmin(teamId);');
         expect(storageRules).toContain('request.resource.size <= 20 * 1024 * 1024');
