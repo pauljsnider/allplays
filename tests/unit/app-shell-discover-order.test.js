@@ -5,9 +5,14 @@ const source = readFileSync(new URL('../../apps/app/src/components/AppShell.tsx'
 
 describe('signed-in primary navigation order', () => {
   it('keeps Discover as the last signed-in menu item', () => {
-    const signedInItems = source.slice(source.indexOf('const navItems'), source.indexOf('const publicNavItems'));
+    const navItemsStart = source.indexOf('const navItems');
+    const signedInItems = source.slice(navItemsStart, source.indexOf('];', navItemsStart) + 2);
     const labels = [...signedInItems.matchAll(/label: '([^']+)'/g)].map((match) => match[1]);
     expect(labels).toEqual(['Home', 'Schedule', 'Messages', 'My Teams', 'Profile', 'Discover']);
+
+    const desktopItemsStart = source.indexOf('const desktopNavItems');
+    const desktopItems = source.slice(desktopItemsStart, source.indexOf('];', desktopItemsStart) + 2);
+    expect(desktopItems).toMatch(/\.\.\.navItems\.slice\(0, -1\),\s*familyNavItem,\s*navItems\[navItems\.length - 1\]/s);
   });
 
   it('does not change the public navigation order', () => {
