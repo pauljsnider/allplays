@@ -28,6 +28,7 @@ describe('fee assignment notification source contract', () => {
         expect(resolverSource).toContain('.filter((playerKey) => playerKey.startsWith(teamPlayerKeyPrefix))');
         expect(resolverSource).toContain("recipientCollection.where('playerKey', 'in'");
         expect(resolverSource).toContain("recipientCollection.where('playerId', 'in'");
+        expect(resolverSource).toContain("recipientCollection.where('childId', 'in'");
         expect(resolverSource).toContain('index += 30');
         expect(functionsSource).not.toContain('listFeeAssignmentBatchRecipients');
     });

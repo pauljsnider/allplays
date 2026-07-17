@@ -9526,7 +9526,8 @@ async function resolveFeeAssignmentRecipientsForUser({
     for (let index = 0; index < uniquePlayerIds.length; index += 30) {
       queryPromises.push(
         recipientCollection.where('playerKey', 'in', uniquePlayerKeys.slice(index, index + 30)).get(),
-        recipientCollection.where('playerId', 'in', uniquePlayerIds.slice(index, index + 30)).get()
+        recipientCollection.where('playerId', 'in', uniquePlayerIds.slice(index, index + 30)).get(),
+        recipientCollection.where('childId', 'in', uniquePlayerIds.slice(index, index + 30)).get()
       );
     }
     const recipientSnaps = await Promise.all(queryPromises);

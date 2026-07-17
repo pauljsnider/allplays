@@ -1461,14 +1461,14 @@ test('notifyFeeAssigned finds payer siblings when recipient document IDs differ 
 
     try {
         const recipientA = {
-            playerKey: 'team-1::player-1',
+            childId: 'player-1',
             childName: 'Avery',
             feeTitle: 'Spring dues',
             amountCents: 2500,
             dueDate: '2026-07-01T12:00:00.000Z'
         };
         const recipientB = {
-            playerId: 'player-2',
+            childId: 'player-2',
             childName: 'Blake',
             feeTitle: 'Spring dues',
             amountCents: 2500,
