@@ -536,6 +536,66 @@ describe('Schedule', () => {
     expect(queueLinks).toContain('/schedule/team-1/event-2?childId=player-1&section=rideshare');
   });
 
+  it('shows a five-item mobile action queue with task-specific child links', async () => {
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [
+        { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
+      ],
+      events: [
+        buildScheduleEvent(1),
+        buildPracticePacketEvent(2, { myRsvp: 'going' }),
+        buildScheduleEvent(3, {
+          myRsvp: 'going',
+          isTeamStaff: true,
+          assignments: [{ role: 'Snack bar', value: '', claimable: true }]
+        }),
+        buildScheduleEvent(4, {
+          myRsvp: 'going',
+          rideshareSummary: { requests: 1, offerCount: 0, pending: 0, confirmed: 0, seatsLeft: 0, isFull: false }
+        }),
+        buildScheduleEvent(5),
+        buildScheduleEvent(6, {
+          myRsvp: 'going',
+          assignments: [{ role: 'Drinks', value: '', claimable: true }]
+        })
+      ]
+    });
+
+    const { container } = renderSchedule();
+
+    expect(await screen.findByText('Needs attention')).toBeTruthy();
+    const queueLinks = Array.from(container.querySelectorAll('.schedule-action-queue-mobile a'));
+    expect(queueLinks).toHaveLength(5);
+    expect(queueLinks.map((link) => link.textContent)).toEqual(expect.arrayContaining([
+      expect.stringContaining('RSVP needed for Pat'),
+      expect.stringContaining('Packet ready: 2 drills'),
+      expect.stringContaining('1 open assignment'),
+      expect.stringContaining('1 ride request')
+    ]));
+    expect(queueLinks.map((link) => link.getAttribute('href'))).toEqual([
+      '/schedule/team-1/event-1?childId=player-1&section=availability',
+      '/schedule/team-1/practice-2?childId=player-1&section=game',
+      '/schedule/team-1/event-3?childId=player-1&section=game',
+      '/schedule/team-1/event-4?childId=player-1&section=rideshare',
+      '/schedule/team-1/event-5?childId=player-1&section=availability'
+    ]);
+  });
+
+  it('omits the mobile action queue when the active filter has no actions', async () => {
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [
+        { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
+      ],
+      events: [buildScheduleEvent(1, { myRsvp: 'going' })]
+    });
+
+    const { container } = renderSchedule();
+
+    expect((await screen.findAllByText('vs. Rivals')).length).toBeGreaterThan(0);
+    expect(container.querySelector('.schedule-action-queue-mobile')).toBeNull();
+    expect(screen.queryByText('Needs attention')).toBeNull();
+  });
+
   it('keeps the desktop parent queue backed by actions beyond the current list window', async () => {
     shellLayoutMocks.isDesktopWeb = true;
     scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
@@ -552,6 +612,23 @@ describe('Schedule', () => {
 
     expect(await screen.findByText('Showing 20 of 22 events')).toBeTruthy();
     expect(screen.getByText('1 open assignment')).toBeTruthy();
+  });
+
+  it('keeps the mobile action queue backed by actions beyond the current list window', async () => {
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [
+        { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
+      ],
+      events: Array.from({ length: 22 }, (_, index) => buildScheduleEvent(index + 1, {
+        myRsvp: 'going',
+        assignments: index === 21 ? [{ role: 'Snack bar', value: '', claimable: true }] : []
+      }))
+    });
+
+    const { container } = renderSchedule();
+
+    expect(await screen.findByText('Showing 20 of 22 events')).toBeTruthy();
+    expect(container.querySelector('.schedule-action-queue-mobile')?.textContent).toContain('1 open assignment');
   });
 
   it('counts only actionable packets in non-packet schedule summaries', async () => {
