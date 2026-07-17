@@ -6876,21 +6876,24 @@ export function subscribeToChatMessages(teamId, { limit = 50, conversationId = D
 export async function sendTeamEmail(teamId, {
     subject,
     body,
-    targetType = 'full_team',
+    targetType,
     recipientIds = [],
     draftId = null,
     attachments = []
 } = {}) {
     const callable = httpsCallable(functions, 'sendTeamEmail');
-    const result = await callable({
+    const payload = {
         teamId,
         subject,
         body,
-        targetType,
         recipientIds,
         draftId,
         attachments
-    });
+    };
+    if (targetType !== undefined && targetType !== null && targetType !== '') {
+        payload.targetType = targetType;
+    }
+    const result = await callable(payload);
     return result.data;
 }
 
