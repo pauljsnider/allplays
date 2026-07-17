@@ -546,6 +546,7 @@ describe('Schedule', () => {
         buildPracticePacketEvent(2, { myRsvp: 'going' }),
         buildScheduleEvent(3, {
           myRsvp: 'going',
+          isTeamStaff: true,
           assignments: [{ role: 'Snack bar', value: '', claimable: true }]
         }),
         buildScheduleEvent(4, {
@@ -574,7 +575,7 @@ describe('Schedule', () => {
     expect(queueLinks.map((link) => link.getAttribute('href'))).toEqual([
       '/schedule/team-1/event-1?childId=player-1&section=availability',
       '/schedule/team-1/practice-2?childId=player-1&section=game',
-      '/schedule/team-1/event-3?childId=player-1&section=assignments',
+      '/schedule/team-1/event-3?childId=player-1&section=game',
       '/schedule/team-1/event-4?childId=player-1&section=rideshare',
       '/schedule/team-1/event-5?childId=player-1&section=availability'
     ]);

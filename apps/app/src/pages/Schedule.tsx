@@ -1535,7 +1535,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
           {statusMessage ? <Status tone="success" message={statusMessage} /> : null}
           {scheduleReadError ? <Status tone="error" message={scheduleLoadError ? getScheduleLoadErrorMessage(scheduleLoadError, hasLoadedSchedule) : scheduleReadError} /> : null}
           {!isDesktopWeb && !scheduleReadLoading && !isInitialScheduleLoad ? (
-            <ScheduleActionQueue events={visibleEvents} compact hideWhenEmpty />
+            <ScheduleActionQueue events={visibleEvents} compact hideWhenEmpty preferGameHubForStaff />
           ) : null}
 
           {scheduleReadLoading || isInitialScheduleLoad ? (
@@ -2615,10 +2615,11 @@ function ScheduleInsightMini({ label, value }: { label: string; value: number })
   );
 }
 
-function ScheduleActionQueue({ events, compact = false, hideWhenEmpty = false }: {
+function ScheduleActionQueue({ events, compact = false, hideWhenEmpty = false, preferGameHubForStaff = false }: {
   events: ParentScheduleEvent[];
   compact?: boolean;
   hideWhenEmpty?: boolean;
+  preferGameHubForStaff?: boolean;
 }) {
   const actionEvents = events
     .map((event) => ({ event, action: getEventActionSummary(event) }))
@@ -2644,7 +2645,7 @@ function ScheduleActionQueue({ events, compact = false, hideWhenEmpty = false }:
       </div>
       <div className={`${compact ? 'mt-2 max-h-56 overflow-y-auto overscroll-contain' : 'mt-3'} space-y-2`}>
         {actionEvents.length ? actionEvents.map(({ event, action }) => (
-          <Link key={event.eventKey} to={getGenericEventDetailPath(event)} className={`block rounded-xl border border-gray-200 bg-white transition hover:border-primary-200 hover:bg-primary-50 ${compact ? 'min-h-11 p-2.5' : 'p-3'}`}>
+          <Link key={event.eventKey} to={getGenericEventDetailPath(event, preferGameHubForStaff)} className={`block rounded-xl border border-gray-200 bg-white transition hover:border-primary-200 hover:bg-primary-50 ${compact ? 'min-h-11 p-2.5' : 'p-3'}`}>
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <div className="truncate text-sm font-black text-gray-950">{action}</div>
