@@ -53,6 +53,13 @@ const navItems: NavItem[] = [
   { label: 'Profile', path: '/profile', icon: UserCircle }
 ];
 
+const familyNavItem: NavItem = { label: 'Family', path: '/parent-tools', icon: UsersRound };
+const desktopNavItems: NavItem[] = [
+  ...navItems.slice(0, -1),
+  familyNavItem,
+  navItems[navItems.length - 1]
+];
+
 const publicNavItems: NavItem[] = [
   { label: 'Discover', path: '/discover', icon: Compass },
   { label: 'Find Teams', path: '/teams/browse', icon: Users },
@@ -264,6 +271,7 @@ export function AppShell({ auth, children }: AppShellProps) {
   const addWorkflows = buildAddWorkflows();
   const hasSignedInSession = Boolean(auth.user || auth.roles.length);
   const activeNavItems = hasSignedInSession ? navItems : publicNavItems;
+  const activeDesktopNavItems = hasSignedInSession ? desktopNavItems : publicNavItems;
   const commonAddWorkflows = commonAddWorkflowIds
     .map((id) => addWorkflows.find((workflow) => workflow.id === id))
     .filter((workflow): workflow is AddWorkflow => workflow !== undefined);
@@ -405,7 +413,7 @@ export function AppShell({ auth, children }: AppShellProps) {
           <div className={`mx-auto grid max-w-7xl grid-cols-[236px_minmax(0,1fr)] gap-6 px-6 py-6 ${isDesktopMessages ? 'desktop-shell-grid-messages' : ''}`}>
             <aside className="sticky top-[84px] h-[calc(100vh-108px)] self-start rounded-2xl border border-gray-200 bg-white p-3 shadow-app">
               <nav className="space-y-1" aria-label="Primary navigation">
-                {activeNavItems.map((item) => {
+                {activeDesktopNavItems.map((item) => {
                   const Icon = item.icon;
                   const isActive = location.pathname === item.path || (item.path !== '/home' && location.pathname.startsWith(item.path + '/'));
 

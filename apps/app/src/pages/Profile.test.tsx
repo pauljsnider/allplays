@@ -216,6 +216,15 @@ describe('Profile', () => {
     expect(sectionGrid?.className).not.toContain('min-w-max');
   });
 
+  it('exposes Family workflows from the mobile profile surface', async () => {
+    renderProfile();
+
+    expect(await screen.findByRole('heading', { name: 'Your Account' })).toBeTruthy();
+    const familyLink = screen.getByRole('link', { name: 'Open Family workflows' });
+    expect(familyLink.getAttribute('href')).toBe('/parent-tools');
+    expect(familyLink.textContent).toContain('Player access, household, fees, calendars, sharing, registration, and awards.');
+  });
+
   it('disables account merge while parent team eligibility is loading', async () => {
     const parentTeamsRequest = createDeferredPromise<Array<{ id: string; name: string }>>();
     profileServiceMocks.loadParentTeams.mockImplementation(() => parentTeamsRequest.promise);
