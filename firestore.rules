@@ -1442,7 +1442,9 @@ service cloud.firestore {
              request.resource.data.get('updatedAt', resource.data.get('updatedAt', null)) is timestamp &&
              (
                (!exists(reactionPath) && existsAfter(reactionPath) && nextCount == previousCount + 1) ||
-               (exists(reactionPath) && !existsAfter(reactionPath) && nextCount == previousCount - 1)
+               (exists(reactionPath) && !existsAfter(reactionPath) &&
+                ((previousCount > 0 && nextCount == previousCount - 1) ||
+                 (previousCount == 0 && nextCount == 0)))
              );
     }
 
@@ -1482,7 +1484,8 @@ service cloud.firestore {
              previousCount is int &&
              nextCount is int &&
              nextCount >= 0 &&
-             nextCount == previousCount - 1;
+             ((previousCount > 0 && nextCount == previousCount - 1) ||
+              (previousCount == 0 && nextCount == 0));
     }
 
     function isSocialPostModeratorUpdateValid() {
