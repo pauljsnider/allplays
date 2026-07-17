@@ -6569,7 +6569,7 @@ export async function saveStaffPracticePacket(event: ParentScheduleEvent, user: 
   assertPracticePacketManagementEvent(event, user);
   const authUser = user as AuthUser;
   const homePacketContent = buildStaffPracticePacketContent(input, event, authUser);
-  const homePacketReminderDueAt = Timestamp.fromDate(homePacketContent.dueAt || event.date);
+  const homePacketReminderDueAt = homePacketContent.dueAt || event.date;
   const sessionPayload = {
     eventId: event.id,
     eventType: 'practice',

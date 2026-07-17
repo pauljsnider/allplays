@@ -17,6 +17,7 @@ describe('drills planning access control', () => {
     });
 
     it('persists the session-date reminder timestamp when saving legacy home packets', () => {
+        expect(drillsHtml).toContain('data.homePacketReminderDueAt = data.date;');
         expect(drillsHtml).toContain("const homePacketReminderDueAt = new Date(document.getElementById('session-date').value);");
         expect(drillsHtml).toContain('homePacketReminderDueAt,\n                homePacketContent: {');
     });

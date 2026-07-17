@@ -306,9 +306,7 @@ describe('React app practice packet service', () => {
             eventType: 'practice',
             sourcePage: 'app-schedule',
             homePacketGenerated: true,
-            homePacketReminderDueAt: expect.objectContaining({
-                toDate: expect.any(Function)
-            }),
+            homePacketReminderDueAt: expect.any(Date),
             homePacketContent: expect.objectContaining({
                 packetTitle: 'Weekend touches',
                 dueDate: expect.stringContaining('2026-05-24'),
@@ -318,7 +316,7 @@ describe('React app practice packet service', () => {
         }));
         const packetContent = dbMocks.upsertPracticeSessionForEvent.mock.calls[0][2].homePacketContent;
         const reminderDueAt = dbMocks.upsertPracticeSessionForEvent.mock.calls[0][2].homePacketReminderDueAt;
-        expect(reminderDueAt.toDate().toISOString()).toContain('2026-05-24');
+        expect(reminderDueAt.toISOString()).toContain('2026-05-24');
         expect(packetContent.blocks).toEqual([
             expect.objectContaining({ drillTitle: 'Ball Mastery', duration: 12, notes: 'Both feet' }),
             expect.objectContaining({ drillTitle: 'Home Drill 2', duration: 8 })
@@ -344,13 +342,37 @@ describe('React app practice packet service', () => {
 
         expect(dbMocks.updatePracticeSession).toHaveBeenCalledWith('team-1', 'session-1', expect.objectContaining({
             homePacketGenerated: true,
-            homePacketReminderDueAt: expect.objectContaining({
-                toDate: expect.any(Function)
-            })
+            homePacketReminderDueAt: expect.any(Date)
         }));
         const reminderDueAt = dbMocks.updatePracticeSession.mock.calls[0][2].homePacketReminderDueAt;
-        expect(reminderDueAt.toDate()).toEqual(new Date('2026-05-22T19:00:00.000Z'));
+        expect(reminderDueAt).toEqual(new Date('2026-05-22T19:00:00.000Z'));
         expect(dbMocks.upsertPracticeSessionForEvent).not.toHaveBeenCalled();
+    });
+
+    it('encodes the reminder due time as a Firestore timestamp in the native REST fallback', async () => {
+        installWindow('capacitor:');
+        authMocks.getNativeAuthIdToken.mockResolvedValue('native-token');
+        dbMocks.updatePracticeSession.mockRejectedValue(new Error('Firestore save unavailable'));
+        const fetchMock = vi.fn().mockResolvedValue({
+            ok: true,
+            json: vi.fn().mockResolvedValue({})
+        });
+        vi.stubGlobal('fetch', fetchMock);
+
+        await saveStaffPracticePacket(practiceEvent({
+            isTeamAdmin: true,
+            practiceSessionId: 'session-1'
+        }), user({ uid: 'coach-1', roles: ['coach'] }), {
+            packetTitle: 'Weekend touches',
+            dueDate: '2026-05-24',
+            blocks: [{ drillTitle: 'Ball Mastery', type: 'Technical', duration: 12 }]
+        });
+
+        const [, request] = fetchMock.mock.calls[0];
+        const body = JSON.parse(request.body);
+        expect(body.fields.homePacketReminderDueAt).toEqual({
+            timestampValue: expect.stringContaining('2026-05-24')
+        });
     });
 
     it('carries packet data from practice sessions into parent schedule events', async () => {
