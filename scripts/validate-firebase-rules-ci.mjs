@@ -64,10 +64,19 @@ export function validateProductionDeployCommand(deployProd) {
 
     assertIncludes(deployProd, 'retry_firebase_deploy "hosting,functions" "application"', 'Production application deploy targets');
     assertIncludes(deployProd, 'retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore"', 'Production Firestore deploy targets');
-    const applicationDeploy = deployProd.indexOf('retry_firebase_deploy "hosting,functions" "application"');
-    const firestoreDeploy = deployProd.indexOf('retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore"');
-    if (applicationDeploy > firestoreDeploy) {
-        throw new Error('Production application deploy must run before the Firestore deploy.');
+    assertIncludes(deployProd, 'git diff --quiet "${{ github.event.before }}" "${{ github.sha }}" -- firestore.rules firestore.indexes.json', 'Production Firestore change detection');
+    assertIncludes(deployProd, 'FIRESTORE_CONFIG_CHANGED: ${{ steps.firestore_config.outputs.changed }}', 'Production Firestore change output');
+    assertIncludes(deployProd, 'if [[ "$FIRESTORE_CONFIG_CHANGED" == "true" ]]; then', 'Production Firestore change ordering');
+    const changedBranchStart = deployProd.indexOf('if [[ "$FIRESTORE_CONFIG_CHANGED" == "true" ]]; then');
+    const unchangedBranchStart = deployProd.indexOf('\n          else', changedBranchStart);
+    const conditionalEnd = deployProd.indexOf('\n          fi', unchangedBranchStart);
+    const changedBranch = deployProd.slice(changedBranchStart, unchangedBranchStart);
+    const unchangedBranch = deployProd.slice(unchangedBranchStart, conditionalEnd);
+    if (changedBranch.indexOf('"firestore"') > changedBranch.indexOf('"application"')) {
+        throw new Error('Production Firestore deploy must run first when its configuration changed.');
+    }
+    if (unchangedBranch.indexOf('"application"') > unchangedBranch.indexOf('"firestore"')) {
+        throw new Error('Production application deploy must run first when Firestore configuration is unchanged.');
     }
 
     const storageDeployCommand = deployCommands.find(command => /--only(?:=|\s+)storage(?:\s|$)/.test(command)) || '';

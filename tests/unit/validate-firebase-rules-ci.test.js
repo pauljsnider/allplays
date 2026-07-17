@@ -70,6 +70,9 @@ service firebase.storage {
       - name: Detect Storage rules changes
         id: storage_rules
         run: git diff --quiet "\${{ github.event.before }}" "\${{ github.sha }}" -- storage.rules
+      - name: Detect Firestore configuration changes
+        id: firestore_config
+        run: git diff --quiet "\${{ github.event.before }}" "\${{ github.sha }}" -- firestore.rules firestore.indexes.json
       - name: Deploy Firebase Storage rules when available
         env:
           STORAGE_RULES_CHANGED: \${{ steps.storage_rules.outputs.changed }}
@@ -79,8 +82,15 @@ service firebase.storage {
           if [[ "$STORAGE_RULES_CHANGED" != "true" ]]; then exit 0; fi
           exit "$storage_status"
             npx firebase-tools@14.25.0 deploy --only "$deploy_targets" --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive
-          retry_firebase_deploy "hosting,functions" "application"
-          retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore"
+          env:
+            FIRESTORE_CONFIG_CHANGED: \${{ steps.firestore_config.outputs.changed }}
+          if [[ "$FIRESTORE_CONFIG_CHANGED" == "true" ]]; then
+            retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore"
+            retry_firebase_deploy "hosting,functions" "application"
+          else
+            retry_firebase_deploy "hosting,functions" "application"
+            retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore"
+          fi
         `;
 
         expect(() => validateProductionDeployCommand(validDeployCommand)).not.toThrow();
@@ -90,6 +100,20 @@ service firebase.storage {
         expect(() => validateProductionDeployCommand(validDeployCommand.replace("sed -E 's/\\x1B\\[[0-9;]*[[:alpha:]]//g' \"$storage_log\" > \"$storage_plain_log\"", ''))).toThrow(
             'Production Storage rules ANSI log normalization'
         );
+        expect(() => validateProductionDeployCommand(validDeployCommand.replace(
+            `retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore"
+            retry_firebase_deploy "hosting,functions" "application"`,
+            `retry_firebase_deploy "hosting,functions" "application"
+            retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore"`
+        ))).toThrow('Production Firestore deploy must run first when its configuration changed');
+        expect(() => validateProductionDeployCommand(validDeployCommand.replace(
+            `else
+            retry_firebase_deploy "hosting,functions" "application"
+            retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore"`,
+            `else
+            retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore"
+            retry_firebase_deploy "hosting,functions" "application"`
+        ))).toThrow('Production application deploy must run first when Firestore configuration is unchanged');
     });
 
     it('requires preview deploy release-target outage handling', () => {

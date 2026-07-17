@@ -129,11 +129,13 @@ describe('authentication email delivery routing', () => {
         expect(productionSource).toContain('for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do');
         expect(productionSource).toContain('if (( attempt == max_attempts )); then');
         expect(productionSource).toContain('retry_delay_seconds=$((15 * (2 ** (attempt - 1))))');
-        const applicationDeploy = 'retry_firebase_deploy "hosting,functions" "application"';
-        const firestoreDeploy = 'retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore"';
-        expect(productionSource).toContain(applicationDeploy);
-        expect(productionSource).toContain(firestoreDeploy);
-        expect(productionSource.indexOf(applicationDeploy)).toBeLessThan(productionSource.indexOf(firestoreDeploy));
+        const changedBranchStart = productionSource.indexOf('if [[ "$FIRESTORE_CONFIG_CHANGED" == "true" ]]; then');
+        const unchangedBranchStart = productionSource.indexOf('\n          else', changedBranchStart);
+        const conditionalEnd = productionSource.indexOf('\n          fi', unchangedBranchStart);
+        const changedBranch = productionSource.slice(changedBranchStart, unchangedBranchStart);
+        const unchangedBranch = productionSource.slice(unchangedBranchStart, conditionalEnd);
+        expect(changedBranch.indexOf('"firestore"')).toBeLessThan(changedBranch.indexOf('"application"'));
+        expect(unchangedBranch.indexOf('"application"')).toBeLessThan(unchangedBranch.indexOf('"firestore"'));
     });
 
     it('retries only transient production deploy failures and fails fast otherwise', () => {

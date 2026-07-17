@@ -137,6 +137,16 @@ jobs:
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Detect Firestore configuration changes
+        id: firestore_config
+        shell: bash
+        run: |
+          if git diff --quiet "${{ github.event.before }}" "${{ github.sha }}" -- firestore.rules firestore.indexes.json; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Deploy Firebase Storage rules when available
         shell: bash
         env:
@@ -170,6 +180,8 @@ jobs:
 
       - name: Deploy Firebase production
         shell: bash
+        env:
+          FIRESTORE_CONFIG_CHANGED: ${{ steps.firestore_config.outputs.changed }}
         run: |
           set -euo pipefail
           transient_pattern='(^|[^[:alnum:]])(429|500|502|503|504)([^[:alnum:]]|$)|service[[:space:]_-]+unavailable|econnreset|connection[[:space:]_-]+reset|network[[:space:]_-]+reset|etimedout|timed[[:space:]_-]+out|timeout'
@@ -207,7 +219,14 @@ jobs:
             done
           }
 
-          # Publish user-facing code first so an unrelated Rules API outage cannot
-          # prevent Hosting and Functions fixes from reaching production.
-          retry_firebase_deploy "hosting,functions" "application"
-          retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore"
+          if [[ "$FIRESTORE_CONFIG_CHANGED" == "true" ]]; then
+            # Keep coupled authorization/index changes fail-closed: application code
+            # must not publish until its Firestore configuration is active.
+            retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore"
+            retry_firebase_deploy "hosting,functions" "application"
+          else
+            # Publish user-facing code first so an unrelated Rules API outage cannot
+            # prevent Hosting and Functions-only fixes from reaching production.
+            retry_firebase_deploy "hosting,functions" "application"
+            retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore"
+          fi
