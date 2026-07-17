@@ -67,17 +67,11 @@ export function validateProductionDeployCommand(deployProd) {
     }
 
     const deployTargets = new Set(onlyList.split(','));
-    for (const target of ['firestore:rules', 'firestore:indexes']) {
+    for (const target of ['firestore:rules', 'firestore:indexes', 'storage']) {
         if (!deployTargets.has(target)) {
             throw new Error(`Production Firebase deploy --only list must include ${target}.`);
         }
     }
-
-    assertMatches(
-        deployProd,
-        /- name: Deploy Firebase Storage rules when enabled\s+if: vars\.ENABLE_FIREBASE_STORAGE_DEPLOY == 'true'\s+run: npx firebase-tools@\S+ deploy --only storage --project game-flow-c6311 --config "\$FIREBASE_PROD_CONFIG" --non-interactive/,
-        'Optional production Storage rules deploy'
-    );
 
     assertMatches(deployCommand, /(?:^|\s)--project game-flow-c6311(?:\s|$)/, 'Production Firebase deploy project');
     assertMatches(deployCommand, /(?:^|\s)--config "\$FIREBASE_PROD_CONFIG"(?:\s|$)/, 'Production Firebase generated config');

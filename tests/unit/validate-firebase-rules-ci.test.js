@@ -61,17 +61,14 @@ service firebase.storage {
 `)).toThrow('Preview deploy installed Firebase CLI project/config arguments');
     });
 
-    it('keeps Storage rules deployable without blocking the normal production release', () => {
+    it('requires production deploys to release Storage rules with the generated config', () => {
         const validDeployCommand = `
-            npx firebase-tools@14.25.0 deploy --only hosting,firestore:rules,firestore:indexes,functions --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive
-      - name: Deploy Firebase Storage rules when enabled
-        if: vars.ENABLE_FIREBASE_STORAGE_DEPLOY == 'true'
-        run: npx firebase-tools@14.25.0 deploy --only storage --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive
+            npx firebase-tools@14.25.0 deploy --only hosting,firestore:rules,firestore:indexes,storage,functions --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive
         `;
 
         expect(() => validateProductionDeployCommand(validDeployCommand)).not.toThrow();
-        expect(() => validateProductionDeployCommand(validDeployCommand.replace("if: vars.ENABLE_FIREBASE_STORAGE_DEPLOY == 'true'", 'if: true'))).toThrow(
-            'Optional production Storage rules deploy'
+        expect(() => validateProductionDeployCommand(validDeployCommand.replace(',storage', ''))).toThrow(
+            'Production Firebase deploy --only list must include storage.'
         );
     });
 

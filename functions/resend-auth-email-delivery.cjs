@@ -3,6 +3,7 @@
 const crypto = require('node:crypto');
 
 const DEFAULT_FROM = 'ALL PLAYS <noreply@mail.allplays.ai>';
+const DELIVERY_RETENTION_MS = 24 * 60 * 60 * 1000;
 const FALLBACK_LEASE_MS = 5 * 60 * 1000;
 const RESEND_EVENT_STATES = Object.freeze({
   'email.sent': 'sent',
@@ -139,6 +140,7 @@ function createResendAuthEmailDelivery({
         attemptCount: 0,
         idempotencyKey: buildIdempotencyKey(deliveryId),
         fallbackState: 'not_requested',
+        expiresAt: new Date(now().getTime() + DELIVERY_RETENTION_MS),
         createdAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp()
       });
@@ -193,6 +195,7 @@ function createResendAuthEmailDelivery({
           providerMessageId,
           state: 'accepted',
           acceptedAt: FieldValue.serverTimestamp(),
+          message: FieldValue.delete(),
           lastError: FieldValue.delete(),
           updatedAt: FieldValue.serverTimestamp()
         }, { merge: true });
@@ -282,29 +285,31 @@ function createResendAuthEmailDelivery({
 
     const deliveryId = await findDeliveryId(providerMessageId);
     if (!deliveryId) {
-      await webhookRef.set({ status: 'unmatched', updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+      await webhookRef.set({ status: 'pending_mapping', updatedAt: FieldValue.serverTimestamp() }, { merge: true });
       logger.warn('Resend webhook did not match an ALL PLAYS authentication delivery.', {
         eventType,
         providerMessageId,
         webhookId
       });
-      return { unmatched: true };
+      const error = new Error('Resend delivery mapping is not available yet.');
+      error.code = 'delivery-mapping-not-found';
+      throw error;
     }
 
     const deliveryRef = firestore.collection('authEmailDeliveries').doc(deliveryId);
-    let fallback = null;
-    let fallbackInProgress = false;
-    let deliveryForAlert = null;
-    let eventWasApplied = false;
     const eventAt = String(event?.created_at || now().toISOString());
     const eventAtMillis = timestampMillis(eventAt);
     const claimedAt = now().toISOString();
     const claimedAtMillis = timestampMillis(claimedAt);
-    await firestore.runTransaction(async (transaction) => {
+    const decision = await firestore.runTransaction(async (transaction) => {
       const snapshot = await transaction.get(deliveryRef);
-      if (!snapshot.exists) return;
+      if (!snapshot.exists) {
+        return { fallback: null, fallbackInProgress: false, deliveryForAlert: null, eventWasApplied: false };
+      }
       const delivery = snapshot.data() || {};
-      deliveryForAlert = delivery;
+      let fallback = null;
+      let fallbackInProgress = false;
+      let eventWasApplied = false;
       const currentEventMillis = timestampMillis(delivery.providerEventAt);
       const update = {
         lastWebhookId: webhookId,
@@ -339,7 +344,9 @@ function createResendAuthEmailDelivery({
         fallbackInProgress = true;
       }
       transaction.set(deliveryRef, update, { merge: true });
+      return { fallback, fallbackInProgress, deliveryForAlert: delivery, eventWasApplied };
     });
+    const { fallback, fallbackInProgress, deliveryForAlert, eventWasApplied } = decision;
 
     if (eventWasApplied && ALERT_EVENTS.has(eventType)) {
       const alertId = `${sanitizeTagValue(providerMessageId)}_${sanitizeTagValue(eventType)}`;

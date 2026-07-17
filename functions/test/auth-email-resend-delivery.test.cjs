@@ -7,7 +7,7 @@ const {
   isTransientResendError
 } = require('../resend-auth-email-delivery.cjs');
 
-function createFakeFirestore() {
+function createFakeFirestore(options = {}) {
   const documents = new Map();
   let autoId = 0;
   const clone = (value) => value == null ? value : structuredClone(value);
@@ -92,10 +92,23 @@ function createFakeFirestore() {
       };
     },
     async runTransaction(callback) {
-      return callback({
-        get: async (ref) => snapshotFor(ref),
-        set: (ref, value, options = {}) => applyWrite(ref.path, value, options.merge === true)
-      });
+      const attemptCount = options.transactionAttempts || 1;
+      for (let attempt = 1; attempt <= attemptCount; attempt += 1) {
+        const writes = [];
+        const result = await callback({
+          get: async (ref) => snapshotFor(ref),
+          set: (ref, value, writeOptions = {}) => writes.push({ ref, value, writeOptions })
+        });
+        if (attempt < attemptCount) {
+          options.beforeTransactionRetry?.({
+            attempt,
+            set: (path, value, merge = true) => applyWrite(path, value, merge)
+          });
+          continue;
+        }
+        writes.forEach(({ ref, value, writeOptions }) => applyWrite(ref.path, value, writeOptions.merge === true));
+        return result;
+      }
     }
   };
   return {
@@ -200,6 +213,8 @@ test('Resend API delivery retries transient failures with one stable idempotency
   assert.deepEqual(harness.sends[0].payload.tags.map((tag) => tag.name), ['category', 'auth_type', 'delivery_id']);
   assert.equal(harness.db.get('authEmailDeliveries/auth_password_reset_request-7').state, 'accepted');
   assert.equal(harness.db.get('authEmailDeliveries/auth_password_reset_request-7').attemptCount, 3);
+  assert.equal(harness.db.get('authEmailDeliveries/auth_password_reset_request-7').message, undefined);
+  assert.equal(harness.db.get('authEmailDeliveries/auth_password_reset_request-7').expiresAt.toISOString(), '2026-07-18T12:00:00.000Z');
   assert.equal(harness.db.get('resendEmailMessages/resend-message-7').deliveryId, 'auth_password_reset_request-7');
 });
 
@@ -277,6 +292,24 @@ test('invalid webhook signature is rejected without changing delivery state', as
   assert.equal(harness.db.has('resendWebhookEvents/invalid-event'), false);
 });
 
+test('webhook returns a retryable error while its provider-message mapping is not committed', async () => {
+  const event = {
+    type: 'email.bounced',
+    created_at: '2026-07-17T12:02:00.000Z',
+    data: { email_id: 'not-mapped-yet' }
+  };
+  const harness = createHarness({ verifiedEvent: event });
+  const response = createResponse();
+  await harness.service.handleWebhook({
+    method: 'POST',
+    rawBody: Buffer.from('{}'),
+    headers: { 'svix-id': 'early-webhook' }
+  }, response);
+
+  assert.equal(response.statusCode, 500);
+  assert.equal(harness.db.get('resendWebhookEvents/early-webhook').status, 'pending_mapping');
+});
+
 test('bounce opens an alert and sends the Firebase password-reset fallback only once', async () => {
   const harness = createHarness();
   await harness.service.send({ deliveryId: 'bounced-reset', job: buildJob() });
@@ -323,6 +356,30 @@ test('an out-of-order old bounce cannot override delivery or trigger fallback', 
   assert.equal(harness.db.get('authEmailDeliveries/ordered-delivery').state, 'delivered');
   assert.equal(harness.fetches.length, 0);
   assert.equal(harness.db.has('emailDeliveryAlerts/resend-message-1_email_bounced'), false);
+});
+
+test('transaction retry discards stale fallback and alert decisions', async () => {
+  const db = createFakeFirestore({
+    transactionAttempts: 2,
+    beforeTransactionRetry: ({ set }) => set('authEmailDeliveries/retried-delivery', {
+      state: 'delivered',
+      providerEventType: 'email.delivered',
+      providerEventAt: '2026-07-17T12:10:00.000Z'
+    })
+  });
+  const harness = createHarness({ db });
+  await harness.service.send({ deliveryId: 'retried-delivery', job: buildJob() });
+  const result = await harness.service.processVerifiedWebhook({
+    type: 'email.bounced',
+    created_at: '2026-07-17T12:01:00.000Z',
+    data: { email_id: 'resend-message-1' }
+  }, 'retried-old-bounce');
+
+  assert.equal(result.applied, false);
+  assert.equal(result.fallbackSent, false);
+  assert.equal(harness.fetches.length, 0);
+  assert.equal(harness.db.has('emailDeliveryAlerts/resend-message-1_email_bounced'), false);
+  assert.equal(harness.db.get('authEmailDeliveries/retried-delivery').state, 'delivered');
 });
 
 test('a concurrent webhook retries until an abandoned fallback lease can be reclaimed', async () => {
