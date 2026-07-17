@@ -816,8 +816,12 @@ describe('Home', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Post' }));
 
     expect(await screen.findByText('Pat Player highlight just posted')).toBeTruthy();
+    expect(screen.getByText('Posted to your ALL PLAYS feed.')).toBeTruthy();
     expect(socialServiceMocks.loadSocialHome).toHaveBeenCalledTimes(2);
     resolveRefresh({ ...baseSocial, feedItems: [createdPost], metrics: { ...baseSocial.metrics, feedItems: 1 } });
+    await waitFor(() => {
+      expect(screen.getByText('Posted to your ALL PLAYS feed.')).toBeTruthy();
+    });
   });
 
   it('shows permission-specific Home refresh copy when access is denied after a prior load', async () => {

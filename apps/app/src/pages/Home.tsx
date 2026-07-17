@@ -407,10 +407,13 @@ export function Home({ auth }: { auth: AuthState }) {
     });
   };
 
-  const refreshSocial = async (nextHome = home) => {
+  const refreshSocial = async (
+    nextHome = home,
+    options: { preserveStatus?: boolean } = {}
+  ) => {
     const user = auth.user;
     if (!user) return;
-    setSocialStatus(null);
+    if (!options.preserveStatus) setSocialStatus(null);
     await runSecondaryLoad(
       async () => {
         setSocial(await loadSocialHome(user, nextHome));
@@ -419,7 +422,9 @@ export function Home({ auth }: { auth: AuthState }) {
         getErrorMessage: (loadError) => getAsyncErrorMessage(loadError, 'Unable to refresh Feed.'),
         rethrow: false,
         onError: (loadError) => {
-          setSocialStatus({ tone: 'error', message: getAsyncErrorMessage(loadError, 'Unable to refresh Feed.') });
+          if (!options.preserveStatus) {
+            setSocialStatus({ tone: 'error', message: getAsyncErrorMessage(loadError, 'Unable to refresh Feed.') });
+          }
         }
       }
     );
@@ -444,7 +449,7 @@ export function Home({ auth }: { auth: AuthState }) {
       nextParams.delete('type');
       setSearchParams(nextParams, { replace: true });
       setSocialStatus({ tone: 'success', message: 'Posted to your ALL PLAYS feed.' });
-      void refreshSocial();
+      void refreshSocial(home, { preserveStatus: true });
     } catch (postError: any) {
       setSocialStatus({ tone: 'error', message: postError?.message || 'Unable to create post.' });
     }
