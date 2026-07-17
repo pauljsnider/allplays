@@ -267,7 +267,10 @@ function createResendAuthEmailDelivery({
       const error = new Error(result?.error?.message || `Firebase fallback failed with HTTP ${response.status}.`);
       error.code = result?.error?.message || `http-${response.status}`;
       error.statusCode = response.status;
-      error.definitiveFailure = true;
+      const responseStatus = Number(response.status);
+      if (responseStatus >= 400 && responseStatus < 500) {
+        error.definitiveFailure = true;
+      }
       throw error;
     }
     return result;

@@ -415,6 +415,37 @@ test('an accepted Firebase fallback is not resent when persisting sent state fai
   assert.equal(harness.db.get('authEmailDeliveries/indeterminate-fallback').fallbackState, 'sending');
 });
 
+test('an ambiguous Firebase fallback 5xx is not resent when the webhook retries', async () => {
+  const harness = createHarness({
+    fetchResponse: {
+      ok: false,
+      status: 503,
+      json: async () => ({ error: { message: 'INTERNAL_ERROR' } })
+    }
+  });
+  await harness.service.send({ deliveryId: 'indeterminate-5xx', job: buildJob() });
+  const event = {
+    type: 'email.bounced',
+    created_at: '2026-07-17T12:05:00.000Z',
+    data: { email_id: 'resend-message-1' }
+  };
+
+  await assert.rejects(
+    harness.service.processVerifiedWebhook(event, 'indeterminate-5xx-first'),
+    (error) => error.statusCode === 503
+  );
+  assert.equal(harness.fetches.length, 1);
+  assert.equal(harness.db.get('authEmailDeliveries/indeterminate-5xx').fallbackState, 'sending');
+  assert.equal(harness.db.get('resendWebhookEvents/indeterminate-5xx-first').status, 'indeterminate');
+
+  await assert.rejects(
+    harness.service.processVerifiedWebhook(event, 'indeterminate-5xx-retry'),
+    (error) => error.code === 'fallback-in-progress'
+  );
+  assert.equal(harness.fetches.length, 1);
+  assert.equal(harness.db.get('authEmailDeliveries/indeterminate-5xx').fallbackState, 'sending');
+});
+
 test('an out-of-order old bounce cannot override delivery or trigger fallback', async () => {
   const harness = createHarness();
   await harness.service.send({ deliveryId: 'ordered-delivery', job: buildJob() });
