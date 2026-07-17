@@ -13,6 +13,7 @@ import {
   getMessageRevisionSignature,
   getSafeMessageAttachments,
   getChatComposerDraftKey,
+  getChatThreadLayoutKey,
   buildVirtualizedChatLayout,
   buildVirtualizedChatWindow,
   buildVirtualizedChatWindowFromLayout
@@ -97,6 +98,7 @@ const olderPage = Array.from({ length: 50 }, (_, index) => buildMessage(`older-$
 
 let scrollHeightValue = 2400;
 let contentScrollHeightValue = 2400;
+let olderLoadGate: { promise: Promise<void>; resolve: () => void } | null = null;
 
 function buildMessage(id: string, seconds: number): ChatMessage {
   return {
@@ -282,7 +284,7 @@ vi.mock('../hooks/useChatMessages', async () => {
           setLoadingOlder(true);
           scrollHeightValue = 3000;
           contentScrollHeightValue = 3000;
-          await Promise.resolve();
+          await (olderLoadGate?.promise || Promise.resolve());
           setOlderMessages(olderPage);
           setLoadingOlder(false);
         },
@@ -357,6 +359,7 @@ class MockResizeObserver {
 beforeEach(() => {
   useStatefulChatSheets = false;
   mockThreadLoadScenario = 'normal';
+  olderLoadGate = null;
   mockRouter.navigate.mockReset();
   mockShellLayoutState.isDesktopWeb = false;
   mockChatSheetsState.showConversationSheet = false;
@@ -538,6 +541,11 @@ describe('ChatWindow virtualization', () => {
     stringifySpy.mockRestore();
   });
 
+  it('scopes thread layout identity by team and normalized conversation', () => {
+    expect(getChatThreadLayoutKey('team-1', 'team')).toBe(getChatThreadLayoutKey('team-1', ''));
+    expect(getChatThreadLayoutKey('team-1', 'team')).not.toBe(getChatThreadLayoutKey('team-2', 'team'));
+  });
+
   it('includes attachment fields in the message revision signature', () => {
     const message = {
       ...buildMessage('message-with-attachment', 10),
@@ -667,6 +675,41 @@ describe('ChatWindow virtualization', () => {
     expect(bubbleCount).toBeGreaterThan(0);
     expect(bubbleCount).toBeLessThan(100);
     expect(bubbleCount).toBeLessThan(liveMessages.length);
+  });
+
+  it('clears pending older-history layout state when switching teams on the default conversation', async () => {
+    let releaseOlderLoad = () => {};
+    olderLoadGate = {
+      promise: new Promise<void>((resolve) => {
+        releaseOlderLoad = resolve;
+      }),
+      resolve: () => releaseOlderLoad()
+    };
+    const view = render(
+      <MemoryRouter>
+        <ChatWindow auth={auth} teamId="team-1" />
+      </MemoryRouter>
+    );
+    const thread = view.container.querySelector('.chat-messages-scroll') as HTMLDivElement;
+    thread.scrollTop = 120;
+    fireEvent.scroll(thread);
+    fireEvent.click(view.getByRole('button', { name: 'Load older messages' }));
+    await waitFor(() => expect(view.getByRole('button', { name: 'Load older messages' })).toBeDisabled());
+
+    view.rerender(
+      <MemoryRouter>
+        <ChatWindow auth={auth} teamId="team-2" />
+      </MemoryRouter>
+    );
+    olderLoadGate.resolve();
+
+    await waitFor(() => {
+      expect(view.getByRole('button', { name: 'Load older messages' })).toBeEnabled();
+      expect(thread.scrollTop).toBe(120);
+      const bubbleCount = view.container.querySelectorAll('.message-bubble').length;
+      expect(bubbleCount).toBeGreaterThan(0);
+      expect(bubbleCount).toBeLessThan(100);
+    });
   });
 
   it('offers in-place retry for a failed message subscription and keeps back navigation available', async () => {

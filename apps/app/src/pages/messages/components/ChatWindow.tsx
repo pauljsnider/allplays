@@ -252,6 +252,10 @@ export function getChatComposerDraftKey(teamId: string, conversationId: string |
   return `${encodeURIComponent(String(teamId || '').trim())}|${encodeURIComponent(normalizeConversationId(conversationId))}`;
 }
 
+export function getChatThreadLayoutKey(teamId: string, conversationId: string | null | undefined) {
+  return `${encodeURIComponent(String(teamId || '').trim())}|${encodeURIComponent(normalizeConversationId(conversationId))}`;
+}
+
 export function isSelectedConversation(conversationId: string, selectedConversationId: string) {
   return conversationId === selectedConversationId;
 }
@@ -407,6 +411,7 @@ export function ChatWindow({
     onTeamReset: resetChatSelectionState
   });
   const effectiveConversationId = normalizeConversationId(selectedConversationId);
+  const activeThreadLayoutKey = getChatThreadLayoutKey(teamId, effectiveConversationId);
   const activeComposerDraftKey = getChatComposerDraftKey(teamId, effectiveConversationId);
   const activeComposerDraftKeyRef = useRef(activeComposerDraftKey);
   const latestComposerDraftRef = useRef<ChatComposerDraft>({
@@ -850,7 +855,7 @@ export function ChatWindow({
     setMeasuredMessageHeights({});
     setMessageViewportState({ scrollTop: 0, viewportHeight: 0 });
     olderLoadAnchorRef.current = null;
-  }, [effectiveConversationId]);
+  }, [activeThreadLayoutKey]);
 
   useEffect(() => {
     setIsMuted(resolveMutedState(teamId, effectiveConversationId, inboxTeam, profile));
