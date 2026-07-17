@@ -38,9 +38,8 @@ describe('fee notification contract', () => {
         expect(functionsSource).toContain('const payerUserIds = await resolveFeeAssignmentPayerUserIds(teamId, data);');
         expect(functionsSource).toContain("const payerTargets = await getTargetsForCategoryUserIds(teamId, 'fees', payerUserIds, null);");
         expect(functionsSource).toContain('claimFeeAssignmentNotificationUser({ teamId, batchId, recipientId, uid })');
-        expect(functionsSource).toContain('const batchRecipients = await listFeeAssignmentBatchRecipients({');
         expect(functionsSource).toContain('for (const uid of claimedUserIds)');
-        expect(functionsSource).toContain('const recipientsForUser = await filterFeeAssignmentRecipientsForUser({');
+        expect(functionsSource).toContain('const recipientsForUser = await resolveFeeAssignmentRecipientsForUser({');
         expect(functionsSource).toContain('const payload = buildCombinedFeeAssignmentNotificationPayload(recipientsForUser);');
         expect(functionsSource).toContain('targets: targetsForUser,');
         expect(functionsSource).toContain('title: payload.title');

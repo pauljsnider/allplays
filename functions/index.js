@@ -9463,31 +9463,6 @@ function buildCombinedFeeAssignmentNotificationPayload(recipients = []) {
   };
 }
 
-async function listFeeAssignmentBatchRecipients({ teamId, batchId, recipientId, recipient }) {
-  let recipients = [];
-  try {
-    const snap = await firestore.collection(`teams/${teamId}/feeBatches/${batchId}/feeRecipients`).get();
-    recipients = snap.docs
-      .map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) }))
-      .filter((entry) => entry && typeof entry === 'object');
-  } catch (error) {
-    functions.logger.warn('Failed to read fee assignment batch recipients; falling back to current recipient.', {
-      teamId,
-      batchId,
-      recipientId,
-      error: error?.message || error
-    });
-  }
-
-  if (recipientId && !recipients.some((entry) => String(entry.id || '') === String(recipientId))) {
-    recipients.push({ id: recipientId, ...(recipient || {}) });
-  }
-  if (!recipients.length && recipient) {
-    recipients.push({ id: recipientId || null, ...recipient });
-  }
-  return recipients;
-}
-
 function getFeeAssignmentRecipientPlayerKey(teamId, recipient = {}) {
   const playerId = resolveFeeRecipientPlayerId(teamId, recipient);
   return getFeeReminderPlayerKey({
@@ -9516,21 +9491,65 @@ async function loadFeeAssignmentUserParentPlayerKeys(uid) {
   }
 }
 
-async function filterFeeAssignmentRecipientsForUser({ teamId, uid, recipients, fallbackRecipient }) {
+async function resolveFeeAssignmentRecipientsForUser({
+  teamId,
+  batchId,
+  uid,
+  recipientId,
+  fallbackRecipient
+}) {
+  const fallback = fallbackRecipient
+    ? { id: recipientId || null, ...fallbackRecipient }
+    : null;
   const normalizedUid = String(uid || '').trim();
-  if (!normalizedUid) return fallbackRecipient ? [fallbackRecipient] : [];
+  if (!normalizedUid || !teamId || !batchId) return fallback ? [fallback] : [];
   const parentPlayerKeys = await loadFeeAssignmentUserParentPlayerKeys(normalizedUid);
-  if (parentPlayerKeys.size) {
-    const fallbackPlayerKey = getFeeAssignmentRecipientPlayerKey(teamId, fallbackRecipient || {});
-    if (!fallbackPlayerKey || parentPlayerKeys.has(fallbackPlayerKey)) {
-      const matchedRecipients = (Array.isArray(recipients) ? recipients : [])
-        .filter((recipient) => parentPlayerKeys.has(getFeeAssignmentRecipientPlayerKey(teamId, recipient)));
-      if (matchedRecipients.length) {
-        return matchedRecipients;
-      }
+  if (!parentPlayerKeys.size) return fallback ? [fallback] : [];
+
+  const teamPlayerKeyPrefix = `${teamId}::`;
+  const fallbackPlayerKey = getFeeAssignmentRecipientPlayerKey(teamId, fallbackRecipient || {});
+  const playerKeys = Array.from(parentPlayerKeys)
+    .filter((playerKey) => playerKey.startsWith(teamPlayerKeyPrefix))
+    .filter((playerKey) => playerKey !== fallbackPlayerKey)
+    .filter((playerKey) => {
+      const playerId = playerKey.slice(teamPlayerKeyPrefix.length);
+      return playerId && !playerId.includes('/');
+    });
+  const uniquePlayerKeys = Array.from(new Set(playerKeys));
+  const uniquePlayerIds = uniquePlayerKeys
+    .map((playerKey) => playerKey.slice(teamPlayerKeyPrefix.length));
+  if (!uniquePlayerIds.length) return fallback ? [fallback] : [];
+
+  try {
+    const recipientCollection = firestore.collection(`teams/${teamId}/feeBatches/${batchId}/feeRecipients`);
+    const queryPromises = [];
+    for (let index = 0; index < uniquePlayerIds.length; index += 30) {
+      queryPromises.push(
+        recipientCollection.where('playerKey', 'in', uniquePlayerKeys.slice(index, index + 30)).get(),
+        recipientCollection.where('playerId', 'in', uniquePlayerIds.slice(index, index + 30)).get(),
+        recipientCollection.where('childId', 'in', uniquePlayerIds.slice(index, index + 30)).get()
+      );
     }
+    const recipientSnaps = await Promise.all(queryPromises);
+    const recipientsById = new Map();
+    recipientSnaps.forEach((querySnap) => {
+      querySnap.docs.forEach((docSnap) => {
+        if (String(docSnap.id || '') === String(recipientId || '')) return;
+        recipientsById.set(docSnap.id, { id: docSnap.id, ...(docSnap.data() || {}) });
+      });
+    });
+    const recipients = Array.from(recipientsById.values());
+    return fallback ? [fallback, ...recipients] : recipients;
+  } catch (error) {
+    functions.logger.warn('Failed to read payer-scoped fee assignment recipients; falling back to current recipient.', {
+      teamId,
+      batchId,
+      recipientId,
+      uid: normalizedUid,
+      error: error?.message || error
+    });
+    return fallback ? [fallback] : [];
   }
-  return fallbackRecipient ? [fallbackRecipient] : [];
 }
 
 function combineDirectNotificationResults(results = []) {
@@ -11204,23 +11223,17 @@ exports.notifyFeeAssigned = functions.firestore
     const claimedUserIds = new Set(claimResults.filter((result) => result.claimed).map((result) => result.uid));
     if (!claimedUserIds.size) return null;
     const claimedPayerTargets = payerTargets.filter((target) => claimedUserIds.has(target.uid));
-    const batchRecipients = await listFeeAssignmentBatchRecipients({
-      teamId,
-      batchId,
-      recipientId,
-      recipient: data
-    });
-
     try {
       const sendResults = [];
       for (const uid of claimedUserIds) {
         const claimedTargets = claimedPayerTargets;
         const targetsForUser = claimedTargets.filter((target) => String(target.uid || '').trim() === uid);
         if (!targetsForUser.length) continue;
-        const recipientsForUser = await filterFeeAssignmentRecipientsForUser({
+        const recipientsForUser = await resolveFeeAssignmentRecipientsForUser({
           teamId,
+          batchId,
           uid,
-          recipients: batchRecipients,
+          recipientId,
           fallbackRecipient: data
         });
         if (recipientsForUser.length <= 1) {

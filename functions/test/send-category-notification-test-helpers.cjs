@@ -118,6 +118,7 @@ function buildNotificationTestEnv({
     const deletedPaths = [];
     const updatedDocs = [];
     const messagingCalls = [];
+    const feeRecipientDocGetPaths = [];
     const docStore = new Map();
     const counts = {
         teamDocGets: 0,
@@ -126,6 +127,7 @@ function buildNotificationTestEnv({
         targetQueries: 0,
         recipientDocGets: 0,
         recipientCollectionGets: 0,
+        feeRecipientDocGets: 0,
         preferenceGets: 0,
         deviceGets: 0,
         userRecordGets: 0,
@@ -406,6 +408,10 @@ function buildNotificationTestEnv({
                         exists: Boolean(entry)
                     });
                 }
+                if (/^teams\/[^/]+\/feeBatches\/[^/]+\/feeRecipients\/[^/]+$/.test(path)) {
+                    counts.feeRecipientDocGets += 1;
+                    feeRecipientDocGetPaths.push(path);
+                }
                 if (docStore.has(path)) {
                     return makeDocSnapshot({ id: this.id, ref: this, data: docStore.get(path), exists: true });
                 }
@@ -612,18 +618,23 @@ function buildNotificationTestEnv({
 
         const feeRecipientsMatch = path.match(/^teams\/([^/]+)\/feeBatches\/([^/]+)\/feeRecipients$/);
         if (feeRecipientsMatch) {
+            const getFeeRecipientDocs = () => {
+                const prefix = `${path}/`;
+                return Array.from(docStore.entries())
+                    .filter(([docPath]) => docPath.startsWith(prefix) && !docPath.slice(prefix.length).includes('/'))
+                    .map(([docPath, data]) => makeDocSnapshot({
+                        id: docPath.slice(prefix.length),
+                        ref: doc(docPath),
+                        data,
+                        exists: true
+                    }));
+            };
             return {
+                where(field, op, value) {
+                    return makeQuery(getFeeRecipientDocs).where(field, op, value);
+                },
                 async get() {
-                    const prefix = `${path}/`;
-                    const docs = Array.from(docStore.entries())
-                        .filter(([docPath]) => docPath.startsWith(prefix) && !docPath.slice(prefix.length).includes('/'))
-                        .map(([docPath, data]) => makeDocSnapshot({
-                            id: docPath.slice(prefix.length),
-                            ref: doc(docPath),
-                            data,
-                            exists: true
-                        }));
-                    return makeQuerySnapshot(docs);
+                    return makeQuerySnapshot(getFeeRecipientDocs());
                 }
             };
         }
@@ -859,6 +870,7 @@ function buildNotificationTestEnv({
         auditWrites,
         updatedDocs,
         messagingCalls,
+        feeRecipientDocGetPaths,
         getNotificationInboxDocCount(uid) {
             const prefix = `users/${uid}/notificationInbox/`;
             return Array.from(docStore.keys())
