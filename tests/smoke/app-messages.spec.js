@@ -467,7 +467,7 @@ test('@visual messages inbox and team chat exercise real migrated chat UX', asyn
     await mockMessagesModules(page);
     await page.goto(url, { waitUntil: 'domcontentloaded' });
 
-    await waitForMessagesRoute(page, page.getByRole('heading', { name: 'Conversations' }));
+    await waitForMessagesRoute(page, page.getByRole('heading', { name: 'Conversations', exact: true }));
     await expect(page.getByRole('link', { name: /Bears/ }).first()).toBeVisible();
     await expect(page.getByText('Coach Jamie: Practice packet is posted.')).toBeVisible();
     await expectVisualSnapshot(page, 'messages-inbox-mobile.png');
@@ -669,7 +669,7 @@ test('messages inbox stays interactive while previews hydrate on inbox and deskt
     await mockMessagesModules(page, { previewDelayMs: 600 });
     await page.goto(appUrl(baseURL, '/messages'), { waitUntil: 'domcontentloaded' });
 
-    await waitForMessagesRoute(page, page.getByRole('heading', { name: 'Conversations' }));
+    await waitForMessagesRoute(page, page.getByRole('heading', { name: 'Conversations', exact: true }));
     const bearsInboxRow = page.getByRole('link', { name: /Bears/ }).first();
     await expect(bearsInboxRow).toBeVisible();
     await expect(bearsInboxRow).toContainText('No messages yet');
