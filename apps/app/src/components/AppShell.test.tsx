@@ -180,6 +180,49 @@ describe('AppShell', () => {
     expect(searchButton.getAttribute('data-testid')).toBe('app-shell-search-trigger');
   });
 
+  it('adds Family to signed-in desktop navigation and marks nested tools active', () => {
+    render(
+      <MemoryRouter initialEntries={['/parent-tools/fees']}>
+        <Routes>
+          <Route path="/parent-tools/fees" element={<AppShell auth={signedInAuth}><div>Family fees</div></AppShell>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    const primaryNav = screen.getByRole('navigation', { name: 'Primary navigation' });
+    const familyLink = within(primaryNav).getByRole('link', { name: 'Family' });
+    expect(familyLink.getAttribute('href')).toBe('/parent-tools');
+    expect(familyLink.className).toContain('bg-primary-50');
+  });
+
+  it('keeps the mobile bottom navigation at six items and routes Family through Profile', () => {
+    useShellLayoutMock.mockReturnValue({ isDesktopWeb: false });
+    render(
+      <MemoryRouter initialEntries={['/home']}>
+        <Routes>
+          <Route path="/home" element={<AppShell auth={signedInAuth}><div>Home</div></AppShell>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    const primaryNav = screen.getByRole('navigation', { name: 'Primary navigation' });
+    expect(within(primaryNav).getAllByRole('link')).toHaveLength(6);
+    expect(within(primaryNav).queryByRole('link', { name: 'Family' })).toBeNull();
+    expect(within(primaryNav).getByRole('link', { name: 'Profile' })).toBeTruthy();
+  });
+
+  it('does not add Family to signed-out navigation', () => {
+    render(
+      <MemoryRouter initialEntries={['/discover']}>
+        <Routes>
+          <Route path="/discover" element={<AppShell auth={{ ...auth, roles: [] }}><div>Discover</div></AppShell>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(screen.queryByRole('link', { name: 'Family' })).toBeNull();
+  });
+
   it('announces notification count changes through a live region', () => {
     render(
       <MemoryRouter initialEntries={['/home']}>
