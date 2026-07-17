@@ -361,6 +361,27 @@ describe('Schedule', () => {
     );
   });
 
+  it('keeps bulk RSVP disabled until current responses finish hydrating', async () => {
+    const schedule = {
+      children: [{ playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }],
+      events: [buildScheduleEvent(1), buildScheduleEvent(2)]
+    };
+    let finishHydration: ((value: typeof schedule) => void) | null = null;
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(schedule);
+    scheduleServiceMocks.hydrateParentScheduleRsvps.mockImplementationOnce(() => new Promise((resolve) => {
+      finishHydration = resolve;
+    }));
+
+    renderSchedule();
+
+    const checkingButton = await screen.findByRole('button', { name: 'Checking…' });
+    expect(checkingButton).toBeDisabled();
+    expect(screen.getByText('Checking your current responses before selecting events.')).toBeTruthy();
+
+    finishHydration?.(schedule);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Review RSVPs' })).toBeEnabled());
+  });
+
   it('submits one response across multiple upcoming games and practices', async () => {
     scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
       children: [{ playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }],
@@ -417,6 +438,39 @@ describe('Schedule', () => {
       );
     });
     expect(scheduleServiceMocks.submitParentScheduleRsvp).not.toHaveBeenCalled();
+  });
+
+  it('uses per-child RSVP writes when only some siblings are selected', async () => {
+    const firstChild = buildScheduleEvent(1);
+    const secondChild = buildScheduleEvent(1, {
+      eventKey: 'team-1::event-1::player-2::2100-06-01T18:00:00.000Z::game',
+      childId: 'player-2',
+      childName: 'Sam'
+    });
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [
+        { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' },
+        { playerId: 'player-2', playerName: 'Sam', teamId: 'team-1', teamName: 'Bears' }
+      ],
+      events: [firstChild, secondChild]
+    });
+    scheduleServiceMocks.submitParentScheduleRsvp.mockResolvedValue(null);
+
+    renderSchedule();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Review RSVPs' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Respond to multiple events' });
+    fireEvent.click(within(dialog).getByLabelText(/^Select Sam /));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Maybe' }));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.submitParentScheduleRsvp).toHaveBeenCalledWith(
+        expect.objectContaining({ childId: 'player-1' }),
+        auth.user,
+        'maybe'
+      );
+    });
+    expect(scheduleServiceMocks.submitParentScheduleRsvpForChildren).not.toHaveBeenCalled();
   });
 
   it('rolls back only failed bulk RSVP rows and keeps them selected for retry', async () => {

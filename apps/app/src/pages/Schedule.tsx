@@ -59,7 +59,7 @@ import {
   getBulkRsvpCandidates,
   getBulkRsvpResultMessage,
   getNeededBulkRsvpEventKeys,
-  groupBulkRsvpEvents
+  groupBulkRsvpSubmissions
 } from '../lib/bulkRsvp';
 
 const filterOptions: Array<{ value: ParentScheduleFilter; label: string }> = [
@@ -151,6 +151,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const [staffToolsRequested, setStaffToolsRequested] = useState(false);
   const [bulkRsvpOpen, setBulkRsvpOpen] = useState(false);
   const [bulkRsvpResult, setBulkRsvpResult] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
+  const [rsvpHydrationPending, setRsvpHydrationPending] = useState(true);
   const [loadedScheduleUserId, setLoadedScheduleUserId] = useState<string | null>(null);
   const [pastHistoryHasMore, setPastHistoryHasMore] = useState(false);
   const hasLoadedScheduleRef = useRef(false);
@@ -201,10 +202,17 @@ export function Schedule({ auth }: { auth: AuthState }) {
 
   const hydrateScheduleRsvpsInBackground = (result: { children: ParentScheduleChild[]; events: ParentScheduleEvent[] }) => {
     const user = auth.user;
-    if (!user) return;
+    if (!user) {
+      setRsvpHydrationPending(false);
+      return;
+    }
     const hydrationVersion = ++rsvpHydrationVersionRef.current;
     const rsvpEvents = getBulkRsvpCandidates(result.events);
-    if (!rsvpEvents.length) return;
+    setRsvpHydrationPending(true);
+    if (!rsvpEvents.length) {
+      setRsvpHydrationPending(false);
+      return;
+    }
 
     const mergeHydratedEvents = (hydratedEvents: ParentScheduleEvent[]) => {
       if (hydrationVersion !== rsvpHydrationVersionRef.current || auth.user?.uid !== user.uid) return;
@@ -222,7 +230,15 @@ export function Schedule({ auth }: { auth: AuthState }) {
       { children: result.children, events: rsvpEvents },
       user,
       { onProgress: mergeHydratedEvents }
-    ).then((hydrated) => mergeHydratedEvents(hydrated.events));
+    ).then((hydrated) => mergeHydratedEvents(hydrated.events))
+      .catch((error) => {
+        logger.warn('Unable to hydrate schedule RSVPs in the background.', { error });
+      })
+      .finally(() => {
+        if (hydrationVersion === rsvpHydrationVersionRef.current && auth.user?.uid === user.uid) {
+          setRsvpHydrationPending(false);
+        }
+      });
   };
 
   const buildPastScheduleRangeByTeam = () => {
@@ -407,6 +423,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
             applyScheduleResult({ children: [], events: [] });
           }
           setLoadedScheduleUserId(auth.user?.uid || null);
+          setRsvpHydrationPending(false);
           timer.end({
             force,
             error: mappedError.message
@@ -425,6 +442,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     hasStartedInitialScheduleLoadRef.current = false;
     pastHistoryLoadedRef.current = false;
     setPastHistoryHasMore(false);
+    setRsvpHydrationPending(Boolean(auth.user?.uid));
     if (!auth.user?.uid) {
       setLoadedScheduleUserId(null);
       applyScheduleResult({ children: [], events: [] });
@@ -657,7 +675,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     selectedEventKeys.forEach((eventKey) => pendingRsvpEventKeysRef.current.add(eventKey));
     updateScheduleEvents((current) => applyBulkRsvpResponse(current, selectedKeySet, response));
 
-    const settledGroups = await Promise.all(groupBulkRsvpEvents(targetEvents).map(async (group) => {
+    const settledGroups = await Promise.all(groupBulkRsvpSubmissions(targetEvents, bulkRsvpCandidates).map(async (group) => {
       try {
         if (group.length > 1) {
           await submitParentScheduleRsvpForChildren(group, user, response);
@@ -910,7 +928,9 @@ export function Schedule({ auth }: { auth: AuthState }) {
             <BulkRsvpLauncher
               eventCount={bulkRsvpCandidates.length}
               neededCount={getNeededBulkRsvpEventKeys(bulkRsvpCandidates).length}
+              hydrating={rsvpHydrationPending}
               onOpen={() => {
+                if (rsvpHydrationPending) return;
                 setBulkRsvpResult(null);
                 setBulkRsvpOpen(true);
               }}
@@ -1114,9 +1134,10 @@ function formatCount(value: number, label: string) {
   return `${value} ${label}${value === 1 ? '' : 's'}`;
 }
 
-function BulkRsvpLauncher({ eventCount, neededCount, onOpen }: {
+function BulkRsvpLauncher({ eventCount, neededCount, hydrating, onOpen }: {
   eventCount: number;
   neededCount: number;
+  hydrating: boolean;
   onOpen: () => void;
 }) {
   return (
@@ -1125,13 +1146,15 @@ function BulkRsvpLauncher({ eventCount, neededCount, onOpen }: {
         <div className="app-label text-primary-700">Family RSVP</div>
         <h2 className="mt-1 text-sm font-black text-gray-950 sm:text-base">Respond to multiple events</h2>
         <p className="mt-0.5 text-xs font-semibold leading-5 text-gray-600">
-          {neededCount
+          {hydrating
+            ? 'Checking your current responses before selecting events.'
+            : neededCount
             ? `${neededCount} ${neededCount === 1 ? 'event needs' : 'events need'} a response. Review up to ${eventCount} upcoming games and practices together.`
             : `Review or update ${eventCount} upcoming games and practices together.`}
         </p>
       </div>
-      <button type="button" className="primary-button min-h-10 flex-none px-3 py-2 text-xs sm:text-sm" onClick={onOpen}>
-        Review RSVPs
+      <button type="button" className="primary-button min-h-10 flex-none px-3 py-2 text-xs sm:text-sm" onClick={onOpen} disabled={hydrating}>
+        {hydrating ? 'Checking…' : 'Review RSVPs'}
       </button>
     </section>
   );

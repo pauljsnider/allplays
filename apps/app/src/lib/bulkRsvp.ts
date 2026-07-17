@@ -45,6 +45,27 @@ export function groupBulkRsvpEvents(events: ParentScheduleEvent[]) {
   return [...groups.values()];
 }
 
+export function groupBulkRsvpSubmissions(
+  selectedEvents: ParentScheduleEvent[],
+  candidateEvents: ParentScheduleEvent[]
+) {
+  const candidateCountByEvent = new Map<string, number>();
+  candidateEvents.forEach((event) => {
+    const key = `${event.teamId}::${event.id}`;
+    candidateCountByEvent.set(key, (candidateCountByEvent.get(key) || 0) + 1);
+  });
+
+  return groupBulkRsvpEvents(selectedEvents).flatMap((group) => {
+    const first = group[0];
+    if (!first) return [];
+    const candidateCount = candidateCountByEvent.get(`${first.teamId}::${first.id}`) || 0;
+    if (group.length > 1 && group.length === candidateCount) {
+      return [group];
+    }
+    return group.map((event) => [event]);
+  });
+}
+
 export function applyBulkRsvpResponse(
   events: ParentScheduleEvent[],
   eventKeys: Set<string>,

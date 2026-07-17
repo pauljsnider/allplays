@@ -6,6 +6,7 @@ import {
   getBulkRsvpResultMessage,
   getNeededBulkRsvpEventKeys,
   groupBulkRsvpEvents,
+  groupBulkRsvpSubmissions,
   maxBulkRsvpEvents
 } from './bulkRsvp';
 
@@ -72,6 +73,14 @@ describe('bulk RSVP helpers', () => {
       'not_responded',
       'maybe'
     ]);
+  });
+
+  it('keeps complete sibling selections atomic and splits partial selections into per-child writes', () => {
+    const first = event(1);
+    const sibling = event(2, { eventKey: 'team-1::game-1::player-2', id: 'game-1' });
+
+    expect(groupBulkRsvpSubmissions([first, sibling], [first, sibling])).toEqual([[first, sibling]]);
+    expect(groupBulkRsvpSubmissions([first], [first, sibling])).toEqual([[first]]);
   });
 
   it('formats complete and partial result summaries', () => {
