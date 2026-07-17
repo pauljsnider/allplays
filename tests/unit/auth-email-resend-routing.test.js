@@ -23,13 +23,14 @@ describe('authentication email delivery routing', () => {
         expect(productionAuthSources).not.toMatch(/accounts:sendOobCode/);
     });
 
-    it('generates action links on the server and queues every auth email through mail', () => {
+    it('generates action links on the server and sends auth email through tracked Resend delivery', () => {
         const functionsSource = read('functions/index.js');
         const authEmailCoreSource = read('functions/auth-email-core.cjs');
         const callablesSource = read('functions/auth-email-callables.cjs');
         const passwordResetWorkerSource = read('functions/auth-email-password-reset-worker.cjs');
         const passwordResetSweeperSource = read('functions/auth-email-password-reset-sweeper.cjs');
         const deliveryStoreSource = read('functions/auth-email-delivery-store.cjs');
+        const resendDeliverySource = read('functions/resend-auth-email-delivery.cjs');
         const resetCallableStart = callablesSource.indexOf('async function queuePasswordResetEmail');
         const resetCallableEnd = callablesSource.indexOf('\n  async function resolveVerificationUser', resetCallableStart);
         const resetCallableSource = callablesSource.slice(resetCallableStart, resetCallableEnd);
@@ -40,10 +41,15 @@ describe('authentication email delivery routing', () => {
         expect(passwordResetWorkerSource).not.toContain('releaseDelivery');
         expect(callablesSource).toContain('generateEmailVerificationLink');
         expect(callablesSource).toContain('generateSignInWithEmailLink');
-        expect(deliveryStoreSource).toContain("firestore.collection('mail').doc(deliveryId || buildMailDocId");
+        expect(deliveryStoreSource).toContain('await sendDelivery({ deliveryId: resolvedDeliveryId, job });');
+        expect(resendDeliverySource).toContain('await resend.emails.send(payload, {');
+        expect(resendDeliverySource).toContain('idempotencyKey: delivery.idempotencyKey');
+        expect(resendDeliverySource).toContain('resend.webhooks.verify({');
+        expect(resendDeliverySource).toContain('accounts:sendOobCode?key=');
         expect(functionsSource).toContain('createAuthEmailCallableHandlers');
         expect(functionsSource).toContain('createAuthEmailDeliveryStore');
-        expect(functionsSource).toContain('.runWith({ failurePolicy: true })');
+        expect(functionsSource).toContain(".runWith({ failurePolicy: true, secrets: ['RESEND_API_KEY'] })");
+        expect(functionsSource).toContain("secrets: ['RESEND_API_KEY', 'RESEND_WEBHOOK_SECRET']");
         expect(functionsSource).toContain(".schedule('every 5 minutes')");
         expect(functionsSource).toContain('createPasswordResetEmailSweeper');
         expect(passwordResetSweeperSource).toContain('Password-reset backlog request remains queued for retry.');
@@ -71,6 +77,14 @@ describe('authentication email delivery routing', () => {
 
         expect(requestRuleStart).toBeGreaterThan(-1);
         expect(requestRule).toContain('allow read, write: if false;');
+        for (const collection of [
+            'authEmailDeliveries',
+            'resendEmailMessages',
+            'resendWebhookEvents',
+            'emailDeliveryAlerts'
+        ]) {
+            expect(rulesSource).toContain(`match /${collection}/{`);
+        }
     });
 
     it('runs extracted authentication email behavior tests in PR and production CI', () => {
@@ -93,8 +107,10 @@ describe('authentication email delivery routing', () => {
             .filter(line => /^(run: )?npx firebase-tools@14\.25\.0 deploy/.test(line));
 
         expect(firebaseDeployCommands).toEqual([
-            'npx firebase-tools@14.25.0 deploy --only hosting,firestore:rules,firestore:indexes,storage,functions --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive 2>&1 | tee "$deploy_log"'
+            'npx firebase-tools@14.25.0 deploy --only hosting,firestore:rules,firestore:indexes,functions --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive 2>&1 | tee "$deploy_log"',
+            'run: npx firebase-tools@14.25.0 deploy --only storage --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive'
         ]);
+        expect(productionSource).toContain("if: vars.ENABLE_FIREBASE_STORAGE_DEPLOY == 'true'");
         expect(productionSource.match(/--force/g) ?? []).toHaveLength(0);
         expect(productionSource).toContain('max_attempts=3');
         expect(productionSource).toContain('for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do');

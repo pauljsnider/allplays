@@ -1,6 +1,7 @@
 const functions = require('firebase-functions');
 const admin = require('firebase-admin');
 const Stripe = require('stripe');
+const { Resend } = require('resend');
 const crypto = require('node:crypto');
 const { isPrivateIpAddress, isBlockedHostname, assertPublicHost, normalizeTargetUrl, fetchWithTimeout } = require('./utils/security-utils');
 const { createCalendarIcsCache, createCalendarIcsFetchHandler } = require('./calendar-ics-fetch-core.cjs');
@@ -83,6 +84,7 @@ const {
 } = require('./auth-email-core.cjs');
 const { createAuthEmailCallableHandlers } = require('./auth-email-callables.cjs');
 const { createAuthEmailDeliveryStore } = require('./auth-email-delivery-store.cjs');
+const { createResendAuthEmailDelivery } = require('./resend-auth-email-delivery.cjs');
 const { createPasswordResetEmailWorker } = require('./auth-email-password-reset-worker.cjs');
 const { createPasswordResetEmailSweeper } = require('./auth-email-password-reset-sweeper.cjs');
 const { findOwnedInviteCode: findOwnedAuthEmailInviteCode } = require('./auth-email-invite-store.cjs');
@@ -2063,6 +2065,22 @@ function isParentInviteExpired(expiresAt) {
   return Number.isFinite(millis) && millis < Date.now();
 }
 
+let resendAuthEmailDelivery;
+function getResendAuthEmailDelivery() {
+  if (resendAuthEmailDelivery) return resendAuthEmailDelivery;
+  const apiKey = String(process.env.RESEND_API_KEY || '').trim();
+  if (!apiKey) throw new Error('RESEND_API_KEY is not configured.');
+  resendAuthEmailDelivery = createResendAuthEmailDelivery({
+    firestore,
+    FieldValue: admin.firestore.FieldValue,
+    logger: functions.logger,
+    resend: new Resend(apiKey),
+    webhookSecret: String(process.env.RESEND_WEBHOOK_SECRET || '').trim(),
+    firebaseWebApiKey: String(process.env.FIREBASE_WEB_API_KEY || 'AIzaSyDoixIoKJuUVWdmImwjYRTthjKOv2mU0Jc').trim()
+  });
+  return resendAuthEmailDelivery;
+}
+
 const authEmailDeliveryStore = createAuthEmailDeliveryStore({
   firestore,
   Timestamp: admin.firestore.Timestamp,
@@ -2072,6 +2090,7 @@ const authEmailDeliveryStore = createAuthEmailDeliveryStore({
   buildRateLimitId: buildAuthEmailRateLimitId,
   buildMailDocId: buildAuthEmailMailDocId,
   buildMailJob: buildAuthEmailMailJob,
+  sendDelivery: ({ deliveryId, job }) => getResendAuthEmailDelivery().send({ deliveryId, job }),
   normalizeEmail: normalizeAuthEmail,
   hashRecipient: (value) => crypto.createHash('sha256').update(value).digest('hex')
 });
@@ -2155,8 +2174,12 @@ const authEmailCallableHandlers = createAuthEmailCallableHandlers({
 });
 
 exports.queuePasswordResetEmail = functions.https.onCall(authEmailCallableHandlers.queuePasswordResetEmail);
-exports.queueEmailVerification = functions.https.onCall(authEmailCallableHandlers.queueEmailVerification);
-exports.queueInviteSignInEmail = functions.https.onCall(authEmailCallableHandlers.queueInviteSignInEmail);
+exports.queueEmailVerification = functions
+  .runWith({ secrets: ['RESEND_API_KEY'] })
+  .https.onCall(authEmailCallableHandlers.queueEmailVerification);
+exports.queueInviteSignInEmail = functions
+  .runWith({ secrets: ['RESEND_API_KEY'] })
+  .https.onCall(authEmailCallableHandlers.queueInviteSignInEmail);
 
 const passwordResetEmailWorker = createPasswordResetEmailWorker({
   auth: admin.auth(),
@@ -2170,7 +2193,7 @@ const passwordResetEmailWorker = createPasswordResetEmailWorker({
 });
 
 exports.processPasswordResetEmailRequest = functions
-  .runWith({ failurePolicy: true })
+  .runWith({ failurePolicy: true, secrets: ['RESEND_API_KEY'] })
   .firestore
   .document('authEmailRequests/{requestId}')
   .onCreate((snapshot, context) => passwordResetEmailWorker.processPasswordResetRequest(
@@ -2198,9 +2221,15 @@ const passwordResetEmailSweeper = createPasswordResetEmailSweeper({
   concurrency: 5
 });
 
-exports.sweepPendingPasswordResetEmailRequests = functions.pubsub
+exports.sweepPendingPasswordResetEmailRequests = functions
+  .runWith({ secrets: ['RESEND_API_KEY'] })
+  .pubsub
   .schedule('every 5 minutes')
   .onRun(() => passwordResetEmailSweeper.sweep());
+
+exports.resendEmailWebhook = functions
+  .runWith({ secrets: ['RESEND_API_KEY', 'RESEND_WEBHOOK_SECRET'] })
+  .https.onRequest((req, res) => getResendAuthEmailDelivery().handleWebhook(req, res));
 
 exports.queueInviteEmail = functions.https.onCall(async (data, context) => {
   const uid = String(context.auth?.uid || '').trim();

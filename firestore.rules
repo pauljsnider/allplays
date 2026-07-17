@@ -2769,6 +2769,24 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Delivery payloads contain one-time authentication links, recipient addresses,
+    // provider IDs, and webhook audit state. Only trusted server code may access them.
+    match /authEmailDeliveries/{deliveryId} {
+      allow read, write: if false;
+    }
+
+    match /resendEmailMessages/{messageId} {
+      allow read, write: if false;
+    }
+
+    match /resendWebhookEvents/{eventId} {
+      allow read, write: if false;
+    }
+
+    match /emailDeliveryAlerts/{alertId} {
+      allow read, write: if false;
+    }
+
     // Registration sources configured by global admins for the Create Team import path.
     match /registrationSources/{sourceId} {
       allow get, list: if canReadRegistrationSource(resource.data);

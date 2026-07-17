@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const { createAuthEmailDeliveryStore } = require('../auth-email-delivery-store.cjs');
 
-function createStore({ nextAllowedAt = null, deleteError = null } = {}) {
+function createStore({ nextAllowedAt = null, deleteError = null, sendDelivery = null } = {}) {
   const calls = { sets: [], creates: [], deletes: [], warnings: [] };
   let autoId = 0;
   const refs = new Map();
@@ -49,6 +49,7 @@ function createStore({ nextAllowedAt = null, deleteError = null } = {}) {
     buildRateLimitId: (type, email, scope) => `${type}:${email}:${scope}`,
     buildMailDocId: (type, email) => `${type}:${email}`,
     buildMailJob: (input) => ({ to: [input.email], metadata: { type: input.type } }),
+    sendDelivery,
     normalizeEmail: (value) => String(value).trim().toLowerCase(),
     hashRecipient: (value) => `hash:${value}`,
     now: () => 1_000
@@ -125,4 +126,26 @@ test('delivery queue accepts a deterministic id for trigger retry idempotency', 
     deliveryId: 'auth_password_reset_request-1'
   });
   assert.equal(calls.creates[0].path, 'mail/auth_password_reset_request-1');
+});
+
+test('delivery queue can route authentication jobs directly to a tracked provider', async () => {
+  const directSends = [];
+  const { store, calls } = createStore({
+    sendDelivery: async (delivery) => directSends.push(delivery)
+  });
+  const id = await store.queue({
+    type: 'password_reset',
+    email: 'coach@example.com',
+    actionUrl: 'https://identity.example/reset',
+    deliveryId: 'tracked-reset-1'
+  });
+  assert.equal(id, 'tracked-reset-1');
+  assert.deepEqual(calls.creates, []);
+  assert.deepEqual(directSends, [{
+    deliveryId: 'tracked-reset-1',
+    job: {
+      to: ['coach@example.com'],
+      metadata: { type: 'password_reset' }
+    }
+  }]);
 });

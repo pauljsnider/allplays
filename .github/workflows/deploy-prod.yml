@@ -132,7 +132,7 @@ jobs:
           for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do
             deploy_log="$RUNNER_TEMP/firebase-prod-deploy-attempt-${attempt}.log"
             set +e
-            npx firebase-tools@14.25.0 deploy --only hosting,firestore:rules,firestore:indexes,storage,functions --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive 2>&1 | tee "$deploy_log"
+            npx firebase-tools@14.25.0 deploy --only hosting,firestore:rules,firestore:indexes,functions --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive 2>&1 | tee "$deploy_log"
             deploy_status="${PIPESTATUS[0]}"
             set -e
 
@@ -154,3 +154,9 @@ jobs:
             echo "Transient Firebase deploy failure; retrying in ${retry_delay_seconds} seconds (attempt $((attempt + 1))/${max_attempts})." >&2
             sleep "$retry_delay_seconds"
           done
+
+      # The production project currently has no deployable default Storage bucket.
+      # Keep that unrelated condition from blocking Hosting, Firestore, and Functions.
+      - name: Deploy Firebase Storage rules when enabled
+        if: vars.ENABLE_FIREBASE_STORAGE_DEPLOY == 'true'
+        run: npx firebase-tools@14.25.0 deploy --only storage --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive
