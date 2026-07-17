@@ -1325,7 +1325,8 @@ describe('Schedule', () => {
     const scheduleSource = readFileSync(resolveAppSourcePath('src/pages/Schedule.tsx'), 'utf8');
     const staffToolsSource = readFileSync(resolveAppSourcePath('src/components/schedule/ScheduleStaffTools.tsx'), 'utf8');
 
-    expect(scheduleSource).toContain("loadScheduleStaffTools().then");
+    expect(scheduleSource).toContain('void loadScheduleStaffTools()');
+    expect(scheduleSource).toContain('.catch(() =>');
     expect(scheduleSource).not.toContain("from '../components/schedule/ScheduleStaffTools'");
     expect(scheduleSource).not.toContain('createScheduledGameForApp');
     expect(scheduleSource).not.toContain('createScheduledPracticeForApp');
@@ -1337,6 +1338,18 @@ describe('Schedule', () => {
     expect(scheduleSource).not.toContain('function CalendarSourcePanel');
     expect(staffToolsSource).toContain('function ScheduleGameCreatePanel');
     expect(staffToolsSource).toContain('function CalendarSourcePanel');
+  });
+
+  it('shows a graceful fallback when schedule staff tools fail to load', async () => {
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(buildStaffScheduleResult());
+    staffToolsLoaderMocks.load.mockRejectedValueOnce(new Error('Chunk load failed'));
+
+    renderSchedule();
+
+    fireEvent.click(await screen.findByRole('button', { name: /manage schedule/i }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Unable to load schedule tools');
+    expect(screen.queryByText('Loading schedule tools…')).toBeNull();
   });
 
   it('defers tracker config loading on mobile until staff tools are opened and caches the result', async () => {
@@ -1414,6 +1427,31 @@ describe('Schedule', () => {
         location: 'West Gym'
       }), auth.user);
     });
+  });
+
+  it('ignores stale tracker configs when staff switch teams before loading finishes', async () => {
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(buildMultiTeamStaffScheduleResult());
+    const configResolvers = new Map<string, (configs: Array<{ id: string; name: string }>) => void>();
+    scheduleServiceMocks.loadScheduleStatTrackerConfigsForApp.mockImplementation((teamId: string) => new Promise((resolve) => {
+      configResolvers.set(teamId, resolve);
+    }));
+
+    renderSchedule();
+
+    await screen.findByRole('button', { name: /manage schedule/i });
+    fireEvent.change(screen.getByLabelText('Team filter'), { target: { value: 'team-1' } });
+    fireEvent.click(screen.getByRole('button', { name: /manage schedule/i }));
+    await waitFor(() => expect(configResolvers.has('team-1')).toBe(true));
+
+    fireEvent.change(screen.getByLabelText('Team filter'), { target: { value: 'team-2' } });
+    await waitFor(() => expect(configResolvers.has('team-2')).toBe(true));
+
+    configResolvers.get('team-2')?.([{ id: 'config-2', name: 'Wolves Tracker' }]);
+    expect((await screen.findAllByRole('option', { name: 'Wolves Tracker' })).length).toBeGreaterThan(0);
+
+    configResolvers.get('team-1')?.([{ id: 'config-1', name: 'Bears Tracker' }]);
+    await waitFor(() => expect(screen.queryAllByRole('option', { name: 'Bears Tracker' })).toHaveLength(0));
+    expect(screen.getAllByRole('option', { name: 'Wolves Tracker' }).length).toBeGreaterThan(0);
   });
 
   it('lets staff team selection override a non-manageable page team filter', async () => {

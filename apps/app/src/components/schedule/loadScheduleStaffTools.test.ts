@@ -14,4 +14,25 @@ describe('loadScheduleStaffTools', () => {
     await expect(firstRequest).resolves.toBe(module);
     expect(importer).toHaveBeenCalledTimes(1);
   });
+
+  it('stores the import promise before invoking a re-entrant importer', async () => {
+    const module = { default: vi.fn() } as unknown as ScheduleStaffToolsModule;
+    let load: () => Promise<ScheduleStaffToolsModule>;
+    let nestedRequest: Promise<ScheduleStaffToolsModule> | undefined;
+    let reentered = false;
+    const importer = vi.fn(() => {
+      if (!reentered) {
+        reentered = true;
+        nestedRequest = load();
+      }
+      return Promise.resolve(module);
+    });
+    load = createScheduleStaffToolsLoader(importer);
+
+    const firstRequest = load();
+
+    await expect(firstRequest).resolves.toBe(module);
+    expect(nestedRequest).toBe(firstRequest);
+    expect(importer).toHaveBeenCalledTimes(1);
+  });
 });

@@ -10,7 +10,7 @@ type ScheduleStaffToolsImporter = () => Promise<ScheduleStaffToolsModule>;
 export function createScheduleStaffToolsLoader(importer: ScheduleStaffToolsImporter) {
   let modulePromise: Promise<ScheduleStaffToolsModule> | null = null;
   return () => {
-    if (!modulePromise) modulePromise = importer();
+    if (!modulePromise) modulePromise = Promise.resolve().then(importer);
     return modulePromise;
   };
 }

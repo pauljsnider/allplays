@@ -148,6 +148,8 @@ export function ScheduleStaffTools({
     }
     return manageableTeamOptions.length === 1 ? manageableTeamOptions[0] : null;
   }, [manageableTeamOptions, selectedStaffManageTeamId, selectedTeamId]);
+  const activeTrackerConfigTeamIdRef = useRef<string | null>(null);
+  activeTrackerConfigTeamIdRef.current = selectedCalendarTeam?.teamId || null;
   const shouldShowManageScheduleTeamPicker = !selectedCalendarTeam && manageableTeamOptions.length > 1;
   const previousSelectedTeamIdRef = useRef(selectedCalendarTeam?.teamId);
 
@@ -166,30 +168,37 @@ export function ScheduleStaffTools({
 
   const requestTrackerConfigLoad = useCallback(() => {
     if (!selectedCalendarTeam || !auth.user) return;
-    const cachedConfigs = trackerConfigCacheRef.current[selectedCalendarTeam.teamId];
+    const requestedTeamId = selectedCalendarTeam.teamId;
+    const cachedConfigs = trackerConfigCacheRef.current[requestedTeamId];
     if (cachedConfigs) {
       setGameTrackerConfigs(cachedConfigs);
       setGameTrackerConfigsLoading(false);
       setGameTrackerConfigError(null);
       return;
     }
-    if (trackerConfigRequestPromiseRef.current[selectedCalendarTeam.teamId]) return;
+    if (trackerConfigRequestPromiseRef.current[requestedTeamId]) {
+      setGameTrackerConfigsLoading(true);
+      setGameTrackerConfigError(null);
+      return;
+    }
 
     setGameTrackerConfigs([]);
     setGameTrackerConfigsLoading(true);
     setGameTrackerConfigError(null);
-    const request = loadScheduleStatTrackerConfigsForApp(selectedCalendarTeam.teamId, auth.user);
-    trackerConfigRequestPromiseRef.current[selectedCalendarTeam.teamId] = request;
+    const request = loadScheduleStatTrackerConfigsForApp(requestedTeamId, auth.user);
+    trackerConfigRequestPromiseRef.current[requestedTeamId] = request;
     request
       .then((configs) => {
-        trackerConfigCacheRef.current[selectedCalendarTeam.teamId] = configs;
-        delete trackerConfigRequestPromiseRef.current[selectedCalendarTeam.teamId];
+        trackerConfigCacheRef.current[requestedTeamId] = configs;
+        delete trackerConfigRequestPromiseRef.current[requestedTeamId];
+        if (activeTrackerConfigTeamIdRef.current !== requestedTeamId) return;
         setGameTrackerConfigs(configs);
         setGameTrackerConfigsLoading(false);
         setGameTrackerConfigError(null);
       })
       .catch((configError: any) => {
-        delete trackerConfigRequestPromiseRef.current[selectedCalendarTeam.teamId];
+        delete trackerConfigRequestPromiseRef.current[requestedTeamId];
+        if (activeTrackerConfigTeamIdRef.current !== requestedTeamId) return;
         setGameTrackerConfigsLoading(false);
         setGameTrackerConfigError(configError?.message || 'Unable to load tracker configs.');
       });
