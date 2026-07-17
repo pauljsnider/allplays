@@ -6,8 +6,15 @@ import {
   buildSharedScheduleSourceUpdate,
   buildSharedScheduleDetachUpdate
 } from '../../js/shared-schedule-sync.js';
+import { readFileSync } from 'node:fs';
 
 describe('shared schedule sync helpers', () => {
+  it('cache-busts the shared schedule helper from the deployed db module', () => {
+    const dbSource = readFileSync(new URL('../../js/db.js', import.meta.url), 'utf8');
+
+    expect(dbSource).toContain("from './shared-schedule-sync.js?v=2';");
+  });
+
   it('keeps placeholder tournament fixtures local until a real opponent team is linked', () => {
     expect(shouldMirrorSharedGame({
       type: 'game',
@@ -126,6 +133,40 @@ describe('shared schedule sync helpers', () => {
       sharedScheduleId: 'shared_team-alpha_game-123'
     });
     expect(payload.notes).toBeNull();
+  });
+
+  it('propagates cancelled live status to the mirrored fixture', () => {
+    const payload = buildMirroredGamePayload({
+      sourceTeamId: 'team-alpha',
+      sourceTeam: { name: 'Alpha FC' },
+      sourceGameId: 'game-123',
+      sourceGame: {
+        type: 'game',
+        opponentTeamId: 'team-bravo',
+        status: 'cancelled',
+        liveStatus: 'cancelled'
+      },
+      sharedScheduleId: 'shared_team-alpha_game-123'
+    });
+
+    expect(payload.liveStatus).toBe('cancelled');
+  });
+
+  it('preserves an existing counterpart live status during ordinary schedule sync', () => {
+    const payload = buildMirroredGamePayload({
+      sourceTeamId: 'team-alpha',
+      sourceTeam: { name: 'Alpha FC' },
+      sourceGameId: 'game-123',
+      sourceGame: {
+        type: 'game',
+        opponentTeamId: 'team-bravo',
+        status: 'scheduled',
+        liveStatus: 'live'
+      },
+      sharedScheduleId: 'shared_team-alpha_game-123'
+    });
+
+    expect(payload).not.toHaveProperty('liveStatus');
   });
 
 

@@ -105,6 +105,7 @@ vi.mock('../../apps/app/src/lib/chatLogic.ts', () => ({
 }));
 
 import { buildCancelScheduledGameChatMessage, cancelScheduledGameForApp, normalizeGameScoreValue, publishLiveScoreUpdateEvent, updateGameScore } from '../../apps/app/src/lib/scheduleService.ts';
+import { getNativeAuthIdToken } from '../../apps/app/src/lib/authService.ts';
 
 const user = {
     uid: 'user-1',
@@ -228,6 +229,7 @@ describe('React app schedule score updates', () => {
 
         expect(dbMocks.updateGame).toHaveBeenCalledWith('team-1', 'game-1', expect.objectContaining({
             status: 'cancelled',
+            liveStatus: 'cancelled',
             cancelledBy: 'user-1'
         }));
         expect(dbMocks.updateGame.mock.calls[0][2].cancelledAt).toBeInstanceOf(Date);
@@ -277,6 +279,131 @@ describe('React app schedule score updates', () => {
             senderName: 'Coach Pat',
             senderEmail: 'coach@example.com'
         });
+        expect(result).toEqual({ cancelled: true, notificationError: null });
+    });
+
+    it('cancels both shared games in the native REST fallback', async () => {
+        vi.stubGlobal('window', {
+            setTimeout: globalThis.setTimeout.bind(globalThis),
+            clearTimeout: globalThis.clearTimeout.bind(globalThis),
+            location: { protocol: 'capacitor:' }
+        });
+        vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token');
+        dbMocks.updateGame.mockRejectedValue(new Error('native fallback'));
+        vi.stubGlobal('fetch', vi.fn()
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({
+                    name: 'projects/demo-allplays/databases/(default)/documents/teams/team-1/games/game-1',
+                    fields: {
+                        sharedScheduleId: { stringValue: 'shared_team-1_game-1' },
+                        sharedScheduleOpponentTeamId: { stringValue: 'team-2' },
+                        sharedScheduleOpponentGameId: { stringValue: 'game-2' }
+                    }
+                })
+            })
+            .mockResolvedValueOnce({ ok: true, json: async () => ({}) })
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({
+                    name: 'projects/demo-allplays/databases/(default)/documents/teams/team-2/games/game-2',
+                    fields: { sharedScheduleId: { stringValue: 'shared_team-1_game-1' } }
+                })
+            })
+            .mockResolvedValueOnce({ ok: true, json: async () => ({}) }));
+
+        await cancelScheduledGameForApp({
+            eventKey: 'team-1__game-1__player-1',
+            id: 'game-1',
+            teamId: 'team-1',
+            teamName: 'Bears',
+            type: 'game',
+            date: new Date('2026-05-21T18:00:00Z'),
+            opponent: 'Falcons',
+            opponentTeamId: 'team-2',
+            sharedScheduleOpponentTeamId: 'team-2',
+            childId: 'player-1',
+            childName: 'Pat',
+            isDbGame: true,
+            isCancelled: false,
+            canUpdateScore: true,
+            assignments: []
+        }, user);
+
+        expect(globalThis.fetch).toHaveBeenCalledTimes(4);
+        const patchCalls = [
+            vi.mocked(globalThis.fetch).mock.calls[1],
+            vi.mocked(globalThis.fetch).mock.calls[3]
+        ];
+        expect(patchCalls.map(([url]) => String(url))).toEqual([
+            expect.stringContaining('/teams/team-1/games/game-1?'),
+            expect.stringContaining('/teams/team-2/games/game-2?')
+        ]);
+        patchCalls.forEach(([, init]) => {
+            const patchPayload = JSON.parse(String(init.body));
+            expect(patchPayload.fields.status.stringValue).toBe('cancelled');
+            expect(patchPayload.fields.liveStatus.stringValue).toBe('cancelled');
+        });
+    });
+
+    it('preserves native source cancellation when the shared counterpart is unauthorized', async () => {
+        vi.stubGlobal('window', {
+            setTimeout: globalThis.setTimeout.bind(globalThis),
+            clearTimeout: globalThis.clearTimeout.bind(globalThis),
+            location: { protocol: 'capacitor:' }
+        });
+        vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token');
+        dbMocks.updateGame.mockRejectedValue(new Error('native fallback'));
+        vi.stubGlobal('fetch', vi.fn()
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({
+                    name: 'projects/demo-allplays/databases/(default)/documents/teams/team-1/games/game-1',
+                    fields: {
+                        sharedScheduleId: { stringValue: 'shared_team-1_game-1' },
+                        sharedScheduleOpponentTeamId: { stringValue: 'team-2' },
+                        sharedScheduleOpponentGameId: { stringValue: 'game-2' }
+                    }
+                })
+            })
+            .mockResolvedValueOnce({ ok: true, json: async () => ({}) })
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({
+                    name: 'projects/demo-allplays/databases/(default)/documents/teams/team-2/games/game-2',
+                    fields: { sharedScheduleId: { stringValue: 'shared_team-1_game-1' } }
+                })
+            })
+            .mockResolvedValueOnce({
+                ok: false,
+                status: 403,
+                json: async () => ({ error: { message: 'Missing or insufficient permissions.' } })
+            }));
+
+        const result = await cancelScheduledGameForApp({
+            eventKey: 'team-1__game-1__player-1',
+            id: 'game-1',
+            teamId: 'team-1',
+            teamName: 'Bears',
+            type: 'game',
+            date: new Date('2026-05-21T18:00:00Z'),
+            opponent: 'Falcons',
+            opponentTeamId: 'team-2',
+            sharedScheduleOpponentTeamId: 'team-2',
+            childId: 'player-1',
+            childName: 'Pat',
+            isDbGame: true,
+            isCancelled: false,
+            canUpdateScore: true,
+            assignments: []
+        }, user);
+
+        const fetchCalls = vi.mocked(globalThis.fetch).mock.calls;
+        expect(fetchCalls).toHaveLength(4);
+        expect(String(fetchCalls[1][0])).toContain('/teams/team-1/games/game-1?');
+        expect(JSON.parse(String(fetchCalls[1][1].body)).fields.status.stringValue).toBe('cancelled');
+        expect(String(fetchCalls[2][0])).toContain('/teams/team-2/games/game-2');
+        expect(String(fetchCalls[3][0])).toContain('/teams/team-2/games/game-2?');
         expect(result).toEqual({ cancelled: true, notificationError: null });
     });
 

@@ -75,7 +75,7 @@ import {
     buildMirroredGamePayload,
     buildSharedScheduleSourceUpdate,
     buildSharedScheduleDetachUpdate
-} from './shared-schedule-sync.js';
+} from './shared-schedule-sync.js?v=2';
 import { normalizeTeamNotificationPreferences } from './notification-preferences.js?v=1';
 import { normalizeAdSpaceSponsors, normalizeLocalAttractionSponsors } from './local-attractions.js?v=2';
 import { generateJoinCode, normalizeJoinCode } from './join-code.js?v=1';
@@ -8204,6 +8204,9 @@ export async function getLiveGamesNow() {
 
     for (const docSnap of snapshot.docs) {
         const gameData = { id: docSnap.id, ...docSnap.data() };
+        if (isExcludedHomepageUpcomingStatus(gameData.status)) {
+            continue;
+        }
         const teamRef = docSnap.ref.parent.parent;
         const teamSnap = await getDoc(teamRef);
         if (teamSnap.exists()) {
@@ -8222,7 +8225,7 @@ export async function getLiveGamesNow() {
         const sharedGames = await getSharedHomepageGames([
             where('liveStatus', '==', 'live')
         ], shouldIncludeTeamInLiveOrUpcoming);
-        games.push(...sharedGames);
+        games.push(...sharedGames.filter(game => !isExcludedHomepageUpcomingStatus(game.status)));
     } catch (error) {
         console.warn('Could not load shared live games:', error?.message || error);
     }
@@ -8287,6 +8290,7 @@ export async function getRecentLiveTrackedGames(limitCount = 6) {
 export async function cancelGame(teamId, gameId, userId) {
     await updateGame(teamId, gameId, {
         status: 'cancelled',
+        liveStatus: 'cancelled',
         cancelledAt: Timestamp.now(),
         cancelledBy: userId
     });

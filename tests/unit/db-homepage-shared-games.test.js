@@ -39,6 +39,8 @@ describe('homepage shared game discovery queries', () => {
         expect(liveSource).toContain('getSharedHomepageGames');
         expect(liveSource).toContain("where('liveStatus', '==', 'live')");
         expect(liveSource).toContain('shouldIncludeTeamInLiveOrUpcoming');
+        expect(liveSource).toContain('isExcludedHomepageUpcomingStatus(gameData.status)');
+        expect(liveSource).toContain('sharedGames.filter(game => !isExcludedHomepageUpcomingStatus(game.status))');
 
         const replaySource = getFunctionSource(source, 'getRecentLiveTrackedGames');
         expect(replaySource).toContain('getSharedHomepageGames(recentQueryConstraints, shouldIncludeTeamInReplay, limitCount)');
@@ -98,5 +100,12 @@ describe('homepage shared game discovery queries', () => {
                 ]
             }
         ]);
+    });
+
+    it('clears live broadcast state when a legacy schedule game is cancelled', () => {
+        const cancelSource = getFunctionSource(readDbSource(), 'cancelGame');
+
+        expect(cancelSource).toContain("status: 'cancelled'");
+        expect(cancelSource).toContain("liveStatus: 'cancelled'");
     });
 });

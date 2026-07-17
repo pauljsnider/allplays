@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { isViewerChatEnabled } from '../../js/live-game-chat.js';
 
@@ -248,7 +248,7 @@ function buildModuleSource() {
             'const { checkAuth } = deps.auth;'
         )
         .replace(
-            "import { isViewerChatEnabled } from './live-game-chat.js?v=1';",
+            "import { isViewerChatEnabled } from './live-game-chat.js?v=2';",
             'const { isViewerChatEnabled } = deps.liveGameChat;'
         )
         .replace(
@@ -293,7 +293,7 @@ function buildModuleSource() {
         )
         .replace(
             "init().catch(error => {\n  console.error('Live game init failed:', error);\n  const feed = document.querySelector('#plays-feed');\n  if (feed) feed.innerHTML = '<div class=\"text-sand/60 text-center py-6\">Something went wrong loading the game. Try refreshing the page.</div>';\n});",
-            "const __initPromise = init().catch(error => {\n  console.error('Live game init failed:', error);\n  const feed = document.querySelector('#plays-feed');\n  if (feed) feed.innerHTML = '<div class=\"text-sand/60 text-center py-6\">Something went wrong loading the game. Try refreshing the page.</div>';\n});\nreturn { state, els, initPromise: __initPromise, seekReplay };"
+            "const __initPromise = init().catch(error => {\n  console.error('Live game init failed:', error);\n  const feed = document.querySelector('#plays-feed');\n  if (feed) feed.innerHTML = '<div class=\"text-sand/60 text-center py-6\">Something went wrong loading the game. Try refreshing the page.</div>';\n});\nreturn { state, els, initPromise: __initPromise, seekReplay, handleGameUpdate };"
         );
 }
 
@@ -315,7 +315,7 @@ const runModule = new AsyncFunction(
     moduleSource
 );
 
-async function bootReplayPage({ replayEvents }) {
+async function bootReplayPage({ replayEvents = [], game: gameOverrides = {}, replay = true } = {}) {
     const { document, ensureElement } = createEnvironment();
     const storage = new Map();
     const sessionStorage = {
@@ -326,7 +326,7 @@ async function bootReplayPage({ replayEvents }) {
             storage.set(key, String(value));
         }
     };
-    const location = new URL('https://allplays.example/live-game.html?teamId=T1&gameId=G1&replay=true');
+    const location = new URL(`https://allplays.example/live-game.html?teamId=T1&gameId=G1&replay=${replay}`);
     const window = {
         document,
         location,
@@ -351,20 +351,24 @@ async function bootReplayPage({ replayEvents }) {
         period: 'Final',
         recordedVideo: null,
         streamUrl: '',
-        sport: 'basketball'
+        sport: 'basketball',
+        ...gameOverrides
     };
     const replayStartRebaseCalls = [];
+    const subscribeLiveChat = vi.fn(() => () => {});
+    const subscribeReactions = vi.fn(() => () => {});
+    const trackViewerPresence = vi.fn(() => () => {});
     const deps = {
         db: {
             getTeam: async () => ({ id: 'T1', name: 'Raptors', sport: 'basketball' }),
             getGame: async () => game,
             getPlayers: async () => [],
             subscribeLiveEvents: () => () => {},
-            subscribeLiveChat: () => () => {},
+            subscribeLiveChat,
             postLiveChatMessage: async () => {},
-            subscribeReactions: () => () => {},
+            subscribeReactions,
             sendReaction: async () => {},
-            trackViewerPresence: () => () => {},
+            trackViewerPresence,
             getLiveEvents: async () => replayEvents,
             getLiveChatHistory: async () => [],
             getLiveReactions: async () => [],
@@ -374,7 +378,7 @@ async function bootReplayPage({ replayEvents }) {
             uploadGameClip: async () => ({ url: '' })
         },
         utils: {
-            getUrlParams: () => ({ teamId: 'T1', gameId: 'G1', replay: 'true' }),
+            getUrlParams: () => ({ teamId: 'T1', gameId: 'G1', replay: String(replay) }),
             escapeHtml: (value) => String(value ?? ''),
             renderHeader() {},
             renderFooter() {},
@@ -575,9 +579,11 @@ async function bootReplayPage({ replayEvents }) {
         awayScore: ensureElement('away-score'),
         chatInput: ensureElement('chat-input'),
         chatLockedNotice: ensureElement('chat-locked-notice'),
+        engagementSubscriptions: { subscribeLiveChat, subscribeReactions, trackViewerPresence },
         replayControls: ensureElement('replay-controls'),
         replayStartRebaseCalls,
         seekReplay: moduleInstance.seekReplay,
+        handleGameUpdate: moduleInstance.handleGameUpdate,
         opponentStats: ensureElement('opponent-stats'),
         lineupOnCourt: ensureElement('lineup-oncourt'),
         lineupBench: ensureElement('lineup-bench'),
@@ -586,6 +592,47 @@ async function bootReplayPage({ replayEvents }) {
 }
 
 describe('live game replay initialization', () => {
+    it('does not start engagement subscriptions for an initially cancelled stale-live game', async () => {
+        const page = await bootReplayPage({
+            replay: false,
+            game: {
+                date: new Date(),
+                status: 'cancelled',
+                liveStatus: 'live'
+            }
+        });
+
+        expect(page.state.isLive).toBe(false);
+        expect(page.state.chatEnabled).toBe(false);
+        expect(page.chatInput.disabled).toBe(true);
+        expect(page.engagementSubscriptions.subscribeLiveChat).not.toHaveBeenCalled();
+        expect(page.engagementSubscriptions.subscribeReactions).not.toHaveBeenCalled();
+        expect(page.engagementSubscriptions.trackViewerPresence).not.toHaveBeenCalled();
+    });
+
+    it('stops an active viewer when a stale-live game is cancelled', async () => {
+        const page = await bootReplayPage({ replayEvents: [] });
+        const unsubscribers = [vi.fn(), vi.fn(), vi.fn(), vi.fn(), vi.fn()];
+        page.state.isReplay = false;
+        page.state.isLive = true;
+        page.state.engagementsActive = true;
+        page.state.liveEventsActive = true;
+        page.state.unsubscribers = unsubscribers;
+
+        page.handleGameUpdate({
+            ...page.state.game,
+            status: 'cancelled',
+            liveStatus: 'live'
+        });
+
+        expect(page.state.isLive).toBe(false);
+        expect(page.state.game.liveStatus).toBe('cancelled');
+        expect(page.state.engagementsActive).toBe(false);
+        expect(page.state.liveEventsActive).toBe(false);
+        expect(page.state.unsubscribers).toEqual([]);
+        unsubscribers.forEach(unsubscribe => expect(unsubscribe).toHaveBeenCalledOnce());
+    });
+
     it('keeps no-reload video refreshes from exposing the generic empty state over media content', () => {
         const source = readFileSync(new URL('../../js/live-game.js', import.meta.url), 'utf8');
         const noReloadStart = source.indexOf('if (!force && !shouldReloadVideoPlayback(state.videoPlayback, nextPlayback)) {');

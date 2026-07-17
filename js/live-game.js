@@ -22,7 +22,7 @@ import { hasFullTeamAccess } from './team-access.js?v=1';
 import { buildScoreLinkedClipRecord, isScoredPlayEvent, validateGameClipFile } from './game-clips.js?v=1';
 import { computePanelVisibility } from './live-stream-utils.js?v=1';
 import { checkAuth } from './auth.js?v=50';
-import { isViewerChatEnabled } from './live-game-chat.js?v=1';
+import { isViewerChatEnabled } from './live-game-chat.js?v=2';
 import { createPlayAnnouncer } from './live-game-announcer.js?v=1';
 import {
   buildReplaySessionState,
@@ -2247,6 +2247,20 @@ function startLiveEvents() {
   state.unsubscribers.push(unsubEvents);
 }
 
+function stopLiveMode() {
+  state.isLive = false;
+  state.unsubscribers.forEach(unsub => {
+    try {
+      unsub();
+    } catch {
+      // ignore
+    }
+  });
+  state.unsubscribers = [];
+  state.engagementsActive = false;
+  state.liveEventsActive = false;
+}
+
 function showNotLiveOverlay() {
   els.notLiveOverlay?.classList.remove('hidden');
   els.endedOverlay?.classList.add('hidden');
@@ -2668,7 +2682,11 @@ function formatFirestoreError(error) {
 
 function handleGameUpdate(gameDoc) {
   if (!gameDoc) return;
-  state.game = gameDoc;
+  const gameStatus = String(gameDoc.status || '').trim().toLowerCase();
+  const isCancelled = gameStatus === 'cancelled' || gameStatus === 'canceled';
+  state.game = isCancelled && gameDoc.liveStatus === 'live'
+    ? { ...gameDoc, liveStatus: 'cancelled' }
+    : gameDoc;
   refreshVideoPanel();
   renderGameInfo();
   const resetAt = getTimestampMs(gameDoc.liveResetAt) || 0;
@@ -2696,11 +2714,11 @@ function handleGameUpdate(gameDoc) {
     renderScoreboard();
   }
 
-  if (!state.isReplay) {
+  if (!state.isReplay && !isCancelled) {
     startEngagements();
   }
 
-  if (gameDoc.liveStatus === 'live') {
+  if (gameDoc.liveStatus === 'live' && !isCancelled) {
     if (!state.isLive && !state.isReplay) {
       els.notLiveOverlay?.classList.add('hidden');
       els.endedOverlay?.classList.add('hidden');
@@ -2709,6 +2727,9 @@ function handleGameUpdate(gameDoc) {
   } else if (gameDoc.liveStatus === 'completed') {
     showEndedOverlay();
   } else {
+    if (isCancelled && (state.isLive || state.engagementsActive || state.liveEventsActive)) {
+      stopLiveMode();
+    }
     showNotLiveOverlay();
   }
 
