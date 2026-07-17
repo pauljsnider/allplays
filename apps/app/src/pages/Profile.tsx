@@ -1277,6 +1277,23 @@ export function Profile({ auth }: { auth: AuthState }) {
         </div>
       </div>
 
+      {!isDesktopWeb ? (
+        <Link
+          to="/parent-tools"
+          className="app-card flex items-center gap-3 p-4 transition hover:border-primary-200 hover:shadow-app-lg"
+          aria-label="Open Family workflows"
+        >
+          <span className="flex h-11 w-11 flex-none items-center justify-center rounded-xl bg-violet-50 text-violet-700">
+            <UserCircle className="h-5 w-5" aria-hidden="true" />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-black text-gray-950">Family workflows</span>
+            <span className="mt-0.5 block text-xs font-semibold leading-5 text-gray-600">Player access, household, fees, calendars, sharing, registration, and awards.</span>
+          </span>
+          <span className="text-sm font-black text-primary-700" aria-hidden="true">Open</span>
+        </Link>
+      ) : null}
+
       {activeProfileSection === 'account' ? (
       <section className="app-card p-4">
         <div className="flex items-center justify-between gap-3">

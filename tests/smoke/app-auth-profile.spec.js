@@ -778,6 +778,23 @@ test('profile exposes account, notification, invite, verification, password, upl
     });
 });
 
+test('mobile profile exposes a persistent shortcut to Family workflows', async ({ page, baseURL }) => {
+    const user = {
+        uid: 'user-1',
+        email: 'parent@example.com',
+        displayName: 'Pat Parent',
+        roles: ['parent'],
+        parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
+    };
+    await mockAppModules(page, { user });
+    await page.goto(appUrl(baseURL, '/profile'), { waitUntil: 'domcontentloaded' });
+
+    const familyShortcut = page.getByRole('link', { name: 'Open Family workflows' });
+    await expect(familyShortcut).toBeVisible();
+    await familyShortcut.click();
+    await expect(page.getByRole('heading', { name: 'Family workflows' })).toBeVisible();
+});
+
 test('profile keeps destructive alert actions disabled until a failed team load retries successfully', async ({ page, baseURL }) => {
     const user = {
         uid: 'user-1',
