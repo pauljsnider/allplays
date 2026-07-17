@@ -118,6 +118,7 @@ function buildNotificationTestEnv({
     const deletedPaths = [];
     const updatedDocs = [];
     const messagingCalls = [];
+    const feeRecipientDocGetPaths = [];
     const docStore = new Map();
     const counts = {
         teamDocGets: 0,
@@ -126,6 +127,7 @@ function buildNotificationTestEnv({
         targetQueries: 0,
         recipientDocGets: 0,
         recipientCollectionGets: 0,
+        feeRecipientDocGets: 0,
         preferenceGets: 0,
         deviceGets: 0,
         userRecordGets: 0,
@@ -405,6 +407,10 @@ function buildNotificationTestEnv({
                         data: entry?.data,
                         exists: Boolean(entry)
                     });
+                }
+                if (/^teams\/[^/]+\/feeBatches\/[^/]+\/feeRecipients\/[^/]+$/.test(path)) {
+                    counts.feeRecipientDocGets += 1;
+                    feeRecipientDocGetPaths.push(path);
                 }
                 if (docStore.has(path)) {
                     return makeDocSnapshot({ id: this.id, ref: this, data: docStore.get(path), exists: true });
@@ -859,6 +865,7 @@ function buildNotificationTestEnv({
         auditWrites,
         updatedDocs,
         messagingCalls,
+        feeRecipientDocGetPaths,
         getNotificationInboxDocCount(uid) {
             const prefix = `users/${uid}/notificationInbox/`;
             return Array.from(docStore.keys())

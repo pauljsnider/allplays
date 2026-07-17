@@ -1446,11 +1446,13 @@ test('notifyFeeAssigned resolves app-created child fee recipients through parent
     }
 });
 
-test('notifyFeeAssigned sends one combined batch assignment push when a parent has multiple recipients', async () => {
+test('notifyFeeAssigned bounds a large batch lookup to the payer siblings and deduplicates their push', async () => {
     const { moduleExports, env, cleanup } = loadNotificationInternals({
         teamDoc: { ownerId: 'coach-1', adminEmails: [] },
         userDocs: {
-            'parent-1': { parentPlayerKeys: ['team-1::player-1', 'team-1::player-2'] }
+            'parent-1': {
+                parentPlayerKeys: ['team-1::player-1', 'team-1::player-2', 'team-2::other-team-player']
+            }
         },
         indexedTargets: [
             { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { fees: true } }
@@ -1472,12 +1474,22 @@ test('notifyFeeAssigned sends one combined batch assignment push when a parent h
             amountCents: 2500,
             dueDate: '2026-07-01T12:00:00.000Z'
         };
-        const refA = env.firestoreState.doc('teams/team-1/feeBatches/batch-3/feeRecipients/recipient-a');
-        const refB = env.firestoreState.doc('teams/team-1/feeBatches/batch-3/feeRecipients/recipient-b');
+        const refA = env.firestoreState.doc('teams/team-1/feeBatches/batch-3/feeRecipients/player-1');
+        const refB = env.firestoreState.doc('teams/team-1/feeBatches/batch-3/feeRecipients/player-2');
         await refA.set(recipientA);
         await refB.set(recipientB);
-        const contextA = { params: { teamId: 'team-1', batchId: 'batch-3', recipientId: 'recipient-a' } };
-        const contextB = { params: { teamId: 'team-1', batchId: 'batch-3', recipientId: 'recipient-b' } };
+        for (let index = 3; index <= 100; index += 1) {
+            await env.firestoreState
+                .doc(`teams/team-1/feeBatches/batch-3/feeRecipients/player-${index}`)
+                .set({
+                    playerKey: `team-1::player-${index}`,
+                    childName: `Player ${index}`,
+                    feeTitle: 'Spring dues',
+                    amountCents: 2500
+                });
+        }
+        const contextA = { params: { teamId: 'team-1', batchId: 'batch-3', recipientId: 'player-1' } };
+        const contextB = { params: { teamId: 'team-1', batchId: 'batch-3', recipientId: 'player-2' } };
 
         const firstResult = await moduleExports.notifyFeeAssigned(makeSnapshot(refA, recipientA), contextA);
         const secondResult = await moduleExports.notifyFeeAssigned(makeSnapshot(refB, recipientB), contextB);
@@ -1490,6 +1502,44 @@ test('notifyFeeAssigned sends one combined batch assignment push when a parent h
         assert.equal(env.messagingCalls[0].body, '$50.00 has been assigned for Avery and Blake, due Jul 1, 2026.');
         assert.equal(env.counts.parentQueries, 2);
         assert.equal(env.counts.userRecordGets, 1);
+        assert.equal(env.counts.feeRecipientDocGets, 1);
+        assert.deepEqual(env.feeRecipientDocGetPaths, [
+            'teams/team-1/feeBatches/batch-3/feeRecipients/player-2'
+        ]);
+    } finally {
+        cleanup();
+    }
+});
+
+test('notifyFeeAssigned falls back to the trigger recipient when a payer sibling document is missing', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        userDocs: {
+            'parent-1': { parentPlayerKeys: ['team-1::player-1', 'team-1::missing-player'] }
+        },
+        indexedTargets: [
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { fees: true } }
+        ]
+    });
+
+    try {
+        const recipient = {
+            playerKey: 'team-1::player-1',
+            childName: 'Avery',
+            feeTitle: 'Spring dues',
+            amountCents: 2500
+        };
+        const ref = env.firestoreState.doc('teams/team-1/feeBatches/batch-missing/feeRecipients/player-1');
+        const context = { params: { teamId: 'team-1', batchId: 'batch-missing', recipientId: 'player-1' } };
+
+        const result = await moduleExports.notifyFeeAssigned(makeSnapshot(ref, recipient), context);
+
+        assert.equal(result?.successCount, 1);
+        assert.equal(env.messagingCalls.length, 1);
+        assert.equal(env.messagingCalls[0].title, 'New fee assigned: Spring dues ($25.00)');
+        assert.deepEqual(env.feeRecipientDocGetPaths, [
+            'teams/team-1/feeBatches/batch-missing/feeRecipients/missing-player'
+        ]);
     } finally {
         cleanup();
     }
