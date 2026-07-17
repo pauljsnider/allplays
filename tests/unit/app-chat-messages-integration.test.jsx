@@ -29,6 +29,12 @@ const chatMocks = vi.hoisted(() => ({
     toggleTeamChatReaction: vi.fn()
 }));
 
+const opportunityMocks = vi.hoisted(() => ({
+    getOpportunityInquiry: vi.fn(),
+    listOpportunityInquiries: vi.fn(),
+    replyToOpportunityInquiry: vi.fn()
+}));
+
 const layoutMocks = vi.hoisted(() => ({
     isDesktopWeb: false
 }));
@@ -137,6 +143,7 @@ vi.mock('../../apps/app/src/lib/voiceService.ts', () => ({
     voiceRecognition: voiceMocks
 }));
 vi.mock('../../apps/app/src/lib/chatService.ts', () => chatMocks);
+vi.mock('../../apps/app/src/lib/opportunityService.ts', () => opportunityMocks);
 vi.mock('../../apps/app/src/lib/chatAiService', () => ({
     sendAllPlaysChatAnswer: chatMocks.sendAllPlaysChatAnswer
 }));
@@ -351,6 +358,7 @@ async function waitForTeamEmailDialog(container) {
 
 beforeEach(() => {
     vi.clearAllMocks();
+    opportunityMocks.listOpportunityInquiries.mockResolvedValue({ items: [], nextCursor: null });
     uxTimingMocks.interactionEnds.length = 0;
     layoutMocks.isDesktopWeb = false;
     nativeMocks.isNativePlatform = false;
@@ -522,7 +530,7 @@ describe('React app messages integration', () => {
     it('renders the real inbox with unread team chat previews', async () => {
         const { container } = await renderMessages('/messages');
 
-        expect(container.textContent).toContain('Team chats');
+        expect(container.textContent).toContain('Conversations');
         expect(container.textContent).toContain('Bears');
         expect(container.textContent).toContain('2');
         expect(container.textContent).toContain('Coach Jamie: Practice packet posted.');
@@ -898,7 +906,7 @@ describe('React app messages integration', () => {
             ]
         });
         const { container } = await renderMessages('/messages');
-        const search = container.querySelector('input[placeholder="Search team chats"]');
+        const search = container.querySelector('input[placeholder="Search conversations"]');
 
         await setFieldValue(search, 'soccer');
 
@@ -935,7 +943,7 @@ describe('React app messages integration', () => {
             ]
         });
         const { container } = await renderMessages('/messages');
-        const search = container.querySelector('input[placeholder="Search team chats"]');
+        const search = container.querySelector('input[placeholder="Search conversations"]');
 
         await setFieldValue(search, 'volleyball');
 
@@ -976,7 +984,7 @@ describe('React app messages integration', () => {
             ]
         });
         const { container } = await renderMessages('/messages');
-        const search = container.querySelector('input[placeholder="Search team chats"]');
+        const search = container.querySelector('input[placeholder="Search conversations"]');
 
         expect(container.querySelector('.messages-list-pane')).toBeTruthy();
         expect(container.querySelector('.chat-window-embedded')).toBeTruthy();
@@ -1029,7 +1037,7 @@ describe('React app messages integration', () => {
         const callCountAfterLoad = chatMocks.loadChatTeamContext.mock.calls.length;
 
         // Type in the search box so that only Thunder matches — team-1 is filtered out.
-        const search = container.querySelector('input[placeholder="Search team chats"]');
+        const search = container.querySelector('input[placeholder="Search conversations"]');
         await setFieldValue(search, 'soccer');
 
         // The inbox list should now show only Thunder (Bears filtered out of the inbox pane).

@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Messages } from './Messages';
 import type { ChatInboxPreviewUpdate, ChatTeam } from '../lib/chatService';
+import type { OpportunityInquiry } from '../lib/opportunityLogic';
 import type { AuthState } from '../lib/types';
 import type { ReactNode } from 'react';
 
@@ -12,8 +13,12 @@ const chatServiceMocks = vi.hoisted(() => ({
   loadChatInbox: vi.fn()
 }));
 const layoutMocks = vi.hoisted(() => ({ isDesktopWeb: false }));
+const opportunityMocks = vi.hoisted(() => ({
+  listOpportunityInquiries: vi.fn().mockResolvedValue({ items: [], nextCursor: null })
+}));
 
 vi.mock('../lib/chatService', () => chatServiceMocks);
+vi.mock('../lib/opportunityService', () => opportunityMocks);
 vi.mock('../lib/useShellLayout', () => ({
   useShellLayout: () => ({ isDesktopWeb: layoutMocks.isDesktopWeb })
 }));
@@ -96,6 +101,23 @@ function preview(teamId: string, text: string, createdAt: string): ChatInboxPrev
   };
 }
 
+function opportunityInquiry(overrides: Partial<OpportunityInquiry> = {}): OpportunityInquiry {
+  return {
+    id: overrides.id || 'inquiry-1',
+    listingId: overrides.listingId || 'opportunity-1',
+    listingTitle: overrides.listingTitle || 'Need a tournament opponent',
+    listingKind: overrides.listingKind || 'coach_or_staff',
+    teamId: overrides.teamId || 'team-1',
+    participantIds: overrides.participantIds || ['user-1', 'coach-1', 'owner-1'],
+    status: overrides.status || 'open',
+    lastMessagePreview: overrides.lastMessagePreview || 'Could we play Saturday morning?',
+    lastMessageAuthorName: overrides.lastMessageAuthorName || 'Pat Parent',
+    createdAt: overrides.createdAt ?? '2026-06-15T02:00:00.000Z',
+    updatedAt: overrides.updatedAt ?? '2026-06-15T03:00:00.000Z',
+    messages: overrides.messages || []
+  };
+}
+
 function renderMessages() {
   return render(
     <MemoryRouter initialEntries={['/messages']}>
@@ -110,6 +132,8 @@ describe('Messages deferred inbox preview batching', () => {
     layoutMocks.isDesktopWeb = false;
     chatServiceMocks.loadChatInbox.mockReset();
     chatServiceMocks.getChatInboxPreview.mockClear();
+    opportunityMocks.listOpportunityInquiries.mockReset();
+    opportunityMocks.listOpportunityInquiries.mockResolvedValue({ items: [], nextCursor: null });
     window.requestAnimationFrame = (callback: FrameRequestCallback) => window.setTimeout(() => callback(performance.now()), 16);
     window.cancelAnimationFrame = (handle: number) => window.clearTimeout(handle);
   });
@@ -138,11 +162,30 @@ describe('Messages deferred inbox preview batching', () => {
 
     expect(await screen.findByRole('link', { name: /Bears/ })).toHaveTextContent('No messages yet');
     expect(screen.getByRole('button', { name: 'Refresh messages' })).toBeEnabled();
-    expect(screen.getByPlaceholderText('Search team chats')).toBeEnabled();
+    expect(screen.getByPlaceholderText('Search conversations')).toBeEnabled();
 
     await waitFor(() => expect(screen.getByRole('link', { name: /Bears/ })).toHaveTextContent('Coach Jamie: Practice packet is posted.'));
     expect(screen.getByRole('link', { name: /Thunder/ })).toHaveTextContent('Coach Jamie: Tournament schedule changed.');
     expect(screen.getByRole('link', { name: /Falcons/ })).toHaveTextContent('Coach Jamie: Lineup card is ready.');
+  });
+
+  it('surfaces private opportunity threads beside team chats', async () => {
+    chatServiceMocks.loadChatInbox.mockResolvedValue({ teams: [team()] });
+    opportunityMocks.listOpportunityInquiries.mockResolvedValue({
+      items: [opportunityInquiry()],
+      nextCursor: null
+    });
+
+    renderMessages();
+
+    expect(await screen.findByRole('link', { name: /Need a tournament opponent/ })).toHaveAttribute(
+      'href',
+      '/messages?inquiry=inquiry-1'
+    );
+    expect(screen.getByRole('link', { name: /Need a tournament opponent/ })).toHaveTextContent(
+      'Pat Parent: Could we play Saturday morning?'
+    );
+    expect(screen.getByText(/1 team chat · 1 opportunity/)).toBeInTheDocument();
   });
 
   it('does not apply stale buffered previews after a newer inbox refresh supersedes the request', async () => {
@@ -179,6 +222,8 @@ describe('Messages inbox windowing', () => {
     layoutMocks.isDesktopWeb = false;
     chatServiceMocks.loadChatInbox.mockReset();
     chatServiceMocks.getChatInboxPreview.mockClear();
+    opportunityMocks.listOpportunityInquiries.mockReset();
+    opportunityMocks.listOpportunityInquiries.mockResolvedValue({ items: [], nextCursor: null });
     window.requestAnimationFrame = (callback: FrameRequestCallback) => window.setTimeout(() => callback(performance.now()), 0);
     window.cancelAnimationFrame = (handle: number) => window.clearTimeout(handle);
   });
@@ -200,16 +245,16 @@ describe('Messages inbox windowing', () => {
 
     expect(await screen.findByRole('link', { name: /Team 001/ })).toHaveAttribute('href', '/messages/team-001');
     expect(document.querySelectorAll('.message-row').length).toBeLessThan(60);
-    expect(screen.getByText(/250 teams/)).toBeInTheDocument();
+    expect(screen.getByText(/250 team chats/)).toBeInTheDocument();
 
-    fireEvent.change(screen.getByPlaceholderText('Search team chats'), { target: { value: 'Team 250' } });
+    fireEvent.change(screen.getByPlaceholderText('Search conversations'), { target: { value: 'Team 250' } });
     const offscreenTeam = await screen.findByRole('link', { name: /Team 250/ });
     expect(offscreenTeam).toHaveAttribute('href', '/messages/team-250');
     expect(document.querySelectorAll('.message-row')).toHaveLength(1);
 
-    fireEvent.change(screen.getByPlaceholderText('Search team chats'), { target: { value: 'not a real team' } });
+    fireEvent.change(screen.getByPlaceholderText('Search conversations'), { target: { value: 'not a real team' } });
     expect(await screen.findByText('No team chats match “not a real team”')).toBeInTheDocument();
-    expect(screen.getByText(/250 teams/)).toBeInTheDocument();
+    expect(screen.getByText(/250 team chats/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Clear search' }));
     await waitFor(() => expect(document.querySelectorAll('.message-row').length).toBeGreaterThan(0));
     expect(document.querySelectorAll('.message-row').length).toBeLessThan(60);
@@ -223,7 +268,7 @@ describe('Messages inbox windowing', () => {
     expect(await screen.findByTestId('chat-window-team')).toHaveTextContent('team-001');
     expect(document.querySelectorAll('.message-row').length).toBeLessThan(60);
 
-    fireEvent.change(screen.getByPlaceholderText('Search team chats'), { target: { value: 'Team 250' } });
+    fireEvent.change(screen.getByPlaceholderText('Search conversations'), { target: { value: 'Team 250' } });
     const offscreenTeam = await screen.findByRole('link', { name: /Team 250/ });
     expect(offscreenTeam).toHaveAttribute('href', '/messages/team-250');
     fireEvent.click(offscreenTeam);

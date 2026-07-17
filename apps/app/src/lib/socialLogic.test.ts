@@ -3,6 +3,7 @@ import {
   buildSocialHomeModel,
   categorizeFriends,
   emptySocialHome,
+  getFriendMessageRoute,
   type SocialFriend
 } from './socialLogic';
 
@@ -37,6 +38,21 @@ describe('categorizeFriends', () => {
     );
     expect(incomingRequests).toEqual([]);
     expect(outgoingRequests.map((f) => f.userId)).toEqual(['them']);
+  });
+});
+
+describe('friend messaging', () => {
+  it('builds a pre-addressed direct-message route for accepted friends with a shared team', () => {
+    expect(getFriendMessageRoute(friend({
+      status: 'accepted',
+      sharedTeamIds: ['team-1'],
+      name: 'Pat Parent'
+    }))).toBe('/messages/team-1?compose=user%3Athem&recipientName=Pat+Parent');
+  });
+
+  it('does not offer messaging without an accepted friendship and shared team', () => {
+    expect(getFriendMessageRoute(friend({ status: 'pending', sharedTeamIds: ['team-1'] }))).toBeNull();
+    expect(getFriendMessageRoute(friend({ status: 'accepted', sharedTeamIds: [] }))).toBeNull();
   });
 });
 

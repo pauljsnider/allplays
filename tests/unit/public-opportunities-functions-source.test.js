@@ -36,7 +36,9 @@ describe('public opportunity callable wiring', () => {
     expect(source).toContain('checkPublicOpportunityBrowseRateLimit');
     expect(source).toContain('checkPublicOpportunityWriteRateLimit');
     expect(source).toContain('checkPublicOpportunityMessageRateLimit');
-    expect(source).toContain("appRoute: `/discover/inquiries/${inquiryRef.id}`");
+    expect(source).toContain("appRoute: `/messages?inquiry=${encodeURIComponent(inquiryRef.id)}`");
+    expect(source).toContain("appRoute: `/messages?inquiry=${encodeURIComponent(ref.id)}`");
+    expect(source).toContain('lastMessagePreview: body');
     expect(source).toContain('writeNotificationInboxRecords({');
   });
 

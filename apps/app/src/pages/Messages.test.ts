@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { getDirectThreadMountKey, getInboxRowWindow, getMessagesInboxLoadRouteKey, isSelectedConversation, mergeInboxTeams, mergeVisibleChatMessages, normalizeConversationId, shouldRecordDirectThreadMount } from './Messages';
+import { getComposeRecipientFromSearch, getDirectThreadMountKey, getInboxRowWindow, getMessagesInboxLoadRouteKey, getOpportunityInquiryIdFromSearch, isSelectedConversation, mergeInboxTeams, mergeVisibleChatMessages, normalizeConversationId, shouldRecordDirectThreadMount } from './Messages';
 import type { ChatInboxPreviewUpdate, ChatTeam } from '../lib/chatService';
 
 function resolveAppSourcePath(relativePath: string) {
@@ -143,6 +143,22 @@ describe('conversation id normalization', () => {
   });
 });
 
+describe('message entry routes', () => {
+  it('selects an opportunity conversation from the Messages query', () => {
+    expect(getOpportunityInquiryIdFromSearch('?inquiry=inquiry-1')).toBe('inquiry-1');
+    expect(getOpportunityInquiryIdFromSearch('?conversation=team')).toBe('');
+  });
+
+  it('accepts only safe user recipient tokens for pre-addressed direct messages', () => {
+    expect(getComposeRecipientFromSearch('?compose=user%3Afriend-1&recipientName=Pat+Parent')).toEqual({
+      id: 'user:friend-1',
+      name: 'Pat Parent'
+    });
+    expect(getComposeRecipientFromSearch('?compose=email%3Aprivate%40example.com')).toBeNull();
+    expect(getComposeRecipientFromSearch('?compose=user%3Afriend%2Fmessages')).toBeNull();
+  });
+});
+
 describe('visible chat message merging', () => {
   const buildMessage = (overrides: Record<string, unknown>) => ({
     id: 'message-1',
@@ -200,7 +216,8 @@ describe('direct thread mount telemetry', () => {
   it('loads the inbox in bounded unread mode while deferred previews hydrate later', () => {
     const source = readFileSync(resolveAppSourcePath('src/pages/Messages.tsx'), 'utf8');
 
-    expect(source).toContain('const result = await loadChatInbox(auth.user, {');
+    expect(source).toContain('const [result, inquiryPage] = await Promise.all([');
+    expect(source).toContain('loadChatInbox(auth.user, {');
     expect(source).toContain('includeLastMessages: false,');
     expect(source).toContain('onPreview: (previewUpdate) => {');
     expect(source).toContain('pendingPreviewUpdates.set(previewUpdate.teamId, previewUpdate);');

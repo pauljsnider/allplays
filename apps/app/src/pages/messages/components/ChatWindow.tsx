@@ -285,6 +285,7 @@ export function ChatWindow({
   teamId,
   inboxTeam,
   preferredConversationId = '',
+  initialRecipient = null,
   onInboxMuteChange,
   embedded = false
 }: {
@@ -292,6 +293,7 @@ export function ChatWindow({
   teamId: string;
   inboxTeam?: ChatTeam;
   preferredConversationId?: string;
+  initialRecipient?: Pick<ChatRecipientOption, 'id' | 'name'> | null;
   onInboxMuteChange?: (conversationId: string, isMuted: boolean) => void;
   embedded?: boolean;
 }) {
@@ -376,6 +378,7 @@ export function ChatWindow({
   const pendingSendRequestsRef = useRef(new Map<string, PendingChatSendRequest>());
   const sendQueueRef = useRef(Promise.resolve());
   const composerDraftsRef = useRef(new Map<string, ChatComposerDraft>());
+  const preparedInitialRecipientKeyRef = useRef('');
 
   const resetChatSelectionState = useCallback(() => {
     setStatus(null);
@@ -828,6 +831,25 @@ export function ChatWindow({
   useEffect(() => {
     currentTeamIdRef.current = teamId;
   }, [teamId]);
+
+  useEffect(() => {
+    const recipientId = String(initialRecipient?.id || '').trim();
+    if (loadingContext || !recipientId || !/^user:[A-Za-z0-9_-]{1,160}$/.test(recipientId)) return;
+    const preparationKey = `${teamId}|${recipientId}`;
+    if (preparedInitialRecipientKeyRef.current === preparationKey) return;
+    if (!isDefaultTeamConversation(effectiveConversationId)) {
+      switchChatConversation(DEFAULT_TEAM_CONVERSATION_ID);
+      return;
+    }
+    preparedInitialRecipientKeyRef.current = preparationKey;
+    setRecipientOptions((current) => current.some((option) => option.id === recipientId) ? current : [
+      ...current,
+      { id: recipientId, name: initialRecipient?.name || 'Friend', detail: 'Accepted friend' }
+    ]);
+    setSelectedRecipientTarget('individuals');
+    setSelectedRecipientIds([recipientId]);
+    setStatus({ tone: 'neutral', message: `Direct message to ${initialRecipient?.name || 'your friend'} is ready.` });
+  }, [effectiveConversationId, initialRecipient, loadingContext, switchChatConversation, teamId]);
 
   useLayoutEffect(() => {
     if (activeComposerDraftKeyRef.current === activeComposerDraftKey) return;

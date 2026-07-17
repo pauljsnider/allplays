@@ -12579,6 +12579,8 @@ function serializeOpportunityInquiry(docSnap, messages = []) {
     status: data.status === 'closed' ? 'closed' : 'open',
     createdAt: data.createdAt?.toDate?.().toISOString?.() || null,
     updatedAt: data.updatedAt?.toDate?.().toISOString?.() || null,
+    lastMessagePreview: cleanOpportunityText(data.lastMessagePreview, 180),
+    lastMessageAuthorName: cleanOpportunityText(data.lastMessageAuthorName, 100),
     messages
   };
 }
@@ -12828,7 +12830,11 @@ exports.listManagedPublicOpportunityTeams = functions.https.onCall(async (_data,
       sport: cleanOpportunityText(team.sport, 60),
       city: cleanOpportunityText(team.city, 80),
       state: cleanOpportunityText(team.state, 40),
-      zip: cleanOpportunityText(team.zip, 10)
+      zip: cleanOpportunityText(team.zip, 10),
+      ageGroup: cleanOpportunityText(team.ageGroup || team.age || team.teamAgeGroup, 40),
+      competitiveLevel: cleanOpportunityText(team.competitiveLevel || team.level, 60),
+      division: cleanOpportunityText(team.division || team.divisionName, 60),
+      availability: cleanOpportunityText(team.opportunityAvailability || team.availability, 240)
     });
   });
   return { items: Array.from(teams.values()).sort((a, b) => a.name.localeCompare(b.name)) };
@@ -12919,6 +12925,8 @@ exports.createOpportunityInquiry = functions.https.onCall(async (data, context =
     recipientUserIds: recipients,
     participantIds,
     status: 'open',
+    lastMessagePreview: body,
+    lastMessageAuthorName: callerName,
     createdAt: now,
     updatedAt: now
   };
@@ -12931,7 +12939,7 @@ exports.createOpportunityInquiry = functions.https.onCall(async (data, context =
     category: 'opportunities',
     title: 'New opportunity inquiry',
     body: `${callerName} asked about ${inquiry.listingTitle}.`,
-    appRoute: `/discover/inquiries/${inquiryRef.id}`,
+    appRoute: `/messages?inquiry=${encodeURIComponent(inquiryRef.id)}`,
     teamId: listing.teamId || null,
     conversationId: inquiryRef.id
   });
@@ -13036,7 +13044,7 @@ exports.replyToOpportunityInquiry = functions.https.onCall(async (data, context 
   const now = admin.firestore.Timestamp.now();
   const batch = firestore.batch();
   batch.set(messageRef, { authorId: uid, authorName, body, createdAt: now });
-  batch.update(ref, { updatedAt: now });
+  batch.update(ref, { updatedAt: now, lastMessagePreview: body, lastMessageAuthorName: authorName });
   await batch.commit();
   const currentTeamRecipients = inquiry.teamId
     ? new Set(await resolveOpportunityRecipients(inquiry))
@@ -13050,7 +13058,7 @@ exports.replyToOpportunityInquiry = functions.https.onCall(async (data, context 
     category: 'opportunities',
     title: 'Opportunity inquiry reply',
     body: `${authorName} replied about ${inquiry.listingTitle || 'an opportunity'}.`,
-    appRoute: `/discover/inquiries/${ref.id}`,
+    appRoute: `/messages?inquiry=${encodeURIComponent(ref.id)}`,
     teamId: inquiry.teamId || null,
     conversationId: ref.id
   });

@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  applyOpportunityTeamDefaults,
   emptyOpportunityInput,
   formatOpportunityLocation,
   getOpportunityInquiryStarterMessages,
   getOpportunityKindLabel,
+  getMissingOpportunityRequiredFields,
+  opportunityAvailabilityOptions,
   opportunityToInput,
   opportunityKinds,
   type PublicOpportunity
@@ -14,8 +17,50 @@ describe('opportunityLogic', () => {
     expect(emptyOpportunityInput('player_seeking_team')).toEqual(expect.objectContaining({
       kind: 'player_seeking_team',
       guardianAttested: false,
-      compensationType: 'not_applicable'
+      compensationType: 'not_applicable',
+      availability: opportunityAvailabilityOptions[0]
     }));
+  });
+
+  it('prefills safe team fields and keeps draft values the user already entered', () => {
+    const input = {
+      ...emptyOpportunityInput('coach_or_staff'),
+      title: 'Assistant coach',
+      city: 'User-entered city'
+    };
+    const result = applyOpportunityTeamDefaults(input, {
+      id: 'team-1',
+      name: 'Bears',
+      sport: 'Basketball',
+      city: 'Austin',
+      state: 'TX',
+      zip: '78701',
+      ageGroup: '12U',
+      competitiveLevel: 'Travel',
+      division: 'Gold',
+      availability: 'Weekends'
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      teamId: 'team-1',
+      sport: 'Basketball',
+      city: 'User-entered city',
+      state: 'TX',
+      ageGroup: '12U',
+      title: 'Assistant coach'
+    }));
+  });
+
+  it('reports kind-specific missing required fields', () => {
+    const teamListing = emptyOpportunityInput('team_seeking_players');
+    expect(getMissingOpportunityRequiredFields(teamListing).map((field) => field.key)).toEqual([
+      'teamId', 'title', 'description', 'sport', 'city', 'state'
+    ]);
+
+    const playerListing = emptyOpportunityInput('player_seeking_team');
+    expect(getMissingOpportunityRequiredFields(playerListing).map((field) => field.key)).toEqual([
+      'title', 'description', 'sport', 'city', 'state', 'ageGroup', 'guardianAttested'
+    ]);
   });
 
   it('formats labels, locations, and edit input', () => {

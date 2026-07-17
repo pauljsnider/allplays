@@ -41,7 +41,7 @@ describe('app form mobile input hints', () => {
       readSource('apps/app/src/pages/messages/components/ChatComposer.tsx')
     ].join('\n');
 
-    expect(source).toContain('placeholder="Search team chats"');
+    expect(source).toContain('placeholder="Search conversations"');
     expect(source).toContain('enterKeyHint="search"');
     expect(source).toContain('className="chat-composer-textarea"');
     expect(source).toContain('enterKeyHint="send"');
