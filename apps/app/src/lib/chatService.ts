@@ -1053,7 +1053,8 @@ export async function loadChatConversationById(
   const conversations = await withTimeout(Promise.resolve(getChatConversations(teamId, user, {
     team,
     canModerate,
-    includeConversationId: requestedConversationId
+    includeConversationId: requestedConversationId,
+    strictIncludeConversationId: true
   })), 'Direct chat conversation lookup') as ChatConversation[];
   return mapChatConversationRecords(conversations)
     .find((conversation) => conversation.id === requestedConversationId) || null;

@@ -1040,7 +1040,8 @@ describe('React app chat recipient service', () => {
             {
                 team: { id: 'team-1', name: 'Bears' },
                 canModerate: false,
-                includeConversationId: reverseConversationId
+                includeConversationId: reverseConversationId,
+                strictIncludeConversationId: true
             }
         );
         expect(conversation).toEqual(expect.objectContaining({
@@ -1048,6 +1049,19 @@ describe('React app chat recipient service', () => {
             type: 'direct',
             participantIds: ['friend-2', 'user:current-1']
         }));
+    });
+
+    it('does not treat a failed exact direct conversation lookup as a missing thread', async () => {
+        dbMocks.getChatConversations.mockRejectedValueOnce(new Error('conversation lookup unavailable'));
+        const { loadChatConversationById } = await import('../../apps/app/src/lib/chatService.ts');
+
+        await expect(loadChatConversationById(
+            'team-1',
+            { uid: 'current-1', email: 'current@example.com', roles: [] },
+            { id: 'team-1', name: 'Bears' },
+            false,
+            'direct_friend-2__user%3Acurrent-1'
+        )).rejects.toThrow('conversation lookup unavailable');
     });
 
     it('routes selected-member messages into a non-default conversation before posting', async () => {

@@ -6710,7 +6710,8 @@ export async function getChatConversations(teamId, user = null, {
     canModerate = false,
     pageSize = DEFAULT_CHAT_CONVERSATION_PAGE_SIZE,
     includeConversationId = '',
-    activeConversationId = ''
+    activeConversationId = '',
+    strictIncludeConversationId = false
 } = {}) {
     const conversationsRef = collection(db, 'teams', teamId, 'chatConversations');
     const normalizedEmail = user?.email ? String(user.email).trim().toLowerCase() : '';
@@ -6755,6 +6756,7 @@ export async function getChatConversations(teamId, user = null, {
                 }
             }
         } catch (error) {
+            if (strictIncludeConversationId) throw error;
             console.warn('Ignoring unavailable requested chat conversation.', { teamId, requestedConversationId, error });
         }
     }
