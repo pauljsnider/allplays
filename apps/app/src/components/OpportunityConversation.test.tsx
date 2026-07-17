@@ -95,6 +95,65 @@ describe('OpportunityConversation', () => {
     expect(screen.queryByRole('heading', { name: 'First opportunity' })).not.toBeInTheDocument();
   });
 
+  it('does not reload or overwrite the active conversation after an older reply finishes', async () => {
+    let resolveReply!: (value: { success: boolean }) => void;
+    const replyPromise = new Promise<{ success: boolean }>((resolve) => {
+      resolveReply = resolve;
+    });
+    const first = {
+      ...inquiry([]),
+      id: 'inquiry-1',
+      listingTitle: 'First opportunity'
+    };
+    const second = {
+      ...inquiry([]),
+      id: 'inquiry-2',
+      listingId: 'listing-2',
+      listingTitle: 'Second opportunity'
+    };
+    const onReplied = vi.fn();
+    opportunityMocks.getOpportunityInquiry
+      .mockReset()
+      .mockImplementation((inquiryId: string) => Promise.resolve(inquiryId === 'inquiry-1' ? first : second));
+    opportunityMocks.replyToOpportunityInquiry.mockReset().mockReturnValue(replyPromise);
+
+    const { rerender } = render(
+      <MemoryRouter>
+        <OpportunityConversation auth={auth} inquiryId="inquiry-1" onReplied={onReplied} />
+      </MemoryRouter>
+    );
+    expect(await screen.findByRole('heading', { name: 'First opportunity' })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Write a private reply'), {
+      target: { value: 'Reply for the first conversation.' }
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send reply' }));
+    await waitFor(() => expect(opportunityMocks.replyToOpportunityInquiry).toHaveBeenCalledWith(
+      'inquiry-1',
+      'Reply for the first conversation.'
+    ));
+
+    rerender(
+      <MemoryRouter>
+        <OpportunityConversation auth={auth} inquiryId="inquiry-2" onReplied={onReplied} />
+      </MemoryRouter>
+    );
+    expect(await screen.findByRole('heading', { name: 'Second opportunity' })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Write a private reply'), {
+      target: { value: 'Draft for the second conversation.' }
+    });
+
+    await act(async () => {
+      resolveReply({ success: true });
+      await replyPromise;
+    });
+
+    expect(screen.getByRole('heading', { name: 'Second opportunity' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Write a private reply')).toHaveValue('Draft for the second conversation.');
+    expect(opportunityMocks.getOpportunityInquiry.mock.calls.filter(([id]) => id === 'inquiry-1')).toHaveLength(1);
+    expect(onReplied).not.toHaveBeenCalled();
+  });
+
   it('loads a private multi-participant thread and sends a reply', async () => {
     const first = inquiry([{
       id: 'message-1',

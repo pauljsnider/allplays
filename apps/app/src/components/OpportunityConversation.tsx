@@ -18,6 +18,9 @@ export function OpportunityConversation({ auth, inquiryId, embedded = false, onR
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
   const loadRequestRef = useRef(0);
+  const replyRequestRef = useRef(0);
+  const activeInquiryIdRef = useRef(inquiryId);
+  activeInquiryIdRef.current = inquiryId;
 
   const load = useCallback(async () => {
     const requestId = ++loadRequestRef.current;
@@ -42,28 +45,37 @@ export function OpportunityConversation({ auth, inquiryId, embedded = false, onR
   }, [inquiryId]);
 
   useEffect(() => {
+    replyRequestRef.current += 1;
+    setMessage('');
+    setSending(false);
     setInquiry(null);
     setLoading(true);
     void load();
     return () => {
       loadRequestRef.current += 1;
+      replyRequestRef.current += 1;
     };
   }, [load]);
 
   const reply = async (event: FormEvent) => {
     event.preventDefault();
     if (!message.trim()) return;
+    const submittedInquiryId = inquiryId;
+    const requestId = ++replyRequestRef.current;
     setSending(true);
     setError('');
     try {
-      await replyToOpportunityInquiry(inquiryId, message);
+      await replyToOpportunityInquiry(submittedInquiryId, message);
+      if (requestId !== replyRequestRef.current || activeInquiryIdRef.current !== submittedInquiryId) return;
       setMessage('');
       const updated = await load();
+      if (requestId !== replyRequestRef.current || activeInquiryIdRef.current !== submittedInquiryId) return;
       if (updated) onReplied?.(updated);
     } catch (replyError: any) {
+      if (requestId !== replyRequestRef.current || activeInquiryIdRef.current !== submittedInquiryId) return;
       setError(replyError?.message || 'Unable to send your reply.');
     } finally {
-      setSending(false);
+      if (requestId === replyRequestRef.current && activeInquiryIdRef.current === submittedInquiryId) setSending(false);
     }
   };
 
