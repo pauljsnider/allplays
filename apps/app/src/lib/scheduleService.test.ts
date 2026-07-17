@@ -221,7 +221,7 @@ import { getCachedAppData, invalidateCachedAppData, loadCachedAppData } from './
 import { mapScheduleEventRecord } from './firestore/mappers';
 import { loadProfileDocument } from './profileService';
 import { getScheduleTournamentInfo } from './scheduleLogic';
-import { adjustGameScore, buildPlayerScoringLiveEvent, buildSingleGameTournamentLegacySchedulePayload, claimOfficialAssignmentItem, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, flushPendingLivePublishOperations, hydrateParentScheduleDetails, loadOfficialAssignments, loadParentSchedule, loadParentScheduleChildren, loadParentScheduleEventDetail, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitParentScheduleRsvp, submitParentScheduleRsvpForChildren, submitStaffScheduleRsvpOverride, TournamentBlockPartialSaveError, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
+import { adjustGameScore, buildPlayerScoringLiveEvent, buildSingleGameTournamentLegacySchedulePayload, claimOfficialAssignmentItem, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, flushPendingLivePublishOperations, hydrateParentScheduleDetails, hydrateParentScheduleRsvps, loadOfficialAssignments, loadParentSchedule, loadParentScheduleChildren, loadParentScheduleEventDetail, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitParentScheduleRsvp, submitParentScheduleRsvpForChildren, submitStaffScheduleRsvpOverride, TournamentBlockPartialSaveError, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
 
 function playerSnapshot(id: string, data: Record<string, unknown> | null) {
   return {
@@ -2370,6 +2370,59 @@ describe('parent family RSVP submission', () => {
     await expect(submitParentScheduleRsvp(baseEvent, user as any, 'maybe')).rejects.toBe(writeError);
 
     expect(invalidateCachedAppData).not.toHaveBeenCalled();
+  });
+
+  it('retains a successful RSVP when a fast schedule reload has not hydrated server details yet', async () => {
+    const sessionEvent = {
+      ...baseEvent,
+      id: 'game-session-cache',
+      eventKey: 'team-1::game-session-cache::player-1',
+      teamName: 'Bears',
+      type: 'game',
+      date: new Date('2100-06-01T18:00:00Z'),
+      location: 'Main Gym',
+      opponent: 'Rivals',
+      title: null,
+      childName: 'Pat',
+      myRsvp: 'not_responded',
+      myRsvpNote: null,
+      assignments: [],
+      openAssignmentCount: 0
+    } as any;
+    vi.mocked(submitRsvpForPlayer).mockResolvedValue(null as any);
+    mocks.getDoc.mockRejectedValue(new Error('detail read still pending'));
+
+    await submitParentScheduleRsvp(sessionEvent, user as any, 'maybe', 'Arriving late');
+    const reloadedEvent = { ...sessionEvent, myRsvp: 'not_responded', myRsvpNote: null };
+    await hydrateParentScheduleRsvps({ children: [], events: [reloadedEvent] }, user as any);
+
+    expect(reloadedEvent.myRsvp).toBe('maybe');
+    expect(reloadedEvent.myRsvpNote).toBe('Arriving late');
+  });
+
+  it('does not replace a known RSVP with missing when progressive detail reads fail', async () => {
+    const eventWithKnownResponse = {
+      ...baseEvent,
+      id: 'game-read-failure',
+      eventKey: 'team-1::game-read-failure::player-1',
+      teamName: 'Bears',
+      type: 'game',
+      date: new Date('2100-06-02T18:00:00Z'),
+      location: 'Main Gym',
+      opponent: 'Rivals',
+      title: null,
+      childName: 'Pat',
+      myRsvp: 'going',
+      myRsvpNote: 'Already loaded',
+      assignments: [],
+      openAssignmentCount: 0
+    } as any;
+    mocks.getDoc.mockRejectedValue(new Error('offline'));
+
+    await hydrateParentScheduleRsvps({ children: [], events: [eventWithKnownResponse] }, user as any);
+
+    expect(eventWithKnownResponse.myRsvp).toBe('going');
+    expect(eventWithKnownResponse.myRsvpNote).toBe('Already loaded');
   });
 
   afterEach(() => {

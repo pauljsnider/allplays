@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Schedule, getGenericEventDetailPath } from './Schedule';
@@ -16,9 +16,12 @@ const scheduleServiceMocks = vi.hoisted(() => ({
   createScheduleImportGame: vi.fn(),
   createScheduleImportPractice: vi.fn(),
   finalizeScheduleImportBatch: vi.fn(),
+  hydrateParentScheduleRsvps: vi.fn(async (schedule: unknown, _user?: unknown, _options?: unknown) => schedule),
   loadParentSchedule: vi.fn(),
   loadScheduleStatTrackerConfigsForApp: vi.fn().mockResolvedValue([]),
-  removeTeamCalendarUrl: vi.fn()
+  removeTeamCalendarUrl: vi.fn(),
+  submitParentScheduleRsvp: vi.fn(),
+  submitParentScheduleRsvpForChildren: vi.fn()
 }));
 
 const appDataCacheMocks = vi.hoisted(() => ({
@@ -131,6 +134,7 @@ function buildScheduleEvent(index: number, overrides: Partial<ParentScheduleEven
     childName: 'Pat',
     isDbGame: true,
     isCancelled: false,
+    isLinkedParentChild: true,
     myRsvp: 'not_responded' as const,
     assignments: [],
     openAssignmentCount: 0,
@@ -333,6 +337,106 @@ describe('Schedule', () => {
     expect(options.force).toBe(false);
     expect(options.shouldCache({ isPartial: true })).toBe(false);
     expect(options.shouldCache({ isPartial: false })).toBe(true);
+  });
+
+  it('progressively applies RSVP hydration after the fast schedule shell loads', async () => {
+    const hydratedEvent = buildScheduleEvent(1);
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [{ playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }],
+      events: [hydratedEvent]
+    });
+    scheduleServiceMocks.hydrateParentScheduleRsvps.mockImplementationOnce(async (schedule: any, _user: unknown, options: any) => {
+      schedule.events[0].myRsvp = 'going';
+      options.onProgress([...schedule.events]);
+      return schedule;
+    });
+
+    renderSchedule();
+
+    expect((await screen.findAllByText('Going')).length).toBeGreaterThan(0);
+    expect(scheduleServiceMocks.hydrateParentScheduleRsvps).toHaveBeenCalledWith(
+      expect.objectContaining({ events: [expect.objectContaining({ id: 'event-1' })] }),
+      auth.user,
+      expect.objectContaining({ onProgress: expect.any(Function) })
+    );
+  });
+
+  it('submits one response across multiple upcoming games and practices', async () => {
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [{ playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }],
+      events: [
+        buildScheduleEvent(1),
+        buildScheduleEvent(2, { type: 'practice', title: 'Team practice', opponent: null }),
+        buildScheduleEvent(3, { myRsvp: 'maybe' })
+      ]
+    });
+    scheduleServiceMocks.submitParentScheduleRsvp.mockResolvedValue(null);
+
+    renderSchedule();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Review RSVPs' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Respond to multiple events' });
+    expect(within(dialog).getByText('2 selected')).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Going' }));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.submitParentScheduleRsvp).toHaveBeenCalledTimes(2);
+    });
+    expect(scheduleServiceMocks.submitParentScheduleRsvp).toHaveBeenCalledWith(expect.objectContaining({ id: 'event-1' }), auth.user, 'going');
+    expect(scheduleServiceMocks.submitParentScheduleRsvp).toHaveBeenCalledWith(expect.objectContaining({ id: 'event-2' }), auth.user, 'going');
+    expect(await screen.findByText('2 RSVPs saved as going.')).toBeTruthy();
+    expect(screen.queryByRole('dialog', { name: 'Respond to multiple events' })).toBeNull();
+  });
+
+  it('uses one family RSVP write for siblings selected on the same event', async () => {
+    const firstChild = buildScheduleEvent(1);
+    const secondChild = buildScheduleEvent(1, {
+      eventKey: 'team-1::event-1::player-2::2100-06-01T18:00:00.000Z::game',
+      childId: 'player-2',
+      childName: 'Sam'
+    });
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [
+        { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' },
+        { playerId: 'player-2', playerName: 'Sam', teamId: 'team-1', teamName: 'Bears' }
+      ],
+      events: [firstChild, secondChild]
+    });
+    scheduleServiceMocks.submitParentScheduleRsvpForChildren.mockResolvedValue(null);
+
+    renderSchedule();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Review RSVPs' }));
+    fireEvent.click(within(await screen.findByRole('dialog', { name: 'Respond to multiple events' })).getByRole('button', { name: 'Maybe' }));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.submitParentScheduleRsvpForChildren).toHaveBeenCalledWith(
+        [expect.objectContaining({ childId: 'player-1' }), expect.objectContaining({ childId: 'player-2' })],
+        auth.user,
+        'maybe'
+      );
+    });
+    expect(scheduleServiceMocks.submitParentScheduleRsvp).not.toHaveBeenCalled();
+  });
+
+  it('rolls back only failed bulk RSVP rows and keeps them selected for retry', async () => {
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [{ playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }],
+      events: [buildScheduleEvent(1), buildScheduleEvent(2)]
+    });
+    scheduleServiceMocks.submitParentScheduleRsvp
+      .mockResolvedValueOnce(null)
+      .mockRejectedValueOnce(new Error('offline'));
+
+    renderSchedule();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Review RSVPs' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Respond to multiple events' });
+    fireEvent.click(within(dialog).getByRole('button', { name: "Can't go" }));
+
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('1 RSVP was not saved');
+    expect(within(dialog).getByText('1 selected')).toBeTruthy();
+    expect(await screen.findByText('1 saved; 1 RSVP needs another try.')).toBeTruthy();
   });
 
   it('keeps team and player filters after an empty schedule refresh fails', async () => {

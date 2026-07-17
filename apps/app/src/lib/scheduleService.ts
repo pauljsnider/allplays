@@ -150,6 +150,107 @@ const parentSchedulePlayerConcurrency = 8;
 const scheduleHydrationCacheTtlMs = 30 * 1000;
 const parentHomeHydrationLookAheadMs = 14 * 24 * 60 * 60 * 1000;
 const parentHomeHydrationLookBehindMs = 12 * 60 * 60 * 1000;
+const rsvpSessionStoragePrefix = 'allplays:schedule-rsvp:';
+const maxSessionRsvpEntries = 200;
+
+type SessionRsvpEntry = {
+  eventKey: string;
+  response: Exclude<RsvpResponse, 'not_responded'>;
+  note: string;
+  updatedAt: number;
+};
+
+const sessionRsvpStateByUser = new Map<string, Map<string, SessionRsvpEntry>>();
+
+function getSessionRsvpStorage() {
+  if (typeof window === 'undefined') return null;
+  try {
+    return window.sessionStorage && typeof window.sessionStorage.getItem === 'function'
+      ? window.sessionStorage
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function getSessionRsvpEventKey(event: Pick<ParentScheduleEvent, 'teamId' | 'id' | 'childId'>) {
+  return `${compactString(event.teamId)}::${compactString(event.id)}::${compactString(event.childId)}`;
+}
+
+function getSessionRsvpState(userId: string) {
+  const existing = sessionRsvpStateByUser.get(userId);
+  if (existing) return existing;
+
+  const state = new Map<string, SessionRsvpEntry>();
+  const storage = getSessionRsvpStorage();
+  if (storage) {
+    try {
+      const parsed = JSON.parse(storage.getItem(`${rsvpSessionStoragePrefix}${userId}`) || '{}');
+      if (parsed?.version === 1 && Array.isArray(parsed.entries)) {
+        parsed.entries.slice(-maxSessionRsvpEntries).forEach((entry: SessionRsvpEntry) => {
+          if (entry?.eventKey && normalizeRsvpResponse(entry.response) !== 'not_responded') {
+            state.set(entry.eventKey, {
+              eventKey: entry.eventKey,
+              response: normalizeRsvpResponse(entry.response) as Exclude<RsvpResponse, 'not_responded'>,
+              note: compactString(entry.note),
+              updatedAt: Number(entry.updatedAt) || Date.now()
+            });
+          }
+        });
+      }
+    } catch (error) {
+      logger.warn('Unable to restore session RSVP state.', { error });
+    }
+  }
+  sessionRsvpStateByUser.set(userId, state);
+  return state;
+}
+
+function persistSessionRsvpState(userId: string, state: Map<string, SessionRsvpEntry>) {
+  const entries = [...state.values()]
+    .sort((left, right) => left.updatedAt - right.updatedAt)
+    .slice(-maxSessionRsvpEntries);
+  if (entries.length !== state.size) {
+    state.clear();
+    entries.forEach((entry) => state.set(entry.eventKey, entry));
+  }
+  try {
+    getSessionRsvpStorage()?.setItem(`${rsvpSessionStoragePrefix}${userId}`, JSON.stringify({ version: 1, entries }));
+  } catch (error) {
+    logger.warn('Unable to persist session RSVP state.', { error });
+  }
+}
+
+function rememberSessionRsvpState(
+  user: AuthUser,
+  events: ParentScheduleEvent[],
+  response: Exclude<RsvpResponse, 'not_responded'>,
+  note: string
+) {
+  const state = getSessionRsvpState(user.uid);
+  events.forEach((event) => {
+    const eventKey = getSessionRsvpEventKey(event);
+    state.set(eventKey, {
+      eventKey,
+      response,
+      note: compactString(note),
+      updatedAt: Date.now()
+    });
+  });
+  persistSessionRsvpState(user.uid, state);
+}
+
+function applySessionRsvpState(events: ParentScheduleEvent[], userId: string) {
+  if (!userId || !events.length) return events;
+  const state = getSessionRsvpState(userId);
+  events.forEach((event) => {
+    const entry = state.get(getSessionRsvpEventKey(event));
+    if (!entry) return;
+    event.myRsvp = entry.response;
+    event.myRsvpNote = entry.note || null;
+  });
+  return events;
+}
 
 function getScheduleEventHydrationCacheKey(teamId: string, eventId: string) {
   return `event-details:${teamId}:${eventId}`;
@@ -3880,6 +3981,7 @@ export async function loadParentScheduleEventDetail(user: AuthUser | null, optio
     if (hydrateDetails && events.length) {
       await hydrateEventDetails(events, user);
     }
+    applySessionRsvpState(events, user.uid);
     timer.end({
       hydrateDetails,
       expandStaffPlayers,
@@ -3945,6 +4047,7 @@ export async function loadParentPlayerSchedule(user: AuthUser | null, options: P
     if (hydrateDetails && events.length) {
       await hydrateEventDetails(events, user);
     }
+    applySessionRsvpState(events, user.uid);
     timer.end({
       hydrateDetails,
       requestedTeamId: requestedTeamId || null,
@@ -4062,6 +4165,7 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
       const partialEvents = completedTeamResults
         .flatMap((result) => result.events)
         .sort((a, b) => a.date.getTime() - b.date.getTime());
+      applySessionRsvpState(partialEvents, user.uid);
       try {
         options.onPartial({
           children,
@@ -4124,6 +4228,7 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
     if (hydrateDetails) {
       await hydrateEventDetails(events, user);
     }
+    applySessionRsvpState(events, user.uid);
     const isPartial = failedTeamLoads.length > 0;
     timer.end({
       hydrateDetails,
@@ -4139,6 +4244,71 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
     timer.end({ hydrateDetails, expandStaffPlayers, error: error?.message || 'Unable to load parent schedule.' });
     throw error;
   }
+}
+
+async function loadOwnRsvpDocuments(events: ParentScheduleEvent[], userId: string) {
+  const firstEvent = events[0];
+  if (!firstEvent) return { rsvps: [], complete: true };
+  const childIds = uniqueNonEmptyStrings(events.map((event) => event.childId));
+  const rsvpIds = uniqueNonEmptyStrings([userId, ...childIds.map((childId) => `${userId}__${childId}`)]);
+  const results = await Promise.allSettled(rsvpIds.flatMap((rsvpId) => [
+    getDoc(doc(db, `teams/${firstEvent.teamId}/games/${firstEvent.id}/rsvps`, rsvpId))
+      .then((snapshot: any) => snapshot.exists() ? { kind: 'rsvp' as const, value: { id: snapshot.id, ...snapshot.data() } } : null),
+    getDoc(doc(db, `teams/${firstEvent.teamId}/games/${firstEvent.id}/rsvpNotes`, rsvpId))
+      .then((snapshot: any) => snapshot.exists() ? { kind: 'note' as const, value: { id: snapshot.id, ...snapshot.data() } } : null)
+  ]));
+  const loaded = results
+    .filter((result): result is PromiseFulfilledResult<any> => result.status === 'fulfilled' && Boolean(result.value))
+    .map((result) => result.value);
+  const rsvps = loaded.filter((entry) => entry.kind === 'rsvp').map((entry) => entry.value);
+  const notes = loaded.filter((entry) => entry.kind === 'note').map((entry) => entry.value);
+  return {
+    rsvps: mergeRsvpNotesIntoRsvps(rsvps, notes),
+    complete: results.every((result) => result.status === 'fulfilled')
+  };
+}
+
+export async function hydrateParentScheduleRsvps(
+  schedule: ParentScheduleLoadResult,
+  user: AuthUser | null,
+  options: { onProgress?: (events: ParentScheduleEvent[]) => void } = {}
+): Promise<ParentScheduleLoadResult> {
+  if (!user?.uid || !schedule.events.length) return schedule;
+
+  applySessionRsvpState(schedule.events, user.uid);
+  const groups = new Map<string, ParentScheduleEvent[]>();
+  schedule.events
+    .filter((event) => event.isDbGame && !event.isCancelled && event.isLinkedParentChild === true && Boolean(event.childId))
+    .forEach((event) => {
+      const key = `${event.teamId}::${event.id}`;
+      groups.set(key, [...(groups.get(key) || []), event]);
+    });
+
+  await mapWithConcurrency([...groups.values()], parentScheduleTeamConcurrency, async (matchingEvents) => {
+    const firstEvent = matchingEvents[0];
+    if (!firstEvent) return;
+    try {
+      const { rsvps, complete } = await loadOwnRsvpDocuments(matchingEvents, user.uid);
+      const myRsvpByChild = resolveMyRsvpByChildForGame(schedule.events, firstEvent.teamId, firstEvent.id, rsvps, user.uid);
+      const myRsvpNotesByChild = resolveMyRsvpNotesByChildForGame(schedule.events, firstEvent.teamId, firstEvent.id, rsvps, user.uid);
+      matchingEvents.forEach((event) => {
+        const hydratedResponse = normalizeRsvpResponse(myRsvpByChild[event.childId]);
+        if (complete || hydratedResponse !== 'not_responded') {
+          event.myRsvp = hydratedResponse;
+          event.myRsvpNote = myRsvpNotesByChild[event.childId] || null;
+        }
+      });
+      applySessionRsvpState(matchingEvents, user.uid);
+      options.onProgress?.([...schedule.events]);
+    } catch (error) {
+      logScheduleWarning('Failed to hydrate parent RSVP state.', 'parent-rsvp-hydration', error, {
+        teamId: firstEvent.teamId,
+        eventId: firstEvent.id
+      });
+    }
+  });
+
+  return schedule;
 }
 
 async function nativeSubmitRsvpForPlayer(teamId: string, gameId: string, user: AuthUser, childId: string, response: RsvpResponse, note = '', visibility: 'admins' | 'team' = 'admins') {
@@ -4362,6 +4532,7 @@ export async function submitParentScheduleRsvp(event: ParentScheduleEvent, user:
       response,
       note: compactString(note) || null
     })), 'RSVP submit');
+    rememberSessionRsvpState(user, [event], response, note);
     invalidateParentScheduleCaches(user, event);
     return result;
   } catch (error) {
@@ -4370,6 +4541,7 @@ export async function submitParentScheduleRsvp(event: ParentScheduleEvent, user:
     }
     logScheduleWarning('Falling back to REST RSVP submit.', 'parent-rsvp-submit', error, { fallback: 'rest', teamId: event.teamId, gameId: event.id, childId: event.childId });
     const result = await nativeSubmitRsvpForPlayer(event.teamId, event.id, user, event.childId, response, note, event.availabilityNoteVisibility === 'team' ? 'team' : 'admins');
+    rememberSessionRsvpState(user, [event], response, note);
     invalidateParentScheduleCaches(user, event);
     return result;
   }
@@ -4410,6 +4582,7 @@ export async function submitParentScheduleRsvpForChildren(events: ParentSchedule
       response,
       note: compactString(note) || null
     })), 'Family RSVP submit');
+    rememberSessionRsvpState(user, events, response, note);
     invalidateParentScheduleCaches(user, firstEvent);
     return result;
   } catch (error) {
@@ -4418,6 +4591,7 @@ export async function submitParentScheduleRsvpForChildren(events: ParentSchedule
     }
     logScheduleWarning('Falling back to REST family RSVP submit.', 'parent-family-rsvp-submit', error, { fallback: 'rest', teamId: firstEvent.teamId, gameId: firstEvent.id, childIds });
     const result = await nativeSubmitRsvpForChildren(firstEvent.teamId, firstEvent.id, user, childIds, response, note, firstEvent.availabilityNoteVisibility === 'team' ? 'team' : 'admins');
+    rememberSessionRsvpState(user, events, response, note);
     invalidateParentScheduleCaches(user, firstEvent);
     return result;
   }
