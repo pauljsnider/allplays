@@ -1475,9 +1475,9 @@ async function moveTeamMediaStorageBackedItem(teamId, item = {}, update = {}) {
     }
 }
 
-async function clearMovedTeamMediaAlbumCover(teamId, item = {}) {
+async function clearMovedTeamMediaAlbumCover(teamId, item = {}, targetFolderId) {
     const sourceFolderId = String(item.folderId || '').trim();
-    if (!sourceFolderId) return;
+    if (!sourceFolderId || sourceFolderId === String(targetFolderId || '').trim()) return;
 
     const sourceFolderRef = doc(db, `teams/${teamId}/mediaFolders`, sourceFolderId);
     const sourceFolderSnapshot = await getDoc(sourceFolderRef);
@@ -1683,7 +1683,7 @@ export async function moveTeamMediaItems(teamId, itemIds = [], targetFolderId) {
 
         if (['photo', 'file'].includes(String(item.type || '').toLowerCase())) {
             await moveTeamMediaStorageBackedItem(teamId, item, update);
-            await clearMovedTeamMediaAlbumCover(teamId, item);
+            await clearMovedTeamMediaAlbumCover(teamId, item, update.folderId);
             continue;
         }
 

@@ -575,6 +575,37 @@ describe('team media db ordering', () => {
         );
     });
 
+    it('preserves the album cover when moving its photo to the current album', async () => {
+        teamMediaUtilsMocks.buildMoveUpdates.mockReturnValue([
+            { id: 'media-cover', folderId: 'folder-team', order: 1 }
+        ]);
+        firebaseMocks.getDocs
+            .mockResolvedValueOnce({ docs: [] })
+            .mockResolvedValueOnce({
+                docs: [{
+                    id: 'media-cover',
+                    data: () => ({
+                        folderId: 'folder-team',
+                        order: 0,
+                        type: 'photo',
+                        mimeType: 'image/jpeg',
+                        storagePath: 'team-media/team-1/folder-team/user-1/cover.jpg',
+                        uploadedBy: 'user-1',
+                        deleted: false
+                    })
+                }]
+            });
+
+        const { moveTeamMediaItems } = await import('../../js/db.js');
+        await moveTeamMediaItems('team-1', ['media-cover'], 'folder-team');
+
+        expect(firebaseMocks.getDoc).not.toHaveBeenCalled();
+        expect(firebaseMocks.updateDoc).not.toHaveBeenCalledWith(
+            expect.objectContaining({ path: expect.stringContaining('/mediaFolders/') }),
+            expect.anything()
+        );
+    });
+
     it('preserves legacy media without order fields at the end of paginated reads', async () => {
         const orderedDocs = [
             {
