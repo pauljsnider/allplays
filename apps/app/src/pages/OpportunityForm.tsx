@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { CheckCircle2, Circle, Loader2, ShieldCheck, Sparkles } from 'lucide-react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Status } from '../components/TeamSummaryPrimitives';
@@ -37,6 +37,7 @@ export function OpportunityForm({ auth }: { auth: AuthState }) {
   const [enhancing, setEnhancing] = useState(false);
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
+  const inputVersionRef = useRef(0);
 
   useEffect(() => {
     let active = true;
@@ -65,18 +66,21 @@ export function OpportunityForm({ auth }: { auth: AuthState }) {
   const completedRequiredCount = requiredFields.length - missingFields.length;
 
   const set = <K extends keyof OpportunityInput>(key: K, value: OpportunityInput[K]) => {
+    inputVersionRef.current += 1;
     setStatus('');
     setInput((current) => ({ ...current, [key]: value }));
   };
 
   const chooseTeam = (teamId: string) => {
     const team = teams.find((entry) => entry.id === teamId);
+    inputVersionRef.current += 1;
     setStatus('');
     setInput((current) => applyOpportunityTeamDefaults({ ...current, teamId }, team));
   };
 
   const chooseKind = (kind: OpportunityKind) => {
     const fresh = emptyOpportunityInput(kind);
+    inputVersionRef.current += 1;
     setStatus('');
     setError('');
     setInput(kind === 'player_seeking_team' ? fresh : applyOpportunityTeamDefaults(fresh, teams[0]));
@@ -114,8 +118,10 @@ export function OpportunityForm({ auth }: { auth: AuthState }) {
     setError('');
     setStatus('');
     const original = input;
+    const originalVersion = inputVersionRef.current;
     try {
       const suggestion = await enhanceOpportunityDraft(original, selectedTeam);
+      if (inputVersionRef.current !== originalVersion) return;
       setInput((current) => current === original ? applyOpportunityAiSuggestion(current, suggestion) : current);
       setStatus('AI suggestions applied. Review every field before publishing.');
     } catch (enhanceError: any) {

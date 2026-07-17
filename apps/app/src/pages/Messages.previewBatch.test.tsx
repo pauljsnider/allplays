@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Messages } from './Messages';
@@ -213,6 +213,33 @@ describe('Messages deferred inbox preview batching', () => {
 
     expect(screen.getByRole('link', { name: /Bears/ })).toHaveTextContent('Coach Jamie: Current request preview.');
     expect(screen.getByRole('link', { name: /Bears/ })).not.toHaveTextContent('Stale older request preview.');
+  });
+
+  it('does not show an older inquiry failure after a newer inbox refresh succeeds', async () => {
+    let rejectStaleInquiry!: (reason: Error) => void;
+    const staleInquiryRequest = new Promise<never>((_resolve, reject) => {
+      rejectStaleInquiry = reject;
+    });
+    chatServiceMocks.loadChatInbox.mockResolvedValue({ teams: [team()] });
+    opportunityMocks.listOpportunityInquiries
+      .mockResolvedValueOnce({ items: [], nextCursor: null })
+      .mockReturnValueOnce(staleInquiryRequest)
+      .mockResolvedValueOnce({ items: [], nextCursor: null });
+
+    renderMessages();
+    expect(await screen.findByRole('link', { name: /Bears/ })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh messages' }));
+    await waitFor(() => expect(opportunityMocks.listOpportunityInquiries).toHaveBeenCalledTimes(2));
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh messages' }));
+    await waitFor(() => expect(opportunityMocks.listOpportunityInquiries).toHaveBeenCalledTimes(3));
+
+    await act(async () => {
+      rejectStaleInquiry(new Error('Stale opportunity failure.'));
+      await staleInquiryRequest.catch(() => undefined);
+    });
+
+    expect(screen.queryByText('Stale opportunity failure.')).not.toBeInTheDocument();
   });
 });
 

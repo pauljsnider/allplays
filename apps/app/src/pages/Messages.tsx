@@ -111,7 +111,9 @@ export function Messages({ auth }: { auth: AuthState }) {
           }
         }),
         listOpportunityInquiries().catch((loadError: any) => {
-          setInquiryError(loadError?.message || 'Unable to load opportunity conversations.');
+          if (inboxRequestIdRef.current === requestId) {
+            setInquiryError(loadError?.message || 'Unable to load opportunity conversations.');
+          }
           return { items: [] as OpportunityInquiry[], nextCursor: null };
         })
       ]);

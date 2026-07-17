@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { OpportunityForm } from './OpportunityForm';
@@ -98,5 +98,29 @@ describe('OpportunityForm', () => {
 
     expect(await screen.findByText('AI is unavailable.')).toBeTruthy();
     expect(title.value).toBe('My original title');
+  });
+
+  it('does not report AI success when a newer user edit keeps the manual draft', async () => {
+    let resolveEnhancement!: (value: { title: string; description: string }) => void;
+    const enhancement = new Promise<{ title: string; description: string }>((resolve) => {
+      resolveEnhancement = resolve;
+    });
+    aiMocks.enhanceOpportunityDraft.mockReturnValue(enhancement);
+    renderForm();
+    const title = await screen.findByRole('textbox', { name: /Title/ }) as HTMLInputElement;
+
+    fireEvent.click(screen.getByRole('button', { name: 'Enhance with AI' }));
+    await waitFor(() => expect(aiMocks.enhanceOpportunityDraft).toHaveBeenCalled());
+    fireEvent.change(title, { target: { value: 'My newer manual title' } });
+    await act(async () => {
+      resolveEnhancement({
+        title: 'Older AI title',
+        description: 'Older AI description'
+      });
+      await enhancement;
+    });
+
+    expect(title.value).toBe('My newer manual title');
+    expect(screen.queryByText(/AI suggestions applied/)).not.toBeInTheDocument();
   });
 });
