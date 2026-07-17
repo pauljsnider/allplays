@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const scheduleSource = readFileSync(new URL('../../apps/app/src/pages/Schedule.tsx', import.meta.url), 'utf8');
+const scheduleStaffToolsSource = readFileSync(new URL('../../apps/app/src/components/schedule/ScheduleStaffTools.tsx', import.meta.url), 'utf8');
 
 describe('Schedule lazy-load guards', () => {
     it('does not statically import staff AI or CSV helpers at the route level', () => {
@@ -46,11 +47,11 @@ describe('Schedule lazy-load guards', () => {
     });
 
     it('loads staff AI and CSV helpers through on-demand dynamic imports', () => {
-        expect(scheduleSource).toContain("scheduleCsvImportModulePromise = import('../lib/scheduleCsvImport')");
-        expect(scheduleSource).toContain("scheduleAiImportModulePromise = import('../lib/scheduleAiImport')");
-        expect(scheduleSource).toContain('loadScheduleCsvImportModule()');
-        expect(scheduleSource).toContain('const [{ parseCsvText, inferScheduleCsvMapping }, csvText] = await Promise.all([');
-        expect(scheduleSource).toContain("const { buildScheduleImportPreview } = await loadScheduleCsvImportModule();");
-        expect(scheduleSource).toContain("const { generateScheduleAiImportRows } = await loadScheduleAiImportModule();");
+        expect(scheduleStaffToolsSource).toContain("scheduleCsvImportModulePromise = import('../../lib/scheduleCsvImport')");
+        expect(scheduleStaffToolsSource).toContain("scheduleAiImportModulePromise = import('../../lib/scheduleAiImport')");
+        expect(scheduleStaffToolsSource).toContain('loadScheduleCsvImportModule()');
+        expect(scheduleStaffToolsSource).toContain('const [{ parseCsvText, inferScheduleCsvMapping }, csvText] = await Promise.all([');
+        expect(scheduleStaffToolsSource).toContain("const { buildScheduleImportPreview } = await loadScheduleCsvImportModule();");
+        expect(scheduleStaffToolsSource).toContain("const { generateScheduleAiImportRows } = await loadScheduleAiImportModule();");
     });
 });

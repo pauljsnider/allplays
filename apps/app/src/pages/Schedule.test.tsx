@@ -44,6 +44,10 @@ const shellLayoutMocks = vi.hoisted(() => ({
   isDesktopWeb: false
 }));
 
+const staffToolsLoaderMocks = vi.hoisted(() => ({
+  load: vi.fn(() => import('../components/schedule/ScheduleStaffTools'))
+}));
+
 vi.mock('../lib/scheduleService', () => scheduleServiceMocks);
 vi.mock('../lib/appDataCache', () => appDataCacheMocks);
 vi.mock('../lib/telemetry', () => ({
@@ -62,6 +66,9 @@ vi.mock('../lib/uxTiming', () => ({
 }));
 vi.mock('../lib/useShellLayout', () => ({
   useShellLayout: () => ({ isDesktopWeb: shellLayoutMocks.isDesktopWeb })
+}));
+vi.mock('../components/schedule/loadScheduleStaffTools', () => ({
+  loadScheduleStaffTools: staffToolsLoaderMocks.load
 }));
 
 const auth: AuthState = {
@@ -1138,7 +1145,7 @@ describe('Schedule', () => {
     expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(1);
   });
 
-  it('hides Manage schedule from non-staff schedule users', async () => {
+  it.each(['list', 'compact', 'calendar', 'packets'])('renders the %s view for a read-only parent without loading staff tools', async (view) => {
     scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
       children: [
         { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
@@ -1150,7 +1157,7 @@ describe('Schedule', () => {
       ]
     });
 
-    renderSchedule();
+    renderSchedule(`/schedule?view=${view}`);
 
     await waitFor(() => {
       expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(1);
@@ -1158,6 +1165,7 @@ describe('Schedule', () => {
     });
     expect(screen.queryByRole('button', { name: /manage schedule/i })).toBeNull();
     expect(screen.queryByRole('button', { name: 'New tournament block' })).toBeNull();
+    expect(staffToolsLoaderMocks.load).not.toHaveBeenCalled();
   });
 
   it('opens the tournament shell from a staff action and cancels without creating data', async () => {
@@ -1313,6 +1321,37 @@ describe('Schedule', () => {
     expect(source).not.toContain('const [loadingPastHistory, setLoadingPastHistory]');
   });
 
+  it('keeps staff management implementation behind the deferred component boundary', () => {
+    const scheduleSource = readFileSync(resolveAppSourcePath('src/pages/Schedule.tsx'), 'utf8');
+    const staffToolsSource = readFileSync(resolveAppSourcePath('src/components/schedule/ScheduleStaffTools.tsx'), 'utf8');
+
+    expect(scheduleSource).toContain('void loadScheduleStaffTools()');
+    expect(scheduleSource).toContain('.catch(() =>');
+    expect(scheduleSource).not.toContain("from '../components/schedule/ScheduleStaffTools'");
+    expect(scheduleSource).not.toContain('createScheduledGameForApp');
+    expect(scheduleSource).not.toContain('createScheduledPracticeForApp');
+    expect(scheduleSource).not.toContain('function ScheduleGameCreatePanel');
+    expect(scheduleSource).not.toContain('function ScheduleTournamentCreatePanel');
+    expect(scheduleSource).not.toContain('function SchedulePracticeCreatePanel');
+    expect(scheduleSource).not.toContain('function ScheduleAiImportPanel');
+    expect(scheduleSource).not.toContain('function ScheduleCsvImportPanel');
+    expect(scheduleSource).not.toContain('function CalendarSourcePanel');
+    expect(staffToolsSource).toContain('function ScheduleGameCreatePanel');
+    expect(staffToolsSource).toContain('function CalendarSourcePanel');
+  });
+
+  it('shows a graceful fallback when schedule staff tools fail to load', async () => {
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(buildStaffScheduleResult());
+    staffToolsLoaderMocks.load.mockRejectedValueOnce(new Error('Chunk load failed'));
+
+    renderSchedule();
+
+    fireEvent.click(await screen.findByRole('button', { name: /manage schedule/i }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Unable to load schedule tools');
+    expect(screen.queryByText('Loading schedule tools…')).toBeNull();
+  });
+
   it('defers tracker config loading on mobile until staff tools are opened and caches the result', async () => {
     scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(buildStaffScheduleResult());
     scheduleServiceMocks.loadScheduleStatTrackerConfigsForApp.mockResolvedValueOnce([
@@ -1323,10 +1362,12 @@ describe('Schedule', () => {
 
     expect(await screen.findByRole('button', { name: /manage schedule/i })).toBeTruthy();
     expect(scheduleServiceMocks.loadScheduleStatTrackerConfigsForApp).not.toHaveBeenCalled();
+    expect(staffToolsLoaderMocks.load).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole('button', { name: /manage schedule/i }));
 
     await waitFor(() => {
+      expect(staffToolsLoaderMocks.load).toHaveBeenCalledTimes(1);
       expect(scheduleServiceMocks.loadScheduleStatTrackerConfigsForApp).toHaveBeenCalledTimes(1);
       expect(scheduleServiceMocks.loadScheduleStatTrackerConfigsForApp).toHaveBeenCalledWith('team-1', auth.user);
     });
@@ -1338,6 +1379,7 @@ describe('Schedule', () => {
     await waitFor(() => {
       expect(screen.getAllByRole('option', { name: 'Varsity Tracker' }).length).toBeGreaterThan(0);
     });
+    expect(staffToolsLoaderMocks.load).toHaveBeenCalledTimes(1);
     expect(scheduleServiceMocks.loadScheduleStatTrackerConfigsForApp).toHaveBeenCalledTimes(1);
   });
 
@@ -1385,6 +1427,31 @@ describe('Schedule', () => {
         location: 'West Gym'
       }), auth.user);
     });
+  });
+
+  it('ignores stale tracker configs when staff switch teams before loading finishes', async () => {
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(buildMultiTeamStaffScheduleResult());
+    const configResolvers = new Map<string, (configs: Array<{ id: string; name: string }>) => void>();
+    scheduleServiceMocks.loadScheduleStatTrackerConfigsForApp.mockImplementation((teamId: string) => new Promise((resolve) => {
+      configResolvers.set(teamId, resolve);
+    }));
+
+    renderSchedule();
+
+    await screen.findByRole('button', { name: /manage schedule/i });
+    fireEvent.change(screen.getByLabelText('Team filter'), { target: { value: 'team-1' } });
+    fireEvent.click(screen.getByRole('button', { name: /manage schedule/i }));
+    await waitFor(() => expect(configResolvers.has('team-1')).toBe(true));
+
+    fireEvent.change(screen.getByLabelText('Team filter'), { target: { value: 'team-2' } });
+    await waitFor(() => expect(configResolvers.has('team-2')).toBe(true));
+
+    configResolvers.get('team-2')?.([{ id: 'config-2', name: 'Wolves Tracker' }]);
+    expect((await screen.findAllByRole('option', { name: 'Wolves Tracker' })).length).toBeGreaterThan(0);
+
+    configResolvers.get('team-1')?.([{ id: 'config-1', name: 'Bears Tracker' }]);
+    await waitFor(() => expect(screen.queryAllByRole('option', { name: 'Bears Tracker' })).toHaveLength(0));
+    expect(screen.getAllByRole('option', { name: 'Wolves Tracker' }).length).toBeGreaterThan(0);
   });
 
   it('lets staff team selection override a non-manageable page team filter', async () => {

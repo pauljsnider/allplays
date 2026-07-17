@@ -10,7 +10,7 @@ describe('performance wiring', () => {
   });
 
   it('keeps high-value workflows instrumented', () => {
-    const schedule = readFileSync('src/pages/Schedule.tsx', 'utf8');
+    const schedule = readFileSync('src/components/schedule/ScheduleStaffTools.tsx', 'utf8');
     const media = readFileSync('src/pages/TeamMedia.tsx', 'utf8');
     const tracker = readFileSync('src/pages/StandardTracker.tsx', 'utf8');
 
