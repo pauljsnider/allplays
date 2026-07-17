@@ -419,6 +419,52 @@ describe('React app Home service', () => {
         expect(home.fees).toEqual([]);
     });
 
+    it('maps progressive schedule results into renderable Home previews', async () => {
+        scheduleMocks.loadParentSchedule.mockImplementationOnce(async (_user, options = {}) => {
+            options.onPartial?.({
+                children: [{
+                    teamId: 'team-1',
+                    teamName: 'Bears',
+                    playerId: 'player-1',
+                    playerName: 'Pat Star'
+                }],
+                events: [],
+                staffTeams: [{ teamId: 'team-coach', teamName: 'Coach Team' }],
+                isPartial: true
+            });
+            return {
+                children: [{
+                    teamId: 'team-1',
+                    teamName: 'Bears',
+                    playerId: 'player-1',
+                    playerName: 'Pat Star'
+                }],
+                events: [event()],
+                staffTeams: [{ teamId: 'team-coach', teamName: 'Coach Team' }]
+            };
+        });
+        const onPartial = vi.fn();
+        const { loadParentHomeSummaryBootstrap } = await import('../../apps/app/src/lib/homeService.ts');
+
+        const summary = await loadParentHomeSummaryBootstrap(user, { force: true, onPartial });
+
+        expect(onPartial).toHaveBeenCalledWith(expect.objectContaining({
+            home: expect.objectContaining({
+                players: [expect.objectContaining({ playerId: 'player-1' })],
+                teams: expect.arrayContaining([
+                    expect.objectContaining({ teamId: 'team-1' }),
+                    expect.objectContaining({ teamId: 'team-coach', role: 'Coach' })
+                ]),
+                upcomingEvents: []
+            }),
+            schedule: expect.objectContaining({ isPartial: true })
+        }));
+        expect(summary.home.upcomingEvents).toHaveLength(1);
+        expect(summary.home.teams).toEqual(expect.arrayContaining([
+            expect.objectContaining({ teamId: 'team-coach', role: 'Coach' })
+        ]));
+    });
+
     it('reuses one base schedule load across summary and secondary Home refresh', async () => {
         scheduleMocks.loadParentSchedule.mockImplementation((_, options = {}) => Promise.resolve({
             children: [

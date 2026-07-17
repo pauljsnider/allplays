@@ -35,12 +35,14 @@ describe('Home async operation contract', () => {
 
         expect(refreshHomeSource).toContain('const hasExistingHome = loadedHomeDetailsUserId === user.uid;');
         expect(refreshHomeSource).toContain("const timer = startScreenMountTimer('home', {");
-        expect(refreshHomeSource).toContain('const summary = await loadParentHomeSummaryBootstrap(user, { force });');
+        expect(refreshHomeSource).toContain('const summary = await loadParentHomeSummaryBootstrap(user, {');
+        expect(refreshHomeSource).toContain('onPartial: (partial) => {');
+        expect(refreshHomeSource).toContain('setPreviewHomeUserId(user.uid);');
         expect(refreshHomeSource).toContain('setHome(summary.home);');
         expect(refreshHomeSource).toContain('const secondaryHome = await loadParentHomeWithSecondaryData(user, {');
         expect(refreshHomeSource).toContain('schedule: summary.schedule');
         expect(refreshHomeSource).toContain('onPartial: (partial) => setHome(partial)');
-        expect(refreshHomeSource).toContain("getErrorMessage: (loadError) => getHomeLoadErrorMessage(toAppServiceError(loadError, 'Unable to load Home.'), hasExistingHome)");
+        expect(refreshHomeSource).toContain("getErrorMessage: (loadError) => getHomeLoadErrorMessage(toAppServiceError(loadError, 'Unable to load Home.'), hasExistingHome || receivedHomePreview)");
         expect(refreshHomeSource).toContain("const appError = toAppServiceError(loadError, 'Unable to load Home.');");
         expect(refreshHomeSource).toContain('if (!hasExistingHome) {');
         expect(refreshHomeSource).toContain('setHome(emptyHome());');

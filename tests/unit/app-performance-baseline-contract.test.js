@@ -73,12 +73,13 @@ describe('app performance baseline contract', () => {
         expect(telemetry).toContain("captureHandledAppError(label, error, {");
 
         expect(home).toContain("const timer = startScreenMountTimer('home', {");
-        expect(home).toContain('const summary = await loadParentHomeSummaryBootstrap(user, { force });');
+        expect(home).toContain('const summary = await loadParentHomeSummaryBootstrap(user, {');
+        expect(home).toContain('onPartial: (partial) => {');
         expect(home).toContain('const secondaryHome = await loadParentHomeWithSecondaryData(user, {');
         expect(home).toContain('timer.end({');
         expect(home).toContain('hydrated: true');
         expect(home).toContain('playerCount: secondaryHome.players.length');
-        expect(home).toContain("getErrorMessage: (loadError) => getHomeLoadErrorMessage(toAppServiceError(loadError, 'Unable to load Home.'), hasExistingHome)");
+        expect(home).toContain("getErrorMessage: (loadError) => getHomeLoadErrorMessage(toAppServiceError(loadError, 'Unable to load Home.'), hasExistingHome || receivedHomePreview)");
         expect(home).toContain('onError: (loadError) => {');
         expect(home).toContain('timer.end({\n            hydrated: false,\n            error: appError.message\n          });');
 
