@@ -350,7 +350,7 @@ describe('Home', () => {
     cleanup();
   });
 
-  it('waits for the initial secondary Home load to finish before recording first meaningful render', async () => {
+  it('records first meaningful render when the Home summary is available', async () => {
     let resolveBootstrap!: (value: { home: typeof baseHome; schedule: [] }) => void;
     let resolveSecondary!: (value: typeof baseHome) => void;
     homeServiceMocks.loadParentHomeSummaryBootstrap.mockImplementationOnce(() => new Promise((resolve) => {
@@ -367,13 +367,26 @@ describe('Home', () => {
     resolveBootstrap({ home: baseHome, schedule: [] });
 
     expect(await screen.findByRole('heading', { name: 'Today for your players' })).toBeTruthy();
-    expect(uxTimingMocks.recordFirstMeaningfulRender).not.toHaveBeenCalled();
-
-    resolveSecondary(baseHome);
-
     await waitFor(() => {
       expect(uxTimingMocks.recordFirstMeaningfulRender).toHaveBeenCalledWith('home');
     });
+
+    resolveSecondary(baseHome);
+    expect(uxTimingMocks.recordFirstMeaningfulRender).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders a progressive Home preview while the full schedule summary is still pending', async () => {
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockImplementationOnce((_user: unknown, options: any) => {
+      options?.onPartial?.({ home: baseHome, schedule: { children: [], events: [], isPartial: true } });
+      return new Promise(() => {});
+    });
+
+    renderHome(signedInAuth);
+
+    expect(await screen.findByRole('heading', { name: 'Today for your players' })).toBeTruthy();
+    expect(screen.getByText('Checking responses…')).toBeTruthy();
+    expect(screen.queryByText('Loading Home')).toBeNull();
+    expect(uxTimingMocks.recordFirstMeaningfulRender).toHaveBeenCalledWith('home');
   });
 
   it('renders the feed for signed-out users without crashing', async () => {
@@ -438,14 +451,15 @@ describe('Home', () => {
     expect(screen.getByText('Check your connection and try loading Home again.')).toBeTruthy();
   });
 
-  it('shows retryable Home error UI when the initial secondary load fails', async () => {
+  it('keeps the summary visible when the initial secondary load fails', async () => {
     homeServiceMocks.loadParentHomeWithSecondaryData.mockRejectedValueOnce(new TypeError('Failed to fetch'));
 
     renderHome(signedInAuth);
 
-    expect(await screen.findByText('Home could not connect')).toBeTruthy();
-    expect(screen.getByText('Check your connection and try loading Home again.')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Retry loading Home' })).toBeTruthy();
+    expect(await screen.findByText('Home details could not refresh while offline.')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Today for your players' })).toBeTruthy();
+    expect(screen.queryByText('Home could not connect')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Retry loading Home' })).toBeNull();
   });
 
   it('shows first-run access actions instead of an empty Today dashboard when no players or teams are linked', async () => {
@@ -586,7 +600,7 @@ describe('Home', () => {
     expect(capturedOnPartial).toBeTypeOf('function');
   });
 
-  it('renders secondary Home details before social data finishes loading', async () => {
+  it('records meaningful Home render without waiting for social data', async () => {
     const largeHome = buildLargeHomeModel();
     let resolveSocial!: (value: typeof baseSocial) => void;
     homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValueOnce(largeHome);
@@ -598,12 +612,12 @@ describe('Home', () => {
 
     expect(await screen.findByText('Falcons')).toBeTruthy();
     expect(socialServiceMocks.loadSocialHome).toHaveBeenCalledWith(signedInAuth.user, largeHome);
-    expect(uxTimingMocks.recordFirstMeaningfulRender).not.toHaveBeenCalled();
+    expect(uxTimingMocks.recordFirstMeaningfulRender).toHaveBeenCalledWith('home');
 
     resolveSocial(baseSocial);
 
     await waitFor(() => {
-      expect(uxTimingMocks.recordFirstMeaningfulRender).toHaveBeenCalledWith('home');
+      expect(uxTimingMocks.recordFirstMeaningfulRender).toHaveBeenCalledTimes(1);
     });
   });
 

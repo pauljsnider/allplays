@@ -240,6 +240,8 @@ export type ParentScheduleLoadOptions = {
   includePastGames?: boolean;
   scheduleRangeByTeam?: ScheduleDateRangeByTeam;
   parentScope?: ParentScheduleScope;
+  /** Stream the resolved player/team shell and completed team schedules while the full load continues. */
+  onPartial?: (result: ParentScheduleLoadResult) => void;
 };
 
 export type OfficialAssignmentsAccess = {
@@ -4043,11 +4045,48 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
       expandStaffPlayers,
       parentScope: canReuseParentScope ? options.parentScope : undefined
     });
+    const staffTeamSummaries = staffTeams
+      .map((team: any) => {
+        const teamId = compactString(team?.id);
+        return teamId ? { teamId, teamName: compactString(team?.name) || teamId } : null;
+      })
+      .filter(Boolean) as ParentScheduleStaffTeam[];
+
+    const completedTeamResults: Array<{
+      teamId: string;
+      events: ParentScheduleEvent[];
+      error: ReturnType<typeof toAppServiceError> | null;
+    }> = [];
+    const emitPartial = () => {
+      if (!options.onPartial) return;
+      const partialEvents = completedTeamResults
+        .flatMap((result) => result.events)
+        .sort((a, b) => a.date.getTime() - b.date.getTime());
+      try {
+        options.onPartial({
+          children,
+          events: partialEvents,
+          staffTeams: staffTeamSummaries,
+          isPartial: true
+        });
+      } catch (error) {
+        logScheduleWarning('Parent schedule partial callback failed.', 'parent-schedule-partial-callback', error);
+      }
+    };
+
+    // The Home page can render its player/team shell as soon as access scope is
+    // known, without waiting for every team's games and practices to finish.
+    emitPartial();
 
     const teamEntries = [...byTeam.entries()];
     const teamResults = await mapWithConcurrency(teamEntries, parentScheduleTeamConcurrency, async ([teamId, teamChildren]) => {
+      let result: {
+        teamId: string;
+        events: ParentScheduleEvent[];
+        error: ReturnType<typeof toAppServiceError> | null;
+      };
       try {
-        return {
+        result = {
           teamId,
           events: await buildTeamSchedule(teamId, teamChildren, user, {
             includePastGames,
@@ -4058,12 +4097,15 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
       } catch (error) {
         const appError = toAppServiceError(error, 'Unable to load schedule.');
         logScheduleWarning('Failed to load team schedule.', 'team-schedule-load', error, { teamId });
-        return {
+        result = {
           teamId,
           events: [] as ParentScheduleEvent[],
           error: appError
         };
       }
+      completedTeamResults.push(result);
+      emitPartial();
+      return result;
     });
 
     const failedTeamLoads = teamResults.filter((result) => result.error);
@@ -4082,12 +4124,6 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
     if (hydrateDetails) {
       await hydrateEventDetails(events, user);
     }
-    const staffTeamSummaries = staffTeams
-      .map((team: any) => {
-        const teamId = compactString(team?.id);
-        return teamId ? { teamId, teamName: compactString(team?.name) || teamId } : null;
-      })
-      .filter(Boolean) as ParentScheduleStaffTeam[];
     const isPartial = failedTeamLoads.length > 0;
     timer.end({
       hydrateDetails,

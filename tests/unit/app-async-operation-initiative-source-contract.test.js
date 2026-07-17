@@ -48,7 +48,7 @@ describe('app async operation initiative source contract', () => {
         expect(homeSource).toContain("import { useAsyncOperation } from '../lib/useAsyncOperation';");
         expect(homeSource).toContain('const { loading, error, clearError, run: runPrimaryLoad } = useAsyncOperation();');
         expect(homeSource).toContain('const { loading: socialLoading, run: runSecondaryLoad } = useAsyncOperation();');
-        expect(homeSource).toContain('getHomeLoadErrorMessage(toAppServiceError(loadError, \'Unable to load Home.\'), hasExistingHome)');
+        expect(homeSource).toContain('getHomeLoadErrorMessage(toAppServiceError(loadError, \'Unable to load Home.\'), hasExistingHome || receivedHomePreview)');
 
         expect(scheduleSource).toContain("import { toAppServiceError, type AppServiceError } from '../lib/appErrors';");
         expect(scheduleSource).toContain("import { useAsyncOperation } from '../lib/useAsyncOperation';");

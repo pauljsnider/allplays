@@ -178,6 +178,7 @@ export function Home({ auth }: { auth: AuthState }) {
   const [socialStatus, setSocialStatus] = useState<{ tone: 'error' | 'success'; message: string } | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
+  const [previewHomeUserId, setPreviewHomeUserId] = useState<string | null>(null);
   const [loadedHomeDetailsUserId, setLoadedHomeDetailsUserId] = useState<string | null>(null);
   const [homeLoadError, setHomeLoadError] = useState<AppServiceError | null>(null);
   const { loading, error, clearError, run: runPrimaryLoad } = useAsyncOperation();
@@ -185,11 +186,13 @@ export function Home({ auth }: { auth: AuthState }) {
   const hasStartedInitialHomeLoadRef = useRef(false);
 
   const authUserId = auth.user?.uid || null;
+  const hasHomePreview = Boolean(authUserId) && authUserId === previewHomeUserId;
   const hasLoadedHomeDetails = Boolean(authUserId) && authUserId === loadedHomeDetailsUserId;
 
   const refreshHome = async ({ force = false }: { force?: boolean } = {}) => {
     const user = auth.user;
     if (!user) return;
+    let receivedHomePreview = false;
     const hasExistingHome = loadedHomeDetailsUserId === user.uid;
     clearError();
     setHomeLoadError(null);
@@ -200,8 +203,18 @@ export function Home({ auth }: { auth: AuthState }) {
     });
     return runPrimaryLoad(
       async () => {
-        const summary = await loadParentHomeSummaryBootstrap(user, { force });
+        const summary = await loadParentHomeSummaryBootstrap(user, {
+          force,
+          onPartial: (partial) => {
+            receivedHomePreview = true;
+            setHome(partial.home);
+            setPreviewHomeUserId(user.uid);
+            setHomeLoadError(null);
+          }
+        });
+        receivedHomePreview = true;
         setHome(summary.home);
+        setPreviewHomeUserId(user.uid);
         setHomeLoadError(null);
 
         void runSecondaryLoad(
@@ -247,6 +260,7 @@ export function Home({ auth }: { auth: AuthState }) {
                 setHomeLoadError(appError);
                 setLoadedHomeDetailsUserId(null);
                 setSocial(emptySocialHome());
+                setSocialStatus({ tone: 'error', message: getHomeSecondaryErrorMessage(appError) });
                 return;
               }
               setSocialStatus({ tone: 'error', message: getHomeSecondaryErrorMessage(appError) });
@@ -257,7 +271,7 @@ export function Home({ auth }: { auth: AuthState }) {
         return summary;
       },
       {
-        getErrorMessage: (loadError) => getHomeLoadErrorMessage(toAppServiceError(loadError, 'Unable to load Home.'), hasExistingHome),
+        getErrorMessage: (loadError) => getHomeLoadErrorMessage(toAppServiceError(loadError, 'Unable to load Home.'), hasExistingHome || receivedHomePreview),
         rethrow: false,
         onError: (loadError) => {
           const appError = toAppServiceError(loadError, 'Unable to load Home.');
@@ -266,10 +280,12 @@ export function Home({ auth }: { auth: AuthState }) {
             hydrated: false,
             error: appError.message
           });
-          if (!hasExistingHome) {
+          if (!hasExistingHome && !receivedHomePreview) {
             setHome(emptyHome());
             setSocial(emptySocialHome());
+            setPreviewHomeUserId(null);
             setLoadedHomeDetailsUserId(null);
+            return;
           }
         }
       }
@@ -289,13 +305,13 @@ export function Home({ auth }: { auth: AuthState }) {
   useRefreshOnResume(() => { void refreshHome({ force: true }); }, { enabled: Boolean(auth.user?.uid) });
 
   useEffect(() => {
-    if (!hasStartedInitialHomeLoadRef.current || loading || socialLoading) {
+    if (!hasStartedInitialHomeLoadRef.current) {
       return;
     }
-    if (hasLoadedHomeDetails || homeLoadError) {
+    if (hasHomePreview || homeLoadError) {
       recordFirstMeaningfulRender('home');
     }
-  }, [hasLoadedHomeDetails, homeLoadError, loading, socialLoading]);
+  }, [hasHomePreview, homeLoadError]);
 
   useEffect(() => {
     let cancelled = false;
@@ -328,7 +344,10 @@ export function Home({ auth }: { auth: AuthState }) {
   }, [searchParams]);
 
   const topAction = home.actionItems[0] || null;
-  const showBlockingErrorState = !loading && !hasLoadedHomeDetails && Boolean(homeLoadError);
+  const hasRenderableHome = !authUserId || hasHomePreview || hasLoadedHomeDetails;
+  const showBlockingErrorState = !loading && !hasRenderableHome && Boolean(homeLoadError);
+  const showInitialHomeSkeleton = loading && !hasRenderableHome;
+  const canRenderHomeSections = !loading || hasRenderableHome;
   const displayName = auth.user?.displayName || auth.user?.email || 'ALL PLAYS User';
   const openCount = home.metrics.rsvpNeeded + home.metrics.packetsReady + home.metrics.unreadMessages + home.fees.length + social.metrics.incomingRequests;
   const today = new Date();
@@ -490,11 +509,11 @@ export function Home({ auth }: { auth: AuthState }) {
       {error ? <Status tone="error" message={error} /> : null}
       {socialStatus ? <Status tone={socialStatus.tone} message={socialStatus.message} /> : null}
 
-      {loading ? <HomePageSkeleton /> : null}
+      {showInitialHomeSkeleton ? <HomePageSkeleton /> : null}
 
       {showBlockingErrorState ? <HomeLoadErrorState error={homeLoadError} onRetry={() => refreshHome({ force: true })} retrying={loading} /> : null}
 
-      {!loading && !showBlockingErrorState && activeSection === 'today' ? (
+      {canRenderHomeSections && !showBlockingErrorState && activeSection === 'today' ? (
         <TodaySection
           home={home}
           social={social}
@@ -504,7 +523,7 @@ export function Home({ auth }: { auth: AuthState }) {
           officialsAccess={resolvedOfficialsAccess}
         />
       ) : null}
-      {!loading && !showBlockingErrorState && activeSection === 'feed' ? (
+      {canRenderHomeSections && !showBlockingErrorState && activeSection === 'feed' ? (
         <FeedSection
           social={social}
           loading={socialLoading}
@@ -515,9 +534,9 @@ export function Home({ auth }: { auth: AuthState }) {
           onStatus={setSocialStatus}
         />
       ) : null}
-      {!loading && !showBlockingErrorState && activeSection === 'players' ? <PlayersSection players={home.players} /> : null}
-      {!loading && !showBlockingErrorState && activeSection === 'teams' ? <TeamsSection teams={home.teams} /> : null}
-      {!loading && !showBlockingErrorState && activeSection === 'friends' ? (
+      {canRenderHomeSections && !showBlockingErrorState && activeSection === 'players' ? <PlayersSection players={home.players} /> : null}
+      {canRenderHomeSections && !showBlockingErrorState && activeSection === 'teams' ? <TeamsSection teams={home.teams} /> : null}
+      {canRenderHomeSections && !showBlockingErrorState && activeSection === 'friends' ? (
         <FriendsSection
           auth={auth}
           home={home}

@@ -3198,6 +3198,35 @@ describe('partial parent schedule team failures (#3021)', () => {
     expect(result.isPartial).toBe(true);
   });
 
+  it('streams the player/team shell before every team schedule finishes', async () => {
+    vi.mocked(getGames).mockImplementation(async (teamId: string) => ([{
+      id: `game-${teamId}`,
+      type: 'game',
+      date: new Date(teamId === 'team-1' ? '2100-06-25T18:00:00.000Z' : '2100-06-26T18:00:00.000Z'),
+      opponent: teamId === 'team-1' ? 'Tigers' : 'Lions',
+      location: 'Main Gym'
+    }] as any));
+    const partials: any[] = [];
+
+    const result = await loadParentSchedule(parentUser, {
+      hydrateDetails: false,
+      expandStaffPlayers: false,
+      onPartial: (partial) => partials.push(partial)
+    });
+
+    expect(partials[0]).toMatchObject({
+      children: [
+        expect.objectContaining({ teamId: 'team-1', playerId: 'p1' }),
+        expect.objectContaining({ teamId: 'team-2', playerId: 'p2' })
+      ],
+      events: [],
+      isPartial: true
+    });
+    expect(partials.some((partial) => partial.events.length === 1)).toBe(true);
+    expect(partials[partials.length - 1]?.events).toHaveLength(2);
+    expect(result.events).toHaveLength(2);
+  });
+
   it('rethrows a typed schedule load error when every team schedule load fails', async () => {
     vi.mocked(getGames).mockRejectedValue(new Error('permission-denied'));
 
