@@ -194,7 +194,7 @@ describe('React app social Firestore rules', () => {
                     transaction.delete(reactionRef);
                 }
                 transaction.update(postRef, {
-                    'reactionCounts.like': liked ? previousCount + 1 : previousCount - 1,
+                    'reactionCounts.like': liked ? previousCount + 1 : Math.max(0, previousCount - 1),
                     updatedAt: Timestamp.now()
                 });
             });
@@ -219,6 +219,25 @@ describe('React app social Firestore rules', () => {
             await assertSucceeds(toggleLike(db, true));
             expect((await getDoc(postRef)).data().reactionCounts.like).toBe(1);
             expect((await getDoc(reactionRef)).exists()).toBe(true);
+
+            await assertSucceeds(toggleLike(db, false));
+            expect((await getDoc(postRef)).data().reactionCounts.like).toBe(0);
+            expect((await getDoc(reactionRef)).exists()).toBe(false);
+        });
+
+        it('allows removing a legacy like when its aggregate count is missing', async () => {
+            const db = viewerDb();
+            const reactionRef = doc(db, 'socialPosts', 'post-1', 'reactions', 'viewer-1');
+            const postRef = doc(db, 'socialPosts', 'post-1');
+
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                await setDoc(doc(context.firestore(), 'socialPosts', 'post-1', 'reactions', 'viewer-1'), {
+                    userId: 'viewer-1',
+                    reactionKey: 'like',
+                    createdAt: Timestamp.now(),
+                    updatedAt: Timestamp.now()
+                });
+            });
 
             await assertSucceeds(toggleLike(db, false));
             expect((await getDoc(postRef)).data().reactionCounts.like).toBe(0);
