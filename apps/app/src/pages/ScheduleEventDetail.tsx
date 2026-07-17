@@ -2862,6 +2862,7 @@ function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: Aut
   const latestPreviewRef = useRef<LineupDraftPreviewResult | null>(null);
   const latestFormationIdRef = useRef(formationId);
   const previousEventKeyRef = useRef(event.eventKey);
+  const locallyHydratedGamePlanRef = useRef<Record<string, any> | null>(null);
 
   const formation = gameDayService?.LINEUP_FORMATIONS[formationId] || null;
   const lineupPeriods = useMemo(() => (
@@ -2898,6 +2899,7 @@ function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: Aut
     dirtyRef.current = false;
     latestDraftRef.current = {};
     latestPreviewRef.current = null;
+    locallyHydratedGamePlanRef.current = null;
   }, []);
 
   useEffect(() => {
@@ -2920,6 +2922,10 @@ function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: Aut
   useEffect(() => {
     let cancelled = false;
     const currentEvent = eventRef.current;
+    if (currentEvent.gamePlan && locallyHydratedGamePlanRef.current === currentEvent.gamePlan) {
+      locallyHydratedGamePlanRef.current = null;
+      return undefined;
+    }
     if (!auth.user || !formationId || currentEvent.isCancelled) {
       setPreview(null);
       setDraftLineups({});
@@ -2971,7 +2977,10 @@ function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: Aut
       const result = await saveScheduledGameLineupDraftForApp(event, auth.user, formationId, { lineups });
       setPreview(result);
       latestPreviewRef.current = result;
-      if (result.gamePlan) onGamePlanSaved(result.gamePlan);
+      if (result.gamePlan) {
+        locallyHydratedGamePlanRef.current = result.gamePlan;
+        onGamePlanSaved(result.gamePlan);
+      }
       dirtyRef.current = false;
       if (reason !== 'publish') {
         setStatus({ tone: 'success', message: reason === 'autosave' ? 'Lineup draft autosaved.' : 'Lineup draft saved.' });
