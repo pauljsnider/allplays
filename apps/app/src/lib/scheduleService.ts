@@ -5855,7 +5855,32 @@ export async function cancelScheduledGameForApp(event: ParentScheduleEvent, user
   } catch (error) {
     if (!isNativeRuntime()) throw error;
     logScheduleWarning('Falling back to REST game cancellation.', 'game-cancel', error, { fallback: 'rest', teamId: event.teamId, gameId: event.id });
-    await nativePatchDocument(`teams/${encodeURIComponent(event.teamId)}/games/${encodeURIComponent(event.id)}`, payload);
+    const sourcePath = `teams/${event.teamId}/games/${event.id}`;
+    const sourceGame = await nativeGetDocument(`teams/${encodeURIComponent(event.teamId)}/games/${encodeURIComponent(event.id)}`);
+    if (!sourceGame) {
+      throw new Error('Scheduled game not found.');
+    }
+    const counterpartTeamId = compactString(sourceGame.sharedScheduleOpponentTeamId);
+    const counterpartGameId = compactString(sourceGame.sharedScheduleOpponentGameId);
+    const isSharedGame = Boolean(sourceGame.sharedScheduleId);
+    if (isSharedGame && (!counterpartTeamId || !counterpartGameId)) {
+      throw new Error('Shared scheduled game counterpart not found.');
+    }
+    const cancellationWrite = (path: string) => ({
+      update: {
+        name: getFirestoreDocumentName(path),
+        fields: buildFirestoreFields(payload)
+      },
+      updateMask: {
+        fieldPaths: Object.keys(payload).map(buildFirestoreUpdateMaskPath)
+      },
+      currentDocument: { exists: true }
+    });
+    const writes = [cancellationWrite(sourcePath)];
+    if (isSharedGame && counterpartTeamId && counterpartGameId) {
+      writes.push(cancellationWrite(`teams/${counterpartTeamId}/games/${counterpartGameId}`));
+    }
+    await nativeCommitWrites(writes);
   }
 
   const notificationFailures: string[] = [];

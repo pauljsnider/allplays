@@ -105,6 +105,7 @@ vi.mock('../../apps/app/src/lib/chatLogic.ts', () => ({
 }));
 
 import { buildCancelScheduledGameChatMessage, cancelScheduledGameForApp, normalizeGameScoreValue, publishLiveScoreUpdateEvent, updateGameScore } from '../../apps/app/src/lib/scheduleService.ts';
+import { getNativeAuthIdToken } from '../../apps/app/src/lib/authService.ts';
 
 const user = {
     uid: 'user-1',
@@ -279,6 +280,62 @@ describe('React app schedule score updates', () => {
             senderEmail: 'coach@example.com'
         });
         expect(result).toEqual({ cancelled: true, notificationError: null });
+    });
+
+    it('atomically cancels both shared games in the native REST fallback', async () => {
+        vi.stubGlobal('window', {
+            setTimeout: globalThis.setTimeout.bind(globalThis),
+            clearTimeout: globalThis.clearTimeout.bind(globalThis),
+            location: { protocol: 'capacitor:' }
+        });
+        vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token');
+        dbMocks.updateGame.mockRejectedValue(new Error('native fallback'));
+        vi.stubGlobal('fetch', vi.fn()
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({
+                    name: 'projects/demo-allplays/databases/(default)/documents/teams/team-1/games/game-1',
+                    fields: {
+                        sharedScheduleId: { stringValue: 'shared_team-1_game-1' },
+                        sharedScheduleOpponentTeamId: { stringValue: 'team-2' },
+                        sharedScheduleOpponentGameId: { stringValue: 'game-2' }
+                    }
+                })
+            })
+            .mockResolvedValueOnce({ ok: true, json: async () => ({}) }));
+
+        await cancelScheduledGameForApp({
+            eventKey: 'team-1__game-1__player-1',
+            id: 'game-1',
+            teamId: 'team-1',
+            teamName: 'Bears',
+            type: 'game',
+            date: new Date('2026-05-21T18:00:00Z'),
+            opponent: 'Falcons',
+            opponentTeamId: 'team-2',
+            sharedScheduleOpponentTeamId: 'team-2',
+            childId: 'player-1',
+            childName: 'Pat',
+            isDbGame: true,
+            isCancelled: false,
+            canUpdateScore: true,
+            assignments: []
+        }, user);
+
+        expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+        const [commitUrl, commitInit] = vi.mocked(globalThis.fetch).mock.calls[1];
+        const commitPayload = JSON.parse(String(commitInit.body));
+        expect(commitUrl).toContain(':commit');
+        expect(commitPayload.writes).toHaveLength(2);
+        expect(commitPayload.writes.map((write) => write.update.name)).toEqual([
+            'projects/demo-allplays/databases/(default)/documents/teams/team-1/games/game-1',
+            'projects/demo-allplays/databases/(default)/documents/teams/team-2/games/game-2'
+        ]);
+        expect(commitPayload.writes.every((write) => (
+            write.update.fields.status.stringValue === 'cancelled'
+            && write.update.fields.liveStatus.stringValue === 'cancelled'
+            && write.currentDocument.exists === true
+        ))).toBe(true);
     });
 
     it('reports counterpart notification failure without failing the cancellation', async () => {
