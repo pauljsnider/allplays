@@ -114,10 +114,8 @@ describe('authentication email delivery routing', () => {
             .filter(line => /^(run: )?npx firebase-tools@14\.25\.0 deploy/.test(line));
 
         expect(firebaseDeployCommands).toEqual([
-            'npx firebase-tools@14.25.0 deploy --only hosting,firestore:rules,firestore:indexes,functions --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive 2>&1 | tee "$deploy_log"',
-            'run: npx firebase-tools@14.25.0 deploy --only storage --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive'
+            'npx firebase-tools@14.25.0 deploy --only hosting,firestore:rules,firestore:indexes,storage,functions --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive 2>&1 | tee "$deploy_log"'
         ]);
-        expect(productionSource).toContain("if: vars.ENABLE_FIREBASE_STORAGE_DEPLOY == 'true'");
         expect(productionSource.match(/--force/g) ?? []).toHaveLength(0);
         expect(productionSource).toContain('max_attempts=3');
         expect(productionSource).toContain('for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do');
