@@ -1424,6 +1424,67 @@ service cloud.firestore {
              request.resource.data.get('updatedAt', resource.data.get('updatedAt', null)) is timestamp;
     }
 
+    function isSocialPostReactionAggregateUpdateValid(postId) {
+      let reactionPath = /databases/$(database)/documents/socialPosts/$(postId)/reactions/$(request.auth.uid);
+      let previousCount = resource.data.get('reactionCounts', {}).get('like', 0);
+      let nextCount = request.resource.data.get('reactionCounts', {}).get('like', 0);
+      return canReadSocialPost(resource.data) &&
+             previousCount is int &&
+             nextCount is int &&
+             nextCount >= 0 &&
+             request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+               'reactionCounts',
+               'updatedAt'
+             ]) &&
+             request.resource.data.get('reactionCounts', {}).diff(
+               resource.data.get('reactionCounts', {})
+             ).affectedKeys().hasOnly(['like']) &&
+             request.resource.data.get('updatedAt', resource.data.get('updatedAt', null)) is timestamp &&
+             (
+               (!exists(reactionPath) && existsAfter(reactionPath) && nextCount == previousCount + 1) ||
+               (exists(reactionPath) && !existsAfter(reactionPath) && nextCount == previousCount - 1)
+             );
+    }
+
+    function isSocialPostReactionCreateValid(postId, userId) {
+      let postPath = /databases/$(database)/documents/socialPosts/$(postId);
+      let postBefore = get(postPath).data;
+      let postAfter = getAfter(postPath).data;
+      let previousCount = postBefore.get('reactionCounts', {}).get('like', 0);
+      let nextCount = postAfter.get('reactionCounts', {}).get('like', 0);
+      return isOwner(userId) &&
+             canReadSocialPost(postBefore) &&
+             request.resource.data.keys().hasOnly([
+               'userId',
+               'reactionKey',
+               'createdAt',
+               'updatedAt'
+             ]) &&
+             request.resource.data.get('userId', '') == request.auth.uid &&
+             request.resource.data.get('reactionKey', '') == 'like' &&
+             request.resource.data.get('createdAt', null) is timestamp &&
+             request.resource.data.get('updatedAt', null) is timestamp &&
+             previousCount is int &&
+             nextCount is int &&
+             nextCount == previousCount + 1;
+    }
+
+    function isSocialPostReactionDeleteValid(postId, userId) {
+      let postPath = /databases/$(database)/documents/socialPosts/$(postId);
+      let postBefore = get(postPath).data;
+      let postAfter = getAfter(postPath).data;
+      let previousCount = postBefore.get('reactionCounts', {}).get('like', 0);
+      let nextCount = postAfter.get('reactionCounts', {}).get('like', 0);
+      return isOwner(userId) &&
+             canReadSocialPost(postBefore) &&
+             resource.data.get('userId', '') == request.auth.uid &&
+             resource.data.get('reactionKey', '') == 'like' &&
+             previousCount is int &&
+             nextCount is int &&
+             nextCount >= 0 &&
+             nextCount == previousCount - 1;
+    }
+
     function isSocialPostModeratorUpdateValid() {
       return canModerateSocialPost(resource.data) &&
              isSocialPostScopeImmutable() &&
@@ -2371,6 +2432,7 @@ service cloud.firestore {
                     (
                       isSocialPostAuthorContentUpdateValid() ||
                       isSocialPostAuthorHideUpdateValid() ||
+                      isSocialPostReactionAggregateUpdateValid(postId) ||
                       isSocialPostModeratorUpdateValid()
                     );
       allow delete: if isSignedIn() &&
@@ -2389,11 +2451,9 @@ service cloud.firestore {
 
       match /reactions/{userId} {
         allow read: if canReadSocialPost(get(/databases/$(database)/documents/socialPosts/$(postId)).data);
-        allow create, update: if isOwner(userId) &&
-                              canReadSocialPost(get(/databases/$(database)/documents/socialPosts/$(postId)).data) &&
-                              request.resource.data.get('userId', userId) == request.auth.uid;
-        allow delete: if isOwner(userId) &&
-                      canReadSocialPost(get(/databases/$(database)/documents/socialPosts/$(postId)).data);
+        allow create: if isSocialPostReactionCreateValid(postId, userId);
+        allow update: if false;
+        allow delete: if isSocialPostReactionDeleteValid(postId, userId);
       }
     }
 
@@ -2504,6 +2564,14 @@ service cloud.firestore {
       match /notificationInbox/{itemId} {
         allow read: if isOwner(userId);
         allow create, update, delete: if false;
+      }
+
+      match /hiddenSocialPosts/{postId} {
+        allow read, delete: if isOwner(userId);
+        allow create, update: if isOwner(userId) &&
+                              request.resource.data.keys().hasOnly(['postId', 'hiddenAt']) &&
+                              request.resource.data.get('postId', '') == postId &&
+                              request.resource.data.get('hiddenAt', null) is timestamp;
       }
 
       match /privateAiMessages/{messageId} {

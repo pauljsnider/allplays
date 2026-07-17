@@ -114,16 +114,130 @@ describe('React app social Firestore rules', () => {
         expect(source).toContain('function socialPostImmutableScopeFields()');
         expect(source).toContain('function isSocialPostAuthorContentUpdateValid()');
         expect(source).toContain('function isSocialPostAuthorHideUpdateValid()');
+        expect(source).toContain('function isSocialPostReactionAggregateUpdateValid(postId)');
+        expect(source).toContain('function isSocialPostReactionCreateValid(postId, userId)');
+        expect(source).toContain('function isSocialPostReactionDeleteValid(postId, userId)');
         expect(source).toContain('function isSocialPostModeratorUpdateValid()');
         expect(source).toContain('match /socialPosts/{postId}');
         expect(source).toContain('match /comments/{commentId}');
         expect(source).toContain('match /reactions/{userId}');
+        expect(source).toContain('match /hiddenSocialPosts/{postId}');
         expect(source).toContain('match /friendships/{friendshipId}');
         expect(source).toContain('match /socialReports/{reportId}');
         expect(source).toContain("request.auth.uid in data.get('visibleUserIds', [])");
         expect(source).toContain("data.get('teamId', '') != '' &&");
         expect(source).toContain("isTeamOwnerOrAdmin(data.get('teamId', ''))");
         expect(source).toContain('function isFriendshipMemberUpdatePayloadValid()');
+        expect(source).toContain('isSocialPostReactionAggregateUpdateValid(postId) ||');
+        expect(source).toContain(".affectedKeys().hasOnly(['like'])");
+        expect(source).toContain('allow create: if isSocialPostReactionCreateValid(postId, userId);');
+        expect(source).toContain('allow delete: if isSocialPostReactionDeleteValid(postId, userId);');
+        expect(source).toContain("request.resource.data.get('postId', '') == postId");
+        expect(source).toContain("request.resource.data.keys().hasOnly(['postId', 'hiddenAt'])");
+    });
+
+    describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('social reaction and viewer hide rules engine coverage', () => {
+        let testEnv;
+
+        beforeAll(async () => {
+            testEnv = await initializeTestEnvironment({
+                projectId: `allplays-social-interactions-rules-${Date.now()}`,
+                firestore: {
+                    rules: rulesSource()
+                }
+            });
+        }, 30_000);
+
+        beforeEach(async () => {
+            await testEnv.clearFirestore();
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                await setDoc(doc(context.firestore(), 'socialPosts', 'post-1'), {
+                    authorId: 'author-1',
+                    type: 'manual_post',
+                    visibility: 'friends',
+                    title: 'Visible post',
+                    visibleUserIds: ['author-1', 'viewer-1'],
+                    teamIds: [],
+                    playerIds: [],
+                    playerNames: [],
+                    media: [],
+                    hidden: false,
+                    reactionCounts: {},
+                    createdAt: Timestamp.now(),
+                    updatedAt: Timestamp.now()
+                });
+            });
+        });
+
+        afterAll(async () => {
+            await testEnv?.cleanup();
+        });
+
+        function viewerDb(uid = 'viewer-1') {
+            return testEnv.authenticatedContext(uid, { email: `${uid}@example.com` }).firestore();
+        }
+
+        async function toggleLike(db, liked) {
+            const postRef = doc(db, 'socialPosts', 'post-1');
+            const reactionRef = doc(db, 'socialPosts', 'post-1', 'reactions', 'viewer-1');
+            await runTransaction(db, async (transaction) => {
+                const postSnapshot = await transaction.get(postRef);
+                const previousCount = postSnapshot.data().reactionCounts?.like || 0;
+                if (liked) {
+                    transaction.set(reactionRef, {
+                        userId: 'viewer-1',
+                        reactionKey: 'like',
+                        createdAt: Timestamp.now(),
+                        updatedAt: Timestamp.now()
+                    });
+                } else {
+                    transaction.delete(reactionRef);
+                }
+                transaction.update(postRef, {
+                    'reactionCounts.like': liked ? previousCount + 1 : previousCount - 1,
+                    updatedAt: Timestamp.now()
+                });
+            });
+        }
+
+        it('requires like documents and aggregate counts to change atomically in both directions', async () => {
+            const db = viewerDb();
+            const reactionRef = doc(db, 'socialPosts', 'post-1', 'reactions', 'viewer-1');
+            const postRef = doc(db, 'socialPosts', 'post-1');
+
+            await assertFails(setDoc(reactionRef, {
+                userId: 'viewer-1',
+                reactionKey: 'like',
+                createdAt: Timestamp.now(),
+                updatedAt: Timestamp.now()
+            }));
+            await assertFails(updateDoc(postRef, {
+                'reactionCounts.like': 1,
+                updatedAt: Timestamp.now()
+            }));
+
+            await assertSucceeds(toggleLike(db, true));
+            expect((await getDoc(postRef)).data().reactionCounts.like).toBe(1);
+            expect((await getDoc(reactionRef)).exists()).toBe(true);
+
+            await assertSucceeds(toggleLike(db, false));
+            expect((await getDoc(postRef)).data().reactionCounts.like).toBe(0);
+            expect((await getDoc(reactionRef)).exists()).toBe(false);
+        });
+
+        it('lets viewers hide posts only in their own private subcollection', async () => {
+            const ownHideRef = doc(viewerDb(), 'users', 'viewer-1', 'hiddenSocialPosts', 'post-1');
+            const otherHideRef = doc(viewerDb(), 'users', 'other-user', 'hiddenSocialPosts', 'post-1');
+
+            await assertSucceeds(setDoc(ownHideRef, {
+                postId: 'post-1',
+                hiddenAt: Timestamp.now()
+            }));
+            await assertFails(setDoc(otherHideRef, {
+                postId: 'post-1',
+                hiddenAt: Timestamp.now()
+            }));
+        });
     });
 
     it('permits accepted friendship creation only during atomic friend invite redemption', () => {
