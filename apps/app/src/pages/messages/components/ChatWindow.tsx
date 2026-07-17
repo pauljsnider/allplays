@@ -875,7 +875,22 @@ export function ChatWindow({
     const recipientId = String(initialRecipient?.id || '').trim();
     if (loadingContext) return;
     if (!recipientId || !/^user:[A-Za-z0-9_-]{1,160}$/.test(recipientId)) {
+      const hadPreparedRouteRecipient = Boolean(
+        preparedInitialRecipientKeyRef.current
+        || initialRecipientLookupKeyRef.current
+        || initialRecipientLookup.key
+      );
       initialRecipientLookupKeyRef.current = '';
+      if (hadPreparedRouteRecipient) {
+        preparedInitialRecipientKeyRef.current = '';
+        setInitialRecipientLookup({ key: '', status: 'idle' });
+        setSelectedRecipientTarget('full_team');
+        setSelectedRecipientIds([]);
+        setStatus(null);
+        if (!isDefaultTeamConversation(effectiveConversationId)) {
+          switchChatConversation(DEFAULT_TEAM_CONVERSATION_ID);
+        }
+      }
       return;
     }
     const preparationKey = `${teamId}|${recipientId}`;

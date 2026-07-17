@@ -691,6 +691,34 @@ describe('React app messages integration', () => {
         expect(container.textContent).toContain('Direct conversation with Coach Jamie opened.');
     });
 
+    it('clears a friend compose audience when navigating to the plain team thread', async () => {
+        layoutMocks.isDesktopWeb = true;
+        const { container } = await renderMessages('/messages/team-1?compose=user%3Acoach-1&recipientName=Coach+Jamie');
+        await waitForText(container, 'Direct message to Coach Jamie is ready.');
+
+        const teamLink = container.querySelector('a[href="/messages/team-1"]');
+        expect(teamLink).toBeTruthy();
+        await act(async () => {
+            teamLink.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }));
+        });
+        await waitForMatch(
+            () => chatMocks.subscribeToTeamChatMessages.mock.calls.at(-1)?.[1] === 'team',
+            'default team conversation subscription'
+        );
+
+        const textarea = container.querySelector('.chat-composer-textarea');
+        await setFieldValue(textarea, 'Update for everyone');
+        await click(container, 'Send message');
+
+        expect(chatMocks.sendTeamChatMessage).toHaveBeenCalledWith(expect.objectContaining({
+            teamId: 'team-1',
+            text: 'Update for everyone',
+            selectedConversationId: 'team',
+            selectedRecipientTarget: 'full_team',
+            selectedRecipientIds: []
+        }));
+    });
+
     it('loads the inbox for the inbox route and desktop two-pane thread route', async () => {
         await renderMessages('/messages');
         expect(chatMocks.loadChatInbox).toHaveBeenCalledTimes(1);
