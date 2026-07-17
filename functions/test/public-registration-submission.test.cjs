@@ -385,6 +385,58 @@ test('creates exactly one pending registration and reserves matching capacity', 
     assert.equal(registrations[0].data.selectedOption.countKey, 'u10');
 });
 
+test('accepts a free online-checkout registration without a checkout token', async () => {
+    const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration(buildSeedState({
+        feeAmountCents: 0,
+        paymentSettings: { offlinePaymentEnabled: false, onlineCheckoutEnabled: true }
+    }));
+
+    const result = await submitPublicRegistration(buildSubmission(), context);
+
+    assert.equal(result.success, true);
+    assert.equal(result.feeSnapshot.finalAmountDueCents, 0);
+    const registrations = firestore.registrationDocs();
+    assert.equal(registrations.length, 1);
+    assert.equal(registrations[0].data.status, 'pending');
+    assert.equal('checkoutAttemptToken' in registrations[0].data, false);
+});
+
+test('accepts an online-checkout registration discounted to zero without a checkout token', async () => {
+    const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration(buildSeedState({
+        paymentSettings: { offlinePaymentEnabled: false, onlineCheckoutEnabled: true },
+        discountRules: [{
+            id: 'free-registration',
+            type: 'quantity',
+            label: 'Free registration',
+            amountType: 'fixed',
+            amountValue: 5000,
+            minimumQuantity: 1,
+            active: true
+        }]
+    }));
+
+    const result = await submitPublicRegistration(buildSubmission(), context);
+
+    assert.equal(result.feeSnapshot.finalAmountDueCents, 0);
+    assert.equal(firestore.registrationDocs().length, 1);
+});
+
+test('requires a checkout token when an online registration has a balance', async () => {
+    const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration(buildSeedState({
+        paymentSettings: { offlinePaymentEnabled: false, onlineCheckoutEnabled: true }
+    }));
+
+    await assert.rejects(
+        submitPublicRegistration(buildSubmission(), context),
+        (error) => {
+            assert.equal(error.code, 'invalid-argument');
+            assert.equal(error.message, 'A checkout attempt token is required.');
+            return true;
+        }
+    );
+    assert.equal(firestore.registrationDocs().length, 0);
+});
+
 test('normalizes guardian email casing for parent readback rules', async () => {
     const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration(buildSeedState());
 

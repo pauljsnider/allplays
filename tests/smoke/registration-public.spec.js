@@ -282,6 +282,31 @@ test('online registration prepares one server registration and redirects to Stri
     });
 });
 
+test('free online registration submits without opening Stripe checkout', async ({ page, baseURL }) => {
+    await mockRegistrationModules(page, {
+        form: registrationForm({
+            feeAmountCents: 0,
+            paymentSettings: {
+                offlinePaymentEnabled: false,
+                onlineCheckoutEnabled: true
+            }
+        })
+    });
+    await page.goto(buildUrl(baseURL, '/registration.html?teamId=team-1&formId=form-1'), { waitUntil: 'domcontentloaded' });
+
+    await fillRequiredRegistrationFields(page);
+    await page.getByRole('button', { name: 'Pay registration with Stripe' }).click();
+    await expect(page.getByRole('heading', { name: 'Registration submitted' })).toBeVisible();
+
+    const result = await page.evaluate(() => ({
+        submitCalls: window.__registrationCalls.filter((call) => call.name === 'submitPublicRegistration'),
+        stripeCalls: window.__registrationStripeCalls
+    }));
+    expect(result.submitCalls).toHaveLength(1);
+    expect(result.submitCalls[0].payload.checkoutAttemptToken).toBe('');
+    expect(result.stripeCalls).toEqual([]);
+});
+
 test('cancelled checkout retry waits for release before retrying without duplicate submission or re-entered form fields', async ({ page, baseURL }) => {
     await mockRegistrationModules(page, {
         form: registrationForm({

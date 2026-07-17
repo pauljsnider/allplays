@@ -681,8 +681,22 @@
                 const feeSnapshot = submission.feeSnapshot;
                 const amountCents = Math.max(0, Number(feeSnapshot?.finalAmountDueCents || 0));
                 const currency = String(feeSnapshot?.currency || activeForm.currency || 'USD').toLowerCase();
-                if (!feeSnapshot || amountCents <= 0) {
+                if (!feeSnapshot) {
                     showFormError('No payment amount specified for this registration.');
+                    return;
+                }
+
+                if (amountCents <= 0) {
+                    const result = requiresRegistrationOption(activeForm)
+                        ? await submitRegistrationWithCapacity(submission)
+                        : await submitRegistrationWithoutCapacity(submission);
+
+                    formElement.classList.add('hidden');
+                    if (result.status === 'waitlisted') {
+                        confirmationMessage.querySelector('h1').textContent = 'Registration waitlisted';
+                        confirmationMessage.querySelector('p').textContent = 'This option is currently full, so your registration has been added to the waitlist.';
+                    }
+                    confirmationMessage.classList.remove('hidden');
                     return;
                 }
 

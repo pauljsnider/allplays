@@ -759,7 +759,7 @@ function addPublicRegistrationDays(date, days) {
   return next;
 }
 
-function validatePublicRegistrationSubmission(form, input) {
+function validatePublicRegistrationSubmission(form, input, feeSnapshot) {
   if (!form?.published) {
     throwPublicRegistrationError('failed-precondition', 'This registration form is not accepting submissions.');
   }
@@ -774,7 +774,9 @@ function validatePublicRegistrationSubmission(form, input) {
   if (form.installmentPlan?.enabled !== true && input.selectedPaymentPlanId !== 'pay_full') {
     throwPublicRegistrationError('invalid-argument', 'Please select a payment plan.');
   }
-  if (form.paymentSettings?.onlineCheckoutEnabled === true && !input.checkoutAttemptToken) {
+  if (form.paymentSettings?.onlineCheckoutEnabled === true
+      && Number(feeSnapshot?.finalAmountDueCents || 0) > 0
+      && !input.checkoutAttemptToken) {
     throwPublicRegistrationError('invalid-argument', 'A checkout attempt token is required.');
   }
 }
@@ -899,7 +901,8 @@ exports.submitPublicRegistration = functions.https.onCall(async (data, context =
 
     const formData = formSnap.data() || {};
     const latestForm = normalizePublicRegistrationForm(formData, input);
-    validatePublicRegistrationSubmission(latestForm, input);
+    const feeSnapshot = calculatePublicRegistrationFeeSnapshot(latestForm, { quantity: input.quantity, now: new Date() });
+    validatePublicRegistrationSubmission(latestForm, input, feeSnapshot);
 
     if (hasConfiguredPublicRegistrationOptions(latestForm) && !publicRegistrationRequiresOption(latestForm)) {
       throwPublicRegistrationError('failed-precondition', 'Registration is currently unavailable. No registration options are available.', {
@@ -938,7 +941,6 @@ exports.submitPublicRegistration = functions.https.onCall(async (data, context =
       status = placement.status;
     }
 
-    const feeSnapshot = calculatePublicRegistrationFeeSnapshot(latestForm, { quantity: input.quantity, now: new Date() });
     const registrationRecord = buildPublicPendingRegistrationRecord({
       form: latestForm,
       input,
