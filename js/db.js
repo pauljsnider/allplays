@@ -1475,6 +1475,24 @@ async function moveTeamMediaStorageBackedItem(teamId, item = {}, update = {}) {
     }
 }
 
+async function clearMovedTeamMediaAlbumCover(teamId, item = {}, targetFolderId) {
+    const sourceFolderId = String(item.folderId || '').trim();
+    if (!sourceFolderId || sourceFolderId === String(targetFolderId || '').trim()) return;
+
+    const sourceFolderRef = doc(db, `teams/${teamId}/mediaFolders`, sourceFolderId);
+    await runTransaction(db, async (transaction) => {
+        const sourceFolderSnapshot = await transaction.get(sourceFolderRef);
+        if (!sourceFolderSnapshot.exists() || sourceFolderSnapshot.data()?.coverPhotoId !== item.id) return;
+
+        transaction.update(sourceFolderRef, {
+            coverPhotoId: deleteField(),
+            coverPhotoUrl: deleteField(),
+            coverPhotoTitle: deleteField(),
+            updatedAt: serverTimestamp()
+        });
+    });
+}
+
 export async function uploadTeamMediaPhoto(teamId, folderId, file, options = {}) {
     const cleanTeamId = String(teamId || '').trim();
     const cleanFolderId = String(folderId || '').trim();
@@ -1667,6 +1685,7 @@ export async function moveTeamMediaItems(teamId, itemIds = [], targetFolderId) {
 
         if (['photo', 'file'].includes(String(item.type || '').toLowerCase())) {
             await moveTeamMediaStorageBackedItem(teamId, item, update);
+            await clearMovedTeamMediaAlbumCover(teamId, item, update.folderId);
             continue;
         }
 
