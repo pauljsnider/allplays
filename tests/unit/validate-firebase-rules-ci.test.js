@@ -67,12 +67,18 @@ service firebase.storage {
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
+      permissions:
+        actions: read
       - name: Detect Storage rules changes
         id: storage_rules
         run: git diff --quiet "\${{ github.event.before }}" "\${{ github.sha }}" -- storage.rules
       - name: Detect Firestore configuration changes
         id: firestore_config
-        run: git diff --quiet "\${{ github.event.before }}" "\${{ github.sha }}" -- firestore.rules firestore.indexes.json
+        env:
+          GH_TOKEN: \${{ github.token }}
+        run: |
+          gh api --method GET "repos/\${GITHUB_REPOSITORY}/actions/workflows/deploy-prod.yml/runs" -f branch="$GITHUB_REF_NAME" -f status=success
+          git diff --quiet "$last_success_sha" "$GITHUB_SHA" -- firestore.rules firestore.indexes.json
       - name: Deploy Firebase Storage rules when available
         env:
           STORAGE_RULES_CHANGED: \${{ steps.storage_rules.outputs.changed }}
@@ -100,6 +106,10 @@ service firebase.storage {
         expect(() => validateProductionDeployCommand(validDeployCommand.replace("sed -E 's/\\x1B\\[[0-9;]*[[:alpha:]]//g' \"$storage_log\" > \"$storage_plain_log\"", ''))).toThrow(
             'Production Storage rules ANSI log normalization'
         );
+        expect(() => validateProductionDeployCommand(validDeployCommand.replace(
+            'git diff --quiet "$last_success_sha" "$GITHUB_SHA" -- firestore.rules firestore.indexes.json',
+            'git diff --quiet "\${{ github.event.before }}" "\${{ github.sha }}" -- firestore.rules firestore.indexes.json'
+        ))).toThrow('Production Firestore change detection is missing');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
             `retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore"
             retry_firebase_deploy "hosting,functions" "application"`,

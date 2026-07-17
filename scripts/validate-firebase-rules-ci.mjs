@@ -64,7 +64,15 @@ export function validateProductionDeployCommand(deployProd) {
 
     assertIncludes(deployProd, 'retry_firebase_deploy "hosting,functions" "application"', 'Production application deploy targets');
     assertIncludes(deployProd, 'retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore"', 'Production Firestore deploy targets');
-    assertIncludes(deployProd, 'git diff --quiet "${{ github.event.before }}" "${{ github.sha }}" -- firestore.rules firestore.indexes.json', 'Production Firestore change detection');
+    assertIncludes(deployProd, 'actions: read', 'Production workflow-run read permission');
+    assertIncludes(deployProd, 'GH_TOKEN: ${{ github.token }}', 'Production workflow-run authentication');
+    assertIncludes(deployProd, 'actions/workflows/deploy-prod.yml/runs', 'Production successful deploy lookup');
+    assertIncludes(deployProd, '-f branch="$GITHUB_REF_NAME"', 'Production successful deploy branch filter');
+    assertIncludes(deployProd, '-f status=success', 'Production successful deploy filter');
+    assertIncludes(deployProd, 'git diff --quiet "$last_success_sha" "$GITHUB_SHA" -- firestore.rules firestore.indexes.json', 'Production Firestore change detection');
+    if (deployProd.includes('git diff --quiet "${{ github.event.before }}" "${{ github.sha }}" -- firestore.rules firestore.indexes.json')) {
+        throw new Error('Production Firestore changes must not use the immediately previous push as the deploy baseline.');
+    }
     assertIncludes(deployProd, 'FIRESTORE_CONFIG_CHANGED: ${{ steps.firestore_config.outputs.changed }}', 'Production Firestore change output');
     assertIncludes(deployProd, 'if [[ "$FIRESTORE_CONFIG_CHANGED" == "true" ]]; then', 'Production Firestore change ordering');
     const changedBranchStart = deployProd.indexOf('if [[ "$FIRESTORE_CONFIG_CHANGED" == "true" ]]; then');
