@@ -63,6 +63,7 @@ const {
   normalizeText,
   resolveTeamEmailRecipients,
   findUnknownTeamEmailRecipientIds,
+  buildVerifiedTeamEmailAttachmentRecord,
   buildTeamEmailMailJob
 } = require('./team-email-core.cjs');
 const {
@@ -10400,7 +10401,7 @@ exports.sendTeamEmail = functions.https.onCall(async (data, context) => {
 
   let attachmentSummary;
   try {
-    attachmentSummary = normalizeTeamEmailAttachmentsForDelivery(teamId, requestedAttachments);
+    attachmentSummary = await normalizeTeamEmailAttachmentsForDelivery(teamId, requestedAttachments);
   } catch (error) {
     throw new functions.https.HttpsError('invalid-argument', error?.message || 'Invalid team email attachments.');
   }
@@ -12110,11 +12111,8 @@ const TEAM_EMAIL_ATTACHMENT_LIMIT_COUNT = 10;
 function normalizeTeamEmailAttachmentRecord(attachment) {
   const name = String(attachment?.name || attachment?.fileName || '').trim();
   const storagePath = String(attachment?.storagePath || attachment?.path || '').trim();
-  const contentType = String(attachment?.contentType || attachment?.type || 'application/octet-stream').trim();
-  const size = Number(attachment?.size || attachment?.bytes || 0);
-  if (!name || name.length > 240 || !storagePath || storagePath.length > 1024 ||
-      contentType.length > 160 || !Number.isFinite(size) || size <= 0) return null;
-  return { name, storagePath, contentType, size };
+  if (!name || name.length > 240 || !storagePath || storagePath.length > 1024) return null;
+  return { name, storagePath };
 }
 
 function isTeamEmailAttachmentPathForTeam(teamId, storagePath) {
@@ -12126,7 +12124,7 @@ function isTeamEmailAttachmentPathForTeam(teamId, storagePath) {
     parts.slice(2).every(Boolean);
 }
 
-function normalizeTeamEmailAttachmentsForDelivery(teamId, attachments) {
+async function normalizeTeamEmailAttachmentsForDelivery(teamId, attachments) {
   const rawAttachments = Array.isArray(attachments) ? attachments : [];
   if (rawAttachments.length > TEAM_EMAIL_ATTACHMENT_LIMIT_COUNT) {
     throw new Error('Team email is limited to 10 attachments.');
@@ -12136,11 +12134,16 @@ function normalizeTeamEmailAttachmentsForDelivery(teamId, attachments) {
       normalized.some((attachment) => !isTeamEmailAttachmentPathForTeam(teamId, attachment.storagePath))) {
     throw new Error('Team email attachments must reference files for the same team.');
   }
-  const totalBytes = normalized.reduce((sum, attachment) => sum + attachment.size, 0);
+  const bucket = admin.storage().bucket();
+  const verified = await Promise.all(normalized.map(async (attachment) => {
+    const [objectMetadata] = await bucket.file(attachment.storagePath).getMetadata();
+    return buildVerifiedTeamEmailAttachmentRecord(attachment, objectMetadata);
+  }));
+  const totalBytes = verified.reduce((sum, attachment) => sum + attachment.size, 0);
   if (totalBytes > TEAM_EMAIL_ATTACHMENT_LIMIT_BYTES) {
     throw new Error('Team email attachments exceed the 20 MB limit.');
   }
-  return { attachments: normalized, totalBytes };
+  return { attachments: verified, totalBytes };
 }
 
 // Public sports opportunity board. Public responses are serialized through an

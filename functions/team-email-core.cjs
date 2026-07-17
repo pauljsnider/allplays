@@ -159,6 +159,22 @@ function findUnknownTeamEmailRecipientIds({ recipientIds = [], players = [] } = 
   return requestedIds.filter((recipientId) => !eligibleIds.has(recipientId));
 }
 
+function buildVerifiedTeamEmailAttachmentRecord(attachment, objectMetadata) {
+  const storagePath = String(attachment?.storagePath || '').trim();
+  const objectName = String(objectMetadata?.name || '').trim();
+  const size = Number(objectMetadata?.size);
+  const contentType = String(objectMetadata?.contentType || 'application/octet-stream').trim();
+  if (!storagePath || objectName !== storagePath || !Number.isFinite(size) || size <= 0 || contentType.length > 160) {
+    throw new Error('Team email attachment metadata could not be verified.');
+  }
+  return {
+    name: String(attachment?.name || '').trim(),
+    storagePath,
+    contentType,
+    size
+  };
+}
+
 function buildTeamEmailMailJob({ email, subject, body, teamId, messageId, senderUid, attachments = [], attachmentTotalBytes = 0 }) {
   const safeBody = normalizeText(body, 20000);
   const html = safeBody
@@ -189,5 +205,6 @@ module.exports = {
   isEmailEnabledContact,
   resolveTeamEmailRecipients,
   findUnknownTeamEmailRecipientIds,
+  buildVerifiedTeamEmailAttachmentRecord,
   buildTeamEmailMailJob
 };

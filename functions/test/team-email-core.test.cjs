@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const {
   resolveTeamEmailRecipients,
   findUnknownTeamEmailRecipientIds,
+  buildVerifiedTeamEmailAttachmentRecord,
   buildTeamEmailMailJob
 } = require('../team-email-core.cjs');
 
@@ -75,6 +76,22 @@ test('findUnknownTeamEmailRecipientIds rejects external, stale, and cross-team s
   });
 
   assert.deepEqual(unknown, ['email:external@example.com', 'player:stale']);
+});
+
+test('buildVerifiedTeamEmailAttachmentRecord ignores falsified caller metadata', () => {
+  const attachment = buildVerifiedTeamEmailAttachmentRecord({
+    name: 'plan.pdf',
+    storagePath: 'team-email-attachments/team1/draft1/coach1/plan.pdf',
+    size: 1,
+    contentType: 'text/plain'
+  }, {
+    name: 'team-email-attachments/team1/draft1/coach1/plan.pdf',
+    size: '2097152',
+    contentType: 'application/pdf'
+  });
+
+  assert.equal(attachment.size, 2097152);
+  assert.equal(attachment.contentType, 'application/pdf');
 });
 
 test('buildTeamEmailMailJob keeps recipient email only in backend mail job', () => {

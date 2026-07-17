@@ -48,7 +48,9 @@ describe('team email attachments', () => {
         expect(source.indexOf('findUnknownTeamEmailRecipientIds({ recipientIds, players })'))
             .toBeLessThan(source.indexOf('const recipients = resolveTeamEmailRecipients'));
         expect(source).toContain('Team email is limited to 400 eligible recipients.');
-        expect(source).toContain('normalizeTeamEmailAttachmentsForDelivery(teamId, requestedAttachments)');
+        expect(source).toContain('await normalizeTeamEmailAttachmentsForDelivery(teamId, requestedAttachments)');
+        expect(source).toContain('bucket.file(attachment.storagePath).getMetadata()');
+        expect(source).toContain('buildVerifiedTeamEmailAttachmentRecord(attachment, objectMetadata)');
         expect(source).toContain('attachments: attachmentSummary.attachments');
         expect(source).toContain('attachmentTotalBytes: attachmentSummary.totalBytes');
         expect(source).toContain('function isTeamEmailAttachmentPathForTeam(teamId, storagePath)');
