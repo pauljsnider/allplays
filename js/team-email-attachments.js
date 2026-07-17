@@ -4,7 +4,6 @@ import {
     storage,
     collection,
     doc,
-    addDoc,
     setDoc,
     getDoc,
     Timestamp,
@@ -157,23 +156,6 @@ export async function deleteTeamEmailAttachment(attachment, { user = auth.curren
     }
 }
 
-export function buildTeamEmailDeliveryPayload({ draft = {}, teamId, sender = auth.currentUser } = {}) {
-    const attachments = normalizeTeamEmailAttachments(draft.attachments || []);
-    return {
-        teamId,
-        draftId: draft.id || null,
-        recipients: Array.isArray(draft.recipients) ? draft.recipients : [],
-        subject: cleanString(draft.subject),
-        body: cleanString(draft.body),
-        attachments,
-        attachmentTotalBytes: getTeamEmailAttachmentTotalBytes(attachments),
-        createdBy: sender?.uid || draft.createdBy || null,
-        createdByEmail: sender?.email || draft.createdByEmail || null,
-        status: 'queued',
-        createdAt: Timestamp.now()
-    };
-}
-
 export async function saveTeamEmailDraft(teamId, draft = {}, { user = auth.currentUser } = {}) {
     const { teamId: cleanTeamId } = await assertTeamEmailManagerAccess(teamId, user);
 
@@ -214,12 +196,4 @@ export async function getTeamEmailDraft(teamId, draftId) {
     const { teamId: cleanTeamId } = await assertTeamEmailManagerAccess(teamId);
     const snap = await getDoc(doc(db, 'teams', cleanTeamId, 'emailDrafts', draftId));
     return snap.exists() ? { id: snap.id, ...snap.data() } : null;
-}
-
-export async function queueTeamEmailSend(teamId, draft = {}, { user = auth.currentUser } = {}) {
-    const { teamId: cleanTeamId } = await assertTeamEmailManagerAccess(teamId, user);
-
-    const payload = buildTeamEmailDeliveryPayload({ draft, teamId: cleanTeamId, sender: user });
-    const sendRef = await addDoc(collection(db, 'teams', cleanTeamId, 'emailSends'), payload);
-    return sendRef.id;
 }

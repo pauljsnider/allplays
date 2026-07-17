@@ -229,18 +229,16 @@ import { buildOfficiatingNotificationRecord } from './officiating-notifications.
 import {
     getTeamEmailAttachmentTotalBytes,
     normalizeTeamEmailAttachments
-} from './team-email-attachments.js?v=1';
+} from './team-email-attachments.js?v=2';
 export {
     TEAM_EMAIL_ATTACHMENT_LIMIT_BYTES,
     assertTeamEmailAttachmentLimit,
-    buildTeamEmailDeliveryPayload,
     deleteTeamEmailAttachment,
     getTeamEmailAttachmentTotalBytes,
     getTeamEmailDraft,
     normalizeTeamEmailAttachments,
-    queueTeamEmailSend,
     uploadTeamEmailAttachment
-} from './team-email-attachments.js?v=1';
+} from './team-email-attachments.js?v=2';
 // import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-vertexai.js';
 export { collection, getDocs, deleteDoc, query };
 const limitQuery = limit;
@@ -6879,7 +6877,9 @@ export async function sendTeamEmail(teamId, {
     subject,
     body,
     targetType = 'full_team',
-    recipientIds = []
+    recipientIds = [],
+    draftId = null,
+    attachments = []
 } = {}) {
     const callable = httpsCallable(functions, 'sendTeamEmail');
     const result = await callable({
@@ -6887,7 +6887,9 @@ export async function sendTeamEmail(teamId, {
         subject,
         body,
         targetType,
-        recipientIds
+        recipientIds,
+        draftId,
+        attachments
     });
     return result.data;
 }

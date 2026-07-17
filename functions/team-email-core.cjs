@@ -128,7 +128,38 @@ function resolveTeamEmailRecipients({ targetType = 'full_team', recipientIds = [
   return serializeRecipients(recipientsByEmail);
 }
 
-function buildTeamEmailMailJob({ email, subject, body, teamId, messageId, senderUid }) {
+function findUnknownTeamEmailRecipientIds({ recipientIds = [], players = [] } = {}) {
+  const requestedIds = Array.from(new Set((Array.isArray(recipientIds) ? recipientIds : [])
+    .map(normalizeRecipientSelector)
+    .filter(Boolean)));
+  const eligibleIds = new Set();
+
+  players.filter((player) => player && player.active !== false).forEach((player) => {
+    const playerId = String(player.id || player.playerId || '').trim();
+    if (playerId) {
+      eligibleIds.add(playerId);
+      eligibleIds.add(`player:${playerId}`);
+    }
+    const contacts = [
+      ...(Array.isArray(player.parents) ? player.parents : []),
+      ...(Array.isArray(player.guardians) ? player.guardians : []),
+      ...(Array.isArray(player.familyContacts) ? player.familyContacts : [])
+    ];
+    contacts.filter(isEmailEnabledContact).forEach((contact) => {
+      const userId = String(contact?.userId || '').trim();
+      const email = normalizeEmail(contact?.email);
+      if (userId) {
+        eligibleIds.add(userId);
+        eligibleIds.add(`user:${userId}`);
+      }
+      if (email) eligibleIds.add(`email:${email}`);
+    });
+  });
+
+  return requestedIds.filter((recipientId) => !eligibleIds.has(recipientId));
+}
+
+function buildTeamEmailMailJob({ email, subject, body, teamId, messageId, senderUid, attachments = [], attachmentTotalBytes = 0 }) {
   const safeBody = normalizeText(body, 20000);
   const html = safeBody
     .split(/\n{2,}/)
@@ -145,7 +176,9 @@ function buildTeamEmailMailJob({ email, subject, body, teamId, messageId, sender
       teamId,
       teamEmailMessageId: messageId,
       type: 'team_email',
-      senderUid
+      senderUid,
+      attachments,
+      attachmentTotalBytes
     }
   };
 }
@@ -155,5 +188,6 @@ module.exports = {
   normalizeEmail,
   isEmailEnabledContact,
   resolveTeamEmailRecipients,
+  findUnknownTeamEmailRecipientIds,
   buildTeamEmailMailJob
 };
