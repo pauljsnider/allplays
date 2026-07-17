@@ -1409,8 +1409,8 @@ test('iOS-sized schedule smoke covers list, event nav, and rideshare without ove
     await expect(page.locator('.schedule-web-sidebar')).toBeHidden();
     const mobileActionQueue = page.locator('.schedule-action-queue-mobile');
     await expect(mobileActionQueue.getByText('Needs attention', { exact: true })).toBeVisible();
-    const availabilityAction = mobileActionQueue.locator('a[href*="/game-1?childId=player-1&section=availability"]');
-    await expect(availabilityAction).toHaveAttribute('href', /#\/schedule\/team-1\/game-1\?childId=player-1&section=availability$/);
+    const gameHubAction = mobileActionQueue.getByRole('link', { name: /RSVP needed for Pat.*vs\. Falcons/ });
+    await expect(gameHubAction).toHaveAttribute('href', /#\/schedule\/team-1\/game-1\?childId=player-1&section=game$/);
     const firstScheduleRow = page.locator('.schedule-list > a').first();
     await expect(firstScheduleRow).toBeVisible();
     const queueBox = await mobileActionQueue.boundingBox();
@@ -1423,9 +1423,9 @@ test('iOS-sized schedule smoke covers list, event nav, and rideshare without ove
     expect(scheduleRowCount).toBeLessThanOrEqual(3);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
 
-    await availabilityAction.click();
-    await expect(page).toHaveURL(/#\/schedule\/team-1\/game-1\?childId=player-1&section=availability$/);
-    await expect(page.getByRole('heading', { name: 'Availability' })).toBeVisible();
+    await gameHubAction.click();
+    await expect(page).toHaveURL(/#\/schedule\/team-1\/game-1\?childId=player-1&section=game$/);
+    await expect(page.getByRole('heading', { name: 'Game hub' })).toBeVisible();
 
     await page.goto(appUrl(baseURL, '/schedule/team-1/game-1?childId=player-1'), { waitUntil: 'domcontentloaded' });
     await expect(page.locator('.event-summary-card').getByRole('heading', { name: 'vs. Falcons' })).toBeVisible();
