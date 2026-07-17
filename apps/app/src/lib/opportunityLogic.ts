@@ -202,6 +202,33 @@ export function applyOpportunityTeamDefaults(input: OpportunityInput, team: Mana
   };
 }
 
+const opportunityTeamDefaultKeys = [
+  'sport',
+  'city',
+  'state',
+  'zip',
+  'ageGroup',
+  'competitiveLevel',
+  'division'
+] as const;
+
+export function switchOpportunityTeamDefaults(
+  input: OpportunityInput,
+  previousTeam: ManagedOpportunityTeam | null | undefined,
+  nextTeam: ManagedOpportunityTeam | null | undefined
+): OpportunityInput {
+  if (input.kind === 'player_seeking_team') return input;
+  const nextInput = { ...input, teamId: nextTeam?.id || '' };
+  opportunityTeamDefaultKeys.forEach((key) => {
+    const currentValue = input[key];
+    const previousDefault = previousTeam?.[key] || '';
+    if (!currentValue || (previousTeam && currentValue === previousDefault)) {
+      nextInput[key] = nextTeam?.[key] || '';
+    }
+  });
+  return nextInput;
+}
+
 export function getOpportunityRequiredFields(input: Pick<OpportunityInput, 'kind'>): OpportunityRequiredField[] {
   if (input.kind === 'player_seeking_team') {
     return [

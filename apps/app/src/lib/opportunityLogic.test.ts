@@ -9,6 +9,7 @@ import {
   opportunityAvailabilityOptions,
   opportunityToInput,
   opportunityKinds,
+  switchOpportunityTeamDefaults,
   type PublicOpportunity
 } from './opportunityLogic';
 
@@ -48,6 +49,34 @@ describe('opportunityLogic', () => {
       state: 'TX',
       ageGroup: '12U',
       title: 'Assistant coach'
+    }));
+  });
+
+  it('replaces prior team defaults while preserving manually changed fields', () => {
+    const firstTeam = {
+      id: 'team-1', name: 'Bears', sport: 'Basketball', city: 'Austin', state: 'TX', zip: '78701',
+      ageGroup: '12U', competitiveLevel: 'Travel', division: 'Gold', availability: 'Weekends'
+    };
+    const secondTeam = {
+      id: 'team-2', name: 'Stars', sport: 'Soccer', city: 'Dallas', state: 'TX', zip: '75201',
+      ageGroup: '14U', competitiveLevel: 'Select', division: 'Premier', availability: 'Weeknights'
+    };
+    const firstTeamDraft = applyOpportunityTeamDefaults(emptyOpportunityInput(), firstTeam);
+    const result = switchOpportunityTeamDefaults(
+      { ...firstTeamDraft, city: 'Manually selected city' },
+      firstTeam,
+      secondTeam
+    );
+
+    expect(result).toEqual(expect.objectContaining({
+      teamId: 'team-2',
+      sport: 'Soccer',
+      city: 'Manually selected city',
+      state: 'TX',
+      zip: '75201',
+      ageGroup: '14U',
+      competitiveLevel: 'Select',
+      division: 'Premier'
     }));
   });
 

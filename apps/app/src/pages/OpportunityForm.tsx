@@ -11,6 +11,7 @@ import {
   opportunityAvailabilityOptions,
   opportunityKinds,
   opportunityToInput,
+  switchOpportunityTeamDefaults,
   type ManagedOpportunityTeam,
   type OpportunityInput,
   type OpportunityKind
@@ -75,7 +76,11 @@ export function OpportunityForm({ auth }: { auth: AuthState }) {
     const team = teams.find((entry) => entry.id === teamId);
     inputVersionRef.current += 1;
     setStatus('');
-    setInput((current) => applyOpportunityTeamDefaults({ ...current, teamId }, team));
+    setInput((current) => switchOpportunityTeamDefaults(
+      current,
+      teams.find((entry) => entry.id === current.teamId),
+      team
+    ));
   };
 
   const chooseKind = (kind: OpportunityKind) => {

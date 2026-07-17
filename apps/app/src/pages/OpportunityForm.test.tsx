@@ -47,6 +47,19 @@ const team = {
   availability: 'Weekends'
 };
 
+const secondTeam = {
+  id: 'team-2',
+  name: 'Stars',
+  sport: 'Soccer',
+  city: 'Dallas',
+  state: 'TX',
+  zip: '75201',
+  ageGroup: '14U',
+  competitiveLevel: 'Select',
+  division: 'Premier',
+  availability: 'Weeknights'
+};
+
 function renderForm() {
   return render(
     <MemoryRouter initialEntries={['/discover/new']}>
@@ -72,6 +85,22 @@ describe('OpportunityForm', () => {
     expect((screen.getByRole('textbox', { name: /City/ }) as HTMLInputElement).value).toBe('Austin');
     expect((screen.getByRole('combobox', { name: /Availability/ }) as HTMLSelectElement).value).toBe('Weeknights');
     expect(screen.getByRole('status').textContent).toContain('5 of 7 complete');
+  });
+
+  it('refreshes generated team details when a different public team is selected', async () => {
+    serviceMocks.listManagedPublicOpportunityTeams.mockResolvedValue([team, secondTeam]);
+    renderForm();
+    const teamSelect = await screen.findByRole('combobox', { name: /Public team/ }) as HTMLSelectElement;
+
+    fireEvent.change(teamSelect, { target: { value: 'team-2' } });
+
+    expect(teamSelect.value).toBe('team-2');
+    expect((screen.getByRole('textbox', { name: /Sport/ }) as HTMLInputElement).value).toBe('Soccer');
+    expect((screen.getByRole('textbox', { name: /City/ }) as HTMLInputElement).value).toBe('Dallas');
+    expect((screen.getByRole('textbox', { name: /ZIP/ }) as HTMLInputElement).value).toBe('75201');
+    expect((screen.getByRole('textbox', { name: /Age group/ }) as HTMLInputElement).value).toBe('14U');
+    expect((screen.getByRole('textbox', { name: /Competitive level/ }) as HTMLInputElement).value).toBe('Select');
+    expect((screen.getByRole('textbox', { name: /Division/ }) as HTMLInputElement).value).toBe('Premier');
   });
 
   it('applies an editable AI title and description', async () => {
