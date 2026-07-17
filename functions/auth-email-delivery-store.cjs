@@ -9,6 +9,7 @@ function createAuthEmailDeliveryStore({
   buildRateLimitId,
   buildMailDocId,
   buildMailJob,
+  sendDelivery = null,
   normalizeEmail,
   hashRecipient,
   now = Date.now,
@@ -66,7 +67,12 @@ function createAuthEmailDeliveryStore({
       uid,
       inviteCodeId
     });
-    const mailRef = firestore.collection('mail').doc(deliveryId || buildMailDocId(type, email));
+    const resolvedDeliveryId = deliveryId || buildMailDocId(type, email);
+    if (sendDelivery) {
+      await sendDelivery({ deliveryId: resolvedDeliveryId, job });
+      return resolvedDeliveryId;
+    }
+    const mailRef = firestore.collection('mail').doc(resolvedDeliveryId);
     await mailRef.create({
       ...job,
       createdAt: FieldValue.serverTimestamp()

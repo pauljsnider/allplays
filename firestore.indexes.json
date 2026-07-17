@@ -559,6 +559,12 @@
       ]
     },
     {
+      "collectionGroup": "authEmailDeliveries",
+      "fieldPath": "expiresAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
       "collectionGroup": "publicRegistrationRateLimits",
       "fieldPath": "expiresAt",
       "ttl": true,
