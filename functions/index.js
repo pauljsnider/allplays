@@ -9508,22 +9508,36 @@ async function resolveFeeAssignmentRecipientsForUser({
 
   const teamPlayerKeyPrefix = `${teamId}::`;
   const fallbackPlayerKey = getFeeAssignmentRecipientPlayerKey(teamId, fallbackRecipient || {});
-  const playerIds = Array.from(parentPlayerKeys)
+  const playerKeys = Array.from(parentPlayerKeys)
     .filter((playerKey) => playerKey.startsWith(teamPlayerKeyPrefix))
-    .map((playerKey) => playerKey.slice(teamPlayerKeyPrefix.length))
-    .filter((playerId) => playerId && !playerId.includes('/'))
-    .filter((playerId) => `${teamPlayerKeyPrefix}${playerId}` !== fallbackPlayerKey);
-  const uniquePlayerIds = Array.from(new Set(playerIds));
+    .filter((playerKey) => playerKey !== fallbackPlayerKey)
+    .filter((playerKey) => {
+      const playerId = playerKey.slice(teamPlayerKeyPrefix.length);
+      return playerId && !playerId.includes('/');
+    });
+  const uniquePlayerKeys = Array.from(new Set(playerKeys));
+  const uniquePlayerIds = uniquePlayerKeys
+    .map((playerKey) => playerKey.slice(teamPlayerKeyPrefix.length));
   if (!uniquePlayerIds.length) return fallback ? [fallback] : [];
 
   try {
-    const recipientRefs = uniquePlayerIds.map((playerId) => (
-      firestore.doc(`teams/${teamId}/feeBatches/${batchId}/feeRecipients/${playerId}`)
-    ));
-    const recipientSnaps = await firestore.getAll(...recipientRefs);
-    const recipients = recipientSnaps
-      .filter((docSnap) => docSnap.exists)
-      .map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) }));
+    const recipientCollection = firestore.collection(`teams/${teamId}/feeBatches/${batchId}/feeRecipients`);
+    const queryPromises = [];
+    for (let index = 0; index < uniquePlayerIds.length; index += 30) {
+      queryPromises.push(
+        recipientCollection.where('playerKey', 'in', uniquePlayerKeys.slice(index, index + 30)).get(),
+        recipientCollection.where('playerId', 'in', uniquePlayerIds.slice(index, index + 30)).get()
+      );
+    }
+    const recipientSnaps = await Promise.all(queryPromises);
+    const recipientsById = new Map();
+    recipientSnaps.forEach((querySnap) => {
+      querySnap.docs.forEach((docSnap) => {
+        if (String(docSnap.id || '') === String(recipientId || '')) return;
+        recipientsById.set(docSnap.id, { id: docSnap.id, ...(docSnap.data() || {}) });
+      });
+    });
+    const recipients = Array.from(recipientsById.values());
     return fallback ? [fallback, ...recipients] : recipients;
   } catch (error) {
     functions.logger.warn('Failed to read payer-scoped fee assignment recipients; falling back to current recipient.', {

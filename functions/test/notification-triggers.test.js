@@ -1446,7 +1446,7 @@ test('notifyFeeAssigned resolves app-created child fee recipients through parent
     }
 });
 
-test('notifyFeeAssigned bounds a large batch lookup to the payer siblings and deduplicates their push', async () => {
+test('notifyFeeAssigned finds payer siblings when recipient document IDs differ from player IDs', async () => {
     const { moduleExports, env, cleanup } = loadNotificationInternals({
         teamDoc: { ownerId: 'coach-1', adminEmails: [] },
         userDocs: {
@@ -1468,14 +1468,14 @@ test('notifyFeeAssigned bounds a large batch lookup to the payer siblings and de
             dueDate: '2026-07-01T12:00:00.000Z'
         };
         const recipientB = {
-            playerKey: 'team-1::player-2',
+            playerId: 'player-2',
             childName: 'Blake',
             feeTitle: 'Spring dues',
             amountCents: 2500,
             dueDate: '2026-07-01T12:00:00.000Z'
         };
-        const refA = env.firestoreState.doc('teams/team-1/feeBatches/batch-3/feeRecipients/player-1');
-        const refB = env.firestoreState.doc('teams/team-1/feeBatches/batch-3/feeRecipients/player-2');
+        const refA = env.firestoreState.doc('teams/team-1/feeBatches/batch-3/feeRecipients/recipient-a');
+        const refB = env.firestoreState.doc('teams/team-1/feeBatches/batch-3/feeRecipients/recipient-b');
         await refA.set(recipientA);
         await refB.set(recipientB);
         for (let index = 3; index <= 100; index += 1) {
@@ -1488,8 +1488,8 @@ test('notifyFeeAssigned bounds a large batch lookup to the payer siblings and de
                     amountCents: 2500
                 });
         }
-        const contextA = { params: { teamId: 'team-1', batchId: 'batch-3', recipientId: 'player-1' } };
-        const contextB = { params: { teamId: 'team-1', batchId: 'batch-3', recipientId: 'player-2' } };
+        const contextA = { params: { teamId: 'team-1', batchId: 'batch-3', recipientId: 'recipient-a' } };
+        const contextB = { params: { teamId: 'team-1', batchId: 'batch-3', recipientId: 'recipient-b' } };
 
         const firstResult = await moduleExports.notifyFeeAssigned(makeSnapshot(refA, recipientA), contextA);
         const secondResult = await moduleExports.notifyFeeAssigned(makeSnapshot(refB, recipientB), contextB);
@@ -1502,10 +1502,7 @@ test('notifyFeeAssigned bounds a large batch lookup to the payer siblings and de
         assert.equal(env.messagingCalls[0].body, '$50.00 has been assigned for Avery and Blake, due Jul 1, 2026.');
         assert.equal(env.counts.parentQueries, 2);
         assert.equal(env.counts.userRecordGets, 1);
-        assert.equal(env.counts.feeRecipientDocGets, 1);
-        assert.deepEqual(env.feeRecipientDocGetPaths, [
-            'teams/team-1/feeBatches/batch-3/feeRecipients/player-2'
-        ]);
+        assert.equal(env.counts.feeRecipientDocGets, 0);
     } finally {
         cleanup();
     }
@@ -1537,9 +1534,7 @@ test('notifyFeeAssigned falls back to the trigger recipient when a payer sibling
         assert.equal(result?.successCount, 1);
         assert.equal(env.messagingCalls.length, 1);
         assert.equal(env.messagingCalls[0].title, 'New fee assigned: Spring dues ($25.00)');
-        assert.deepEqual(env.feeRecipientDocGetPaths, [
-            'teams/team-1/feeBatches/batch-missing/feeRecipients/missing-player'
-        ]);
+        assert.equal(env.counts.feeRecipientDocGets, 0);
     } finally {
         cleanup();
     }

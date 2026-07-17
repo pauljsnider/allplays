@@ -26,9 +26,9 @@ describe('fee assignment notification source contract', () => {
 
         expect(resolverSource).toContain("const teamPlayerKeyPrefix = `${teamId}::`;");
         expect(resolverSource).toContain('.filter((playerKey) => playerKey.startsWith(teamPlayerKeyPrefix))');
-        expect(resolverSource).toContain('firestore.doc(`teams/${teamId}/feeBatches/${batchId}/feeRecipients/${playerId}`)');
-        expect(resolverSource).toContain('const recipientSnaps = await firestore.getAll(...recipientRefs);');
-        expect(resolverSource).not.toContain('.collection(');
+        expect(resolverSource).toContain("recipientCollection.where('playerKey', 'in'");
+        expect(resolverSource).toContain("recipientCollection.where('playerId', 'in'");
+        expect(resolverSource).toContain('index += 30');
         expect(functionsSource).not.toContain('listFeeAssignmentBatchRecipients');
     });
 
