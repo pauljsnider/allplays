@@ -167,6 +167,19 @@ async function mockScheduleAppModules(page) {
                     };
                 }
 
+                export async function hydrateParentScheduleRsvps(schedule, _user, options = {}) {
+                    options.onProgress?.([...schedule.events]);
+                    return schedule;
+                }
+
+                export async function submitParentScheduleRsvp() {
+                    return { response: 'going' };
+                }
+
+                export async function submitParentScheduleRsvpForChildren() {
+                    return { response: 'going' };
+                }
+
                 export async function createScheduledGameForApp(teamId, form, user) {
                     window.__scheduleCalls.gameCreates.push({ teamId, form, userId: user?.uid || null });
                     return { id: 'game-created' };
