@@ -17,7 +17,6 @@ describe('loadScheduleStaffTools', () => {
 
   it('stores the import promise before invoking a re-entrant importer', async () => {
     const module = { default: vi.fn() } as unknown as ScheduleStaffToolsModule;
-    let load: () => Promise<ScheduleStaffToolsModule>;
     let nestedRequest: Promise<ScheduleStaffToolsModule> | undefined;
     let reentered = false;
     const importer = vi.fn(() => {
@@ -27,7 +26,7 @@ describe('loadScheduleStaffTools', () => {
       }
       return Promise.resolve(module);
     });
-    load = createScheduleStaffToolsLoader(importer);
+    const load = createScheduleStaffToolsLoader(importer);
 
     const firstRequest = load();
 
