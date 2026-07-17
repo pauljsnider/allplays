@@ -1407,14 +1407,25 @@ test('iOS-sized schedule smoke covers list, event nav, and rideshare without ove
 
     await expect(mobileScheduleFilter(page)).toBeVisible({ timeout: 15000 });
     await expect(page.locator('.schedule-web-sidebar')).toBeHidden();
+    const mobileActionQueue = page.locator('.schedule-action-queue-mobile');
+    await expect(mobileActionQueue.getByText('Needs attention', { exact: true })).toBeVisible();
+    const availabilityAction = mobileActionQueue.locator('a[href*="/game-1?childId=player-1&section=availability"]');
+    await expect(availabilityAction).toHaveAttribute('href', /#\/schedule\/team-1\/game-1\?childId=player-1&section=availability$/);
     const firstScheduleRow = page.locator('.schedule-list > a').first();
     await expect(firstScheduleRow).toBeVisible();
+    const queueBox = await mobileActionQueue.boundingBox();
+    const firstRowBox = await firstScheduleRow.boundingBox();
+    expect(queueBox && firstRowBox && queueBox.y + queueBox.height <= firstRowBox.y).toBe(true);
     await expect(firstScheduleRow.getByText('1 task open')).toBeVisible();
     await expect(firstScheduleRow.getByText('4 seats open')).toBeVisible();
     const scheduleRowCount = await page.locator('.schedule-list > a').count();
     expect(scheduleRowCount).toBeGreaterThanOrEqual(2);
     expect(scheduleRowCount).toBeLessThanOrEqual(3);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
+
+    await availabilityAction.click();
+    await expect(page).toHaveURL(/#\/schedule\/team-1\/game-1\?childId=player-1&section=availability$/);
+    await expect(page.getByRole('heading', { name: 'Availability' })).toBeVisible();
 
     await page.goto(appUrl(baseURL, '/schedule/team-1/game-1?childId=player-1'), { waitUntil: 'domcontentloaded' });
     await expect(page.locator('.event-summary-card').getByRole('heading', { name: 'vs. Falcons' })).toBeVisible();

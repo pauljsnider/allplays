@@ -1534,6 +1534,9 @@ export function Schedule({ auth }: { auth: AuthState }) {
           ) : null}
           {statusMessage ? <Status tone="success" message={statusMessage} /> : null}
           {scheduleReadError ? <Status tone="error" message={scheduleLoadError ? getScheduleLoadErrorMessage(scheduleLoadError, hasLoadedSchedule) : scheduleReadError} /> : null}
+          {!isDesktopWeb && !scheduleReadLoading && !isInitialScheduleLoad ? (
+            <ScheduleActionQueue events={visibleEvents} compact hideWhenEmpty />
+          ) : null}
 
           {scheduleReadLoading || isInitialScheduleLoad ? (
             <LoadingSchedule />
@@ -2612,24 +2615,36 @@ function ScheduleInsightMini({ label, value }: { label: string; value: number })
   );
 }
 
-function ScheduleActionQueue({ events }: { events: ParentScheduleEvent[] }) {
+function ScheduleActionQueue({ events, compact = false, hideWhenEmpty = false }: {
+  events: ParentScheduleEvent[];
+  compact?: boolean;
+  hideWhenEmpty?: boolean;
+}) {
   const actionEvents = events
     .map((event) => ({ event, action: getEventActionSummary(event) }))
     .filter((item) => item.action)
     .slice(0, 5);
 
+  if (hideWhenEmpty && !actionEvents.length) return null;
+
   return (
-    <section className="app-card schedule-action-queue p-4">
+    <section className={`app-card schedule-action-queue ${compact ? 'schedule-action-queue-mobile min-w-0 overflow-hidden p-3' : 'p-4'}`}>
       <div className="flex items-center justify-between gap-3">
         <div>
-          <div className="app-label">Needs attention</div>
-          <h2 className="mt-1 text-base font-black text-gray-950">Parent queue</h2>
+          {compact ? (
+            <h2 className="text-sm font-black text-gray-950">Needs attention</h2>
+          ) : (
+            <>
+              <div className="app-label">Needs attention</div>
+              <h2 className="mt-1 text-base font-black text-gray-950">Parent queue</h2>
+            </>
+          )}
         </div>
         <ClipboardCheck className="h-5 w-5 text-primary-600" aria-hidden="true" />
       </div>
-      <div className="mt-3 space-y-2">
+      <div className={`${compact ? 'mt-2 max-h-56 overflow-y-auto overscroll-contain' : 'mt-3'} space-y-2`}>
         {actionEvents.length ? actionEvents.map(({ event, action }) => (
-          <Link key={event.eventKey} to={getGenericEventDetailPath(event)} className="block rounded-xl border border-gray-200 bg-white p-3 transition hover:border-primary-200 hover:bg-primary-50">
+          <Link key={event.eventKey} to={getGenericEventDetailPath(event)} className={`block rounded-xl border border-gray-200 bg-white transition hover:border-primary-200 hover:bg-primary-50 ${compact ? 'min-h-11 p-2.5' : 'p-3'}`}>
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <div className="truncate text-sm font-black text-gray-950">{action}</div>
