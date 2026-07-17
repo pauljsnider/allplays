@@ -528,6 +528,59 @@ describe('team media db ordering', () => {
     });
 
     it('clears the source album cover when moving its storage-backed photo', async () => {
+        const transactionUpdate = vi.fn();
+        teamMediaUtilsMocks.buildMoveUpdates.mockReturnValue([
+            { id: 'media-cover', folderId: 'folder-private', order: 0 }
+        ]);
+        firebaseMocks.getDocs
+            .mockResolvedValueOnce({ docs: [] })
+            .mockResolvedValueOnce({
+                docs: [{
+                    id: 'media-cover',
+                    data: () => ({
+                        folderId: 'folder-team',
+                        order: 0,
+                        type: 'photo',
+                        mimeType: 'image/jpeg',
+                        storagePath: 'team-media/team-1/folder-team/user-1/cover.jpg',
+                        uploadedBy: 'user-1',
+                        deleted: false
+                    })
+                }]
+            });
+        firebaseMocks.runTransaction.mockImplementationOnce(async (_db, callback) => callback({
+            get: vi.fn(async () => ({
+                exists: () => true,
+                data: () => ({
+                    coverPhotoId: 'media-cover',
+                    coverPhotoUrl: 'https://cdn.example.test/cover.jpg',
+                    coverPhotoTitle: 'Album cover'
+                })
+            })),
+            update: transactionUpdate
+        }));
+        firebaseMocks.getDownloadURL.mockResolvedValueOnce('https://cdn.example.test/cover.jpg');
+
+        const { moveTeamMediaItems } = await import('../../js/db.js');
+        await moveTeamMediaItems('team-1', ['media-cover'], 'folder-private');
+
+        expect(transactionUpdate).toHaveBeenCalledWith(
+            { path: 'teams/team-1/mediaFolders/folder-team' },
+            {
+                coverPhotoId: 'DELETE_FIELD',
+                coverPhotoUrl: 'DELETE_FIELD',
+                coverPhotoTitle: 'DELETE_FIELD',
+                updatedAt: 'server-ts'
+            }
+        );
+        expect(firebaseMocks.updateDoc).not.toHaveBeenCalledWith(
+            { path: 'teams/team-1/mediaFolders/folder-private' },
+            expect.anything()
+        );
+    });
+
+    it('preserves a concurrently reassigned source album cover when moving the previous cover photo', async () => {
+        const transactionUpdate = vi.fn();
         teamMediaUtilsMocks.buildMoveUpdates.mockReturnValue([
             { id: 'media-cover', folderId: 'folder-private', order: 0 }
         ]);
@@ -549,28 +602,24 @@ describe('team media db ordering', () => {
             });
         firebaseMocks.getDoc.mockResolvedValueOnce({
             exists: () => true,
-            data: () => ({
-                coverPhotoId: 'media-cover',
-                coverPhotoUrl: 'https://cdn.example.test/cover.jpg',
-                coverPhotoTitle: 'Album cover'
-            })
+            data: () => ({ coverPhotoId: 'media-cover' })
         });
+        firebaseMocks.runTransaction.mockImplementationOnce(async (_db, callback) => callback({
+            get: vi.fn(async () => ({
+                exists: () => true,
+                data: () => ({ coverPhotoId: 'new-cover' })
+            })),
+            update: transactionUpdate
+        }));
         firebaseMocks.getDownloadURL.mockResolvedValueOnce('https://cdn.example.test/cover.jpg');
 
         const { moveTeamMediaItems } = await import('../../js/db.js');
         await moveTeamMediaItems('team-1', ['media-cover'], 'folder-private');
 
-        expect(firebaseMocks.updateDoc).toHaveBeenCalledWith(
-            { path: 'teams/team-1/mediaFolders/folder-team' },
-            {
-                coverPhotoId: 'DELETE_FIELD',
-                coverPhotoUrl: 'DELETE_FIELD',
-                coverPhotoTitle: 'DELETE_FIELD',
-                updatedAt: 'server-ts'
-            }
-        );
+        expect(firebaseMocks.runTransaction).toHaveBeenCalledTimes(1);
+        expect(transactionUpdate).not.toHaveBeenCalled();
         expect(firebaseMocks.updateDoc).not.toHaveBeenCalledWith(
-            { path: 'teams/team-1/mediaFolders/folder-private' },
+            { path: 'teams/team-1/mediaFolders/folder-team' },
             expect.anything()
         );
     });

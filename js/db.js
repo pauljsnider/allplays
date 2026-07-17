@@ -1480,14 +1480,16 @@ async function clearMovedTeamMediaAlbumCover(teamId, item = {}, targetFolderId) 
     if (!sourceFolderId || sourceFolderId === String(targetFolderId || '').trim()) return;
 
     const sourceFolderRef = doc(db, `teams/${teamId}/mediaFolders`, sourceFolderId);
-    const sourceFolderSnapshot = await getDoc(sourceFolderRef);
-    if (!sourceFolderSnapshot.exists() || sourceFolderSnapshot.data()?.coverPhotoId !== item.id) return;
+    await runTransaction(db, async (transaction) => {
+        const sourceFolderSnapshot = await transaction.get(sourceFolderRef);
+        if (!sourceFolderSnapshot.exists() || sourceFolderSnapshot.data()?.coverPhotoId !== item.id) return;
 
-    await updateDoc(sourceFolderRef, {
-        coverPhotoId: deleteField(),
-        coverPhotoUrl: deleteField(),
-        coverPhotoTitle: deleteField(),
-        updatedAt: serverTimestamp()
+        transaction.update(sourceFolderRef, {
+            coverPhotoId: deleteField(),
+            coverPhotoUrl: deleteField(),
+            coverPhotoTitle: deleteField(),
+            updatedAt: serverTimestamp()
+        });
     });
 }
 
