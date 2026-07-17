@@ -10,6 +10,10 @@ const browserMocks = vi.hoisted(() => ({
     open: vi.fn()
 }));
 
+const appLauncherMocks = vi.hoisted(() => ({
+    openUrl: vi.fn()
+}));
+
 const shareMocks = vi.hoisted(() => ({
     canShare: vi.fn(),
     share: vi.fn()
@@ -28,6 +32,10 @@ vi.mock('../../apps/app/node_modules/@capacitor/core/dist/index.cjs.js', () => (
 
 vi.mock('../../apps/app/node_modules/@capacitor/browser/dist/plugin.cjs.js', () => ({
     Browser: browserMocks
+}));
+
+vi.mock('../../apps/app/node_modules/@capacitor/app-launcher/dist/plugin.cjs.js', () => ({
+    AppLauncher: appLauncherMocks
 }));
 
 vi.mock('../../apps/app/node_modules/@capacitor/share/dist/plugin.cjs.js', () => ({
@@ -68,6 +76,7 @@ beforeEach(() => {
     nativeState.isNative = false;
     nativeState.plugins = new Set();
     browserMocks.open.mockResolvedValue(undefined);
+    appLauncherMocks.openUrl.mockResolvedValue({ completed: true });
     shareMocks.canShare.mockResolvedValue({ value: true });
     shareMocks.share.mockResolvedValue(undefined);
     filesystemMocks.writeFile.mockResolvedValue({ uri: 'file:///cache/calendar.ics' });
@@ -185,7 +194,7 @@ describe('React app public URL actions', () => {
     });
 
     it('opens public URLs with the native Browser plugin inside Capacitor', async () => {
-        installNativeCapacitor(['Browser']);
+        installNativeCapacitor(['Browser', 'AppLauncher']);
         const { openPublicUrl } = await loadPublicActions();
 
         await openPublicUrl('https://allplays.ai/game.html#teamId=team-1&gameId=game-1');
@@ -193,6 +202,46 @@ describe('React app public URL actions', () => {
         expect(browserMocks.open).toHaveBeenCalledWith({
             url: 'https://allplays.ai/game.html#teamId=team-1&gameId=game-1'
         });
+        expect(appLauncherMocks.openUrl).not.toHaveBeenCalled();
+    });
+
+    it('hands native webcal URLs to the OS launcher without changing the URL', async () => {
+        installNativeCapacitor(['Browser', 'AppLauncher']);
+        const { openPublicUrl } = await loadPublicActions();
+        const url = 'webcal://calendar.example.test/private/team-1.ics?token=private-token&view=full';
+
+        await openPublicUrl(url);
+
+        expect(appLauncherMocks.openUrl).toHaveBeenCalledWith({ url });
+        expect(browserMocks.open).not.toHaveBeenCalled();
+    });
+
+    it('rejects non-webcal custom schemes without invoking a native plugin', async () => {
+        installNativeCapacitor(['Browser', 'AppLauncher']);
+        const { openPublicUrl } = await loadPublicActions();
+
+        await expect(openPublicUrl('intent://malicious.example.test/#Intent;scheme=vendor;end')).rejects.toThrow('Unsupported URL scheme.');
+
+        expect(appLauncherMocks.openUrl).not.toHaveBeenCalled();
+        expect(browserMocks.open).not.toHaveBeenCalled();
+    });
+
+    it('rejects when the native OS launcher cannot open a webcal URL', async () => {
+        installNativeCapacitor(['Browser', 'AppLauncher']);
+        appLauncherMocks.openUrl.mockRejectedValueOnce(new Error('Unable to open URL.'));
+        const { openPublicUrl } = await loadPublicActions();
+
+        await expect(openPublicUrl('webcal://calendar.example.test/team-1.ics?token=private-token')).rejects.toThrow('Unable to open URL.');
+        expect(browserMocks.open).not.toHaveBeenCalled();
+    });
+
+    it('rejects when the native OS launcher reports no webcal handler', async () => {
+        installNativeCapacitor(['Browser', 'AppLauncher']);
+        appLauncherMocks.openUrl.mockResolvedValueOnce({ completed: false });
+        const { openPublicUrl } = await loadPublicActions();
+
+        await expect(openPublicUrl('webcal://calendar.example.test/team-1.ics?token=private-token')).rejects.toThrow('No application is available to open this URL.');
+        expect(browserMocks.open).not.toHaveBeenCalled();
     });
 
     it('uses the native Share plugin with URL-appended text on iOS and Android', async () => {

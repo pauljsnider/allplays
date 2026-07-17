@@ -707,8 +707,8 @@ describe('ParentTools access', () => {
     });
 
     it('prioritizes live calendar subscriptions and preserves each feed action', async () => {
-        const privateFeedUrl = 'https://calendar.example.test/team-1.ics?token=private-token';
-        const appleFeedUrl = 'webcal://calendar.example.test/team-1.ics?token=private-token';
+        const privateFeedUrl = 'https://calendar.example.test/private/teams/team-1.ics?token=private-token&view=full';
+        const appleFeedUrl = 'webcal://calendar.example.test/private/teams/team-1.ics?token=private-token&view=full';
         const googleFeedUrl = `https://calendar.google.com/calendar/render?cid=${encodeURIComponent(privateFeedUrl)}`;
         const writeText = vi.fn().mockResolvedValue(undefined);
         Object.defineProperty(navigator, 'clipboard', {
@@ -749,6 +749,28 @@ describe('ParentTools access', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Copy private link' }));
         await waitFor(() => expect(writeText).toHaveBeenCalledWith(privateFeedUrl));
         expect(parentToolsServiceMocks.getPrivateTeamCalendarFeedUrl).toHaveBeenCalledTimes(3);
+    });
+
+    it('reports a rejected Apple Calendar handoff and restores team actions', async () => {
+        const privateFeedUrl = 'https://calendar.example.test/private/teams/team-1.ics?token=private-token&view=full';
+        const appleFeedUrl = 'webcal://calendar.example.test/private/teams/team-1.ics?token=private-token&view=full';
+        parentToolsServiceMocks.loadParentCalendarTools.mockResolvedValue({
+            events: [],
+            teams: [{ teamId: 'team-1', teamName: 'Bears', eventCount: 1 }]
+        });
+        parentToolsServiceMocks.getPrivateTeamCalendarFeedUrl.mockResolvedValue(privateFeedUrl);
+        parentToolsServiceMocks.getAppleCalendarFeedUrl.mockReturnValue(appleFeedUrl);
+        vi.mocked(openPublicUrl).mockRejectedValueOnce(new Error('Unable to open URL.'));
+
+        renderParentTools(['/parent-tools/calendar'], false, linkedAuth);
+
+        fireEvent.click(await screen.findByRole('button', { name: 'Apple Calendar' }));
+
+        await waitFor(() => expect(openPublicUrl).toHaveBeenCalledWith(appleFeedUrl));
+        expect(await screen.findByText('Unable to open URL.')).toBeTruthy();
+        expect(screen.getByRole('button', { name: 'Apple Calendar' })).toBeEnabled();
+        expect(screen.getByRole('button', { name: 'Google Calendar' })).toBeEnabled();
+        expect(screen.getByRole('button', { name: 'Copy private link' })).toBeEnabled();
     });
 
     it('keeps empty-calendar feedback without rendering subscription actions', async () => {

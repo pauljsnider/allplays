@@ -1,3 +1,4 @@
+import { AppLauncher } from '@capacitor/app-launcher';
 import { Browser } from '@capacitor/browser';
 import { Capacitor } from '@capacitor/core';
 import { Directory, Encoding, Filesystem } from '@capacitor/filesystem';
@@ -32,9 +33,24 @@ function appendUrlToShareText(text: string, url: string) {
 
 export async function openPublicUrl(url: string) {
   if (!url) return;
-  if (isNativePluginAvailable('Browser')) {
+  const scheme = url.match(/^([a-z][a-z0-9+.-]*):/i)?.[1]?.toLowerCase();
+  const isWebUrl = scheme === 'http' || scheme === 'https';
+  if (isWebUrl && isNativePluginAvailable('Browser')) {
     await Browser.open({ url });
     return;
+  }
+  if (scheme === 'webcal' && Capacitor.isNativePlatform()) {
+    if (!isNativePluginAvailable('AppLauncher')) {
+      throw new Error('No application is available to open this URL.');
+    }
+    const result = await AppLauncher.openUrl({ url });
+    if (!result.completed) {
+      throw new Error('No application is available to open this URL.');
+    }
+    return;
+  }
+  if (scheme && !isWebUrl && Capacitor.isNativePlatform()) {
+    throw new Error('Unsupported URL scheme.');
   }
 
   const opened = window.open(url, '_blank', 'noopener,noreferrer');
