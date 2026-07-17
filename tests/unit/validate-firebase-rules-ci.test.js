@@ -75,6 +75,7 @@ service firebase.storage {
           STORAGE_RULES_CHANGED: \${{ steps.storage_rules.outputs.changed }}
         run: |
           npx firebase-tools@14.25.0 deploy --only storage --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive
+          sed -E 's/\\x1B\\[[0-9;]*[[:alpha:]]//g' "$storage_log" > "$storage_plain_log"
           if [[ "$STORAGE_RULES_CHANGED" != "true" ]]; then exit 0; fi
           exit "$storage_status"
             npx firebase-tools@14.25.0 deploy --only hosting,firestore:rules,firestore:indexes,functions --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive
@@ -83,6 +84,9 @@ service firebase.storage {
         expect(() => validateProductionDeployCommand(validDeployCommand)).not.toThrow();
         expect(() => validateProductionDeployCommand(validDeployCommand.replace('[[ "$STORAGE_RULES_CHANGED" != "true" ]]', '[[ true ]]'))).toThrow(
             'Production Storage rules unchanged-only skip'
+        );
+        expect(() => validateProductionDeployCommand(validDeployCommand.replace("sed -E 's/\\x1B\\[[0-9;]*[[:alpha:]]//g' \"$storage_log\" > \"$storage_plain_log\"", ''))).toThrow(
+            'Production Storage rules ANSI log normalization'
         );
     });
 
