@@ -49,7 +49,8 @@ function buildHarness({
     privateProfiles = {},
     practiceTargetsByTeam = {},
     existingReminderDocs = {},
-    pageSize = 100
+    pageSize = 100,
+    indexedQueryError = null
 } = {}) {
     const reminderDocStore = new Map(Object.entries(existingReminderDocs));
     const sendDirectTargetsNotification = vi.fn(async () => ({ successCount: 1, failureCount: 0 }));
@@ -79,6 +80,7 @@ function buildHarness({
         const constraints = [];
         let limitValue = sessionDocs.length;
         let cursor = null;
+        let orderByField = null;
         return {
             where(field, operator, value) {
                 constraints.push({ field, operator, value });
@@ -86,6 +88,7 @@ function buildHarness({
                 return this;
             },
             orderBy(field) {
+                orderByField = field;
                 queryCalls.push(['orderBy', field]);
                 return this;
             },
@@ -100,6 +103,9 @@ function buildHarness({
                 return this;
             },
             async get() {
+                if (indexedQueryError && constraints.some(({ field }) => field === 'homePacketReminderDueAt')) {
+                    throw indexedQueryError;
+                }
                 const matches = sessionDocs
                     .filter((docSnap) => constraints.every(({ field, operator, value }) => {
                         const actual = docSnap.data()?.[field];
@@ -111,6 +117,9 @@ function buildHarness({
                         throw new Error(`Unexpected operator ${operator}`);
                     }))
                     .sort((left, right) => {
+                        if (orderByField === '__name__') {
+                            return left.ref.path.localeCompare(right.ref.path);
+                        }
                         const dueDifference = new Date(left.data().homePacketReminderDueAt).getTime()
                             - new Date(right.data().homePacketReminderDueAt).getTime();
                         return dueDifference || left.ref.path.localeCompare(right.ref.path);
@@ -189,6 +198,9 @@ function buildHarness({
         firestore: {
             Timestamp: {
                 fromDate: (date) => new Date(date)
+            },
+            FieldPath: {
+                documentId: () => '__name__'
             },
             FieldValue: {
                 serverTimestamp: () => ({ __serverTimestamp: true })
@@ -422,6 +434,9 @@ describe('sendPracticePacketDueTomorrowReminders', () => {
             },
             practiceTargetsByTeam: {
                 'team-1': [{ uid: 'parent-1', token: 'parent-token', teamId: 'team-1' }]
+            },
+            existingReminderDocs: {
+                'systemMigrations/practicePacketReminderDueAt': { completed: true }
             }
         });
 
@@ -447,6 +462,73 @@ describe('sendPracticePacketDueTomorrowReminders', () => {
             ['orderBy', 'homePacketReminderDueAt'],
             ['orderBy', 'homePacketReminderDueAt']
         ]);
+    });
+
+    it('delivers reminders for due-tomorrow packets that have not been backfilled yet', async () => {
+        const harness = buildHarness({
+            sessions: [{
+                path: 'teams/team-1/practiceSessions/legacy-session',
+                data: {
+                    title: 'Legacy packet',
+                    homePacketGenerated: true,
+                    homePacketContent: {
+                        blocks: [{ id: 'block-1' }],
+                        dueAt: '2026-06-21T09:00:00.000Z'
+                    }
+                }
+            }],
+            playersByTeam: {
+                'team-1': [{ id: 'player-1', data: { name: 'Pat', parents: [{ userId: 'parent-1' }] } }]
+            },
+            practiceTargetsByTeam: {
+                'team-1': [{ uid: 'parent-1', token: 'parent-token', teamId: 'team-1' }]
+            }
+        });
+
+        const result = await harness.sendPracticePacketDueTomorrowReminders(harness.now);
+
+        expect(result).toEqual([
+            { teamId: 'team-1', sessionId: 'legacy-session', playerId: 'player-1', targetCount: 1 }
+        ]);
+        expect(harness.queryCalls).toContainEqual(['orderBy', '__name__']);
+        expect(harness.queryCalls).toContainEqual(['limit', 100]);
+    });
+
+    it('uses the compatibility scan while the new composite index is still building', async () => {
+        const harness = buildHarness({
+            indexedQueryError: new Error('The query requires an index'),
+            sessions: [{
+                path: 'teams/team-1/practiceSessions/indexed-session',
+                data: {
+                    title: 'Indexed packet',
+                    homePacketGenerated: true,
+                    homePacketReminderDueAt: new Date('2026-06-21T09:00:00.000Z'),
+                    homePacketContent: {
+                        blocks: [{ id: 'block-1' }],
+                        dueAt: '2026-06-21T09:00:00.000Z'
+                    }
+                }
+            }],
+            playersByTeam: {
+                'team-1': [{ id: 'player-1', data: { name: 'Pat', parents: [{ userId: 'parent-1' }] } }]
+            },
+            practiceTargetsByTeam: {
+                'team-1': [{ uid: 'parent-1', token: 'parent-token', teamId: 'team-1' }]
+            },
+            existingReminderDocs: {
+                'systemMigrations/practicePacketReminderDueAt': { completed: true }
+            }
+        });
+
+        const result = await harness.sendPracticePacketDueTomorrowReminders(harness.now);
+
+        expect(result).toEqual([
+            { teamId: 'team-1', sessionId: 'indexed-session', playerId: 'player-1', targetCount: 1 }
+        ]);
+        expect(harness.functions.logger.error).toHaveBeenCalledWith(
+            'Practice packet reminder indexed query unavailable; using migration compatibility scan.',
+            { error: 'The query requires an index' }
+        );
     });
 
     it('logs and exits when practice notifications are unavailable', async () => {

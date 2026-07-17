@@ -12,6 +12,7 @@ function makeHarness(records) {
     }));
     const queryCalls = [];
     const writes = [];
+    const migrationStateWrites = [];
 
     function buildQuery(cursor = null, pageSize = docs.length) {
         return {
@@ -40,6 +41,9 @@ function makeHarness(records) {
 
     const db = {
         collectionGroup: vi.fn(() => buildQuery()),
+        doc: vi.fn((path) => ({
+            set: vi.fn(async (value, options) => migrationStateWrites.push({ path, value, options }))
+        })),
         batch: vi.fn(() => ({
             update: vi.fn((ref, value) => writes.push({ path: ref.path, value })),
             commit: vi.fn(async () => undefined)
@@ -49,7 +53,7 @@ function makeHarness(records) {
         fromDate: vi.fn((date) => ({ millis: date.getTime() }))
     };
 
-    return { db, Timestamp, queryCalls, writes };
+    return { db, Timestamp, queryCalls, writes, migrationStateWrites };
 }
 
 describe('practice packet reminder due-at backfill', () => {
@@ -130,5 +134,10 @@ describe('practice packet reminder due-at backfill', () => {
                 value: { homePacketReminderDueAt: { millis: Date.parse('2026-07-23T18:00:00.000Z') } }
             }
         ]);
+        expect(harness.migrationStateWrites).toEqual([{
+            path: 'systemMigrations/practicePacketReminderDueAt',
+            value: { completed: true },
+            options: { merge: true }
+        }]);
     });
 });

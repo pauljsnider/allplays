@@ -4,6 +4,7 @@ import admin from 'firebase-admin';
 import { pathToFileURL } from 'node:url';
 
 const DEFAULT_PAGE_SIZE = 400;
+const MIGRATION_STATE_PATH = 'systemMigrations/practicePacketReminderDueAt';
 
 function coerceDate(value) {
     if (typeof value?.toDate === 'function') return value.toDate();
@@ -76,6 +77,8 @@ export async function backfillPracticePacketReminderDueAt({
             ? snapshot.docs[snapshot.docs.length - 1]
             : null;
     } while (lastDoc);
+
+    await db.doc(MIGRATION_STATE_PATH).set({ completed: true }, { merge: true });
 
     return { scanned, updated, skipped, malformed };
 }
