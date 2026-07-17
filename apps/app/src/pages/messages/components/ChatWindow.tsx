@@ -260,6 +260,31 @@ export function isSelectedConversation(conversationId: string, selectedConversat
   return conversationId === selectedConversationId;
 }
 
+function getUserParticipantId(participantId: unknown) {
+  const normalizedId = String(participantId || '').trim();
+  if (!normalizedId) return '';
+  if (normalizedId.toLowerCase().startsWith('user:')) return normalizedId.slice(5).trim();
+  return normalizedId.includes(':') ? '' : normalizedId;
+}
+
+export function findExistingDirectConversationId(
+  conversations: ChatConversation[],
+  currentUserId: string,
+  recipientId: string
+) {
+  const currentParticipantId = getUserParticipantId(currentUserId);
+  const recipientParticipantId = getUserParticipantId(recipientId);
+  if (!currentParticipantId || !recipientParticipantId || currentParticipantId === recipientParticipantId) return '';
+  const expectedParticipantIds = new Set([currentParticipantId, recipientParticipantId]);
+
+  return conversations.find((conversation) => {
+    if (conversation.type !== 'direct') return false;
+    const participantIds = new Set((conversation.participantIds || []).map(getUserParticipantId).filter(Boolean));
+    return participantIds.size === expectedParticipantIds.size
+      && [...expectedParticipantIds].every((participantId) => participantIds.has(participantId));
+  })?.id || '';
+}
+
 export function TeamAvatar({ team }: { team: Pick<ChatTeam, 'name' | 'photoUrl' | 'unreadCount'> }) {
   return (
     <div className="relative flex h-11 w-11 flex-none items-center justify-center overflow-hidden rounded-xl border border-gray-200 bg-primary-50 text-primary-700 shadow-sm">
@@ -837,6 +862,18 @@ export function ChatWindow({
     if (loadingContext || !recipientId || !/^user:[A-Za-z0-9_-]{1,160}$/.test(recipientId)) return;
     const preparationKey = `${teamId}|${recipientId}`;
     if (preparedInitialRecipientKeyRef.current === preparationKey) return;
+    const existingDirectConversationId = findExistingDirectConversationId(
+      conversations,
+      auth.user?.uid || '',
+      recipientId
+    );
+    if (existingDirectConversationId) {
+      if (effectiveConversationId !== existingDirectConversationId
+        && !switchChatConversation(existingDirectConversationId)) return;
+      preparedInitialRecipientKeyRef.current = preparationKey;
+      setStatus({ tone: 'neutral', message: `Direct conversation with ${initialRecipient?.name || 'your friend'} opened.` });
+      return;
+    }
     if (!isDefaultTeamConversation(effectiveConversationId)) {
       switchChatConversation(DEFAULT_TEAM_CONVERSATION_ID);
       return;
@@ -849,7 +886,7 @@ export function ChatWindow({
     setSelectedRecipientTarget('individuals');
     setSelectedRecipientIds([recipientId]);
     setStatus({ tone: 'neutral', message: `Direct message to ${initialRecipient?.name || 'your friend'} is ready.` });
-  }, [effectiveConversationId, initialRecipient, loadingContext, switchChatConversation, teamId]);
+  }, [auth.user?.uid, conversations, effectiveConversationId, initialRecipient, loadingContext, switchChatConversation, teamId]);
 
   useLayoutEffect(() => {
     if (activeComposerDraftKeyRef.current === activeComposerDraftKey) return;
