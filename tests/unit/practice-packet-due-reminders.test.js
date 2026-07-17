@@ -72,6 +72,7 @@ function buildHarness({
     });
 
     const queryCalls = [];
+    const indexedPageFetchDeliveryCounts = [];
     const sessionDocs = sessions.map((session) => {
         const ref = { path: session.path, id: session.path.split('/').pop() };
         return makeDocSnapshot(ref, session.data, true);
@@ -103,7 +104,11 @@ function buildHarness({
                 return this;
             },
             async get() {
-                if (indexedQueryError && constraints.some(({ field }) => field === 'homePacketReminderDueAt')) {
+                const isIndexedQuery = constraints.some(({ field }) => field === 'homePacketReminderDueAt');
+                if (isIndexedQuery) {
+                    indexedPageFetchDeliveryCounts.push(sendDirectTargetsNotification.mock.calls.length);
+                }
+                if (indexedQueryError && isIndexedQuery) {
                     throw indexedQueryError;
                 }
                 const matches = sessionDocs
@@ -249,7 +254,8 @@ function buildHarness({
         getTeamFeeRecipientTargetUserIds,
         sendDirectTargetsNotification,
         reminderDocStore,
-        queryCalls
+        queryCalls,
+        indexedPageFetchDeliveryCounts
     };
 }
 
@@ -407,7 +413,7 @@ describe('sendPracticePacketDueTomorrowReminders', () => {
         }));
     });
 
-    it('uses bounded cursor pages and excludes historical and future packets', async () => {
+    it('processes bounded cursor pages before fetching the next page and excludes out-of-window packets', async () => {
         const makeSession = (id, dueAt) => ({
             path: `teams/team-1/practiceSessions/${id}`,
             data: {
@@ -444,6 +450,7 @@ describe('sendPracticePacketDueTomorrowReminders', () => {
 
         expect(result.map(({ sessionId }) => sessionId)).toEqual(['due-1', 'due-2', 'due-3']);
         expect(harness.sendDirectTargetsNotification).toHaveBeenCalledTimes(3);
+        expect(harness.indexedPageFetchDeliveryCounts).toEqual([0, 2]);
         expect(harness.queryCalls.filter(([name]) => name === 'limit')).toEqual([
             ['limit', 2],
             ['limit', 2]
