@@ -46,6 +46,11 @@ describe('authentication email delivery routing', () => {
         expect(resendDeliverySource).toContain('idempotencyKey: delivery.idempotencyKey');
         expect(resendDeliverySource).toContain('resend.webhooks.verify({');
         expect(resendDeliverySource).toContain('accounts:sendOobCode?key=');
+        expect(resendDeliverySource).toContain('message: FieldValue.delete()');
+        expect(resendDeliverySource).toContain("error.code = 'delivery-mapping-pending'");
+        expect(resendDeliverySource).toContain('expiresAt: new Date(now().getTime() + DELIVERY_RETENTION_MS)');
+        const indexesSource = read('firestore.indexes.json');
+        expect(indexesSource).toMatch(/"collectionGroup": "authEmailDeliveries"[\s\S]*?"fieldPath": "expiresAt"[\s\S]*?"ttl": true/);
         expect(functionsSource).toContain('createAuthEmailCallableHandlers');
         expect(functionsSource).toContain('createAuthEmailDeliveryStore');
         expect(functionsSource).toContain(".runWith({ failurePolicy: true, secrets: ['RESEND_API_KEY'] })");
@@ -114,8 +119,11 @@ describe('authentication email delivery routing', () => {
             .filter(line => /^(run: )?npx firebase-tools@14\.25\.0 deploy/.test(line));
 
         expect(firebaseDeployCommands).toEqual([
-            'npx firebase-tools@14.25.0 deploy --only hosting,firestore:rules,firestore:indexes,storage,functions --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive 2>&1 | tee "$deploy_log"'
+            'npx firebase-tools@14.25.0 deploy --only storage --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive 2>&1 | tee "$storage_log"',
+            'npx firebase-tools@14.25.0 deploy --only hosting,firestore:rules,firestore:indexes,functions --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive 2>&1 | tee "$deploy_log"'
         ]);
+        expect(productionSource).toContain('[[ "$STORAGE_RULES_CHANGED" != "true" ]]');
+        expect(productionSource).toContain('exit "$storage_status"');
         expect(productionSource.match(/--force/g) ?? []).toHaveLength(0);
         expect(productionSource).toContain('max_attempts=3');
         expect(productionSource).toContain('for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do');

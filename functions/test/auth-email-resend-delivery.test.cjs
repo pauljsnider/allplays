@@ -53,16 +53,22 @@ function createFakeFirestore(options = {}) {
       applyWrite(this.path, value, true);
     }
   });
-  const queryFor = (collectionName, field, expected, limitValue = Infinity) => ({
+  const queryFor = (collectionName, field, operator, expected, limitValue = Infinity) => ({
     limit(value) {
-      return queryFor(collectionName, field, expected, value);
+      return queryFor(collectionName, field, operator, expected, value);
     },
     async get() {
       const prefix = `${collectionName}/`;
       const docs = [];
       for (const [path, data] of documents) {
         if (!path.startsWith(prefix) || path.slice(prefix.length).includes('/')) continue;
-        if (data[field] !== expected) continue;
+        const actual = data[field];
+        const matches = operator === '=='
+          ? actual === expected
+          : operator === '<='
+            ? new Date(actual).getTime() <= new Date(expected).getTime()
+            : false;
+        if (!matches) continue;
         const ref = docRef(collectionName, path.slice(prefix.length));
         docs.push(snapshotFor(ref));
         if (docs.length >= limitValue) break;
@@ -74,10 +80,7 @@ function createFakeFirestore(options = {}) {
     collection(name) {
       return {
         doc: (id = `auto-${++autoId}`) => docRef(name, id),
-        where: (field, operator, expected) => {
-          assert.equal(operator, '==');
-          return queryFor(name, field, expected);
-        }
+        where: (field, operator, expected) => queryFor(name, field, operator, expected)
       };
     },
     batch() {
@@ -215,7 +218,22 @@ test('Resend API delivery retries transient failures with one stable idempotency
   assert.equal(harness.db.get('authEmailDeliveries/auth_password_reset_request-7').attemptCount, 3);
   assert.equal(harness.db.get('authEmailDeliveries/auth_password_reset_request-7').message, undefined);
   assert.equal(harness.db.get('authEmailDeliveries/auth_password_reset_request-7').expiresAt.toISOString(), '2026-07-18T12:00:00.000Z');
+  assert.equal(harness.db.get('authEmailDeliveries/auth_password_reset_request-7').recipient, 'coach@allplays.ai');
   assert.equal(harness.db.get('resendEmailMessages/resend-message-7').deliveryId, 'auth_password_reset_request-7');
+});
+
+test('accepted non-reset deliveries immediately redact message bodies and recipients', async () => {
+  const harness = createHarness();
+  const job = buildJob('https://allplays.ai/verify-email.html?oobCode=secret');
+  job.metadata.type = 'auth_email_verification';
+
+  await harness.service.send({ deliveryId: 'verification-delivery', job });
+
+  const delivery = harness.db.get('authEmailDeliveries/verification-delivery');
+  assert.equal(delivery.message, undefined);
+  assert.equal(delivery.recipient, undefined);
+  assert.equal(delivery.expiresAt.toISOString(), '2026-07-18T12:00:00.000Z');
+  assert.equal(delivery.recipientHash.length, 64);
 });
 
 test('a function retry reuses the stored one-time link and deduplicates after acceptance', async () => {
@@ -275,7 +293,39 @@ test('verified delivered webhook uses the exact raw body and records final deliv
   assert.equal(harness.verifies[0].payload, '{"signed":"bytes"}');
   assert.equal(harness.verifies[0].webhookSecret, 'whsec_test');
   assert.equal(harness.db.get('authEmailDeliveries/webhook-delivery').state, 'delivered');
+  assert.equal(harness.db.get('authEmailDeliveries/webhook-delivery').recipient, undefined);
   assert.equal(harness.db.get('resendWebhookEvents/webhook-delivered').status, 'processed');
+});
+
+test('an unmatched webhook returns 503 so Resend retries after the provider mapping commits', async () => {
+  const event = {
+    type: 'email.bounced',
+    created_at: '2026-07-17T12:00:01.000Z',
+    data: { email_id: 'resend-message-1' }
+  };
+  const harness = createHarness({ verifiedEvent: event });
+  const request = {
+    method: 'POST',
+    rawBody: Buffer.from('{"event":"early"}'),
+    headers: {
+      'svix-id': 'early-webhook',
+      'svix-timestamp': 'timestamp',
+      'svix-signature': 'signature'
+    }
+  };
+
+  const earlyResponse = createResponse();
+  await harness.service.handleWebhook(request, earlyResponse);
+  assert.equal(earlyResponse.statusCode, 503);
+  assert.equal(harness.db.get('resendWebhookEvents/early-webhook').status, 'pending_mapping');
+
+  await harness.service.send({ deliveryId: 'eventually-mapped', job: buildJob() });
+  const retryResponse = createResponse();
+  await harness.service.handleWebhook(request, retryResponse);
+
+  assert.equal(retryResponse.statusCode, 200);
+  assert.equal(harness.db.get('authEmailDeliveries/eventually-mapped').fallbackState, 'sent');
+  assert.equal(harness.db.get('resendWebhookEvents/early-webhook').status, 'processed');
 });
 
 test('invalid webhook signature is rejected without changing delivery state', async () => {
@@ -290,24 +340,6 @@ test('invalid webhook signature is rejected without changing delivery state', as
   assert.equal(response.statusCode, 400);
   assert.equal(harness.db.get('authEmailDeliveries/unchanged').state, 'accepted');
   assert.equal(harness.db.has('resendWebhookEvents/invalid-event'), false);
-});
-
-test('webhook returns a retryable error while its provider-message mapping is not committed', async () => {
-  const event = {
-    type: 'email.bounced',
-    created_at: '2026-07-17T12:02:00.000Z',
-    data: { email_id: 'not-mapped-yet' }
-  };
-  const harness = createHarness({ verifiedEvent: event });
-  const response = createResponse();
-  await harness.service.handleWebhook({
-    method: 'POST',
-    rawBody: Buffer.from('{}'),
-    headers: { 'svix-id': 'early-webhook' }
-  }, response);
-
-  assert.equal(response.statusCode, 500);
-  assert.equal(harness.db.get('resendWebhookEvents/early-webhook').status, 'pending_mapping');
 });
 
 test('bounce opens an alert and sends the Firebase password-reset fallback only once', async () => {
@@ -374,7 +406,6 @@ test('transaction retry discards stale fallback and alert decisions', async () =
     created_at: '2026-07-17T12:01:00.000Z',
     data: { email_id: 'resend-message-1' }
   }, 'retried-old-bounce');
-
   assert.equal(result.applied, false);
   assert.equal(result.fallbackSent, false);
   assert.equal(harness.fetches.length, 0);

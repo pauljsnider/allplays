@@ -191,14 +191,20 @@ function createResendAuthEmailDelivery({
           idempotencyKey: delivery.idempotencyKey
         }));
         const batch = firestore.batch();
-        batch.set(deliveryRef, {
+        const acceptedUpdate = {
           providerMessageId,
           state: 'accepted',
           acceptedAt: FieldValue.serverTimestamp(),
           message: FieldValue.delete(),
+          messageRedactedAt: FieldValue.serverTimestamp(),
           lastError: FieldValue.delete(),
           updatedAt: FieldValue.serverTimestamp()
-        }, { merge: true });
+        };
+        if (delivery.type !== 'auth_password_reset') {
+          acceptedUpdate.recipient = FieldValue.delete();
+          acceptedUpdate.recipientRedactedAt = FieldValue.serverTimestamp();
+        }
+        batch.set(deliveryRef, acceptedUpdate, { merge: true });
         batch.set(firestore.collection('resendEmailMessages').doc(providerMessageId), {
           deliveryId: normalizedDeliveryId,
           createdAt: FieldValue.serverTimestamp()
@@ -291,8 +297,9 @@ function createResendAuthEmailDelivery({
         providerMessageId,
         webhookId
       });
-      const error = new Error('Resend delivery mapping is not available yet.');
-      error.code = 'delivery-mapping-not-found';
+      const error = new Error('Resend webhook arrived before its delivery mapping was available.');
+      error.code = 'delivery-mapping-pending';
+      error.statusCode = 503;
       throw error;
     }
 
@@ -304,7 +311,12 @@ function createResendAuthEmailDelivery({
     const decision = await firestore.runTransaction(async (transaction) => {
       const snapshot = await transaction.get(deliveryRef);
       if (!snapshot.exists) {
-        return { fallback: null, fallbackInProgress: false, deliveryForAlert: null, eventWasApplied: false };
+        return {
+          deliveryForAlert: null,
+          eventWasApplied: false,
+          fallback: null,
+          fallbackInProgress: false
+        };
       }
       const delivery = snapshot.data() || {};
       let fallback = null;
@@ -320,6 +332,14 @@ function createResendAuthEmailDelivery({
         update.state = eventState;
         update.providerEventType = eventType;
         update.providerEventAt = eventAt;
+      }
+
+      if (
+        eventWasApplied &&
+        ['email.delivered', 'email.complained'].includes(eventType)
+      ) {
+        update.recipient = FieldValue.delete();
+        update.recipientRedactedAt = FieldValue.serverTimestamp();
       }
 
       const fallbackLeaseExpired = delivery.fallbackState === 'claimed' &&
@@ -344,9 +364,20 @@ function createResendAuthEmailDelivery({
         fallbackInProgress = true;
       }
       transaction.set(deliveryRef, update, { merge: true });
-      return { fallback, fallbackInProgress, deliveryForAlert: delivery, eventWasApplied };
+      return {
+        deliveryForAlert: { recipientHash: delivery.recipientHash || null },
+        eventWasApplied,
+        fallback,
+        fallbackInProgress
+      };
     });
-    const { fallback, fallbackInProgress, deliveryForAlert, eventWasApplied } = decision;
+
+    const {
+      deliveryForAlert = null,
+      eventWasApplied = false,
+      fallback = null,
+      fallbackInProgress = false
+    } = decision || {};
 
     if (eventWasApplied && ALERT_EVENTS.has(eventType)) {
       const alertId = `${sanitizeTagValue(providerMessageId)}_${sanitizeTagValue(eventType)}`;
@@ -375,6 +406,8 @@ function createResendAuthEmailDelivery({
           fallbackProvider: 'firebase-auth',
           fallbackSentAt: FieldValue.serverTimestamp(),
           fallbackLastError: FieldValue.delete(),
+          recipient: FieldValue.delete(),
+          recipientRedactedAt: FieldValue.serverTimestamp(),
           updatedAt: FieldValue.serverTimestamp()
         }, { merge: true });
       } catch (error) {
@@ -448,7 +481,7 @@ function createResendAuthEmailDelivery({
         code: error?.code || error?.name || null,
         webhookId
       });
-      res.status(500).send('Webhook processing failed');
+      res.status(getErrorStatus(error) || 500).send('Webhook processing failed');
     }
   }
 
