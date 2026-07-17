@@ -152,7 +152,7 @@ describe('shared schedule sync helpers', () => {
     expect(payload.liveStatus).toBe('cancelled');
   });
 
-  it('does not mirror an active live stream without the source event stream', () => {
+  it('preserves an existing counterpart live status during ordinary schedule sync', () => {
     const payload = buildMirroredGamePayload({
       sourceTeamId: 'team-alpha',
       sourceTeam: { name: 'Alpha FC' },
@@ -166,7 +166,7 @@ describe('shared schedule sync helpers', () => {
       sharedScheduleId: 'shared_team-alpha_game-123'
     });
 
-    expect(payload.liveStatus).toBeNull();
+    expect(payload).not.toHaveProperty('liveStatus');
   });
 
 

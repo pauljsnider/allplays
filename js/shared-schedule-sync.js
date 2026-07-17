@@ -41,7 +41,7 @@ export function buildMirroredGamePayload({
     || sourceLiveStatus === 'cancelled'
     || sourceLiveStatus === 'canceled';
 
-  return {
+  const payload = {
     type: 'game',
     date: sourceGame.date || null,
     opponent: sourceTeam.name || sourceGame.opponent || 'Opponent',
@@ -53,7 +53,6 @@ export function buildMirroredGamePayload({
     homeScore: Number(sourceGame.awayScore) || 0,
     awayScore: Number(sourceGame.homeScore) || 0,
     status: sourceGame.status || 'scheduled',
-    liveStatus: isCancelled ? 'cancelled' : null,
     competitionType: sourceGame.competitionType || 'league',
     seasonLabel: sourceGame.seasonLabel || null,
     countsTowardSeasonRecord: sourceGame.countsTowardSeasonRecord !== false,
@@ -72,6 +71,12 @@ export function buildMirroredGamePayload({
     sharedScheduleOpponentTeamId: sourceTeamId || null,
     sharedScheduleOpponentGameId: sourceGameId || null
   };
+
+  if (isCancelled) {
+    payload.liveStatus = 'cancelled';
+  }
+
+  return payload;
 }
 
 export function buildSharedScheduleSourceUpdate({
