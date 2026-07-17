@@ -216,6 +216,16 @@ describe('React app public URL actions', () => {
         expect(browserMocks.open).not.toHaveBeenCalled();
     });
 
+    it('rejects non-webcal custom schemes without invoking a native plugin', async () => {
+        installNativeCapacitor(['Browser', 'AppLauncher']);
+        const { openPublicUrl } = await loadPublicActions();
+
+        await expect(openPublicUrl('intent://malicious.example.test/#Intent;scheme=vendor;end')).rejects.toThrow('Unsupported URL scheme.');
+
+        expect(appLauncherMocks.openUrl).not.toHaveBeenCalled();
+        expect(browserMocks.open).not.toHaveBeenCalled();
+    });
+
     it('rejects when the native OS launcher cannot open a webcal URL', async () => {
         installNativeCapacitor(['Browser', 'AppLauncher']);
         appLauncherMocks.openUrl.mockRejectedValueOnce(new Error('Unable to open URL.'));

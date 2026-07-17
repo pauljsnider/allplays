@@ -39,7 +39,7 @@ export async function openPublicUrl(url: string) {
     await Browser.open({ url });
     return;
   }
-  if (scheme && !isWebUrl && Capacitor.isNativePlatform()) {
+  if (scheme === 'webcal' && Capacitor.isNativePlatform()) {
     if (!isNativePluginAvailable('AppLauncher')) {
       throw new Error('No application is available to open this URL.');
     }
@@ -48,6 +48,9 @@ export async function openPublicUrl(url: string) {
       throw new Error('No application is available to open this URL.');
     }
     return;
+  }
+  if (scheme && !isWebUrl && Capacitor.isNativePlatform()) {
+    throw new Error('Unsupported URL scheme.');
   }
 
   const opened = window.open(url, '_blank', 'noopener,noreferrer');
