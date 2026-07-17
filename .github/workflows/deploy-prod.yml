@@ -153,15 +153,17 @@ jobs:
             exit 0
           fi
 
+          storage_plain_log="$RUNNER_TEMP/firebase-storage-deploy.plain.log"
+          sed -E 's/\x1B\[[0-9;]*[[:alpha:]]//g' "$storage_log" > "$storage_plain_log"
           storage_not_configured="Firebase Storage has not been set up on project 'game-flow-c6311'"
-          if grep -Fq "$storage_not_configured" "$storage_log" && [[ "$STORAGE_RULES_CHANGED" != "true" ]]; then
+          if grep -Fq "$storage_not_configured" "$storage_plain_log" && [[ "$STORAGE_RULES_CHANGED" != "true" ]]; then
             echo "::warning::Firebase Storage is not initialized; no Storage surface exists yet. Rules were unchanged, so the rest of production deployment can continue."
             echo "### Firebase Storage rules" >> "$GITHUB_STEP_SUMMARY"
             echo "Skipped because Storage is not initialized and storage.rules was unchanged." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
-          if grep -Fq "$storage_not_configured" "$storage_log"; then
+          if grep -Fq "$storage_not_configured" "$storage_plain_log"; then
             echo "::error::storage.rules changed, but Firebase Storage is not initialized. Refusing to deploy other production changes with stale Storage authorization rules."
           fi
           exit "$storage_status"

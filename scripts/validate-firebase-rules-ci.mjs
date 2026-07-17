@@ -80,6 +80,7 @@ export function validateProductionDeployCommand(deployProd) {
     assertIncludes(deployProd, 'fetch-depth: 0', 'Production Storage rules change history');
     assertIncludes(deployProd, 'git diff --quiet "${{ github.event.before }}" "${{ github.sha }}" -- storage.rules', 'Production Storage rules change detection');
     assertIncludes(deployProd, 'STORAGE_RULES_CHANGED: ${{ steps.storage_rules.outputs.changed }}', 'Production Storage rules change output');
+    assertIncludes(deployProd, "sed -E 's/\\x1B\\[[0-9;]*[[:alpha:]]//g' \"$storage_log\" > \"$storage_plain_log\"", 'Production Storage rules ANSI log normalization');
     assertIncludes(deployProd, '[[ "$STORAGE_RULES_CHANGED" != "true" ]]', 'Production Storage rules unchanged-only skip');
     assertIncludes(deployProd, 'exit "$storage_status"', 'Production Storage rules changed failure');
     assertMatches(deployCommand, /(?:^|\s)--project game-flow-c6311(?:\s|$)/, 'Production Firebase deploy project');
