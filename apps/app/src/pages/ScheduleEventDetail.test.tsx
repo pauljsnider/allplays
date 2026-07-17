@@ -4679,7 +4679,7 @@ describe('ScheduleEventDetail lineup builder', () => {
     });
   });
 
-  it('keeps the lineup autosave confirmation when the saved game plan refreshes the same event', async () => {
+  it('keeps the saved lineup interactive without reloading its locally hydrated preview', async () => {
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
       events: [buildEvent({
         isTeamStaff: true,
@@ -4754,21 +4754,12 @@ describe('ScheduleEventDetail lineup builder', () => {
     });
 
     await waitFor(() => {
-      expect(scheduleServiceMocks.saveScheduledGameLineupDraftForApp).toHaveBeenCalled();
-      expect(scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp).toHaveBeenCalledWith(
-        expect.objectContaining({
-          gamePlan: expect.objectContaining({
-            lineups: expect.objectContaining({
-              'Q1-pg': 'p1',
-              'Q1-sg': 'p2'
-            })
-          })
-        }),
-        auth.user,
-        'basketball-5v5'
-      );
+      expect(scheduleServiceMocks.saveScheduledGameLineupDraftForApp).toHaveBeenCalledTimes(1);
+      expect(scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp).toHaveBeenCalledTimes(1);
       expect(screen.getByText('Lineup draft autosaved.')).toBeTruthy();
       expect((screen.getByLabelText('Formation') as HTMLSelectElement).value).toBe('basketball-5v5');
+      expect(within(screen.getByTestId('lineup-slot-Q1-sg')).getByText('#2 Blake Jones')).toBeTruthy();
+      expect(screen.queryByText('Loading lineup builder…')).toBeNull();
     });
   });
 
