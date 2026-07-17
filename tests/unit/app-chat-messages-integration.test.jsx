@@ -9,6 +9,7 @@ const chatMocks = vi.hoisted(() => ({
     editTeamChatMessage: vi.fn(),
     ensureStaffChatConversation: vi.fn(),
     getChatInboxPreview: vi.fn((message) => message ? `${message.senderName || 'Unknown'}: ${message.text || 'Attachment'}` : 'No messages yet'),
+    loadChatConversationById: vi.fn(),
     loadChatConversations: vi.fn(),
     loadChatInbox: vi.fn(),
     loadChatRecipientOptions: vi.fn(),
@@ -475,6 +476,7 @@ beforeEach(() => {
     chatMocks.loadChatConversations.mockResolvedValue([
         { id: 'team', type: 'team', name: 'Bears Team Chat', participantIds: [], participantRoles: ['team'] }
     ]);
+    chatMocks.loadChatConversationById.mockResolvedValue(null);
     chatMocks.ensureStaffChatConversation.mockResolvedValue({
         id: 'staff-conversation',
         type: 'group',
@@ -657,6 +659,36 @@ describe('React app messages integration', () => {
             expect.any(Function),
             expect.any(Function)
         );
+    });
+
+    it('hydrates an older reverse direct thread before preparing a friend message', async () => {
+        const reverseConversationId = 'direct_coach-1__user%3Auser-1';
+        chatMocks.loadChatConversationById.mockResolvedValueOnce({
+            id: reverseConversationId,
+            type: 'direct',
+            name: 'Coach Jamie',
+            participantIds: ['coach-1', 'user:user-1'],
+            participantRoles: []
+        });
+
+        const { container } = await renderMessages('/messages/team-1?compose=user%3Acoach-1&recipientName=Coach+Jamie');
+        await waitForMockCallCount(chatMocks.loadChatConversationById, 1, 'reverse direct conversation lookup');
+        await flush();
+
+        expect(chatMocks.loadChatConversationById).toHaveBeenCalledWith(
+            'team-1',
+            auth.user,
+            { id: 'team-1', name: 'Bears', sport: 'Basketball' },
+            true,
+            reverseConversationId
+        );
+        expect(chatMocks.subscribeToTeamChatMessages).toHaveBeenLastCalledWith(
+            'team-1',
+            reverseConversationId,
+            expect.any(Function),
+            expect.any(Function)
+        );
+        expect(container.textContent).toContain('Direct conversation with Coach Jamie opened.');
     });
 
     it('loads the inbox for the inbox route and desktop two-pane thread route', async () => {

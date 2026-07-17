@@ -1014,6 +1014,42 @@ describe('React app chat recipient service', () => {
         ]);
     });
 
+    it('loads an exact reverse direct conversation beyond the recent page', async () => {
+        const reverseConversationId = 'direct_friend-2__user%3Acurrent-1';
+        dbMocks.getChatConversations.mockImplementation(async (_teamId, _user, options = {}) => [
+            { id: 'team', type: 'team', participantIds: [] },
+            ...(options.includeConversationId === reverseConversationId ? [{
+                id: reverseConversationId,
+                type: 'direct',
+                participantIds: ['friend-2', 'user:current-1']
+            }] : [])
+        ]);
+
+        const { loadChatConversationById } = await import('../../apps/app/src/lib/chatService.ts');
+        const conversation = await loadChatConversationById(
+            'team-1',
+            { uid: 'current-1', email: 'current@example.com', roles: [] },
+            { id: 'team-1', name: 'Bears' },
+            false,
+            reverseConversationId
+        );
+
+        expect(dbMocks.getChatConversations).toHaveBeenCalledWith(
+            'team-1',
+            expect.objectContaining({ uid: 'current-1' }),
+            {
+                team: { id: 'team-1', name: 'Bears' },
+                canModerate: false,
+                includeConversationId: reverseConversationId
+            }
+        );
+        expect(conversation).toEqual(expect.objectContaining({
+            id: reverseConversationId,
+            type: 'direct',
+            participantIds: ['friend-2', 'user:current-1']
+        }));
+    });
+
     it('routes selected-member messages into a non-default conversation before posting', async () => {
         const photo = new File(['photo'], 'arrival.jpg', { type: 'image/jpeg' });
         const video = new File(['clip'], 'warmups.mp4', { type: 'video/mp4' });

@@ -29,6 +29,7 @@ import {
   deleteTeamChatMessage,
   editTeamChatMessage,
   ensureStaffChatConversation,
+  loadChatConversationById,
   loadChatRecipientOptions,
   markTeamChatRead,
   muteTeamChat,
@@ -285,6 +286,14 @@ export function findExistingDirectConversationId(
   })?.id || '';
 }
 
+export function getReverseDirectConversationId(currentUserId: string, recipientId: string) {
+  const currentParticipantId = getUserParticipantId(currentUserId);
+  const recipientParticipantId = getUserParticipantId(recipientId);
+  if (!currentParticipantId || !recipientParticipantId || currentParticipantId === recipientParticipantId) return '';
+  const participantIds = [recipientParticipantId, `user:${currentParticipantId}`].sort();
+  return `direct_${participantIds.map((participantId) => encodeURIComponent(participantId)).join('__')}`;
+}
+
 export function TeamAvatar({ team }: { team: Pick<ChatTeam, 'name' | 'photoUrl' | 'unreadCount'> }) {
   return (
     <div className="relative flex h-11 w-11 flex-none items-center justify-center overflow-hidden rounded-xl border border-gray-200 bg-primary-50 text-primary-700 shadow-sm">
@@ -332,6 +341,10 @@ export function ChatWindow({
   const [selectedRecipientIds, setSelectedRecipientIds] = useState<string[]>([]);
   const [status, setStatus] = useState<ChatStatus | null>(null);
   const [composerNotice, setComposerNotice] = useState('');
+  const [initialRecipientLookup, setInitialRecipientLookup] = useState<{
+    key: string;
+    status: 'idle' | 'loading' | 'missing' | 'found' | 'error';
+  }>({ key: '', status: 'idle' });
   const [text, setText] = useState('');
   const [filePreviews, setFilePreviews] = useState<FilePreview[]>([]);
   const [pendingSendCount, setPendingSendCount] = useState(0);
@@ -404,6 +417,7 @@ export function ChatWindow({
   const sendQueueRef = useRef(Promise.resolve());
   const composerDraftsRef = useRef(new Map<string, ChatComposerDraft>());
   const preparedInitialRecipientKeyRef = useRef('');
+  const initialRecipientLookupKeyRef = useRef('');
 
   const resetChatSelectionState = useCallback(() => {
     setStatus(null);
@@ -859,7 +873,11 @@ export function ChatWindow({
 
   useEffect(() => {
     const recipientId = String(initialRecipient?.id || '').trim();
-    if (loadingContext || !recipientId || !/^user:[A-Za-z0-9_-]{1,160}$/.test(recipientId)) return;
+    if (loadingContext) return;
+    if (!recipientId || !/^user:[A-Za-z0-9_-]{1,160}$/.test(recipientId)) {
+      initialRecipientLookupKeyRef.current = '';
+      return;
+    }
     const preparationKey = `${teamId}|${recipientId}`;
     if (preparedInitialRecipientKeyRef.current === preparationKey) return;
     const existingDirectConversationId = findExistingDirectConversationId(
@@ -868,12 +886,42 @@ export function ChatWindow({
       recipientId
     );
     if (existingDirectConversationId) {
+      initialRecipientLookupKeyRef.current = '';
       if (effectiveConversationId !== existingDirectConversationId
         && !switchChatConversation(existingDirectConversationId)) return;
       preparedInitialRecipientKeyRef.current = preparationKey;
       setStatus({ tone: 'neutral', message: `Direct conversation with ${initialRecipient?.name || 'your friend'} opened.` });
       return;
     }
+    const reverseConversationId = getReverseDirectConversationId(auth.user?.uid || '', recipientId);
+    if (reverseConversationId && initialRecipientLookup.key !== preparationKey) {
+      initialRecipientLookupKeyRef.current = preparationKey;
+      setInitialRecipientLookup({ key: preparationKey, status: 'loading' });
+      if (!auth.user || !team) return;
+      void loadChatConversationById(teamId, auth.user, team, canModerate, reverseConversationId).then((conversation) => {
+        if (initialRecipientLookupKeyRef.current !== preparationKey) return;
+        if (!conversation) {
+          setInitialRecipientLookup({ key: preparationKey, status: 'missing' });
+          return;
+        }
+        setConversations((current) => current.some((entry) => entry.id === conversation.id)
+          ? current
+          : [...current, conversation]);
+        preparedInitialRecipientKeyRef.current = preparationKey;
+        switchChatConversation(conversation.id);
+        setStatus({ tone: 'neutral', message: `Direct conversation with ${initialRecipient?.name || 'your friend'} opened.` });
+        setInitialRecipientLookup({ key: preparationKey, status: 'found' });
+      }).catch((lookupError: any) => {
+        if (initialRecipientLookupKeyRef.current !== preparationKey) return;
+        setStatus({ tone: 'error', message: lookupError?.message || 'Unable to check for an existing direct conversation.' });
+        setInitialRecipientLookup({ key: preparationKey, status: 'error' });
+      });
+      return;
+    }
+    if (initialRecipientLookup.key === preparationKey
+      && (initialRecipientLookup.status === 'loading'
+        || initialRecipientLookup.status === 'found'
+        || initialRecipientLookup.status === 'error')) return;
     if (!isDefaultTeamConversation(effectiveConversationId)) {
       switchChatConversation(DEFAULT_TEAM_CONVERSATION_ID);
       return;
@@ -886,7 +934,7 @@ export function ChatWindow({
     setSelectedRecipientTarget('individuals');
     setSelectedRecipientIds([recipientId]);
     setStatus({ tone: 'neutral', message: `Direct message to ${initialRecipient?.name || 'your friend'} is ready.` });
-  }, [auth.user?.uid, conversations, effectiveConversationId, initialRecipient, loadingContext, switchChatConversation, teamId]);
+  }, [auth.user, canModerate, conversations, effectiveConversationId, initialRecipient, initialRecipientLookup, loadingContext, setConversations, switchChatConversation, team, teamId]);
 
   useLayoutEffect(() => {
     if (activeComposerDraftKeyRef.current === activeComposerDraftKey) return;

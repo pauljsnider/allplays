@@ -1039,6 +1039,26 @@ export async function loadChatConversations(
   }
 }
 
+export async function loadChatConversationById(
+  teamId: string,
+  user: AuthUser,
+  team: Record<string, any>,
+  canModerate: boolean,
+  conversationId: string
+): Promise<ChatConversation | null> {
+  const requestedConversationId = compactString(conversationId);
+  if (!requestedConversationId || isDefaultTeamConversation(requestedConversationId) || requestedConversationId.includes('/')) {
+    return null;
+  }
+  const conversations = await withTimeout(Promise.resolve(getChatConversations(teamId, user, {
+    team,
+    canModerate,
+    includeConversationId: requestedConversationId
+  })), 'Direct chat conversation lookup') as ChatConversation[];
+  return mapChatConversationRecords(conversations)
+    .find((conversation) => conversation.id === requestedConversationId) || null;
+}
+
 function canReuseStaffChatConversation(conversation: ChatConversation | null | undefined) {
   const participantRoles = Array.isArray(conversation?.participantRoles)
     ? conversation.participantRoles.map(compactString).filter(Boolean)
