@@ -1475,6 +1475,22 @@ async function moveTeamMediaStorageBackedItem(teamId, item = {}, update = {}) {
     }
 }
 
+async function clearMovedTeamMediaAlbumCover(teamId, item = {}) {
+    const sourceFolderId = String(item.folderId || '').trim();
+    if (!sourceFolderId) return;
+
+    const sourceFolderRef = doc(db, `teams/${teamId}/mediaFolders`, sourceFolderId);
+    const sourceFolderSnapshot = await getDoc(sourceFolderRef);
+    if (!sourceFolderSnapshot.exists() || sourceFolderSnapshot.data()?.coverPhotoId !== item.id) return;
+
+    await updateDoc(sourceFolderRef, {
+        coverPhotoId: deleteField(),
+        coverPhotoUrl: deleteField(),
+        coverPhotoTitle: deleteField(),
+        updatedAt: serverTimestamp()
+    });
+}
+
 export async function uploadTeamMediaPhoto(teamId, folderId, file, options = {}) {
     const cleanTeamId = String(teamId || '').trim();
     const cleanFolderId = String(folderId || '').trim();
@@ -1667,6 +1683,7 @@ export async function moveTeamMediaItems(teamId, itemIds = [], targetFolderId) {
 
         if (['photo', 'file'].includes(String(item.type || '').toLowerCase())) {
             await moveTeamMediaStorageBackedItem(teamId, item, update);
+            await clearMovedTeamMediaAlbumCover(teamId, item);
             continue;
         }
 

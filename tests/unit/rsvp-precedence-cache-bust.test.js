@@ -20,7 +20,7 @@ describe('RSVP precedence cache delivery', () => {
             'team-chat.html': 'db.js?v=100',
             'js/auth.js': 'db.js?v=95',
             'profile.html': 'db.js?v=95',
-            'js/team-media.js': 'db.js?v=96'
+            'js/team-media.js': 'db.js?v=97'
         };
 
         for (const [path, expectedVersion] of Object.entries(runtimeSources)) {
@@ -58,7 +58,7 @@ describe('RSVP precedence cache delivery', () => {
             'live-game.html': 'js/live-game.js?v=19',
             'live-tracker.html': 'js/live-tracker.js?v=2',
             'team-fees.html': 'js/team-fees-admin.js?v=14',
-            'team-media.html': 'js/team-media.js?v=14',
+            'team-media.html': 'js/team-media.js?v=15',
             'track-basketball.html': 'js/track-basketball.js?v=2',
             'tracking-items.html': 'js/tracking-items-admin.js?v=2',
             'team.html': 'js/team-staff-permissions.js?v=3',

@@ -124,6 +124,7 @@ vi.mock('../../js/vendor/firebase-storage.js', () => ({
 describe('team media db ordering', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        firebaseMocks.getDoc.mockResolvedValue({ exists: () => false });
         folderState.nextMediaOrder = 0;
         addDocState.nextId = 1;
         batchState.batches = [];
@@ -520,6 +521,58 @@ describe('team media db ordering', () => {
             }
         );
         expect(firebaseMocks.deleteObject).toHaveBeenCalledWith({ fullPath: 'team-media/team-1/folder-team/user-1/original.jpg' });
+        expect(firebaseMocks.updateDoc).not.toHaveBeenCalledWith(
+            expect.objectContaining({ path: expect.stringContaining('/mediaFolders/') }),
+            expect.anything()
+        );
+    });
+
+    it('clears the source album cover when moving its storage-backed photo', async () => {
+        teamMediaUtilsMocks.buildMoveUpdates.mockReturnValue([
+            { id: 'media-cover', folderId: 'folder-private', order: 0 }
+        ]);
+        firebaseMocks.getDocs
+            .mockResolvedValueOnce({ docs: [] })
+            .mockResolvedValueOnce({
+                docs: [{
+                    id: 'media-cover',
+                    data: () => ({
+                        folderId: 'folder-team',
+                        order: 0,
+                        type: 'photo',
+                        mimeType: 'image/jpeg',
+                        storagePath: 'team-media/team-1/folder-team/user-1/cover.jpg',
+                        uploadedBy: 'user-1',
+                        deleted: false
+                    })
+                }]
+            });
+        firebaseMocks.getDoc.mockResolvedValueOnce({
+            exists: () => true,
+            data: () => ({
+                coverPhotoId: 'media-cover',
+                coverPhotoUrl: 'https://cdn.example.test/cover.jpg',
+                coverPhotoTitle: 'Album cover'
+            })
+        });
+        firebaseMocks.getDownloadURL.mockResolvedValueOnce('https://cdn.example.test/cover.jpg');
+
+        const { moveTeamMediaItems } = await import('../../js/db.js');
+        await moveTeamMediaItems('team-1', ['media-cover'], 'folder-private');
+
+        expect(firebaseMocks.updateDoc).toHaveBeenCalledWith(
+            { path: 'teams/team-1/mediaFolders/folder-team' },
+            {
+                coverPhotoId: 'DELETE_FIELD',
+                coverPhotoUrl: 'DELETE_FIELD',
+                coverPhotoTitle: 'DELETE_FIELD',
+                updatedAt: 'server-ts'
+            }
+        );
+        expect(firebaseMocks.updateDoc).not.toHaveBeenCalledWith(
+            { path: 'teams/team-1/mediaFolders/folder-private' },
+            expect.anything()
+        );
     });
 
     it('preserves legacy media without order fields at the end of paginated reads', async () => {
