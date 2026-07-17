@@ -94,7 +94,8 @@ function resolveTeamEmailRecipients({ targetType = 'full_team', recipientIds = [
     return serializeRecipients(recipientsByEmail);
   }
 
-  if (targetType === 'individuals' && selectedIds.size > 0) {
+  if (targetType === 'individuals') {
+    if (selectedIds.size === 0) return [];
     activePlayers.forEach((player) => {
       const playerId = String(player.id || player.playerId || '');
       const playerSelector = normalizeRecipientSelector(`player:${playerId}`);
@@ -130,7 +131,10 @@ function resolveTeamEmailRecipients({ targetType = 'full_team', recipientIds = [
 
 function findUnknownTeamEmailRecipientIds({ recipientIds = [], players = [] } = {}) {
   const requestedIds = Array.from(new Set((Array.isArray(recipientIds) ? recipientIds : [])
-    .map(normalizeRecipientSelector)
+    .map((recipientId) => {
+      const rawRecipientId = String(recipientId || '').trim();
+      return normalizeRecipientSelector(rawRecipientId) || rawRecipientId;
+    })
     .filter(Boolean)));
   const eligibleIds = new Set();
 

@@ -78,6 +78,20 @@ test('findUnknownTeamEmailRecipientIds rejects external, stale, and cross-team s
   assert.deepEqual(unknown, ['email:external@example.com', 'player:stale']);
 });
 
+test('findUnknownTeamEmailRecipientIds rejects malformed individual selectors', () => {
+  const unknown = findUnknownTeamEmailRecipientIds({
+    recipientIds: ['email:not-an-email', 'player:', 'user:'],
+    players: [{ id: 'p1', parents: [{ email: 'parent@example.com', userId: 'u1' }] }]
+  });
+
+  assert.deepEqual(unknown, ['email:not-an-email', 'player:', 'user:']);
+  assert.deepEqual(resolveTeamEmailRecipients({
+    targetType: 'individuals',
+    recipientIds: ['email:not-an-email', 'player:', 'user:'],
+    players: [{ id: 'p1', parents: [{ email: 'parent@example.com', userId: 'u1' }] }]
+  }), []);
+});
+
 test('buildVerifiedTeamEmailAttachmentRecord ignores falsified caller metadata', () => {
   const attachment = buildVerifiedTeamEmailAttachmentRecord({
     name: 'plan.pdf',
