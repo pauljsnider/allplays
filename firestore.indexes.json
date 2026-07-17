@@ -132,6 +132,14 @@
       ]
     },
     {
+      "collectionGroup": "practiceSessions",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "homePacketGenerated", "order": "ASCENDING" },
+        { "fieldPath": "homePacketReminderDueAt", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "sharedGames",
       "queryScope": "COLLECTION_GROUP",
       "fields": [

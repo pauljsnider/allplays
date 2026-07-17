@@ -306,6 +306,9 @@ describe('React app practice packet service', () => {
             eventType: 'practice',
             sourcePage: 'app-schedule',
             homePacketGenerated: true,
+            homePacketReminderDueAt: expect.objectContaining({
+                toDate: expect.any(Function)
+            }),
             homePacketContent: expect.objectContaining({
                 packetTitle: 'Weekend touches',
                 dueDate: expect.stringContaining('2026-05-24'),
@@ -314,6 +317,8 @@ describe('React app practice packet service', () => {
             })
         }));
         const packetContent = dbMocks.upsertPracticeSessionForEvent.mock.calls[0][2].homePacketContent;
+        const reminderDueAt = dbMocks.upsertPracticeSessionForEvent.mock.calls[0][2].homePacketReminderDueAt;
+        expect(reminderDueAt.toDate().toISOString()).toContain('2026-05-24');
         expect(packetContent.blocks).toEqual([
             expect.objectContaining({ drillTitle: 'Ball Mastery', duration: 12, notes: 'Both feet' }),
             expect.objectContaining({ drillTitle: 'Home Drill 2', duration: 8 })
@@ -323,6 +328,29 @@ describe('React app practice packet service', () => {
             packetTitle: 'Weekend touches',
             totalMinutes: 20
         });
+    });
+
+    it('persists the session date as reminder due time on linked-session updates without an explicit due date', async () => {
+        const coach = user({ uid: 'coach-1', roles: ['coach'] });
+
+        await saveStaffPracticePacket(practiceEvent({
+            isTeamAdmin: true,
+            practiceSessionId: 'session-1'
+        }), coach, {
+            packetTitle: 'Practice follow-up',
+            dueDate: null,
+            blocks: [{ drillTitle: 'Ball Mastery', type: 'Technical', duration: 12 }]
+        });
+
+        expect(dbMocks.updatePracticeSession).toHaveBeenCalledWith('team-1', 'session-1', expect.objectContaining({
+            homePacketGenerated: true,
+            homePacketReminderDueAt: expect.objectContaining({
+                toDate: expect.any(Function)
+            })
+        }));
+        const reminderDueAt = dbMocks.updatePracticeSession.mock.calls[0][2].homePacketReminderDueAt;
+        expect(reminderDueAt.toDate()).toEqual(new Date('2026-05-22T19:00:00.000Z'));
+        expect(dbMocks.upsertPracticeSessionForEvent).not.toHaveBeenCalled();
     });
 
     it('carries packet data from practice sessions into parent schedule events', async () => {
