@@ -29,6 +29,11 @@ describe('scorekeeping access wiring', () => {
         const appHelpIndex = readFileSync(resolve(process.cwd(), 'apps/app/src/lib/helpKnowledgeIndex.ts'), 'utf8');
         expect(appHelpIndex).toContain('Delegated scorekeeper : Open the scheduled game in Game Day and select Open scorekeeper');
         expect(appHelpIndex).toContain('Scorekeeping access does not include the Schedule page.');
+
+        const workflowManifest = JSON.parse(readFileSync(resolve(process.cwd(), 'workflow-manifest.json'), 'utf8'));
+        const trackGameSearchText = workflowManifest.find((item) => item.file === 'workflow-track-game.html')?.searchText;
+        expect(trackGameSearchText).toContain('Open scorekeeper');
+        expect(trackGameSearchText).toContain('Scorekeeping access does not include the Schedule page.');
     });
 
     it('gates both live scoring trackers with scorekeeping access', () => {
