@@ -686,20 +686,6 @@
                     return;
                 }
 
-                if (amountCents <= 0) {
-                    const result = requiresRegistrationOption(activeForm)
-                        ? await submitRegistrationWithCapacity(submission)
-                        : await submitRegistrationWithoutCapacity(submission);
-
-                    formElement.classList.add('hidden');
-                    if (result.status === 'waitlisted') {
-                        confirmationMessage.querySelector('h1').textContent = 'Registration waitlisted';
-                        confirmationMessage.querySelector('p').textContent = 'This option is currently full, so your registration has been added to the waitlist.';
-                    }
-                    confirmationMessage.classList.remove('hidden');
-                    return;
-                }
-
                 const retryKey = buildCheckoutRetryKey(submission, amountCents, currency);
                 const checkoutAttemptToken = preparedCheckoutRegistration?.retryKey === retryKey
                     ? preparedCheckoutRegistration.checkoutAttemptToken
@@ -719,6 +705,13 @@
                     return;
                 }
 
+                const authoritativeAmountCents = Math.max(0, Number(result.feeSnapshot?.finalAmountDueCents ?? amountCents));
+                if (authoritativeAmountCents <= 0) {
+                    formElement.classList.add('hidden');
+                    confirmationMessage.classList.remove('hidden');
+                    return;
+                }
+
                 if (!result.registrationId) {
                     throw new Error('Registration could not be prepared for checkout.');
                 }
@@ -730,8 +723,8 @@
                         teamId,
                         formId,
                         registrationId: result.registrationId,
-                        amount: amountCents,
-                        currency,
+                        amount: authoritativeAmountCents,
+                        currency: String(result.feeSnapshot?.currency || currency).toLowerCase(),
                         checkoutAttemptToken,
                         metadata: {
                             teamId,

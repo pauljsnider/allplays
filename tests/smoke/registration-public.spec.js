@@ -303,8 +303,37 @@ test('free online registration submits without opening Stripe checkout', async (
         stripeCalls: window.__registrationStripeCalls
     }));
     expect(result.submitCalls).toHaveLength(1);
-    expect(result.submitCalls[0].payload.checkoutAttemptToken).toBe('');
+    expect(result.submitCalls[0].payload.checkoutAttemptToken).toMatch(/^[a-f0-9]{32}$/);
     expect(result.stripeCalls).toEqual([]);
+});
+
+test('zero client preview continues to Stripe when the server returns a balance', async ({ page, baseURL }) => {
+    await mockRegistrationModules(page, {
+        form: registrationForm({
+            feeAmountCents: 0,
+            paymentSettings: {
+                offlinePaymentEnabled: false,
+                onlineCheckoutEnabled: true
+            }
+        }),
+        submitResult: {
+            status: 'pending',
+            registrationId: 'reg-1',
+            feeSnapshot: { finalAmountDueCents: 12000, currency: 'USD' }
+        }
+    });
+    await page.goto(buildUrl(baseURL, '/registration.html?teamId=team-1&formId=form-1'), { waitUntil: 'domcontentloaded' });
+
+    await fillRequiredRegistrationFields(page);
+    await page.getByRole('button', { name: 'Pay registration with Stripe' }).click();
+    await expect(page).toHaveURL(/#stripe-checkout$/);
+
+    const result = await page.evaluate(() => ({
+        submitCalls: window.__registrationCalls.filter((call) => call.name === 'submitPublicRegistration'),
+        stripeCalls: window.__registrationStripeCalls
+    }));
+    expect(result.submitCalls[0].payload.checkoutAttemptToken).toMatch(/^[a-f0-9]{32}$/);
+    expect(result.stripeCalls[0]).toMatchObject({ amount: 12000, currency: 'usd' });
 });
 
 test('cancelled checkout retry waits for release before retrying without duplicate submission or re-entered form fields', async ({ page, baseURL }) => {
