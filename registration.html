@@ -681,7 +681,7 @@
                 const feeSnapshot = submission.feeSnapshot;
                 const amountCents = Math.max(0, Number(feeSnapshot?.finalAmountDueCents || 0));
                 const currency = String(feeSnapshot?.currency || activeForm.currency || 'USD').toLowerCase();
-                if (!feeSnapshot || amountCents <= 0) {
+                if (!feeSnapshot) {
                     showFormError('No payment amount specified for this registration.');
                     return;
                 }
@@ -705,6 +705,13 @@
                     return;
                 }
 
+                const authoritativeAmountCents = Math.max(0, Number(result.feeSnapshot?.finalAmountDueCents ?? amountCents));
+                if (authoritativeAmountCents <= 0) {
+                    formElement.classList.add('hidden');
+                    confirmationMessage.classList.remove('hidden');
+                    return;
+                }
+
                 if (!result.registrationId) {
                     throw new Error('Registration could not be prepared for checkout.');
                 }
@@ -716,8 +723,8 @@
                         teamId,
                         formId,
                         registrationId: result.registrationId,
-                        amount: amountCents,
-                        currency,
+                        amount: authoritativeAmountCents,
+                        currency: String(result.feeSnapshot?.currency || currency).toLowerCase(),
                         checkoutAttemptToken,
                         metadata: {
                             teamId,
