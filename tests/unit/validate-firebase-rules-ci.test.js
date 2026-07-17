@@ -78,7 +78,9 @@ service firebase.storage {
           sed -E 's/\\x1B\\[[0-9;]*[[:alpha:]]//g' "$storage_log" > "$storage_plain_log"
           if [[ "$STORAGE_RULES_CHANGED" != "true" ]]; then exit 0; fi
           exit "$storage_status"
-            npx firebase-tools@14.25.0 deploy --only hosting,firestore:rules,firestore:indexes,functions --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive
+            npx firebase-tools@14.25.0 deploy --only "$deploy_targets" --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive
+          retry_firebase_deploy "hosting,functions" "application"
+          retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore"
         `;
 
         expect(() => validateProductionDeployCommand(validDeployCommand)).not.toThrow();

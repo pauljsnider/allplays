@@ -57,21 +57,17 @@ export function validatePreviewDeployCommand(deployPreview) {
 
 export function validateProductionDeployCommand(deployProd) {
     const deployCommands = Array.from(deployProd.matchAll(/^\s*npx firebase-tools@\S+ deploy\b[^\n]*$/gm), match => match[0]);
-    const deployCommand = deployCommands.find(command => /--only(?:=|\s+)hosting,/.test(command)) || '';
+    const deployCommand = deployCommands.find(command => /--only(?:=|\s+)"\$deploy_targets"/.test(command)) || '';
     if (!deployCommand) {
         throw new Error('Production Firebase deploy command is missing.');
     }
 
-    const onlyList = (deployCommand.match(/(?:^|\s)--only(?:=|\s+)([^\s]+)/) || [])[1];
-    if (!onlyList) {
-        throw new Error('Production Firebase deploy --only list is missing.');
-    }
-
-    const deployTargets = new Set(onlyList.split(','));
-    for (const target of ['firestore:rules', 'firestore:indexes']) {
-        if (!deployTargets.has(target)) {
-            throw new Error(`Production Firebase deploy --only list must include ${target}.`);
-        }
+    assertIncludes(deployProd, 'retry_firebase_deploy "hosting,functions" "application"', 'Production application deploy targets');
+    assertIncludes(deployProd, 'retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore"', 'Production Firestore deploy targets');
+    const applicationDeploy = deployProd.indexOf('retry_firebase_deploy "hosting,functions" "application"');
+    const firestoreDeploy = deployProd.indexOf('retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore"');
+    if (applicationDeploy > firestoreDeploy) {
+        throw new Error('Production application deploy must run before the Firestore deploy.');
     }
 
     const storageDeployCommand = deployCommands.find(command => /--only(?:=|\s+)storage(?:\s|$)/.test(command)) || '';

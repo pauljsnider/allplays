@@ -120,7 +120,7 @@ describe('authentication email delivery routing', () => {
 
         expect(firebaseDeployCommands).toEqual([
             'npx firebase-tools@14.25.0 deploy --only storage --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive 2>&1 | tee "$storage_log"',
-            'npx firebase-tools@14.25.0 deploy --only hosting,firestore:rules,firestore:indexes,functions --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive 2>&1 | tee "$deploy_log"'
+            'npx firebase-tools@14.25.0 deploy --only "$deploy_targets" --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive 2>&1 | tee "$deploy_log"'
         ]);
         expect(productionSource).toContain('[[ "$STORAGE_RULES_CHANGED" != "true" ]]');
         expect(productionSource).toContain('exit "$storage_status"');
@@ -129,6 +129,11 @@ describe('authentication email delivery routing', () => {
         expect(productionSource).toContain('for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do');
         expect(productionSource).toContain('if (( attempt == max_attempts )); then');
         expect(productionSource).toContain('retry_delay_seconds=$((15 * (2 ** (attempt - 1))))');
+        const applicationDeploy = 'retry_firebase_deploy "hosting,functions" "application"';
+        const firestoreDeploy = 'retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore"';
+        expect(productionSource).toContain(applicationDeploy);
+        expect(productionSource).toContain(firestoreDeploy);
+        expect(productionSource.indexOf(applicationDeploy)).toBeLessThan(productionSource.indexOf(firestoreDeploy));
     });
 
     it('retries only transient production deploy failures and fails fast otherwise', () => {
@@ -151,6 +156,6 @@ describe('authentication email delivery routing', () => {
         expect(deployStep.indexOf(transientGuard)).toBeLessThan(deployStep.indexOf(attemptLimitGuard));
         expect(deployStep.indexOf(attemptLimitGuard)).toBeLessThan(deployStep.indexOf(retryDelay));
         expect(nonTransientBranch).toContain('failed with a non-transient error; not retrying.');
-        expect(nonTransientBranch).toContain('exit "$deploy_status"');
+        expect(nonTransientBranch).toContain('return "$deploy_status"');
     });
 });
