@@ -2507,11 +2507,11 @@ service cloud.firestore {
       }
 
       match /privateAiMessages/{messageId} {
-        allow read, create, update, delete: if isOwner(userId) || isGlobalAdmin();
+        allow read, create, update, delete: if isOwner(userId);
       }
 
       match /privateAiConversations/{conversationId} {
-        allow read, create, update, delete: if isOwner(userId) || isGlobalAdmin();
+        allow read, create, update, delete: if isOwner(userId);
       }
 
       match /entitlements/{entitlementId} {

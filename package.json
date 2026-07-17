@@ -10,7 +10,7 @@
     "test": "vitest run tests/unit",
     "test:unit": "vitest run tests/unit",
     "test:unit:ci": "vitest run tests/unit --reporter=dot && npm run test:storage-rules:ci",
-    "test:storage-rules:ci": "firebase emulators:exec --only firestore,storage --project demo-allplays \"vitest run tests/unit/storage-rules-team-boundary.test.js tests/unit/player-rules-privacy.test.js --reporter=dot\"",
+    "test:storage-rules:ci": "firebase emulators:exec --only firestore,storage --project demo-allplays \"vitest run tests/unit/storage-rules-team-boundary.test.js tests/unit/player-rules-privacy.test.js tests/unit/private-ai-rules.test.js --reporter=dot\"",
     "test:coverage-map": "node scripts/report-test-coverage-map.mjs --check",
     "test:functions:notifications": "npm run test:notifications --prefix functions",
     "test:functions:auth-email": "node --test functions/test/auth-email-*.test.cjs",
