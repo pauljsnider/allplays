@@ -467,11 +467,11 @@ test('@visual messages inbox and team chat exercise real migrated chat UX', asyn
     await mockMessagesModules(page);
     await page.goto(url, { waitUntil: 'domcontentloaded' });
 
-    await waitForMessagesRoute(page, page.getByRole('heading', { name: 'Team chats' }));
+    await waitForMessagesRoute(page, page.getByRole('heading', { name: 'Conversations' }));
     await expect(page.getByRole('link', { name: /Bears/ }).first()).toBeVisible();
     await expect(page.getByText('Coach Jamie: Practice packet is posted.')).toBeVisible();
     await expectVisualSnapshot(page, 'messages-inbox-mobile.png');
-    const searchInput = page.getByPlaceholder('Search team chats');
+    const searchInput = page.getByPlaceholder('Search conversations');
     await expect(searchInput).toBeVisible();
     await expect.poll(() => searchInput.evaluate((element) => window.getComputedStyle(element).fontSize)).toBe('16px');
     await searchInput.click();
@@ -669,14 +669,14 @@ test('messages inbox stays interactive while previews hydrate on inbox and deskt
     await mockMessagesModules(page, { previewDelayMs: 600 });
     await page.goto(appUrl(baseURL, '/messages'), { waitUntil: 'domcontentloaded' });
 
-    await waitForMessagesRoute(page, page.getByRole('heading', { name: 'Team chats' }));
+    await waitForMessagesRoute(page, page.getByRole('heading', { name: 'Conversations' }));
     const bearsInboxRow = page.getByRole('link', { name: /Bears/ }).first();
     await expect(bearsInboxRow).toBeVisible();
     await expect(bearsInboxRow).toContainText('No messages yet');
     await expect(page.getByRole('button', { name: 'Refresh messages' })).toBeVisible();
-    await page.getByPlaceholder('Search team chats').fill('Falcons');
+    await page.getByPlaceholder('Search conversations').fill('Falcons');
     await expect(page.getByRole('link', { name: /Falcons/ }).first()).toBeVisible();
-    await page.getByPlaceholder('Search team chats').fill('');
+    await page.getByPlaceholder('Search conversations').fill('');
     await expect(bearsInboxRow).toContainText('Coach Jamie: Practice packet is posted.', { timeout: 5000 });
     await expect(page.getByRole('link', { name: /Falcons/ }).first()).toContainText('Coach Lee: Lineup card is ready.');
 
