@@ -14,6 +14,7 @@ import {
 } from '../lib/scheduleService';
 import { getCachedAppData, getParentScheduleSummaryCacheKey, loadCachedAppData } from '../lib/appDataCache';
 import { toAppServiceError, type AppServiceError } from '../lib/appErrors';
+import { createLogger } from '../lib/logger';
 import { startAppInitialLoadTimer } from '../lib/telemetry';
 import { recordFirstMeaningfulRender, startScreenMountTimer } from '../lib/uxTiming';
 import { completeParentCoreWorkflowTimer } from '../lib/parentWorkflowTiming';
@@ -61,6 +62,8 @@ import {
   getNeededBulkRsvpEventKeys,
   groupBulkRsvpSubmissions
 } from '../lib/bulkRsvp';
+
+const logger = createLogger('schedule');
 
 const filterOptions: Array<{ value: ParentScheduleFilter; label: string }> = [
   { value: 'upcoming-all', label: 'All Upcoming' },

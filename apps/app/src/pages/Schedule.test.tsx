@@ -366,7 +366,7 @@ describe('Schedule', () => {
       children: [{ playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }],
       events: [buildScheduleEvent(1), buildScheduleEvent(2)]
     };
-    let finishHydration: ((value: typeof schedule) => void) | null = null;
+    let finishHydration!: (value: typeof schedule) => void;
     scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(schedule);
     scheduleServiceMocks.hydrateParentScheduleRsvps.mockImplementationOnce(() => new Promise((resolve) => {
       finishHydration = resolve;
@@ -378,7 +378,7 @@ describe('Schedule', () => {
     expect(checkingButton).toBeDisabled();
     expect(screen.getByText('Checking your current responses before selecting events.')).toBeTruthy();
 
-    finishHydration?.(schedule);
+    finishHydration(schedule);
     await waitFor(() => expect(screen.getByRole('button', { name: 'Review RSVPs' })).toBeEnabled());
   });
 
