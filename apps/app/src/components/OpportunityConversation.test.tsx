@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 import type { OpportunityInquiry } from '../lib/opportunityLogic';
@@ -52,6 +52,49 @@ function inquiry(messages: OpportunityInquiry['messages']): OpportunityInquiry {
 }
 
 describe('OpportunityConversation', () => {
+  it('ignores an older private thread response after switching conversations', async () => {
+    let resolveFirst!: (value: OpportunityInquiry) => void;
+    const firstPromise = new Promise<OpportunityInquiry>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const first = {
+      ...inquiry([]),
+      id: 'inquiry-1',
+      listingTitle: 'First opportunity'
+    };
+    const second = {
+      ...inquiry([]),
+      id: 'inquiry-2',
+      listingId: 'listing-2',
+      listingTitle: 'Second opportunity'
+    };
+    opportunityMocks.getOpportunityInquiry
+      .mockReset()
+      .mockImplementation((inquiryId: string) => inquiryId === 'inquiry-1' ? firstPromise : Promise.resolve(second));
+
+    const { rerender } = render(
+      <MemoryRouter>
+        <OpportunityConversation auth={auth} inquiryId="inquiry-1" />
+      </MemoryRouter>
+    );
+    await waitFor(() => expect(opportunityMocks.getOpportunityInquiry).toHaveBeenCalledWith('inquiry-1'));
+
+    rerender(
+      <MemoryRouter>
+        <OpportunityConversation auth={auth} inquiryId="inquiry-2" />
+      </MemoryRouter>
+    );
+    expect(await screen.findByRole('heading', { name: 'Second opportunity' })).toBeInTheDocument();
+
+    await act(async () => {
+      resolveFirst(first);
+      await firstPromise;
+    });
+
+    expect(screen.getByRole('heading', { name: 'Second opportunity' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'First opportunity' })).not.toBeInTheDocument();
+  });
+
   it('loads a private multi-participant thread and sends a reply', async () => {
     const first = inquiry([{
       id: 'message-1',

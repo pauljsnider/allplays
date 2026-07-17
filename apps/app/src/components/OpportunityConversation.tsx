@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2, RefreshCw, Send, Users } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { getOpportunityInquiry, replyToOpportunityInquiry } from '../lib/opportunityService';
@@ -17,19 +17,27 @@ export function OpportunityConversation({ auth, inquiryId, embedded = false, onR
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
+  const loadRequestRef = useRef(0);
 
   const load = useCallback(async () => {
-    if (!inquiryId) return;
+    const requestId = ++loadRequestRef.current;
+    if (!inquiryId) {
+      setInquiry(null);
+      setLoading(false);
+      return null;
+    }
     setError('');
     try {
       const nextInquiry = await getOpportunityInquiry(inquiryId);
+      if (requestId !== loadRequestRef.current) return null;
       setInquiry(nextInquiry);
       return nextInquiry;
     } catch (loadError: any) {
+      if (requestId !== loadRequestRef.current) return null;
       setError(loadError?.message || 'Unable to load this opportunity conversation.');
       return null;
     } finally {
-      setLoading(false);
+      if (requestId === loadRequestRef.current) setLoading(false);
     }
   }, [inquiryId]);
 
@@ -37,6 +45,9 @@ export function OpportunityConversation({ auth, inquiryId, embedded = false, onR
     setInquiry(null);
     setLoading(true);
     void load();
+    return () => {
+      loadRequestRef.current += 1;
+    };
   }, [load]);
 
   const reply = async (event: FormEvent) => {
