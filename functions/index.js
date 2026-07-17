@@ -8932,18 +8932,6 @@ exports.queueDueRegistrationFailedPaymentReminders = functions.pubsub
   .schedule('every 6 hours')
   .onRun(() => queueDueRegistrationFailedPaymentReminders());
 
-function getPracticePacketReminderDueDate(packet = {}, session = {}) {
-  return coercePracticePacketDate(
-    packet.dueDate
-    || packet.dueAt
-    || packet.deadline
-    || packet.deadlineAt
-    || packet.completeBy
-    || packet.completeByAt
-    || session.date
-  );
-}
-
 function getTomorrowDateRange(now = new Date()) {
   const start = new Date(Date.UTC(
     now.getUTCFullYear(),
@@ -8959,12 +8947,27 @@ function getTomorrowDateRange(now = new Date()) {
   return { start, end };
 }
 
+function getPracticePacketReminderDueDate(packet = {}, session = {}) {
+  return coercePracticePacketDate(
+    packet.dueAt
+    || packet.dueDate
+    || packet.deadline
+    || packet.deadlineAt
+    || packet.completeBy
+    || packet.completeByAt
+    || session.date
+  );
+}
+
 function isPracticePacketDueTomorrow(packet = {}, session = {}, now = new Date()) {
   const dueDate = getPracticePacketReminderDueDate(packet, session);
   if (!dueDate) return false;
   const { start, end } = getTomorrowDateRange(now);
   return dueDate >= start && dueDate < end;
 }
+
+const PRACTICE_PACKET_REMINDER_PAGE_SIZE = 100;
+const PRACTICE_PACKET_REMINDER_MIGRATION_STATE_PATH = 'systemMigrations/practicePacketReminderDueAt';
 
 function getPracticePacketReminderDocRef(teamId, sessionId, playerId) {
   return firestore.doc(`teams/${teamId}/practiceSessions/${sessionId}/packetReminderSends/${playerId}`);
@@ -9062,94 +9065,153 @@ async function sendPracticePacketDueTomorrowReminders(now = new Date()) {
     return [];
   }
 
-  const sessionSnap = await firestore.collectionGroup('practiceSessions')
-    .where('homePacketGenerated', '==', true)
-    .get();
-
+  const { start, end } = getTomorrowDateRange(now);
   const practiceTargetsByTeam = new Map();
   const results = [];
+  let indexedQueryFailed = false;
 
-  for (const docSnap of sessionSnap.docs) {
-    const session = docSnap.data() || {};
-    const packet = session.homePacketContent || null;
-    if (!hasPracticePacketContent(packet)) continue;
-    if (!isPracticePacketDueTomorrow(packet, session, now)) continue;
+  async function processCandidateSessionDocs(candidateSessionDocs) {
+    for (const docSnap of candidateSessionDocs) {
+      const session = docSnap.data() || {};
+      const packet = session.homePacketContent || null;
+      if (!hasPracticePacketContent(packet)) continue;
 
-    const pathParts = docSnap.ref.path.split('/');
-    const teamId = pathParts[1];
-    const sessionId = docSnap.id;
-    if (!teamId || !sessionId) continue;
+      const pathParts = docSnap.ref.path.split('/');
+      const teamId = pathParts[1];
+      const sessionId = docSnap.id;
+      if (!teamId || !sessionId) continue;
 
-    const [playersSnap, completionsSnap] = await Promise.all([
-      firestore.collection(`teams/${teamId}/players`).get(),
-      firestore.collection(`teams/${teamId}/practiceSessions/${sessionId}/packetCompletions`).get()
-    ]);
-    const completedPlayerIds = new Set(
-      completionsSnap.docs
-        .map((completionSnap) => completionSnap.data() || {})
-        .filter((completion) => String(completion.status || 'completed').trim().toLowerCase() === 'completed')
-        .map((completion) => String(completion.childId || '').trim())
-        .filter(Boolean)
-    );
+      const [playersSnap, completionsSnap] = await Promise.all([
+        firestore.collection(`teams/${teamId}/players`).get(),
+        firestore.collection(`teams/${teamId}/practiceSessions/${sessionId}/packetCompletions`).get()
+      ]);
+      const completedPlayerIds = new Set(
+        completionsSnap.docs
+          .map((completionSnap) => completionSnap.data() || {})
+          .filter((completion) => String(completion.status || 'completed').trim().toLowerCase() === 'completed')
+          .map((completion) => String(completion.childId || '').trim())
+          .filter(Boolean)
+      );
 
-    let practiceTargets = practiceTargetsByTeam.get(teamId);
-    if (!practiceTargets) {
-      practiceTargets = await getTargetsForCategory(teamId, 'practice', null);
-      practiceTargetsByTeam.set(teamId, practiceTargets);
-    }
-    if (!practiceTargets.length) continue;
+      let practiceTargets = practiceTargetsByTeam.get(teamId);
+      if (!practiceTargets) {
+        practiceTargets = await getTargetsForCategory(teamId, 'practice', null);
+        practiceTargetsByTeam.set(teamId, practiceTargets);
+      }
+      if (!practiceTargets.length) continue;
 
-    const scheduleEventId = String(session.eventId || '').trim() || sessionId;
-    const destination = buildPracticePacketNotificationDestination({ teamId, eventId: scheduleEventId, sessionId });
-    const packetTitle = getPracticePacketNotificationTitle(packet, session);
+      const scheduleEventId = String(session.eventId || '').trim() || sessionId;
+      const destination = buildPracticePacketNotificationDestination({ teamId, eventId: scheduleEventId, sessionId });
+      const packetTitle = getPracticePacketNotificationTitle(packet, session);
 
-    for (const playerSnap of playersSnap.docs) {
-      const playerId = String(playerSnap.id || '').trim();
-      const player = playerSnap.data() || {};
-      if (!playerId || player.active === false) continue;
-      if (completedPlayerIds.has(playerId)) continue;
+      for (const playerSnap of playersSnap.docs) {
+        const playerId = String(playerSnap.id || '').trim();
+        const player = playerSnap.data() || {};
+        if (!playerId || player.active === false) continue;
+        if (completedPlayerIds.has(playerId)) continue;
 
-      const candidateUserIds = await getPracticePacketReminderTargetUserIds(teamId, playerId, player);
-      if (!candidateUserIds.length) continue;
+        const candidateUserIds = await getPracticePacketReminderTargetUserIds(teamId, playerId, player);
+        if (!candidateUserIds.length) continue;
 
-      const candidateUserIdSet = new Set(candidateUserIds);
-      const parentTargets = practiceTargets.filter((target) => candidateUserIdSet.has(target.uid));
-      if (!parentTargets.length) continue;
+        const candidateUserIdSet = new Set(candidateUserIds);
+        const parentTargets = practiceTargets.filter((target) => candidateUserIdSet.has(target.uid));
+        if (!parentTargets.length) continue;
 
-      const claimId = await claimPracticePacketReminder(teamId, sessionId, playerId, now);
-      if (!claimId) continue;
+        const claimId = await claimPracticePacketReminder(teamId, sessionId, playerId, now);
+        if (!claimId) continue;
 
-      try {
-        await sendDirectTargetsNotification({
-          targets: parentTargets,
-          category: 'practice',
-          title: `Reminder: ${packetTitle} is due tomorrow`,
-          body: `${String(player.name || 'Your player').trim() || 'Your player'} has not completed the ${getPracticePacketNotificationLabel(session)} yet.`,
-          teamId,
-          eventId: sessionId,
-          linkOverride: destination.link,
-          appRouteOverride: destination.appRoute
-        });
+        try {
+          await sendDirectTargetsNotification({
+            targets: parentTargets,
+            category: 'practice',
+            title: `Reminder: ${packetTitle} is due tomorrow`,
+            body: `${String(player.name || 'Your player').trim() || 'Your player'} has not completed the ${getPracticePacketNotificationLabel(session)} yet.`,
+            teamId,
+            eventId: sessionId,
+            linkOverride: destination.link,
+            appRouteOverride: destination.appRoute
+          });
 
-        const markedSent = await markPracticePacketReminderSent(teamId, sessionId, playerId, claimId);
-        if (!markedSent) continue;
+          const markedSent = await markPracticePacketReminderSent(teamId, sessionId, playerId, claimId);
+          if (!markedSent) continue;
 
-        results.push({
-          teamId,
-          sessionId,
-          playerId,
-          targetCount: parentTargets.length
-        });
-      } catch (error) {
-        await clearPracticePacketReminderClaim(teamId, sessionId, playerId, claimId, error);
-        functions.logger.error('Failed to send practice packet due tomorrow reminder.', {
-          teamId,
-          sessionId,
-          playerId,
-          error: error?.message || error
-        });
+          results.push({
+            teamId,
+            sessionId,
+            playerId,
+            targetCount: parentTargets.length
+          });
+        } catch (error) {
+          await clearPracticePacketReminderClaim(teamId, sessionId, playerId, claimId, error);
+          functions.logger.error('Failed to send practice packet due tomorrow reminder.', {
+            teamId,
+            sessionId,
+            playerId,
+            error: error?.message || error
+          });
+        }
       }
     }
+  }
+
+  let lastSessionDoc = null;
+  do {
+    let sessionSnap;
+    try {
+      let sessionQuery = firestore.collectionGroup('practiceSessions')
+        .where('homePacketGenerated', '==', true)
+        .where('homePacketReminderDueAt', '>=', admin.firestore.Timestamp.fromDate(start))
+        .where('homePacketReminderDueAt', '<', admin.firestore.Timestamp.fromDate(end))
+        .orderBy('homePacketReminderDueAt')
+        .limit(PRACTICE_PACKET_REMINDER_PAGE_SIZE);
+      if (lastSessionDoc) {
+        sessionQuery = sessionQuery.startAfter(lastSessionDoc);
+      }
+      sessionSnap = await sessionQuery.get();
+    } catch (error) {
+      indexedQueryFailed = true;
+      functions.logger.error('Practice packet reminder indexed query unavailable; using migration compatibility scan.', {
+        error: error?.message || error
+      });
+      break;
+    }
+
+    await processCandidateSessionDocs(sessionSnap.docs);
+    lastSessionDoc = sessionSnap.docs.length === PRACTICE_PACKET_REMINDER_PAGE_SIZE
+      ? sessionSnap.docs[sessionSnap.docs.length - 1]
+      : null;
+  } while (lastSessionDoc);
+
+  const migrationStateSnap = await firestore.doc(PRACTICE_PACKET_REMINDER_MIGRATION_STATE_PATH).get();
+  const migrationComplete = migrationStateSnap.exists && migrationStateSnap.data()?.completed === true;
+  if (!migrationComplete || indexedQueryFailed) {
+    // Compatibility path for packets created before homePacketReminderDueAt was materialized.
+    // Keep every read bounded until the restart-safe migration records completion.
+    let lastLegacySessionDoc = null;
+    do {
+      let legacySessionQuery = firestore.collectionGroup('practiceSessions')
+        .where('homePacketGenerated', '==', true)
+        .orderBy(admin.firestore.FieldPath.documentId())
+        .limit(PRACTICE_PACKET_REMINDER_PAGE_SIZE);
+      if (lastLegacySessionDoc) {
+        legacySessionQuery = legacySessionQuery.startAfter(lastLegacySessionDoc);
+      }
+      const legacySessionSnap = await legacySessionQuery.get();
+
+      const eligibleLegacySessionDocs = [];
+      for (const docSnap of legacySessionSnap.docs) {
+        const session = docSnap.data() || {};
+        if (!indexedQueryFailed && session.homePacketReminderDueAt) continue;
+        const packet = session.homePacketContent || null;
+        if (!hasPracticePacketContent(packet) || !isPracticePacketDueTomorrow(packet, session, now)) continue;
+        eligibleLegacySessionDocs.push(docSnap);
+      }
+      await processCandidateSessionDocs(eligibleLegacySessionDocs);
+
+      lastLegacySessionDoc = legacySessionSnap.docs.length === PRACTICE_PACKET_REMINDER_PAGE_SIZE
+        ? legacySessionSnap.docs[legacySessionSnap.docs.length - 1]
+        : null;
+    } while (lastLegacySessionDoc);
   }
 
   return results;

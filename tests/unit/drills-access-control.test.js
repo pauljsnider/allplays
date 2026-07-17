@@ -16,6 +16,12 @@ describe('drills planning access control', () => {
         expect(drillsHtml).toContain("if (!requireFullPlanningAccess('Home packets')) return;");
     });
 
+    it('persists the session-date reminder timestamp when saving legacy home packets', () => {
+        expect(drillsHtml).toContain('data.homePacketReminderDueAt = data.date;');
+        expect(drillsHtml).toContain("const homePacketReminderDueAt = new Date(document.getElementById('session-date').value);");
+        expect(drillsHtml).toContain('homePacketReminderDueAt,\n                homePacketContent: {');
+    });
+
     it('hides admin-only controls for read-only users', () => {
         expect(drillsHtml).toContain("document.getElementById('btn-new-drill').classList.add('hidden');");
         expect(drillsHtml).toContain("document.getElementById('session-meta-bar').classList.add('hidden');");

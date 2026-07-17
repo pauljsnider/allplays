@@ -3053,6 +3053,7 @@ ${text}
             };
             if (state.homePacketBlocks.length > 0) {
                 data.homePacketGenerated = true;
+                data.homePacketReminderDueAt = data.date;
                 data.homePacketContent = {
                     blocks: normalizeHomePacketBlocks(state.homePacketBlocks),
                     totalMinutes: state.homePacketBlocks.reduce((sum, b) => sum + (parseInt(b.duration, 10) || 0), 0),
@@ -4406,8 +4407,10 @@ ${userPrompt}
                 return;
             }
             const normalizedBlocks = normalizeHomePacketBlocks(state.homePacketBlocks);
+            const homePacketReminderDueAt = new Date(document.getElementById('session-date').value);
             const payload = {
                 homePacketGenerated: true,
+                homePacketReminderDueAt,
                 homePacketContent: {
                     blocks: normalizedBlocks,
                     totalMinutes: normalizedBlocks.reduce((sum, b) => sum + (parseInt(b.duration, 10) || 0), 0),
