@@ -58,7 +58,7 @@ export function resolveNativeDeepLinkRoute(url: unknown) {
   if (
     !rawUrl
     || rawUrl.length > maximumDeepLinkLength
-    || /[\u0000-\u001f\u007f\\]/.test(rawUrl)
+    || hasUnsafeLinkCharacters(rawUrl)
   ) return null;
 
   try {
@@ -112,7 +112,7 @@ function normalizeRoute(route: string) {
   if (
     routeWithSlash.length > maximumDeepLinkLength
     || routeWithSlash.startsWith('//')
-    || /[\u0000-\u001f\u007f\\]/.test(routeWithSlash)
+    || hasUnsafeLinkCharacters(routeWithSlash)
   ) return null;
   return routeWithSlash;
 }
@@ -124,4 +124,11 @@ function isSensitiveActionRoute(route: string) {
   if (params.has('oobCode')) return true;
   const mode = String(params.get('mode') || '').toLowerCase();
   return ['resetpassword', 'verifyemail', 'recoveremail', 'signin'].includes(mode);
+}
+
+function hasUnsafeLinkCharacters(value: string) {
+  return [...value].some((character) => {
+    const codePoint = character.codePointAt(0) || 0;
+    return codePoint <= 0x1f || codePoint === 0x7f || character === '\\';
+  });
 }
