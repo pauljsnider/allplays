@@ -286,12 +286,20 @@ export function findExistingDirectConversationId(
   })?.id || '';
 }
 
-export function getReverseDirectConversationId(currentUserId: string, recipientId: string) {
+export function getDirectConversationLookupIds(currentUserId: string, recipientId: string) {
   const currentParticipantId = getUserParticipantId(currentUserId);
   const recipientParticipantId = getUserParticipantId(recipientId);
-  if (!currentParticipantId || !recipientParticipantId || currentParticipantId === recipientParticipantId) return '';
-  const participantIds = [recipientParticipantId, `user:${currentParticipantId}`].sort();
-  return `direct_${participantIds.map((participantId) => encodeURIComponent(participantId)).join('__')}`;
+  if (!currentParticipantId || !recipientParticipantId || currentParticipantId === recipientParticipantId) return [];
+  return [
+    [currentParticipantId, `user:${recipientParticipantId}`],
+    [recipientParticipantId, `user:${currentParticipantId}`]
+  ].map((participantIds) => {
+    return `direct_${participantIds.sort().map((participantId) => encodeURIComponent(participantId)).join('__')}`;
+  }).filter((conversationId, index, conversationIds) => conversationIds.indexOf(conversationId) === index);
+}
+
+export function getReverseDirectConversationId(currentUserId: string, recipientId: string) {
+  return getDirectConversationLookupIds(currentUserId, recipientId)[1] || '';
 }
 
 export function TeamAvatar({ team }: { team: Pick<ChatTeam, 'name' | 'photoUrl' | 'unreadCount'> }) {
@@ -417,6 +425,7 @@ export function ChatWindow({
   const sendQueueRef = useRef(Promise.resolve());
   const composerDraftsRef = useRef(new Map<string, ChatComposerDraft>());
   const preparedInitialRecipientKeyRef = useRef('');
+  const preparedInitialRecipientDraftKeyRef = useRef('');
   const initialRecipientLookupKeyRef = useRef('');
 
   const resetChatSelectionState = useCallback(() => {
@@ -873,7 +882,37 @@ export function ChatWindow({
 
   useEffect(() => {
     const recipientId = String(initialRecipient?.id || '').trim();
-    if (loadingContext) return;
+    const clearPreparedRecipientDraft = () => {
+      const preparedDraftKey = preparedInitialRecipientDraftKeyRef.current;
+      if (!preparedDraftKey) return;
+      const isActivePreparedDraft = activeComposerDraftKeyRef.current === preparedDraftKey;
+      const cachedDraft = composerDraftsRef.current.get(preparedDraftKey);
+      composerDraftsRef.current.delete(preparedDraftKey);
+      preparedInitialRecipientDraftKeyRef.current = '';
+
+      if (!isActivePreparedDraft) {
+        cachedDraft?.filePreviews.forEach((preview) => URL.revokeObjectURL(preview.url));
+        return;
+      }
+
+      latestComposerDraftRef.current = {
+        text: '',
+        filePreviews: [],
+        selectedRecipientTarget: 'full_team',
+        selectedRecipientIds: []
+      };
+      setText('');
+      setFilePreviews((current) => {
+        const previewUrls = new Set([
+          ...(cachedDraft?.filePreviews || []).map((preview) => preview.url),
+          ...current.map((preview) => preview.url)
+        ]);
+        previewUrls.forEach((url) => URL.revokeObjectURL(url));
+        return [];
+      });
+      setComposerCursorPosition(undefined);
+    };
+
     if (!recipientId || !/^user:[A-Za-z0-9_-]{1,160}$/.test(recipientId)) {
       const hadPreparedRouteRecipient = Boolean(
         preparedInitialRecipientKeyRef.current
@@ -882,21 +921,7 @@ export function ChatWindow({
       );
       initialRecipientLookupKeyRef.current = '';
       if (hadPreparedRouteRecipient) {
-        if (isDefaultTeamConversation(effectiveConversationId)) {
-          composerDraftsRef.current.delete(activeComposerDraftKeyRef.current);
-          latestComposerDraftRef.current = {
-            text: '',
-            filePreviews: [],
-            selectedRecipientTarget: 'full_team',
-            selectedRecipientIds: []
-          };
-          setText('');
-          setFilePreviews((current) => {
-            current.forEach((preview) => URL.revokeObjectURL(preview.url));
-            return [];
-          });
-          setComposerCursorPosition(undefined);
-        }
+        clearPreparedRecipientDraft();
         preparedInitialRecipientKeyRef.current = '';
         setInitialRecipientLookup({ key: '', status: 'idle' });
         setSelectedRecipientTarget('full_team');
@@ -908,7 +933,18 @@ export function ChatWindow({
       }
       return;
     }
+    if (loadingContext) return;
     const preparationKey = `${teamId}|${recipientId}`;
+    if (preparedInitialRecipientKeyRef.current
+      && preparedInitialRecipientKeyRef.current !== preparationKey) {
+      initialRecipientLookupKeyRef.current = '';
+      clearPreparedRecipientDraft();
+      preparedInitialRecipientKeyRef.current = '';
+      setInitialRecipientLookup({ key: '', status: 'idle' });
+      setSelectedRecipientTarget('full_team');
+      setSelectedRecipientIds([]);
+      setStatus(null);
+    }
     if (preparedInitialRecipientKeyRef.current === preparationKey) return;
     const existingDirectConversationId = findExistingDirectConversationId(
       conversations,
@@ -923,12 +959,21 @@ export function ChatWindow({
       setStatus({ tone: 'neutral', message: `Direct conversation with ${initialRecipient?.name || 'your friend'} opened.` });
       return;
     }
-    const reverseConversationId = getReverseDirectConversationId(auth.user?.uid || '', recipientId);
-    if (reverseConversationId && initialRecipientLookup.key !== preparationKey) {
+    const directConversationIds = getDirectConversationLookupIds(auth.user?.uid || '', recipientId);
+    if (directConversationIds.length && initialRecipientLookup.key !== preparationKey) {
+      const lookupUser = auth.user;
+      const lookupTeam = team;
+      if (!lookupUser || !lookupTeam) return;
       initialRecipientLookupKeyRef.current = preparationKey;
       setInitialRecipientLookup({ key: preparationKey, status: 'loading' });
-      if (!auth.user || !team) return;
-      void loadChatConversationById(teamId, auth.user, team, canModerate, reverseConversationId).then((conversation) => {
+      void (async () => {
+        for (const conversationId of directConversationIds) {
+          const conversation = await loadChatConversationById(teamId, lookupUser, lookupTeam, canModerate, conversationId);
+          if (initialRecipientLookupKeyRef.current !== preparationKey) return;
+          if (conversation) return conversation;
+        }
+        return null;
+      })().then((conversation) => {
         if (initialRecipientLookupKeyRef.current !== preparationKey) return;
         if (!conversation) {
           setInitialRecipientLookup({ key: preparationKey, status: 'missing' });
@@ -957,6 +1002,7 @@ export function ChatWindow({
       return;
     }
     preparedInitialRecipientKeyRef.current = preparationKey;
+    preparedInitialRecipientDraftKeyRef.current = activeComposerDraftKeyRef.current;
     setRecipientOptions((current) => current.some((option) => option.id === recipientId) ? current : [
       ...current,
       { id: recipientId, name: initialRecipient?.name || 'Friend', detail: 'Accepted friend' }

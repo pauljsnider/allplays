@@ -663,7 +663,9 @@ describe('React app messages integration', () => {
 
     it('hydrates an older reverse direct thread before preparing a friend message', async () => {
         const reverseConversationId = 'direct_coach-1__user%3Auser-1';
-        chatMocks.loadChatConversationById.mockResolvedValueOnce({
+        chatMocks.loadChatConversationById
+            .mockResolvedValueOnce(null)
+            .mockResolvedValueOnce({
             id: reverseConversationId,
             type: 'direct',
             name: 'Coach Jamie',
@@ -672,10 +674,19 @@ describe('React app messages integration', () => {
         });
 
         const { container } = await renderMessages('/messages/team-1?compose=user%3Acoach-1&recipientName=Coach+Jamie');
-        await waitForMockCallCount(chatMocks.loadChatConversationById, 1, 'reverse direct conversation lookup');
+        await waitForMockCallCount(chatMocks.loadChatConversationById, 2, 'direct conversation lookups');
         await flush();
 
-        expect(chatMocks.loadChatConversationById).toHaveBeenCalledWith(
+        expect(chatMocks.loadChatConversationById).toHaveBeenNthCalledWith(
+            1,
+            'team-1',
+            auth.user,
+            { id: 'team-1', name: 'Bears', sport: 'Basketball' },
+            true,
+            'direct_user-1__user%3Acoach-1'
+        );
+        expect(chatMocks.loadChatConversationById).toHaveBeenNthCalledWith(
+            2,
             'team-1',
             auth.user,
             { id: 'team-1', name: 'Bears', sport: 'Basketball' },
@@ -685,6 +696,36 @@ describe('React app messages integration', () => {
         expect(chatMocks.subscribeToTeamChatMessages).toHaveBeenLastCalledWith(
             'team-1',
             reverseConversationId,
+            expect.any(Function),
+            expect.any(Function)
+        );
+        expect(container.textContent).toContain('Direct conversation with Coach Jamie opened.');
+    });
+
+    it('hydrates an older canonical direct thread before preparing a friend message', async () => {
+        const canonicalConversationId = 'direct_user-1__user%3Acoach-1';
+        chatMocks.loadChatConversationById.mockResolvedValueOnce({
+            id: canonicalConversationId,
+            type: 'direct',
+            name: 'Coach Jamie',
+            participantIds: ['user-1', 'user:coach-1'],
+            participantRoles: []
+        });
+
+        const { container } = await renderMessages('/messages/team-1?compose=user%3Acoach-1&recipientName=Coach+Jamie');
+        await waitForMockCallCount(chatMocks.loadChatConversationById, 1, 'canonical direct conversation lookup');
+        await flush();
+
+        expect(chatMocks.loadChatConversationById).toHaveBeenCalledWith(
+            'team-1',
+            auth.user,
+            { id: 'team-1', name: 'Bears', sport: 'Basketball' },
+            true,
+            canonicalConversationId
+        );
+        expect(chatMocks.subscribeToTeamChatMessages).toHaveBeenLastCalledWith(
+            'team-1',
+            canonicalConversationId,
             expect.any(Function),
             expect.any(Function)
         );
@@ -729,6 +770,73 @@ describe('React app messages integration', () => {
             selectedRecipientTarget: 'full_team',
             selectedRecipientIds: []
         }));
+    });
+
+    it('does not restore a private friend draft after switching teams and back', async () => {
+        layoutMocks.isDesktopWeb = true;
+        chatMocks.loadChatInbox.mockResolvedValueOnce({
+            teams: [
+                {
+                    id: 'team-1',
+                    name: 'Bears',
+                    sport: 'Basketball',
+                    role: 'Admin',
+                    canModerate: true,
+                    unreadCount: 2,
+                    lastMessage: chatMessage({ id: 'last-1', text: 'Practice packet posted.' })
+                },
+                {
+                    id: 'team-2',
+                    name: 'Thunder',
+                    sport: 'Soccer',
+                    role: 'Parent',
+                    canModerate: false,
+                    unreadCount: 0,
+                    lastMessage: chatMessage({ id: 'last-2', text: 'Tournament schedule changed.' })
+                }
+            ]
+        });
+        chatMocks.loadChatTeamContext.mockImplementation(async (teamId) => ({
+            team: teamId === 'team-2'
+                ? { id: 'team-2', name: 'Thunder', sport: 'Soccer' }
+                : { id: 'team-1', name: 'Bears', sport: 'Basketball' },
+            profile: { fullName: 'Pat Parent', photoUrl: '' },
+            canModerate: teamId !== 'team-2'
+        }));
+
+        const { container } = await renderMessages('/messages/team-1?compose=user%3Acoach-1&recipientName=Coach+Jamie');
+        await waitForText(container, 'Direct message to Coach Jamie is ready.');
+        const textarea = container.querySelector('.chat-composer-textarea');
+        await setFieldValue(textarea, 'Private team-one draft');
+        const photoInput = container.querySelector('input[type="file"][accept="image/*"]');
+        const photo = new File(['private-photo'], 'private-team-one.jpg', { type: 'image/jpeg' });
+        Object.defineProperty(photoInput, 'files', { configurable: true, value: [photo] });
+        await act(async () => {
+            photoInput.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        await flush();
+
+        const thunderLink = container.querySelector('a[href="/messages/team-2"]');
+        await act(async () => {
+            thunderLink.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }));
+        });
+        await waitForMatch(
+            () => chatMocks.subscribeToTeamChatMessages.mock.calls.at(-1)?.[0] === 'team-2',
+            'Thunder team subscription'
+        );
+
+        const bearsLink = container.querySelector('a[href="/messages/team-1"]');
+        await act(async () => {
+            bearsLink.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }));
+        });
+        await waitForMatch(
+            () => chatMocks.subscribeToTeamChatMessages.mock.calls.at(-1)?.[0] === 'team-1',
+            'Bears team subscription'
+        );
+
+        expect(container.querySelector('.chat-composer-textarea').value).toBe('');
+        expect(container.textContent).not.toContain('private-team-one.jpg');
+        expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:chat-upload');
     });
 
     it('loads the inbox for the inbox route and desktop two-pane thread route', async () => {

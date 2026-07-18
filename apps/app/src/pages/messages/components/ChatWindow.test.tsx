@@ -5,7 +5,7 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { APP_BACK_DISMISS_EVENT } from '../../../lib/nativeBackButton';
-import { findExistingDirectConversationId, getReverseDirectConversationId, Sheet, sendLazyAllPlaysChatAnswer } from './ChatWindow';
+import { findExistingDirectConversationId, getDirectConversationLookupIds, getReverseDirectConversationId, Sheet, sendLazyAllPlaysChatAnswer } from './ChatWindow';
 
 const chatAiServiceMocks = vi.hoisted(() => ({
   sendAllPlaysChatAnswer: vi.fn()
@@ -147,6 +147,10 @@ describe('Chat composer audience lifecycle', () => {
       .toBe('direct_friend-2__user%3Acurrent-1');
     expect(getReverseDirectConversationId('current-1', 'user:friend-2'))
       .toBe('direct_friend-2__user%3Acurrent-1');
+    expect(getDirectConversationLookupIds('current-1', 'user:friend-2')).toEqual([
+      'direct_current-1__user%3Afriend-2',
+      'direct_friend-2__user%3Acurrent-1'
+    ]);
     expect(findExistingDirectConversationId(conversations, 'current-1', 'user:missing-4')).toBe('');
   });
 
