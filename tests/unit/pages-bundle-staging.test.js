@@ -2,12 +2,14 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { stagePagesBundle, writeAppCheckRuntimeConfig } from '../../scripts/stage-pages-bundle.mjs';
 import { writeFirebaseHostingConfig } from '../../scripts/write-firebase-hosting-config.mjs';
 
 const tempDirs = [];
+const originalSiteKey = process.env.ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY;
+const originalEnforcementReady = process.env.ALLPLAYS_APP_CHECK_ENFORCEMENT_READY;
 
 function makeTempDir() {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'allplays-pages-bundle-'));
@@ -20,10 +22,19 @@ function writeFile(filePath, contents = '') {
     fs.writeFileSync(filePath, contents);
 }
 
+beforeEach(() => {
+    delete process.env.ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY;
+    delete process.env.ALLPLAYS_APP_CHECK_ENFORCEMENT_READY;
+});
+
 afterEach(() => {
     while (tempDirs.length) {
         fs.rmSync(tempDirs.pop(), { recursive: true, force: true });
     }
+    if (originalSiteKey === undefined) delete process.env.ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY;
+    else process.env.ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY = originalSiteKey;
+    if (originalEnforcementReady === undefined) delete process.env.ALLPLAYS_APP_CHECK_ENFORCEMENT_READY;
+    else process.env.ALLPLAYS_APP_CHECK_ENFORCEMENT_READY = originalEnforcementReady;
 });
 
 describe('pages bundle staging', () => {
@@ -123,6 +134,53 @@ describe('pages bundle staging', () => {
             }
         });
         expect(writeAppCheckRuntimeConfig(destinationDir, 'not a valid key')).toBeNull();
+    });
+
+    it('fails staging on a missing or invalid site key only after the rollout-ready gate', () => {
+        const destinationDir = makeTempDir();
+
+        expect(writeAppCheckRuntimeConfig(destinationDir, undefined)).toBeNull();
+        expect(() => writeAppCheckRuntimeConfig(destinationDir, undefined, {
+            requireValidSiteKey: true
+        })).toThrow(/enforcement-ready staging requires a valid/);
+        expect(() => writeAppCheckRuntimeConfig(destinationDir, 'not a valid key', {
+            requireValidSiteKey: true
+        })).toThrow(/enforcement-ready staging requires a valid/);
+    });
+
+    it('enforces the rollout-ready key gate during full bundle staging', () => {
+        const rootDir = makeTempDir();
+        const destinationDir = path.join(makeTempDir(), 'site');
+        writeFile(path.join(rootDir, 'index.html'), '<h1>ALL PLAYS</h1>');
+        writeFile(path.join(rootDir, 'apps', 'app', 'dist', 'index.html'), '<div id="root"></div>');
+        process.env.ALLPLAYS_APP_CHECK_ENFORCEMENT_READY = 'true';
+
+        expect(() => stagePagesBundle(destinationDir, { rootDir }))
+            .toThrow(/enforcement-ready staging requires a valid/);
+    });
+
+    it('wires production, Pages, and preview staging to explicit repository variables', () => {
+        const repoRoot = path.resolve(import.meta.dirname, '../..');
+        const productionWorkflow = fs.readFileSync(
+            path.join(repoRoot, '.github', 'workflows', 'deploy-prod.yml'),
+            'utf8'
+        );
+        const pagesWorkflow = fs.readFileSync(
+            path.join(repoRoot, '.github', 'workflows', 'app-github-pages.yml'),
+            'utf8'
+        );
+        const previewWorkflow = fs.readFileSync(
+            path.join(repoRoot, '.github', 'workflows', 'deploy-preview.yml'),
+            'utf8'
+        );
+
+        for (const workflow of [productionWorkflow, pagesWorkflow, previewWorkflow]) {
+            expect(workflow).toContain('ALLPLAYS_APP_CHECK_ENFORCEMENT_READY: ${{ vars.APP_CHECK_ENFORCEMENT_READY }}');
+        }
+        expect(productionWorkflow).toContain('vars.APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY');
+        expect(pagesWorkflow).toContain('vars.APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY');
+        expect(previewWorkflow).toContain('vars.APP_CHECK_PREVIEW_RECAPTCHA_ENTERPRISE_SITE_KEY');
+        expect(previewWorkflow).not.toContain('APP_CHECK_PREVIEW_RECAPTCHA_ENTERPRISE_SITE_KEY ||');
     });
 
     it('adds immutable headers only for concrete staged app asset files', () => {

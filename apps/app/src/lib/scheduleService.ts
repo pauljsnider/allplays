@@ -57,6 +57,7 @@ import {
   deleteField,
   Timestamp
 } from './adapters/legacyScheduleDb';
+import { getPrimaryAppCheckHeaders } from './adapters/legacyFirebaseAppCheck';
 import {
   sendPublicRsvpReminderEmails,
   normalizeOfficialLinkEmail,
@@ -966,16 +967,16 @@ function getFirestoreBaseUrl() {
   return `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(getProjectId())}/databases/(default)/documents`;
 }
 
-async function getNativeHeaders() {
+async function getNativeHeaders(requestUrl: string) {
   const token = await getNativeAuthIdToken(true);
   if (!token) {
     throw new Error('Native auth token is unavailable.');
   }
 
-  return {
+  return getPrimaryAppCheckHeaders({
     Authorization: `Bearer ${token}`,
     'Content-Type': 'application/json'
-  };
+  }, requestUrl);
 }
 
 async function nativeFirestoreRequest(path: string, init: RequestInit = {}) {
@@ -984,7 +985,7 @@ async function nativeFirestoreRequest(path: string, init: RequestInit = {}) {
     const response = await withTimeout(fetch(url, {
       ...init,
       headers: {
-        ...(await getNativeHeaders()),
+        ...(await getNativeHeaders(url)),
         ...(init.headers || {})
       }
     }), 'Firestore REST request');
@@ -6032,12 +6033,13 @@ async function sendPublicRsvpReminderEmailsNativeSafe(event: ParentScheduleEvent
 
   const token = await getNativeAuthIdToken(true);
   if (!token) throw new Error('Native auth token is unavailable.');
-  const response = await withTimeout(fetch(`https://us-central1-${getProjectId()}.cloudfunctions.net/sendPublicRsvpEmails`, {
+  const requestUrl = `https://us-central1-${getProjectId()}.cloudfunctions.net/sendPublicRsvpEmails`;
+  const response = await withTimeout(fetch(requestUrl, {
     method: 'POST',
-    headers: {
+    headers: await getPrimaryAppCheckHeaders({
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json'
-    },
+    }, requestUrl),
     body: JSON.stringify({
       teamId: event.teamId,
       gameId: event.id,

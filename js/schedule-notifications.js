@@ -1,3 +1,5 @@
+import { getPrimaryAppCheckHeaders } from './firebase-app-check-rest.js?v=1';
+
 const SUPPORTED_REMINDER_HOURS = [24, 48, 72];
 
 function coerceReminderHours(value, fallback = 24) {
@@ -331,14 +333,15 @@ export async function sendPublicRsvpReminderEmails({
     }
 
     const token = await user.getIdToken();
+    const requestUrl = `${getFunctionsBaseUrl(auth)}/sendPublicRsvpEmails`;
     let response;
     try {
-        response = await fetch(`${getFunctionsBaseUrl(auth)}/sendPublicRsvpEmails`, {
+        response = await fetch(requestUrl, {
             method: 'POST',
-            headers: {
+            headers: await getPrimaryAppCheckHeaders({
                 'Authorization': `Bearer ${token}`,
                 'Content-Type': 'application/json'
-            },
+            }, requestUrl),
             body: JSON.stringify({
                 teamId,
                 gameId,

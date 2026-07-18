@@ -11,7 +11,7 @@ const firebaseMocks = vi.hoisted(() => ({
     getCountFromServer: vi.fn(),
 }));
 
-vi.mock('../../js/firebase.js?v=21', () => ({
+vi.mock('../../js/firebase.js?v=22', () => ({
     db: {},
     auth: { currentUser: null },
     storage: {},

@@ -48,6 +48,7 @@ jobs:
       - name: Stage GitHub Pages bundle
         env:
           ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY: ${{ vars.APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY }}
+          ALLPLAYS_APP_CHECK_ENFORCEMENT_READY: ${{ vars.APP_CHECK_ENFORCEMENT_READY }}
         run: node scripts/stage-pages-bundle.mjs "$RUNNER_TEMP/allplays-pages"
 
       - name: Upload app Pages bundle artifact

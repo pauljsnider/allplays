@@ -27,6 +27,7 @@ import {
   loadLegacySignupFlow
 } from './adapters/legacyAuth';
 import { createLogger } from './logger';
+import { getPrimaryAppCheckHeaders } from './adapters/legacyFirebaseAppCheck';
 import { clearAppDataCache } from './appDataCache';
 import type { AuthUser, UserRole } from './types';
 
@@ -369,11 +370,12 @@ async function refreshNativeAuthSession(session: NativeAuthSession) {
     throw new Error('Native auth refresh is unavailable.');
   }
 
-  const response = await withTimeout(fetch(`https://securetoken.googleapis.com/v1/token?key=${encodeURIComponent(apiKey)}`, {
+  const requestUrl = `https://securetoken.googleapis.com/v1/token?key=${encodeURIComponent(apiKey)}`;
+  const response = await withTimeout(fetch(requestUrl, {
     method: 'POST',
-    headers: {
+    headers: await getPrimaryAppCheckHeaders({
       'Content-Type': 'application/x-www-form-urlencoded'
-    },
+    }, requestUrl),
     body: new URLSearchParams({
       grant_type: 'refresh_token',
       refresh_token: session.refreshToken
@@ -690,11 +692,12 @@ async function callFirebaseAuthRest(endpoint: string, payload: Record<string, un
     throw new Error('Firebase API key is missing.');
   }
 
-  const response = await withTimeout(fetch(`https://identitytoolkit.googleapis.com/v1/${endpoint}?key=${encodeURIComponent(apiKey)}`, {
+  const requestUrl = `https://identitytoolkit.googleapis.com/v1/${endpoint}?key=${encodeURIComponent(apiKey)}`;
+  const response = await withTimeout(fetch(requestUrl, {
     method: 'POST',
-    headers: {
+    headers: await getPrimaryAppCheckHeaders({
       'Content-Type': 'application/json'
-    },
+    }, requestUrl),
     body: JSON.stringify(payload)
   }), 'Firebase Auth request timed out.');
   const responsePayload = await response.json().catch(() => ({}));

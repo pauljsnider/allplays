@@ -48,9 +48,20 @@ function normalizePublicSiteKey(value) {
     return /^[A-Za-z0-9_-]{10,200}$/.test(normalized) ? normalized : '';
 }
 
-export function writeAppCheckRuntimeConfig(destinationDir, siteKey) {
+function isAppCheckEnforcementReady(value) {
+    return typeof value === 'string' && ['true', '1'].includes(value.trim().toLowerCase());
+}
+
+export function writeAppCheckRuntimeConfig(destinationDir, siteKey, { requireValidSiteKey = false } = {}) {
     const normalizedSiteKey = normalizePublicSiteKey(siteKey);
-    if (!normalizedSiteKey) return null;
+    if (!normalizedSiteKey) {
+        if (requireValidSiteKey) {
+            throw new Error(
+                'App Check enforcement-ready staging requires a valid ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY.'
+            );
+        }
+        return null;
+    }
 
     const outputPath = path.join(destinationDir, appCheckRuntimeConfigRelativePath);
     fs.mkdirSync(path.dirname(outputPath), { recursive: true });
@@ -136,7 +147,12 @@ export function stagePagesBundle(destinationDir, { rootDir = defaultRootDir } = 
     fs.writeFileSync(path.join(resolvedDestination, '.nojekyll'), '');
     const appCheckRuntimeConfigPath = writeAppCheckRuntimeConfig(
         resolvedDestination,
-        process.env.ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY
+        process.env.ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY,
+        {
+            requireValidSiteKey: isAppCheckEnforcementReady(
+                process.env.ALLPLAYS_APP_CHECK_ENFORCEMENT_READY
+            )
+        }
     );
 
     const rootIndexPath = path.join(resolvedDestination, 'index.html');

@@ -80,7 +80,7 @@ vi.mock('../../js/vendor/firebase-functions.js', () => ({
     httpsCallable: vi.fn()
 }));
 
-vi.mock('../../js/firebase-app-check.js?v=1', () => ({
+vi.mock('../../js/firebase-app-check.js?v=2', () => ({
     initializePrimaryAppCheck: vi.fn(async () => ({ state: 'skipped' }))
 }));
 
@@ -110,7 +110,7 @@ describe('firebase firestore initialization', () => {
         });
         firestoreMocks.getFirestore.mockReturnValue(existingDb);
 
-        const module = await import('../../js/firebase.js?v=21');
+        const module = await import('../../js/firebase.js?v=22');
 
         expect(module.db).toBe(existingDb);
         expect(firestoreMocks.initializeFirestore).toHaveBeenCalledTimes(1);

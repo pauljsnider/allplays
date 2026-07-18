@@ -190,7 +190,7 @@ export function renderHeader(container, user) {
   // Keep telemetry available on new pages that use the shared header but miss
   // the global module tag.
   try {
-    import('./telemetry.js?v=2').catch((e) => console.warn('[Telemetry] Failed to load:', e));
+    import('./telemetry.js?v=3').catch((e) => console.warn('[Telemetry] Failed to load:', e));
   } catch (e) {
     console.warn('[Telemetry] Failed to initialize:', e);
   }

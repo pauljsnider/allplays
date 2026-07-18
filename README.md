@@ -40,6 +40,8 @@ A static HTML + JavaScript sports team management and stat tracking application,
    - On Firebase Hosting, primary config can also come from `/__/firebase/init.json`.
 6. Configure Firebase App Check before enabling console enforcement:
    - Set the public GitHub Actions repository variable `APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY` for the web app.
+   - Keep `APP_CHECK_ENFORCEMENT_READY=false` while monitoring; setting it to `true` makes staging reject a missing or invalid key.
+   - Dynamic Firebase preview hosts need a separately registered `APP_CHECK_PREVIEW_RECAPTCHA_ENTERPRISE_SITE_KEY`; do not broadly allowlist `web.app`.
    - For a direct/local build, use `window.__ALLPLAYS_CONFIG__.appCheck.recaptchaEnterpriseSiteKey` or `VITE_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY`.
    - Register the native `ai.allplays.lite` apps with App Attest (iOS) and Play Integrity (Android).
    - Follow the staged monitoring and enforcement checklist in `docs/firebase-app-check-rollout.md`.
@@ -49,6 +51,7 @@ Notes:
 - Email summaries are mailto-only; there is no backend email send.
 - AI match summary in `track.html` requires Firebase AI enabled/billing; hide it if disabled.
 - Do not add `localhost` to the reCAPTCHA Enterprise production allowlist. Local web development automatically uses the App Check debug provider after a site key is configured; register the generated debug token in Firebase Console.
+- `VITE_APP_CHECK_DEBUG_TOKEN=true` is for explicit local development only; production app builds reject enabled or token-shaped values.
 
 ### 1.1 Stripe Team Pass configuration
 

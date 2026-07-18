@@ -10,7 +10,7 @@ const getDocsMock = vi.fn();
 const runTransactionMock = vi.fn();
 const authMock = { currentUser: { uid: 'coach-1', email: 'coach@allplays.ai' } };
 
-vi.mock('../../js/firebase.js?v=21', () => ({
+vi.mock('../../js/firebase.js?v=22', () => ({
     db: {},
     auth: authMock,
     functions: {},

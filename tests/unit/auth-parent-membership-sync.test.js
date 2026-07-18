@@ -36,7 +36,7 @@ const dbMocks = vi.hoisted(() => ({
     normalizeParentScopeLinks: vi.fn()
 }));
 
-vi.mock('../../js/firebase.js?v=21', () => firebaseMocks);
+vi.mock('../../js/firebase.js?v=22', () => firebaseMocks);
 vi.mock('../../js/db.js?v=95', () => dbMocks);
 vi.mock('../../js/signup-flow.js?v=9', () => ({
     executeEmailPasswordSignup: vi.fn()

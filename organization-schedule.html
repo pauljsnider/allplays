@@ -8,7 +8,7 @@
     <title>Organization Schedule - ALL PLAYS</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="css/styles.css">
-    <script type="module" src="/js/telemetry.js?v=2"></script>
+    <script type="module" src="/js/telemetry.js?v=3"></script>
 </head>
 <body class="bg-gray-50 text-gray-900">
     <div id="header-container"></div>
@@ -324,8 +324,8 @@
         import { renderHeader, renderFooter, getUrlParams } from './js/utils.js?v=15';
         import { checkAuth } from './js/auth.js?v=50';
         import { getTeamAccessInfo } from './js/team-access.js';
-        import { addDoc, collection, db, deleteDoc, doc, getDocs, Timestamp, updateDoc } from './js/firebase.js?v=21';
-        import { functions, httpsCallable } from './js/firebase.js?v=21';
+        import { addDoc, collection, db, deleteDoc, doc, getDocs, Timestamp, updateDoc } from './js/firebase.js?v=22';
+        import { functions, httpsCallable } from './js/firebase.js?v=22';
         import {
             ORGANIZATION_SCHEDULE_WEEKDAYS,
             buildBlackoutDatePayload,

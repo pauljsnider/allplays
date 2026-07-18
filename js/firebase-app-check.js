@@ -5,6 +5,13 @@ import {
     initializeAppCheck
 } from './vendor/firebase-app-check.js';
 import { resolveAppCheckRuntimeConfig } from './firebase-runtime-config.js?v=11';
+import { registerPrimaryAppCheckContext } from './firebase-app-check-rest.js?v=1';
+
+export {
+    getPrimaryAppCheckHeaders,
+    getPrimaryAppCheckToken,
+    isPrimaryFirebaseRestRequest
+} from './firebase-app-check-rest.js?v=1';
 
 const INITIALIZATIONS_KEY = '__allplaysAppCheckInitializations';
 const STATUS_KEY = '__ALLPLAYS_APP_CHECK_STATUS__';
@@ -38,7 +45,9 @@ function isLocalBrowserRuntime() {
 function safeErrorDetails(error) {
     return {
         code: typeof error?.code === 'string' ? error.code : undefined,
-        message: typeof error?.message === 'string' ? error.message.slice(0, 300) : 'Unknown App Check error'
+        // SDK errors can contain request context. Keep diagnostics useful without
+        // ever copying a token or credential-shaped value into logs/status.
+        message: 'App Check operation failed.'
     };
 }
 
@@ -86,6 +95,9 @@ async function initializeNativeAppCheck(app, config) {
         provider,
         isTokenAutoRefreshEnabled: config.isTokenAutoRefreshEnabled !== false
     });
+    registerPrimaryAppCheckContext({
+        tokenGetter: (forceRefresh) => getToken(appCheck, forceRefresh)
+    });
     monitorToken(appCheck, useDebugProvider ? 'native-debug' : 'native-attestation');
     return reportStatus({
         state: 'initialized',
@@ -113,6 +125,9 @@ function initializeWebAppCheck(app, config) {
     const appCheck = initializeAppCheck(app, {
         provider: new ReCaptchaEnterpriseProvider(siteKey),
         isTokenAutoRefreshEnabled: config.isTokenAutoRefreshEnabled !== false
+    });
+    registerPrimaryAppCheckContext({
+        tokenGetter: (forceRefresh) => getToken(appCheck, forceRefresh)
     });
     monitorToken(appCheck, localDebugToken ? 'web-debug' : 'recaptcha-enterprise');
     return reportStatus({
@@ -147,11 +162,14 @@ async function initializeOnce(app) {
  * rollout gate.
  */
 export function initializePrimaryAppCheck(app) {
+    registerPrimaryAppCheckContext({ options: app?.options || {} });
     const initializations = getInitializations();
     if (!initializations.has(app)) {
         initializations.set(app, initializeOnce(app));
     }
-    return initializations.get(app);
+    const initialization = initializations.get(app);
+    registerPrimaryAppCheckContext({ initialization });
+    return initialization;
 }
 
 export function getAppCheckStatus() {

@@ -38,7 +38,7 @@
             }
         }
     </script>
-  <script type="module" src="/js/telemetry.js?v=2"></script>
+  <script type="module" src="/js/telemetry.js?v=3"></script>
 </head>
 
 <body class="bg-gradient-to-br from-gray-50 to-gray-100 text-gray-900">
@@ -333,14 +333,14 @@
         import { aggregateSeasonStatsByPlayerId, buildPlayerLeaderboardSnapshot, selectAnalyticsConfig } from './js/stat-leaderboards.js?v=3';
         import { calculateSeasonRecord, listSeasonLabels } from './js/season-record.js';
         import { checkAuth } from './js/auth.js?v=50';
-        import { collection, getDocs, query, where } from "./js/firebase.js?v=21";
-        import { db } from './js/firebase.js?v=21';
+        import { collection, getDocs, query, where } from "./js/firebase.js?v=22";
+        import { db } from './js/firebase.js?v=22';
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js';
         import { getVisibleRosterFieldValues } from './js/roster-field-privacy.js';
         import { buildAvailabilityNoteRows, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from './js/availability-preferences.js?v=1';
-        import { buildAvailabilityReminderRecipients, buildRsvpReminderMessage } from './js/schedule-notifications.js?v=4';
+        import { buildAvailabilityReminderRecipients, buildRsvpReminderMessage } from './js/schedule-notifications.js?v=6';
         import { readTeamPremiumEntitlement, renderPremiumGateState } from './js/premium-entitlements.js?v=1';
-        import { renderTeamPassCard } from './js/team-pass.js?v=2';
+        import { renderTeamPassCard } from './js/team-pass.js?v=3';
         import { getVisiblePlayerTrackingSummary } from './js/player-tracking-summary.js?v=1';
         import { renderTeamStaffPermissionsSection } from './js/team-staff-permissions.js?v=3';
         import { getDefaultSchedulePrintOptions, printSchedule, promptSchedulePrintOptions } from './js/schedule-print.js?v=2';

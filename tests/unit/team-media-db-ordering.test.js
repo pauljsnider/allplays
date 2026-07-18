@@ -65,7 +65,7 @@ const teamMediaUtilsMocks = vi.hoisted(() => ({
 
 const uploadTaskQueue = vi.hoisted(() => []);
 
-vi.mock('../../js/firebase.js?v=21', () => ({
+vi.mock('../../js/firebase.js?v=22', () => ({
     db: {},
     auth: { currentUser: { uid: 'user-1' } },
     storage: {},

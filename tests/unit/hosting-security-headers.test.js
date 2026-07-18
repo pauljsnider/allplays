@@ -4,6 +4,10 @@ import { readFileSync } from 'node:fs';
 const firebaseConfig = JSON.parse(
     readFileSync(new URL('../../firebase.json', import.meta.url), 'utf8')
 );
+const firebaseAuthVendor = readFileSync(
+    new URL('../../js/vendor/firebase-auth.js', import.meta.url),
+    'utf8'
+);
 
 function headerMapFor(source) {
     const rule = firebaseConfig.hosting.headers.find((candidate) => candidate.source === source);
@@ -30,12 +34,20 @@ describe('Firebase Hosting security headers', () => {
         expect(globalCsp).toContain('https://cdn.tailwindcss.com');
         expect(globalCsp).toContain('https://www.gstatic.com');
         expect(globalCsp).toContain('https://www.google.com');
+        expect(globalCsp).toContain('https://apis.google.com');
         expect(globalCsp).toContain('https://www.googletagmanager.com');
         expect(globalCsp).toContain('https://*.firebaseapp.com');
         expect(globalCsp).toContain('https://www.youtube.com');
         expect(globalCsp).toContain('https://player.twitch.tv');
         expect(globalCsp).toContain("connect-src 'self' https: wss:");
         expect(globalCsp).not.toContain("default-src *");
+    });
+
+    it('allows the exact Google API loader used by Firebase Auth popup flows', () => {
+        const loaderUrl = firebaseAuthVendor.match(/gapiScript:"(https:\/\/[^\"]+)"/)?.[1];
+
+        expect(loaderUrl).toBe('https://apis.google.com/js/api.js');
+        expect(globalCsp).toContain(new URL(loaderUrl).origin);
     });
 
     it('keeps the documented external scoreboard iframe functional', () => {

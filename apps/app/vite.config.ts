@@ -1,9 +1,10 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import { visualizer } from 'rollup-plugin-visualizer';
 import { patchBundleVisualizerTooltipFile } from './build/fixBundleVisualizerTooltip.js';
+import { assertSafeAppCheckBuildEnvironment } from './build/appCheckBuildGuard.js';
 
 const appDirectory = path.dirname(fileURLToPath(import.meta.url));
 
@@ -16,7 +17,10 @@ const bundleVisualizerTooltipFixPlugin = {
   }
 };
 
-export default defineConfig({
+export default defineConfig(({ mode }) => {
+  assertSafeAppCheckBuildEnvironment(mode, loadEnv(mode, appDirectory, 'VITE_'));
+
+  return {
   base: './',
   resolve: {
     alias: {
@@ -91,4 +95,5 @@ export default defineConfig({
       ]
     }
   }
+  };
 });

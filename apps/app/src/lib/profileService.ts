@@ -16,6 +16,7 @@ import {
 } from './adapters/legacyProfileDb';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import { createLogger } from './logger';
+import { getPrimaryAppCheckHeaders } from './adapters/legacyFirebaseAppCheck';
 import { getNativeRestDedupKey, loadDedupedNativeRestRequest, shouldDedupNativeRestRequest } from './nativeRestDedup';
 import { captureHandledAppError, createAppTimer } from './telemetry';
 
@@ -141,22 +142,22 @@ function getFirestoreBaseUrl() {
   return `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(getProjectId())}/databases/(default)/documents`;
 }
 
-async function getNativeHeaders() {
+async function getNativeHeaders(requestUrl: string) {
   const token = await getNativeAuthIdToken();
   if (!token) {
     throw new Error('Native auth token is unavailable.');
   }
 
-  return {
+  return getPrimaryAppCheckHeaders({
     Authorization: `Bearer ${token}`,
     'Content-Type': 'application/json'
-  };
+  }, requestUrl);
 }
 
 async function nativeFirestoreRequest(path: string, init: RequestInit = {}) {
   const url = `${getFirestoreBaseUrl()}${path}`;
   const runRequest = async () => {
-    const headers = await getNativeHeaders();
+    const headers = await getNativeHeaders(url);
     const response = await withTimeout(fetch(url, {
       ...init,
       headers: {

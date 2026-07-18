@@ -19,7 +19,21 @@ fails. Firebase Console enforcement is the separate fail-closed rollout gate.
    `APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY`. The staging workflow writes only
    this public key to `/.well-known/allplays-runtime-config.json`; no debug token
    or credential is written to the bundle.
-4. For direct builds, the equivalent runtime contract is:
+   Keep `APP_CHECK_ENFORCEMENT_READY` unset or `false` during monitoring. After
+   every production client is token-ready and immediately before enabling the
+   first console enforcement, set it to `true`; production and Pages staging
+   will then fail instead of publishing a missing or malformed site key.
+4. Preview channels use dynamic sibling hosts such as
+   `game-flow-c6311--<channel>-<hash>.web.app`. The production hostname allowlist
+   does not cover these hosts, and allowing all of `web.app` is unsafe. The
+   preview workflow therefore accepts only the separate public repository
+   variable `APP_CHECK_PREVIEW_RECAPTCHA_ENTERPRISE_SITE_KEY`; set it only when
+   a controlled preview hostname/provider strategy has been registered. With
+   `APP_CHECK_ENFORCEMENT_READY=true`, preview staging intentionally fails if
+   that variable is missing. Until that strategy exists, previews are useful
+   for unenforced monitoring but cannot be relied on for post-enforcement API
+   testing.
+5. For direct builds, the equivalent runtime contract is:
 
    ```js
    window.__ALLPLAYS_CONFIG__ = {
@@ -53,7 +67,9 @@ all use the native token.
 Native debug/simulator runs need Firebase App Check debug tokens. Enable the
 debug provider only in a local build with `VITE_APP_CHECK_DEBUG_TOKEN=true`,
 capture the platform token from device logs, and register it in Firebase
-Console. Production workflows do not set this variable.
+Console. Native debug requires both Vite development mode and the explicit
+flag. Production workflows do not set this variable, and production builds
+reject `true`, `1`, or a token-shaped value if one is supplied.
 
 ## Compatibility verification before enforcement
 
@@ -87,6 +103,13 @@ The separate `game-flow-img` Firebase project uses a named web app and anonymous
 auth. Do not enforce App Check for that project's Storage or Authentication until
 it has its own reCAPTCHA Enterprise registration and the Capacitor behavior has
 been validated, or image storage has been migrated to the primary project.
+
+Firebase Console App Check enforcement for Cloud Functions applies to callable
+functions. Tokenized public HTTP endpoints such as calendar feeds must remain
+unenforced/exempt unless their backend explicitly verifies the
+`X-Firebase-AppCheck` token and has a compatibility/rollback plan. The clients
+attach the primary token to known primary-project REST calls where available,
+but sending a header alone does not enforce or validate it server-side.
 
 The legacy browser surface currently vendors Firebase Web SDK 12.6.0. It sends
 baseline App Check session tokens, but Firebase AI Logic replay protection needs

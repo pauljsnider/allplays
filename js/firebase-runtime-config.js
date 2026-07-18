@@ -218,7 +218,7 @@ export async function resolveAppCheckRuntimeConfig() {
         isTokenAutoRefreshEnabled: true
     });
     const nativeDebug = viteEnvironment.DEV === true
-        || normalizeBoolean(viteEnvironment.VITE_APP_CHECK_DEBUG_TOKEN) === true;
+        && normalizeBoolean(viteEnvironment.VITE_APP_CHECK_DEBUG_TOKEN) === true;
 
     return {
         isTokenAutoRefreshEnabled: true,
