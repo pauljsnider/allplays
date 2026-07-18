@@ -189,6 +189,14 @@ async function mockMessagesModules(page, options = {}) {
         });
     });
 
+    await page.route(/\/src\/lib\/friendMessageService\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: 'export async function canMessageAcceptedFriend() { return true; }'
+        });
+    });
+
     await page.route(/\/src\/lib\/notificationInboxService\.ts(\?.*)?$/, async (route) => {
         await route.fulfill({
             status: 200,

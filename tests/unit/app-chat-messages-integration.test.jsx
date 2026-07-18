@@ -36,6 +36,10 @@ const opportunityMocks = vi.hoisted(() => ({
     replyToOpportunityInquiry: vi.fn()
 }));
 
+const friendMessageMocks = vi.hoisted(() => ({
+    canMessageAcceptedFriend: vi.fn()
+}));
+
 const layoutMocks = vi.hoisted(() => ({
     isDesktopWeb: false
 }));
@@ -145,6 +149,7 @@ vi.mock('../../apps/app/src/lib/voiceService.ts', () => ({
 }));
 vi.mock('../../apps/app/src/lib/chatService.ts', () => chatMocks);
 vi.mock('../../apps/app/src/lib/opportunityService.ts', () => opportunityMocks);
+vi.mock('../../apps/app/src/lib/friendMessageService.ts', () => friendMessageMocks);
 vi.mock('../../apps/app/src/lib/chatAiService', () => ({
     sendAllPlaysChatAnswer: chatMocks.sendAllPlaysChatAnswer
 }));
@@ -360,6 +365,7 @@ async function waitForTeamEmailDialog(container) {
 beforeEach(() => {
     vi.clearAllMocks();
     opportunityMocks.listOpportunityInquiries.mockResolvedValue({ items: [], nextCursor: null });
+    friendMessageMocks.canMessageAcceptedFriend.mockResolvedValue(true);
     uxTimingMocks.interactionEnds.length = 0;
     layoutMocks.isDesktopWeb = false;
     nativeMocks.isNativePlatform = false;
@@ -758,6 +764,51 @@ describe('React app messages integration', () => {
             false,
             'direct_coach-1__user%3Auser-1'
         );
+    });
+
+    it('rejects a crafted direct-message route when the recipient is not an accepted friend on the team', async () => {
+        friendMessageMocks.canMessageAcceptedFriend.mockResolvedValueOnce(false);
+
+        const { container } = await renderMessages('/messages/team-1?compose=user%3Acoach-1&recipientName=Coach+Jamie');
+        await waitForText(container, 'You can only start a direct message with an accepted friend who shares this team.');
+
+        expect(friendMessageMocks.canMessageAcceptedFriend).toHaveBeenCalledWith(auth.user, 'user:coach-1', 'team-1');
+        expect(chatMocks.loadChatConversationById).not.toHaveBeenCalled();
+        expect(container.textContent).not.toContain('Direct message to Coach Jamie is ready.');
+    });
+
+    it('keeps a crafted direct-message route closed when friendship verification fails', async () => {
+        friendMessageMocks.canMessageAcceptedFriend.mockRejectedValueOnce(new Error('Friend connection unavailable.'));
+
+        const { container } = await renderMessages('/messages/team-1?compose=user%3Acoach-1&recipientName=Coach+Jamie');
+        await waitForText(container, 'Friend connection unavailable.');
+
+        expect(chatMocks.loadChatConversationById).not.toHaveBeenCalled();
+        expect(container.textContent).not.toContain('Direct message to Coach Jamie is ready.');
+    });
+
+    it('ignores a stale friendship verification after leaving the compose route', async () => {
+        let resolveAuthorization;
+        friendMessageMocks.canMessageAcceptedFriend.mockImplementationOnce(() => new Promise((resolve) => {
+            resolveAuthorization = resolve;
+        }));
+        layoutMocks.isDesktopWeb = true;
+
+        const { container } = await renderMessages('/messages/team-1?compose=user%3Acoach-1&recipientName=Coach+Jamie');
+        await waitForMockCallCount(friendMessageMocks.canMessageAcceptedFriend, 1, 'friend authorization');
+        const teamLink = container.querySelector('a[href="/messages/team-1"]');
+        expect(teamLink).toBeTruthy();
+        await act(async () => {
+            teamLink.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }));
+        });
+        await flush();
+        await act(async () => {
+            resolveAuthorization(true);
+        });
+        await flush();
+
+        expect(chatMocks.loadChatConversationById).not.toHaveBeenCalled();
+        expect(container.textContent).not.toContain('Direct message to Coach Jamie is ready.');
     });
 
     it('clears a friend compose audience when navigating to the plain team thread', async () => {

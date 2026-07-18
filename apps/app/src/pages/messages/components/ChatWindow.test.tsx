@@ -12,6 +12,9 @@ const chatAiServiceMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../../lib/chatAiService', () => chatAiServiceMocks);
+vi.mock('../../../lib/friendMessageService', () => ({
+  canMessageAcceptedFriend: vi.fn().mockResolvedValue(true)
+}));
 
 function resolveAppSourcePath(relativePath: string) {
   const cwd = process.cwd();

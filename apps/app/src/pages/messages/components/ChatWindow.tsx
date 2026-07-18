@@ -41,6 +41,7 @@ import {
   type ChatMessage,
   type ChatTeam
 } from '../../../lib/chatService';
+import { canMessageAcceptedFriend } from '../../../lib/friendMessageService';
 import { AvatarImage } from '../../../components/AvatarImage';
 import { MessagesPageSkeleton } from '../../../components/PageSkeletons';
 import {
@@ -353,6 +354,10 @@ export function ChatWindow({
     key: string;
     status: 'idle' | 'loading' | 'missing' | 'found' | 'error';
   }>({ key: '', status: 'idle' });
+  const [initialRecipientAuthorization, setInitialRecipientAuthorization] = useState<{
+    key: string;
+    status: 'idle' | 'loading' | 'allowed' | 'denied' | 'error';
+  }>({ key: '', status: 'idle' });
   const [text, setText] = useState('');
   const [filePreviews, setFilePreviews] = useState<FilePreview[]>([]);
   const [pendingSendCount, setPendingSendCount] = useState(0);
@@ -427,6 +432,7 @@ export function ChatWindow({
   const preparedInitialRecipientKeyRef = useRef('');
   const preparedInitialRecipientDraftKeyRef = useRef('');
   const initialRecipientLookupKeyRef = useRef('');
+  const initialRecipientAuthorizationKeyRef = useRef('');
 
   const resetChatSelectionState = useCallback(() => {
     setStatus(null);
@@ -918,12 +924,16 @@ export function ChatWindow({
         preparedInitialRecipientKeyRef.current
         || initialRecipientLookupKeyRef.current
         || initialRecipientLookup.key
+        || initialRecipientAuthorizationKeyRef.current
+        || initialRecipientAuthorization.key
       );
       initialRecipientLookupKeyRef.current = '';
       if (hadPreparedRouteRecipient) {
+        initialRecipientAuthorizationKeyRef.current = '';
         clearPreparedRecipientDraft();
         preparedInitialRecipientKeyRef.current = '';
         setInitialRecipientLookup({ key: '', status: 'idle' });
+        setInitialRecipientAuthorization({ key: '', status: 'idle' });
         setSelectedRecipientTarget('full_team');
         setSelectedRecipientIds([]);
         setStatus(null);
@@ -934,7 +944,7 @@ export function ChatWindow({
       return;
     }
     if (loadingContext) return;
-    const preparationKey = `${teamId}|${recipientId}`;
+    const preparationKey = `${auth.user?.uid || ''}|${teamId}|${recipientId}`;
     if (preparedInitialRecipientKeyRef.current
       && preparedInitialRecipientKeyRef.current !== preparationKey) {
       initialRecipientLookupKeyRef.current = '';
@@ -946,6 +956,32 @@ export function ChatWindow({
       setStatus(null);
     }
     if (preparedInitialRecipientKeyRef.current === preparationKey) return;
+    const authorizationKey = preparationKey;
+    if (initialRecipientAuthorization.key !== authorizationKey) {
+      if (initialRecipientAuthorizationKeyRef.current === authorizationKey) return;
+      const lookupUser = auth.user;
+      if (!lookupUser) return;
+      initialRecipientAuthorizationKeyRef.current = authorizationKey;
+      initialRecipientLookupKeyRef.current = '';
+      setInitialRecipientLookup({ key: '', status: 'idle' });
+      setInitialRecipientAuthorization({ key: authorizationKey, status: 'loading' });
+      setStatus(null);
+      void canMessageAcceptedFriend(lookupUser, recipientId, teamId).then((allowed) => {
+        if (initialRecipientAuthorizationKeyRef.current !== authorizationKey) return;
+        setInitialRecipientAuthorization({ key: authorizationKey, status: allowed ? 'allowed' : 'denied' });
+        if (!allowed) {
+          setSelectedRecipientTarget('full_team');
+          setSelectedRecipientIds([]);
+          setStatus({ tone: 'error', message: 'You can only start a direct message with an accepted friend who shares this team.' });
+        }
+      }).catch((authorizationError: any) => {
+        if (initialRecipientAuthorizationKeyRef.current !== authorizationKey) return;
+        setInitialRecipientAuthorization({ key: authorizationKey, status: 'error' });
+        setStatus({ tone: 'error', message: authorizationError?.message || 'Unable to verify this friend connection.' });
+      });
+      return;
+    }
+    if (initialRecipientAuthorization.status !== 'allowed') return;
     const existingDirectConversationId = findExistingDirectConversationId(
       conversations,
       auth.user?.uid || '',
@@ -1010,7 +1046,7 @@ export function ChatWindow({
     setSelectedRecipientTarget('individuals');
     setSelectedRecipientIds([recipientId]);
     setStatus({ tone: 'neutral', message: `Direct message to ${initialRecipient?.name || 'your friend'} is ready.` });
-  }, [auth.user, canModerate, conversations, effectiveConversationId, initialRecipient, initialRecipientLookup, loadingContext, setConversations, switchChatConversation, team, teamId]);
+  }, [auth.user, canModerate, conversations, effectiveConversationId, initialRecipient, initialRecipientAuthorization, initialRecipientLookup, loadingContext, setConversations, switchChatConversation, team, teamId]);
 
   useLayoutEffect(() => {
     if (activeComposerDraftKeyRef.current === activeComposerDraftKey) return;

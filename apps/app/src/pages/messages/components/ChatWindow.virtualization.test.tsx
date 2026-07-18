@@ -159,6 +159,10 @@ vi.mock('../../../lib/publicActions', () => ({
   sharePublicUrl: vi.fn()
 }));
 
+vi.mock('../../../lib/friendMessageService', () => ({
+  canMessageAcceptedFriend: vi.fn().mockResolvedValue(true)
+}));
+
 vi.mock('../../../lib/useShellLayout', () => ({
   useShellLayout: () => mockShellLayoutState
 }));
