@@ -8265,36 +8265,7 @@ async function sendDirectTargetsNotification({
   const allResponses = [];
   let successCount = 0;
   let failureCount = 0;
-
-  for (let i = 0; i < pushTargets.length; i += maxMulticastTokens) {
-    const targetChunk = pushTargets.slice(i, i + maxMulticastTokens);
-    const sendResult = await admin.messaging().sendEachForMulticast({
-      tokens: targetChunk.map((target) => target.token),
-      notification: { title, body },
-      data: {
-        teamId: String(teamId),
-        gameId: String(gameId || ''),
-        eventId: String(eventId || gameId || ''),
-        conversationId: String(conversationId || ''),
-        childId: String(childId || ''),
-        rsvpId: String(childId || ''),
-        category: String(category),
-        appRoute,
-        link
-      },
-      ...deliveryOptions,
-      webpush: mergeWebpushOptions({
-        notification: WEB_PUSH_NOTIFICATION_ASSETS,
-        fcmOptions: { link }
-      }, deliveryOptions)
-    });
-    allResponses.push(...(Array.isArray(sendResult.responses) ? sendResult.responses : []));
-    successCount += Number(sendResult.successCount || 0);
-    failureCount += Number(sendResult.failureCount || 0);
-    await pruneInvalidTokens(sendResult, targetChunk);
-  }
-
-  const inboxResult = await writeNotificationInboxRecords({
+  const inboxPromise = writeNotificationInboxRecords({
     targets: inboxTargets,
     category,
     title,
@@ -8305,6 +8276,41 @@ async function sendDirectTargetsNotification({
     eventId: eventId || gameId,
     conversationId
   });
+
+  try {
+    for (let i = 0; i < pushTargets.length; i += maxMulticastTokens) {
+      const targetChunk = pushTargets.slice(i, i + maxMulticastTokens);
+      const sendResult = await admin.messaging().sendEachForMulticast({
+        tokens: targetChunk.map((target) => target.token),
+        notification: { title, body },
+        data: {
+          teamId: String(teamId),
+          gameId: String(gameId || ''),
+          eventId: String(eventId || gameId || ''),
+          conversationId: String(conversationId || ''),
+          childId: String(childId || ''),
+          rsvpId: String(childId || ''),
+          category: String(category),
+          appRoute,
+          link
+        },
+        ...deliveryOptions,
+        webpush: mergeWebpushOptions({
+          notification: WEB_PUSH_NOTIFICATION_ASSETS,
+          fcmOptions: { link }
+        }, deliveryOptions)
+      });
+      allResponses.push(...(Array.isArray(sendResult.responses) ? sendResult.responses : []));
+      successCount += Number(sendResult.successCount || 0);
+      failureCount += Number(sendResult.failureCount || 0);
+      await pruneInvalidTokens(sendResult, targetChunk);
+    }
+  } catch (error) {
+    await inboxPromise;
+    throw error;
+  }
+
+  const inboxResult = await inboxPromise;
 
   await writeNotificationAuditRecord({
     teamId,
@@ -10168,6 +10174,7 @@ async function buildTeamChatNotificationContext(teamId, options = {}) {
       .filter((member) => {
         const preferenceEntry = memberPreferencesByUid.get(member.uid);
         if (preferenceEntry?.exists) return preferenceEntry.preferences[category] === true;
+        if (category === 'liveChat') return true;
         if (indexedUserIds.has(member.uid)) return indexedUserIdsByCategory[category].has(member.uid);
         return DEFAULT_NOTIFICATION_PREFERENCES[category] === true;
       })
@@ -10242,7 +10249,6 @@ function buildTeamChatNotificationPlan({ text, actorUid = null, recipientContext
   const mentionedUids = text
     ? detectMentionedUids(text, members, { allowReservedMentions: actorIsStaff }).filter((uid) => uid !== actorUid)
     : [];
-  const mentionedSet = new Set(mentionedUids);
   const mutedSet = new Set(Array.isArray(context.mutedUids) ? context.mutedUids : []);
   const mentionEnabledSet = new Set(
     Array.isArray(context.enabledUidsByCategory?.mentions)
@@ -10254,18 +10260,20 @@ function buildTeamChatNotificationPlan({ text, actorUid = null, recipientContext
       ? context.enabledUidsByCategory.liveChat
       : liveChatTargets.map((target) => target.uid)
   );
+  const mentionDeliverySet = new Set(mentionedUids.filter((uid) => mentionEnabledSet.has(uid)));
   const liveChatInboxUids = members
     .map((member) => String(member?.uid || '').trim())
-    .filter((uid) => uid && liveChatEnabledSet.has(uid) && uid !== actorUid && !mentionedSet.has(uid) && !mutedSet.has(uid));
+    .filter((uid) => uid && liveChatEnabledSet.has(uid) && uid !== actorUid && !mentionDeliverySet.has(uid) && !mutedSet.has(uid));
 
   return {
     mentionedUids,
-    mentionInboxUids: mentionedUids.filter((uid) => mentionEnabledSet.has(uid)),
-    mentionTargets: mentionTargets.filter((target) => target.uid !== actorUid && mentionedSet.has(target.uid)),
+    mentionInboxUids: mentionedUids.filter((uid) => mentionDeliverySet.has(uid)),
+    mentionTargets: mentionTargets.filter((target) => target.uid !== actorUid && mentionDeliverySet.has(target.uid)),
     liveChatInboxUids,
     liveChatTargets: liveChatTargets.filter((target) => (
       target.uid !== actorUid
-      && !mentionedSet.has(target.uid)
+      && liveChatEnabledSet.has(target.uid)
+      && !mentionDeliverySet.has(target.uid)
       && !mutedSet.has(target.uid)
     ))
   };
@@ -10326,7 +10334,7 @@ async function handleTeamChatMessageCreated(snapshot, context) {
     await snapshot.ref.update({ mentionedUids });
   }
 
-  if (mentionedUids.length) {
+  if (notificationPlan.mentionTargets.length || notificationPlan.mentionInboxUids.length) {
     results.push(await sendDirectTargetsNotification({
       targets: notificationPlan.mentionTargets,
       inboxUids: notificationPlan.mentionInboxUids,

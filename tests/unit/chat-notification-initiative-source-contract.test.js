@@ -18,7 +18,7 @@ describe('chat notification initiative source contract', () => {
         expect(functionsSource).toContain("category: 'mentions'");
         expect(functionsSource).toContain("category: 'liveChat'");
         expect(functionsSource).toContain('await snapshot.ref.update({ mentionedUids });');
-        expect(functionsSource).toContain('&& !mentionedSet.has(target.uid)');
+        expect(functionsSource).toContain('&& !mentionDeliverySet.has(target.uid)');
         expect(functionsSource).toContain('&& !mutedSet.has(target.uid)');
         expect(functionsSource).toContain('mutedConversations[normalizedConversationId]');
     });

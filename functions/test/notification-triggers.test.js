@@ -910,7 +910,6 @@ test('notifyTeamChatMessageCreated writes inbox items for members without push d
             'parent-3': { displayName: 'Opted Out Parent' }
         },
         preferenceDocs: {
-            'users/parent-2/notificationPreferences/team-1': { liveChat: true },
             'users/parent-3/notificationPreferences/team-1': { liveChat: false }
         },
         indexedTargets: []
@@ -948,6 +947,89 @@ test('notifyTeamChatMessageCreated writes inbox items for members without push d
             ['parent-1'],
             ['parent-2']
         ]);
+    } finally {
+        cleanup();
+    }
+});
+
+test('notifyTeamChatMessageCreated persists inbox delivery when push transport rejects', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        parentUserIds: ['parent-1'],
+        userDocs: {
+            'coach-1': { displayName: 'Coach Prime' },
+            'parent-1': { displayName: 'Jamie Parent' }
+        },
+        indexedTargets: [
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { liveChat: true } }
+        ],
+        sendEachErrors: [new Error('temporary FCM outage')]
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/chatMessages/message-push-failure');
+        const snapshot = makeSnapshot(ref, {
+            text: 'Team update',
+            senderId: 'coach-1',
+            senderName: 'Coach Prime',
+            conversationId: 'team'
+        });
+
+        await assert.rejects(() => moduleExports.notifyTeamChatMessageCreated(snapshot, {
+            params: { teamId: 'team-1', messageId: 'message-push-failure' }
+        }), /temporary FCM outage/);
+
+        assert.equal(env.messagingCalls.length, 1);
+        assert.deepEqual(env.inboxWrites.map((write) => ({
+            uid: write.uid,
+            category: write.value.category
+        })), [{ uid: 'parent-1', category: 'liveChat' }]);
+    } finally {
+        cleanup();
+    }
+});
+
+test('notifyTeamChatMessageCreated falls mentioned users back to live chat when mentions are disabled', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        parentUserIds: ['parent-1'],
+        userDocs: {
+            'coach-1': { displayName: 'Coach Prime' },
+            'parent-1': { displayName: 'Jamie Parent' }
+        },
+        preferenceDocs: {
+            'users/parent-1/notificationPreferences/team-1': { mentions: false, liveChat: true }
+        },
+        indexedTargets: [
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { mentions: true, liveChat: true } }
+        ]
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/chatMessages/message-mention-fallback');
+        const snapshot = makeSnapshot(ref, {
+            text: 'Nice work @Jamie',
+            senderId: 'coach-1',
+            senderName: 'Coach Prime',
+            conversationId: 'team'
+        });
+
+        const result = await moduleExports.notifyTeamChatMessageCreated(snapshot, {
+            params: { teamId: 'team-1', messageId: 'message-mention-fallback' }
+        });
+
+        assert.equal(result.length, 1);
+        assert.deepEqual(env.updatedDocs, [{
+            path: 'teams/team-1/chatMessages/message-mention-fallback',
+            value: { mentionedUids: ['parent-1'] }
+        }]);
+        assert.deepEqual(env.messagingCalls.map((call) => `${call.data.category}:${call.tokens[0]}`), [
+            'liveChat:parent-token'
+        ]);
+        assert.deepEqual(env.inboxWrites.map((write) => ({
+            uid: write.uid,
+            category: write.value.category
+        })), [{ uid: 'parent-1', category: 'liveChat' }]);
     } finally {
         cleanup();
     }

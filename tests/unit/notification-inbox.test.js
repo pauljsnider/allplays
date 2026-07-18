@@ -63,7 +63,9 @@ describe('notification inbox pipeline', () => {
         expect(functionsSource).toContain('.startAfter(oldestRetainedDoc)');
         expect(functionsSource).toContain('.limit(500)');
         expect(functionsSource).not.toContain('.offset(NOTIFICATION_INBOX_MAX_ITEMS)');
-        expect(functionsSource.match(/const inboxResult = await writeNotificationInboxRecords\(\{/g)).toHaveLength(3);
+        expect(functionsSource.match(/const inboxResult = await writeNotificationInboxRecords\(\{/g)).toHaveLength(2);
+        expect(functionsSource.match(/const inboxPromise = writeNotificationInboxRecords\(\{/g)).toHaveLength(1);
+        expect(functionsSource).toContain('await inboxPromise;\n    throw error;');
         expect(functionsSource.match(/inboxWriteCount: inboxResult.writeCount/g)).toHaveLength(3);
         expect(functionsSource.match(/inboxCleanupCount: inboxResult.cleanupCount/g)).toHaveLength(2);
         expect(functionsSource.match(/inboxFailureCount: inboxResult.failureCount/g)).toHaveLength(3);

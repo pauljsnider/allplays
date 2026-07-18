@@ -21,7 +21,7 @@ describe('issue 2589 chat mention notification source contract', () => {
         expect(functionsSource).toContain('targets: notificationPlan.mentionTargets');
         expect(functionsSource).toContain("category: 'liveChat'");
         expect(functionsSource).toContain('targets: notificationPlan.liveChatTargets');
-        expect(functionsSource).toContain('&& !mentionedSet.has(target.uid)');
+        expect(functionsSource).toContain('&& !mentionDeliverySet.has(target.uid)');
         expect(functionsSource).toContain('&& !mutedSet.has(target.uid)');
     });
 
@@ -29,6 +29,6 @@ describe('issue 2589 chat mention notification source contract', () => {
         expect(mentionDetectionTestSource).toContain('matches a rostered multi-word display name exactly');
         expect(mentionDetectionTestSource).toContain('ignores reserved tokens unless the caller explicitly allows them');
         expect(mentionDetectionTestSource).toContain('uses per-conversation mute state before falling back to team-wide chatMuted');
-        expect(deliveryContractSource).toContain('sends mention pushes only to mentioned users and live chat pushes only to non-muted non-mentioned users');
+        expect(deliveryContractSource).toContain('sends mention pushes only to mention-enabled users and falls other mentions back to live chat');
     });
 });

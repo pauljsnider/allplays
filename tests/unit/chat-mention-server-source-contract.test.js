@@ -19,10 +19,10 @@ describe('server-side chat mention notification contract', () => {
         expect(functionsSource).toContain('conversationId');
     });
 
-    it('deduplicates mentioned and muted users out of generic liveChat targets', () => {
-        expect(functionsSource).toContain('const mentionedSet = new Set(mentionedUids);');
+    it('deduplicates mention-enabled and muted users out of generic liveChat targets', () => {
+        expect(functionsSource).toContain('const mentionDeliverySet = new Set(mentionedUids.filter((uid) => mentionEnabledSet.has(uid)));');
         expect(functionsSource).toContain('const mutedSet = new Set(Array.isArray(context.mutedUids) ? context.mutedUids : []);');
-        expect(functionsSource).toContain('&& !mentionedSet.has(target.uid)');
+        expect(functionsSource).toContain('&& !mentionDeliverySet.has(target.uid)');
         expect(functionsSource).toContain('&& !mutedSet.has(target.uid)');
         expect(functionsSource).toContain('liveChatInboxUids');
     });
