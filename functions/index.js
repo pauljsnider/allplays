@@ -30,6 +30,10 @@ const {
   buildTeamFeePaidUpdate,
   buildTeamFeeStripeRefundUpdate
 } = require('./team-fees-core.cjs');
+const {
+  getRegistrationPaidCheckoutGuardFailure,
+  normalizeRegistrationCheckoutCurrency
+} = require('./registration-payment-webhook-core.cjs');
 const { createFirestoreFixedWindowRateLimiter, createInMemoryRateLimiter, getRequestIp } = require('./rate-limit.cjs');
 const { buildPublicGamesIcs, canExposeEmptyPublicFeed, isPublicFanGame } = require('./public-calendar-core.cjs');
 const { buildCalendarFeedGamesQuery } = require('./calendar-feed-window-core.cjs');
@@ -1140,6 +1144,15 @@ function getRegistrationCheckoutAmountCents(registration = {}, form = null) {
     return Math.max(0, Math.round(Number(installmentState.currentInstallment?.amountCents || 0) || 0));
   }
   return Math.max(0, Math.round(Number(registration.feeSnapshot?.finalAmountDueCents ?? registration.feeAmountCents ?? 0)));
+}
+
+function getRegistrationCheckoutCurrency(registration = {}, form = null) {
+  return normalizeRegistrationCheckoutCurrency(
+    form?.currency
+      || registration.feeSnapshot?.currency
+      || registration.currency
+      || 'usd'
+  ) || 'usd';
 }
 
 function getRegistrationCustomerEmail(registration = {}) {
@@ -4211,9 +4224,7 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
   if (!Number.isFinite(amountCents) || amountCents <= 0) {
     throw new functions.https.HttpsError('failed-precondition', 'This registration does not have a payment due.');
   }
-  const currency = String(
-    form.currency || registration.feeSnapshot?.currency || registration.currency || 'usd'
-  ).trim().toLowerCase() || 'usd';
+  const currency = getRegistrationCheckoutCurrency(registration, form);
   if (!registrationCheckoutAuthorityMatches(registration, resolvedInput)) {
     throw new functions.https.HttpsError('failed-precondition', 'Current public checkout capability is required.');
   }
@@ -4344,6 +4355,7 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
       stripeCheckoutSessionId: session.id,
       stripePaymentStatus: session.payment_status || 'unpaid',
       checkoutAmountCents: amountCents,
+      checkoutCurrency: currency,
       checkoutAttemptToken: input.checkoutAttemptToken || null,
       publicCheckoutCapabilityHash: hashPublicCheckoutCapability(issuedPublicCheckoutCapability),
       checkoutCreatedAt: now,
@@ -4431,6 +4443,26 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
         const form = formSnap.data() || {};
         const registration = registrationSnap.data() || {};
         if (shouldMarkRegistrationPaidFromEvent(event)) {
+          const paidCheckoutGuardFailure = getRegistrationPaidCheckoutGuardFailure({
+            registration,
+            session,
+            authorityMatches: registrationCheckoutAuthorityMatches(registration, registrationInput),
+            expectedCurrency: getRegistrationCheckoutCurrency(registration, form)
+          });
+          if (paidCheckoutGuardFailure) {
+            transaction.set(eventRef, {
+              provider: 'stripe',
+              product: 'registration',
+              type: event.type,
+              checkoutSessionId: session.id || null,
+              registrationPath: registrationRef.path,
+              ignored: true,
+              ignoredReason: paidCheckoutGuardFailure,
+              receivedAt
+            });
+            return;
+          }
+
           if (registration.paymentPlan?.id === 'installments' && form.installmentPlan?.enabled === true) {
             const nextPaidInstallmentCount = getRegistrationPaymentPlanPaidInstallmentCount(registration) + 1;
             const installmentState = buildRegistrationInstallmentPaymentState(registration, form, nextPaidInstallmentCount);
@@ -4445,6 +4477,7 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
               stripePaymentIntentId: session.payment_intent || null,
               stripePaymentStatus: session.payment_status || 'paid',
               stripeEventId: event.id,
+              lastPaidStripeCheckoutSessionId: session.id,
               paymentPlan: {
                 ...registration.paymentPlan,
                 totalBalanceDueCents: installmentState.totalBalanceDueCents,
@@ -4469,6 +4502,7 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
               stripePaymentIntentId: session.payment_intent || null,
               stripePaymentStatus: session.payment_status || 'paid',
               stripeEventId: event.id,
+              lastPaidStripeCheckoutSessionId: session.id,
               updatedAt: receivedAt
             }, { merge: true });
             transaction.update(registrationRef, buildRegistrationReminderStopUpdate({ reason: 'paid', nowIso: queuedAtIso }));
