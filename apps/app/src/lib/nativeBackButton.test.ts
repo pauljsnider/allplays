@@ -12,6 +12,8 @@ describe('native back button helpers', () => {
     expect(getNativeBackTarget('/schedule/team-1/game-1')).toBe('/schedule');
     expect(getNativeBackTarget('/schedule')).toBe('/home');
     expect(getNativeBackTarget('/messages/team-1')).toBe('/messages');
+    expect(getNativeBackTarget('/messages', '?inquiry=inquiry-1')).toBe('/messages');
+    expect(getNativeBackTarget('/messages', '?inquiry=inquiry-1&source=notification')).toBe('/messages?source=notification');
     expect(getNativeBackTarget('/teams/team-1/fees')).toBe('/teams/team-1');
     expect(getNativeBackTarget('/teams/team-1', '?tab=roster')).toBe('/teams/team-1');
     expect(getNativeBackTarget('/teams/team-1', '?tab=more')).toBe('/teams/team-1');

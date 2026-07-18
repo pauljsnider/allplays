@@ -43,6 +43,8 @@ export function getNativeBackTarget(pathname: string, search = '') {
   if (homeStateTarget) return homeStateTarget;
   const profileStateTarget = getNativeProfileBackTarget(path, normalizedSearch);
   if (profileStateTarget) return profileStateTarget;
+  const messagesStateTarget = getNativeMessagesBackTarget(path, normalizedSearch);
+  if (messagesStateTarget) return messagesStateTarget;
   if (isNativeExitRoute(path, search)) return null;
   if (['/schedule', '/messages', '/teams', '/officials', '/parent-tools', '/profile', '/ai', '/help'].includes(path)) return '/home';
   if (/^\/schedule\/[^/]+\/[^/]+/.test(path)) return '/schedule';
@@ -102,6 +104,15 @@ function getNativeProfileBackTarget(pathname: string, search: string) {
   }
 
   return null;
+}
+
+function getNativeMessagesBackTarget(pathname: string, search: string) {
+  if (pathname !== '/messages' || !search) return null;
+
+  const params = new URLSearchParams(search);
+  if (!String(params.get('inquiry') || '').trim()) return null;
+  params.delete('inquiry');
+  return buildRoute(pathname, params);
 }
 
 function buildRoute(pathname: string, searchParams: URLSearchParams) {
