@@ -54,9 +54,9 @@ describe('team media visibility notification contract', () => {
 
     it('passes media audience context through indexed and legacy target lookups', () => {
         expect(functionsSource).toContain('canReceiveCategoryNotification(category, user, audienceContext)');
-        expect(functionsSource).toContain('if (indexedRecipientDocs.some((docSnap) => notificationRecipientDocNeedsRoleBackfill(docSnap))) {');
-        expect(functionsSource).toContain('additionalUsers = [...candidateUsers, ...additionalUsers];');
-        expect(functionsSource).toContain('buildIndexedEligibleUsers(indexedRecipientDocs, category, audienceContext, additionalUsers)');
+        expect(functionsSource).toContain('const roleBackfillUsers = indexedRecipientDocs.some((docSnap) => notificationRecipientDocNeedsRoleBackfill(docSnap))');
+        expect(functionsSource).toContain('buildIndexedEligibleUsers(indexedRecipientDocs, category, audienceContext, roleBackfillUsers)');
+        expect(functionsSource).toContain('getLegacyTargetsForCategory(teamId, category, missingUsers, actorUid, audienceContext)');
         expect(functionsSource).toContain('const explicitlyEligibleLegacyRecipientDocs = categoryRecipientDocs.filter((docSnap) => (');
         expect(functionsSource).toContain('getLegacyTargetsForCategory(teamId, category, users, actorUid, audienceContext)');
         expect(functionsSource).toContain('async function getTargetsForCategory(teamId, category, actorUid = null, audienceContext = {}, additionalUsers = []) {');

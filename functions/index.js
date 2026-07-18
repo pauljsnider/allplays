@@ -7194,12 +7194,29 @@ async function getTargetsForCategory(teamId, category, actorUid = null, audience
   const categoryRecipientDocs = targetSnap.docs || [];
   const indexedRecipientDocs = categoryRecipientDocs.filter(isAggregateNotificationRecipientDoc);
   if (indexedRecipientDocs.length) {
-    additionalUsers = Array.isArray(additionalUsers) ? additionalUsers : [];
-    if (indexedRecipientDocs.some((docSnap) => notificationRecipientDocNeedsRoleBackfill(docSnap))) {
-      const candidateUsers = await getCandidateUsersForTeam(teamId);
-      additionalUsers = [...candidateUsers, ...additionalUsers];
-    }
-    const eligibleUsers = buildIndexedEligibleUsers(indexedRecipientDocs, category, audienceContext, additionalUsers);
+    const candidateUsers = await getCandidateUsersForTeam(teamId);
+    const resolutionUsersByUid = new Map();
+    candidateUsers.forEach((user) => mergeNotificationResolutionUser(resolutionUsersByUid, user));
+    (Array.isArray(additionalUsers) ? additionalUsers : []).forEach((user) => {
+      mergeNotificationResolutionUser(resolutionUsersByUid, user);
+    });
+    const resolutionUsers = Array.from(resolutionUsersByUid.values()).map((entry) => ({
+      uid: entry.uid,
+      roles: Array.from(entry.roles)
+    }));
+    const recipientRefs = resolutionUsers
+      .map((user) => buildTeamNotificationRecipientRef(teamId, user.uid))
+      .filter(Boolean);
+    const recipientSnaps = recipientRefs.length ? await firestore.getAll(...recipientRefs) : [];
+    const indexedUserIds = new Set(recipientSnaps
+      .filter((docSnap) => docSnap.exists && isAggregateNotificationRecipientDoc(docSnap))
+      .map((docSnap) => getNotificationRecipientDocUid(docSnap))
+      .filter(Boolean));
+    const missingUsers = resolutionUsers.filter((user) => !indexedUserIds.has(user.uid));
+    const roleBackfillUsers = indexedRecipientDocs.some((docSnap) => notificationRecipientDocNeedsRoleBackfill(docSnap))
+      ? resolutionUsers.filter((user) => indexedRecipientDocs.some((docSnap) => getNotificationRecipientDocUid(docSnap) === user.uid))
+      : [];
+    const eligibleUsers = buildIndexedEligibleUsers(indexedRecipientDocs, category, audienceContext, roleBackfillUsers);
     const explicitlyEligibleLegacyRecipientDocs = categoryRecipientDocs.filter((docSnap) => (
       isLegacyTargetNotificationRecipientDoc(docSnap)
       && eligibleUsers.has(getNotificationRecipientDocUid(docSnap))
@@ -7211,7 +7228,23 @@ async function getTargetsForCategory(teamId, category, actorUid = null, audience
       .map((docSnap) => getNotificationRecipientDocUid(docSnap))
       .filter((uid) => eligibleUsers.has(uid))
       .map((uid) => [uid, eligibleUsers.get(uid)]));
-    return appendTokenlessNotificationTargets(targets, indexedEligibleUsers, teamId, actorUid);
+    const indexedTargets = appendTokenlessNotificationTargets(targets, indexedEligibleUsers, teamId, actorUid);
+    const fallbackTargets = missingUsers.length
+      ? await getLegacyTargetsForCategory(teamId, category, missingUsers, actorUid, audienceContext)
+      : [];
+    if (missingUsers.length && typeof backfillNotificationRecipientsForTeam === 'function') {
+      try {
+        await backfillNotificationRecipientsForTeam(teamId, missingUsers, { skipLegacyCleanup: true });
+      } catch (error) {
+        const logger = typeof functions !== 'undefined' ? functions.logger : null;
+        logger?.warn?.('Failed to backfill missing notification recipients after partial indexed lookup', {
+          teamId,
+          category,
+          error: error?.message || String(error || 'Unknown error')
+        });
+      }
+    }
+    return [...indexedTargets, ...fallbackTargets];
   }
 
   const legacyTargetRecipientDocs = categoryRecipientDocs.filter(isLegacyTargetNotificationRecipientDoc);

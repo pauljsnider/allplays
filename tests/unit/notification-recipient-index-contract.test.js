@@ -37,12 +37,14 @@ describe('notification recipient index foundation', () => {
         expect(functionsSource).toContain(".document('teams/{teamId}')");
     });
 
-    it('falls back to live preference/device reads and backfills after empty indexed lookups', () => {
+    it('falls back to live preference/device reads and backfills incomplete indexed lookups', () => {
         expect(functionsSource).toContain('async function getTargetsForCategory(teamId, category');
         expect(functionsSource).toContain('function isAggregateNotificationRecipientDoc(docSnap) {');
         expect(functionsSource).toContain('const categoryRecipientDocs = targetSnap.docs || [];');
         expect(functionsSource).toContain('const indexedRecipientDocs = categoryRecipientDocs.filter(isAggregateNotificationRecipientDoc);');
-        expect(functionsSource).toContain('const eligibleUsers = buildIndexedEligibleUsers(indexedRecipientDocs, category, audienceContext, additionalUsers);');
+        expect(functionsSource).toContain('const missingUsers = resolutionUsers.filter((user) => !indexedUserIds.has(user.uid));');
+        expect(functionsSource).toContain('const eligibleUsers = buildIndexedEligibleUsers(indexedRecipientDocs, category, audienceContext, roleBackfillUsers);');
+        expect(functionsSource).toContain('await backfillNotificationRecipientsForTeam(teamId, missingUsers, { skipLegacyCleanup: true });');
         expect(functionsSource).toContain('const explicitlyEligibleLegacyRecipientDocs = categoryRecipientDocs.filter((docSnap) => (');
         expect(functionsSource).toContain('await teamNotificationRecipientIndexIsEmpty(teamId)');
         expect(functionsSource).toContain('some((docSnap) => isAggregateNotificationRecipientDoc(docSnap))');
