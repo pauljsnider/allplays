@@ -147,9 +147,16 @@ vi.mock('./pages/ScheduleEventDetail', () => ({
   ScheduleEventDetail: () => <div>Event detail page</div>,
 }));
 
-vi.mock('./pages/Messages', () => ({
-  Messages: () => <div>Messages page</div>,
-}));
+vi.mock('./pages/Messages', async () => {
+  const reactRouterDom = await import('react-router-dom');
+  return {
+    Messages: () => {
+      const location = reactRouterDom.useLocation();
+      const inquiryId = new URLSearchParams(location.search).get('inquiry');
+      return <div>{inquiryId ? `Opportunity inquiry ${inquiryId}` : 'Messages page'}</div>;
+    },
+  };
+});
 
 vi.mock('./pages/Teams', () => ({
   Teams: () => <div>Teams page</div>,
@@ -602,6 +609,23 @@ describe('App protected route loading', () => {
     });
 
     expect(await screen.findByText('Schedule page')).toBeTruthy();
+  });
+
+  it('routes native back from an opportunity inquiry to the messages inbox', async () => {
+    render(
+      <MemoryRouter initialEntries={['/messages?inquiry=inquiry-1']}>
+        <App />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('Opportunity inquiry inquiry-1')).toBeTruthy();
+    await waitFor(() => expect(nativeBackMock.listeners).toHaveLength(1));
+
+    await act(async () => {
+      nativeBackMock.listeners[0]({ canGoBack: false });
+    });
+
+    expect(await screen.findByText('Messages page')).toBeTruthy();
   });
 
   it('collapses Profile query state before leaving to Home on native back', async () => {

@@ -36,6 +36,10 @@ export type ChatConversationFirestoreRecord = {
     name?: string | null;
     participantIds?: string[];
     participantRoles?: string[];
+    directAccess?: 'accepted_friend' | 'team_admin' | null;
+    directUserIds?: string[];
+    friendshipId?: string | null;
+    initiatedBy?: string | null;
     mutedBy?: string[];
     isDefault?: boolean;
     isLegacy?: boolean;

@@ -68,6 +68,10 @@ export type ManagedOpportunityTeam = {
   city: string;
   state: string;
   zip: string;
+  ageGroup: string;
+  competitiveLevel: string;
+  division: string;
+  availability: string;
 };
 
 export type OpportunityMessage = {
@@ -88,7 +92,14 @@ export type OpportunityInquiry = {
   status: 'open' | 'closed';
   createdAt: string | null;
   updatedAt: string | null;
+  lastMessagePreview: string;
+  lastMessageAuthorName: string;
   messages: OpportunityMessage[];
+};
+
+export type OpportunityRequiredField = {
+  key: keyof OpportunityInput;
+  label: string;
 };
 
 export const opportunityKinds: Array<{ id: OpportunityKind; label: string; detail: string }> = [
@@ -103,6 +114,23 @@ export const compensationOptions: Array<{ id: CompensationType; label: string }>
   { id: 'paid', label: 'Paid' },
   { id: 'volunteer', label: 'Volunteer' },
   { id: 'either', label: 'Paid or volunteer' }
+];
+
+export const opportunityAvailabilityOptions = [
+  'Weeknights',
+  'Weekends',
+  'Weeknights and weekends',
+  'Weekday daytime',
+  'Flexible / discuss'
+] as const;
+
+const commonRequiredOpportunityFields: OpportunityRequiredField[] = [
+  { key: 'title', label: 'Title' },
+  { key: 'description', label: 'Description' },
+  { key: 'sport', label: 'Sport' },
+  { key: 'city', label: 'City' },
+  { key: 'state', label: 'State' },
+  { key: 'availability', label: 'Availability' }
 ];
 
 const opportunityInquiryKindStarters: Record<OpportunityKind, string> = {
@@ -149,13 +177,89 @@ export function emptyOpportunityInput(kind: OpportunityKind = 'team_seeking_play
     city: '',
     state: '',
     zip: '',
-    availability: '',
+    availability: opportunityAvailabilityOptions[0],
     startDate: '',
     compensationType: 'not_applicable',
     compensationSummary: '',
     teamId: '',
     guardianAttested: false
   };
+}
+
+export function applyOpportunityTeamDefaults(input: OpportunityInput, team: ManagedOpportunityTeam | null | undefined): OpportunityInput {
+  if (!team || input.kind === 'player_seeking_team') return input;
+  const availability = input.teamId
+    ? input.availability
+    : team.availability || input.availability || opportunityAvailabilityOptions[0];
+  return {
+    ...input,
+    teamId: team.id,
+    sport: input.sport || team.sport,
+    city: input.city || team.city,
+    state: input.state || team.state,
+    zip: input.zip || team.zip,
+    ageGroup: input.ageGroup || team.ageGroup,
+    competitiveLevel: input.competitiveLevel || team.competitiveLevel,
+    division: input.division || team.division,
+    availability
+  };
+}
+
+const opportunityTeamDefaultKeys = [
+  'sport',
+  'city',
+  'state',
+  'zip',
+  'ageGroup',
+  'competitiveLevel',
+  'division'
+] as const;
+
+export function switchOpportunityTeamDefaults(
+  input: OpportunityInput,
+  previousTeam: ManagedOpportunityTeam | null | undefined,
+  nextTeam: ManagedOpportunityTeam | null | undefined
+): OpportunityInput {
+  if (input.kind === 'player_seeking_team') return input;
+  const nextInput = { ...input, teamId: nextTeam?.id || '' };
+  opportunityTeamDefaultKeys.forEach((key) => {
+    const currentValue = input[key];
+    const previousDefault = previousTeam?.[key] || '';
+    if (!currentValue || (previousTeam && currentValue === previousDefault)) {
+      nextInput[key] = nextTeam?.[key] || '';
+    }
+  });
+  const previousAvailabilityDefault = previousTeam?.availability || opportunityAvailabilityOptions[0];
+  if (!input.availability || (previousTeam && input.availability === previousAvailabilityDefault)) {
+    nextInput.availability = nextTeam?.availability || opportunityAvailabilityOptions[0];
+  }
+  return nextInput;
+}
+
+export function getOpportunityRequiredFields(input: Pick<OpportunityInput, 'kind'>): OpportunityRequiredField[] {
+  if (input.kind === 'player_seeking_team') {
+    return [
+      ...commonRequiredOpportunityFields,
+      { key: 'ageGroup', label: 'Age group' },
+      { key: 'guardianAttested', label: 'Adult/guardian confirmation' }
+    ];
+  }
+  return [{ key: 'teamId', label: 'Public team' }, ...commonRequiredOpportunityFields];
+}
+
+export function getMissingOpportunityRequiredFields(input: OpportunityInput): OpportunityRequiredField[] {
+  return getOpportunityRequiredFields(input).filter(({ key }) => {
+    const value = input[key];
+    return typeof value === 'boolean' ? !value : !String(value || '').trim();
+  });
+}
+
+export function containsUnsafeOpportunityAiText(value: unknown) {
+  const text = String(value || '');
+  return /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i.test(text)
+    || /(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/.test(text)
+    || /\b\d{1,6}\s+[A-Za-z0-9.'-]+(?:\s+[A-Za-z0-9.'-]+){0,3}\s+(?:street|st|avenue|ave|road|rd|lane|ln|drive|dr|court|ct|boulevard|blvd)\b/i.test(text)
+    || /\b(?:date of birth|birth date|dob|born on|school|academy|high school|middle school|elementary)\b/i.test(text);
 }
 
 export function opportunityToInput(item: PublicOpportunity): OpportunityInput {

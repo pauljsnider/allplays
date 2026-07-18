@@ -104,15 +104,50 @@ describe('targeted team chat Firestore rules', () => {
 
     it('bounds chat conversation discovery while preserving default and requested conversations', () => {
         expect(dbSource).toContain('export const DEFAULT_CHAT_CONVERSATION_PAGE_SIZE = 25;');
-        expect(dbSource).toContain("query(conversationsRef, orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize))");
-        expect(dbSource).toContain("query(conversationsRef, where('participantIds', 'array-contains', user.uid), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize))");
-        expect(dbSource).toContain("query(conversationsRef, where('participantIds', 'array-contains', `user:${user.uid}`), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize))");
-        expect(dbSource).toContain("query(conversationsRef, where('participantIds', 'array-contains', `email:${normalizedEmail}`), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize))");
+        expect(dbSource).toContain("query(conversationsRef, where('type', 'in', ['team', 'group']), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize))");
+        expect(dbSource).toContain("query(conversationsRef, where('directAccess', '==', 'team_admin'), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize))");
+        expect(dbSource).toContain("query(conversationsRef, where('directUserIds', 'array-contains', user.uid), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize))");
+        expect(dbSource).toContain("query(conversationsRef, where('participantIds', 'array-contains', user.uid), where('type', 'in', ['team', 'group']), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize))");
+        expect(dbSource).toContain("query(conversationsRef, where('participantIds', 'array-contains', `user:${user.uid}`), where('type', 'in', ['team', 'group']), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize))");
+        expect(dbSource).toContain("query(conversationsRef, where('participantIds', 'array-contains', user.uid), where('type', '==', 'direct'), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize))");
+        expect(dbSource).toContain("query(conversationsRef, where('participantIds', 'array-contains', `user:${user.uid}`), where('type', '==', 'direct'), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize))");
+        expect(dbSource).toContain("query(conversationsRef, where('participantIds', 'array-contains', `email:${normalizedEmail}`), where('type', 'in', ['team', 'group']), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize))");
         expect(dbSource).toContain('const boundedStored = stored.slice(0, conversationPageSize);');
         expect(dbSource).toContain("const requestedConversationSnap = await getDoc(doc(db, 'teams', teamId, 'chatConversations', requestedConversationId));");
         expect(dbSource).toContain('} catch (error) {');
         expect(dbSource).toContain("console.warn('Ignoring unavailable requested chat conversation.', { teamId, requestedConversationId, error });");
         expect(dbSource).toContain('return [buildDefaultTeamConversation(team), ...boundedStored];');
+    });
+
+    it('declares indexes for participant-only and moderator conversation queries', () => {
+        const conversationIndexes = firestoreIndexes.indexes.filter((index) => index.collectionGroup === 'chatConversations');
+        expect(conversationIndexes).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                fields: [
+                    { fieldPath: 'participantIds', arrayConfig: 'CONTAINS' },
+                    { fieldPath: 'type', order: 'ASCENDING' },
+                    { fieldPath: 'updatedAt', order: 'DESCENDING' }
+                ]
+            }),
+            expect.objectContaining({
+                fields: [
+                    { fieldPath: 'directUserIds', arrayConfig: 'CONTAINS' },
+                    { fieldPath: 'updatedAt', order: 'DESCENDING' }
+                ]
+            }),
+            expect.objectContaining({
+                fields: [
+                    { fieldPath: 'type', order: 'ASCENDING' },
+                    { fieldPath: 'updatedAt', order: 'DESCENDING' }
+                ]
+            }),
+            expect.objectContaining({
+                fields: [
+                    { fieldPath: 'directAccess', order: 'ASCENDING' },
+                    { fieldPath: 'updatedAt', order: 'DESCENDING' }
+                ]
+            })
+        ]));
     });
 
     it('includes a backfill for fieldless legacy full-team messages before constrained reads ship', () => {
@@ -255,6 +290,8 @@ describe('targeted team chat Firestore rules', () => {
 
         expect(listHelper).toContain('isTeamOwnerOrAdmin(teamId) ||');
         expect(listHelper).toContain('request.auth.uid in participantIds');
+        expect(listHelper).toContain("request.auth.uid in conversationData.get('directUserIds', [])");
+        expect(listHelper).toContain('!isParticipantOnlyAcceptedFriendConversation(conversationData) ||');
         expect(listHelper).not.toContain('!isStaffRoleChatConversation(conversationData)');
     });
 

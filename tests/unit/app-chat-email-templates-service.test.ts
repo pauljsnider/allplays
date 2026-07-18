@@ -41,6 +41,10 @@ vi.mock('../../js/vendor/firebase-ai.js', () => ({ getAI: vi.fn(), getGenerative
 vi.mock('../../js/firebase-runtime-config.js', () => ({ resolveImageFirebaseConfig: vi.fn() }));
 vi.mock('../../js/team-visibility.js', () => ({ isTeamActive: vi.fn(() => true) }));
 vi.mock('../../apps/app/src/lib/authService.ts', () => ({ firebaseAuth: {}, getNativeAuthIdToken: vi.fn() }));
+vi.mock('../../apps/app/src/lib/friendMessageService.ts', () => ({
+    canMessageAcceptedFriend: vi.fn(),
+    sendAuthorizedDirectMessage: vi.fn()
+}));
 
 import { loadTeamEmailTemplates, saveTeamEmailTemplate } from '../../apps/app/src/lib/chatService.ts';
 

@@ -6230,8 +6230,14 @@ export function canAccessTeamChat(user, team) {
     // Global admin
     if (user.isAdmin) return true;
 
-    // Parent (has parentOf entry for this team)
-    if (user.parentOf?.some(p => p.teamId === team.id)) return true;
+    // Normalized membership is authoritative once present. Legacy profiles
+    // without parentTeamIds retain access through their parentOf links until
+    // the normal profile backfill runs.
+    if (Array.isArray(user.parentTeamIds)) {
+        if (user.parentTeamIds.includes(team.id)) return true;
+    } else if (user.parentOf?.some(p => p.teamId === team.id)) {
+        return true;
+    }
 
     return false;
 }
@@ -6705,29 +6711,58 @@ function normalizeRequestedChatConversationId(conversationId) {
     return normalized;
 }
 
+async function loadChatConversationQuerySnapshots(
+    participantQueries,
+    legacyDirectParticipantQueries,
+    loadQuery = getDocs
+) {
+    const [snapshots, legacyResults] = await Promise.all([
+        Promise.all(participantQueries.map((conversationQuery) => loadQuery(conversationQuery))),
+        Promise.allSettled(legacyDirectParticipantQueries.map((conversationQuery) => loadQuery(conversationQuery)))
+    ]);
+    return [
+        ...snapshots,
+        ...legacyResults
+            .filter((result) => result.status === 'fulfilled')
+            .map((result) => result.value)
+    ];
+}
+
 export async function getChatConversations(teamId, user = null, {
     team = null,
     canModerate = false,
     pageSize = DEFAULT_CHAT_CONVERSATION_PAGE_SIZE,
     includeConversationId = '',
-    activeConversationId = ''
+    activeConversationId = '',
+    strictIncludeConversationId = false
 } = {}) {
     const conversationsRef = collection(db, 'teams', teamId, 'chatConversations');
     const normalizedEmail = user?.email ? String(user.email).trim().toLowerCase() : '';
     const conversationPageSize = normalizeChatConversationPageSize(pageSize);
-    const participantQueries = canModerate
-        ? [query(conversationsRef, orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize))]
-        : [
-            ...(user?.uid ? [
-                query(conversationsRef, where('participantIds', 'array-contains', user.uid), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize)),
-                query(conversationsRef, where('participantIds', 'array-contains', `user:${user.uid}`), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize))
-            ] : []),
-            ...(normalizedEmail ? [
-                query(conversationsRef, where('participantIds', 'array-contains', `email:${normalizedEmail}`), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize))
-            ] : [])
-        ];
+    const participantQueries = [
+        ...(canModerate ? [
+            query(conversationsRef, where('type', 'in', ['team', 'group']), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize)),
+            query(conversationsRef, where('directAccess', '==', 'team_admin'), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize))
+        ] : []),
+        ...(user?.uid ? [
+            query(conversationsRef, where('directUserIds', 'array-contains', user.uid), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize)),
+            query(conversationsRef, where('participantIds', 'array-contains', user.uid), where('type', 'in', ['team', 'group']), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize)),
+            query(conversationsRef, where('participantIds', 'array-contains', `user:${user.uid}`), where('type', 'in', ['team', 'group']), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize))
+        ] : []),
+        ...(normalizedEmail ? [
+            query(conversationsRef, where('participantIds', 'array-contains', `email:${normalizedEmail}`), where('type', 'in', ['team', 'group']), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize))
+        ] : [])
+    ];
+    // Legacy direct conversations predate directUserIds/directAccess. Their
+    // participant-only queries cannot prove the modern directUserIds rule for
+    // every potential document, so keep them best-effort: a denied legacy read
+    // must not discard the modern participant-safe inbox queries above.
+    const legacyDirectParticipantQueries = user?.uid ? [
+        query(conversationsRef, where('participantIds', 'array-contains', user.uid), where('type', '==', 'direct'), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize)),
+        query(conversationsRef, where('participantIds', 'array-contains', `user:${user.uid}`), where('type', '==', 'direct'), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize))
+    ] : [];
     const snapshots = participantQueries.length > 0
-        ? await Promise.all(participantQueries.map((conversationQuery) => getDocs(conversationQuery)))
+        ? await loadChatConversationQuerySnapshots(participantQueries, legacyDirectParticipantQueries)
         : [];
     const conversationsById = new Map();
     snapshots.forEach((snapshot) => {
@@ -6755,6 +6790,7 @@ export async function getChatConversations(teamId, user = null, {
                 }
             }
         } catch (error) {
+            if (strictIncludeConversationId) throw error;
             console.warn('Ignoring unavailable requested chat conversation.', { teamId, requestedConversationId, error });
         }
     }
@@ -6771,7 +6807,12 @@ export async function upsertChatConversation(teamId, conversation = {}) {
         participantIds = [],
         participantRoles = [],
         mutedBy = [],
-        name = null
+        name = null,
+        directAccess = null,
+        directUserIds = [],
+        friendshipId = null,
+        initiatedBy = null,
+        createOnly = false
     } = conversation;
     const normalizedType = normalizeConversationType(type);
     const normalizedParticipantIds = normalizeConversationParticipantIds(participantIds);
@@ -6782,13 +6823,67 @@ export async function upsertChatConversation(teamId, conversation = {}) {
     const conversationId = buildConversationId(normalizedType, normalizedParticipantIds, normalizedParticipantRoles);
     const now = Timestamp.now();
     const conversationRef = doc(db, 'teams', teamId, 'chatConversations', conversationId);
-    const existing = await getDoc(conversationRef);
     const normalizedMutedBy = Array.from(new Set(Array.isArray(mutedBy) ? mutedBy : []));
     const hasMutedByUpdate = Object.prototype.hasOwnProperty.call(conversation, 'mutedBy');
+    const normalizedDirectAccess = directAccess === 'accepted_friend' || directAccess === 'team_admin'
+        ? directAccess
+        : null;
+    const normalizedDirectUserIds = Array.from(new Set((Array.isArray(directUserIds) ? directUserIds : [])
+        .map((userId) => String(userId || '').trim())
+        .filter(Boolean)))
+        .sort();
+    const normalizedFriendshipId = String(friendshipId || '').trim() || null;
+    const normalizedInitiatedBy = String(initiatedBy || '').trim() || null;
+    const directMetadata = normalizedType === 'direct' && normalizedDirectAccess && normalizedDirectUserIds.length === 2
+        ? {
+            directAccess: normalizedDirectAccess,
+            directUserIds: normalizedDirectUserIds,
+            friendshipId: normalizedDirectAccess === 'accepted_friend' ? normalizedFriendshipId : null,
+            initiatedBy: normalizedDirectAccess === 'team_admin' ? normalizedInitiatedBy : null
+        }
+        : {};
     const isCanonicalStaffConversation = normalizedType === 'group' &&
         normalizedParticipantIds.length === 0 &&
         normalizedParticipantRoles.length === 1 &&
         normalizedParticipantRoles[0] === 'staff';
+
+    const payload = {
+        type: normalizedType,
+        participantIds: normalizedParticipantIds,
+        participantRoles: normalizedParticipantRoles,
+        mutedBy: normalizedMutedBy,
+        ...directMetadata,
+        updatedAt: now
+    };
+    if (name) {
+        payload.name = name;
+    }
+    payload.createdAt = now;
+
+    let createError = null;
+    if (createOnly) {
+        try {
+            // A blind write lets Firestore evaluate this as a create without a
+            // forbidden get of a missing participant-private direct thread.
+            // If another client won the deterministic-ID race, the update is
+            // rejected and the existing participant can safely read it below.
+            await setDoc(conversationRef, payload);
+            return { id: conversationId, ...payload };
+        } catch (error) {
+            createError = error;
+        }
+    }
+
+    let existing;
+    try {
+        existing = await getDoc(conversationRef);
+    } catch (error) {
+        if (createError) throw createError;
+        throw error;
+    }
+    if (createError && !existing.exists()) {
+        throw createError;
+    }
 
     if (existing.exists()) {
         const existingData = existing.data() || {};
@@ -6808,7 +6903,8 @@ export async function upsertChatConversation(teamId, conversation = {}) {
                 participantRoles: normalizedParticipantRoles
             } : {}),
             ...(hasMutedByUpdate ? { mutedBy: normalizedMutedBy } : {}),
-            ...(shouldBackfillName ? { name } : {})
+            ...(shouldBackfillName ? { name } : {}),
+            ...(!existingData.directAccess && directMetadata.directAccess ? directMetadata : {})
         };
         if (Object.keys(existingUpdate).length > 0) {
             await setDoc(conversationRef, {
@@ -6830,30 +6926,66 @@ export async function upsertChatConversation(teamId, conversation = {}) {
                 updatedAt: now
             } : {}),
             ...(shouldBackfillName ? { name, updatedAt: now } : {}),
+            ...(!existingData.directAccess && directMetadata.directAccess ? { ...directMetadata, updatedAt: now } : {}),
             participantIds: shouldRepairCanonicalStaffConversation
                 ? normalizedParticipantIds
                 : (existingData.participantIds || normalizedParticipantIds),
             participantRoles: shouldRepairCanonicalStaffConversation
                 ? normalizedParticipantRoles
                 : (existingData.participantRoles || normalizedParticipantRoles),
+            ...((existingData.directAccess || directMetadata.directAccess) ? {
+                directAccess: existingData.directAccess || directMetadata.directAccess,
+                directUserIds: existingData.directUserIds || directMetadata.directUserIds || [],
+                friendshipId: existingData.friendshipId || directMetadata.friendshipId || null,
+                initiatedBy: existingData.initiatedBy || directMetadata.initiatedBy || null
+            } : {}),
             name: existingData.name || name || null
         };
     }
 
-    const payload = {
-        type: normalizedType,
-        participantIds: normalizedParticipantIds,
-        participantRoles: normalizedParticipantRoles,
-        mutedBy: normalizedMutedBy,
-        updatedAt: now
-    };
-    if (name) {
-        payload.name = name;
-    }
-    payload.createdAt = now;
     await setDoc(conversationRef, payload, { merge: true });
     return { id: conversationId, ...payload };
 }
+
+/**
+ * Repair a legacy two-participant direct thread that predates authorization
+ * metadata. The thread retains its history and participant boundary by
+ * becoming an in-place participant-scoped group.
+ */
+export async function repairLegacyDirectConversation(teamId, conversationId) {
+    const normalizedConversationId = normalizeRequestedChatConversationId(conversationId);
+    if (!normalizedConversationId) {
+        throw new Error('A valid legacy conversation is required.');
+    }
+    const conversationRef = doc(db, 'teams', teamId, 'chatConversations', normalizedConversationId);
+    const snapshot = await getDoc(conversationRef);
+    if (!snapshot.exists()) {
+        throw new Error('Legacy conversation not found.');
+    }
+    const conversation = snapshot.data() || {};
+    if (conversation.type === 'group') {
+        return { id: snapshot.id, ...conversation };
+    }
+    const participantIds = normalizeConversationParticipantIds(conversation.participantIds);
+    if (conversation.type !== 'direct' || conversation.directAccess || participantIds.length !== 2) {
+        throw new Error('Only legacy direct conversations without authorization metadata can be repaired.');
+    }
+    const updatedAt = serverTimestamp();
+    await updateDoc(conversationRef, {
+        type: 'group',
+        updatedAt
+    });
+    return {
+        id: snapshot.id,
+        ...conversation,
+        type: 'group',
+        participantIds,
+        updatedAt
+    };
+}
+
+// Backward-compatible export for clients that loaded the first repair API.
+export const repairLegacyAliasDirectConversation = repairLegacyDirectConversation;
 
 /**
  * Get chat messages for a team with pagination support.

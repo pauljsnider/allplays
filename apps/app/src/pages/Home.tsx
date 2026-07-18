@@ -76,6 +76,7 @@ import { useViewLoadTimer } from '../lib/viewLoadTiming';
 import {
   emptySocialHome,
   filterSocialFeedItems,
+  getFriendMessageRoute,
   getSocialPostPresetForType,
   getSocialTypeLabel,
   getSocialVisibilityLabel,
@@ -1704,6 +1705,7 @@ function FriendCard({
   const [busy, setBusy] = useState('');
   const incoming = friend.status === 'pending' && friend.recipientId === currentUserId;
   const outgoing = friend.status === 'pending' && friend.requesterId === currentUserId;
+  const messageRoute = getFriendMessageRoute(friend);
   const run = async (label: string, action: () => Promise<void> | void) => {
     setBusy(label);
     try {
@@ -1743,6 +1745,7 @@ function FriendCard({
         {friend.status === 'accepted' ? (
           <>
             <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-black text-emerald-700">Friend</span>
+            {messageRoute ? <Link to={messageRoute} className="inline-flex items-center gap-1 rounded-full bg-primary-50 px-2.5 py-1 text-xs font-black text-primary-700"><MessageCircle className="h-3.5 w-3.5" />Message</Link> : null}
             <button type="button" className="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-black text-gray-700" disabled={Boolean(busy)} onClick={() => run('remove', onRemove)}>
               {busy === 'remove' ? 'Removing...' : 'Remove'}
             </button>

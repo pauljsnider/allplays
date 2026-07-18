@@ -51,7 +51,7 @@ export function OpportunityDetail({ auth }: { auth: AuthState }) {
     setError('');
     try {
       const inquiry = await createOpportunityInquiry(listingId, message);
-      navigate(`/discover/inquiries/${encodeURIComponent(inquiry.id)}`);
+      navigate(`/messages?inquiry=${encodeURIComponent(inquiry.id)}`);
     } catch (sendError: any) {
       setError(sendError?.message || 'Unable to send this inquiry.');
     } finally {

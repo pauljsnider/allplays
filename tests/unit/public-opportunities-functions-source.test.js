@@ -21,6 +21,7 @@ describe('public opportunity callable wiring', () => {
       'getOpportunityInquiry',
       'listMyPublicOpportunities',
       'listManagedPublicOpportunityTeams',
+      'sendAuthorizedDirectMessage',
       'getPublicTeamProfile',
       'listPublicOpportunityReports',
       'moderatePublicOpportunity'
@@ -36,7 +37,9 @@ describe('public opportunity callable wiring', () => {
     expect(source).toContain('checkPublicOpportunityBrowseRateLimit');
     expect(source).toContain('checkPublicOpportunityWriteRateLimit');
     expect(source).toContain('checkPublicOpportunityMessageRateLimit');
-    expect(source).toContain("appRoute: `/discover/inquiries/${inquiryRef.id}`");
+    expect(source).toContain("appRoute: `/messages?inquiry=${encodeURIComponent(inquiryRef.id)}`");
+    expect(source).toContain("appRoute: `/messages?inquiry=${encodeURIComponent(ref.id)}`");
+    expect(source).toContain('lastMessagePreview: body');
     expect(source).toContain('writeNotificationInboxRecords({');
   });
 
@@ -96,10 +99,26 @@ describe('public opportunity callable wiring', () => {
     expect(recipientResolver).not.toContain('new Set([String(listing.authorId');
   });
 
+  it('authorizes direct messages on the server write path', () => {
+    expect(source).toContain('exports.sendAuthorizedDirectMessage');
+    expect(source).toContain("conversation.directAccess === 'accepted_friend'");
+    expect(source).toContain("conversation.directAccess === 'team_admin'");
+    expect(source).toContain('canMessageAcceptedFriendForTeam({');
+    expect(source).toContain('hasTeamAdminAccess({');
+    expect(source).toContain('initiatorId === caller.uid\n      ? caller.email');
+    expect(source).toContain('await admin.auth().getUser(recipientId)');
+    expect(source).toContain('userId: recipientId,\n    email: recipientEmail');
+    expect(source).toContain('batch.create(messageRef, message);');
+    expect(source).toContain('if (!clientMessageId || !isAlreadyExistsError(error)) throw error;');
+    expect(source).toContain('existingMessage.clientMessageId !== clientMessageId');
+  });
+
   it('revokes private team inquiry access and notifications from former administrators', () => {
     expect(source).toMatch(/canAccessOpportunityInquiry[\s\S]*isOpportunityPlatformAdmin\(caller\)[\s\S]*inquiry\.senderId === caller\.uid/);
     expect(source).toMatch(/canAccessOpportunityInquiry[\s\S]*inquiry\.participantIds\.includes\(caller\.uid\)[\s\S]*hasTeamAdminAccess/);
-    expect(source).toContain('snap.docs.map((docSnap) => canAccessOpportunityInquiry(caller, docSnap.data() || {}))');
+    expect(source).toContain('scanned.map((docSnap) => canAccessOpportunityInquiry(caller, docSnap.data() || {}))');
+    expect(source).toContain("collectionRef.where('teamId', 'in', teamIds)");
+    expect(source).toContain('listOpportunityManagedTeamDocuments(caller)');
     expect(source).toContain('const currentTeamRecipients = inquiry.teamId');
     expect(source).toContain('currentTeamRecipients.has(participantId)');
   });

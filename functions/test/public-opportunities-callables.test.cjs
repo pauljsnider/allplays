@@ -168,6 +168,14 @@ function makeFirestore(seed = {}) {
         batch() {
             const operations = [];
             return {
+                create: (ref, value) => operations.push(async () => {
+                    if (state.has(ref.path)) {
+                        const error = new Error(`Document already exists: ${ref.path}`);
+                        error.code = 6;
+                        throw error;
+                    }
+                    await ref.set(value);
+                }),
                 set: (ref, value, options) => operations.push(() => ref.set(value, options)),
                 update: (ref, value) => operations.push(() => ref.update(value)),
                 commit: async () => Promise.all(operations.map((operation) => operation()))
@@ -215,7 +223,7 @@ function makeFunctionsStub() {
     };
 }
 
-function loadCallables(seed = {}) {
+function loadCallables(seed = {}, { authUsers = {} } = {}) {
     delete require.cache[repoIndexPath];
     const firestore = makeFirestore(seed);
     const fieldValue = {
@@ -232,7 +240,18 @@ function loadCallables(seed = {}) {
             Timestamp: FakeTimestamp,
             FieldPath: { documentId: () => '__name__' }
         }),
-        auth: () => ({ verifyIdToken: async () => null }),
+        auth: () => ({
+            verifyIdToken: async () => null,
+            getUser: async (uid) => {
+                const authUser = authUsers[uid];
+                if (!authUser) {
+                    const error = new Error(`Missing auth user: ${uid}`);
+                    error.code = 'auth/user-not-found';
+                    throw error;
+                }
+                return { uid, ...clone(authUser) };
+            }
+        }),
         messaging: () => ({})
     };
     functionsStub = makeFunctionsStub();
@@ -409,6 +428,261 @@ test('revoked team admins lose private inquiry access with bounded, resumable st
     await assert.rejects(
         callables.getOpportunityInquiry({ inquiryId: 'stale-000' }, context),
         (error) => error.code === 'permission-denied'
+    );
+});
+
+test('current team admins can discover and open inquiries created before their assignment', async () => {
+    const createdAt = new FakeTimestamp(Date.now() - 1000);
+    const seed = {
+        'users/current-admin': { email: 'current@example.com', isAdmin: false },
+        'teams/team-1': { ownerId: 'current-admin', adminEmails: [] },
+        'opportunityInquiries/older-inquiry': {
+            senderId: 'sender-1',
+            teamId: 'team-1',
+            participantIds: ['former-admin', 'sender-1'],
+            listingTitle: 'Coach opening',
+            updatedAt: createdAt,
+            createdAt,
+            status: 'open'
+        }
+    };
+    const { callables } = loadCallables(seed);
+    const context = authContext('current-admin', { email: 'current@example.com' });
+
+    const result = await callables.listOpportunityInquiries({}, context);
+    assert.deepEqual(result.items.map((item) => item.id), ['older-inquiry']);
+    const detail = await callables.getOpportunityInquiry({ inquiryId: 'older-inquiry' }, context);
+    assert.equal(detail.inquiry.id, 'older-inquiry');
+});
+
+test('direct-message callable rechecks friendship and team access on the write path', async () => {
+    const seed = {
+        'users/sender': { email: 'sender@example.com', isAdmin: false, parentTeamIds: ['team-1'], fullName: 'Sender' },
+        'users/recipient': { email: 'recipient@example.com', isAdmin: false, parentTeamIds: ['team-1'] },
+        'teams/team-1': { ownerId: 'owner', adminEmails: [] },
+        'friendships/recipient__sender': {
+            status: 'accepted',
+            memberIds: ['recipient', 'sender'],
+            sharedTeamIds: ['team-1'],
+            blockedBy: []
+        },
+        'teams/team-1/chatConversations/direct_sender__user%3Arecipient': {
+            type: 'direct',
+            participantIds: ['sender', 'user:recipient'],
+            participantRoles: [],
+            directAccess: 'accepted_friend',
+            directUserIds: ['recipient', 'sender'],
+            friendshipId: 'recipient__sender',
+            initiatedBy: null
+        }
+    };
+    const { firestore, callables } = loadCallables(seed);
+    const context = authContext('sender', { email: 'sender@example.com' });
+    const input = {
+        teamId: 'team-1',
+        conversationId: 'direct_sender__user%3Arecipient',
+        clientMessageId: 'client-direct-1',
+        text: 'Hi friend',
+        attachments: [{
+            type: 'image/jpeg',
+            url: 'https://firebasestorage.googleapis.com/v0/b/allplays-images/o/direct-photo.jpg?alt=media',
+            path: 'team-photos/1700000000000_chat_team-1_direct_sender__user%3Arecipient_sender_photo.jpg',
+            name: 'photo.jpg',
+            size: 1024
+        }]
+    };
+
+    const sent = await callables.sendAuthorizedDirectMessage(input, context);
+    assert.equal(sent.id, 'sender__client-direct-1');
+    assert.equal(
+        firestore.snapshot('teams/team-1/chatConversations/direct_sender__user%3Arecipient/chatMessages/sender__client-direct-1').text,
+        'Hi friend'
+    );
+    assert.deepEqual(
+        firestore.snapshot('teams/team-1/chatConversations/direct_sender__user%3Arecipient/chatMessages/sender__client-direct-1').recipientIds,
+        ['user:recipient']
+    );
+    assert.deepEqual(
+        firestore.snapshot('teams/team-1/chatConversations/direct_sender__user%3Arecipient/chatMessages/sender__client-direct-1').attachments.map((attachment) => ({
+            type: attachment.type,
+            mimeType: attachment.mimeType
+        })),
+        [{ type: 'image', mimeType: 'image/jpeg' }]
+    );
+
+    const retried = await callables.sendAuthorizedDirectMessage({
+        ...input,
+        text: 'Attempted replacement',
+        attachments: []
+    }, context);
+    assert.equal(retried.id, sent.id);
+    assert.equal(retried.createdAt, sent.createdAt);
+    assert.equal(
+        firestore.snapshot('teams/team-1/chatConversations/direct_sender__user%3Arecipient/chatMessages/sender__client-direct-1').text,
+        'Hi friend'
+    );
+    assert.deepEqual(
+        firestore.snapshot('teams/team-1/chatConversations/direct_sender__user%3Arecipient/chatMessages/sender__client-direct-1').attachments.map((attachment) => attachment.type),
+        ['image']
+    );
+
+    const sentVideo = await callables.sendAuthorizedDirectMessage({
+        ...input,
+        clientMessageId: 'client-direct-video',
+        text: '',
+        attachments: [{
+            type: null,
+            mimeType: 'video/mp4',
+            url: 'https://firebasestorage.googleapis.com/v0/b/allplays-images/o/direct-video.mp4?alt=media',
+            path: 'team-videos/1700000000001_chat_team-1_direct_sender__user%3Arecipient_sender_video.mp4',
+            name: 'video.mp4',
+            size: 2048
+        }]
+    }, context);
+    assert.equal(sentVideo.id, 'sender__client-direct-video');
+    assert.deepEqual(
+        firestore.snapshot('teams/team-1/chatConversations/direct_sender__user%3Arecipient/chatMessages/sender__client-direct-video').attachments.map((attachment) => ({
+            type: attachment.type,
+            mimeType: attachment.mimeType
+        })),
+        [{ type: 'video', mimeType: 'video/mp4' }]
+    );
+
+    await firestore.doc('friendships/recipient__sender').update({ status: 'removed' });
+    await assert.rejects(
+        callables.sendAuthorizedDirectMessage({ ...input, clientMessageId: 'client-direct-2' }, context),
+        (error) => error.code === 'permission-denied'
+    );
+});
+
+test('direct-message callable honors unbackfilled legacy parent team links', async () => {
+    const conversationPath = 'teams/team-1/chatConversations/direct_owner__user%3Alegacy-parent';
+    const seed = {
+        'users/owner': { email: 'owner@example.com', isAdmin: false },
+        'users/legacy-parent': {
+            email: 'parent@example.com',
+            isAdmin: false,
+            parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
+        },
+        'teams/team-1': { ownerId: 'owner', adminEmails: [] },
+        [conversationPath]: {
+            type: 'direct',
+            participantIds: ['owner', 'user:legacy-parent'],
+            participantRoles: [],
+            directAccess: 'team_admin',
+            directUserIds: ['legacy-parent', 'owner'],
+            friendshipId: null,
+            initiatedBy: 'owner'
+        }
+    };
+    const { firestore, callables } = loadCallables(seed);
+
+    const sent = await callables.sendAuthorizedDirectMessage({
+        teamId: 'team-1',
+        conversationId: 'direct_owner__user%3Alegacy-parent',
+        clientMessageId: 'legacy-parent-reply-1',
+        text: 'Legacy parent reply',
+        attachments: []
+    }, authContext('legacy-parent'));
+
+    assert.equal(sent.id, 'legacy-parent__legacy-parent-reply-1');
+    assert.equal(
+        firestore.snapshot(`${conversationPath}/chatMessages/legacy-parent__legacy-parent-reply-1`).text,
+        'Legacy parent reply'
+    );
+});
+
+test('team-admin direct conversations allow either participant to reply while the initiator remains an admin', async () => {
+    const conversationPath = 'teams/team-1/chatConversations/direct_owner__user%3Aparent';
+    const seed = {
+        'users/owner': { email: 'owner@example.com', isAdmin: false },
+        'users/parent': { email: 'parent@example.com', isAdmin: false, parentTeamIds: ['team-1'] },
+        'teams/team-1': { ownerId: 'owner', adminEmails: [] },
+        [conversationPath]: {
+            type: 'direct',
+            participantIds: ['owner', 'user:parent'],
+            participantRoles: [],
+            directAccess: 'team_admin',
+            directUserIds: ['owner', 'parent'],
+            friendshipId: null,
+            initiatedBy: 'owner'
+        }
+    };
+    const { firestore, callables } = loadCallables(seed);
+
+    const sent = await callables.sendAuthorizedDirectMessage({
+        teamId: 'team-1',
+        conversationId: 'direct_owner__user%3Aparent',
+        clientMessageId: 'parent-reply-1',
+        text: 'Thanks, coach',
+        attachments: []
+    }, authContext('parent'));
+
+    assert.equal(sent.id, 'parent__parent-reply-1');
+    assert.equal(
+        firestore.snapshot(`${conversationPath}/chatMessages/parent__parent-reply-1`).senderId,
+        'parent'
+    );
+    assert.deepEqual(
+        firestore.snapshot(`${conversationPath}/chatMessages/parent__parent-reply-1`).recipientIds,
+        ['owner']
+    );
+
+    await firestore.doc('teams/team-1').update({ ownerId: 'new-owner' });
+    await assert.rejects(
+        callables.sendAuthorizedDirectMessage({
+            teamId: 'team-1',
+            conversationId: 'direct_owner__user%3Aparent',
+            clientMessageId: 'parent-reply-2',
+            text: 'Can you still see this?',
+            attachments: []
+        }, authContext('parent')),
+        (error) => error.code === 'permission-denied'
+    );
+});
+
+test('email-only team admins can send and receive direct replies when their user profile omits email', async () => {
+    const conversationPath = 'teams/team-1/chatConversations/direct_email-admin__user%3Aparent';
+    const seed = {
+        'users/email-admin': { isAdmin: false },
+        'users/parent': { email: 'parent@example.com', isAdmin: false, parentTeamIds: ['team-1'] },
+        'teams/team-1': { ownerId: 'owner', adminEmails: ['coach@example.com'] },
+        [conversationPath]: {
+            type: 'direct',
+            participantIds: ['email-admin', 'user:parent'],
+            participantRoles: [],
+            directAccess: 'team_admin',
+            directUserIds: ['email-admin', 'parent'],
+            friendshipId: null,
+            initiatedBy: 'email-admin'
+        }
+    };
+    const { firestore, callables } = loadCallables(seed, {
+        authUsers: { 'email-admin': { email: 'coach@example.com' } }
+    });
+    const input = {
+        teamId: 'team-1',
+        conversationId: 'direct_email-admin__user%3Aparent',
+        text: 'Checking in',
+        attachments: []
+    };
+
+    await callables.sendAuthorizedDirectMessage(
+        { ...input, clientMessageId: 'admin-first' },
+        authContext('email-admin', { email: 'coach@example.com' })
+    );
+    await callables.sendAuthorizedDirectMessage(
+        { ...input, clientMessageId: 'parent-reply', text: 'Thanks' },
+        authContext('parent')
+    );
+
+    assert.equal(
+        firestore.snapshot(`${conversationPath}/chatMessages/email-admin__admin-first`).senderId,
+        'email-admin'
+    );
+    assert.equal(
+        firestore.snapshot(`${conversationPath}/chatMessages/parent__parent-reply`).senderId,
+        'parent'
     );
 });
 

@@ -1923,7 +1923,11 @@ service cloud.firestore {
              data.recipientIds.size() <= 50 &&
              participantIds is list &&
              data.recipientIds.hasOnly(participantIds) &&
-             data.senderId in participantIds &&
+             (
+               data.senderId in participantIds ||
+               (conversationData.get('type', '') == 'direct' &&
+                data.senderId in conversationData.get('directUserIds', []))
+             ) &&
              !(data.senderId in data.recipientIds);
     }
 
@@ -1960,9 +1964,16 @@ service cloud.firestore {
              'staff' in data.get('participantRoles', []);
     }
 
+    function isParticipantOnlyAcceptedFriendConversation(data) {
+      return data.get('type', '') == 'direct' &&
+             data.get('directAccess', '') == 'accepted_friend';
+    }
+
     function canListChatConversation(teamId, conversationId, conversationData) {
       let participantIds = conversationData.get('participantIds', []);
       return canAccessTeamChat(teamId) &&
+             (!isParticipantOnlyAcceptedFriendConversation(conversationData) ||
+              request.auth.uid in conversationData.get('directUserIds', [])) &&
              (
                isTeamOwnerOrAdmin(teamId) ||
                (
@@ -1972,6 +1983,7 @@ service cloud.firestore {
                    conversationData.get('type', '') == 'team' ||
                    request.auth.uid in participantIds ||
                    ('user:' + request.auth.uid) in participantIds ||
+                   request.auth.uid in conversationData.get('directUserIds', []) ||
                    (request.auth.token.email != null && ('email:' + request.auth.token.email.lower()) in participantIds)
                  )
                )
@@ -2007,6 +2019,8 @@ service cloud.firestore {
     function canAccessChatConversation(teamId, conversationId, conversationData) {
       let participantIds = conversationData.get('participantIds', []);
       return canAccessTeamChat(teamId) &&
+             (!isParticipantOnlyAcceptedFriendConversation(conversationData) ||
+              request.auth.uid in conversationData.get('directUserIds', [])) &&
              (
                (
                  isCanonicalStaffChatConversation(conversationId) &&
@@ -2022,21 +2036,75 @@ service cloud.firestore {
                    isTeamOwnerOrAdmin(teamId) ||
                    request.auth.uid in participantIds ||
                    ('user:' + request.auth.uid) in participantIds ||
+                   request.auth.uid in conversationData.get('directUserIds', []) ||
                    (request.auth.token.email != null && ('email:' + request.auth.token.email.lower()) in participantIds)
                  )
                )
              );
     }
 
+    function hasValidDirectUserMetadata(data) {
+      let participantIds = data.get('participantIds', []);
+      let directUserIds = data.get('directUserIds', []);
+      return data.get('type', '') == 'direct' &&
+             participantIds is list &&
+             participantIds.size() == 2 &&
+             directUserIds is list &&
+             directUserIds.size() == 2 &&
+             directUserIds[0] is string &&
+             directUserIds[1] is string &&
+             directUserIds[0] != directUserIds[1] &&
+             participantIds.hasAny([directUserIds[0], 'user:' + directUserIds[0]]) &&
+             participantIds.hasAny([directUserIds[1], 'user:' + directUserIds[1]]);
+    }
+
+    function isAcceptedFriendDirectConversation(teamId, data) {
+      let directUserIds = data.get('directUserIds', []);
+      let friendshipId = data.get('friendshipId', '');
+      let friendshipPath = /databases/$(database)/documents/friendships/$(friendshipId);
+      let friendship = get(friendshipPath).data;
+      return hasValidDirectUserMetadata(data) &&
+             data.get('directAccess', '') == 'accepted_friend' &&
+             friendshipId == buildFriendshipId(directUserIds[0], directUserIds[1]) &&
+             data.get('initiatedBy', null) == null &&
+             exists(friendshipPath) &&
+             friendship.get('status', '') == 'accepted' &&
+             friendship.get('memberIds', []) is list &&
+             friendship.get('memberIds', []).size() == 2 &&
+             friendship.get('memberIds', []).hasAll(directUserIds) &&
+             teamId in friendship.get('sharedTeamIds', []) &&
+             friendship.get('blockedBy', []).size() == 0;
+    }
+
+    function isTeamAdminDirectConversation(teamId, data) {
+      let directUserIds = data.get('directUserIds', []);
+      return hasValidDirectUserMetadata(data) &&
+             data.get('directAccess', '') == 'team_admin' &&
+             data.get('friendshipId', null) == null &&
+             data.get('initiatedBy', '') is string &&
+             data.get('initiatedBy', '') in directUserIds;
+    }
+
+    function isDirectConversationCreateAuthorized(teamId, data) {
+      return data.get('type', '') != 'direct' ||
+             isAcceptedFriendDirectConversation(teamId, data) ||
+             (isTeamOwnerOrAdmin(teamId) &&
+              data.get('initiatedBy', '') == request.auth.uid &&
+              isTeamAdminDirectConversation(teamId, data));
+    }
+
     function isChatConversationPayloadValid(data) {
       return data.keys().hasOnly([
                'type', 'name', 'participantIds', 'participantRoles', 'lastMessageAt',
-               'mutedBy', 'createdAt', 'updatedAt'
+               'mutedBy', 'createdAt', 'updatedAt', 'directAccess', 'directUserIds',
+               'friendshipId', 'initiatedBy'
              ]) &&
              data.get('type', '') in ['team', 'group', 'direct'] &&
              data.get('participantIds', []) is list &&
              data.get('participantRoles', []) is list &&
-             data.get('mutedBy', []) is list;
+             data.get('mutedBy', []) is list &&
+             (data.get('type', '') == 'direct' ||
+              (!data.keys().hasAny(['directAccess', 'directUserIds', 'friendshipId', 'initiatedBy'])));
     }
 
     function isNullableBoundedChatString(value, maxSize) {
@@ -2261,7 +2329,7 @@ service cloud.firestore {
                (
                  !isCanonicalStaffChatConversation(conversationId) &&
                  !isStaffRoleChatConversation(conversationData) &&
-                 conversationData.get('type', '') in ['direct', 'group'] &&
+                 conversationData.get('type', '') == 'group' &&
                  data.get('targetType', 'full_team') == 'individuals' &&
                  hasValidNestedChatRecipientIds(conversationData, data) &&
                  data.get('targetRole', null) == null &&
@@ -2333,8 +2401,48 @@ service cloud.firestore {
              request.resource.data.get('name', null) == resource.data.get('name', null) &&
              request.resource.data.get('participantIds', []) == resource.data.get('participantIds', []) &&
              request.resource.data.get('participantRoles', []) == resource.data.get('participantRoles', []) &&
+             request.resource.data.get('directAccess', null) == resource.data.get('directAccess', null) &&
+             request.resource.data.get('directUserIds', []) == resource.data.get('directUserIds', []) &&
+             request.resource.data.get('friendshipId', null) == resource.data.get('friendshipId', null) &&
+             request.resource.data.get('initiatedBy', null) == resource.data.get('initiatedBy', null) &&
              request.resource.data.diff(resource.data).affectedKeys()
                .hasOnly(['lastMessageAt', 'mutedBy', 'updatedAt']);
+    }
+
+    function isDirectConversationAuthorizationUpgrade(teamId) {
+      return resource.data.get('type', '') == 'direct' &&
+             resource.data.get('directAccess', null) == null &&
+             request.auth.uid in request.resource.data.get('directUserIds', []) &&
+             request.resource.data.get('type', '') == resource.data.get('type', '') &&
+             request.resource.data.get('name', null) == resource.data.get('name', null) &&
+             request.resource.data.get('participantIds', []) == resource.data.get('participantIds', []) &&
+             request.resource.data.get('participantRoles', []) == resource.data.get('participantRoles', []) &&
+             request.resource.data.get('mutedBy', []) == resource.data.get('mutedBy', []) &&
+             request.resource.data.get('createdAt', null) == resource.data.get('createdAt', null) &&
+             request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+               'directAccess', 'directUserIds', 'friendshipId', 'initiatedBy', 'updatedAt'
+             ]) &&
+             isDirectConversationCreateAuthorized(teamId, request.resource.data);
+    }
+
+    // Direct threads created before directAccess existed cannot satisfy the
+    // modern authorization contract. Existing participants may preserve the
+    // thread in place under the same participant-scoped group boundary.
+    function isLegacyDirectConversationGroupRepair(teamId, conversationId) {
+      return resource.data.get('type', '') == 'direct' &&
+             resource.data.get('directAccess', null) == null &&
+             resource.data.get('participantIds', []) is list &&
+             resource.data.get('participantIds', []).size() == 2 &&
+             canAccessChatConversation(teamId, conversationId, resource.data) &&
+             request.resource.data.get('type', '') == 'group' &&
+             request.resource.data.get('name', null) == resource.data.get('name', null) &&
+             request.resource.data.get('participantIds', []) == resource.data.get('participantIds', []) &&
+             request.resource.data.get('participantRoles', []) == resource.data.get('participantRoles', []) &&
+             request.resource.data.get('mutedBy', []) == resource.data.get('mutedBy', []) &&
+             request.resource.data.get('createdAt', null) == resource.data.get('createdAt', null) &&
+             request.resource.data.get('lastMessageAt', null) == resource.data.get('lastMessageAt', null) &&
+             request.resource.data.get('updatedAt', null) == request.time &&
+             request.resource.data.diff(resource.data).affectedKeys().hasOnly(['type', 'updatedAt']);
     }
 
     function chatReactionKeys() {
@@ -3786,13 +3894,19 @@ service cloud.firestore {
         allow list: if canListChatConversation(teamId, conversationId, resource.data);
         allow create: if canAccessTeamChat(teamId) &&
                          isChatConversationPayloadValid(request.resource.data) &&
+                         isDirectConversationCreateAuthorized(teamId, request.resource.data) &&
                          canAccessChatConversation(teamId, conversationId, request.resource.data);
+        // Keep the narrowly-scoped legacy repair on its own allow path so it
+        // does not spend the expression budget evaluating unrelated updates.
+        allow update: if isChatConversationPayloadValid(request.resource.data) &&
+                         isLegacyDirectConversationGroupRepair(teamId, conversationId);
         allow update: if isChatConversationPayloadValid(request.resource.data) &&
                          ((canAccessChatConversation(teamId, conversationId, resource.data) &&
                            canAccessChatConversation(teamId, conversationId, request.resource.data) &&
                            (isTeamStaffChatConversationUpdate(teamId) ||
                             isChatConversationParticipantMetadataUpdate())) ||
-                          isCanonicalStaffChatConversationRepair(teamId, conversationId));
+                          isCanonicalStaffChatConversationRepair(teamId, conversationId) ||
+                          isDirectConversationAuthorizationUpgrade(teamId));
         allow delete: if isTeamOwnerOrAdmin(teamId);
 
         match /chatMessages/{messageId} {

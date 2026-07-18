@@ -25,6 +25,7 @@ const dbMocks = vi.hoisted(() => ({
     getUserProfile: vi.fn(),
     getUserTeamsWithAccess: vi.fn(),
     postChatMessage: vi.fn(),
+    repairLegacyDirectConversation: vi.fn(),
     saveTeamEmailDraft: vi.fn(),
     saveTeamEmailTemplate: vi.fn(),
     sendTeamEmail: vi.fn(),
@@ -37,6 +38,11 @@ const dbMocks = vi.hoisted(() => ({
     upsertChatConversation: vi.fn()
 }));
 
+const friendMessageMocks = vi.hoisted(() => ({
+    canMessageAcceptedFriend: vi.fn(),
+    sendAuthorizedDirectMessage: vi.fn()
+}));
+
 vi.mock('@capacitor/core', () => ({
     Capacitor: {
         isNativePlatform: () => false
@@ -44,6 +50,7 @@ vi.mock('@capacitor/core', () => ({
 }));
 
 vi.mock('../../js/db.js', () => dbMocks);
+vi.mock('../../apps/app/src/lib/friendMessageService.ts', () => friendMessageMocks);
 vi.mock('../../js/vendor/firebase-app.js', () => ({
     getApp: vi.fn(() => ({}))
 }));
@@ -82,6 +89,8 @@ beforeEach(() => {
     dbMocks.getChatMessages.mockResolvedValue([]);
     dbMocks.sendTeamEmail.mockResolvedValue({ recipientCount: 8, status: 'queued' });
     dbMocks.getSentTeamEmails.mockResolvedValue([]);
+    friendMessageMocks.canMessageAcceptedFriend.mockResolvedValue(true);
+    friendMessageMocks.sendAuthorizedDirectMessage.mockResolvedValue({ id: 'direct-message-1' });
 });
 
 afterEach(() => {
@@ -1014,6 +1023,72 @@ describe('React app chat recipient service', () => {
         ]);
     });
 
+    it('loads an exact reverse direct conversation beyond the recent page', async () => {
+        const reverseConversationId = 'direct_friend-2__user%3Acurrent-1';
+        dbMocks.getChatConversations.mockImplementation(async (_teamId, _user, options = {}) => [
+            { id: 'team', type: 'team', participantIds: [] },
+            ...(options.includeConversationId === reverseConversationId ? [{
+                id: reverseConversationId,
+                type: 'direct',
+                participantIds: ['friend-2', 'user:current-1']
+            }] : [])
+        ]);
+
+        const { loadChatConversationById } = await import('../../apps/app/src/lib/chatService.ts');
+        const conversation = await loadChatConversationById(
+            'team-1',
+            { uid: 'current-1', email: 'current@example.com', roles: [] },
+            { id: 'team-1', name: 'Bears' },
+            false,
+            reverseConversationId
+        );
+
+        expect(dbMocks.getChatConversations).toHaveBeenCalledWith(
+            'team-1',
+            expect.objectContaining({ uid: 'current-1' }),
+            {
+                team: { id: 'team-1', name: 'Bears' },
+                canModerate: false,
+                includeConversationId: reverseConversationId,
+                strictIncludeConversationId: true
+            }
+        );
+        expect(conversation).toEqual(expect.objectContaining({
+            id: reverseConversationId,
+            type: 'direct',
+            participantIds: ['friend-2', 'user:current-1']
+        }));
+    });
+
+    it('does not treat a failed exact direct conversation lookup as a missing thread', async () => {
+        dbMocks.getChatConversations.mockRejectedValueOnce(new Error('conversation lookup unavailable'));
+        const { loadChatConversationById } = await import('../../apps/app/src/lib/chatService.ts');
+
+        await expect(loadChatConversationById(
+            'team-1',
+            { uid: 'current-1', email: 'current@example.com', roles: [] },
+            { id: 'team-1', name: 'Bears' },
+            false,
+            'direct_friend-2__user%3Acurrent-1'
+        )).rejects.toThrow('conversation lookup unavailable');
+    });
+
+    it('treats a denied missing direct conversation as absent for a non-moderator', async () => {
+        dbMocks.getChatConversations.mockRejectedValueOnce(Object.assign(
+            new Error('Missing conversation reads are denied by Firestore rules.'),
+            { code: 'permission-denied' }
+        ));
+        const { loadChatConversationById } = await import('../../apps/app/src/lib/chatService.ts');
+
+        await expect(loadChatConversationById(
+            'team-1',
+            { uid: 'current-1', email: 'parent@example.com', roles: [] },
+            { id: 'team-1', name: 'Bears' },
+            false,
+            'direct_current-1__user%3Afriend-2'
+        )).resolves.toBeNull();
+    });
+
     it('routes selected-member messages into a non-default conversation before posting', async () => {
         const photo = new File(['photo'], 'arrival.jpg', { type: 'image/jpeg' });
         const video = new File(['clip'], 'warmups.mp4', { type: 'video/mp4' });
@@ -1108,12 +1183,10 @@ describe('React app chat recipient service', () => {
         dbMocks.getUsersByParentPlayerKey.mockResolvedValue([
             { id: 'parent-1', email: 'guardian@example.com', parentPlayerKeys: ['team-1::player-1'] }
         ]);
-        dbMocks.upsertChatConversation.mockResolvedValue({
+        dbMocks.upsertChatConversation.mockImplementation(async (_teamId, conversation) => ({
             id: 'group-linked-parent',
-            type: 'direct',
-            participantIds: ['coach-1', 'user:parent-1', 'email:guardian@example.com'],
-            participantRoles: []
-        });
+            ...conversation
+        }));
         dbMocks.postChatMessage.mockResolvedValue({ id: 'msg-linked-parent' });
 
         const { sendTeamChatMessage } = await import('../../apps/app/src/lib/chatService.ts');
@@ -1135,8 +1208,13 @@ describe('React app chat recipient service', () => {
 
         expect(dbMocks.getUsersByParentPlayerKey).toHaveBeenCalledWith('team-1::player-1');
         expect(dbMocks.upsertChatConversation).toHaveBeenCalledWith('team-1', expect.objectContaining({
+            type: 'group',
             participantIds: ['coach-1', 'user:parent-1', 'email:guardian@example.com']
         }));
+        expect(dbMocks.postChatMessage).toHaveBeenCalledWith('team-1', expect.objectContaining({
+            conversationId: 'group-linked-parent'
+        }));
+        expect(friendMessageMocks.sendAuthorizedDirectMessage).not.toHaveBeenCalled();
     });
 
     it('does not create undiscoverable player-token conversations when a selected player has no linked guardian', async () => {

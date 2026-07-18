@@ -245,6 +245,17 @@ export function buildFriendshipId(userIdA: string, userIdB: string) {
     .join('__');
 }
 
+export function getFriendMessageRoute(friend: Pick<SocialFriend, 'status' | 'userId' | 'name' | 'sharedTeamIds'>) {
+  const teamId = String(friend.sharedTeamIds?.[0] || '').trim();
+  const userId = String(friend.userId || '').trim();
+  if (friend.status !== 'accepted' || !teamId || !userId) return null;
+  const query = new URLSearchParams({
+    compose: `user:${userId}`,
+    recipientName: String(friend.name || 'Friend').trim() || 'Friend'
+  });
+  return `/messages/${encodeURIComponent(teamId)}?${query.toString()}`;
+}
+
 export function getFriendshipStatusForUser(friendship: any, currentUserId: string): FriendshipStatus {
   const status = String(friendship?.status || 'none') as FriendshipStatus;
   if (status === 'blocked') return 'blocked';

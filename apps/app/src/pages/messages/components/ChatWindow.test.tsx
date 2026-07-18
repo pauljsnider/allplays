@@ -5,13 +5,16 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { APP_BACK_DISMISS_EVENT } from '../../../lib/nativeBackButton';
-import { Sheet, sendLazyAllPlaysChatAnswer } from './ChatWindow';
+import { findExistingDirectConversationId, getDirectConversationLookupIds, getReverseDirectConversationId, Sheet, sendLazyAllPlaysChatAnswer } from './ChatWindow';
 
 const chatAiServiceMocks = vi.hoisted(() => ({
   sendAllPlaysChatAnswer: vi.fn()
 }));
 
 vi.mock('../../../lib/chatAiService', () => chatAiServiceMocks);
+vi.mock('../../../lib/friendMessageService', () => ({
+  canMessageAcceptedFriend: vi.fn().mockResolvedValue(true)
+}));
 
 function resolveAppSourcePath(relativePath: string) {
   const cwd = process.cwd();
@@ -128,6 +131,32 @@ describe('Messages ALL PLAYS lazy loading', () => {
 });
 
 describe('Chat composer audience lifecycle', () => {
+  it('reuses a direct conversation that the friend originally started', () => {
+    const conversations = [{
+      id: 'direct_friend-2__user%3Acurrent-1',
+      type: 'direct' as const,
+      participantIds: ['friend-2', 'user:current-1']
+    }, {
+      id: 'direct_current-1__user%3Aother-3',
+      type: 'direct' as const,
+      participantIds: ['current-1', 'user:other-3']
+    }, {
+      id: 'group_current-1__friend-2',
+      type: 'group' as const,
+      participantIds: ['current-1', 'friend-2']
+    }];
+
+    expect(findExistingDirectConversationId(conversations, 'current-1', 'user:friend-2'))
+      .toBe('direct_friend-2__user%3Acurrent-1');
+    expect(getReverseDirectConversationId('current-1', 'user:friend-2'))
+      .toBe('direct_friend-2__user%3Acurrent-1');
+    expect(getDirectConversationLookupIds('current-1', 'user:friend-2')).toEqual([
+      'direct_current-1__user%3Afriend-2',
+      'direct_friend-2__user%3Acurrent-1'
+    ]);
+    expect(findExistingDirectConversationId(conversations, 'current-1', 'user:missing-4')).toBe('');
+  });
+
   it('keeps full team as the default and resets the audience before enqueueing each send', () => {
     const sourcePath = resolveAppSourcePath('src/pages/messages/components/ChatWindow.tsx');
     const source = readFileSync(sourcePath, 'utf8');

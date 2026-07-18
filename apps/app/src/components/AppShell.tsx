@@ -46,11 +46,11 @@ const NotificationInboxSheet = lazy(() => import('./NotificationInboxSheet').the
 
 const navItems: NavItem[] = [
   { label: 'Home', path: '/home', icon: Home },
-  { label: 'Discover', path: '/discover', icon: Compass },
   { label: 'Schedule', path: '/schedule', icon: CalendarDays },
   { label: 'Messages', path: '/messages', icon: MessageCircle },
   { label: 'My Teams', path: '/teams', icon: Users },
-  { label: 'Profile', path: '/profile', icon: UserCircle }
+  { label: 'Profile', path: '/profile', icon: UserCircle },
+  { label: 'Discover', path: '/discover', icon: Compass }
 ];
 
 const familyNavItem: NavItem = { label: 'Family', path: '/parent-tools', icon: UsersRound };

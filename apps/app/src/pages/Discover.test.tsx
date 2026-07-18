@@ -103,7 +103,7 @@ describe('public Discover experience', () => {
       <MemoryRouter initialEntries={['/discover/opportunities/listing-1']}>
         <Routes>
           <Route path="/discover/opportunities/:listingId" element={<OpportunityDetail auth={signedInAuth} />} />
-          <Route path="/discover/inquiries/:inquiryId" element={<div>Private inquiry thread</div>} />
+          <Route path="/messages" element={<div>Private inquiry thread</div>} />
         </Routes>
       </MemoryRouter>
     );

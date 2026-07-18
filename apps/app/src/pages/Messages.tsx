@@ -14,6 +14,9 @@ import {
   type ChatMessage,
   type ChatTeam
 } from '../lib/chatService';
+import { OpportunityConversation } from '../components/OpportunityConversation';
+import { listOpportunityInquiries } from '../lib/opportunityService';
+import type { OpportunityInquiry } from '../lib/opportunityLogic';
 import { MessagesPageSkeleton } from '../components/PageSkeletons';
 import { PullToRefresh } from '../components/PullToRefresh';
 import {
@@ -43,6 +46,8 @@ export function Messages({ auth }: { auth: AuthState }) {
   const location = useLocation();
   const { isDesktopWeb } = useShellLayout();
   const [teams, setTeams] = useState<ChatTeam[]>([]);
+  const [inquiries, setInquiries] = useState<OpportunityInquiry[]>([]);
+  const [inquiryError, setInquiryError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
@@ -93,22 +98,32 @@ export function Messages({ auth }: { auth: AuthState }) {
     inboxRequestIdRef.current = requestId;
     setLoading(true);
     setError(null);
+    setInquiryError(null);
     try {
-      const result = await loadChatInbox(auth.user, {
-        includeLastMessages: false,
-        onPreview: (previewUpdate) => {
-          if (inboxRequestIdRef.current !== requestId) return;
-          previewUpdates.set(previewUpdate.teamId, previewUpdate);
-          pendingPreviewUpdates.set(previewUpdate.teamId, previewUpdate);
-          schedulePreviewFlush();
-        }
-      });
+      const [result, inquiryPage] = await Promise.all([
+        loadChatInbox(auth.user, {
+          includeLastMessages: false,
+          onPreview: (previewUpdate) => {
+            if (inboxRequestIdRef.current !== requestId) return;
+            previewUpdates.set(previewUpdate.teamId, previewUpdate);
+            pendingPreviewUpdates.set(previewUpdate.teamId, previewUpdate);
+            schedulePreviewFlush();
+          }
+        }),
+        listOpportunityInquiries().catch((loadError: any) => {
+          if (inboxRequestIdRef.current === requestId) {
+            setInquiryError(loadError?.message || 'Unable to load opportunity conversations.');
+          }
+          return { items: [] as OpportunityInquiry[], nextCursor: null };
+        })
+      ]);
       if (inboxRequestIdRef.current !== requestId) {
         cancelPreviewFlush();
         return;
       }
       cancelPreviewFlush();
       setTeams(mergeInboxTeams(result.teams, previewUpdates));
+      setInquiries(inquiryPage.items);
       const totalUnread = result.teams.reduce((sum, team) => sum + team.unreadCount, 0);
       completeParentCoreWorkflowTimer('messages', {
         targetPage: 'messages',
@@ -133,6 +148,7 @@ export function Messages({ auth }: { auth: AuthState }) {
       const message = loadError?.message || 'Unable to load messages.';
       setError(message);
       setTeams([]);
+      setInquiries([]);
       timer.end({
         teamCount: 0,
         unreadCount: 0,
@@ -223,18 +239,32 @@ export function Messages({ auth }: { auth: AuthState }) {
     ].join(' ').toLowerCase().includes(normalized));
   }, [query, teams]);
 
-  const preferredConversationId = useMemo(() => getPreferredConversationIdFromSearch(location.search), [location.search]);
+  const filteredInquiries = useMemo(() => {
+    const normalized = query.trim().toLowerCase();
+    if (!normalized) return inquiries;
+    return inquiries.filter((inquiry) => [
+      inquiry.listingTitle,
+      inquiry.lastMessageAuthorName,
+      inquiry.lastMessagePreview,
+      'opportunity'
+    ].join(' ').toLowerCase().includes(normalized));
+  }, [inquiries, query]);
 
-  const activeTeamId = teamId || (isDesktopWeb ? selectedDesktopTeamId : undefined);
+  const preferredConversationId = useMemo(() => getPreferredConversationIdFromSearch(location.search), [location.search]);
+  const selectedInquiryId = useMemo(() => getOpportunityInquiryIdFromSearch(location.search), [location.search]);
+  const initialRecipient = useMemo(() => getComposeRecipientFromSearch(location.search), [location.search]);
+
+  const activeTeamId = selectedInquiryId ? undefined : teamId || (isDesktopWeb ? selectedDesktopTeamId : undefined);
 
   if (isDesktopWeb) {
     return (
       <div className="messages-page messages-page-web">
-        <MessagesHeader teams={teams} loading={loading} onRefresh={refreshInbox} />
+        <MessagesHeader teams={teams} inquiries={inquiries} loading={loading} onRefresh={refreshInbox} />
         <section className="messages-two-pane mt-4">
           <aside className="messages-list-pane">
             <InboxSearch query={query} onChange={setQuery} />
             <div className="messages-list-scroll">
+              <OpportunityInboxList inquiries={filteredInquiries} activeInquiryId={selectedInquiryId} error={inquiryError} />
               <InboxList
                 teams={filteredTeams}
                 loading={loading}
@@ -249,12 +279,20 @@ export function Messages({ auth }: { auth: AuthState }) {
             </div>
           </aside>
           <div className="messages-chat-pane min-w-0">
-            {activeTeamId ? (
+            {selectedInquiryId ? (
+              <OpportunityConversation
+                auth={auth}
+                inquiryId={selectedInquiryId}
+                embedded
+                onReplied={(updated) => setInquiries((current) => current.map((item) => item.id === updated.id ? updated : item))}
+              />
+            ) : activeTeamId ? (
               <ChatWindow
                 auth={auth}
                 teamId={activeTeamId}
                 inboxTeam={teams.find((team) => team.id === activeTeamId)}
                 preferredConversationId={teamId === activeTeamId ? preferredConversationId : ''}
+                initialRecipient={teamId === activeTeamId ? initialRecipient : null}
                 onInboxMuteChange={(nextConversationId, nextIsMuted) => {
                   setTeams((current) => updateInboxTeamMuteState(current, activeTeamId, nextConversationId, nextIsMuted));
                 }}
@@ -269,6 +307,10 @@ export function Messages({ auth }: { auth: AuthState }) {
     );
   }
 
+  if (selectedInquiryId) {
+    return <OpportunityConversation auth={auth} inquiryId={selectedInquiryId} onReplied={(updated) => setInquiries((current) => current.map((item) => item.id === updated.id ? updated : item))} />;
+  }
+
   if (activeTeamId) {
     return (
       <ChatWindow
@@ -276,6 +318,7 @@ export function Messages({ auth }: { auth: AuthState }) {
         teamId={activeTeamId}
         inboxTeam={teams.find((team) => team.id === activeTeamId)}
         preferredConversationId={preferredConversationId}
+        initialRecipient={initialRecipient}
         onInboxMuteChange={(nextConversationId, nextIsMuted) => {
           setTeams((current) => updateInboxTeamMuteState(current, activeTeamId, nextConversationId, nextIsMuted));
         }}
@@ -286,8 +329,9 @@ export function Messages({ auth }: { auth: AuthState }) {
   return (
     <PullToRefresh onRefresh={() => refreshInbox()} disabled={!auth.user?.uid}>
     <div className="messages-page space-y-4">
-      <MessagesHeader teams={teams} loading={loading} onRefresh={refreshInbox} />
+      <MessagesHeader teams={teams} inquiries={inquiries} loading={loading} onRefresh={refreshInbox} />
       <InboxSearch query={query} onChange={setQuery} />
+      <OpportunityInboxList inquiries={filteredInquiries} activeInquiryId="" error={inquiryError} />
       <InboxList
         teams={filteredTeams}
         loading={loading}
@@ -302,7 +346,7 @@ export function Messages({ auth }: { auth: AuthState }) {
   );
 }
 
-function MessagesHeader({ teams, loading, onRefresh }: { teams: ChatTeam[]; loading: boolean; onRefresh: () => void }) {
+function MessagesHeader({ teams, inquiries, loading, onRefresh }: { teams: ChatTeam[]; inquiries: OpportunityInquiry[]; loading: boolean; onRefresh: () => void }) {
   const unread = teams.reduce((total, team) => total + team.unreadCount, 0);
   const staffTeams = teams.filter((team) => team.canModerate).length;
 
@@ -311,9 +355,9 @@ function MessagesHeader({ teams, loading, onRefresh }: { teams: ChatTeam[]; load
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
           <div className="app-label">Messages</div>
-          <h1 className="mt-1 text-xl font-black text-gray-950 sm:text-2xl">Team chats</h1>
+          <h1 className="mt-1 text-xl font-black text-gray-950 sm:text-2xl">Conversations</h1>
           <div className="mt-1 text-xs font-bold text-gray-500 sm:text-sm">
-            {teams.length} team{teams.length === 1 ? '' : 's'} · {unread} unread · {staffTeams} staff
+            {teams.length} team chat{teams.length === 1 ? '' : 's'} · {inquiries.length} opportunit{inquiries.length === 1 ? 'y' : 'ies'} · {unread} unread · {staffTeams} staff
           </div>
         </div>
         <button type="button" className="ghost-button !h-10 !min-h-10 !w-10 !p-0" onClick={onRefresh} aria-label="Refresh messages">
@@ -333,10 +377,41 @@ function InboxSearch({ query, onChange }: { query: string; onChange: (value: str
         value={query}
         onChange={(event) => onChange(event.target.value)}
         className="min-w-0 flex-1 border-0 bg-transparent text-base font-semibold text-gray-900 outline-none placeholder:text-gray-400"
-        placeholder="Search team chats"
+        placeholder="Search conversations"
         enterKeyHint="search"
       />
     </label>
+  );
+}
+
+function OpportunityInboxList({ inquiries, activeInquiryId, error }: { inquiries: OpportunityInquiry[]; activeInquiryId: string; error: string | null }) {
+  if (!inquiries.length && !error) return null;
+  return (
+    <section className="mb-3 space-y-2" aria-labelledby="opportunity-conversations-title">
+      <div className="flex items-center justify-between px-1">
+        <h2 id="opportunity-conversations-title" className="app-label">Opportunity conversations</h2>
+        {inquiries.length ? <span className="rounded-full bg-primary-50 px-2 py-0.5 text-[10px] font-black text-primary-700">{inquiries.length}</span> : null}
+      </div>
+      {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-bold text-rose-700">{error}</div> : null}
+      {inquiries.map((inquiry) => (
+        <Link
+          key={inquiry.id}
+          to={`/messages?inquiry=${encodeURIComponent(inquiry.id)}`}
+          className={`message-row app-card flex items-center gap-3 p-3 transition hover:border-primary-200 hover:shadow-app-lg ${activeInquiryId === inquiry.id ? '!border-primary-200 bg-primary-50/50' : ''}`}
+        >
+          <div className="flex h-11 w-11 flex-none items-center justify-center rounded-xl border border-primary-100 bg-primary-50 text-primary-700"><MessageCircle className="h-5 w-5" /></div>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-sm font-black text-gray-950">{inquiry.listingTitle}</span>
+            <span className="mt-1 block truncate text-xs font-semibold text-gray-600">
+              {inquiry.lastMessagePreview
+                ? `${inquiry.lastMessageAuthorName ? `${inquiry.lastMessageAuthorName}: ` : ''}${inquiry.lastMessagePreview}`
+                : 'Private opportunity conversation'}
+            </span>
+          </span>
+          <span className="flex-none text-[10px] font-black uppercase text-primary-700">Opportunity</span>
+        </Link>
+      ))}
+    </section>
   );
 }
 
@@ -691,6 +766,21 @@ function EmptyChatSelection() {
 function getPreferredConversationIdFromSearch(search: string) {
   const params = new URLSearchParams(search || '');
   return String(params.get('conversation') || params.get('conversationId') || '').trim();
+}
+
+export function getOpportunityInquiryIdFromSearch(search: string) {
+  const params = new URLSearchParams(search || '');
+  return String(params.get('inquiry') || '').trim();
+}
+
+export function getComposeRecipientFromSearch(search: string) {
+  const params = new URLSearchParams(search || '');
+  const id = String(params.get('compose') || '').trim();
+  if (!/^user:[A-Za-z0-9_-]{1,160}$/.test(id)) return null;
+  return {
+    id,
+    name: String(params.get('recipientName') || 'Friend').replace(/\s+/g, ' ').trim().slice(0, 100) || 'Friend'
+  };
 }
 
 function buildMessagesRoute(teamId: string, preferredConversationId?: string | null) {

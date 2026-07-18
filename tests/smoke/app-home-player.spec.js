@@ -122,6 +122,14 @@ async function mockHomePlayerModules(page) {
         };
     });
 
+    await page.route(/\/src\/lib\/friendMessageService\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: 'export async function canMessageAcceptedFriend() { return true; }'
+        });
+    });
+
     await page.route(/\/src\/lib\/useAuth\.ts(\?.*)?$/, async (route) => {
         await route.fulfill({
             status: 200,
@@ -689,6 +697,8 @@ async function mockHomePlayerModules(page) {
                 export async function loadChatConversations() {
                     return [{ id: 'team', label: 'Full team', targetType: 'full_team', unreadCount: 0, isMuted: false }];
                 }
+
+                export async function loadChatConversationById() { return null; }
 
                 export function subscribeToTeamChatMessages(_teamId, _conversationId, onSnapshot) {
                     const message = {

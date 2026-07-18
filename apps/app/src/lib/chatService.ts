@@ -21,6 +21,7 @@ import {
   getUserTeamsWithAccess,
   isTeamActive,
   postChatMessage,
+  repairLegacyDirectConversation,
   saveStoredTeamEmailDraft,
   saveStoredTeamEmailTemplate,
   sendTeamEmail,
@@ -51,6 +52,7 @@ import {
   type ChatTargetType
 } from './chatLogic';
 import { startInteractionTimer, UX_TIMING } from './uxTiming';
+import { canMessageAcceptedFriend, sendAuthorizedDirectMessage } from './friendMessageService';
 import {
   mapChatConversationRecords,
   mapChatMessageRecord,
@@ -571,6 +573,64 @@ async function resolveConversationParticipantIds(teamId: string, senderId: strin
   return Array.from(new Set([senderId, ...resolvedRecipients].filter(Boolean)));
 }
 
+function normalizeDirectUserId(value: unknown) {
+  const normalized = compactString(value);
+  const userId = normalized.toLowerCase().startsWith('user:') ? normalized.slice(5).trim() : normalized;
+  return userId && !userId.includes(':') && /^[A-Za-z0-9_-]{1,160}$/.test(userId) ? userId : '';
+}
+
+function getDirectUserIds(senderId: string, participantIds: string[]) {
+  const directUserIds = Array.from(new Set((participantIds || []).map(normalizeDirectUserId).filter(Boolean))).sort();
+  const normalizedSenderId = normalizeDirectUserId(senderId);
+  return directUserIds.length === 2 && directUserIds.includes(normalizedSenderId) ? directUserIds : [];
+}
+
+async function resolveDirectConversationMetadata({
+  teamId,
+  user,
+  participantIds,
+  canModerate,
+  existingConversation
+}: {
+  teamId: string;
+  user: AuthUser;
+  participantIds: string[];
+  canModerate: boolean;
+  existingConversation?: ChatConversation | null;
+}) {
+  const directUserIds = getDirectUserIds(user.uid, participantIds);
+  if (directUserIds.length !== 2) {
+    throw new Error('Direct messages require exactly two current team members.');
+  }
+  if (existingConversation?.directAccess === 'team_admin'
+    && existingConversation.directUserIds?.length === 2) {
+    return {
+      directAccess: 'team_admin' as const,
+      directUserIds,
+      friendshipId: null,
+      initiatedBy: existingConversation.initiatedBy || null
+    };
+  }
+  if (canModerate) {
+    return {
+      directAccess: 'team_admin' as const,
+      directUserIds,
+      friendshipId: null,
+      initiatedBy: user.uid
+    };
+  }
+  const recipientId = directUserIds.find((userId) => userId !== user.uid) || '';
+  if (!recipientId || !await canMessageAcceptedFriend(user, recipientId, teamId)) {
+    throw new Error('You can only send a direct message to an accepted friend who still shares this team.');
+  }
+  return {
+    directAccess: 'accepted_friend' as const,
+    directUserIds,
+    friendshipId: directUserIds.join('__'),
+    initiatedBy: null
+  };
+}
+
 function getTeamRole(user: AuthUser, team: Record<string, any>, profile: Record<string, any>): ChatTeam['role'] {
   if (canModerateChat(mapUserWithProfile(user, profile), team)) {
     return team.ownerId === user.uid || user.isAdmin ? 'Admin' : 'Coach';
@@ -1039,6 +1099,36 @@ export async function loadChatConversations(
   }
 }
 
+export async function loadChatConversationById(
+  teamId: string,
+  user: AuthUser,
+  team: Record<string, any>,
+  canModerate: boolean,
+  conversationId: string
+): Promise<ChatConversation | null> {
+  const requestedConversationId = compactString(conversationId);
+  if (!requestedConversationId || isDefaultTeamConversation(requestedConversationId) || requestedConversationId.includes('/')) {
+    return null;
+  }
+  let conversations: ChatConversation[];
+  try {
+    conversations = await withTimeout(Promise.resolve(getChatConversations(teamId, user, {
+      team,
+      canModerate,
+      includeConversationId: requestedConversationId,
+      strictIncludeConversationId: true
+    })), 'Direct chat conversation lookup') as ChatConversation[];
+  } catch (error) {
+    const code = compactString((error as { code?: unknown } | null)?.code).toLowerCase().replace(/^firestore\//, '');
+    // Rules that inspect resource data deny missing-document reads for non-moderators.
+    // For this participant-scoped probe, denied and missing both mean no readable thread.
+    if (code === 'permission-denied' || code === 'not-found') return null;
+    throw error;
+  }
+  return mapChatConversationRecords(conversations)
+    .find((conversation) => conversation.id === requestedConversationId) || null;
+}
+
 function canReuseStaffChatConversation(conversation: ChatConversation | null | undefined) {
   const participantRoles = Array.isArray(conversation?.participantRoles)
     ? conversation.participantRoles.map(compactString).filter(Boolean)
@@ -1303,6 +1393,7 @@ export async function sendTeamChatMessage({
   selectedConversationId,
   selectedRecipientTarget,
   selectedRecipientIds,
+  canModerate = false,
   onProgress,
   skipInteractionTiming = false
 }: {
@@ -1317,6 +1408,7 @@ export async function sendTeamChatMessage({
   selectedConversationId: string;
   selectedRecipientTarget: ChatTargetType;
   selectedRecipientIds: string[];
+  canModerate?: boolean;
   onProgress?: (stage: 'uploading' | 'posting') => void;
   aiMeta?: Record<string, unknown> | null;
   skipInteractionTiming?: boolean;
@@ -1350,12 +1442,21 @@ export async function sendTeamChatMessage({
         ? []
         : await resolveConversationParticipantIds(teamId, user.uid, targetMetadata.recipientIds);
       const participantRoles = targetMetadata.targetType === 'staff' ? ['staff'] : [];
+      const conversationType = participantIds.length === 2
+        && getDirectUserIds(user.uid, participantIds).length === 2
+        ? 'direct'
+        : 'group';
+      const directMetadata = conversationType === 'direct'
+        ? await resolveDirectConversationMetadata({ teamId, user, participantIds, canModerate })
+        : {};
       createdConversation = await withTimeout(Promise.resolve(upsertChatConversation(teamId, {
-        type: participantIds.length === 2 ? 'direct' : 'group',
+        type: conversationType,
         participantIds,
         participantRoles,
         mutedBy: [],
-        name: targetMetadata.targetType === 'staff' ? 'Staff only' : null
+        name: targetMetadata.targetType === 'staff' ? 'Staff only' : null,
+        ...(conversationType === 'direct' ? { createOnly: true } : {}),
+        ...directMetadata
       })), 'Chat conversation create') as ChatConversation;
       conversationId = createdConversation.id;
       if (targetMetadata.targetType === 'individuals') {
@@ -1364,6 +1465,31 @@ export async function sendTeamChatMessage({
           recipientIds: Array.isArray(createdConversation.participantIds) ? createdConversation.participantIds : participantIds,
           targetRole: null
         };
+      }
+    } else if (selectedConversation?.type === 'direct') {
+      const participantIds = selectedConversation.participantIds || targetMetadata.recipientIds;
+      const directUserIds = getDirectUserIds(user.uid, participantIds);
+      if (!selectedConversation.directAccess && (!canModerate || directUserIds.length !== 2)) {
+        selectedConversation = await withTimeout(Promise.resolve(
+          repairLegacyDirectConversation(teamId, selectedConversation.id)
+        ), 'Legacy chat repair') as ChatConversation;
+        createdConversation = selectedConversation;
+      } else {
+        const directMetadata = await resolveDirectConversationMetadata({
+          teamId,
+          user,
+          participantIds,
+          canModerate,
+          existingConversation: selectedConversation
+        });
+        if (!selectedConversation.directAccess) {
+          selectedConversation = await withTimeout(Promise.resolve(upsertChatConversation(teamId, {
+            type: 'direct',
+            participantIds,
+            participantRoles: selectedConversation.participantRoles || [],
+            ...directMetadata
+          })), 'Direct chat authorization upgrade') as ChatConversation;
+        }
       }
     }
 
@@ -1391,7 +1517,16 @@ export async function sendTeamChatMessage({
       ...targetMetadata
     };
 
-    if (isNativeRuntime()) {
+    const effectiveConversation = createdConversation || selectedConversation;
+    if (effectiveConversation?.type === 'direct') {
+      await sendAuthorizedDirectMessage({
+        teamId,
+        conversationId,
+        clientMessageId: payload.clientMessageId,
+        text: payload.text,
+        attachments: payload.attachments
+      });
+    } else if (isNativeRuntime()) {
       await nativePostChatMessage(teamId, payload);
     } else {
       await withTimeout(Promise.resolve(postChatMessage(teamId, payload)), 'Chat message send');

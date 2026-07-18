@@ -16,6 +16,7 @@ import {
   buildChatAudienceMetadata,
   type ChatTargetType
 } from './chatLogic';
+import { sendAuthorizedDirectMessage } from './friendMessageService';
 import type { AuthUser } from './types';
 
 const aiStatsGamesLimit = 10;
@@ -232,8 +233,19 @@ export async function sendAllPlaysChatAnswer({
     selectedRecipientTarget,
     selectedRecipientIds
   });
+  const answerText = `ALL PLAYS\n\n${responseText}`;
+  if (selectedConversation?.type === 'direct') {
+    await sendAuthorizedDirectMessage({
+      teamId,
+      conversationId: selectedConversationId,
+      clientMessageId: null,
+      text: answerText,
+      attachments: []
+    });
+    return;
+  }
   await postChatMessage(teamId, {
-    text: `ALL PLAYS\n\n${responseText}`,
+    text: answerText,
     senderId: user.uid,
     senderName: user.displayName || user.email || null,
     senderEmail: user.email || null,

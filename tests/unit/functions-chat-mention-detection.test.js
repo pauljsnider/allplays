@@ -384,6 +384,38 @@ describe('notifyTeamChatMessageCreated source wiring', () => {
         expect(deliveries[0].title).not.toContain('Coach Kim');
     });
 
+    it('notifies recipients for canonical attachment-only photo and video messages', async () => {
+        const deliveries = [];
+        const handler = getTeamChatMessageCreatedHandler({
+            senderProfile: { fullName: 'Pat Parent' },
+            sendNotification: async (payload) => {
+                deliveries.push(payload);
+                return { success: true };
+            }
+        });
+        const snapshot = (attachment) => ({
+            data: () => ({
+                text: '',
+                imageUrl: null,
+                attachments: [attachment],
+                senderId: 'parent-1',
+                recipientIds: ['user:recipient-1']
+            }),
+            ref: { update: async () => {} }
+        });
+
+        await handler(snapshot({ type: 'image', url: 'https://example.com/photo.jpg' }), {
+            params: { teamId: 'team-1', conversationId: 'direct-1', messageId: 'photo-1' }
+        });
+        await handler(snapshot({ type: 'video/mp4', url: 'https://example.com/video.mp4' }), {
+            params: { teamId: 'team-1', conversationId: 'direct-1', messageId: 'video-1' }
+        });
+
+        expect(deliveries).toHaveLength(2);
+        expect(deliveries.map((delivery) => delivery.body)).toEqual(['sent a photo', 'sent a video']);
+        expect(deliveries.every((delivery) => delivery.conversationId === 'direct-1')).toBe(true);
+    });
+
     it('exports the notifyTeamChatMessageCreated Firestore trigger', () => {
         expect(notifyTeamChatMessageCreatedSource).toContain("exports.notifyTeamChatMessageCreated = functions.firestore");
         expect(notifyTeamChatMessageCreatedSource).toContain(".document('teams/{teamId}/chatMessages/{messageId}')");
@@ -394,6 +426,7 @@ describe('notifyTeamChatMessageCreated source wiring', () => {
     });
 
     it('builds one shared recipient context for mentions and live chat delivery', () => {
+        expect(handleTeamChatMessageCreatedSource).toContain('if (!text && !imageUrl && attachments.length === 0) return null;');
         expect(handleTeamChatMessageCreatedSource).toContain('const shouldResolveMentions = Boolean(text);');
         expect(handleTeamChatMessageCreatedSource).toContain('const conversationId = normalizeTeamChatConversationId(data.conversationId || context.params.conversationId);');
         expect(handleTeamChatMessageCreatedSource).toContain('const recipientContext = await buildTeamChatNotificationContext(teamId, {');

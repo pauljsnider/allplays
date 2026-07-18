@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
+  applyOpportunityTeamDefaults,
   emptyOpportunityInput,
   formatOpportunityLocation,
   getOpportunityInquiryStarterMessages,
   getOpportunityKindLabel,
+  getMissingOpportunityRequiredFields,
+  opportunityAvailabilityOptions,
   opportunityToInput,
   opportunityKinds,
+  switchOpportunityTeamDefaults,
   type PublicOpportunity
 } from './opportunityLogic';
 
@@ -14,8 +18,112 @@ describe('opportunityLogic', () => {
     expect(emptyOpportunityInput('player_seeking_team')).toEqual(expect.objectContaining({
       kind: 'player_seeking_team',
       guardianAttested: false,
-      compensationType: 'not_applicable'
+      compensationType: 'not_applicable',
+      availability: opportunityAvailabilityOptions[0]
     }));
+  });
+
+  it('prefills safe team fields and keeps draft values the user already entered', () => {
+    const input = {
+      ...emptyOpportunityInput('coach_or_staff'),
+      title: 'Assistant coach',
+      city: 'User-entered city'
+    };
+    const result = applyOpportunityTeamDefaults(input, {
+      id: 'team-1',
+      name: 'Bears',
+      sport: 'Basketball',
+      city: 'Austin',
+      state: 'TX',
+      zip: '78701',
+      ageGroup: '12U',
+      competitiveLevel: 'Travel',
+      division: 'Gold',
+      availability: 'Weekends'
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      teamId: 'team-1',
+      sport: 'Basketball',
+      city: 'User-entered city',
+      state: 'TX',
+      ageGroup: '12U',
+      availability: 'Weekends',
+      title: 'Assistant coach'
+    }));
+  });
+
+  it('replaces prior team defaults while preserving manually changed fields', () => {
+    const firstTeam = {
+      id: 'team-1', name: 'Bears', sport: 'Basketball', city: 'Austin', state: 'TX', zip: '78701',
+      ageGroup: '12U', competitiveLevel: 'Travel', division: 'Gold', availability: 'Weekends'
+    };
+    const secondTeam = {
+      id: 'team-2', name: 'Stars', sport: 'Soccer', city: 'Dallas', state: 'TX', zip: '75201',
+      ageGroup: '14U', competitiveLevel: 'Select', division: 'Premier', availability: 'Weeknights'
+    };
+    const firstTeamDraft = applyOpportunityTeamDefaults(emptyOpportunityInput(), firstTeam);
+    const result = switchOpportunityTeamDefaults(
+      { ...firstTeamDraft, city: 'Manually selected city' },
+      firstTeam,
+      secondTeam
+    );
+
+    expect(result).toEqual(expect.objectContaining({
+      teamId: 'team-2',
+      sport: 'Soccer',
+      city: 'Manually selected city',
+      state: 'TX',
+      zip: '75201',
+      ageGroup: '14U',
+      competitiveLevel: 'Select',
+      division: 'Premier',
+      availability: 'Weeknights'
+    }));
+  });
+
+  it('keeps a manually changed availability when switching teams', () => {
+    const firstTeam = {
+      id: 'team-1', name: 'Bears', sport: 'Basketball', city: 'Austin', state: 'TX', zip: '78701',
+      ageGroup: '12U', competitiveLevel: 'Travel', division: 'Gold', availability: 'Weekends'
+    };
+    const secondTeam = {
+      id: 'team-2', name: 'Stars', sport: 'Soccer', city: 'Dallas', state: 'TX', zip: '75201',
+      ageGroup: '14U', competitiveLevel: 'Select', division: 'Premier', availability: 'Weeknights'
+    };
+    const firstTeamDraft = applyOpportunityTeamDefaults(emptyOpportunityInput(), firstTeam);
+
+    expect(switchOpportunityTeamDefaults(
+      { ...firstTeamDraft, availability: 'Flexible' },
+      firstTeam,
+      secondTeam
+    ).availability).toBe('Flexible');
+  });
+
+  it('uses the first availability option when a team has no availability default', () => {
+    const teamWithoutAvailability = {
+      id: 'team-1', name: 'Bears', sport: 'Basketball', city: 'Austin', state: 'TX', zip: '78701',
+      ageGroup: '12U', competitiveLevel: 'Travel', division: 'Gold', availability: ''
+    };
+    const draft = applyOpportunityTeamDefaults(emptyOpportunityInput(), teamWithoutAvailability);
+    expect(draft.availability).toBe(opportunityAvailabilityOptions[0]);
+    expect(switchOpportunityTeamDefaults(draft, teamWithoutAvailability, {
+      ...teamWithoutAvailability,
+      id: 'team-2',
+      availability: 'Weekends'
+    }).availability).toBe('Weekends');
+  });
+
+  it('reports kind-specific missing required fields', () => {
+    const teamListing = emptyOpportunityInput('team_seeking_players');
+    expect(getMissingOpportunityRequiredFields(teamListing).map((field) => field.key)).toEqual([
+      'teamId', 'title', 'description', 'sport', 'city', 'state'
+    ]);
+
+    const playerListing = emptyOpportunityInput('player_seeking_team');
+    expect(getMissingOpportunityRequiredFields(playerListing).map((field) => field.key)).toEqual([
+      'title', 'description', 'sport', 'city', 'state', 'ageGroup', 'guardianAttested'
+    ]);
   });
 
   it('formats labels, locations, and edit input', () => {

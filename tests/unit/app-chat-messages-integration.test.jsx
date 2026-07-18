@@ -2,13 +2,14 @@
 import React, { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot } from 'react-dom/client';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 
 const chatMocks = vi.hoisted(() => ({
     deleteTeamChatMessage: vi.fn(),
     editTeamChatMessage: vi.fn(),
     ensureStaffChatConversation: vi.fn(),
     getChatInboxPreview: vi.fn((message) => message ? `${message.senderName || 'Unknown'}: ${message.text || 'Attachment'}` : 'No messages yet'),
+    loadChatConversationById: vi.fn(),
     loadChatConversations: vi.fn(),
     loadChatInbox: vi.fn(),
     loadChatRecipientOptions: vi.fn(),
@@ -27,6 +28,16 @@ const chatMocks = vi.hoisted(() => ({
     sendTeamEmailMessage: vi.fn(),
     subscribeToTeamChatMessages: vi.fn(),
     toggleTeamChatReaction: vi.fn()
+}));
+
+const opportunityMocks = vi.hoisted(() => ({
+    getOpportunityInquiry: vi.fn(),
+    listOpportunityInquiries: vi.fn(),
+    replyToOpportunityInquiry: vi.fn()
+}));
+
+const friendMessageMocks = vi.hoisted(() => ({
+    canMessageAcceptedFriend: vi.fn()
 }));
 
 const layoutMocks = vi.hoisted(() => ({
@@ -137,6 +148,8 @@ vi.mock('../../apps/app/src/lib/voiceService.ts', () => ({
     voiceRecognition: voiceMocks
 }));
 vi.mock('../../apps/app/src/lib/chatService.ts', () => chatMocks);
+vi.mock('../../apps/app/src/lib/opportunityService.ts', () => opportunityMocks);
+vi.mock('../../apps/app/src/lib/friendMessageService.ts', () => friendMessageMocks);
 vi.mock('../../apps/app/src/lib/chatAiService', () => ({
     sendAllPlaysChatAnswer: chatMocks.sendAllPlaysChatAnswer
 }));
@@ -187,17 +200,26 @@ async function renderMessages(initialEntry, authState = auth) {
     document.body.appendChild(container);
     const root = createRoot(container);
     mountedRoots.add(root);
+    let navigateRoute = null;
+
+    function NavigationCapture() {
+        navigateRoute = useNavigate();
+        return null;
+    }
 
     const renderWithAuth = async (nextAuthState) => {
         await act(async () => {
             root.render(React.createElement(
                 MemoryRouter,
                 { initialEntries: [initialEntry] },
-                React.createElement(
-                    Routes,
-                    null,
-                    React.createElement(Route, { path: '/messages', element: React.createElement(Messages, { auth: nextAuthState }) }),
-                    React.createElement(Route, { path: '/messages/:teamId', element: React.createElement(Messages, { auth: nextAuthState }) })
+                React.createElement(React.Fragment, null,
+                    React.createElement(NavigationCapture),
+                    React.createElement(
+                        Routes,
+                        null,
+                        React.createElement(Route, { path: '/messages', element: React.createElement(Messages, { auth: nextAuthState }) }),
+                        React.createElement(Route, { path: '/messages/:teamId', element: React.createElement(Messages, { auth: nextAuthState }) })
+                    )
                 )
             ));
         });
@@ -210,7 +232,13 @@ async function renderMessages(initialEntry, authState = auth) {
     return {
         container,
         root,
-        rerender: renderWithAuth
+        rerender: renderWithAuth,
+        navigate: async (path) => {
+            await act(async () => {
+                navigateRoute(path);
+            });
+            await flush();
+        }
     };
 }
 
@@ -351,6 +379,8 @@ async function waitForTeamEmailDialog(container) {
 
 beforeEach(() => {
     vi.clearAllMocks();
+    opportunityMocks.listOpportunityInquiries.mockResolvedValue({ items: [], nextCursor: null });
+    friendMessageMocks.canMessageAcceptedFriend.mockResolvedValue(true);
     uxTimingMocks.interactionEnds.length = 0;
     layoutMocks.isDesktopWeb = false;
     nativeMocks.isNativePlatform = false;
@@ -467,6 +497,7 @@ beforeEach(() => {
     chatMocks.loadChatConversations.mockResolvedValue([
         { id: 'team', type: 'team', name: 'Bears Team Chat', participantIds: [], participantRoles: ['team'] }
     ]);
+    chatMocks.loadChatConversationById.mockResolvedValue(null);
     chatMocks.ensureStaffChatConversation.mockResolvedValue({
         id: 'staff-conversation',
         type: 'group',
@@ -522,7 +553,7 @@ describe('React app messages integration', () => {
     it('renders the real inbox with unread team chat previews', async () => {
         const { container } = await renderMessages('/messages');
 
-        expect(container.textContent).toContain('Team chats');
+        expect(container.textContent).toContain('Conversations');
         expect(container.textContent).toContain('Bears');
         expect(container.textContent).toContain('2');
         expect(container.textContent).toContain('Coach Jamie: Practice packet posted.');
@@ -649,6 +680,300 @@ describe('React app messages integration', () => {
             expect.any(Function),
             expect.any(Function)
         );
+    });
+
+    it('hydrates an older reverse direct thread before preparing a friend message', async () => {
+        const reverseConversationId = 'direct_coach-1__user%3Auser-1';
+        chatMocks.loadChatConversationById
+            .mockResolvedValueOnce(null)
+            .mockResolvedValueOnce({
+            id: reverseConversationId,
+            type: 'direct',
+            name: 'Coach Jamie',
+            participantIds: ['coach-1', 'user:user-1'],
+            participantRoles: []
+        });
+
+        const { container } = await renderMessages('/messages/team-1?compose=user%3Acoach-1&recipientName=Coach+Jamie');
+        await waitForMockCallCount(chatMocks.loadChatConversationById, 2, 'direct conversation lookups');
+        await flush();
+
+        expect(chatMocks.loadChatConversationById).toHaveBeenNthCalledWith(
+            1,
+            'team-1',
+            auth.user,
+            { id: 'team-1', name: 'Bears', sport: 'Basketball' },
+            true,
+            'direct_user-1__user%3Acoach-1'
+        );
+        expect(chatMocks.loadChatConversationById).toHaveBeenNthCalledWith(
+            2,
+            'team-1',
+            auth.user,
+            { id: 'team-1', name: 'Bears', sport: 'Basketball' },
+            true,
+            reverseConversationId
+        );
+        expect(chatMocks.subscribeToTeamChatMessages).toHaveBeenLastCalledWith(
+            'team-1',
+            reverseConversationId,
+            expect.any(Function),
+            expect.any(Function)
+        );
+        expect(container.textContent).toContain('Direct conversation with Coach Jamie opened.');
+    });
+
+    it('hydrates an older canonical direct thread before preparing a friend message', async () => {
+        const canonicalConversationId = 'direct_user-1__user%3Acoach-1';
+        chatMocks.loadChatConversationById.mockResolvedValueOnce({
+            id: canonicalConversationId,
+            type: 'direct',
+            name: 'Coach Jamie',
+            participantIds: ['user-1', 'user:coach-1'],
+            participantRoles: []
+        });
+
+        const { container } = await renderMessages('/messages/team-1?compose=user%3Acoach-1&recipientName=Coach+Jamie');
+        await waitForMockCallCount(chatMocks.loadChatConversationById, 1, 'canonical direct conversation lookup');
+        await flush();
+
+        expect(chatMocks.loadChatConversationById).toHaveBeenCalledWith(
+            'team-1',
+            auth.user,
+            { id: 'team-1', name: 'Bears', sport: 'Basketball' },
+            true,
+            canonicalConversationId
+        );
+        expect(chatMocks.subscribeToTeamChatMessages).toHaveBeenLastCalledWith(
+            'team-1',
+            canonicalConversationId,
+            expect.any(Function),
+            expect.any(Function)
+        );
+        expect(container.textContent).toContain('Direct conversation with Coach Jamie opened.');
+    });
+
+    it('prepares a first-time friend message for a non-moderator after both direct ids are absent', async () => {
+        chatMocks.loadChatTeamContext.mockResolvedValueOnce({
+            team: { id: 'team-1', name: 'Bears', sport: 'Basketball' },
+            profile: { fullName: 'Pat Parent', photoUrl: '' },
+            canModerate: false
+        });
+
+        const { container } = await renderMessages('/messages/team-1?compose=user%3Acoach-1&recipientName=Coach+Jamie');
+        await waitForText(container, 'Direct message to Coach Jamie is ready.');
+
+        expect(chatMocks.loadChatConversationById).toHaveBeenNthCalledWith(
+            1,
+            'team-1',
+            auth.user,
+            { id: 'team-1', name: 'Bears', sport: 'Basketball' },
+            false,
+            'direct_user-1__user%3Acoach-1'
+        );
+        expect(chatMocks.loadChatConversationById).toHaveBeenNthCalledWith(
+            2,
+            'team-1',
+            auth.user,
+            { id: 'team-1', name: 'Bears', sport: 'Basketball' },
+            false,
+            'direct_coach-1__user%3Auser-1'
+        );
+    });
+
+    it('rejects a crafted direct-message route when the recipient is not an accepted friend on the team', async () => {
+        friendMessageMocks.canMessageAcceptedFriend.mockResolvedValueOnce(false);
+
+        const { container } = await renderMessages('/messages/team-1?compose=user%3Acoach-1&recipientName=Coach+Jamie');
+        await waitForText(container, 'You can only start a direct message with an accepted friend who shares this team.');
+
+        expect(friendMessageMocks.canMessageAcceptedFriend).toHaveBeenCalledWith(auth.user, 'user:coach-1', 'team-1');
+        expect(chatMocks.loadChatConversationById).not.toHaveBeenCalled();
+        expect(container.textContent).not.toContain('Direct message to Coach Jamie is ready.');
+    });
+
+    it('keeps a crafted direct-message route closed when friendship verification fails', async () => {
+        friendMessageMocks.canMessageAcceptedFriend.mockRejectedValueOnce(new Error('Friend connection unavailable.'));
+
+        const { container } = await renderMessages('/messages/team-1?compose=user%3Acoach-1&recipientName=Coach+Jamie');
+        await waitForText(container, 'Friend connection unavailable.');
+
+        expect(chatMocks.loadChatConversationById).not.toHaveBeenCalled();
+        expect(container.textContent).not.toContain('Direct message to Coach Jamie is ready.');
+    });
+
+    it('ignores a stale friendship verification after leaving the compose route', async () => {
+        let resolveAuthorization;
+        friendMessageMocks.canMessageAcceptedFriend.mockImplementationOnce(() => new Promise((resolve) => {
+            resolveAuthorization = resolve;
+        }));
+        layoutMocks.isDesktopWeb = true;
+
+        const { container } = await renderMessages('/messages/team-1?compose=user%3Acoach-1&recipientName=Coach+Jamie');
+        await waitForMockCallCount(friendMessageMocks.canMessageAcceptedFriend, 1, 'friend authorization');
+        const teamLink = container.querySelector('a[href="/messages/team-1"]');
+        expect(teamLink).toBeTruthy();
+        await act(async () => {
+            teamLink.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }));
+        });
+        await flush();
+        await act(async () => {
+            resolveAuthorization(true);
+        });
+        await flush();
+
+        expect(chatMocks.loadChatConversationById).not.toHaveBeenCalled();
+        expect(container.textContent).not.toContain('Direct message to Coach Jamie is ready.');
+    });
+
+    it('clears a friend compose audience when navigating to the plain team thread', async () => {
+        layoutMocks.isDesktopWeb = true;
+        const { container } = await renderMessages('/messages/team-1?compose=user%3Acoach-1&recipientName=Coach+Jamie');
+        await waitForText(container, 'Direct message to Coach Jamie is ready.');
+
+        const textarea = container.querySelector('.chat-composer-textarea');
+        await setFieldValue(textarea, 'Private friend draft');
+        const photoInput = container.querySelector('input[type="file"][accept="image/*"]');
+        const photo = new File(['private-photo'], 'private.jpg', { type: 'image/jpeg' });
+        Object.defineProperty(photoInput, 'files', { configurable: true, value: [photo] });
+        await act(async () => {
+            photoInput.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        await flush();
+
+        const teamLink = container.querySelector('a[href="/messages/team-1"]');
+        expect(teamLink).toBeTruthy();
+        await act(async () => {
+            teamLink.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }));
+        });
+        await waitForMatch(
+            () => chatMocks.subscribeToTeamChatMessages.mock.calls.at(-1)?.[1] === 'team',
+            'default team conversation subscription'
+        );
+        expect(textarea.value).toBe('');
+        expect(container.textContent).not.toContain('private.jpg');
+        expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:chat-upload');
+
+        await setFieldValue(textarea, 'Update for everyone');
+        await click(container, 'Send message');
+
+        expect(chatMocks.sendTeamChatMessage).toHaveBeenCalledWith(expect.objectContaining({
+            teamId: 'team-1',
+            text: 'Update for everyone',
+            selectedConversationId: 'team',
+            selectedRecipientTarget: 'full_team',
+            selectedRecipientIds: []
+        }));
+    });
+
+    it('preserves a full-team draft while a first-time friend message uses a blank private draft', async () => {
+        layoutMocks.isDesktopWeb = true;
+        const { container, navigate } = await renderMessages('/messages/team-1');
+        const textarea = container.querySelector('.chat-composer-textarea');
+        await setFieldValue(textarea, 'Team practice update');
+        const photoInput = container.querySelector('input[type="file"][accept="image/*"]');
+        const teamPhoto = new File(['team-photo'], 'team.jpg', { type: 'image/jpeg' });
+        Object.defineProperty(photoInput, 'files', { configurable: true, value: [teamPhoto] });
+        await act(async () => {
+            photoInput.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        await flush();
+        expect(container.querySelector('img[alt="team.jpg"]')).toBeTruthy();
+
+        await navigate('/messages/team-1?compose=user%3Acoach-1&recipientName=Coach+Jamie');
+        await waitForText(container, 'Direct message to Coach Jamie is ready.');
+        expect(textarea.value).toBe('');
+        expect(container.querySelector('img[alt="team.jpg"]')).toBeNull();
+
+        await setFieldValue(textarea, 'Private hello');
+        await click(container, 'Send message');
+        expect(chatMocks.sendTeamChatMessage).toHaveBeenLastCalledWith(expect.objectContaining({
+            teamId: 'team-1',
+            text: 'Private hello',
+            selectedConversationId: 'team',
+            selectedRecipientTarget: 'individuals',
+            selectedRecipientIds: ['user:coach-1']
+        }));
+
+        await navigate('/messages/team-1');
+        await waitForMatch(() => textarea.value === 'Team practice update', 'restored team draft');
+        expect(container.querySelector('img[alt="team.jpg"]')).toBeTruthy();
+
+        await click(container, 'Send message');
+        expect(chatMocks.sendTeamChatMessage).toHaveBeenLastCalledWith(expect.objectContaining({
+            teamId: 'team-1',
+            text: 'Team practice update',
+            selectedConversationId: 'team',
+            selectedRecipientTarget: 'full_team',
+            selectedRecipientIds: []
+        }));
+    });
+
+    it('does not restore a private friend draft after switching teams and back', async () => {
+        layoutMocks.isDesktopWeb = true;
+        chatMocks.loadChatInbox.mockResolvedValueOnce({
+            teams: [
+                {
+                    id: 'team-1',
+                    name: 'Bears',
+                    sport: 'Basketball',
+                    role: 'Admin',
+                    canModerate: true,
+                    unreadCount: 2,
+                    lastMessage: chatMessage({ id: 'last-1', text: 'Practice packet posted.' })
+                },
+                {
+                    id: 'team-2',
+                    name: 'Thunder',
+                    sport: 'Soccer',
+                    role: 'Parent',
+                    canModerate: false,
+                    unreadCount: 0,
+                    lastMessage: chatMessage({ id: 'last-2', text: 'Tournament schedule changed.' })
+                }
+            ]
+        });
+        chatMocks.loadChatTeamContext.mockImplementation(async (teamId) => ({
+            team: teamId === 'team-2'
+                ? { id: 'team-2', name: 'Thunder', sport: 'Soccer' }
+                : { id: 'team-1', name: 'Bears', sport: 'Basketball' },
+            profile: { fullName: 'Pat Parent', photoUrl: '' },
+            canModerate: teamId !== 'team-2'
+        }));
+
+        const { container } = await renderMessages('/messages/team-1?compose=user%3Acoach-1&recipientName=Coach+Jamie');
+        await waitForText(container, 'Direct message to Coach Jamie is ready.');
+        const textarea = container.querySelector('.chat-composer-textarea');
+        await setFieldValue(textarea, 'Private team-one draft');
+        const photoInput = container.querySelector('input[type="file"][accept="image/*"]');
+        const photo = new File(['private-photo'], 'private-team-one.jpg', { type: 'image/jpeg' });
+        Object.defineProperty(photoInput, 'files', { configurable: true, value: [photo] });
+        await act(async () => {
+            photoInput.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        await flush();
+
+        const thunderLink = container.querySelector('a[href="/messages/team-2"]');
+        await act(async () => {
+            thunderLink.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }));
+        });
+        await waitForMatch(
+            () => chatMocks.subscribeToTeamChatMessages.mock.calls.at(-1)?.[0] === 'team-2',
+            'Thunder team subscription'
+        );
+
+        const bearsLink = container.querySelector('a[href="/messages/team-1"]');
+        await act(async () => {
+            bearsLink.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }));
+        });
+        await waitForMatch(
+            () => chatMocks.subscribeToTeamChatMessages.mock.calls.at(-1)?.[0] === 'team-1',
+            'Bears team subscription'
+        );
+
+        expect(container.querySelector('.chat-composer-textarea').value).toBe('');
+        expect(container.textContent).not.toContain('private-team-one.jpg');
+        expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:chat-upload');
     });
 
     it('loads the inbox for the inbox route and desktop two-pane thread route', async () => {
@@ -898,7 +1223,7 @@ describe('React app messages integration', () => {
             ]
         });
         const { container } = await renderMessages('/messages');
-        const search = container.querySelector('input[placeholder="Search team chats"]');
+        const search = container.querySelector('input[placeholder="Search conversations"]');
 
         await setFieldValue(search, 'soccer');
 
@@ -935,7 +1260,7 @@ describe('React app messages integration', () => {
             ]
         });
         const { container } = await renderMessages('/messages');
-        const search = container.querySelector('input[placeholder="Search team chats"]');
+        const search = container.querySelector('input[placeholder="Search conversations"]');
 
         await setFieldValue(search, 'volleyball');
 
@@ -976,7 +1301,7 @@ describe('React app messages integration', () => {
             ]
         });
         const { container } = await renderMessages('/messages');
-        const search = container.querySelector('input[placeholder="Search team chats"]');
+        const search = container.querySelector('input[placeholder="Search conversations"]');
 
         expect(container.querySelector('.messages-list-pane')).toBeTruthy();
         expect(container.querySelector('.chat-window-embedded')).toBeTruthy();
@@ -1029,7 +1354,7 @@ describe('React app messages integration', () => {
         const callCountAfterLoad = chatMocks.loadChatTeamContext.mock.calls.length;
 
         // Type in the search box so that only Thunder matches — team-1 is filtered out.
-        const search = container.querySelector('input[placeholder="Search team chats"]');
+        const search = container.querySelector('input[placeholder="Search conversations"]');
         await setFieldValue(search, 'soccer');
 
         // The inbox list should now show only Thunder (Bears filtered out of the inbox pane).
