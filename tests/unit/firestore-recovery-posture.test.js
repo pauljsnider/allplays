@@ -1,0 +1,74 @@
+import { describe, expect, it } from 'vitest';
+
+import { evaluateFirestoreRecoveryPosture } from '../../scripts/verify-firestore-recovery.mjs';
+
+const now = Date.parse('2026-07-18T12:00:00Z');
+
+function healthyInput() {
+    return {
+        now,
+        database: {
+            pointInTimeRecoveryEnablement: 'POINT_IN_TIME_RECOVERY_ENABLED',
+            deleteProtectionState: 'DELETE_PROTECTION_ENABLED'
+        },
+        schedules: [{
+            name: 'daily',
+            dailyRecurrence: {},
+            retention: '1209600s',
+            createTime: '2026-07-17T12:00:00Z'
+        }],
+        backups: [{
+            name: 'backup-1',
+            state: 'READY',
+            snapshotTime: '2026-07-18T06:00:00Z'
+        }]
+    };
+}
+
+describe('Firestore recovery posture', () => {
+    it('accepts PITR, delete protection, 14-day daily backups, and a fresh ready backup', () => {
+        expect(evaluateFirestoreRecoveryPosture(healthyInput())).toMatchObject({
+            healthy: true,
+            failures: [],
+            newestBackup: { name: 'backup-1' }
+        });
+    });
+
+    it('fails closed when recovery controls are absent or too weak', () => {
+        const result = evaluateFirestoreRecoveryPosture({
+            now,
+            database: {},
+            schedules: [{ dailyRecurrence: {}, retention: '604800s', createTime: '2026-07-01T00:00:00Z' }],
+            backups: []
+        });
+
+        expect(result.healthy).toBe(false);
+        expect(result.failures).toEqual(expect.arrayContaining([
+            'Point-in-time recovery is not enabled.',
+            'Database delete protection is not enabled.',
+            'The daily managed-backup retention is shorter than 14 days.',
+            'The daily schedule has not produced a ready backup within its initial 36-hour window.'
+        ]));
+    });
+
+    it('fails when the newest completed backup is stale', () => {
+        const input = healthyInput();
+        input.backups[0].snapshotTime = '2026-07-15T00:00:00Z';
+
+        expect(evaluateFirestoreRecoveryPosture(input)).toMatchObject({
+            healthy: false,
+            failures: ['The newest ready backup is older than 36 hours.']
+        });
+    });
+
+    it('allows only the documented first-backup grace window', () => {
+        const input = healthyInput();
+        input.schedules[0].createTime = '2026-07-18T02:42:05Z';
+        input.backups = [];
+
+        expect(evaluateFirestoreRecoveryPosture(input)).toMatchObject({
+            healthy: true,
+            notices: [expect.stringContaining('initial 36-hour window')]
+        });
+    });
+});

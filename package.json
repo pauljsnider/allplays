@@ -20,6 +20,7 @@
     "test:smoke:visual:update": "playwright test --config=playwright.smoke.config.js --grep @visual --update-snapshots",
     "test:smoke:team-fallback": "playwright test tests/smoke/team-fallback-regressions.spec.js --config=playwright.smoke.config.js --reporter=line",
     "ci:firebase-rules": "node scripts/validate-firebase-rules-ci.mjs",
+    "ops:verify-firestore-recovery": "node scripts/verify-firestore-recovery.mjs",
     "stage:pages": "node scripts/stage-pages-bundle.mjs",
     "app:build-help-index": "node scripts/build-app-help-knowledge-index.mjs",
     "app:check-bundle-size": "node scripts/check-app-bundle-size.mjs",
