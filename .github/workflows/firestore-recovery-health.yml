@@ -1,0 +1,77 @@
+name: firestore-recovery-health
+
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: firestore-recovery-health
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  verify-recovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      FIREBASE_PROJECT_ID: game-flow-c6311
+      FIRESTORE_RECOVERY_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.FIRESTORE_RECOVERY_WORKLOAD_IDENTITY_PROVIDER }}
+      FIRESTORE_RECOVERY_SERVICE_ACCOUNT: ${{ vars.FIRESTORE_RECOVERY_SERVICE_ACCOUNT }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Setup Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+
+      - name: Fail closed unless the recovery OIDC identity is exact
+        run: node scripts/verify-firestore-recovery-identity.mjs
+
+      - name: Authenticate to Google Cloud with GitHub OIDC
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.FIRESTORE_RECOVERY_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.FIRESTORE_RECOVERY_SERVICE_ACCOUNT }}
+          create_credentials_file: true
+          cleanup_credentials: true
+
+      - name: Setup Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
+        with:
+          version: '557.0.0'
+
+      - name: Verify PITR, delete protection, and managed backups
+        run: npm run ops:verify-firestore-recovery
+
+  reconcile-recovery-status:
+    needs: verify-recovery
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Setup Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+
+      - name: Reconcile durable recovery incident
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERIFY_RESULT: ${{ needs.verify-recovery.result }}
+        run: node scripts/reconcile-firestore-recovery-issue.mjs
