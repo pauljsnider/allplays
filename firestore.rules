@@ -2425,22 +2425,14 @@ service cloud.firestore {
              isDirectConversationCreateAuthorized(teamId, request.resource.data);
     }
 
-    function hasLegacyAliasChatParticipant(data) {
-      let participantIds = data.get('participantIds', []);
-      return participantIds is list &&
-             participantIds.size() == 2 &&
-             ((participantIds[0] is string && participantIds[0].matches('^(email|player):.+$')) ||
-              (participantIds[1] is string && participantIds[1].matches('^(email|player):.+$')));
-    }
-
-    // Old clients classified any two recipient tokens as a direct thread. A
-    // thread containing an email/player alias cannot satisfy the modern
-    // two-user direct-message authorization contract, so its participants may
-    // repair it in place to the participant-scoped group model.
-    function isLegacyAliasDirectConversationGroupRepair(teamId, conversationId) {
+    // Direct threads created before directAccess existed cannot satisfy the
+    // modern authorization contract. Existing participants may preserve the
+    // thread in place under the same participant-scoped group boundary.
+    function isLegacyDirectConversationGroupRepair(teamId, conversationId) {
       return resource.data.get('type', '') == 'direct' &&
              resource.data.get('directAccess', null) == null &&
-             hasLegacyAliasChatParticipant(resource.data) &&
+             resource.data.get('participantIds', []) is list &&
+             resource.data.get('participantIds', []).size() == 2 &&
              canAccessChatConversation(teamId, conversationId, resource.data) &&
              request.resource.data.get('type', '') == 'group' &&
              request.resource.data.get('name', null) == resource.data.get('name', null) &&
@@ -2450,8 +2442,7 @@ service cloud.firestore {
              request.resource.data.get('createdAt', null) == resource.data.get('createdAt', null) &&
              request.resource.data.get('lastMessageAt', null) == resource.data.get('lastMessageAt', null) &&
              request.resource.data.get('updatedAt', null) == request.time &&
-             request.resource.data.diff(resource.data).affectedKeys().hasOnly(['type', 'updatedAt']) &&
-             canAccessChatConversation(teamId, conversationId, request.resource.data);
+             request.resource.data.diff(resource.data).affectedKeys().hasOnly(['type', 'updatedAt']);
     }
 
     function chatReactionKeys() {
@@ -3905,14 +3896,17 @@ service cloud.firestore {
                          isChatConversationPayloadValid(request.resource.data) &&
                          isDirectConversationCreateAuthorized(teamId, request.resource.data) &&
                          canAccessChatConversation(teamId, conversationId, request.resource.data);
+        // Keep the narrowly-scoped legacy repair on its own allow path so it
+        // does not spend the expression budget evaluating unrelated updates.
+        allow update: if isChatConversationPayloadValid(request.resource.data) &&
+                         isLegacyDirectConversationGroupRepair(teamId, conversationId);
         allow update: if isChatConversationPayloadValid(request.resource.data) &&
                          ((canAccessChatConversation(teamId, conversationId, resource.data) &&
                            canAccessChatConversation(teamId, conversationId, request.resource.data) &&
                            (isTeamStaffChatConversationUpdate(teamId) ||
                             isChatConversationParticipantMetadataUpdate())) ||
                           isCanonicalStaffChatConversationRepair(teamId, conversationId) ||
-                          isDirectConversationAuthorizationUpgrade(teamId) ||
-                          isLegacyAliasDirectConversationGroupRepair(teamId, conversationId));
+                          isDirectConversationAuthorizationUpgrade(teamId));
         allow delete: if isTeamOwnerOrAdmin(teamId);
 
         match /chatMessages/{messageId} {

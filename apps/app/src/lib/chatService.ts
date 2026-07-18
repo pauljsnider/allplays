@@ -21,7 +21,7 @@ import {
   getUserTeamsWithAccess,
   isTeamActive,
   postChatMessage,
-  repairLegacyAliasDirectConversation,
+  repairLegacyDirectConversation,
   saveStoredTeamEmailDraft,
   saveStoredTeamEmailTemplate,
   sendTeamEmail,
@@ -1467,9 +1467,10 @@ export async function sendTeamChatMessage({
       }
     } else if (selectedConversation?.type === 'direct') {
       const participantIds = selectedConversation.participantIds || targetMetadata.recipientIds;
-      if (getDirectUserIds(user.uid, participantIds).length !== 2) {
+      const directUserIds = getDirectUserIds(user.uid, participantIds);
+      if (!selectedConversation.directAccess && (!canModerate || directUserIds.length !== 2)) {
         selectedConversation = await withTimeout(Promise.resolve(
-          repairLegacyAliasDirectConversation(teamId, selectedConversation.id)
+          repairLegacyDirectConversation(teamId, selectedConversation.id)
         ), 'Legacy chat repair') as ChatConversation;
         createdConversation = selectedConversation;
       } else {

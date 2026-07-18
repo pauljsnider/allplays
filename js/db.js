@@ -6902,11 +6902,11 @@ export async function upsertChatConversation(teamId, conversation = {}) {
 }
 
 /**
- * Repair a legacy two-token direct thread that contains an email/player alias.
- * Modern direct threads require two canonical user IDs; alias threads retain
- * their history and participant boundary by becoming an in-place group.
+ * Repair a legacy two-participant direct thread that predates authorization
+ * metadata. The thread retains its history and participant boundary by
+ * becoming an in-place participant-scoped group.
  */
-export async function repairLegacyAliasDirectConversation(teamId, conversationId) {
+export async function repairLegacyDirectConversation(teamId, conversationId) {
     const normalizedConversationId = normalizeRequestedChatConversationId(conversationId);
     if (!normalizedConversationId) {
         throw new Error('A valid legacy conversation is required.');
@@ -6921,9 +6921,8 @@ export async function repairLegacyAliasDirectConversation(teamId, conversationId
         return { id: snapshot.id, ...conversation };
     }
     const participantIds = normalizeConversationParticipantIds(conversation.participantIds);
-    const hasLegacyAlias = participantIds.some((participantId) => /^(email|player):/i.test(participantId));
-    if (conversation.type !== 'direct' || conversation.directAccess || participantIds.length !== 2 || !hasLegacyAlias) {
-        throw new Error('Only legacy alias-based direct conversations can be repaired.');
+    if (conversation.type !== 'direct' || conversation.directAccess || participantIds.length !== 2) {
+        throw new Error('Only legacy direct conversations without authorization metadata can be repaired.');
     }
     const updatedAt = serverTimestamp();
     await updateDoc(conversationRef, {
@@ -6938,6 +6937,9 @@ export async function repairLegacyAliasDirectConversation(teamId, conversationId
         updatedAt
     };
 }
+
+// Backward-compatible export for clients that loaded the first repair API.
+export const repairLegacyAliasDirectConversation = repairLegacyDirectConversation;
 
 /**
  * Get chat messages for a team with pagination support.

@@ -25,7 +25,7 @@ const dbMocks = vi.hoisted(() => ({
     getUserProfile: vi.fn(),
     getUserTeamsWithAccess: vi.fn(),
     postChatMessage: vi.fn(),
-    repairLegacyAliasDirectConversation: vi.fn(),
+    repairLegacyDirectConversation: vi.fn(),
     saveTeamEmailDraft: vi.fn(),
     saveTeamEmailTemplate: vi.fn(),
     sendTeamEmail: vi.fn(),

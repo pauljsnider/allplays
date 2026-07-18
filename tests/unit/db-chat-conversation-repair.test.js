@@ -20,8 +20,8 @@ function buildRepair(overrides = {}) {
         updateDoc: vi.fn().mockResolvedValue(undefined),
         ...overrides
     };
-    const source = getFunctionSource('repairLegacyAliasDirectConversation')
-        .replace('export async function repairLegacyAliasDirectConversation', 'return async function repairLegacyAliasDirectConversation');
+    const source = getFunctionSource('repairLegacyDirectConversation')
+        .replace('export async function repairLegacyDirectConversation', 'return async function repairLegacyDirectConversation');
     const repair = new Function(...Object.keys(dependencies), source)(...Object.values(dependencies));
     return { repair, dependencies };
 }
@@ -34,11 +34,32 @@ function snapshot(data, id = 'legacy-direct') {
     };
 }
 
-describe('legacy alias direct conversation repair', () => {
+describe('legacy direct conversation repair', () => {
     it('converts an email-based legacy direct thread in place', async () => {
         const conversation = {
             type: 'direct',
             participantIds: ['coach-1', 'email:parent@example.com'],
+            participantRoles: []
+        };
+        const { repair, dependencies } = buildRepair({
+            getDoc: vi.fn().mockResolvedValue(snapshot(conversation))
+        });
+
+        await expect(repair('team-1', 'legacy-direct')).resolves.toMatchObject({
+            id: 'legacy-direct',
+            type: 'group',
+            participantIds: conversation.participantIds
+        });
+        expect(dependencies.updateDoc).toHaveBeenCalledWith(
+            expect.objectContaining({ path: 'teams/team-1/chatConversations/legacy-direct' }),
+            { type: 'group', updatedAt: { serverTimestamp: true } }
+        );
+    });
+
+    it('converts a two-user metadata-less legacy admin thread in place', async () => {
+        const conversation = {
+            type: 'direct',
+            participantIds: ['parent-1', 'coach-1'],
             participantRoles: []
         };
         const { repair, dependencies } = buildRepair({
@@ -67,16 +88,16 @@ describe('legacy alias direct conversation repair', () => {
         expect(repaired.dependencies.updateDoc).not.toHaveBeenCalled();
 
         for (const conversation of [
-            { type: 'direct', participantIds: ['coach-1', 'user:parent-1'] },
             {
                 type: 'direct',
                 participantIds: ['coach-1', 'email:parent@example.com'],
                 directAccess: 'team_admin'
             },
-            { type: 'direct', participantIds: ['coach-1', 'email:a@example.com', 'email:b@example.com'] }
+            { type: 'direct', participantIds: ['coach-1', 'email:a@example.com', 'email:b@example.com'] },
+            { type: 'team', participantIds: ['coach-1', 'parent-1'] }
         ]) {
             const unsafe = buildRepair({ getDoc: vi.fn().mockResolvedValue(snapshot(conversation)) });
-            await expect(unsafe.repair('team-1', 'legacy-direct')).rejects.toThrow(/only legacy alias-based/i);
+            await expect(unsafe.repair('team-1', 'legacy-direct')).rejects.toThrow(/only legacy direct conversations without authorization metadata/i);
             expect(unsafe.dependencies.updateDoc).not.toHaveBeenCalled();
         }
     });

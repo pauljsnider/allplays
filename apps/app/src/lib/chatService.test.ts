@@ -32,7 +32,7 @@ const legacyChatServiceMocks = vi.hoisted(() => ({
   getUserTeamsWithAccess: vi.fn(),
   isTeamActive: vi.fn(() => true),
   postChatMessage: vi.fn(),
-  repairLegacyAliasDirectConversation: vi.fn(),
+  repairLegacyDirectConversation: vi.fn(),
   resolveImageFirebaseConfig: vi.fn(() => ({ apiKey: 'test-api-key', storageBucket: 'test-bucket' })),
   saveStoredTeamEmailDraft: vi.fn(),
   saveStoredTeamEmailTemplate: vi.fn(),
@@ -155,7 +155,7 @@ beforeEach(() => {
   });
   legacyChatServiceMocks.resolveImageFirebaseConfig.mockReturnValue({ apiKey: 'test-api-key', storageBucket: 'test-bucket' });
   legacyChatServiceMocks.postChatMessage.mockResolvedValue({ id: 'message-1' });
-  legacyChatServiceMocks.repairLegacyAliasDirectConversation.mockImplementation(async (_teamId, conversationId) => ({
+  legacyChatServiceMocks.repairLegacyDirectConversation.mockImplementation(async (_teamId, conversationId) => ({
     id: conversationId,
     type: 'group',
     participantIds: ['user-1', 'email:guardian@example.test'],
@@ -483,13 +483,52 @@ describe('sendTeamChatMessage attachment uploads', () => {
       selectedRecipientIds: ['email:guardian@example.test']
     });
 
-    expect(legacyChatServiceMocks.repairLegacyAliasDirectConversation).toHaveBeenCalledWith('team-1', conversationId);
+    expect(legacyChatServiceMocks.repairLegacyDirectConversation).toHaveBeenCalledWith('team-1', conversationId);
     expect(legacyChatServiceMocks.postChatMessage).toHaveBeenCalledWith('team-1', expect.objectContaining({
       conversationId,
       recipientIds: ['user-1', 'email:guardian@example.test']
     }));
     expect(friendMessageMocks.sendAuthorizedDirectMessage).not.toHaveBeenCalled();
     expect(result.createdConversation).toMatchObject({ id: conversationId, type: 'group' });
+  });
+
+  it('repairs a metadata-less legacy admin direct thread before a parent replies', async () => {
+    legacyChatServiceMocks.repairLegacyDirectConversation.mockImplementation(async (_teamId, conversationId) => ({
+      id: conversationId,
+      type: 'group',
+      participantIds: ['user-1', 'coach-2'],
+      participantRoles: []
+    }));
+    const { sendTeamChatMessage } = await import('./chatService');
+    const conversationId = 'direct_user-1__coach-2';
+
+    await sendTeamChatMessage({
+      ...buildSendInput([]),
+      user: {
+        uid: 'user-1',
+        email: 'parent@example.test',
+        displayName: 'Pat Parent',
+        roles: ['parent']
+      },
+      selectedConversation: {
+        id: conversationId,
+        type: 'direct',
+        participantIds: ['user-1', 'coach-2'],
+        participantRoles: [],
+        directAccess: null
+      } as any,
+      selectedConversationId: conversationId,
+      selectedRecipientTarget: 'individuals',
+      selectedRecipientIds: ['coach-2']
+    });
+
+    expect(legacyChatServiceMocks.repairLegacyDirectConversation).toHaveBeenCalledWith('team-1', conversationId);
+    expect(friendMessageMocks.canMessageAcceptedFriend).not.toHaveBeenCalled();
+    expect(friendMessageMocks.sendAuthorizedDirectMessage).not.toHaveBeenCalled();
+    expect(legacyChatServiceMocks.postChatMessage).toHaveBeenCalledWith('team-1', expect.objectContaining({
+      conversationId,
+      recipientIds: ['user-1', 'coach-2']
+    }));
   });
 
   it('keeps user and email aliases for one guardian on a group thread', async () => {

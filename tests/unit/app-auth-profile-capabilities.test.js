@@ -427,7 +427,7 @@ describe('React app auth/profile capability parity', () => {
             'subscribeToChatMessages',
             'postChatMessage',
             'upsertChatConversation',
-            'repairLegacyAliasDirectConversation',
+            'repairLegacyDirectConversation',
             'uploadTeamChatAttachment',
             'deleteUploadedChatAttachments',
             'nativeUploadChatMedia',
