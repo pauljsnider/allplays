@@ -396,6 +396,7 @@ describe('pages bundle staging', () => {
         expect(smokeIndex).toBeGreaterThan(serverIndex);
         expect(previewWorkflow).toContain('python3 -m http.server 4173 --directory "$RUNNER_TEMP/allplays-pages"');
         expect(previewWorkflow).toContain("SMOKE_PAGES_STAGED_ARTIFACT: 'true'");
+        expect(previewWorkflow).toContain('SMOKE_APP_BOOT_URL: http://127.0.0.1:4173/app/');
         expect(previewWorkflow).toContain('SMOKE_EXPECTED_APP_CHECK_SITE_KEY: ${{ vars.APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY }}');
     });
 

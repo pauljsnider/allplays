@@ -84,6 +84,7 @@ jobs:
         env:
           SMOKE_BASE_URL: http://127.0.0.1:4173
           SMOKE_APP_BASE_URL: http://127.0.0.1:5174
+          SMOKE_APP_BOOT_URL: http://127.0.0.1:4173/app/
           SMOKE_EXPECTED_APP_CHECK_SITE_KEY: ${{ vars.APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY }}
           SMOKE_PAGES_STAGED_ARTIFACT: 'true'
           SMOKE_PARENT_EMAIL: ${{ vars.SMOKE_PARENT_EMAIL }}

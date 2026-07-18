@@ -37,6 +37,33 @@ test.describe('exact staged GitHub Pages artifact', () => {
         }
     });
 
+    test('boots the staged React production bundle without failed executable assets', async ({ page }) => {
+        const fatalErrors = [];
+        const failedAssets = [];
+
+        page.on('pageerror', (error) => {
+            fatalErrors.push(error.message);
+        });
+        page.on('requestfailed', (request) => {
+            if (['document', 'script', 'stylesheet'].includes(request.resourceType())) {
+                failedAssets.push(
+                    `${request.method()} ${request.url()} ${request.failure()?.errorText || ''}`.trim()
+                );
+            }
+        });
+
+        const response = await page.goto('/app/#/auth', { waitUntil: 'domcontentloaded' });
+        expect(response?.status()).toBe(200);
+        await expect(page).toHaveTitle(/ALL PLAYS APP/i);
+        await expect(page.locator('#root')).not.toBeEmpty();
+        await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
+        await expect(page.locator('input[type="email"]')).toBeVisible();
+        await expect(page.locator('input[type="password"]')).toBeVisible();
+
+        expect(fatalErrors).toEqual([]);
+        expect(failedAssets).toEqual([]);
+    });
+
     for (const { name, path, widgetPolicy } of [
         { name: 'legacy root', path: '/', widgetPolicy: false },
         { name: 'React app', path: '/app/', widgetPolicy: false },
