@@ -30,7 +30,8 @@ describe('Firebase Hosting security headers', () => {
     });
 
     it('preserves Firebase Auth, App Check, AI, analytics, media, and legacy Tailwind dependencies', () => {
-        expect(globalCsp).toContain("script-src 'self' 'unsafe-inline' 'unsafe-eval'");
+        expect(globalCsp).toContain("script-src 'self' 'unsafe-inline'");
+        expect(globalCsp).not.toContain("'unsafe-eval'");
         expect(globalCsp).toContain('https://cdn.tailwindcss.com');
         expect(globalCsp).toContain('https://www.gstatic.com');
         expect(globalCsp).toContain('https://www.google.com');
@@ -56,6 +57,7 @@ describe('Firebase Hosting security headers', () => {
         expect(widgetCsp).not.toContain("frame-ancestors 'self'");
         expect(widgetCsp).toContain('https://www.google.com');
         expect(widgetCsp).toContain('https://*.firebaseapp.com');
+        expect(widgetCsp).not.toContain("'unsafe-eval'");
     });
 
     it('prevents caching the staged runtime configuration', () => {
