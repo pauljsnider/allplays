@@ -109,6 +109,16 @@ export async function runPublicTeamProfileBackfill(options = parsePublicTeamBack
     }
 
     if (options.apply && !options.teamId) {
+        // Re-list and re-apply every team before publishing completion. This
+        // closes the window where a team can be created or made public after
+        // the initial collection snapshot but before clients switch sources.
+        const reconciliationTeamDocs = await listTeams(db, '');
+        summary.teamsScanned += reconciliationTeamDocs.length;
+        for (const teamSnap of reconciliationTeamDocs) {
+            const result = await applyCurrentPublicTeamProfile(db, teamSnap.id);
+            if (result === 'upserted') summary.projectionsUpserted += 1;
+            if (result === 'deleted') summary.projectionsDeleted += 1;
+        }
         await db.doc(PUBLIC_TEAM_PROFILE_MIGRATION_STATE_PATH).set({ completed: true }, { merge: true });
         summary.migrationCompletionRecorded = true;
     }

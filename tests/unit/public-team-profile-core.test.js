@@ -152,6 +152,8 @@ describe('public team profile callable boundary', () => {
     expect(privateRace.state.profile).toBeNull();
     expect(privateRace.state.transactionReads).toEqual([
       'teams/team-race',
+      'publicTeamProfiles/team-race',
+      'teams/team-race',
       'publicTeamProfiles/team-race'
     ]);
     expect(privateRace.state.completion).toEqual({ completed: true });
@@ -166,14 +168,17 @@ describe('public team profile callable boundary', () => {
     }, { db: publicRace.db });
 
     expect(publicSummary).toMatchObject({
-      projectionsUpserted: 1,
+      projectionsUpserted: 2,
       projectionsDeleted: 0,
       migrationCompletionRecorded: true
     });
     expect(publicRace.state.profile).toMatchObject({
       name: 'Newly Public Race Team', isPublic: true, active: true, state: 'MO'
     });
-    expect(publicRace.state.transactionReads).toEqual(['teams/team-race']);
+    expect(publicRace.state.transactionReads).toEqual([
+      'teams/team-race',
+      'teams/team-race'
+    ]);
 
     const deletedRace = createBackfillDb({
       listedTeam: stalePublic,
@@ -192,8 +197,74 @@ describe('public team profile callable boundary', () => {
     expect(deletedRace.state.profile).toBeNull();
     expect(deletedRace.state.transactionReads).toEqual([
       'teams/team-race',
+      'publicTeamProfiles/team-race',
+      'teams/team-race',
       'publicTeamProfiles/team-race'
     ]);
+    logSpy.mockRestore();
+  });
+
+  it('reconciles teams created after the initial snapshot before recording completion', async () => {
+    const teams = new Map([
+      ['existing-team', { name: 'Existing Team', isPublic: true, active: true }],
+      ['late-team', { name: 'Late Team', isPublic: true, active: true }]
+    ]);
+    const profiles = new Map();
+    const events = [];
+    let collectionReads = 0;
+    const db = {
+      collection: vi.fn(() => ({
+        get: vi.fn(async () => {
+          collectionReads += 1;
+          const visibleIds = collectionReads === 1
+            ? ['existing-team']
+            : ['existing-team', 'late-team'];
+          return {
+            docs: visibleIds.map((id) => createBackfillSnapshot(id, teams.get(id)))
+          };
+        })
+      })),
+      doc: vi.fn((path) => ({
+        path,
+        set: vi.fn(async (value) => {
+          if (path === 'systemMigrations/publicTeamProfilesBackfill') {
+            events.push(`completed:${value.completed}`);
+          }
+        })
+      })),
+      runTransaction: vi.fn(async (handler) => handler({
+        get: vi.fn(async (ref) => {
+          if (ref.path.startsWith('teams/')) {
+            const id = ref.path.slice('teams/'.length);
+            return createBackfillSnapshot(id, teams.get(id) || null);
+          }
+          const id = ref.path.slice('publicTeamProfiles/'.length);
+          return createBackfillSnapshot(id, profiles.get(id) || null);
+        }),
+        set: vi.fn((ref, value) => {
+          const id = ref.path.slice('publicTeamProfiles/'.length);
+          profiles.set(id, value);
+          events.push(`profile:${id}`);
+        }),
+        delete: vi.fn()
+      }))
+    };
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const summary = await runPublicTeamProfileBackfill({
+      apply: true, teamId: '', projectId: 'demo-allplays', serviceAccountPath: ''
+    }, { db });
+
+    expect(collectionReads).toBe(2);
+    expect(profiles.get('late-team')).toMatchObject({
+      name: 'Late Team', isPublic: true, active: true
+    });
+    expect(events.indexOf('profile:late-team')).toBeLessThan(events.indexOf('completed:true'));
+    expect(summary).toMatchObject({
+      teamsScanned: 3,
+      projectionsUpserted: 3,
+      migrationCompletionRecorded: true
+    });
     logSpy.mockRestore();
   });
 });
