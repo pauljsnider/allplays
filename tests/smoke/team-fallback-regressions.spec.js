@@ -280,6 +280,7 @@ export async function getChatConversations() {
     throw permissionDenied();
 }
 export async function upsertChatConversation() {}
+export async function repairLegacyAliasDirectConversation() {}
 export async function getChatMessages() {
     return [];
 }
