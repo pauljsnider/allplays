@@ -69,7 +69,8 @@ describe('RSVP precedence cache delivery', () => {
             expect(readRepoFile(path)).toContain(expectedVersion);
         }
 
-        expect(readRepoFile('js/utils.js')).toContain("import('./global-search.js?v=10')");
+        expect(readRepoFile('js/utils.js')).toContain("import('./global-search.js?v=11')");
+        expect(readRepoFile('js/utils.js')).not.toContain("import('./global-search.js?v=10')");
         expect(readRepoFile('js/db.js')).toContain("from './utils.js?v=15';");
         expect(readRepoFile('parent-dashboard.html')).toContain('js/utils.js?v=15');
         expect(readRepoFile('js/live-game.js')).toContain("from './live-game-state.js?v=7';");
