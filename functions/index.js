@@ -7081,7 +7081,7 @@ async function getLegacyTargetsForCategory(teamId, category, users, actorUid = n
         ? normalizeNotificationPreferences(prefSnap.data())
         : DEFAULT_NOTIFICATION_PREFERENCES;
       if (prefs[category] !== true) return [];
-      return devicesSnap.docs
+      const targets = devicesSnap.docs
         .map((docSnap) => {
           const data = docSnap.data() || {};
           const token = String(data.token || '').trim();
@@ -7094,6 +7094,7 @@ async function getLegacyTargetsForCategory(teamId, category, users, actorUid = n
           };
         })
         .filter(Boolean);
+      return targets.length ? targets : [{ uid, teamId }];
     });
 
   const targetGroups = await Promise.all(queryTasks);
@@ -7179,6 +7180,15 @@ function notificationRecipientDocNeedsRoleBackfill(docSnap) {
   return Boolean(user?.uid) && (!Array.isArray(user.roles) || user.roles.length === 0);
 }
 
+function appendTokenlessNotificationTargets(targets, eligibleUsers, teamId, actorUid = null) {
+  const resolvedTargets = Array.isArray(targets) ? targets : [];
+  const targetedUserIds = new Set(resolvedTargets.map((target) => String(target?.uid || '').trim()).filter(Boolean));
+  const tokenlessTargets = Array.from(eligibleUsers?.keys?.() || [])
+    .filter((uid) => uid && uid !== actorUid && !targetedUserIds.has(uid))
+    .map((uid) => ({ uid, teamId }));
+  return [...resolvedTargets, ...tokenlessTargets];
+}
+
 async function getTargetsForCategory(teamId, category, actorUid = null, audienceContext = {}, additionalUsers = []) {
   if (!NOTIFICATION_CATEGORIES.includes(category)) return [];
 
@@ -7198,9 +7208,14 @@ async function getTargetsForCategory(teamId, category, actorUid = null, audience
       isLegacyTargetNotificationRecipientDoc(docSnap)
       && eligibleUsers.has(getNotificationRecipientDocUid(docSnap))
     ));
-    return [...indexedRecipientDocs, ...explicitlyEligibleLegacyRecipientDocs]
+    const targets = [...indexedRecipientDocs, ...explicitlyEligibleLegacyRecipientDocs]
       .flatMap((docSnap) => buildTargetsFromNotificationRecipientDoc(docSnap, { teamId, category, actorUid, eligibleUsers }))
       .filter(Boolean);
+    const indexedEligibleUsers = new Map(indexedRecipientDocs
+      .map((docSnap) => getNotificationRecipientDocUid(docSnap))
+      .filter((uid) => eligibleUsers.has(uid))
+      .map((uid) => [uid, eligibleUsers.get(uid)]));
+    return appendTokenlessNotificationTargets(targets, indexedEligibleUsers, teamId, actorUid);
   }
 
   const legacyTargetRecipientDocs = categoryRecipientDocs.filter(isLegacyTargetNotificationRecipientDoc);
@@ -7410,7 +7425,14 @@ async function getTargetsForCategoryUserIds(teamId, category, userIds = [], acto
   const indexedTargets = recipientSnaps
     .filter((docSnap) => docSnap.exists)
     .flatMap((docSnap) => buildTargetsFromNotificationRecipientDoc(docSnap, { teamId, category, actorUid, eligibleUsers }));
-  const indexedUserIds = new Set(indexedTargets.map((target) => target.uid));
+  const indexedEnabledUserIds = new Set(recipientSnaps
+    .filter((docSnap) => docSnap.exists && docSnap.data()?.categories?.[category] === true)
+    .map((docSnap) => getNotificationRecipientDocUid(docSnap))
+    .filter((uid) => eligibleUsers.has(uid)));
+  const indexedUserIds = new Set(recipientSnaps
+    .filter((docSnap) => docSnap.exists)
+    .map((docSnap) => getNotificationRecipientDocUid(docSnap))
+    .filter(Boolean));
   const missingUsers = users.filter((user) => (
     user?.uid
     && user.uid !== actorUid
@@ -7420,9 +7442,15 @@ async function getTargetsForCategoryUserIds(teamId, category, userIds = [], acto
   const fallbackTargets = missingUsers.length
     ? await getLegacyTargetsForCategory(teamId, category, missingUsers, actorUid, audienceContext)
     : [];
+  const logicalIndexedTargets = appendTokenlessNotificationTargets(
+    indexedTargets,
+    new Map(Array.from(indexedEnabledUserIds).map((uid) => [uid, eligibleUsers.get(uid)])),
+    teamId,
+    actorUid
+  );
 
   const seenTargetIds = new Set();
-  return [...indexedTargets, ...fallbackTargets].filter((target) => {
+  return [...logicalIndexedTargets, ...fallbackTargets].filter((target) => {
     const uid = String(target?.uid || '').trim();
     if (!recipientUserIds.has(uid)) return false;
     const key = `${uid}:${target?.deviceId || ''}:${target?.token || ''}`;
@@ -8036,7 +8064,14 @@ async function sendCategoryNotification({
   const inboxUserIds = excludeSet.size
     ? allInboxUserIds.filter((uid) => !excludeSet.has(uid))
     : allInboxUserIds;
-  if (!targets.length && !inboxUserIds.length) return null;
+  const inboxTargets = getUniqueNotificationInboxTargets(inboxUserIds.map((uid) => ({ uid })));
+  const pushTargets = targets.filter((target) => String(target?.token || '').trim());
+  const targetedUserIds = new Set(targets.map((target) => String(target?.uid || '').trim()).filter(Boolean));
+  const auditTargets = [
+    ...targets,
+    ...inboxUserIds.filter((uid) => !targetedUserIds.has(uid)).map((uid) => ({ uid }))
+  ];
+  if (!pushTargets.length && !inboxTargets.length) return null;
 
   const link = linkOverride || buildNotificationLink({ category, teamId, gameId, eventId: eventId || gameId, conversationId, childId });
   const appRoute = buildNotificationAppRoute({ category, teamId, gameId, eventId: eventId || gameId, conversationId, childId });
@@ -8065,8 +8100,8 @@ async function sendCategoryNotification({
   let successCount = 0;
   let failureCount = 0;
 
-  for (let i = 0; i < targets.length; i += maxMulticastTokens) {
-    const targetChunk = targets.slice(i, i + maxMulticastTokens);
+  for (let i = 0; i < pushTargets.length; i += maxMulticastTokens) {
+    const targetChunk = pushTargets.slice(i, i + maxMulticastTokens);
     try {
       const sendResult = await admin.messaging().sendEachForMulticast({
         tokens: targetChunk.map((target) => target.token),
@@ -8108,7 +8143,7 @@ async function sendCategoryNotification({
   }
 
   const inboxResult = await writeNotificationInboxRecords({
-    targets: inboxUserIds.map((uid) => ({ uid })),
+    targets: inboxTargets,
     category,
     title,
     body,
@@ -8126,7 +8161,7 @@ async function sendCategoryNotification({
     body,
     link,
     appRoute,
-    targets,
+    targets: auditTargets,
     successCount,
     failureCount,
     inboxResult,
@@ -8361,11 +8396,12 @@ async function sendDirectTargetsNotification({
   appRouteOverride = null,
   timeSensitive = false
 }) {
-  const pushTargets = Array.isArray(targets) ? targets : [];
+  const logicalTargets = Array.isArray(targets) ? targets : [];
+  const pushTargets = logicalTargets.filter((target) => String(target?.token || '').trim());
   const inboxTargets = getUniqueNotificationInboxTargets(
     Array.isArray(inboxUids)
       ? inboxUids.map((uid) => ({ uid }))
-      : pushTargets
+      : logicalTargets
   );
   if (!pushTargets.length && !inboxTargets.length) return null;
 
