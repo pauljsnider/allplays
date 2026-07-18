@@ -18,6 +18,8 @@ describe('Firestore recovery delivery contract', () => {
         expect(workflow).toContain("cron: '17 15 * * *'");
         expect(workflow).toContain('environment: production');
         expect(authIndex).toBeGreaterThan(-1);
+        expect(workflow).toContain('secrets.FIRESTORE_RECOVERY_READ_ONLY_SERVICE_ACCOUNT_GAME_FLOW_C6311');
+        expect(workflow).not.toContain('secrets.FIREBASE_SERVICE_ACCOUNT_GAME_FLOW_C6311');
         expect(workflow).toContain('create_credentials_file: true');
         expect(workflow).toContain('cleanup_credentials: true');
         expect(setupIndex).toBeGreaterThan(authIndex);
