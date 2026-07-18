@@ -51,18 +51,35 @@ describe('Pages deployment artifact verification', () => {
         const artifactDir = makeArtifact();
         writeFile(path.join(artifactDir, '.nojekyll'));
 
-        expect(() => verifyPagesDeployArtifact(artifactDir, { enforcementReady: true }))
-            .toThrow(/missing a valid enforcement-ready App Check runtime config/);
+        expect(() => verifyPagesDeployArtifact(artifactDir, {
+            enforcementReady: true,
+            expectedSiteKey: 'public-enterprise-site-key_123'
+        }))
+            .toThrow(/missing a valid App Check runtime config/);
 
         writeFile(
             path.join(artifactDir, '.well-known', 'allplays-runtime-config.json'),
             '{not-json'
         );
-        expect(() => verifyPagesDeployArtifact(artifactDir, { enforcementReady: 'true' }))
-            .toThrow(/missing a valid enforcement-ready App Check runtime config/);
+        expect(() => verifyPagesDeployArtifact(artifactDir, {
+            enforcementReady: 'true',
+            expectedSiteKey: 'public-enterprise-site-key_123'
+        }))
+            .toThrow(/missing a valid App Check runtime config/);
     });
 
-    it('requires an enabled runtime config with a valid public site key', () => {
+    it('requires hidden runtime config when Pages deploy is enabled before enforcement', () => {
+        const artifactDir = makeArtifact();
+        writeFile(path.join(artifactDir, '.nojekyll'));
+
+        expect(() => verifyPagesDeployArtifact(artifactDir, {
+            enforcementReady: false,
+            pagesDeployEnabled: true,
+            expectedSiteKey: 'public-enterprise-site-key_123'
+        })).toThrow(/missing a valid App Check runtime config/);
+    });
+
+    it('requires an enabled runtime config matching the expected public site key', () => {
         const artifactDir = makeArtifact();
         writeFile(path.join(artifactDir, '.nojekyll'));
 
@@ -70,15 +87,38 @@ describe('Pages deployment artifact verification', () => {
             enabled: false,
             recaptchaEnterpriseSiteKey: 'public-enterprise-site-key_123'
         });
-        expect(() => verifyPagesDeployArtifact(artifactDir, { enforcementReady: '1' }))
-            .toThrow(/not enabled with a valid public site key/);
+        expect(() => verifyPagesDeployArtifact(artifactDir, {
+            pagesDeployEnabled: 'true',
+            expectedSiteKey: 'public-enterprise-site-key_123'
+        })).toThrow(/not enabled with the expected public site key/);
 
         writeRuntimeConfig(artifactDir, {
             enabled: true,
             recaptchaEnterpriseSiteKey: 'invalid key'
         });
-        expect(() => verifyPagesDeployArtifact(artifactDir, { enforcementReady: true }))
-            .toThrow(/not enabled with a valid public site key/);
+        expect(() => verifyPagesDeployArtifact(artifactDir, {
+            pagesDeployEnabled: true,
+            expectedSiteKey: 'public-enterprise-site-key_123'
+        })).toThrow(/not enabled with the expected public site key/);
+
+        writeRuntimeConfig(artifactDir, {
+            enabled: true,
+            recaptchaEnterpriseSiteKey: 'different-public-site-key_456'
+        });
+        expect(() => verifyPagesDeployArtifact(artifactDir, {
+            pagesDeployEnabled: true,
+            expectedSiteKey: 'public-enterprise-site-key_123'
+        })).toThrow(/not enabled with the expected public site key/);
+    });
+
+    it('fails a configured Pages deploy when the expected public key is unavailable', () => {
+        const artifactDir = makeArtifact();
+        writeFile(path.join(artifactDir, '.nojekyll'));
+
+        expect(() => verifyPagesDeployArtifact(artifactDir, {
+            enforcementReady: false,
+            pagesDeployEnabled: true
+        })).toThrow(/requires a valid expected public App Check site key/);
     });
 
     it('accepts the enforcement-ready hidden runtime config without returning its key', () => {
@@ -90,6 +130,9 @@ describe('Pages deployment artifact verification', () => {
             isTokenAutoRefreshEnabled: true
         });
 
-        expect(verifyPagesDeployArtifact(artifactDir, { enforcementReady: true })).toBeUndefined();
+        expect(verifyPagesDeployArtifact(artifactDir, {
+            enforcementReady: true,
+            expectedSiteKey: 'public-enterprise-site-key_123'
+        })).toBeUndefined();
     });
 });

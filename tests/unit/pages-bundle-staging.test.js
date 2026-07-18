@@ -354,7 +354,9 @@ describe('pages bundle staging', () => {
         const pagesUploadIndex = deployJob.indexOf('- name: Upload GitHub Pages artifact');
 
         expect(intermediateUpload).toContain('include-hidden-files: true');
+        expect(deployJob).toContain('ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY: ${{ vars.APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY }}');
         expect(deployJob).toContain('ALLPLAYS_APP_CHECK_ENFORCEMENT_READY: ${{ vars.APP_CHECK_ENFORCEMENT_READY }}');
+        expect(deployJob).toContain('ALLPLAYS_PAGES_DEPLOY_ENABLED: ${{ vars.APP_GITHUB_PAGES_DEPLOY_ENABLED }}');
         expect(deployJob).toContain('node scripts/verify-pages-deploy-artifact.mjs "$RUNNER_TEMP/allplays-pages"');
         expect(downloadIndex).toBeGreaterThan(-1);
         expect(verifyIndex).toBeGreaterThan(downloadIndex);

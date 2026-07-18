@@ -83,7 +83,9 @@ jobs:
 
       - name: Verify staged Pages deployment artifact
         env:
+          ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY: ${{ vars.APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY }}
           ALLPLAYS_APP_CHECK_ENFORCEMENT_READY: ${{ vars.APP_CHECK_ENFORCEMENT_READY }}
+          ALLPLAYS_PAGES_DEPLOY_ENABLED: ${{ vars.APP_GITHUB_PAGES_DEPLOY_ENABLED }}
         run: node scripts/verify-pages-deploy-artifact.mjs "$RUNNER_TEMP/allplays-pages"
 
       - name: Upload GitHub Pages artifact
