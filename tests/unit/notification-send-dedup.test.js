@@ -123,6 +123,14 @@ function buildSendCategoryNotificationHarness({
         failureCount: 0
     }));
     const writeNotificationAuditRecord = vi.fn(async () => {});
+    const getUniqueNotificationInboxTargets = (notificationTargets = []) => {
+        const targetsByUid = new Map();
+        notificationTargets.forEach((target) => {
+            const uid = String(target?.uid || '').trim();
+            if (uid && !targetsByUid.has(uid)) targetsByUid.set(uid, { ...target, uid });
+        });
+        return Array.from(targetsByUid.values());
+    };
     const functions = {
         logger: {
             info: vi.fn(),
@@ -142,6 +150,7 @@ function buildSendCategoryNotificationHarness({
         'pruneInvalidTokens',
         'writeNotificationInboxRecords',
         'writeNotificationAuditRecord',
+        'getUniqueNotificationInboxTargets',
         'functions',
         `${sendSource}\nreturn sendCategoryNotification;`
     );
@@ -158,6 +167,7 @@ function buildSendCategoryNotificationHarness({
         pruneInvalidTokens,
         writeNotificationInboxRecords,
         writeNotificationAuditRecord,
+        getUniqueNotificationInboxTargets,
         functions
     );
 
@@ -332,8 +342,7 @@ describe('notification send dedup guard — sendCategoryNotification', () => {
         }));
         expect(harness.writeNotificationInboxRecords).toHaveBeenCalledWith(expect.objectContaining({
             targets: [
-                { uid: 'parent-1', deviceId: 'ios-1', token: 'token-1' },
-                { uid: 'parent-1', deviceId: 'web-1', token: 'token-2' }
+                { uid: 'parent-1', deviceId: 'ios-1', token: 'token-1' }
             ]
         }));
         expect(result).toMatchObject({ successCount: 2, failureCount: 0 });

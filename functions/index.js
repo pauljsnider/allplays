@@ -5849,7 +5849,7 @@ async function syncNotificationRecipientForTeamUser(teamId, uid, options = {}) {
     ? normalizeNotificationPreferences(prefSnap.data())
     : DEFAULT_NOTIFICATION_PREFERENCES;
   const tokens = buildNotificationRecipientTokens(devicesSnap);
-  if (!tokens.length || !hasEnabledNotificationCategory(preferences)) {
+  if (!hasEnabledNotificationCategory(preferences)) {
     if (!skipLegacyCleanup) {
       await cleanupLegacyNotificationRecipientDocs(teamId, normalizedUid);
     }
@@ -7077,7 +7077,7 @@ async function getLegacyTargetsForCategory(teamId, category, users, actorUid = n
         ? normalizeNotificationPreferences(prefSnap.data())
         : DEFAULT_NOTIFICATION_PREFERENCES;
       if (prefs[category] !== true) return [];
-      return devicesSnap.docs
+      const targets = devicesSnap.docs
         .map((docSnap) => {
           const data = docSnap.data() || {};
           const token = String(data.token || '').trim();
@@ -7090,6 +7090,7 @@ async function getLegacyTargetsForCategory(teamId, category, users, actorUid = n
           };
         })
         .filter(Boolean);
+      return targets.length ? targets : [{ uid, teamId }];
     });
 
   const targetGroups = await Promise.all(queryTasks);
@@ -7170,9 +7171,84 @@ function buildIndexedEligibleUsers(recipientDocs, category, audienceContext = {}
     .map((user) => [user.uid, user]));
 }
 
-function notificationRecipientDocNeedsRoleBackfill(docSnap) {
-  const user = getNotificationRecipientUserFromDoc(docSnap);
-  return Boolean(user?.uid) && (!Array.isArray(user.roles) || user.roles.length === 0);
+function appendTokenlessNotificationTargets(targets, eligibleUsers, teamId, actorUid = null) {
+  const resolvedTargets = Array.isArray(targets) ? targets : [];
+  const targetedUserIds = new Set(resolvedTargets.map((target) => String(target?.uid || '').trim()).filter(Boolean));
+  const tokenlessTargets = Array.from(eligibleUsers?.keys?.() || [])
+    .filter((uid) => uid && uid !== actorUid && !targetedUserIds.has(uid))
+    .map((uid) => ({ uid, teamId }));
+  return [...resolvedTargets, ...tokenlessTargets];
+}
+
+async function resolveMixedNotificationRecipientIndex({
+  teamId,
+  category,
+  actorUid = null,
+  audienceContext = {},
+  recipientDocs = [],
+  additionalUsers = []
+}) {
+  const candidateUsers = await getCandidateUsersForTeam(teamId);
+  const eligibleUsers = buildIndexedEligibleUsers(
+    recipientDocs,
+    category,
+    audienceContext,
+    [...candidateUsers, ...(Array.isArray(additionalUsers) ? additionalUsers : [])]
+  );
+  const knownUserIds = new Set((recipientDocs || [])
+    .map((docSnap) => getNotificationRecipientDocUid(docSnap))
+    .filter(Boolean));
+  const coverageUserIds = Array.from(eligibleUsers.keys())
+    .filter((uid) => uid && uid !== actorUid && !knownUserIds.has(uid));
+  const existingUserIds = new Set(knownUserIds);
+  const batchSize = 250;
+  for (let index = 0; index < coverageUserIds.length; index += batchSize) {
+    const userIdChunk = coverageUserIds.slice(index, index + batchSize);
+    const recipientRefs = userIdChunk
+      .map((uid) => buildTeamNotificationRecipientRef(teamId, uid))
+      .filter(Boolean);
+    const recipientSnaps = recipientRefs.length ? await firestore.getAll(...recipientRefs) : [];
+    recipientSnaps.forEach((docSnap, snapIndex) => {
+      if (docSnap.exists) existingUserIds.add(userIdChunk[snapIndex]);
+    });
+  }
+
+  const missingUsers = Array.from(eligibleUsers.values()).filter((user) => (
+    user?.uid
+    && user.uid !== actorUid
+    && !existingUserIds.has(user.uid)
+  ));
+  const fallbackTargets = missingUsers.length
+    ? await getLegacyTargetsForCategory(teamId, category, missingUsers, actorUid, audienceContext)
+    : [];
+
+  if (missingUsers.length && typeof backfillNotificationRecipientsForTeam === 'function') {
+    try {
+      await backfillNotificationRecipientsForTeam(teamId, missingUsers, { skipLegacyCleanup: true });
+    } catch (error) {
+      const logger = typeof functions !== 'undefined' ? functions.logger : null;
+      logger?.warn?.('Failed to backfill missing notification recipient index entries', {
+        teamId,
+        category,
+        missingUserCount: missingUsers.length,
+        error: error?.message || String(error || 'Unknown error')
+      });
+    }
+  }
+
+  return { eligibleUsers, fallbackTargets };
+}
+
+function dedupeNotificationTargets(targets) {
+  const seenTargetIds = new Set();
+  return (Array.isArray(targets) ? targets : []).filter((target) => {
+    const uid = String(target?.uid || '').trim();
+    if (!uid) return false;
+    const key = `${uid}:${target?.deviceId || ''}:${target?.token || ''}`;
+    if (seenTargetIds.has(key)) return false;
+    seenTargetIds.add(key);
+    return true;
+  });
 }
 
 async function getTargetsForCategory(teamId, category, actorUid = null, audienceContext = {}, additionalUsers = []) {
@@ -7184,59 +7260,68 @@ async function getTargetsForCategory(teamId, category, actorUid = null, audience
   const categoryRecipientDocs = targetSnap.docs || [];
   const indexedRecipientDocs = categoryRecipientDocs.filter(isAggregateNotificationRecipientDoc);
   if (indexedRecipientDocs.length) {
-    additionalUsers = Array.isArray(additionalUsers) ? additionalUsers : [];
-    if (indexedRecipientDocs.some((docSnap) => notificationRecipientDocNeedsRoleBackfill(docSnap))) {
-      const candidateUsers = await getCandidateUsersForTeam(teamId);
-      additionalUsers = [...candidateUsers, ...additionalUsers];
-    }
-    const eligibleUsers = buildIndexedEligibleUsers(indexedRecipientDocs, category, audienceContext, additionalUsers);
+    const { eligibleUsers, fallbackTargets } = await resolveMixedNotificationRecipientIndex({
+      teamId,
+      category,
+      actorUid,
+      audienceContext,
+      recipientDocs: categoryRecipientDocs,
+      additionalUsers
+    });
     const explicitlyEligibleLegacyRecipientDocs = categoryRecipientDocs.filter((docSnap) => (
       isLegacyTargetNotificationRecipientDoc(docSnap)
       && eligibleUsers.has(getNotificationRecipientDocUid(docSnap))
     ));
-    return [...indexedRecipientDocs, ...explicitlyEligibleLegacyRecipientDocs]
+    const targets = [...indexedRecipientDocs, ...explicitlyEligibleLegacyRecipientDocs]
       .flatMap((docSnap) => buildTargetsFromNotificationRecipientDoc(docSnap, { teamId, category, actorUid, eligibleUsers }))
       .filter(Boolean);
+    const indexedEligibleUsers = new Map(indexedRecipientDocs
+      .map((docSnap) => getNotificationRecipientDocUid(docSnap))
+      .filter((uid) => eligibleUsers.has(uid))
+      .map((uid) => [uid, eligibleUsers.get(uid)]));
+    return dedupeNotificationTargets([
+      ...appendTokenlessNotificationTargets(targets, indexedEligibleUsers, teamId, actorUid),
+      ...fallbackTargets
+    ]);
   }
 
   const legacyTargetRecipientDocs = categoryRecipientDocs.filter(isLegacyTargetNotificationRecipientDoc);
   if (legacyTargetRecipientDocs.length) {
-    const candidateUsers = await getCandidateUsersForTeam(teamId);
-    const indexedAdditionalUsers = [
-      ...candidateUsers,
-      ...(Array.isArray(additionalUsers) ? additionalUsers : [])
-    ];
-    const eligibleUsers = buildIndexedEligibleUsers([], category, audienceContext, indexedAdditionalUsers);
-    const explicitlyEligibleLegacyRecipientDocs = legacyTargetRecipientDocs.filter((docSnap) => (
-      eligibleUsers.has(getNotificationRecipientDocUid(docSnap))
-    ));
-    if (explicitlyEligibleLegacyRecipientDocs.length) {
-      return explicitlyEligibleLegacyRecipientDocs
-        .flatMap((docSnap) => buildTargetsFromNotificationRecipientDoc(docSnap, { teamId, category, actorUid, eligibleUsers }))
-        .filter(Boolean);
-    }
+    const { eligibleUsers, fallbackTargets } = await resolveMixedNotificationRecipientIndex({
+      teamId,
+      category,
+      actorUid,
+      audienceContext,
+      recipientDocs: categoryRecipientDocs,
+      additionalUsers
+    });
+    const legacyTargets = legacyTargetRecipientDocs
+      .filter((docSnap) => eligibleUsers.has(getNotificationRecipientDocUid(docSnap)))
+      .flatMap((docSnap) => buildTargetsFromNotificationRecipientDoc(docSnap, { teamId, category, actorUid, eligibleUsers }))
+      .filter(Boolean);
+    return dedupeNotificationTargets([...legacyTargets, ...fallbackTargets]);
   }
 
   const indexIsEmpty = typeof teamNotificationRecipientIndexIsEmpty === 'function'
     ? await teamNotificationRecipientIndexIsEmpty(teamId)
     : true;
   if (!indexIsEmpty) {
-    const candidateUsers = categoryRecipientDocs.length ? await getCandidateUsersForTeam(teamId) : [];
-    const indexedAdditionalUsers = [
-      ...candidateUsers,
-      ...(Array.isArray(additionalUsers) ? additionalUsers : [])
-    ];
-    const eligibleUsers = buildIndexedEligibleUsers([], category, audienceContext, indexedAdditionalUsers);
+    const { eligibleUsers, fallbackTargets } = await resolveMixedNotificationRecipientIndex({
+      teamId,
+      category,
+      actorUid,
+      audienceContext,
+      recipientDocs: categoryRecipientDocs,
+      additionalUsers
+    });
     const explicitlyEligibleLegacyRecipientDocs = categoryRecipientDocs.filter((docSnap) => (
       !isAggregateNotificationRecipientDoc(docSnap)
       && eligibleUsers.has(getNotificationRecipientDocUid(docSnap))
     ));
-    if (explicitlyEligibleLegacyRecipientDocs.length) {
-      return explicitlyEligibleLegacyRecipientDocs
-        .flatMap((docSnap) => buildTargetsFromNotificationRecipientDoc(docSnap, { teamId, category, actorUid, eligibleUsers }))
-        .filter(Boolean);
-    }
-    return [];
+    const legacyTargets = explicitlyEligibleLegacyRecipientDocs
+      .flatMap((docSnap) => buildTargetsFromNotificationRecipientDoc(docSnap, { teamId, category, actorUid, eligibleUsers }))
+      .filter(Boolean);
+    return dedupeNotificationTargets([...legacyTargets, ...fallbackTargets]);
   }
 
   const candidateUsers = await getCandidateUsersForTeam(teamId);
@@ -7289,18 +7374,33 @@ async function getTargetsForCategoryUserIds(teamId, category, userIds = [], acto
     .filter((docSnap) => docSnap.exists)
     .flatMap((docSnap) => buildTargetsFromNotificationRecipientDoc(docSnap, { teamId, category, actorUid, eligibleUsers }));
   const indexedUserIds = new Set(indexedTargets.map((target) => target.uid));
+  const existingIndexedUserIds = new Set(recipientSnaps
+    .filter((docSnap) => docSnap.exists)
+    .map((docSnap) => getNotificationRecipientDocUid(docSnap))
+    .filter(Boolean));
+  const tokenlessIndexedTargets = recipientSnaps
+    .filter((docSnap) => {
+      if (!docSnap.exists) return false;
+      const data = docSnap.data() || {};
+      const uid = getNotificationRecipientDocUid(docSnap);
+      return uid
+        && uid !== actorUid
+        && eligibleUsers.has(uid)
+        && data.categories?.[category] === true
+        && !indexedUserIds.has(uid);
+    })
+    .map((docSnap) => ({ uid: getNotificationRecipientDocUid(docSnap), teamId }));
   const missingUsers = users.filter((user) => (
     user?.uid
     && user.uid !== actorUid
-    && !indexedUserIds.has(user.uid)
+    && !existingIndexedUserIds.has(user.uid)
     && eligibleUsers.has(user.uid)
   ));
   const fallbackTargets = missingUsers.length
     ? await getLegacyTargetsForCategory(teamId, category, missingUsers, actorUid, audienceContext)
     : [];
-
   const seenTargetIds = new Set();
-  return [...indexedTargets, ...fallbackTargets].filter((target) => {
+  return [...indexedTargets, ...tokenlessIndexedTargets, ...fallbackTargets].filter((target) => {
     const uid = String(target?.uid || '').trim();
     if (!recipientUserIds.has(uid)) return false;
     const key = `${uid}:${target?.deviceId || ''}:${target?.token || ''}`;
@@ -7907,7 +8007,9 @@ async function sendCategoryNotification({
   const targets = excludeSet.size
     ? allTargets.filter((t) => !excludeSet.has(t.uid))
     : allTargets;
-  if (!targets.length) return null;
+  const inboxTargets = getUniqueNotificationInboxTargets(targets);
+  const pushTargets = targets.filter((target) => String(target?.token || '').trim());
+  if (!pushTargets.length && !inboxTargets.length) return null;
 
   const link = linkOverride || buildNotificationLink({ category, teamId, gameId, eventId: eventId || gameId, conversationId, childId });
   const appRoute = buildNotificationAppRoute({ category, teamId, gameId, eventId: eventId || gameId, conversationId, childId });
@@ -7936,8 +8038,8 @@ async function sendCategoryNotification({
   let successCount = 0;
   let failureCount = 0;
 
-  for (let i = 0; i < targets.length; i += maxMulticastTokens) {
-    const targetChunk = targets.slice(i, i + maxMulticastTokens);
+  for (let i = 0; i < pushTargets.length; i += maxMulticastTokens) {
+    const targetChunk = pushTargets.slice(i, i + maxMulticastTokens);
     try {
       const sendResult = await admin.messaging().sendEachForMulticast({
         tokens: targetChunk.map((target) => target.token),
@@ -7979,7 +8081,7 @@ async function sendCategoryNotification({
   }
 
   const inboxResult = await writeNotificationInboxRecords({
-    targets,
+    targets: inboxTargets,
     category,
     title,
     body,
@@ -8217,6 +8319,7 @@ async function registerScheduleImportBatchEvent({ teamId, gameId, game, batch })
 
 async function sendDirectTargetsNotification({
   targets,
+  inboxUids = null,
   category,
   title,
   body,
@@ -8231,7 +8334,14 @@ async function sendDirectTargetsNotification({
   appRouteOverride = null,
   timeSensitive = false
 }) {
-  if (!targets.length) return null;
+  const logicalTargets = Array.isArray(targets) ? targets : [];
+  const pushTargets = logicalTargets.filter((target) => String(target?.token || '').trim());
+  const inboxTargets = getUniqueNotificationInboxTargets(
+    Array.isArray(inboxUids)
+      ? inboxUids.map((uid) => ({ uid }))
+      : logicalTargets
+  );
+  if (!pushTargets.length && !inboxTargets.length) return null;
 
   const link = linkOverride || buildNotificationLink({ category, teamId, gameId, eventId: eventId || gameId, batchId, recipientId, conversationId, childId });
   const appRoute = appRouteOverride || buildNotificationAppRoute({ category, teamId, gameId, eventId: eventId || gameId, batchId, recipientId, conversationId, childId });
@@ -8259,37 +8369,8 @@ async function sendDirectTargetsNotification({
   const allResponses = [];
   let successCount = 0;
   let failureCount = 0;
-
-  for (let i = 0; i < targets.length; i += maxMulticastTokens) {
-    const targetChunk = targets.slice(i, i + maxMulticastTokens);
-    const sendResult = await admin.messaging().sendEachForMulticast({
-      tokens: targetChunk.map((target) => target.token),
-      notification: { title, body },
-      data: {
-        teamId: String(teamId),
-        gameId: String(gameId || ''),
-        eventId: String(eventId || gameId || ''),
-        conversationId: String(conversationId || ''),
-        childId: String(childId || ''),
-        rsvpId: String(childId || ''),
-        category: String(category),
-        appRoute,
-        link
-      },
-      ...deliveryOptions,
-      webpush: mergeWebpushOptions({
-        notification: WEB_PUSH_NOTIFICATION_ASSETS,
-        fcmOptions: { link }
-      }, deliveryOptions)
-    });
-    allResponses.push(...(Array.isArray(sendResult.responses) ? sendResult.responses : []));
-    successCount += Number(sendResult.successCount || 0);
-    failureCount += Number(sendResult.failureCount || 0);
-    await pruneInvalidTokens(sendResult, targetChunk);
-  }
-
-  const inboxResult = await writeNotificationInboxRecords({
-    targets,
+  const inboxPromise = writeNotificationInboxRecords({
+    targets: inboxTargets,
     category,
     title,
     body,
@@ -8300,6 +8381,41 @@ async function sendDirectTargetsNotification({
     conversationId
   });
 
+  try {
+    for (let i = 0; i < pushTargets.length; i += maxMulticastTokens) {
+      const targetChunk = pushTargets.slice(i, i + maxMulticastTokens);
+      const sendResult = await admin.messaging().sendEachForMulticast({
+        tokens: targetChunk.map((target) => target.token),
+        notification: { title, body },
+        data: {
+          teamId: String(teamId),
+          gameId: String(gameId || ''),
+          eventId: String(eventId || gameId || ''),
+          conversationId: String(conversationId || ''),
+          childId: String(childId || ''),
+          rsvpId: String(childId || ''),
+          category: String(category),
+          appRoute,
+          link
+        },
+        ...deliveryOptions,
+        webpush: mergeWebpushOptions({
+          notification: WEB_PUSH_NOTIFICATION_ASSETS,
+          fcmOptions: { link }
+        }, deliveryOptions)
+      });
+      allResponses.push(...(Array.isArray(sendResult.responses) ? sendResult.responses : []));
+      successCount += Number(sendResult.successCount || 0);
+      failureCount += Number(sendResult.failureCount || 0);
+      await pruneInvalidTokens(sendResult, targetChunk);
+    }
+  } catch (error) {
+    await inboxPromise;
+    throw error;
+  }
+
+  const inboxResult = await inboxPromise;
+
   await writeNotificationAuditRecord({
     teamId,
     category,
@@ -8307,7 +8423,7 @@ async function sendDirectTargetsNotification({
     body,
     link,
     appRoute,
-    targets,
+    targets: inboxTargets,
     successCount,
     failureCount,
     inboxResult,
@@ -10103,7 +10219,22 @@ async function buildTeamChatNotificationContext(teamId, options = {}) {
     members = members.filter((member) => scopedParticipantUids.has(member.uid));
   }
 
-  const userRecords = await getUserRecordsByIds(members.map((member) => member.uid));
+  const [userRecords, memberPreferenceEntries] = await Promise.all([
+    getUserRecordsByIds(members.map((member) => member.uid)),
+    Promise.all(members.map(async (member) => {
+      const preferenceSnap = await firestore.doc(`users/${member.uid}/notificationPreferences/${teamId}`).get();
+      return {
+        uid: member.uid,
+        exists: preferenceSnap.exists,
+        preferences: preferenceSnap.exists
+          ? normalizeNotificationPreferences(preferenceSnap.data())
+          : DEFAULT_NOTIFICATION_PREFERENCES
+      };
+    }))
+  ]);
+  const memberPreferencesByUid = new Map(
+    memberPreferenceEntries.map((entry) => [entry.uid, entry])
+  );
 
   const categories = includeMentions ? ['mentions', 'liveChat'] : ['liveChat'];
   const eligibleUidsByCategory = categories.reduce((accumulator, category) => {
@@ -10123,6 +10254,7 @@ async function buildTeamChatNotificationContext(teamId, options = {}) {
     mentions: new Set(),
     liveChat: new Set()
   };
+  const indexedUserIds = new Set();
 
   indexedTargetSnap.forEach((docSnap) => {
     const data = docSnap.data() || {};
@@ -10130,6 +10262,7 @@ async function buildTeamChatNotificationContext(teamId, options = {}) {
     const deviceId = String(data.deviceId || '').trim();
     const token = String(data.token || '').trim();
     if (!uid || !deviceId || !token) return;
+    indexedUserIds.add(uid);
 
     categories.forEach((category) => {
       if (data.categories?.[category] !== true) return;
@@ -10138,6 +10271,20 @@ async function buildTeamChatNotificationContext(teamId, options = {}) {
       indexedUserIdsByCategory[category].add(uid);
     });
   });
+
+  const enabledUidsByCategory = categories.reduce((accumulator, category) => {
+    accumulator[category] = members
+      .filter((member) => eligibleUidsByCategory[category].has(member.uid))
+      .filter((member) => {
+        const preferenceEntry = memberPreferencesByUid.get(member.uid);
+        if (preferenceEntry?.exists) return preferenceEntry.preferences[category] === true;
+        if (category === 'liveChat') return true;
+        if (indexedUserIds.has(member.uid)) return indexedUserIdsByCategory[category].has(member.uid);
+        return DEFAULT_NOTIFICATION_PREFERENCES[category] === true;
+      })
+      .map((member) => member.uid);
+    return accumulator;
+  }, { mentions: [], liveChat: [] });
 
   const fallbackTargetsByCategory = {
     mentions: [],
@@ -10182,6 +10329,7 @@ async function buildTeamChatNotificationContext(teamId, options = {}) {
   return {
     members: hydratedMembers,
     mutedUids: hydratedMembers.filter((member) => member.muted).map((member) => member.uid),
+    enabledUidsByCategory,
     targetsByCategory: {
       mentions: [...indexedTargetsByCategory.mentions, ...fallbackTargetsByCategory.mentions],
       liveChat: [...indexedTargetsByCategory.liveChat, ...fallbackTargetsByCategory.liveChat]
@@ -10195,29 +10343,41 @@ function buildTeamChatNotificationPlan({ text, actorUid = null, recipientContext
     mutedUids: [],
     targetsByCategory: { mentions: [], liveChat: [] }
   };
+  const members = Array.isArray(context.members) ? context.members : [];
   const mentionTargets = dedupeNotificationTargetsByUserDevice(context.targetsByCategory?.mentions);
   const liveChatTargets = dedupeNotificationTargetsByUserDevice(context.targetsByCategory?.liveChat);
-  const mentionEligibleUids = new Set(mentionTargets.map((target) => target.uid));
-  const mentionMembers = Array.isArray(context.members)
-    ? context.members.filter((member) => mentionEligibleUids.has(member.uid))
-    : [];
   const actorIsStaff = Boolean(
     actorUid
-    && Array.isArray(context.members)
-    && context.members.some((member) => member.uid === actorUid && Array.isArray(member.roles) && member.roles.includes('staff'))
+    && members.some((member) => member.uid === actorUid && Array.isArray(member.roles) && member.roles.includes('staff'))
   );
   const mentionedUids = text
-    ? detectMentionedUids(text, mentionMembers, { allowReservedMentions: actorIsStaff }).filter((uid) => uid !== actorUid)
+    ? detectMentionedUids(text, members, { allowReservedMentions: actorIsStaff }).filter((uid) => uid !== actorUid)
     : [];
-  const mentionedSet = new Set(mentionedUids);
   const mutedSet = new Set(Array.isArray(context.mutedUids) ? context.mutedUids : []);
+  const mentionEnabledSet = new Set(
+    Array.isArray(context.enabledUidsByCategory?.mentions)
+      ? context.enabledUidsByCategory.mentions
+      : mentionTargets.map((target) => target.uid)
+  );
+  const liveChatEnabledSet = new Set(
+    Array.isArray(context.enabledUidsByCategory?.liveChat)
+      ? context.enabledUidsByCategory.liveChat
+      : liveChatTargets.map((target) => target.uid)
+  );
+  const mentionDeliverySet = new Set(mentionedUids.filter((uid) => mentionEnabledSet.has(uid)));
+  const liveChatInboxUids = members
+    .map((member) => String(member?.uid || '').trim())
+    .filter((uid) => uid && liveChatEnabledSet.has(uid) && uid !== actorUid && !mentionDeliverySet.has(uid) && !mutedSet.has(uid));
 
   return {
     mentionedUids,
-    mentionTargets: mentionTargets.filter((target) => target.uid !== actorUid && mentionedSet.has(target.uid)),
+    mentionInboxUids: mentionedUids.filter((uid) => mentionDeliverySet.has(uid) && !mutedSet.has(uid)),
+    mentionTargets: mentionTargets.filter((target) => target.uid !== actorUid && mentionDeliverySet.has(target.uid)),
+    liveChatInboxUids,
     liveChatTargets: liveChatTargets.filter((target) => (
       target.uid !== actorUid
-      && !mentionedSet.has(target.uid)
+      && liveChatEnabledSet.has(target.uid)
+      && !mentionDeliverySet.has(target.uid)
       && !mutedSet.has(target.uid)
     ))
   };
@@ -10278,9 +10438,10 @@ async function handleTeamChatMessageCreated(snapshot, context) {
     await snapshot.ref.update({ mentionedUids });
   }
 
-  if (mentionedUids.length && notificationPlan.mentionTargets.length) {
+  if (notificationPlan.mentionTargets.length || notificationPlan.mentionInboxUids?.length) {
     results.push(await sendDirectTargetsNotification({
       targets: notificationPlan.mentionTargets,
+      inboxUids: notificationPlan.mentionInboxUids,
       category: 'mentions',
       title: `${senderName} mentioned you`,
       body,
@@ -10289,12 +10450,13 @@ async function handleTeamChatMessageCreated(snapshot, context) {
     }));
   }
 
-  if (!notificationPlan.liveChatTargets.length) {
+  if (!notificationPlan.liveChatTargets.length && !notificationPlan.liveChatInboxUids.length) {
     return results.length ? results : null;
   }
 
   results.push(await sendDirectTargetsNotification({
     targets: notificationPlan.liveChatTargets,
+    inboxUids: notificationPlan.liveChatInboxUids,
     category: 'liveChat',
     title: `${senderName}: Team Chat`,
     body,
@@ -10619,11 +10781,34 @@ exports.sendTeamEmail = functions.https.onCall(async (data, context) => {
     throw new functions.https.HttpsError('internal', 'Some email delivery jobs could not be queued. Check sent history for partial failure details.');
   }
 
+  const directRecipientUids = recipients.flatMap((recipient) => (
+    Array.isArray(recipient.userIds) ? recipient.userIds : []
+  ));
+  const emailRecipientUids = await getUserIdsByEmails(recipients.map((recipient) => recipient.email));
+  const inboxRecipientUids = Array.from(new Set([...directRecipientUids, ...emailRecipientUids]
+    .map((uid) => String(uid || '').trim())
+    .filter((uid) => uid && uid !== context.auth.uid)));
+  const inboxResult = await writeNotificationInboxRecords({
+    targets: inboxRecipientUids.map((uid) => ({ uid })),
+    category: 'team_email',
+    title: `Team email: ${subject}`,
+    body: truncateNotificationBody(body),
+    appRoute: buildNotificationAppRoute({
+      category: 'liveChat',
+      teamId,
+      conversationId: 'team'
+    }),
+    teamId,
+    conversationId: 'team'
+  });
+
   return {
     messageId: messageRef.id,
     status: 'sent',
     recipientCount: recipients.length,
-    delivery: messagePayload.delivery
+    delivery: messagePayload.delivery,
+    inboxWriteCount: inboxResult.writeCount,
+    inboxFailureCount: inboxResult.failureCount
   };
 });
 
