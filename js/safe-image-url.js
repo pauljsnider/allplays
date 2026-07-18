@@ -61,7 +61,7 @@ function isFirstPartyFirebaseStorageUrl(value) {
 
 export function resolveSafeProfilePhotoWriteUrl(value) {
     const safeUrl = resolveSafeProfilePhotoUrl(value);
-    if (!safeUrl) return '';
+    if (!safeUrl || safeUrl !== value) return '';
 
     const hostname = new URL(safeUrl).hostname.toLowerCase();
     if (hostname === 'allplays.ai' || hostname === 'www.allplays.ai' || hostname.endsWith('.googleusercontent.com')) {

@@ -35,6 +35,16 @@ describe('trusted persisted image URLs', () => {
     });
 
     it.each([
+        'https://LH3.googleusercontent.com/avatar.png',
+        'https://lh3.googleusercontent.com:443/avatar.png',
+        'https://lh3.googleusercontent.com/profiles/../avatar.png',
+        'https://allplays.ai'
+    ])('falls back instead of returning a normalized URL that cannot match the canonical profile value %s', (url) => {
+        expect(resolveSafeProfilePhotoUrl(url)).not.toBe(url);
+        expect(resolveSafeProfilePhotoWriteUrl(url)).toBe('');
+    });
+
+    it.each([
         'javascript:alert(1)',
         'data:image/svg+xml,<svg onload=alert(1)>',
         'http://firebasestorage.googleapis.com/v0/b/bucket/o/photo.png',
