@@ -6,6 +6,7 @@ import {
 } from './scheduleLogic';
 
 export const maxBulkRsvpEvents = 50;
+export const maxGroupedRsvpPlayerIds = 10;
 const recentlyStartedEventWindowMs = 3 * 60 * 60 * 1000;
 
 export function getBulkRsvpCandidates(
@@ -64,7 +65,12 @@ export function groupBulkRsvpSubmissions(
     if (!first) return [];
     const scheduleCount = scheduleCountByEvent.get(`${first.teamId}::${first.id}`) || 0;
     const savedNotes = new Set(group.map((event) => String(event.myRsvpNote || '').trim()));
-    if (group.length > 1 && group.length === scheduleCount && savedNotes.size === 1) {
+    if (
+      group.length > 1
+      && group.length <= maxGroupedRsvpPlayerIds
+      && group.length === scheduleCount
+      && savedNotes.size === 1
+    ) {
       return [group];
     }
     return group.map((event) => [event]);

@@ -2489,6 +2489,14 @@ describe('parent family RSVP submission', () => {
     expect(reloadedEvent.myRsvp).toBe('going');
     expect(reloadedEvent.myRsvpNote).toBe('Local note');
     expect(reloadedEvent.myRsvpNoteHydrated).toBe(true);
+
+    mocks.getDoc.mockRejectedValue(new Error('offline after partial hydration'));
+    const secondReload = { ...sessionEvent, myRsvp: 'not_responded', myRsvpNote: null };
+    await hydrateParentScheduleRsvps({ children: [], events: [secondReload] }, user as any);
+
+    expect(secondReload.myRsvp).toBe('going');
+    expect(secondReload.myRsvpNote).toBe('Local note');
+    expect(secondReload.myRsvpNoteHydrated).toBe(true);
   });
 
   it('does not replace a known RSVP with missing when progressive detail reads fail', async () => {

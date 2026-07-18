@@ -8,7 +8,8 @@ import {
   getNeededBulkRsvpEventKeys,
   groupBulkRsvpEvents,
   groupBulkRsvpSubmissions,
-  maxBulkRsvpEvents
+  maxBulkRsvpEvents,
+  maxGroupedRsvpPlayerIds
 } from './bulkRsvp';
 
 function event(index: number, overrides: Partial<ParentScheduleEvent> = {}): ParentScheduleEvent {
@@ -102,6 +103,17 @@ describe('bulk RSVP helpers', () => {
       [first, siblingWithDifferentNote],
       [first, siblingWithDifferentNote]
     )).toEqual([[first], [siblingWithDifferentNote]]);
+  });
+
+  it('uses per-child writes when a complete sibling group exceeds the rules limit', () => {
+    const siblings = Array.from({ length: maxGroupedRsvpPlayerIds + 1 }, (_, index) => event(index + 1, {
+      eventKey: `team-1::game-large-family::player-${index + 1}`,
+      id: 'game-large-family'
+    }));
+
+    expect(groupBulkRsvpSubmissions(siblings, siblings)).toEqual(
+      siblings.map((sibling) => [sibling])
+    );
   });
 
   it('formats complete and partial result summaries', () => {

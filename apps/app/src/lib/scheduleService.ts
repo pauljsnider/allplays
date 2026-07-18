@@ -262,6 +262,31 @@ function reconcileSessionRsvpState(events: ParentScheduleEvent[], userId: string
   if (changed) persistSessionRsvpState(userId, state);
 }
 
+function reconcileSessionRsvpResponses(events: ParentScheduleEvent[], userId: string) {
+  if (!userId || !events.length) return;
+  const state = getSessionRsvpState(userId);
+  let changed = false;
+  events.forEach((event) => {
+    const eventKey = getSessionRsvpEventKey(event);
+    const existing = state.get(eventKey);
+    if (!existing) return;
+    const response = normalizeRsvpResponse(event.myRsvp);
+    if (response === 'not_responded') {
+      changed = state.delete(eventKey) || changed;
+      return;
+    }
+    if (existing.response !== response) {
+      state.set(eventKey, {
+        ...existing,
+        response,
+        updatedAt: Date.now()
+      });
+      changed = true;
+    }
+  });
+  if (changed) persistSessionRsvpState(userId, state);
+}
+
 function finalizeSessionRsvpHydration(
   events: ParentScheduleEvent[],
   authoritativeEvents: ParentScheduleEvent[],
@@ -4366,13 +4391,18 @@ export async function hydrateParentScheduleRsvps(
           event.myRsvpNoteHydrated = true;
         }
       });
-      reconcileSessionRsvpState(
+      const fullyHydratedEvents = matchingEvents.filter((event) => (
+        responseReadsCompleteByChild[event.childId]
+        && noteReadsCompleteByChild[event.childId]
+      ));
+      reconcileSessionRsvpResponses(
         matchingEvents.filter((event) => (
           responseReadsCompleteByChild[event.childId]
-          && noteReadsCompleteByChild[event.childId]
+          && !noteReadsCompleteByChild[event.childId]
         )),
         user.uid
       );
+      reconcileSessionRsvpState(fullyHydratedEvents, user.uid);
       options.onProgress?.([...schedule.events]);
     } catch (error) {
       logScheduleWarning('Failed to hydrate parent RSVP state.', 'parent-rsvp-hydration', error, {
