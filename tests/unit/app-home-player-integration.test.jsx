@@ -144,6 +144,22 @@ function buttonByText(container, text) {
     return button;
 }
 
+function linkByText(container, text) {
+    const link = Array.from(container.querySelectorAll('a')).find((candidate) => candidate.textContent.trim() === text);
+    if (!link) {
+        throw new Error(`Link not found: ${text}`);
+    }
+    return link;
+}
+
+function summaryByText(container, text) {
+    const summary = Array.from(container.querySelectorAll('summary')).find((candidate) => candidate.textContent.trim() === text);
+    if (!summary) {
+        throw new Error(`Summary not found: ${text}`);
+    }
+    return summary;
+}
+
 function buttonByAriaLabel(container, label) {
     const button = Array.from(container.querySelectorAll('button')).find((candidate) => candidate.getAttribute('aria-label') === label);
     if (!button) {
@@ -155,6 +171,20 @@ function buttonByAriaLabel(container, label) {
 async function clickButton(container, text) {
     await act(async () => {
         buttonByText(container, text).dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flush();
+}
+
+async function clickLink(container, text) {
+    await act(async () => {
+        linkByText(container, text).dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flush();
+}
+
+async function clickSummary(container, text) {
+    await act(async () => {
+        summaryByText(container, text).dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     await flush();
 }
@@ -539,7 +569,7 @@ afterEach(async () => {
 describe('React app Home and player drill-in integration', () => {
     it('uses the section submenu pattern and navigates from Home to the team-scoped player page', async () => {
         const { container } = await renderApp('/home');
-        await waitForText(container, 'Today for your players');
+        await waitForText(container, 'Your day');
         await waitForText(container, 'Do first');
         expect(container.textContent).toContain('Team chats');
         expect(container.textContent).toContain('2 unread messages');
@@ -553,13 +583,13 @@ describe('React app Home and player drill-in integration', () => {
             teams: expect.any(Array)
         }));
 
-        await clickButton(container, 'Teams');
+        await clickLink(container, 'Teams');
         await waitForText(container, 'Teams');
         const teamLink = Array.from(container.querySelectorAll('a')).find((link) => link.getAttribute('href') === '/teams?selectedTeamId=team-1&from=home');
         expect(teamLink?.getAttribute('href')).toBe('/teams?selectedTeamId=team-1&from=home');
         expect(teamLink?.getAttribute('aria-label')).toBe('Open Bears in My Teams');
 
-        await clickButton(container, 'Feed');
+        await clickLink(container, 'Feed');
         await waitForText(container, 'Quick shares');
         expect(container.textContent).toContain('Jamie Friend');
         expect(container.textContent).toContain('Great ball movement in the second half.');
@@ -567,6 +597,7 @@ describe('React app Home and player drill-in integration', () => {
             '/players/team-1/player-1',
             '/home?section=friends'
         ]));
+        await clickSummary(container, 'Quick shares');
         await clickButton(container, 'Player moment');
         await waitForText(container, 'What happened?');
         expect(container.textContent).not.toContain('Pick one');
@@ -585,7 +616,7 @@ describe('React app Home and player drill-in integration', () => {
             playerIds: ['player-1']
         }));
 
-        await clickButton(container, 'Friends');
+        await clickLink(container, 'Friends');
         await waitForText(container, 'Needs response');
         expect(container.textContent).toContain('Casey Parent');
         expect(container.textContent).toContain('Morgan Parent');
@@ -593,7 +624,7 @@ describe('React app Home and player drill-in integration', () => {
         await clickButton(container, 'Accept');
         expect(socialMocks.respondToFriendRequest).toHaveBeenCalledWith('friendship-3', 'accepted');
 
-        await clickButton(container, 'Players');
+        await clickLink(container, 'Players');
         await waitForText(container, 'My players');
         const playerLink = Array.from(container.querySelectorAll('a')).find((link) => link.getAttribute('href') === '/players/team-1/player-1');
         expect(playerLink?.getAttribute('href')).toBe('/players/team-1/player-1');
@@ -912,19 +943,19 @@ describe('React app Home and player drill-in integration', () => {
         });
 
         const { container } = await renderApp('/home');
-        await waitForText(container, 'Today for your players');
+        await waitForText(container, 'Your day');
         expect(container.textContent).toContain('3 unread messages');
         expect(container.textContent).toContain('Staff Wolves');
         expect(container.textContent).toContain('All caught up');
         expect(container.textContent).toContain('No upcoming events');
 
-        await clickButton(container, 'Teams');
+        await clickLink(container, 'Teams');
         await waitForText(container, 'Coach · Soccer');
         const teamLink = Array.from(container.querySelectorAll('a')).find((link) => link.getAttribute('href') === '/teams?selectedTeamId=team-staff&from=home');
         expect(teamLink).toBeTruthy();
         expect(teamLink?.getAttribute('aria-label')).toBe('Open Staff Wolves in My Teams');
 
-        await clickButton(container, 'Players');
+        await clickLink(container, 'Players');
         await waitForText(container, 'No players linked yet');
     });
 
