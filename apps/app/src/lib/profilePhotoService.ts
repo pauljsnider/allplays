@@ -6,13 +6,18 @@ import {
 } from '@capacitor/camera';
 import { Capacitor } from '@capacitor/core';
 import { resolveImageFirebaseConfig } from './adapters/legacyProfilePhotoDb';
+import {
+  clearImageUploadSession,
+  readImageUploadSession,
+  writeImageUploadSession,
+  type ImageUploadSession
+} from './imageUploadSessionStore';
 import { createLogger } from './logger';
 import { isNativeRuntime } from './nativeRuntime';
 import { uploadUserPhoto } from './adapters/legacyProfilePhotoDb';
 
 const profileTimeoutMs = 8000;
 const nativeImageUploadTimeoutMs = 20000;
-const imageUploadSessionKey = 'allplays-image-upload-session';
 const profilePhotoMaxDimensionPx = 1024;
 const profilePhotoMaxBytes = 512 * 1024;
 const profilePhotoQuality = 0.82;
@@ -29,13 +34,6 @@ export class ProfilePhotoAcquireError extends Error {
     this.code = code;
   }
 }
-
-type ImageUploadSession = {
-  apiKey: string;
-  idToken: string;
-  refreshToken: string;
-  expirationTime: number;
-};
 
 function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs = profileTimeoutMs): Promise<T> {
   let timeoutId: number | undefined;
@@ -224,26 +222,9 @@ export async function acquireProfilePhoto(source: ProfilePhotoSource): Promise<F
   }
 }
 
-function readImageUploadSession(): ImageUploadSession | null {
-  try {
-    const raw = window.localStorage?.getItem(imageUploadSessionKey);
-    return raw ? JSON.parse(raw) as ImageUploadSession : null;
-  } catch {
-    return null;
-  }
-}
-
-function writeImageUploadSession(session: ImageUploadSession) {
-  try {
-    window.localStorage?.setItem(imageUploadSessionKey, JSON.stringify(session));
-  } catch (error) {
-    logger.warn('Unable to persist image upload auth session.', { error });
-  }
-}
-
 // Firebase web API keys are public project identifiers. Security is enforced by Firebase Auth and Storage rules.
 async function getImageUploadSession(apiKey: string): Promise<ImageUploadSession> {
-  const current = readImageUploadSession();
+  const current = await readImageUploadSession();
   if (current?.apiKey === apiKey && current.idToken && current.refreshToken) {
     if (Number(current.expirationTime || 0) > Date.now() + 60000) {
       return current;
@@ -252,7 +233,10 @@ async function getImageUploadSession(apiKey: string): Promise<ImageUploadSession
       return await refreshImageUploadSession(current);
     } catch (error) {
       logger.warn('Image upload auth refresh failed, creating a new anonymous session.', { error });
+      await clearImageUploadSession();
     }
+  } else if (current) {
+    await clearImageUploadSession();
   }
 
   return createImageUploadSession(apiKey);
@@ -280,7 +264,7 @@ async function refreshImageUploadSession(session: ImageUploadSession): Promise<I
     refreshToken: payload.refresh_token || session.refreshToken,
     expirationTime: Date.now() + Math.max(Number.parseInt(payload.expires_in || '3600', 10) - 30, 60) * 1000
   };
-  writeImageUploadSession(nextSession);
+  await writeImageUploadSession(nextSession);
   return nextSession;
 }
 
@@ -306,7 +290,7 @@ async function createImageUploadSession(apiKey: string): Promise<ImageUploadSess
   if (!session.idToken || !session.refreshToken) {
     throw new Error('Image upload auth did not return a usable token.');
   }
-  writeImageUploadSession(session);
+  await writeImageUploadSession(session);
   return session;
 }
 
