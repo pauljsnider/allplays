@@ -93,7 +93,7 @@ describe('app production artifact guard', () => {
             .toThrow(/private key material/);
     });
 
-    it('verifies the resolved Vite output directory instead of a hard-coded dist path', () => {
+    it('verifies the resolved Vite output directory from the post-write hook', () => {
         const repoRoot = makeTemporaryDirectory();
         const appDirectory = path.join(repoRoot, 'apps/app');
         const customOutDirectory = path.join(repoRoot, 'custom-build-output');
@@ -108,6 +108,7 @@ describe('app production artifact guard', () => {
             publicDir: false
         });
 
-        expect(() => plugin.closeBundle()).not.toThrow();
+        expect(plugin.closeBundle).toBeUndefined();
+        expect(() => plugin.writeBundle()).not.toThrow();
     });
 });

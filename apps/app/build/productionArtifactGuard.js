@@ -168,7 +168,7 @@ export function createProductionArtifactGuard({ appDirectory, repoRoot }) {
       assertSafeProductionModuleGraph(this.getModuleIds(), { appDirectory, repoRoot });
       assertSafeProductionBundle(bundle);
     },
-    closeBundle() {
+    writeBundle() {
       const result = assertSafeProductionDist(distDirectory, { publicDirectory });
       console.log(
         `App production artifacts verified (${result.fileCount} files; ${result.javascriptCount} JS, ${result.cssCount} CSS, ${result.publicFileCount} public).`
