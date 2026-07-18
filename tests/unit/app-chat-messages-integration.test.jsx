@@ -732,6 +732,34 @@ describe('React app messages integration', () => {
         expect(container.textContent).toContain('Direct conversation with Coach Jamie opened.');
     });
 
+    it('prepares a first-time friend message for a non-moderator after both direct ids are absent', async () => {
+        chatMocks.loadChatTeamContext.mockResolvedValueOnce({
+            team: { id: 'team-1', name: 'Bears', sport: 'Basketball' },
+            profile: { fullName: 'Pat Parent', photoUrl: '' },
+            canModerate: false
+        });
+
+        const { container } = await renderMessages('/messages/team-1?compose=user%3Acoach-1&recipientName=Coach+Jamie');
+        await waitForText(container, 'Direct message to Coach Jamie is ready.');
+
+        expect(chatMocks.loadChatConversationById).toHaveBeenNthCalledWith(
+            1,
+            'team-1',
+            auth.user,
+            { id: 'team-1', name: 'Bears', sport: 'Basketball' },
+            false,
+            'direct_user-1__user%3Acoach-1'
+        );
+        expect(chatMocks.loadChatConversationById).toHaveBeenNthCalledWith(
+            2,
+            'team-1',
+            auth.user,
+            { id: 'team-1', name: 'Bears', sport: 'Basketball' },
+            false,
+            'direct_coach-1__user%3Auser-1'
+        );
+    });
+
     it('clears a friend compose audience when navigating to the plain team thread', async () => {
         layoutMocks.isDesktopWeb = true;
         const { container } = await renderMessages('/messages/team-1?compose=user%3Acoach-1&recipientName=Coach+Jamie');

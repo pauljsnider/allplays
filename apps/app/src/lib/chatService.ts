@@ -1050,12 +1050,21 @@ export async function loadChatConversationById(
   if (!requestedConversationId || isDefaultTeamConversation(requestedConversationId) || requestedConversationId.includes('/')) {
     return null;
   }
-  const conversations = await withTimeout(Promise.resolve(getChatConversations(teamId, user, {
-    team,
-    canModerate,
-    includeConversationId: requestedConversationId,
-    strictIncludeConversationId: true
-  })), 'Direct chat conversation lookup') as ChatConversation[];
+  let conversations: ChatConversation[];
+  try {
+    conversations = await withTimeout(Promise.resolve(getChatConversations(teamId, user, {
+      team,
+      canModerate,
+      includeConversationId: requestedConversationId,
+      strictIncludeConversationId: true
+    })), 'Direct chat conversation lookup') as ChatConversation[];
+  } catch (error) {
+    const code = compactString((error as { code?: unknown } | null)?.code).toLowerCase().replace(/^firestore\//, '');
+    // Rules that inspect resource data deny missing-document reads for non-moderators.
+    // For this participant-scoped probe, denied and missing both mean no readable thread.
+    if (code === 'permission-denied' || code === 'not-found') return null;
+    throw error;
+  }
   return mapChatConversationRecords(conversations)
     .find((conversation) => conversation.id === requestedConversationId) || null;
 }

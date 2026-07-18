@@ -1064,6 +1064,22 @@ describe('React app chat recipient service', () => {
         )).rejects.toThrow('conversation lookup unavailable');
     });
 
+    it('treats a denied missing direct conversation as absent for a non-moderator', async () => {
+        dbMocks.getChatConversations.mockRejectedValueOnce(Object.assign(
+            new Error('Missing conversation reads are denied by Firestore rules.'),
+            { code: 'permission-denied' }
+        ));
+        const { loadChatConversationById } = await import('../../apps/app/src/lib/chatService.ts');
+
+        await expect(loadChatConversationById(
+            'team-1',
+            { uid: 'current-1', email: 'parent@example.com', roles: [] },
+            { id: 'team-1', name: 'Bears' },
+            false,
+            'direct_current-1__user%3Afriend-2'
+        )).resolves.toBeNull();
+    });
+
     it('routes selected-member messages into a non-default conversation before posting', async () => {
         const photo = new File(['photo'], 'arrival.jpg', { type: 'image/jpeg' });
         const video = new File(['clip'], 'warmups.mp4', { type: 'video/mp4' });
