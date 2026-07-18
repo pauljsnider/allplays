@@ -77,7 +77,17 @@ service firebase.storage {
         env:
           GH_TOKEN: \${{ github.token }}
         run: |
-          gh api --method GET "repos/\${GITHUB_REPOSITORY}/actions/workflows/deploy-prod.yml/runs" -f branch="$GITHUB_REF_NAME" -f status=success
+          lookup_max_attempts=3
+          for ((lookup_attempt = 1; lookup_attempt <= lookup_max_attempts; lookup_attempt += 1)); do
+            if last_success_sha="$(gh api --method GET "repos/\${GITHUB_REPOSITORY}/actions/workflows/deploy-prod.yml/runs" -f branch="$GITHUB_REF_NAME" -f status=success)"; then
+              lookup_succeeded="true"
+            fi
+          done
+          if [[ "$lookup_succeeded" != "true" ]]; then
+            echo "The successful production deploy lookup failed; forcing Firestore-first ordering."
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           git diff --quiet "$last_success_sha" "$GITHUB_SHA" -- firestore.rules firestore.indexes.json
       - name: Deploy Firebase Storage rules when available
         env:
@@ -110,6 +120,14 @@ service firebase.storage {
             'git diff --quiet "$last_success_sha" "$GITHUB_SHA" -- firestore.rules firestore.indexes.json',
             'git diff --quiet "\${{ github.event.before }}" "\${{ github.sha }}" -- firestore.rules firestore.indexes.json'
         ))).toThrow('Production Firestore change detection is missing');
+        expect(() => validateProductionDeployCommand(validDeployCommand.replace(
+            'if last_success_sha="$(gh api',
+            'last_success_sha="$(gh api'
+        ))).toThrow('Production successful deploy guarded lookup is missing');
+        expect(() => validateProductionDeployCommand(validDeployCommand.replace(
+            'echo "changed=true" >> "$GITHUB_OUTPUT"',
+            'echo "changed=false" >> "$GITHUB_OUTPUT"'
+        ))).toThrow('Production successful deploy lookup failure must force Firestore-first ordering');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
             `retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore"
             retry_firebase_deploy "hosting,functions" "application"`,

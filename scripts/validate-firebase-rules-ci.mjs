@@ -69,6 +69,16 @@ export function validateProductionDeployCommand(deployProd) {
     assertIncludes(deployProd, 'actions/workflows/deploy-prod.yml/runs', 'Production successful deploy lookup');
     assertIncludes(deployProd, '-f branch="$GITHUB_REF_NAME"', 'Production successful deploy branch filter');
     assertIncludes(deployProd, '-f status=success', 'Production successful deploy filter');
+    assertIncludes(deployProd, 'for ((lookup_attempt = 1; lookup_attempt <= lookup_max_attempts; lookup_attempt += 1)); do', 'Production successful deploy lookup retries');
+    assertIncludes(deployProd, 'if last_success_sha="$(gh api', 'Production successful deploy guarded lookup');
+    assertIncludes(deployProd, 'if [[ "$lookup_succeeded" != "true" ]]; then', 'Production successful deploy lookup failure fallback');
+    assertIncludes(deployProd, 'The successful production deploy lookup failed; forcing Firestore-first ordering.', 'Production successful deploy lookup warning');
+    const lookupFallbackStart = deployProd.indexOf('if [[ "$lookup_succeeded" != "true" ]]; then');
+    const baselineValidationStart = deployProd.indexOf('if [[ ! "$last_success_sha" =~', lookupFallbackStart);
+    const lookupFallback = deployProd.slice(lookupFallbackStart, baselineValidationStart);
+    if (!lookupFallback.includes('echo "changed=true" >> "$GITHUB_OUTPUT"') || !lookupFallback.includes('exit 0')) {
+        throw new Error('Production successful deploy lookup failure must force Firestore-first ordering.');
+    }
     assertIncludes(deployProd, 'git diff --quiet "$last_success_sha" "$GITHUB_SHA" -- firestore.rules firestore.indexes.json', 'Production Firestore change detection');
     if (deployProd.includes('git diff --quiet "${{ github.event.before }}" "${{ github.sha }}" -- firestore.rules firestore.indexes.json')) {
         throw new Error('Production Firestore changes must not use the immediately previous push as the deploy baseline.');
