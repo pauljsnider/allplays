@@ -16,7 +16,9 @@ describe('admin telemetry issue-first view', () => {
         expect(filterValues).toContain('js_error');
         expect(filterValues).toContain('js_unhandled_rejection');
         expect(filterValues).toContain('app_load_error');
+        expect(filterValues).toContain('public_rsvp_error');
         expect(filterValues).toContain('interaction_rage_click');
+        expect(adminHtml).toContain('src="js/admin.js?v=11"');
     });
 
     it('renders issue counts from aggregate telemetry and recent examples from raw events', () => {
@@ -25,6 +27,7 @@ describe('admin telemetry issue-first view', () => {
         expect(adminJs).toContain("{ name: 'js_error', label: 'JS errors' }");
         expect(adminJs).toContain("{ name: 'js_unhandled_rejection', label: 'Unhandled rejections' }");
         expect(adminJs).toContain("{ name: 'app_load_error', label: 'App errors' }");
+        expect(adminJs).toContain("{ name: 'public_rsvp_error', label: 'Public RSVP errors' }");
         expect(adminJs).toContain("{ name: 'interaction_rage_click', label: 'Rage clicks' }");
         expect(adminJs).toContain('function renderTelemetryNeedsAttention()');
         expect(adminJs).toContain('function getTelemetryIssueCounts()');
@@ -32,7 +35,7 @@ describe('admin telemetry issue-first view', () => {
         expect(adminJs).toContain('const totalIssues = Array.from(issueCounts.values()).reduce((sum, count) => sum + count, 0);');
         expect(adminJs).toContain('const issueEvents = telemetryState.events.filter((event) => issueCounts.has(event.name));');
         expect(adminJs).toContain('No tracked errors or rage clicks recorded for this range.');
-        expect(adminJs).toContain('grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3');
+        expect(adminJs).toContain('grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3');
         expect(adminJs).toContain('renderTelemetryNeedsAttention();');
     });
 });

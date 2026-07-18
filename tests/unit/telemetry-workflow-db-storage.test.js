@@ -217,4 +217,37 @@ describe('telemetry workflow DB storage', () => {
             })
         ]));
     });
+
+    it('counts public RSVP failures in daily, page, route, and session error aggregates', async () => {
+        const harness = createFirestoreHarness();
+        const { normalizeTelemetryEvent, commitTelemetryEvents } = loadTelemetryCollectorHelpers()(harness.admin);
+        const receivedAt = new Date('2030-06-01T12:00:00.000Z');
+        const event = normalizeTelemetryEvent({
+            id: 'public-rsvp-error-1',
+            name: 'public_rsvp_error',
+            version: '1.0.0',
+            sessionId: 'session-public-rsvp-error',
+            visitorId: 'visitor-public-rsvp-error',
+            signedIn: false,
+            clientTimestamp: '2030-06-01T11:59:59.000Z',
+            pagePath: '/public-rsvp.html',
+            appRoute: '/public-rsvp.html',
+            properties: { failureKind: 'request_rejected' }
+        }, receivedAt);
+
+        await expect(commitTelemetryEvents(harness.db, [event], '2030-06-01')).resolves.toEqual({
+            stored: 1,
+            duplicates: 0
+        });
+
+        const errorAggregateCollections = new Set([
+            'telemetryDaily',
+            'telemetryPagesDaily',
+            'telemetryRoutesDaily',
+            'telemetrySessions'
+        ]);
+        const errorAggregateWrites = harness.sets.filter((write) => errorAggregateCollections.has(write.ref.collectionName));
+        expect(errorAggregateWrites).toHaveLength(4);
+        expect(errorAggregateWrites.every((write) => write.data.errors?.increment === 1)).toBe(true);
+    });
 });
