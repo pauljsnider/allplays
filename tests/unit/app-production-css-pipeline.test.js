@@ -38,7 +38,7 @@ describe('app production CSS pipeline', () => {
         const postcssConfig = await import(path.join(appRoot, 'postcss.config.js'));
 
         expect(appPackageJson.devDependencies).toMatchObject({
-            '@tailwindcss/postcss': '^4.3.2',
+            '@tailwindcss/postcss': '^4.3.3',
             tailwindcss: '^4.3.2'
         });
         expect(postcssConfig.default.plugins).toHaveProperty('@tailwindcss/postcss');
