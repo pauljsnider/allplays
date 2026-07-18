@@ -1,4 +1,4 @@
-import { isViewerChatEnabled, postLiveChatMessage, subscribeLiveChat } from './adapters/legacyLiveGameChat';
+import { isViewerChatEnabled, postLiveChatMessage, resolveSafeProfilePhotoUrl, subscribeLiveChat } from './adapters/legacyLiveGameChat';
 import type { AuthUser } from './types';
 
 export type LiveGameChatMessage = {
@@ -68,7 +68,7 @@ export function buildLiveGameChatPayload(input: {
         text,
         senderId: user?.uid || null,
         senderName,
-        senderPhotoUrl: compactString(user?.photoUrl) || null,
+        senderPhotoUrl: resolveSafeProfilePhotoUrl(user?.photoUrl) || null,
         isAnonymous: !user
     };
 }

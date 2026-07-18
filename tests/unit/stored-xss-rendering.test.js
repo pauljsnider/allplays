@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const liveGameSource = readFileSync(new URL('../../js/live-game.js', import.meta.url), 'utf8');
+const appLiveGameChatSource = readFileSync(new URL('../../apps/app/src/lib/liveGameChatService.ts', import.meta.url), 'utf8');
 const drillsSource = readFileSync(new URL('../../drills.html', import.meta.url), 'utf8');
 
 describe('stored image URL XSS rendering contracts', () => {
@@ -11,6 +12,11 @@ describe('stored image URL XSS rendering contracts', () => {
         expect(liveGameSource).toContain('row.appendChild(avatar || fallback);');
         expect(liveGameSource).not.toContain('<img src="${msg.senderPhotoUrl}"');
         expect(liveGameSource).not.toContain('senderPhotoUrl: state.user?.photoURL || null');
+    });
+
+    it('normalizes React app chat avatars before constructing the write payload', () => {
+        expect(appLiveGameChatSource).toContain('senderPhotoUrl: resolveSafeProfilePhotoUrl(user?.photoUrl) || null');
+        expect(appLiveGameChatSource).not.toContain('senderPhotoUrl: compactString(user?.photoUrl) || null');
     });
 
     it('keeps persisted diagram URLs out of HTML and inline handlers', () => {
