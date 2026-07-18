@@ -1,3 +1,5 @@
+import process from 'node:process';
+
 const SAFE_DISABLED_VALUES = new Set(['', 'false', '0']);
 export const NATIVE_APP_CHECK_DEBUG_MODE = 'native-debug';
 

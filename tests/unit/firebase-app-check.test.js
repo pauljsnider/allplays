@@ -26,7 +26,8 @@ import {
     initializeNativeAppCheck,
     initializePrimaryAppCheck,
     isCapacitorNativeRuntime,
-    isPrimaryFirebaseRestRequest
+    isPrimaryFirebaseRestRequest,
+    normalizeNativeAppCheckToken
 } from '../../js/firebase-app-check.js';
 
 const PRIMARY_APP = {
@@ -130,6 +131,56 @@ describe('Firebase App Check initialization', () => {
         });
         expect(nativeAppCheck.initialize.mock.calls[0][0]).not.toHaveProperty('token');
         expect(status).toMatchObject({ state: 'initialized', provider: 'native-debug' });
+    });
+
+    it('derives expiry from a native JWT when the plugin omits expiry metadata', async () => {
+        const now = 1_800_000_000_000;
+        const expirationSeconds = (now / 1000) + 900;
+        const jwtPayload = Buffer.from(JSON.stringify({ exp: expirationSeconds }))
+            .toString('base64url');
+        nativeAppCheck.getToken.mockResolvedValueOnce({
+            token: `header.${jwtPayload}.signature`
+        });
+
+        const result = normalizeNativeAppCheckToken(
+            await nativeAppCheck.getToken({ forceRefresh: false }),
+            now
+        );
+
+        expect(result).toEqual({
+            token: `header.${jwtPayload}.signature`,
+            expireTimeMillis: expirationSeconds * 1000
+        });
+    });
+
+    it('preserves a valid native token expiry ahead of JWT metadata', () => {
+        const now = 1_800_000_000_000;
+        const futureExpiry = now + 45_000;
+        const jwtPayload = Buffer.from(JSON.stringify({ exp: (now / 1000) + 900 }))
+            .toString('base64url');
+
+        expect(normalizeNativeAppCheckToken({
+            token: `header.${jwtPayload}.signature`,
+            expireTimeMillis: futureExpiry
+        }, now)).toEqual({
+            token: `header.${jwtPayload}.signature`,
+            expireTimeMillis: futureExpiry
+        });
+    });
+
+    it('uses a finite future fallback for malformed native tokens without a 0ms or NaN refresh window', () => {
+        const now = 1_800_000_000_000;
+        const normalized = normalizeNativeAppCheckToken({
+            token: 'malformed-native-token',
+            expireTimeMillis: Number.NaN
+        }, now);
+
+        expect(normalized).toEqual({
+            token: 'malformed-native-token',
+            expireTimeMillis: now + (10 * 60 * 1000)
+        });
+        expect(Number.isFinite(normalized.expireTimeMillis)).toBe(true);
+        expect(normalized.expireTimeMillis - (5 * 60 * 1000) - now).toBeGreaterThan(0);
     });
 
     it('never enables the web debug provider from production runtime config', async () => {

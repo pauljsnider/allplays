@@ -15,6 +15,7 @@ export {
 
 const INITIALIZATIONS_KEY = '__allplaysAppCheckInitializations';
 const STATUS_KEY = '__ALLPLAYS_APP_CHECK_STATUS__';
+const NATIVE_TOKEN_FALLBACK_TTL_MS = 10 * 60 * 1000;
 
 function getInitializations() {
     if (!globalThis[INITIALIZATIONS_KEY]) {
@@ -80,6 +81,39 @@ function monitorToken(appCheck, provider) {
     });
 }
 
+export function normalizeNativeAppCheckToken(result, now = Date.now()) {
+    const nativeExpiry = Number(result?.expireTimeMillis);
+    let jwtExpiry;
+    if (!(Number.isFinite(nativeExpiry) && nativeExpiry > now)) {
+        try {
+            const payload = String(result?.token || '').split('.')[1];
+            if (payload && typeof globalThis.atob === 'function') {
+                const normalizedPayload = payload.replace(/-/g, '+').replace(/_/g, '/');
+                const padding = '='.repeat((4 - (normalizedPayload.length % 4)) % 4);
+                const expirationSeconds = Number(JSON.parse(
+                    globalThis.atob(normalizedPayload + padding)
+                )?.exp);
+                const expirationMillis = expirationSeconds * 1000;
+                if (Number.isFinite(expirationMillis) && expirationMillis > now) {
+                    jwtExpiry = expirationMillis;
+                }
+            }
+        } catch (_error) {
+            // A native token should be a JWT, but expiry metadata is optional.
+            // Keep malformed payloads fail-open without logging token contents.
+        }
+    }
+
+    const expireTimeMillis = Number.isFinite(nativeExpiry) && nativeExpiry > now
+        ? nativeExpiry
+        : jwtExpiry || now + NATIVE_TOKEN_FALLBACK_TTL_MS;
+
+    return {
+        token: result?.token,
+        expireTimeMillis
+    };
+}
+
 export async function initializeNativeAppCheck(app, config) {
     const { FirebaseAppCheck } = await import('@capacitor-firebase/app-check');
     const useDebugProvider = config.nativeDebug === true;
@@ -89,7 +123,9 @@ export async function initializeNativeAppCheck(app, config) {
     });
 
     const provider = new CustomProvider({
-        getToken: () => FirebaseAppCheck.getToken({ forceRefresh: false })
+        getToken: async () => normalizeNativeAppCheckToken(
+            await FirebaseAppCheck.getToken({ forceRefresh: false })
+        )
     });
     const appCheck = initializeAppCheck(app, {
         provider,
