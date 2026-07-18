@@ -160,7 +160,7 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
     return () => {
       cancelled = true;
     };
-  }, [auth.user?.uid, teamId, formId, publicAccess, reloadKey, staffReview]);
+  }, [auth.user, teamId, formId, publicAccess, reloadKey, staffReview]);
 
   const activeOptions: any[] = useMemo(() => form ? ((Array.isArray(form.options) && form.options.length) ? form.options : getActiveRegistrationOptions(form, form.registrationOptionCounts || {})) : [], [form]);
   const paymentPlanChoices: any[] = useMemo(() => form ? ((Array.isArray(form.paymentPlans) && form.paymentPlans.length) ? form.paymentPlans : getPaymentPlanChoices(form)) : [], [form]);
@@ -211,7 +211,7 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
   useEffect(() => {
     if (!selectedReview) return;
     setSelectedMergePlayerId(selectedReview.linkedPlayerId || '');
-  }, [selectedReview?.id]);
+  }, [selectedReview]);
 
   useEffect(() => {
     if (staffReview || returnStatus !== 'cancelled' || (!returnPublicCheckoutCapability && !returnRegistrationId)) return;

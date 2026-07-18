@@ -114,7 +114,7 @@ function RegistrationDetailPage({ auth, publicAccess = false }: { auth: AuthStat
     return () => {
       cancelled = true;
     };
-  }, [auth.user?.uid, teamId, formId, publicAccess, reloadKey]);
+  }, [auth.user, teamId, formId, publicAccess, reloadKey]);
 
   const activeOptions: any[] = useMemo(() => form ? ((Array.isArray(form.options) && form.options.length) ? form.options : getActiveRegistrationOptions(form, form.registrationOptionCounts || {})) : [], [form]);
   const paymentPlanChoices: any[] = useMemo(() => form ? ((Array.isArray(form.paymentPlans) && form.paymentPlans.length) ? form.paymentPlans : getPaymentPlanChoices(form)) : [], [form]);
