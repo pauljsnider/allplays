@@ -10109,7 +10109,22 @@ async function buildTeamChatNotificationContext(teamId, options = {}) {
     members = members.filter((member) => scopedParticipantUids.has(member.uid));
   }
 
-  const userRecords = await getUserRecordsByIds(members.map((member) => member.uid));
+  const [userRecords, memberPreferenceEntries] = await Promise.all([
+    getUserRecordsByIds(members.map((member) => member.uid)),
+    Promise.all(members.map(async (member) => {
+      const preferenceSnap = await firestore.doc(`users/${member.uid}/notificationPreferences/${teamId}`).get();
+      return {
+        uid: member.uid,
+        exists: preferenceSnap.exists,
+        preferences: preferenceSnap.exists
+          ? normalizeNotificationPreferences(preferenceSnap.data())
+          : DEFAULT_NOTIFICATION_PREFERENCES
+      };
+    }))
+  ]);
+  const memberPreferencesByUid = new Map(
+    memberPreferenceEntries.map((entry) => [entry.uid, entry])
+  );
 
   const categories = includeMentions ? ['mentions', 'liveChat'] : ['liveChat'];
   const eligibleUidsByCategory = categories.reduce((accumulator, category) => {
@@ -10129,6 +10144,7 @@ async function buildTeamChatNotificationContext(teamId, options = {}) {
     mentions: new Set(),
     liveChat: new Set()
   };
+  const indexedUserIds = new Set();
 
   indexedTargetSnap.forEach((docSnap) => {
     const data = docSnap.data() || {};
@@ -10136,6 +10152,7 @@ async function buildTeamChatNotificationContext(teamId, options = {}) {
     const deviceId = String(data.deviceId || '').trim();
     const token = String(data.token || '').trim();
     if (!uid || !deviceId || !token) return;
+    indexedUserIds.add(uid);
 
     categories.forEach((category) => {
       if (data.categories?.[category] !== true) return;
@@ -10144,6 +10161,19 @@ async function buildTeamChatNotificationContext(teamId, options = {}) {
       indexedUserIdsByCategory[category].add(uid);
     });
   });
+
+  const enabledUidsByCategory = categories.reduce((accumulator, category) => {
+    accumulator[category] = members
+      .filter((member) => eligibleUidsByCategory[category].has(member.uid))
+      .filter((member) => {
+        const preferenceEntry = memberPreferencesByUid.get(member.uid);
+        if (preferenceEntry?.exists) return preferenceEntry.preferences[category] === true;
+        if (indexedUserIds.has(member.uid)) return indexedUserIdsByCategory[category].has(member.uid);
+        return DEFAULT_NOTIFICATION_PREFERENCES[category] === true;
+      })
+      .map((member) => member.uid);
+    return accumulator;
+  }, { mentions: [], liveChat: [] });
 
   const fallbackTargetsByCategory = {
     mentions: [],
@@ -10188,6 +10218,7 @@ async function buildTeamChatNotificationContext(teamId, options = {}) {
   return {
     members: hydratedMembers,
     mutedUids: hydratedMembers.filter((member) => member.muted).map((member) => member.uid),
+    enabledUidsByCategory,
     targetsByCategory: {
       mentions: [...indexedTargetsByCategory.mentions, ...fallbackTargetsByCategory.mentions],
       liveChat: [...indexedTargetsByCategory.liveChat, ...fallbackTargetsByCategory.liveChat]
@@ -10213,13 +10244,23 @@ function buildTeamChatNotificationPlan({ text, actorUid = null, recipientContext
     : [];
   const mentionedSet = new Set(mentionedUids);
   const mutedSet = new Set(Array.isArray(context.mutedUids) ? context.mutedUids : []);
+  const mentionEnabledSet = new Set(
+    Array.isArray(context.enabledUidsByCategory?.mentions)
+      ? context.enabledUidsByCategory.mentions
+      : mentionTargets.map((target) => target.uid)
+  );
+  const liveChatEnabledSet = new Set(
+    Array.isArray(context.enabledUidsByCategory?.liveChat)
+      ? context.enabledUidsByCategory.liveChat
+      : liveChatTargets.map((target) => target.uid)
+  );
   const liveChatInboxUids = members
     .map((member) => String(member?.uid || '').trim())
-    .filter((uid) => uid && uid !== actorUid && !mentionedSet.has(uid) && !mutedSet.has(uid));
+    .filter((uid) => uid && liveChatEnabledSet.has(uid) && uid !== actorUid && !mentionedSet.has(uid) && !mutedSet.has(uid));
 
   return {
     mentionedUids,
-    mentionInboxUids: mentionedUids,
+    mentionInboxUids: mentionedUids.filter((uid) => mentionEnabledSet.has(uid)),
     mentionTargets: mentionTargets.filter((target) => target.uid !== actorUid && mentionedSet.has(target.uid)),
     liveChatInboxUids,
     liveChatTargets: liveChatTargets.filter((target) => (

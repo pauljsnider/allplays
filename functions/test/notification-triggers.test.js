@@ -902,11 +902,16 @@ test('notifyTeamChatMessageCreated sends mentions and liveChat only to enabled r
 test('notifyTeamChatMessageCreated writes inbox items for members without push devices', async () => {
     const { moduleExports, env, cleanup } = loadNotificationInternals({
         teamDoc: { ownerId: 'coach-1', adminEmails: [] },
-        parentUserIds: ['parent-1', 'parent-2'],
+        parentUserIds: ['parent-1', 'parent-2', 'parent-3'],
         userDocs: {
             'coach-1': { displayName: 'Coach Prime' },
             'parent-1': { displayName: 'Jamie Parent' },
-            'parent-2': { displayName: 'Taylor Parent' }
+            'parent-2': { displayName: 'Taylor Parent' },
+            'parent-3': { displayName: 'Opted Out Parent' }
+        },
+        preferenceDocs: {
+            'users/parent-2/notificationPreferences/team-1': { liveChat: true },
+            'users/parent-3/notificationPreferences/team-1': { liveChat: false }
         },
         indexedTargets: []
     });
@@ -938,6 +943,7 @@ test('notifyTeamChatMessageCreated writes inbox items for members without push d
             { uid: 'parent-2', category: 'liveChat' }
         ]);
         assert.equal(env.inboxWrites.some((write) => write.uid === 'coach-1'), false);
+        assert.equal(env.inboxWrites.some((write) => write.uid === 'parent-3'), false);
         assert.deepEqual(env.auditWrites.map((entry) => entry.value.targetUserIds).sort(), [
             ['parent-1'],
             ['parent-2']

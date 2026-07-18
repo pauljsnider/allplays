@@ -28,6 +28,8 @@ function getBuildTeamChatNotificationContext() {
         'getUserRecordsByIds',
         'notificationAudienceAllowsRoles',
         'getLegacyTargetsForCategory',
+        'DEFAULT_NOTIFICATION_PREFERENCES',
+        'normalizeNotificationPreferences',
         `${slice}; return buildTeamChatNotificationContext;`
     );
 }
@@ -259,7 +261,12 @@ describe('buildTeamChatNotificationContext', () => {
                 ['parent-1', { displayName: 'Pat Parent', teamChatState: { 'team-1': { mutedConversations: { team: { seconds: 3 } } } } }]
             ]),
             (category, roles = []) => category === 'mentions' || roles.includes('parent') || roles.includes('staff'),
-            async () => []
+            async () => [],
+            { mentions: true, liveChat: false },
+            (preferences = {}) => ({
+                mentions: preferences.mentions ?? true,
+                liveChat: preferences.liveChat ?? false
+            })
         );
     }
 
