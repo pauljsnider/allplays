@@ -1,3 +1,5 @@
+import { getPrimaryAppCheckHeaders } from './firebase-app-check-rest.js?v=1';
+
 const DEFAULT_TELEMETRY_ENDPOINT = 'https://us-central1-game-flow-c6311.cloudfunctions.net/collectTelemetry';
 const TELEMETRY_OPT_OUT_KEY = 'allplays.telemetry.optOut';
 const LOCAL_DEVELOPMENT_HOSTNAMES = new Set(['localhost', '127.0.0.1', '0.0.0.0', '']);
@@ -89,9 +91,11 @@ export async function capturePublicRsvpFailure(properties = {}) {
             appRoute: '/public-rsvp.html',
             properties: normalizePublicRsvpFailure(properties)
         };
-        const response = await fetch(resolveTelemetryEndpoint(), {
+        const endpoint = resolveTelemetryEndpoint();
+        const headers = await getPrimaryAppCheckHeaders({ 'Content-Type': 'application/json' }, endpoint);
+        const response = await fetch(endpoint, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers,
             body: JSON.stringify({
                 sentAt: new Date().toISOString(),
                 events: [event]

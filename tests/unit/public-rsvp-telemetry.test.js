@@ -3,6 +3,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 
+const appCheckMocks = vi.hoisted(() => ({
+    getPrimaryAppCheckHeaders: vi.fn(async (headers) => ({
+        ...headers,
+        'X-Firebase-AppCheck': 'test-app-check-token'
+    }))
+}));
+
+vi.mock('../../js/firebase-app-check-rest.js?v=1', () => ({
+    getPrimaryAppCheckHeaders: appCheckMocks.getPrimaryAppCheckHeaders
+}));
+
 import {
     capturePublicRsvpFailure,
     isPublicRsvpTelemetryEnabled,
@@ -16,6 +27,7 @@ describe('public RSVP failure telemetry', () => {
     beforeEach(() => {
         mockFetch.mockReset();
         mockFetch.mockResolvedValue({ ok: true });
+        appCheckMocks.getPrimaryAppCheckHeaders.mockClear();
         window.fetch = mockFetch;
         window.__ALLPLAYS_CONFIG__ = {
             telemetryEndpoint: 'https://telemetry.example.test/collect'
@@ -89,9 +101,16 @@ describe('public RSVP failure telemetry', () => {
         expect(url).toBe('https://telemetry.example.test/collect');
         expect(options).toMatchObject({
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Firebase-AppCheck': 'test-app-check-token'
+            },
             keepalive: true
         });
+        expect(appCheckMocks.getPrimaryAppCheckHeaders).toHaveBeenCalledWith(
+            { 'Content-Type': 'application/json' },
+            'https://telemetry.example.test/collect'
+        );
         expect(options.headers.Authorization).toBeUndefined();
         expect(payload.authToken).toBeUndefined();
         expect(event).toMatchObject({

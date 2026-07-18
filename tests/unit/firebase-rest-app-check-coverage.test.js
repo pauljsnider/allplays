@@ -9,6 +9,7 @@ const primaryRestCallers = [
     '../../apps/app/src/lib/profileService.ts',
     '../../apps/app/src/lib/scheduleService.ts',
     '../../apps/app/src/lib/teamDetailService.ts',
+    '../../js/public-rsvp-telemetry.js',
     '../../js/schedule-notifications.js',
     '../../js/team-pass.js',
     '../../js/telemetry.js'
@@ -50,6 +51,7 @@ describe('raw Firebase REST App Check coverage', () => {
             'apps/app/src/lib/profileService.ts',
             'apps/app/src/lib/scheduleService.ts',
             'apps/app/src/lib/teamDetailService.ts',
+            'js/public-rsvp-telemetry.js',
             'js/schedule-notifications.js',
             'js/team-pass.js',
             'js/telemetry.js'
