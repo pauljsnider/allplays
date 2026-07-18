@@ -1011,6 +1011,18 @@ service cloud.firestore {
       ]);
     }
 
+    function hasSettledRegistrationIdentityPreserved() {
+      return request.resource.data.get('id', null) == resource.data.get('id', null) &&
+             request.resource.data.get('registrationId', null) == resource.data.get('registrationId', null) &&
+             request.resource.data.get('guardianEmail', '') == resource.data.get('guardianEmail', '') &&
+             request.resource.data.get('guardian', {}).get('email', '') ==
+               resource.data.get('guardian', {}).get('email', '') &&
+             request.resource.data.get('guardian', {}).get('guardianEmail', '') ==
+               resource.data.get('guardian', {}).get('guardianEmail', '') &&
+             request.resource.data.get('guardian', {}).get('parentEmail', '') ==
+               resource.data.get('guardian', {}).get('parentEmail', '');
+    }
+
     function hasActiveTeamFeeStripeAuthority(data) {
       return data.get('checkoutStatus', '') in ['creating', 'creation_failed', 'open', 'async_pending'];
     }
@@ -3335,7 +3347,8 @@ service cloud.firestore {
                            !isStripePaymentAuthorityRolloutFrozen() &&
                            !hasActiveRegistrationStripeAuthority(resource.data) &&
                            (!hasSettledRegistrationStripeAuthority(resource.data) ||
-                            hasSettledRegistrationStripeAuthority(request.resource.data)) &&
+                            (hasSettledRegistrationStripeAuthority(request.resource.data) &&
+                             hasSettledRegistrationIdentityPreserved())) &&
                            resource.data.teamId == teamId &&
                            resource.data.formId == formId &&
                            request.resource.data.teamId == teamId &&

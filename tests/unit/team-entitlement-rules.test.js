@@ -83,7 +83,15 @@ describe('team entitlement Firestore rules', () => {
                     teamId: 'team-a', formId: 'form-a', status: 'pending'
                 });
                 await setDoc(doc(firestore, 'teams/team-a/registrationForms/form-a/registrations/settled-provider'), {
-                    teamId: 'team-a', formId: 'form-a', status: 'approved', paymentProvider: 'stripe'
+                    id: 'settled-provider', registrationId: 'settled-provider',
+                    teamId: 'team-a', formId: 'form-a', status: 'approved', paymentProvider: 'stripe',
+                    guardianEmail: 'parent@example.com',
+                    guardian: {
+                        email: 'parent@example.com',
+                        guardianEmail: 'guardian@example.com',
+                        parentEmail: 'alternate@example.com',
+                        phone: '555-0100'
+                    }
                 });
                 await setDoc(doc(firestore, 'teams/team-a/registrationForms/form-a/registrations/settled-complete'), {
                     teamId: 'team-a', formId: 'form-a', status: 'approved', checkoutStatus: 'complete'
@@ -173,8 +181,15 @@ describe('team entitlement Firestore rules', () => {
             const grossRef = doc(ownerDb, 'teams/team-a/registrationForms/form-a/registrations/settled-gross');
 
             await assertSucceeds(updateDoc(providerRef, { status: 'archived' }));
+            await assertSucceeds(updateDoc(providerRef, { 'guardian.phone': '555-0101' }));
             await assertFails(updateDoc(providerRef, { teamId: 'team-b' }));
             await assertFails(updateDoc(providerRef, { formId: 'form-b' }));
+            await assertFails(updateDoc(providerRef, { id: 'forged-registration' }));
+            await assertFails(updateDoc(providerRef, { registrationId: 'forged-registration' }));
+            await assertFails(updateDoc(providerRef, { guardianEmail: 'attacker@example.com' }));
+            await assertFails(updateDoc(providerRef, { 'guardian.email': 'attacker@example.com' }));
+            await assertFails(updateDoc(providerRef, { 'guardian.guardianEmail': 'attacker@example.com' }));
+            await assertFails(updateDoc(providerRef, { 'guardian.parentEmail': 'attacker@example.com' }));
             await assertFails(updateDoc(completeRef, { checkoutStatus: deleteField() }));
             await assertFails(updateDoc(grossRef, { stripeGrossPaidAmountCents: deleteField() }));
             await assertFails(deleteDoc(providerRef));
