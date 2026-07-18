@@ -12693,6 +12693,9 @@ exports.sendAuthorizedDirectMessage = functions.https.onCall(async (data, contex
     caller.user?.fullName || caller.user?.displayName || context.auth?.token?.name,
     160
   ) || null;
+  const recipientParticipantIds = conversation.participantIds.filter(
+    (participantId) => normalizeDirectChatUserId(participantId) !== caller.uid
+  );
   const message = {
     clientMessageId: clientMessageId || null,
     text,
@@ -12714,7 +12717,7 @@ exports.sendAuthorizedDirectMessage = functions.https.onCall(async (data, contex
     aiQuestion: null,
     aiMeta: null,
     targetType: 'individuals',
-    recipientIds: conversation.participantIds,
+    recipientIds: recipientParticipantIds,
     targetRole: null,
     conversationId
   };

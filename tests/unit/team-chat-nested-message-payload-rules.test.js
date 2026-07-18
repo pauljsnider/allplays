@@ -12,6 +12,7 @@ const dbSource = readFileSync(new URL('../../js/db.js', import.meta.url), 'utf8'
 const appChatSource = readFileSync(new URL('../../apps/app/src/lib/chatService.ts', import.meta.url), 'utf8');
 const appAiSource = readFileSync(new URL('../../apps/app/src/lib/chatAiService.ts', import.meta.url), 'utf8');
 const chatPageSource = readFileSync(new URL('../../team-chat.html', import.meta.url), 'utf8');
+const functionsSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
 
 describe('nested team chat message payload contracts', () => {
     it('validates the complete create shape, trusted sender fields, server time, targets, and media', () => {
@@ -141,6 +142,9 @@ describe('nested team chat message payload contracts', () => {
         expect(chatPageSource).toContain("httpsCallable(functions, 'sendAuthorizedDirectMessage')");
         expect(chatPageSource).toContain("if (conversation?.type === 'direct')");
         expect(chatPageSource).toContain('return postChatMessage(teamId, message);');
+        expect(functionsSource).toContain('const recipientParticipantIds = conversation.participantIds.filter(');
+        expect(functionsSource).toContain('(participantId) => normalizeDirectChatUserId(participantId) !== caller.uid');
+        expect(functionsSource).toContain('recipientIds: recipientParticipantIds');
     });
 
     it('does not persist privileged AI identity fields from client conversations', () => {
@@ -735,6 +739,23 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
 
         await assertSucceeds(updateDoc(legacyRef, {
             text: 'Edited legacy update',
+            editedAt: serverTimestamp()
+        }));
+    });
+
+    it('allows senders to edit callable-authored direct messages addressed to the other participant', async () => {
+        const parentDb = authedFirestore('parent-1', 'parent@example.com');
+        const callableMessageRef = messageRef(parentDb, friendDirectConversationId, 'callable-editable');
+        await testEnv.withSecurityRulesDisabled(async (context) => {
+            await setDoc(messageRef(context.firestore(), friendDirectConversationId, 'callable-editable'), directPayload({
+                recipientIds: ['user:user-2'],
+                conversationId: friendDirectConversationId,
+                createdAt: Timestamp.now()
+            }));
+        });
+
+        await assertSucceeds(updateDoc(callableMessageRef, {
+            text: 'Edited direct update',
             editedAt: serverTimestamp()
         }));
     });

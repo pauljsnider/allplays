@@ -473,6 +473,10 @@ test('direct-message callable rechecks friendship and team access on the write p
         firestore.snapshot('teams/team-1/chatConversations/direct_sender__user%3Arecipient/chatMessages/sender__client-direct-1').text,
         'Hi friend'
     );
+    assert.deepEqual(
+        firestore.snapshot('teams/team-1/chatConversations/direct_sender__user%3Arecipient/chatMessages/sender__client-direct-1').recipientIds,
+        ['user:recipient']
+    );
 
     await firestore.doc('friendships/recipient__sender').update({ status: 'removed' });
     await assert.rejects(
@@ -511,6 +515,10 @@ test('team-admin direct conversations allow either participant to reply while th
     assert.equal(
         firestore.snapshot(`${conversationPath}/chatMessages/parent__parent-reply-1`).senderId,
         'parent'
+    );
+    assert.deepEqual(
+        firestore.snapshot(`${conversationPath}/chatMessages/parent__parent-reply-1`).recipientIds,
+        ['owner']
     );
 
     await firestore.doc('teams/team-1').update({ ownerId: 'new-owner' });
