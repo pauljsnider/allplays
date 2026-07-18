@@ -9,6 +9,9 @@ const firebaseMocks = vi.hoisted(() => ({
     getIdToken: vi.fn(),
     onAuthStateChanged: vi.fn()
 }));
+const appCheckMocks = vi.hoisted(() => ({
+    getPrimaryAppCheckHeaders: vi.fn(async (headers) => ({ ...headers }))
+}));
 
 Object.defineProperty(navigator, 'sendBeacon', {
     configurable: true,
@@ -46,6 +49,8 @@ vi.mock('../../js/firebase.js?v=22', () => {
     };
 });
 
+vi.mock('../../js/firebase-app-check-rest.js?v=1', () => appCheckMocks);
+
 describe('telemetry.js payload handling', () => {
     let telemetryModule;
 
@@ -58,6 +63,8 @@ describe('telemetry.js payload handling', () => {
         firebaseMocks.auth.currentUser = null;
         firebaseMocks.getIdToken.mockReset();
         firebaseMocks.onAuthStateChanged.mockReset();
+        appCheckMocks.getPrimaryAppCheckHeaders.mockReset();
+        appCheckMocks.getPrimaryAppCheckHeaders.mockImplementation(async (headers) => ({ ...headers }));
 
         window.__ALLPLAYS_CONFIG__ = { telemetryEndpoint: 'http://mock-telemetry-endpoint.com' };
         window.history.replaceState({}, '', '/?telemetry=1');
@@ -67,6 +74,7 @@ describe('telemetry.js payload handling', () => {
         await telemetryModule.flush();
         mockFetch.mockClear();
         firebaseMocks.getIdToken.mockClear();
+        appCheckMocks.getPrimaryAppCheckHeaders.mockClear();
     });
 
     afterEach(() => {
@@ -185,6 +193,18 @@ describe('telemetry.js payload handling', () => {
         allPayloads.forEach((payload) => {
             expect(payload.authToken).toBeUndefined();
         });
+    });
+
+    it('starts the unload beacon before awaiting App Check headers', async () => {
+        appCheckMocks.getPrimaryAppCheckHeaders.mockImplementation(() => new Promise(() => {}));
+        telemetryModule.captureTelemetryEvent('pagehide_event');
+        mockSendBeacon.mockClear();
+
+        const flushPromise = telemetryModule.flush(true);
+
+        expect(mockSendBeacon).toHaveBeenCalledTimes(1);
+        expect(appCheckMocks.getPrimaryAppCheckHeaders).not.toHaveBeenCalled();
+        await flushPromise;
     });
 
     it('buffers bursts larger than the old 40-event cap without dropping', async () => {

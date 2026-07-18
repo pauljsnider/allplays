@@ -381,16 +381,17 @@ export async function sendEvents(events, keepalive = false) {
     }
     const payload = JSON.stringify(payloadObject);
 
+    // App Check token acquisition can still be pending when pagehide fires.
+    // Start the headerless beacon synchronously so navigation cannot tear down
+    // the page before telemetry delivery begins.
+    if (keepalive && navigator.sendBeacon) {
+        const blob = new Blob([payload], { type: 'application/json' });
+        if (navigator.sendBeacon(endpoint, blob)) return;
+    }
+
     const headers = await getPrimaryAppCheckHeaders({ 'Content-Type': 'application/json' }, endpoint);
     if (authToken) {
         headers.Authorization = `Bearer ${authToken}`;
-    }
-
-    // sendBeacon cannot carry App Check headers. Keep it only as the fail-open
-    // unload path while no attestation token is available.
-    if (keepalive && navigator.sendBeacon && !headers['X-Firebase-AppCheck']) {
-        const blob = new Blob([payload], { type: 'application/json' });
-        if (navigator.sendBeacon(endpoint, blob)) return;
     }
 
     const response = await fetch(endpoint, {

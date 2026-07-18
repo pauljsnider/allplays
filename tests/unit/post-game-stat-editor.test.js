@@ -255,7 +255,7 @@ describe('post-game stat editor helpers', () => {
         expect(pageSource).toContain('id="stats-save-next-btn"');
         expect(pageSource).toContain('resolvePostGameEditorDidNotPlay');
         expect(pageSource).toContain('setCompletedGamePlayerStats');
-        expect(pageSource).toContain("from './js/db.js?v=91'");
+        expect(pageSource).toContain("from './js/db.js?v=102'");
         expect(dbSource).toContain('participated: !didNotPlay');
         expect(dbSource).toContain("participationStatus: didNotPlay ? 'did-not-appear' : (statsPayload.participationStatus || 'appeared')");
         expect(dbSource).toContain('await deleteDoc(privateDocRef);');
