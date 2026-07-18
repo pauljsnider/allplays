@@ -27,6 +27,7 @@ const {
     buildTeamFeeStripeChargeLedger,
     getTeamFeeChargeGuardFailure,
     allocateTeamFeeRefundAcrossCharges,
+    getTeamFeeAggregateFinancialState,
     buildTeamFeePaidUpdate,
     buildTeamFeeStripeRefundUpdate
 } = require('../../functions/team-fees-core.cjs');
@@ -163,6 +164,22 @@ describe('team fee checkout function helpers', () => {
         expect(shouldApplyTeamFeeCheckoutSession({ recipient: legacyRecipient, session: legacySession })).toBe(true);
         expect(getTeamFeeCheckoutGuardFailure({ recipient: legacyRecipient, session: legacySession })).toBe('');
         expect(getTeamFeeCheckoutGuardFailure({ recipient: legacyRecipient, session: { ...legacySession, metadata: { checkoutAttemptToken: 'tok_new_1234567890' } } })).toBe('checkout_attempt_mismatch');
+
+        const historicalTokenizedRecipient = {
+            ...recipient,
+            stripePaymentAuthorityVersion: undefined,
+            checkoutCurrency: undefined,
+            livemode: undefined
+        };
+        expect(getTeamFeeCheckoutGuardFailure({ recipient: historicalTokenizedRecipient, session })).toBe('');
+        expect(getTeamFeeCheckoutGuardFailure({
+            recipient: historicalTokenizedRecipient,
+            session: { ...session, currency: 'eur' }
+        })).toBe('checkout_currency_mismatch');
+        expect(getTeamFeeCheckoutGuardFailure({
+            recipient: { ...historicalTokenizedRecipient, stripePaymentAuthorityVersion: 2 },
+            session
+        })).toBe('checkout_currency_mismatch');
     });
 
     it('marks paid immediate and async team fee checkout sessions as paid', () => {
@@ -406,6 +423,26 @@ describe('team fee checkout function helpers', () => {
         ]);
         expect(allocateTeamFeeRefundAcrossCharges(ledgers, 8000)).toEqual([]);
         expect(allocateTeamFeeRefundAcrossCharges([], 1000)).toEqual([]);
+    });
+
+    it('aggregates every charge without allowing a resolved charge to hide an open dispute', () => {
+        const ledger = {
+            type: 'stripe_charge', provider: 'stripe', product: 'team_fee',
+            amountPaidCents: 5000, refundedAmountCents: 0,
+            disputeLostAmountCents: 0, refundableAmountCents: 5000
+        };
+        const aggregate = getTeamFeeAggregateFinancialState([
+            { ...ledger, stripeChargeId: 'ch_open', disputeStatus: 'open' },
+            { ...ledger, stripeChargeId: 'ch_refund', refundedAmountCents: 1000, refundableAmountCents: 4000 }
+        ]);
+        expect(aggregate).toMatchObject({
+            valid: true, financialStatus: 'disputed', grossPaidAmountCents: 10000,
+            refundedAmountCents: 1000, refundableAmountCents: 9000
+        });
+        expect(getTeamFeeAggregateFinancialState([
+            { ...ledger, stripeChargeId: 'ch_valid' },
+            { stripeChargeId: 'ch_invalid', amountPaidCents: 5000 }
+        ]).valid).toBe(false);
     });
 
     it('builds Stripe refund ledger updates without over-crediting balances', () => {

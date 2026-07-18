@@ -7,7 +7,9 @@ const {
     isLegacyStripeRegistrationCandidate,
     isLegacyStripeTeamFeeCandidate,
     isTeamPassEntitlementAuthorityCandidate,
-    buildPaymentAuthorityRolloutBlocker
+    buildPaymentAuthorityRolloutBlocker,
+    inspectStripeChargeLedgerCoverage,
+    inspectTeamPassAttemptAuthority
 } = require('../../functions/payment-authority-rollout-core.cjs');
 
 describe('Stripe payment-authority rollout gate', () => {
@@ -35,6 +37,60 @@ describe('Stripe payment-authority rollout gate', () => {
         expect(buildPaymentAuthorityRolloutBlocker({
             product: 'team_fee', path: 'teams/t/feeBatches/b/feeRecipients/r', hasAuthorityLedger: true
         })).toBeNull();
+    });
+
+    it('requires exact scope, identifiers, aggregates, and installment count for every charge ledger', () => {
+        const record = {
+            id: 'reg-a', teamId: 'team-a', formId: 'form-a',
+            stripeGrossPaidAmountCents: 5000, stripeRefundedAmountCents: 0,
+            stripeDisputeLostAmountCents: 0, paymentPlan: { id: 'installments', paidInstallmentCount: 1 },
+            lastPaidStripeChargeId: 'ch_a'
+        };
+        const ledger = {
+            type: 'stripe_charge', provider: 'stripe', product: 'registration',
+            teamId: 'team-a', formId: 'form-a', registrationId: 'reg-a',
+            stripeCheckoutSessionId: 'cs_a', stripePaymentIntentId: 'pi_a', stripeChargeId: 'ch_a',
+            amountPaidCents: 5000, refundedAmountCents: 0, disputeLostAmountCents: 0,
+            currency: 'usd', livemode: false
+        };
+        expect(inspectStripeChargeLedgerCoverage({ product: 'registration', record, ledgers: [ledger] })).toBe('');
+        expect(inspectStripeChargeLedgerCoverage({
+            product: 'registration', record, ledgers: [{ ...ledger, registrationId: 'victim' }]
+        })).toBe('stripe_charge_ledger_invalid');
+        expect(inspectStripeChargeLedgerCoverage({
+            product: 'registration', record: { ...record, stripeGrossPaidAmountCents: 10000 }, ledgers: [ledger]
+        })).toBe('stripe_charge_ledger_gross_mismatch');
+        expect(inspectStripeChargeLedgerCoverage({
+            product: 'registration', record: { ...record, paymentPlan: { id: 'installments', paidInstallmentCount: 2 } }, ledgers: [ledger]
+        })).toBe('stripe_charge_ledger_count_mismatch');
+        const repaymentLedger = {
+            ...ledger, stripeCheckoutSessionId: 'cs_repay', stripePaymentIntentId: 'pi_repay',
+            stripeChargeId: 'ch_repay', amountPaidCents: 2000, paymentPurpose: 'reversal_repayment'
+        };
+        expect(inspectStripeChargeLedgerCoverage({
+            product: 'registration',
+            record: { ...record, stripeGrossPaidAmountCents: 7000, lastPaidStripeChargeId: 'ch_repay' },
+            ledgers: [ledger, repaymentLedger]
+        })).toBe('');
+    });
+
+    it('requires complete Team Pass authority and a charge id for legacy attempts', () => {
+        const attempt = {
+            product: 'team_pass', teamId: 'team-a', seasonId: '2026', tier: 'team-pass',
+            checkoutStatus: 'paid', stripeCheckoutSessionId: 'cs_a', stripePaymentIntentId: 'pi_a',
+            checkoutAmountCents: 4900, checkoutCurrency: 'usd', livemode: false,
+            legacyPaymentAuthorityVersion: 1
+        };
+        expect(inspectTeamPassAttemptAuthority({
+            teamId: 'team-a', seasonId: '2026', tier: 'team-pass', attempt
+        })).toBe('active_entitlement_invalid_checkout_attempt');
+        expect(inspectTeamPassAttemptAuthority({
+            teamId: 'team-a', seasonId: '2026', tier: 'team-pass', attempt: { ...attempt, stripeChargeId: 'ch_a' }
+        })).toBe('');
+        expect(inspectTeamPassAttemptAuthority({
+            teamId: 'team-a', seasonId: '2026', tier: 'team-pass',
+            attempt: { ...attempt, legacyPaymentAuthorityVersion: undefined, stripePaymentAuthorityVersion: 2 }
+        })).toBe('');
     });
 
     it('keeps the callable dry-run-first and requires an explicit empty assertion', () => {

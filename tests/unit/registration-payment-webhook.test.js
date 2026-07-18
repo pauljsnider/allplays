@@ -194,7 +194,8 @@ describe('registration paid webhook guard', () => {
         }, charge });
         const update = buildRegistrationReversalUpdate({ registration, ledger, reversal: partialRefund, charge });
         expect(update.registrationUpdate).toMatchObject({
-            paymentStatus: 'partially_refunded', stripeRefundedAmountCents: 2500, balanceDueCents: 2500
+            paymentStatus: 'partially_refunded', stripeRefundedAmountCents: 2500,
+            stripeReversalBalanceCents: 2500, balanceDueCents: 2500
         });
 
         const lost = reconcileStripeChargeReversal({ current: partialRefund, event: {
@@ -203,7 +204,9 @@ describe('registration paid webhook guard', () => {
         }, charge: { ...charge, amount_refunded: 2500 } });
         const lostUpdate = buildRegistrationReversalUpdate({ registration, ledger, reversal: lost, charge });
         expect(lostUpdate.registrationUpdate).toMatchObject({
-            paymentStatus: 'dispute_lost', stripeRefundedAmountCents: 2500, stripeDisputeLostAmountCents: 5000
+            paymentStatus: 'dispute_lost', stripeRefundedAmountCents: 2500,
+            stripeDisputeLostAmountCents: 5000, stripeReversalBalanceCents: 7500,
+            balanceDueCents: 7500
         });
     });
 

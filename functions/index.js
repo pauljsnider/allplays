@@ -43,6 +43,7 @@ const {
   buildTeamFeeStripeChargeLedger,
   getTeamFeeChargeGuardFailure,
   allocateTeamFeeRefundAcrossCharges,
+  getTeamFeeAggregateFinancialState,
   buildTeamFeePaidUpdate,
   buildTeamFeeStripeRefundUpdate
 } = require('./team-fees-core.cjs');
@@ -67,7 +68,8 @@ const {
   isLegacyStripeRegistrationCandidate,
   isLegacyStripeTeamFeeCandidate,
   isTeamPassEntitlementAuthorityCandidate,
-  buildPaymentAuthorityRolloutBlocker
+  inspectStripeChargeLedgerCoverage,
+  inspectTeamPassAttemptAuthority
 } = require('./payment-authority-rollout-core.cjs');
 const { createFirestoreFixedWindowRateLimiter, createInMemoryRateLimiter, getRequestIp } = require('./rate-limit.cjs');
 const { buildPublicGamesIcs, canExposeEmptyPublicFeed, isPublicFanGame } = require('./public-calendar-core.cjs');
@@ -1159,6 +1161,8 @@ function buildRegistrationInstallmentPaymentState(registration = {}, form = null
 }
 
 function getRegistrationCheckoutAmountCents(registration = {}, form = null) {
+  const reversalBalanceCents = Math.max(0, Math.round(Number(registration.stripeReversalBalanceCents || 0) || 0));
+  if (reversalBalanceCents > 0) return reversalBalanceCents;
   if (form && registration.paymentPlan?.id === 'installments' && form.installmentPlan?.enabled === true) {
     const installmentState = buildRegistrationInstallmentPaymentState(registration, form);
     return Math.max(0, Math.round(Number(installmentState.currentInstallment?.amountCents || 0) || 0));
@@ -1250,7 +1254,8 @@ function buildRegistrationCheckoutMetadata({ input, registration }) {
     checkoutAttemptToken: input.checkoutAttemptToken || '',
     publicCheckoutCapability: input.publicCheckoutCapability || '',
     selectedOptionId: String(registration.selectedOption?.id || ''),
-    paymentPlanId: String(registration.paymentPlan?.id || '')
+    paymentPlanId: String(registration.paymentPlan?.id || ''),
+    paymentPurpose: String(input.paymentPurpose || '')
   };
 }
 
@@ -1599,8 +1604,18 @@ async function reserveRegistrationCheckoutCreation(input, options = {}) {
     if (registration.paymentStatus === 'paid') {
       throw new functions.https.HttpsError('failed-precondition', 'This registration has already been paid.');
     }
+    if (registration.paymentStatus === 'disputed'
+        || String(registration.stripeFinancialStatus || '').toLowerCase() === 'disputed') {
+      throw new functions.https.HttpsError('failed-precondition', 'This registration payment is disputed and cannot be retried until the dispute is resolved.');
+    }
     if (!registrationCheckoutAuthorityMatches(registration, input)) {
       throw new functions.https.HttpsError('failed-precondition', 'Current public checkout capability is required.');
+    }
+    const reversalBalanceCents = Math.max(0, Math.round(Number(registration.stripeReversalBalanceCents || 0) || 0));
+    const paymentPurpose = String(reservationProposal.stripeRequest?.metadata?.paymentPurpose || '').trim();
+    if ((reversalBalanceCents > 0 && (paymentPurpose !== 'reversal_repayment' || amountCents !== reversalBalanceCents))
+        || (reversalBalanceCents === 0 && paymentPurpose === 'reversal_repayment')) {
+      throw new functions.https.HttpsError('aborted', 'Registration reversal balance changed before checkout could be reserved. Retry with current payment state.');
     }
     if (canReuseRegistrationCheckoutSession(registration, amountCents, input)) {
       throw new functions.https.HttpsError('aborted', 'An existing registration checkout must be revalidated before reuse.');
@@ -3938,6 +3953,9 @@ exports.createStripeTeamPassCheckout = functions.https.onCall(async (data, conte
       ? classifyStoredStripeCheckoutSession(existingSession)
       : 'stale';
     if (!guardFailure && classification === 'reusable') {
+      if (!existingAttempt.purchaserUid || existingAttempt.purchaserUid !== context.auth.uid) {
+        throw new functions.https.HttpsError('aborted', 'Another purchaser already has an active Team Pass checkout. Try again after it expires.');
+      }
       return { checkoutUrl: existingSession.url || existingAttempt.checkoutUrl, sessionId: existingSession.id };
     }
     if (!guardFailure && classification === 'terminal') {
@@ -3994,14 +4012,11 @@ exports.createStripeTeamPassCheckout = functions.https.onCall(async (data, conte
       }));
       return { active: true };
     }
-    if (attempt.checkoutStatus === 'open'
-        && attempt.purchaserUid === context.auth.uid
-        && attempt.priceId === teamPassPriceId
-        && Number(attempt.checkoutAmountCents) === checkoutAmountCents
-        && attempt.checkoutCurrency === checkoutCurrency
-        && attempt.checkoutUrl
-        && attempt.stripeCheckoutSessionId) {
-      return { busy: true };
+    if (attempt.checkoutStatus === 'open') {
+      if (attempt.checkoutUrl && attempt.stripeCheckoutSessionId) {
+        return { busy: true };
+      }
+      return { blockedAuthority: true };
     }
     if (attempt.checkoutStatus === 'creating'
         && Number(attempt.checkoutReservedAtMs || 0) > reservedAtMs - 120_000) {
@@ -4236,6 +4251,7 @@ async function scanPaymentAuthorityRolloutCollection({ collectionGroupName, isCa
   const maximumDocuments = 10_000;
   let lastSnapshot = null;
   let scanned = 0;
+  let authorityComplete = true;
   const blockers = [];
   while (scanned < maximumDocuments) {
     let query = firestore.collectionGroup(collectionGroupName)
@@ -4243,23 +4259,51 @@ async function scanPaymentAuthorityRolloutCollection({ collectionGroupName, isCa
       .limit(pageSize);
     if (lastSnapshot) query = query.startAfter(lastSnapshot);
     const snapshot = await query.get();
-    if (snapshot.empty) return { scanned, blockers, complete: true };
+    if (snapshot.empty) return { scanned, blockers, complete: authorityComplete };
     scanned += snapshot.size;
     const candidateDocs = snapshot.docs.filter((docSnap) => isCandidate(docSnap.data() || {}, docSnap.ref.path));
     for (let offset = 0; offset < candidateDocs.length; offset += 25) {
       const page = candidateDocs.slice(offset, offset + 25);
       const pageResults = await Promise.all(page.map(async (docSnap) => ({
         path: docSnap.ref.path,
-        blocker: await inspectAuthority(docSnap)
+        inspection: await inspectAuthority(docSnap)
       })));
       pageResults.forEach((result) => {
-        if (result.blocker) blockers.push(result.blocker);
+        const inspection = result.inspection && typeof result.inspection === 'object'
+          && Object.prototype.hasOwnProperty.call(result.inspection, 'blocker')
+          ? result.inspection
+          : { blocker: result.inspection, complete: true };
+        if (inspection.complete === false) authorityComplete = false;
+        if (inspection.blocker) blockers.push(inspection.blocker);
       });
     }
     lastSnapshot = snapshot.docs[snapshot.docs.length - 1];
-    if (snapshot.size < pageSize) return { scanned, blockers, complete: true };
+    if (snapshot.size < pageSize) return { scanned, blockers, complete: authorityComplete };
   }
   return { scanned, blockers, complete: false };
+}
+
+async function readPaymentAuthoritySubcollection(collectionRef) {
+  const pageSize = 250;
+  const maximumDocuments = 10_000;
+  const docs = [];
+  let lastSnapshot = null;
+  while (docs.length < maximumDocuments) {
+    let query = collectionRef.orderBy(admin.firestore.FieldPath.documentId()).limit(pageSize);
+    if (lastSnapshot) query = query.startAfter(lastSnapshot);
+    const snapshot = await query.get();
+    docs.push(...(snapshot.docs || []));
+    if (snapshot.size < pageSize) return { docs, complete: true };
+    lastSnapshot = snapshot.docs[snapshot.docs.length - 1];
+  }
+  return { docs, complete: false };
+}
+
+function buildRolloutInspection({ product, path, reason = '', complete = true }) {
+  return {
+    complete,
+    blocker: reason ? { product, path, reason } : null
+  };
 }
 
 exports.auditStripePaymentAuthorityRollout = functions.runWith({ timeoutSeconds: 540, memory: '1GB' }).https.onCall(async (data, context) => {
@@ -4280,20 +4324,28 @@ exports.auditStripePaymentAuthorityRollout = functions.runWith({ timeoutSeconds:
       collectionGroupName: 'registrations',
       isCandidate: isLegacyStripeRegistrationCandidate,
       inspectAuthority: async (docSnap) => {
-        const chargeSnap = await docSnap.ref.collection('stripeCharges').limit(1).get();
-        return buildPaymentAuthorityRolloutBlocker({
-          product: 'registration', path: docSnap.ref.path, hasAuthorityLedger: !chargeSnap.empty
-        });
+        const chargeScan = await readPaymentAuthoritySubcollection(docSnap.ref.collection('stripeCharges'));
+        const record = { id: docSnap.id, ...(docSnap.data() || {}) };
+        const reason = chargeScan.complete
+          ? inspectStripeChargeLedgerCoverage({
+            product: 'registration', record, ledgers: chargeScan.docs.map((ledgerSnap) => ledgerSnap.data() || {})
+          })
+          : 'stripe_charge_ledger_scan_incomplete';
+        return buildRolloutInspection({ product: 'registration', path: docSnap.ref.path, reason, complete: chargeScan.complete });
       }
     }),
     scanPaymentAuthorityRolloutCollection({
       collectionGroupName: 'feeRecipients',
       isCandidate: isLegacyStripeTeamFeeCandidate,
       inspectAuthority: async (docSnap) => {
-        const chargeSnap = await docSnap.ref.collection('stripeCharges').limit(1).get();
-        return buildPaymentAuthorityRolloutBlocker({
-          product: 'team_fee', path: docSnap.ref.path, hasAuthorityLedger: !chargeSnap.empty
-        });
+        const chargeScan = await readPaymentAuthoritySubcollection(docSnap.ref.collection('stripeCharges'));
+        const record = { id: docSnap.id, ...(docSnap.data() || {}) };
+        const reason = chargeScan.complete
+          ? inspectStripeChargeLedgerCoverage({
+            product: 'team_fee', record, ledgers: chargeScan.docs.map((ledgerSnap) => ledgerSnap.data() || {})
+          })
+          : 'stripe_charge_ledger_scan_incomplete';
+        return buildRolloutInspection({ product: 'team_fee', path: docSnap.ref.path, reason, complete: chargeScan.complete });
       }
     }),
     scanPaymentAuthorityRolloutCollection({
@@ -4304,18 +4356,25 @@ exports.auditStripePaymentAuthorityRollout = functions.runWith({ timeoutSeconds:
         const parts = docSnap.ref.path.split('/');
         const teamId = parts[0] === 'teams' && parts[2] === 'entitlements' ? parts[1] : '';
         const seasonId = String(entitlement.seasonId || docSnap.id.replace(/_team-pass$/, '')).trim();
-        const attemptSnap = await firestore.collection(`teams/${teamId}/teamPassCheckoutAttempts`)
-          .where('seasonId', '==', seasonId)
-          .where('tier', '==', 'team-pass')
-          .limit(10)
-          .get();
-        const hasAuthorityLedger = (attemptSnap.docs || []).some((attemptDoc) => (
-          ['paid', 'disputed', 'refunded', 'dispute_lost'].includes(String(attemptDoc.data()?.checkoutStatus || '').toLowerCase())
-          && Boolean(String(attemptDoc.data()?.stripePaymentIntentId || '').trim())
+        const attemptScan = await readPaymentAuthoritySubcollection(
+          firestore.collection(`teams/${teamId}/teamPassCheckoutAttempts`)
+        );
+        const matchingAttempts = attemptScan.docs.filter((attemptDoc) => (
+          String(attemptDoc.data()?.seasonId || '').trim() === seasonId
+          && String(attemptDoc.data()?.tier || '').trim() === 'team-pass'
         ));
-        return buildPaymentAuthorityRolloutBlocker({
-          product: 'team_pass', path: docSnap.ref.path, hasAuthorityLedger
-        });
+        const hasValidAuthority = matchingAttempts.some((attemptDoc) => !inspectTeamPassAttemptAuthority({
+          teamId,
+          seasonId,
+          tier: 'team-pass',
+          attempt: attemptDoc.data() || {}
+        }));
+        const reason = !attemptScan.complete
+          ? 'team_pass_checkout_attempt_scan_incomplete'
+          : hasValidAuthority ? '' : matchingAttempts.length > 0
+            ? 'active_entitlement_invalid_checkout_attempt'
+            : 'active_entitlement_missing_checkout_attempt';
+        return buildRolloutInspection({ product: 'team_pass', path: docSnap.ref.path, reason, complete: attemptScan.complete });
       }
     })
   ]);
@@ -4408,6 +4467,10 @@ exports.createStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
       ? classifyStoredStripeCheckoutSession(existingSession)
       : 'stale';
     if (!guardFailure && classification === 'reusable') {
+      const existingPayerUid = String(recipient.checkoutPayerUid || existingSession.metadata?.payerUid || '').trim();
+      if (!existingPayerUid || existingPayerUid !== context.auth.uid) {
+        throw new functions.https.HttpsError('aborted', 'Another payer already has an active checkout for this team fee. Try again after it expires.');
+      }
       return { checkoutUrl: existingSession.url || recipient.checkoutUrl, sessionId: existingSession.id };
     }
     if (!guardFailure && classification === 'terminal') {
@@ -5063,16 +5126,16 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
 
   const refundedAt = admin.firestore.FieldValue.serverTimestamp();
   const ledgerRefundedAt = admin.firestore.Timestamp.now();
-  let newlyRecordedAmountCents = 0;
-  const newlyRecordedRefunds = [];
-  let recordedRefundIds = completedAllocations.map((entry) => entry.stripeRefundId);
-  await firestore.runTransaction(async (transaction) => {
+  const reconciliation = await firestore.runTransaction(async (transaction) => {
+    let newlyRecordedAmountCents = 0;
+    const newlyRecordedRefunds = [];
     const resultRefs = results.map((result) => buildTeamFeeStripeChargeRef(recipientRef, result.allocation.stripeChargeId));
     const successfulResults = results.filter((result) => result.ok);
     const adminRefs = successfulResults.map((result) => buildTeamFeeAdminBillingRef(recipientRef, result.refund.id));
-    const [latestRecipientSnap, latestIntentSnap, ...snapshots] = await Promise.all([
+    const [latestRecipientSnap, latestIntentSnap, allChargeLedgersSnap, ...snapshots] = await Promise.all([
       transaction.get(recipientRef),
       transaction.get(refundIntentRef),
+      transaction.get(recipientRef.collection('stripeCharges')),
       ...resultRefs.map((ref) => transaction.get(ref)),
       ...adminRefs.map((ref) => transaction.get(ref))
     ]);
@@ -5087,6 +5150,7 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
     const ledgerSnaps = snapshots.slice(0, resultRefs.length);
     const adminSnaps = snapshots.slice(resultRefs.length);
     let adminIndex = 0;
+    const nextLedgersByChargeId = new Map();
 
     results.forEach((result, index) => {
       const ledgerSnap = ledgerSnaps[index];
@@ -5128,6 +5192,13 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
         lastStripeRefundId: result.refund.id,
         updatedAt: refundedAt
       }, { merge: true });
+      nextLedgersByChargeId.set(result.allocation.stripeChargeId, {
+        ...ledger,
+        refundedAmountCents: currentRefundedAmountCents + refundDeltaCents,
+        pendingRefundAmountCents,
+        refundableAmountCents: Math.max(0, Number(ledger.refundableAmountCents || 0) - refundDeltaCents),
+        lastStripeRefundId: result.refund.id
+      });
       transaction.set(buildTeamFeeAdminBillingRef(recipientRef, result.refund.id), {
         type: 'stripe_refund', provider: 'stripe', product: 'team_fee',
         teamId: input.teamId, batchId: input.batchId, recipientId: input.recipientId,
@@ -5143,6 +5214,12 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
       });
     });
 
+    const aggregateFinancialState = getTeamFeeAggregateFinancialState((allChargeLedgersSnap.docs || []).map((docSnap) => (
+      nextLedgersByChargeId.get(docSnap.data()?.stripeChargeId) || (docSnap.data() || {})
+    )));
+    if (!aggregateFinancialState.valid) {
+      throw new Error('Team fee charge ledger aggregate is invalid.');
+    }
     if (newlyRecordedAmountCents > 0) {
       const { ledgerEntries = [], adminBilling: ignoredAdminBilling, ...update } = buildTeamFeeStripeRefundUpdate({
         recipient: latestRecipient,
@@ -5155,6 +5232,11 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
       });
       transaction.set(recipientRef, {
         ...withTeamFeeParentBillingClears(update),
+        stripeGrossPaidAmountCents: aggregateFinancialState.grossPaidAmountCents,
+        stripeRefundedAmountCents: aggregateFinancialState.refundedAmountCents,
+        stripeDisputeLostAmountCents: aggregateFinancialState.disputeLostAmountCents,
+        stripeRefundableAmountCents: aggregateFinancialState.refundableAmountCents,
+        stripeFinancialStatus: aggregateFinancialState.financialStatus,
         paymentLedger: admin.firestore.FieldValue.arrayUnion(...ledgerEntries.map((entry) => ({
           ...entry,
           stripeRefundIds: newlyRecordedRefunds.map((refund) => refund.id)
@@ -5164,7 +5246,7 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
     const failed = results.filter((result) => !result.ok);
     const hasRetryableAmbiguity = failed.some((result) => result.preserveReservation);
     const nextCompletedAllocations = [...completedByChargeId.values()];
-    recordedRefundIds = nextCompletedAllocations.map((entry) => entry.stripeRefundId);
+    const recordedRefundIds = nextCompletedAllocations.map((entry) => entry.stripeRefundId);
     const recordedAmountCents = nextCompletedAllocations.reduce((total, entry) => total + Math.max(0, Number(entry.amountCents || 0)), 0);
     const fullyRecorded = failed.length === 0 && recordedAmountCents >= input.amountCents;
     transaction.set(refundIntentRef, {
@@ -5179,8 +5261,10 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
       recordedAt: fullyRecorded ? refundedAt : null,
       updatedAt: refundedAt
     }, { merge: true });
+    return { newlyRecordedAmountCents, newlyRecordedRefunds, recordedRefundIds };
   });
 
+  const { newlyRecordedRefunds, recordedRefundIds } = reconciliation;
   const failures = results.filter((result) => !result.ok);
   if (failures.length > 0) {
     throw new functions.https.HttpsError('failed-precondition', newlyRecordedRefunds.length > 0
@@ -5237,6 +5321,10 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
   }
   if (registration.paymentStatus === 'paid') {
     throw new functions.https.HttpsError('failed-precondition', 'This registration has already been paid.');
+  }
+  if (registration.paymentStatus === 'disputed'
+      || String(registration.stripeFinancialStatus || '').toLowerCase() === 'disputed') {
+    throw new functions.https.HttpsError('failed-precondition', 'This registration payment is disputed and cannot be retried until the dispute is resolved.');
   }
 
   // Recompute from the authoritative form at the server-captured submission
@@ -5326,8 +5414,12 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
     publicCheckoutCapability: issuedPublicCheckoutCapability,
     checkoutAttemptToken: issuedCheckoutAttemptToken,
     paymentPlanId: String(registration.paymentPlan?.id || 'pay_full').trim() || 'pay_full',
+    paymentPurpose: Math.max(0, Number(registration.stripeReversalBalanceCents || 0)) > 0
+      ? 'reversal_repayment'
+      : '',
     paidInstallmentCount: registration.paymentPlan?.id === 'installments'
-      ? getRegistrationPaymentPlanPaidInstallmentCount(registration) + 1
+      ? getRegistrationPaymentPlanPaidInstallmentCount(registration)
+        + (Math.max(0, Number(registration.stripeReversalBalanceCents || 0)) > 0 ? 0 : 1)
       : 0
   };
   const { successUrl, cancelUrl } = buildRegistrationCheckoutUrls(appUrl, checkoutUrlInput);
@@ -5596,6 +5688,35 @@ exports.cancelStripeRegistrationCheckout = functions.https.onCall(async (data) =
   });
 });
 
+async function recoverLegacyReversalCheckoutSession(stripe, charge = {}) {
+  const paymentIntentId = getStripeObjectId(charge.payment_intent);
+  if (!paymentIntentId) return null;
+  const listed = await stripe.checkout.sessions.list({ payment_intent: paymentIntentId, limit: 2 });
+  const sessions = Array.isArray(listed?.data) ? listed.data : [];
+  if (sessions.length === 0) return null;
+  if (sessions.length !== 1) throw new Error('Stripe PaymentIntent matched multiple Checkout Sessions.');
+  const session = sessions[0] || {};
+  const metadata = session.metadata || {};
+  const product = String(metadata.product || '').trim();
+  const expectedClientReference = product === 'registration'
+    ? `${metadata.teamId}:${metadata.formId}:${metadata.registrationId}`
+    : product === 'team_fee'
+      ? `${metadata.teamId}:${metadata.batchId}:${metadata.recipientId}`
+      : product === TEAM_PASS_PRODUCT
+        ? `${metadata.teamId}:${metadata.seasonId}:${metadata.purchaserUid}`
+        : '';
+  if (!expectedClientReference
+      || session.mode !== 'payment'
+      || getStripeObjectId(session.payment_intent) !== paymentIntentId
+      || session.client_reference_id !== expectedClientReference
+      || Math.max(0, Math.round(Number(session.amount_total || 0))) !== Math.max(0, Math.round(Number(charge.amount || 0)))
+      || String(session.currency || '').trim().toLowerCase() !== String(charge.currency || '').trim().toLowerCase()
+      || Boolean(session.livemode) !== Boolean(charge.livemode)) {
+    throw new Error('Legacy Stripe reversal Checkout Session authority did not match the charge.');
+  }
+  return session;
+}
+
 exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
   if (req.method !== 'POST') {
     res.status(405).send('Method not allowed');
@@ -5735,7 +5856,51 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
             return;
           }
 
-          if (registration.paymentPlan?.id === 'installments' && form.installmentPlan?.enabled === true) {
+          const isReversalRepayment = session.metadata?.paymentPurpose === 'reversal_repayment';
+          if (isReversalRepayment) {
+            const repaymentAmountCents = Math.max(0, Math.round(Number(session.amount_total || 0)));
+            const nextReversalBalanceCents = Math.max(0, Number(registration.stripeReversalBalanceCents || 0) - repaymentAmountCents);
+            const nextBalanceDueCents = Math.max(0, Number(registration.balanceDueCents || 0) - repaymentAmountCents);
+            const installmentState = registration.paymentPlan?.id === 'installments'
+              ? buildRegistrationInstallmentPaymentState(registration, form)
+              : null;
+            const paymentStatusAfterCharge = nextReversalBalanceCents > 0
+              ? 'partially_refunded'
+              : installmentState?.remainingBalanceCents > 0
+                ? 'installment_in_progress'
+                : nextBalanceDueCents > 0 ? 'payment_due' : 'paid';
+            transaction.set(registrationRef, {
+              checkoutStatus: 'complete',
+              paymentStatus: paymentStatusAfterCharge,
+              paidAt: receivedAt,
+              balanceDueCents: nextBalanceDueCents,
+              stripeReversalBalanceCents: nextReversalBalanceCents,
+              stripeCheckoutSessionId: session.id || null,
+              stripePaymentIntentId: session.payment_intent || null,
+              stripePaymentStatus: session.payment_status || 'paid',
+              stripeEventId: event.id,
+              lastPaidStripeCheckoutSessionId: session.id,
+              lastPaidStripeChargeId: chargeId,
+              stripeGrossPaidAmountCents: Math.max(0, Number(registration.stripeGrossPaidAmountCents || 0)) + repaymentAmountCents,
+              stripeFinancialStatus: 'paid',
+              checkoutCreationReservationId: admin.firestore.FieldValue.delete(),
+              checkoutCreationStartedAt: admin.firestore.FieldValue.delete(),
+              retryCapacityReservationId: admin.firestore.FieldValue.delete(),
+              updatedAt: receivedAt
+            }, { merge: true });
+            transaction.set(chargeRef, buildRegistrationStripeChargeLedger({
+              registration,
+              session,
+              paymentIntent,
+              eventId: event.id,
+              receivedAt,
+              paymentStatusAfterCharge
+            }));
+            if (recoveredReservationRef) {
+              transaction.set(recoveredReservationRef, { status: 'paid', processedAt: receivedAt, updatedAt: receivedAt }, { merge: true });
+            }
+            transaction.update(registrationRef, buildRegistrationReminderStopUpdate({ reason: paymentStatusAfterCharge, nowIso: queuedAtIso }));
+          } else if (registration.paymentPlan?.id === 'installments' && form.installmentPlan?.enabled === true) {
             const nextPaidInstallmentCount = getRegistrationPaymentPlanPaidInstallmentCount(registration) + 1;
             const installmentState = buildRegistrationInstallmentPaymentState(registration, form, nextPaidInstallmentCount);
             const hasRemainingInstallments = installmentState.remainingBalanceCents > 0 && installmentState.remainingSchedule.length > 0;
@@ -6128,6 +6293,7 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
     }
   }
 
+  let recoveredLegacyReversalSession = null;
   if (shouldHandleTeamPassReversalEvent(event)) {
     try {
       const reversalObject = event.data?.object || {};
@@ -6153,12 +6319,16 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
             product = candidate.product;
           }
         }
+        if (!product && Object.keys(charge.metadata || {}).length === 0) {
+          recoveredLegacyReversalSession = await recoverLegacyReversalCheckoutSession(stripe, charge);
+          product = String(recoveredLegacyReversalSession?.metadata?.product || '').trim();
+        }
       }
 
       if (product === 'registration') {
         const input = legacyChargeLedgerAuthority
           ? normalizeRegistrationCheckoutCancelInput(legacyChargeLedgerAuthority)
-          : normalizeRegistrationCheckoutCancelInput(charge.metadata || {});
+          : normalizeRegistrationCheckoutCancelInput(recoveredLegacyReversalSession?.metadata || charge.metadata || {});
         const registrationRef = buildRegistrationRef(input);
         const chargeRef = buildRegistrationStripeChargeRef(registrationRef, charge.id);
         const eventRef = firestore.doc(`stripeEvents/${event.id}`);
@@ -6210,17 +6380,18 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
       if (product === 'team_fee') {
         const input = legacyChargeLedgerAuthority
           ? normalizeTeamFeeCheckoutInput(legacyChargeLedgerAuthority)
-          : normalizeTeamFeeCheckoutInput(charge.metadata || {});
+          : normalizeTeamFeeCheckoutInput(recoveredLegacyReversalSession?.metadata || charge.metadata || {});
         const recipientRef = buildTeamFeeRecipientRef(input);
         const chargeRef = buildTeamFeeStripeChargeRef(recipientRef, charge.id);
         const eventRef = firestore.doc(`stripeEvents/${event.id}`);
         const receivedAt = admin.firestore.FieldValue.serverTimestamp();
         let teamFeeUpdated = false;
         await firestore.runTransaction(async (transaction) => {
-          const [eventSnap, recipientSnap, ledgerSnap] = await Promise.all([
+          const [eventSnap, recipientSnap, ledgerSnap, chargeLedgerQuerySnap] = await Promise.all([
             transaction.get(eventRef),
             transaction.get(recipientRef),
-            transaction.get(chargeRef)
+            transaction.get(chargeRef),
+            transaction.get(recipientRef.collection('stripeCharges'))
           ]);
           if (eventSnap.exists) return;
           if (!recipientSnap.exists || !ledgerSnap.exists) {
@@ -6245,30 +6416,38 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
             const paidAmountCents = Math.max(0, Number(recipient.paidAmountCents ?? recipient.amountPaidCents ?? 0) - netReductionDelta);
             const totalAmountCents = Math.max(0, Number(recipient.amountDueCents ?? recipient.adjustedAmountCents ?? recipient.amountCents ?? 0));
             const balanceDueCents = Math.max(0, totalAmountCents - paidAmountCents);
-            const financialStatus = getStripeChargeFinancialStatus(reversal);
-            transaction.set(recipientRef, {
-              status: paidAmountCents <= 0 ? 'unpaid' : balanceDueCents > 0 ? 'partial' : 'paid',
-              paidAmountCents,
-              amountPaidCents: paidAmountCents,
-              balanceDueCents,
-              remainingBalanceCents: balanceDueCents,
-              stripeRefundedAmountCents: Math.max(0, Number(recipient.stripeRefundedAmountCents || 0) + refundDelta),
-              stripeDisputeLostAmountCents: Math.max(0, Number(recipient.stripeDisputeLostAmountCents || 0) + lostDelta),
-              stripeRefundableAmountCents: Math.max(0, Number(recipient.stripeRefundableAmountCents || 0) - netReductionDelta),
-              stripeFinancialStatus: financialStatus,
-              checkoutStatus: 'stale',
-              updatedAt: receivedAt
-            }, { merge: true });
-            transaction.set(chargeRef, {
+            const nextLedger = {
+              ...ledger,
               refundedAmountCents: nextRefunded,
               disputeLostAmountCents: nextLost,
               refundableAmountCents: Math.max(0, chargeAmountCents - nextRefunded - nextLost),
               disputeStatus: reversal.disputeStatus || 'none',
               disputeEventCreated: Number(reversal.disputeEventCreated || 0),
               refundEventCreated: Number(reversal.refundEventCreated || 0),
-              reversalState: reversal,
+              reversalState: reversal
+            };
+            const aggregateFinancialState = getTeamFeeAggregateFinancialState((chargeLedgerQuerySnap.docs || []).map((docSnap) => (
+              docSnap.id === chargeRef.id ? nextLedger : (docSnap.data() || {})
+            )));
+            if (!aggregateFinancialState.valid) {
+              throw new Error('Team fee charge ledger aggregate is invalid.');
+            }
+            const financialStatus = aggregateFinancialState.financialStatus;
+            transaction.set(recipientRef, {
+              status: paidAmountCents <= 0 ? 'unpaid' : balanceDueCents > 0 ? 'partial' : 'paid',
+              paidAmountCents,
+              amountPaidCents: paidAmountCents,
+              balanceDueCents,
+              remainingBalanceCents: balanceDueCents,
+              stripeGrossPaidAmountCents: aggregateFinancialState.grossPaidAmountCents,
+              stripeRefundedAmountCents: aggregateFinancialState.refundedAmountCents,
+              stripeDisputeLostAmountCents: aggregateFinancialState.disputeLostAmountCents,
+              stripeRefundableAmountCents: aggregateFinancialState.refundableAmountCents,
+              stripeFinancialStatus: financialStatus,
+              checkoutStatus: 'stale',
               updatedAt: receivedAt
             }, { merge: true });
+            transaction.set(chargeRef, { ...nextLedger, updatedAt: receivedAt }, { merge: true });
             transaction.set(buildTeamFeeAdminBillingRef(recipientRef, event.id), {
               type: event.type, provider: 'stripe', product: 'team_fee',
               teamId: input.teamId, batchId: input.batchId, recipientId: input.recipientId,
@@ -6310,6 +6489,9 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
       let attemptRef;
       if (charge?.metadata?.product === TEAM_PASS_PRODUCT) {
         input = normalizeTeamPassCheckoutInput(charge.metadata);
+        attemptRef = buildTeamPassAttemptRef(input);
+      } else if (recoveredLegacyReversalSession?.metadata?.product === TEAM_PASS_PRODUCT) {
+        input = normalizeTeamPassCheckoutInput(recoveredLegacyReversalSession.metadata);
         attemptRef = buildTeamPassAttemptRef(input);
       } else if (Object.keys(charge?.metadata || {}).length === 0 && getStripeObjectId(charge?.payment_intent)) {
         const legacyAttemptSnap = await firestore.collectionGroup('teamPassCheckoutAttempts')
@@ -6355,7 +6537,11 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
           throw new Error('Team Pass checkout attempt is not ready for reversal reconciliation.');
         }
         const attempt = attemptSnap.exists ? (attemptSnap.data() || {}) : {};
-        const ignoredReason = getTeamPassChargeGuardFailure({ attempt, charge });
+        const chargeAuthority = Object.keys(charge.metadata || {}).length === 0
+          && recoveredLegacyReversalSession?.metadata?.product === TEAM_PASS_PRODUCT
+          ? { ...charge, metadata: recoveredLegacyReversalSession.metadata }
+          : charge;
+        const ignoredReason = getTeamPassChargeGuardFailure({ attempt, charge: chargeAuthority });
         const currentReversal = attempt.reversalState || {};
         const nextReversal = ignoredReason ? currentReversal : reconcileTeamPassReversal({
           current: currentReversal,

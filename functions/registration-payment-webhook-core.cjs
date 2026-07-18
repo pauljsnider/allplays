@@ -164,6 +164,7 @@ function buildRegistrationStripeChargeLedger({ registration = {}, session = {}, 
         stripePaymentIntentId: paymentIntent.id,
         stripeCheckoutSessionId: session.id,
         checkoutAttemptToken: session.metadata?.checkoutAttemptToken || null,
+        paymentPurpose: normalizeString(session.metadata?.paymentPurpose) || null,
         amountPaidCents: normalizePositiveInteger(session.amount_total),
         refundedAmountCents: 0,
         disputeLostAmountCents: 0,
@@ -206,6 +207,7 @@ function buildRegistrationReversalUpdate({ registration = {}, ledger = {}, rever
     const previousLedgerLost = Math.max(0, Number(ledger.disputeLostAmountCents || 0));
     const nextTotalRefunded = Math.max(0, Number(registration.stripeRefundedAmountCents || 0) + refundedAmountCents - previousLedgerRefunded);
     const nextTotalLost = Math.max(0, Number(registration.stripeDisputeLostAmountCents || 0) + lostAmountCents - previousLedgerLost);
+    const reversalBalanceDelta = (refundedAmountCents - previousLedgerRefunded) + (lostAmountCents - previousLedgerLost);
     const grossPaid = Math.max(chargeAmountCents, Number(registration.stripeGrossPaidAmountCents || 0));
     const basePaymentStatus = normalizeString(registration.paymentStatusBeforeStripeReversal || ledger.paymentStatusAfterCharge || 'paid');
     const paymentStatus = financialStatus === 'disputed'
@@ -222,10 +224,11 @@ function buildRegistrationReversalUpdate({ registration = {}, ledger = {}, rever
             stripeGrossPaidAmountCents: grossPaid,
             stripeRefundedAmountCents: nextTotalRefunded,
             stripeDisputeLostAmountCents: nextTotalLost,
+            stripeReversalBalanceCents: Math.max(0, Number(registration.stripeReversalBalanceCents || 0) + reversalBalanceDelta),
             paymentStatusBeforeStripeReversal: ['disputed', 'dispute_lost', 'refunded', 'partially_refunded'].includes(normalizeString(registration.paymentStatus))
                 ? basePaymentStatus
                 : normalizeString(registration.paymentStatus || basePaymentStatus),
-            balanceDueCents: Math.max(0, Number(registration.balanceDueCents || 0) + (refundedAmountCents - previousLedgerRefunded) + (lostAmountCents - previousLedgerLost))
+            balanceDueCents: Math.max(0, Number(registration.balanceDueCents || 0) + reversalBalanceDelta)
         },
         ledgerUpdate: {
             refundedAmountCents,

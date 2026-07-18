@@ -230,7 +230,13 @@ function getTeamFeeCheckoutGuardFailure({ recipient = {}, session = {} } = {}) {
 
     const expectedCurrency = normalizeString(recipient.checkoutCurrency).toLowerCase();
     const sessionCurrency = normalizeString(session.currency).toLowerCase();
-    if (!isLegacyCheckoutSession && (!expectedCurrency || !sessionCurrency || expectedCurrency !== sessionCurrency)) {
+    const isExactHistoricalUsdAuthority = recipient.stripePaymentAuthorityVersion !== 2
+        && Boolean(recipientToken && sessionToken && recipientToken === sessionToken)
+        && !expectedCurrency
+        && sessionCurrency === 'usd';
+    if (!isLegacyCheckoutSession
+        && !isExactHistoricalUsdAuthority
+        && (!expectedCurrency || !sessionCurrency || expectedCurrency !== sessionCurrency)) {
         return 'checkout_currency_mismatch';
     }
     if (!isLegacyCheckoutSession && recipient.livemode !== undefined && Boolean(session.livemode) !== Boolean(recipient.livemode)) {
@@ -469,6 +475,49 @@ function allocateTeamFeeRefundAcrossCharges(ledgers = [], amountCents = 0) {
     return remaining === 0 ? allocations : [];
 }
 
+function getTeamFeeAggregateFinancialState(ledgers = []) {
+    const normalized = Array.isArray(ledgers) ? ledgers : [];
+    const seenChargeIds = new Set();
+    const valid = normalized.length > 0 && normalized.every((ledger) => {
+        const stripeChargeId = normalizeString(ledger?.stripeChargeId);
+        const amountPaidCents = Number(ledger?.amountPaidCents);
+        const refundedAmountCents = Number(ledger?.refundedAmountCents || 0);
+        const disputeLostAmountCents = Number(ledger?.disputeLostAmountCents || 0);
+        const refundableAmountCents = Number(ledger?.refundableAmountCents || 0);
+        const amounts = [amountPaidCents, refundedAmountCents, disputeLostAmountCents, refundableAmountCents];
+        if (ledger?.type !== 'stripe_charge'
+            || ledger?.provider !== 'stripe'
+            || ledger?.product !== 'team_fee'
+            || !stripeChargeId
+            || seenChargeIds.has(stripeChargeId)
+            || !amounts.every((amount) => Number.isSafeInteger(amount) && amount >= 0)
+            || amountPaidCents <= 0
+            || refundedAmountCents + disputeLostAmountCents + refundableAmountCents !== amountPaidCents) return false;
+        seenChargeIds.add(stripeChargeId);
+        return true;
+    });
+    const grossPaidAmountCents = normalized.reduce((total, ledger) => total + Math.max(0, Number(ledger.amountPaidCents || 0)), 0);
+    const refundedAmountCents = normalized.reduce((total, ledger) => total + Math.max(0, Number(ledger.refundedAmountCents || 0)), 0);
+    const disputeLostAmountCents = normalized.reduce((total, ledger) => total + Math.max(0, Number(ledger.disputeLostAmountCents || 0)), 0);
+    const refundableAmountCents = normalized.reduce((total, ledger) => total + Math.max(0, Number(ledger.refundableAmountCents || 0)), 0);
+    const disputeStatuses = normalized.map((ledger) => normalizeString(ledger.disputeStatus).toLowerCase());
+    const financialStatus = disputeStatuses.includes('open')
+        ? 'disputed'
+        : disputeStatuses.includes('lost') || disputeLostAmountCents > 0
+            ? 'dispute_lost'
+            : refundedAmountCents > 0
+                ? refundedAmountCents >= grossPaidAmountCents ? 'refunded' : 'partially_refunded'
+                : grossPaidAmountCents > 0 ? 'paid' : 'unpaid';
+    return {
+        valid,
+        financialStatus,
+        grossPaidAmountCents,
+        refundedAmountCents,
+        disputeLostAmountCents,
+        refundableAmountCents
+    };
+}
+
 function buildTeamFeeStripeRefundUpdate({ recipient = {}, refund = {}, amountCents = 0, actorId = '', reason = '', refundedAt, ledgerRefundedAt = refundedAt }) {
     const refundAmountCents = Math.round(Number(amountCents || refund.amount || 0));
     const previousPaidCents = getTeamFeePaidCents(recipient);
@@ -608,6 +657,7 @@ module.exports = {
     buildTeamFeeStripeChargeLedger,
     getTeamFeeChargeGuardFailure,
     allocateTeamFeeRefundAcrossCharges,
+    getTeamFeeAggregateFinancialState,
     buildTeamFeePaidUpdate,
     buildTeamFeeStripeRefundUpdate
 };
