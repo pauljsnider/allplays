@@ -2,7 +2,7 @@
 import React, { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot } from 'react-dom/client';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 
 const chatMocks = vi.hoisted(() => ({
     deleteTeamChatMessage: vi.fn(),
@@ -200,17 +200,26 @@ async function renderMessages(initialEntry, authState = auth) {
     document.body.appendChild(container);
     const root = createRoot(container);
     mountedRoots.add(root);
+    let navigateRoute = null;
+
+    function NavigationCapture() {
+        navigateRoute = useNavigate();
+        return null;
+    }
 
     const renderWithAuth = async (nextAuthState) => {
         await act(async () => {
             root.render(React.createElement(
                 MemoryRouter,
                 { initialEntries: [initialEntry] },
-                React.createElement(
-                    Routes,
-                    null,
-                    React.createElement(Route, { path: '/messages', element: React.createElement(Messages, { auth: nextAuthState }) }),
-                    React.createElement(Route, { path: '/messages/:teamId', element: React.createElement(Messages, { auth: nextAuthState }) })
+                React.createElement(React.Fragment, null,
+                    React.createElement(NavigationCapture),
+                    React.createElement(
+                        Routes,
+                        null,
+                        React.createElement(Route, { path: '/messages', element: React.createElement(Messages, { auth: nextAuthState }) }),
+                        React.createElement(Route, { path: '/messages/:teamId', element: React.createElement(Messages, { auth: nextAuthState }) })
+                    )
                 )
             ));
         });
@@ -223,7 +232,13 @@ async function renderMessages(initialEntry, authState = auth) {
     return {
         container,
         root,
-        rerender: renderWithAuth
+        rerender: renderWithAuth,
+        navigate: async (path) => {
+            await act(async () => {
+                navigateRoute(path);
+            });
+            await flush();
+        }
     };
 }
 
@@ -845,6 +860,49 @@ describe('React app messages integration', () => {
         expect(chatMocks.sendTeamChatMessage).toHaveBeenCalledWith(expect.objectContaining({
             teamId: 'team-1',
             text: 'Update for everyone',
+            selectedConversationId: 'team',
+            selectedRecipientTarget: 'full_team',
+            selectedRecipientIds: []
+        }));
+    });
+
+    it('preserves a full-team draft while a first-time friend message uses a blank private draft', async () => {
+        layoutMocks.isDesktopWeb = true;
+        const { container, navigate } = await renderMessages('/messages/team-1');
+        const textarea = container.querySelector('.chat-composer-textarea');
+        await setFieldValue(textarea, 'Team practice update');
+        const photoInput = container.querySelector('input[type="file"][accept="image/*"]');
+        const teamPhoto = new File(['team-photo'], 'team.jpg', { type: 'image/jpeg' });
+        Object.defineProperty(photoInput, 'files', { configurable: true, value: [teamPhoto] });
+        await act(async () => {
+            photoInput.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        await flush();
+        expect(container.querySelector('img[alt="team.jpg"]')).toBeTruthy();
+
+        await navigate('/messages/team-1?compose=user%3Acoach-1&recipientName=Coach+Jamie');
+        await waitForText(container, 'Direct message to Coach Jamie is ready.');
+        expect(textarea.value).toBe('');
+        expect(container.querySelector('img[alt="team.jpg"]')).toBeNull();
+
+        await setFieldValue(textarea, 'Private hello');
+        await click(container, 'Send message');
+        expect(chatMocks.sendTeamChatMessage).toHaveBeenLastCalledWith(expect.objectContaining({
+            teamId: 'team-1',
+            text: 'Private hello',
+            selectedConversationId: 'team',
+            selectedRecipientTarget: 'individuals',
+            selectedRecipientIds: ['user:coach-1']
+        }));
+
+        await navigate('/messages/team-1');
+        await waitForMatch(() => textarea.value === 'Team practice update', 'restored team draft');
+        expect(container.querySelector('img[alt="team.jpg"]')).toBeTruthy();
+
+        await click(container, 'Send message');
+        expect(chatMocks.sendTeamChatMessage).toHaveBeenLastCalledWith(expect.objectContaining({
+            teamId: 'team-1',
+            text: 'Team practice update',
             selectedConversationId: 'team',
             selectedRecipientTarget: 'full_team',
             selectedRecipientIds: []

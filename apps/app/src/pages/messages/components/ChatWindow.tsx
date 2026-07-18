@@ -254,6 +254,10 @@ export function getChatComposerDraftKey(teamId: string, conversationId: string |
   return `${encodeURIComponent(String(teamId || '').trim())}|${encodeURIComponent(normalizeConversationId(conversationId))}`;
 }
 
+function getInitialRecipientComposerDraftKey(teamId: string, recipientId: string) {
+  return `${getChatComposerDraftKey(teamId, DEFAULT_TEAM_CONVERSATION_ID)}|initial-recipient:${encodeURIComponent(recipientId)}`;
+}
+
 export function getChatThreadLayoutKey(teamId: string, conversationId: string | null | undefined) {
   return `${encodeURIComponent(String(teamId || '').trim())}|${encodeURIComponent(normalizeConversationId(conversationId))}`;
 }
@@ -890,7 +894,7 @@ export function ChatWindow({
     const recipientId = String(initialRecipient?.id || '').trim();
     const clearPreparedRecipientDraft = () => {
       const preparedDraftKey = preparedInitialRecipientDraftKeyRef.current;
-      if (!preparedDraftKey) return;
+      if (!preparedDraftKey) return false;
       const isActivePreparedDraft = activeComposerDraftKeyRef.current === preparedDraftKey;
       const cachedDraft = composerDraftsRef.current.get(preparedDraftKey);
       composerDraftsRef.current.delete(preparedDraftKey);
@@ -898,25 +902,34 @@ export function ChatWindow({
 
       if (!isActivePreparedDraft) {
         cachedDraft?.filePreviews.forEach((preview) => URL.revokeObjectURL(preview.url));
-        return;
+        return true;
       }
 
-      latestComposerDraftRef.current = {
+      const nextDraftKey = getChatComposerDraftKey(teamId, effectiveConversationId);
+      const nextDraft = composerDraftsRef.current.get(nextDraftKey) || {
         text: '',
         filePreviews: [],
-        selectedRecipientTarget: 'full_team',
+        selectedRecipientTarget: 'full_team' as ChatTargetType,
         selectedRecipientIds: []
       };
-      setText('');
+      activeComposerDraftKeyRef.current = nextDraftKey;
+      latestComposerDraftRef.current = nextDraft;
+      setText(nextDraft.text);
       setFilePreviews((current) => {
-        const previewUrls = new Set([
+        const preservedPreviewUrls = new Set(nextDraft.filePreviews.map((preview) => preview.url));
+        const discardedPreviewUrls = new Set([
           ...(cachedDraft?.filePreviews || []).map((preview) => preview.url),
           ...current.map((preview) => preview.url)
         ]);
-        previewUrls.forEach((url) => URL.revokeObjectURL(url));
-        return [];
+        discardedPreviewUrls.forEach((url) => {
+          if (!preservedPreviewUrls.has(url)) URL.revokeObjectURL(url);
+        });
+        return [...nextDraft.filePreviews];
       });
+      setSelectedRecipientTarget(nextDraft.selectedRecipientTarget);
+      setSelectedRecipientIds([...nextDraft.selectedRecipientIds]);
       setComposerCursorPosition(undefined);
+      return true;
     };
 
     if (!recipientId || !/^user:[A-Za-z0-9_-]{1,160}$/.test(recipientId)) {
@@ -930,12 +943,14 @@ export function ChatWindow({
       initialRecipientLookupKeyRef.current = '';
       if (hadPreparedRouteRecipient) {
         initialRecipientAuthorizationKeyRef.current = '';
-        clearPreparedRecipientDraft();
+        const handledPreparedDraft = clearPreparedRecipientDraft();
         preparedInitialRecipientKeyRef.current = '';
         setInitialRecipientLookup({ key: '', status: 'idle' });
         setInitialRecipientAuthorization({ key: '', status: 'idle' });
-        setSelectedRecipientTarget('full_team');
-        setSelectedRecipientIds([]);
+        if (!handledPreparedDraft) {
+          setSelectedRecipientTarget('full_team');
+          setSelectedRecipientIds([]);
+        }
         setStatus(null);
         if (!isDefaultTeamConversation(effectiveConversationId)) {
           switchChatConversation(DEFAULT_TEAM_CONVERSATION_ID);
@@ -948,11 +963,13 @@ export function ChatWindow({
     if (preparedInitialRecipientKeyRef.current
       && preparedInitialRecipientKeyRef.current !== preparationKey) {
       initialRecipientLookupKeyRef.current = '';
-      clearPreparedRecipientDraft();
+      const handledPreparedDraft = clearPreparedRecipientDraft();
       preparedInitialRecipientKeyRef.current = '';
       setInitialRecipientLookup({ key: '', status: 'idle' });
-      setSelectedRecipientTarget('full_team');
-      setSelectedRecipientIds([]);
+      if (!handledPreparedDraft) {
+        setSelectedRecipientTarget('full_team');
+        setSelectedRecipientIds([]);
+      }
       setStatus(null);
     }
     if (preparedInitialRecipientKeyRef.current === preparationKey) return;
@@ -1037,14 +1054,33 @@ export function ChatWindow({
       switchChatConversation(DEFAULT_TEAM_CONVERSATION_ID);
       return;
     }
+    const currentDraftKey = activeComposerDraftKeyRef.current;
+    composerDraftsRef.current.set(currentDraftKey, {
+      ...latestComposerDraftRef.current,
+      filePreviews: [...latestComposerDraftRef.current.filePreviews],
+      selectedRecipientIds: [...latestComposerDraftRef.current.selectedRecipientIds]
+    });
+    const initialRecipientDraftKey = getInitialRecipientComposerDraftKey(teamId, recipientId);
+    const initialRecipientDraft: ChatComposerDraft = {
+      text: '',
+      filePreviews: [],
+      selectedRecipientTarget: 'individuals',
+      selectedRecipientIds: [recipientId]
+    };
+    composerDraftsRef.current.delete(initialRecipientDraftKey);
+    activeComposerDraftKeyRef.current = initialRecipientDraftKey;
+    latestComposerDraftRef.current = initialRecipientDraft;
     preparedInitialRecipientKeyRef.current = preparationKey;
-    preparedInitialRecipientDraftKeyRef.current = activeComposerDraftKeyRef.current;
+    preparedInitialRecipientDraftKeyRef.current = initialRecipientDraftKey;
     setRecipientOptions((current) => current.some((option) => option.id === recipientId) ? current : [
       ...current,
       { id: recipientId, name: initialRecipient?.name || 'Friend', detail: 'Accepted friend' }
     ]);
+    setText('');
+    setFilePreviews([]);
     setSelectedRecipientTarget('individuals');
     setSelectedRecipientIds([recipientId]);
+    setComposerCursorPosition(undefined);
     setStatus({ tone: 'neutral', message: `Direct message to ${initialRecipient?.name || 'your friend'} is ready.` });
   }, [auth.user, canModerate, conversations, effectiveConversationId, initialRecipient, initialRecipientAuthorization, initialRecipientLookup, loadingContext, setConversations, switchChatConversation, team, teamId]);
 
@@ -1510,7 +1546,7 @@ export function ChatWindow({
     pendingScrollRef.current = true;
     pendingSendRequestsRef.current.set(clientMessageId, request);
     setOptimisticMessages((current) => [...current, createOptimisticChatMessage(request)]);
-    composerDraftsRef.current.delete(getChatComposerDraftKey(teamId, request.selectedConversationId));
+    composerDraftsRef.current.delete(activeComposerDraftKeyRef.current);
     latestComposerDraftRef.current = {
       text: '',
       filePreviews: [],
