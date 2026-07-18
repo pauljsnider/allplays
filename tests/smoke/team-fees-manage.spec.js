@@ -142,6 +142,7 @@ async function mockTeamFeesManageModules(page) {
                     amountDueCents: 10000,
                     amountPaidCents: 10000,
                     paymentProvider: 'stripe',
+                    stripeRefundableAmountCents: 10000,
                     hasAdminBilling: true,
                     adminBilling: {
                         stripePaymentIntentId: 'pi_123',
@@ -202,11 +203,13 @@ test('team fees manage page records manual payments and refunds through delegate
     await expect(unpaidRecipient).toContainText('Outstanding $100.00');
     await expect(unpaidRecipient.locator('form[data-action="paid"]')).toBeVisible();
     await expect(unpaidRecipient.locator('form[data-action="adjust"]')).toBeVisible();
+    await expect(unpaidRecipient.locator('form[data-action="refund"]')).toHaveCount(0);
     await expect(unpaidRecipient.locator('[data-refund-action]')).toBeDisabled();
 
     const partialRecipient = page.locator('[data-recipient-id="partial-1"]');
     await expect(partialRecipient).toContainText('Paid $25.00');
     await expect(partialRecipient).toContainText('Outstanding $75.00');
+    await expect(partialRecipient.locator('form[data-action="refund"]')).toHaveCount(0);
     await expect(partialRecipient.locator('[data-refund-action]')).toBeEnabled();
 
     const paidRecipient = page.locator('[data-recipient-id="paid-1"]');
@@ -214,6 +217,7 @@ test('team fees manage page records manual payments and refunds through delegate
     await expect(paidRecipient).toContainText('Outstanding $0.00');
     await expect(paidRecipient.locator('form[data-action="cancel"]')).toContainText('Refund paid recipients before canceling their balance.');
     await expect(paidRecipient.locator('form[data-action="cancel"] button')).toBeDisabled();
+    await expect(paidRecipient.locator('form[data-action="refund"]')).toHaveCount(0);
     await expect(paidRecipient.locator('[data-refund-action]')).toBeEnabled();
 
     const stripeRecipient = page.locator('[data-recipient-id="stripe-1"]');
