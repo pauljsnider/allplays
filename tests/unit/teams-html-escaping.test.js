@@ -46,6 +46,8 @@ describe('teams page HTML escaping', () => {
         expect(source).toContain("let activeLocationFilter = '';");
         expect(source).toContain('browseCursor = discovery.nextCursor || null;');
         expect(source).toContain('canLoadMore: Boolean(browseCursor),');
+        expect(source).toContain('No matches in this scan yet');
+        expect(source).toContain('onClick: loadNextDiscoveryPage');
         expect(source).toContain("await loadTeams(activeLocationFilter, { cursor: nextCursor, append: true });");
         expect(source).toContain("activeLocationFilter = getLocationSearchValue();");
         expect(source).toContain("activeLocationFilter = '';");

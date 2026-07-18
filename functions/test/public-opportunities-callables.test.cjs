@@ -414,6 +414,25 @@ test('public team discovery pages the compatibility source without exposing mana
     assert.equal(Object.hasOwn(secondPage.teams[0], 'paymentConfig'), false);
 });
 
+test('public team discovery exact-matches whole state-code queries without breaking city-state searches', async () => {
+    const { callables } = loadCallables({
+        'teams/name-match': {
+            name: 'Indiana Bears', city: 'Kansas City', state: 'MO', isPublic: true, active: true
+        },
+        'teams/state-match': {
+            name: 'Wildcats', city: 'Bloomington', state: 'IN', isPublic: true, active: true
+        }
+    });
+
+    const statePage = await callables.discoverPublicTeamProfiles({ searchText: 'IN', pageSize: 10 }, {});
+    assert.deepEqual(statePage.teams.map((team) => team.id), ['state-match']);
+
+    const cityStatePage = await callables.discoverPublicTeamProfiles({
+        searchText: 'bloomington in', pageSize: 10
+    }, {});
+    assert.deepEqual(cityStatePage.teams.map((team) => team.id), ['state-match']);
+});
+
 test('public team source cursors preserve legacy names beyond presentation limits', async () => {
     const longSourceName = `Legacy ${'x'.repeat(110)}`;
     const { callables } = loadCallables({

@@ -48,6 +48,19 @@ describe('public team profile callable boundary', () => {
     expect(matchesPublicTeamProfileSearch(profile, 'private-owner')).toBe(false);
   });
 
+  it('matches a whole two-letter query only against state while preserving city-state token searches', () => {
+    const nameMatch = buildPublicTeamProfile({
+      name: 'Indiana Bears', isPublic: true, active: true, city: 'Kansas City', state: 'MO'
+    });
+    const stateMatch = buildPublicTeamProfile({
+      name: 'Wildcats', isPublic: true, active: true, city: 'Bloomington', state: 'IN'
+    });
+
+    expect(matchesPublicTeamProfileSearch(nameMatch, 'in')).toBe(false);
+    expect(matchesPublicTeamProfileSearch(stateMatch, 'IN')).toBe(true);
+    expect(matchesPublicTeamProfileSearch(stateMatch, 'bloomington in')).toBe(true);
+  });
+
   it('caps paged compatibility scans and never requests more than the remaining budget', async () => {
     const documents = Array.from({ length: 7 }, (_, index) => ({ id: `team-${index}` }));
     const fetchPage = vi.fn(async ({ cursor, pageSize }) => {

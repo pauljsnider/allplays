@@ -274,6 +274,9 @@ function buildPublicTeamProfile(team = {}, options = {}) {
 function matchesPublicTeamProfileSearch(profile = {}, searchText = '') {
   const search = normalizeText(searchText).toLowerCase();
   if (!search) return true;
+  if (/^[a-z]{2}$/.test(search)) {
+    return normalizeText(profile.state).toLowerCase() === search;
+  }
   const fields = [
     profile.name,
     profile.sport,

@@ -166,6 +166,40 @@ describe('discoverPublicTeams search pagination', () => {
         });
         expect(callable).toHaveBeenNthCalledWith(2, { searchText: 'target', cursor: scanCursor, pageSize: 24 });
     });
+
+    it('returns a resumable cursor after the bounded empty-page continuation limit', async () => {
+        const firstCursor = {
+            kind: 'public-team-callable-v2', source: 'projection', searchText: 'target', lastName: 'Alpha', lastId: 'alpha'
+        };
+        const resumeCursor = {
+            kind: 'public-team-callable-v2', source: 'projection', searchText: 'target', lastName: 'Middle', lastId: 'middle'
+        };
+        const callable = vi.fn()
+            .mockResolvedValueOnce({ data: { teams: [], nextCursor: firstCursor } })
+            .mockResolvedValueOnce({ data: { teams: [], nextCursor: resumeCursor } })
+            .mockResolvedValueOnce({
+                data: {
+                    teams: [{ id: 'target', name: 'Target Team', isPublic: true, active: true }],
+                    nextCursor: null
+                }
+            });
+        firebaseMocks.httpsCallable.mockReturnValue(callable);
+        const { discoverPublicTeams } = await import('../../js/db.js?v=91');
+
+        await expect(discoverPublicTeams({ searchText: 'target' })).resolves.toEqual({
+            teams: [],
+            nextCursor: resumeCursor
+        });
+        expect(callable).toHaveBeenCalledTimes(2);
+
+        await expect(discoverPublicTeams({ searchText: 'target', cursor: resumeCursor })).resolves.toEqual({
+            teams: [{ id: 'target', name: 'Target Team', isPublic: true, active: true }],
+            nextCursor: null
+        });
+        expect(callable).toHaveBeenNthCalledWith(3, {
+            searchText: 'target', cursor: resumeCursor, pageSize: 24
+        });
+    });
 });
 
 describe('public team roster count', () => {

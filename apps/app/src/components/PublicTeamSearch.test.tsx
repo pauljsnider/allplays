@@ -279,6 +279,26 @@ describe('PublicTeamSearch', () => {
         expect(screen.queryByText('Atlanta United')).toBeNull();
     });
 
+    it('offers explicit continuation when a bounded scan is empty but resumable', async () => {
+        (getPublicTeamsPage as import('vitest').Mock)
+            .mockResolvedValueOnce({ teams: [], nextCursor: 'scan-cursor-2' })
+            .mockResolvedValueOnce({ teams: [mockTeams[0]], nextCursor: null });
+        renderSearch();
+
+        const searchInput = screen.getByPlaceholderText('Search by team, city, state, or zip');
+        fireEvent.change(searchInput, { target: { value: 'atlanta' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Search public teams' }));
+
+        await waitFor(() => expect(screen.getByText(/No matches in this scan yet/i)).toBeTruthy());
+        expect(screen.queryByText(/No public teams found/i)).toBeNull();
+        fireEvent.click(screen.getByRole('button', { name: /Load more teams/i }));
+
+        await waitFor(() => expect(getPublicTeamsPage).toHaveBeenLastCalledWith({
+            searchText: 'atlanta', cursor: 'scan-cursor-2'
+        }));
+        expect(screen.getByText('Atlanta United')).toBeTruthy();
+    });
+
     it('recovers from an empty filtered search by browsing all public teams', async () => {
         (getPublicTeamsPage as import('vitest').Mock)
             .mockResolvedValueOnce({ teams: [], nextCursor: null })

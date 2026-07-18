@@ -247,6 +247,7 @@ export { collection, getDocs, deleteDoc, query };
 const limitQuery = limit;
 const startAfterQuery = startAfter;
 const DEFAULT_PUBLIC_TEAM_DISCOVERY_PAGE_SIZE = 24;
+const MAX_PUBLIC_TEAM_EMPTY_PAGE_CONTINUATIONS = 1;
 const MAX_PUBLIC_TEAM_ROSTER_COUNT = 200;
 export const DEFAULT_CHAT_CONVERSATION_PAGE_SIZE = 25;
 const CHAT_REACTIONS = [
@@ -681,6 +682,7 @@ async function discoverPublicTeamsFromCallable({ searchText = '', cursor = null,
     const discoverProfiles = httpsCallable(functions, 'discoverPublicTeamProfiles');
     const seenEmptyPageCursors = new Set();
     let currentCursor = cursor;
+    let emptyPageContinuations = 0;
 
     while (true) {
         const result = await discoverProfiles({ searchText, cursor: currentCursor, pageSize });
@@ -697,6 +699,10 @@ async function discoverPublicTeamsFromCallable({ searchText = '', cursor = null,
             throw new Error('Public team discovery returned a repeated empty-page cursor.');
         }
         seenEmptyPageCursors.add(cursorKey);
+        if (emptyPageContinuations >= MAX_PUBLIC_TEAM_EMPTY_PAGE_CONTINUATIONS) {
+            return { teams, nextCursor };
+        }
+        emptyPageContinuations += 1;
         currentCursor = nextCursor;
     }
 }

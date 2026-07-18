@@ -817,9 +817,9 @@ describe('React app search service', () => {
             nextCursor: null
         });
 
-        const teams = await searchAppTeams('be', [{ id: 'team-home', name: 'Bearcats', sport: 'Soccer', fromAppAccess: true }], auth.user);
+        const teams = await searchAppTeams('bea', [{ id: 'team-home', name: 'Bearcats', sport: 'Soccer', fromAppAccess: true }], auth.user);
 
-        expect(dbMocks.discoverPublicTeams).toHaveBeenCalledWith({ searchText: 'be', cursor: null, pageSize: 20 });
+        expect(dbMocks.discoverPublicTeams).toHaveBeenCalledWith({ searchText: 'bea', cursor: null, pageSize: 20 });
         expect(teams.map((team) => team.id)).toEqual(['team-home', 'team-public']);
         expect(teams.find((team) => team.id === 'team-home')).toMatchObject({
             name: 'Bearcats Public',
@@ -844,8 +844,8 @@ describe('React app search service', () => {
             nextCursor: null
         });
 
-        const first = await searchAppTeams('be', [{ id: 'team-home', name: 'Bearcats', sport: 'Soccer', fromAppAccess: true }], auth.user);
-        const second = await searchAppTeams(' BE ', [{ id: 'team-home', name: 'Bearcats', sport: 'Soccer', fromAppAccess: true }], auth.user);
+        const first = await searchAppTeams('bea', [{ id: 'team-home', name: 'Bearcats', sport: 'Soccer', fromAppAccess: true }], auth.user);
+        const second = await searchAppTeams(' BEA ', [{ id: 'team-home', name: 'Bearcats', sport: 'Soccer', fromAppAccess: true }], auth.user);
 
         expect(dbMocks.discoverPublicTeams).toHaveBeenCalledTimes(1);
         expect(first.map((team) => team.id)).toEqual(['team-home', 'team-public']);

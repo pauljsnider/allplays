@@ -122,6 +122,19 @@ test('public team fallback search matches all normalized tokens without private 
   assert.equal(matchesPublicTeamProfileSearch(profile, 'austin'), false);
 });
 
+test('public team fallback search treats a whole two-letter query as an exact state code', () => {
+  const nameMatch = buildPublicTeamProfile({
+    name: 'Indiana Bears', city: 'Kansas City', state: 'MO', isPublic: true
+  });
+  const stateMatch = buildPublicTeamProfile({
+    name: 'Wildcats', city: 'Bloomington', state: 'IN', isPublic: true
+  });
+
+  assert.equal(matchesPublicTeamProfileSearch(nameMatch, 'in'), false);
+  assert.equal(matchesPublicTeamProfileSearch(stateMatch, 'in'), true);
+  assert.equal(matchesPublicTeamProfileSearch(stateMatch, 'bloomington in'), true);
+});
+
 test('deployment fallback reads every source page instead of truncating at 1000 teams', async () => {
   const source = Array.from({ length: 1001 }, (_, index) => ({ id: `team-${index + 1}` }));
   const cursors = [];

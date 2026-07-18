@@ -195,7 +195,7 @@ describe('publicTeamsService', () => {
         expect(dbMocks.discoverPublicTeams).toHaveBeenCalledWith({ searchText: 'Kansas City', cursor: null, pageSize: 24 });
     });
 
-    it('still matches short text prefixes before treating two-letter searches as state codes', async () => {
+    it('treats a whole two-letter search as an exact state code', async () => {
         dbMocks.discoverPublicTeams.mockResolvedValue({
             teams: [
                 {
@@ -217,14 +217,25 @@ describe('publicTeamsService', () => {
         await expect(getPublicTeamsPage({ searchText: 'be' })).resolves.toEqual({
             teams: [
                 expect.objectContaining({
-                    teamId: 'team-bears-1',
-                    teamName: 'Bears'
-                }),
-                expect.objectContaining({
                     teamId: 'team-state-1',
                     teamName: 'Wildcats'
                 })
             ],
+            nextCursor: null
+        });
+    });
+
+    it('preserves multi-token city and state searches', async () => {
+        dbMocks.discoverPublicTeams.mockResolvedValue({
+            teams: [
+                { id: 'team-kc-1', name: 'Current', city: 'Kansas City', state: 'MO' },
+                { id: 'team-ks-1', name: 'Wildcats', city: 'Wichita', state: 'KS' }
+            ],
+            nextCursor: null
+        });
+
+        await expect(getPublicTeamsPage({ searchText: 'kansas mo' })).resolves.toEqual({
+            teams: [expect.objectContaining({ teamId: 'team-kc-1' })],
             nextCursor: null
         });
     });

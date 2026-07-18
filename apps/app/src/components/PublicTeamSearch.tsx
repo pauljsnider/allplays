@@ -252,12 +252,24 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
       ) : (
         <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-center">
           <div className="text-sm font-semibold text-gray-500">
-            No public teams found {activeSearchQuery ? `for "${activeSearchQuery}"` : ''}. Try a different search or browse all public teams.
+            {nextCursor
+              ? <>No matches in this scan yet {activeSearchQuery ? `for "${activeSearchQuery}"` : ''}. Continue searching to scan more public teams.</>
+              : <>No public teams found {activeSearchQuery ? `for "${activeSearchQuery}"` : ''}. Try a different search or browse all public teams.</>}
           </div>
           <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:justify-center">
+            {nextCursor ? (
+              <button
+                type="button"
+                className="primary-button w-full justify-center !min-h-10 !px-4 text-sm sm:w-auto"
+                onClick={handleLoadMore}
+                disabled={loading}
+              >
+                Load more teams
+              </button>
+            ) : null}
             <button
               type="button"
-              className="primary-button w-full justify-center !min-h-10 !px-4 text-sm sm:w-auto"
+              className={`${nextCursor ? 'ghost-button' : 'primary-button'} w-full justify-center !min-h-10 !px-4 text-sm sm:w-auto`}
               onClick={handleBrowseAll}
               disabled={loading && pendingRequestKey === publicTeamRequestKey(undefined)}
             >
