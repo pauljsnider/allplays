@@ -39,6 +39,10 @@ const excludedFiles = new Set([
     'package.json',
     'storage.rules'
 ]);
+const excludedPublicClaimPaths = new Set([
+    '.well-known/apple-app-site-association',
+    '.well-known/assetlinks.json'
+]);
 
 const appCheckRuntimeConfigRelativePath = path.join('.well-known', 'allplays-runtime-config.json');
 const pagesMetaUnsupportedDirectives = new Set(['frame-ancestors']);
@@ -151,7 +155,9 @@ function listHtmlFiles(rootDir, currentDir = rootDir, files = []) {
 export function injectPagesSecurityMeta(destinationDir, { rootDir = defaultRootDir } = {}) {
     const resolvedDestination = path.resolve(destinationDir);
     const policies = readPagesSecurityMetaPolicies(rootDir);
-    const htmlFiles = listHtmlFiles(resolvedDestination);
+    const htmlFiles = listHtmlFiles(resolvedDestination).filter((htmlPath) => (
+        !toRelativePath(resolvedDestination, htmlPath).startsWith('app/assets/')
+    ));
     if (htmlFiles.length === 0) {
         throw new Error('No staged HTML files were found for Pages security meta injection.');
     }
@@ -253,7 +259,9 @@ function shouldExclude(rootDir, sourcePath, entry) {
     }
 
     if (entry.isFile()) {
-        return excludedFiles.has(entry.name) || entry.name.endsWith('.md');
+        return excludedPublicClaimPaths.has(relativePath)
+            || excludedFiles.has(entry.name)
+            || entry.name.endsWith('.md');
     }
 
     return false;

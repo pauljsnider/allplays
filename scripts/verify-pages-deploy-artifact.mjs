@@ -3,27 +3,19 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const runtimeConfigRelativePath = path.join('.well-known', 'allplays-runtime-config.json');
-
-function isEnforcementReady(value) {
-    return value === true
-        || (typeof value === 'string' && ['true', '1'].includes(value.trim().toLowerCase()));
-}
+const unpublishedMobileAssociationRelativePaths = [
+    path.join('.well-known', 'apple-app-site-association'),
+    path.join('.well-known', 'assetlinks.json')
+];
 
 function isValidPublicSiteKey(value) {
     return typeof value === 'string' && /^[A-Za-z0-9_-]{10,200}$/.test(value.trim());
 }
 
-function isPagesDeployEnabled(value) {
-    return value === true
-        || (typeof value === 'string' && value.trim().toLowerCase() === 'true');
-}
-
 export function verifyPagesDeployArtifact(
     artifactDir,
     {
-        enforcementReady = process.env.ALLPLAYS_APP_CHECK_ENFORCEMENT_READY,
-        expectedSiteKey = process.env.ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY,
-        pagesDeployEnabled = process.env.ALLPLAYS_PAGES_DEPLOY_ENABLED
+        expectedSiteKey = process.env.ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY
     } = {}
 ) {
     if (!artifactDir) {
@@ -36,11 +28,13 @@ export function verifyPagesDeployArtifact(
         throw new Error('Pages deployment artifact is missing the required .nojekyll file.');
     }
 
-    const requireRuntimeConfig = isEnforcementReady(enforcementReady)
-        || isPagesDeployEnabled(pagesDeployEnabled)
-        || (typeof expectedSiteKey === 'string' && expectedSiteKey.trim().length > 0);
-    if (!requireRuntimeConfig) {
-        return;
+    for (const relativePath of unpublishedMobileAssociationRelativePaths) {
+        const associationPath = path.join(resolvedArtifactDir, relativePath);
+        if (fs.existsSync(associationPath)) {
+            throw new Error(
+                `Pages deployment artifact must not publish ${relativePath} until real mobile app association identifiers are configured.`
+            );
+        }
     }
 
     if (!isValidPublicSiteKey(expectedSiteKey)) {

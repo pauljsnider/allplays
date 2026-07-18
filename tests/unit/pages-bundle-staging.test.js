@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -26,6 +27,10 @@ function makeTempDir() {
 function writeFile(filePath, contents = '') {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, contents);
+}
+
+function sha256(contents) {
+    return createHash('sha256').update(contents).digest('hex');
 }
 
 function makePagesSecurityFirebaseConfig() {
@@ -117,8 +122,14 @@ describe('pages bundle staging', () => {
         writeFile(path.join(rootDir, 'css', 'site.css'), 'body {}');
         writeFile(path.join(rootDir, 'js', 'site.js'), 'export const ok = true;');
         writeFile(path.join(rootDir, 'CNAME'), 'allplays.ai');
-        writeFile(path.join(rootDir, '.well-known', 'assetlinks.json'), '[]');
-        writeFile(path.join(rootDir, '.well-known', 'apple-app-site-association'), '{}');
+        writeFile(
+            path.join(rootDir, '.well-known', 'assetlinks.json'),
+            '[{"target":{"sha256_cert_fingerprints":["REPLACE_WITH_RELEASE_CERT_SHA256_FINGERPRINT"]}}]'
+        );
+        writeFile(
+            path.join(rootDir, '.well-known', 'apple-app-site-association'),
+            '{"appIDs":["REPLACE_WITH_APPLE_TEAM_ID.ai.allplays.lite"]}'
+        );
         writeFile(path.join(rootDir, 'package.json'), '{}');
         writeFile(path.join(rootDir, 'firebase.json'), JSON.stringify(makePagesSecurityFirebaseConfig()));
         writeFile(path.join(rootDir, '.firebaserc'), '{}');
@@ -126,6 +137,8 @@ describe('pages bundle staging', () => {
         writeFile(path.join(rootDir, 'apps', 'app', 'src', 'main.tsx'), 'source');
         writeFile(path.join(rootDir, 'apps', 'app', 'dist', 'index.html'), '<!doctype html><html><head></head><body><div id="root"></div></body></html>');
         writeFile(path.join(rootDir, 'apps', 'app', 'dist', 'assets', 'index.js'), 'console.log("app");');
+        const hashedAssetHtml = '<!doctype html><html><head></head><body>Hashed help asset</body></html>';
+        writeFile(path.join(rootDir, 'apps', 'app', 'dist', 'assets', 'help-AbC123.html'), hashedAssetHtml);
         writeFile(path.join(rootDir, 'tests', 'unit', 'example.test.js'), 'test');
 
         const result = stagePagesBundle(destinationDir, { rootDir });
@@ -135,9 +148,14 @@ describe('pages bundle staging', () => {
         expect(fs.existsSync(path.join(destinationDir, 'css', 'site.css'))).toBe(true);
         expect(fs.existsSync(path.join(destinationDir, 'js', 'site.js'))).toBe(true);
         expect(fs.existsSync(path.join(destinationDir, 'CNAME'))).toBe(true);
-        expect(fs.existsSync(path.join(destinationDir, '.well-known', 'assetlinks.json'))).toBe(true);
-        expect(fs.existsSync(path.join(destinationDir, '.well-known', 'apple-app-site-association'))).toBe(true);
+        expect(fs.existsSync(path.join(destinationDir, '.well-known', 'assetlinks.json'))).toBe(false);
+        expect(fs.existsSync(path.join(destinationDir, '.well-known', 'apple-app-site-association'))).toBe(false);
         expect(fs.existsSync(path.join(destinationDir, 'app', 'assets', 'index.js'))).toBe(true);
+        const stagedHashedAssetPath = path.join(destinationDir, 'app', 'assets', 'help-AbC123.html');
+        const stagedHashedAssetHtml = fs.readFileSync(stagedHashedAssetPath, 'utf8');
+        expect(stagedHashedAssetHtml).toBe(hashedAssetHtml);
+        expect(sha256(stagedHashedAssetHtml)).toBe(sha256(hashedAssetHtml));
+        expect(stagedHashedAssetHtml).not.toContain('Content-Security-Policy');
         expect(fs.existsSync(path.join(destinationDir, '.nojekyll'))).toBe(true);
         expect(result.securityMeta.htmlFileCount).toBe(3);
 
@@ -354,13 +372,31 @@ describe('pages bundle staging', () => {
         const pagesUploadIndex = deployJob.indexOf('- name: Upload GitHub Pages artifact');
 
         expect(intermediateUpload).toContain('include-hidden-files: true');
+        expect(pagesWorkflow).toContain("github.event_name == 'workflow_dispatch' && inputs.deploy");
         expect(deployJob).toContain('ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY: ${{ vars.APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY }}');
-        expect(deployJob).toContain('ALLPLAYS_APP_CHECK_ENFORCEMENT_READY: ${{ vars.APP_CHECK_ENFORCEMENT_READY }}');
-        expect(deployJob).toContain('ALLPLAYS_PAGES_DEPLOY_ENABLED: ${{ vars.APP_GITHUB_PAGES_DEPLOY_ENABLED }}');
+        expect(deployJob).not.toContain('ALLPLAYS_PAGES_DEPLOY_ENABLED');
         expect(deployJob).toContain('node scripts/verify-pages-deploy-artifact.mjs "$RUNNER_TEMP/allplays-pages"');
         expect(downloadIndex).toBeGreaterThan(-1);
         expect(verifyIndex).toBeGreaterThan(downloadIndex);
         expect(pagesUploadIndex).toBeGreaterThan(verifyIndex);
+    });
+
+    it('runs preview browser smoke against the exact staged Pages artifact', () => {
+        const repoRoot = path.resolve(import.meta.dirname, '../..');
+        const previewWorkflow = fs.readFileSync(
+            path.join(repoRoot, '.github', 'workflows', 'preview-smoke.yml'),
+            'utf8'
+        );
+        const stageIndex = previewWorkflow.indexOf('- name: Stage exact GitHub Pages artifact');
+        const serverIndex = previewWorkflow.indexOf('- name: Start staged Pages artifact server');
+        const smokeIndex = previewWorkflow.indexOf('- name: Run static-hosting smoke');
+
+        expect(stageIndex).toBeGreaterThan(-1);
+        expect(serverIndex).toBeGreaterThan(stageIndex);
+        expect(smokeIndex).toBeGreaterThan(serverIndex);
+        expect(previewWorkflow).toContain('python3 -m http.server 4173 --directory "$RUNNER_TEMP/allplays-pages"');
+        expect(previewWorkflow).toContain("SMOKE_PAGES_STAGED_ARTIFACT: 'true'");
+        expect(previewWorkflow).toContain('SMOKE_EXPECTED_APP_CHECK_SITE_KEY: ${{ vars.APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY }}');
     });
 
     it('adds immutable headers only for concrete staged app asset files', () => {

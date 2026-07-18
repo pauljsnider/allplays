@@ -40,8 +40,17 @@ jobs:
             sleep 15
           done
 
-      - name: Start local static server
-        run: python3 -m http.server 4173 >/tmp/allplays-preview-smoke.log 2>&1 &
+      - name: Build React app
+        run: npm run app:build
+
+      - name: Stage exact GitHub Pages artifact
+        env:
+          ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY: ${{ vars.APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY }}
+          ALLPLAYS_APP_CHECK_ENFORCEMENT_READY: ${{ vars.APP_CHECK_ENFORCEMENT_READY }}
+        run: node scripts/stage-pages-bundle.mjs "$RUNNER_TEMP/allplays-pages"
+
+      - name: Start staged Pages artifact server
+        run: python3 -m http.server 4173 --directory "$RUNNER_TEMP/allplays-pages" >/tmp/allplays-preview-smoke.log 2>&1 &
 
       - name: Start React app dev server
         run: npm --prefix apps/app run dev -- --host 127.0.0.1 --port 5174 >/tmp/allplays-app-preview-smoke.log 2>&1 &
@@ -75,6 +84,8 @@ jobs:
         env:
           SMOKE_BASE_URL: http://127.0.0.1:4173
           SMOKE_APP_BASE_URL: http://127.0.0.1:5174
+          SMOKE_EXPECTED_APP_CHECK_SITE_KEY: ${{ vars.APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY }}
+          SMOKE_PAGES_STAGED_ARTIFACT: 'true'
           SMOKE_PARENT_EMAIL: ${{ vars.SMOKE_PARENT_EMAIL }}
           SMOKE_PARENT_PASSWORD: ${{ secrets.SMOKE_PARENT_PASSWORD }}
           SMOKE_SUITE: preview

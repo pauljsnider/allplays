@@ -35,24 +35,23 @@ describe('Pages deployment artifact verification', () => {
     it('always requires the hidden .nojekyll file', () => {
         const artifactDir = makeArtifact();
 
-        expect(() => verifyPagesDeployArtifact(artifactDir, { enforcementReady: false }))
+        expect(() => verifyPagesDeployArtifact(artifactDir))
             .toThrow(/missing the required \.nojekyll/);
     });
 
-    it('keeps pre-enforcement rollout fail-open after hidden-file preservation is verified', () => {
+    it('always requires the expected public App Check key in a deploy job', () => {
         const artifactDir = makeArtifact();
         writeFile(path.join(artifactDir, '.nojekyll'));
 
-        expect(() => verifyPagesDeployArtifact(artifactDir, { enforcementReady: false }))
-            .not.toThrow();
+        expect(() => verifyPagesDeployArtifact(artifactDir))
+            .toThrow(/requires a valid expected public App Check site key/);
     });
 
-    it('fails closed when enforcement-ready runtime config is missing or malformed', () => {
+    it('fails closed when runtime config is missing or malformed', () => {
         const artifactDir = makeArtifact();
         writeFile(path.join(artifactDir, '.nojekyll'));
 
         expect(() => verifyPagesDeployArtifact(artifactDir, {
-            enforcementReady: true,
             expectedSiteKey: 'public-enterprise-site-key_123'
         }))
             .toThrow(/missing a valid App Check runtime config/);
@@ -62,21 +61,9 @@ describe('Pages deployment artifact verification', () => {
             '{not-json'
         );
         expect(() => verifyPagesDeployArtifact(artifactDir, {
-            enforcementReady: 'true',
             expectedSiteKey: 'public-enterprise-site-key_123'
         }))
             .toThrow(/missing a valid App Check runtime config/);
-    });
-
-    it('requires hidden runtime config when Pages deploy is enabled before enforcement', () => {
-        const artifactDir = makeArtifact();
-        writeFile(path.join(artifactDir, '.nojekyll'));
-
-        expect(() => verifyPagesDeployArtifact(artifactDir, {
-            enforcementReady: false,
-            pagesDeployEnabled: true,
-            expectedSiteKey: 'public-enterprise-site-key_123'
-        })).toThrow(/missing a valid App Check runtime config/);
     });
 
     it('requires an enabled runtime config matching the expected public site key', () => {
@@ -88,7 +75,6 @@ describe('Pages deployment artifact verification', () => {
             recaptchaEnterpriseSiteKey: 'public-enterprise-site-key_123'
         });
         expect(() => verifyPagesDeployArtifact(artifactDir, {
-            pagesDeployEnabled: 'true',
             expectedSiteKey: 'public-enterprise-site-key_123'
         })).toThrow(/not enabled with the expected public site key/);
 
@@ -97,7 +83,6 @@ describe('Pages deployment artifact verification', () => {
             recaptchaEnterpriseSiteKey: 'invalid key'
         });
         expect(() => verifyPagesDeployArtifact(artifactDir, {
-            pagesDeployEnabled: true,
             expectedSiteKey: 'public-enterprise-site-key_123'
         })).toThrow(/not enabled with the expected public site key/);
 
@@ -106,22 +91,24 @@ describe('Pages deployment artifact verification', () => {
             recaptchaEnterpriseSiteKey: 'different-public-site-key_456'
         });
         expect(() => verifyPagesDeployArtifact(artifactDir, {
-            pagesDeployEnabled: true,
             expectedSiteKey: 'public-enterprise-site-key_123'
         })).toThrow(/not enabled with the expected public site key/);
     });
 
-    it('fails a configured Pages deploy when the expected public key is unavailable', () => {
+    it('rejects unpublished mobile association claims even when hidden files are preserved', () => {
         const artifactDir = makeArtifact();
         writeFile(path.join(artifactDir, '.nojekyll'));
+        writeFile(
+            path.join(artifactDir, '.well-known', 'assetlinks.json'),
+            '[{"target":{"sha256_cert_fingerprints":["REPLACE_WITH_RELEASE_CERT_SHA256_FINGERPRINT"]}}]'
+        );
 
         expect(() => verifyPagesDeployArtifact(artifactDir, {
-            enforcementReady: false,
-            pagesDeployEnabled: true
-        })).toThrow(/requires a valid expected public App Check site key/);
+            expectedSiteKey: 'public-enterprise-site-key_123'
+        })).toThrow(/must not publish \.well-known.assetlinks\.json until real mobile app association identifiers are configured/);
     });
 
-    it('accepts the enforcement-ready hidden runtime config without returning its key', () => {
+    it('accepts the hidden runtime config without returning its key', () => {
         const artifactDir = makeArtifact();
         writeFile(path.join(artifactDir, '.nojekyll'));
         writeRuntimeConfig(artifactDir, {
@@ -131,7 +118,6 @@ describe('Pages deployment artifact verification', () => {
         });
 
         expect(verifyPagesDeployArtifact(artifactDir, {
-            enforcementReady: true,
             expectedSiteKey: 'public-enterprise-site-key_123'
         })).toBeUndefined();
     });
