@@ -151,7 +151,8 @@ describe('authentication email delivery routing', () => {
         );
 
         expect(deployStepStart).toBeGreaterThan(-1);
-        expect(deployStep).toContain("transient_pattern='(^|[^[:alnum:]])(429|500|502|503|504)([^[:alnum:]]|$)|service[[:space:]_-]+unavailable|econnreset|connection[[:space:]_-]+reset|network[[:space:]_-]+reset|etimedout|timed[[:space:]_-]+out|timeout'");
+        expect(deployStep).toContain("transient_pattern='(^|[^[:alnum:]])(429|500|502|503|504)([^[:alnum:]]|$)|HTTP Error:[[:space:]]*409,[[:space:]]*Requested entity already exists|service[[:space:]_-]+unavailable|econnreset|connection[[:space:]_-]+reset|network[[:space:]_-]+reset|etimedout|timed[[:space:]_-]+out|timeout'");
+        expect(deployStep).not.toContain('(^|[^[:alnum:]])(409|');
         expect(deployStep).toContain('2>&1 | tee "$deploy_log"');
         expect(deployStep).toContain('deploy_status="${PIPESTATUS[0]}"');
         expect(deployStep).toContain(transientGuard);
