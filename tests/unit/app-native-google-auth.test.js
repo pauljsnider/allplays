@@ -1,6 +1,25 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+// This integration-style test loads the real app auth runtime, whose bundled
+// fallback config targets the test-data production Firebase project.
+const firebaseProjectId = 'game-flow-c6311';
+
+function createFirebaseIdToken(uid, overrides = {}) {
+    const encode = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
+    return `${encode({ alg: 'none', typ: 'JWT' })}.${encode({
+        aud: firebaseProjectId,
+        iss: `https://securetoken.google.com/${firebaseProjectId}`,
+        sub: uid,
+        user_id: uid,
+        exp: Math.floor(Date.now() / 1000) + 3600,
+        iat: Math.floor(Date.now() / 1000),
+        ...overrides
+    })}.signature`;
+}
+
+const nativeGoogleFirebaseIdToken = createFirebaseIdToken('native-google-user');
+
 const capacitorState = vi.hoisted(() => ({
     isNative: true,
     platform: 'android',
@@ -45,7 +64,8 @@ const firebaseMocks = vi.hoisted(() => ({
         app: {
             name: '[DEFAULT]',
             options: {
-                apiKey: 'test-api-key'
+                apiKey: 'test-api-key',
+                projectId: 'test-project'
             }
         }
     },
@@ -214,7 +234,7 @@ function mockFirebaseAuthRest({ isNewUser = false } = {}) {
                     email: 'parent@example.com',
                     displayName: 'Parent User',
                     profilePicture: 'https://example.com/photo.png',
-                    idToken: 'firebase-id-token',
+                    idToken: nativeGoogleFirebaseIdToken,
                     refreshToken: 'firebase-refresh-token',
                     expiresIn: '3600',
                     isNewUser
@@ -227,6 +247,7 @@ function mockFirebaseAuthRest({ isNewUser = false } = {}) {
                 ok: true,
                 json: async () => ({
                     users: [{
+                        localId: 'native-google-user',
                         email: 'parent@example.com',
                         emailVerified: true,
                         displayName: 'Parent User',
@@ -315,7 +336,7 @@ describe('React app native Google auth', () => {
         expect(savedSession).toMatchObject({
             uid: 'native-google-user',
             email: 'parent@example.com',
-            idToken: 'firebase-id-token',
+            idToken: nativeGoogleFirebaseIdToken,
             refreshToken: 'firebase-refresh-token',
             provider: 'rest'
         });
@@ -349,7 +370,7 @@ describe('React app native Google auth', () => {
         await signInWithGoogleAccount('native123');
 
         expect(dbMocks.validateAccessCode).toHaveBeenCalledWith('NATIVE123', {
-            nativeAuthToken: 'firebase-id-token'
+            nativeAuthToken: nativeGoogleFirebaseIdToken
         });
         expect(dbMocks.markAccessCodeAsUsed).toHaveBeenCalledWith('native-code', 'native-google-user');
     });

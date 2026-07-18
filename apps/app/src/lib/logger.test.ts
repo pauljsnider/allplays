@@ -160,4 +160,16 @@ describe('logger', () => {
             '[schedule-service] Fetch failed for https://example.test/callback?access_token=[REDACTED]&teamId=team-1#id_token=[REDACTED]'
         );
     });
+
+    it('redacts email addresses from auth failures and other free-form logs', () => {
+        const error = new Error('Account parent@example.com could not be restored.');
+
+        expect(normalizeErrorForLogging(error)).toEqual({
+            name: 'Error',
+            message: 'Account [REDACTED_EMAIL] could not be restored.'
+        });
+        expect(sanitizeForLogging('Retry player+one@example.co.uk later.')).toBe(
+            'Retry [REDACTED_EMAIL] later.'
+        );
+    });
 });

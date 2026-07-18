@@ -18,7 +18,12 @@ import type { AuthState } from '../lib/types';
 function readEmailForSignIn() {
   try {
     const storage = typeof window !== 'undefined' ? window.localStorage : null;
-    return typeof storage?.getItem === 'function' ? storage.getItem('emailForSignIn') || '' : '';
+    if (typeof storage?.getItem !== 'function') return '';
+    const email = storage.getItem('emailForSignIn') || '';
+    // Older releases persisted this sign-in hint durably. Consume it once and
+    // remove it so an email address is not left behind on a shared device.
+    storage.removeItem('emailForSignIn');
+    return email;
   } catch {
     return '';
   }

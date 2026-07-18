@@ -1,11 +1,27 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+const firebaseProjectId = 'test-project';
+
+function createFirebaseIdToken(uid: string, overrides: Record<string, unknown> = {}) {
+  const encode = (value: Record<string, unknown>) => Buffer.from(JSON.stringify(value)).toString('base64url');
+  return `${encode({ alg: 'none', typ: 'JWT' })}.${encode({
+    aud: firebaseProjectId,
+    iss: `https://securetoken.google.com/${firebaseProjectId}`,
+    sub: uid,
+    user_id: uid,
+    exp: Math.floor(Date.now() / 1000) + 3600,
+    iat: Math.floor(Date.now() / 1000),
+    ...overrides
+  })}.signature`;
+}
+
 const authState = vi.hoisted(() => ({
   currentUser: null,
   app: {
     options: {
-      apiKey: 'test-api-key'
+      apiKey: 'test-api-key',
+      projectId: 'test-project'
     },
     name: '[DEFAULT]'
   }
@@ -66,6 +82,15 @@ const nativeSessionStoreMocks = vi.hoisted(() => ({
   })
 }));
 
+const nativeFirebasePersistenceMocks = vi.hoisted(() => ({
+  persistNativeFirebaseAuthUser: vi.fn(async () => {}),
+  clearNativeFirebaseAuthUser: vi.fn(async () => {})
+}));
+
+const imageUploadSessionMocks = vi.hoisted(() => ({
+  clearImageUploadSession: vi.fn(async () => {})
+}));
+
 const authObserverMocks = vi.hoisted(() => ({
   onAuthStateChanged: vi.fn()
 }));
@@ -118,6 +143,9 @@ vi.mock('./nativeAuthSessionStore', () => ({
   clearNativeAuthSession: nativeSessionStoreMocks.clearNativeAuthSession
 }));
 
+vi.mock('./nativeFirebaseAuthPersistence', () => nativeFirebasePersistenceMocks);
+vi.mock('./imageUploadSessionStore', () => imageUploadSessionMocks);
+
 vi.mock('./logger', () => ({
   createLogger: () => ({
     info: vi.fn(),
@@ -127,14 +155,20 @@ vi.mock('./logger', () => ({
 }));
 
 import {
+  applyActionCode,
+  confirmPasswordReset,
   createUserWithEmailAndPassword,
+  isSignInWithEmailLink,
   signInWithEmailLink,
   signInWithPopup,
-  signInWithRedirect
+  signInWithRedirect,
+  signOut as firebaseSignOutMock,
+  verifyPasswordResetCode
 } from './firebaseAuthRuntime';
 import { Capacitor } from '@capacitor/core';
 import {
   describeAuthError,
+  getNativeAuthIdToken,
   getRouteForUser,
   hydrateFirebaseUser,
   isValidAuthEmail,
@@ -302,6 +336,24 @@ describe('signOut', () => {
     appDataCacheMocks.flushAppDataCachePersistence.mockReset();
     appDataCacheMocks.flushAppDataCachePersistence.mockResolvedValue(undefined);
     nativeSessionStoreMocks.clearNativeAuthSession.mockClear();
+    nativeFirebasePersistenceMocks.clearNativeFirebaseAuthUser.mockReset();
+    nativeFirebasePersistenceMocks.clearNativeFirebaseAuthUser.mockResolvedValue(undefined);
+    vi.mocked(firebaseSignOutMock).mockReset();
+    vi.mocked(firebaseSignOutMock).mockResolvedValue(undefined);
+    imageUploadSessionMocks.clearImageUploadSession.mockReset();
+    imageUploadSessionMocks.clearImageUploadSession.mockResolvedValue(undefined);
+  });
+
+  it('continues all logout cleanup when secure Firebase persistence removal fails', async () => {
+    nativeFirebasePersistenceMocks.clearNativeFirebaseAuthUser.mockRejectedValueOnce(new Error('keychain locked'));
+
+    await expect(signOut()).resolves.toBeUndefined();
+
+    expect(nativeSessionStoreMocks.clearNativeAuthSession).toHaveBeenCalledTimes(1);
+    expect(imageUploadSessionMocks.clearImageUploadSession).toHaveBeenCalledTimes(1);
+    expect(appDataCacheMocks.clearAppDataCache).toHaveBeenCalledTimes(1);
+    expect(appDataCacheMocks.flushAppDataCachePersistence).toHaveBeenCalledTimes(1);
+    expect(firebaseSignOutMock).toHaveBeenCalledWith(authState);
   });
 
   it('clears persisted app-data cache so the next user cannot read cached data', async () => {
@@ -309,6 +361,7 @@ describe('signOut', () => {
     expect(appDataCacheMocks.clearAppDataCache).toHaveBeenCalledTimes(1);
     expect(appDataCacheMocks.flushAppDataCachePersistence).toHaveBeenCalledTimes(1);
     expect(nativeSessionStoreMocks.clearNativeAuthSession).toHaveBeenCalledTimes(1);
+    expect(imageUploadSessionMocks.clearImageUploadSession).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -342,7 +395,7 @@ describe('signUpWithEmail', () => {
         email: 'player@example.com',
         emailVerified: false,
         refreshToken: 'signup-refresh-token',
-        getIdToken: vi.fn(async () => 'signup-id-token')
+        getIdToken: vi.fn(async () => createFirebaseIdToken('new-native-user'))
       }
     });
     nativeSessionStoreMocks.session = null;
@@ -360,7 +413,7 @@ describe('signUpWithEmail', () => {
     expect(credential.user).toMatchObject({ uid: 'new-native-user', isNativeRestSession: true });
     expect(nativeSessionStoreMocks.writeNativeAuthSession).toHaveBeenCalledWith(expect.objectContaining({
       uid: 'new-native-user',
-      idToken: 'signup-id-token',
+      idToken: createFirebaseIdToken('new-native-user'),
       refreshToken: 'signup-refresh-token'
     }));
   });
@@ -372,14 +425,20 @@ describe('signUpWithEmail', () => {
 });
 
 describe('native email-link completion', () => {
+  beforeEach(() => {
+    vi.mocked(isSignInWithEmailLink).mockReset();
+    vi.mocked(signInWithEmailLink).mockReset();
+  });
+
   it('moves the one-time Firebase credential into encrypted native persistence', async () => {
+    vi.mocked(isSignInWithEmailLink).mockReturnValueOnce(true);
     vi.mocked(signInWithEmailLink).mockResolvedValueOnce({
       user: {
         uid: 'email-link-user',
         email: 'parent@example.com',
         emailVerified: true,
         refreshToken: 'email-link-refresh-token',
-        getIdToken: vi.fn(async () => 'email-link-id-token')
+        getIdToken: vi.fn(async () => createFirebaseIdToken('email-link-user'))
       }
     });
     legacyAuthMocks.updateUserProfile.mockResolvedValueOnce(undefined);
@@ -394,9 +453,52 @@ describe('native email-link completion', () => {
     expect(credential.nativeRest).toBe(true);
     expect(credential.user).toMatchObject({ uid: 'email-link-user', isNativeRestSession: true });
     expect(nativeSessionStoreMocks.writeNativeAuthSession).toHaveBeenCalledWith(expect.objectContaining({
-      idToken: 'email-link-id-token',
+      idToken: createFirebaseIdToken('email-link-user'),
       refreshToken: 'email-link-refresh-token'
     }));
+  });
+
+  it('rejects an invalid email-link URL before exchanging credentials', async () => {
+    vi.mocked(isSignInWithEmailLink).mockReturnValueOnce(false);
+
+    await expect(completeEmailLink(
+      'parent@example.com',
+      'https://allplays.ai/app/#/accept-invite?mode=email-link'
+    )).rejects.toThrow('invalid or expired');
+
+    expect(signInWithEmailLink).not.toHaveBeenCalled();
+  });
+});
+
+describe('Firebase action-code validation', () => {
+  beforeEach(() => {
+    vi.mocked(verifyPasswordResetCode).mockReset();
+    vi.mocked(confirmPasswordReset).mockReset();
+    vi.mocked(applyActionCode).mockReset();
+  });
+
+  it('passes URL-safe Firebase action codes through unchanged', async () => {
+    const { verifyResetCode, confirmReset, applyEmailActionCode } = await import('./authService');
+
+    await verifyResetCode('Abc_123-def');
+    await confirmReset('Abc_123-def', 'new-password');
+    await applyEmailActionCode('Abc_123-def');
+
+    expect(verifyPasswordResetCode).toHaveBeenCalledWith(authState, 'Abc_123-def');
+    expect(confirmPasswordReset).toHaveBeenCalledWith(authState, 'Abc_123-def', 'new-password');
+    expect(applyActionCode).toHaveBeenCalledWith(authState, 'Abc_123-def');
+  });
+
+  it('rejects malformed or oversized action codes before calling Firebase', async () => {
+    const { verifyResetCode, confirmReset, applyEmailActionCode } = await import('./authService');
+
+    await expect(verifyResetCode('bad code?')).rejects.toThrow('invalid or incomplete');
+    await expect(confirmReset('x'.repeat(2049), 'new-password')).rejects.toThrow('invalid or incomplete');
+    await expect(applyEmailActionCode('')).rejects.toThrow('invalid or incomplete');
+
+    expect(verifyPasswordResetCode).not.toHaveBeenCalled();
+    expect(confirmPasswordReset).not.toHaveBeenCalled();
+    expect(applyActionCode).not.toHaveBeenCalled();
   });
 });
 
@@ -418,6 +520,8 @@ describe('signInWithGoogleAccount invite redemption', () => {
     legacyAuthMocks.markAccessCodeAsUsed.mockReset();
     legacyAuthMocks.updateUserProfile.mockReset();
     legacyAuthMocks.updateUserProfile.mockResolvedValue(undefined);
+    imageUploadSessionMocks.clearImageUploadSession.mockReset();
+    imageUploadSessionMocks.clearImageUploadSession.mockResolvedValue(undefined);
     legacyInviteFlowMocks.processInvite.mockReset();
     legacyInviteFlowMocks.processInvite.mockResolvedValue({ success: true, redirectUrl: 'dashboard.html' });
     legacyInviteFlowMocks.createInviteProcessor.mockReset();
@@ -594,6 +698,7 @@ function installTestSessionStorage() {
 describe('native REST sign-in', () => {
   beforeEach(() => {
     authState.currentUser = null;
+    delete (authState as any).emulatorConfig;
     appDataCacheMocks.clearAppDataCache.mockReset();
     legacyAuthMocks.updateUserProfile.mockReset();
     legacyAuthMocks.updateUserProfile.mockResolvedValue(undefined);
@@ -603,18 +708,24 @@ describe('native REST sign-in', () => {
     nativeSessionStoreMocks.session = null;
     nativeSessionStoreMocks.readNativeAuthSession.mockClear();
     nativeSessionStoreMocks.writeNativeAuthSession.mockClear();
+    nativeSessionStoreMocks.clearNativeAuthSession.mockClear();
+    nativeFirebasePersistenceMocks.persistNativeFirebaseAuthUser.mockReset();
+    nativeFirebasePersistenceMocks.persistNativeFirebaseAuthUser.mockResolvedValue(undefined);
+    imageUploadSessionMocks.clearImageUploadSession.mockReset();
+    imageUploadSessionMocks.clearImageUploadSession.mockResolvedValue(undefined);
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       if (url.includes('accounts:signInWithPassword')) {
         return createJsonResponse({
           localId: 'new-user',
           email: 'new@example.com',
-          idToken: 'new-id-token',
+          idToken: createFirebaseIdToken('new-user'),
           refreshToken: 'new-refresh-token',
           expiresIn: '3600'
         });
       }
       return createJsonResponse({
         users: [{
+          localId: 'new-user',
           email: 'new@example.com',
           emailVerified: true,
           displayName: 'New User'
@@ -639,12 +750,115 @@ describe('native REST sign-in', () => {
     expect(result.nativeRest).toBe(true);
     expect(result.user.uid).toBe('new-user');
     expect(appDataCacheMocks.clearAppDataCache).toHaveBeenCalledTimes(1);
+    expect(imageUploadSessionMocks.clearImageUploadSession).toHaveBeenCalledTimes(1);
     expect(nativeSessionStoreMocks.writeNativeAuthSession).toHaveBeenCalledWith(expect.objectContaining({
       uid: 'new-user',
-      idToken: 'new-id-token',
+      idToken: createFirebaseIdToken('new-user'),
       refreshToken: 'new-refresh-token'
     }));
     expect(window.localStorage.getItem('allplays-native-auth-session')).toBeNull();
+    const fetchMock = vi.mocked(fetch);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    fetchMock.mock.calls.forEach(([, options]) => {
+      expect(options).toMatchObject({
+        method: 'POST',
+        cache: 'no-store',
+        credentials: 'omit',
+        redirect: 'error',
+        referrerPolicy: 'no-referrer'
+      });
+    });
+  });
+
+  it('rejects token claims for another Firebase project before persisting the session', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('accounts:signInWithPassword')) {
+        return createJsonResponse({
+          localId: 'new-user',
+          email: 'new@example.com',
+          idToken: createFirebaseIdToken('new-user', { aud: 'foreign-project' }),
+          refreshToken: 'new-refresh-token',
+          expiresIn: '3600'
+        });
+      }
+      return createJsonResponse({ users: [{ localId: 'new-user' }] });
+    }));
+
+    await expect(signInWithEmail('new@example.com', 'password123')).rejects.toThrow('unexpected identity');
+    expect(nativeSessionStoreMocks.writeNativeAuthSession).not.toHaveBeenCalled();
+    expect(nativeFirebasePersistenceMocks.persistNativeFirebaseAuthUser).not.toHaveBeenCalled();
+  });
+
+  it('rejects a profile lookup for a different uid before persisting the session', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('accounts:signInWithPassword')) {
+        return createJsonResponse({
+          localId: 'new-user',
+          email: 'new@example.com',
+          idToken: createFirebaseIdToken('new-user'),
+          refreshToken: 'new-refresh-token',
+          expiresIn: '3600'
+        });
+      }
+      return createJsonResponse({ users: [{ localId: 'different-user' }] });
+    }));
+
+    await expect(signInWithEmail('new@example.com', 'password123')).rejects.toThrow('did not match');
+    expect(nativeSessionStoreMocks.writeNativeAuthSession).not.toHaveBeenCalled();
+  });
+
+  it('fails closed and clears the fallback session when secure Firebase persistence fails', async () => {
+    nativeFirebasePersistenceMocks.persistNativeFirebaseAuthUser.mockRejectedValueOnce(new Error('keychain locked'));
+
+    await expect(signInWithEmail('new@example.com', 'password123')).rejects.toThrow('keychain locked');
+
+    expect(nativeSessionStoreMocks.writeNativeAuthSession).toHaveBeenCalledTimes(1);
+    expect(nativeSessionStoreMocks.clearNativeAuthSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('blocks direct production REST calls when Firebase Auth is configured for an emulator', async () => {
+    (authState as any).emulatorConfig = { host: '127.0.0.1', port: 9099 };
+
+    await expect(signInWithEmail('new@example.com', 'password123')).rejects.toThrow('emulator is configured');
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(nativeSessionStoreMocks.writeNativeAuthSession).not.toHaveBeenCalled();
+  });
+});
+
+describe('native restored-session identity checks', () => {
+  beforeEach(() => {
+    authState.currentUser = null;
+    nativeSessionStoreMocks.session = null;
+  });
+
+  it('does not restore a cross-project token into authenticated state', async () => {
+    nativeSessionStoreMocks.session = {
+      uid: 'user-1',
+      email: 'user@example.com',
+      idToken: createFirebaseIdToken('user-1', { aud: 'foreign-project' }),
+      refreshToken: 'refresh-token',
+      expirationTime: Date.now() + 3600_000,
+      apiKey: 'test-api-key',
+      provider: 'rest'
+    };
+
+    await expect(getNativeAuthIdToken()).resolves.toBeNull();
+  });
+
+  it('restores the expected project and uid token without a forced refresh', async () => {
+    const idToken = createFirebaseIdToken('user-1');
+    nativeSessionStoreMocks.session = {
+      uid: 'user-1',
+      email: 'user@example.com',
+      idToken,
+      refreshToken: 'refresh-token',
+      expirationTime: Date.now() + 3600_000,
+      apiKey: 'test-api-key',
+      provider: 'rest'
+    };
+
+    await expect(getNativeAuthIdToken()).resolves.toBe(idToken);
   });
 });
 

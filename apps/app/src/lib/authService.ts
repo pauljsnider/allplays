@@ -35,6 +35,13 @@ import {
   writeNativeAuthSession
 } from './nativeAuthSessionStore';
 import type { NativeAuthSession } from './nativeAuthSessionStore';
+import {
+  clearNativeFirebaseAuthUser,
+  persistNativeFirebaseAuthUser
+} from './nativeFirebaseAuthPersistence';
+import { assertFirebaseIdTokenIdentity } from './firebaseIdTokenIdentity';
+import { assertNativeAuthBackendPolicy } from './nativeAuthBackendPolicy';
+import { clearImageUploadSession } from './imageUploadSessionStore';
 import type { AuthUser, UserRole } from './types';
 
 export const firebaseAuth = auth;
@@ -106,6 +113,7 @@ type NativeRestSignInPayload = {
 };
 
 type NativeRestLookupUser = {
+  localId?: string;
   email?: string;
   emailVerified?: boolean;
   displayName?: string;
@@ -170,6 +178,30 @@ function requireValidAuthEmail(email: string | null | undefined) {
 
 function normalizeCode(code: string | null | undefined) {
   return String(code || '').trim().toUpperCase();
+}
+
+function requireValidFirebaseActionCode(code: string | null | undefined) {
+  const normalizedCode = String(code || '').trim();
+  if (
+    normalizedCode.length < 4
+    || normalizedCode.length > 2048
+    || !/^[A-Za-z0-9_-]+$/.test(normalizedCode)
+  ) {
+    throw new Error('This account action link is invalid or incomplete.');
+  }
+  return normalizedCode;
+}
+
+function getFirebaseProjectId() {
+  return String(auth.app?.options?.projectId || '').trim();
+}
+
+function assertNativeAuthRuntimeTarget() {
+  assertNativeAuthBackendPolicy({
+    projectId: getFirebaseProjectId(),
+    emulatorConfigured: Boolean((auth as any).emulatorConfig),
+    buildMode: String(import.meta.env?.MODE || '')
+  });
 }
 
 function withTimeout<T>(promise: Promise<T>, message: string, timeoutMs = authTimeoutMs): Promise<T> {
@@ -338,10 +370,15 @@ async function refreshNativeAuthSession(session: NativeAuthSession) {
   if (!apiKey || !session.refreshToken) {
     throw new Error('Native auth refresh is unavailable.');
   }
+  assertNativeAuthRuntimeTarget();
 
   const requestUrl = `https://securetoken.googleapis.com/v1/token?key=${encodeURIComponent(apiKey)}`;
   const response = await withTimeout(fetch(requestUrl, {
     method: 'POST',
+    cache: 'no-store',
+    credentials: 'omit',
+    redirect: 'error',
+    referrerPolicy: 'no-referrer',
     headers: await getPrimaryAppCheckHeaders({
       'Content-Type': 'application/x-www-form-urlencoded'
     }, requestUrl),
@@ -356,12 +393,21 @@ async function refreshNativeAuthSession(session: NativeAuthSession) {
   }
 
   const expiresInSeconds = Number.parseInt(payload.expires_in || '3600', 10);
+  const nextUid = String(payload.user_id || session.uid || '');
+  const nextIdToken = String(payload.id_token || '');
+  const tokenClaims = assertFirebaseIdTokenIdentity(nextIdToken, {
+    expectedUid: nextUid,
+    projectId: getFirebaseProjectId()
+  });
   const nextSession: NativeAuthSession = {
     ...session,
-    uid: payload.user_id || session.uid,
-    idToken: payload.id_token || session.idToken,
+    uid: nextUid,
+    idToken: nextIdToken,
     refreshToken: payload.refresh_token || session.refreshToken,
-    expirationTime: Date.now() + Math.max(expiresInSeconds - 30, 60) * 1000
+    expirationTime: Math.min(
+      Date.now() + Math.max(expiresInSeconds - 30, 60) * 1000,
+      tokenClaims.exp * 1000 - 30_000
+    )
   };
   await writeNativeAuthSession(nextSession);
   return nextSession;
@@ -390,12 +436,16 @@ async function refreshNativePluginAuthSession(session: NativeAuthSession) {
   }
 
   const idToken = await getNativePluginToken(true);
+  const tokenClaims = assertFirebaseIdTokenIdentity(idToken, {
+    expectedUid: currentUser.uid,
+    projectId: getFirebaseProjectId()
+  });
   const nextSession: NativeAuthSession = {
     ...session,
     uid: currentUser.uid,
     email: currentUser.email || session.email || '',
     idToken,
-    expirationTime: Date.now() + 55 * 60 * 1000,
+    expirationTime: tokenClaims.exp * 1000 - 30_000,
     displayName: currentUser.displayName || session.displayName || null,
     photoUrl: currentUser.photoUrl || session.photoUrl || null,
     emailVerified: currentUser.emailVerified === true || session.emailVerified === true,
@@ -407,6 +457,18 @@ async function refreshNativePluginAuthSession(session: NativeAuthSession) {
 
 function buildNativeAuthFallbackUser(session: NativeAuthSession | null): FirebaseUser | null {
   if (!session?.uid || !session?.idToken || (!session.refreshToken && session.provider !== 'native-plugin')) {
+    return null;
+  }
+
+  try {
+    assertFirebaseIdTokenIdentity(session.idToken, {
+      expectedUid: session.uid,
+      projectId: getFirebaseProjectId(),
+      allowExpired: true
+    });
+  } catch {
+    // A migrated or restored credential that does not belong to this Firebase
+    // project and UID must not create even a UI-level authenticated state.
     return null;
   }
 
@@ -437,6 +499,9 @@ async function getNativeAuthFallbackUser(): Promise<FirebaseUser | null> {
 }
 
 export async function getNativeAuthIdToken(forceRefresh = false): Promise<string | null> {
+  if (auth.currentUser?.getIdToken) {
+    return auth.currentUser.getIdToken(forceRefresh);
+  }
   const fallbackUser = await getNativeAuthFallbackUser();
   if (!fallbackUser?.getIdToken) {
     return null;
@@ -458,13 +523,25 @@ async function getNativeAccessCodeValidationOptions(result: UserCredential) {
 }
 
 async function persistNativeRestAuthSession(signInPayload: NativeRestSignInPayload, lookupUser: NativeRestLookupUser = {}): Promise<FirebaseUser> {
+  assertNativeAuthRuntimeTarget();
+  const tokenClaims = assertFirebaseIdTokenIdentity(signInPayload.idToken, {
+    expectedUid: signInPayload.localId,
+    projectId: getFirebaseProjectId()
+  });
+  if (!lookupUser.localId || lookupUser.localId !== signInPayload.localId) {
+    throw new Error('Firebase profile lookup did not match the signed-in account.');
+  }
   const email = signInPayload.email || lookupUser.email || '';
   const previousUid = auth.currentUser?.uid || (await readNativeAuthSession())?.uid || null;
   if (previousUid && previousUid !== signInPayload.localId) {
     clearCachedUserData();
+    await clearImageUploadSession();
   }
   const expiresInSeconds = Number.parseInt(signInPayload.expiresIn || '3600', 10);
-  const expirationTime = Date.now() + Math.max(expiresInSeconds - 30, 60) * 1000;
+  const expirationTime = Math.min(
+    Date.now() + Math.max(expiresInSeconds - 30, 60) * 1000,
+    tokenClaims.exp * 1000 - 30_000
+  );
   const now = `${Date.now()}`;
   const photoUrl = signInPayload.profilePicture || signInPayload.photoUrl || lookupUser.photoUrl || null;
   const authUser = {
@@ -507,9 +584,24 @@ async function persistNativeRestAuthSession(signInPayload: NativeRestSignInPaylo
     provider: 'rest'
   });
 
-  // Native REST sessions are intentionally kept out of Firebase's WebView
-  // IndexedDB store. Native requests obtain the token through this module,
-  // while the encrypted Keychain/Keystore entry survives app restarts.
+  try {
+    await persistNativeFirebaseAuthUser(
+      String(auth.app?.options?.apiKey || ''),
+      String(auth.app?.name || '[DEFAULT]'),
+      authUser
+    );
+  } catch (error) {
+    // Never leave the fallback session restorable when Firebase's secure
+    // persistence failed. The clear operation writes a non-secret tombstone
+    // if the OS secure store itself is temporarily unavailable.
+    await clearNativeAuthSession();
+    throw error;
+  }
+
+  // Remove only the legacy WebView IndexedDB copy after the Keychain/Keystore
+  // write succeeds. Firebase Auth restores the secure record on next boot, so
+  // Firestore and callable requests remain authenticated without plaintext
+  // token persistence.
   await clearFirebaseAuthStorageSession();
 
   return {
@@ -561,6 +653,7 @@ async function persistNativeFirebaseCredential(user: FirebaseUser, isNewUser = f
     expiresIn: '3600',
     isNewUser
   }, {
+    localId: user.uid,
     email: user.email || '',
     emailVerified: user.emailVerified === true,
     displayName: user.displayName || undefined,
@@ -585,18 +678,22 @@ async function persistNativePluginAuthSession(nativeResult: NativePluginSignInRe
   }
 
   const idToken = await getNativePluginToken(true);
+  const tokenClaims = assertFirebaseIdTokenIdentity(idToken, {
+    expectedUid: pluginUser.uid,
+    projectId: getFirebaseProjectId()
+  });
   const lookupPayload = await callFirebaseAuthRest('accounts:lookup', {
     idToken
-  }).catch((error) => {
-    logger.warn('Unable to load native Firebase auth profile.', { error });
-    return {};
   }) as { users?: NativeRestLookupUser[] };
   const lookupUser = Array.isArray(lookupPayload.users) ? lookupPayload.users[0] || {} : {};
+  if (!lookupUser.localId || lookupUser.localId !== pluginUser.uid) {
+    throw new Error('Firebase profile lookup did not match the native signed-in account.');
+  }
   const email = pluginUser.email || lookupUser.email || '';
   const displayName = pluginUser.displayName || lookupUser.displayName || null;
   const photoUrl = pluginUser.photoUrl || lookupUser.photoUrl || null;
   const metadata = nativeMetadataToAuthMetadata(pluginUser.metadata);
-  const expirationTime = Date.now() + 55 * 60 * 1000;
+  const expirationTime = tokenClaims.exp * 1000 - 30_000;
   const isNewUser = nativeResult.additionalUserInfo?.isNewUser === true;
 
   await writeNativeAuthSession({
@@ -610,6 +707,9 @@ async function persistNativePluginAuthSession(nativeResult: NativePluginSignInRe
     emailVerified: pluginUser.emailVerified === true || lookupUser.emailVerified === true,
     provider: 'native-plugin'
   });
+  // The current shipping Google flow uses skipNativeAuth=true and the REST
+  // branch above. Do not write a non-refreshable plugin session into Firebase
+  // web persistence; the secure native SDK session remains its authority.
   await clearFirebaseAuthStorageSession();
 
   return {
@@ -671,6 +771,7 @@ function createRestAuthError(payload: any, fallbackMessage = 'Authentication fai
 }
 
 async function callFirebaseAuthRest(endpoint: string, payload: Record<string, unknown>) {
+  assertNativeAuthRuntimeTarget();
   const apiKey = auth.app?.options?.apiKey;
   if (!apiKey) {
     throw new Error('Firebase API key is missing.');
@@ -679,6 +780,10 @@ async function callFirebaseAuthRest(endpoint: string, payload: Record<string, un
   const requestUrl = `https://identitytoolkit.googleapis.com/v1/${endpoint}?key=${encodeURIComponent(apiKey)}`;
   const response = await withTimeout(fetch(requestUrl, {
     method: 'POST',
+    cache: 'no-store',
+    credentials: 'omit',
+    redirect: 'error',
+    referrerPolicy: 'no-referrer',
     headers: await getPrimaryAppCheckHeaders({
       'Content-Type': 'application/json'
     }, requestUrl),
@@ -695,7 +800,14 @@ async function deleteNativeAuthUser() {
   const session = await readNativeAuthSession();
   if (!session?.idToken) {
     await clearNativeAuthSession();
+    await clearNativeFirebaseAuthUser(
+      String(auth.app?.options?.apiKey || ''),
+      String(auth.app?.name || '[DEFAULT]')
+    );
     await clearFirebaseAuthStorageSession();
+    clearCachedUserData();
+    await runBestEffortAuthCleanup('Image upload auth cleanup', clearImageUploadSession);
+    await flushAppDataCachePersistence();
     return;
   }
 
@@ -709,7 +821,14 @@ async function deleteNativeAuthUser() {
     }
   } finally {
     await clearNativeAuthSession();
+    await clearNativeFirebaseAuthUser(
+      String(auth.app?.options?.apiKey || ''),
+      String(auth.app?.name || '[DEFAULT]')
+    );
     await clearFirebaseAuthStorageSession();
+    clearCachedUserData();
+    await runBestEffortAuthCleanup('Image upload auth cleanup', clearImageUploadSession);
+    await flushAppDataCachePersistence();
   }
 }
 
@@ -721,9 +840,6 @@ async function signInWithNativeRestSession(email: string, password: string) {
   }) as NativeRestSignInPayload;
   const lookupPayload = await callFirebaseAuthRest('accounts:lookup', {
     idToken: signInPayload.idToken
-  }).catch((error) => {
-    logger.warn('Unable to load native REST auth profile.', { error });
-    return {};
   }) as { users?: NativeRestLookupUser[] };
   const lookupUser = Array.isArray(lookupPayload.users) ? lookupPayload.users[0] || {} : {};
   return persistNativeRestAuthSession(signInPayload, lookupUser);
@@ -769,9 +885,6 @@ async function signInWithNativeGoogleRestSession(googleIdToken: string, googleAc
   }) as NativeRestSignInPayload;
   const lookupPayload = await callFirebaseAuthRest('accounts:lookup', {
     idToken: signInPayload.idToken
-  }).catch((error) => {
-    logger.warn('Unable to load native Google REST auth profile.', { error });
-    return {};
   }) as { users?: NativeRestLookupUser[] };
   const lookupUser = Array.isArray(lookupPayload.users) ? lookupPayload.users[0] || {} : {};
   return persistNativeRestAuthSession(signInPayload, lookupUser);
@@ -957,10 +1070,6 @@ export function observeFirebaseUser(callback: (user: FirebaseUser | null) => voi
   };
 
   if (isNativeRuntime()) {
-    // Remove the pre-v2 REST session copy that older builds wrote into the
-    // Firebase Web SDK's IndexedDB store. The encrypted native session remains
-    // the only durable source of truth after migration.
-    void clearFirebaseAuthStorageSession();
     timeoutId = window.setTimeout(() => {
       void readNativeAuthSession().then((session) => {
         if (!webAuthUserObserved) emit(buildNativeAuthFallbackUser(session));
@@ -1270,6 +1379,9 @@ async function refreshNativeFallbackVerification() {
     idToken
   }) as { users?: NativeRestLookupUser[] };
   const lookupUser = Array.isArray(lookupPayload.users) ? lookupPayload.users[0] || {} : {};
+  if (!lookupUser.localId || lookupUser.localId !== session.uid) {
+    throw new Error('Firebase profile lookup did not match the signed-in account.');
+  }
   const verified = lookupUser.emailVerified === true;
   const refreshedSession = await readNativeAuthSession() || session;
 
@@ -1296,15 +1408,15 @@ export async function reloadCurrentUser() {
 }
 
 export async function verifyResetCode(oobCode: string) {
-  return verifyPasswordResetCode(auth, oobCode);
+  return verifyPasswordResetCode(auth, requireValidFirebaseActionCode(oobCode));
 }
 
 export async function confirmReset(oobCode: string, newPassword: string) {
-  return confirmPasswordReset(auth, oobCode, newPassword);
+  return confirmPasswordReset(auth, requireValidFirebaseActionCode(oobCode), newPassword);
 }
 
 export async function applyEmailActionCode(oobCode: string) {
-  return applyActionCode(auth, oobCode);
+  return applyActionCode(auth, requireValidFirebaseActionCode(oobCode));
 }
 
 export function isEmailLink(url: string) {
@@ -1313,6 +1425,9 @@ export function isEmailLink(url: string) {
 
 export async function completeEmailLink(email: string, url: string) {
   const normalizedEmail = requireValidAuthEmail(email);
+  if (!isSignInWithEmailLink(auth, url)) {
+    throw new Error('This email sign-in link is invalid or expired.');
+  }
   const result = await signInWithEmailLink(auth, normalizedEmail, url) as UserCredential;
   const credential = isNativeRuntime()
     ? {
@@ -1357,6 +1472,12 @@ export async function setCurrentUserPassword(newPassword: string) {
     ...payload,
     localId: payload.localId || fallbackUser.uid,
     email: payload.email || fallbackUser.email || ''
+  }, {
+    localId: payload.localId || fallbackUser.uid,
+    email: payload.email || fallbackUser.email || '',
+    emailVerified: fallbackUser.emailVerified === true,
+    displayName: fallbackUser.displayName || undefined,
+    photoUrl: fallbackUser.photoURL || undefined
   });
   await updateUserProfile(fallbackUser.uid, {
     hasPassword: true,
@@ -1480,7 +1601,12 @@ export function mapLegacyRedirectToAppRoute(redirectUrl?: string) {
 
 export async function signOut() {
   await clearNativeAuthSession();
+  await runBestEffortAuthCleanup('Secure Firebase auth cleanup', () => clearNativeFirebaseAuthUser(
+    String(auth.app?.options?.apiKey || ''),
+    String(auth.app?.name || '[DEFAULT]')
+  ));
   clearCachedUserData();
+  await runBestEffortAuthCleanup('Image upload auth cleanup', clearImageUploadSession);
   await flushAppDataCachePersistence();
   await runBestEffortAuthCleanup('Firebase auth storage cleanup', clearFirebaseAuthStorageSession);
   await runBestEffortAuthCleanup('Native Firebase sign-out', async () => {

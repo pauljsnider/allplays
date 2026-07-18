@@ -6,7 +6,7 @@ import {
   getAuth,
   getRedirectResult,
   GoogleAuthProvider,
-  inMemoryPersistence,
+  indexedDBLocalPersistence,
   initializeApp,
   initializePrimaryAppCheck,
   initializeAuth,
@@ -23,6 +23,7 @@ import {
   verifyPasswordResetCode
 } from './adapters/legacyFirebaseAuthSdk';
 import { createLogger } from './logger';
+import { NativeSecureFirebaseAuthPersistence } from './nativeFirebaseAuthPersistence';
 
 const logger = createLogger('firebase');
 
@@ -59,15 +60,15 @@ async function initializeFirebaseAuth(appInstance: typeof app) {
 
   try {
     return initializeAuth(appInstance, {
-      // Native sessions are restored from OS-protected Keychain/Keystore by
-      // authService. Firebase's WebView copy must never persist credentials in
-      // IndexedDB/localStorage alongside that encrypted source of truth.
-      persistence: inMemoryPersistence
+      // The secure persistence is first so Firebase migrates existing
+      // IndexedDB sessions into Keychain/Keystore and removes the old copy.
+      // IndexedDB is present only as a one-time migration source.
+      persistence: [NativeSecureFirebaseAuthPersistence, indexedDBLocalPersistence]
     });
   } catch (error) {
     logger.warn('Native auth initialization reused an existing auth instance.', { error });
     const existingAuth = getAuth(appInstance);
-    await setPersistence(existingAuth, inMemoryPersistence);
+    await setPersistence(existingAuth, NativeSecureFirebaseAuthPersistence);
     return existingAuth;
   }
 }

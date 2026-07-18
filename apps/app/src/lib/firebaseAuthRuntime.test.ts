@@ -19,7 +19,7 @@ const firebaseAuthSdk = vi.hoisted(() => {
     getAuth: vi.fn((app: unknown) => ({ app, auth: true })),
     getRedirectResult: vi.fn(),
     GoogleAuthProvider: class {},
-    inMemoryPersistence: { type: 'inMemoryPersistence' },
+    indexedDBLocalPersistence: class IndexedDbLocalPersistence {},
     initializeApp: vi.fn(() => ({ name: '[DEFAULT]', created: true })),
     initializePrimaryAppCheck: vi.fn(() => Promise.resolve({ state: 'ready' })),
     initializeAuth: vi.fn(),
@@ -37,7 +37,12 @@ const firebaseAuthSdk = vi.hoisted(() => {
   };
 });
 
+const nativePersistenceMock = vi.hoisted(() => ({
+  NativeSecureFirebaseAuthPersistence: class NativeSecureFirebaseAuthPersistence {}
+}));
+
 vi.mock('./adapters/legacyFirebaseAuthSdk', () => firebaseAuthSdk);
+vi.mock('./nativeFirebaseAuthPersistence', () => nativePersistenceMock);
 
 vi.mock('./logger', () => ({
   createLogger: vi.fn(() => ({
@@ -87,7 +92,7 @@ describe('firebaseAuthRuntime', () => {
     expect(firebaseAuthSdk.getAuth).toHaveBeenCalledWith(existingDefaultApp);
   });
 
-  it('uses memory-only Firebase persistence in native WebViews', async () => {
+  it('uses encrypted native persistence with IndexedDB available only as a migration source', async () => {
     Object.defineProperty(window, 'Capacitor', {
       configurable: true,
       value: { isNativePlatform: () => true }
@@ -97,12 +102,17 @@ describe('firebaseAuthRuntime', () => {
 
     expect(firebaseAuthSdk.initializeAuth).toHaveBeenCalledWith(
       { name: '[DEFAULT]', created: true },
-      { persistence: firebaseAuthSdk.inMemoryPersistence }
+      {
+        persistence: [
+          nativePersistenceMock.NativeSecureFirebaseAuthPersistence,
+          firebaseAuthSdk.indexedDBLocalPersistence
+        ]
+      }
     );
     expect(runtime.auth).toEqual({ app: { name: '[DEFAULT]', created: true }, nativeAuth: true });
   });
 
-  it('forces an already initialized native auth instance back to memory-only persistence', async () => {
+  it('forces an already initialized native auth instance onto encrypted native persistence', async () => {
     Object.defineProperty(window, 'Capacitor', {
       configurable: true,
       value: { isNativePlatform: () => true }
@@ -115,7 +125,10 @@ describe('firebaseAuthRuntime', () => {
 
     const runtime = await import('./firebaseAuthRuntime');
 
-    expect(firebaseAuthSdk.setPersistence).toHaveBeenCalledWith(existingAuth, firebaseAuthSdk.inMemoryPersistence);
+    expect(firebaseAuthSdk.setPersistence).toHaveBeenCalledWith(
+      existingAuth,
+      nativePersistenceMock.NativeSecureFirebaseAuthPersistence
+    );
     expect(runtime.auth).toBe(existingAuth);
   });
 });

@@ -77,6 +77,19 @@ function redactSensitiveAssignments(value: string) {
     );
 }
 
+function redactEmailAddresses(value: string) {
+    return value.replace(
+        /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,
+        '[REDACTED_EMAIL]'
+    );
+}
+
+function redactFreeFormSecrets(value: string) {
+    return redactEmailAddresses(
+        redactSensitiveAssignments(redactSensitiveQueryParams(redactBearerTokens(value)))
+    );
+}
+
 function isHeadersLike(value: unknown): value is Headers {
     return typeof Headers !== 'undefined' && value instanceof Headers;
 }
@@ -87,7 +100,7 @@ function sanitizeValue(value: unknown, seen: WeakSet<object>, depth: number, key
     if (typeof value === 'string') {
         return isSensitiveKey(keyHint)
             ? redactedValue
-            : redactSensitiveAssignments(redactSensitiveQueryParams(redactBearerTokens(value)));
+            : redactFreeFormSecrets(value);
     }
 
     if (typeof value !== 'object') {

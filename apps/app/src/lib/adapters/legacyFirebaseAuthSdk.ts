@@ -23,6 +23,10 @@ import {
 import { resolvePrimaryFirebaseConfig as legacyResolvePrimaryFirebaseConfig } from '@legacy/firebase-runtime-config.js';
 import { initializePrimaryAppCheck as legacyInitializePrimaryAppCheck } from '@legacy/firebase-app-check.js';
 
+export type Persistence = {
+  readonly type: 'SESSION' | 'LOCAL' | 'NONE' | 'COOKIE';
+};
+
 /**
  * Typed adapter boundary for the vendored Firebase app/auth SDK + runtime config
  * used by firebaseAuthRuntime (#2066). Bindings re-exported as-is (no behavior
