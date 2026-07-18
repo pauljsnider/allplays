@@ -357,19 +357,28 @@ function getTeamFeeRefundAuthorityFailure({ input = {}, recipient = {}, adminBil
     return '';
 }
 
-function getTeamFeePaymentIntentGuardFailure({ recipient = {}, session = {}, paymentIntent = {} } = {}) {
+function getTeamFeePaymentIntentGuardFailure({
+    recipient = {},
+    session = {},
+    paymentIntent = {},
+    allowLegacyPaymentIntentMetadata = false
+} = {}) {
     const metadata = paymentIntent.metadata || {};
     const sessionPaymentIntentId = normalizeString(
         typeof session.payment_intent === 'string' ? session.payment_intent : session.payment_intent?.id
     );
     if (!sessionPaymentIntentId || paymentIntent.id !== sessionPaymentIntentId) return 'payment_intent_mismatch';
-    if (metadata.product !== 'team_fee'
-        || metadata.teamId !== recipient.teamId
-        || metadata.batchId !== recipient.batchId
-        || metadata.recipientId !== recipient.id) return 'payment_intent_scope_mismatch';
-    const sessionToken = normalizeCheckoutAttemptToken(session.metadata?.checkoutAttemptToken);
-    const intentToken = normalizeCheckoutAttemptToken(metadata.checkoutAttemptToken);
-    if (!sessionToken || !intentToken || sessionToken !== intentToken) return 'payment_intent_attempt_mismatch';
+    const metadataKeys = Object.keys(metadata);
+    const hasLegacyEmptyMetadata = allowLegacyPaymentIntentMetadata === true && metadataKeys.length === 0;
+    if (!hasLegacyEmptyMetadata) {
+        if (metadata.product !== 'team_fee'
+            || metadata.teamId !== recipient.teamId
+            || metadata.batchId !== recipient.batchId
+            || metadata.recipientId !== recipient.id) return 'payment_intent_scope_mismatch';
+        const sessionToken = normalizeCheckoutAttemptToken(session.metadata?.checkoutAttemptToken);
+        const intentToken = normalizeCheckoutAttemptToken(metadata.checkoutAttemptToken);
+        if (!sessionToken || !intentToken || sessionToken !== intentToken) return 'payment_intent_attempt_mismatch';
+    }
     const expectedAmount = Math.round(Number(session.amount_total || 0));
     const intentAmount = Math.round(Number(paymentIntent.amount_received || paymentIntent.amount || 0));
     if (!Number.isSafeInteger(expectedAmount) || expectedAmount <= 0 || intentAmount !== expectedAmount) return 'payment_intent_amount_mismatch';
@@ -407,6 +416,7 @@ function buildTeamFeeStripeChargeLedger({ recipient = {}, session = {}, paymentI
         currency: normalizeString(session.currency).toLowerCase(),
         livemode: Boolean(session.livemode),
         stripeEventId: eventId || null,
+        ...(Object.keys(paymentIntent.metadata || {}).length === 0 ? { legacyPaymentAuthorityVersion: 1 } : {}),
         paidAt: receivedAt,
         updatedAt: receivedAt
     };
@@ -419,10 +429,11 @@ function getTeamFeeChargeGuardFailure({ input = {}, ledger = {}, charge = {} } =
     if (!charge.id || ledger.stripeChargeId !== charge.id) return 'charge_id_mismatch';
     if (!paymentIntentId || ledger.stripePaymentIntentId !== paymentIntentId) return 'charge_payment_intent_mismatch';
     if (ledger.teamId !== input.teamId || ledger.batchId !== input.batchId || ledger.recipientId !== input.recipientId) return 'charge_ledger_scope_mismatch';
-    if (metadata.product !== 'team_fee'
+    const hasLegacyEmptyMetadata = ledger.legacyPaymentAuthorityVersion === 1 && Object.keys(metadata).length === 0;
+    if (!hasLegacyEmptyMetadata && (metadata.product !== 'team_fee'
         || metadata.teamId !== input.teamId
         || metadata.batchId !== input.batchId
-        || metadata.recipientId !== input.recipientId) return 'charge_metadata_scope_mismatch';
+        || metadata.recipientId !== input.recipientId)) return 'charge_metadata_scope_mismatch';
     if (Math.round(Number(charge.amount || 0)) !== Math.round(Number(ledger.amountPaidCents || 0))) return 'charge_amount_mismatch';
     if (normalizeString(charge.currency).toLowerCase() !== normalizeString(ledger.currency).toLowerCase()) return 'charge_currency_mismatch';
     if (Boolean(charge.livemode) !== Boolean(ledger.livemode)) return 'charge_livemode_mismatch';
@@ -529,6 +540,7 @@ function buildTeamFeePaidUpdate({ recipient = {}, session = {}, eventId, receive
         balanceDueCents,
         checkoutStatus: 'paid',
         checkoutAttemptToken: null,
+        checkoutPayerUid: null,
         checkoutUrl: null,
         paymentLink: null,
         paymentProvider: 'stripe',

@@ -26,7 +26,9 @@ describe('parent dashboard registration application statuses', () => {
         expect(rules).toContain('isCurrentUserRegistrationGuardian(resource.data)');
         const registrationRules = rules.match(/match \/registrations\/\{registrationId\} \{[\s\S]*?allow create:/)[0];
         expect(registrationRules).toContain('allow read: if isTeamOwnerOrAdmin(teamId) || isCurrentUserRegistrationGuardian(resource.data);');
-        expect(registrationRules).toContain('allow update: if isTeamOwnerOrAdmin(teamId);');
+        expect(registrationRules).toContain('allow update: if isTeamOwnerOrAdmin(teamId) &&');
+        expect(registrationRules).toContain('!hasActiveRegistrationStripeAuthority(resource.data) &&');
+        expect(registrationRules).toContain('hasNoRegistrationStripeAuthorityMutation();');
         expect(registrationRules).not.toContain('allow update: if isTeamOwnerOrAdmin(teamId) || isCurrentUserRegistrationGuardian(resource.data);');
     });
 });

@@ -887,10 +887,17 @@ service cloud.firestore {
       return !data.keys().hasAny([
                'paymentProvider',
                'checkoutAttemptToken',
+               'checkoutPayerUid',
                'checkoutUrl',
                'paymentLink',
                'checkoutAmountCents',
                'checkoutCurrency',
+               'stripePaymentAuthorityVersion',
+               'checkoutReservedAtMs',
+               'checkoutExpiresAt',
+               'checkoutCreatedAt',
+               'stripePaymentStatus',
+               'livemode',
                'stripeGrossPaidAmountCents',
                'stripeRefundedAmountCents',
                'stripeRefundableAmountCents',
@@ -918,10 +925,17 @@ service cloud.firestore {
       let affectedKeys = request.resource.data.diff(resource.data).affectedKeys();
       return (!affectedKeys.hasAny(['paymentProvider']) || request.resource.data.get('paymentProvider', null) == null) &&
              (!affectedKeys.hasAny(['checkoutAttemptToken']) || request.resource.data.get('checkoutAttemptToken', null) == null) &&
+             (!affectedKeys.hasAny(['checkoutPayerUid']) || request.resource.data.get('checkoutPayerUid', null) == null) &&
              (!affectedKeys.hasAny(['checkoutUrl']) || request.resource.data.get('checkoutUrl', null) == null) &&
              (!affectedKeys.hasAny(['paymentLink']) || request.resource.data.get('paymentLink', null) == null) &&
              (!affectedKeys.hasAny(['checkoutAmountCents']) || request.resource.data.get('checkoutAmountCents', null) == null) &&
              (!affectedKeys.hasAny(['checkoutCurrency']) || request.resource.data.get('checkoutCurrency', null) == null) &&
+             (!affectedKeys.hasAny(['stripePaymentAuthorityVersion']) || request.resource.data.get('stripePaymentAuthorityVersion', null) == null) &&
+             (!affectedKeys.hasAny(['checkoutReservedAtMs']) || request.resource.data.get('checkoutReservedAtMs', null) == null) &&
+             (!affectedKeys.hasAny(['checkoutExpiresAt']) || request.resource.data.get('checkoutExpiresAt', null) == null) &&
+             (!affectedKeys.hasAny(['checkoutCreatedAt']) || request.resource.data.get('checkoutCreatedAt', null) == null) &&
+             (!affectedKeys.hasAny(['stripePaymentStatus']) || request.resource.data.get('stripePaymentStatus', null) == null) &&
+             (!affectedKeys.hasAny(['livemode']) || request.resource.data.get('livemode', null) == null) &&
              (!affectedKeys.hasAny(['stripeGrossPaidAmountCents']) || request.resource.data.get('stripeGrossPaidAmountCents', null) == null) &&
              (!affectedKeys.hasAny(['stripeRefundedAmountCents']) || request.resource.data.get('stripeRefundedAmountCents', null) == null) &&
              (!affectedKeys.hasAny(['stripeRefundableAmountCents']) || request.resource.data.get('stripeRefundableAmountCents', null) == null) &&
@@ -942,6 +956,45 @@ service cloud.firestore {
              (!affectedKeys.hasAny(['reason']) || request.resource.data.get('reason', null) == null) &&
              (!affectedKeys.hasAny(['adminBilling']) || request.resource.data.get('adminBilling', null) == null) &&
              (!affectedKeys.hasAny(['adminBillingEntries']) || request.resource.data.get('adminBillingEntries', null) == null);
+    }
+
+    function hasActiveRegistrationStripeAuthority(data) {
+      return data.get('checkoutStatus', '') in ['creating', 'creation_failed', 'open', 'async_pending'] ||
+             data.get('paymentStatus', '') in ['checkout_open', 'pending_payment'] ||
+             (data.get('checkoutCreationReservationId', '') is string &&
+              data.get('checkoutCreationReservationId', '').size() > 0);
+    }
+
+    function hasNoRegistrationStripeAuthorityFields(data) {
+      return !data.keys().hasAny([
+        'paymentProvider', 'checkoutStatus', 'paymentStatus', 'checkoutAttemptToken',
+        'checkoutCreationReservationId', 'checkoutCreationStartedAt',
+        'retryCapacityReservationId', 'stripePaymentAuthorityVersion',
+        'publicCheckoutCapabilityHash', 'checkoutUrl', 'paymentLink',
+        'checkoutAmountCents', 'checkoutCurrency', 'checkoutExpiresAt', 'checkoutCreatedAt', 'livemode',
+        'stripeCheckoutSessionId', 'stripePaymentIntentId', 'stripePaymentStatus', 'stripeEventId',
+        'lastPaidStripeCheckoutSessionId', 'lastPaidStripeChargeId',
+        'stripeGrossPaidAmountCents', 'stripeRefundedAmountCents',
+        'stripeDisputeLostAmountCents', 'stripeFinancialStatus'
+      ]);
+    }
+
+    function hasNoRegistrationStripeAuthorityMutation() {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+        'paymentProvider', 'checkoutStatus', 'paymentStatus', 'checkoutAttemptToken',
+        'checkoutCreationReservationId', 'checkoutCreationStartedAt',
+        'retryCapacityReservationId', 'stripePaymentAuthorityVersion',
+        'publicCheckoutCapabilityHash', 'checkoutUrl', 'paymentLink',
+        'checkoutAmountCents', 'checkoutCurrency', 'checkoutExpiresAt', 'checkoutCreatedAt', 'livemode',
+        'stripeCheckoutSessionId', 'stripePaymentIntentId', 'stripePaymentStatus', 'stripeEventId',
+        'lastPaidStripeCheckoutSessionId', 'lastPaidStripeChargeId',
+        'stripeGrossPaidAmountCents', 'stripeRefundedAmountCents',
+        'stripeDisputeLostAmountCents', 'stripeFinancialStatus'
+      ]);
+    }
+
+    function hasActiveTeamFeeStripeAuthority(data) {
+      return data.get('checkoutStatus', '') in ['creating', 'creation_failed', 'open', 'async_pending'];
     }
 
     function isSafeOfflineTeamFeeBilling(data, teamId, batchId, recipientId) {
@@ -3237,9 +3290,14 @@ service cloud.firestore {
 
         match /registrations/{registrationId} {
           allow read: if isTeamOwnerOrAdmin(teamId) || isCurrentUserRegistrationGuardian(resource.data);
-          allow update: if isTeamOwnerOrAdmin(teamId);
-          allow delete: if isTeamOwnerOrAdmin(teamId);
-          allow create: if isTeamOwnerOrAdmin(teamId) && request.resource.data.status == 'pending';
+          allow update: if isTeamOwnerOrAdmin(teamId) &&
+                           !hasActiveRegistrationStripeAuthority(resource.data) &&
+                           hasNoRegistrationStripeAuthorityMutation();
+          allow delete: if isTeamOwnerOrAdmin(teamId) &&
+                           !hasActiveRegistrationStripeAuthority(resource.data);
+          allow create: if isTeamOwnerOrAdmin(teamId) &&
+                          request.resource.data.status == 'pending' &&
+                          hasNoRegistrationStripeAuthorityFields(request.resource.data);
 
           // Raw checkout capabilities, replay parameters, and Stripe charge
           // authority are server-only even for team administrators.
@@ -3913,12 +3971,14 @@ service cloud.firestore {
                            request.resource.data.batchId == batchId &&
                            hasNoPrivateTeamFeeBillingFields(request.resource.data);
           allow update: if isTeamOwnerOrAdmin(teamId) &&
+                           !hasActiveTeamFeeStripeAuthority(resource.data) &&
                            resource.data.teamId == teamId &&
                            resource.data.batchId == batchId &&
                            request.resource.data.teamId == teamId &&
                            request.resource.data.batchId == batchId &&
                            hasNoIntroducedPrivateTeamFeeBillingFields();
           allow delete: if isTeamOwnerOrAdmin(teamId) &&
+                           !hasActiveTeamFeeStripeAuthority(resource.data) &&
                            resource.data.teamId == teamId &&
                            resource.data.batchId == batchId;
 
@@ -3938,6 +3998,10 @@ service cloud.firestore {
           }
 
           match /stripeCharges/{chargeId} {
+            allow read, create, update, delete: if false;
+          }
+
+          match /checkoutReservations/{reservationId} {
             allow read, create, update, delete: if false;
           }
 

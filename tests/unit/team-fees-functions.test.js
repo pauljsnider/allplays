@@ -356,6 +356,23 @@ describe('team fee checkout function helpers', () => {
         };
         expect(getTeamFeePaymentIntentGuardFailure({ recipient, session, paymentIntent })).toBe('');
         expect(getTeamFeePaymentIntentGuardFailure({
+            recipient,
+            session,
+            paymentIntent: { ...paymentIntent, metadata: {} },
+            allowLegacyPaymentIntentMetadata: true
+        })).toBe('');
+        expect(getTeamFeePaymentIntentGuardFailure({
+            recipient,
+            session,
+            paymentIntent: { ...paymentIntent, metadata: {} }
+        })).toBe('payment_intent_scope_mismatch');
+        expect(getTeamFeePaymentIntentGuardFailure({
+            recipient,
+            session,
+            paymentIntent: { ...paymentIntent, metadata: { product: 'team_fee' } },
+            allowLegacyPaymentIntentMetadata: true
+        })).toBe('payment_intent_scope_mismatch');
+        expect(getTeamFeePaymentIntentGuardFailure({
             recipient, session, paymentIntent: { ...paymentIntent, metadata: { ...metadata, recipientId: 'victim' } }
         })).toBe('payment_intent_scope_mismatch');
 

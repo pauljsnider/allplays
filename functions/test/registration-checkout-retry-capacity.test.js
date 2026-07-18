@@ -217,7 +217,7 @@ function makeFunctionsStub() {
     };
 }
 
-function installModuleStubs({ firestore, stripeCreateImpl }) {
+function installModuleStubs({ firestore, stripeCreateImpl, stripeExpireImpl = async () => ({ status: 'expired' }) }) {
     adminStub = {
         apps: [true],
         initializeApp: () => {},
@@ -231,7 +231,8 @@ function installModuleStubs({ firestore, stripeCreateImpl }) {
             return {
                 checkout: {
                     sessions: {
-                        create: stripeCreateImpl
+                        create: stripeCreateImpl,
+                        expire: stripeExpireImpl
                     }
                 },
                 webhooks: {
@@ -244,10 +245,10 @@ function installModuleStubs({ firestore, stripeCreateImpl }) {
     };
 }
 
-function loadCheckoutHandler({ seed, stripeCreateImpl, firestoreOptions }) {
+function loadCheckoutHandler({ seed, stripeCreateImpl, stripeExpireImpl, firestoreOptions }) {
     delete require.cache[repoIndexPath];
     const firestore = makeFirestore(seed, firestoreOptions);
-    installModuleStubs({ firestore, stripeCreateImpl });
+    installModuleStubs({ firestore, stripeCreateImpl, stripeExpireImpl });
     const mod = require('../index.js');
     return {
         firestore,
@@ -848,6 +849,119 @@ test('replays the exact durable Stripe request after post-Stripe persistence fai
     assert.equal(completedRegistration.checkoutStatus, 'open');
     assert.equal(Object.prototype.hasOwnProperty.call(completedRegistration, 'checkoutCreationReservationId'), false);
     assert.equal(loaded.firestore.snapshot(reservationPath).status, 'persisted');
+});
+
+test('terminal registration replay is preserved for webhook reconciliation instead of projected as open', async () => {
+    const registrationPath = 'teams/team-1/registrationForms/form-1/registrations/reg-1';
+    const expiredSessionIds = [];
+    const sharedSession = {
+        id: 'cs_test_terminal_replay',
+        url: 'https://checkout.stripe.com/c/terminal_replay',
+        payment_status: 'unpaid',
+        status: 'open',
+        livemode: false,
+        expires_at: Math.floor(Date.now() / 1000) + 1800
+    };
+    const stripeCreateImpl = async (payload) => ({ ...clone(sharedSession), metadata: clone(payload.metadata) });
+    const loaded = loadCheckoutHandler({
+        seed: buildSeedState(),
+        stripeCreateImpl,
+        stripeExpireImpl: async (sessionId) => {
+            expiredSessionIds.push(sessionId);
+            return { ...clone(sharedSession), status: 'expired' };
+        },
+        firestoreOptions: {
+            onGet: ({ path, count }) => {
+                if (path === registrationPath && count === 4) {
+                    throw new Error('Injected registration projection failure.');
+                }
+            }
+        }
+    });
+    await assert.rejects(
+        loaded.createStripeRegistrationCheckout(checkoutInput),
+        /Injected registration projection failure\./
+    );
+    const reservationId = loaded.firestore.snapshot(registrationPath).checkoutCreationReservationId;
+    const reservationPath = `${registrationPath}/checkoutReservations/${reservationId}`;
+    sharedSession.status = 'complete';
+    sharedSession.payment_status = 'paid';
+
+    await assert.rejects(
+        loaded.createStripeRegistrationCheckout(checkoutInput),
+        (error) => error?.code === 'failed-precondition' && /completing/.test(error.message)
+    );
+
+    assert.deepEqual(expiredSessionIds, []);
+    assert.equal(loaded.firestore.snapshot(reservationPath).status, 'stripe_created');
+    assert.equal(loaded.firestore.snapshot(reservationPath).stripeCheckoutSessionId, sharedSession.id);
+    const registration = loaded.firestore.snapshot(registrationPath);
+    assert.equal(registration.checkoutCreationReservationId, reservationId);
+    assert.notEqual(registration.checkoutStatus, 'open');
+});
+
+test('concurrent duplicate checkout callers share one session without the replay loser expiring it', async () => {
+    const registrationPath = 'teams/team-1/registrationForms/form-1/registrations/reg-1';
+    const stripeCalls = [];
+    const expiredSessionIds = [];
+    let releaseFirstStripeCall;
+    let releaseReplayStripeCall;
+    let markFirstStripeStarted;
+    let markReplayStripeStarted;
+    const firstStripeStarted = new Promise((resolve) => { markFirstStripeStarted = resolve; });
+    const replayStripeStarted = new Promise((resolve) => { markReplayStripeStarted = resolve; });
+    const firstStripeRelease = new Promise((resolve) => { releaseFirstStripeCall = resolve; });
+    const replayStripeRelease = new Promise((resolve) => { releaseReplayStripeCall = resolve; });
+    const sharedSession = {
+        id: 'cs_test_concurrent_shared',
+        url: 'https://checkout.stripe.com/c/concurrent_shared',
+        payment_status: 'unpaid',
+        status: 'open',
+        livemode: false,
+        expires_at: Math.floor(Date.now() / 1000) + 1800
+    };
+    const loaded = loadCheckoutHandler({
+        seed: buildSeedState({ registrationCapacityReleased: false }),
+        stripeCreateImpl: async (payload, options) => {
+            stripeCalls.push({ payload: clone(payload), options: clone(options) });
+            if (stripeCalls.length === 1) {
+                markFirstStripeStarted();
+                await firstStripeRelease;
+            } else {
+                markReplayStripeStarted();
+                await replayStripeRelease;
+            }
+            return { ...clone(sharedSession), metadata: clone(payload.metadata) };
+        },
+        stripeExpireImpl: async (sessionId) => {
+            expiredSessionIds.push(sessionId);
+            return { ...clone(sharedSession), status: 'expired' };
+        }
+    });
+
+    const firstCheckout = loaded.createStripeRegistrationCheckout({ ...checkoutInput, retryPayment: false });
+    await firstStripeStarted;
+    const reservationId = loaded.firestore.snapshot(registrationPath).checkoutCreationReservationId;
+    const replayCheckout = loaded.createStripeRegistrationCheckout({ ...checkoutInput, retryPayment: false });
+    await replayStripeStarted;
+    releaseFirstStripeCall();
+    const firstResult = await firstCheckout;
+    releaseReplayStripeCall();
+    const replayResult = await replayCheckout;
+
+    assert.deepEqual(firstResult, replayResult);
+    assert.deepEqual(firstResult, {
+        checkoutUrl: sharedSession.url,
+        sessionId: sharedSession.id
+    });
+    assert.equal(stripeCalls.length, 2);
+    assert.deepEqual(stripeCalls[1], stripeCalls[0]);
+    assert.deepEqual(expiredSessionIds, []);
+    const registration = loaded.firestore.snapshot(registrationPath);
+    assert.equal(registration.checkoutStatus, 'open');
+    assert.equal(registration.stripeCheckoutSessionId, sharedSession.id);
+    assert.equal(Object.prototype.hasOwnProperty.call(registration, 'checkoutCreationReservationId'), false);
+    assert.equal(loaded.firestore.snapshot(`${registrationPath}/checkoutReservations/${reservationId}`).status, 'persisted');
 });
 
 test('supersedes an expired durable replay before creating a fresh registration checkout', async () => {

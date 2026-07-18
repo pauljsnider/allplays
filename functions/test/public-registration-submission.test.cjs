@@ -111,46 +111,67 @@ function makeFirestore(seed = {}) {
     }
 
     function collection(path) {
-        return {
+        let limitCount = null;
+        const query = {
             path,
             doc(id) {
                 const docId = id || `auto-${nextAutoId++}`;
                 return doc(`${path}/${docId}`);
             },
+            limit(value) {
+                limitCount = Math.max(0, Number(value) || 0);
+                return query;
+            },
             async get() {
                 const parentDepth = path.split('/').length;
-                const docs = [...state.entries()]
+                let docs = [...state.entries()]
                     .filter(([candidatePath]) => candidatePath.startsWith(`${path}/`) && candidatePath.split('/').length === parentDepth + 1)
                     .map(([candidatePath, data]) => {
                         const ref = doc(candidatePath);
                         return { id: ref.id, ref, exists: true, data: () => clone(data) };
                     });
+                if (Number.isFinite(limitCount)) docs = docs.slice(0, limitCount);
                 return { docs, empty: docs.length === 0, size: docs.length };
             }
         };
+        return query;
     }
 
     function collectionGroup(name) {
         const filters = [];
+        let limitCount = null;
+        let cursorPath = '';
         const query = {
             where(field, operator, value) {
                 filters.push({ field, operator, value });
                 return query;
             },
-            limit() {
+            orderBy() {
+                return query;
+            },
+            limit(value) {
+                limitCount = Number(value);
+                return query;
+            },
+            startAfter(snapshot) {
+                cursorPath = snapshot?.ref?.path || '';
                 return query;
             },
             async get() {
-                const docs = [...state.entries()]
+                let docs = [...state.entries()]
                     .filter(([path, data]) => {
                         const parts = path.split('/');
-                        return parts.at(-2) === name && filters.every((filter) => filter.operator === '==' && data?.[filter.field] === filter.value);
+                        return parts.at(-2) === name
+                            && (!cursorPath || path > cursorPath)
+                            && filters.every((filter) => filter.operator === '==' && data?.[filter.field] === filter.value);
                     })
+                    .sort(([leftPath], [rightPath]) => leftPath.localeCompare(rightPath))
                     .map(([path]) => {
                         const ref = doc(path);
                         const data = state.get(path);
                         return { id: ref.id, ref, data: () => clone(data) };
                     });
+                if (Number.isFinite(limitCount)) docs = docs.slice(0, limitCount);
                 return { docs, empty: docs.length === 0, size: docs.length };
             }
         };
@@ -259,6 +280,8 @@ function installModuleStubs(firestore) {
         checkoutSessions: [],
         checkoutSessionOptions: [],
         checkoutResponses: new Map(),
+        checkoutResponsesByIdempotencyKey: new Map(),
+        checkoutCreateHook: null,
         expiredSessionIds: [],
         refundCalls: [],
         refundCreateHook: null,
@@ -274,6 +297,7 @@ function installModuleStubs(firestore) {
         initializeApp: () => {},
         firestore: Object.assign(() => firestore, {
             FieldValue: firestore.FieldValue,
+            FieldPath: { documentId: () => '__name__' },
             Timestamp: { now: () => 'TIMESTAMP_NOW' }
         }),
         auth: () => ({ verifyIdToken: async () => null }),
@@ -286,6 +310,13 @@ function installModuleStubs(firestore) {
                 checkout: { sessions: { create: async (payload, options) => {
                     stripeState.checkoutSessions.push(clone(payload));
                     stripeState.checkoutSessionOptions.push(clone(options));
+                    if (typeof stripeState.checkoutCreateHook === 'function') {
+                        await stripeState.checkoutCreateHook({ payload: clone(payload), options: clone(options) });
+                    }
+                    const idempotencyKey = String(options?.idempotencyKey || '');
+                    if (idempotencyKey && stripeState.checkoutResponsesByIdempotencyKey.has(idempotencyKey)) {
+                        return clone(stripeState.checkoutResponsesByIdempotencyKey.get(idempotencyKey));
+                    }
                     const response = {
                         id: `cs_test_${stripeState.checkoutSessions.length}`,
                         url: `https://stripe.test/checkout/${stripeState.checkoutSessions.length}`,
@@ -298,12 +329,18 @@ function installModuleStubs(firestore) {
                         ...(clone(stripeState.nextCheckoutResponse) || {})
                     };
                     stripeState.checkoutResponses.set(response.id, clone(response));
+                    if (idempotencyKey) stripeState.checkoutResponsesByIdempotencyKey.set(idempotencyKey, clone(response));
                     return response;
                 }, retrieve: async (sessionId) => {
                     const session = stripeState.checkoutResponses.get(sessionId);
                     if (!session) throw new Error('Checkout session not found.');
                     return clone(session);
-                }, expire: async (sessionId) => {
+                }, listLineItems: async () => ({ data: [{
+                    quantity: 1,
+                    amount_total: stripeState.teamPassPrice.unit_amount,
+                    currency: stripeState.teamPassPrice.currency,
+                    price: clone(stripeState.teamPassPrice)
+                }] }), expire: async (sessionId) => {
                     const session = stripeState.checkoutResponses.get(sessionId);
                     if (!session) throw new Error('Checkout session not found.');
                     session.status = 'expired';
@@ -540,6 +577,55 @@ test('Team Pass checkout persists server authority and webhook writes only a saf
     assert.equal(firestore.snapshot('teams/team-pass/teamPassCheckoutAttempts/2026_team-pass').checkoutStatus, 'refunded');
 });
 
+test('pre-authority Team Pass paid Session is migrated and credited instead of being acknowledged as unrelated', async () => {
+    const { firestore, stripeState, mod } = loadFunctionsModule({
+        'teams/team-pass': { ownerId: 'owner-1', adminEmails: [] },
+        'users/owner-1': { email: 'owner@example.com' }
+    });
+    stripeState.paymentIntents.set('pi_team_pass_legacy', {
+        id: 'pi_team_pass_legacy', amount_received: 4900, currency: 'usd', livemode: false,
+        latest_charge: 'ch_team_pass_legacy', metadata: {}
+    });
+    stripeState.webhookEvent = {
+        id: 'evt_team_pass_legacy_paid', type: 'checkout.session.completed', created: 100,
+        data: { object: {
+            id: 'cs_team_pass_legacy', mode: 'payment', status: 'complete', payment_status: 'paid',
+            payment_intent: 'pi_team_pass_legacy', customer: 'cus_team_pass_legacy',
+            client_reference_id: 'team-pass:2026:owner-1', amount_total: 4900, currency: 'usd', livemode: false,
+            metadata: { teamId: 'team-pass', seasonId: '2026', tier: 'team-pass', purchaserUid: 'owner-1' }
+        } }
+    };
+
+    const response = await deliverStripeWebhook(mod);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.body.unlocked, true);
+    assert.equal(response.body.legacyReconciled, true);
+    assert.deepEqual(firestore.snapshot('teams/team-pass/entitlements/2026_team-pass'), {
+        status: 'active', teamId: 'team-pass', seasonId: '2026', tier: 'team-pass', updatedAt: 'SERVER_TIMESTAMP'
+    });
+    const legacyAttempts = [...firestore._state.entries()]
+        .filter(([path]) => path.startsWith('teams/team-pass/teamPassCheckoutAttempts/legacy_'));
+    assert.equal(legacyAttempts.length, 1);
+    assert.equal(legacyAttempts[0][1].legacyPaymentAuthorityVersion, 1);
+    assert.equal(legacyAttempts[0][1].stripeCheckoutSessionId, 'cs_team_pass_legacy');
+    assert.equal(legacyAttempts[0][1].stripePaymentIntentId, 'pi_team_pass_legacy');
+    assert.equal(legacyAttempts[0][1].stripeChargeId, 'ch_team_pass_legacy');
+    assert.equal(firestore.snapshot('stripeEvents/evt_team_pass_legacy_paid').ignored, false);
+
+    stripeState.webhookEvent = {
+        id: 'evt_team_pass_legacy_refund', type: 'charge.refunded', created: 200,
+        data: { object: {
+            id: 'ch_team_pass_legacy', object: 'charge', metadata: {}, payment_intent: 'pi_team_pass_legacy',
+            amount: 4900, amount_refunded: 4900, currency: 'usd', livemode: false
+        } }
+    };
+    assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
+    assert.equal(firestore.snapshot('teams/team-pass/entitlements/2026_team-pass').status, 'cancelled');
+    assert.equal([...firestore._state.entries()]
+        .find(([path]) => path.startsWith('teams/team-pass/teamPassCheckoutAttempts/legacy_'))[1].checkoutStatus, 'refunded');
+});
+
 test('Team Pass checkout revalidates and replaces an expired stored Stripe URL', async () => {
     const { firestore, stripeState, mod } = loadFunctionsModule({
         'teams/team-pass': { ownerId: 'owner-1', adminEmails: [] },
@@ -555,6 +641,219 @@ test('Team Pass checkout revalidates and replaces an expired stored Stripe URL',
     assert.notEqual(second.sessionId, first.sessionId);
     assert.equal(stripeState.checkoutSessions.length, 2);
     assert.equal(firestore.snapshot('teams/team-pass/teamPassCheckoutAttempts/2026_team-pass').stripeCheckoutSessionId, second.sessionId);
+});
+
+test('late duplicate Team Pass projection preserves the concurrently persisted checkout', async () => {
+    const attemptPath = 'teams/team-pass/teamPassCheckoutAttempts/2026_team-pass';
+    const { firestore, stripeState, mod } = loadFunctionsModule({
+        'teams/team-pass': { ownerId: 'owner-1', adminEmails: [] },
+        'users/owner-1': { email: 'owner@example.com' }
+    });
+    const sessionId = 'cs_team_pass_concurrent_winner';
+    const checkoutUrl = 'https://stripe.test/checkout/team-pass-concurrent';
+    stripeState.nextCheckoutResponse = { id: sessionId, url: checkoutUrl };
+    stripeState.checkoutCreateHook = async ({ payload }) => {
+        await firestore.doc(attemptPath).set({
+            checkoutStatus: 'open',
+            checkoutUrl,
+            stripeCheckoutSessionId: sessionId,
+            checkoutAttemptToken: payload.metadata.checkoutAttemptToken,
+            purchaserUid: 'owner-1'
+        }, { merge: true });
+    };
+
+    const result = await mod.createStripeTeamPassCheckout(
+        { teamId: 'team-pass', seasonId: '2026', tier: 'team-pass' },
+        { auth: { uid: 'owner-1', token: { email: 'owner@example.com' } } }
+    );
+
+    assert.deepEqual(result, { checkoutUrl, sessionId });
+    assert.equal(firestore.snapshot(attemptPath).checkoutStatus, 'open');
+    assert.deepEqual(stripeState.expiredSessionIds, []);
+});
+
+test('idempotent Team Pass replay preserves a terminal Session for webhook reconciliation', async () => {
+    const attemptPath = 'teams/team-pass/teamPassCheckoutAttempts/2026_team-pass';
+    const { firestore, stripeState, mod } = loadFunctionsModule({
+        'teams/team-pass': { ownerId: 'owner-1', adminEmails: [] },
+        'users/owner-1': { email: 'owner@example.com' }
+    });
+    const request = { teamId: 'team-pass', seasonId: '2026', tier: 'team-pass' };
+    const authContext = { auth: { uid: 'owner-1', token: { email: 'owner@example.com' } } };
+    let injected = false;
+    stripeState.checkoutCreateHook = async ({ payload, options }) => {
+        if (injected) return;
+        injected = true;
+        const response = {
+            id: 'cs_team_pass_terminal_replay', url: 'https://stripe.test/checkout/team-pass-terminal',
+            mode: 'payment', payment_status: 'paid', status: 'complete', payment_intent: 'pi_team_pass_terminal_replay',
+            livemode: false, metadata: clone(payload.metadata), amount_total: 4900, currency: 'usd'
+        };
+        stripeState.checkoutResponses.set(response.id, clone(response));
+        stripeState.checkoutResponsesByIdempotencyKey.set(options.idempotencyKey, clone(response));
+        throw new Error('Injected post-Stripe Team Pass failure.');
+    };
+    await assert.rejects(mod.createStripeTeamPassCheckout(request, authContext), /Injected post-Stripe Team Pass failure/);
+    await assert.rejects(mod.createStripeTeamPassCheckout(request, authContext), /payment is completing/i);
+    assert.equal(firestore.snapshot(attemptPath).checkoutStatus, 'open');
+    assert.equal(firestore.snapshot(attemptPath).stripeCheckoutSessionId, 'cs_team_pass_terminal_replay');
+
+    stripeState.webhookEvent = {
+        id: 'evt_team_pass_terminal_replay', type: 'checkout.session.completed', created: 100,
+        data: { object: clone(stripeState.checkoutResponses.get('cs_team_pass_terminal_replay')) }
+    };
+    assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
+    assert.equal(firestore.snapshot(attemptPath).checkoutStatus, 'paid');
+    assert.equal(firestore.snapshot('teams/team-pass/entitlements/2026_team-pass').status, 'active');
+});
+
+test('failed Team Pass checkout authority cannot be replaced by another eligible purchaser', async () => {
+    const attemptPath = 'teams/team-pass/teamPassCheckoutAttempts/2026_team-pass';
+    const { firestore, stripeState, mod } = loadFunctionsModule({
+        'teams/team-pass': { ownerId: 'owner-1', adminEmails: ['admin@example.com'] },
+        'users/owner-1': { email: 'owner@example.com' },
+        'users/admin-2': { email: 'admin@example.com' }
+    });
+    const request = { teamId: 'team-pass', seasonId: '2026', tier: 'team-pass' };
+    let firstCall = true;
+    stripeState.checkoutCreateHook = async () => {
+        if (firstCall) {
+            firstCall = false;
+            throw new Error('Injected Team Pass creation failure.');
+        }
+    };
+    await assert.rejects(mod.createStripeTeamPassCheckout(request, {
+        auth: { uid: 'owner-1', token: { email: 'owner@example.com' } }
+    }), /Injected Team Pass creation failure/);
+    const failedAttempt = firestore.snapshot(attemptPath);
+    const failedToken = failedAttempt.checkoutAttemptToken;
+
+    await assert.rejects(mod.createStripeTeamPassCheckout(request, {
+        auth: { uid: 'admin-2', token: { email: 'admin@example.com' } }
+    }), /reconciled before another purchaser/i);
+    assert.equal(stripeState.checkoutSessions.length, 1);
+    assert.equal(firestore.snapshot(attemptPath).checkoutAttemptToken, failedToken);
+    assert.equal(firestore.snapshot(attemptPath).purchaserUid, 'owner-1');
+
+    const checkout = await mod.createStripeTeamPassCheckout(request, {
+        auth: { uid: 'owner-1', token: { email: 'owner@example.com' } }
+    });
+    const retriedAttempt = firestore.snapshot(attemptPath);
+    assert.equal(retriedAttempt.checkoutAttemptToken, failedToken);
+    assert.equal(retriedAttempt.purchaserUid, 'owner-1');
+    assert.equal(stripeState.checkoutSessions[1].metadata.purchaserUid, 'owner-1');
+    assert.equal(stripeState.checkoutSessionOptions[1].idempotencyKey, stripeState.checkoutSessionOptions[0].idempotencyKey);
+    assert.equal(retriedAttempt.stripeCheckoutSessionId, checkout.sessionId);
+});
+
+test('idempotent Team Pass replay supersedes an expired Session before a fresh attempt', async () => {
+    const attemptPath = 'teams/team-pass/teamPassCheckoutAttempts/2026_team-pass';
+    const { firestore, stripeState, mod } = loadFunctionsModule({
+        'teams/team-pass': { ownerId: 'owner-1', adminEmails: [] },
+        'users/owner-1': { email: 'owner@example.com' }
+    });
+    const request = { teamId: 'team-pass', seasonId: '2026', tier: 'team-pass' };
+    const authContext = { auth: { uid: 'owner-1', token: { email: 'owner@example.com' } } };
+    let injected = false;
+    stripeState.checkoutCreateHook = async ({ payload, options }) => {
+        if (injected) return;
+        injected = true;
+        const response = {
+            id: 'cs_team_pass_expired_replay', url: 'https://stripe.test/checkout/team-pass-expired',
+            mode: 'payment', payment_status: 'unpaid', status: 'expired', livemode: false,
+            metadata: clone(payload.metadata), amount_total: 4900, currency: 'usd'
+        };
+        stripeState.checkoutResponses.set(response.id, clone(response));
+        stripeState.checkoutResponsesByIdempotencyKey.set(options.idempotencyKey, clone(response));
+        throw new Error('Injected post-Stripe Team Pass failure.');
+    };
+    await assert.rejects(mod.createStripeTeamPassCheckout(request, authContext), /Injected post-Stripe Team Pass failure/);
+    await assert.rejects(mod.createStripeTeamPassCheckout(request, authContext), /replayed Team Pass checkout expired/i);
+    assert.equal(firestore.snapshot(attemptPath).checkoutStatus, 'stale');
+
+    stripeState.checkoutCreateHook = null;
+    const fresh = await mod.createStripeTeamPassCheckout(request, authContext);
+    assert.notEqual(fresh.sessionId, 'cs_team_pass_expired_replay');
+    assert.notEqual(stripeState.checkoutSessionOptions[2].idempotencyKey, stripeState.checkoutSessionOptions[1].idempotencyKey);
+    assert.equal(firestore.snapshot(attemptPath).checkoutStatus, 'open');
+});
+
+test('Team Pass entitlement backfill paginates through non-team collection-group cursors without getting stuck', async () => {
+    const { mod } = loadFunctionsModule({
+        'users/platform-admin': { email: 'admin@example.com', isAdmin: true },
+        'teams/team-a/entitlements/2026_team-pass': {
+            teamId: 'team-a', seasonId: '2026', tier: 'team-pass', status: 'active'
+        },
+        'users/user-a/entitlements/2026_team-pass': {
+            seasonId: '2026', tier: 'team-pass', status: 'active'
+        }
+    });
+    const adminContext = { auth: { uid: 'platform-admin', token: { email: 'admin@example.com' } } };
+
+    const first = await mod.backfillTeamPassEntitlementProjections({ dryRun: true, limit: 1 }, adminContext);
+    assert.equal(first.matched, 1);
+    assert.equal(first.eligible, 1);
+    assert.equal(first.nextCursorPath, 'teams/team-a/entitlements/2026_team-pass');
+
+    const second = await mod.backfillTeamPassEntitlementProjections({
+        dryRun: true, limit: 1, cursorPath: first.nextCursorPath
+    }, adminContext);
+    assert.equal(second.matched, 1);
+    assert.equal(second.eligible, 0);
+    assert.equal(second.nextCursorPath, 'users/user-a/entitlements/2026_team-pass');
+
+    const third = await mod.backfillTeamPassEntitlementProjections({
+        dryRun: true, limit: 1, cursorPath: second.nextCursorPath
+    }, adminContext);
+    assert.equal(third.matched, 0);
+    assert.equal(third.hasMore, false);
+    assert.equal(third.nextCursorPath, null);
+});
+
+test('payment authority rollout gate audits blockers and requires an explicit empty assertion', async () => {
+    const registrationPath = 'teams/team-a/registrationForms/form-a/registrations/reg-a';
+    const feePath = 'teams/team-a/feeBatches/batch-a/feeRecipients/fee-a';
+    const { firestore, mod } = loadFunctionsModule({
+        'users/platform-admin': { email: 'admin@example.com', isAdmin: true },
+        [registrationPath]: {
+            teamId: 'team-a', formId: 'form-a', paymentProvider: 'stripe',
+            stripeCheckoutSessionId: 'cs_registration_legacy'
+        },
+        [feePath]: {
+            teamId: 'team-a', batchId: 'batch-a', paymentProvider: 'stripe',
+            stripeGrossPaidAmountCents: 2500
+        },
+        [`${feePath}/stripeCharges/ch_fee`]: {
+            type: 'stripe_charge', provider: 'stripe', product: 'team_fee', stripeChargeId: 'ch_fee'
+        }
+    });
+    const adminContext = { auth: { uid: 'platform-admin', token: { email: 'admin@example.com' } } };
+
+    const audit = await mod.auditStripePaymentAuthorityRollout({ assertEmpty: false }, adminContext);
+    assert.equal(audit.ready, false);
+    assert.equal(audit.complete, true);
+    assert.equal(audit.blockerCount, 1);
+    assert.deepEqual(audit.blockers[0], {
+        product: 'registration', path: registrationPath, reason: 'paid_stripe_record_missing_charge_ledger'
+    });
+    await assert.rejects(
+        mod.auditStripePaymentAuthorityRollout({
+            assertEmpty: true,
+            confirmation: 'assert_no_legacy_stripe_payment_authority_v1'
+        }, adminContext),
+        (error) => error.code === 'failed-precondition' && error.details?.blockerCount === 1
+    );
+
+    await firestore.doc(`${registrationPath}/stripeCharges/ch_registration`).set({
+        type: 'stripe_charge', provider: 'stripe', product: 'registration', stripeChargeId: 'ch_registration'
+    });
+    const asserted = await mod.auditStripePaymentAuthorityRollout({
+        assertEmpty: true,
+        confirmation: 'assert_no_legacy_stripe_payment_authority_v1'
+    }, adminContext);
+    assert.equal(asserted.ready, true);
+    assert.equal(asserted.blockerCount, 0);
+    assert.equal([...firestore._state.keys()].filter((path) => path.startsWith('paymentAuthorityRolloutAudits/')).length, 3);
 });
 
 test('Team Pass reversal state remains authoritative when refund arrives before paid', async () => {
@@ -697,6 +996,170 @@ test('team fee checkout reserves one current attempt and reuses its Stripe sessi
     assert.equal(recipient.checkoutCurrency, 'usd');
 });
 
+test('late duplicate team fee projection cannot downgrade or expire the persisted reservation', async () => {
+    const recipientPath = 'teams/team-fee/feeBatches/batch-1/feeRecipients/recipient-1';
+    const { firestore, stripeState, mod } = loadFunctionsModule({
+        'teams/team-fee': { ownerId: 'owner-1', adminEmails: [] },
+        'users/owner-1': { email: 'owner@example.com' },
+        [recipientPath]: {
+            teamId: 'team-fee', batchId: 'batch-1', collectionMode: 'online_stripe',
+            amountCents: 7500, paidAmountCents: 0, balanceDueCents: 7500,
+            status: 'unpaid', feeTitle: 'Tournament fee', playerName: 'Sam'
+        }
+    });
+    const sessionId = 'cs_team_fee_concurrent_winner';
+    const checkoutUrl = 'https://stripe.test/checkout/team-fee-concurrent';
+    stripeState.nextCheckoutResponse = { id: sessionId, url: checkoutUrl };
+    stripeState.checkoutCreateHook = async ({ payload }) => {
+        const token = payload.metadata.checkoutAttemptToken;
+        await firestore.doc(recipientPath).set({
+            checkoutStatus: 'open',
+            checkoutUrl,
+            stripeCheckoutSessionId: sessionId,
+            checkoutAttemptToken: token,
+            checkoutPayerUid: 'owner-1'
+        }, { merge: true });
+        await firestore.doc(`${recipientPath}/checkoutReservations/${token}`).set({
+            status: 'persisted',
+            stripeCheckoutSessionId: sessionId
+        }, { merge: true });
+    };
+
+    const result = await mod.createStripeTeamFeeCheckout(
+        { teamId: 'team-fee', batchId: 'batch-1', recipientId: 'recipient-1' },
+        { auth: { uid: 'owner-1', token: { email: 'owner@example.com' } } }
+    );
+
+    assert.deepEqual(result, { checkoutUrl, sessionId });
+    assert.equal(firestore.snapshot(recipientPath).checkoutStatus, 'open');
+    const token = firestore.snapshot(recipientPath).checkoutAttemptToken;
+    assert.equal(firestore.snapshot(`${recipientPath}/checkoutReservations/${token}`).status, 'persisted');
+    assert.deepEqual(stripeState.expiredSessionIds, []);
+});
+
+test('failed team fee checkout authority cannot be replaced by another eligible payer', async () => {
+    const recipientPath = 'teams/team-fee/feeBatches/batch-1/feeRecipients/recipient-1';
+    const { firestore, stripeState, mod } = loadFunctionsModule({
+        'teams/team-fee': { ownerId: 'owner-1', adminEmails: [] },
+        'users/owner-1': { email: 'owner@example.com' },
+        'users/parent-2': { email: 'parent@example.com' },
+        [recipientPath]: {
+            teamId: 'team-fee', batchId: 'batch-1', collectionMode: 'online_stripe', parentUserId: 'parent-2',
+            amountCents: 7500, paidAmountCents: 0, balanceDueCents: 7500,
+            status: 'unpaid', feeTitle: 'Tournament fee', playerName: 'Sam'
+        }
+    });
+    const request = { teamId: 'team-fee', batchId: 'batch-1', recipientId: 'recipient-1' };
+    let firstCall = true;
+    stripeState.checkoutCreateHook = async () => {
+        if (firstCall) {
+            firstCall = false;
+            throw new Error('Injected Stripe creation failure.');
+        }
+    };
+    await assert.rejects(mod.createStripeTeamFeeCheckout(request, {
+        auth: { uid: 'owner-1', token: { email: 'owner@example.com' } }
+    }), /Injected Stripe creation failure/);
+    const failedAttempt = firestore.snapshot(recipientPath);
+    const failedToken = failedAttempt.checkoutAttemptToken;
+    assert.equal(failedAttempt.checkoutPayerUid, 'owner-1');
+
+    await assert.rejects(mod.createStripeTeamFeeCheckout(request, {
+        auth: { uid: 'parent-2', token: { email: 'parent@example.com' } }
+    }), /safely invalidated before another payer/i);
+    assert.equal(stripeState.checkoutSessions.length, 1);
+    assert.equal(firestore.snapshot(recipientPath).checkoutAttemptToken, failedToken);
+    assert.equal(firestore.snapshot(recipientPath).checkoutPayerUid, 'owner-1');
+
+    const checkout = await mod.createStripeTeamFeeCheckout(request, {
+        auth: { uid: 'owner-1', token: { email: 'owner@example.com' } }
+    });
+    const retriedAttempt = firestore.snapshot(recipientPath);
+    assert.equal(retriedAttempt.checkoutAttemptToken, failedToken);
+    assert.equal(retriedAttempt.checkoutPayerUid, 'owner-1');
+    assert.equal(stripeState.checkoutSessions[1].metadata.payerUid, 'owner-1');
+    assert.equal(stripeState.checkoutSessionOptions[1].idempotencyKey, stripeState.checkoutSessionOptions[0].idempotencyKey);
+    assert.equal(retriedAttempt.stripeCheckoutSessionId, checkout.sessionId);
+});
+
+test('admin invalidation recovers and expires a sessionless failed team fee checkout before clearing authority', async () => {
+    const recipientPath = 'teams/team-fee/feeBatches/batch-1/feeRecipients/recipient-1';
+    const { firestore, stripeState, mod } = loadFunctionsModule({
+        'teams/team-fee': { ownerId: 'owner-1', adminEmails: [] },
+        'users/owner-1': { email: 'owner@example.com' },
+        [recipientPath]: {
+            teamId: 'team-fee', batchId: 'batch-1', collectionMode: 'online_stripe',
+            amountCents: 7500, paidAmountCents: 0, balanceDueCents: 7500,
+            status: 'unpaid', feeTitle: 'Tournament fee', playerName: 'Sam'
+        }
+    });
+    const request = { teamId: 'team-fee', batchId: 'batch-1', recipientId: 'recipient-1' };
+    let injected = false;
+    stripeState.checkoutCreateHook = async ({ payload, options }) => {
+        if (injected) return;
+        injected = true;
+        const response = {
+            id: 'cs_team_fee_ambiguous', url: 'https://stripe.test/checkout/ambiguous',
+            payment_status: 'unpaid', status: 'open', livemode: false,
+            metadata: clone(payload.metadata), amount_total: 7500, currency: 'usd'
+        };
+        stripeState.checkoutResponses.set(response.id, clone(response));
+        stripeState.checkoutResponsesByIdempotencyKey.set(options.idempotencyKey, clone(response));
+        throw new Error('Injected ambiguous network failure.');
+    };
+    const authContext = { auth: { uid: 'owner-1', token: { email: 'owner@example.com' } } };
+    await assert.rejects(mod.createStripeTeamFeeCheckout(request, authContext), /Injected ambiguous network failure/);
+    assert.equal(firestore.snapshot(recipientPath).checkoutStatus, 'creation_failed');
+
+    const result = await mod.expireStripeTeamFeeCheckout(request, authContext);
+
+    assert.deepEqual(result, { expired: true, recovered: true });
+    assert.deepEqual(stripeState.expiredSessionIds, ['cs_team_fee_ambiguous']);
+    const recipient = firestore.snapshot(recipientPath);
+    assert.equal(recipient.checkoutStatus, 'expired');
+    assert.equal(recipient.checkoutAttemptToken, null);
+    const reservationPath = `${recipientPath}/checkoutReservations/${stripeState.checkoutSessions[0].metadata.checkoutAttemptToken}`;
+    assert.equal(firestore.snapshot(reservationPath).status, 'superseded');
+});
+
+test('idempotent team fee replay classifies an expired Session before allowing a fresh attempt', async () => {
+    const recipientPath = 'teams/team-fee/feeBatches/batch-1/feeRecipients/recipient-1';
+    const { firestore, stripeState, mod } = loadFunctionsModule({
+        'teams/team-fee': { ownerId: 'owner-1', adminEmails: [] },
+        'users/owner-1': { email: 'owner@example.com' },
+        [recipientPath]: {
+            teamId: 'team-fee', batchId: 'batch-1', collectionMode: 'online_stripe',
+            amountCents: 7500, paidAmountCents: 0, balanceDueCents: 7500,
+            status: 'unpaid', feeTitle: 'Tournament fee', playerName: 'Sam'
+        }
+    });
+    const request = { teamId: 'team-fee', batchId: 'batch-1', recipientId: 'recipient-1' };
+    const authContext = { auth: { uid: 'owner-1', token: { email: 'owner@example.com' } } };
+    let injected = false;
+    stripeState.checkoutCreateHook = async ({ payload, options }) => {
+        if (injected) return;
+        injected = true;
+        const response = {
+            id: 'cs_team_fee_expired_replay', url: 'https://stripe.test/checkout/expired',
+            payment_status: 'unpaid', status: 'expired', livemode: false,
+            metadata: clone(payload.metadata), amount_total: 7500, currency: 'usd'
+        };
+        stripeState.checkoutResponses.set(response.id, clone(response));
+        stripeState.checkoutResponsesByIdempotencyKey.set(options.idempotencyKey, clone(response));
+        throw new Error('Injected post-Stripe failure.');
+    };
+    await assert.rejects(mod.createStripeTeamFeeCheckout(request, authContext), /Injected post-Stripe failure/);
+    await assert.rejects(mod.createStripeTeamFeeCheckout(request, authContext), /replayed fee checkout expired/i);
+    assert.equal(firestore.snapshot(recipientPath).checkoutStatus, 'stale');
+
+    stripeState.checkoutCreateHook = null;
+    const fresh = await mod.createStripeTeamFeeCheckout(request, authContext);
+
+    assert.notEqual(fresh.sessionId, 'cs_team_fee_expired_replay');
+    assert.notEqual(stripeState.checkoutSessionOptions[2].idempotencyKey, stripeState.checkoutSessionOptions[1].idempotencyKey);
+    assert.equal(firestore.snapshot(recipientPath).checkoutStatus, 'open');
+});
+
 test('team fee checkout revalidates and replaces an expired stored Stripe URL', async () => {
     const recipientPath = 'teams/team-fee/feeBatches/batch-1/feeRecipients/recipient-1';
     const { firestore, stripeState, mod } = loadFunctionsModule({
@@ -754,6 +1217,53 @@ test('team fee webhook reconciles charge refunds through its server-owned charge
     assert.equal(recipient.stripeRefundedAmountCents, 2500);
     assert.equal(recipient.stripeRefundableAmountCents, 5000);
     assert.equal(firestore.snapshot(`${recipientPath}/stripeCharges/ch_pi_team_fee_paid`).refundedAmountCents, 2500);
+});
+
+test('legacy team fee checkout with empty PaymentIntent metadata is still credited from exact Session authority', async () => {
+    const recipientPath = 'teams/team-fee/feeBatches/batch-1/feeRecipients/recipient-1';
+    const { firestore, stripeState, mod } = loadFunctionsModule({
+        'teams/team-fee': { ownerId: 'owner-1', adminEmails: [] },
+        'users/owner-1': { email: 'owner@example.com' },
+        [recipientPath]: {
+            teamId: 'team-fee', batchId: 'batch-1', collectionMode: 'online_stripe',
+            amountCents: 7500, paidAmountCents: 0, balanceDueCents: 7500,
+            status: 'unpaid', feeTitle: 'Tournament fee', playerName: 'Sam'
+        }
+    });
+    const checkout = await mod.createStripeTeamFeeCheckout({
+        teamId: 'team-fee', batchId: 'batch-1', recipientId: 'recipient-1'
+    }, { auth: { uid: 'owner-1', token: { email: 'owner@example.com' } } });
+    await firestore.doc(recipientPath).set({
+        stripePaymentAuthorityVersion: firestore.FieldValue.delete()
+    }, { merge: true });
+    const session = stripeState.checkoutResponses.get(checkout.sessionId);
+    stripeState.paymentIntents.set('pi_team_fee_legacy', {
+        id: 'pi_team_fee_legacy', latest_charge: 'ch_team_fee_legacy', amount_received: 7500,
+        currency: 'usd', livemode: false, metadata: {}
+    });
+    stripeState.webhookEvent = {
+        id: 'evt_team_fee_legacy_paid', type: 'checkout.session.completed', created: 100,
+        data: { object: { ...clone(session), payment_status: 'paid', payment_intent: 'pi_team_fee_legacy' } }
+    };
+
+    assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
+    const recipient = firestore.snapshot(recipientPath);
+    assert.equal(recipient.status, 'paid');
+    assert.equal(recipient.paidAmountCents, 7500);
+    assert.equal(recipient.balanceDueCents, 0);
+    assert.equal(firestore.snapshot(`${recipientPath}/stripeCharges/ch_team_fee_legacy`).stripePaymentIntentId, 'pi_team_fee_legacy');
+    assert.equal(firestore.snapshot('stripeEvents/evt_team_fee_legacy_paid').ignored, false);
+
+    stripeState.webhookEvent = {
+        id: 'evt_team_fee_legacy_refund', type: 'charge.refunded', created: 200,
+        data: { object: {
+            id: 'ch_team_fee_legacy', object: 'charge', metadata: {}, payment_intent: 'pi_team_fee_legacy',
+            amount: 7500, amount_refunded: 2500, currency: 'usd', livemode: false
+        } }
+    };
+    assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
+    assert.equal(firestore.snapshot(recipientPath).paidAmountCents, 5000);
+    assert.equal(firestore.snapshot(`${recipientPath}/stripeCharges/ch_team_fee_legacy`).refundedAmountCents, 2500);
 });
 
 test('team fee refund callable records only the ledger delta when its webhook wins the race', async () => {
@@ -1589,6 +2099,44 @@ test('registration webhook reconciles refunds against the paid charge ledger', a
     assert.equal(registration.stripeRefundedAmountCents, 2000);
     assert.equal(registration.balanceDueCents, 10334);
     assert.equal(firestore.snapshot(`${registrationPath}/stripeCharges/${chargeId}`).refundedAmountCents, 2000);
+});
+
+test('legacy registration checkout with empty PaymentIntent metadata is still credited from exact Session authority', async () => {
+    const { firestore, stripeState, mod, submission, registrationPath } = await createInstallmentCheckoutFixture();
+    await firestore.doc(registrationPath).set({
+        stripePaymentAuthorityVersion: firestore.FieldValue.delete()
+    }, { merge: true });
+    stripeState.paymentIntents.set('pi_registration_legacy', {
+        id: 'pi_registration_legacy', latest_charge: 'ch_registration_legacy', amount_received: 4166,
+        currency: 'usd', livemode: false, metadata: {}
+    });
+    stripeState.webhookEvent = {
+        id: 'evt_registration_legacy_paid', type: 'checkout.session.completed', created: 100,
+        data: { object: {
+            ...buildPaidInstallmentWebhookEvent({
+                eventId: 'evt_registration_legacy_paid', registrationId: submission.registrationId
+            }).data.object,
+            payment_intent: 'pi_registration_legacy'
+        } }
+    };
+
+    assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
+    const registration = firestore.snapshot(registrationPath);
+    assert.equal(registration.paymentStatus, 'installment_in_progress');
+    assert.equal(registration.paymentPlan.paidInstallmentCount, 1);
+    assert.equal(firestore.snapshot(`${registrationPath}/stripeCharges/ch_registration_legacy`).stripePaymentIntentId, 'pi_registration_legacy');
+    assert.equal(firestore.snapshot('stripeEvents/evt_registration_legacy_paid').ignored, undefined);
+
+    stripeState.webhookEvent = {
+        id: 'evt_registration_legacy_refund', type: 'charge.refunded', created: 200,
+        data: { object: {
+            id: 'ch_registration_legacy', object: 'charge', metadata: {}, payment_intent: 'pi_registration_legacy',
+            amount: 4166, amount_refunded: 1000, currency: 'usd', livemode: false
+        } }
+    };
+    assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
+    assert.equal(firestore.snapshot(registrationPath).stripeRefundedAmountCents, 1000);
+    assert.equal(firestore.snapshot(`${registrationPath}/stripeCharges/ch_registration_legacy`).refundedAmountCents, 1000);
 });
 
 test('registration paid webhook recovers an exact durable reservation when the Stripe response was not projected', async () => {

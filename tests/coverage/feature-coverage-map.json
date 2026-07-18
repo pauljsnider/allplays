@@ -408,6 +408,7 @@
                 "createStripeTeamFeeCheckout",
                 "createStripeTeamPassCheckout",
                 "backfillTeamPassEntitlementProjections",
+                "auditStripePaymentAuthorityRollout",
                 "expireStripeTeamFeeCheckout",
                 "notifyFeeAssigned",
                 "notifyFeeMarkedPaid",
@@ -422,6 +423,7 @@
                 "tests/unit/fee-due-reminders-source.test.js",
                 "tests/unit/fee-notification-contract.test.js",
                 "tests/unit/stripe-payment-lifecycle.test.js",
+                "tests/unit/payment-authority-rollout.test.js",
                 "tests/unit/team-fees-functions.test.js",
                 "tests/unit/team-pass-functions.test.js"
             ],

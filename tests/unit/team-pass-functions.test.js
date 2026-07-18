@@ -6,8 +6,11 @@ const require = createRequire(import.meta.url);
 const {
     normalizeTeamPassCheckoutInput,
     buildTeamPassCheckoutMetadata,
+    isValidEntitlementCollectionGroupCursorPath,
     isEligibleTeamPassPurchaser,
     shouldUnlockTeamPassFromEvent,
+    hasLegacyTeamPassMetadata,
+    getLegacyTeamPassCheckoutGuardFailure,
     getTeamPassCheckoutGuardFailure,
     getTeamPassChargeGuardFailure,
     getTeamPassReversalStatus,
@@ -104,6 +107,43 @@ describe('team pass function helpers', () => {
                     }
                 }
             }
+        })).toBe(false);
+    });
+
+    it('accepts only the exact pre-authority Team Pass shape through the legacy reconciliation guard', () => {
+        const session = {
+            id: 'cs_legacy', mode: 'payment', payment_status: 'paid', payment_intent: 'pi_legacy',
+            client_reference_id: 'team_123:2026:user_123', amount_total: 4900, currency: 'usd', livemode: false,
+            metadata: { teamId: 'team_123', seasonId: '2026', tier: 'team-pass', purchaserUid: 'user_123' }
+        };
+        const paymentIntent = {
+            id: 'pi_legacy', amount_received: 4900, currency: 'usd', livemode: false,
+            latest_charge: 'ch_legacy', metadata: {}
+        };
+        const configuredPrice = {
+            id: 'price_team_pass', active: true, type: 'one_time', unit_amount: 4900, currency: 'usd'
+        };
+        const lineItems = [{
+            quantity: 1, amount_total: 4900, currency: 'usd', price: configuredPrice
+        }];
+        const guard = (overrides = {}) => getLegacyTeamPassCheckoutGuardFailure({
+            session, paymentIntent, lineItems, configuredPrice, configuredPriceId: 'price_team_pass',
+            expectedLivemode: false, paidEvent: true, ...overrides
+        });
+
+        expect(hasLegacyTeamPassMetadata(session)).toBe(true);
+        expect(guard()).toBe('');
+        expect(guard({ session: { ...session, client_reference_id: 'victim:2026:user_123' } })).toBe('client_reference_mismatch');
+        expect(guard({ session: { ...session, amount_total: 1 } })).toBe('checkout_amount_mismatch');
+        expect(guard({ paymentIntent: { ...paymentIntent, metadata: { product: 'team_pass' } } })).toBe('legacy_payment_intent_metadata_mismatch');
+        expect(guard({ lineItems: [{ ...lineItems[0], quantity: 2 }] })).toBe('checkout_line_item_mismatch');
+        expect(hasLegacyTeamPassMetadata({
+            ...session,
+            metadata: { ...session.metadata, checkoutAttemptToken: 'tok_1234567890abcdef' }
+        })).toBe(false);
+        expect(hasLegacyTeamPassMetadata({
+            ...session,
+            metadata: { ...session.metadata, unexpectedAuthority: 'unsafe' }
         })).toBe(false);
     });
 
@@ -207,6 +247,18 @@ describe('team pass function helpers', () => {
             charge
         })).toBe('');
         expect(getTeamPassChargeGuardFailure({ attempt, charge: { ...charge, payment_intent: 'pi_other' } })).toBe('payment_intent_mismatch');
+        expect(getTeamPassChargeGuardFailure({
+            attempt: {
+                teamId: 'team_123', seasonId: '2026', tier: 'team-pass', purchaserUid: 'user_123',
+                legacyPaymentAuthorityVersion: 1, checkoutStatus: 'paid', stripeCheckoutSessionId: 'cs_legacy',
+                stripePaymentIntentId: 'pi_legacy', stripeChargeId: 'ch_legacy', checkoutAmountCents: 4900,
+                checkoutCurrency: 'usd', livemode: false
+            },
+            charge: {
+                id: 'ch_legacy', metadata: {}, payment_intent: 'pi_legacy', amount: 4900,
+                amount_refunded: 4900, currency: 'usd', livemode: false
+            }
+        })).toBe('');
         expect(getTeamPassReversalStatus({ type: 'charge.refunded' }, charge)).toBe('refunded');
         expect(getTeamPassReversalStatus({ type: 'charge.dispute.created', data: { object: {} } }, { ...charge, amount_refunded: 0 })).toBe('disputed');
         expect(getTeamPassReversalStatus({ type: 'charge.dispute.closed', data: { object: { status: 'won' } } }, { ...charge, amount_refunded: 0 })).toBe('paid');
@@ -245,5 +297,10 @@ describe('team pass function helpers', () => {
         expect(source).toContain('query = query.startAfter(cursorSnap)');
         expect(source).toContain('buildSafeTeamPassEntitlementProjection({');
         expect(source).toContain('rewritten: dryRun ? 0 : candidates.length');
+        expect(isValidEntitlementCollectionGroupCursorPath('teams/team-a/entitlements/2026_team-pass')).toBe(true);
+        expect(isValidEntitlementCollectionGroupCursorPath('users/user-a/entitlements/team-pass')).toBe(true);
+        expect(isValidEntitlementCollectionGroupCursorPath('organizations/org-a/users/user-a/entitlements/team-pass')).toBe(true);
+        expect(isValidEntitlementCollectionGroupCursorPath('teams/team-a/other/team-pass')).toBe(false);
+        expect(isValidEntitlementCollectionGroupCursorPath('teams//entitlements/team-pass')).toBe(false);
     });
 });

@@ -30,6 +30,16 @@ function normalizeCheckoutAttemptToken(value) {
   return /^[A-Za-z0-9_-]{16,128}$/.test(token) ? token : '';
 }
 
+function isValidEntitlementCollectionGroupCursorPath(value) {
+  const path = asTrimmedString(value);
+  if (!path || path.length > 6_000) return false;
+  const parts = path.split('/');
+  return parts.length >= 4
+    && parts.length % 2 === 0
+    && parts[parts.length - 2] === 'entitlements'
+    && parts.every((part) => part.length > 0 && part.length <= 1_500 && !['.', '..'].includes(part));
+}
+
 function normalizeTeamPassCheckoutInput(data = {}) {
   const teamId = asTrimmedString(data.teamId);
   const requestedSeasonId = asTrimmedString(data.seasonId);
@@ -94,6 +104,23 @@ function hasTeamPassMetadata(session = {}) {
   }
 }
 
+function hasLegacyTeamPassMetadata(session = {}) {
+  const metadata = session.metadata || {};
+  const metadataKeys = Object.keys(metadata).sort();
+  const expectedKeys = ['purchaserUid', 'seasonId', 'teamId', 'tier'];
+  if (metadataKeys.length !== expectedKeys.length
+      || metadataKeys.some((key, index) => key !== expectedKeys[index])) return false;
+  if (asTrimmedString(metadata.product)
+      || asTrimmedString(metadata.checkoutAttemptToken)
+      || asTrimmedString(metadata.priceId)) return false;
+  try {
+    normalizeTeamPassCheckoutInput(metadata);
+  } catch (error) {
+    return false;
+  }
+  return Boolean(asTrimmedString(metadata.purchaserUid));
+}
+
 function shouldHandleTeamPassCheckoutEvent(event = {}) {
   const session = event?.data?.object || {};
   return [
@@ -101,14 +128,77 @@ function shouldHandleTeamPassCheckoutEvent(event = {}) {
     'checkout.session.async_payment_succeeded',
     'checkout.session.async_payment_failed',
     'checkout.session.expired'
-  ].includes(event.type) && session.metadata?.product === TEAM_PASS_PRODUCT;
+  ].includes(event.type) && (
+    session.metadata?.product === TEAM_PASS_PRODUCT
+    || hasLegacyTeamPassMetadata(session)
+  );
 }
 
 function shouldUnlockTeamPassFromEvent(event = {}) {
   if (!shouldHandleTeamPassCheckoutEvent(event)) return false;
   if (!['checkout.session.completed', 'checkout.session.async_payment_succeeded'].includes(event.type)) return false;
   const session = event.data?.object || {};
-  return isPaidCheckoutSession(session) && hasTeamPassMetadata(session);
+  return isPaidCheckoutSession(session) && (hasTeamPassMetadata(session) || hasLegacyTeamPassMetadata(session));
+}
+
+function getLegacyTeamPassCheckoutGuardFailure({
+  session = {},
+  paymentIntent = {},
+  lineItems = [],
+  configuredPrice = {},
+  configuredPriceId = '',
+  expectedLivemode = null,
+  paidEvent = false
+} = {}) {
+  if (!hasLegacyTeamPassMetadata(session)) return 'legacy_metadata_invalid';
+  const input = normalizeTeamPassCheckoutInput(session.metadata || {});
+  const purchaserUid = asTrimmedString(session.metadata?.purchaserUid);
+  if (asTrimmedString(session.client_reference_id) !== `${input.teamId}:${input.seasonId}:${purchaserUid}`) {
+    return 'client_reference_mismatch';
+  }
+  if (asTrimmedString(session.mode) !== 'payment') return 'checkout_mode_mismatch';
+  const checkoutLineItems = Array.isArray(lineItems) ? lineItems : [];
+  const exactLineItem = checkoutLineItems.length === 1 ? checkoutLineItems[0] : null;
+  const expandedLineItemPrice = exactLineItem && typeof exactLineItem.price === 'object' ? exactLineItem.price : null;
+  const usesVerifiedLegacyLineItem = exactLineItem
+    && Number(exactLineItem.quantity) === 1
+    && expandedLineItemPrice
+    && expandedLineItemPrice.type === 'one_time';
+  if (checkoutLineItems.length > 0 && !usesVerifiedLegacyLineItem) return 'checkout_line_item_mismatch';
+  if (!usesVerifiedLegacyLineItem
+      && (!configuredPriceId || configuredPrice.id !== configuredPriceId)) return 'configured_price_mismatch';
+  if (!usesVerifiedLegacyLineItem && configuredPrice.type !== 'one_time') return 'configured_price_invalid';
+  const expectedAmount = normalizePositiveInteger(
+    usesVerifiedLegacyLineItem
+      ? exactLineItem.amount_total || expandedLineItemPrice.unit_amount
+      : configuredPrice.unit_amount
+  );
+  if (!expectedAmount || normalizePositiveInteger(session.amount_total) !== expectedAmount) return 'checkout_amount_mismatch';
+  const expectedCurrency = normalizeCurrency(
+    usesVerifiedLegacyLineItem
+      ? exactLineItem.currency || expandedLineItemPrice.currency
+      : configuredPrice.currency
+  );
+  if (!expectedCurrency || normalizeCurrency(session.currency) !== expectedCurrency) return 'checkout_currency_mismatch';
+  if (expectedLivemode !== null && expectedLivemode !== undefined
+      && Boolean(session.livemode) !== Boolean(expectedLivemode)) return 'livemode_mismatch';
+  if (!paidEvent) return '';
+  if (!isPaidCheckoutSession(session)) return 'checkout_not_paid';
+  const paymentIntentId = asTrimmedString(
+    typeof session.payment_intent === 'string' ? session.payment_intent : session.payment_intent?.id
+  );
+  if (!paymentIntentId || paymentIntent.id !== paymentIntentId) return 'payment_intent_mismatch';
+  if (Object.keys(paymentIntent.metadata || {}).length !== 0) return 'legacy_payment_intent_metadata_mismatch';
+  if (normalizePositiveInteger(paymentIntent.amount_received || paymentIntent.amount) !== expectedAmount) {
+    return 'payment_intent_amount_mismatch';
+  }
+  if (normalizeCurrency(paymentIntent.currency) !== expectedCurrency) return 'payment_intent_currency_mismatch';
+  if (Boolean(paymentIntent.livemode) !== Boolean(session.livemode)) return 'payment_intent_livemode_mismatch';
+  const chargeId = asTrimmedString(
+    typeof paymentIntent.latest_charge === 'string' ? paymentIntent.latest_charge : paymentIntent.latest_charge?.id
+  );
+  if (!chargeId) return 'payment_intent_charge_missing';
+  return '';
 }
 
 function shouldHandleTeamPassReversalEvent(event = {}) {
@@ -117,21 +207,35 @@ function shouldHandleTeamPassReversalEvent(event = {}) {
 
 function getTeamPassChargeGuardFailure({ attempt = {}, charge = {} } = {}) {
   const metadata = charge.metadata || {};
-  if (metadata.product !== TEAM_PASS_PRODUCT) return 'product_mismatch';
+  const isLegacyAuthority = attempt.legacyPaymentAuthorityVersion === 1;
+  const hasLegacyEmptyMetadata = isLegacyAuthority && Object.keys(metadata).length === 0;
+  if (!hasLegacyEmptyMetadata && metadata.product !== TEAM_PASS_PRODUCT) return 'product_mismatch';
   let input;
-  try {
-    input = normalizeTeamPassCheckoutInput(metadata);
-  } catch (error) {
-    return 'metadata_invalid';
+  if (hasLegacyEmptyMetadata) {
+    try {
+      input = normalizeTeamPassCheckoutInput(attempt);
+    } catch (error) {
+      return 'legacy_attempt_invalid';
+    }
+    if (!asTrimmedString(attempt.purchaserUid)
+        || !asTrimmedString(attempt.stripeCheckoutSessionId)
+        || !asTrimmedString(attempt.stripeChargeId)
+        || charge.id !== attempt.stripeChargeId) return 'legacy_attempt_invalid';
+  } else {
+    try {
+      input = normalizeTeamPassCheckoutInput(metadata);
+    } catch (error) {
+      return 'metadata_invalid';
+    }
+    if (input.teamId !== asTrimmedString(attempt.teamId)
+        || input.seasonId !== asTrimmedString(attempt.seasonId)
+        || input.tier !== asTrimmedString(attempt.tier)) return 'entitlement_scope_mismatch';
+    if (normalizeCheckoutAttemptToken(metadata.checkoutAttemptToken) !== normalizeCheckoutAttemptToken(attempt.checkoutAttemptToken)) {
+      return 'checkout_attempt_mismatch';
+    }
+    if (!attempt.purchaserUid || metadata.purchaserUid !== attempt.purchaserUid) return 'purchaser_mismatch';
+    if (!attempt.priceId || metadata.priceId !== attempt.priceId) return 'price_mismatch';
   }
-  if (input.teamId !== asTrimmedString(attempt.teamId)
-      || input.seasonId !== asTrimmedString(attempt.seasonId)
-      || input.tier !== asTrimmedString(attempt.tier)) return 'entitlement_scope_mismatch';
-  if (normalizeCheckoutAttemptToken(metadata.checkoutAttemptToken) !== normalizeCheckoutAttemptToken(attempt.checkoutAttemptToken)) {
-    return 'checkout_attempt_mismatch';
-  }
-  if (!attempt.purchaserUid || metadata.purchaserUid !== attempt.purchaserUid) return 'purchaser_mismatch';
-  if (!attempt.priceId || metadata.priceId !== attempt.priceId) return 'price_mismatch';
   const paymentIntentId = asTrimmedString(
     typeof charge.payment_intent === 'string' ? charge.payment_intent : charge.payment_intent?.id
   );
@@ -249,11 +353,14 @@ module.exports = {
   normalizeTeamPassCheckoutInput,
   buildTeamPassAttemptId,
   buildTeamPassCheckoutMetadata,
+  isValidEntitlementCollectionGroupCursorPath,
   isEligibleTeamPassPurchaser,
   isPaidCheckoutSession,
   hasTeamPassMetadata,
+  hasLegacyTeamPassMetadata,
   shouldHandleTeamPassCheckoutEvent,
   shouldUnlockTeamPassFromEvent,
+  getLegacyTeamPassCheckoutGuardFailure,
   shouldHandleTeamPassReversalEvent,
   getTeamPassChargeGuardFailure,
   getTeamPassReversalStatus,

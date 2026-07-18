@@ -121,14 +121,26 @@ function getRegistrationPaidCheckoutGuardFailure({
     });
 }
 
-function getRegistrationPaymentIntentGuardFailure({ registration = {}, session = {}, paymentIntent = {} } = {}) {
+function getRegistrationPaymentIntentGuardFailure({
+    registration = {},
+    session = {},
+    paymentIntent = {},
+    allowLegacyPaymentIntentMetadata = false
+} = {}) {
     const metadata = paymentIntent.metadata || {};
     const sessionPaymentIntentId = normalizeString(typeof session.payment_intent === 'string' ? session.payment_intent : session.payment_intent?.id);
     if (!sessionPaymentIntentId || paymentIntent.id !== sessionPaymentIntentId) return 'payment_intent_mismatch';
-    if (metadata.product !== 'registration'
-        || metadata.teamId !== registration.teamId
-        || metadata.formId !== registration.formId
-        || metadata.registrationId !== registration.id) return 'payment_intent_scope_mismatch';
+    const metadataKeys = Object.keys(metadata);
+    const hasLegacyEmptyMetadata = allowLegacyPaymentIntentMetadata === true && metadataKeys.length === 0;
+    if (!hasLegacyEmptyMetadata) {
+        if (metadata.product !== 'registration'
+            || metadata.teamId !== registration.teamId
+            || metadata.formId !== registration.formId
+            || metadata.registrationId !== registration.id) return 'payment_intent_scope_mismatch';
+        const sessionToken = normalizeString(session.metadata?.checkoutAttemptToken);
+        const intentToken = normalizeString(metadata.checkoutAttemptToken);
+        if (!sessionToken || !intentToken || sessionToken !== intentToken) return 'payment_intent_attempt_mismatch';
+    }
     const expectedAmount = normalizePositiveInteger(session.amount_total);
     const intentAmount = normalizePositiveInteger(paymentIntent.amount_received || paymentIntent.amount);
     if (!expectedAmount || intentAmount !== expectedAmount) return 'payment_intent_amount_mismatch';
@@ -161,6 +173,7 @@ function buildRegistrationStripeChargeLedger({ registration = {}, session = {}, 
         livemode: Boolean(session.livemode),
         paymentStatusAfterCharge,
         stripeEventId: eventId || null,
+        ...(Object.keys(paymentIntent.metadata || {}).length === 0 ? { legacyPaymentAuthorityVersion: 1 } : {}),
         paidAt: receivedAt,
         updatedAt: receivedAt
     };
@@ -173,10 +186,11 @@ function getRegistrationChargeGuardFailure({ input = {}, ledger = {}, charge = {
     if (!charge.id || ledger.stripeChargeId !== charge.id) return 'charge_id_mismatch';
     if (!paymentIntentId || ledger.stripePaymentIntentId !== paymentIntentId) return 'charge_payment_intent_mismatch';
     if (ledger.teamId !== input.teamId || ledger.formId !== input.formId || ledger.registrationId !== input.registrationId) return 'charge_ledger_scope_mismatch';
-    if (metadata.product !== 'registration'
+    const hasLegacyEmptyMetadata = ledger.legacyPaymentAuthorityVersion === 1 && Object.keys(metadata).length === 0;
+    if (!hasLegacyEmptyMetadata && (metadata.product !== 'registration'
         || metadata.teamId !== input.teamId
         || metadata.formId !== input.formId
-        || metadata.registrationId !== input.registrationId) return 'charge_metadata_scope_mismatch';
+        || metadata.registrationId !== input.registrationId)) return 'charge_metadata_scope_mismatch';
     if (normalizePositiveInteger(charge.amount) !== normalizePositiveInteger(ledger.amountPaidCents)) return 'charge_amount_mismatch';
     if (normalizeCurrency(charge.currency) !== normalizeCurrency(ledger.currency)) return 'charge_currency_mismatch';
     if (Boolean(charge.livemode) !== Boolean(ledger.livemode)) return 'charge_livemode_mismatch';

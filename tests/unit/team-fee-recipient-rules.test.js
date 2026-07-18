@@ -51,6 +51,7 @@ describe('team fee recipient Firestore rules', () => {
         expect(nestedRecipientBlock).toContain('resource.data.batchId == batchId');
         expect(nestedRecipientBlock).toContain('hasNoPrivateTeamFeeBillingFields(request.resource.data)');
         expect(nestedRecipientBlock).toContain('hasNoIntroducedPrivateTeamFeeBillingFields()');
+        expect(nestedRecipientBlock).toContain('!hasActiveTeamFeeStripeAuthority(resource.data)');
     });
 
     it('keeps Stripe authority server-only while allowing bounded offline billing records', () => {
@@ -61,6 +62,8 @@ describe('team fee recipient Firestore rules', () => {
         expect(rules).toContain('hasNoPrivateTeamFeeBillingFields(request.resource.data)');
         expect(rules).toContain('hasNoIntroducedPrivateTeamFeeBillingFields()');
         expect(rules).toContain("request.resource.data.get('stripePaymentIntentId', null) == null");
+        expect(rules).toContain("request.resource.data.get('checkoutPayerUid', null) == null");
+        expect(rules).toContain("request.resource.data.get('stripePaymentAuthorityVersion', null) == null");
         expect(rules).toContain("request.resource.data.get('stripeRefundableAmountCents', null) == null");
         expect(rules).toContain('match /adminBilling/{billingId} {');
         expect(rules).toContain('match /stripeCharges/{chargeId} {');
@@ -181,6 +184,9 @@ describe('team fee recipient Firestore rules', () => {
             const feeRef = recipientRef(ownerDb, 'team-a', 'batch-a', 'stripe-target');
             await assertSucceeds(setDoc(feeRef, recipientPayload('team-a', 'batch-a')));
             await assertFails(updateDoc(feeRef, { paymentProvider: 'stripe', stripeCheckoutSessionId: 'cs_forged' }));
+            await assertFails(updateDoc(feeRef, {
+                checkoutPayerUid: 'owner-a', stripePaymentAuthorityVersion: 2, checkoutReservedAtMs: Date.now()
+            }));
 
             await seedRecipient('teams/team-a/feeBatches/batch-a/feeRecipients/stripe-target', {
                 ...recipientPayload(),
@@ -208,6 +214,28 @@ describe('team fee recipient Firestore rules', () => {
                 amountPaidCents: 2500, note: 'Cash', recordedBy: 'owner-a', updatedAt: 'now'
             }));
             await assertSucceeds(getDoc(billingRef));
+        });
+
+        it('blocks stale admin clients from mutating or deleting a recipient until server checkout authority is cleared', async () => {
+            await seedRecipient('teams/team-a/feeBatches/batch-a/feeRecipients/active-checkout', {
+                ...recipientPayload(),
+                checkoutStatus: 'open',
+                checkoutAttemptToken: 'tok_server_1234567890',
+                stripeCheckoutSessionId: 'cs_server_active'
+            });
+            await seedRecipient('teams/team-a/feeBatches/batch-a/feeRecipients/cleared-checkout', {
+                ...recipientPayload(),
+                checkoutStatus: 'expired'
+            });
+            const ownerDb = authedFirestore('owner-a', 'owner-a@example.com');
+            const activeRef = recipientRef(ownerDb, 'team-a', 'batch-a', 'active-checkout');
+            const clearedRef = recipientRef(ownerDb, 'team-a', 'batch-a', 'cleared-checkout');
+
+            await assertFails(updateDoc(activeRef, { status: 'paid' }));
+            await assertFails(deleteDoc(activeRef));
+            await assertSucceeds(updateDoc(clearedRef, { status: 'paid' }));
+            await assertSucceeds(deleteDoc(clearedRef));
+            await assertFails(getDoc(doc(ownerDb, 'teams/team-a/feeBatches/batch-a/feeRecipients/active-checkout/checkoutReservations/tok_server_1234567890')));
         });
     });
 });

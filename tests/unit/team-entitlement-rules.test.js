@@ -6,6 +6,7 @@ import {
     initializeTestEnvironment
 } from '@firebase/rules-unit-testing';
 import {
+    deleteDoc,
     doc,
     getDoc,
     setDoc,
@@ -32,6 +33,8 @@ describe('team entitlement Firestore rules', () => {
         expect(rules).not.toContain("request.resource.data.status in ['active', 'inactive', 'expired', 'cancelled']");
         expect(rules).toContain("request.resource.data.keys().hasOnly(['status', 'teamId', 'seasonId', 'tier', 'updatedAt'])");
         expect(rules).toContain('match /checkoutReservations/{reservationId} {');
+        expect(rules).toContain('!hasActiveRegistrationStripeAuthority(resource.data)');
+        expect(rules).toContain('hasNoRegistrationStripeAuthorityMutation()');
     });
 
     describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('emulator authorization coverage', () => {
@@ -104,6 +107,38 @@ describe('team entitlement Firestore rules', () => {
             await assertFails(setDoc(reservationRef, { stripeRequest: { mode: 'payment' } }));
             await assertFails(getDoc(chargeRef));
             await assertFails(setDoc(chargeRef, { stripeChargeId: 'ch-a' }));
+        });
+
+        it('blocks stale admin registration writes while server Stripe authority is active', async () => {
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                const firestore = context.firestore();
+                await setDoc(doc(firestore, 'teams/team-a/registrationForms/form-a/registrations/active-payment'), {
+                    teamId: 'team-a', formId: 'form-a', status: 'pending', checkoutStatus: 'open',
+                    checkoutCreationReservationId: 'res-active', stripeCheckoutSessionId: 'cs-active'
+                });
+                await setDoc(doc(firestore, 'teams/team-a/registrationForms/form-a/registrations/cleared-payment'), {
+                    teamId: 'team-a', formId: 'form-a', status: 'pending', checkoutStatus: 'expired'
+                });
+            });
+            const ownerDb = testEnv.authenticatedContext('owner-a').firestore();
+            const activeRef = doc(ownerDb, 'teams/team-a/registrationForms/form-a/registrations/active-payment');
+            const clearedRef = doc(ownerDb, 'teams/team-a/registrationForms/form-a/registrations/cleared-payment');
+            const cleanCreateRef = doc(ownerDb, 'teams/team-a/registrationForms/form-a/registrations/admin-created');
+            const forgedCreateRef = doc(ownerDb, 'teams/team-a/registrationForms/form-a/registrations/forged-authority');
+
+            await assertSucceeds(setDoc(cleanCreateRef, { teamId: 'team-a', formId: 'form-a', status: 'pending' }));
+            await assertFails(setDoc(forgedCreateRef, {
+                teamId: 'team-a', formId: 'form-a', status: 'pending',
+                checkoutStatus: 'open', stripeCheckoutSessionId: 'cs_forged'
+            }));
+            await assertFails(updateDoc(activeRef, { status: 'approved' }));
+            await assertFails(deleteDoc(activeRef));
+            await assertSucceeds(updateDoc(clearedRef, { status: 'approved' }));
+            await assertFails(updateDoc(clearedRef, { stripeCheckoutSessionId: 'cs_forged' }));
+            await assertFails(updateDoc(clearedRef, {
+                checkoutStatus: 'creating', checkoutAttemptToken: 'tok_forged_1234567890'
+            }));
+            await assertSucceeds(deleteDoc(clearedRef));
         });
 
         it('denies client activation on create and update, including active-record edits', async () => {

@@ -145,8 +145,28 @@ describe('registration paid webhook guard', () => {
         };
         expect(getRegistrationPaymentIntentGuardFailure({ registration, session, paymentIntent })).toBe('');
         expect(getRegistrationPaymentIntentGuardFailure({
+            registration,
+            session,
+            paymentIntent: { ...paymentIntent, metadata: {} },
+            allowLegacyPaymentIntentMetadata: true
+        })).toBe('');
+        expect(getRegistrationPaymentIntentGuardFailure({
+            registration,
+            session,
+            paymentIntent: { ...paymentIntent, metadata: {} }
+        })).toBe('payment_intent_scope_mismatch');
+        expect(getRegistrationPaymentIntentGuardFailure({
+            registration,
+            session,
+            paymentIntent: { ...paymentIntent, metadata: { product: 'registration' } },
+            allowLegacyPaymentIntentMetadata: true
+        })).toBe('payment_intent_scope_mismatch');
+        expect(getRegistrationPaymentIntentGuardFailure({
             registration, session, paymentIntent: { ...paymentIntent, metadata: { ...metadata, registrationId: 'victim' } }
         })).toBe('payment_intent_scope_mismatch');
+        expect(getRegistrationPaymentIntentGuardFailure({
+            registration, session, paymentIntent: { ...paymentIntent, metadata: { ...metadata, checkoutAttemptToken: 'tok_wrong_1234567890' } }
+        })).toBe('payment_intent_attempt_mismatch');
 
         const ledger = buildRegistrationStripeChargeLedger({
             registration, session, paymentIntent, paymentStatusAfterCharge: 'paid', eventId: 'evt_paid', receivedAt: 'now'
