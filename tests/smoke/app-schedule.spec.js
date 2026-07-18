@@ -198,6 +198,7 @@ async function mockScheduleModules(page, options = {}) {
                         visibility: 'team',
                         myRsvp: overrides.myRsvp || ${JSON.stringify(gameMyRsvp)},
                         myRsvpNote: overrides.myRsvpNote || ${JSON.stringify(gameMyRsvpNote)},
+                        myRsvpNoteHydrated: overrides.myRsvpNoteHydrated === true,
                         rsvpSummary: overrides.rsvpSummary || { going: 1, maybe: 0, notGoing: 0, notResponded: 1 },
                         rideshareSummary: overrides.rideshareSummary || { offerCount: 1, seatsLeft: 2, requests: 1, pending: 1, confirmed: 0, isFull: false },
                         assignments: overrides.assignments || getAssignments(),
@@ -535,6 +536,9 @@ async function mockScheduleModules(page, options = {}) {
                 }
 
                 export async function hydrateParentScheduleRsvps(schedule, user, options = {}) {
+                    schedule.events.forEach((event) => {
+                        event.myRsvpNoteHydrated = true;
+                    });
                     options.onProgress?.([...schedule.events]);
                     return schedule;
                 }
