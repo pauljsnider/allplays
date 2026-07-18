@@ -5,7 +5,7 @@ import {
     assertSucceeds,
     initializeTestEnvironment
 } from '@firebase/rules-unit-testing';
-import { collection, doc, getDoc, getDocs, serverTimestamp, setDoc, Timestamp, updateDoc } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, query, serverTimestamp, setDoc, Timestamp, updateDoc, where } from 'firebase/firestore';
 
 const rules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
 const dbSource = readFileSync(new URL('../../js/db.js', import.meta.url), 'utf8');
@@ -456,6 +456,25 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
             doc(parentDb, 'teams/team-1/chatConversations/direct-revoked-friend'),
             directConversationPayload()
         ));
+    });
+
+    it('keeps accepted-friend direct conversations private from nonparticipant team admins', async () => {
+        const conversationPath = `teams/team-1/chatConversations/${friendDirectConversationId}`;
+        const coachDb = authedFirestore('coach-1', 'coach@example.com');
+        const parentDb = authedFirestore('parent-1', 'parent@example.com');
+        const friendDb = authedFirestore('user-2', 'user2@example.com');
+
+        await assertFails(getDoc(doc(coachDb, conversationPath)));
+        await assertSucceeds(getDoc(doc(parentDb, conversationPath)));
+        await assertSucceeds(getDoc(doc(friendDb, conversationPath)));
+        await assertFails(getDocs(query(
+            collection(coachDb, 'teams/team-1/chatConversations'),
+            where('directAccess', '==', 'accepted_friend')
+        )));
+        await assertSucceeds(getDocs(query(
+            collection(parentDb, 'teams/team-1/chatConversations'),
+            where('directUserIds', 'array-contains', 'parent-1')
+        )));
     });
 
     it('lets only a direct participant upgrade legacy direct authorization metadata', async () => {

@@ -1960,9 +1960,16 @@ service cloud.firestore {
              'staff' in data.get('participantRoles', []);
     }
 
+    function isParticipantOnlyAcceptedFriendConversation(data) {
+      return data.get('type', '') == 'direct' &&
+             data.get('directAccess', '') == 'accepted_friend';
+    }
+
     function canListChatConversation(teamId, conversationId, conversationData) {
       let participantIds = conversationData.get('participantIds', []);
       return canAccessTeamChat(teamId) &&
+             (!isParticipantOnlyAcceptedFriendConversation(conversationData) ||
+              request.auth.uid in conversationData.get('directUserIds', [])) &&
              (
                isTeamOwnerOrAdmin(teamId) ||
                (
@@ -1972,6 +1979,7 @@ service cloud.firestore {
                    conversationData.get('type', '') == 'team' ||
                    request.auth.uid in participantIds ||
                    ('user:' + request.auth.uid) in participantIds ||
+                   request.auth.uid in conversationData.get('directUserIds', []) ||
                    (request.auth.token.email != null && ('email:' + request.auth.token.email.lower()) in participantIds)
                  )
                )
@@ -2007,6 +2015,8 @@ service cloud.firestore {
     function canAccessChatConversation(teamId, conversationId, conversationData) {
       let participantIds = conversationData.get('participantIds', []);
       return canAccessTeamChat(teamId) &&
+             (!isParticipantOnlyAcceptedFriendConversation(conversationData) ||
+              request.auth.uid in conversationData.get('directUserIds', [])) &&
              (
                (
                  isCanonicalStaffChatConversation(conversationId) &&
@@ -2022,6 +2032,7 @@ service cloud.firestore {
                    isTeamOwnerOrAdmin(teamId) ||
                    request.auth.uid in participantIds ||
                    ('user:' + request.auth.uid) in participantIds ||
+                   request.auth.uid in conversationData.get('directUserIds', []) ||
                    (request.auth.token.email != null && ('email:' + request.auth.token.email.lower()) in participantIds)
                  )
                )

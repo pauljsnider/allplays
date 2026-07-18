@@ -76,6 +76,10 @@ describe('team chat conversations', () => {
         expect(db).toContain("where('participantIds', 'array-contains', user.uid)");
         expect(db).toContain("where('participantIds', 'array-contains', `user:${user.uid}`)");
         expect(db).toContain("where('participantIds', 'array-contains', `email:${normalizedEmail}`)");
+        expect(db).toContain("where('directUserIds', 'array-contains', user.uid)");
+        expect(db).toContain("where('directAccess', '==', 'team_admin')");
+        expect(rules).toContain('function isParticipantOnlyAcceptedFriendConversation(data)');
+        expect(rules).toContain("request.auth.uid in conversationData.get('directUserIds', [])");
         expect(db).not.toContain("where('participantRoles', 'array-contains', 'team')");
         expect(rules).not.toContain("'team' in participantRoles");
         const nestedMessageRules = rules.slice(

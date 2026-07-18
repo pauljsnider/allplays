@@ -6716,17 +6716,20 @@ export async function getChatConversations(teamId, user = null, {
     const conversationsRef = collection(db, 'teams', teamId, 'chatConversations');
     const normalizedEmail = user?.email ? String(user.email).trim().toLowerCase() : '';
     const conversationPageSize = normalizeChatConversationPageSize(pageSize);
-    const participantQueries = canModerate
-        ? [query(conversationsRef, orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize))]
-        : [
-            ...(user?.uid ? [
-                query(conversationsRef, where('participantIds', 'array-contains', user.uid), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize)),
-                query(conversationsRef, where('participantIds', 'array-contains', `user:${user.uid}`), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize))
-            ] : []),
-            ...(normalizedEmail ? [
-                query(conversationsRef, where('participantIds', 'array-contains', `email:${normalizedEmail}`), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize))
-            ] : [])
-        ];
+    const participantQueries = [
+        ...(canModerate ? [
+            query(conversationsRef, where('type', 'in', ['team', 'group']), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize)),
+            query(conversationsRef, where('directAccess', '==', 'team_admin'), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize))
+        ] : []),
+        ...(user?.uid ? [
+            query(conversationsRef, where('directUserIds', 'array-contains', user.uid), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize)),
+            query(conversationsRef, where('participantIds', 'array-contains', user.uid), where('type', 'in', ['team', 'group']), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize)),
+            query(conversationsRef, where('participantIds', 'array-contains', `user:${user.uid}`), where('type', 'in', ['team', 'group']), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize))
+        ] : []),
+        ...(normalizedEmail ? [
+            query(conversationsRef, where('participantIds', 'array-contains', `email:${normalizedEmail}`), where('type', 'in', ['team', 'group']), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize))
+        ] : [])
+    ];
     const snapshots = participantQueries.length > 0
         ? await Promise.all(participantQueries.map((conversationQuery) => getDocs(conversationQuery)))
         : [];
