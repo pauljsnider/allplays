@@ -82,6 +82,7 @@ describe('Capacitor native config', () => {
         const androidBuild = readProjectFile('android/app/capacitor.build.gradle');
         const iosPackage = readProjectFile('ios/App/CapApp-SPM/Package.swift');
         const iosEntitlements = readProjectFile('ios/App/App/App.entitlements');
+        const iosAppDelegate = readProjectFile('ios/App/App/AppDelegate.swift');
 
         expect(rootPackage.dependencies['@capacitor-firebase/app-check']).toBe('8.3.0');
         expect(appPackage.dependencies['@capacitor-firebase/app-check']).toBe('8.3.0');
@@ -93,6 +94,19 @@ describe('Capacitor native config', () => {
         expect(iosPackage).toContain('path: "symlinks/CapacitorFirebaseAppCheck"');
         expect(iosEntitlements).toContain('com.apple.developer.devicecheck.appattest-environment');
         expect(iosEntitlements).toContain('<string>production</string>');
+
+        const launchSetup = iosAppDelegate.slice(
+            iosAppDelegate.indexOf('didFinishLaunchingWithOptions'),
+            iosAppDelegate.indexOf('func applicationWillResignActive')
+        );
+        expect(iosAppDelegate).toContain('import FirebaseAppCheck');
+        expect(launchSetup).toContain('#if DEBUG');
+        expect(launchSetup).toContain('AppCheck.setAppCheckProviderFactory(AppCheckDebugProviderFactory())');
+        expect(launchSetup).toContain('#else');
+        expect(launchSetup).toContain('AppCheck.setAppCheckProviderFactory(AppAttestProviderFactory())');
+        expect(launchSetup.indexOf('AppCheck.setAppCheckProviderFactory')).toBeLessThan(
+            launchSetup.indexOf('return true')
+        );
     });
 
     it('uses an explicit token-free App Check debug build only for local simulator and debug APK commands', () => {
