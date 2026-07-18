@@ -225,7 +225,7 @@ export function buildAppSearchActions(auth: Pick<AuthState, 'user' | 'isAdmin' |
       kind: 'action',
       title: 'Profile',
       subtitle: 'Account settings and notifications',
-      route: '/profile'
+      route: '/profile/settings'
     },
     {
       id: 'discover-opportunities',

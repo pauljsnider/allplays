@@ -550,7 +550,7 @@ export function Home({ auth }: { auth: AuthState }) {
         />
       ) : null}
       {canRenderHomeSections && !showBlockingErrorState && activeSection === 'players' ? <PlayersSection players={home.players} /> : null}
-      {canRenderHomeSections && !showBlockingErrorState && activeSection === 'teams' ? <TeamsSection teams={home.teams} /> : null}
+      {canRenderHomeSections && !showBlockingErrorState && activeSection === 'teams' ? <TeamsSection teams={home.teams} players={home.players} /> : null}
       {canRenderHomeSections && !showBlockingErrorState && activeSection === 'friends' ? (
         <FriendsSection
           auth={auth}
@@ -630,7 +630,7 @@ function TodaySection({
           label="Availability"
           value={!hasLoadedHomeDetails && !home.metrics.rsvpNeeded ? '…' : String(home.metrics.rsvpNeeded)}
           detail={home.metrics.rsvpNeeded ? 'Needs a response' : hasLoadedHomeDetails ? 'Responses done' : 'Checking responses…'}
-          to={rsvpAction?.to || '/schedule'}
+          to={home.metrics.rsvpNeeded > 1 ? '/schedule?bulkRsvp=1' : rsvpAction?.to || '/schedule'}
           urgent={home.metrics.rsvpNeeded > 0}
         />
         <SignalCard
@@ -681,7 +681,10 @@ function TodaySection({
             <div className="app-label">To-do list</div>
             <h2 className="mt-1 app-section-title">{topAction ? 'More to do' : 'Needs Attention'}</h2>
           </div>
-          <span className="rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-xs font-black text-gray-600">{home.actionItems.length}</span>
+          <div className="flex items-center gap-2">
+            {home.metrics.rsvpNeeded > 1 ? <MultiRsvpLink to="/schedule?bulkRsvp=1" /> : null}
+            <span className="rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-xs font-black text-gray-600">{home.actionItems.length}</span>
+          </div>
         </div>
         <div className="mt-3 space-y-2">
           {remainingActions.length ? remainingActions.map((action) => (
@@ -885,6 +888,11 @@ function PlayersSection({ players }: { players: ParentHomePlayer[] }) {
     return <EmptyCard icon={UserRound} title="No players linked yet" detail="Redeem an invite code or request team access." />;
   }
 
+  const rsvpPlayers = players.filter((player) => player.rsvpNeeded > 0);
+  const multiRsvpRoute = rsvpPlayers.length === 1
+    ? `/schedule?playerId=${encodeURIComponent(rsvpPlayers[0].playerId)}&bulkRsvp=1`
+    : '/schedule?bulkRsvp=1';
+
   return (
     <section className="home-section-content app-card p-4">
       <div className="flex items-center justify-between gap-3">
@@ -892,7 +900,9 @@ function PlayersSection({ players }: { players: ParentHomePlayer[] }) {
           <div className="app-label">Players</div>
           <h2 className="mt-1 app-section-title">My players</h2>
         </div>
-        <UserRound className="h-5 w-5 text-primary-600" aria-hidden="true" />
+        {players.reduce((total, player) => total + player.rsvpNeeded, 0) > 1
+          ? <MultiRsvpLink to={multiRsvpRoute} />
+          : <UserRound className="h-5 w-5 text-primary-600" aria-hidden="true" />}
       </div>
       <div className="mt-3 grid gap-2 lg:grid-cols-2">
         {players.map((player) => (
@@ -903,10 +913,15 @@ function PlayersSection({ players }: { players: ParentHomePlayer[] }) {
   );
 }
 
-function TeamsSection({ teams }: { teams: ParentHomeTeam[] }) {
+function TeamsSection({ teams, players }: { teams: ParentHomeTeam[]; players: ParentHomePlayer[] }) {
   if (!teams.length) {
     return <EmptyCard icon={Users} title="No teams available" detail="Team access appears after a player is linked." />;
   }
+
+  const rsvpTeamIds = [...new Set(players.filter((player) => player.rsvpNeeded > 0).map((player) => player.teamId))];
+  const multiRsvpRoute = rsvpTeamIds.length === 1
+    ? `/schedule?teamId=${encodeURIComponent(rsvpTeamIds[0])}&bulkRsvp=1`
+    : '/schedule?bulkRsvp=1';
 
   return (
     <section className="home-section-content app-card p-4">
@@ -915,7 +930,9 @@ function TeamsSection({ teams }: { teams: ParentHomeTeam[] }) {
           <div className="app-label">My teams</div>
           <h2 className="mt-1 app-section-title">Teams</h2>
         </div>
-        <Users className="h-5 w-5 text-primary-600" aria-hidden="true" />
+        {players.reduce((total, player) => total + player.rsvpNeeded, 0) > 1
+          ? <MultiRsvpLink to={multiRsvpRoute} />
+          : <Users className="h-5 w-5 text-primary-600" aria-hidden="true" />}
       </div>
       <div className="mt-3 grid gap-2 lg:grid-cols-2">
         {teams.map((team) => (
@@ -923,6 +940,15 @@ function TeamsSection({ teams }: { teams: ParentHomeTeam[] }) {
         ))}
       </div>
     </section>
+  );
+}
+
+function MultiRsvpLink({ to }: { to: string }) {
+  return (
+    <Link to={to} className="ghost-button !min-h-9 !px-3 text-xs">
+      <ClipboardCheck className="h-4 w-4" aria-hidden="true" />
+      Multi RSVP
+    </Link>
   );
 }
 
@@ -2221,7 +2247,9 @@ function TeamCard({ team }: { team: ParentHomeTeam }) {
 
 function HomeEventCard({ event }: { event: ParentScheduleEvent }) {
   const rsvp = normalizeRsvpResponse(event.myRsvp);
-  const openAssignments = getOpenScheduleAssignments(event.assignments).length;
+  const openAssignments = event.assignmentClaimsHydrated === false
+    ? 0
+    : getOpenScheduleAssignments(event.assignments).length;
   const eventPath = getEventDetailPath(event);
   return (
     <Link

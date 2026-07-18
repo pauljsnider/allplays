@@ -196,7 +196,7 @@ export function buildHomeActionItems({
 
   upcoming.forEach((event) => {
     const rsvp = normalizeRsvpResponse(event.myRsvp);
-    if (event.isDbGame && !event.availabilityLocked && rsvp === 'not_responded') {
+    if (event.myRsvpNoteHydrated !== false && event.isDbGame && !event.availabilityLocked && rsvp === 'not_responded') {
       actions.push({
         id: `rsvp:${event.eventKey}`,
         kind: 'rsvp',
@@ -222,7 +222,9 @@ export function buildHomeActionItems({
       });
     }
 
-    const openAssignments = getOpenScheduleAssignments(event.assignments);
+    const openAssignments = event.assignmentClaimsHydrated === false
+      ? []
+      : getOpenScheduleAssignments(event.assignments);
     if (openAssignments.length > 0) {
       actions.push({
         id: `assignment:${event.eventKey}`,
@@ -421,8 +423,15 @@ function buildHomeEventIndex(events: ParentScheduleEvent[], now: Date): HomeEven
       playerBucket.upcomingByKey.set(eventKey, event);
     }
 
-    const openAssignments = getOpenScheduleAssignments(event.assignments).length;
-    const needsRsvp = event.isDbGame && !event.availabilityLocked && normalizeRsvpResponse(event.myRsvp) === 'not_responded' ? 1 : 0;
+    const openAssignments = event.assignmentClaimsHydrated === false
+      ? 0
+      : getOpenScheduleAssignments(event.assignments).length;
+    const needsRsvp = event.myRsvpNoteHydrated !== false
+      && event.isDbGame
+      && !event.availabilityLocked
+      && normalizeRsvpResponse(event.myRsvp) === 'not_responded'
+      ? 1
+      : 0;
     const packetReady = event.type === 'practice' && event.practiceHomePacketSummary ? 1 : 0;
 
     teamBucket.openActions += needsRsvp + Number(packetReady) + openAssignments;

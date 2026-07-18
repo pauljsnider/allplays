@@ -3339,6 +3339,7 @@ function createScheduleEvent(input: {
     myRsvp: 'not_responded',
     myRsvpNote: null,
     myRsvpNoteHydrated: false,
+    assignmentClaimsHydrated: false,
     rsvpSummary: input.rsvpSummary || null,
     rideshareSummary: null,
     assignments: Array.isArray(input.assignments) ? input.assignments : [],
@@ -3859,7 +3860,7 @@ async function hydrateEventDetails(events: ParentScheduleEvent[], user: AuthUser
     const firstEvent = matchingEvents[0];
     if (!firstEvent) return;
 
-    const { rsvps: loadedRsvps, rsvpsLoaded, offers, claims } = await loadCachedEventHydrationDetails(teamId, gameId);
+    const { rsvps: loadedRsvps, rsvpsLoaded, offers, claims, claimsLoaded } = await loadCachedEventHydrationDetails(teamId, gameId);
     const ownRsvpNotes = rsvpsLoaded
       ? await mergeOwnRsvpNotes(teamId, gameId, loadedRsvps, user.uid)
       : { rsvps: loadedRsvps, noteReadsComplete: false };
@@ -3891,6 +3892,7 @@ async function hydrateEventDetails(events: ParentScheduleEvent[], user: AuthUser
       event.rideshareSummary = rideshareSummary;
       event.assignments = assignments;
       event.openAssignmentCount = openAssignmentCount;
+      event.assignmentClaimsHydrated = claimsLoaded;
       event.availabilityNotesVisible = availabilityNotesVisible;
       event.availabilityNotes = availabilityNotes;
     });
@@ -3925,7 +3927,8 @@ function loadCachedEventHydrationDetails(teamId: string, gameId: string) {
         rsvps: rsvpsResult.status === 'fulfilled' ? rsvpsResult.value : [],
         rsvpsLoaded: rsvpsResult.status === 'fulfilled',
         offers: offersResult.status === 'fulfilled' ? offersResult.value : [],
-        claims: claimsResult.status === 'fulfilled' ? claimsResult.value : {}
+        claims: claimsResult.status === 'fulfilled' ? claimsResult.value : {},
+        claimsLoaded: claimsResult.status === 'fulfilled'
       };
     },
     {

@@ -274,6 +274,53 @@ function getUserParticipantId(participantId: unknown) {
   return normalizedId.includes(':') ? '' : normalizedId;
 }
 
+export function getChatThreadHeading({
+  conversation,
+  currentUserId,
+  selectedRecipientTarget,
+  selectedRecipientIds,
+  recipientOptions,
+  initialRecipient,
+  teamName
+}: {
+  conversation: ChatConversation | null;
+  currentUserId: string;
+  selectedRecipientTarget: ChatTargetType;
+  selectedRecipientIds: string[];
+  recipientOptions: ChatRecipientOption[];
+  initialRecipient?: Pick<ChatRecipientOption, 'id' | 'name'> | null;
+  teamName: string;
+}) {
+  const isDirect = conversation?.type === 'direct'
+    || (selectedRecipientTarget === 'individuals' && selectedRecipientIds.length === 1);
+  if (!isDirect) {
+    return {
+      isDirect: false,
+      primary: teamName,
+      secondary: getConversationDisplayName(conversation, { name: teamName })
+    };
+  }
+
+  const currentId = getUserParticipantId(currentUserId);
+  const participantIds = [
+    ...(conversation?.directUserIds || []),
+    ...(conversation?.participantIds || []),
+    ...(selectedRecipientTarget === 'individuals' ? selectedRecipientIds : [])
+  ].map(getUserParticipantId).filter((id) => id && id !== currentId);
+  const recipientId = participantIds[0] || getUserParticipantId(initialRecipient?.id);
+  const recipient = recipientOptions.find((option) => getUserParticipantId(option.id) === recipientId)
+    || (getUserParticipantId(initialRecipient?.id) === recipientId ? initialRecipient : null);
+  const storedName = String(conversation?.name || '').trim();
+  const primary = recipient?.name
+    || (storedName && storedName.toLowerCase() !== 'direct conversation' ? storedName : '')
+    || 'Direct message';
+  return {
+    isDirect: true,
+    primary,
+    secondary: `Direct message · ${teamName}`
+  };
+}
+
 export function findExistingDirectConversationId(
   conversations: ChatConversation[],
   currentUserId: string,
@@ -673,6 +720,15 @@ export function ChatWindow({
   const mentionTriggerActive = hasChatMentionTrigger(text, composerCursorPosition);
   const mediaEntries = useMemo(() => collectThreadMedia(visibleMessages), [visibleMessages]);
   const teamName = team?.name || inboxTeam?.name || 'Team chat';
+  const threadHeading = useMemo(() => getChatThreadHeading({
+    conversation: selectedConversation,
+    currentUserId: auth.user?.uid || '',
+    selectedRecipientTarget,
+    selectedRecipientIds,
+    recipientOptions,
+    initialRecipient,
+    teamName
+  }), [auth.user?.uid, initialRecipient, recipientOptions, selectedConversation, selectedRecipientIds, selectedRecipientTarget, teamName]);
   const composerDisabled = showConversationSheet
     || showAudienceSheet
     || showMediaGallery
@@ -1831,15 +1887,15 @@ export function ChatWindow({
               <ChevronLeft className="h-5 w-5" aria-hidden="true" />
             </Link>
           ) : null}
-          <TeamAvatar team={{ name: teamName, photoUrl: team?.photoUrl || inboxTeam?.photoUrl, unreadCount: 0 }} />
+          <TeamAvatar team={{ name: threadHeading.primary, photoUrl: threadHeading.isDirect ? null : team?.photoUrl || inboxTeam?.photoUrl, unreadCount: 0 }} />
           <div className="min-w-0 flex-1">
-            <div className="truncate text-base font-black text-gray-950">{teamName}</div>
+            <div className="truncate text-base font-black text-gray-950">{threadHeading.primary}</div>
             <button
               type="button"
               className="mt-0.5 flex max-w-full items-center gap-1 text-left text-xs font-bold text-gray-500"
               onClick={openConversationSheet}
             >
-              <span className="truncate">{getConversationDisplayName(selectedConversation, team || {})}</span>
+              <span className="truncate">{threadHeading.secondary}</span>
               <ChevronDown className="h-3.5 w-3.5 flex-none" aria-hidden="true" />
             </button>
           </div>
@@ -1938,7 +1994,7 @@ export function ChatWindow({
                 <div>
                   <MessageCircle className="mx-auto h-12 w-12 text-gray-300" aria-hidden="true" />
                   <div className="mt-3 text-base font-black text-gray-950">No messages yet</div>
-                  <div className="mt-1 text-sm font-semibold text-gray-500">Send the first update to {teamName}.</div>
+                  <div className="mt-1 text-sm font-semibold text-gray-500">Send the first update to {threadHeading.primary}.</div>
                 </div>
               </div>
             ) : (

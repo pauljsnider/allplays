@@ -1,4 +1,4 @@
-function getPublicBaseUrl() {
+export function getPublicBaseUrl() {
     if (typeof window !== 'undefined' && /^https?:$/i.test(window.location.protocol)) {
         return window.location.origin;
     }

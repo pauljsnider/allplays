@@ -178,6 +178,10 @@ vi.mock('./pages/Profile', async () => {
   };
 });
 
+vi.mock('./pages/FriendProfile', () => ({
+  FriendProfile: () => <div>Self profile home</div>
+}));
+
 function installTestLocalStorage() {
   const store = new Map<string, string>();
   Object.defineProperty(window, 'localStorage', {
@@ -646,8 +650,7 @@ describe('App protected route loading', () => {
       nativeBackMock.listeners[0]({ canGoBack: false });
     });
 
-    expect(await screen.findByText('Profile section: account')).toBeTruthy();
-    expect(screen.getByText('Profile team: none')).toBeTruthy();
+    expect(await screen.findByText('Self profile home')).toBeTruthy();
 
     await act(async () => {
       nativeBackMock.listeners[0]({ canGoBack: false });

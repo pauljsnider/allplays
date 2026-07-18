@@ -375,6 +375,7 @@ type TeamDetailBaseSnapshot = {
 type FirestoreDocument = Record<string, any> & { id: string };
 
 const teamDetailBaseSnapshotCache = new Map<string, TeamDetailBaseSnapshot>();
+const teamDetailInsightsCache = new Map<string, Promise<TeamDetailInsightsPayload>>();
 const privilegedTeamPlayersCache = new Map<string, Promise<any[]>>();
 type RelevantTeamMembersCacheEntry = {
   inviteStateKey: string;
@@ -391,6 +392,7 @@ const relevantTeamMembersCache = new Map<string, RelevantTeamMembersCacheEntry>(
 
 export function __resetTeamDetailBaseSnapshotCacheForTests() {
   teamDetailBaseSnapshotCache.clear();
+  teamDetailInsightsCache.clear();
   privilegedTeamPlayersCache.clear();
   relevantTeamMembersCache.clear();
 }
@@ -398,6 +400,11 @@ export function __resetTeamDetailBaseSnapshotCacheForTests() {
 function invalidateTeamDetailBaseSnapshotCache(teamId: string) {
   const normalizedTeamId = cleanString(teamId);
   teamDetailBaseSnapshotCache.delete(normalizedTeamId);
+  for (const cacheKey of teamDetailInsightsCache.keys()) {
+    if (cacheKey.startsWith(`${normalizedTeamId}::`)) {
+      teamDetailInsightsCache.delete(cacheKey);
+    }
+  }
   for (const cacheKey of privilegedTeamPlayersCache.keys()) {
     if (cacheKey.startsWith(`${normalizedTeamId}::`)) {
       privilegedTeamPlayersCache.delete(cacheKey);
@@ -1487,28 +1494,40 @@ export async function loadParentTeamDetailBootstrap(teamId: string, user: AuthUs
   });
 }
 
-export async function loadTeamDetailInsights(teamId: string, user: AuthUser | null): Promise<TeamDetailInsightsPayload> {
-  const { team, players, games, configs } = await loadTeamDetailBaseSnapshot(teamId);
+export function loadTeamDetailInsights(teamId: string, user: AuthUser | null): Promise<TeamDetailInsightsPayload> {
+  const normalizedTeamId = cleanString(teamId);
+  const cacheKey = `${normalizedTeamId}::${cleanString(user?.uid) || 'anonymous'}`;
+  const cached = teamDetailInsightsCache.get(cacheKey);
+  if (cached) return cached;
 
-  if (!team) throw new Error('Team not found.');
+  const request = (async () => {
+    const { team, players, games, configs } = await loadTeamDetailBaseSnapshot(normalizedTeamId);
 
-  const linkedPlayerIds = getLinkedPlayerIds(user, teamId, players);
-  const completedGameIds = (Array.isArray(games) ? games : [])
-    .filter(isCompletedGame)
-    .map((game: any) => cleanString(game.id || game.gameId))
-    .filter(Boolean);
+    if (!team) throw new Error('Team not found.');
 
-  const [seasonStatsByPlayerId, trackingItems, trackingStatuses] = await Promise.all([
-    completedGameIds.length ? Promise.resolve(getAggregatedStatsForGames(teamId, completedGameIds)).catch(() => ({})) : Promise.resolve({}),
-    linkedPlayerIds.length ? Promise.resolve(getPublicTrackingItems(teamId)).catch(() => []) : Promise.resolve([]),
-    linkedPlayerIds.length ? Promise.resolve(getPlayerTrackingStatuses(teamId, linkedPlayerIds)).catch(() => []) : Promise.resolve([])
-  ]);
+    const linkedPlayerIds = getLinkedPlayerIds(user, normalizedTeamId, players);
+    const completedGameIds = (Array.isArray(games) ? games : [])
+      .filter(isCompletedGame)
+      .map((game: any) => cleanString(game.id || game.gameId))
+      .filter(Boolean);
 
-  const normalizedPlayers = normalizePlayers(players, linkedPlayerIds);
-  return {
-    leaderboards: buildLeaderboards(configs, normalizedPlayers, seasonStatsByPlayerId, team?.sport),
-    trackingSummaries: buildTrackingSummaries(normalizedPlayers, linkedPlayerIds, trackingItems, trackingStatuses)
-  };
+    const [seasonStatsByPlayerId, trackingItems, trackingStatuses] = await Promise.all([
+      completedGameIds.length ? Promise.resolve(getAggregatedStatsForGames(normalizedTeamId, completedGameIds)).catch(() => ({})) : Promise.resolve({}),
+      linkedPlayerIds.length ? Promise.resolve(getPublicTrackingItems(normalizedTeamId)).catch(() => []) : Promise.resolve([]),
+      linkedPlayerIds.length ? Promise.resolve(getPlayerTrackingStatuses(normalizedTeamId, linkedPlayerIds)).catch(() => []) : Promise.resolve([])
+    ]);
+
+    const normalizedPlayers = normalizePlayers(players, linkedPlayerIds);
+    return {
+      leaderboards: buildLeaderboards(configs, normalizedPlayers, seasonStatsByPlayerId, team?.sport),
+      trackingSummaries: buildTrackingSummaries(normalizedPlayers, linkedPlayerIds, trackingItems, trackingStatuses)
+    };
+  })();
+  teamDetailInsightsCache.set(cacheKey, request);
+  request.catch(() => {
+    if (teamDetailInsightsCache.get(cacheKey) === request) teamDetailInsightsCache.delete(cacheKey);
+  });
+  return request;
 }
 
 export async function loadTeamDetailSponsors(teamId: string): Promise<TeamDetailSponsorsPayload> {

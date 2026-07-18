@@ -637,7 +637,7 @@ describe('React app TeamDetail page', () => {
         const { container } = await renderTeamDetail();
 
         expect(teamDetailMocks.loadParentTeamDetail).toHaveBeenCalledTimes(1);
-        expect(teamDetailMocks.loadTeamDetailInsights).not.toHaveBeenCalled();
+        expect(teamDetailMocks.loadTeamDetailInsights).toHaveBeenCalledTimes(1);
         expect(teamDetailMocks.loadTeamDetailSponsors).not.toHaveBeenCalled();
 
         await clickButton(container, 'Insights');
@@ -696,8 +696,22 @@ describe('React app TeamDetail page', () => {
         expect(container.textContent).not.toContain('Loading local attractions and sponsors…');
     });
 
+    it('retries a failed background insights prefetch when the user opens Insights', async () => {
+        teamDetailMocks.loadTeamDetailInsights
+            .mockRejectedValueOnce(new Error('Prefetch offline'))
+            .mockResolvedValueOnce(deferredInsightsModel());
+
+        const { container } = await renderTeamDetail();
+
+        expect(teamDetailMocks.loadTeamDetailInsights).toHaveBeenCalledTimes(1);
+        await clickButton(container, 'Insights');
+        expect(teamDetailMocks.loadTeamDetailInsights).toHaveBeenCalledTimes(2);
+        expect(container.textContent).toContain('Bring ball');
+        expect(container.textContent).not.toContain('Prefetch offline');
+    });
+
     it('keeps the page usable when deferred Insights or More hydration fails', async () => {
-        teamDetailMocks.loadTeamDetailInsights.mockRejectedValueOnce(new Error('Insights offline'));
+        teamDetailMocks.loadTeamDetailInsights.mockRejectedValue(new Error('Insights offline'));
         teamDetailMocks.loadTeamDetailSponsors.mockRejectedValueOnce(new Error('Sponsors offline'));
 
         const { container } = await renderTeamDetail();

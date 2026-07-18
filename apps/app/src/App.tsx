@@ -264,7 +264,8 @@ export default function App() {
         <Route path="/games/:gameId" element={<Protected auth={auth}><GameDetail auth={auth} /></Protected>} />
         <Route path="/help" element={<Protected auth={auth}><HelpPortal auth={auth} /></Protected>} />
         <Route path="/help/:helpId" element={<Protected auth={auth}><HelpArticle /></Protected>} />
-        <Route path="/profile" element={<Protected auth={auth}><Profile auth={auth} /></Protected>} />
+        <Route path="/profile" element={<Protected auth={auth}><ProfileHomeRoute auth={auth} /></Protected>} />
+        <Route path="/profile/settings" element={<Protected auth={auth}><Profile auth={auth} /></Protected>} />
         <Route path="/people/:userId" element={<Protected auth={auth}><FriendProfile auth={auth} /></Protected>} />
         <Route path="/capabilities/:capabilityId" element={<Protected auth={auth}><CapabilityPage /></Protected>} />
         <Route path="*" element={<Navigate to={auth.user ? signedInDefaultRoute : '/auth'} replace />} />
@@ -295,6 +296,15 @@ function PublicPage({ auth, children }: { auth: AuthState; children: ReactNode }
       </ErrorBoundary>
     </AppShell>
   );
+}
+
+function ProfileHomeRoute({ auth }: { auth: AuthState }) {
+  const location = useLocation();
+  const params = new URLSearchParams(location.search);
+  if (params.has('section') || params.has('teamId')) {
+    return <Profile auth={auth} />;
+  }
+  return <FriendProfile auth={auth} profileUserId={auth.user?.uid} />;
 }
 
 function Protected({ auth, children }: { auth: AuthState; children: ReactNode }) {

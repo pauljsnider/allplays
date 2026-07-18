@@ -5,7 +5,7 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { APP_BACK_DISMISS_EVENT } from '../../../lib/nativeBackButton';
-import { findExistingDirectConversationId, getDirectConversationLookupIds, getReverseDirectConversationId, Sheet, sendLazyAllPlaysChatAnswer } from './ChatWindow';
+import { findExistingDirectConversationId, getChatThreadHeading, getDirectConversationLookupIds, getReverseDirectConversationId, Sheet, sendLazyAllPlaysChatAnswer } from './ChatWindow';
 
 const chatAiServiceMocks = vi.hoisted(() => ({
   sendAllPlaysChatAnswer: vi.fn()
@@ -131,6 +131,29 @@ describe('Messages ALL PLAYS lazy loading', () => {
 });
 
 describe('Chat composer audience lifecycle', () => {
+  it('uses the other participant as the direct-message heading for drafts and stored threads', () => {
+    const draftHeading = getChatThreadHeading({
+      conversation: { id: 'team', type: 'team' },
+      currentUserId: 'current-1',
+      selectedRecipientTarget: 'individuals',
+      selectedRecipientIds: ['friend-2'],
+      recipientOptions: [],
+      initialRecipient: { id: 'user:friend-2', name: 'Jamie Friend' },
+      teamName: 'Bears'
+    });
+    const storedHeading = getChatThreadHeading({
+      conversation: { id: 'direct-1', type: 'direct', participantIds: ['user:current-1', 'user:friend-2'] },
+      currentUserId: 'current-1',
+      selectedRecipientTarget: 'full_team',
+      selectedRecipientIds: [],
+      recipientOptions: [{ id: 'user:friend-2', name: 'Jamie Friend' }],
+      teamName: 'Bears'
+    });
+
+    expect(draftHeading).toEqual({ isDirect: true, primary: 'Jamie Friend', secondary: 'Direct message · Bears' });
+    expect(storedHeading).toEqual(draftHeading);
+  });
+
   it('reuses a direct conversation that the friend originally started', () => {
     const conversations = [{
       id: 'direct_friend-2__user%3Acurrent-1',

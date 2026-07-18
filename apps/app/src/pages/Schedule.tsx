@@ -165,6 +165,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const eventsRef = useRef<ParentScheduleEvent[]>([]);
   const rsvpHydrationVersionRef = useRef(0);
   const lastRsvpHydrationScopeRef = useRef('');
+  const bulkRsvpQueryHandledRef = useRef(false);
   const pendingRsvpEventKeysRef = useRef(new Set<string>());
   const updateScheduleEvents = (updater: (current: ParentScheduleEvent[]) => ParentScheduleEvent[]) => {
     const nextEvents = updater(eventsRef.current);
@@ -517,6 +518,17 @@ export function Schedule({ auth }: { auth: AuthState }) {
     [allBulkRsvpCandidates]
   );
   const unavailableBulkRsvpCount = allBulkRsvpCandidates.length - bulkRsvpCandidates.length;
+
+  useEffect(() => {
+    if (searchParams.get('bulkRsvp') !== '1') {
+      bulkRsvpQueryHandledRef.current = false;
+      return;
+    }
+    if (bulkRsvpQueryHandledRef.current || rsvpHydrationPending || scheduleReadLoading || bulkRsvpCandidates.length < 2) return;
+    bulkRsvpQueryHandledRef.current = true;
+    setBulkRsvpResult(null);
+    setBulkRsvpOpen(true);
+  }, [bulkRsvpCandidates.length, rsvpHydrationPending, scheduleReadLoading, searchParams]);
   const scheduleRoute = `/schedule${searchParams.toString() ? `?${searchParams.toString()}` : ''}`;
 
   useViewLoadTimer({

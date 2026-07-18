@@ -131,6 +131,7 @@ describe('React app search service', () => {
             route: '/teams/browse'
         });
         expect(signedInActions[0]).not.toHaveProperty('href');
+        expect(signedInActions.find((item) => item.id === 'profile')?.route).toBe('/profile/settings');
 
         expect(buildAppSearchActions({ ...auth, isAdmin: true }).map((item) => item.id)).toContain('admin-dashboard');
     });

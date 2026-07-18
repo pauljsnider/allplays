@@ -637,6 +637,17 @@ describe('Schedule', () => {
     expect(await screen.findByText('1 saved; 1 RSVP needs another try.')).toBeTruthy();
   });
 
+  it('opens multi RSVP from a shareable schedule query after hydration', async () => {
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [{ playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }],
+      events: [buildScheduleEvent(1), buildScheduleEvent(2)]
+    });
+
+    renderSchedule('/schedule?bulkRsvp=1');
+
+    expect(await screen.findByRole('dialog', { name: 'Respond to multiple events' })).toBeTruthy();
+  });
+
   it('keeps team and player filters after an empty schedule refresh fails', async () => {
     scheduleServiceMocks.loadParentSchedule
       .mockResolvedValueOnce({

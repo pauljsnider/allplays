@@ -630,6 +630,33 @@ describe('TeamDetail', () => {
     await waitFor(() => expect(window.scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'auto' }));
   });
 
+  it('prefetches insights after the base team model renders', async () => {
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    await waitFor(() => expect(teamDetailServiceMocks.loadTeamDetailInsights).toHaveBeenCalledWith('team-1', auth.user));
+  });
+
+  it('opens player detail when the roster row surface is clicked', async () => {
+    const router = createMemoryRouter([
+      { path: '/teams/:teamId', element: <TeamDetail auth={auth} /> },
+      { path: '/players/:teamId/:playerId', element: <div>Player profile opened</div> }
+    ], { initialEntries: ['/teams/team-1?tab=roster'] });
+
+    render(<RouterProvider router={router} />);
+    const row = await screen.findByTestId('roster-player-row');
+    fireEvent.click(row);
+
+    expect(await screen.findByText('Player profile opened')).toBeTruthy();
+    expect(router.state.location.pathname).toBe('/players/team-1/player-1');
+  });
+
   it('steps back to team overview before leaving the team hub', async () => {
     const router = createMemoryRouter(
       [

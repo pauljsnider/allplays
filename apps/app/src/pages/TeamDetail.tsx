@@ -132,6 +132,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
   const [insightsLoading, setInsightsLoading] = useState(false);
   const [insightsError, setInsightsError] = useState('');
   const [insightsLoaded, setInsightsLoaded] = useState(false);
+  const [insightsReloadVersion, setInsightsReloadVersion] = useState(0);
   const [sponsorsLoading, setSponsorsLoading] = useState(false);
   const [sponsorsError, setSponsorsError] = useState('');
   const [sponsorsLoaded, setSponsorsLoaded] = useState(false);
@@ -182,6 +183,9 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
     }
 
     const nextSearch = nextParams.toString();
+    if (nextTab === 'insights' && insightsError && !insightsLoadingRef.current) {
+      setInsightsReloadVersion((version) => version + 1);
+    }
     navigate({
       pathname: location.pathname,
       search: nextSearch ? `?${nextSearch}` : ''
@@ -210,6 +214,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
           setInsightsLoading(false);
           setInsightsError('');
           setInsightsLoaded(false);
+          setInsightsReloadVersion(0);
           setSponsorsLoading(false);
           setSponsorsError('');
           setSponsorsLoaded(false);
@@ -317,7 +322,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
   useEffect(() => {
     let cancelled = false;
     async function loadInsightsForTab() {
-      if (!teamId || activeTab !== 'insights' || !hasTeamModel || insightsLoaded || insightsLoadingRef.current) return;
+      if (!teamId || !hasTeamModel || insightsLoaded || insightsLoadingRef.current) return;
       setInsightsLoading(true);
       setInsightsError('');
       try {
@@ -337,7 +342,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [activeTab, authUserId, hasTeamModel, insightsLoaded, teamId]);
+  }, [authUserId, hasTeamModel, insightsLoaded, insightsReloadVersion, teamId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2954,6 +2959,7 @@ function PlayerRow({
   inviteSummary?: TeamRosterParentInviteSummary;
   onInviteCreated: () => Promise<void>;
 }) {
+  const navigate = useNavigate();
   const [creatingInvite, setCreatingInvite] = useState(false);
   const [inviteResult, setInviteResult] = useState<CreateRosterParentInviteForAppResult | null>(null);
   const [inviteStatus, setInviteStatus] = useState<{ success: boolean; message: string } | null>(null);
@@ -3023,10 +3029,21 @@ function PlayerRow({
     setInviteStatus({ success: false, message: 'Unable to share the invite from this device.' });
   }
 
+  const playerPath = `/players/${encodeURIComponent(teamId)}/${encodeURIComponent(player.id)}`;
+  const openPlayerFromRow = (target: EventTarget | null) => {
+    const element = target instanceof Element ? target : null;
+    if (element?.closest('a, button, input, select, textarea, label')) return;
+    navigate(playerPath);
+  };
+
   return (
-    <div data-testid={player.active === false ? 'inactive-roster-player-row' : 'roster-player-row'} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+    <div
+      data-testid={player.active === false ? 'inactive-roster-player-row' : 'roster-player-row'}
+      className="cursor-pointer rounded-xl border border-gray-200 bg-gray-50 p-3 transition hover:border-primary-200 hover:bg-primary-50/40"
+      onClick={(event) => openPlayerFromRow(event.target)}
+    >
       <div className="flex min-w-0 items-center gap-3">
-        <Link to={`/players/${encodeURIComponent(teamId)}/${encodeURIComponent(player.id)}`} className="flex min-w-0 flex-1 items-center gap-3 transition hover:text-primary-700">
+        <Link to={playerPath} className="flex min-w-0 flex-1 items-center gap-3 transition hover:text-primary-700">
           <PlayerPhoto name={player.name} photoUrl={player.photoUrl} />
           <span className="min-w-0 flex-1">
             <span className="flex min-w-0 items-center gap-2">

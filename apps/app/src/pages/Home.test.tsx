@@ -274,7 +274,7 @@ function buildLargeHomeModel() {
     metrics: {
       players: 4,
       teams: 3,
-      rsvpNeeded: 1,
+      rsvpNeeded: 2,
       unreadMessages: 4,
       packetsReady: 1
     }
@@ -948,6 +948,8 @@ describe('Home', () => {
     expect(screen.getByText('Upcoming')).toBeTruthy();
     expect(screen.getAllByText('Player 1 needs availability').length).toBeGreaterThan(0);
     expect(screen.getByRole('link', { name: /do\s*player 1 needs availability/i }).getAttribute('href')).toBe('/schedule/team-1/upcoming-1');
+    expect(screen.getByRole('link', { name: /Availability.*2.*Needs a response/i })).toHaveAttribute('href', '/schedule?bulkRsvp=1');
+    expect(screen.getByRole('link', { name: 'Multi RSVP' })).toHaveAttribute('href', '/schedule?bulkRsvp=1');
     expect(screen.getByText('Falcons')).toBeTruthy();
     expect(screen.getAllByText('Tournament fee').length).toBeGreaterThan(0);
 

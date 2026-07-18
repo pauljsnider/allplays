@@ -25,6 +25,7 @@ describe('React app auth/profile capability parity', () => {
             'path="/reset-password"',
             'path="/verify-pending"',
             'path="/profile"',
+            'path="/profile/settings"',
             'path="/teams/:teamId/fees"',
             'path="/teams/:teamId/fees/:batchId"'
         ]);
