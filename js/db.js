@@ -6230,8 +6230,14 @@ export function canAccessTeamChat(user, team) {
     // Global admin
     if (user.isAdmin) return true;
 
-    // Parent (has parentOf entry for this team)
-    if (user.parentOf?.some(p => p.teamId === team.id)) return true;
+    // Normalized membership is authoritative once present. Legacy profiles
+    // without parentTeamIds retain access through their parentOf links until
+    // the normal profile backfill runs.
+    if (Array.isArray(user.parentTeamIds)) {
+        if (user.parentTeamIds.includes(team.id)) return true;
+    } else if (user.parentOf?.some(p => p.teamId === team.id)) {
+        return true;
+    }
 
     return false;
 }

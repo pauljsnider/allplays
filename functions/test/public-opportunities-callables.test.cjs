@@ -555,6 +555,43 @@ test('direct-message callable rechecks friendship and team access on the write p
     );
 });
 
+test('direct-message callable honors unbackfilled legacy parent team links', async () => {
+    const conversationPath = 'teams/team-1/chatConversations/direct_owner__user%3Alegacy-parent';
+    const seed = {
+        'users/owner': { email: 'owner@example.com', isAdmin: false },
+        'users/legacy-parent': {
+            email: 'parent@example.com',
+            isAdmin: false,
+            parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
+        },
+        'teams/team-1': { ownerId: 'owner', adminEmails: [] },
+        [conversationPath]: {
+            type: 'direct',
+            participantIds: ['owner', 'user:legacy-parent'],
+            participantRoles: [],
+            directAccess: 'team_admin',
+            directUserIds: ['legacy-parent', 'owner'],
+            friendshipId: null,
+            initiatedBy: 'owner'
+        }
+    };
+    const { firestore, callables } = loadCallables(seed);
+
+    const sent = await callables.sendAuthorizedDirectMessage({
+        teamId: 'team-1',
+        conversationId: 'direct_owner__user%3Alegacy-parent',
+        clientMessageId: 'legacy-parent-reply-1',
+        text: 'Legacy parent reply',
+        attachments: []
+    }, authContext('legacy-parent'));
+
+    assert.equal(sent.id, 'legacy-parent__legacy-parent-reply-1');
+    assert.equal(
+        firestore.snapshot(`${conversationPath}/chatMessages/legacy-parent__legacy-parent-reply-1`).text,
+        'Legacy parent reply'
+    );
+});
+
 test('team-admin direct conversations allow either participant to reply while the initiator remains an admin', async () => {
     const conversationPath = 'teams/team-1/chatConversations/direct_owner__user%3Aparent';
     const seed = {

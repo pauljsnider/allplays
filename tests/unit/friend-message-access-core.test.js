@@ -34,6 +34,22 @@ describe('friend message access core', () => {
         expect(check()).toBe(true);
     });
 
+    it('falls back to legacy parentOf membership only when parentTeamIds is absent', () => {
+        expect(check({
+            sender: {
+                parentOf: [{ teamId: 'team-1', playerId: 'player-1' }],
+                email: 'parent@example.com'
+            }
+        })).toBe(true);
+        expect(check({
+            sender: {
+                parentOf: [{ teamId: 'team-1', playerId: 'player-1' }],
+                parentTeamIds: [],
+                email: 'parent@example.com'
+            }
+        })).toBe(false);
+    });
+
     it('allows owner-to-parent and parent-to-admin messaging', () => {
         expect(check({
             sender: { email: 'owner@example.com' },

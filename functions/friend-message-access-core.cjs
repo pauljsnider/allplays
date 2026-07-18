@@ -27,6 +27,14 @@ function normalizedStrings(values) {
     .filter(Boolean));
 }
 
+function getParentTeamIds(user) {
+  if (Array.isArray(user?.parentTeamIds)) {
+    return normalizedStrings(user.parentTeamIds);
+  }
+  return normalizedStrings((Array.isArray(user?.parentOf) ? user.parentOf : [])
+    .map((link) => link?.teamId));
+}
+
 function isAcceptedFriendshipForTeam(friendship, senderId, recipientId, teamId) {
   const memberIds = normalizedUserIds(friendship?.memberIds);
   const sharedTeamIds = normalizedStrings(friendship?.sharedTeamIds);
@@ -38,7 +46,9 @@ function isAcceptedFriendshipForTeam(friendship, senderId, recipientId, teamId) 
 }
 
 function hasCurrentTeamAccess({ team, user, userId, email }) {
-  const parentTeamIds = normalizedStrings(user?.parentTeamIds);
+  // parentTeamIds is the normalized, revocable source of truth. Fall back to
+  // parentOf only for legacy profiles that have not received that field yet.
+  const parentTeamIds = getParentTeamIds(user);
   const adminEmails = new Set((Array.isArray(team?.adminEmails) ? team.adminEmails : [])
     .map(normalizeEmail)
     .filter(Boolean));
