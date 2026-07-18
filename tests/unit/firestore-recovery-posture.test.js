@@ -81,10 +81,23 @@ describe('Firestore recovery posture', () => {
         });
     });
 
-    it.each([undefined, 'CREATING'])('rejects a backup whose state is %s', (state) => {
+    it.each([
+        ['missing', undefined, false],
+        ['an unknown string', 'UNKNOWN', true],
+        ['a non-ready lifecycle state', 'CREATING', true],
+        ['lowercase ready', 'ready', true],
+        ['null', null, true],
+        ['a number', 1, true],
+        ['a boolean', true, true],
+        ['an object', { value: 'READY' }, true]
+    ])('rejects a backup whose state is %s', (_description, state, hasState) => {
         const input = healthyInput();
         input.schedules[0].createTime = '2026-07-16T00:00:00Z';
-        input.backups[0].state = state;
+        if (hasState) {
+            input.backups[0].state = state;
+        } else {
+            delete input.backups[0].state;
+        }
 
         expect(evaluateFirestoreRecoveryPosture(input)).toMatchObject({
             healthy: false,
