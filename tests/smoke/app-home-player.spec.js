@@ -878,7 +878,28 @@ async function mockHomePlayerModules(page) {
                 }
                 export async function createSocialPost(user, input) {
                     window.__socialPosts.push({ user, input });
-                    return 'post-new';
+                    return {
+                        id: 'post-new',
+                        type: input.type,
+                        visibility: input.visibility,
+                        authorId: user.uid,
+                        authorName: user.displayName || user.email || 'ALL PLAYS member',
+                        authorPhotoUrl: user.photoURL || null,
+                        teamId: input.teamId || null,
+                        teamName: input.teamName || null,
+                        playerIds: input.playerIds || [],
+                        playerNames: input.playerNames || [],
+                        sourceType: 'member',
+                        sourceId: user.uid,
+                        title: input.title,
+                        detail: input.detail,
+                        body: input.body,
+                        media: input.media || [],
+                        reactionCounts: {},
+                        commentCount: 0,
+                        viewerHasLiked: false,
+                        createdAt: new Date()
+                    };
                 }
                 export async function reactToSocialPost() {}
                 export async function commentOnSocialPost() {}

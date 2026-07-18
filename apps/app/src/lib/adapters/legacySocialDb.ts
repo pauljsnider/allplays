@@ -9,7 +9,10 @@ import {
   updateDoc as legacyUpdateDoc,
   query as legacyQuery,
   where as legacyWhere,
+  orderBy as legacyOrderBy,
   limit as legacyLimit,
+  startAfter as legacyStartAfter,
+  runTransaction as legacyRunTransaction,
   Timestamp as LegacyTimestamp,
   serverTimestamp as legacyServerTimestamp
 } from '@legacy/firebase.js';
@@ -28,6 +31,9 @@ export const addDoc = legacyAddDoc as (...args: any[]) => Promise<any>;
 export const updateDoc = legacyUpdateDoc as (...args: any[]) => Promise<any>;
 export const query = legacyQuery as (...args: any[]) => any;
 export const where = legacyWhere as (...args: any[]) => any;
+export const orderBy = legacyOrderBy as (...args: any[]) => any;
 export const limit = legacyLimit as (...args: any[]) => any;
+export const startAfter = legacyStartAfter as (...args: any[]) => any;
+export const runTransaction = legacyRunTransaction as (...args: any[]) => Promise<any>;
 export const Timestamp = LegacyTimestamp as any;
 export const serverTimestamp = legacyServerTimestamp as (...args: any[]) => any;

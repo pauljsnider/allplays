@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-    buildDerivedSocialFeedItems,
     buildFriendshipId,
     buildSocialHomeModel,
     filterSocialFeedItems,
@@ -11,24 +10,6 @@ import {
     normalizeSocialFriend,
     socialPostPresets
 } from '../../apps/app/src/lib/socialLogic.ts';
-
-function event(overrides = {}) {
-    return {
-        id: overrides.id || 'game-1',
-        teamId: overrides.teamId || 'team-1',
-        teamName: overrides.teamName || 'Bears',
-        type: overrides.type || 'game',
-        date: overrides.date || new Date('2100-06-01T18:00:00Z'),
-        location: overrides.location || 'Main Gym',
-        opponent: overrides.opponent || 'Falcons',
-        title: overrides.title || null,
-        childId: overrides.childId || 'player-1',
-        childName: overrides.childName || 'Pat Star',
-        myRsvp: overrides.myRsvp || 'not_responded',
-        assignments: [],
-        ...overrides
-    };
-}
 
 function feedItem(overrides = {}) {
     return {
@@ -57,60 +38,6 @@ function feedItem(overrides = {}) {
 }
 
 describe('React app social logic', () => {
-    it('derives social feed prompts from home schedule, packets, players, and teams', () => {
-        const home = {
-            upcomingEvents: [
-                event(),
-                event({
-                    id: 'practice-1',
-                    type: 'practice',
-                    title: 'Practice',
-                    date: new Date('2100-06-02T18:00:00Z'),
-                    practiceHomePacketSummary: '2 drills · 20 min'
-                })
-            ],
-            players: [{
-                teamId: 'team-1',
-                teamName: 'Bears',
-                playerId: 'player-1',
-                playerName: 'Pat Star',
-                nextEvent: event(),
-                rsvpNeeded: 1,
-                packetsReady: 1,
-                openAssignments: 0,
-                unreadCount: 0
-            }],
-            teams: [{
-                teamId: 'team-1',
-                teamName: 'Bears',
-                role: 'Parent',
-                sport: 'Basketball',
-                photoUrl: 'https://img.example.test/bears.png',
-                players: [],
-                nextEvent: event(),
-                eventCount: 2,
-                unreadCount: 2,
-                openActions: 2
-            }]
-        };
-
-        const items = buildDerivedSocialFeedItems(home, 'user-1', 'Pat Parent', new Date('2100-05-30T12:00:00Z'));
-
-        expect(items.map((item) => item.type)).toEqual(expect.arrayContaining([
-            'upcoming_game',
-            'practice_packet',
-            'player_moment',
-            'team_media'
-        ]));
-        expect(items.find((item) => item.type === 'practice_packet')).toMatchObject({
-            title: 'Practice packet ready',
-            route: '/schedule/team-1/practice-1?childId=player-1&section=game'
-        });
-        expect(items.find((item) => item.type === 'team_media').media).toEqual([
-            expect.objectContaining({ type: 'image', url: 'https://img.example.test/bears.png' })
-        ]);
-    });
-
     it('sorts and filters feed items for parent-friendly sections', () => {
         const items = mergeSocialFeedItems(
             [

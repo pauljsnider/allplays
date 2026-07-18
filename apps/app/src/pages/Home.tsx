@@ -79,6 +79,7 @@ import {
   getSocialPostPresetForType,
   getSocialTypeLabel,
   getSocialVisibilityLabel,
+  mergeSocialFeedItems,
   socialPostPresets,
   socialFeedFilters,
   socialVisibilityOptions,
@@ -406,19 +407,24 @@ export function Home({ auth }: { auth: AuthState }) {
     });
   };
 
-  const refreshSocial = async (nextHome = home) => {
+  const refreshSocial = async (
+    nextHome = home,
+    options: { preserveStatus?: boolean; rethrow?: boolean } = {}
+  ) => {
     const user = auth.user;
     if (!user) return;
-    setSocialStatus(null);
+    if (!options.preserveStatus) setSocialStatus(null);
     await runSecondaryLoad(
       async () => {
         setSocial(await loadSocialHome(user, nextHome));
       },
       {
         getErrorMessage: (loadError) => getAsyncErrorMessage(loadError, 'Unable to refresh Feed.'),
-        rethrow: false,
+        rethrow: Boolean(options.rethrow),
         onError: (loadError) => {
-          setSocialStatus({ tone: 'error', message: getAsyncErrorMessage(loadError, 'Unable to refresh Feed.') });
+          if (!options.preserveStatus) {
+            setSocialStatus({ tone: 'error', message: getAsyncErrorMessage(loadError, 'Unable to refresh Feed.') });
+          }
         }
       }
     );
@@ -428,14 +434,22 @@ export function Home({ auth }: { auth: AuthState }) {
     if (!auth.user) return;
     setSocialStatus(null);
     try {
-      await createSocialPost(auth.user, input);
+      const createdPost = await createSocialPost(auth.user, input);
+      setSocial((current) => {
+        const feedItems = mergeSocialFeedItems([createdPost], current.feedItems);
+        return {
+          ...current,
+          feedItems,
+          metrics: { ...current.metrics, feedItems: feedItems.length }
+        };
+      });
       setComposerOpen(false);
       const nextParams = new URLSearchParams(searchParams);
       nextParams.delete('social');
       nextParams.delete('type');
       setSearchParams(nextParams, { replace: true });
-      await refreshSocial();
       setSocialStatus({ tone: 'success', message: 'Posted to your ALL PLAYS feed.' });
+      void refreshSocial(home, { preserveStatus: true });
     } catch (postError: any) {
       setSocialStatus({ tone: 'error', message: postError?.message || 'Unable to create post.' });
     }
@@ -529,7 +543,7 @@ export function Home({ auth }: { auth: AuthState }) {
           loading={socialLoading}
           auth={auth}
           home={home}
-          onRefresh={() => refreshSocial()}
+          onRefresh={(options) => refreshSocial(home, options)}
           onOpenComposer={openComposer}
           onStatus={setSocialStatus}
         />
@@ -1088,16 +1102,27 @@ function FeedSection({
   loading: boolean;
   auth: AuthState;
   home: ParentHomeModel;
-  onRefresh: () => Promise<void> | void;
+  onRefresh: (options?: { rethrow?: boolean }) => Promise<void> | void;
   onOpenComposer: (type?: SocialPostType) => void;
   onStatus: (status: { tone: 'error' | 'success'; message: string } | null) => void;
 }) {
   const [filter, setFilter] = useState<SocialFeedFilter>('all');
+  const [optimisticallyHiddenPostIds, setOptimisticallyHiddenPostIds] = useState<Set<string>>(() => new Set());
   const [opportunities, setOpportunities] = useState<PublicOpportunity[]>([]);
   const [opportunityLoading, setOpportunityLoading] = useState(false);
   const [opportunityLoaded, setOpportunityLoaded] = useState(false);
   const [opportunityError, setOpportunityError] = useState('');
-  const visibleItems = useMemo(() => filterSocialFeedItems(social.feedItems, filter), [social.feedItems, filter]);
+  const visibleItems = useMemo(() => filterSocialFeedItems(social.feedItems, filter)
+    .filter((item) => !optimisticallyHiddenPostIds.has(item.id)), [social.feedItems, filter, optimisticallyHiddenPostIds]);
+
+  const setPostOptimisticallyHidden = (postId: string, hidden: boolean) => {
+    setOptimisticallyHiddenPostIds((current) => {
+      const next = new Set(current);
+      if (hidden) next.add(postId);
+      else next.delete(postId);
+      return next;
+    });
+  };
 
   useEffect(() => {
     if (filter !== 'opportunities' || opportunityLoaded || opportunityLoading) return;
@@ -1119,7 +1144,7 @@ function FeedSection({
           <div className="min-w-0">
             <div className="app-label">Social</div>
             <h2 className="mt-1 app-section-title">Feed</h2>
-            <p className="mt-1 text-xs font-semibold text-gray-500">Team posts, player moments, game recaps, packets, and friend updates.</p>
+            <p className="mt-1 text-xs font-semibold text-gray-500">Posts and highlights shared by you, friends, and your teams.</p>
           </div>
           <div className="flex flex-none items-center gap-2">
             <button type="button" className="ghost-button !h-9 !min-h-9 !w-9 !p-0" onClick={() => onRefresh()} disabled={loading} aria-label="Refresh feed" title="Refresh feed">
@@ -1160,6 +1185,7 @@ function FeedSection({
                 auth={auth}
                 onRefresh={onRefresh}
                 onStatus={onStatus}
+                onOptimisticHide={setPostOptimisticallyHidden}
               />
             )) : (
               <EmptyCard icon={Newspaper} title="No posts for this filter" detail={home.teams.length ? 'Try another filter or create a post for your team.' : 'Link a team or player to unlock team feed activity.'} />
@@ -1215,18 +1241,20 @@ function SocialFeedCard({
   item,
   auth,
   onRefresh,
-  onStatus
+  onStatus,
+  onOptimisticHide
 }: {
   item: SocialFeedItem;
   auth: AuthState;
-  onRefresh: () => Promise<void> | void;
+  onRefresh: (options?: { rethrow?: boolean }) => Promise<void> | void;
   onStatus: (status: { tone: 'error' | 'success'; message: string } | null) => void;
+  onOptimisticHide: (postId: string, hidden: boolean) => void;
 }) {
   const [comment, setComment] = useState('');
   const [busyActions, setBusyActions] = useState<Record<string, boolean>>({});
   const [optimisticItem, setOptimisticItem] = useState(item);
   const inFlightActionsRef = useRef(new Set<string>());
-  const canPersist = !item.autoGenerated && Boolean(auth.user?.uid);
+  const canPersist = Boolean(auth.user?.uid);
   const isAuthor = item.authorId === auth.user?.uid;
   const primaryHref = item.route || item.href || '';
   const isExternal = Boolean(item.href && !item.route);
@@ -1256,7 +1284,7 @@ function SocialFeedCard({
     clearComment = false
   }: {
     actionKey: string;
-    action: () => Promise<void>;
+    action: () => Promise<unknown>;
     success: string;
     optimistic?: () => void;
     rollback?: () => void;
@@ -1273,7 +1301,15 @@ function SocialFeedCard({
     }
     try {
       await action();
-      await onRefresh();
+      try {
+        await onRefresh({ rethrow: true });
+      } catch {
+        onStatus({
+          tone: 'success',
+          message: `${success} Refresh to see the latest feed.`
+        });
+        return;
+      }
       onStatus({ tone: 'success', message: success });
     } catch (error: any) {
       rollback?.();
@@ -1349,43 +1385,62 @@ function SocialFeedCard({
           ) : null}
           <button
             type="button"
-            className="ghost-button !min-h-9 !px-3 text-xs"
+            className={`ghost-button !min-h-9 !px-3 text-xs ${optimisticItem.viewerHasLiked ? '!border-rose-200 !bg-rose-50 !text-rose-700' : ''}`}
             disabled={!canPersist || likeBusy}
             onClick={() => runAction({
               actionKey: 'like',
-              action: () => reactToSocialPost(item.id, auth.user!, 'like'),
-              success: 'Liked the post.',
+              action: async () => {
+                const result = await reactToSocialPost(item.id, auth.user!, 'like');
+                if (result) {
+                  setOptimisticItem((current) => ({
+                    ...current,
+                    viewerHasLiked: result.liked,
+                    reactionCounts: { ...current.reactionCounts, like: result.count }
+                  }));
+                }
+              },
+              success: optimisticItem.viewerHasLiked ? 'Like removed.' : 'Liked the post.',
               optimistic: () => setOptimisticItem((current) => ({
                 ...current,
+                viewerHasLiked: !current.viewerHasLiked,
                 reactionCounts: {
                   ...current.reactionCounts,
-                  like: Number(current.reactionCounts.like || 0) + 1
+                  like: Math.max(0, Number(current.reactionCounts.like || 0) + (current.viewerHasLiked ? -1 : 1))
                 }
               })),
               rollback: () => setOptimisticItem((current) => ({
                 ...current,
+                viewerHasLiked: !current.viewerHasLiked,
                 reactionCounts: {
                   ...current.reactionCounts,
-                  like: Math.max(0, Number(current.reactionCounts.like || 0) - 1)
+                  like: Math.max(0, Number(current.reactionCounts.like || 0) + (current.viewerHasLiked ? -1 : 1))
                 }
               }))
             })}
-            title={item.autoGenerated ? 'Open the source item before reacting.' : 'Like'}
+            aria-label={`${optimisticItem.viewerHasLiked ? 'Unlike' : 'Like'} post, ${likeCount} like${likeCount === 1 ? '' : 's'}`}
+            title={optimisticItem.viewerHasLiked ? 'Unlike' : 'Like'}
           >
-            {likeBusy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Heart className="h-4 w-4" aria-hidden="true" />}
+            {likeBusy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Heart className={`h-4 w-4 ${optimisticItem.viewerHasLiked ? 'fill-current' : ''}`} aria-hidden="true" />}
             {likeCount}
           </button>
-          {isAuthor ? (
+          {canPersist ? (
             <button
               type="button"
-              className="ghost-button !min-h-9 !px-3 text-xs text-rose-700"
+              className="ghost-button !min-h-9 !px-3 text-xs"
               disabled={hideBusy}
-              onClick={() => runAction({ actionKey: 'hide', action: () => hideSocialPost(item.id, auth.user!), success: 'Post hidden from your feed.' })}
+              onClick={() => runAction({
+                actionKey: 'hide',
+                action: () => hideSocialPost(item.id, auth.user!),
+                success: 'Post hidden from your feed.',
+                optimistic: () => onOptimisticHide(item.id, true),
+                rollback: () => onOptimisticHide(item.id, false)
+              })}
             >
               {hideBusy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Flag className="h-4 w-4" aria-hidden="true" />}
               Hide
             </button>
-          ) : canPersist ? (
+          ) : null}
+          {!isAuthor && canPersist ? (
             <button
               type="button"
               className="ghost-button !min-h-9 !px-3 text-xs"
