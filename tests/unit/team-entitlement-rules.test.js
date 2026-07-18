@@ -86,6 +86,10 @@ describe('team entitlement Firestore rules', () => {
                     id: 'settled-provider', registrationId: 'settled-provider',
                     teamId: 'team-a', formId: 'form-a', status: 'approved', paymentProvider: 'stripe',
                     guardianEmail: 'parent@example.com',
+                    participant: { firstName: 'Pat', lastName: 'Player' },
+                    selectedOption: { id: 'u12', countKey: 'u12', title: 'U12' },
+                    feeSnapshot: { quantity: 1, totalAmountCents: 5000, currency: 'usd' },
+                    paymentPlan: { id: 'installments', paidInstallmentCount: 1, installmentCount: 2 },
                     guardian: {
                         email: 'parent@example.com',
                         guardianEmail: 'guardian@example.com',
@@ -186,6 +190,10 @@ describe('team entitlement Firestore rules', () => {
             await assertFails(updateDoc(providerRef, { formId: 'form-b' }));
             await assertFails(updateDoc(providerRef, { id: 'forged-registration' }));
             await assertFails(updateDoc(providerRef, { registrationId: 'forged-registration' }));
+            await assertFails(updateDoc(providerRef, { 'participant.firstName': 'Other' }));
+            await assertFails(updateDoc(providerRef, { 'selectedOption.countKey': 'u14' }));
+            await assertFails(updateDoc(providerRef, { 'feeSnapshot.quantity': 2 }));
+            await assertFails(updateDoc(providerRef, { 'paymentPlan.id': 'pay_full' }));
             await assertFails(updateDoc(providerRef, { guardianEmail: 'attacker@example.com' }));
             await assertFails(updateDoc(providerRef, { 'guardian.email': 'attacker@example.com' }));
             await assertFails(updateDoc(providerRef, { 'guardian.guardianEmail': 'attacker@example.com' }));

@@ -8,7 +8,7 @@ The final assertion is valid only inside a verified payment-maintenance window. 
 
 After the PR's exact head has clean CI and independent security review, use this ordering:
 
-1. Create `paymentAuthorityRollout/control` with `frozen: true` through an authenticated, audited administrator operation. Record the write time and exact document contents.
+1. Generate a unique 16–128 character `freezeId`, then create `paymentAuthorityRollout/control` with that exact `freezeId` and `frozen: true` through an authenticated, audited administrator operation. Record the write time and exact document contents. Do not reuse a prior maintenance-window ID.
 2. Inventory all seven intended payment-mutation callable names before scanning:
 
    - `createStripeRegistrationCheckout`
@@ -40,7 +40,8 @@ Verify both exact functions are active before continuing. Do not include payment
    ```json
    {
      "dryRun": false,
-     "confirmation": "expire_open_legacy_stripe_checkout_sessions_v1"
+     "confirmation": "expire_open_legacy_stripe_checkout_sessions_v1",
+     "freezeId": "<exact active freezeId>"
    }
    ```
 
@@ -51,11 +52,12 @@ Verify both exact functions are active before continuing. Do not include payment
    ```json
    {
      "assertEmpty": true,
-     "confirmation": "assert_no_legacy_stripe_payment_authority_v1"
+     "confirmation": "assert_no_legacy_stripe_payment_authority_v1",
+     "freezeId": "<exact active freezeId>"
    }
    ```
 
-11. Capture the sanitized result fields (`ready`, `complete`, `asserted`, all scanned counts, and `blockerCount`) plus the audit document ID and timestamp. Do not copy user, payment, or Stripe identifiers into PR evidence.
+11. The asserted audit reads the exact `freezeId` before and after every Stripe/Firestore scan and fails if the maintenance window is absent or replaced. Capture the sanitized result fields (`ready`, `complete`, `asserted`, all scanned counts, and `blockerCount`) plus the audit document ID, freeze ID, and timestamp. Do not copy user, payment, or Stripe identifiers into PR evidence.
 12. While the IAM and rules freeze still hold, merge the exact reviewed head and deploy the hardened payment handlers/webhook. Every new mutation handler independently checks the frozen control and returns maintenance/unavailable before changing authority. Re-check effective IAM and control state before and after deployment; if deployment restored a public grant, remove it again before continuing.
 13. Verify every deployed handler revision. While `frozen: true`, restore the exact pre-freeze callable invoker grants only for targets that existed in the saved manifest. For a newly created `expireStripeTeamFeeCheckout` or `expireStripeTeamPassCheckout`, apply a separately reviewed callable invoker policy matching the intended client transport and record that new policy; there is no pre-freeze policy to restore. Confirm every now-invokable hardened mutation callable still rejects payment mutation because of the control document. Run the explicit empty assertion again after all intended invoker policies are active. Only after that post-deploy assertion is clean may the operator clear `paymentAuthorityRollout/control.frozen` as the final reopening step. Verify a new checkout and each required expiration/recovery flow use durable v2 authority before considering the cutover complete.
 

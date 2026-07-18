@@ -189,6 +189,8 @@ describe('Stripe payment-authority rollout gate', () => {
         const source = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
         expect(source).toContain('exports.auditStripePaymentAuthorityRollout');
         expect(source).toContain("data?.confirmation !== 'assert_no_legacy_stripe_payment_authority_v1'");
+        expect(source).toContain('await assertStripePaymentAuthorityRolloutIsFrozen(data?.freezeId)');
+        expect(source).toContain('await assertStripePaymentAuthorityRolloutIsFrozen(freezeId)');
         expect(source).toContain("throw new functions.https.HttpsError('failed-precondition', 'Payment authority rollout is blocked");
         expect(source).toContain("firestore.collection('paymentAuthorityRolloutAudits').doc().set");
         expect(source).not.toContain('purgeStripePaymentAuthority');
@@ -220,6 +222,7 @@ describe('Stripe payment-authority rollout gate', () => {
         expect(source).toContain('exports.expireOpenStripePaymentAuthoritySessionsForRollout');
         expect(source).toContain('const dryRun = data?.dryRun !== false;');
         expect(source).toContain("data?.confirmation !== 'expire_open_legacy_stripe_checkout_sessions_v1'");
+        expect(source).toContain('await assertStripePaymentAuthorityRolloutIsFrozen(data?.freezeId)');
         expect(source).toContain('getStripePaymentAuthoritySessionBindingFailure(session, expectedLivemode)');
         expect(source).toContain('bindingFailureCount');
         expect(source).toContain('liveModeMatched');
@@ -241,6 +244,8 @@ describe('Stripe payment-authority rollout gate', () => {
         }
         expect(runbook).toContain('save its full IAM policy, etag, and revision');
         expect(runbook).toContain('record a verified `NOT_DEPLOYED` entry');
+        expect(runbook).toContain('Do not reuse a prior maintenance-window ID');
+        expect(runbook).toContain('reads the exact `freezeId` before and after every Stripe/Firestore scan');
         expect(runbook).toContain('Do not infer quiescence from an IAM command succeeding or treat a nonexistent function as an IAM success');
         expect(runbook).toContain('returns HTTP 403 before callable code runs');
         expect(runbook).toContain('webhook, audit, and cleanup endpoints remain invokable');

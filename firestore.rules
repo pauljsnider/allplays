@@ -1014,6 +1014,10 @@ service cloud.firestore {
     function hasSettledRegistrationIdentityPreserved() {
       return request.resource.data.get('id', null) == resource.data.get('id', null) &&
              request.resource.data.get('registrationId', null) == resource.data.get('registrationId', null) &&
+             request.resource.data.get('participant', {}) == resource.data.get('participant', {}) &&
+             request.resource.data.get('selectedOption', null) == resource.data.get('selectedOption', null) &&
+             request.resource.data.get('feeSnapshot', null) == resource.data.get('feeSnapshot', null) &&
+             request.resource.data.get('paymentPlan', null) == resource.data.get('paymentPlan', null) &&
              request.resource.data.get('guardianEmail', '') == resource.data.get('guardianEmail', '') &&
              request.resource.data.get('guardian', {}).get('email', '') ==
                resource.data.get('guardian', {}).get('email', '') &&

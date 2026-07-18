@@ -346,6 +346,30 @@ function buildStripePaymentAuthorityRolloutControlRef() {
   return firestore.doc('paymentAuthorityRollout/control');
 }
 
+function normalizeStripePaymentAuthorityRolloutFreezeId(value) {
+  const freezeId = String(value || '').trim();
+  if (!/^[A-Za-z0-9_-]{16,128}$/.test(freezeId)) {
+    throw new functions.https.HttpsError(
+      'failed-precondition',
+      'The exact payment-authority maintenance freeze ID is required.'
+    );
+  }
+  return freezeId;
+}
+
+async function assertStripePaymentAuthorityRolloutIsFrozen(freezeId) {
+  const expectedFreezeId = normalizeStripePaymentAuthorityRolloutFreezeId(freezeId);
+  const controlSnap = await buildStripePaymentAuthorityRolloutControlRef().get();
+  const control = controlSnap.exists ? (controlSnap.data() || {}) : {};
+  if (control.frozen !== true || String(control.freezeId || '').trim() !== expectedFreezeId) {
+    throw new functions.https.HttpsError(
+      'failed-precondition',
+      'The exact payment-authority maintenance freeze is not active.'
+    );
+  }
+  return expectedFreezeId;
+}
+
 async function assertStripePaymentAuthorityMutationIsNotFrozen() {
   const controlSnap = await buildStripePaymentAuthorityRolloutControlRef().get();
   if (controlSnap.exists && controlSnap.data()?.frozen === true) {
@@ -5170,6 +5194,9 @@ exports.auditStripePaymentAuthorityRollout = functions.runWith({ timeoutSeconds:
   if (assertEmpty && data?.confirmation !== 'assert_no_legacy_stripe_payment_authority_v1') {
     throw new functions.https.HttpsError('failed-precondition', 'Explicit empty-authority assertion confirmation is required.');
   }
+  const freezeId = assertEmpty
+    ? await assertStripePaymentAuthorityRolloutIsFrozen(data?.freezeId)
+    : '';
   const stripe = createStripeClient();
 
   const [registrations, teamFees, teamPasses, stripeChargeLedgers, teamPassAttempts, stripeSessions] = await Promise.all([
@@ -5255,6 +5282,11 @@ exports.auditStripePaymentAuthorityRollout = functions.runWith({ timeoutSeconds:
     && stripeChargeLedgers.complete
     && teamPassAttempts.complete
     && stripeSessions.complete;
+  if (assertEmpty) {
+    // Re-read after every Firestore and Stripe page so a cleared or replaced
+    // maintenance window cannot produce valid final assertion evidence.
+    await assertStripePaymentAuthorityRolloutIsFrozen(freezeId);
+  }
   const blockers = [
     ...registrations.blockers,
     ...teamFees.blockers,
@@ -5286,6 +5318,7 @@ exports.auditStripePaymentAuthorityRollout = functions.runWith({ timeoutSeconds:
     ...result,
     actorId: context.auth.uid,
     confirmation: assertEmpty ? 'assert_no_legacy_stripe_payment_authority_v1' : null,
+    freezeId: assertEmpty ? freezeId : null,
     createdAt: admin.firestore.FieldValue.serverTimestamp()
   });
   if (!complete) {
@@ -5309,6 +5342,9 @@ exports.expireOpenStripePaymentAuthoritySessionsForRollout = functions.runWith({
   if (!dryRun && data?.confirmation !== 'expire_open_legacy_stripe_checkout_sessions_v1') {
     throw new functions.https.HttpsError('failed-precondition', 'Explicit rollout Session expiration confirmation is required.');
   }
+  const freezeId = dryRun
+    ? ''
+    : await assertStripePaymentAuthorityRolloutIsFrozen(data?.freezeId);
   const stripe = createStripeClient();
   const { secretKey } = getStripeConfig();
   const expectedLivemode = getExpectedStripeLivemode(secretKey);
@@ -5325,6 +5361,9 @@ exports.expireOpenStripePaymentAuthoritySessionsForRollout = functions.runWith({
   ));
   const liveModeMatched = relevantSessions.filter((session) => session.livemode === true).length;
   const testModeMatched = relevantSessions.filter((session) => session.livemode === false).length;
+  if (!dryRun) {
+    await assertStripePaymentAuthorityRolloutIsFrozen(freezeId);
+  }
   let expired = 0;
   let failureCount = 0;
   for (const session of (dryRun || bindingFailureCount > 0) ? [] : relevantSessions) {
@@ -5355,6 +5394,7 @@ exports.expireOpenStripePaymentAuthoritySessionsForRollout = functions.runWith({
     ...result,
     actorId: context.auth.uid,
     confirmation: dryRun ? null : 'expire_open_legacy_stripe_checkout_sessions_v1',
+    freezeId: dryRun ? null : freezeId,
     createdAt: admin.firestore.FieldValue.serverTimestamp()
   });
   if (bindingFailureCount > 0) {

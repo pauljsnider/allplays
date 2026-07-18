@@ -1155,6 +1155,7 @@ test('Team Pass entitlement backfill paginates through non-team collection-group
 test('payment authority rollout gate audits blockers and requires an explicit empty assertion', async () => {
     const registrationPath = 'teams/team-a/registrationForms/form-a/registrations/reg-a';
     const feePath = 'teams/team-a/feeBatches/batch-a/feeRecipients/fee-a';
+    const freezeId = 'freeze_payment_authority_20260718';
     const { firestore, mod } = loadFunctionsModule({
         'users/platform-admin': { email: 'admin@example.com', isAdmin: true },
         [registrationPath]: {
@@ -1192,6 +1193,23 @@ test('payment authority rollout gate audits blockers and requires an explicit em
             assertEmpty: true,
             confirmation: 'assert_no_legacy_stripe_payment_authority_v1'
         }, adminContext),
+        /maintenance freeze ID is required/i
+    );
+    await firestore.doc('paymentAuthorityRollout/control').set({ frozen: true, freezeId });
+    await assert.rejects(
+        mod.auditStripePaymentAuthorityRollout({
+            assertEmpty: true,
+            confirmation: 'assert_no_legacy_stripe_payment_authority_v1',
+            freezeId: `${freezeId}_wrong`
+        }, adminContext),
+        /exact payment-authority maintenance freeze is not active/i
+    );
+    await assert.rejects(
+        mod.auditStripePaymentAuthorityRollout({
+            assertEmpty: true,
+            confirmation: 'assert_no_legacy_stripe_payment_authority_v1',
+            freezeId
+        }, adminContext),
         (error) => error.code === 'failed-precondition' && error.details?.blockerCount === 1
     );
 
@@ -1204,7 +1222,8 @@ test('payment authority rollout gate audits blockers and requires an explicit em
     });
     const asserted = await mod.auditStripePaymentAuthorityRollout({
         assertEmpty: true,
-        confirmation: 'assert_no_legacy_stripe_payment_authority_v1'
+        confirmation: 'assert_no_legacy_stripe_payment_authority_v1',
+        freezeId
     }, adminContext);
     assert.equal(asserted.ready, true);
     assert.equal(asserted.blockerCount, 0);
@@ -1387,9 +1406,10 @@ test('payment authority rollout gate detects pointers, orphan ledgers, and paid 
 });
 
 test('rollout cleanup dry-runs and expires only exactly bound AllPlays open Sessions', async () => {
-    const { stripeState, mod } = loadFunctionsModule({
+    const { firestore, stripeState, mod } = loadFunctionsModule({
         'users/platform-admin': { email: 'admin@example.com', isAdmin: true }
     });
+    const freezeId = 'freeze_payment_authority_cleanup';
     stripeState.checkoutResponses.set('cs_rollout_team_pass', {
         id: 'cs_rollout_team_pass', mode: 'payment', status: 'open', payment_status: 'unpaid', livemode: false,
         client_reference_id: 'team-pass:2026:owner-1',
@@ -1419,9 +1439,19 @@ test('rollout cleanup dry-runs and expires only exactly bound AllPlays open Sess
         mod.expireOpenStripePaymentAuthoritySessionsForRollout({ dryRun: false }, adminContext),
         /confirmation is required/i
     );
+    await assert.rejects(
+        mod.expireOpenStripePaymentAuthoritySessionsForRollout({
+            dryRun: false,
+            confirmation: 'expire_open_legacy_stripe_checkout_sessions_v1',
+            freezeId
+        }, adminContext),
+        /exact payment-authority maintenance freeze is not active/i
+    );
+    await firestore.doc('paymentAuthorityRollout/control').set({ frozen: true, freezeId });
     const expired = await mod.expireOpenStripePaymentAuthoritySessionsForRollout({
         dryRun: false,
-        confirmation: 'expire_open_legacy_stripe_checkout_sessions_v1'
+        confirmation: 'expire_open_legacy_stripe_checkout_sessions_v1',
+        freezeId
     }, adminContext);
     assert.equal(expired.expired, 1);
     assert.deepEqual(stripeState.expiredSessionIds, ['cs_rollout_team_pass']);
