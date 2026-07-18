@@ -4,9 +4,17 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { Modal } from '../components/Modal';
 import { SchedulePageSkeleton } from '../components/PageSkeletons';
 import { PullToRefresh } from '../components/PullToRefresh';
-import { loadParentSchedule, type ParentScheduleChild, type ParentScheduleStaffTeam } from '../lib/scheduleService';
+import {
+  hydrateParentScheduleRsvps,
+  loadParentSchedule,
+  submitParentScheduleRsvp,
+  submitParentScheduleRsvpForChildren,
+  type ParentScheduleChild,
+  type ParentScheduleStaffTeam
+} from '../lib/scheduleService';
 import { getCachedAppData, getParentScheduleSummaryCacheKey, loadCachedAppData } from '../lib/appDataCache';
 import { toAppServiceError, type AppServiceError } from '../lib/appErrors';
+import { createLogger } from '../lib/logger';
 import { startAppInitialLoadTimer } from '../lib/telemetry';
 import { recordFirstMeaningfulRender, startScreenMountTimer } from '../lib/uxTiming';
 import { completeParentCoreWorkflowTimer } from '../lib/parentWorkflowTiming';
@@ -47,6 +55,16 @@ import {
 } from '../lib/scheduleLogic';
 import type { AuthState } from '../lib/types';
 import { loadScheduleStaffTools } from '../components/schedule/loadScheduleStaffTools';
+import {
+  applyBulkRsvpResponse,
+  getBulkRsvpCandidates,
+  getBulkRsvpNoteReadyCandidates,
+  getBulkRsvpResultMessage,
+  getNeededBulkRsvpEventKeys,
+  groupBulkRsvpSubmissions
+} from '../lib/bulkRsvp';
+
+const logger = createLogger('schedule');
 
 const filterOptions: Array<{ value: ParentScheduleFilter; label: string }> = [
   { value: 'upcoming-all', label: 'All Upcoming' },
@@ -135,6 +153,9 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const [desktopStaffToolsOpen, setDesktopStaffToolsOpen] = useState(false);
   const [mobileStaffToolsOpen, setMobileStaffToolsOpen] = useState(false);
   const [staffToolsRequested, setStaffToolsRequested] = useState(false);
+  const [bulkRsvpOpen, setBulkRsvpOpen] = useState(false);
+  const [bulkRsvpResult, setBulkRsvpResult] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
+  const [rsvpHydrationPending, setRsvpHydrationPending] = useState(true);
   const [loadedScheduleUserId, setLoadedScheduleUserId] = useState<string | null>(null);
   const [pastHistoryHasMore, setPastHistoryHasMore] = useState(false);
   const hasLoadedScheduleRef = useRef(false);
@@ -142,6 +163,14 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const pastHistoryLoadedRef = useRef(false);
   const childrenRef = useRef<ParentScheduleChild[]>([]);
   const eventsRef = useRef<ParentScheduleEvent[]>([]);
+  const rsvpHydrationVersionRef = useRef(0);
+  const lastRsvpHydrationScopeRef = useRef('');
+  const pendingRsvpEventKeysRef = useRef(new Set<string>());
+  const updateScheduleEvents = (updater: (current: ParentScheduleEvent[]) => ParentScheduleEvent[]) => {
+    const nextEvents = updater(eventsRef.current);
+    eventsRef.current = nextEvents;
+    setEvents(nextEvents);
+  };
   const applyScheduleResult = (data: { children: ParentScheduleChild[]; events: ParentScheduleEvent[]; staffTeams?: ParentScheduleStaffTeam[]; }) => {
     childrenRef.current = data.children;
     eventsRef.current = data.events;
@@ -174,6 +203,60 @@ export function Schedule({ auth }: { auth: AuthState }) {
     eventsRef.current = mergedEvents;
     setChildren(mergedChildren);
     setEvents(mergedEvents);
+  };
+
+  const hydrateScheduleRsvpsInBackground = (result: { children: ParentScheduleChild[]; events: ParentScheduleEvent[] }) => {
+    const user = auth.user;
+    if (!user) {
+      setRsvpHydrationPending(false);
+      return;
+    }
+    const hydrationScopeKey = `${user.uid}::${selectedTeamId}::${selectedPlayerId}`;
+    lastRsvpHydrationScopeRef.current = hydrationScopeKey;
+    const hydrationVersion = ++rsvpHydrationVersionRef.current;
+    const scopedEvents = filterParentScheduleEvents(result.events, {
+      filter: 'upcoming-all',
+      playerId: selectedPlayerId,
+      teamId: selectedTeamId,
+      timeRange: 'all'
+    });
+    const rsvpEvents = getBulkRsvpCandidates(scopedEvents);
+    setRsvpHydrationPending(true);
+    if (!rsvpEvents.length) {
+      setRsvpHydrationPending(false);
+      return;
+    }
+
+    const mergeHydratedEvents = (hydratedEvents: ParentScheduleEvent[]) => {
+      if (hydrationVersion !== rsvpHydrationVersionRef.current || auth.user?.uid !== user.uid) return;
+      const hydratedByKey = new Map(hydratedEvents.map((event) => [event.eventKey, event]));
+      updateScheduleEvents((current) => current.map((event) => {
+        if (pendingRsvpEventKeysRef.current.has(event.eventKey)) return event;
+        const hydrated = hydratedByKey.get(event.eventKey);
+        return hydrated
+          ? {
+              ...event,
+              myRsvp: hydrated.myRsvp,
+              myRsvpNote: hydrated.myRsvpNote,
+              myRsvpNoteHydrated: hydrated.myRsvpNoteHydrated
+            }
+          : event;
+      }));
+    };
+
+    void hydrateParentScheduleRsvps(
+      { children: result.children, events: rsvpEvents },
+      user,
+      { onProgress: mergeHydratedEvents }
+    ).then((hydrated) => mergeHydratedEvents(hydrated.events))
+      .catch((error) => {
+        logger.warn('Unable to hydrate schedule RSVPs in the background.', { error });
+      })
+      .finally(() => {
+        if (hydrationVersion === rsvpHydrationVersionRef.current && auth.user?.uid === user.uid) {
+          setRsvpHydrationPending(false);
+        }
+      });
   };
 
   const buildPastScheduleRangeByTeam = () => {
@@ -308,6 +391,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
           setLoadedScheduleUserId(auth.user?.uid || null);
           setScheduleLoadError(null);
           applyScheduleResult(result);
+          hydrateScheduleRsvpsInBackground(result);
           completeParentCoreWorkflowTimer('schedule', {
             targetPage: 'schedule',
             teamId: selectedTeamId || '',
@@ -357,6 +441,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
             applyScheduleResult({ children: [], events: [] });
           }
           setLoadedScheduleUserId(auth.user?.uid || null);
+          setRsvpHydrationPending(false);
           timer.end({
             force,
             error: mappedError.message
@@ -375,6 +460,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     hasStartedInitialScheduleLoadRef.current = false;
     pastHistoryLoadedRef.current = false;
     setPastHistoryHasMore(false);
+    setRsvpHydrationPending(Boolean(auth.user?.uid));
     if (!auth.user?.uid) {
       setLoadedScheduleUserId(null);
       applyScheduleResult({ children: [], events: [] });
@@ -384,6 +470,20 @@ export function Schedule({ auth }: { auth: AuthState }) {
     void refreshSchedule();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid]);
+
+  useEffect(() => {
+    const user = auth.user;
+    if (!user?.uid || !hasLoadedSchedule || scheduleReadLoading) return;
+    const hydrationScopeKey = `${user.uid}::${selectedTeamId}::${selectedPlayerId}`;
+    if (lastRsvpHydrationScopeRef.current === hydrationScopeKey) return;
+    hydrateScheduleRsvpsInBackground({
+      children: childrenRef.current,
+      events: eventsRef.current
+    });
+    // The hydration helper intentionally reads the latest refs and owns its
+    // stale-request guard. Filter changes are the only trigger needed here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [auth.user?.uid, hasLoadedSchedule, scheduleReadLoading, selectedPlayerId, selectedTeamId]);
 
   useEffect(() => {
     if (filter === 'past-all' && hasLoadedSchedule) {
@@ -406,6 +506,17 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const visibleEvents = useMemo(() => (
     filterParentScheduleEvents(events, { filter, playerId: selectedPlayerId, teamId: selectedTeamId, timeRange })
   ), [events, filter, selectedPlayerId, selectedTeamId, timeRange]);
+  const allBulkRsvpCandidates = useMemo(() => getBulkRsvpCandidates(filterParentScheduleEvents(events, {
+    filter: 'upcoming-all',
+    playerId: selectedPlayerId,
+    teamId: selectedTeamId,
+    timeRange: 'all'
+  })), [events, selectedPlayerId, selectedTeamId]);
+  const bulkRsvpCandidates = useMemo(
+    () => getBulkRsvpNoteReadyCandidates(allBulkRsvpCandidates),
+    [allBulkRsvpCandidates]
+  );
+  const unavailableBulkRsvpCount = allBulkRsvpCandidates.length - bulkRsvpCandidates.length;
   const scheduleRoute = `/schedule${searchParams.toString() ? `?${searchParams.toString()}` : ''}`;
 
   useViewLoadTimer({
@@ -583,6 +694,62 @@ export function Schedule({ auth }: { auth: AuthState }) {
     } catch {
       setStatusMessage('Copy is not available in this browser.');
     }
+  };
+
+  const handleBulkRsvp = async (
+    selectedEventKeys: string[],
+    response: Exclude<RsvpResponse, 'not_responded'>
+  ) => {
+    const user = auth.user;
+    if (!user || !selectedEventKeys.length) return { failedEventKeys: selectedEventKeys };
+
+    const selectedKeySet = new Set(selectedEventKeys);
+    const targetEvents = bulkRsvpCandidates.filter((event) => selectedKeySet.has(event.eventKey));
+    if (targetEvents.length !== selectedEventKeys.length) {
+      setBulkRsvpResult({
+        tone: 'error',
+        message: 'Some RSVP notes are still unavailable. Refresh before updating those events.'
+      });
+      return { failedEventKeys: selectedEventKeys };
+    }
+    const previousByKey = new Map(targetEvents.map((event) => [event.eventKey, {
+      response: normalizeRsvpResponse(event.myRsvp),
+      note: event.myRsvpNote || null
+    }]));
+    selectedEventKeys.forEach((eventKey) => pendingRsvpEventKeysRef.current.add(eventKey));
+    updateScheduleEvents((current) => applyBulkRsvpResponse(current, selectedKeySet, response));
+
+    const settledGroups = await Promise.all(groupBulkRsvpSubmissions(targetEvents, eventsRef.current).map(async (group) => {
+      try {
+        const savedNote = String(group[0]?.myRsvpNote || '');
+        if (group.length > 1) {
+          await submitParentScheduleRsvpForChildren(group, user, response, savedNote);
+        } else if (group[0]) {
+          await submitParentScheduleRsvp(group[0], user, response, savedNote);
+        }
+        return { ok: true as const, eventKeys: group.map((event) => event.eventKey) };
+      } catch {
+        return { ok: false as const, eventKeys: group.map((event) => event.eventKey) };
+      }
+    }));
+    const failedEventKeys = settledGroups.filter((result) => !result.ok).flatMap((result) => result.eventKeys);
+    const failedKeySet = new Set(failedEventKeys);
+    updateScheduleEvents((current) => current.map((event) => {
+      if (!selectedKeySet.has(event.eventKey)) return event;
+      if (failedKeySet.has(event.eventKey)) {
+        const previous = previousByKey.get(event.eventKey);
+        return previous ? { ...event, myRsvp: previous.response, myRsvpNote: previous.note } : event;
+      }
+      return { ...event, myRsvp: response };
+    }));
+    selectedEventKeys.forEach((eventKey) => pendingRsvpEventKeysRef.current.delete(eventKey));
+
+    const savedCount = targetEvents.length - failedEventKeys.length;
+    setBulkRsvpResult({
+      tone: failedEventKeys.length ? 'error' : 'success',
+      message: getBulkRsvpResultMessage(savedCount, failedEventKeys.length, response)
+    });
+    return { failedEventKeys };
   };
 
   return (
@@ -800,7 +967,23 @@ export function Schedule({ auth }: { auth: AuthState }) {
             </div>
           ) : null}
           {statusMessage ? <Status tone="success" message={statusMessage} /> : null}
+          {bulkRsvpResult ? <Status tone={bulkRsvpResult.tone} message={bulkRsvpResult.message} /> : null}
+          {!rsvpHydrationPending && unavailableBulkRsvpCount > 0 ? (
+            <Status tone="error" message={`${unavailableBulkRsvpCount} ${unavailableBulkRsvpCount === 1 ? 'RSVP is' : 'RSVPs are'} waiting for private note data. Refresh before updating ${unavailableBulkRsvpCount === 1 ? 'it' : 'them'}.`} />
+          ) : null}
           {scheduleReadError ? <Status tone="error" message={scheduleLoadError ? getScheduleLoadErrorMessage(scheduleLoadError, hasLoadedSchedule) : scheduleReadError} /> : null}
+          {bulkRsvpCandidates.length > 1 ? (
+            <BulkRsvpLauncher
+              eventCount={bulkRsvpCandidates.length}
+              neededCount={getNeededBulkRsvpEventKeys(bulkRsvpCandidates).length}
+              hydrating={rsvpHydrationPending}
+              onOpen={() => {
+                if (rsvpHydrationPending) return;
+                setBulkRsvpResult(null);
+                setBulkRsvpOpen(true);
+              }}
+            />
+          ) : null}
           {!isDesktopWeb && !scheduleReadLoading && !isInitialScheduleLoad ? (
             <ScheduleActionQueue events={visibleEvents} compact hideWhenEmpty preferGameHubForStaff />
           ) : null}
@@ -904,6 +1087,13 @@ export function Schedule({ auth }: { auth: AuthState }) {
           ) : null}
         </div>
       </div>
+      {bulkRsvpOpen ? (
+        <BulkRsvpModal
+          events={bulkRsvpCandidates}
+          onClose={() => setBulkRsvpOpen(false)}
+          onSubmit={handleBulkRsvp}
+        />
+      ) : null}
     </div>
     </PullToRefresh>
   );
@@ -990,6 +1180,142 @@ function Segment({ active, onClick, icon: Icon, label }: { active: boolean; onCl
 
 function formatCount(value: number, label: string) {
   return `${value} ${label}${value === 1 ? '' : 's'}`;
+}
+
+function BulkRsvpLauncher({ eventCount, neededCount, hydrating, onOpen }: {
+  eventCount: number;
+  neededCount: number;
+  hydrating: boolean;
+  onOpen: () => void;
+}) {
+  return (
+    <section className="app-card flex items-center justify-between gap-3 border-primary-100 bg-primary-50 p-3 sm:p-4" aria-label="Family RSVP">
+      <div className="min-w-0">
+        <div className="app-label text-primary-700">Family RSVP</div>
+        <h2 className="mt-1 text-sm font-black text-gray-950 sm:text-base">Respond to multiple events</h2>
+        <p className="mt-0.5 text-xs font-semibold leading-5 text-gray-600">
+          {hydrating
+            ? 'Checking your current responses before selecting events.'
+            : neededCount
+            ? `${neededCount} ${neededCount === 1 ? 'event needs' : 'events need'} a response. Review up to ${eventCount} upcoming games and practices together.`
+            : `Review or update ${eventCount} upcoming games and practices together.`}
+        </p>
+      </div>
+      <button type="button" className="primary-button min-h-10 flex-none px-3 py-2 text-xs sm:text-sm" onClick={onOpen} disabled={hydrating}>
+        {hydrating ? 'Checking…' : 'Review RSVPs'}
+      </button>
+    </section>
+  );
+}
+
+function BulkRsvpModal({ events, onClose, onSubmit }: {
+  events: ParentScheduleEvent[];
+  onClose: () => void;
+  onSubmit: (
+    eventKeys: string[],
+    response: Exclude<RsvpResponse, 'not_responded'>
+  ) => Promise<{ failedEventKeys: string[] }>;
+}) {
+  const neededEventKeys = getNeededBulkRsvpEventKeys(events);
+  const [selectedEventKeys, setSelectedEventKeys] = useState(() => new Set(neededEventKeys));
+  const [submitting, setSubmitting] = useState<Exclude<RsvpResponse, 'not_responded'> | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const setSelected = (eventKey: string, selected: boolean) => {
+    setSelectedEventKeys((current) => {
+      const next = new Set(current);
+      if (selected) next.add(eventKey);
+      else next.delete(eventKey);
+      return next;
+    });
+  };
+
+  const submit = async (response: Exclude<RsvpResponse, 'not_responded'>) => {
+    if (!selectedEventKeys.size || submitting) return;
+    setSubmitting(response);
+    setError(null);
+    try {
+      const result = await onSubmit([...selectedEventKeys], response);
+      if (!result.failedEventKeys.length) {
+        onClose();
+        return;
+      }
+      setSelectedEventKeys(new Set(result.failedEventKeys));
+      setError(`${result.failedEventKeys.length} ${result.failedEventKeys.length === 1 ? 'RSVP was' : 'RSVPs were'} not saved. The failed ${result.failedEventKeys.length === 1 ? 'event remains' : 'events remain'} selected so you can try again.`);
+    } finally {
+      setSubmitting(null);
+    }
+  };
+
+  return (
+    <Modal
+      ariaLabel="Respond to multiple events"
+      overlayClassName="z-[70] flex items-end justify-center bg-gray-950/45 p-0 sm:items-center sm:p-6"
+      onClose={() => { if (!submitting) onClose(); }}
+    >
+      <section className="flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:max-h-[86vh] sm:rounded-3xl">
+        <header className="border-b border-gray-100 px-4 py-4 sm:px-5">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="app-label text-primary-700">Family RSVP</div>
+              <h2 className="mt-1 text-xl font-black text-gray-950">Respond to multiple events</h2>
+              <p className="mt-1 text-sm font-semibold text-gray-600">Choose events, then apply one response. Existing responses can be updated.</p>
+            </div>
+            <button type="button" className="ghost-button min-h-9 px-3 py-2 text-xs" onClick={onClose} disabled={Boolean(submitting)}>Close</button>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <button type="button" className="secondary-button min-h-9 px-3 py-2 text-xs" onClick={() => setSelectedEventKeys(new Set(events.map((event) => event.eventKey)))} disabled={Boolean(submitting)}>Select all</button>
+            <button type="button" className="secondary-button min-h-9 px-3 py-2 text-xs" onClick={() => setSelectedEventKeys(new Set(neededEventKeys))} disabled={Boolean(submitting) || !neededEventKeys.length}>Select needed</button>
+            <button type="button" className="ghost-button min-h-9 px-3 py-2 text-xs" onClick={() => setSelectedEventKeys(new Set())} disabled={Boolean(submitting) || !selectedEventKeys.size}>Clear</button>
+            <span className="ml-auto text-xs font-black text-gray-600">{selectedEventKeys.size} selected</span>
+          </div>
+        </header>
+
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-2 sm:px-5">
+          {events.map((event) => {
+            const currentRsvp = normalizeRsvpResponse(event.myRsvp);
+            return (
+              <label key={event.eventKey} className="flex cursor-pointer items-start gap-3 border-b border-gray-100 py-3 last:border-b-0">
+                <input
+                  type="checkbox"
+                  className="mt-1 h-4 w-4 rounded border-gray-300 text-primary-600"
+                  checked={selectedEventKeys.has(event.eventKey)}
+                  onChange={(changeEvent) => setSelected(event.eventKey, changeEvent.target.checked)}
+                  disabled={Boolean(submitting)}
+                  aria-label={`Select ${event.childName} ${getScheduleTitle(event)} on ${formatEventDateLabel(event.date)}`}
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="flex flex-wrap items-center gap-2">
+                    <span className="font-black text-gray-950">{getScheduleTitle(event)}</span>
+                    <span className={`rounded-full border px-2 py-0.5 text-[10px] font-black uppercase ${rsvpBadgeClasses[currentRsvp]}`}>{rsvpLabels[currentRsvp]}</span>
+                  </span>
+                  <span className="mt-0.5 block text-xs font-bold text-gray-600">{formatEventDateLabel(event.date)} · {formatEventTimeLabel(event.date)} · {event.childName}</span>
+                  <span className="mt-0.5 block truncate text-xs font-semibold text-gray-500">{event.teamName} · {event.location || 'Location TBD'}</span>
+                </span>
+              </label>
+            );
+          })}
+        </div>
+
+        <footer className="border-t border-gray-100 bg-gray-50 px-4 py-4 sm:px-5">
+          {error ? <div role="alert" className="mb-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-bold text-rose-800">{error}</div> : null}
+          <div className="grid grid-cols-3 gap-2">
+            {(['going', 'maybe', 'not_going'] as const).map((response) => (
+              <button
+                key={response}
+                type="button"
+                className={response === 'going' ? 'primary-button min-h-11 px-2 py-2 text-xs sm:text-sm' : 'secondary-button min-h-11 px-2 py-2 text-xs sm:text-sm'}
+                onClick={() => submit(response)}
+                disabled={!selectedEventKeys.size || Boolean(submitting)}
+              >
+                {submitting === response ? 'Saving…' : response === 'not_going' ? "Can't go" : response === 'going' ? 'Going' : 'Maybe'}
+              </button>
+            ))}
+          </div>
+        </footer>
+      </section>
+    </Modal>
+  );
 }
 
 function Metric({ label, mobileLabel, value }: { label: string; mobileLabel?: string; value: string }) {

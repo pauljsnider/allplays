@@ -221,7 +221,7 @@ import { getCachedAppData, invalidateCachedAppData, loadCachedAppData } from './
 import { mapScheduleEventRecord } from './firestore/mappers';
 import { loadProfileDocument } from './profileService';
 import { getScheduleTournamentInfo } from './scheduleLogic';
-import { adjustGameScore, buildPlayerScoringLiveEvent, buildSingleGameTournamentLegacySchedulePayload, claimOfficialAssignmentItem, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, flushPendingLivePublishOperations, hydrateParentScheduleDetails, loadOfficialAssignments, loadParentSchedule, loadParentScheduleChildren, loadParentScheduleEventDetail, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitParentScheduleRsvp, submitParentScheduleRsvpForChildren, submitStaffScheduleRsvpOverride, TournamentBlockPartialSaveError, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
+import { adjustGameScore, buildPlayerScoringLiveEvent, buildSingleGameTournamentLegacySchedulePayload, claimOfficialAssignmentItem, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, flushPendingLivePublishOperations, hydrateParentScheduleDetails, hydrateParentScheduleRsvps, loadOfficialAssignments, loadParentSchedule, loadParentScheduleChildren, loadParentScheduleEventDetail, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitParentScheduleRsvp, submitParentScheduleRsvpForChildren, submitStaffScheduleRsvpOverride, TournamentBlockPartialSaveError, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
 
 function playerSnapshot(id: string, data: Record<string, unknown> | null) {
   return {
@@ -1253,6 +1253,7 @@ describe('parent schedule detail hydration', () => {
     expect(getRsvps).not.toHaveBeenCalledWith('team-1', 'future-game');
     expect(nearEvent.myRsvp).toBe('going');
     expect(nearEvent.myRsvpNote).toBe('Will be there.');
+    expect(nearEvent.myRsvpNoteHydrated).toBe(true);
     expect(nearEvent.rsvpSummary).toEqual({
       going: 1,
       maybe: 0,
@@ -1308,6 +1309,40 @@ describe('parent schedule detail hydration', () => {
 
     expect(nearEvent.myRsvp).toBe('not_going');
     expect(nearEvent.myRsvpNote).toBe('Child correction');
+  });
+
+  it('reconciles sticky session state after a complete detail hydration', async () => {
+    const localEvent = buildHydrationEvent('server-newer-game', new Date(Date.now() + 24 * 60 * 60 * 1000));
+    vi.mocked(submitRsvpForPlayer).mockResolvedValue(null as any);
+
+    await submitParentScheduleRsvp(localEvent, user, 'maybe', 'Local note');
+
+    const serverEvent = buildHydrationEvent('server-newer-game', localEvent.date);
+    await hydrateParentScheduleDetails({ children: [], events: [serverEvent] }, user);
+
+    expect(serverEvent.myRsvp).toBe('going');
+    expect(serverEvent.myRsvpNote).toBe('Will be there.');
+
+    vi.mocked(getDoc).mockRejectedValue(new Error('offline after hydration'));
+    await hydrateParentScheduleRsvps({ children: [], events: [serverEvent] }, user);
+
+    expect(serverEvent.myRsvp).toBe('going');
+    expect(serverEvent.myRsvpNote).toBe('Will be there.');
+  });
+
+  it('reconciles a fresh detail response when its private note read fails', async () => {
+    const localEvent = buildHydrationEvent('partial-detail-game', new Date(Date.now() + 24 * 60 * 60 * 1000));
+    vi.mocked(submitRsvpForPlayer).mockResolvedValue(null as any);
+
+    await submitParentScheduleRsvp(localEvent, user, 'maybe', 'Local note');
+    vi.mocked(getDoc).mockRejectedValue(new Error('private RSVP note unavailable'));
+
+    const serverEvent = buildHydrationEvent('partial-detail-game', localEvent.date);
+    await hydrateParentScheduleDetails({ children: [], events: [serverEvent] }, user);
+
+    expect(serverEvent.myRsvp).toBe('going');
+    expect(serverEvent.myRsvpNote).toBe('Local note');
+    expect(serverEvent.myRsvpNoteHydrated).toBe(true);
   });
 
   it('refreshes cached open assignment counts after assignment claim hydration', async () => {
@@ -2370,6 +2405,240 @@ describe('parent family RSVP submission', () => {
     await expect(submitParentScheduleRsvp(baseEvent, user as any, 'maybe')).rejects.toBe(writeError);
 
     expect(invalidateCachedAppData).not.toHaveBeenCalled();
+  });
+
+  it('retains a successful RSVP when a fast schedule reload has not hydrated server details yet', async () => {
+    const sessionEvent = {
+      ...baseEvent,
+      id: 'game-session-cache',
+      eventKey: 'team-1::game-session-cache::player-1',
+      teamName: 'Bears',
+      type: 'game',
+      date: new Date('2100-06-01T18:00:00Z'),
+      location: 'Main Gym',
+      opponent: 'Rivals',
+      title: null,
+      childName: 'Pat',
+      myRsvp: 'not_responded',
+      myRsvpNote: null,
+      assignments: [],
+      openAssignmentCount: 0
+    } as any;
+    vi.mocked(submitRsvpForPlayer).mockResolvedValue(null as any);
+    mocks.getDoc.mockRejectedValue(new Error('detail read still pending'));
+
+    await submitParentScheduleRsvp(sessionEvent, user as any, 'maybe', 'Arriving late');
+    const reloadedEvent = { ...sessionEvent, myRsvp: 'not_responded', myRsvpNote: null };
+    await hydrateParentScheduleRsvps({ children: [], events: [reloadedEvent] }, user as any);
+
+    expect(reloadedEvent.myRsvp).toBe('maybe');
+    expect(reloadedEvent.myRsvpNote).toBe('Arriving late');
+  });
+
+  it('reconciles session RSVP state after complete server hydration', async () => {
+    const sessionEvent = {
+      ...baseEvent,
+      id: 'game-session-reconcile',
+      eventKey: 'team-1::game-session-reconcile::player-1',
+      myRsvp: 'not_responded',
+      myRsvpNote: null
+    } as any;
+    vi.mocked(submitRsvpForPlayer).mockResolvedValue(null as any);
+
+    await submitParentScheduleRsvp(sessionEvent, user as any, 'maybe', 'Local note');
+    mocks.getDoc.mockImplementation(async (reference: any) => {
+      if (reference.path.endsWith('/rsvps/parent-1')) {
+        return {
+          id: 'parent-1',
+          exists: () => true,
+          data: () => ({ userId: 'parent-1', playerId: 'player-1', response: 'going' })
+        };
+      }
+      if (reference.path.endsWith('/rsvpNotes/parent-1')) {
+        return {
+          id: 'parent-1',
+          exists: () => true,
+          data: () => ({ userId: 'parent-1', playerId: 'player-1', note: 'Server note' })
+        };
+      }
+      return { id: reference.path.split('/').pop(), exists: () => false, data: () => null };
+    });
+    const reloadedEvent = { ...sessionEvent, myRsvp: 'not_responded', myRsvpNote: null };
+
+    await hydrateParentScheduleRsvps({ children: [], events: [reloadedEvent] }, user as any);
+
+    expect(reloadedEvent.myRsvp).toBe('going');
+    expect(reloadedEvent.myRsvpNote).toBe('Server note');
+  });
+
+  it('reconciles a session RSVP response when its private note read fails', async () => {
+    const sessionEvent = {
+      ...baseEvent,
+      id: 'game-session-note-read-failure',
+      myRsvp: 'not_responded',
+      myRsvpNote: null
+    } as any;
+    vi.mocked(submitRsvpForPlayer).mockResolvedValue(null as any);
+
+    await submitParentScheduleRsvp(sessionEvent, user as any, 'maybe', 'Local note');
+    mocks.getDoc.mockImplementation(async (reference: any) => {
+      if (reference.path.endsWith('/rsvps/parent-1')) {
+        return {
+          id: 'parent-1',
+          exists: () => true,
+          data: () => ({ userId: 'parent-1', playerId: 'player-1', response: 'going' })
+        };
+      }
+      if (reference.path.endsWith('/rsvps/parent-1__player-1')) {
+        return { id: 'parent-1__player-1', exists: () => false, data: () => null };
+      }
+      if (reference.path.endsWith('/rsvpNotes/parent-1__player-1')) {
+        throw new Error('child note read denied');
+      }
+      return { id: reference.path.split('/').pop(), exists: () => false, data: () => null };
+    });
+    const reloadedEvent = { ...sessionEvent, myRsvp: 'not_responded', myRsvpNote: null };
+
+    await hydrateParentScheduleRsvps({ children: [], events: [reloadedEvent] }, user as any);
+
+    expect(reloadedEvent.myRsvp).toBe('going');
+    expect(reloadedEvent.myRsvpNote).toBe('Local note');
+    expect(reloadedEvent.myRsvpNoteHydrated).toBe(true);
+
+    mocks.getDoc.mockRejectedValue(new Error('offline after partial hydration'));
+    const secondReload = { ...sessionEvent, myRsvp: 'not_responded', myRsvpNote: null };
+    await hydrateParentScheduleRsvps({ children: [], events: [secondReload] }, user as any);
+
+    expect(secondReload.myRsvp).toBe('going');
+    expect(secondReload.myRsvpNote).toBe('Local note');
+    expect(secondReload.myRsvpNoteHydrated).toBe(true);
+  });
+
+  it('does not replace a known RSVP with missing when progressive detail reads fail', async () => {
+    const eventWithKnownResponse = {
+      ...baseEvent,
+      id: 'game-read-failure',
+      eventKey: 'team-1::game-read-failure::player-1',
+      teamName: 'Bears',
+      type: 'game',
+      date: new Date('2100-06-02T18:00:00Z'),
+      location: 'Main Gym',
+      opponent: 'Rivals',
+      title: null,
+      childName: 'Pat',
+      myRsvp: 'going',
+      myRsvpNote: 'Already loaded',
+      assignments: [],
+      openAssignmentCount: 0
+    } as any;
+    mocks.getDoc.mockRejectedValue(new Error('offline'));
+
+    await hydrateParentScheduleRsvps({ children: [], events: [eventWithKnownResponse] }, user as any);
+
+    expect(eventWithKnownResponse.myRsvp).toBe('going');
+    expect(eventWithKnownResponse.myRsvpNote).toBe('Already loaded');
+  });
+
+  it('preserves a known child RSVP when its override read fails after the family RSVP loads', async () => {
+    const eventWithKnownResponse = {
+      ...baseEvent,
+      id: 'game-child-read-failure',
+      myRsvp: 'going',
+      myRsvpNote: null
+    } as any;
+    mocks.getDoc.mockImplementation(async (reference: any) => {
+      if (reference.path.endsWith('/rsvps/parent-1')) {
+        return {
+          id: 'parent-1',
+          exists: () => true,
+          data: () => ({ userId: 'parent-1', playerId: 'player-1', response: 'not_going' })
+        };
+      }
+      if (reference.path.endsWith('/rsvps/parent-1__player-1')) {
+        throw new Error('child override read failed');
+      }
+      return { id: reference.path.split('/').pop(), exists: () => false, data: () => null };
+    });
+
+    await hydrateParentScheduleRsvps({ children: [], events: [eventWithKnownResponse] }, user as any);
+
+    expect(eventWithKnownResponse.myRsvp).toBe('going');
+  });
+
+  it('preserves a known child RSVP note when its private note read fails', async () => {
+    const eventWithKnownNote = {
+      ...baseEvent,
+      id: 'game-note-read-failure',
+      myRsvp: 'going',
+      myRsvpNote: 'Already loaded',
+      myRsvpNoteHydrated: false
+    } as any;
+    mocks.getDoc.mockImplementation(async (reference: any) => {
+      if (reference.path.endsWith('/rsvps/parent-1')) {
+        return {
+          id: 'parent-1',
+          exists: () => true,
+          data: () => ({ userId: 'parent-1', playerId: 'player-1', response: 'going' })
+        };
+      }
+      if (reference.path.endsWith('/rsvps/parent-1__player-1')) {
+        return { id: 'parent-1__player-1', exists: () => false, data: () => null };
+      }
+      if (reference.path.endsWith('/rsvpNotes/parent-1')) {
+        return {
+          id: 'parent-1',
+          exists: () => true,
+          data: () => ({ userId: 'parent-1', note: 'Stale family note' })
+        };
+      }
+      if (reference.path.endsWith('/rsvpNotes/parent-1__player-1')) {
+        throw new Error('child note read failed');
+      }
+      return { id: reference.path.split('/').pop(), exists: () => false, data: () => null };
+    });
+
+    await hydrateParentScheduleRsvps({ children: [], events: [eventWithKnownNote] }, user as any);
+
+    expect(eventWithKnownNote.myRsvp).toBe('going');
+    expect(eventWithKnownNote.myRsvpNote).toBe('Already loaded');
+    expect(eventWithKnownNote.myRsvpNoteHydrated).toBe(false);
+  });
+
+  it('preserves a known child RSVP note when its prerequisite RSVP override read fails', async () => {
+    const eventWithKnownNote = {
+      ...baseEvent,
+      id: 'game-rsvp-prerequisite-read-failure',
+      myRsvp: 'going',
+      myRsvpNote: 'Already loaded'
+    } as any;
+    mocks.getDoc.mockImplementation(async (reference: any) => {
+      if (reference.path.endsWith('/rsvps/parent-1')) {
+        return {
+          id: 'parent-1',
+          exists: () => true,
+          data: () => ({ userId: 'parent-1', playerId: 'player-1', response: 'going' })
+        };
+      }
+      if (reference.path.endsWith('/rsvps/parent-1__player-1')) {
+        throw new Error('child RSVP override read failed');
+      }
+      if (reference.path.endsWith('/rsvpNotes/parent-1')) {
+        return {
+          id: 'parent-1',
+          exists: () => true,
+          data: () => ({ userId: 'parent-1', note: 'Stale family note' })
+        };
+      }
+      if (reference.path.endsWith('/rsvpNotes/parent-1__player-1')) {
+        return { id: 'parent-1__player-1', exists: () => false, data: () => null };
+      }
+      return { id: reference.path.split('/').pop(), exists: () => false, data: () => null };
+    });
+
+    await hydrateParentScheduleRsvps({ children: [], events: [eventWithKnownNote] }, user as any);
+
+    expect(eventWithKnownNote.myRsvp).toBe('going');
+    expect(eventWithKnownNote.myRsvpNote).toBe('Already loaded');
   });
 
   afterEach(() => {

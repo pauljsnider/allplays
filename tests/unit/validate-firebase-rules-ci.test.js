@@ -3,10 +3,15 @@ import {
     assertPreviewDeploySkipHandling,
     extractMatchBlock,
     validatePreviewDeployCommand,
-    validateProductionDeployCommand
+    validateProductionDeployCommand,
+    validateFirebaseRulesCi
 } from '../../scripts/validate-firebase-rules-ci.mjs';
 
 describe('validate Firebase rules CI helpers', () => {
+    it('accepts the deployed RSVP note get/list privacy contract', () => {
+        expect(() => validateFirebaseRulesCi()).not.toThrow();
+    });
+
     it('scopes legacy game clip assertions to the flat path block', () => {
         const storageRules = `rules_version = '2';
 service firebase.storage {

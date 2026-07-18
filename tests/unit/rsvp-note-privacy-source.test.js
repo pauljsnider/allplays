@@ -76,10 +76,17 @@ describe('RSVP note privacy source contract', () => {
 
     expect(loadRsvps).toContain('/rsvpNotes');
     expect(mergeOwnRsvpNotes).toContain('loadRsvpNoteById(teamId, gameId, rsvpId)');
+    expect(mergeOwnRsvpNotes).toContain('noteReadsComplete: results.every');
     expect(nativeSubmit).toContain('/rsvpNotes/');
     expect(nativeSubmit).toContain('playerId: childId');
     expect(nativeSubmit).toContain('childId,');
     expect(statusPatch).toContain('respondedAt');
     expect(statusPatch).not.toContain('note:');
+  });
+
+  it('reconciles sticky session state in every complete schedule hydration path', () => {
+    expect(scheduleServiceSource.match(/finalizeSessionRsvpHydration\(/g)).toHaveLength(5);
+    expect(scheduleServiceSource).toContain('reconcileSessionRsvpState(authoritativeEvents, userId);');
+    expect(scheduleServiceSource).toContain('rsvpsLoaded: rsvpsResult.status === \'fulfilled\'');
   });
 });

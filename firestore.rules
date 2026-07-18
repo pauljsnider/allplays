@@ -3469,7 +3469,12 @@ service cloud.firestore {
                    (isTeamOwnerOrAdmin(teamId) ||
                     canWriteOwnParentRsvpNote(teamId, rsvpId, data));
           }
-          allow read: if canReadRsvpNote(teamId, resource.data);
+          // A parent may probe their own note ids so an intentionally absent
+          // child override resolves as a missing document instead of a denied
+          // read. Existing documents still use the data-aware privacy check.
+          allow get: if (resource == null && isOwnRsvpNoteId() && isParentForTeam(teamId)) ||
+                        canReadRsvpNote(teamId, resource.data);
+          allow list: if canReadRsvpNote(teamId, resource.data);
           allow create, update: if isSignedIn() && canWriteRsvpNote(teamId, rsvpId, request.resource.data);
           allow delete: if isTeamOwnerOrAdmin(teamId) ||
                            (resource == null && isOwnRsvpNoteId() && isParentForTeam(teamId)) ||

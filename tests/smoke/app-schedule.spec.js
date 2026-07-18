@@ -198,6 +198,7 @@ async function mockScheduleModules(page, options = {}) {
                         visibility: 'team',
                         myRsvp: overrides.myRsvp || ${JSON.stringify(gameMyRsvp)},
                         myRsvpNote: overrides.myRsvpNote || ${JSON.stringify(gameMyRsvpNote)},
+                        myRsvpNoteHydrated: overrides.myRsvpNoteHydrated === true,
                         rsvpSummary: overrides.rsvpSummary || { going: 1, maybe: 0, notGoing: 0, notResponded: 1 },
                         rideshareSummary: overrides.rideshareSummary || { offerCount: 1, seatsLeft: 2, requests: 1, pending: 1, confirmed: 0, isFull: false },
                         assignments: overrides.assignments || getAssignments(),
@@ -531,6 +532,14 @@ async function mockScheduleModules(page, options = {}) {
                 }
 
                 export async function hydrateParentScheduleDetails(schedule) {
+                    return schedule;
+                }
+
+                export async function hydrateParentScheduleRsvps(schedule, user, options = {}) {
+                    schedule.events.forEach((event) => {
+                        event.myRsvpNoteHydrated = true;
+                    });
+                    options.onProgress?.([...schedule.events]);
                     return schedule;
                 }
 
@@ -1223,6 +1232,29 @@ test('@visual app schedule loads agenda filters, player select, calendar, export
     await page.locator('.schedule-web-sidebar').getByRole('button', { name: 'Packets' }).click();
     await expect(page.getByText('1 practice packet needs review')).toBeVisible();
     await expect(page.getByText('2 drills · 20 min')).toBeVisible();
+});
+
+test('parent can RSVP to multiple games and practices from the schedule', async ({ page, baseURL }) => {
+    await mockScheduleModules(page);
+    await page.goto(appUrl(baseURL, '/schedule'), { waitUntil: 'domcontentloaded' });
+
+    await waitForScheduleRoute(page, page.getByRole('heading', { name: 'Games, practices, RSVP' }));
+    await page.getByRole('button', { name: 'Review RSVPs' }).click();
+
+    const dialog = page.getByRole('dialog', { name: 'Respond to multiple events' });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByText('2 selected')).toBeVisible();
+    await dialog.getByRole('button', { name: 'Going' }).click();
+
+    await expect(dialog).toBeHidden();
+    await expect(page.getByText('2 RSVPs saved as going.')).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.__scheduleCalls.rsvps)).toEqual([
+        { eventKey: 'game-1-player-1', childId: 'player-1', userId: 'user-1', response: 'going', note: '' },
+        { eventKey: 'practice-1-player-1', childId: 'player-1', userId: 'user-1', response: 'going', note: '' }
+    ]);
+
+    await page.getByRole('button', { name: 'Review RSVPs' }).click();
+    await expect(page.getByRole('dialog', { name: 'Respond to multiple events' }).locator('span').filter({ hasText: /^Going$/ })).toHaveCount(2);
 });
 
 test('app standard tracker records linked opponent stat entry', async ({ page, baseURL }) => {
