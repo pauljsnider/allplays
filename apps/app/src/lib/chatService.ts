@@ -21,6 +21,7 @@ import {
   getUserTeamsWithAccess,
   isTeamActive,
   postChatMessage,
+  repairLegacyAliasDirectConversation,
   saveStoredTeamEmailDraft,
   saveStoredTeamEmailTemplate,
   sendTeamEmail,
@@ -1465,20 +1466,28 @@ export async function sendTeamChatMessage({
         };
       }
     } else if (selectedConversation?.type === 'direct') {
-      const directMetadata = await resolveDirectConversationMetadata({
-        teamId,
-        user,
-        participantIds: selectedConversation.participantIds || targetMetadata.recipientIds,
-        canModerate,
-        existingConversation: selectedConversation
-      });
-      if (!selectedConversation.directAccess) {
-        selectedConversation = await withTimeout(Promise.resolve(upsertChatConversation(teamId, {
-          type: 'direct',
-          participantIds: selectedConversation.participantIds || targetMetadata.recipientIds,
-          participantRoles: selectedConversation.participantRoles || [],
-          ...directMetadata
-        })), 'Direct chat authorization upgrade') as ChatConversation;
+      const participantIds = selectedConversation.participantIds || targetMetadata.recipientIds;
+      if (getDirectUserIds(user.uid, participantIds).length !== 2) {
+        selectedConversation = await withTimeout(Promise.resolve(
+          repairLegacyAliasDirectConversation(teamId, selectedConversation.id)
+        ), 'Legacy chat repair') as ChatConversation;
+        createdConversation = selectedConversation;
+      } else {
+        const directMetadata = await resolveDirectConversationMetadata({
+          teamId,
+          user,
+          participantIds,
+          canModerate,
+          existingConversation: selectedConversation
+        });
+        if (!selectedConversation.directAccess) {
+          selectedConversation = await withTimeout(Promise.resolve(upsertChatConversation(teamId, {
+            type: 'direct',
+            participantIds,
+            participantRoles: selectedConversation.participantRoles || [],
+            ...directMetadata
+          })), 'Direct chat authorization upgrade') as ChatConversation;
+        }
       }
     }
 

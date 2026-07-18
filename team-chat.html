@@ -344,7 +344,7 @@
     <script type="module">
         import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=15';
         import { checkAuth } from './js/auth.js?v=50';
-        import { getTeam, getUserProfile, getPlayers, getGames, getGameEvents, getAggregatedStatsForGames, getChatConversations, upsertChatConversation, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, getTeamEmailDrafts, saveTeamEmailDraft, getTeamEmailTemplates, saveTeamEmailTemplate, deleteTeamEmailTemplate, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages, sendTeamEmail, getSentTeamEmails, uploadChatImage, deleteUploadedChatAttachments, toggleChatReaction } from './js/db.js?v=102';
+        import { getTeam, getUserProfile, getPlayers, getGames, getGameEvents, getAggregatedStatsForGames, getChatConversations, upsertChatConversation, repairLegacyAliasDirectConversation, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, getTeamEmailDrafts, saveTeamEmailDraft, getTeamEmailTemplates, saveTeamEmailTemplate, deleteTeamEmailTemplate, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages, sendTeamEmail, getSentTeamEmails, uploadChatImage, deleteUploadedChatAttachments, toggleChatReaction } from './js/db.js?v=103';
         import { DEFAULT_TEAM_CONVERSATION_ID, buildDefaultTeamConversation, getConversationDisplayName, isDefaultTeamConversation } from './js/team-chat-conversations.js?v=2';
         import { shouldUpdateChatLastRead, shouldRetryChatLastReadOnViewReturn } from './js/team-chat-last-read.js?v=3';
         import {
@@ -3015,8 +3015,14 @@
                     await loadConversations();
                 } else {
                     const activeConversation = getSelectedConversation();
-                    if (activeConversation?.type === 'direct' && canModerate && !activeConversation.directAccess) {
-                        const directUserIds = getDirectParticipantUserIds(activeConversation.participantIds || []);
+                    const directUserIds = activeConversation?.type === 'direct'
+                        ? getDirectParticipantUserIds(activeConversation.participantIds || [])
+                        : [];
+                    if (activeConversation?.type === 'direct' && directUserIds.length !== 2) {
+                        const repairedConversation = await repairLegacyAliasDirectConversation(teamId, activeConversation.id);
+                        Object.assign(activeConversation, repairedConversation);
+                        await loadConversations();
+                    } else if (activeConversation?.type === 'direct' && canModerate && !activeConversation.directAccess) {
                         await upsertChatConversation(teamId, {
                             type: 'direct',
                             participantIds: activeConversation.participantIds || [],

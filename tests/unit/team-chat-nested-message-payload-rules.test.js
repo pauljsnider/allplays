@@ -96,6 +96,10 @@ describe('nested team chat message payload contracts', () => {
         expect(rules).toContain("teamId in friendship.get('sharedTeamIds', [])");
         expect(rules).toContain('isDirectConversationCreateAuthorized(teamId, request.resource.data)');
         expect(rules).toContain("request.auth.uid in request.resource.data.get('directUserIds', [])");
+        expect(rules).toContain('function isLegacyAliasDirectConversationGroupRepair(teamId, conversationId)');
+        expect(rules).toContain('isLegacyAliasDirectConversationGroupRepair(teamId, conversationId)');
+        expect(appChatSource).toContain('repairLegacyAliasDirectConversation(teamId, selectedConversation.id)');
+        expect(chatPageSource).toContain('repairLegacyAliasDirectConversation(teamId, activeConversation.id)');
 
         const nestedMessageRules = rules.slice(
             rules.indexOf('match /chatConversations/{conversationId} {'),
@@ -512,6 +516,45 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
             doc(authedFirestore('parent-1', 'parent@example.com'), `teams/team-1/chatConversations/${conversationId}`),
             upgrade
         ));
+    });
+
+    it('lets participants repair alias-based legacy direct threads without changing their audience', async () => {
+        const conversationId = 'legacy-email-direct-repair';
+        const conversationPath = `teams/team-1/chatConversations/${conversationId}`;
+        await testEnv.withSecurityRulesDisabled(async (context) => {
+            await setDoc(doc(context.firestore(), conversationPath), {
+                type: 'direct',
+                name: 'Legacy guardian conversation',
+                participantIds: ['coach-1', 'email:parent@example.com'],
+                participantRoles: [],
+                mutedBy: [],
+                createdAt: Timestamp.fromMillis(1700000000000),
+                updatedAt: Timestamp.fromMillis(1700000000000)
+            });
+        });
+        const coachRef = doc(authedFirestore('coach-1', 'coach@example.com'), conversationPath);
+        const parentRef = doc(authedFirestore('parent-1', 'parent@example.com'), conversationPath);
+        const attackerRef = doc(authedFirestore('attacker-1', 'attacker@example.com'), conversationPath);
+
+        await assertFails(updateDoc(attackerRef, { type: 'group', updatedAt: serverTimestamp() }));
+        await assertFails(updateDoc(coachRef, {
+            type: 'group',
+            participantIds: ['coach-1', 'email:attacker@example.com'],
+            updatedAt: serverTimestamp()
+        }));
+        await assertSucceeds(updateDoc(parentRef, { type: 'group', updatedAt: serverTimestamp() }));
+        await assertSucceeds(setDoc(messageRef(
+            authedFirestore('parent-1', 'parent@example.com'),
+            conversationId,
+            'legacy-email-reply'
+        ), directPayload({
+            senderId: 'parent-1',
+            senderEmail: 'parent@example.com',
+            senderName: 'Pat Parent',
+            senderPhotoUrl: 'https://example.com/parent.jpg',
+            conversationId,
+            recipientIds: ['coach-1', 'email:parent@example.com']
+        })));
     });
 
     it('lets only team staff repair legacy canonical metadata before reading staff messages', async () => {

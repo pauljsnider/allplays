@@ -2425,6 +2425,35 @@ service cloud.firestore {
              isDirectConversationCreateAuthorized(teamId, request.resource.data);
     }
 
+    function hasLegacyAliasChatParticipant(data) {
+      let participantIds = data.get('participantIds', []);
+      return participantIds is list &&
+             participantIds.size() == 2 &&
+             ((participantIds[0] is string && participantIds[0].matches('^(email|player):.+$')) ||
+              (participantIds[1] is string && participantIds[1].matches('^(email|player):.+$')));
+    }
+
+    // Old clients classified any two recipient tokens as a direct thread. A
+    // thread containing an email/player alias cannot satisfy the modern
+    // two-user direct-message authorization contract, so its participants may
+    // repair it in place to the participant-scoped group model.
+    function isLegacyAliasDirectConversationGroupRepair(teamId, conversationId) {
+      return resource.data.get('type', '') == 'direct' &&
+             resource.data.get('directAccess', null) == null &&
+             hasLegacyAliasChatParticipant(resource.data) &&
+             canAccessChatConversation(teamId, conversationId, resource.data) &&
+             request.resource.data.get('type', '') == 'group' &&
+             request.resource.data.get('name', null) == resource.data.get('name', null) &&
+             request.resource.data.get('participantIds', []) == resource.data.get('participantIds', []) &&
+             request.resource.data.get('participantRoles', []) == resource.data.get('participantRoles', []) &&
+             request.resource.data.get('mutedBy', []) == resource.data.get('mutedBy', []) &&
+             request.resource.data.get('createdAt', null) == resource.data.get('createdAt', null) &&
+             request.resource.data.get('lastMessageAt', null) == resource.data.get('lastMessageAt', null) &&
+             request.resource.data.get('updatedAt', null) == request.time &&
+             request.resource.data.diff(resource.data).affectedKeys().hasOnly(['type', 'updatedAt']) &&
+             canAccessChatConversation(teamId, conversationId, request.resource.data);
+    }
+
     function chatReactionKeys() {
       return ['thumbs_up', 'heart', 'joy', 'wow', 'sad', 'clap'];
     }
@@ -3882,7 +3911,8 @@ service cloud.firestore {
                            (isTeamStaffChatConversationUpdate(teamId) ||
                             isChatConversationParticipantMetadataUpdate())) ||
                           isCanonicalStaffChatConversationRepair(teamId, conversationId) ||
-                          isDirectConversationAuthorizationUpgrade(teamId));
+                          isDirectConversationAuthorizationUpgrade(teamId) ||
+                          isLegacyAliasDirectConversationGroupRepair(teamId, conversationId));
         allow delete: if isTeamOwnerOrAdmin(teamId);
 
         match /chatMessages/{messageId} {

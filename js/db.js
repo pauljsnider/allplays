@@ -6902,6 +6902,44 @@ export async function upsertChatConversation(teamId, conversation = {}) {
 }
 
 /**
+ * Repair a legacy two-token direct thread that contains an email/player alias.
+ * Modern direct threads require two canonical user IDs; alias threads retain
+ * their history and participant boundary by becoming an in-place group.
+ */
+export async function repairLegacyAliasDirectConversation(teamId, conversationId) {
+    const normalizedConversationId = normalizeRequestedChatConversationId(conversationId);
+    if (!normalizedConversationId) {
+        throw new Error('A valid legacy conversation is required.');
+    }
+    const conversationRef = doc(db, 'teams', teamId, 'chatConversations', normalizedConversationId);
+    const snapshot = await getDoc(conversationRef);
+    if (!snapshot.exists()) {
+        throw new Error('Legacy conversation not found.');
+    }
+    const conversation = snapshot.data() || {};
+    if (conversation.type === 'group') {
+        return { id: snapshot.id, ...conversation };
+    }
+    const participantIds = normalizeConversationParticipantIds(conversation.participantIds);
+    const hasLegacyAlias = participantIds.some((participantId) => /^(email|player):/i.test(participantId));
+    if (conversation.type !== 'direct' || conversation.directAccess || participantIds.length !== 2 || !hasLegacyAlias) {
+        throw new Error('Only legacy alias-based direct conversations can be repaired.');
+    }
+    const updatedAt = serverTimestamp();
+    await updateDoc(conversationRef, {
+        type: 'group',
+        updatedAt
+    });
+    return {
+        id: snapshot.id,
+        ...conversation,
+        type: 'group',
+        participantIds,
+        updatedAt
+    };
+}
+
+/**
  * Get chat messages for a team with pagination support.
  * Returns messages ordered by createdAt descending (newest first).
  */
