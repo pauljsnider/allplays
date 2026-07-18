@@ -34,6 +34,21 @@ describe('friend message access core', () => {
         expect(check()).toBe(true);
     });
 
+    it('accepts legacy parentOf membership when parentTeamIds has not been backfilled', () => {
+        expect(check({
+            sender: {
+                parentOf: [{ teamId: 'team-1', playerId: 'player-1' }],
+                email: 'parent@example.com'
+            }
+        })).toBe(true);
+        expect(check({
+            sender: {
+                parentOf: [{ teamId: 'other-team', playerId: 'player-1' }],
+                email: 'parent@example.com'
+            }
+        })).toBe(false);
+    });
+
     it('allows owner-to-parent and parent-to-admin messaging', () => {
         expect(check({
             sender: { email: 'owner@example.com' },
@@ -71,7 +86,10 @@ describe('friend message access core', () => {
         const documents = new Map([
             ['friendships/owner-1__parent-1', friendship],
             ['teams/team-1', { ownerId: 'owner-1' }],
-            ['users/parent-1', { parentTeamIds: ['team-1'], email: 'parent@example.com' }],
+            ['users/parent-1', {
+                parentOf: [{ teamId: 'team-1', playerId: 'player-1' }],
+                email: 'parent@example.com'
+            }],
             ['users/owner-1', { email: 'owner@example.com' }]
         ]);
         const reads = [];

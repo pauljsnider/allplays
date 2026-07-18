@@ -95,6 +95,7 @@ describe('nested team chat message payload contracts', () => {
         expect(rules).toContain("friendship.get('status', '') == 'accepted'");
         expect(rules).toContain("teamId in friendship.get('sharedTeamIds', [])");
         expect(rules).toContain('isDirectConversationCreateAuthorized(teamId, request.resource.data)');
+        expect(rules).toContain("request.auth.uid in request.resource.data.get('directUserIds', [])");
 
         const nestedMessageRules = rules.slice(
             rules.indexOf('match /chatConversations/{conversationId} {'),
@@ -215,6 +216,11 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
                 email: 'user2@example.com',
                 fullName: 'Other Parent',
                 photoUrl: 'https://example.com/other.jpg',
+                isAdmin: false,
+                parentTeamIds: ['team-1']
+            });
+            await setDoc(doc(firestore, 'users/attacker-1'), {
+                email: 'attacker@example.com',
                 isAdmin: false,
                 parentTeamIds: ['team-1']
             });
@@ -449,6 +455,37 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
         await assertFails(setDoc(
             doc(parentDb, 'teams/team-1/chatConversations/direct-revoked-friend'),
             directConversationPayload()
+        ));
+    });
+
+    it('lets only a direct participant upgrade legacy direct authorization metadata', async () => {
+        const conversationId = 'legacy-direct-upgrade';
+        await testEnv.withSecurityRulesDisabled(async (context) => {
+            await setDoc(doc(context.firestore(), `teams/team-1/chatConversations/${conversationId}`), {
+                type: 'direct',
+                name: 'Legacy private conversation',
+                participantIds: ['parent-1', 'user:user-2'],
+                participantRoles: [],
+                mutedBy: [],
+                createdAt: Timestamp.fromMillis(1700000000000),
+                updatedAt: Timestamp.fromMillis(1700000000000)
+            });
+        });
+        const upgrade = {
+            directAccess: 'accepted_friend',
+            directUserIds: ['parent-1', 'user-2'],
+            friendshipId: 'parent-1__user-2',
+            initiatedBy: null,
+            updatedAt: serverTimestamp()
+        };
+
+        await assertFails(updateDoc(
+            doc(authedFirestore('attacker-1', 'attacker@example.com'), `teams/team-1/chatConversations/${conversationId}`),
+            upgrade
+        ));
+        await assertSucceeds(updateDoc(
+            doc(authedFirestore('parent-1', 'parent@example.com'), `teams/team-1/chatConversations/${conversationId}`),
+            upgrade
         ));
     });
 

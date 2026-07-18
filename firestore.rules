@@ -2397,6 +2397,7 @@ service cloud.firestore {
     function isDirectConversationAuthorizationUpgrade(teamId) {
       return resource.data.get('type', '') == 'direct' &&
              resource.data.get('directAccess', null) == null &&
+             request.auth.uid in request.resource.data.get('directUserIds', []) &&
              request.resource.data.get('type', '') == resource.data.get('type', '') &&
              request.resource.data.get('name', null) == resource.data.get('name', null) &&
              request.resource.data.get('participantIds', []) == resource.data.get('participantIds', []) &&
