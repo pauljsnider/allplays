@@ -10446,16 +10446,25 @@ async function handleTeamChatMessageCreated(snapshot, context) {
   const data = snapshot.data() || {};
   const text = String(data.text || '').trim();
   const imageUrl = String(data.imageUrl || '').trim();
-  if (!text && !imageUrl) return null;
+  const attachments = Array.isArray(data.attachments) ? data.attachments.filter(Boolean) : [];
+  if (!text && !imageUrl && attachments.length === 0) return null;
   if (isPreEventReminderChatMessage(data)) return null;
 
   const teamId = context.params.teamId;
   const actorUid = data.senderId || null;
   const conversationId = normalizeTeamChatConversationId(data.conversationId || context.params.conversationId);
   const senderName = await resolveTeamChatSenderLabel(actorUid, data.senderName);
+  const hasImageAttachment = attachments.some((attachment) => {
+    const type = String(attachment?.type || attachment?.mimeType || '').toLowerCase();
+    return type === 'image' || type.startsWith('image/');
+  });
+  const hasVideoAttachment = attachments.some((attachment) => {
+    const type = String(attachment?.type || attachment?.mimeType || '').toLowerCase();
+    return type === 'video' || type.startsWith('video/');
+  });
   const body = text
     ? (text.length > 120 ? `${text.slice(0, 117)}...` : text)
-    : 'sent a photo';
+    : (imageUrl || hasImageAttachment ? 'sent a photo' : (hasVideoAttachment ? 'sent a video' : 'sent an attachment'));
 
   const shouldResolveMentions = Boolean(text);
   const recipientContext = await buildTeamChatNotificationContext(teamId, {
