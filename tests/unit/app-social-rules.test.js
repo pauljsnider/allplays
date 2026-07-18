@@ -343,6 +343,8 @@ describe('React app social Firestore rules', () => {
         expect(source).toContain("request.resource.data.diff(resource.data).affectedKeys().hasOnly([\n               'requesterId',");
         expect(source).toContain("request.resource.data.get('requesterId', '') == resource.data.get('requesterId', '')");
         expect(source).toContain("request.resource.data.get('recipientId', '') == resource.data.get('recipientId', '')");
+        expect(source).toContain('isFriendshipStatusTransitionValid()');
+        expect(source).toContain("request.auth.uid == resource.data.get('recipientId', '')");
         expect(source).toContain("request.resource.data.get('blockedBy', resource.data.get('blockedBy', [])) == resource.data.get('blockedBy', [])");
         expect(source).toContain("request.resource.data.get('status', '') == 'blocked'");
         expect(source).toContain("request.auth.uid in request.resource.data.get('blockedBy', [])");
@@ -595,6 +597,43 @@ describe('React app social Firestore rules', () => {
             const unrelatedViewer = testEnv.authenticatedContext('viewer-unrelated', { email: 'viewer-unrelated@example.com' });
             await assertFails(getDoc(profileRef('profile-private', pendingViewer)));
             await assertFails(getDoc(profileRef('profile-private', unrelatedViewer)));
+        });
+
+        it('requires the recipient to accept before a requester can read a friend profile', async () => {
+            const requesterId = 'profile-requester';
+            const recipientId = 'profile-recipient';
+            const friendshipId = [requesterId, recipientId].sort().join('__');
+            await seedPublicProfile(recipientId, { discoveryTeamIds: [] });
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                await setDoc(doc(context.firestore(), 'friendships', friendshipId), {
+                    requesterId,
+                    recipientId,
+                    memberIds: [requesterId, recipientId].sort(),
+                    status: 'pending',
+                    sharedTeamIds: [],
+                    sharedTeamNames: [],
+                    blockedBy: []
+                });
+            });
+
+            const requesterDb = testEnv.authenticatedContext(requesterId, {
+                email: 'profile-requester@example.com'
+            }).firestore();
+            const recipientDb = testEnv.authenticatedContext(recipientId, {
+                email: 'profile-recipient@example.com'
+            }).firestore();
+            await assertFails(updateDoc(doc(requesterDb, 'friendships', friendshipId), {
+                status: 'blocked'
+            }));
+            await assertFails(updateDoc(doc(requesterDb, 'friendships', friendshipId), {
+                status: 'accepted'
+            }));
+            await assertFails(getDoc(doc(requesterDb, 'publicUserProfiles', recipientId)));
+
+            await assertSucceeds(updateDoc(doc(recipientDb, 'friendships', friendshipId), {
+                status: 'accepted'
+            }));
+            await assertSucceeds(getDoc(doc(requesterDb, 'publicUserProfiles', recipientId)));
         });
 
         it('denies owner writes to membership fields while allowing presentation profile updates', async () => {
