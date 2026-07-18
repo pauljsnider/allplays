@@ -374,6 +374,63 @@ describe('preview Hosting archive validation', () => {
         expect(hiddenConfig.result.stderr).toContain('unexpected hidden path .firebaserc');
     });
 
+    it('cannot follow a destination-directory symlink inserted after emptiness validation', () => {
+        const directory = makeTempDirectory();
+        const archivePath = path.join(directory, 'artifact.zip');
+        const destinationPath = path.join(directory, 'site');
+        const escapePath = path.join(directory, 'escape');
+        createZip(archivePath, [
+            ...requiredEntries,
+            { name: 'js/app.js', content: 'console.log("must stay contained")' }
+        ]);
+
+        const python = String.raw`
+import importlib.util
+import os
+from pathlib import Path
+
+module_path = Path(os.environ['PREVIEW_EXTRACTOR_PATH'])
+spec = importlib.util.spec_from_file_location('preview_extractor', module_path)
+extractor = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(extractor)
+
+archive = Path(os.environ['PREVIEW_ZIP_PATH'])
+destination = Path(os.environ['PREVIEW_DESTINATION_PATH'])
+escape = Path(os.environ['PREVIEW_ESCAPE_PATH'])
+original_ensure = extractor.ensure_empty_destination
+
+def inject_symlink_after_validation(path):
+    original_ensure(path)
+    escape.mkdir()
+    (path / 'js').symlink_to(escape, target_is_directory=True)
+
+extractor.ensure_empty_destination = inject_symlink_after_validation
+try:
+    extractor.extract_archive(archive, destination)
+except extractor.ArtifactValidationError as error:
+    if (escape / 'app.js').exists():
+        raise SystemExit('extractor wrote through the injected directory symlink')
+    print(error)
+else:
+    raise SystemExit('extractor accepted an injected directory symlink')
+`;
+        const result = spawnSync('python3', ['-c', python], {
+            encoding: 'utf8',
+            env: {
+                ...process.env,
+                PREVIEW_DESTINATION_PATH: destinationPath,
+                PREVIEW_ESCAPE_PATH: escapePath,
+                PREVIEW_EXTRACTOR_PATH: path.join(repoRoot, 'scripts', 'extract-preview-hosting-artifact.py'),
+                PREVIEW_ZIP_PATH: archivePath,
+                PYTHONDONTWRITEBYTECODE: '1'
+            }
+        });
+
+        expect(result.status, result.stderr).toBe(0);
+        expect(result.stdout).toContain('without following links');
+        expect(fs.existsSync(path.join(escapePath, 'app.js'))).toBe(false);
+    });
+
     it('requires the exact staged Hosting artifact shape', () => {
         const missingApp = extractZip(requiredEntries.filter((entry) => entry.name !== 'app/index.html'));
         expect(missingApp.result.status).not.toBe(0);

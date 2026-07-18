@@ -137,62 +137,139 @@ def ensure_empty_destination(destination: Path) -> None:
         destination.mkdir(parents=True, mode=0o700)
 
 
+def require_fd_relative_filesystem_support() -> None:
+    required_flags = ('O_DIRECTORY', 'O_NOFOLLOW')
+    if any(not hasattr(os, flag) for flag in required_flags):
+        fail('platform lacks required no-follow filesystem controls')
+    required_dir_fd_operations = (os.mkdir, os.open, os.stat, os.unlink)
+    if any(operation not in os.supports_dir_fd for operation in required_dir_fd_operations):
+        fail('platform lacks required directory-relative filesystem controls')
+    if os.listdir not in os.supports_fd:
+        fail('platform cannot verify an extracted tree through directory descriptors')
+
+
+def directory_open_flags() -> int:
+    return os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, 'O_CLOEXEC', 0)
+
+
+def open_child_directory(parent_fd: int, name: str, *, create: bool) -> int:
+    if create:
+        try:
+            os.mkdir(name, mode=0o755, dir_fd=parent_fd)
+        except FileExistsError:
+            pass
+        except OSError as error:
+            fail(f'could not safely create artifact directory: {error}')
+    try:
+        child_fd = os.open(name, directory_open_flags(), dir_fd=parent_fd)
+    except OSError as error:
+        fail(f'could not safely open artifact directory without following links: {error}')
+    if not stat.S_ISDIR(os.fstat(child_fd).st_mode):
+        os.close(child_fd)
+        fail('artifact path component is not a directory')
+    return child_fd
+
+
+def open_relative_directory(root_fd: int, parts: tuple[str, ...], *, create: bool) -> int:
+    current_fd = os.dup(root_fd)
+    try:
+        for part in parts:
+            next_fd = open_child_directory(current_fd, part, create=create)
+            os.close(current_fd)
+            current_fd = next_fd
+        return current_fd
+    except Exception:
+        os.close(current_fd)
+        raise
+
+
+def verify_extracted_tree(root_fd: int) -> tuple[int, int]:
+    verified_files = 0
+    verified_total = 0
+    pending: list[tuple[str, ...]] = [()]
+    while pending:
+        relative_directory = pending.pop()
+        directory_fd = open_relative_directory(root_fd, relative_directory, create=False)
+        try:
+            for name in os.listdir(directory_fd):
+                item = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+                if stat.S_ISREG(item.st_mode):
+                    verified_files += 1
+                    verified_total += item.st_size
+                elif stat.S_ISDIR(item.st_mode):
+                    pending.append((*relative_directory, name))
+                else:
+                    fail('extracted tree contains a symlink or special file')
+        finally:
+            os.close(directory_fd)
+    return verified_files, verified_total
+
+
 def extract_archive(archive_path: Path, destination: Path) -> tuple[int, int]:
     inspected, expected_total = inspect_archive(archive_path)
     ensure_empty_destination(destination)
-    destination_resolved = destination.resolve(strict=True)
+    require_fd_relative_filesystem_support()
     extracted_total = 0
     extracted_files = 0
 
-    with zipfile.ZipFile(archive_path) as archive:
-        for info, relative_path in inspected:
-            target = destination.joinpath(*relative_path.parts)
-            target_parent = target if info.is_dir() else target.parent
-            target_parent.mkdir(parents=True, exist_ok=True, mode=0o755)
-            if target_parent.resolve(strict=True) != destination_resolved and destination_resolved not in target_parent.resolve(strict=True).parents:
-                fail('archive extraction target escaped the destination')
-            if info.is_dir():
-                continue
+    try:
+        root_fd = os.open(destination, directory_open_flags())
+    except OSError as error:
+        fail(f'could not safely open the extraction destination without following links: {error}')
+    try:
+        with zipfile.ZipFile(archive_path) as archive:
+            for info, relative_path in inspected:
+                parts = relative_path.parts
+                if info.is_dir():
+                    directory_fd = open_relative_directory(root_fd, parts, create=True)
+                    os.close(directory_fd)
+                    continue
 
-            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-            descriptor = os.open(target, flags, 0o644)
-            written = 0
-            try:
-                with os.fdopen(descriptor, 'wb') as output, archive.open(info, 'r') as source:
-                    while True:
-                        chunk = source.read(64 * 1024)
-                        if not chunk:
-                            break
-                        written += len(chunk)
-                        extracted_total += len(chunk)
-                        if written > info.file_size or written > MAX_SINGLE_FILE_BYTES:
-                            fail('extracted file exceeded its declared or allowed size')
-                        if extracted_total > MAX_UNCOMPRESSED_BYTES:
-                            fail('extracted content exceeded the total size limit')
-                        output.write(chunk)
-            except Exception:
-                target.unlink(missing_ok=True)
-                raise
-            if written != info.file_size:
-                fail('extracted file size did not match ZIP metadata')
-            extracted_files += 1
+                parent_fd = open_relative_directory(root_fd, parts[:-1], create=True)
+                try:
+                    flags = (
+                        os.O_WRONLY
+                        | os.O_CREAT
+                        | os.O_EXCL
+                        | os.O_NOFOLLOW
+                        | getattr(os, 'O_CLOEXEC', 0)
+                    )
+                    try:
+                        descriptor = os.open(parts[-1], flags, 0o644, dir_fd=parent_fd)
+                    except OSError as error:
+                        fail(f'could not safely create artifact file without following links: {error}')
+                    written = 0
+                    try:
+                        with os.fdopen(descriptor, 'wb') as output, archive.open(info, 'r') as source:
+                            while True:
+                                chunk = source.read(64 * 1024)
+                                if not chunk:
+                                    break
+                                written += len(chunk)
+                                extracted_total += len(chunk)
+                                if written > info.file_size or written > MAX_SINGLE_FILE_BYTES:
+                                    fail('extracted file exceeded its declared or allowed size')
+                                if extracted_total > MAX_UNCOMPRESSED_BYTES:
+                                    fail('extracted content exceeded the total size limit')
+                                output.write(chunk)
+                    except Exception:
+                        try:
+                            os.unlink(parts[-1], dir_fd=parent_fd)
+                        except FileNotFoundError:
+                            pass
+                        raise
+                    if written != info.file_size:
+                        fail('extracted file size did not match ZIP metadata')
+                    extracted_files += 1
+                finally:
+                    os.close(parent_fd)
 
-    if extracted_total != expected_total:
-        fail('extracted total size did not match validated ZIP metadata')
+        if extracted_total != expected_total:
+            fail('extracted total size did not match validated ZIP metadata')
 
-    verified_total = 0
-    verified_files = 0
-    for root, directories, files in os.walk(destination, followlinks=False):
-        root_path = Path(root)
-        for name in [*directories, *files]:
-            item = root_path / name
-            mode = item.lstat().st_mode
-            if stat.S_ISLNK(mode) or not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
-                fail('extracted tree contains a symlink or special file')
-        for name in files:
-            item = root_path / name
-            verified_total += item.stat().st_size
-            verified_files += 1
+        verified_files, verified_total = verify_extracted_tree(root_fd)
+    finally:
+        os.close(root_fd)
 
     if verified_total != extracted_total or verified_files != extracted_files:
         fail('extracted tree changed during verification')
