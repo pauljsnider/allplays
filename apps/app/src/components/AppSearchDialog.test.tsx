@@ -52,7 +52,12 @@ const {
   }),
   getKnownAppSearchTeamsMock: vi.fn((_user: AuthState['user']): AppSearchTeam[] => []),
   loadAppSearchTeamsMock: vi.fn(async (): Promise<AppSearchTeam[]> => [{ id: 'team-2', name: 'Rockets', sport: 'Soccer', zip: '64114' }]),
-  searchAppTeamsMock: vi.fn<(query: string, teams: AppSearchTeam[], user: AuthState['user']) => Promise<AppSearchTeam[]>>(),
+  searchAppTeamsMock: vi.fn<(
+    query: string,
+    teams: AppSearchTeam[],
+    user: AuthState['user'],
+    cursor?: unknown | null
+  ) => Promise<AppSearchTeam[] | { teams: AppSearchTeam[]; nextCursor: unknown | null }>>(),
   searchAppPlayersMock: vi.fn<(query: string, teamsById: Map<string, AppSearchTeam>, user: AuthState['user']) => Promise<any[]>>(),
 }));
 
@@ -107,6 +112,7 @@ vi.mock('../lib/searchService', () => ({
   getKnownAppSearchTeams: getKnownAppSearchTeamsMock,
   loadAppSearchTeams: loadAppSearchTeamsMock,
   searchAppTeams: searchAppTeamsMock,
+  searchAppTeamsPage: searchAppTeamsMock,
   searchAppPlayers: searchAppPlayersMock,
 }));
 
@@ -590,6 +596,33 @@ describe('AppSearchDialog', () => {
       expect.objectContaining({ id: 'team-2', name: 'Rockets' })
     ]), null));
     expect(loadAppSearchTeamsMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows and consumes the residual cursor instead of reporting capped team search as complete', async () => {
+    const cursor = { kind: 'public-team-callable-v2', lastId: 'middle' };
+    getKnownAppSearchTeamsMock.mockReturnValue([]);
+    loadAppSearchTeamsMock.mockResolvedValue([]);
+    searchAppTeamsMock
+      .mockResolvedValueOnce({ teams: [], nextCursor: cursor })
+      .mockResolvedValueOnce({
+        teams: [{ id: 'team-target', name: 'Target United', sport: 'Soccer' }],
+        nextCursor: null
+      });
+
+    render(
+      <MemoryRouter>
+        <AppSearchDialog auth={auth} open={true} onClose={vi.fn()} />
+      </MemoryRouter>
+    );
+
+    fireEvent.change(screen.getByLabelText('Search teams, players, actions, help'), { target: { value: 'target' } });
+    const continueButton = await screen.findByRole('button', { name: 'Continue team search' });
+    expect(screen.getByText('No matching teams in this scan yet')).not.toBeNull();
+    fireEvent.click(continueButton);
+
+    await waitFor(() => expect(searchAppTeamsMock).toHaveBeenNthCalledWith(2, 'target', [], null, cursor));
+    expect(await screen.findByRole('button', { name: /Target United/i })).not.toBeNull();
+    expect(screen.queryByRole('button', { name: 'Continue team search' })).toBeNull();
   });
 
   it('waits briefly for hydrated access so the first query runs once with the expanded scope', async () => {

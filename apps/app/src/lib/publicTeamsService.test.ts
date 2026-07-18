@@ -8,7 +8,7 @@ const dbMocks = vi.hoisted(() => ({
 
 vi.mock('./adapters/legacyPublicTeamsDb', () => dbMocks);
 
-import { getPublicTeamDetail, getPublicTeamsByLocation, getPublicTeamsPage } from './publicTeamsService';
+import { getBoundedPublicTeamSearchPage, getPublicTeamDetail, getPublicTeamsByLocation, getPublicTeamsPage } from './publicTeamsService';
 
 describe('publicTeamsService', () => {
     beforeEach(() => {
@@ -193,6 +193,52 @@ describe('publicTeamsService', () => {
             })
         ]);
         expect(dbMocks.discoverPublicTeams).toHaveBeenCalledWith({ searchText: 'Kansas City', cursor: null, pageSize: 24 });
+    });
+
+    it('continues bounded empty location-search pages and returns a later match', async () => {
+        const firstCursor = { kind: 'public-team-callable-v2', lastId: 'middle' };
+        dbMocks.discoverPublicTeams
+            .mockResolvedValueOnce({ teams: [], nextCursor: firstCursor })
+            .mockResolvedValueOnce({
+                teams: [{ id: 'team-target', name: 'Target Team', city: 'Target', state: 'KS' }],
+                nextCursor: null
+            });
+
+        await expect(getPublicTeamsByLocation('Target')).resolves.toEqual([
+            expect.objectContaining({ teamId: 'team-target', teamName: 'Target Team' })
+        ]);
+        expect(dbMocks.discoverPublicTeams).toHaveBeenNthCalledWith(1, {
+            searchText: 'Target', cursor: null, pageSize: 24
+        });
+        expect(dbMocks.discoverPublicTeams).toHaveBeenNthCalledWith(2, {
+            searchText: 'Target', cursor: firstCursor, pageSize: 24
+        });
+    });
+
+    it('preserves the residual cursor at the single-shot cap and rejects repeated cursors', async () => {
+        const secondCursor = { lastId: 'second' };
+        dbMocks.discoverPublicTeams
+            .mockResolvedValueOnce({ teams: [], nextCursor: { lastId: 'first' } })
+            .mockResolvedValueOnce({ teams: [], nextCursor: secondCursor });
+
+        await expect(getBoundedPublicTeamSearchPage({ searchText: 'Target' })).resolves.toEqual({
+            teams: [],
+            nextCursor: secondCursor
+        });
+        expect(dbMocks.discoverPublicTeams).toHaveBeenCalledTimes(2);
+
+        vi.clearAllMocks();
+        dbMocks.discoverPublicTeams
+            .mockResolvedValueOnce({ teams: [], nextCursor: { lastId: 'first' } })
+            .mockResolvedValueOnce({ teams: [], nextCursor: secondCursor });
+        await expect(getPublicTeamsByLocation('Target')).rejects.toThrow('incomplete');
+        expect(dbMocks.discoverPublicTeams).toHaveBeenCalledTimes(2);
+
+        vi.clearAllMocks();
+        const repeatedCursor = { lastId: 'same' };
+        dbMocks.discoverPublicTeams.mockResolvedValue({ teams: [], nextCursor: repeatedCursor });
+        await expect(getPublicTeamsByLocation('Target')).rejects.toThrow('repeated cursor');
+        expect(dbMocks.discoverPublicTeams).toHaveBeenCalledTimes(2);
     });
 
     it('treats a whole two-letter search as an exact state code', async () => {

@@ -43,6 +43,7 @@ import {
     resetAppSearchCache,
     scoreSearchText,
     searchAppTeams,
+    searchAppTeamsPage,
     searchAppPlayers,
     splitSearchTokens
 } from '../../apps/app/src/lib/searchService.ts';
@@ -824,6 +825,48 @@ describe('React app search service', () => {
         expect(teams.find((team) => team.id === 'team-home')).toMatchObject({
             name: 'Bearcats Public',
             isPublic: true
+        });
+    });
+
+    it('continues a bounded empty public-team page before caching app search results', async () => {
+        const firstCursor = { kind: 'public-team-callable-v2', lastId: 'middle' };
+        dbMocks.discoverPublicTeams
+            .mockResolvedValueOnce({ teams: [], nextCursor: firstCursor })
+            .mockResolvedValueOnce({
+                teams: [{ id: 'team-target', name: 'Target Team', isPublic: true }],
+                nextCursor: null
+            });
+
+        const teams = await searchAppTeams('target', [], auth.user);
+
+        expect(teams.map((team) => team.id)).toEqual(['team-target']);
+        expect(dbMocks.discoverPublicTeams).toHaveBeenNthCalledWith(1, {
+            searchText: 'target', cursor: null, pageSize: 20
+        });
+        expect(dbMocks.discoverPublicTeams).toHaveBeenNthCalledWith(2, {
+            searchText: 'target', cursor: firstCursor, pageSize: 20
+        });
+    });
+
+    it('preserves a residual app-search cursor at the cap and resumes from it', async () => {
+        const firstCursor = { lastId: 'first' };
+        const residualCursor = { lastId: 'second' };
+        dbMocks.discoverPublicTeams
+            .mockResolvedValueOnce({ teams: [], nextCursor: firstCursor })
+            .mockResolvedValueOnce({ teams: [], nextCursor: residualCursor })
+            .mockResolvedValueOnce({
+                teams: [{ id: 'team-target', name: 'Target Team', isPublic: true }],
+                nextCursor: null
+            });
+
+        const firstPage = await searchAppTeamsPage('target', [], auth.user);
+        expect(firstPage).toEqual({ teams: [], nextCursor: residualCursor });
+
+        const secondPage = await searchAppTeamsPage('target', [], auth.user, firstPage.nextCursor);
+        expect(secondPage.teams.map((team) => team.id)).toEqual(['team-target']);
+        expect(secondPage.nextCursor).toBeNull();
+        expect(dbMocks.discoverPublicTeams).toHaveBeenNthCalledWith(3, {
+            searchText: 'target', cursor: residualCursor, pageSize: 20
         });
     });
 

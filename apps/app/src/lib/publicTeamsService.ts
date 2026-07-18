@@ -2,6 +2,7 @@ import { discoverPublicTeams, getPublicTeamProfile, getPublicTeamRosterCount, ty
 import { type ParentHomeTeam } from './homeLogic';
 
 const PUBLIC_ROSTER_COUNT_CONCURRENCY = 6;
+const SINGLE_SHOT_PUBLIC_TEAM_PAGE_REQUEST_LIMIT = 2;
 
 export type PublicTeamsPage = {
     teams: ParentHomeTeam[];
@@ -146,9 +147,54 @@ export async function getPublicTeamsPage({ searchText, locationFilter, cursor = 
     };
 }
 
+export async function getBoundedPublicTeamSearchPage({
+    searchText,
+    locationFilter,
+    cursor: initialCursor = null,
+    pageSize = 24,
+    includeRosterCounts = true
+}: PublicTeamsPageOptions = {}): Promise<PublicTeamsPage> {
+    const rawResultLimit = Number(pageSize);
+    const resultLimit = Number.isFinite(rawResultLimit)
+        ? Math.min(Math.max(Math.floor(rawResultLimit), 1), 100)
+        : 24;
+    const teamsById = new Map<string, ParentHomeTeam>();
+    const seenCursors = new Set<string>();
+    let cursor: unknown | null = initialCursor;
+    if (cursor) seenCursors.add(JSON.stringify(cursor));
+
+    for (let requestCount = 0;
+        requestCount < SINGLE_SHOT_PUBLIC_TEAM_PAGE_REQUEST_LIMIT && teamsById.size < resultLimit;
+        requestCount += 1) {
+        const page = await getPublicTeamsPage({
+            searchText,
+            locationFilter,
+            cursor,
+            pageSize: resultLimit - teamsById.size,
+            includeRosterCounts
+        });
+        page.teams.forEach((team) => teamsById.set(team.teamId, team));
+        cursor = page.nextCursor || null;
+        if (!cursor || teamsById.size >= resultLimit) break;
+        const cursorKey = JSON.stringify(cursor);
+        if (seenCursors.has(cursorKey)) {
+            throw new Error('Public team search returned a repeated cursor.');
+        }
+        seenCursors.add(cursorKey);
+    }
+
+    return {
+        teams: Array.from(teamsById.values()),
+        nextCursor: teamsById.size < resultLimit ? cursor : null
+    };
+}
+
 export async function getPublicTeamsByLocation(locationFilter?: string): Promise<ParentHomeTeam[]> {
-    const result = await getPublicTeamsPage({ searchText: locationFilter });
-    return result.teams;
+    const page = await getBoundedPublicTeamSearchPage({ searchText: locationFilter });
+    if (page.nextCursor) {
+        throw new Error('Public team location search is incomplete; use paged discovery to continue.');
+    }
+    return page.teams;
 }
 
 export async function getPublicTeamDetail(teamId: string): Promise<PublicTeamProfile> {

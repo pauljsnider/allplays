@@ -17,9 +17,13 @@ const legacySearchDbMocks = vi.hoisted(() => ({
   where: vi.fn()
 }));
 
-const publicTeamsServiceMocks = vi.hoisted(() => ({
-  getPublicTeamsPage: vi.fn()
-}));
+const publicTeamsServiceMocks = vi.hoisted(() => {
+  const getPublicTeamsPage = vi.fn();
+  return {
+    getPublicTeamsPage,
+    getBoundedPublicTeamSearchPage: getPublicTeamsPage
+  };
+});
 
 vi.mock('./adapters/legacySearchDb', () => legacySearchDbMocks);
 vi.mock('./homeService', () => ({
@@ -240,6 +244,7 @@ describe('searchService app search caches', () => {
     expect(publicTeamsServiceMocks.getPublicTeamsPage).toHaveBeenCalledTimes(1);
     expect(publicTeamsServiceMocks.getPublicTeamsPage).toHaveBeenCalledWith({
       searchText: 'Austin',
+      cursor: null,
       pageSize: 20,
       includeRosterCounts: false
     });

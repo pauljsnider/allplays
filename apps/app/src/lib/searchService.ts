@@ -15,7 +15,7 @@ import {
 } from './adapters/legacySearchDb';
 import { loadParentHomeSummary } from './homeService';
 import { searchHelpKnowledge } from './helpKnowledgeService';
-import { getPublicTeamsPage } from './publicTeamsService';
+import { getBoundedPublicTeamSearchPage } from './publicTeamsService';
 import type { AuthState, AuthUser, UserRole } from './types';
 
 const teamsCacheTtlMs = 10 * 60 * 1000;
@@ -49,7 +49,13 @@ type PlayerSearchCacheEntry = {
 
 type PublicTeamSearchCacheEntry = {
   teams?: AppSearchTeam[];
-  promise?: Promise<AppSearchTeam[]>;
+  nextCursor?: unknown | null;
+  promise?: Promise<AppSearchTeamsPage>;
+};
+
+export type AppSearchTeamsPage = {
+  teams: AppSearchTeam[];
+  nextCursor: unknown | null;
 };
 
 export type AppSearchKind = 'action' | 'team' | 'player' | 'social' | 'help';
@@ -390,17 +396,26 @@ export async function loadAppSearchTeams(user: AuthUser | null): Promise<AppSear
 }
 
 export async function searchAppTeams(queryText: string, appAccessTeams: AppSearchTeam[], user: AuthUser | null): Promise<AppSearchTeam[]> {
+  return (await searchAppTeamsPage(queryText, appAccessTeams, user)).teams;
+}
+
+export async function searchAppTeamsPage(
+  queryText: string,
+  appAccessTeams: AppSearchTeam[],
+  user: AuthUser | null,
+  cursor: unknown | null = null
+): Promise<AppSearchTeamsPage> {
   const rawQuery = String(queryText || '').trim();
   const localTeams = getImmediateAppTeamSearchResults(rawQuery, appAccessTeams);
-  if (rawQuery.length < 2) return localTeams;
+  if (rawQuery.length < 2) return { teams: localTeams, nextCursor: null };
 
   const firstToken = splitSearchTokens(rawQuery)[0] || '';
-  if (!firstToken) return localTeams;
+  if (!firstToken) return { teams: localTeams, nextCursor: null };
 
   try {
-    const publicTeams = await getCachedPublicTeamSearchResults(rawQuery, user);
+    const publicPage = await getCachedPublicTeamSearchResults(rawQuery, user, cursor);
     const localTeamsById = new Map(appAccessTeams.map((team) => [team.id, team]));
-    publicTeams.forEach((team) => {
+    publicPage.teams.forEach((team) => {
       if (canUserDiscoverTeamInAppSearch(team, user)) {
         const existingTeam = localTeamsById.get(team.id);
         localTeamsById.set(team.id, existingTeam?.fromAppAccess
@@ -409,9 +424,12 @@ export async function searchAppTeams(queryText: string, appAccessTeams: AppSearc
       }
     });
 
-    return rankTeamsForQuery(Array.from(localTeamsById.values()), rawQuery).slice(0, teamSearchQueryLimit);
+    return {
+      teams: rankTeamsForQuery(Array.from(localTeamsById.values()), rawQuery).slice(0, teamSearchQueryLimit),
+      nextCursor: publicPage.nextCursor
+    };
   } catch (error) {
-    if (localTeams.length) return localTeams;
+    if (localTeams.length) return { teams: localTeams, nextCursor: cursor };
     throw error;
   }
 }
@@ -618,26 +636,33 @@ export function resetAppSearchCache() {
   publicTeamSearchCache.clear();
 }
 
-async function getCachedPublicTeamSearchResults(queryText: string, user: AuthUser | null): Promise<AppSearchTeam[]> {
+async function getCachedPublicTeamSearchResults(
+  queryText: string,
+  user: AuthUser | null,
+  cursor: unknown | null = null
+): Promise<AppSearchTeamsPage> {
   const normalizedQuery = normalizeSearchQuery(queryText);
-  const cacheKey = `${getAppSearchUserCacheKey(user)}::${normalizedQuery}`;
+  const cursorKey = cursor ? JSON.stringify(cursor) : 'start';
+  const cacheKey = `${getAppSearchUserCacheKey(user)}::${normalizedQuery}::${cursorKey}`;
   const cachedEntry = publicTeamSearchCache.get(cacheKey);
 
   if (cachedEntry?.teams) {
     markSearchCacheEntryRecentlyUsed(publicTeamSearchCache, cacheKey, cachedEntry);
-    return cachedEntry.teams;
+    return { teams: cachedEntry.teams, nextCursor: cachedEntry.nextCursor || null };
   }
   if (cachedEntry?.promise) return cachedEntry.promise;
 
-  const promise = getPublicTeamsPage({
+  const promise = getBoundedPublicTeamSearchPage({
     searchText: queryText,
+    cursor,
     pageSize: teamSearchQueryLimit,
     includeRosterCounts: false
   })
     .then((result) => {
       const teams = normalizePublicTeamSearchResults(result?.teams || []);
-      setBoundedCompletedSearchCacheEntry(publicTeamSearchCache, cacheKey, { teams }, publicTeamSearchCacheMaxEntries);
-      return teams;
+      const page = { teams, nextCursor: result?.nextCursor || null };
+      setBoundedCompletedSearchCacheEntry(publicTeamSearchCache, cacheKey, page, publicTeamSearchCacheMaxEntries);
+      return page;
     })
     .catch((error) => {
       publicTeamSearchCache.delete(cacheKey);

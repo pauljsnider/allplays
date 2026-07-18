@@ -110,6 +110,102 @@ describe('legacy global search modal', () => {
         expect(firebaseMocks.doc).toHaveBeenCalledWith(firebaseMocks.db, 'teams', 'team-access');
     });
 
+    it('continues a bounded empty public-team page before reporting no global-search result', async () => {
+        const firstCursor = { kind: 'public-team-callable-v2', lastId: 'middle' };
+        dbMocks.discoverPublicTeams
+            .mockResolvedValueOnce({ teams: [], nextCursor: firstCursor })
+            .mockResolvedValueOnce({
+                teams: [{ id: 'team-target', name: 'Target United', isPublic: true, active: true }],
+                nextCursor: null
+            });
+        const { setupHeaderSearch } = await import('../../js/global-search.js?v=10');
+
+        setupHeaderSearch({ user: { uid: 'user-1', email: 'user@example.com' }, headerContainer: null });
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }));
+        await flushAsyncWork();
+        const input = document.querySelector('[data-global-search-input="1"]');
+        input.value = 'target';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        await vi.advanceTimersByTimeAsync(200);
+        await flushAsyncWork();
+
+        expect(dbMocks.discoverPublicTeams).toHaveBeenNthCalledWith(1, { searchText: 'target', pageSize: 20 });
+        expect(dbMocks.discoverPublicTeams).toHaveBeenNthCalledWith(2, {
+            searchText: 'target', cursor: firstCursor, pageSize: 20
+        });
+        expect(document.body.textContent).toContain('Target United');
+        expect(document.body.textContent).not.toContain('No results');
+    });
+
+    it('caps sparse global team search continuation at two page requests', async () => {
+        dbMocks.discoverPublicTeams
+            .mockResolvedValueOnce({ teams: [], nextCursor: { lastId: 'first' } })
+            .mockResolvedValueOnce({ teams: [], nextCursor: { lastId: 'second' } });
+        const { setupHeaderSearch } = await import('../../js/global-search.js?v=10');
+
+        setupHeaderSearch({ user: { uid: 'user-1', email: 'user@example.com' }, headerContainer: null });
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }));
+        await flushAsyncWork();
+        const input = document.querySelector('[data-global-search-input="1"]');
+        input.value = 'target';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        await vi.advanceTimersByTimeAsync(200);
+        await flushAsyncWork();
+
+        expect(dbMocks.discoverPublicTeams).toHaveBeenCalledTimes(2);
+        expect(document.body.textContent).toContain('No matching teams in this scan yet');
+        expect(document.body.textContent).toContain('Continue team search');
+        expect(document.body.textContent).not.toContain('No results');
+    });
+
+    it('fails a repeated global-search cursor without issuing an unbounded loop', async () => {
+        const repeatedCursor = { lastId: 'same' };
+        dbMocks.discoverPublicTeams.mockResolvedValue({ teams: [], nextCursor: repeatedCursor });
+        const { setupHeaderSearch } = await import('../../js/global-search.js?v=10');
+
+        setupHeaderSearch({ user: { uid: 'user-1', email: 'user@example.com' }, headerContainer: null });
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }));
+        await flushAsyncWork();
+        const input = document.querySelector('[data-global-search-input="1"]');
+        input.value = 'target';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        await vi.advanceTimersByTimeAsync(200);
+        await flushAsyncWork();
+
+        expect(dbMocks.discoverPublicTeams).toHaveBeenCalledTimes(2);
+        expect(document.body.textContent).toContain('Public team search unavailable');
+    });
+
+    it('does not continue a stale sparse search after the query changes', async () => {
+        let resolveFirstSearch;
+        dbMocks.discoverPublicTeams
+            .mockImplementationOnce(() => new Promise((resolve) => { resolveFirstSearch = resolve; }))
+            .mockResolvedValueOnce({ teams: [], nextCursor: null });
+        const { setupHeaderSearch } = await import('../../js/global-search.js?v=10');
+
+        setupHeaderSearch({ user: { uid: 'user-1', email: 'user@example.com' }, headerContainer: null });
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }));
+        await flushAsyncWork();
+        const input = document.querySelector('[data-global-search-input="1"]');
+        input.value = 'target';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        await vi.advanceTimersByTimeAsync(200);
+
+        input.value = 'new query';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        await vi.advanceTimersByTimeAsync(200);
+        resolveFirstSearch({ teams: [], nextCursor: { lastId: 'stale-cursor' } });
+        await flushAsyncWork();
+
+        expect(dbMocks.discoverPublicTeams).toHaveBeenCalledTimes(2);
+        expect(dbMocks.discoverPublicTeams).toHaveBeenNthCalledWith(2, {
+            searchText: 'new query', pageSize: 20
+        });
+        expect(dbMocks.discoverPublicTeams.mock.calls).not.toContainEqual([{
+            searchText: 'target', cursor: { lastId: 'stale-cursor' }, pageSize: 20
+        }]);
+    });
+
     it('uses parent team link visibility summaries without per-team fallback reads', async () => {
         const { setupHeaderSearch } = await import('../../js/global-search.js?v=9');
 

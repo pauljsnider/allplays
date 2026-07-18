@@ -12,10 +12,11 @@ import {
   getImmediateAppTeamSearchResults,
   getKnownAppSearchTeams,
   loadAppSearchTeams,
-  searchAppTeams,
+  searchAppTeamsPage,
   searchAppPlayers,
   type AppSearchItem,
   type AppSearchPlayer,
+  type AppSearchTeamsPage,
   type AppSearchTeam
 } from '../lib/searchService';
 import type { AuthState } from '../lib/types';
@@ -36,12 +37,14 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
   const [teams, setTeams] = useState<AppSearchTeam[]>([]);
   const [teamsLoading, setTeamsLoading] = useState(false);
   const [teamsError, setTeamsError] = useState('');
+  const [teamNextCursor, setTeamNextCursor] = useState<unknown | null>(null);
   const [players, setPlayers] = useState<AppSearchPlayer[]>([]);
   const [playersLoading, setPlayersLoading] = useState(false);
   const [playersError, setPlayersError] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
   const [keyboardInset, setKeyboardInset] = useState(0);
   const searchRequestId = useRef(0);
+  const queryRef = useRef('');
   const playerSearchGenerationRef = useRef(0);
   const playerSearchTimeoutRef = useRef<number | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -51,6 +54,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
   const hydratedTeamsPromiseRef = useRef<Promise<AppSearchTeam[]> | null>(null);
   const navigate = useNavigate();
   const helpRoleFilter = derivePrimaryHelpRole(auth);
+  queryRef.current = query;
 
   const results = useMemo(
     () => computeAppSearchResults({ queryText: query, auth, teams, players, helpRoleFilter }),
@@ -60,7 +64,10 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
   const flatResults = results.flat ?? [...results.actions, ...results.teams, ...helpResults, ...results.players];
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      searchRequestId.current += 1;
+      return;
+    }
     return lockBodyScroll();
   }, [open]);
 
@@ -86,6 +93,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
     setActiveIndex(0);
     setTeamsLoading(false);
     setTeamsError('');
+    setTeamNextCursor(null);
   }, [auth.user, open]);
 
   useEffect(() => {
@@ -99,6 +107,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
       setTeams(baseTeamsRef.current);
       setTeamsLoading(false);
       setTeamsError('');
+      setTeamNextCursor(null);
       setPlayers([]);
       setPlayersLoading(false);
       setPlayersError('');
@@ -114,6 +123,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
       setTeams(localTeams);
       setTeamsLoading(localTeams.length === 0);
       setTeamsError('');
+      setTeamNextCursor(null);
     };
 
     setImmediateTeamResults(initialAccessibleTeams);
@@ -144,14 +154,17 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
         }, remotePlayerSearchCoalesceMs);
       };
 
-      const applyTeamResults = (teamsResult: PromiseSettledResult<AppSearchTeam[]>) => {
+      const applyTeamResults = (teamsResult: PromiseSettledResult<AppSearchTeamsPage | AppSearchTeam[]>) => {
         if (disposed || requestId !== searchRequestId.current) return;
         if (teamsResult.status === 'fulfilled') {
-          setTeams(teamsResult.value);
+          const page = normalizeAppSearchTeamsPage(teamsResult.value);
+          setTeams(page.teams);
+          setTeamNextCursor(page.nextCursor);
           setTeamsError('');
           return;
         }
         setTeams([]);
+        setTeamNextCursor(null);
         setTeamsError(teamsResult.reason?.message || 'Team search unavailable.');
       };
 
@@ -161,8 +174,8 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
         schedulePlayerSearch(accessibleTeams);
 
         const [teamsResult] = await Promise.allSettled([
-          searchAppTeams(trimmedQuery, accessibleTeams, auth.user)
-        ]) as [PromiseSettledResult<AppSearchTeam[]>];
+          searchAppTeamsPage(trimmedQuery, accessibleTeams, auth.user)
+        ]) as [PromiseSettledResult<AppSearchTeamsPage | AppSearchTeam[]>];
         applyTeamResults(teamsResult);
         if (!disposed && requestId === searchRequestId.current) {
           setTeamsLoading(false);
@@ -225,6 +238,30 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
       clearScheduledPlayerSearch();
     };
   }, [auth.user, open, query]);
+
+  const continueTeamSearch = async () => {
+    const trimmedQuery = query.trim();
+    const cursor = teamNextCursor;
+    if (trimmedQuery.length < 2 || !cursor || teamsLoading) return;
+    const requestId = searchRequestId.current;
+    setTeamsLoading(true);
+    setTeamsError('');
+    try {
+      const page = normalizeAppSearchTeamsPage(
+        await searchAppTeamsPage(trimmedQuery, baseTeamsRef.current, auth.user, cursor)
+      );
+      if (requestId !== searchRequestId.current || trimmedQuery !== queryRef.current.trim()) return;
+      setTeams((current) => mergeSearchTeams(current, page.teams));
+      setTeamNextCursor(page.nextCursor);
+    } catch (error: any) {
+      if (requestId !== searchRequestId.current || trimmedQuery !== queryRef.current.trim()) return;
+      setTeamsError(error?.message || 'Team search unavailable.');
+    } finally {
+      if (requestId === searchRequestId.current && trimmedQuery === queryRef.current.trim()) {
+        setTeamsLoading(false);
+      }
+    }
+  };
 
   useEffect(() => {
     setActiveIndex(0);
@@ -354,7 +391,9 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
       : teamsError
         ? teamsError
         : results.teams.length === 0
-          ? 'No matching teams'
+          ? teamNextCursor
+            ? 'No matching teams in this scan yet'
+            : 'No matching teams'
           : ''
     : teamsError;
   const helpStatus = hasRealQuery && helpResults.length === 0
@@ -401,7 +440,10 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
                   enterKeyHint="search"
                   autoComplete="off"
                   value={query}
-                  onChange={(event) => setQuery(event.target.value)}
+                  onChange={(event) => {
+                    setQuery(event.target.value);
+                    setTeamNextCursor(null);
+                  }}
                   className="min-h-11 w-full rounded-xl border border-gray-200 px-3 pr-11 text-base font-semibold outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
                   placeholder="Search teams, players, actions, help..."
                   aria-label="Search teams, players, actions, help"
@@ -455,6 +497,16 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
               offset={results.actions.length}
               status={teamsStatus}
               statusTone={teamsError ? 'error' : 'neutral'}
+              headerAccessory={hasRealQuery && teamNextCursor ? (
+                <button
+                  type="button"
+                  className="text-xs font-extrabold text-primary-700 transition hover:text-primary-800 disabled:opacity-60"
+                  onClick={() => void continueTeamSearch()}
+                  disabled={teamsLoading}
+                >
+                  {teamsLoading ? 'Continuing...' : 'Continue team search'}
+                </button>
+              ) : null}
               onOpen={openResult}
               onHover={setActiveResultIndex}
             />
@@ -494,7 +546,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
               onHover={setActiveResultIndex}
             />
 
-            {!teamsLoading && !playersLoading && flatResults.length === 0 ? (
+            {!teamsLoading && !playersLoading && !teamNextCursor && flatResults.length === 0 ? (
               <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-6 text-center text-sm font-semibold text-gray-500">
                 No results
               </div>
@@ -600,6 +652,12 @@ function mergeSearchTeams(...teamLists: AppSearchTeam[][]) {
     if (team?.id) teamsById.set(team.id, team);
   });
   return Array.from(teamsById.values());
+}
+
+function normalizeAppSearchTeamsPage(value: AppSearchTeamsPage | AppSearchTeam[]): AppSearchTeamsPage {
+  return Array.isArray(value)
+    ? { teams: value, nextCursor: null }
+    : { teams: value?.teams || [], nextCursor: value?.nextCursor || null };
 }
 
 function haveSameSearchTeamSearchData(left: AppSearchTeam[], right: AppSearchTeam[]) {

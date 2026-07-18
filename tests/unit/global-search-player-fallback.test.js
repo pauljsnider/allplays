@@ -9,8 +9,11 @@ describe('legacy global player search scoping', () => {
         expect(source).toContain("import { discoverPublicTeams } from './db.js?v=107';");
         expect(source).not.toContain('import { getTeams }');
         expect(source).toContain('const teamSearchQueryLimit = 20;');
+        expect(source).toContain('const publicTeamSearchPageRequestLimit = 2;');
         expect(source).toContain('if (q.length < 2) {');
-        expect(source).toContain("const result = await discoverPublicTeams({ searchText: q, pageSize: teamSearchQueryLimit });");
+        expect(source).toContain('requestCount < publicTeamSearchPageRequestLimit');
+        expect(source).toContain('? { searchText: q, cursor, pageSize: remainingTeamSlots }');
+        expect(source).toContain("throw new Error('Public team search returned a repeated cursor.')");
         expect(source).not.toContain('const teams = await getTeams();');
     });
 

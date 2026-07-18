@@ -25,6 +25,7 @@ let cachedAccessibleTeamsUserKey = '';
 const playerSearchQueryLimit = playerSearchResultLimit;
 const playerSearchTeamLimit = 8;
 const teamSearchQueryLimit = 20;
+const publicTeamSearchPageRequestLimit = 2;
 
 let currentUser = null;
 let keyHandlerInstalled = false;
@@ -438,6 +439,8 @@ function openModal({ initialQuery = '' } = {}) {
         flatResults: [],
         teams: [],
         publicTeams: [],
+        publicTeamsNextCursor: null,
+        publicTeamsSearchText: '',
         loadingTeams: true,
         teamsError: '',
         loadingPublicTeams: false,
@@ -496,6 +499,13 @@ function openModal({ initialQuery = '' } = {}) {
     root.addEventListener('keydown', onKeyDown);
 
     const onClickResult = (e) => {
+        const continueTeamsButton = e.target?.closest?.('[data-global-search-more-teams="1"]');
+        if (continueTeamsButton) {
+            const cursor = modalState?.publicTeamsNextCursor;
+            const searchText = modalState?.publicTeamsSearchText || modalState?.input?.value || '';
+            if (cursor) void runTeamSearch(searchText, { cursor, append: true });
+            return;
+        }
         const btn = e.target?.closest?.('[data-global-search-result="1"]');
         if (!btn) return;
         const href = btn.getAttribute('data-href');
@@ -579,6 +589,7 @@ function openModal({ initialQuery = '' } = {}) {
         const actionsHtml = renderSection('Actions', matchedActions, 0);
         const teamsOffset = matchedActions.length;
         const teamsRows = matchedTeams.map((item, idx) => renderResultRow(item, (teamsOffset + idx) === modalState.activeIndex)).join('');
+        const canContinueTeamSearch = q.trim().length >= 2 && Boolean(modalState.publicTeamsNextCursor);
         const teamsStatus = modalState.loadingTeams
             ? `<div class="text-sm text-gray-500 px-1 py-2">Loading teams...</div>`
             : modalState.teamsError
@@ -590,8 +601,13 @@ function openModal({ initialQuery = '' } = {}) {
                         : (matchedTeams.length === 0
                             ? (q.trim().length < 2
                                 ? `<div class="text-sm text-gray-500 px-1 py-2">Type at least 2 characters to search public teams</div>`
-                                : `<div class="text-sm text-gray-500 px-1 py-2">No matching teams</div>`)
+                                : canContinueTeamSearch
+                                    ? `<div class="text-sm text-gray-500 px-1 py-2">No matching teams in this scan yet</div>`
+                                    : `<div class="text-sm text-gray-500 px-1 py-2">No matching teams</div>`)
                             : '');
+        const teamContinuationHtml = canContinueTeamSearch && !modalState.loadingPublicTeams
+            ? `<button type="button" data-global-search-more-teams="1" class="mt-2 text-xs font-bold text-primary-700 hover:text-primary-800">Continue team search</button>`
+            : '';
 
         const teamsHtml = `
             <div>
@@ -600,6 +616,7 @@ function openModal({ initialQuery = '' } = {}) {
                     ${teamsRows}
                 </div>
                 ${teamsStatus}
+                ${teamContinuationHtml}
             </div>
         `;
 
@@ -621,7 +638,7 @@ function openModal({ initialQuery = '' } = {}) {
             </div>
         `;
 
-        const emptyHtml = modalState.flatResults.length === 0 && !modalState.loadingTeams
+        const emptyHtml = modalState.flatResults.length === 0 && !modalState.loadingTeams && !canContinueTeamSearch
             ? `<div class="text-sm text-gray-500 px-1 py-6 text-center">No results</div>`
             : '';
 
@@ -635,12 +652,14 @@ function openModal({ initialQuery = '' } = {}) {
         `;
     };
 
-    const runTeamSearch = async (rawQuery) => {
+    const runTeamSearch = async (rawQuery, { cursor: initialCursor = null, append = false } = {}) => {
         const q = (rawQuery || '').trim();
         if (!modalState) return;
 
         if (q.length < 2) {
             modalState.publicTeams = [];
+            modalState.publicTeamsNextCursor = null;
+            modalState.publicTeamsSearchText = '';
             modalState.loadingPublicTeams = false;
             modalState.publicTeamsError = '';
             renderResults();
@@ -648,22 +667,50 @@ function openModal({ initialQuery = '' } = {}) {
         }
 
         const reqId = ++modalState.publicTeamsReqId;
+        if (!append) modalState.publicTeamsNextCursor = null;
         modalState.loadingPublicTeams = true;
         modalState.publicTeamsError = '';
         renderResults();
 
         try {
-            const result = await discoverPublicTeams({ searchText: q, pageSize: teamSearchQueryLimit });
-            if (!modalState || reqId !== modalState.publicTeamsReqId) return;
-            const publicTeams = (result?.teams || []).filter((team) => isTeamActive(team) && !modalState.teamsById.has(team.id));
-            modalState.publicTeams = publicTeams;
+            const publicTeamsById = new Map(append
+                ? (modalState.publicTeams || []).map((team) => [team.id, team])
+                : []);
+            const seenCursors = new Set();
+            let cursor = initialCursor;
+            if (cursor) seenCursors.add(JSON.stringify(cursor));
+
+            for (let requestCount = 0;
+                requestCount < publicTeamSearchPageRequestLimit && publicTeamsById.size < teamSearchQueryLimit;
+                requestCount += 1) {
+                const remainingTeamSlots = teamSearchQueryLimit - publicTeamsById.size;
+                const result = await discoverPublicTeams(cursor
+                    ? { searchText: q, cursor, pageSize: remainingTeamSlots }
+                    : { searchText: q, pageSize: remainingTeamSlots });
+                if (!modalState || reqId !== modalState.publicTeamsReqId) return;
+                (result?.teams || [])
+                    .filter((team) => isTeamActive(team) && !modalState.teamsById.has(team.id))
+                    .forEach((team) => publicTeamsById.set(team.id, team));
+
+                cursor = result?.nextCursor || null;
+                if (!cursor || publicTeamsById.size >= teamSearchQueryLimit) break;
+                const cursorKey = JSON.stringify(cursor);
+                if (seenCursors.has(cursorKey)) {
+                    throw new Error('Public team search returned a repeated cursor.');
+                }
+                seenCursors.add(cursorKey);
+            }
+
+            modalState.publicTeams = Array.from(publicTeamsById.values());
+            modalState.publicTeamsNextCursor = publicTeamsById.size < teamSearchQueryLimit ? cursor : null;
+            modalState.publicTeamsSearchText = q;
             modalState.loadingPublicTeams = false;
             modalState.publicTeamsError = '';
             renderResults();
         } catch (e) {
             console.error('[GlobalSearch] Team search failed:', e);
             if (!modalState || reqId !== modalState.publicTeamsReqId) return;
-            modalState.publicTeams = [];
+            if (!append) modalState.publicTeams = [];
             modalState.loadingPublicTeams = false;
             modalState.publicTeamsError = 'Public team search unavailable.';
             renderResults();
@@ -770,6 +817,9 @@ function openModal({ initialQuery = '' } = {}) {
 
     input.addEventListener('input', () => {
         modalState.activeIndex = 0;
+        if ((modalState.input.value || '').trim() !== modalState.publicTeamsSearchText) {
+            modalState.publicTeamsNextCursor = null;
+        }
         scheduleSearches();
         renderResults();
     });
@@ -785,6 +835,7 @@ function openModal({ initialQuery = '' } = {}) {
             if (!modalState) return;
             modalState.teams = teams;
             modalState.publicTeams = [];
+            modalState.publicTeamsNextCursor = null;
             modalState.loadingTeams = false;
             modalState.teamsError = '';
             modalState.teamsById = new Map((teams || []).map(t => [t.id, t]));
