@@ -49,6 +49,9 @@ function makeFunctionsStub() {
         firestore: {
             document: () => triggerChain
         },
+        auth: {
+            user: () => triggerChain
+        },
         pubsub: {
             schedule: () => triggerChain
         },
@@ -570,6 +573,38 @@ test('backfill sync preserves legacy recipient docs when skipLegacyCleanup is en
         assert.equal(env.getDoc('teams/team-1/notificationRecipients/parent-1__device-a')?.token, 'token-a');
         assert.deepEqual(env.deletedPaths, []);
         assert.equal(env.getDoc('teams/team-1/notificationRecipients/parent-1')?.uid, 'parent-1');
+    } finally {
+        env.cleanup();
+    }
+});
+
+test('recipient sync retains tokenless users so inbox delivery does not depend on push enrollment', async () => {
+    const env = loadNotificationRecipientIndexEnv({
+        teamDocs: {
+            'team-1': { ownerId: 'coach-1', adminEmails: [] }
+        },
+        userDocs: {
+            'parent-1': { email: 'parent@example.com', parentTeamIds: ['team-1'] }
+        },
+        preferenceDocs: {
+            'users/parent-1/notificationPreferences/team-1': { schedule: true }
+        },
+        deviceDocs: {
+            'parent-1': []
+        }
+    });
+
+    try {
+        const result = await env.internals.syncNotificationRecipientForTeamUser('team-1', 'parent-1');
+
+        assert.deepEqual(result, {
+            uid: 'parent-1',
+            teamId: 'team-1',
+            roles: ['parent'],
+            tokenCount: 0
+        });
+        assert.deepEqual(env.getDoc('teams/team-1/notificationRecipients/parent-1')?.tokens, []);
+        assert.equal(env.getDoc('teams/team-1/notificationRecipients/parent-1')?.categories?.schedule, true);
     } finally {
         env.cleanup();
     }

@@ -1157,3 +1157,92 @@ test('sendCategoryNotification allows the same logical send after the dedup wind
             cleanup();
         }
 });
+
+test('sendCategoryNotification writes schedule inbox activity for a tokenless parent using default preferences', async () => {
+        const { internals, env, cleanup } = loadNotificationInternals({
+            teamDoc: {
+                ownerId: '',
+                adminEmails: []
+            },
+            parentUserIds: ['parent-tokenless'],
+            userDocs: {
+                'parent-tokenless': { parentTeamIds: ['team-1'] }
+            }
+        });
+
+        try {
+            const result = await internals.sendCategoryNotification({
+                teamId: 'team-1',
+                category: 'schedule',
+                title: 'Schedule changed',
+                body: 'Practice starts at 6:00.'
+            });
+
+            assert.equal(result?.successCount, 0);
+            assert.equal(result?.failureCount, 0);
+            assert.equal(result?.inboxWriteCount, 1);
+            assert.equal(env.messagingCalls.length, 0);
+            assert.deepEqual(env.inboxWrites.map((write) => write.uid), ['parent-tokenless']);
+        } finally {
+            cleanup();
+        }
+});
+
+test('sendCategoryNotification honors a tokenless parent schedule opt-out', async () => {
+        const { internals, env, cleanup } = loadNotificationInternals({
+            teamDoc: {
+                ownerId: '',
+                adminEmails: []
+            },
+            parentUserIds: ['parent-tokenless'],
+            userDocs: {
+                'parent-tokenless': { parentTeamIds: ['team-1'] }
+            },
+            preferenceDocs: {
+                'users/parent-tokenless/notificationPreferences/team-1': { schedule: false }
+            }
+        });
+
+        try {
+            const result = await internals.sendCategoryNotification({
+                teamId: 'team-1',
+                category: 'schedule',
+                title: 'Schedule changed',
+                body: 'Practice starts at 6:00.'
+            });
+
+            assert.equal(result, null);
+            assert.equal(env.messagingCalls.length, 0);
+            assert.equal(env.inboxWrites.length, 0);
+        } finally {
+            cleanup();
+        }
+});
+
+test('targeted RSVP reminders keep tokenless eligible parents in the inbox audience', async () => {
+        const { internals, env, cleanup } = loadNotificationInternals({
+            teamDoc: {
+                ownerId: '',
+                adminEmails: []
+            },
+            parentUserIds: ['parent-tokenless'],
+            userDocs: {
+                'parent-tokenless': { parentTeamIds: ['team-1'] }
+            }
+        });
+
+        try {
+            const result = await internals.sendRsvpReminderPushNotifications({
+                teamId: 'team-1',
+                gameId: 'game-1',
+                event: { title: 'Saturday game' },
+                recipientUserIds: ['parent-tokenless']
+            });
+
+            assert.deepEqual(result, { successCount: 0, failureCount: 0, targetCount: 1 });
+            assert.equal(env.messagingCalls.length, 0);
+            assert.deepEqual(env.inboxWrites.map((write) => write.uid), ['parent-tokenless']);
+        } finally {
+            cleanup();
+        }
+});

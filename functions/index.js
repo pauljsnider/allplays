@@ -5849,7 +5849,7 @@ async function syncNotificationRecipientForTeamUser(teamId, uid, options = {}) {
     ? normalizeNotificationPreferences(prefSnap.data())
     : DEFAULT_NOTIFICATION_PREFERENCES;
   const tokens = buildNotificationRecipientTokens(devicesSnap);
-  if (!tokens.length || !hasEnabledNotificationCategory(preferences)) {
+  if (!hasEnabledNotificationCategory(preferences)) {
     if (!skipLegacyCleanup) {
       await cleanupLegacyNotificationRecipientDocs(teamId, normalizedUid);
     }
@@ -6378,8 +6378,7 @@ async function practicePacketAssignedNotification(beforeData = null, afterData =
   }
 
   const { teamId, sessionId } = context.params || {};
-  const [allPracticeTargets, candidateUsers, assignedParentUserIds] = await Promise.all([
-    getTargetsForCategory(teamId, 'practice', null),
+  const [candidateUsers, assignedParentUserIds] = await Promise.all([
     getCandidateUsersForTeam(teamId),
     resolvePracticePacketAssignedParentUserIds(teamId, afterPacket, afterData)
   ]);
@@ -6389,16 +6388,15 @@ async function practicePacketAssignedNotification(beforeData = null, afterData =
       .map((user) => user.uid)
   );
   const assignedParentUserIdSet = Array.isArray(assignedParentUserIds) ? new Set(assignedParentUserIds) : null;
-  const parentTargets = allPracticeTargets.filter((target) => (
-    parentUserIds.has(target.uid)
-    && (!assignedParentUserIdSet || assignedParentUserIdSet.has(target.uid))
-  ));
+  const recipientUserIds = Array.from(parentUserIds)
+    .filter((uid) => !assignedParentUserIdSet || assignedParentUserIdSet.has(uid));
+  const parentAudience = await getCategoryNotificationAudienceForUserIds(teamId, 'practice', recipientUserIds);
 
-  if (!parentTargets.length) {
+  if (!parentAudience.targets.length && !parentAudience.inboxUids.length) {
     functions.logger.warn('notifyPracticePacketAssigned found no practice-enabled parent targets.', {
       teamId,
       sessionId,
-      totalPracticeTargets: allPracticeTargets.length,
+      totalPracticeTargets: parentAudience.targets.length,
       parentUserCount: parentUserIds.size,
       assignedParentUserCount: assignedParentUserIdSet ? assignedParentUserIdSet.size : null
     });
@@ -6409,7 +6407,8 @@ async function practicePacketAssignedNotification(beforeData = null, afterData =
   const destination = buildPracticePacketNotificationDestination({ teamId, eventId: scheduleEventId, sessionId });
 
   await sendDirectTargetsNotification({
-    targets: parentTargets,
+    targets: parentAudience.targets,
+    inboxUids: parentAudience.inboxUids,
     category: 'practice',
     title: 'Practice packet ready',
     body: getPracticePacketNotificationBody(afterPacket, afterData),
@@ -6637,9 +6636,10 @@ async function resolveRegistrationNotificationUserIds(registration = {}) {
   return Array.from(userIds);
 }
 
-async function getStaffTargetsForAccess(teamId, actorUid = null) {
-  const [allAccessTargets, candidateUsers] = await Promise.all([
+async function getStaffNotificationAudienceForAccess(teamId, actorUid = null) {
+  const [allAccessTargets, allAccessInboxUids, candidateUsers] = await Promise.all([
     getTargetsForCategory(teamId, 'access', actorUid),
+    getInboxUserIdsForCategory(teamId, 'access', actorUid),
     getCandidateUsersForTeam(teamId)
   ]);
   const staffUserIds = new Set(
@@ -6647,19 +6647,23 @@ async function getStaffTargetsForAccess(teamId, actorUid = null) {
       .filter((user) => Array.isArray(user?.roles) && user.roles.includes('staff'))
       .map((user) => user.uid)
   );
-  return allAccessTargets.filter((target) => staffUserIds.has(target.uid));
+  return {
+    targets: allAccessTargets.filter((target) => staffUserIds.has(target.uid)),
+    inboxUids: allAccessInboxUids.filter((uid) => staffUserIds.has(uid))
+  };
 }
 
 async function sendRegistrationStatusNotification({ teamId, formId, registrationId, registration, title, body }) {
   const guardianUserIds = await resolveRegistrationNotificationUserIds(registration);
   if (!guardianUserIds.length) return null;
 
-  const guardianTargets = await getTargetsForCategoryUserIds(teamId, 'access', guardianUserIds);
-  if (!guardianTargets.length) return null;
+  const guardianAudience = await getCategoryNotificationAudienceForUserIds(teamId, 'access', guardianUserIds);
+  if (!guardianAudience.targets.length && !guardianAudience.inboxUids.length) return null;
 
   const destination = buildParentRegistrationNotificationDestination({ teamId, formId, registrationId });
   return sendDirectTargetsNotification({
-    targets: guardianTargets,
+    targets: guardianAudience.targets,
+    inboxUids: guardianAudience.inboxUids,
     category: 'access',
     title,
     body,
@@ -7266,6 +7270,124 @@ async function getTargetsForCategory(teamId, category, actorUid = null, audience
   return fallbackTargets;
 }
 
+async function getNotificationPreferencesForUsers(teamId, userIds = []) {
+  const uniqueUserIds = Array.from(new Set(
+    (Array.isArray(userIds) ? userIds : [])
+      .map((uid) => String(uid || '').trim())
+      .filter(Boolean)
+  ));
+  const preferencesByUid = new Map();
+  const batchSize = 250;
+  for (let index = 0; index < uniqueUserIds.length; index += batchSize) {
+    const userIdChunk = uniqueUserIds.slice(index, index + batchSize);
+    const refs = userIdChunk.map((uid) => firestore.doc(`users/${uid}/notificationPreferences/${teamId}`));
+    const snaps = await firestore.getAll(...refs);
+    snaps.forEach((snap, snapIndex) => {
+      preferencesByUid.set(
+        userIdChunk[snapIndex],
+        snap.exists ? normalizeNotificationPreferences(snap.data()) : DEFAULT_NOTIFICATION_PREFERENCES
+      );
+    });
+  }
+  return preferencesByUid;
+}
+
+async function getInboxUserIdsForCategory(teamId, category, actorUid = null, audienceContext = {}, additionalUsers = []) {
+  if (!NOTIFICATION_CATEGORIES.includes(category)) return [];
+
+  const [targetSnap, candidateUsers] = await Promise.all([
+    firestore.collection(`teams/${teamId}/notificationRecipients`)
+      .where(`categories.${category}`, '==', true)
+      .get(),
+    getCandidateUsersForTeam(teamId)
+  ]);
+  const usersByUid = new Map();
+  candidateUsers.forEach((user) => mergeNotificationResolutionUser(usersByUid, user));
+  (Array.isArray(additionalUsers) ? additionalUsers : []).forEach((user) => {
+    mergeNotificationResolutionUser(usersByUid, user);
+  });
+
+  const eligibleUsers = new Map(Array.from(usersByUid.values())
+    .map((entry) => ({ uid: entry.uid, roles: Array.from(entry.roles) }))
+    .filter((user) => user.uid !== actorUid && canReceiveCategoryNotification(category, user, audienceContext))
+    .map((user) => [user.uid, user]));
+  if (!eligibleUsers.size) return [];
+
+  const inboxUserIds = new Set();
+  (targetSnap.docs || []).forEach((docSnap) => {
+    if (!isAggregateNotificationRecipientDoc(docSnap)) return;
+    const uid = getNotificationRecipientDocUid(docSnap);
+    if (eligibleUsers.has(uid)) {
+      inboxUserIds.add(uid);
+    }
+  });
+
+  const unresolvedUserIds = Array.from(eligibleUsers.keys()).filter((uid) => !inboxUserIds.has(uid));
+  const recipientRefs = unresolvedUserIds.map((uid) => buildTeamNotificationRecipientRef(teamId, uid));
+  const recipientSnaps = recipientRefs.length ? await firestore.getAll(...recipientRefs) : [];
+  const unindexedUserIds = [];
+  recipientSnaps.forEach((docSnap, index) => {
+    const uid = unresolvedUserIds[index];
+    if (docSnap.exists && isAggregateNotificationRecipientDoc(docSnap)) {
+      if (docSnap.data()?.categories?.[category] === true) {
+        inboxUserIds.add(uid);
+      }
+      return;
+    }
+    unindexedUserIds.push(uid);
+  });
+
+  const preferencesByUid = await getNotificationPreferencesForUsers(teamId, unindexedUserIds);
+  unindexedUserIds.forEach((uid) => {
+    if (preferencesByUid.get(uid)?.[category] === true) {
+      inboxUserIds.add(uid);
+    }
+  });
+  return Array.from(inboxUserIds);
+}
+
+async function getInboxUserIdsForCategoryUserIds(teamId, category, userIds = [], actorUid = null, audienceContext = {}) {
+  if (!NOTIFICATION_CATEGORIES.includes(category)) return [];
+  const users = Array.from(new Set(
+    (Array.isArray(userIds) ? userIds : [])
+      .map((uid) => String(uid || '').trim())
+      .filter((uid) => uid && uid !== actorUid)
+  )).map((uid) => ({ uid, roles: ['parent'] }));
+  const eligibleUsers = users.filter((user) => canReceiveCategoryNotification(category, user, audienceContext));
+  if (!eligibleUsers.length) return [];
+
+  const recipientRefs = eligibleUsers.map((user) => buildTeamNotificationRecipientRef(teamId, user.uid));
+  const recipientSnaps = await firestore.getAll(...recipientRefs);
+  const inboxUserIds = new Set();
+  const unindexedUserIds = [];
+  recipientSnaps.forEach((docSnap, index) => {
+    const uid = eligibleUsers[index].uid;
+    if (docSnap.exists && isAggregateNotificationRecipientDoc(docSnap)) {
+      if (docSnap.data()?.categories?.[category] === true) {
+        inboxUserIds.add(uid);
+      }
+      return;
+    }
+    unindexedUserIds.push(uid);
+  });
+
+  const preferencesByUid = await getNotificationPreferencesForUsers(teamId, unindexedUserIds);
+  unindexedUserIds.forEach((uid) => {
+    if (preferencesByUid.get(uid)?.[category] === true) {
+      inboxUserIds.add(uid);
+    }
+  });
+  return Array.from(inboxUserIds);
+}
+
+async function getCategoryNotificationAudienceForUserIds(teamId, category, userIds = [], actorUid = null, audienceContext = {}) {
+  const [targets, inboxUids] = await Promise.all([
+    getTargetsForCategoryUserIds(teamId, category, userIds, actorUid, audienceContext),
+    getInboxUserIdsForCategoryUserIds(teamId, category, userIds, actorUid, audienceContext)
+  ]);
+  return { targets, inboxUids };
+}
+
 async function getTargetsForCategoryUserIds(teamId, category, userIds = [], actorUid = null, audienceContext = {}) {
   if (!NOTIFICATION_CATEGORIES.includes(category)) return [];
   const recipientUserIds = new Set(
@@ -7440,13 +7562,14 @@ async function sendRideClaimNotification(request = {}, context = {}) {
   const driverUserId = String(offer.driverUserId || '').trim();
   if (!driverUserId || driverUserId === actorUid) return null;
 
-  const targets = await getTargetsForCategoryUserIds(teamId, 'rideshare', [driverUserId], actorUid);
-  if (!targets.length) return null;
+  const audience = await getCategoryNotificationAudienceForUserIds(teamId, 'rideshare', [driverUserId], actorUid);
+  if (!audience.targets.length && !audience.inboxUids.length) return null;
 
   const game = gameSnap.exists ? (gameSnap.data() || {}) : {};
   const payload = buildRideClaimNotificationPayload(game, offer, request);
   return sendDirectTargetsNotification({
-    targets,
+    targets: audience.targets,
+    inboxUids: audience.inboxUids,
     category: 'rideshare',
     title: payload.title,
     body: payload.body,
@@ -7902,12 +8025,18 @@ async function sendCategoryNotification({
     }
   }
 
-  const allTargets = await getTargetsForCategory(teamId, category, actorUid, audienceContext);
+  const [allTargets, allInboxUserIds] = await Promise.all([
+    getTargetsForCategory(teamId, category, actorUid, audienceContext),
+    getInboxUserIdsForCategory(teamId, category, actorUid, audienceContext)
+  ]);
   const excludeSet = new Set(Array.isArray(excludeUids) ? excludeUids : []);
   const targets = excludeSet.size
     ? allTargets.filter((t) => !excludeSet.has(t.uid))
     : allTargets;
-  if (!targets.length) return null;
+  const inboxUserIds = excludeSet.size
+    ? allInboxUserIds.filter((uid) => !excludeSet.has(uid))
+    : allInboxUserIds;
+  if (!targets.length && !inboxUserIds.length) return null;
 
   const link = linkOverride || buildNotificationLink({ category, teamId, gameId, eventId: eventId || gameId, conversationId, childId });
   const appRoute = buildNotificationAppRoute({ category, teamId, gameId, eventId: eventId || gameId, conversationId, childId });
@@ -7979,7 +8108,7 @@ async function sendCategoryNotification({
   }
 
   const inboxResult = await writeNotificationInboxRecords({
-    targets,
+    targets: inboxUserIds.map((uid) => ({ uid })),
     category,
     title,
     body,
@@ -8429,11 +8558,12 @@ function buildOfficiatingDestination(teamId) {
   };
 }
 
-async function sendOfficiatingTargetsNotification({ teamId, gameId = null, targets, title, body }) {
-  if (!targets.length) return null;
+async function sendOfficiatingTargetsNotification({ teamId, gameId = null, targets, inboxUids = null, title, body }) {
+  if (!targets.length && !inboxUids?.length) return null;
   const destination = buildOfficiatingDestination(teamId);
   return sendDirectTargetsNotification({
     targets,
+    inboxUids,
     category: 'officiating',
     title,
     body,
@@ -8482,6 +8612,9 @@ function getNewOpenOfficiatingSlots(beforeGame = {}, afterGame = {}) {
 }
 
 exports._internal = {
+  getInboxUserIdsForCategory,
+  getInboxUserIdsForCategoryUserIds,
+  getCategoryNotificationAudienceForUserIds,
   getTargetsForCategoryUserIds,
   buildTeamMediaNotificationBatchId,
   buildTeamMediaNotificationBatchMetadata,
@@ -8522,14 +8655,15 @@ exports.notifyOfficiatingNotificationCreated = functions.firestore
     if (!recipientUserIds.length) return null;
 
     const actorUid = String(record.actorUserId || record.actor?.userId || '').trim() || null;
-    const targets = await getTargetsForCategoryUserIds(teamId, 'officiating', recipientUserIds, actorUid);
-    if (!targets.length) return null;
+    const audience = await getCategoryNotificationAudienceForUserIds(teamId, 'officiating', recipientUserIds, actorUid);
+    if (!audience.targets.length && !audience.inboxUids.length) return null;
 
     const copy = getOfficiatingNotificationCopy(record);
     return sendOfficiatingTargetsNotification({
       teamId,
       gameId: record.gameId || record.gameReference?.gameId || null,
-      targets,
+      targets: audience.targets,
+      inboxUids: audience.inboxUids,
       title: copy.title,
       body: copy.body
     });
@@ -8547,21 +8681,19 @@ exports.notifyOpenOfficiatingSlots = functions.firestore
 
     const { teamId, gameId } = context.params;
     const actorUid = String(afterGame.updatedBy || afterGame.createdBy || '').trim() || null;
-    const targets = await getTargetsForCategory(teamId, 'officiating', actorUid);
-    if (!targets.length) return null;
-
     const gameLabel = getOfficiatingGameLabel(afterGame);
     const dateLabel = getOfficiatingDateLabel(afterGame);
     const position = openSlots.length === 1
       ? openSlots[0].position
       : `${openSlots.length} open assignments`;
 
-    return sendOfficiatingTargetsNotification({
+    return sendCategoryNotification({
       teamId,
       gameId,
-      targets,
+      category: 'officiating',
       title: `Open assignment: ${position}`,
-      body: `${gameLabel}${dateLabel ? ` on ${dateLabel}` : ''} needs an official. Claim it before someone else does.`
+      body: `${gameLabel}${dateLabel ? ` on ${dateLabel}` : ''} needs an official. Claim it before someone else does.`,
+      actorUid
     });
   });
 
@@ -9140,7 +9272,6 @@ async function sendPracticePacketDueTomorrowReminders(now = new Date()) {
         practiceTargets = await getTargetsForCategory(teamId, 'practice', null);
         practiceTargetsByTeam.set(teamId, practiceTargets);
       }
-      if (!practiceTargets.length) continue;
 
       const scheduleEventId = String(session.eventId || '').trim() || sessionId;
       const destination = buildPracticePacketNotificationDestination({ teamId, eventId: scheduleEventId, sessionId });
@@ -9157,7 +9288,8 @@ async function sendPracticePacketDueTomorrowReminders(now = new Date()) {
 
         const candidateUserIdSet = new Set(candidateUserIds);
         const parentTargets = practiceTargets.filter((target) => candidateUserIdSet.has(target.uid));
-        if (!parentTargets.length) continue;
+        const parentInboxUids = await getInboxUserIdsForCategoryUserIds(teamId, 'practice', candidateUserIds);
+        if (!parentTargets.length && !parentInboxUids.length) continue;
 
         const claimId = await claimPracticePacketReminder(teamId, sessionId, playerId, now);
         if (!claimId) continue;
@@ -9165,6 +9297,7 @@ async function sendPracticePacketDueTomorrowReminders(now = new Date()) {
         try {
           await sendDirectTargetsNotification({
             targets: parentTargets,
+            inboxUids: parentInboxUids,
             category: 'practice',
             title: `Reminder: ${packetTitle} is due tomorrow`,
             body: `${String(player.name || 'Your player').trim() || 'Your player'} has not completed the ${getPracticePacketNotificationLabel(session)} yet.`,
@@ -9181,7 +9314,7 @@ async function sendPracticePacketDueTomorrowReminders(now = new Date()) {
             teamId,
             sessionId,
             playerId,
-            targetCount: parentTargets.length
+            targetCount: new Set([...parentTargets.map((target) => target.uid), ...parentInboxUids]).size
           });
         } catch (error) {
           await clearPracticePacketReminderClaim(teamId, sessionId, playerId, claimId, error);
@@ -9365,17 +9498,16 @@ async function resolveEligibleFeeReminderRecipient({
   const candidateUserIds = await resolveFeeReminderCandidateUserIds(teamId, recipient);
   if (!candidateUserIds.length) return null;
 
-  const allTargets = await getTargetsForCategory(teamId, 'fees', null);
-  const candidateUserIdSet = new Set(candidateUserIds);
-  const payerTargets = allTargets.filter((target) => candidateUserIdSet.has(target.uid));
-  if (!payerTargets.length) return null;
+  const payerAudience = await getCategoryNotificationAudienceForUserIds(teamId, 'fees', candidateUserIds);
+  if (!payerAudience.targets.length && !payerAudience.inboxUids.length) return null;
 
   return {
     teamId,
     batchId,
     recipientId,
     candidateUserIds,
-    payerTargets
+    payerTargets: payerAudience.targets,
+    payerInboxUids: payerAudience.inboxUids
   };
 }
 
@@ -9431,6 +9563,7 @@ async function sendFeeUnpaidDueReminders() {
 
       await sendDirectTargetsNotification({
         targets: eligibleRecipient.payerTargets,
+        inboxUids: eligibleRecipient.payerInboxUids,
         category: 'fees',
         title: `Reminder: ${title} is due soon`,
         body,
@@ -10872,13 +11005,14 @@ const notifyRideOfferCreated = functions.firestore
     const recipientUserIds = parentUserIds.filter((uid) => uid && uid !== actorUid);
     if (!recipientUserIds.length) return null;
 
-    const targets = await getParentNotificationTargetsForTeam(teamId, 'rideshare', recipientUserIds, actorUid);
-    if (!targets.length) return null;
+    const audience = await getCategoryNotificationAudienceForUserIds(teamId, 'rideshare', recipientUserIds, actorUid);
+    if (!audience.targets.length && !audience.inboxUids.length) return null;
 
     const game = gameSnap.exists ? (gameSnap.data() || {}) : {};
     const payload = buildRideOfferNotificationPayload(game, offer);
     return sendDirectTargetsNotification({
-      targets,
+      targets: audience.targets,
+      inboxUids: audience.inboxUids,
       category: 'rideshare',
       title: payload.title,
       body: payload.body,
@@ -10938,13 +11072,14 @@ const notifyRideOfferCancelled = functions.firestore
     if (!claimantUserIds.length) return null;
 
     const actorUid = String(after.driverUserId || before.driverUserId || '').trim() || null;
-    const targets = await getTargetsForCategoryUserIds(teamId, 'rideshare', claimantUserIds, actorUid);
-    if (!targets.length) return null;
+    const audience = await getCategoryNotificationAudienceForUserIds(teamId, 'rideshare', claimantUserIds, actorUid);
+    if (!audience.targets.length && !audience.inboxUids.length) return null;
 
     const game = gameSnap.exists ? (gameSnap.data() || {}) : {};
     const payload = buildRideOfferCancelledNotificationPayload(game);
     return sendDirectTargetsNotification({
-      targets,
+      targets: audience.targets,
+      inboxUids: audience.inboxUids,
       category: 'rideshare',
       title: payload.title,
       body: payload.body,
@@ -11031,15 +11166,16 @@ exports.notifyParentMembershipRequestCreated = functions.firestore
     const teamId = String(context.params?.teamId || '').trim();
     if (!teamId) return null;
 
-    const staffTargets = await getStaffTargetsForAccess(teamId, String(data.requesterUserId || '').trim() || null);
-    if (!staffTargets.length) return null;
+    const staffAudience = await getStaffNotificationAudienceForAccess(teamId, String(data.requesterUserId || '').trim() || null);
+    if (!staffAudience.targets.length && !staffAudience.inboxUids.length) return null;
 
     const destination = buildStaffAccessRequestNotificationDestination({ teamId });
     const requesterName = String(data.requesterName || data.requesterEmail || 'A parent').trim() || 'A parent';
     const playerName = String(data.playerName || 'a player').trim() || 'a player';
 
     await sendDirectTargetsNotification({
-      targets: staffTargets,
+      targets: staffAudience.targets,
+      inboxUids: staffAudience.inboxUids,
       category: 'access',
       title: `Access request: ${requesterName} for ${playerName}`,
       body: `${requesterName} requested ${String(data.relation || 'parent').trim() || 'parent'} access for ${playerName}.`,
@@ -11065,15 +11201,16 @@ exports.notifyParentMembershipRequestUpdated = functions.firestore
     if (!teamId || !requesterUserId || beforeStatus === afterStatus) return null;
     if (!['approved', 'denied'].includes(afterStatus)) return null;
 
-    const requesterTargets = await getTargetsForCategoryUserIds(teamId, 'access', [requesterUserId]);
-    if (!requesterTargets.length) return null;
+    const requesterAudience = await getCategoryNotificationAudienceForUserIds(teamId, 'access', [requesterUserId]);
+    if (!requesterAudience.targets.length && !requesterAudience.inboxUids.length) return null;
 
     const teamSnap = await firestore.doc(`teams/${teamId}`).get();
     const teamName = String(teamSnap.exists ? (teamSnap.data()?.name || '') : '').trim() || 'your team';
     const destination = buildTeamNotificationDestination({ teamId });
 
     await sendDirectTargetsNotification({
-      targets: requesterTargets,
+      targets: requesterAudience.targets,
+      inboxUids: requesterAudience.inboxUids,
       category: 'access',
       title: afterStatus === 'approved'
         ? `You now have access to ${teamName}`
@@ -11099,15 +11236,16 @@ exports.notifyRegistrationSubmitted = functions.firestore
     const formId = String(context.params?.formId || '').trim();
     if (!teamId || !formId) return null;
 
-    const staffTargets = await getStaffTargetsForAccess(teamId, null);
-    if (!staffTargets.length) return null;
+    const staffAudience = await getStaffNotificationAudienceForAccess(teamId, null);
+    if (!staffAudience.targets.length && !staffAudience.inboxUids.length) return null;
 
     const participantName = getRegistrationParticipantName(data);
     const programName = getRegistrationProgramName(data);
     const destination = buildRegistrationReviewNotificationDestination({ teamId, formId });
 
     await sendDirectTargetsNotification({
-      targets: staffTargets,
+      targets: staffAudience.targets,
+      inboxUids: staffAudience.inboxUids,
       category: 'access',
       title: `Registration submitted: ${participantName}`,
       body: `${participantName} submitted ${programName}.`,
@@ -11188,9 +11326,8 @@ exports.notifyInviteRedeemed = functions.firestore
     const inviterUid = String(afterData.generatedBy || '').trim();
     if (!teamId || !inviterUid) return null;
 
-    const inviteTargets = (await getTargetsForCategory(teamId, 'access', null, {}, [{ uid: inviterUid, roles: ['staff'] }]))
-      .filter((target) => target.uid === inviterUid);
-    if (!inviteTargets.length) return null;
+    const inviteAudience = await getCategoryNotificationAudienceForUserIds(teamId, 'access', [inviterUid]);
+    if (!inviteAudience.targets.length && !inviteAudience.inboxUids.length) return null;
 
     const usedByUid = String(afterData.usedBy || '').trim();
     const usedBySnap = usedByUid ? await firestore.doc(`users/${usedByUid}`).get() : null;
@@ -11206,7 +11343,8 @@ exports.notifyInviteRedeemed = functions.firestore
     const destination = buildTeamNotificationDestination({ teamId });
 
     await sendDirectTargetsNotification({
-      targets: inviteTargets,
+      targets: inviteAudience.targets,
+      inboxUids: inviteAudience.inboxUids,
       category: 'access',
       title: `${inviteeName} accepted your invite`,
       body: inviteType === 'admin_invite'
@@ -11249,8 +11387,9 @@ exports.notifyFeeMarkedPaid = functions.firestore
     const payerIdentity = getFeePayerIdentity(after);
     const wasPaymentRecorded = paymentAmountCents > 0;
 
-    const [allFeeTargets, candidateUsers] = await Promise.all([
+    const [allFeeTargets, allFeeInboxUids, candidateUsers] = await Promise.all([
       getTargetsForCategory(teamId, 'fees', null),
+      getInboxUserIdsForCategory(teamId, 'fees', null),
       getCandidateUsersForTeam(teamId)
     ]);
     const staffUserIds = new Set(
@@ -11262,9 +11401,11 @@ exports.notifyFeeMarkedPaid = functions.firestore
     const promises = [];
     if (payerUserId) {
       const payerTargets = allFeeTargets.filter((target) => target.uid === payerUserId);
-      if (payerTargets.length) {
+      const payerInboxUids = allFeeInboxUids.filter((uid) => uid === payerUserId);
+      if (payerTargets.length || payerInboxUids.length) {
         promises.push(sendDirectTargetsNotification({
           targets: payerTargets,
+          inboxUids: payerInboxUids,
           category: 'fees',
           title: wasPaymentRecorded ? `Payment received: ${title}` : `Fee paid: ${title}`,
           body: wasPaymentRecorded
@@ -11278,9 +11419,11 @@ exports.notifyFeeMarkedPaid = functions.firestore
     }
 
     const staffTargets = allFeeTargets.filter((target) => staffUserIds.has(target.uid) && target.uid !== payerUserId);
-    if (staffTargets.length) {
+    const staffInboxUids = allFeeInboxUids.filter((uid) => staffUserIds.has(uid) && uid !== payerUserId);
+    if (staffTargets.length || staffInboxUids.length) {
       promises.push(sendDirectTargetsNotification({
         targets: staffTargets,
+        inboxUids: staffInboxUids,
         category: 'fees',
         title: `Fee paid: ${title}`,
         body: wasPaymentRecorded
@@ -11335,16 +11478,8 @@ exports.notifyPublishedCertificateAward = functions.firestore
       return null;
     }
 
-    const allAwardTargets = await getTargetsForCategory(
-      teamId,
-      'awards',
-      null,
-      {},
-      parentUserIds.map((uid) => ({ uid, roles: ['parent'] }))
-    );
-    const parentUserIdSet = new Set(parentUserIds);
-    const parentTargets = allAwardTargets.filter((target) => parentUserIdSet.has(target.uid));
-    if (!parentTargets.length) {
+    const parentAudience = await getCategoryNotificationAudienceForUserIds(teamId, 'awards', parentUserIds);
+    if (!parentAudience.targets.length && !parentAudience.inboxUids.length) {
       await markPublishedCertificateAwardNotificationProcessed(change.after.ref, eventId);
       return null;
     }
@@ -11354,7 +11489,8 @@ exports.notifyPublishedCertificateAward = functions.firestore
     const awardTitle = String(afterData.awardTitle || afterData.title || 'Award').trim() || 'Award';
 
     await sendDirectTargetsNotification({
-      targets: parentTargets,
+      targets: parentAudience.targets,
+      inboxUids: parentAudience.inboxUids,
       category: 'awards',
       title: `Award published for ${playerName}`,
       body: `${awardTitle} is ready to view in ParentTools.`,
@@ -11385,23 +11521,27 @@ exports.notifyFeeAssigned = functions.firestore
     const payerUserIds = await resolveFeeAssignmentPayerUserIds(teamId, data);
     if (!payerUserIds.length) return null;
 
-    const payerTargets = await getTargetsForCategoryUserIds(teamId, 'fees', payerUserIds, null);
-    if (!payerTargets.length) return null;
+    const payerAudience = await getCategoryNotificationAudienceForUserIds(teamId, 'fees', payerUserIds, null);
+    if (!payerAudience.targets.length && !payerAudience.inboxUids.length) return null;
 
-    const targetUserIds = Array.from(new Set(payerTargets.map((target) => String(target.uid || '').trim()).filter(Boolean)));
+    const targetUserIds = Array.from(new Set([
+      ...payerAudience.targets.map((target) => String(target.uid || '').trim()),
+      ...payerAudience.inboxUids
+    ].filter(Boolean)));
     const claimResults = await Promise.all(targetUserIds.map(async (uid) => ({
       uid,
       claimed: await claimFeeAssignmentNotificationUser({ teamId, batchId, recipientId, uid })
     })));
     const claimedUserIds = new Set(claimResults.filter((result) => result.claimed).map((result) => result.uid));
     if (!claimedUserIds.size) return null;
-    const claimedPayerTargets = payerTargets.filter((target) => claimedUserIds.has(target.uid));
+    const claimedPayerTargets = payerAudience.targets.filter((target) => claimedUserIds.has(target.uid));
     try {
       const sendResults = [];
       for (const uid of claimedUserIds) {
         const claimedTargets = claimedPayerTargets;
         const targetsForUser = claimedTargets.filter((target) => String(target.uid || '').trim() === uid);
-        if (!targetsForUser.length) continue;
+        const inboxUidsForUser = payerAudience.inboxUids.includes(uid) ? [uid] : [];
+        if (!targetsForUser.length && !inboxUidsForUser.length) continue;
         const recipientsForUser = await resolveFeeAssignmentRecipientsForUser({
           teamId,
           batchId,
@@ -11416,6 +11556,7 @@ exports.notifyFeeAssigned = functions.firestore
           const amountDisplay = amountCents > 0 ? ` (${formatMoneyFromCents(amountCents, data.currency || 'USD')})` : '';
           sendResults.push(await sendDirectTargetsNotification({
             targets: targetsForUser,
+            inboxUids: inboxUidsForUser,
             category: 'fees',
             title: `New fee assigned: ${title}${amountDisplay}`,
             body: buildFeeAssignmentNotificationBody(data, amountDisplay ? amountDisplay.slice(2, -1) : ''),
@@ -11427,6 +11568,7 @@ exports.notifyFeeAssigned = functions.firestore
         const payload = buildCombinedFeeAssignmentNotificationPayload(recipientsForUser);
         sendResults.push(await sendDirectTargetsNotification({
           targets: targetsForUser,
+          inboxUids: inboxUidsForUser,
           category: 'fees',
           title: payload.title,
           body: payload.body,
@@ -11463,8 +11605,9 @@ exports.notifyPracticePacketCompleted = functions.firestore
     const parentUserId = String(data.parentUserId || '').trim() || null;
     const playerName = String(data.childName || 'A player').trim() || 'A player';
 
-    const [allPracticeTargets, candidateUsers, sessionSnap] = await Promise.all([
+    const [allPracticeTargets, allPracticeInboxUids, candidateUsers, sessionSnap] = await Promise.all([
       getTargetsForCategory(teamId, 'practice', null),
+      getInboxUserIdsForCategory(teamId, 'practice', null),
       getCandidateUsersForTeam(teamId),
       firestore.doc(`teams/${teamId}/practiceSessions/${sessionId}`).get()
     ]);
@@ -11477,8 +11620,12 @@ exports.notifyPracticePacketCompleted = functions.firestore
       staffUserIds.has(target.uid)
       && target.uid !== parentUserId
     ));
+    const staffInboxUids = allPracticeInboxUids.filter((uid) => (
+      staffUserIds.has(uid)
+      && uid !== parentUserId
+    ));
 
-    if (!staffTargets.length) {
+    if (!staffTargets.length && !staffInboxUids.length) {
       functions.logger.warn('notifyPracticePacketCompleted found no staff notification targets.', {
         teamId,
         sessionId,
@@ -11495,6 +11642,7 @@ exports.notifyPracticePacketCompleted = functions.firestore
 
     await sendDirectTargetsNotification({
       targets: staffTargets,
+      inboxUids: staffInboxUids,
       category: 'practice',
       title: `Home packet completed: ${playerName}`,
       body: `${playerName} completed the ${getPracticePacketNotificationLabel(session)}.`,
@@ -11662,10 +11810,11 @@ async function sendRsvpReminderPushNotifications({ teamId, gameId, event = {}, r
     let targetCount = 0;
 
     for (const [childId, userIds] of childIdByRecipientGroup.entries()) {
-      const targets = await getTargetsForCategoryUserIds(teamId, 'rsvp', userIds);
-      if (!targets.length) continue;
+      const audience = await getCategoryNotificationAudienceForUserIds(teamId, 'rsvp', userIds);
+      if (!audience.targets.length && !audience.inboxUids.length) continue;
       const sendResult = await sendDirectTargetsNotification({
-        targets,
+        targets: audience.targets,
+        inboxUids: audience.inboxUids,
         category: 'rsvp',
         title: payload.title,
         body: payload.body,
@@ -11676,19 +11825,20 @@ async function sendRsvpReminderPushNotifications({ teamId, gameId, event = {}, r
       });
       successCount += Number(sendResult?.successCount || 0);
       failureCount += Number(sendResult?.failureCount || 0);
-      targetCount += targets.length;
+      targetCount += new Set([...audience.targets.map((target) => target.uid), ...audience.inboxUids]).size;
     }
 
     return { successCount, failureCount, targetCount };
   }
 
-  const targets = await getTargetsForCategoryUserIds(teamId, 'rsvp', recipientUserIds);
-  if (!targets.length) {
+  const audience = await getCategoryNotificationAudienceForUserIds(teamId, 'rsvp', recipientUserIds);
+  if (!audience.targets.length && !audience.inboxUids.length) {
     return { successCount: 0, failureCount: 0, targetCount: 0 };
   }
 
   const sendResult = await sendDirectTargetsNotification({
-    targets,
+    targets: audience.targets,
+    inboxUids: audience.inboxUids,
     category: 'rsvp',
     title: payload.title,
     body: payload.body,
@@ -11701,7 +11851,7 @@ async function sendRsvpReminderPushNotifications({ teamId, gameId, event = {}, r
   return {
     successCount: Number(sendResult?.successCount || 0),
     failureCount: Number(sendResult?.failureCount || 0),
-    targetCount: targets.length
+    targetCount: new Set([...audience.targets.map((target) => target.uid), ...audience.inboxUids]).size
   };
 }
 
