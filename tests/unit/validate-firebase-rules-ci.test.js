@@ -263,6 +263,27 @@ service firebase.storage {
             'Test deploy'
         )).toThrow('Test deploy must not use a long-lived Google service-account key or static ADC input');
         expect(() => validateFirebaseDeployWorkloadIdentity(
+            validWorkflow.replace(
+                'run: node "$firebase_cli" deploy',
+                'env:\n              DEPLOY_AUTH: \${{ secrets["RENAMED"] }}\n            run: node "$firebase_cli" deploy'
+            ),
+            'Test deploy'
+        )).toThrow('Test deploy must not use a long-lived Google service-account key or static ADC input');
+        expect(() => validateFirebaseDeployWorkloadIdentity(
+            validWorkflow.replace(
+                'run: node "$firebase_cli" deploy',
+                'env:\n              FIREBASE_RELEASE_TOKEN: renamed-token\n            run: node "$firebase_cli" deploy'
+            ),
+            'Test deploy'
+        )).toThrow('Test deploy must not use a long-lived Google service-account key or static ADC input');
+        expect(() => validateFirebaseDeployWorkloadIdentity(
+            validWorkflow.replace(
+                'node "$firebase_cli" deploy --only hosting',
+                'export FIREBASE_"TOKEN"="$DEPLOY_AUTH"\n              node "$firebase_cli" deploy --only hosting'
+            ),
+            'Test deploy'
+        )).toThrow('Test deploy must not use a long-lived Google service-account key or static ADC input');
+        expect(() => validateFirebaseDeployWorkloadIdentity(
             validWorkflow.replace('timeout-minutes: 4', 'timeout-minutes: 6'),
             'Test deploy'
         )).toThrow('Test deploy credentialed deploy steps must have a four-minute timeout');

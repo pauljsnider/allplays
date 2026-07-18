@@ -191,7 +191,8 @@ export function validateFirebaseDeployWorkloadIdentity(workflow, label) {
     ]);
     for (const object of objects) {
         for (const key of Object.keys(object)) {
-            if (forbiddenMappingKeys.has(key.trim().toLowerCase())) {
+            const normalizedKey = key.trim().toLowerCase();
+            if (forbiddenMappingKeys.has(normalizedKey) || /^firebase[a-z0-9_]*token$/.test(normalizedKey)) {
                 throw new Error(`${label} must not use a long-lived Google service-account key or static ADC input.`);
             }
         }
@@ -202,10 +203,11 @@ export function validateFirebaseDeployWorkloadIdentity(workflow, label) {
         .filter((line) => !/^\s*echo\s+["'](?:CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE|GOOGLE_APPLICATION_CREDENTIALS|GOOGLE_GHA_CREDS_PATH)=["']\s*$/.test(line))
         .join('\n');
     const forbiddenScalarPatterns = [
-        /\$\{\{\s*secrets\./i,
+        /\bsecrets\b/i,
         /CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE/i,
         /credentials[\s_-]*json\s*:/i,
         /\bFIREBASE[A-Z0-9_]*TOKEN\b/i,
+        /\bFIREBASE_[^\n]{0,64}TOKEN\b/i,
         /GOOGLE_APPLICATION_CREDENTIALS/i,
         /GOOGLE_GHA_CREDS_PATH/i,
         /gcloud\s+auth\s+activate-service-account/i,
