@@ -11,6 +11,7 @@ function healthyInput() {
     return {
         now,
         database: {
+            uid: 'current-database-uid',
             pointInTimeRecoveryEnablement: 'POINT_IN_TIME_RECOVERY_ENABLED',
             deleteProtectionState: 'DELETE_PROTECTION_ENABLED'
         },
@@ -22,6 +23,7 @@ function healthyInput() {
         }],
         backups: [{
             name: 'backup-1',
+            databaseUid: 'current-database-uid',
             state: 'READY',
             snapshotTime: '2026-07-18T06:00:00Z'
         }]
@@ -63,6 +65,7 @@ describe('Firestore recovery posture', () => {
         expect(result.failures).toEqual(expect.arrayContaining([
             'Point-in-time recovery is not enabled.',
             'Database delete protection is not enabled.',
+            'The current database UID is unavailable, so backup lineage cannot be verified.',
             'The daily managed-backup retention is shorter than 14 days.',
             'The daily schedule has not produced a ready backup within its initial 36-hour window.'
         ]));
@@ -86,6 +89,45 @@ describe('Firestore recovery posture', () => {
         expect(evaluateFirestoreRecoveryPosture(input)).toMatchObject({
             healthy: true,
             notices: [expect.stringContaining('initial 36-hour window')]
+        });
+    });
+
+    it('rejects a fresh backup from an older database incarnation', () => {
+        const input = healthyInput();
+        input.schedules[0].createTime = '2026-07-16T00:00:00Z';
+        input.backups[0].databaseUid = 'retired-database-uid';
+
+        expect(evaluateFirestoreRecoveryPosture(input)).toMatchObject({
+            healthy: false,
+            failures: ['The daily schedule has not produced a ready backup within its initial 36-hour window.'],
+            newestBackup: null
+        });
+    });
+
+    it('treats old-incarnation backups as absent during the initial schedule grace window', () => {
+        const input = healthyInput();
+        input.schedules[0].createTime = '2026-07-18T02:42:05Z';
+        input.backups[0].databaseUid = 'retired-database-uid';
+
+        expect(evaluateFirestoreRecoveryPosture(input)).toMatchObject({
+            healthy: true,
+            failures: [],
+            notices: [expect.stringContaining('initial 36-hour window')],
+            newestBackup: null
+        });
+    });
+
+    it('fails closed when the current database UID cannot be established', () => {
+        const input = healthyInput();
+        delete input.database.uid;
+        input.schedules[0].createTime = '2026-07-18T02:42:05Z';
+        input.backups = [];
+
+        expect(evaluateFirestoreRecoveryPosture(input)).toMatchObject({
+            healthy: false,
+            failures: ['The current database UID is unavailable, so backup lineage cannot be verified.'],
+            notices: [expect.stringContaining('initial 36-hour window')],
+            newestBackup: null
         });
     });
 });

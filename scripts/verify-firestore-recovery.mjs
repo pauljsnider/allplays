@@ -34,6 +34,11 @@ export function evaluateFirestoreRecoveryPosture({
         failures.push('Database delete protection is not enabled.');
     }
 
+    const currentDatabaseUid = String(database?.uid || '').trim();
+    if (!currentDatabaseUid) {
+        failures.push('The current database UID is unavailable, so backup lineage cannot be verified.');
+    }
+
     const dailySchedule = schedules.find((schedule) => schedule?.dailyRecurrence != null);
     if (!dailySchedule) {
         failures.push('No daily managed-backup schedule exists.');
@@ -42,7 +47,11 @@ export function evaluateFirestoreRecoveryPosture({
     }
 
     const readyBackups = backups
-        .filter((backup) => !backup?.state || backup.state === 'READY')
+        .filter((backup) => (
+            currentDatabaseUid
+            && String(backup?.databaseUid || '').trim() === currentDatabaseUid
+            && (!backup?.state || backup.state === 'READY')
+        ))
         .sort((left, right) => timestampMillis(right.snapshotTime || right.createTime) - timestampMillis(left.snapshotTime || left.createTime));
     const newestBackup = readyBackups[0] || null;
 
