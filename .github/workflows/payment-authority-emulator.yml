@@ -1,0 +1,88 @@
+name: payment-authority-emulator
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/payment-authority-emulator.yml'
+      - 'firestore.rules'
+      - 'functions/**'
+      - 'js/db.js'
+      - 'js/team-fees-admin.js'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tests/unit/db-team-fee-recipient-updates.test.js'
+      - 'tests/unit/parent-dashboard-fees.test.js'
+      - 'tests/unit/payment-authority-rollout.test.js'
+      - 'tests/unit/registration-payment-webhook.test.js'
+      - 'tests/unit/stripe-async-payment-webhook.test.js'
+      - 'tests/unit/stripe-payment-lifecycle.test.js'
+      - 'tests/unit/stripe-registration-fee-recompute.test.js'
+      - 'tests/unit/team-entitlement-rules.test.js'
+      - 'tests/unit/team-fee-recipient-rules.test.js'
+      - 'tests/unit/team-fees-admin.test.js'
+      - 'tests/unit/team-fees-functions.test.js'
+      - 'tests/unit/team-pass-functions.test.js'
+  push:
+    branches:
+      - master
+    paths:
+      - '.github/workflows/payment-authority-emulator.yml'
+      - 'firestore.rules'
+      - 'functions/**'
+      - 'js/db.js'
+      - 'js/team-fees-admin.js'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tests/unit/db-team-fee-recipient-updates.test.js'
+      - 'tests/unit/parent-dashboard-fees.test.js'
+      - 'tests/unit/payment-authority-rollout.test.js'
+      - 'tests/unit/registration-payment-webhook.test.js'
+      - 'tests/unit/stripe-async-payment-webhook.test.js'
+      - 'tests/unit/stripe-payment-lifecycle.test.js'
+      - 'tests/unit/stripe-registration-fee-recompute.test.js'
+      - 'tests/unit/team-entitlement-rules.test.js'
+      - 'tests/unit/team-fee-recipient-rules.test.js'
+      - 'tests/unit/team-fees-admin.test.js'
+      - 'tests/unit/team-fees-functions.test.js'
+      - 'tests/unit/team-pass-functions.test.js'
+  workflow_dispatch:
+
+concurrency:
+  group: payment-authority-emulator-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  payment-authority:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Functions dependencies
+        run: npm ci --prefix functions
+
+      - name: Run payment authority and replay regressions
+        run: npm run test:payment-authority:unit:ci
+
+      - name: Run payment authorization rules in the Firestore emulator
+        run: npm run test:payment-authority:emulator:ci
