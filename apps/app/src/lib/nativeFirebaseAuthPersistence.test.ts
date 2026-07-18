@@ -15,12 +15,14 @@ import {
   clearNativeFirebaseAuthUser,
   getFirebaseAuthPersistenceKey,
   NativeSecureFirebaseAuthPersistence,
-  persistNativeFirebaseAuthUser
+  persistNativeFirebaseAuthUser,
+  shouldBlockNativeFirebaseAuthMigration
 } from './nativeFirebaseAuthPersistence';
 
 describe('NativeSecureFirebaseAuthPersistence', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    installLocalStorage();
     window.localStorage.clear();
     runtimeState.native = true;
     secureStorageMocks.getNativeSecureItem.mockResolvedValue(null);
@@ -74,6 +76,7 @@ describe('NativeSecureFirebaseAuthPersistence', () => {
     expect(secureStorageMocks.removeNativeSecureItem).toHaveBeenCalledWith(
       'firebase-auth-firebase%3AauthUser%3Aapi-key%3A%5BDEFAULT%5D'
     );
+    expect(shouldBlockNativeFirebaseAuthMigration('api-key')).toBe(true);
   });
 
   it('tombstones a failed removal so stale secure auth cannot restore on relaunch', async () => {
@@ -91,7 +94,7 @@ describe('NativeSecureFirebaseAuthPersistence', () => {
     expect(secureStorageMocks.getNativeSecureItem).not.toHaveBeenCalled();
   });
 
-  it('clears a failed-removal tombstone only after stale auth is deleted or replaced', async () => {
+  it('retains a signed-out tombstone after deletion and clears it only after replacement', async () => {
     const persistence = new NativeSecureFirebaseAuthPersistence();
     const key = 'firebase:key';
     const markerKey = 'allplays-native-firebase-auth-signed-out:firebase%3Akey';
@@ -99,10 +102,121 @@ describe('NativeSecureFirebaseAuthPersistence', () => {
 
     await expect(persistence._get(key)).resolves.toBeNull();
     expect(secureStorageMocks.removeNativeSecureItem).toHaveBeenCalledWith('firebase-auth-firebase%3Akey');
-    expect(window.localStorage.getItem(markerKey)).toBeNull();
+    expect(window.localStorage.getItem(markerKey)).toBe('1');
 
-    window.localStorage.setItem(markerKey, '1');
     await persistence._set(key, { uid: 'new-user' });
     expect(window.localStorage.getItem(markerKey)).toBeNull();
   });
+
+  it('blocks the full Firebase migration hierarchy until a fresh secure user replaces signed-out state', async () => {
+    const key = getFirebaseAuthPersistenceKey('api-key');
+    let secureValue: string | null = JSON.stringify({ uid: 'user-a' });
+    let secureRemovalFails = true;
+    secureStorageMocks.getNativeSecureItem.mockImplementation(async () => secureValue);
+    secureStorageMocks.setNativeSecureItem.mockImplementation(async (_key: string, value: string) => {
+      secureValue = value;
+    });
+    secureStorageMocks.removeNativeSecureItem.mockImplementation(async () => {
+      if (secureRemovalFails) throw new Error('keychain locked');
+      secureValue = null;
+    });
+
+    const securePersistence = new NativeSecureFirebaseAuthPersistence();
+    const legacyPersistence = {
+      _shouldAllowMigration: true,
+      _isAvailable: vi.fn(async () => true),
+      _get: vi.fn(async () => ({ uid: 'user-a' })),
+      _set: vi.fn(async () => undefined),
+      _remove: vi.fn(async () => {
+        throw new Error('IndexedDB cleanup failed');
+      })
+    };
+
+    await expect(securePersistence._remove(key)).rejects.toThrow('keychain locked');
+    expect(shouldBlockNativeFirebaseAuthMigration('api-key')).toBe(true);
+
+    secureRemovalFails = false;
+    const guardedHierarchy = shouldBlockNativeFirebaseAuthMigration('api-key')
+      ? [securePersistence]
+      : [securePersistence, legacyPersistence];
+    await expect(initializeLikeFirebasePersistenceManager(guardedHierarchy, key)).resolves.toBeNull();
+    expect(legacyPersistence._get).not.toHaveBeenCalled();
+    expect(shouldBlockNativeFirebaseAuthMigration('api-key')).toBe(true);
+
+    await securePersistence._set(key, { uid: 'user-b' });
+    expect(shouldBlockNativeFirebaseAuthMigration('api-key')).toBe(false);
+
+    const replacementHierarchy = shouldBlockNativeFirebaseAuthMigration('api-key')
+      ? [securePersistence]
+      : [securePersistence, legacyPersistence];
+    await expect(initializeLikeFirebasePersistenceManager(replacementHierarchy, key)).resolves.toEqual({ uid: 'user-b' });
+    expect(legacyPersistence._get).not.toHaveBeenCalled();
+    expect(legacyPersistence._remove).toHaveBeenCalledWith(key);
+  });
 });
+
+type SimulatedPersistence = {
+  _shouldAllowMigration?: boolean;
+  _isAvailable: () => Promise<boolean>;
+  _get: (key: string) => Promise<PersistenceValue | null>;
+  _set: (key: string, value: PersistenceValue) => Promise<unknown>;
+  _remove: (key: string) => Promise<unknown>;
+};
+
+type PersistenceValue = Record<string, unknown> | string;
+
+/** Mirrors Firebase 12.16 PersistenceUserManager.create's ordered probing,
+ * preferred-store migration, and ignored cleanup failures. */
+async function initializeLikeFirebasePersistenceManager(
+  hierarchy: SimulatedPersistence[],
+  key: string
+): Promise<PersistenceValue | null> {
+  const available = (
+    await Promise.all(hierarchy.map(async (persistence) => ((await persistence._isAvailable()) ? persistence : null)))
+  ).filter((persistence): persistence is SimulatedPersistence => Boolean(persistence));
+  let selected = available[0];
+  let currentUser: PersistenceValue | null = null;
+  let userToMigrate: PersistenceValue | null = null;
+
+  for (const persistence of hierarchy) {
+    try {
+      const candidate = await persistence._get(key);
+      if (!candidate) continue;
+      currentUser = candidate;
+      if (persistence !== selected) userToMigrate = candidate;
+      selected = persistence;
+      break;
+    } catch {
+      // Firebase ignores unreadable migration sources.
+    }
+  }
+
+  const migrationHierarchy = available.filter((persistence) => persistence._shouldAllowMigration);
+  if (!selected?._shouldAllowMigration || migrationHierarchy.length === 0) return currentUser;
+  selected = migrationHierarchy[0];
+  if (userToMigrate) await selected._set(key, userToMigrate);
+  await Promise.all(
+    hierarchy.map(async (persistence) => {
+      if (persistence === selected) return;
+      try {
+        await persistence._remove(key);
+      } catch {
+        // Firebase intentionally ignores cleanup failures after selection.
+      }
+    })
+  );
+  return currentUser;
+}
+
+function installLocalStorage() {
+  const records = new Map<string, string>();
+  Object.defineProperty(window, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem: vi.fn((key: string) => records.get(key) ?? null),
+      setItem: vi.fn((key: string, value: string) => records.set(key, String(value))),
+      removeItem: vi.fn((key: string) => records.delete(key)),
+      clear: vi.fn(() => records.clear())
+    }
+  });
+}

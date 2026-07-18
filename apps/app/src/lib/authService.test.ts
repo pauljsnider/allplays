@@ -344,6 +344,10 @@ describe('signOut', () => {
     imageUploadSessionMocks.clearImageUploadSession.mockResolvedValue(undefined);
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('continues all logout cleanup when secure Firebase persistence removal fails', async () => {
     nativeFirebasePersistenceMocks.clearNativeFirebaseAuthUser.mockRejectedValueOnce(new Error('keychain locked'));
 
@@ -362,6 +366,73 @@ describe('signOut', () => {
     expect(appDataCacheMocks.flushAppDataCachePersistence).toHaveBeenCalledTimes(1);
     expect(nativeSessionStoreMocks.clearNativeAuthSession).toHaveBeenCalledTimes(1);
     expect(imageUploadSessionMocks.clearImageUploadSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('finishes user A logout before allowing a queued user B auth mutation to start', async () => {
+    const fallbackRemoval = createDeferred<void>();
+    nativeSessionStoreMocks.clearNativeAuthSession.mockImplementationOnce(() => fallbackRemoval.promise);
+    legacySignupFlowMocks.executeEmailPasswordSignup.mockReset();
+    legacySignupFlowMocks.executeEmailPasswordSignup.mockResolvedValue({
+      user: { uid: 'user-b', email: 'user-b@example.com' }
+    });
+
+    const logout = signOut();
+    await vi.waitFor(() => expect(nativeSessionStoreMocks.clearNativeAuthSession).toHaveBeenCalledTimes(1));
+    const userBSignIn = signUpWithEmail('user-b@example.com', 'secret1', 'ABCD1234');
+    await Promise.resolve();
+    expect(legacySignupFlowMocks.executeEmailPasswordSignup).not.toHaveBeenCalled();
+
+    fallbackRemoval.resolve();
+    await expect(logout).resolves.toBeUndefined();
+    await expect(userBSignIn).resolves.toMatchObject({ user: { uid: 'user-b' } });
+    expect(vi.mocked(firebaseSignOutMock).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(legacySignupFlowMocks.executeEmailPasswordSignup).mock.invocationCallOrder[0]
+    );
+  });
+
+  it('continues queued auth work after a best-effort logout cleanup failure', async () => {
+    appDataCacheMocks.flushAppDataCachePersistence.mockRejectedValueOnce(new Error('cache store unavailable'));
+    legacySignupFlowMocks.executeEmailPasswordSignup.mockReset();
+    legacySignupFlowMocks.executeEmailPasswordSignup.mockResolvedValue({
+      user: { uid: 'user-b', email: 'user-b@example.com' }
+    });
+
+    const logout = signOut();
+    const userBSignIn = signUpWithEmail('user-b@example.com', 'secret1', 'ABCD1234');
+
+    await expect(logout).resolves.toBeUndefined();
+    await expect(userBSignIn).resolves.toMatchObject({ user: { uid: 'user-b' } });
+    expect(firebaseSignOutMock).toHaveBeenCalledWith(authState);
+  });
+
+  it('fails a queued replacement closed when logout times out and finishes late', async () => {
+    vi.useFakeTimers();
+    const fallbackRemoval = createDeferred<void>();
+    nativeSessionStoreMocks.clearNativeAuthSession.mockImplementationOnce(() => fallbackRemoval.promise);
+    legacySignupFlowMocks.executeEmailPasswordSignup.mockReset();
+    legacySignupFlowMocks.executeEmailPasswordSignup.mockResolvedValue({
+      user: { uid: 'user-b', email: 'user-b@example.com' }
+    });
+
+    const logout = signOut();
+    await Promise.resolve();
+    const staleUserBSignIn = signUpWithEmail('user-b@example.com', 'secret1', 'ABCD1234');
+    const staleSignInRejection = expect(staleUserBSignIn).rejects.toThrow(
+      'still finishing prior account cleanup'
+    );
+
+    await vi.advanceTimersByTimeAsync(2_500);
+    await expect(logout).resolves.toBeUndefined();
+    expect(legacySignupFlowMocks.executeEmailPasswordSignup).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(12_500);
+    await staleSignInRejection;
+    fallbackRemoval.resolve();
+    await vi.runAllTimersAsync();
+    expect(legacySignupFlowMocks.executeEmailPasswordSignup).not.toHaveBeenCalled();
+
+    await expect(signUpWithEmail('user-b@example.com', 'secret1', 'ABCD1234'))
+      .resolves.toMatchObject({ user: { uid: 'user-b' } });
   });
 });
 
@@ -926,6 +997,16 @@ function createJsonResponse(payload: unknown) {
     ok: true,
     json: vi.fn(async () => payload)
   } as unknown as Response;
+}
+
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
 }
 
 function installIndexedDbMock() {

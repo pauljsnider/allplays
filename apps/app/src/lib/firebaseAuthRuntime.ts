@@ -23,7 +23,7 @@ import {
   verifyPasswordResetCode
 } from './adapters/legacyFirebaseAuthSdk';
 import { createLogger } from './logger';
-import { NativeSecureFirebaseAuthPersistence } from './nativeFirebaseAuthPersistence';
+import { NativeSecureFirebaseAuthPersistence, shouldBlockNativeFirebaseAuthMigration } from './nativeFirebaseAuthPersistence';
 
 const logger = createLogger('firebase');
 
@@ -58,16 +58,30 @@ async function initializeFirebaseAuth(appInstance: typeof app) {
     return getAuth(appInstance);
   }
 
+  const blockLegacyMigration = shouldBlockNativeFirebaseAuthMigration(
+    String(firebaseConfig.apiKey || ''),
+    String(appInstance.name || '[DEFAULT]')
+  );
   try {
     return initializeAuth(appInstance, {
       // The secure persistence is first so Firebase migrates existing
       // IndexedDB sessions into Keychain/Keystore and removes the old copy.
-      // IndexedDB is present only as a one-time migration source.
-      persistence: [NativeSecureFirebaseAuthPersistence, indexedDBLocalPersistence]
+      // IndexedDB is present only as a one-time migration source and is omitted
+      // after logout until a fresh secure credential replaces the tombstone.
+      persistence: blockLegacyMigration
+        ? [NativeSecureFirebaseAuthPersistence]
+        : [NativeSecureFirebaseAuthPersistence, indexedDBLocalPersistence]
     });
   } catch (error) {
     logger.warn('Native auth initialization reused an existing auth instance.', { error });
     const existingAuth = getAuth(appInstance);
+    if (blockLegacyMigration) {
+      // An auth instance initialized before this module may already have loaded
+      // a stale IndexedDB user. Clear that instance before changing persistence;
+      // otherwise setPersistence would migrate the signed-out user into secure
+      // storage and defeat the same tombstone guard used above.
+      await signOut(existingAuth);
+    }
     await setPersistence(existingAuth, NativeSecureFirebaseAuthPersistence);
     return existingAuth;
   }

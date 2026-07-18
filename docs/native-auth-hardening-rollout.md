@@ -11,13 +11,17 @@ authentication credentials and account boundaries are still security-sensitive.
 - Firebase Auth state in iOS/Android moves from plaintext WebView storage to
   iOS Keychain / Android Keystore-backed secure storage.
 - The existing Firebase IndexedDB record is retained only as an automatic,
-  one-time migration source. Firebase then removes the old persistence copy.
+  one-time migration source while no signed-out tombstone exists. A tombstoned
+  launch omits IndexedDB from Firebase's persistence hierarchy until a fresh
+  secure credential is written, so failed cleanup cannot restore an old user.
 - The native REST fallback, image-upload anonymous session, and persisted
   native app-data cache use the same secure-storage boundary. Browser cache
   data is session-scoped.
 - Logout removes the secure Firebase record, fallback session, image session,
   Firebase IndexedDB record, and user-scoped app-data cache. A non-secret
   signed-out marker prevents restoration if secure deletion temporarily fails.
+  Native auth mutations and same-key secure-storage operations are serialized
+  so delayed cleanup for user A cannot delete a replacement session for user B.
 - Direct native Firebase REST calls reject emulator/prod crossover, foreign
   project configuration, mismatched UID/profile responses, expired or
   wrong-project token claims, browser credential attachment, redirects, and
@@ -44,7 +48,14 @@ every privileged data operation.
 4. Serve both association files from `https://allplays.ai/.well-known/` with
    HTTP 200, no redirect, and the correct JSON content type. Confirm association
    on freshly installed release builds.
-5. Complete security review and remove the PR hold only after all device and
+5. Decide and validate the intended iOS uninstall/reinstall behavior. The
+   secure-storage dependency documents that iOS Keychain entries survive app
+   deletion, while the WebView tombstone does not. A first-launch install epoch
+   cannot be added backward-compatibly in this release because existing users
+   upgrading from an older build also have no epoch and would all be signed out.
+   Keep this as a release gate until the owner accepts reinstall restoration or
+   a staged release first seeds an epoch before enforcing first-launch purges.
+6. Complete security review and remove the PR hold only after all device and
    upgrade tests below pass against a non-production test account.
 
 ## Device validation matrix
@@ -52,20 +63,22 @@ every privileged data operation.
 Run on at least one supported physical iPhone/iPad and Android device, plus the
 CI simulator/emulator builds:
 
-| Scenario | Expected result |
-| --- | --- |
-| Upgrade while signed in with email/password | Existing IndexedDB session migrates once; app remains signed in; Firestore-backed screens load; no auth token remains in WebView storage. |
-| Upgrade while signed in with Google | Same as email/password; account picker and existing-account behavior remain unchanged. |
-| Fresh email/password, Google, signup, and email-link login | Sign-in completes, survives a process kill, and restores the correct Firebase `currentUser`. |
-| Force-close with Keychain/Keystore unavailable or locked | No plaintext fallback is created; app fails signed out or uses only the current process's in-memory session. |
-| Logout with secure deletion failure | UI and app-data cache clear immediately; the signed-out marker prevents a stale secure token from restoring. |
-| Sign out user A, sign in user B | No schedule, fee, team, profile, message, or image-session data from user A appears for user B. |
-| Delete account | Server deletion runs first; local secure sessions and caches are cleared even if the request fails after deletion. |
-| Expired/rotated refresh token | Refresh succeeds only for the configured project and UID; invalid refresh forces reauthentication without leaking a token to logs. |
-| Auth emulator configured in a native build | Direct production REST auth is blocked before any network request. |
-| HTTPS universal/app link while running and cold-started | Intended internal route opens once. |
-| Custom-scheme reset/verify link | Rejected; no `oobCode` reaches the app through the unverified scheme. |
-| HTTPS reset/verify link after association is complete | Firebase validates the one-time code and expiry; malformed/oversized codes are rejected locally first. |
+| Scenario                                                   | Expected result                                                                                                                                                                                          |
+| ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Upgrade while signed in with email/password                | Existing IndexedDB session migrates once; app remains signed in; Firestore-backed screens load; no auth token remains in WebView storage.                                                                |
+| Upgrade while signed in with Google                        | Same as email/password; account picker and existing-account behavior remain unchanged.                                                                                                                   |
+| Fresh email/password, Google, signup, and email-link login | Sign-in completes, survives a process kill, and restores the correct Firebase `currentUser`.                                                                                                             |
+| Force-close with Keychain/Keystore unavailable or locked   | No plaintext fallback is created; app fails signed out or uses only the current process's in-memory session.                                                                                             |
+| Logout with secure deletion failure                        | UI and app-data cache clear immediately; the signed-out marker prevents a stale secure token from restoring.                                                                                             |
+| Logout cleanup is delayed, then user B signs in            | User B waits for user A cleanup; no late A removal or Firebase sign-out deletes B. If a same-key native operation times out before starting, B fails closed and a retry succeeds after storage recovers. |
+| Sign out user A, sign in user B                            | No schedule, fee, team, profile, message, or image-session data from user A appears for user B.                                                                                                          |
+| Delete and reinstall on iOS                                | Record whether Keychain restores the prior account. The PR remains held until that behavior is explicitly accepted or a staged install-epoch migration is designed and tested.                           |
+| Delete account                                             | Server deletion runs first; local secure sessions and caches are cleared even if the request fails after deletion.                                                                                       |
+| Expired/rotated refresh token                              | Refresh succeeds only for the configured project and UID; invalid refresh forces reauthentication without leaking a token to logs.                                                                       |
+| Auth emulator configured in a native build                 | Direct production REST auth is blocked before any network request.                                                                                                                                       |
+| HTTPS universal/app link while running and cold-started    | Intended internal route opens once.                                                                                                                                                                      |
+| Custom-scheme reset/verify link                            | Rejected; no `oobCode` reaches the app through the unverified scheme.                                                                                                                                    |
+| HTTPS reset/verify link after association is complete      | Firebase validates the one-time code and expiry; malformed/oversized codes are rejected locally first.                                                                                                   |
 
 Also inspect Safari Web Inspector / Android WebView storage after login and
 logout. The legacy keys `allplays-native-auth-session`, image auth records,

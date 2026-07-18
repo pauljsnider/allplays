@@ -38,7 +38,8 @@ const firebaseAuthSdk = vi.hoisted(() => {
 });
 
 const nativePersistenceMock = vi.hoisted(() => ({
-  NativeSecureFirebaseAuthPersistence: class NativeSecureFirebaseAuthPersistence {}
+  NativeSecureFirebaseAuthPersistence: class NativeSecureFirebaseAuthPersistence {},
+  shouldBlockNativeFirebaseAuthMigration: vi.fn(() => false)
 }));
 
 vi.mock('./adapters/legacyFirebaseAuthSdk', () => firebaseAuthSdk);
@@ -60,7 +61,10 @@ describe('firebaseAuthRuntime', () => {
     firebaseAuthSdk.getAuth.mockImplementation((app: unknown) => ({ app, auth: true }));
     firebaseAuthSdk.initializeAuth.mockImplementation((app: unknown) => ({ app, nativeAuth: true }));
     firebaseAuthSdk.setPersistence.mockResolvedValue(undefined);
+    firebaseAuthSdk.signOut.mockResolvedValue(undefined);
     firebaseAuthSdk.resolvePrimaryFirebaseConfig.mockResolvedValue(firebaseAuthSdk.resolvedConfig);
+    nativePersistenceMock.shouldBlockNativeFirebaseAuthMigration.mockReset();
+    nativePersistenceMock.shouldBlockNativeFirebaseAuthMigration.mockReturnValue(false);
     Object.defineProperty(window, 'Capacitor', {
       configurable: true,
       value: undefined
@@ -112,6 +116,23 @@ describe('firebaseAuthRuntime', () => {
     expect(runtime.auth).toEqual({ app: { name: '[DEFAULT]', created: true }, nativeAuth: true });
   });
 
+  it('omits IndexedDB from the native hierarchy while a signed-out tombstone is active', async () => {
+    Object.defineProperty(window, 'Capacitor', {
+      configurable: true,
+      value: { isNativePlatform: () => true }
+    });
+    nativePersistenceMock.shouldBlockNativeFirebaseAuthMigration.mockReturnValue(true);
+
+    await import('./firebaseAuthRuntime');
+
+    expect(nativePersistenceMock.shouldBlockNativeFirebaseAuthMigration)
+      .toHaveBeenCalledWith('api-key', '[DEFAULT]');
+    expect(firebaseAuthSdk.initializeAuth).toHaveBeenCalledWith(
+      { name: '[DEFAULT]', created: true },
+      { persistence: [nativePersistenceMock.NativeSecureFirebaseAuthPersistence] }
+    );
+  });
+
   it('forces an already initialized native auth instance onto encrypted native persistence', async () => {
     Object.defineProperty(window, 'Capacitor', {
       configurable: true,
@@ -130,5 +151,28 @@ describe('firebaseAuthRuntime', () => {
       nativePersistenceMock.NativeSecureFirebaseAuthPersistence
     );
     expect(runtime.auth).toBe(existingAuth);
+  });
+
+  it('clears an already initialized IndexedDB user before applying secure persistence when tombstoned', async () => {
+    Object.defineProperty(window, 'Capacitor', {
+      configurable: true,
+      value: { isNativePlatform: () => true }
+    });
+    nativePersistenceMock.shouldBlockNativeFirebaseAuthMigration.mockReturnValue(true);
+    firebaseAuthSdk.initializeAuth.mockImplementation(() => {
+      throw new Error('already initialized');
+    });
+    const existingAuth = { app: null, auth: true, currentUser: { uid: 'user-a' } };
+    firebaseAuthSdk.getAuth.mockReturnValue(existingAuth);
+
+    await import('./firebaseAuthRuntime');
+
+    expect(firebaseAuthSdk.signOut).toHaveBeenCalledWith(existingAuth);
+    expect(firebaseAuthSdk.setPersistence).toHaveBeenCalledWith(
+      existingAuth,
+      nativePersistenceMock.NativeSecureFirebaseAuthPersistence
+    );
+    expect(firebaseAuthSdk.signOut.mock.invocationCallOrder[0])
+      .toBeLessThan(firebaseAuthSdk.setPersistence.mock.invocationCallOrder[0]);
   });
 });

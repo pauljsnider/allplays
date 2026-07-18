@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const capacitorState = vi.hoisted(() => ({ available: true }));
 const secureStorageMocks = vi.hoisted(() => ({
@@ -42,6 +42,10 @@ describe('nativeSecureStorage', () => {
     secureStorageMocks.keys.mockResolvedValue([]);
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('configures device-only, non-synchronizing secure storage before use', async () => {
     const storage = await loadStorage();
 
@@ -62,4 +66,60 @@ describe('nativeSecureStorage', () => {
     });
     expect(secureStorageMocks.getItem).not.toHaveBeenCalled();
   });
+
+  it('orders a delayed logout removal before a replacement write on the same key', async () => {
+    vi.useFakeTimers();
+    const removal = createDeferred<void>();
+    secureStorageMocks.removeItem.mockReturnValueOnce(removal.promise);
+    const storage = await loadStorage();
+
+    const removePromise = storage.removeNativeSecureItem('firebase-auth-user');
+    const removeRejection = expect(removePromise).rejects.toThrow('removal timed out');
+    await vi.advanceTimersByTimeAsync(1_500);
+    await removeRejection;
+
+    const replacementPromise = storage.setNativeSecureItem('firebase-auth-user', 'user-b');
+    expect(secureStorageMocks.setItem).not.toHaveBeenCalled();
+    removal.resolve();
+    await vi.runAllTimersAsync();
+    await expect(replacementPromise).resolves.toBeUndefined();
+
+    expect(secureStorageMocks.removeItem.mock.invocationCallOrder[0])
+      .toBeLessThan(secureStorageMocks.setItem.mock.invocationCallOrder[0]);
+  });
+
+  it('cancels a queued replacement that times out and permits a clean retry after recovery', async () => {
+    vi.useFakeTimers();
+    const removal = createDeferred<void>();
+    secureStorageMocks.removeItem.mockReturnValueOnce(removal.promise);
+    const storage = await loadStorage();
+
+    const removePromise = storage.removeNativeSecureItem('firebase-auth-user');
+    const removeRejection = expect(removePromise).rejects.toThrow('removal timed out');
+    await vi.advanceTimersByTimeAsync(1_500);
+    await removeRejection;
+
+    const timedOutReplacement = storage.setNativeSecureItem('firebase-auth-user', 'user-b');
+    const replacementRejection = expect(timedOutReplacement).rejects.toThrow('write timed out');
+    await vi.advanceTimersByTimeAsync(1_500);
+    await replacementRejection;
+    expect(secureStorageMocks.setItem).not.toHaveBeenCalled();
+
+    removal.resolve();
+    await vi.runAllTimersAsync();
+    expect(secureStorageMocks.setItem).not.toHaveBeenCalled();
+
+    await expect(storage.setNativeSecureItem('firebase-auth-user', 'user-b')).resolves.toBeUndefined();
+    expect(secureStorageMocks.setItem).toHaveBeenCalledTimes(1);
+  });
 });
+
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}

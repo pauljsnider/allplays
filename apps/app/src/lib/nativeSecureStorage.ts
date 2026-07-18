@@ -21,6 +21,7 @@ export class NativeSecureStorageUnavailableError extends Error {
 type SecureStorageBackend = { api: SecureStorageApi };
 
 let secureStoragePromise: Promise<SecureStorageBackend> | null = null;
+const secureStorageOperationTails = new Map<string, Promise<void>>();
 
 async function loadSecureStorage(): Promise<SecureStorageBackend> {
   if (!isNativeRuntime()) {
@@ -77,19 +78,64 @@ async function getConfiguredStorage() {
   }
 }
 
+/**
+ * Keep operations on the same native key ordered even after a caller-facing
+ * timeout. Native plugin promises cannot be cancelled; without this queue, a
+ * delayed logout removal could complete after the next account writes the same
+ * key. Operations that time out before starting are cancelled so they cannot
+ * unexpectedly mutate storage later.
+ */
+function runKeyedSecureStorageOperation<T>(
+  key: string,
+  operation: (storage: SecureStorageApi) => Promise<T>,
+  timeoutMessage: string
+) {
+  const previousTail = secureStorageOperationTails.get(key) || Promise.resolve();
+  let started = false;
+  let cancelled = false;
+  const scheduled = previousTail.then(async () => {
+    if (cancelled) {
+      throw new NativeSecureStorageUnavailableError('Native secure-storage operation was cancelled after timing out.');
+    }
+    started = true;
+    const storage = (await getConfiguredStorage()).api;
+    return operation(storage);
+  });
+  const nextTail = scheduled.then(
+    () => undefined,
+    () => undefined
+  );
+  secureStorageOperationTails.set(key, nextTail);
+  void nextTail.finally(() => {
+    if (secureStorageOperationTails.get(key) === nextTail) {
+      secureStorageOperationTails.delete(key);
+    }
+  });
+
+  return withSecureStorageTimeout(scheduled, timeoutMessage).catch((error) => {
+    if (!started) cancelled = true;
+    throw error;
+  });
+}
+
 export async function getNativeSecureItem(key: string) {
-  const storage = (await getConfiguredStorage()).api;
-  return withSecureStorageTimeout(storage.getItem(key), 'Native secure-storage read timed out.');
+  return runKeyedSecureStorageOperation(key, (storage) => storage.getItem(key), 'Native secure-storage read timed out.');
 }
 
 export async function setNativeSecureItem(key: string, value: string) {
-  const storage = (await getConfiguredStorage()).api;
-  await withSecureStorageTimeout(storage.setItem(key, value), 'Native secure-storage write timed out.');
+  await runKeyedSecureStorageOperation(
+    key,
+    (storage) => storage.setItem(key, value),
+    'Native secure-storage write timed out.'
+  );
 }
 
 export async function removeNativeSecureItem(key: string) {
-  const storage = (await getConfiguredStorage()).api;
-  await withSecureStorageTimeout(storage.removeItem(key), 'Native secure-storage removal timed out.');
+  await runKeyedSecureStorageOperation(
+    key,
+    (storage) => storage.removeItem(key),
+    'Native secure-storage removal timed out.'
+  );
 }
 
 export async function listNativeSecureKeys() {

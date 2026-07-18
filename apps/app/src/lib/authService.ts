@@ -42,6 +42,10 @@ import {
 import { assertFirebaseIdTokenIdentity } from './firebaseIdTokenIdentity';
 import { assertNativeAuthBackendPolicy } from './nativeAuthBackendPolicy';
 import { clearImageUploadSession } from './imageUploadSessionStore';
+import {
+  holdNativeAuthMutationQueueUntil,
+  runSerializedNativeAuthMutation
+} from './nativeAuthMutationQueue';
 import type { AuthUser, UserRole } from './types';
 
 export const firebaseAuth = auth;
@@ -222,15 +226,23 @@ function withTimeout<T>(promise: Promise<T>, message: string, timeoutMs = authTi
 }
 
 async function runBestEffortAuthCleanup(label: string, cleanup: () => Promise<unknown>) {
+  const cleanupPromise = Promise.resolve().then(cleanup);
+  // Native plugin promises cannot be cancelled. Keep the mutation queue closed
+  // after the caller-facing timeout so late cleanup cannot erase the next user.
+  holdNativeAuthMutationQueueUntil(cleanupPromise);
   try {
     await withTimeout(
-      Promise.resolve().then(cleanup),
+      cleanupPromise,
       `${label} timed out.`,
       signOutCleanupTimeoutMs
     );
   } catch (error) {
     logger.warn('Operation failed during sign-out.', { label, error });
   }
+}
+
+function runNativeAuthMutation<T>(operation: () => Promise<T>) {
+  return isNativeRuntime() ? runSerializedNativeAuthMutation(operation) : operation();
 }
 
 export function describeAuthError(error: any) {
@@ -498,7 +510,7 @@ async function getNativeAuthFallbackUser(): Promise<FirebaseUser | null> {
   return buildNativeAuthFallbackUser(await readNativeAuthSession());
 }
 
-export async function getNativeAuthIdToken(forceRefresh = false): Promise<string | null> {
+async function getNativeAuthIdTokenInternal(forceRefresh = false): Promise<string | null> {
   if (auth.currentUser?.getIdToken) {
     return auth.currentUser.getIdToken(forceRefresh);
   }
@@ -510,12 +522,16 @@ export async function getNativeAuthIdToken(forceRefresh = false): Promise<string
   return fallbackUser.getIdToken(forceRefresh);
 }
 
+export function getNativeAuthIdToken(forceRefresh = false): Promise<string | null> {
+  return runNativeAuthMutation(() => getNativeAuthIdTokenInternal(forceRefresh));
+}
+
 async function getNativeAccessCodeValidationOptions(result: UserCredential) {
   if (!result.nativeRest || auth.currentUser) {
     return undefined;
   }
 
-  const nativeAuthToken = await getNativeAuthIdToken().catch((error: unknown) => {
+  const nativeAuthToken = await getNativeAuthIdTokenInternal().catch((error: unknown) => {
     logger.warn('Unable to attach native auth token for access code validation.', { error });
     return null;
   });
@@ -632,7 +648,7 @@ async function persistNativeRestAuthSession(signInPayload: NativeRestSignInPaylo
       return currentSession.idToken;
     },
     async delete() {
-      await deleteNativeAuthUser();
+      await runNativeAuthMutation(deleteNativeAuthUser);
     }
   };
 }
@@ -745,7 +761,7 @@ async function persistNativePluginAuthSession(nativeResult: NativePluginSignInRe
       return currentSession.idToken;
     },
     async delete() {
-      await deleteNativeAuthUser();
+      await runNativeAuthMutation(deleteNativeAuthUser);
     }
   };
 }
@@ -977,7 +993,16 @@ async function cleanupFailedNewUser(user: FirebaseUser | null, context: string, 
     }
   }
 
-  if (user?.delete) {
+  if (user?.isNativeRestSession) {
+    try {
+      // Native Google/email activation cleanup already runs inside the auth
+      // mutation queue. Call the implementation directly to avoid re-entering
+      // and deadlocking the same serialized operation.
+      await deleteNativeAuthUser();
+    } catch (deleteError) {
+      logger.error('Error deleting user after auth operation.', { context, error: deleteError });
+    }
+  } else if (user?.delete) {
     try {
       await user.delete();
     } catch (deleteError) {
@@ -1110,7 +1135,7 @@ export function getCurrentFirebaseUser(): FirebaseUser | null {
   return auth.currentUser || null;
 }
 
-export async function signInWithEmail(email: string, password: string) {
+async function signInWithEmailInternal(email: string, password: string) {
   const normalizedEmail = requireValidAuthEmail(email);
   const { updateUserProfile } = await loadLegacyAuthDb();
 
@@ -1139,7 +1164,15 @@ export async function signInWithEmail(email: string, password: string) {
   return credential as UserCredential;
 }
 
+export function signInWithEmail(email: string, password: string) {
+  return runNativeAuthMutation(() => signInWithEmailInternal(email, password));
+}
+
 export async function signUpWithEmail(email: string, password: string, activationCode: string) {
+  return runNativeAuthMutation(() => signUpWithEmailInternal(email, password, activationCode));
+}
+
+async function signUpWithEmailInternal(email: string, password: string, activationCode: string) {
   const normalizedEmail = requireValidAuthEmail(email);
   const [
     dbModule,
@@ -1302,7 +1335,7 @@ async function processGoogleResult(result: UserCredential | null, activationCode
   return result;
 }
 
-export async function signInWithGoogleAccount(activationCode?: string | null) {
+async function signInWithGoogleAccountInternal(activationCode?: string | null) {
   const code = normalizeCode(activationCode);
   if (code) {
     window.sessionStorage.setItem(pendingActivationCodeKey, code);
@@ -1333,6 +1366,10 @@ export async function signInWithGoogleAccount(activationCode?: string | null) {
     }
     throw error;
   }
+}
+
+export function signInWithGoogleAccount(activationCode?: string | null) {
+  return runNativeAuthMutation(() => signInWithGoogleAccountInternal(activationCode));
 }
 
 export async function completeGoogleRedirect() {
@@ -1397,7 +1434,7 @@ async function refreshNativeFallbackVerification() {
   return verified;
 }
 
-export async function reloadCurrentUser() {
+async function reloadCurrentUserInternal() {
   const user = getCurrentFirebaseUser();
   if (user?.reload) {
     await user.reload();
@@ -1405,6 +1442,10 @@ export async function reloadCurrentUser() {
   }
 
   return refreshNativeFallbackVerification();
+}
+
+export function reloadCurrentUser() {
+  return runNativeAuthMutation(reloadCurrentUserInternal);
 }
 
 export async function verifyResetCode(oobCode: string) {
@@ -1423,7 +1464,7 @@ export function isEmailLink(url: string) {
   return isSignInWithEmailLink(auth, url);
 }
 
-export async function completeEmailLink(email: string, url: string) {
+async function completeEmailLinkInternal(email: string, url: string) {
   const normalizedEmail = requireValidAuthEmail(email);
   if (!isSignInWithEmailLink(auth, url)) {
     throw new Error('This email sign-in link is invalid or expired.');
@@ -1445,7 +1486,11 @@ export async function completeEmailLink(email: string, url: string) {
   return credential;
 }
 
-export async function setCurrentUserPassword(newPassword: string) {
+export function completeEmailLink(email: string, url: string) {
+  return runNativeAuthMutation(() => completeEmailLinkInternal(email, url));
+}
+
+async function setCurrentUserPasswordInternal(newPassword: string) {
   const { updateUserProfile } = await loadLegacyAuthDb();
   const user = auth.currentUser;
   if (user) {
@@ -1458,7 +1503,7 @@ export async function setCurrentUserPassword(newPassword: string) {
   }
 
   const fallbackUser = await getNativeAuthFallbackUser();
-  const idToken = await getNativeAuthIdToken();
+  const idToken = await getNativeAuthIdTokenInternal();
   if (!fallbackUser || !idToken) {
     throw new Error('No user is currently signed in.');
   }
@@ -1483,6 +1528,10 @@ export async function setCurrentUserPassword(newPassword: string) {
     hasPassword: true,
     passwordSetAt: new Date()
   }).catch((error: unknown) => logger.warn('Unable to mark native password as set.', { error }));
+}
+
+export function setCurrentUserPassword(newPassword: string) {
+  return runNativeAuthMutation(() => setCurrentUserPasswordInternal(newPassword));
 }
 
 export async function redeemInviteForUser(userId: string, code: string, authEmail?: string | null) {
@@ -1599,15 +1648,15 @@ export function mapLegacyRedirectToAppRoute(redirectUrl?: string) {
   return '/home';
 }
 
-export async function signOut() {
-  await clearNativeAuthSession();
+async function signOutInternal() {
+  await runBestEffortAuthCleanup('Native fallback auth cleanup', clearNativeAuthSession);
   await runBestEffortAuthCleanup('Secure Firebase auth cleanup', () => clearNativeFirebaseAuthUser(
     String(auth.app?.options?.apiKey || ''),
     String(auth.app?.name || '[DEFAULT]')
   ));
   clearCachedUserData();
   await runBestEffortAuthCleanup('Image upload auth cleanup', clearImageUploadSession);
-  await flushAppDataCachePersistence();
+  await runBestEffortAuthCleanup('App data cache persistence cleanup', flushAppDataCachePersistence);
   await runBestEffortAuthCleanup('Firebase auth storage cleanup', clearFirebaseAuthStorageSession);
   await runBestEffortAuthCleanup('Native Firebase sign-out', async () => {
     if ((Capacitor as any).isPluginAvailable?.('FirebaseAuthentication')) {
@@ -1615,4 +1664,8 @@ export async function signOut() {
     }
   });
   await runBestEffortAuthCleanup('Web Firebase sign-out', () => firebaseSignOut(auth));
+}
+
+export function signOut() {
+  return runNativeAuthMutation(signOutInternal);
 }

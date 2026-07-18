@@ -34,11 +34,13 @@ export class NativeSecureFirebaseAuthPersistence implements Persistence {
     if (hasSignedOutMarker(key)) {
       try {
         await removeNativeSecureItem(toSecureStorageKey(key));
-        clearSignedOutMarker(key);
       } catch {
-        // Keep the tombstone so stale credentials remain ignored until secure
-        // storage is available and the old record can be deleted.
+        // Keep trying on later reads while secure storage is unavailable.
       }
+      // The marker is intentionally retained even after deletion succeeds.
+      // Firebase probes every configured persistence during initialization, so
+      // clearing it here could let a stale IndexedDB migration source recreate
+      // the user. Only a successful replacement _set clears signed-out state.
       return null;
     }
     const rawValue = await getNativeSecureItem(toSecureStorageKey(key));
@@ -55,7 +57,6 @@ export class NativeSecureFirebaseAuthPersistence implements Persistence {
   async _remove(key: string) {
     setSignedOutMarker(key);
     await removeNativeSecureItem(toSecureStorageKey(key));
-    clearSignedOutMarker(key);
   }
 
   _addListener(_key: string, _listener: StorageEventListener) {
@@ -84,6 +85,16 @@ export async function persistNativeFirebaseAuthUser(
 export async function clearNativeFirebaseAuthUser(apiKey: string, appName: string) {
   const persistence = new NativeSecureFirebaseAuthPersistence();
   await persistence._remove(getFirebaseAuthPersistenceKey(apiKey, appName));
+}
+
+/**
+ * Firebase Auth's PersistenceUserManager probes every persistence in its
+ * hierarchy and migrates the first user it finds into the preferred store.
+ * While signed out, omit legacy IndexedDB from that hierarchy so an old copy
+ * cannot bypass the secure-store tombstone and recreate the prior account.
+ */
+export function shouldBlockNativeFirebaseAuthMigration(apiKey: string, appName = '[DEFAULT]') {
+  return hasSignedOutMarker(getFirebaseAuthPersistenceKey(apiKey, appName));
 }
 
 function toSecureStorageKey(firebasePersistenceKey: string) {
