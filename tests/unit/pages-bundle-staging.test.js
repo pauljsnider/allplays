@@ -119,6 +119,30 @@ describe('pages bundle staging', () => {
         expect(config.storage.rules).toBe('storage.rules');
     });
 
+    it('does not let the generated Hosting config ignore staged App Check config', () => {
+        const rootDir = makeTempDir();
+        const publicDir = path.join(makeTempDir(), 'site');
+        const outputFile = path.join(rootDir, '.firebase-generated.json');
+
+        writeFile(path.join(rootDir, 'firebase.json'), JSON.stringify({
+            hosting: {
+                public: '.',
+                ignore: ['firebase.json', '**/.*', '**/node_modules/**']
+            }
+        }));
+        writeFile(
+            path.join(publicDir, '.well-known', 'allplays-runtime-config.json'),
+            JSON.stringify({ appCheck: { enabled: true } })
+        );
+
+        const resolvedOutputFile = writeFirebaseHostingConfig(publicDir, outputFile, { rootDir });
+        const config = JSON.parse(fs.readFileSync(resolvedOutputFile, 'utf8'));
+
+        expect(config.hosting.ignore).not.toContain('**/.*');
+        expect(config.hosting.ignore).toContain('firebase.json');
+        expect(config.hosting.ignore).toContain('**/node_modules/**');
+    });
+
     it('stages only a public App Check site key in well-known runtime config', () => {
         const destinationDir = makeTempDir();
 

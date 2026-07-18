@@ -195,4 +195,26 @@ describe('Firebase App Check initialization', () => {
         });
         expect(JSON.stringify(getAppCheckStatus())).not.toContain('secret-app-check-token');
     });
+
+    it('rejects SDK placeholder tokens and keeps REST requests fail-open', async () => {
+        globalThis.window.__ALLPLAYS_CONFIG__.appCheck = {
+            recaptchaEnterpriseSiteKey: 'public-site-key'
+        };
+        await initializePrimaryAppCheck(PRIMARY_APP);
+        appCheckSdk.getToken.mockResolvedValueOnce({
+            token: 'placeholder-token-that-must-not-be-sent',
+            error: new Error('reCAPTCHA failure with private diagnostics')
+        });
+
+        const requestUrl = 'https://firestore.googleapis.com/v1/projects/game-flow-c6311/databases/(default)/documents/teams';
+        await expect(getPrimaryAppCheckHeaders({ Authorization: 'Bearer user-token' }, requestUrl))
+            .resolves.toEqual({ Authorization: 'Bearer user-token' });
+
+        expect(getAppCheckStatus()).toMatchObject({
+            state: 'token-error',
+            error: { message: 'App Check operation failed.' }
+        });
+        expect(JSON.stringify(getAppCheckStatus())).not.toContain('placeholder-token');
+        expect(JSON.stringify(getAppCheckStatus())).not.toContain('private diagnostics');
+    });
 });

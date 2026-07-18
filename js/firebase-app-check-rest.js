@@ -39,6 +39,10 @@ export async function getPrimaryAppCheckToken(forceRefresh = false) {
         const tokenGetter = globalThis[PRIMARY_TOKEN_GETTER_KEY];
         if (typeof tokenGetter !== 'function') return null;
         const result = await tokenGetter(forceRefresh === true);
+        if (result?.error != null || result?.internalError != null) {
+            reportTokenError();
+            return null;
+        }
         return typeof result?.token === 'string' && result.token ? result.token : null;
     } catch (_error) {
         reportTokenError();
