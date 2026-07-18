@@ -112,6 +112,16 @@
       "collectionGroup": "socialPosts",
       "queryScope": "COLLECTION",
       "fields": [
+        { "fieldPath": "visibleUserIds", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "authorId", "order": "ASCENDING" },
+        { "fieldPath": "hidden", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "socialPosts",
+      "queryScope": "COLLECTION",
+      "fields": [
         { "fieldPath": "teamId", "order": "ASCENDING" },
         { "fieldPath": "hidden", "order": "ASCENDING" },
         { "fieldPath": "createdAt", "order": "DESCENDING" }

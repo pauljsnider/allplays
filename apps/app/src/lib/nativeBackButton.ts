@@ -60,6 +60,7 @@ export function getNativeBackTarget(pathname: string, search = '') {
   if (/^\/teams\/[^/]+$/.test(path)) return '/teams';
   if (/^\/parent-tools\/registrations\/[^/]+\/[^/]+$/.test(path)) return '/parent-tools/registrations';
   if (/^\/parent-tools\/.+/.test(path)) return '/parent-tools';
+  if (/^\/people\/[^/]+/.test(path)) return '/home?section=friends';
   if (/^\/players\//.test(path)) return '/home';
   if (/^\/games\//.test(path)) return '/schedule';
   if (/^\/help\/.+/.test(path)) return '/help';

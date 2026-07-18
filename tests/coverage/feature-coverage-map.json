@@ -213,6 +213,7 @@
             ],
             "appPages": [
                 "apps/app/src/pages/CreateTeam.tsx",
+                "apps/app/src/pages/FriendProfile.tsx",
                 "apps/app/src/pages/Home.tsx",
                 "apps/app/src/pages/PlayerDetail.tsx",
                 "apps/app/src/pages/PublicTeamsBrowse.tsx",
@@ -230,6 +231,7 @@
                 "syncPublicUserProfileProjection"
             ],
             "unitTests": [
+                "tests/unit/app-friend-profile.test.jsx",
                 "tests/unit/app-home-logic.test.js",
                 "tests/unit/app-home-service.test.js",
                 "tests/unit/app-player-service.test.js",
@@ -253,6 +255,7 @@
                 "tests/unit/app-home-player-integration.test.jsx"
             ],
             "workflowTests": [
+                "tests/smoke/app-friend-profile.spec.js",
                 "tests/smoke/app-home-player.spec.js",
                 "tests/smoke/app-search.spec.js",
                 "tests/smoke/app-teams.spec.js",
