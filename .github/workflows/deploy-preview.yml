@@ -6,6 +6,7 @@ on:
       - opened
       - synchronize
       - reopened
+      - closed
 
 # Pull-request-controlled code runs here, so this workflow has no repository
 # permissions and receives no privileged secrets. Its only deploy input is an
@@ -18,7 +19,7 @@ concurrency:
 
 jobs:
   unit-tests:
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event.action != 'closed' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
 
     steps:
@@ -69,7 +70,7 @@ jobs:
         run: npm run test:functions:auth-email
 
   regression-guards:
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event.action != 'closed' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
 
     steps:
@@ -111,7 +112,7 @@ jobs:
           path: /tmp/allplays-preview-regression-guards.log
 
   build-preview-artifact:
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event.action != 'closed' && github.event.pull_request.head.repo.full_name == github.repository
     needs: [unit-tests, regression-guards]
     runs-on: ubuntu-latest
 

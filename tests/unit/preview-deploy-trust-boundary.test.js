@@ -181,6 +181,15 @@ describe('preview deployment workflow trust boundary', () => {
         expect(pullRequestWorkflow).toMatch(/build-preview-artifact:[\s\S]*needs: \[unit-tests, regression-guards\]/);
     });
 
+    it('cancels in-flight preview work when its pull request closes', () => {
+        expect(pullRequestWorkflow).toContain('      - closed');
+        expect(pullRequestWorkflow).toContain('group: preview-${{ github.event.pull_request.number }}');
+        expect(pullRequestWorkflow).toContain('cancel-in-progress: true');
+        expect(pullRequestWorkflow.match(
+            /if: github\.event\.action != 'closed' && github\.event\.pull_request\.head\.repo\.full_name == github\.repository/g
+        )).toHaveLength(3);
+    });
+
     it('runs the credentialed deploy only from trusted default-branch code', () => {
         expect(trustedWorkflow).toContain('workflow_run:');
         expect(trustedWorkflow).toContain('name: firebase-preview-trusted');
