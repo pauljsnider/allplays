@@ -686,7 +686,7 @@ describe('Home', () => {
     await waitFor(() => expect(socialServiceMocks.loadSocialHome).toHaveBeenCalledTimes(2));
   });
 
-  it('lets a viewer hide another author post and refreshes the feed once', async () => {
+  it('optimistically hides a post, blocks duplicate taps, and refreshes once', async () => {
     let resolveHide: () => void = () => {};
     socialServiceMocks.loadSocialHome.mockResolvedValueOnce({
       ...baseSocial,
@@ -702,10 +702,34 @@ describe('Home', () => {
     const hideButton = await screen.findByRole('button', { name: 'Hide' });
     fireEvent.click(hideButton);
     fireEvent.click(hideButton);
+    expect(screen.queryByText('Pat Player highlight')).toBeNull();
     expect(socialServiceMocks.hideSocialPost).toHaveBeenCalledTimes(1);
 
     resolveHide();
     await waitFor(() => expect(socialServiceMocks.loadSocialHome).toHaveBeenCalledTimes(2));
+  });
+
+  it('restores an optimistically hidden post when the hide write fails', async () => {
+    let rejectHide: () => void = () => {};
+    socialServiceMocks.loadSocialHome.mockResolvedValueOnce({
+      ...baseSocial,
+      feedItems: [baseFeedItem],
+      metrics: { ...baseSocial.metrics, feedItems: 1 }
+    });
+    socialServiceMocks.hideSocialPost.mockImplementationOnce(() => new Promise((_, reject) => {
+      rejectHide = () => reject(new Error('Hide unavailable.'));
+    }));
+
+    renderHome(signedInAuth, '/home?section=feed');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Hide' }));
+    expect(screen.queryByText('Pat Player highlight')).toBeNull();
+
+    rejectHide();
+
+    expect(await screen.findByText('Pat Player highlight')).toBeTruthy();
+    expect(await screen.findByText('Hide unavailable.')).toBeTruthy();
+    expect(socialServiceMocks.loadSocialHome).toHaveBeenCalledTimes(1);
   });
 
   it('optimistically clears comment input, increments the count, and blocks duplicate submits', async () => {

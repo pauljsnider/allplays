@@ -1107,11 +1107,22 @@ function FeedSection({
   onStatus: (status: { tone: 'error' | 'success'; message: string } | null) => void;
 }) {
   const [filter, setFilter] = useState<SocialFeedFilter>('all');
+  const [optimisticallyHiddenPostIds, setOptimisticallyHiddenPostIds] = useState<Set<string>>(() => new Set());
   const [opportunities, setOpportunities] = useState<PublicOpportunity[]>([]);
   const [opportunityLoading, setOpportunityLoading] = useState(false);
   const [opportunityLoaded, setOpportunityLoaded] = useState(false);
   const [opportunityError, setOpportunityError] = useState('');
-  const visibleItems = useMemo(() => filterSocialFeedItems(social.feedItems, filter), [social.feedItems, filter]);
+  const visibleItems = useMemo(() => filterSocialFeedItems(social.feedItems, filter)
+    .filter((item) => !optimisticallyHiddenPostIds.has(item.id)), [social.feedItems, filter, optimisticallyHiddenPostIds]);
+
+  const setPostOptimisticallyHidden = (postId: string, hidden: boolean) => {
+    setOptimisticallyHiddenPostIds((current) => {
+      const next = new Set(current);
+      if (hidden) next.add(postId);
+      else next.delete(postId);
+      return next;
+    });
+  };
 
   useEffect(() => {
     if (filter !== 'opportunities' || opportunityLoaded || opportunityLoading) return;
@@ -1174,6 +1185,7 @@ function FeedSection({
                 auth={auth}
                 onRefresh={onRefresh}
                 onStatus={onStatus}
+                onOptimisticHide={setPostOptimisticallyHidden}
               />
             )) : (
               <EmptyCard icon={Newspaper} title="No posts for this filter" detail={home.teams.length ? 'Try another filter or create a post for your team.' : 'Link a team or player to unlock team feed activity.'} />
@@ -1229,12 +1241,14 @@ function SocialFeedCard({
   item,
   auth,
   onRefresh,
-  onStatus
+  onStatus,
+  onOptimisticHide
 }: {
   item: SocialFeedItem;
   auth: AuthState;
   onRefresh: () => Promise<void> | void;
   onStatus: (status: { tone: 'error' | 'success'; message: string } | null) => void;
+  onOptimisticHide: (postId: string, hidden: boolean) => void;
 }) {
   const [comment, setComment] = useState('');
   const [busyActions, setBusyActions] = useState<Record<string, boolean>>({});
@@ -1406,7 +1420,13 @@ function SocialFeedCard({
               type="button"
               className="ghost-button !min-h-9 !px-3 text-xs"
               disabled={hideBusy}
-              onClick={() => runAction({ actionKey: 'hide', action: () => hideSocialPost(item.id, auth.user!), success: 'Post hidden from your feed.' })}
+              onClick={() => runAction({
+                actionKey: 'hide',
+                action: () => hideSocialPost(item.id, auth.user!),
+                success: 'Post hidden from your feed.',
+                optimistic: () => onOptimisticHide(item.id, true),
+                rollback: () => onOptimisticHide(item.id, false)
+              })}
             >
               {hideBusy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Flag className="h-4 w-4" aria-hidden="true" />}
               Hide
