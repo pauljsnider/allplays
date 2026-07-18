@@ -102,6 +102,37 @@ test('notifyGameCreated writes schedule inbox items for recipients without push 
     }
 });
 
+test('notifyGameCreated falls back to and backfills a tokenless recipient missing from a partial index', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        parentUserIds: ['parent-1', 'parent-2'],
+        userDocs: {
+            'parent-1': { parentTeamIds: ['team-1'] }
+        },
+        indexedRecipients: [
+            { uid: 'parent-2', roles: ['parent'], deviceId: 'parent-device', token: 'parent-token', categories: { schedule: true } }
+        ]
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/games/game-partial-index');
+        const result = await moduleExports.notifyGameCreated(makeSnapshot(ref, {
+            title: 'Game at Lions',
+            type: 'game',
+            opponent: 'Lions',
+            date: '2026-06-20T16:00:00.000Z',
+            createdBy: 'coach-1'
+        }), { params: { teamId: 'team-1', gameId: 'game-partial-index' } });
+
+        assert.equal(result?.successCount, 1);
+        assert.deepEqual(env.messagingCalls.map((call) => call.tokens), [['parent-token']]);
+        assert.deepEqual(env.inboxWrites.map((write) => write.uid).sort(), ['parent-1', 'parent-2']);
+        assert.equal(env.dedupWrites.some((write) => write.path === 'teams/team-1/notificationRecipients/parent-1'), true);
+    } finally {
+        cleanup();
+    }
+});
+
 test('notifyGameCreated sends one team summary for schedule import batches over three events', async () => {
     const { moduleExports, env, cleanup } = loadNotificationInternals({
         teamDoc: { ownerId: 'coach-1', name: 'Team Bears', adminEmails: [] },
