@@ -58,10 +58,12 @@ describe('team fee recipient Firestore rules', () => {
     it('keeps Stripe authority server-only while allowing bounded offline billing records', () => {
         expect(rules).toContain('function hasNoPrivateTeamFeeBillingFields(data)');
         expect(rules).toContain('function hasNoIntroducedPrivateTeamFeeBillingFields()');
+        expect(rules).toContain('function hasSettledTeamFeeStripeAuthority(data)');
         expect(rules).toContain("'stripePaymentIntentId'");
         expect(rules).toContain("'recordedBy'");
         expect(rules).toContain('hasNoPrivateTeamFeeBillingFields(request.resource.data)');
         expect(rules).toContain('hasNoIntroducedPrivateTeamFeeBillingFields()');
+        expect(nestedRecipientBlock).toContain('!hasSettledTeamFeeStripeAuthority(resource.data)');
         expect(rules).toContain("request.resource.data.get('stripePaymentIntentId', null) == null");
         expect(rules).toContain("request.resource.data.get('checkoutPayerUid', null) == null");
         expect(rules).toContain("request.resource.data.get('stripePaymentAuthorityVersion', null) == null");
@@ -244,6 +246,7 @@ describe('team fee recipient Firestore rules', () => {
             }));
             await assertFails(updateDoc(feeRef, { stripeFinancialStatus: null }));
             await assertFails(updateDoc(feeRef, { stripeRefundedAmountCents: 0 }));
+            await assertFails(deleteDoc(feeRef));
             await assertSucceeds(updateDoc(feeRef, {
                 checkoutStatus: 'stale',
                 checkoutAttemptToken: deleteField(),
@@ -299,6 +302,34 @@ describe('team fee recipient Firestore rules', () => {
             await assertSucceeds(updateDoc(clearedRef, { status: 'paid' }));
             await assertSucceeds(deleteDoc(clearedRef));
             await assertFails(getDoc(doc(ownerDb, 'teams/team-a/feeBatches/batch-a/feeRecipients/active-checkout/checkoutReservations/tok_server_1234567890')));
+        });
+
+        it('blocks terminal Stripe evidence while preserving expired-unpaid and offline recipient deletion', async () => {
+            await seedRecipient('teams/team-a/feeBatches/batch-a/feeRecipients/legacy-charge', {
+                ...recipientPayload(),
+                paymentProvider: 'stripe',
+                checkoutStatus: 'stale',
+                stripeChargeId: 'ch_legacy_settled'
+            });
+            await seedRecipient('teams/team-a/feeBatches/batch-a/feeRecipients/expired-unpaid-offline-paid', {
+                ...recipientPayload(),
+                paymentProvider: 'stripe',
+                checkoutStatus: 'expired',
+                stripePaymentStatus: 'unpaid',
+                status: 'paid',
+                paidAmountCents: 2500
+            });
+            await seedRecipient('teams/team-a/feeBatches/batch-a/feeRecipients/offline-paid', {
+                ...recipientPayload(),
+                paymentProvider: 'offline',
+                status: 'paid',
+                paidAmountCents: 2500
+            });
+            const ownerDb = authedFirestore('owner-a', 'owner-a@example.com');
+
+            await assertFails(deleteDoc(recipientRef(ownerDb, 'team-a', 'batch-a', 'legacy-charge')));
+            await assertSucceeds(deleteDoc(recipientRef(ownerDb, 'team-a', 'batch-a', 'expired-unpaid-offline-paid')));
+            await assertSucceeds(deleteDoc(recipientRef(ownerDb, 'team-a', 'batch-a', 'offline-paid')));
         });
     });
 });

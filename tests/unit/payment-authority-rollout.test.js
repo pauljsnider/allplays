@@ -97,6 +97,50 @@ describe('Stripe payment-authority rollout gate', () => {
                 attempt: { ...attempt, stripeChargeId: 'ch_a', checkoutStatus }
             })).toBe('active_entitlement_invalid_checkout_attempt');
         }
+        for (const reversalState of [
+            { chargeAmountCents: 4900, refundedAmountCents: 100, disputeStatus: 'none' },
+            { chargeAmountCents: 4900, refundedAmountCents: 0, disputeStatus: 'open' },
+            { chargeAmountCents: 4900, refundedAmountCents: 0, disputeStatus: 'lost' }
+        ]) {
+            expect(inspectTeamPassAttemptAuthority({
+                teamId: 'team-a', seasonId: '2026', tier: 'team-pass',
+                attempt: { ...attempt, stripeChargeId: 'ch_a', reversalState }
+            })).toBe('active_entitlement_invalid_checkout_attempt');
+        }
+        expect(inspectTeamPassAttemptAuthority({
+            teamId: 'team-a', seasonId: '2026', tier: 'team-pass',
+            attempt: { ...attempt, stripeChargeId: 'ch_a', refundedAmountCents: 100 }
+        })).toBe('active_entitlement_invalid_checkout_attempt');
+        expect(inspectTeamPassAttemptAuthority({
+            teamId: 'team-a', seasonId: '2026', tier: 'team-pass',
+            attempt: { ...attempt, stripeChargeId: 'ch_a', disputeStatus: 'open' }
+        })).toBe('active_entitlement_invalid_checkout_attempt');
+        expect(inspectTeamPassAttemptAuthority({
+            teamId: 'team-a', seasonId: '2026', tier: 'team-pass',
+            attempt: {
+                ...attempt, stripeChargeId: 'ch_a', disputeStatus: 'lost',
+                reversalState: { chargeAmountCents: 4900, refundedAmountCents: 0, disputeStatus: 'none' }
+            }
+        })).toBe('active_entitlement_invalid_checkout_attempt');
+        expect(inspectTeamPassAttemptAuthority({
+            teamId: 'team-a', seasonId: '2026', tier: 'team-pass',
+            attempt: { ...attempt, stripeChargeId: 'ch_a', disputeLostAmountCents: 4900 }
+        })).toBe('active_entitlement_invalid_checkout_attempt');
+        expect(inspectTeamPassAttemptAuthority({
+            teamId: 'team-a', seasonId: '2026', tier: 'team-pass',
+            attempt: { ...attempt, stripeChargeId: 'ch_a', disputeId: 'dp_unresolved' }
+        })).toBe('active_entitlement_invalid_checkout_attempt');
+        expect(inspectTeamPassAttemptAuthority({
+            teamId: 'team-a', seasonId: '2026', tier: 'team-pass',
+            attempt: { ...attempt, stripeChargeId: 'ch_a', stripeFinancialStatus: 'disputed' }
+        })).toBe('active_entitlement_invalid_checkout_attempt');
+        expect(inspectTeamPassAttemptAuthority({
+            teamId: 'team-a', seasonId: '2026', tier: 'team-pass',
+            attempt: {
+                ...attempt, stripeChargeId: 'ch_a', refundedAmountCents: 0, disputeId: 'dp_won',
+                reversalState: { chargeAmountCents: 4900, refundedAmountCents: 0, disputeStatus: 'won' }
+            }
+        })).toBe('');
     });
 
     it('keeps the callable dry-run-first and requires an explicit empty assertion', () => {

@@ -1,5 +1,7 @@
 'use strict';
 
+const { getTeamPassEffectivePaymentStatus } = require('./team-pass-core.cjs');
+
 function normalizeString(value) {
   return String(value || '').trim();
 }
@@ -132,11 +134,51 @@ function inspectStripeChargeLedgerCoverage({ product = '', record = {}, ledgers 
 function inspectTeamPassAttemptAuthority({ teamId = '', seasonId = '', tier = 'team-pass', attempt = {} } = {}) {
   const authorityVersion = Number(attempt.stripePaymentAuthorityVersion || attempt.legacyPaymentAuthorityVersion || 1);
   const amountCents = asNonNegativeSafeInteger(attempt.checkoutAmountCents);
+  const reversalState = attempt.reversalState;
+  const hasValidReversalState = reversalState === undefined
+    || (reversalState !== null && typeof reversalState === 'object' && !Array.isArray(reversalState));
+  const reversalRefundedAmountCents = reversalState?.refundedAmountCents;
+  const topLevelRefundedAmountCents = attempt.refundedAmountCents;
+  const reversalDisputeLostAmountCents = reversalState?.disputeLostAmountCents;
+  const topLevelDisputeLostAmountCents = attempt.disputeLostAmountCents;
+  const disputeStatuses = [reversalState?.disputeStatus, attempt.disputeStatus]
+    .map((value) => normalizeString(value).toLowerCase())
+    .filter(Boolean);
+  const explicitFinancialStatuses = [attempt.reversalStatus, attempt.financialStatus, attempt.stripeFinancialStatus]
+    .map((value) => normalizeString(value).toLowerCase())
+    .filter(Boolean);
+  const hasValidRefundAmounts = [
+    reversalRefundedAmountCents,
+    topLevelRefundedAmountCents,
+    reversalDisputeLostAmountCents,
+    topLevelDisputeLostAmountCents,
+    reversalState?.chargeAmountCents
+  ]
+    .every((value) => value === undefined || asNonNegativeSafeInteger(value) !== null);
+  const hasOnlyEffectiveDisputeSignals = disputeStatuses.every((status) => ['none', 'won'].includes(status));
+  const hasWonDisputeSignal = disputeStatuses.includes('won');
+  const hasResolvedDisputeId = !normalizeString(attempt.disputeId) || hasWonDisputeSignal;
+  const hasEffectivePaidAuthority = hasValidReversalState
+    && hasValidRefundAmounts
+    && hasOnlyEffectiveDisputeSignals
+    && hasResolvedDisputeId
+    && explicitFinancialStatuses.every((status) => status === 'paid')
+    && asNonNegativeSafeInteger(reversalRefundedAmountCents || 0) === 0
+    && asNonNegativeSafeInteger(topLevelRefundedAmountCents || 0) === 0
+    && asNonNegativeSafeInteger(reversalDisputeLostAmountCents || 0) === 0
+    && asNonNegativeSafeInteger(topLevelDisputeLostAmountCents || 0) === 0
+    && getTeamPassEffectivePaymentStatus({
+      ...(hasValidReversalState && reversalState ? reversalState : {}),
+      chargeAmountCents: reversalState?.chargeAmountCents || amountCents || 0,
+      refundedAmountCents: reversalRefundedAmountCents ?? topLevelRefundedAmountCents ?? 0,
+      disputeStatus: hasWonDisputeSignal ? 'won' : 'none'
+    }) === 'paid';
   if (normalizeString(attempt.product) !== 'team_pass'
       || normalizeString(attempt.teamId) !== normalizeString(teamId)
       || normalizeString(attempt.seasonId) !== normalizeString(seasonId)
       || normalizeString(attempt.tier) !== normalizeString(tier)
       || normalizeString(attempt.checkoutStatus).toLowerCase() !== 'paid'
+      || !hasEffectivePaidAuthority
       || !normalizeString(attempt.stripeCheckoutSessionId)
       || !normalizeString(attempt.stripePaymentIntentId)
       || amountCents === null

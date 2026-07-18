@@ -16,7 +16,8 @@ describe('registration failed payment reminder wiring', () => {
     it('records auditable reminder metadata on the registration and resolves it when paid', () => {
         expect(source).toContain('paymentReminder: {');
         expect(source).toContain('buildRegistrationFailedPaymentReminderState({');
-        expect(source).toContain("transaction.update(registrationRef, buildRegistrationReminderStopUpdate({ reason: 'paid', nowIso: queuedAtIso }));");
+        expect(source).toContain('effectivePaymentStatus: aggregateFinancialState.financialStatus');
+        expect(source).toContain('transaction.update(registrationRef, buildRegistrationReminderStopUpdate({ reason: effectivePaymentStatus, nowIso: queuedAtIso }));');
         expect(source).toContain("'paymentReminder.nextReminderAt': admin.firestore.FieldValue.delete()");
     });
 

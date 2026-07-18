@@ -1022,6 +1022,7 @@ test('payment authority rollout gate requires structurally complete Team Pass at
     const valid = await mod.auditStripePaymentAuthorityRollout({ assertEmpty: false }, adminContext);
     assert.equal(valid.ready, true);
     assert.equal(valid.blockerCount, 0);
+    const validAttempt = clone(firestore.snapshot(attemptPath));
 
     for (const checkoutStatus of ['disputed', 'refunded', 'dispute_lost']) {
         await firestore.doc(attemptPath).set({ checkoutStatus }, { merge: true });
@@ -1031,6 +1032,28 @@ test('payment authority rollout gate requires structurally complete Team Pass at
             product: 'team_pass', path: entitlementPath, reason: 'active_entitlement_invalid_checkout_attempt'
         }]);
     }
+
+    await firestore.doc(attemptPath).set({
+        ...validAttempt,
+        checkoutStatus: 'paid',
+        reversalState: { chargeAmountCents: 4900, refundedAmountCents: 0, disputeStatus: 'open' }
+    });
+    const stalePaidStatus = await mod.auditStripePaymentAuthorityRollout({ assertEmpty: false }, adminContext);
+    assert.equal(stalePaidStatus.ready, false);
+    assert.deepEqual(stalePaidStatus.blockers, [{
+        product: 'team_pass', path: entitlementPath, reason: 'active_entitlement_invalid_checkout_attempt'
+    }]);
+
+    await firestore.doc('teams/team-pass/teamPassCheckoutAttempts/history_repurchase').set({
+        ...validAttempt,
+        checkoutStatus: 'paid',
+        stripeCheckoutSessionId: 'cs_team_pass_repurchase',
+        stripePaymentIntentId: 'pi_team_pass_repurchase',
+        stripeChargeId: 'ch_team_pass_repurchase'
+    });
+    const effectiveRepurchase = await mod.auditStripePaymentAuthorityRollout({ assertEmpty: false }, adminContext);
+    assert.equal(effectiveRepurchase.ready, true);
+    assert.equal(effectiveRepurchase.blockerCount, 0);
 });
 
 test('payment authority rollout gate paginates and validates every charge ledger', async () => {
@@ -2795,6 +2818,67 @@ test('registration checkout blocks unresolved disputes at preflight and transact
         publicCheckoutCapability: checkoutCapability
     }), /payment is disputed/i);
     assert.equal(stripeState.checkoutSessions.length, 1);
+});
+
+test('registration paid webhook preserves a sibling dispute and refreshes the operational baseline', async () => {
+    const { firestore, stripeState, mod, submission, registrationPath } = await createInstallmentCheckoutFixture();
+    const checkoutCapability = stripeState.checkoutSessions[0].metadata.publicCheckoutCapability;
+    stripeState.webhookEvent = buildPaidInstallmentWebhookEvent({
+        eventId: 'evt_installment_first_paid_before_second_session_dispute',
+        registrationId: submission.registrationId
+    });
+    assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
+
+    await mod.createStripeRegistrationCheckout({
+        teamId: 'team-1', formId: 'form-1', registrationId: submission.registrationId,
+        publicCheckoutCapability: checkoutCapability
+    });
+    const secondSession = stripeState.checkoutResponses.get('cs_test_2');
+    const currentCheckoutCapability = secondSession.metadata.publicCheckoutCapability;
+    const firstChargeId = 'ch_pi_evt_installment_first_paid_before_second_session_dispute';
+    stripeState.webhookEvent = {
+        id: 'evt_installment_first_disputed_while_second_open', type: 'charge.dispute.created', created: 200,
+        data: { object: { object: 'dispute', id: 'dp_registration_paid_race', charge: firstChargeId, status: 'needs_response' } }
+    };
+    assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
+    assert.equal(firestore.snapshot(registrationPath).stripeFinancialStatus, 'disputed');
+
+    stripeState.webhookEvent = {
+        id: 'evt_installment_second_paid_after_sibling_dispute', type: 'checkout.session.completed', created: 250,
+        data: { object: {
+            ...clone(secondSession), status: 'complete', payment_status: 'paid',
+            payment_intent: 'pi_evt_installment_second_paid_after_sibling_dispute'
+        } }
+    };
+    assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
+
+    const disputed = firestore.snapshot(registrationPath);
+    assert.equal(disputed.checkoutStatus, 'complete');
+    assert.equal(disputed.paymentPlan.paidInstallmentCount, 2);
+    assert.equal(disputed.paymentStatus, 'disputed');
+    assert.equal(disputed.paymentStatusBeforeStripeReversal, 'installment_in_progress');
+    assert.equal(disputed.stripeFinancialStatus, 'disputed');
+    assert.equal(disputed.stripeGrossPaidAmountCents, 8332);
+    assert.equal(disputed.stripeRefundedAmountCents, 0);
+    assert.equal(disputed.stripeDisputeLostAmountCents, 0);
+    assert.equal(
+        firestore.snapshot(`${registrationPath}/stripeCharges/ch_pi_evt_installment_second_paid_after_sibling_dispute`).disputeStatus,
+        'none'
+    );
+    await assert.rejects(mod.createStripeRegistrationCheckout({
+        teamId: 'team-1', formId: 'form-1', registrationId: submission.registrationId,
+        publicCheckoutCapability: currentCheckoutCapability
+    }), /payment is disputed/i);
+    assert.equal(stripeState.checkoutSessions.length, 2);
+
+    stripeState.webhookEvent = {
+        id: 'evt_installment_first_dispute_won_after_second_paid', type: 'charge.dispute.closed', created: 300,
+        data: { object: { object: 'dispute', id: 'dp_registration_paid_race', charge: firstChargeId, status: 'won' } }
+    };
+    assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
+    const resolved = firestore.snapshot(registrationPath);
+    assert.equal(resolved.paymentStatus, 'installment_in_progress');
+    assert.equal(resolved.stripeFinancialStatus, 'paid');
 });
 
 test('registration refund on another installment cannot clear an open dispute', async () => {

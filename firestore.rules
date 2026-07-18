@@ -999,6 +999,22 @@ service cloud.firestore {
       return data.get('checkoutStatus', '') in ['creating', 'creation_failed', 'open', 'async_pending'];
     }
 
+    function hasSettledTeamFeeStripeAuthority(data) {
+      return data.keys().hasAny([
+               'stripeGrossPaidAmountCents',
+               'stripeRefundedAmountCents',
+               'stripeRefundableAmountCents',
+               'stripeDisputeLostAmountCents',
+               'stripeFinancialStatus'
+             ]) ||
+             (data.get('paymentProvider', '') == 'stripe' &&
+              (data.get('checkoutStatus', '') in ['paid', 'complete'] ||
+               data.get('stripePaymentStatus', '') == 'paid' ||
+               (data.get('stripeChargeId', '') is string && data.get('stripeChargeId', '').size() > 0) ||
+               (data.get('stripeRefundId', '') is string && data.get('stripeRefundId', '').size() > 0) ||
+               (data.get('stripeLastRefundId', '') is string && data.get('stripeLastRefundId', '').size() > 0)));
+    }
+
     function isSafeOfflineTeamFeeBilling(data, teamId, batchId, recipientId) {
       return data.get('type', '') in ['offline_payment', 'balance_adjustment', 'offline_refund', 'cancellation'] &&
              data.get('teamId', '') == teamId &&
@@ -3974,6 +3990,8 @@ service cloud.firestore {
                            hasNoPrivateTeamFeeBillingFields(request.resource.data);
           allow update: if isTeamOwnerOrAdmin(teamId) &&
                            !hasActiveTeamFeeStripeAuthority(resource.data) &&
+                           (!hasSettledTeamFeeStripeAuthority(resource.data) ||
+                            hasSettledTeamFeeStripeAuthority(request.resource.data)) &&
                            resource.data.teamId == teamId &&
                            resource.data.batchId == batchId &&
                            request.resource.data.teamId == teamId &&
@@ -3981,6 +3999,7 @@ service cloud.firestore {
                            hasNoIntroducedPrivateTeamFeeBillingFields();
           allow delete: if isTeamOwnerOrAdmin(teamId) &&
                            !hasActiveTeamFeeStripeAuthority(resource.data) &&
+                           !hasSettledTeamFeeStripeAuthority(resource.data) &&
                            resource.data.teamId == teamId &&
                            resource.data.batchId == batchId;
 

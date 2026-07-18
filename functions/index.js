@@ -5916,6 +5916,33 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
             return;
           }
 
+          const chargeLedgerQuerySnap = await transaction.get(registrationRef.collection('stripeCharges'));
+          const existingChargeLedgers = (chargeLedgerQuerySnap.docs || []).map((docSnap) => docSnap.data() || {});
+          const buildPaidChargeAggregate = (paymentStatusAfterCharge) => {
+            const chargeLedger = buildRegistrationStripeChargeLedger({
+              registration,
+              session,
+              paymentIntent,
+              eventId: event.id,
+              receivedAt,
+              paymentStatusAfterCharge
+            });
+            const aggregateFinancialState = getRegistrationAggregateFinancialState({
+              registration,
+              ledgers: [...existingChargeLedgers, chargeLedger]
+            });
+            if (!aggregateFinancialState.valid) {
+              throw new Error('Registration charge ledger aggregate is invalid.');
+            }
+            return {
+              chargeLedger,
+              aggregateFinancialState,
+              effectivePaymentStatus: aggregateFinancialState.financialStatus === 'disputed'
+                ? 'disputed'
+                : paymentStatusAfterCharge
+            };
+          };
+
           const isReversalRepayment = session.metadata?.paymentPurpose === 'reversal_repayment';
           if (isReversalRepayment) {
             const repaymentAmountCents = Math.max(0, Math.round(Number(session.amount_total || 0)));
@@ -5929,9 +5956,14 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
               : installmentState?.remainingBalanceCents > 0
                 ? 'installment_in_progress'
                 : nextBalanceDueCents > 0 ? 'payment_due' : 'paid';
+            const {
+              chargeLedger,
+              aggregateFinancialState,
+              effectivePaymentStatus
+            } = buildPaidChargeAggregate(paymentStatusAfterCharge);
             transaction.set(registrationRef, {
               checkoutStatus: 'complete',
-              paymentStatus: paymentStatusAfterCharge,
+              paymentStatus: effectivePaymentStatus,
               paidAt: receivedAt,
               balanceDueCents: nextBalanceDueCents,
               stripeReversalBalanceCents: nextReversalBalanceCents,
@@ -5941,33 +5973,34 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
               stripeEventId: event.id,
               lastPaidStripeCheckoutSessionId: session.id,
               lastPaidStripeChargeId: chargeId,
-              stripeGrossPaidAmountCents: Math.max(0, Number(registration.stripeGrossPaidAmountCents || 0)) + repaymentAmountCents,
-              stripeFinancialStatus: 'paid',
+              stripeGrossPaidAmountCents: aggregateFinancialState.grossPaidAmountCents,
+              stripeRefundedAmountCents: aggregateFinancialState.refundedAmountCents,
+              stripeDisputeLostAmountCents: aggregateFinancialState.disputeLostAmountCents,
+              stripeFinancialStatus: aggregateFinancialState.financialStatus,
+              paymentStatusBeforeStripeReversal: paymentStatusAfterCharge,
               checkoutCreationReservationId: admin.firestore.FieldValue.delete(),
               checkoutCreationStartedAt: admin.firestore.FieldValue.delete(),
               retryCapacityReservationId: admin.firestore.FieldValue.delete(),
               updatedAt: receivedAt
             }, { merge: true });
-            transaction.set(chargeRef, buildRegistrationStripeChargeLedger({
-              registration,
-              session,
-              paymentIntent,
-              eventId: event.id,
-              receivedAt,
-              paymentStatusAfterCharge
-            }));
+            transaction.set(chargeRef, chargeLedger);
             if (recoveredReservationRef) {
               transaction.set(recoveredReservationRef, { status: 'paid', processedAt: receivedAt, updatedAt: receivedAt }, { merge: true });
             }
-            transaction.update(registrationRef, buildRegistrationReminderStopUpdate({ reason: paymentStatusAfterCharge, nowIso: queuedAtIso }));
+            transaction.update(registrationRef, buildRegistrationReminderStopUpdate({ reason: effectivePaymentStatus, nowIso: queuedAtIso }));
           } else if (registration.paymentPlan?.id === 'installments' && form.installmentPlan?.enabled === true) {
             const nextPaidInstallmentCount = getRegistrationPaymentPlanPaidInstallmentCount(registration) + 1;
             const installmentState = buildRegistrationInstallmentPaymentState(registration, form, nextPaidInstallmentCount);
             const hasRemainingInstallments = installmentState.remainingBalanceCents > 0 && installmentState.remainingSchedule.length > 0;
             const paymentStatusAfterCharge = hasRemainingInstallments ? 'installment_in_progress' : 'paid';
+            const {
+              chargeLedger,
+              aggregateFinancialState,
+              effectivePaymentStatus
+            } = buildPaidChargeAggregate(paymentStatusAfterCharge);
             transaction.set(registrationRef, {
               checkoutStatus: 'complete',
-              paymentStatus: paymentStatusAfterCharge,
+              paymentStatus: effectivePaymentStatus,
               paidAt: receivedAt,
               balanceDueCents: installmentState.remainingBalanceCents,
               nextPaymentDueDate: installmentState.nextDueDate || null,
@@ -5977,10 +6010,11 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
               stripeEventId: event.id,
               lastPaidStripeCheckoutSessionId: session.id,
               lastPaidStripeChargeId: chargeId,
-              stripeGrossPaidAmountCents: Math.max(0, Number(registration.stripeGrossPaidAmountCents || 0)) + Math.max(0, Number(session.amount_total || 0)),
-              stripeRefundedAmountCents: Math.max(0, Number(registration.stripeRefundedAmountCents || 0)),
-              stripeDisputeLostAmountCents: Math.max(0, Number(registration.stripeDisputeLostAmountCents || 0)),
-              stripeFinancialStatus: 'paid',
+              stripeGrossPaidAmountCents: aggregateFinancialState.grossPaidAmountCents,
+              stripeRefundedAmountCents: aggregateFinancialState.refundedAmountCents,
+              stripeDisputeLostAmountCents: aggregateFinancialState.disputeLostAmountCents,
+              stripeFinancialStatus: aggregateFinancialState.financialStatus,
+              paymentStatusBeforeStripeReversal: paymentStatusAfterCharge,
               checkoutCreationReservationId: admin.firestore.FieldValue.delete(),
               checkoutCreationStartedAt: admin.firestore.FieldValue.delete(),
               retryCapacityReservationId: admin.firestore.FieldValue.delete(),
@@ -5996,22 +6030,21 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
               },
               updatedAt: receivedAt
             }, { merge: true });
-            transaction.set(chargeRef, buildRegistrationStripeChargeLedger({
-              registration,
-              session,
-              paymentIntent,
-              eventId: event.id,
-              receivedAt,
-              paymentStatusAfterCharge
-            }));
+            transaction.set(chargeRef, chargeLedger);
             if (recoveredReservationRef) {
               transaction.set(recoveredReservationRef, { status: 'paid', processedAt: receivedAt, updatedAt: receivedAt }, { merge: true });
             }
-            transaction.update(registrationRef, buildRegistrationReminderStopUpdate({ reason: hasRemainingInstallments ? 'installment_in_progress' : 'paid', nowIso: queuedAtIso }));
+            transaction.update(registrationRef, buildRegistrationReminderStopUpdate({ reason: effectivePaymentStatus, nowIso: queuedAtIso }));
           } else {
+            const paymentStatusAfterCharge = 'paid';
+            const {
+              chargeLedger,
+              aggregateFinancialState,
+              effectivePaymentStatus
+            } = buildPaidChargeAggregate(paymentStatusAfterCharge);
             transaction.set(registrationRef, {
               checkoutStatus: 'complete',
-              paymentStatus: 'paid',
+              paymentStatus: effectivePaymentStatus,
               paidAt: receivedAt,
               balanceDueCents: 0,
               nextPaymentDueDate: null,
@@ -6021,27 +6054,21 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
               stripeEventId: event.id,
               lastPaidStripeCheckoutSessionId: session.id,
               lastPaidStripeChargeId: chargeId,
-              stripeGrossPaidAmountCents: Math.max(0, Number(registration.stripeGrossPaidAmountCents || 0)) + Math.max(0, Number(session.amount_total || 0)),
-              stripeRefundedAmountCents: Math.max(0, Number(registration.stripeRefundedAmountCents || 0)),
-              stripeDisputeLostAmountCents: Math.max(0, Number(registration.stripeDisputeLostAmountCents || 0)),
-              stripeFinancialStatus: 'paid',
+              stripeGrossPaidAmountCents: aggregateFinancialState.grossPaidAmountCents,
+              stripeRefundedAmountCents: aggregateFinancialState.refundedAmountCents,
+              stripeDisputeLostAmountCents: aggregateFinancialState.disputeLostAmountCents,
+              stripeFinancialStatus: aggregateFinancialState.financialStatus,
+              paymentStatusBeforeStripeReversal: paymentStatusAfterCharge,
               checkoutCreationReservationId: admin.firestore.FieldValue.delete(),
               checkoutCreationStartedAt: admin.firestore.FieldValue.delete(),
               retryCapacityReservationId: admin.firestore.FieldValue.delete(),
               updatedAt: receivedAt
             }, { merge: true });
-            transaction.set(chargeRef, buildRegistrationStripeChargeLedger({
-              registration,
-              session,
-              paymentIntent,
-              eventId: event.id,
-              receivedAt,
-              paymentStatusAfterCharge: 'paid'
-            }));
+            transaction.set(chargeRef, chargeLedger);
             if (recoveredReservationRef) {
               transaction.set(recoveredReservationRef, { status: 'paid', processedAt: receivedAt, updatedAt: receivedAt }, { merge: true });
             }
-            transaction.update(registrationRef, buildRegistrationReminderStopUpdate({ reason: 'paid', nowIso: queuedAtIso }));
+            transaction.update(registrationRef, buildRegistrationReminderStopUpdate({ reason: effectivePaymentStatus, nowIso: queuedAtIso }));
           }
         } else {
           const lifecycleGuardFailure = getRegistrationCheckoutLifecycleGuardFailure({
