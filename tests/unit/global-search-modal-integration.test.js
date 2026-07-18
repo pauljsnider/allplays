@@ -73,7 +73,7 @@ describe('legacy global search modal', () => {
     });
 
     it('opens without bootstrapping all public teams and waits for a 2-character query before public discovery', async () => {
-        const { setupHeaderSearch } = await import('../../js/global-search.js?v=11');
+        const { setupHeaderSearch } = await import('../../js/global-search.js?v=12');
 
         setupHeaderSearch({
             user: {
@@ -118,7 +118,7 @@ describe('legacy global search modal', () => {
                 teams: [{ id: 'team-target', name: 'Target United', isPublic: true, active: true }],
                 nextCursor: null
             });
-        const { setupHeaderSearch } = await import('../../js/global-search.js?v=11');
+        const { setupHeaderSearch } = await import('../../js/global-search.js?v=12');
 
         setupHeaderSearch({ user: { uid: 'user-1', email: 'user@example.com' }, headerContainer: null });
         window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }));
@@ -141,7 +141,7 @@ describe('legacy global search modal', () => {
         dbMocks.discoverPublicTeams
             .mockResolvedValueOnce({ teams: [], nextCursor: { lastId: 'first' } })
             .mockResolvedValueOnce({ teams: [], nextCursor: { lastId: 'second' } });
-        const { setupHeaderSearch } = await import('../../js/global-search.js?v=11');
+        const { setupHeaderSearch } = await import('../../js/global-search.js?v=12');
 
         setupHeaderSearch({ user: { uid: 'user-1', email: 'user@example.com' }, headerContainer: null });
         window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }));
@@ -158,10 +158,54 @@ describe('legacy global search modal', () => {
         expect(document.body.textContent).not.toContain('No results');
     });
 
+    it('continues from a full public-team page without growing the bounded result set', async () => {
+        const nextCursor = { kind: 'public-team-callable-v2', lastId: 'team-20' };
+        dbMocks.discoverPublicTeams
+            .mockResolvedValueOnce({
+                teams: Array.from({ length: 20 }, (_, index) => ({
+                    id: `team-${index + 1}`,
+                    name: `Target Team ${index + 1}`,
+                    isPublic: true,
+                    active: true
+                })),
+                nextCursor
+            })
+            .mockResolvedValueOnce({
+                teams: [{ id: 'team-21', name: 'Target Team 21', isPublic: true, active: true }],
+                nextCursor: null
+            });
+        const { setupHeaderSearch } = await import('../../js/global-search.js?v=12');
+
+        setupHeaderSearch({ user: { uid: 'user-1', email: 'user@example.com' }, headerContainer: null });
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }));
+        await flushAsyncWork();
+        const input = document.querySelector('[data-global-search-input="1"]');
+        input.value = 'target';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        await vi.advanceTimersByTimeAsync(200);
+        await flushAsyncWork();
+
+        expect(dbMocks.discoverPublicTeams).toHaveBeenCalledTimes(1);
+        expect(document.body.textContent).toContain('Target Team 1');
+        const continueButton = document.querySelector('[data-global-search-more-teams="1"]');
+        expect(continueButton).not.toBeNull();
+
+        continueButton.click();
+        await flushAsyncWork();
+
+        expect(dbMocks.discoverPublicTeams).toHaveBeenNthCalledWith(2, {
+            searchText: 'target', cursor: nextCursor, pageSize: 20
+        });
+        expect(document.body.textContent).toContain('Target Team 21');
+        expect(document.body.textContent).not.toContain('Target Team 1');
+        expect(document.querySelectorAll('[data-global-search-result="1"]')).toHaveLength(1);
+        expect(document.querySelector('[data-global-search-more-teams="1"]')).toBeNull();
+    });
+
     it('fails a repeated global-search cursor without issuing an unbounded loop', async () => {
         const repeatedCursor = { lastId: 'same' };
         dbMocks.discoverPublicTeams.mockResolvedValue({ teams: [], nextCursor: repeatedCursor });
-        const { setupHeaderSearch } = await import('../../js/global-search.js?v=11');
+        const { setupHeaderSearch } = await import('../../js/global-search.js?v=12');
 
         setupHeaderSearch({ user: { uid: 'user-1', email: 'user@example.com' }, headerContainer: null });
         window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }));
@@ -181,7 +225,7 @@ describe('legacy global search modal', () => {
         dbMocks.discoverPublicTeams
             .mockImplementationOnce(() => new Promise((resolve) => { resolveFirstSearch = resolve; }))
             .mockResolvedValueOnce({ teams: [], nextCursor: null });
-        const { setupHeaderSearch } = await import('../../js/global-search.js?v=11');
+        const { setupHeaderSearch } = await import('../../js/global-search.js?v=12');
 
         setupHeaderSearch({ user: { uid: 'user-1', email: 'user@example.com' }, headerContainer: null });
         window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }));
@@ -207,7 +251,7 @@ describe('legacy global search modal', () => {
     });
 
     it('uses parent team link visibility summaries without per-team fallback reads', async () => {
-        const { setupHeaderSearch } = await import('../../js/global-search.js?v=11');
+        const { setupHeaderSearch } = await import('../../js/global-search.js?v=12');
 
         setupHeaderSearch({
             user: {
@@ -253,7 +297,7 @@ describe('legacy global search modal', () => {
     });
 
     it('falls back to Firestore when parent links only mark app access without visibility', async () => {
-        const { setupHeaderSearch } = await import('../../js/global-search.js?v=11');
+        const { setupHeaderSearch } = await import('../../js/global-search.js?v=12');
 
         firebaseMocks.getDoc.mockResolvedValueOnce(firestoreDoc('team-app-access-only', {
             name: 'Stored Access Rockets',
@@ -288,7 +332,7 @@ describe('legacy global search modal', () => {
     });
 
     it('searches a query-matching private team beyond the first eight private teams', async () => {
-        const { setupHeaderSearch } = await import('../../js/global-search.js?v=11');
+        const { setupHeaderSearch } = await import('../../js/global-search.js?v=12');
         const privateTeams = [
             ...Array.from({ length: 8 }, (_, index) => ({
                 teamId: `team-private-${index}`,

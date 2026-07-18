@@ -198,7 +198,7 @@ export function renderHeader(container, user) {
   // Global search: injected into the shared header in one place.
   // Lazy-import to avoid adding weight to initial render and to avoid circular deps.
   try {
-    import('./global-search.js?v=11')
+    import('./global-search.js?v=12')
       .then(({ setupHeaderSearch }) => {
         if (typeof setupHeaderSearch === 'function') {
           setupHeaderSearch({ user, headerContainer: container });

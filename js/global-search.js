@@ -673,8 +673,10 @@ function openModal({ initialQuery = '' } = {}) {
         renderResults();
 
         try {
-            const publicTeamsById = new Map(append
-                ? (modalState.publicTeams || []).map((team) => [team.id, team])
+            const existingPublicTeams = append ? (modalState.publicTeams || []) : [];
+            const shouldAppendExistingTeams = append && existingPublicTeams.length < teamSearchQueryLimit;
+            const publicTeamsById = new Map(shouldAppendExistingTeams
+                ? existingPublicTeams.map((team) => [team.id, team])
                 : []);
             const seenCursors = new Set();
             let cursor = initialCursor;
@@ -693,16 +695,17 @@ function openModal({ initialQuery = '' } = {}) {
                     .forEach((team) => publicTeamsById.set(team.id, team));
 
                 cursor = result?.nextCursor || null;
-                if (!cursor || publicTeamsById.size >= teamSearchQueryLimit) break;
+                if (!cursor) break;
                 const cursorKey = JSON.stringify(cursor);
                 if (seenCursors.has(cursorKey)) {
                     throw new Error('Public team search returned a repeated cursor.');
                 }
                 seenCursors.add(cursorKey);
+                if (publicTeamsById.size >= teamSearchQueryLimit) break;
             }
 
             modalState.publicTeams = Array.from(publicTeamsById.values());
-            modalState.publicTeamsNextCursor = publicTeamsById.size < teamSearchQueryLimit ? cursor : null;
+            modalState.publicTeamsNextCursor = cursor;
             modalState.publicTeamsSearchText = q;
             modalState.loadingPublicTeams = false;
             modalState.publicTeamsError = '';

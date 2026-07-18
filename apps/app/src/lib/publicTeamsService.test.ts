@@ -241,6 +241,35 @@ describe('publicTeamsService', () => {
         expect(dbMocks.discoverPublicTeams).toHaveBeenCalledTimes(2);
     });
 
+    it('preserves the continuation cursor when a bounded page fills exactly', async () => {
+        const nextCursor = { kind: 'public-team-callable-v2', lastId: 'team-20' };
+        dbMocks.discoverPublicTeams.mockResolvedValue({
+            teams: Array.from({ length: 20 }, (_, index) => ({
+                id: `team-${index + 1}`,
+                name: `Target Team ${index + 1}`
+            })),
+            nextCursor
+        });
+
+        await expect(getBoundedPublicTeamSearchPage({
+            searchText: 'Target',
+            pageSize: 20,
+            includeRosterCounts: false
+        })).resolves.toEqual({
+            teams: expect.arrayContaining([
+                expect.objectContaining({ teamId: 'team-1' }),
+                expect.objectContaining({ teamId: 'team-20' })
+            ]),
+            nextCursor
+        });
+        expect(dbMocks.discoverPublicTeams).toHaveBeenCalledTimes(1);
+        expect(dbMocks.discoverPublicTeams).toHaveBeenCalledWith({
+            searchText: 'Target',
+            cursor: null,
+            pageSize: 20
+        });
+    });
+
     it('treats a whole two-letter search as an exact state code', async () => {
         dbMocks.discoverPublicTeams.mockResolvedValue({
             teams: [

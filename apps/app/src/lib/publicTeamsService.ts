@@ -175,17 +175,18 @@ export async function getBoundedPublicTeamSearchPage({
         });
         page.teams.forEach((team) => teamsById.set(team.teamId, team));
         cursor = page.nextCursor || null;
-        if (!cursor || teamsById.size >= resultLimit) break;
+        if (!cursor) break;
         const cursorKey = JSON.stringify(cursor);
         if (seenCursors.has(cursorKey)) {
             throw new Error('Public team search returned a repeated cursor.');
         }
         seenCursors.add(cursorKey);
+        if (teamsById.size >= resultLimit) break;
     }
 
     return {
         teams: Array.from(teamsById.values()),
-        nextCursor: teamsById.size < resultLimit ? cursor : null
+        nextCursor: cursor
     };
 }
 
