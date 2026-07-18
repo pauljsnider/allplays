@@ -10334,7 +10334,7 @@ async function handleTeamChatMessageCreated(snapshot, context) {
     await snapshot.ref.update({ mentionedUids });
   }
 
-  if (notificationPlan.mentionTargets.length || notificationPlan.mentionInboxUids.length) {
+  if (notificationPlan.mentionTargets.length || notificationPlan.mentionInboxUids?.length) {
     results.push(await sendDirectTargetsNotification({
       targets: notificationPlan.mentionTargets,
       inboxUids: notificationPlan.mentionInboxUids,
