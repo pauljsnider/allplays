@@ -407,8 +407,10 @@ describe('public registration flow', () => {
         expect(page).toContain('cancelStripeRegistrationCheckout({ teamId, formId, registrationId, checkoutAttemptToken, publicCheckoutCapability });');
         expect(page).toContain('releaseCancelledStripeRegistration(cancelledRegistrationId, cancelledCheckoutAttemptToken, cancelledPublicCheckoutCapability)');
         expect(page).toContain('function createCheckoutAttemptToken()');
+        expect(page).toContain('const submissionAttempt = preparePublicRegistrationSubmission(submission);');
         expect(page).toContain('? preparedCheckoutRegistration.checkoutAttemptToken');
-        expect(page).toContain(': createCheckoutAttemptToken();');
+        expect(page).toContain(': submissionAttempt.submissionIdempotencyKey;');
+        expect(page).toContain('submissionIdempotencyKey: checkoutAttemptToken');
         expect(page).toContain('checkoutAttemptToken,');
         expect(page).not.toContain('runTransaction(db, async (transaction)');
         expect(page).not.toContain('addDoc(');
@@ -722,7 +724,10 @@ describe('public registration flow', () => {
         expect(appSource).toContain('function createCheckoutAttemptToken()');
         expect(appSource).toContain("throw new Error('Crypto API not available. Cannot generate secure checkout token.');");
         expect(appSource).not.toContain('Math.random().toString(36).slice(2, 18)');
-        expect(appSource).toContain("const checkoutAttemptToken = isRetryPaymentMode ? returnCheckoutAttemptToken : createCheckoutAttemptToken();");
+        expect(appSource).toContain('getOrCreateRegistrationSubmissionAttempt(');
+        expect(appSource).toContain('submissionAttemptRef.current = submissionAttempt;');
+        expect(appSource).toContain('const checkoutAttemptToken = isRetryPaymentMode ? returnCheckoutAttemptToken : submissionAttempt.token;');
+        expect(appSource).toContain('submissionIdempotencyKey: checkoutAttemptToken');
         expect(appSource).toContain('retryPayment: true');
         expect(appSource).toContain('publicCheckoutCapability: currentPublicCheckoutCapability ||');
         expect(appSource).toContain("Stripe payment was cancelled. You can retry payment for this registration.");

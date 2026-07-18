@@ -4,6 +4,15 @@ const Module = require('node:module');
 
 const repoIndexPath = require.resolve('../index.js');
 const originalModuleLoad = Module._load;
+const registrationSecurityEnvKeys = [
+    'PUBLIC_REGISTRATION_APP_CHECK_MODE',
+    'PUBLIC_REGISTRATION_NETWORK_RATE_LIMIT_MODE',
+    'PUBLIC_REGISTRATION_FORM_RATE_LIMIT_MODE',
+    'PUBLIC_REGISTRATION_CHECKOUT_RATE_LIMIT_MODE'
+];
+const originalRegistrationSecurityEnv = Object.fromEntries(
+    registrationSecurityEnvKeys.map((key) => [key, process.env[key]])
+);
 
 let adminStub = null;
 let functionsStub = null;
@@ -327,6 +336,7 @@ test.beforeEach(() => {
     functionsStub = null;
     StripeStub = null;
     stripeState = null;
+    registrationSecurityEnvKeys.forEach((key) => delete process.env[key]);
 });
 
 test.afterEach(() => {
@@ -336,6 +346,11 @@ test.afterEach(() => {
     functionsStub = null;
     StripeStub = null;
     stripeState = null;
+    registrationSecurityEnvKeys.forEach((key) => {
+        const value = originalRegistrationSecurityEnv[key];
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+    });
 });
 
 test('loads unrelated callables without Firestore transaction support', () => {
@@ -349,7 +364,7 @@ test('loads unrelated callables without Firestore transaction support', () => {
     assert.equal(typeof mod.listPublicOpportunities, 'function');
 });
 
-test('rejects nonexistent forms before creating a durable rate-limit document', async () => {
+test('rate limits nonexistent form probes before returning a non-enumerating error', async () => {
     const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration({});
 
     await assert.rejects(
@@ -360,7 +375,7 @@ test('rejects nonexistent forms before creating a durable rate-limit document', 
         }
     );
 
-    assert.equal(firestore.rateLimitDocs().length, 0);
+    assert.equal(firestore.rateLimitDocs().length, 3);
     assert.equal(firestore.registrationDocs().length, 0);
 });
 
@@ -541,8 +556,174 @@ test('isolates guardian submission limits for families sharing an IP address', a
     );
 
     assert.equal(result.success, true);
-    assert.equal(firestore.rateLimitDocs().length, 2);
+    assert.equal(firestore.rateLimitDocs().length, 4);
     assert.equal(firestore.registrationDocs().length, 4);
+});
+
+test('replays an identical keyed submission without duplicating capacity or consuming another rate slot', async () => {
+    const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration(buildSeedState());
+    const input = buildSubmission({ submissionIdempotencyKey: 'submission_token_1234567890' });
+
+    const first = await submitPublicRegistration(input, context);
+    const rateLimitStateBeforeReplay = clone(firestore.rateLimitDocs());
+    const replay = await submitPublicRegistration({
+        ...input,
+        participant: { playerName: 'Sam Player' }
+    }, context);
+
+    assert.equal(replay.registrationId, first.registrationId);
+    assert.equal(replay.idempotentReplay, true);
+    assert.equal(firestore.registrationDocs().length, 1);
+    assert.equal(firestore.snapshot('teams/team-1/registrationForms/form-1').registrationOptionCounts.u10.enrolled, 1);
+    assert.deepEqual(firestore.rateLimitDocs(), rateLimitStateBeforeReplay);
+    assert.match(first.registrationId, /^submission_[a-f0-9]{64}$/);
+});
+
+test('rejects reuse of a submission key with different applicant data', async () => {
+    const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration(buildSeedState());
+    const input = buildSubmission({ submissionIdempotencyKey: 'submission_token_1234567890' });
+    await submitPublicRegistration(input, context);
+
+    await assert.rejects(
+        submitPublicRegistration({
+            ...input,
+            participant: { playerName: 'Different Player' }
+        }, context),
+        (error) => {
+            assert.equal(error.code, 'already-exists');
+            assert.equal(error.details.reason, 'idempotency-conflict');
+            return true;
+        }
+    );
+    assert.equal(firestore.registrationDocs().length, 1);
+    assert.equal(firestore.snapshot('teams/team-1/registrationForms/form-1').registrationOptionCounts.u10.enrolled, 1);
+});
+
+test('stores authenticated caller attribution without trusting it as guardian input', async () => {
+    const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration(buildSeedState());
+    const input = buildSubmission({ submissionIdempotencyKey: 'submission_token_1234567890' });
+    const result = await submitPublicRegistration(input, {
+        ...context,
+        auth: { uid: 'signed-in-user', token: { email: 'different@example.com', email_verified: true } }
+    });
+
+    const registration = firestore.snapshot(`teams/team-1/registrationForms/form-1/registrations/${result.registrationId}`);
+    assert.equal(registration.submittedByUserId, 'signed-in-user');
+    assert.equal(registration.guardian.email, 'parent@example.com');
+});
+
+test('observes missing App Check by default and enforces only after the rollout flag changes', async () => {
+    const observed = loadSubmitPublicRegistration(buildSeedState());
+    await assert.doesNotReject(observed.submitPublicRegistration(buildSubmission(), context));
+
+    process.env.PUBLIC_REGISTRATION_APP_CHECK_MODE = 'enforce';
+    const enforced = loadSubmitPublicRegistration(buildSeedState());
+    await assert.rejects(
+        enforced.submitPublicRegistration(buildSubmission(), context),
+        (error) => {
+            assert.equal(error.code, 'failed-precondition');
+            assert.equal(error.details.reason, 'app-check-required');
+            return true;
+        }
+    );
+    assert.equal(enforced.firestore.registrationDocs().length, 0);
+
+    await assert.doesNotReject(enforced.submitPublicRegistration(buildSubmission(), {
+        ...context,
+        app: { appId: '1:123:web:verified' }
+    }));
+});
+
+test('applies the staged App Check gate to public registration checkout and cancellation', async () => {
+    process.env.PUBLIC_REGISTRATION_APP_CHECK_MODE = 'enforce';
+    const { mod } = loadFunctionsModule(buildSeedState({
+        paymentSettings: { offlinePaymentEnabled: true, onlineCheckoutEnabled: true }
+    }));
+    const verifiedContext = {
+        ...context,
+        app: { appId: '1:123:web:verified' }
+    };
+    const checkoutAttemptToken = 'checkouttoken123456';
+    const submission = await mod.submitPublicRegistration(buildSubmission({ checkoutAttemptToken }), verifiedContext);
+    const checkoutInput = {
+        teamId: 'team-1',
+        formId: 'form-1',
+        registrationId: submission.registrationId,
+        checkoutAttemptToken
+    };
+
+    await assert.rejects(
+        mod.createStripeRegistrationCheckout(checkoutInput),
+        (error) => error.code === 'failed-precondition' && error.details.reason === 'app-check-required'
+    );
+    const checkout = await mod.createStripeRegistrationCheckout(checkoutInput, verifiedContext);
+    assert.equal(checkout.checkoutUrl, 'https://stripe.test/checkout/1');
+
+    const cancelCheckoutAttemptToken = 'cancelcheckouttoken123456';
+    const cancelSubmission = await mod.submitPublicRegistration(buildSubmission({
+        guardian: { email: 'cancel@example.com' },
+        checkoutAttemptToken: cancelCheckoutAttemptToken
+    }), verifiedContext);
+    const cancelInput = {
+        teamId: 'team-1',
+        formId: 'form-1',
+        registrationId: cancelSubmission.registrationId,
+        checkoutAttemptToken: cancelCheckoutAttemptToken
+    };
+    await assert.rejects(
+        mod.cancelStripeRegistrationCheckout(cancelInput),
+        (error) => error.code === 'failed-precondition' && error.details.reason === 'app-check-required'
+    );
+    await assert.doesNotReject(mod.cancelStripeRegistrationCheckout(cancelInput, verifiedContext));
+});
+
+test('stages network throttling in observe mode before explicit enforcement', async () => {
+    const form = buildSeedState({ registrationOptions: [], registrationOptionCounts: {} });
+    const observed = loadSubmitPublicRegistration(form);
+    for (let index = 0; index < 31; index += 1) {
+        await observed.submitPublicRegistration(buildSubmission({
+            guardian: { email: `family-${index}@example.com` },
+            selectedOptionId: ''
+        }), context);
+    }
+    assert.equal(observed.firestore.registrationDocs().length, 31);
+
+    process.env.PUBLIC_REGISTRATION_NETWORK_RATE_LIMIT_MODE = 'enforce';
+    const enforced = loadSubmitPublicRegistration(form);
+    for (let index = 0; index < 30; index += 1) {
+        await enforced.submitPublicRegistration(buildSubmission({
+            guardian: { email: `family-${index}@example.com` },
+            selectedOptionId: ''
+        }), context);
+    }
+    await assert.rejects(
+        enforced.submitPublicRegistration(buildSubmission({
+            guardian: { email: 'family-30@example.com' },
+            selectedOptionId: ''
+        }), context),
+        (error) => {
+            assert.equal(error.code, 'resource-exhausted');
+            assert.equal(error.details.scope, 'network');
+            return true;
+        }
+    );
+    assert.equal(enforced.firestore.registrationDocs().length, 30);
+});
+
+test('rejects oversized public field maps and unsafe quantities before any database write', async () => {
+    const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration(buildSeedState());
+    await assert.rejects(
+        submitPublicRegistration(buildSubmission({
+            participant: Object.fromEntries(Array.from({ length: 21 }, (_, index) => [`field${index}`, 'value']))
+        }), context),
+        (error) => error.code === 'invalid-argument'
+    );
+    await assert.rejects(
+        submitPublicRegistration(buildSubmission({ quantity: 21 }), context),
+        (error) => error.code === 'invalid-argument'
+    );
+    assert.equal(firestore.registrationDocs().length, 0);
+    assert.equal(firestore.rateLimitDocs().length, 0);
 });
 
 test('shares submission throttling across independently loaded function handlers', async () => {

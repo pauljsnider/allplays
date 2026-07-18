@@ -333,7 +333,8 @@ export async function submitOfflineRegistration(teamId: string, formId: string, 
       selectedOptionId: submission.selectedOptionId || submission.selectedOption?.id || '',
       selectedPaymentPlanId: submission.selectedPaymentPlanId || 'pay_full',
       quantity: submission.quantity || submission.feeSnapshot?.quantity || 1,
-      checkoutAttemptToken: submission.checkoutAttemptToken || ''
+      checkoutAttemptToken: submission.checkoutAttemptToken || '',
+      submissionIdempotencyKey: submission.submissionIdempotencyKey || submission.checkoutAttemptToken || ''
     });
     return result?.data || {};
   } catch (error: any) {

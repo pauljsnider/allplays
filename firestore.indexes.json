@@ -630,6 +630,13 @@
       ]
     },
     {
+      "collectionGroup": "registrations",
+      "fieldPath": "submittedByUserId",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
+    },
+    {
       "collectionGroup": "authEmailDeliveries",
       "fieldPath": "expiresAt",
       "ttl": true,

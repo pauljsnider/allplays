@@ -5803,17 +5803,46 @@ function formatParentRegistrationStatusLabel(status = '') {
 
 async function listParentRegistrationApplicationsForProfile(userProfile = {}) {
     const email = normalizeParentRegistrationEmail(userProfile.email || auth.currentUser?.email);
-    if (!email) return [];
+    const userId = String(userProfile.id || userProfile.uid || auth.currentUser?.uid || '').trim();
+    if (!email && !userId) return [];
 
-    const snapshot = await getDocs(query(
-        collectionGroup(db, 'registrations'),
-        where('guardian.email', '==', email)
-    ));
+    const registrationQueries = [];
+    if (email) {
+        registrationQueries.push(query(
+            collectionGroup(db, 'registrations'),
+            where('guardian.email', '==', email)
+        ));
+    }
+    if (userId) {
+        registrationQueries.push(query(
+            collectionGroup(db, 'registrations'),
+            where('submittedByUserId', '==', userId)
+        ));
+    }
+    const queryResults = await Promise.all(registrationQueries.map(async (registrationQuery) => {
+        try {
+            return { snapshot: await getDocs(registrationQuery), error: null };
+        } catch (error) {
+            return { snapshot: null, error };
+        }
+    }));
+    const successfulResults = queryResults.filter((result) => result.snapshot);
+    if (successfulResults.length === 0) {
+        throw queryResults.find((result) => result.error)?.error || new Error('Registration applications could not be loaded.');
+    }
+    const seenRegistrationPaths = new Set();
+    const registrationDocs = successfulResults.flatMap((result) => result.snapshot.docs).filter((registrationDoc) => {
+        const registrationData = registrationDoc.data() || {};
+        const dedupKey = registrationDoc.ref?.path || [registrationData.teamId, registrationData.formId, registrationDoc.id].join('/');
+        if (seenRegistrationPaths.has(dedupKey)) return false;
+        seenRegistrationPaths.add(dedupKey);
+        return true;
+    });
 
     const teamCache = new Map();
     const formCache = new Map();
 
-    const applications = await Promise.all(snapshot.docs.map(async (registrationDoc) => {
+    const applications = await Promise.all(registrationDocs.map(async (registrationDoc) => {
         const registration = { id: registrationDoc.id, ...(registrationDoc.data() || {}) };
         const teamId = registration.teamId || '';
         const formId = registration.formId || '';
