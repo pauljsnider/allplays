@@ -65,6 +65,17 @@ const TEXT_LIMITS = Object.freeze({
   youtubeEmbedUrl: 1000,
   status: 40
 });
+const PUBLIC_TEAM_PROFILE_STRING_FIELDS = Object.freeze([
+  ...Object.keys(TEXT_LIMITS),
+  'publicSearchName',
+  'publicSearchCity',
+  'publicSearchState',
+  'publicSearchZip',
+  'publicSearchCityState'
+]);
+const PUBLIC_TEAM_PROFILE_BOOLEAN_FIELDS = Object.freeze([
+  'appAccess', 'webAccess', 'active', 'archived', 'isPublic'
+]);
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -91,6 +102,12 @@ function isPlainObject(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const prototype = Object.getPrototypeOf(value);
   return prototype === Object.prototype || prototype === null;
+}
+
+function isTimestampLike(value) {
+  return value === null ||
+    value instanceof Date ||
+    Boolean(value && typeof value === 'object' && typeof value.toMillis === 'function');
 }
 
 function sanitizeFiniteNumber(value) {
@@ -322,6 +339,13 @@ function isPublicTeamProfileSchemaValid(profile = {}) {
     profile.publicSchemaVersion === PUBLIC_SCHEMA_VERSION &&
     normalizeText(profile.name).length > 0 &&
     findUnexpectedPublicTeamProfileFields(profile).length === 0 &&
+    PUBLIC_TEAM_PROFILE_STRING_FIELDS.every((field) => (
+      !Object.prototype.hasOwnProperty.call(profile, field) || typeof profile[field] === 'string'
+    )) &&
+    PUBLIC_TEAM_PROFILE_BOOLEAN_FIELDS.every((field) => (
+      !Object.prototype.hasOwnProperty.call(profile, field) || typeof profile[field] === 'boolean'
+    )) &&
+    (!Object.prototype.hasOwnProperty.call(profile, 'sourceUpdatedAt') || isTimestampLike(profile.sourceUpdatedAt)) &&
     [...NESTED_PRESENTATION_FIELDS].every((field) => (
       !Object.prototype.hasOwnProperty.call(profile, field) ||
       stableSerialize(profile[field]) === stableSerialize(sanitizeNestedPresentationField(field, profile[field]))

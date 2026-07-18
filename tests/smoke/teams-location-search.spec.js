@@ -40,6 +40,15 @@ export async function discoverPublicTeams(options = {}) {
     }
     return { teams: pages.kansas, nextCursor: 'search-page-2' };
   }
+  if (filter.includes('sparse')) {
+    if (options.cursor === 'sparse-page-3') {
+      return { teams: [], nextCursor: null };
+    }
+    if (options.cursor === 'sparse-page-2') {
+      return { teams: [], nextCursor: 'sparse-page-3' };
+    }
+    return { teams: [], nextCursor: 'sparse-page-2' };
+  }
   return { teams: [], nextCursor: null };
 }
 
@@ -116,4 +125,33 @@ test('browse teams location search paginates filtered results and clear restores
     await expect(page.getByText('Alpha Soccer')).toBeVisible();
     await expect(page.getByText('Kansas City Current')).toHaveCount(0);
     await expect.poll(() => page.evaluate(() => window.__teamSearchCalls.at(-1))).toEqual({ cursor: null, pageSize: 24 });
+});
+
+test('browse teams preserves sparse-search guidance through empty continuation pages', async ({ page, baseURL }) => {
+    await page.route('**/js/auth.js?v=*', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_STUB }));
+    await page.route('**/js/db.js?v=*', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: DB_STUB }));
+    await page.route('**/js/telemetry.js?v=*', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: '' }));
+    await page.route('**/js/utils.js?v=*', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: UTILS_STUB }));
+
+    await page.goto(`${baseURL}/teams.html`, { waitUntil: 'domcontentloaded' });
+    await page.locator('#location-search-input').fill('Sparse');
+    await page.locator('#search-button').click();
+
+    const scanMessage = 'No matches in this scan yet for "Sparse". Continue searching to scan more public teams.';
+    await expect(page.getByText(scanMessage)).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Load more teams' })).toBeVisible();
+
+    await page.getByRole('button', { name: 'Load more teams' }).click();
+    await expect(page.getByText(scanMessage)).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Load more teams' })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.__teamSearchCalls.at(-1))).toEqual({
+      searchText: 'Sparse', cursor: 'sparse-page-2', pageSize: 24
+    });
+
+    await page.getByRole('button', { name: 'Load more teams' }).click();
+    await expect(page.getByText('No public teams found for "Sparse".')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Load more teams' })).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => window.__teamSearchCalls.at(-1))).toEqual({
+      searchText: 'Sparse', cursor: 'sparse-page-3', pageSize: 24
+    });
 });

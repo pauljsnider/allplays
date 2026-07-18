@@ -111,6 +111,24 @@ test('projection validation rejects injected fields and nameless documents', () 
       'Pool A': { poolName: 'Pool A', teamOrder: ['Safe'], finalizedBy: { userId: 'private-user' } }
     }
   }), false);
+
+  for (const malformedField of [
+    { description: ['private'] },
+    { photoUrl: { private: true } },
+    { leagueUrl: ['private'] },
+    { publicSearchName: { private: true } },
+    { appAccess: 'true' },
+    { archived: 'false' },
+    { sourceUpdatedAt: { private: true } }
+  ]) {
+    assert.equal(isPublicTeamProfileSchemaValid({
+      publicSchemaVersion: 1,
+      name: 'Malformed Allowed Field',
+      isPublic: true,
+      active: true,
+      ...malformedField
+    }), false);
+  }
 });
 
 test('public team fallback search matches all normalized tokens without private fields', () => {

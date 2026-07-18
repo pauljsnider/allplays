@@ -1617,6 +1617,47 @@ service cloud.firestore {
               isOwnerUserEmailAuthBound(request.resource.data));
     }
 
+    function isOptionalPublicTeamProfileString(data, fieldName) {
+      return !data.keys().hasAny([fieldName]) || data.get(fieldName, null) is string;
+    }
+
+    function isOptionalPublicTeamProfileBool(data, fieldName) {
+      return !data.keys().hasAny([fieldName]) || data.get(fieldName, null) is bool;
+    }
+
+    function isOptionalPublicTeamProfileMap(data, fieldName) {
+      return !data.keys().hasAny([fieldName]) || data.get(fieldName, null) is map;
+    }
+
+    function isOptionalPublicTeamProfileList(data, fieldName) {
+      return !data.keys().hasAny([fieldName]) || data.get(fieldName, null) is list;
+    }
+
+    function isOptionalPublicTeamProfileTimestamp(data, fieldName) {
+      return !data.keys().hasAny([fieldName]) ||
+             data.get(fieldName, null) == null ||
+             data.get(fieldName, null) is timestamp;
+    }
+
+    function isPublicTeamProfileSocialLinksValid(data) {
+      let links = data.get('socialLinks', {});
+      return !data.keys().hasAny(['socialLinks']) ||
+             (links is map &&
+              links.keys().hasOnly([
+                'facebook', 'instagram', 'x', 'twitter', 'tiktok',
+                'youtube', 'linkedin', 'threads', 'bluesky'
+              ]) &&
+              isOptionalPublicTeamProfileString(links, 'facebook') &&
+              isOptionalPublicTeamProfileString(links, 'instagram') &&
+              isOptionalPublicTeamProfileString(links, 'x') &&
+              isOptionalPublicTeamProfileString(links, 'twitter') &&
+              isOptionalPublicTeamProfileString(links, 'tiktok') &&
+              isOptionalPublicTeamProfileString(links, 'youtube') &&
+              isOptionalPublicTeamProfileString(links, 'linkedin') &&
+              isOptionalPublicTeamProfileString(links, 'threads') &&
+              isOptionalPublicTeamProfileString(links, 'bluesky'));
+    }
+
     function isPublicTeamProfilePayloadValid(data) {
       return data.keys().hasOnly([
                'publicSchemaVersion',
@@ -1629,19 +1670,43 @@ service cloud.firestore {
                'publicSearchName', 'publicSearchCity', 'publicSearchState', 'publicSearchZip',
                'publicSearchCityState', 'sourceUpdatedAt'
              ]) &&
+             data.get('publicSchemaVersion', 0) is int &&
              data.get('publicSchemaVersion', 0) == 1 &&
+             data.get('isPublic', false) is bool &&
              data.get('isPublic', false) == true &&
+             data.get('active', false) is bool &&
              data.get('active', false) == true &&
              data.get('name', '') is string &&
              data.get('name', '').size() > 0 &&
-             (!data.keys().hasAny(['socialLinks']) || data.socialLinks is map) &&
-             (!data.keys().hasAny(['standingsConfig']) || data.standingsConfig is map) &&
-             (!data.keys().hasAny(['tournament']) || data.tournament is map) &&
-             (!data.keys().hasAny(['tournamentDivisions']) || data.tournamentDivisions is list) &&
-             (!data.keys().hasAny(['tournamentPools']) || data.tournamentPools is list) &&
-             (!data.keys().hasAny(['tournamentPoolOverrides']) || data.tournamentPoolOverrides is map) &&
-             (!data.keys().hasAny(['appAccess']) || data.appAccess is bool) &&
-             (!data.keys().hasAny(['webAccess']) || data.webAccess is bool);
+             isOptionalPublicTeamProfileString(data, 'sport') &&
+             isOptionalPublicTeamProfileString(data, 'description') &&
+             isOptionalPublicTeamProfileString(data, 'photoUrl') &&
+             isOptionalPublicTeamProfileString(data, 'city') &&
+             isOptionalPublicTeamProfileString(data, 'state') &&
+             isOptionalPublicTeamProfileString(data, 'zip') &&
+             isOptionalPublicTeamProfileString(data, 'leagueUrl') &&
+             isOptionalPublicTeamProfileString(data, 'websiteUrl') &&
+             isPublicTeamProfileSocialLinksValid(data) &&
+             isOptionalPublicTeamProfileString(data, 'twitchChannel') &&
+             isOptionalPublicTeamProfileString(data, 'streamUrl') &&
+             isOptionalPublicTeamProfileString(data, 'livestreamUrl') &&
+             isOptionalPublicTeamProfileString(data, 'streamEmbedUrl') &&
+             isOptionalPublicTeamProfileString(data, 'youtubeEmbedUrl') &&
+             isOptionalPublicTeamProfileMap(data, 'standingsConfig') &&
+             isOptionalPublicTeamProfileMap(data, 'tournament') &&
+             isOptionalPublicTeamProfileList(data, 'tournamentDivisions') &&
+             isOptionalPublicTeamProfileList(data, 'tournamentPools') &&
+             isOptionalPublicTeamProfileMap(data, 'tournamentPoolOverrides') &&
+             isOptionalPublicTeamProfileBool(data, 'appAccess') &&
+             isOptionalPublicTeamProfileBool(data, 'webAccess') &&
+             isOptionalPublicTeamProfileBool(data, 'archived') &&
+             isOptionalPublicTeamProfileString(data, 'status') &&
+             isOptionalPublicTeamProfileString(data, 'publicSearchName') &&
+             isOptionalPublicTeamProfileString(data, 'publicSearchCity') &&
+             isOptionalPublicTeamProfileString(data, 'publicSearchState') &&
+             isOptionalPublicTeamProfileString(data, 'publicSearchZip') &&
+             isOptionalPublicTeamProfileString(data, 'publicSearchCityState') &&
+             isOptionalPublicTeamProfileTimestamp(data, 'sourceUpdatedAt');
     }
 
     function isOwnerUserEmailAuthBound(data) {

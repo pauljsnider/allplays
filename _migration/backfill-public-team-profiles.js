@@ -16,6 +16,7 @@ const {
     isPublicTeamProfileSchemaValid
 } = require('../functions/public-team-profile-core.cjs');
 const PUBLIC_TEAM_PROFILE_MIGRATION_STATE_PATH = 'systemMigrations/publicTeamProfilesBackfill';
+const PUBLIC_TEAM_PROFILE_RECONCILIATION_MAX_PASSES = 5;
 
 function readFlag(argv, flag) {
     const index = argv.indexOf(flag);
@@ -49,6 +50,34 @@ async function listTeams(db, teamId) {
     return teamSnap.exists ? [teamSnap] : [];
 }
 
+async function listPublicTeamProfiles(db) {
+    return (await db.collection('publicTeamProfiles').get()).docs;
+}
+
+function stableSnapshotValue(value) {
+    if (value === null || value === undefined) return value ?? null;
+    if (Array.isArray(value)) return value.map(stableSnapshotValue);
+    if (value instanceof Date) return { __date: value.toISOString() };
+    if (typeof value?.toMillis === 'function') return { __timestampMillis: value.toMillis() };
+    if (typeof value === 'object') {
+        return Object.fromEntries(Object.keys(value).sort().map((key) => [key, stableSnapshotValue(value[key])]));
+    }
+    return value;
+}
+
+function getTeamSnapshotFingerprint(teamDocs) {
+    return teamDocs
+        .map((teamSnap) => {
+            const updateTime = teamSnap.updateTime;
+            const version = typeof updateTime?.toMillis === 'function'
+                ? updateTime.toMillis()
+                : JSON.stringify(stableSnapshotValue(teamSnap.data() || {}));
+            return `${teamSnap.id}:${version}`;
+        })
+        .sort()
+        .join('|');
+}
+
 async function applyCurrentPublicTeamProfile(db, teamId) {
     const teamRef = db.doc(`teams/${teamId}`);
     const profileRef = db.doc(`publicTeamProfiles/${teamId}`);
@@ -74,15 +103,54 @@ async function applyCurrentPublicTeamProfile(db, teamId) {
     });
 }
 
+async function reconcilePublicTeamProfilesToFixedPoint(db) {
+    for (let pass = 1; pass <= PUBLIC_TEAM_PROFILE_RECONCILIATION_MAX_PASSES; pass += 1) {
+        const [beforeTeamDocs, profileDocs] = await Promise.all([
+            listTeams(db, ''),
+            listPublicTeamProfiles(db)
+        ]);
+        const reconciliationIds = new Set([
+            ...beforeTeamDocs.map((teamSnap) => teamSnap.id),
+            ...profileDocs.map((profileSnap) => profileSnap.id)
+        ]);
+
+        for (const teamId of reconciliationIds) {
+            await applyCurrentPublicTeamProfile(db, teamId);
+        }
+
+        const afterTeamDocs = await listTeams(db, '');
+        if (getTeamSnapshotFingerprint(beforeTeamDocs) === getTeamSnapshotFingerprint(afterTeamDocs)) {
+            return {
+                passes: pass,
+                teamsReconciled: reconciliationIds.size
+            };
+        }
+    }
+
+    throw new Error(
+        `Teams kept changing during ${PUBLIC_TEAM_PROFILE_RECONCILIATION_MAX_PASSES} reconciliation passes; ` +
+        'migration completion was not recorded.'
+    );
+}
+
 export async function runPublicTeamProfileBackfill(options = parsePublicTeamBackfillArgs(), dependencies = {}) {
     if (!dependencies.db) initializeAdmin(options);
     const db = dependencies.db || getFirestore();
+    const migrationStateRef = db.doc(PUBLIC_TEAM_PROFILE_MIGRATION_STATE_PATH);
+    if (options.apply && !options.teamId) {
+        // A rerun must fail safe to the source compatibility path until a fresh
+        // fixed point is proven. If the process exits early, completed remains
+        // false and public discovery does not switch to a partial projection.
+        await migrationStateRef.set({ completed: false }, { merge: true });
+    }
     const teamDocs = await listTeams(db, options.teamId);
     const summary = {
         dryRun: !options.apply,
         teamsScanned: teamDocs.length,
         projectionsUpserted: 0,
         projectionsDeleted: 0,
+        reconciliationPasses: 0,
+        teamsReconciled: 0,
         migrationCompletionRecorded: false
     };
 
@@ -109,17 +177,10 @@ export async function runPublicTeamProfileBackfill(options = parsePublicTeamBack
     }
 
     if (options.apply && !options.teamId) {
-        // Re-list and re-apply every team before publishing completion. This
-        // closes the window where a team can be created or made public after
-        // the initial collection snapshot but before clients switch sources.
-        const reconciliationTeamDocs = await listTeams(db, '');
-        summary.teamsScanned += reconciliationTeamDocs.length;
-        for (const teamSnap of reconciliationTeamDocs) {
-            const result = await applyCurrentPublicTeamProfile(db, teamSnap.id);
-            if (result === 'upserted') summary.projectionsUpserted += 1;
-            if (result === 'deleted') summary.projectionsDeleted += 1;
-        }
-        await db.doc(PUBLIC_TEAM_PROFILE_MIGRATION_STATE_PATH).set({ completed: true }, { merge: true });
+        const reconciliation = await reconcilePublicTeamProfilesToFixedPoint(db);
+        summary.reconciliationPasses = reconciliation.passes;
+        summary.teamsReconciled = reconciliation.teamsReconciled;
+        await migrationStateRef.set({ completed: true }, { merge: true });
         summary.migrationCompletionRecorded = true;
     }
 

@@ -178,7 +178,9 @@
           await loadTeams(activeLocationFilter, { cursor: nextCursor, append: true });
         };
 
-        if (teams.length === 0 && !append) {
+        renderedTeams = append ? [...renderedTeams, ...teams] : teams;
+
+        if (renderedTeams.length === 0) {
           const emptyMessage = browseCursor
             ? locationFilter
               ? `No matches in this scan yet for "${escapeHtml(locationFilter)}". Continue searching to scan more public teams.`
@@ -205,8 +207,6 @@
           });
           return;
         }
-
-        renderedTeams = append ? [...renderedTeams, ...teams] : teams;
 
         // Resolve locations for teams with zip
         const uniqueZips = [...new Set(renderedTeams

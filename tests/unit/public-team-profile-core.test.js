@@ -23,17 +23,29 @@ function createBackfillDb({ listedTeam, currentTeam, existingProfile = null }) {
   const state = {
     profile: existingProfile,
     completion: null,
+    completionWrites: [],
+    teamCollectionReads: 0,
     transactionReads: []
   };
   const db = {
-    collection: vi.fn(() => ({
-      get: vi.fn(async () => ({ docs: [createBackfillSnapshot('team-race', listedTeam)] }))
+    collection: vi.fn((path) => ({
+      get: vi.fn(async () => {
+        if (path === 'publicTeamProfiles') {
+          return { docs: state.profile ? [createBackfillSnapshot('team-race', state.profile)] : [] };
+        }
+        state.teamCollectionReads += 1;
+        const team = state.teamCollectionReads === 1 ? listedTeam : currentTeam;
+        return { docs: team ? [createBackfillSnapshot('team-race', team)] : [] };
+      })
     })),
     doc: vi.fn((path) => ({
       path,
       get: vi.fn(async () => createBackfillSnapshot('team-race', state.profile)),
       set: vi.fn(async (value) => {
-        if (path === 'systemMigrations/publicTeamProfilesBackfill') state.completion = value;
+        if (path === 'systemMigrations/publicTeamProfilesBackfill') {
+          state.completion = value;
+          state.completionWrites.push(value);
+        }
       })
     })),
     runTransaction: vi.fn(async (handler) => handler({
@@ -52,6 +64,71 @@ function createBackfillDb({ listedTeam, currentTeam, existingProfile = null }) {
       })
     }))
   };
+  return { db, state };
+}
+
+function createConcurrentBackfillDb({ keepChanging = false } = {}) {
+  const teams = new Map([
+    ['team-existing', { name: 'Existing Public Team', isPublic: true, active: true, revision: 0 }]
+  ]);
+  const profiles = new Map();
+  const state = {
+    completionWrites: [],
+    events: [],
+    teamCollectionReads: 0,
+    teams,
+    profiles
+  };
+
+  const snapshotForPath = (path) => {
+    const [collectionName, id] = path.split('/');
+    const source = collectionName === 'teams' ? teams : profiles;
+    const value = source.get(id) || null;
+    return createBackfillSnapshot(id, value);
+  };
+
+  const db = {
+    collection: vi.fn((path) => ({
+      get: vi.fn(async () => {
+        if (path === 'teams') {
+          state.teamCollectionReads += 1;
+          if (state.teamCollectionReads === 2) {
+            teams.set('team-concurrent', {
+              name: 'Concurrent Public Team', isPublic: true, active: true, revision: 0
+            });
+          }
+          if (keepChanging && state.teamCollectionReads > 1) {
+            const existing = teams.get('team-existing');
+            teams.set('team-existing', { ...existing, revision: existing.revision + 1 });
+          }
+          return { docs: Array.from(teams, ([id, value]) => createBackfillSnapshot(id, value)) };
+        }
+        return { docs: Array.from(profiles, ([id, value]) => createBackfillSnapshot(id, value)) };
+      })
+    })),
+    doc: vi.fn((path) => ({
+      path,
+      get: vi.fn(async () => snapshotForPath(path)),
+      set: vi.fn(async (value) => {
+        if (path === 'systemMigrations/publicTeamProfilesBackfill') {
+          state.completionWrites.push(value);
+          state.events.push(`migration:${value.completed}`);
+        }
+      })
+    })),
+    runTransaction: vi.fn(async (handler) => handler({
+      get: vi.fn(async (ref) => snapshotForPath(ref.path)),
+      set: vi.fn((ref, value) => {
+        const id = ref.path.split('/').pop();
+        profiles.set(id, value);
+        state.events.push(`profile:${id}`);
+      }),
+      delete: vi.fn((ref) => {
+        profiles.delete(ref.path.split('/').pop());
+      })
+    }))
+  };
+
   return { db, state };
 }
 
@@ -81,6 +158,23 @@ describe('public team profile callable boundary', () => {
     expect(profile).not.toHaveProperty('paymentConfig');
     expect(isPublicTeamProfileSchemaValid(profile)).toBe(true);
     expect(isPublicTeamProfileSchemaValid({ ...profile, unexpectedSecret: 'nope' })).toBe(false);
+  });
+
+  it('rejects malformed values even when every top-level field is allow-listed', () => {
+    const base = { publicSchemaVersion: 1, name: 'Safe Team', isPublic: true, active: true };
+    const malformedFields = [
+      { description: ['private'] },
+      { photoUrl: { private: true } },
+      { leagueUrl: ['private'] },
+      { publicSearchName: { private: true } },
+      { appAccess: 'true' },
+      { archived: 'false' },
+      { sourceUpdatedAt: { private: true } }
+    ];
+
+    malformedFields.forEach((malformedField) => {
+      expect(isPublicTeamProfileSchemaValid({ ...base, ...malformedField })).toBe(false);
+    });
   });
 
   it('matches normalized public presentation fields without consulting private data', () => {
@@ -123,11 +217,13 @@ describe('public team profile callable boundary', () => {
 
   it('records completion only after a full applied backfill', () => {
     const migrationSource = readFileSync(new URL('../../_migration/backfill-public-team-profiles.js', import.meta.url), 'utf8');
-    const completionWrite = migrationSource.indexOf("db.doc(PUBLIC_TEAM_PROFILE_MIGRATION_STATE_PATH).set({ completed: true }");
+    const completionWrite = migrationSource.indexOf("migrationStateRef.set({ completed: true }");
     const projectionLoop = migrationSource.indexOf('for (const teamSnap of teamDocs)');
 
     expect(migrationSource).toContain("PUBLIC_TEAM_PROFILE_MIGRATION_STATE_PATH = 'systemMigrations/publicTeamProfilesBackfill'");
     expect(migrationSource).toContain('if (options.apply && !options.teamId)');
+    expect(migrationSource).toContain('migrationStateRef.set({ completed: false }');
+    expect(migrationSource).toContain('reconcilePublicTeamProfilesToFixedPoint(db)');
     expect(completionWrite).toBeGreaterThan(projectionLoop);
   });
 
@@ -157,6 +253,7 @@ describe('public team profile callable boundary', () => {
       'publicTeamProfiles/team-race'
     ]);
     expect(privateRace.state.completion).toEqual({ completed: true });
+    expect(privateRace.state.completionWrites).toEqual([{ completed: false }, { completed: true }]);
 
     const publicNow = { name: 'Newly Public Race Team', isPublic: true, active: true, state: 'MO' };
     const publicRace = createBackfillDb({
@@ -168,17 +265,14 @@ describe('public team profile callable boundary', () => {
     }, { db: publicRace.db });
 
     expect(publicSummary).toMatchObject({
-      projectionsUpserted: 2,
+      projectionsUpserted: 1,
       projectionsDeleted: 0,
       migrationCompletionRecorded: true
     });
     expect(publicRace.state.profile).toMatchObject({
       name: 'Newly Public Race Team', isPublic: true, active: true, state: 'MO'
     });
-    expect(publicRace.state.transactionReads).toEqual([
-      'teams/team-race',
-      'teams/team-race'
-    ]);
+    expect(publicRace.state.transactionReads).toEqual(['teams/team-race', 'teams/team-race']);
 
     const deletedRace = createBackfillDb({
       listedTeam: stalePublic,
@@ -197,74 +291,44 @@ describe('public team profile callable boundary', () => {
     expect(deletedRace.state.profile).toBeNull();
     expect(deletedRace.state.transactionReads).toEqual([
       'teams/team-race',
-      'publicTeamProfiles/team-race',
-      'teams/team-race',
       'publicTeamProfiles/team-race'
     ]);
     logSpy.mockRestore();
   });
 
-  it('reconciles teams created after the initial snapshot before recording completion', async () => {
-    const teams = new Map([
-      ['existing-team', { name: 'Existing Team', isPublic: true, active: true }],
-      ['late-team', { name: 'Late Team', isPublic: true, active: true }]
-    ]);
-    const profiles = new Map();
-    const events = [];
-    let collectionReads = 0;
-    const db = {
-      collection: vi.fn(() => ({
-        get: vi.fn(async () => {
-          collectionReads += 1;
-          const visibleIds = collectionReads === 1
-            ? ['existing-team']
-            : ['existing-team', 'late-team'];
-          return {
-            docs: visibleIds.map((id) => createBackfillSnapshot(id, teams.get(id)))
-          };
-        })
-      })),
-      doc: vi.fn((path) => ({
-        path,
-        set: vi.fn(async (value) => {
-          if (path === 'systemMigrations/publicTeamProfilesBackfill') {
-            events.push(`completed:${value.completed}`);
-          }
-        })
-      })),
-      runTransaction: vi.fn(async (handler) => handler({
-        get: vi.fn(async (ref) => {
-          if (ref.path.startsWith('teams/')) {
-            const id = ref.path.slice('teams/'.length);
-            return createBackfillSnapshot(id, teams.get(id) || null);
-          }
-          const id = ref.path.slice('publicTeamProfiles/'.length);
-          return createBackfillSnapshot(id, profiles.get(id) || null);
-        }),
-        set: vi.fn((ref, value) => {
-          const id = ref.path.slice('publicTeamProfiles/'.length);
-          profiles.set(id, value);
-          events.push(`profile:${id}`);
-        }),
-        delete: vi.fn()
-      }))
-    };
+  it('reconciles a public team created after the initial snapshot before recording completion', async () => {
+    const concurrent = createConcurrentBackfillDb();
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     const summary = await runPublicTeamProfileBackfill({
       apply: true, teamId: '', projectId: 'demo-allplays', serviceAccountPath: ''
-    }, { db });
+    }, { db: concurrent.db });
 
-    expect(collectionReads).toBe(2);
-    expect(profiles.get('late-team')).toMatchObject({
-      name: 'Late Team', isPublic: true, active: true
-    });
-    expect(events.indexOf('profile:late-team')).toBeLessThan(events.indexOf('completed:true'));
     expect(summary).toMatchObject({
-      teamsScanned: 3,
-      projectionsUpserted: 3,
+      teamsScanned: 1,
+      reconciliationPasses: 1,
+      teamsReconciled: 2,
       migrationCompletionRecorded: true
     });
+    expect(concurrent.state.profiles.get('team-concurrent')).toMatchObject({
+      name: 'Concurrent Public Team', isPublic: true, active: true
+    });
+    expect(concurrent.state.events.indexOf('profile:team-concurrent')).toBeLessThan(
+      concurrent.state.events.lastIndexOf('migration:true')
+    );
+    expect(concurrent.state.completionWrites).toEqual([{ completed: false }, { completed: true }]);
+    logSpy.mockRestore();
+  });
+
+  it('leaves projection mode disabled when reconciliation cannot reach a fixed point', async () => {
+    const changing = createConcurrentBackfillDb({ keepChanging: true });
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await expect(runPublicTeamProfileBackfill({
+      apply: true, teamId: '', projectId: 'demo-allplays', serviceAccountPath: ''
+    }, { db: changing.db })).rejects.toThrow('migration completion was not recorded');
+
+    expect(changing.state.completionWrites).toEqual([{ completed: false }]);
     logSpy.mockRestore();
   });
 });

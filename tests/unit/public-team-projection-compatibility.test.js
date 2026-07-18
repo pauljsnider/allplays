@@ -61,7 +61,11 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('public team projection co
 
     it('fails closed if a privileged writer ever creates a malformed projection', async () => {
         await testEnv.withSecurityRulesDisabled(async (context) => {
-            await setDoc(doc(context.firestore(), 'publicTeamProfiles/malformed-team'), {
+            const db = context.firestore();
+            await setDoc(doc(db, 'teams/malformed-team'), {
+                name: 'Malformed Team', isPublic: true, active: true
+            });
+            await setDoc(doc(db, 'publicTeamProfiles/malformed-team'), {
                 publicSchemaVersion: 1,
                 name: 'Malformed Team', isPublic: true, active: true,
                 unexpectedSecret: 'must-not-list'
@@ -76,6 +80,55 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('public team projection co
             where('active', '==', true),
             limit(100)
         )));
+    });
+
+    it('fails closed when any allow-listed projection field has a malformed type', async () => {
+        const malformedFields = [
+            { name: { private: 'value' } },
+            { sport: { private: 'value' } },
+            { description: ['private'] },
+            { photoUrl: { private: 'value' } },
+            { city: ['private'] },
+            { state: { private: 'value' } },
+            { zip: ['private'] },
+            { leagueUrl: { private: 'value' } },
+            { websiteUrl: ['private'] },
+            { socialLinks: { privateEmail: 'private@example.test' } },
+            { twitchChannel: { private: 'value' } },
+            { streamUrl: ['private'] },
+            { livestreamUrl: { private: 'value' } },
+            { streamEmbedUrl: ['private'] },
+            { youtubeEmbedUrl: { private: 'value' } },
+            { standingsConfig: ['private'] },
+            { tournament: ['private'] },
+            { tournamentDivisions: { private: 'value' } },
+            { tournamentPools: { private: 'value' } },
+            { tournamentPoolOverrides: ['private'] },
+            { appAccess: 'true' },
+            { webAccess: 1 },
+            { archived: 'false' },
+            { status: { private: 'value' } },
+            { publicSearchName: ['private'] },
+            { publicSearchCity: { private: 'value' } },
+            { publicSearchState: ['private'] },
+            { publicSearchZip: { private: 'value' } },
+            { publicSearchCityState: ['private'] },
+            { sourceUpdatedAt: { private: 'value' } }
+        ];
+        const publicDb = testEnv.unauthenticatedContext().firestore();
+
+        for (const malformedField of malformedFields) {
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                await setDoc(doc(context.firestore(), 'publicTeamProfiles/public-team'), {
+                    publicSchemaVersion: 1,
+                    name: 'Public Team',
+                    isPublic: true,
+                    active: true,
+                    ...malformedField
+                });
+            });
+            await assertFails(getDoc(doc(publicDb, 'publicTeamProfiles/public-team')));
+        }
     });
 
     it('fails closed when a projection outlives a private, inactive, or deleted source team', async () => {
