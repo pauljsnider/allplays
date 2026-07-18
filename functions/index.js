@@ -12751,9 +12751,34 @@ exports.sendAuthorizedDirectMessage = functions.https.onCall(async (data, contex
     conversationId
   };
   const batch = firestore.batch();
-  batch.set(messageRef, message);
+  // A caller-provided request ID is an idempotency key, not an edit handle.
+  // `create` keeps retries from overwriting or undeleting the original message
+  // through this Admin SDK path, while the batch preserves the conversation
+  // metadata update atomically for the first successful send.
+  batch.create(messageRef, message);
   batch.update(conversationRef, { lastMessageAt: now, updatedAt: now });
-  await batch.commit();
+  try {
+    await batch.commit();
+  } catch (error) {
+    if (!clientMessageId || !isAlreadyExistsError(error)) throw error;
+    const existingSnap = await messageRef.get();
+    const existingMessage = existingSnap.exists ? existingSnap.data() || {} : {};
+    if (
+      !existingSnap.exists ||
+      existingMessage.senderId !== caller.uid ||
+      existingMessage.clientMessageId !== clientMessageId ||
+      existingMessage.conversationId !== conversationId
+    ) {
+      throw error;
+    }
+    const existingCreatedAt = existingMessage.createdAt?.toDate?.();
+    return {
+      id: messageRef.id,
+      createdAt: existingCreatedAt instanceof Date && Number.isFinite(existingCreatedAt.getTime())
+        ? existingCreatedAt.toISOString()
+        : null
+    };
+  }
   return { id: messageRef.id, createdAt: now.toDate().toISOString() };
 });
 

@@ -168,6 +168,14 @@ function makeFirestore(seed = {}) {
         batch() {
             const operations = [];
             return {
+                create: (ref, value) => operations.push(async () => {
+                    if (state.has(ref.path)) {
+                        const error = new Error(`Document already exists: ${ref.path}`);
+                        error.code = 6;
+                        throw error;
+                    }
+                    await ref.set(value);
+                }),
                 set: (ref, value, options) => operations.push(() => ref.set(value, options)),
                 update: (ref, value) => operations.push(() => ref.update(value)),
                 commit: async () => Promise.all(operations.map((operation) => operation()))
@@ -500,6 +508,22 @@ test('direct-message callable rechecks friendship and team access on the write p
             mimeType: attachment.mimeType
         })),
         [{ type: 'image', mimeType: 'image/jpeg' }]
+    );
+
+    const retried = await callables.sendAuthorizedDirectMessage({
+        ...input,
+        text: 'Attempted replacement',
+        attachments: []
+    }, context);
+    assert.equal(retried.id, sent.id);
+    assert.equal(retried.createdAt, sent.createdAt);
+    assert.equal(
+        firestore.snapshot('teams/team-1/chatConversations/direct_sender__user%3Arecipient/chatMessages/sender__client-direct-1').text,
+        'Hi friend'
+    );
+    assert.deepEqual(
+        firestore.snapshot('teams/team-1/chatConversations/direct_sender__user%3Arecipient/chatMessages/sender__client-direct-1').attachments.map((attachment) => attachment.type),
+        ['image']
     );
 
     const sentVideo = await callables.sendAuthorizedDirectMessage({

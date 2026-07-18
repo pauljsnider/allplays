@@ -803,10 +803,19 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
 
     it('allows senders to edit callable-authored direct messages addressed to the other participant', async () => {
         const parentDb = authedFirestore('parent-1', 'parent@example.com');
+        const prefixedParticipantDb = authedFirestore('user-2', 'user2@example.com');
         const callableMessageRef = messageRef(parentDb, friendDirectConversationId, 'callable-editable');
+        const prefixedSenderMessageRef = messageRef(prefixedParticipantDb, friendDirectConversationId, 'callable-prefixed-sender-editable');
         await testEnv.withSecurityRulesDisabled(async (context) => {
             await setDoc(messageRef(context.firestore(), friendDirectConversationId, 'callable-editable'), directPayload({
                 recipientIds: ['user:user-2'],
+                conversationId: friendDirectConversationId,
+                createdAt: Timestamp.now()
+            }));
+            await setDoc(messageRef(context.firestore(), friendDirectConversationId, 'callable-prefixed-sender-editable'), directPayload({
+                senderId: 'user-2',
+                senderEmail: 'user2@example.com',
+                recipientIds: ['parent-1'],
                 conversationId: friendDirectConversationId,
                 createdAt: Timestamp.now()
             }));
@@ -814,6 +823,10 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
 
         await assertSucceeds(updateDoc(callableMessageRef, {
             text: 'Edited direct update',
+            editedAt: serverTimestamp()
+        }));
+        await assertSucceeds(updateDoc(prefixedSenderMessageRef, {
+            text: 'Edited reply from prefixed participant',
             editedAt: serverTimestamp()
         }));
     });

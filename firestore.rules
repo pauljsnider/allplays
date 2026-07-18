@@ -1923,7 +1923,11 @@ service cloud.firestore {
              data.recipientIds.size() <= 50 &&
              participantIds is list &&
              data.recipientIds.hasOnly(participantIds) &&
-             data.senderId in participantIds &&
+             (
+               data.senderId in participantIds ||
+               (conversationData.get('type', '') == 'direct' &&
+                data.senderId in conversationData.get('directUserIds', []))
+             ) &&
              !(data.senderId in data.recipientIds);
     }
 
