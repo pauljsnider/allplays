@@ -250,4 +250,54 @@ describe('telemetry.js payload handling', () => {
             properties: { property: 'value' }
         });
     });
+
+    it('excludes RSVP answers from generic interactions while preserving explicit failure telemetry', async () => {
+        document.body.innerHTML = `
+            <form id="rsvp-form" data-telemetry-ignore>
+                <label>
+                    <input type="radio" name="response" value="not_going">
+                    <span>Can't Go</span>
+                </label>
+                <button type="submit">Submit RSVP</button>
+            </form>
+        `;
+        const form = document.getElementById('rsvp-form');
+        const radio = form.querySelector('input[name="response"]');
+        radio.checked = true;
+
+        radio.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        radio.dispatchEvent(new Event('change', { bubbles: true }));
+        form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+        window.AllPlaysTelemetry.capture('public_rsvp_error', {
+            label: 'Public RSVP submit',
+            stage: 'submit',
+            failureKind: 'request_rejected',
+            httpStatus: 400,
+            online: true
+        });
+
+        await telemetryModule.flush();
+
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+        const [, options] = mockFetch.mock.calls[0];
+        const payload = JSON.parse(options.body);
+        expect(payload.events).toHaveLength(1);
+        expect(payload.events[0]).toMatchObject({
+            name: 'public_rsvp_error',
+            properties: {
+                label: 'Public RSVP submit',
+                stage: 'submit',
+                failureKind: 'request_rejected',
+                httpStatus: 400,
+                online: true
+            }
+        });
+        expect(payload.events.map((event) => event.name)).not.toEqual(expect.arrayContaining([
+            'interaction_click',
+            'interaction_change',
+            'interaction_submit'
+        ]));
+        expect(JSON.stringify(payload)).not.toContain("Can't Go");
+        expect(JSON.stringify(payload)).not.toContain('not_going');
+    });
 });

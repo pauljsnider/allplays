@@ -34,6 +34,7 @@ describe('public RSVP page', () => {
         const reporterSource = source.slice(reporterStart, reporterEnd);
 
         expect(source).toContain('<script type="module" src="/js/telemetry.js?v=2"></script>');
+        expect(source).toContain('<form id="rsvp-form" data-telemetry-ignore');
         expect(source).not.toContain("import { captureTelemetryEvent }");
         expect(reporterStart).toBeGreaterThanOrEqual(0);
         expect(reporterEnd).toBeGreaterThan(reporterStart);
