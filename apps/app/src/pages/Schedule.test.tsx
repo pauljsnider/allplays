@@ -362,6 +362,47 @@ describe('Schedule', () => {
     );
   });
 
+  it('hydrates RSVP rows again when a team filter moves beyond the global bulk limit', async () => {
+    const teamOneEvents = Array.from({ length: 50 }, (_, index) => buildScheduleEvent((index % 28) + 1, {
+      id: `team-1-event-${index + 1}`,
+      eventKey: `team-1::event-${index + 1}::player-1`,
+      date: new Date(Date.UTC(2100, 5, 1, 18, index)),
+      myRsvpNoteHydrated: false
+    }));
+    const teamTwoEvents = [1, 2].map((index) => buildScheduleEvent(index, {
+      id: `team-2-event-${index}`,
+      eventKey: `team-2::event-${index}::player-2`,
+      teamId: 'team-2',
+      teamName: 'Hawks',
+      childId: 'player-2',
+      childName: 'Sam',
+      date: new Date(Date.UTC(2100, 6, 1, 18, index)),
+      myRsvpNoteHydrated: false
+    }));
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [
+        { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' },
+        { playerId: 'player-2', playerName: 'Sam', teamId: 'team-2', teamName: 'Hawks' }
+      ],
+      events: [...teamOneEvents, ...teamTwoEvents]
+    });
+
+    renderSchedule();
+
+    await waitFor(() => expect(scheduleServiceMocks.hydrateParentScheduleRsvps).toHaveBeenCalledTimes(1));
+    expect((scheduleServiceMocks.hydrateParentScheduleRsvps.mock.calls[0]?.[0] as any).events).toHaveLength(50);
+    expect((scheduleServiceMocks.hydrateParentScheduleRsvps.mock.calls[0]?.[0] as any).events.every(
+      (event: ParentScheduleEvent) => event.teamId === 'team-1'
+    )).toBe(true);
+
+    fireEvent.change(screen.getByLabelText('Team filter'), { target: { value: 'team-2' } });
+
+    await waitFor(() => expect(scheduleServiceMocks.hydrateParentScheduleRsvps).toHaveBeenCalledTimes(2));
+    const scopedEvents = (scheduleServiceMocks.hydrateParentScheduleRsvps.mock.calls[1]?.[0] as any).events;
+    expect(scopedEvents).toHaveLength(2);
+    expect(scopedEvents.every((event: ParentScheduleEvent) => event.teamId === 'team-2')).toBe(true);
+  });
+
   it('waits for RSVP hydration before preselecting only unanswered bulk events', async () => {
     const schedule = {
       children: [{ playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }],

@@ -164,6 +164,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const childrenRef = useRef<ParentScheduleChild[]>([]);
   const eventsRef = useRef<ParentScheduleEvent[]>([]);
   const rsvpHydrationVersionRef = useRef(0);
+  const lastRsvpHydrationScopeRef = useRef('');
   const pendingRsvpEventKeysRef = useRef(new Set<string>());
   const updateScheduleEvents = (updater: (current: ParentScheduleEvent[]) => ParentScheduleEvent[]) => {
     const nextEvents = updater(eventsRef.current);
@@ -210,8 +211,16 @@ export function Schedule({ auth }: { auth: AuthState }) {
       setRsvpHydrationPending(false);
       return;
     }
+    const hydrationScopeKey = `${user.uid}::${selectedTeamId}::${selectedPlayerId}`;
+    lastRsvpHydrationScopeRef.current = hydrationScopeKey;
     const hydrationVersion = ++rsvpHydrationVersionRef.current;
-    const rsvpEvents = getBulkRsvpCandidates(result.events);
+    const scopedEvents = filterParentScheduleEvents(result.events, {
+      filter: 'upcoming-all',
+      playerId: selectedPlayerId,
+      teamId: selectedTeamId,
+      timeRange: 'all'
+    });
+    const rsvpEvents = getBulkRsvpCandidates(scopedEvents);
     setRsvpHydrationPending(true);
     if (!rsvpEvents.length) {
       setRsvpHydrationPending(false);
@@ -461,6 +470,20 @@ export function Schedule({ auth }: { auth: AuthState }) {
     void refreshSchedule();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid]);
+
+  useEffect(() => {
+    const user = auth.user;
+    if (!user?.uid || !hasLoadedSchedule || scheduleReadLoading) return;
+    const hydrationScopeKey = `${user.uid}::${selectedTeamId}::${selectedPlayerId}`;
+    if (lastRsvpHydrationScopeRef.current === hydrationScopeKey) return;
+    hydrateScheduleRsvpsInBackground({
+      children: childrenRef.current,
+      events: eventsRef.current
+    });
+    // The hydration helper intentionally reads the latest refs and owns its
+    // stale-request guard. Filter changes are the only trigger needed here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [auth.user?.uid, hasLoadedSchedule, scheduleReadLoading, selectedPlayerId, selectedTeamId]);
 
   useEffect(() => {
     if (filter === 'past-all' && hasLoadedSchedule) {
