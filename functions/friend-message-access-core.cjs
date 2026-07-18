@@ -38,9 +38,7 @@ function isAcceptedFriendshipForTeam(friendship, senderId, recipientId, teamId) 
 }
 
 function hasCurrentTeamAccess({ team, user, userId, email }) {
-  const parentTeamIds = normalizedStrings(Array.isArray(user?.parentTeamIds)
-    ? user.parentTeamIds
-    : (Array.isArray(user?.parentOf) ? user.parentOf.map((link) => link?.teamId) : []));
+  const parentTeamIds = normalizedStrings(user?.parentTeamIds);
   const adminEmails = new Set((Array.isArray(team?.adminEmails) ? team.adminEmails : [])
     .map(normalizeEmail)
     .filter(Boolean));

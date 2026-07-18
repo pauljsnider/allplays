@@ -12629,6 +12629,15 @@ exports.sendAuthorizedDirectMessage = functions.https.onCall(async (data, contex
   const recipientId = directUserIds.find((userId) => userId !== caller.uid);
   const recipientSnap = await firestore.doc(`users/${recipientId}`).get();
   const recipient = recipientSnap.exists ? recipientSnap.data() || {} : {};
+  let recipientEmail = String(recipient.email || recipient.profileEmail || '').trim().toLowerCase();
+  if (!recipientEmail) {
+    try {
+      const recipientAuthRecord = await admin.auth().getUser(recipientId);
+      recipientEmail = String(recipientAuthRecord?.email || '').trim().toLowerCase();
+    } catch (error) {
+      console.warn('Unable to resolve direct-message recipient auth email', recipientId, error);
+    }
+  }
   const teamWithId = { ...team, id: teamId };
   const callerHasAccess = hasCurrentTeamAccess({
     team: teamWithId,
@@ -12639,7 +12648,8 @@ exports.sendAuthorizedDirectMessage = functions.https.onCall(async (data, contex
   const recipientHasAccess = hasCurrentTeamAccess({
     team: teamWithId,
     user: recipient,
-    userId: recipientId
+    userId: recipientId,
+    email: recipientEmail
   });
   if (!callerHasAccess || !recipientHasAccess) {
     throwOpportunityError('permission-denied', 'Both participants must still have access to this team.');
@@ -12665,11 +12675,14 @@ exports.sendAuthorizedDirectMessage = functions.https.onCall(async (data, contex
   } else if (conversation.directAccess === 'team_admin') {
     const initiatorId = String(conversation.initiatedBy || '');
     const initiator = initiatorId === caller.uid ? caller.user : initiatorId === recipientId ? recipient : null;
+    const initiatorEmail = initiatorId === caller.uid
+      ? caller.email
+      : recipientEmail;
     if (!initiator || !hasTeamAdminAccess({
       team,
       user: initiator,
       uid: initiatorId,
-      email: initiator.email || initiator.profileEmail
+      email: initiatorEmail
     })) {
       throwOpportunityError('permission-denied', 'The team administrator who started this conversation no longer has access.');
     }

@@ -215,7 +215,7 @@ function makeFunctionsStub() {
     };
 }
 
-function loadCallables(seed = {}) {
+function loadCallables(seed = {}, { authUsers = {} } = {}) {
     delete require.cache[repoIndexPath];
     const firestore = makeFirestore(seed);
     const fieldValue = {
@@ -232,7 +232,18 @@ function loadCallables(seed = {}) {
             Timestamp: FakeTimestamp,
             FieldPath: { documentId: () => '__name__' }
         }),
-        auth: () => ({ verifyIdToken: async () => null }),
+        auth: () => ({
+            verifyIdToken: async () => null,
+            getUser: async (uid) => {
+                const authUser = authUsers[uid];
+                if (!authUser) {
+                    const error = new Error(`Missing auth user: ${uid}`);
+                    error.code = 'auth/user-not-found';
+                    throw error;
+                }
+                return { uid, ...clone(authUser) };
+            }
+        }),
         messaging: () => ({})
     };
     functionsStub = makeFunctionsStub();
@@ -566,6 +577,51 @@ test('team-admin direct conversations allow either participant to reply while th
             attachments: []
         }, authContext('parent')),
         (error) => error.code === 'permission-denied'
+    );
+});
+
+test('email-only team admins can send and receive direct replies when their user profile omits email', async () => {
+    const conversationPath = 'teams/team-1/chatConversations/direct_email-admin__user%3Aparent';
+    const seed = {
+        'users/email-admin': { isAdmin: false },
+        'users/parent': { email: 'parent@example.com', isAdmin: false, parentTeamIds: ['team-1'] },
+        'teams/team-1': { ownerId: 'owner', adminEmails: ['coach@example.com'] },
+        [conversationPath]: {
+            type: 'direct',
+            participantIds: ['email-admin', 'user:parent'],
+            participantRoles: [],
+            directAccess: 'team_admin',
+            directUserIds: ['email-admin', 'parent'],
+            friendshipId: null,
+            initiatedBy: 'email-admin'
+        }
+    };
+    const { firestore, callables } = loadCallables(seed, {
+        authUsers: { 'email-admin': { email: 'coach@example.com' } }
+    });
+    const input = {
+        teamId: 'team-1',
+        conversationId: 'direct_email-admin__user%3Aparent',
+        text: 'Checking in',
+        attachments: []
+    };
+
+    await callables.sendAuthorizedDirectMessage(
+        { ...input, clientMessageId: 'admin-first' },
+        authContext('email-admin', { email: 'coach@example.com' })
+    );
+    await callables.sendAuthorizedDirectMessage(
+        { ...input, clientMessageId: 'parent-reply', text: 'Thanks' },
+        authContext('parent')
+    );
+
+    assert.equal(
+        firestore.snapshot(`${conversationPath}/chatMessages/email-admin__admin-first`).senderId,
+        'email-admin'
+    );
+    assert.equal(
+        firestore.snapshot(`${conversationPath}/chatMessages/parent__parent-reply`).senderId,
+        'parent'
     );
 });
 

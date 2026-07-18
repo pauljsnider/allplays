@@ -105,6 +105,9 @@ describe('public opportunity callable wiring', () => {
     expect(source).toContain("conversation.directAccess === 'team_admin'");
     expect(source).toContain('canMessageAcceptedFriendForTeam({');
     expect(source).toContain('hasTeamAdminAccess({');
+    expect(source).toContain('initiatorId === caller.uid\n      ? caller.email');
+    expect(source).toContain('await admin.auth().getUser(recipientId)');
+    expect(source).toContain('userId: recipientId,\n    email: recipientEmail');
     expect(source).toContain('batch.set(messageRef, message);');
   });
 
