@@ -192,6 +192,10 @@ describe('preview deployment workflow trust boundary', () => {
 
     it('runs the credentialed deploy only from trusted default-branch code', () => {
         expect(trustedWorkflow).toContain('workflow_run:');
+        expect(trustedWorkflow).toContain(
+            'group: trusted-preview-pr-${{ github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.id }}'
+        );
+        expect(trustedWorkflow).toContain('cancel-in-progress: true');
         expect(trustedWorkflow).toContain('name: firebase-preview-trusted');
         expect(trustedWorkflow).toContain('ref: ${{ github.event.repository.default_branch }}');
         expect(trustedWorkflow).toContain('persist-credentials: false');
@@ -206,6 +210,25 @@ describe('preview deployment workflow trust boundary', () => {
         expect(trustedWorkflow).toContain('node scripts/write-firebase-hosting-config.mjs "$FIREBASE_PREVIEW_SITE"');
         expect(trustedWorkflow).toContain('CURRENT_CHANNEL: pr-${{ steps.verify_trigger.outputs.pr_number }}');
         expect(trustedWorkflow).toContain('hosting:channel:deploy "$CURRENT_CHANNEL" --project game-flow-c6311');
+    });
+
+    it('rechecks the exact pull-request head immediately before deploy and comment writes', () => {
+        const deployStepIndex = trustedWorkflow.indexOf('name: Deploy fixed Firebase Hosting preview channel');
+        const preDeployCheckIndex = trustedWorkflow.indexOf('firebase-preview-pre-deploy-pr.json');
+        const deployWriteIndex = trustedWorkflow.indexOf('hosting:channel:deploy "$CURRENT_CHANNEL"');
+        const commentStepIndex = trustedWorkflow.indexOf('name: Report preview URL on verified pull request');
+        const preCommentCheckIndex = trustedWorkflow.indexOf('firebase-preview-pre-comment-pr.json');
+        const commentWriteIndex = trustedWorkflow.indexOf('issues/comments/$comment_id');
+
+        expect(preDeployCheckIndex).toBeGreaterThan(deployStepIndex);
+        expect(deployWriteIndex).toBeGreaterThan(preDeployCheckIndex);
+        expect(preCommentCheckIndex).toBeGreaterThan(commentStepIndex);
+        expect(commentWriteIndex).toBeGreaterThan(preCommentCheckIndex);
+        expect(trustedWorkflow).toMatch(/recheck_current_head\n\s+if ! deploy_preview_channel/);
+        expect(trustedWorkflow.slice(preCommentCheckIndex, commentWriteIndex)).toContain(
+            'node scripts/verify-preview-deploy-trigger.mjs'
+        );
+        expect(trustedWorkflow.match(/node scripts\/verify-preview-deploy-trigger\.mjs/g)).toHaveLength(4);
     });
 
     it('withholds the Firebase credential until identity, archive, shape, config, and install checks pass', () => {
@@ -269,6 +292,8 @@ describe('preview deployment workflow trust boundary', () => {
         expect(trustBoundaryRunbook).toContain('production-smoke');
         expect(trustBoundaryRunbook).toContain('SMOKE_AUTH_EMAIL');
         expect(trustBoundaryRunbook).toContain('protected/default-branch-only deployment policy');
+        expect(trustBoundaryRunbook).toContain('serialized and cancelable per PR');
+        expect(trustBoundaryRunbook).toContain('immediately before the Firebase channel write');
         expect(trustBoundaryRunbook).toContain('Any new commit invalidates prior review evidence.');
         expect(trustBoundaryRunbook).toContain('Cloud Audit Logs for the old key ID');
         expect(trustBoundaryRunbook).toContain('Workload Identity Federation');
@@ -352,11 +377,13 @@ describe('preview Hosting archive validation', () => {
         expect(result.stdout).toContain('Validated and extracted 4 Hosting files');
     });
 
-    it('rejects traversal paths, symlinks, and repository/deploy configuration', () => {
+    it('rejects traversal paths', () => {
         const traversal = extractZip([...requiredEntries, { name: '../escape.txt', content: 'escape' }]);
         expect(traversal.result.status).not.toBe(0);
         expect(traversal.result.stderr).toContain('ambiguous or traversing path');
+    });
 
+    it('rejects archive symlinks', () => {
         const symlink = extractZip([...requiredEntries, {
             name: 'linked-index.html',
             type: 'symlink',
@@ -364,11 +391,15 @@ describe('preview Hosting archive validation', () => {
         }]);
         expect(symlink.result.status).not.toBe(0);
         expect(symlink.result.stderr).toContain('symlink or special file');
+    });
 
+    it('rejects Firebase deploy configuration from the artifact', () => {
         const config = extractZip([...requiredEntries, { name: 'firebase.json', content: '{}' }]);
         expect(config.result.status).not.toBe(0);
         expect(config.result.stderr).toContain('forbidden root path firebase.json');
+    });
 
+    it('rejects unexpected hidden deployment configuration', () => {
         const hiddenConfig = extractZip([...requiredEntries, { name: '.firebaserc', content: '{}' }]);
         expect(hiddenConfig.result.status).not.toBe(0);
         expect(hiddenConfig.result.stderr).toContain('unexpected hidden path .firebaserc');

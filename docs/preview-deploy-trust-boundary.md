@@ -33,6 +33,11 @@ outside that environment.
 The trusted workflow may deploy only the verified PR's fixed `pr-N` Firebase
 Hosting channel. It must not prune, delete, or select another channel. All
 third-party actions in both workflows must remain pinned to full commit SHAs.
+Trusted runs must be serialized and cancelable per PR, not per workflow run.
+The PR must still be open at the triggering head when credentials become
+available, immediately before the Firebase channel write, and immediately
+before the shared preview comment write. A failed recheck must stop the related
+external write.
 
 ## Review and operational checks
 
