@@ -93,13 +93,10 @@ describe('app production artifact guard', () => {
             .toThrow(/private key material/);
     });
 
-    it('verifies the resolved Vite output directory from the post-write hook', () => {
+    it('runs final verification after writes against the resolved Vite output directory', () => {
         const repoRoot = makeTemporaryDirectory();
         const appDirectory = path.join(repoRoot, 'apps/app');
         const customOutDirectory = path.join(repoRoot, 'custom-build-output');
-        writeFile(customOutDirectory, 'index.html', '<div id="root"></div>');
-        writeFile(customOutDirectory, 'assets/index.js', 'console.log("ok")');
-        writeFile(customOutDirectory, 'assets/index.css', 'body{}');
 
         const plugin = createProductionArtifactGuard({ appDirectory, repoRoot });
         plugin.configResolved({
@@ -109,6 +106,12 @@ describe('app production artifact guard', () => {
         });
 
         expect(plugin.closeBundle).toBeUndefined();
+        expect(() => plugin.writeBundle()).toThrow(/index\.html \(missing\).*assets\/\*\.js \(missing\).*assets\/\*\.css \(missing\)/);
+
+        writeFile(customOutDirectory, 'index.html', '<div id="root"></div>');
+        writeFile(customOutDirectory, 'assets/index.js', 'console.log("ok")');
+        writeFile(customOutDirectory, 'assets/index.css', 'body{}');
+
         expect(() => plugin.writeBundle()).not.toThrow();
     });
 });
