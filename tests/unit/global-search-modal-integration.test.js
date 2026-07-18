@@ -18,9 +18,9 @@ const firebaseMocks = vi.hoisted(() => ({
     limit: vi.fn((count) => ({ type: 'limit', count }))
 }));
 
-vi.mock('../../js/db.js?v=107', () => dbMocks);
+vi.mock('../../js/db.js?v=108', () => dbMocks);
 vi.mock('../../js/firebase.js?v=22', () => firebaseMocks);
-vi.mock('../../js/utils.js?v=15', () => ({
+vi.mock('../../js/utils.js?v=16', () => ({
     escapeHtml: (value) => String(value || '')
 }));
 vi.mock('../../js/global-search-visibility.js?v=2', () => ({
@@ -73,7 +73,7 @@ describe('legacy global search modal', () => {
     });
 
     it('opens without bootstrapping all public teams and waits for a 2-character query before public discovery', async () => {
-        const { setupHeaderSearch } = await import('../../js/global-search.js?v=9');
+        const { setupHeaderSearch } = await import('../../js/global-search.js?v=10');
 
         setupHeaderSearch({
             user: {
@@ -111,7 +111,7 @@ describe('legacy global search modal', () => {
     });
 
     it('uses parent team link visibility summaries without per-team fallback reads', async () => {
-        const { setupHeaderSearch } = await import('../../js/global-search.js?v=9');
+        const { setupHeaderSearch } = await import('../../js/global-search.js?v=10');
 
         setupHeaderSearch({
             user: {
@@ -157,7 +157,7 @@ describe('legacy global search modal', () => {
     });
 
     it('falls back to Firestore when parent links only mark app access without visibility', async () => {
-        const { setupHeaderSearch } = await import('../../js/global-search.js?v=9');
+        const { setupHeaderSearch } = await import('../../js/global-search.js?v=10');
 
         firebaseMocks.getDoc.mockResolvedValueOnce(firestoreDoc('team-app-access-only', {
             name: 'Stored Access Rockets',
@@ -192,7 +192,7 @@ describe('legacy global search modal', () => {
     });
 
     it('searches a query-matching private team beyond the first eight private teams', async () => {
-        const { setupHeaderSearch } = await import('../../js/global-search.js?v=9');
+        const { setupHeaderSearch } = await import('../../js/global-search.js?v=10');
         const privateTeams = [
             ...Array.from({ length: 8 }, (_, index) => ({
                 teamId: `team-private-${index}`,
