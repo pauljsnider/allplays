@@ -104,6 +104,7 @@
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "visibleUserIds", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "hidden", "order": "ASCENDING" },
         { "fieldPath": "createdAt", "order": "DESCENDING" }
       ]
     },
@@ -112,6 +113,8 @@
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "teamIds", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "teamId", "order": "ASCENDING" },
+        { "fieldPath": "hidden", "order": "ASCENDING" },
         { "fieldPath": "createdAt", "order": "DESCENDING" }
       ]
     },

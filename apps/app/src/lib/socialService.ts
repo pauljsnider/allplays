@@ -193,6 +193,7 @@ export async function loadVisibleSocialPosts(user: AuthUser, home: ParentHomeMod
       buildQuery: (cursor) => query(
         collection(db, 'socialPosts'),
         where('visibleUserIds', 'array-contains', user.uid),
+        where('hidden', '==', false),
         orderBy('createdAt', 'desc'),
         ...(cursor ? [startAfter(cursor)] : []),
         limit(socialPostLimit)
@@ -206,6 +207,8 @@ export async function loadVisibleSocialPosts(user: AuthUser, home: ParentHomeMod
       buildQuery: (cursor) => query(
         collection(db, 'socialPosts'),
         where('teamIds', 'array-contains', teamId),
+        where('teamId', '==', teamId),
+        where('hidden', '==', false),
         orderBy('createdAt', 'desc'),
         ...(cursor ? [startAfter(cursor)] : []),
         limit(teamSocialPostLimit)

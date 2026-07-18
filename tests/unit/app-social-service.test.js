@@ -277,6 +277,8 @@ describe('React app social service', () => {
             expect.objectContaining({ id: 'post-visible', viewerHasLiked: true })
         ]);
         expect(firebaseMocks.orderBy).toHaveBeenCalledWith('createdAt', 'desc');
+        expect(firebaseMocks.where).toHaveBeenCalledWith('teamId', '==', 'team-1');
+        expect(firebaseMocks.where).toHaveBeenCalledWith('hidden', '==', false);
     });
 
     it('pages past a full hidden post window to return older visible feed items', async () => {

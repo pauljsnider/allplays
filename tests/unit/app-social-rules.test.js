@@ -10,6 +10,8 @@ import {
     doc,
     getDoc,
     getDocs,
+    limit,
+    orderBy,
     query,
     runTransaction,
     serverTimestamp,
@@ -256,6 +258,71 @@ describe('React app social Firestore rules', () => {
                 postId: 'post-1',
                 hiddenAt: Timestamp.now()
             }));
+        });
+
+        it('executes rule-compatible visible-user and team feed queries', async () => {
+            const db = viewerDb();
+            const visiblePostsQuery = query(
+                collection(db, 'socialPosts'),
+                where('visibleUserIds', 'array-contains', 'viewer-1'),
+                where('hidden', '==', false),
+                orderBy('createdAt', 'desc'),
+                limit(30)
+            );
+            const teamPostsQuery = query(
+                collection(db, 'socialPosts'),
+                where('teamIds', 'array-contains', 'team-1'),
+                where('teamId', '==', 'team-1'),
+                where('hidden', '==', false),
+                orderBy('createdAt', 'desc'),
+                limit(12)
+            );
+
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                await setDoc(doc(context.firestore(), 'teams', 'team-1'), {
+                    ownerId: 'author-1',
+                    adminEmails: []
+                });
+                await setDoc(doc(context.firestore(), 'users', 'viewer-1'), {
+                    email: 'viewer-1@example.com',
+                    parentTeamIds: ['team-1']
+                });
+                await setDoc(doc(context.firestore(), 'socialPosts', 'post-1'), {
+                    authorId: 'author-1',
+                    type: 'manual_post',
+                    visibility: 'friends_and_team',
+                    title: 'Visible team post',
+                    visibleUserIds: ['author-1', 'viewer-1'],
+                    teamId: 'team-1',
+                    teamIds: ['team-1'],
+                    playerIds: [],
+                    playerNames: [],
+                    media: [],
+                    hidden: false,
+                    reactionCounts: {},
+                    createdAt: Timestamp.now(),
+                    updatedAt: Timestamp.now()
+                });
+                await setDoc(doc(context.firestore(), 'socialPosts', 'hidden-post'), {
+                    authorId: 'author-1',
+                    type: 'manual_post',
+                    visibility: 'friends_and_team',
+                    title: 'Hidden team post',
+                    visibleUserIds: ['author-1', 'viewer-1'],
+                    teamId: 'team-1',
+                    teamIds: ['team-1'],
+                    playerIds: [],
+                    playerNames: [],
+                    media: [],
+                    hidden: true,
+                    reactionCounts: {},
+                    createdAt: Timestamp.now(),
+                    updatedAt: Timestamp.now()
+                });
+            });
+
+            await expect(assertSucceeds(getDocs(visiblePostsQuery))).resolves.toMatchObject({ size: 1 });
+            await expect(assertSucceeds(getDocs(teamPostsQuery))).resolves.toMatchObject({ size: 1 });
         });
     });
 
