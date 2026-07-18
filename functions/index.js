@@ -4805,7 +4805,7 @@ function writeCorsHeaders(req, res, methods = 'GET,OPTIONS') {
     res.set('Vary', 'Origin');
   }
   res.set('Access-Control-Allow-Methods', methods);
-  res.set('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+  res.set('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Firebase-AppCheck');
   res.set('Cache-Control', 'no-store');
 }
 
@@ -11677,7 +11677,7 @@ function writePublicRsvpCors(req, res) {
     res.set('Vary', 'Origin');
   }
   res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.set('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+  res.set('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Firebase-AppCheck');
 }
 
 function publicRsvpJsonError(res, status, error) {

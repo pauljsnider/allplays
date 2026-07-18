@@ -14,6 +14,7 @@ const primaryRestCallers = [
     '../../js/telemetry.js'
 ];
 const repoRoot = fileURLToPath(new URL('../../', import.meta.url));
+const functionsSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
 
 function listSourceFiles(directory) {
     return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -72,5 +73,11 @@ describe('raw Firebase REST App Check coverage', () => {
         expect(source).not.toContain('getPrimaryAppCheckHeaders');
         expect(source).toContain('identitytoolkit.googleapis.com');
         expect(source).toContain('firebasestorage.googleapis.com');
+    });
+
+    it('allows App Check through CORS on raw functions that receive attested browser requests', () => {
+        const appCheckCorsHeader = "res.set('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Firebase-AppCheck');";
+
+        expect(functionsSource.split(appCheckCorsHeader)).toHaveLength(3);
     });
 });

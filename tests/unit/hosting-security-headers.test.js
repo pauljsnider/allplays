@@ -38,6 +38,7 @@ describe('Firebase Hosting security headers', () => {
         expect(globalCsp).toContain('https://apis.google.com');
         expect(globalCsp).toContain('https://www.googletagmanager.com');
         expect(globalCsp).toContain('https://*.firebaseapp.com');
+        expect(globalCsp).toContain('https://recaptcha.google.com');
         expect(globalCsp).toContain('https://www.youtube.com');
         expect(globalCsp).toContain('https://player.twitch.tv');
         expect(globalCsp).toContain("connect-src 'self' https: wss:");
@@ -56,6 +57,7 @@ describe('Firebase Hosting security headers', () => {
         expect(widgetCsp).toContain('frame-ancestors *');
         expect(widgetCsp).not.toContain("frame-ancestors 'self'");
         expect(widgetCsp).toContain('https://www.google.com');
+        expect(widgetCsp).toContain('https://recaptcha.google.com');
         expect(widgetCsp).toContain('https://*.firebaseapp.com');
         expect(widgetCsp).not.toContain("'unsafe-eval'");
     });
