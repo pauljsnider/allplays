@@ -7,7 +7,7 @@ const drillsHtml = readFileSync(path.resolve(process.cwd(), 'drills.html'), 'utf
 const updateDoc = vi.fn();
 const doc = vi.fn((database, ...segments) => ({ database, path: segments.join('/') }));
 
-vi.mock('../../js/firebase.js?v=20', () => ({
+vi.mock('../../js/firebase.js?v=21', () => ({
     db: { name: 'mock-db' },
     auth: {},
     storage: {},
@@ -46,7 +46,7 @@ vi.mock('../../js/firebase.js?v=20', () => ({
     deleteObject: vi.fn()
 }));
 
-vi.mock('../../js/firebase-images.js?v=9', () => ({
+vi.mock('../../js/firebase-images.js?v=10', () => ({
     imageStorage: {},
     ensureImageAuth: vi.fn(),
     requireImageAuth: vi.fn()

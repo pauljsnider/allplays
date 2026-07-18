@@ -672,8 +672,8 @@
 
     <script type="module">
         import { getTeam, getGame, getPlayers, getConfigs, logStatEvent, updatePlayerStats, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, setGameLiveStatus, subscribeLiveChat, postLiveChatMessage } from './js/db.js?v=91';
-        import { db } from './js/firebase.js?v=20';
-        import { writeBatch, doc, setDoc, addDoc, onSnapshot, orderBy } from './js/firebase.js?v=20';
+        import { db } from './js/firebase.js?v=21';
+        import { writeBatch, doc, setDoc, addDoc, onSnapshot, orderBy } from './js/firebase.js?v=21';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=15';
         import { resolveOpponentDisplayName, resolveLiveStatConfig, resolveLiveStatColumns, resolveGoalSportTrackerProfile } from './js/live-game-state.js?v=8';
         import { createFieldState, setPlayerFieldStatus, startFieldClock, pauseFieldClock, getPlayerFieldElapsedMs, getLiveLineup } from './js/live-tracker-field-status.js?v=1';

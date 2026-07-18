@@ -51,12 +51,15 @@ import {
 } from "./vendor/firebase-firestore.js";
 import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from "./vendor/firebase-storage.js";
 import { getFunctions, httpsCallable } from "./vendor/firebase-functions.js";
-import { resolvePrimaryFirebaseConfig } from "./firebase-runtime-config.js?v=10";
+import { initializePrimaryAppCheck } from "./firebase-app-check.js?v=1";
+import { resolvePrimaryFirebaseConfig } from "./firebase-runtime-config.js?v=11";
 
 const firebaseConfig = await resolvePrimaryFirebaseConfig();
 
 const existingDefaultApp = getApps().find((candidate) => candidate.name === '[DEFAULT]');
 const app = existingDefaultApp || initializeApp(firebaseConfig);
+export const appCheckReady = initializePrimaryAppCheck(app);
+await appCheckReady;
 function isCapacitorNativeRuntime() {
     const protocol = typeof window !== 'undefined' ? window.location?.protocol : '';
     if (protocol === 'capacitor:' || protocol === 'ionic:') {

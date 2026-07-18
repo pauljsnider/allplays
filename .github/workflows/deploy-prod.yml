@@ -112,6 +112,8 @@ jobs:
         run: npm run app:build
 
       - name: Stage Firebase production bundle
+        env:
+          ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY: ${{ vars.APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY }}
         run: |
           site_dir="$RUNNER_TEMP/firebase-prod-site"
           config_file="$GITHUB_WORKSPACE/.firebase-prod.generated.json"

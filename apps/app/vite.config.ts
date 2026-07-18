@@ -45,11 +45,18 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id) {
+          const normalizedId = id.split(path.sep).join('/');
+          const legacyFirebaseMatch = normalizedId.match(/\/js\/vendor\/firebase-([a-z-]+)\.js$/);
+          if (legacyFirebaseMatch) {
+            // Keep App Check from pulling the much larger Firestore client into
+            // the authentication bootstrap chunk through their shared app core.
+            return `legacy-firebase-${legacyFirebaseMatch[1]}`;
+          }
+
           if (!id.includes('node_modules')) {
             return undefined;
           }
 
-          const normalizedId = id.split(path.sep).join('/');
           const packageRoot = normalizedId.split('/node_modules/')[1];
           const packageName = packageRoot?.startsWith('@')
             ? packageRoot.split('/').slice(0, 2).join('/')

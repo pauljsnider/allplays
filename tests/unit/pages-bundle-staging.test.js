@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { stagePagesBundle } from '../../scripts/stage-pages-bundle.mjs';
+import { stagePagesBundle, writeAppCheckRuntimeConfig } from '../../scripts/stage-pages-bundle.mjs';
 import { writeFirebaseHostingConfig } from '../../scripts/write-firebase-hosting-config.mjs';
 
 const tempDirs = [];
@@ -106,6 +106,23 @@ describe('pages bundle staging', () => {
         expect(config.hosting.rewrites).toEqual([{ source: '**', destination: '/index.html' }]);
         expect(config.firestore.rules).toBe('firestore.rules');
         expect(config.storage.rules).toBe('storage.rules');
+    });
+
+    it('stages only a public App Check site key in well-known runtime config', () => {
+        const destinationDir = makeTempDir();
+
+        const outputPath = writeAppCheckRuntimeConfig(destinationDir, 'public-enterprise-site-key_123');
+        const config = JSON.parse(fs.readFileSync(outputPath, 'utf8'));
+
+        expect(outputPath).toBe(path.join(destinationDir, '.well-known', 'allplays-runtime-config.json'));
+        expect(config).toEqual({
+            appCheck: {
+                enabled: true,
+                recaptchaEnterpriseSiteKey: 'public-enterprise-site-key_123',
+                isTokenAutoRefreshEnabled: true
+            }
+        });
+        expect(writeAppCheckRuntimeConfig(destinationDir, 'not a valid key')).toBeNull();
     });
 
     it('adds immutable headers only for concrete staged app asset files', () => {

@@ -1,7 +1,7 @@
 import { beforeEach, describe, it, expect, vi } from 'vitest';
 
 // Mock firebase.js so the module can be imported without a live Firebase project
-vi.mock('../../js/firebase.js?v=20', () => ({
+vi.mock('../../js/firebase.js?v=21', () => ({
     db: {},
     collection: vi.fn(),
     getDocs: vi.fn(),
@@ -31,7 +31,7 @@ import {
     statKeyLabel,
     toggleIncentiveRule,
 } from '../../js/parent-incentives.js';
-import * as firebaseModule from '../../js/firebase.js?v=20';
+import * as firebaseModule from '../../js/firebase.js?v=21';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

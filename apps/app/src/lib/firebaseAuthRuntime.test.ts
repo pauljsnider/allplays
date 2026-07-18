@@ -21,6 +21,7 @@ const firebaseAuthSdk = vi.hoisted(() => {
     GoogleAuthProvider: class {},
     indexedDBLocalPersistence: { type: 'indexedDBLocalPersistence' },
     initializeApp: vi.fn(() => ({ name: '[DEFAULT]', created: true })),
+    initializePrimaryAppCheck: vi.fn(() => Promise.resolve({ state: 'ready' })),
     initializeAuth: vi.fn(),
     isSignInWithEmailLink: vi.fn(),
     onAuthStateChanged: vi.fn(),
@@ -49,6 +50,7 @@ describe('firebaseAuthRuntime', () => {
     vi.clearAllMocks();
     firebaseAuthSdk.getApps.mockReturnValue([]);
     firebaseAuthSdk.initializeApp.mockReturnValue({ name: '[DEFAULT]', created: true });
+    firebaseAuthSdk.initializePrimaryAppCheck.mockResolvedValue({ state: 'ready' });
     firebaseAuthSdk.getAuth.mockImplementation((app: unknown) => ({ app, auth: true }));
     firebaseAuthSdk.resolvePrimaryFirebaseConfig.mockResolvedValue(firebaseAuthSdk.resolvedConfig);
   });
@@ -62,6 +64,7 @@ describe('firebaseAuthRuntime', () => {
     const runtime = await import('./firebaseAuthRuntime');
 
     expect(firebaseAuthSdk.initializeApp).toHaveBeenCalledWith(firebaseAuthSdk.resolvedConfig);
+    expect(firebaseAuthSdk.initializePrimaryAppCheck).toHaveBeenCalledWith({ name: '[DEFAULT]', created: true });
     expect(firebaseAuthSdk.getAuth).toHaveBeenCalledWith({ name: '[DEFAULT]', created: true });
     expect(runtime.auth).toEqual({ app: { name: '[DEFAULT]', created: true }, auth: true });
   });
@@ -73,6 +76,7 @@ describe('firebaseAuthRuntime', () => {
     await import('./firebaseAuthRuntime');
 
     expect(firebaseAuthSdk.initializeApp).not.toHaveBeenCalled();
+    expect(firebaseAuthSdk.initializePrimaryAppCheck).toHaveBeenCalledWith(existingDefaultApp);
     expect(firebaseAuthSdk.getAuth).toHaveBeenCalledWith(existingDefaultApp);
   });
 });

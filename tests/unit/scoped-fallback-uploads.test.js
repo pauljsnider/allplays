@@ -25,7 +25,7 @@ const firebaseMocks = vi.hoisted(() => ({
     })
 }));
 
-vi.mock('../../js/firebase.js?v=20', () => ({
+vi.mock('../../js/firebase.js?v=21', () => ({
     db: {},
     auth: { currentUser: { uid: 'user-42' } },
     storage: 'main-storage',
@@ -61,7 +61,7 @@ vi.mock('../../js/firebase.js?v=20', () => ({
     deleteObject: firebaseMocks.deleteObject
 }));
 
-vi.mock('../../js/firebase-images.js?v=9', () => ({
+vi.mock('../../js/firebase-images.js?v=10', () => ({
     imageStorage: 'image-storage',
     ensureImageAuth: imageAuthMocks.ensureImageAuth,
     requireImageAuth: imageAuthMocks.requireImageAuth

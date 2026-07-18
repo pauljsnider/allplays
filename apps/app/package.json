@@ -21,6 +21,7 @@
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {
+    "@capacitor-firebase/app-check": "8.3.0",
     "@capacitor-firebase/authentication": "^8.3.0",
     "@capacitor-firebase/messaging": "^8.3.0",
     "@capacitor-firebase/performance": "^8.3.0",

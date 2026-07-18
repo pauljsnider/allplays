@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { resolveImageFirebaseConfig, resolvePrimaryFirebaseConfig } from '../../js/firebase-runtime-config.js';
+import {
+    resolveAppCheckRuntimeConfig,
+    resolveImageFirebaseConfig,
+    resolvePrimaryFirebaseConfig
+} from '../../js/firebase-runtime-config.js';
 
 const ORIGINAL_WINDOW = globalThis.window;
 const ORIGINAL_FETCH = globalThis.fetch;
@@ -9,6 +13,7 @@ function resetGlobals() {
     delete globalThis.window.__ALLPLAYS_CONFIG__;
     delete globalThis.window.ALLPLAYS_FIREBASE_CONFIG;
     delete globalThis.window.ALLPLAYS_FIREBASE_IMAGE_CONFIG;
+    delete globalThis.window.ALLPLAYS_APP_CHECK_CONFIG;
     delete globalThis.fetch;
 }
 
@@ -135,5 +140,49 @@ describe('firebase runtime config', () => {
 
         expect(config.projectId).toBe('game-flow-img');
         expect(config.appId).toBe('1:340859680438:web:4d00f571e8531907a11817');
+    });
+
+    it('normalizes inline App Check config and keeps auto-refresh enabled', async () => {
+        resetGlobals();
+        globalThis.window.__ALLPLAYS_CONFIG__ = {
+            appCheck: {
+                enabled: 'true',
+                webSiteKey: ' enterprise-site-key ',
+                debugToken: ' local-debug-token '
+            }
+        };
+
+        const config = await resolveAppCheckRuntimeConfig();
+
+        expect(config).toMatchObject({
+            enabled: true,
+            recaptchaEnterpriseSiteKey: 'enterprise-site-key',
+            debugToken: 'local-debug-token',
+            isTokenAutoRefreshEnabled: true
+        });
+        expect(globalThis.fetch).toBeUndefined();
+    });
+
+    it('loads staged App Check config from the well-known runtime endpoint', async () => {
+        resetGlobals();
+        globalThis.window.location = {
+            origin: 'https://allplays.ai',
+            hostname: 'allplays.ai',
+            pathname: '/app/'
+        };
+        globalThis.fetch = vi.fn().mockResolvedValue({
+            ok: true,
+            json: async () => ({
+                appCheck: { recaptchaEnterpriseSiteKey: 'staged-site-key' }
+            })
+        });
+
+        const config = await resolveAppCheckRuntimeConfig();
+
+        expect(config.recaptchaEnterpriseSiteKey).toBe('staged-site-key');
+        expect(globalThis.fetch).toHaveBeenCalledWith(
+            'https://allplays.ai/.well-known/allplays-runtime-config.json',
+            { cache: 'no-store' }
+        );
     });
 });

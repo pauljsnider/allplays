@@ -38,11 +38,17 @@ A static HTML + JavaScript sports team management and stat tracking application,
    - Main app config: `window.__ALLPLAYS_CONFIG__.firebase` (or `firebasePrimary`) with keys `apiKey`, `authDomain`, `projectId`, `messagingSenderId`, `appId` (optional: `storageBucket`, `measurementId`).
    - Image app config: `window.__ALLPLAYS_CONFIG__.firebaseImages` (or `firebaseImage`) with the same keys.
    - On Firebase Hosting, primary config can also come from `/__/firebase/init.json`.
+6. Configure Firebase App Check before enabling console enforcement:
+   - Set the public GitHub Actions repository variable `APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY` for the web app.
+   - For a direct/local build, use `window.__ALLPLAYS_CONFIG__.appCheck.recaptchaEnterpriseSiteKey` or `VITE_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY`.
+   - Register the native `ai.allplays.lite` apps with App Attest (iOS) and Play Integrity (Android).
+   - Follow the staged monitoring and enforcement checklist in `docs/firebase-app-check-rollout.md`.
 
 Notes:
 - Auth domains must include your hosting domains and local dev (e.g., `localhost`, `127.0.0.1`, `allplays.ai`, `game-flow-c6311.web.app`).
 - Email summaries are mailto-only; there is no backend email send.
 - AI match summary in `track.html` requires Firebase AI enabled/billing; hide it if disabled.
+- Do not add `localhost` to the reCAPTCHA Enterprise production allowlist. Local web development automatically uses the App Check debug provider after a site key is configured; register the generated debug token in Firebase Console.
 
 ### 1.1 Stripe Team Pass configuration
 

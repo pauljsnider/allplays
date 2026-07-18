@@ -11,7 +11,7 @@ const firebaseMocks = vi.hoisted(() => ({
     getCountFromServer: vi.fn(),
 }));
 
-vi.mock('../../js/firebase.js?v=20', () => ({
+vi.mock('../../js/firebase.js?v=21', () => ({
     db: {},
     auth: { currentUser: null },
     storage: {},
@@ -47,7 +47,7 @@ vi.mock('../../js/firebase.js?v=20', () => ({
     deleteObject: vi.fn()
 }));
 
-vi.mock('../../js/firebase-images.js?v=9', () => ({
+vi.mock('../../js/firebase-images.js?v=10', () => ({
     imageStorage: {},
     ensureImageAuth: vi.fn(),
     requireImageAuth: vi.fn()

@@ -8,6 +8,7 @@ import {
   GoogleAuthProvider,
   indexedDBLocalPersistence,
   initializeApp,
+  initializePrimaryAppCheck,
   initializeAuth,
   isSignInWithEmailLink,
   onAuthStateChanged,
@@ -30,6 +31,7 @@ const firebaseConfig = await resolvePrimaryFirebaseConfig();
 // above is awaiting, and getApp() throws app/no-app when only they exist.
 const existingDefaultApp = getApps().find((candidate) => candidate?.name === '[DEFAULT]');
 const app = existingDefaultApp || initializeApp(firebaseConfig);
+await initializePrimaryAppCheck(app);
 
 function isCapacitorNativeRuntime() {
   const protocol = typeof window !== 'undefined' ? window.location?.protocol : '';

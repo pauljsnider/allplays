@@ -38,5 +38,16 @@
   },
   "server": {
     "cleartext": false
+  },
+  "experimental": {
+    "ios": {
+      "spm": {
+        "packageOptions": {
+          "@capacitor-firebase/app-check": {
+            "symlink": true
+          }
+        }
+      }
+    }
   }
 }

@@ -40,6 +40,30 @@ const excludedFiles = new Set([
     'storage.rules'
 ]);
 
+const appCheckRuntimeConfigRelativePath = path.join('.well-known', 'allplays-runtime-config.json');
+
+function normalizePublicSiteKey(value) {
+    if (typeof value !== 'string') return '';
+    const normalized = value.trim();
+    return /^[A-Za-z0-9_-]{10,200}$/.test(normalized) ? normalized : '';
+}
+
+export function writeAppCheckRuntimeConfig(destinationDir, siteKey) {
+    const normalizedSiteKey = normalizePublicSiteKey(siteKey);
+    if (!normalizedSiteKey) return null;
+
+    const outputPath = path.join(destinationDir, appCheckRuntimeConfigRelativePath);
+    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+    fs.writeFileSync(outputPath, `${JSON.stringify({
+        appCheck: {
+            enabled: true,
+            recaptchaEnterpriseSiteKey: normalizedSiteKey,
+            isTokenAutoRefreshEnabled: true
+        }
+    }, null, 2)}\n`);
+    return outputPath;
+}
+
 function toRelativePath(rootDir, filePath) {
     return path.relative(rootDir, filePath).split(path.sep).join('/');
 }
@@ -110,6 +134,10 @@ export function stagePagesBundle(destinationDir, { rootDir = defaultRootDir } = 
     fs.mkdirSync(appDestinationDir, { recursive: true });
     fs.cpSync(appDistDir, appDestinationDir, { recursive: true });
     fs.writeFileSync(path.join(resolvedDestination, '.nojekyll'), '');
+    const appCheckRuntimeConfigPath = writeAppCheckRuntimeConfig(
+        resolvedDestination,
+        process.env.ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY
+    );
 
     const rootIndexPath = path.join(resolvedDestination, 'index.html');
     const appIndexPath = path.join(appDestinationDir, 'index.html');
@@ -123,7 +151,8 @@ export function stagePagesBundle(destinationDir, { rootDir = defaultRootDir } = 
     return {
         destinationDir: resolvedDestination,
         rootIndexPath,
-        appIndexPath
+        appIndexPath,
+        appCheckRuntimeConfigPath
     };
 }
 

@@ -74,6 +74,27 @@ describe('Capacitor native config', () => {
         expect(appPnpmLock).toContain(`'@vitejs/plugin-react@${pluginReactVersion}(vite@8.1.4`);
     });
 
+    it('wires App Check into both native shells without a SwiftPM identity collision', () => {
+        const config = JSON.parse(readProjectFile('capacitor.config.json'));
+        const rootPackage = JSON.parse(readProjectFile('package.json'));
+        const appPackage = JSON.parse(readProjectFile('apps/app/package.json'));
+        const androidSettings = readProjectFile('android/capacitor.settings.gradle');
+        const androidBuild = readProjectFile('android/app/capacitor.build.gradle');
+        const iosPackage = readProjectFile('ios/App/CapApp-SPM/Package.swift');
+        const iosEntitlements = readProjectFile('ios/App/App/App.entitlements');
+
+        expect(rootPackage.dependencies['@capacitor-firebase/app-check']).toBe('8.3.0');
+        expect(appPackage.dependencies['@capacitor-firebase/app-check']).toBe('8.3.0');
+        expect(androidSettings).toContain("include ':capacitor-firebase-app-check'");
+        expect(androidBuild).toContain("implementation project(':capacitor-firebase-app-check')");
+        expect(config.experimental.ios.spm.packageOptions['@capacitor-firebase/app-check']).toEqual({
+            symlink: true
+        });
+        expect(iosPackage).toContain('path: "symlinks/CapacitorFirebaseAppCheck"');
+        expect(iosEntitlements).toContain('com.apple.developer.devicecheck.appattest-environment');
+        expect(iosEntitlements).toContain('<string>production</string>');
+    });
+
     it('keeps Vitest and coverage peer versions aligned in app lockfiles', () => {
         const appPackage = JSON.parse(readProjectFile('apps/app/package.json'));
         const appPackageLock = JSON.parse(readProjectFile('apps/app/package-lock.json'));
