@@ -582,7 +582,8 @@ test('legacy retry checkout ignores stored and current discounts without a captu
     assert.equal(registration.checkoutAmountCents, 10000);
 });
 
-test('rolls back reserved capacity when Stripe checkout creation fails', async () => {
+test('retains capacity and a durable replay reservation when Stripe checkout creation is ambiguous', async () => {
+    const registrationPath = 'teams/team-1/registrationForms/form-1/registrations/reg-1';
     const { firestore, createStripeRegistrationCheckout } = loadCheckoutHandler({
         seed: buildSeedState(),
         stripeCreateImpl: async () => {
@@ -596,18 +597,22 @@ test('rolls back reserved capacity when Stripe checkout creation fails', async (
     );
 
     const form = firestore.snapshot('teams/team-1/registrationForms/form-1');
-    const registration = firestore.snapshot('teams/team-1/registrationForms/form-1/registrations/reg-1');
+    const registration = firestore.snapshot(registrationPath);
 
-    assert.equal(form.registrationOptionCounts.u10.enrolled, 0);
-    assert.equal(registration.registrationCapacityReleased, true);
-    assert.equal(registration.capacityReleasedAt, 'SERVER_TIMESTAMP');
+    assert.equal(form.registrationOptionCounts.u10.enrolled, 1);
+    assert.equal(registration.registrationCapacityReleased, false);
     assert.equal(Object.prototype.hasOwnProperty.call(registration, 'checkoutStatus'), false);
     assert.equal(Object.prototype.hasOwnProperty.call(registration, 'paymentStatus'), false);
     assert.equal(Object.prototype.hasOwnProperty.call(registration, 'checkoutUrl'), false);
-    assert.equal(Object.prototype.hasOwnProperty.call(registration, 'retryCapacityReservationId'), false);
+    assert.match(registration.retryCapacityReservationId, /^[0-9a-f-]{36}$/i);
+    assert.match(registration.checkoutCreationReservationId, /^[0-9a-f-]{36}$/i);
+    const reservation = firestore.snapshot(`${registrationPath}/checkoutReservations/${registration.checkoutCreationReservationId}`);
+    assert.equal(reservation.status, 'creation_failed');
+    assert.equal(reservation.stripeRequest.metadata.product, 'registration');
+    assert.match(reservation.stripeIdempotencyKey, /^registration_checkout_/);
 });
 
-test('checkout owner adopts and releases an overlapping retry reservation when Stripe creation fails', async () => {
+test('checkout owner preserves an overlapping retry reservation when Stripe creation is ambiguous', async () => {
     const registrationPath = 'teams/team-1/registrationForms/form-1/registrations/reg-1';
     const formPath = 'teams/team-1/registrationForms/form-1';
     const { firestore, createStripeRegistrationCheckout } = loadCheckoutHandler({
@@ -639,10 +644,10 @@ test('checkout owner adopts and releases an overlapping retry reservation when S
     const form = firestore.snapshot(formPath);
     const registration = firestore.snapshot(registrationPath);
 
-    assert.equal(form.registrationOptionCounts.u10.enrolled, 0);
-    assert.equal(registration.registrationCapacityReleased, true);
-    assert.equal(Object.prototype.hasOwnProperty.call(registration, 'retryCapacityReservationId'), false);
-    assert.equal(registration.capacityReleasedAt, 'SERVER_TIMESTAMP');
+    assert.equal(form.registrationOptionCounts.u10.enrolled, 1);
+    assert.equal(registration.registrationCapacityReleased, false);
+    assert.equal(registration.retryCapacityReservationId, 'existing-retry-reservation');
+    assert.match(registration.checkoutCreationReservationId, /^[0-9a-f-]{36}$/i);
 });
 
 test('retry losing checkout creation ownership does not release capacity beneath the surviving checkout', async () => {
@@ -684,7 +689,7 @@ test('retry losing checkout creation ownership does not release capacity beneath
     assert.equal(Object.prototype.hasOwnProperty.call(registration, 'capacityReleasedAt'), false);
 });
 
-test('restores capacity after retrying a previously failed session when Stripe creation fails again', async () => {
+test('holds capacity while retrying a previously failed session with a durable Stripe request', async () => {
     const { firestore, createStripeRegistrationCheckout } = loadCheckoutHandler({
         seed: buildSeedState({
             checkoutStatus: 'payment_failed',
@@ -707,16 +712,17 @@ test('restores capacity after retrying a previously failed session when Stripe c
     const form = firestore.snapshot('teams/team-1/registrationForms/form-1');
     const registration = firestore.snapshot('teams/team-1/registrationForms/form-1/registrations/reg-1');
 
-    assert.equal(form.registrationOptionCounts.u10.enrolled, 0);
-    assert.equal(registration.registrationCapacityReleased, true);
+    assert.equal(form.registrationOptionCounts.u10.enrolled, 1);
+    assert.equal(registration.registrationCapacityReleased, false);
     assert.equal(registration.checkoutStatus, 'payment_failed');
     assert.equal(registration.paymentStatus, 'payment_failed');
     assert.equal(registration.checkoutUrl, 'https://checkout.stripe.com/c/old_session');
     assert.equal(registration.stripeCheckoutSessionId, 'cs_old_failed');
-    assert.equal(Object.prototype.hasOwnProperty.call(registration, 'retryCapacityReservationId'), false);
+    assert.match(registration.retryCapacityReservationId, /^[0-9a-f-]{36}$/i);
+    assert.match(registration.checkoutCreationReservationId, /^[0-9a-f-]{36}$/i);
 });
 
-test('records and clears a retry capacity reservation id around Stripe checkout creation failures', async () => {
+test('records and retains retry capacity authority across Stripe creation failures', async () => {
     const registrationPath = 'teams/team-1/registrationForms/form-1/registrations/reg-1';
     let firestore = null;
     let reservedRetryCapacityReservationId = '';
@@ -738,9 +744,9 @@ test('records and clears a retry capacity reservation id around Stripe checkout 
     const registration = firestore.snapshot(registrationPath);
 
     assert.match(reservedRetryCapacityReservationId, /^[0-9a-f-]{36}$/i);
-    assert.equal(registration.registrationCapacityReleased, true);
-    assert.equal(registration.capacityReleasedAt, 'SERVER_TIMESTAMP');
-    assert.equal(Object.prototype.hasOwnProperty.call(registration, 'retryCapacityReservationId'), false);
+    assert.equal(registration.registrationCapacityReleased, false);
+    assert.equal(registration.retryCapacityReservationId, reservedRetryCapacityReservationId);
+    assert.match(registration.checkoutCreationReservationId, /^[0-9a-f-]{36}$/i);
 });
 
 test('reserves capacity exactly once after a failed retry is retried successfully', async () => {
@@ -781,6 +787,64 @@ test('reserves capacity exactly once after a failed retry is retried successfull
     assert.equal(registration.stripeCheckoutSessionId, 'cs_test_123');
     assert.equal(registration.checkoutAmountCents, 5000);
     assert.equal(Object.prototype.hasOwnProperty.call(registration, 'retryCapacityReservationId'), false);
+});
+
+test('replays the exact durable Stripe request after post-Stripe persistence fails', async () => {
+    const registrationPath = 'teams/team-1/registrationForms/form-1/registrations/reg-1';
+    const stripeCalls = [];
+    const stripeCreateImpl = async (payload, options) => {
+        stripeCalls.push({ payload: clone(payload), options: clone(options) });
+        return {
+            id: 'cs_test_durable_replay',
+            url: 'https://checkout.stripe.com/c/durable_replay',
+            payment_status: 'unpaid',
+            status: 'open',
+            livemode: false,
+            expires_at: Math.floor(Date.now() / 1000) + 1800,
+            metadata: clone(payload.metadata)
+        };
+    };
+    const loaded = loadCheckoutHandler({
+        seed: buildSeedState(),
+        stripeCreateImpl,
+        firestoreOptions: {
+            onGet: ({ path, count }) => {
+                if (path === registrationPath && count === 4) {
+                    throw new Error('Injected registration projection failure.');
+                }
+            }
+        }
+    });
+
+    await assert.rejects(
+        loaded.createStripeRegistrationCheckout(checkoutInput),
+        /Injected registration projection failure\./
+    );
+
+    const registrationAfterFailure = loaded.firestore.snapshot(registrationPath);
+    const reservationId = registrationAfterFailure.checkoutCreationReservationId;
+    assert.match(reservationId, /^[0-9a-f-]{36}$/i);
+    const reservationPath = `${registrationPath}/checkoutReservations/${reservationId}`;
+    const reservationAfterFailure = loaded.firestore.snapshot(reservationPath);
+    assert.equal(reservationAfterFailure.status, 'stripe_created');
+    assert.equal(reservationAfterFailure.stripeCheckoutSessionId, 'cs_test_durable_replay');
+
+    delete require.cache[repoIndexPath];
+    installModuleStubs({ firestore: loaded.firestore, stripeCreateImpl });
+    const mod = require('../index.js');
+    const result = await mod.createStripeRegistrationCheckout(checkoutInput);
+
+    assert.deepEqual(result, {
+        checkoutUrl: 'https://checkout.stripe.com/c/durable_replay',
+        sessionId: 'cs_test_durable_replay'
+    });
+    assert.equal(stripeCalls.length, 2);
+    assert.deepEqual(stripeCalls[1], stripeCalls[0]);
+    const completedRegistration = loaded.firestore.snapshot(registrationPath);
+    assert.equal(completedRegistration.stripeCheckoutSessionId, 'cs_test_durable_replay');
+    assert.equal(completedRegistration.checkoutStatus, 'open');
+    assert.equal(Object.prototype.hasOwnProperty.call(completedRegistration, 'checkoutCreationReservationId'), false);
+    assert.equal(loaded.firestore.snapshot(reservationPath).status, 'persisted');
 });
 
 test('includes retryPayment on Stripe cancel returns for initial public registration checkout', async () => {

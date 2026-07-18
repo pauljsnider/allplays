@@ -891,6 +891,11 @@ service cloud.firestore {
                'paymentLink',
                'checkoutAmountCents',
                'checkoutCurrency',
+               'stripeGrossPaidAmountCents',
+               'stripeRefundedAmountCents',
+               'stripeRefundableAmountCents',
+               'stripeDisputeLostAmountCents',
+               'stripeFinancialStatus',
                'stripeCheckoutSessionId',
                'stripePaymentIntentId',
                'stripeCustomerId',
@@ -917,6 +922,11 @@ service cloud.firestore {
              (!affectedKeys.hasAny(['paymentLink']) || request.resource.data.get('paymentLink', null) == null) &&
              (!affectedKeys.hasAny(['checkoutAmountCents']) || request.resource.data.get('checkoutAmountCents', null) == null) &&
              (!affectedKeys.hasAny(['checkoutCurrency']) || request.resource.data.get('checkoutCurrency', null) == null) &&
+             (!affectedKeys.hasAny(['stripeGrossPaidAmountCents']) || request.resource.data.get('stripeGrossPaidAmountCents', null) == null) &&
+             (!affectedKeys.hasAny(['stripeRefundedAmountCents']) || request.resource.data.get('stripeRefundedAmountCents', null) == null) &&
+             (!affectedKeys.hasAny(['stripeRefundableAmountCents']) || request.resource.data.get('stripeRefundableAmountCents', null) == null) &&
+             (!affectedKeys.hasAny(['stripeDisputeLostAmountCents']) || request.resource.data.get('stripeDisputeLostAmountCents', null) == null) &&
+             (!affectedKeys.hasAny(['stripeFinancialStatus']) || request.resource.data.get('stripeFinancialStatus', null) == null) &&
              (!affectedKeys.hasAny(['stripeCheckoutSessionId']) || request.resource.data.get('stripeCheckoutSessionId', null) == null) &&
              (!affectedKeys.hasAny(['stripePaymentIntentId']) || request.resource.data.get('stripePaymentIntentId', null) == null) &&
              (!affectedKeys.hasAny(['stripeCustomerId']) || request.resource.data.get('stripeCustomerId', null) == null) &&
@@ -2834,12 +2844,6 @@ service cloud.firestore {
         allow write: if isGlobalAdmin();
       }
 
-      // Checkout attempts contain purchaser and Stripe authority data. They are
-      // written only by trusted functions and are never exposed to clients.
-      match /teamPassCheckoutAttempts/{attemptId} {
-        allow read, create, update, delete: if false;
-      }
-
       match /familyMemberships/{memberId} {
         allow read: if isOwner(userId) || isGlobalAdmin() ||
                        (isSignedIn() && resource.data.email is string && request.auth.token.email is string && resource.data.email == request.auth.token.email.lower());
@@ -3236,6 +3240,16 @@ service cloud.firestore {
           allow update: if isTeamOwnerOrAdmin(teamId);
           allow delete: if isTeamOwnerOrAdmin(teamId);
           allow create: if isTeamOwnerOrAdmin(teamId) && request.resource.data.status == 'pending';
+
+          // Raw checkout capabilities, replay parameters, and Stripe charge
+          // authority are server-only even for team administrators.
+          match /checkoutReservations/{reservationId} {
+            allow read, create, update, delete: if false;
+          }
+
+          match /stripeCharges/{chargeId} {
+            allow read, create, update, delete: if false;
+          }
         }
       }
 
@@ -3283,25 +3297,33 @@ service cloud.firestore {
         // metadata stays limited to team admins.
         allow read: if isTeamOwnerOrAdmin(teamId) ||
           (
+            resource.data.keys().hasOnly(['status', 'teamId', 'seasonId', 'tier', 'updatedAt']) &&
+            resource.data.keys().hasAll(['status', 'teamId', 'seasonId', 'tier', 'updatedAt']) &&
             resource.data.teamId == teamId &&
             resource.data.seasonId is string &&
             resource.data.tier == 'team-pass' &&
             resource.data.status in ['active', 'inactive', 'expired', 'cancelled'] &&
-            !resource.data.keys().hasAny([
-              'stripeCustomerId', 'stripeSubscriptionId', 'stripePaymentIntentId',
-              'providerCustomerId', 'providerSubscriptionId', 'billingEmail'
-            ])
+            resource.data.updatedAt is timestamp
           );
         // Team admins may stage or deactivate non-active records, but only a
         // trusted Admin SDK path (for example the verified Stripe webhook) may
         // create or preserve an active paid entitlement. Admin SDK writes
         // bypass these client rules; existing active entitlements remain readable.
         allow create, update: if isTeamOwnerOrAdmin(teamId) &&
+          request.resource.data.keys().hasOnly(['status', 'teamId', 'seasonId', 'tier', 'updatedAt']) &&
+          request.resource.data.keys().hasAll(['status', 'teamId', 'seasonId', 'tier', 'updatedAt']) &&
           request.resource.data.teamId == teamId &&
           request.resource.data.seasonId is string &&
           request.resource.data.tier == 'team-pass' &&
-          request.resource.data.status in ['inactive', 'expired', 'cancelled'];
+          request.resource.data.status in ['inactive', 'expired', 'cancelled'] &&
+          request.resource.data.updatedAt is timestamp;
         allow delete: if isTeamOwnerOrAdmin(teamId);
+      }
+
+      // Checkout attempts contain purchaser and Stripe authority data. This
+      // team-scoped rule is explicit so a broader nested match cannot expose it.
+      match /teamPassCheckoutAttempts/{attemptId} {
+        allow read, create, update, delete: if false;
       }
 
       match /membershipRequests/{requestId} {
@@ -3913,6 +3935,14 @@ service cloud.firestore {
                              );
             allow delete: if isTeamOwnerOrAdmin(teamId) &&
                              isSafeOfflineTeamFeeBilling(resource.data, teamId, batchId, recipientId);
+          }
+
+          match /stripeCharges/{chargeId} {
+            allow read, create, update, delete: if false;
+          }
+
+          match /refundIntents/{refundId} {
+            allow read, create, update, delete: if false;
           }
         }
       }

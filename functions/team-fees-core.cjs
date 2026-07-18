@@ -71,7 +71,18 @@ function getTeamFeeRefundedCents(recipient = {}) {
 }
 
 function getTeamFeeRefundableCents(recipient = {}) {
-    return getTeamFeePaidCents(recipient);
+    const refundable = Number(recipient.stripeRefundableAmountCents);
+    return Number.isSafeInteger(refundable) ? Math.max(0, refundable) : 0;
+}
+
+function getTeamFeeStripeGrossPaidCents(recipient = {}) {
+    const paid = Number(recipient.stripeGrossPaidAmountCents);
+    return Number.isSafeInteger(paid) ? Math.max(0, paid) : 0;
+}
+
+function getTeamFeeStripeRefundedCents(recipient = {}) {
+    const refunded = Number(recipient.stripeRefundedAmountCents);
+    return Number.isSafeInteger(refunded) ? Math.max(0, refunded) : 0;
 }
 
 function getTeamFeeBalanceCents(recipient = {}) {
@@ -346,6 +357,107 @@ function getTeamFeeRefundAuthorityFailure({ input = {}, recipient = {}, adminBil
     return '';
 }
 
+function getTeamFeePaymentIntentGuardFailure({ recipient = {}, session = {}, paymentIntent = {} } = {}) {
+    const metadata = paymentIntent.metadata || {};
+    const sessionPaymentIntentId = normalizeString(
+        typeof session.payment_intent === 'string' ? session.payment_intent : session.payment_intent?.id
+    );
+    if (!sessionPaymentIntentId || paymentIntent.id !== sessionPaymentIntentId) return 'payment_intent_mismatch';
+    if (metadata.product !== 'team_fee'
+        || metadata.teamId !== recipient.teamId
+        || metadata.batchId !== recipient.batchId
+        || metadata.recipientId !== recipient.id) return 'payment_intent_scope_mismatch';
+    const sessionToken = normalizeCheckoutAttemptToken(session.metadata?.checkoutAttemptToken);
+    const intentToken = normalizeCheckoutAttemptToken(metadata.checkoutAttemptToken);
+    if (!sessionToken || !intentToken || sessionToken !== intentToken) return 'payment_intent_attempt_mismatch';
+    const expectedAmount = Math.round(Number(session.amount_total || 0));
+    const intentAmount = Math.round(Number(paymentIntent.amount_received || paymentIntent.amount || 0));
+    if (!Number.isSafeInteger(expectedAmount) || expectedAmount <= 0 || intentAmount !== expectedAmount) return 'payment_intent_amount_mismatch';
+    if (normalizeString(paymentIntent.currency).toLowerCase() !== normalizeString(session.currency).toLowerCase()) {
+        return 'payment_intent_currency_mismatch';
+    }
+    if (Boolean(paymentIntent.livemode) !== Boolean(session.livemode)) return 'payment_intent_livemode_mismatch';
+    if (!normalizeString(typeof paymentIntent.latest_charge === 'string' ? paymentIntent.latest_charge : paymentIntent.latest_charge?.id)) {
+        return 'payment_intent_charge_missing';
+    }
+    return '';
+}
+
+function buildTeamFeeStripeChargeLedger({ recipient = {}, session = {}, paymentIntent = {}, eventId = '', receivedAt = null } = {}) {
+    const stripeChargeId = normalizeString(typeof paymentIntent.latest_charge === 'string' ? paymentIntent.latest_charge : paymentIntent.latest_charge?.id);
+    const amountPaidCents = Math.round(Number(session.amount_total || paymentIntent.amount_received || 0));
+    return {
+        type: 'stripe_charge',
+        provider: 'stripe',
+        product: 'team_fee',
+        teamId: recipient.teamId,
+        batchId: recipient.batchId,
+        recipientId: recipient.id,
+        stripeChargeId,
+        stripePaymentIntentId: paymentIntent.id,
+        stripeCheckoutSessionId: session.id,
+        checkoutAttemptToken: session.metadata?.checkoutAttemptToken || null,
+        amountPaidCents,
+        refundedAmountCents: 0,
+        pendingRefundAmountCents: 0,
+        refundableAmountCents: amountPaidCents,
+        disputeLostAmountCents: 0,
+        disputeStatus: 'none',
+        disputeEventCreated: 0,
+        currency: normalizeString(session.currency).toLowerCase(),
+        livemode: Boolean(session.livemode),
+        stripeEventId: eventId || null,
+        paidAt: receivedAt,
+        updatedAt: receivedAt
+    };
+}
+
+function getTeamFeeChargeGuardFailure({ input = {}, ledger = {}, charge = {} } = {}) {
+    const metadata = charge.metadata || {};
+    const paymentIntentId = normalizeString(typeof charge.payment_intent === 'string' ? charge.payment_intent : charge.payment_intent?.id);
+    if (ledger.type !== 'stripe_charge' || ledger.provider !== 'stripe' || ledger.product !== 'team_fee') return 'charge_ledger_invalid';
+    if (!charge.id || ledger.stripeChargeId !== charge.id) return 'charge_id_mismatch';
+    if (!paymentIntentId || ledger.stripePaymentIntentId !== paymentIntentId) return 'charge_payment_intent_mismatch';
+    if (ledger.teamId !== input.teamId || ledger.batchId !== input.batchId || ledger.recipientId !== input.recipientId) return 'charge_ledger_scope_mismatch';
+    if (metadata.product !== 'team_fee'
+        || metadata.teamId !== input.teamId
+        || metadata.batchId !== input.batchId
+        || metadata.recipientId !== input.recipientId) return 'charge_metadata_scope_mismatch';
+    if (Math.round(Number(charge.amount || 0)) !== Math.round(Number(ledger.amountPaidCents || 0))) return 'charge_amount_mismatch';
+    if (normalizeString(charge.currency).toLowerCase() !== normalizeString(ledger.currency).toLowerCase()) return 'charge_currency_mismatch';
+    if (Boolean(charge.livemode) !== Boolean(ledger.livemode)) return 'charge_livemode_mismatch';
+    return '';
+}
+
+function allocateTeamFeeRefundAcrossCharges(ledgers = [], amountCents = 0) {
+    let remaining = Math.round(Number(amountCents || 0));
+    if (!Number.isSafeInteger(remaining) || remaining <= 0) return [];
+    const sorted = (Array.isArray(ledgers) ? ledgers : [])
+        .filter((ledger) => ledger?.type === 'stripe_charge' && ledger?.provider === 'stripe')
+        .map((ledger) => {
+            const refundable = Math.max(0, Math.round(Number(ledger.refundableAmountCents || 0)));
+            const pending = Math.max(0, Math.round(Number(ledger.pendingRefundAmountCents || 0)));
+            return { ...ledger, availableRefundAmountCents: Math.max(0, refundable - pending) };
+        })
+        .filter((ledger) => ledger.availableRefundAmountCents > 0 && !['open', 'lost'].includes(normalizeString(ledger.disputeStatus).toLowerCase()))
+        .sort((left, right) => {
+            const timeDelta = Number(right.paidAtMillis || 0) - Number(left.paidAtMillis || 0);
+            return timeDelta || normalizeString(right.stripeChargeId).localeCompare(normalizeString(left.stripeChargeId));
+        });
+    const allocations = [];
+    for (const ledger of sorted) {
+        if (remaining <= 0) break;
+        const allocationAmountCents = Math.min(remaining, ledger.availableRefundAmountCents);
+        allocations.push({
+            stripeChargeId: ledger.stripeChargeId,
+            stripePaymentIntentId: ledger.stripePaymentIntentId,
+            amountCents: allocationAmountCents
+        });
+        remaining -= allocationAmountCents;
+    }
+    return remaining === 0 ? allocations : [];
+}
+
 function buildTeamFeeStripeRefundUpdate({ recipient = {}, refund = {}, amountCents = 0, actorId = '', reason = '', refundedAt, ledgerRefundedAt = refundedAt }) {
     const refundAmountCents = Math.round(Number(amountCents || refund.amount || 0));
     const previousPaidCents = getTeamFeePaidCents(recipient);
@@ -374,6 +486,10 @@ function buildTeamFeeStripeRefundUpdate({ recipient = {}, refund = {}, amountCen
         stripeCheckoutSessionId: null,
         checkoutAmountCents: null,
         paymentProvider: 'stripe',
+        stripeGrossPaidAmountCents: getTeamFeeStripeGrossPaidCents(recipient),
+        stripeRefundedAmountCents: getTeamFeeStripeRefundedCents(recipient) + refundAmountCents,
+        stripeRefundableAmountCents: Math.max(0, getTeamFeeRefundableCents(recipient) - refundAmountCents),
+        stripeFinancialStatus: Math.max(0, getTeamFeeRefundableCents(recipient) - refundAmountCents) > 0 ? 'partially_refunded' : 'refunded',
         hasAdminBilling: true,
         stripeLastRefundStatus: refundStatus,
         ledgerEntries: [{
@@ -416,6 +532,10 @@ function buildTeamFeePaidUpdate({ recipient = {}, session = {}, eventId, receive
         checkoutUrl: null,
         paymentLink: null,
         paymentProvider: 'stripe',
+        stripeGrossPaidAmountCents: getTeamFeeStripeGrossPaidCents(recipient) + stripePaidAmountCents,
+        stripeRefundedAmountCents: getTeamFeeStripeRefundedCents(recipient),
+        stripeRefundableAmountCents: getTeamFeeRefundableCents(recipient) + stripePaidAmountCents,
+        stripeFinancialStatus: 'paid',
         stripeCheckoutSessionId: null,
         stripePaymentAmountCents: stripePaidAmountCents,
         hasAdminBilling: true,
@@ -455,6 +575,8 @@ module.exports = {
     getTeamFeeBalanceCents,
     getTeamFeeRefundedCents,
     getTeamFeeRefundableCents,
+    getTeamFeeStripeGrossPaidCents,
+    getTeamFeeStripeRefundedCents,
     isOnlineTeamFeeCollection,
     isTeamFeeCheckoutEligible,
     isEligibleTeamFeePayer,
@@ -470,6 +592,10 @@ module.exports = {
     buildTeamFeeAdminBillingMetadata,
     getTeamFeeStripePaymentRefs,
     getTeamFeeRefundAuthorityFailure,
+    getTeamFeePaymentIntentGuardFailure,
+    buildTeamFeeStripeChargeLedger,
+    getTeamFeeChargeGuardFailure,
+    allocateTeamFeeRefundAcrossCharges,
     buildTeamFeePaidUpdate,
     buildTeamFeeStripeRefundUpdate
 };

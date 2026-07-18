@@ -197,7 +197,8 @@ export function getRecipientRefundedCents(recipient) {
 }
 
 export function getRecipientRefundableCents(recipient) {
-    return getRecipientPaidCents(recipient);
+    const refundable = Number(recipient?.stripeRefundableAmountCents);
+    return Number.isSafeInteger(refundable) ? Math.max(0, refundable) : 0;
 }
 
 export function getRecipientStripePaymentRefs(recipient) {
@@ -207,10 +208,7 @@ export function getRecipientStripePaymentRefs(recipient) {
 }
 
 export function isOnlineRefundEligible(recipient) {
-    const { paymentIntentId, chargeId } = getRecipientStripePaymentRefs(recipient);
-    const hasPrivateAdminBilling = recipient?.hasAdminBilling === true;
     return recipient?.paymentProvider === 'stripe'
-        && Boolean(paymentIntentId || chargeId || hasPrivateAdminBilling)
         && getRecipientRefundableCents(recipient) > 0;
 }
 

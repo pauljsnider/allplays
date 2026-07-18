@@ -1,5 +1,10 @@
 'use strict';
 
+const {
+  getStripeChargeFinancialStatus,
+  reconcileStripeChargeReversal
+} = require('./stripe-payment-lifecycle-core.cjs');
+
 const TEAM_PASS_TIER = 'team-pass';
 const TEAM_PASS_PRODUCT = 'team_pass';
 
@@ -130,26 +135,29 @@ function getTeamPassChargeGuardFailure({ attempt = {}, charge = {} } = {}) {
   const paymentIntentId = asTrimmedString(
     typeof charge.payment_intent === 'string' ? charge.payment_intent : charge.payment_intent?.id
   );
-  if (!paymentIntentId || paymentIntentId !== attempt.stripePaymentIntentId) return 'payment_intent_mismatch';
+  if (!paymentIntentId) return 'payment_intent_missing';
+  if (attempt.stripePaymentIntentId && paymentIntentId !== attempt.stripePaymentIntentId) return 'payment_intent_mismatch';
   if (attempt.livemode !== undefined && Boolean(charge.livemode) !== Boolean(attempt.livemode)) return 'livemode_mismatch';
   if (normalizePositiveInteger(charge.amount) !== normalizePositiveInteger(attempt.checkoutAmountCents)) return 'charge_amount_mismatch';
   if (!normalizeCurrency(charge.currency)
       || normalizeCurrency(charge.currency) !== normalizeCurrency(attempt.checkoutCurrency)) return 'charge_currency_mismatch';
-  if (!['paid', 'disputed'].includes(asTrimmedString(attempt.checkoutStatus).toLowerCase())) return 'checkout_state_mismatch';
+  if (!['creating', 'open', 'async_pending', 'paid', 'disputed', 'refunded', 'disputed_lost'].includes(asTrimmedString(attempt.checkoutStatus).toLowerCase())) {
+    return 'checkout_state_mismatch';
+  }
   return '';
 }
 
 function getTeamPassReversalStatus(event = {}, charge = {}) {
-  if (event.type === 'charge.refunded') {
-    return Number(charge.amount_refunded || 0) > 0 ? 'refunded' : '';
-  }
-  const dispute = event.data?.object || {};
-  if (event.type === 'charge.dispute.created') return 'disputed';
-  if (event.type === 'charge.dispute.closed') {
-    if (dispute.status === 'won' && Number(charge.amount_refunded || 0) <= 0) return 'paid';
-    return 'disputed_lost';
-  }
-  return '';
+  if (!shouldHandleTeamPassReversalEvent(event)) return '';
+  return getStripeChargeFinancialStatus(reconcileStripeChargeReversal({ event, charge }));
+}
+
+function reconcileTeamPassReversal({ current = {}, event = {}, charge = {} } = {}) {
+  return reconcileStripeChargeReversal({ current, event, charge });
+}
+
+function getTeamPassEffectivePaymentStatus(reversal = {}) {
+  return getStripeChargeFinancialStatus(reversal);
 }
 
 function getTeamPassCheckoutGuardFailure({ attempt = {}, session = {}, paidEvent = false } = {}) {
@@ -197,13 +205,28 @@ function buildTeamPassEntitlement({ session = {}, receivedAt = null, status = 'a
   const { teamId, seasonId, tier } = normalizeTeamPassCheckoutInput(metadata);
   return {
     refPath: `teams/${teamId}/entitlements/${seasonId}_${tier}`,
-    data: {
+    data: buildSafeTeamPassEntitlementProjection({
       status,
       teamId,
       seasonId,
       tier,
       updatedAt: receivedAt || null
-    }
+    })
+  };
+}
+
+function buildSafeTeamPassEntitlementProjection({ teamId, seasonId, tier = TEAM_PASS_TIER, status = 'inactive', updatedAt = null } = {}) {
+  const input = normalizeTeamPassCheckoutInput({ teamId, seasonId, tier });
+  const normalizedStatus = asTrimmedString(status).toLowerCase();
+  if (!['active', 'inactive', 'expired', 'cancelled'].includes(normalizedStatus)) {
+    throw new Error('Invalid team pass entitlement status');
+  }
+  return {
+    status: normalizedStatus,
+    teamId: input.teamId,
+    seasonId: input.seasonId,
+    tier: input.tier,
+    updatedAt
   };
 }
 
@@ -234,7 +257,10 @@ module.exports = {
   shouldHandleTeamPassReversalEvent,
   getTeamPassChargeGuardFailure,
   getTeamPassReversalStatus,
+  reconcileTeamPassReversal,
+  getTeamPassEffectivePaymentStatus,
   getTeamPassCheckoutGuardFailure,
   buildTeamPassEntitlement,
+  buildSafeTeamPassEntitlementProjection,
   buildTeamPassAttemptPaymentUpdate
 };

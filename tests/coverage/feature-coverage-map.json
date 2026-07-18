@@ -407,6 +407,7 @@
             "cloudFunctions": [
                 "createStripeTeamFeeCheckout",
                 "createStripeTeamPassCheckout",
+                "backfillTeamPassEntitlementProjections",
                 "expireStripeTeamFeeCheckout",
                 "notifyFeeAssigned",
                 "notifyFeeMarkedPaid",
@@ -419,7 +420,10 @@
                 "tests/unit/db-team-fee-recipient-list.test.js",
                 "tests/unit/db-team-fee-recipient-updates.test.js",
                 "tests/unit/fee-due-reminders-source.test.js",
-                "tests/unit/fee-notification-contract.test.js"
+                "tests/unit/fee-notification-contract.test.js",
+                "tests/unit/stripe-payment-lifecycle.test.js",
+                "tests/unit/team-fees-functions.test.js",
+                "tests/unit/team-pass-functions.test.js"
             ],
             "integrationTests": [
                 "apps/app/src/pages/TeamFees.test.tsx"

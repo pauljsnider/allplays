@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module';
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const require = createRequire(import.meta.url);
@@ -10,6 +11,8 @@ const {
     getTeamPassCheckoutGuardFailure,
     getTeamPassChargeGuardFailure,
     getTeamPassReversalStatus,
+    reconcileTeamPassReversal,
+    getTeamPassEffectivePaymentStatus,
     buildTeamPassEntitlement,
     buildTeamPassAttemptPaymentUpdate
 } = require('../../functions/team-pass-core.cjs');
@@ -197,9 +200,48 @@ describe('team pass function helpers', () => {
             amount_refunded: 4900, currency: 'usd', livemode: true
         };
         expect(getTeamPassChargeGuardFailure({ attempt, charge })).toBe('');
+        expect(getTeamPassChargeGuardFailure({
+            attempt: { ...attempt, checkoutStatus: 'open', stripePaymentIntentId: '' },
+            charge
+        })).toBe('');
         expect(getTeamPassChargeGuardFailure({ attempt, charge: { ...charge, payment_intent: 'pi_other' } })).toBe('payment_intent_mismatch');
         expect(getTeamPassReversalStatus({ type: 'charge.refunded' }, charge)).toBe('refunded');
-        expect(getTeamPassReversalStatus({ type: 'charge.dispute.created', data: { object: {} } }, charge)).toBe('disputed');
+        expect(getTeamPassReversalStatus({ type: 'charge.dispute.created', data: { object: {} } }, { ...charge, amount_refunded: 0 })).toBe('disputed');
         expect(getTeamPassReversalStatus({ type: 'charge.dispute.closed', data: { object: { status: 'won' } } }, { ...charge, amount_refunded: 0 })).toBe('paid');
+    });
+
+    it('keeps Team Pass access monotonic when reversal events arrive before or after paid', () => {
+        const refundedBeforePaid = reconcileTeamPassReversal({ current: {}, event: {
+            id: 'evt_refund', type: 'charge.refunded', created: 200
+        }, charge: { amount_refunded: 4900 } });
+        expect(getTeamPassEffectivePaymentStatus(refundedBeforePaid)).toBe('refunded');
+
+        const won = reconcileTeamPassReversal({ current: {}, event: {
+            id: 'evt_won', type: 'charge.dispute.closed', created: 300,
+            data: { object: { status: 'won' } }
+        }, charge: { amount_refunded: 0 } });
+        const lateCreated = reconcileTeamPassReversal({ current: won, event: {
+            id: 'evt_created', type: 'charge.dispute.created', created: 100,
+            data: { object: { status: 'needs_response' } }
+        }, charge: { amount_refunded: 0 } });
+        expect(lateCreated).toEqual(won);
+        expect(getTeamPassEffectivePaymentStatus(lateCreated)).toBe('paid');
+
+        const lost = reconcileTeamPassReversal({ current: lateCreated, event: {
+            id: 'evt_lost', type: 'charge.dispute.closed', created: 400,
+            data: { object: { status: 'lost' } }
+        }, charge: { amount_refunded: 0 } });
+        expect(getTeamPassEffectivePaymentStatus(lost)).toBe('dispute_lost');
+    });
+
+    it('exposes a dry-run-first exact entitlement backfill with explicit write confirmation', () => {
+        const source = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
+        expect(source).toContain('exports.backfillTeamPassEntitlementProjections');
+        expect(source).toContain("data?.confirmation !== 'rewrite_safe_team_pass_entitlements_v1'");
+        expect(source).toContain("firestore.collectionGroup('entitlements')");
+        expect(source).toContain('.orderBy(admin.firestore.FieldPath.documentId())');
+        expect(source).toContain('query = query.startAfter(cursorSnap)');
+        expect(source).toContain('buildSafeTeamPassEntitlementProjection({');
+        expect(source).toContain('rewritten: dryRun ? 0 : candidates.length');
     });
 });

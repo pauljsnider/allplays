@@ -61,7 +61,9 @@ describe('team fee recipient Firestore rules', () => {
         expect(rules).toContain('hasNoPrivateTeamFeeBillingFields(request.resource.data)');
         expect(rules).toContain('hasNoIntroducedPrivateTeamFeeBillingFields()');
         expect(rules).toContain("request.resource.data.get('stripePaymentIntentId', null) == null");
+        expect(rules).toContain("request.resource.data.get('stripeRefundableAmountCents', null) == null");
         expect(rules).toContain('match /adminBilling/{billingId} {');
+        expect(rules).toContain('match /stripeCharges/{chargeId} {');
         expect(rules).toContain('function isSafeOfflineTeamFeeBilling(data, teamId, batchId, recipientId)');
         expect(rules).toContain('isSafeOfflineTeamFeeBilling(request.resource.data, teamId, batchId, recipientId)');
     });
@@ -195,8 +197,12 @@ describe('team fee recipient Firestore rules', () => {
             });
 
             const billingRef = doc(ownerDb, 'teams/team-a/feeBatches/batch-a/feeRecipients/stripe-target/adminBilling/latest');
+            const chargeRef = doc(ownerDb, 'teams/team-a/feeBatches/batch-a/feeRecipients/stripe-target/stripeCharges/ch_server');
             await assertFails(getDoc(billingRef));
             await assertFails(updateDoc(billingRef, { stripePaymentIntentId: 'pi_attacker' }));
+            await assertFails(getDoc(chargeRef));
+            await assertFails(setDoc(chargeRef, { stripeChargeId: 'ch_attacker', refundableAmountCents: 2500 }));
+            await assertFails(updateDoc(feeRef, { stripeRefundableAmountCents: 2500 }));
             await assertSucceeds(setDoc(billingRef, {
                 type: 'offline_payment', teamId: 'team-a', batchId: 'batch-a', recipientId: 'stripe-target',
                 amountPaidCents: 2500, note: 'Cash', recordedBy: 'owner-a', updatedAt: 'now'

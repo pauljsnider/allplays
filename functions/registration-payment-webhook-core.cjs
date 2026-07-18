@@ -1,5 +1,10 @@
 'use strict';
 
+const {
+    getStripeChargeFinancialStatus,
+    getStripeChargeLostAmountCents
+} = require('./stripe-payment-lifecycle-core.cjs');
+
 function normalizeString(value) {
     return String(value || '').trim();
 }
@@ -116,8 +121,115 @@ function getRegistrationPaidCheckoutGuardFailure({
     });
 }
 
+function getRegistrationPaymentIntentGuardFailure({ registration = {}, session = {}, paymentIntent = {} } = {}) {
+    const metadata = paymentIntent.metadata || {};
+    const sessionPaymentIntentId = normalizeString(typeof session.payment_intent === 'string' ? session.payment_intent : session.payment_intent?.id);
+    if (!sessionPaymentIntentId || paymentIntent.id !== sessionPaymentIntentId) return 'payment_intent_mismatch';
+    if (metadata.product !== 'registration'
+        || metadata.teamId !== registration.teamId
+        || metadata.formId !== registration.formId
+        || metadata.registrationId !== registration.id) return 'payment_intent_scope_mismatch';
+    const expectedAmount = normalizePositiveInteger(session.amount_total);
+    const intentAmount = normalizePositiveInteger(paymentIntent.amount_received || paymentIntent.amount);
+    if (!expectedAmount || intentAmount !== expectedAmount) return 'payment_intent_amount_mismatch';
+    if (normalizeCurrency(paymentIntent.currency) !== normalizeCurrency(session.currency)) return 'payment_intent_currency_mismatch';
+    if (Boolean(paymentIntent.livemode) !== Boolean(session.livemode)) return 'payment_intent_livemode_mismatch';
+    const chargeId = normalizeString(typeof paymentIntent.latest_charge === 'string' ? paymentIntent.latest_charge : paymentIntent.latest_charge?.id);
+    if (!chargeId) return 'payment_intent_charge_missing';
+    return '';
+}
+
+function buildRegistrationStripeChargeLedger({ registration = {}, session = {}, paymentIntent = {}, eventId = '', receivedAt = null, paymentStatusAfterCharge = 'paid' } = {}) {
+    const stripeChargeId = normalizeString(typeof paymentIntent.latest_charge === 'string' ? paymentIntent.latest_charge : paymentIntent.latest_charge?.id);
+    return {
+        type: 'stripe_charge',
+        provider: 'stripe',
+        product: 'registration',
+        teamId: registration.teamId,
+        formId: registration.formId,
+        registrationId: registration.id,
+        stripeChargeId,
+        stripePaymentIntentId: paymentIntent.id,
+        stripeCheckoutSessionId: session.id,
+        checkoutAttemptToken: session.metadata?.checkoutAttemptToken || null,
+        amountPaidCents: normalizePositiveInteger(session.amount_total),
+        refundedAmountCents: 0,
+        disputeLostAmountCents: 0,
+        disputeStatus: 'none',
+        disputeEventCreated: 0,
+        currency: normalizeCurrency(session.currency),
+        livemode: Boolean(session.livemode),
+        paymentStatusAfterCharge,
+        stripeEventId: eventId || null,
+        paidAt: receivedAt,
+        updatedAt: receivedAt
+    };
+}
+
+function getRegistrationChargeGuardFailure({ input = {}, ledger = {}, charge = {} } = {}) {
+    const metadata = charge.metadata || {};
+    const paymentIntentId = normalizeString(typeof charge.payment_intent === 'string' ? charge.payment_intent : charge.payment_intent?.id);
+    if (ledger.type !== 'stripe_charge' || ledger.provider !== 'stripe' || ledger.product !== 'registration') return 'charge_ledger_invalid';
+    if (!charge.id || ledger.stripeChargeId !== charge.id) return 'charge_id_mismatch';
+    if (!paymentIntentId || ledger.stripePaymentIntentId !== paymentIntentId) return 'charge_payment_intent_mismatch';
+    if (ledger.teamId !== input.teamId || ledger.formId !== input.formId || ledger.registrationId !== input.registrationId) return 'charge_ledger_scope_mismatch';
+    if (metadata.product !== 'registration'
+        || metadata.teamId !== input.teamId
+        || metadata.formId !== input.formId
+        || metadata.registrationId !== input.registrationId) return 'charge_metadata_scope_mismatch';
+    if (normalizePositiveInteger(charge.amount) !== normalizePositiveInteger(ledger.amountPaidCents)) return 'charge_amount_mismatch';
+    if (normalizeCurrency(charge.currency) !== normalizeCurrency(ledger.currency)) return 'charge_currency_mismatch';
+    if (Boolean(charge.livemode) !== Boolean(ledger.livemode)) return 'charge_livemode_mismatch';
+    return '';
+}
+
+function buildRegistrationReversalUpdate({ registration = {}, ledger = {}, reversal = {}, charge = {} } = {}) {
+    const financialStatus = getStripeChargeFinancialStatus(reversal);
+    const chargeAmountCents = normalizePositiveInteger(charge.amount || ledger.amountPaidCents);
+    const refundedAmountCents = Math.min(chargeAmountCents, Math.max(0, Number(reversal.refundedAmountCents || 0)));
+    const lostAmountCents = getStripeChargeLostAmountCents(reversal, chargeAmountCents);
+    const previousLedgerRefunded = Math.max(0, Number(ledger.refundedAmountCents || 0));
+    const previousLedgerLost = Math.max(0, Number(ledger.disputeLostAmountCents || 0));
+    const nextTotalRefunded = Math.max(0, Number(registration.stripeRefundedAmountCents || 0) + refundedAmountCents - previousLedgerRefunded);
+    const nextTotalLost = Math.max(0, Number(registration.stripeDisputeLostAmountCents || 0) + lostAmountCents - previousLedgerLost);
+    const grossPaid = Math.max(chargeAmountCents, Number(registration.stripeGrossPaidAmountCents || 0));
+    const basePaymentStatus = normalizeString(registration.paymentStatusBeforeStripeReversal || ledger.paymentStatusAfterCharge || 'paid');
+    const paymentStatus = financialStatus === 'disputed'
+        ? 'disputed'
+        : financialStatus === 'dispute_lost'
+            ? 'dispute_lost'
+            : nextTotalRefunded > 0
+                ? nextTotalRefunded >= grossPaid ? 'refunded' : 'partially_refunded'
+                : basePaymentStatus;
+    return {
+        registrationUpdate: {
+            paymentStatus,
+            stripeFinancialStatus: financialStatus,
+            stripeGrossPaidAmountCents: grossPaid,
+            stripeRefundedAmountCents: nextTotalRefunded,
+            stripeDisputeLostAmountCents: nextTotalLost,
+            paymentStatusBeforeStripeReversal: ['disputed', 'dispute_lost', 'refunded', 'partially_refunded'].includes(normalizeString(registration.paymentStatus))
+                ? basePaymentStatus
+                : normalizeString(registration.paymentStatus || basePaymentStatus),
+            balanceDueCents: Math.max(0, Number(registration.balanceDueCents || 0) + (refundedAmountCents - previousLedgerRefunded) + (lostAmountCents - previousLedgerLost))
+        },
+        ledgerUpdate: {
+            refundedAmountCents,
+            disputeLostAmountCents: lostAmountCents,
+            disputeStatus: reversal.disputeStatus || 'none',
+            disputeEventCreated: Number(reversal.disputeEventCreated || 0),
+            refundEventCreated: Number(reversal.refundEventCreated || 0),
+            lastStripeEventId: reversal.lastStripeEventId || null
+        }
+    };
+}
+
 module.exports = {
     getRegistrationCheckoutLifecycleGuardFailure,
     getRegistrationPaidCheckoutGuardFailure,
+    getRegistrationPaymentIntentGuardFailure,
+    buildRegistrationStripeChargeLedger,
+    getRegistrationChargeGuardFailure,
+    buildRegistrationReversalUpdate,
     normalizeRegistrationCheckoutCurrency: normalizeCurrency
 };

@@ -22,7 +22,7 @@ describe('team fees admin page routing', () => {
         const pageSource = readFileSync(new URL('../../team-fees.html', import.meta.url), 'utf8');
 
         expect(adminSource).toContain("import('./db.js?v=107')");
-        expect(pageSource).toContain('<script type="module" src="./js/team-fees-admin.js?v=15"></script>');
+        expect(pageSource).toContain('<script type="module" src="./js/team-fees-admin.js?v=16"></script>');
     });
 
     it('routes the manage view back link with the teamId hash parameter that team.html reads', () => {
@@ -303,15 +303,15 @@ describe('online team fee refunds', () => {
             paymentProvider: 'stripe',
             amountPaidCents: 10000,
             refundedAmountCents: 2500,
+            stripeRefundableAmountCents: 7500,
             hasAdminBilling: true
         };
 
-        expect(getRecipientRefundableCents(recipient)).toBe(10000);
+        expect(getRecipientRefundableCents(recipient)).toBe(7500);
         expect(getRecipientStripePaymentRefs(recipient)).toEqual({ paymentIntentId: '', chargeId: '' });
         expect(isOnlineRefundEligible(recipient)).toBe(true);
         expect(isOnlineRefundEligible({ ...recipient, hasAdminBilling: false, stripePaymentIntentId: 'pi_root' })).toBe(true);
-        expect(isOnlineRefundEligible({ ...recipient, hasAdminBilling: false, stripePaymentIntentId: '', stripeChargeId: '', adminBilling: { stripePaymentIntentId: 'pi_private' } })).toBe(true);
-        expect(isOnlineRefundEligible({ ...recipient, hasAdminBilling: false, stripePaymentIntentId: '', stripeChargeId: '', adminBilling: {} })).toBe(false);
+        expect(isOnlineRefundEligible({ ...recipient, stripeRefundableAmountCents: undefined })).toBe(false);
         expect(isOnlineRefundEligible({ ...recipient, paymentProvider: 'manual' })).toBe(false);
     });
 });

@@ -23,6 +23,10 @@ const {
     buildTeamFeeAdminBillingMetadata,
     getTeamFeeStripePaymentRefs,
     getTeamFeeRefundAuthorityFailure,
+    getTeamFeePaymentIntentGuardFailure,
+    buildTeamFeeStripeChargeLedger,
+    getTeamFeeChargeGuardFailure,
+    allocateTeamFeeRefundAcrossCharges,
     buildTeamFeePaidUpdate,
     buildTeamFeeStripeRefundUpdate
 } = require('../../functions/team-fees-core.cjs');
@@ -276,6 +280,7 @@ describe('team fee checkout function helpers', () => {
 
         const recipient = {
             paidAmountCents: 6500,
+            stripeRefundableAmountCents: 4000,
             paymentLedger: [
                 { type: 'stripe_refund', refundAmountCents: 2500, status: 'succeeded' },
                 { type: 'stripe_refund', amountCents: 1000, status: 'pending' },
@@ -283,11 +288,11 @@ describe('team fee checkout function helpers', () => {
             ]
         };
         expect(getTeamFeeRefundedCents(recipient)).toBe(3500);
-        expect(getTeamFeeRefundableCents(recipient)).toBe(6500);
+        expect(getTeamFeeRefundableCents(recipient)).toBe(4000);
         expect(getTeamFeeRefundableCents({
             paidAmountCents: 8000,
             refundedAmountCents: 2000
-        })).toBe(8000);
+        })).toBe(0);
     });
 
     it('resolves private Stripe payment refs from admin billing metadata', () => {
@@ -333,6 +338,57 @@ describe('team fee checkout function helpers', () => {
         expect(getTeamFeeRefundAuthorityFailure({ input, recipient, adminBilling, session: { ...session, payment_intent: 'pi_victim' } })).toBe('payment_intent_mismatch');
         expect(getTeamFeeRefundAuthorityFailure({ input, recipient, adminBilling, session: { ...session, amount_total: 7600 } })).toBe('checkout_amount_mismatch');
         expect(getTeamFeeRefundAuthorityFailure({ input, recipient, adminBilling, session: { ...session, livemode: false } })).toBe('checkout_livemode_mismatch');
+    });
+
+    it('binds paid PaymentIntents and refund charges to the exact fee recipient', () => {
+        const metadata = {
+            product: 'team_fee', teamId: 'team_123', batchId: 'batch_456', recipientId: 'recipient_789',
+            checkoutAttemptToken: 'tok_1234567890abcdef'
+        };
+        const recipient = { id: 'recipient_789', teamId: 'team_123', batchId: 'batch_456' };
+        const session = {
+            id: 'cs_123', payment_intent: 'pi_123', amount_total: 7500, currency: 'usd', livemode: false,
+            metadata
+        };
+        const paymentIntent = {
+            id: 'pi_123', latest_charge: 'ch_123', amount_received: 7500, currency: 'usd', livemode: false,
+            metadata
+        };
+        expect(getTeamFeePaymentIntentGuardFailure({ recipient, session, paymentIntent })).toBe('');
+        expect(getTeamFeePaymentIntentGuardFailure({
+            recipient, session, paymentIntent: { ...paymentIntent, metadata: { ...metadata, recipientId: 'victim' } }
+        })).toBe('payment_intent_scope_mismatch');
+
+        const ledger = buildTeamFeeStripeChargeLedger({ recipient, session, paymentIntent, eventId: 'evt_123', receivedAt: 'now' });
+        const charge = { id: 'ch_123', payment_intent: 'pi_123', amount: 7500, currency: 'usd', livemode: false, metadata };
+        const input = { teamId: recipient.teamId, batchId: recipient.batchId, recipientId: recipient.id };
+        expect(getTeamFeeChargeGuardFailure({ input, ledger, charge })).toBe('');
+        expect(getTeamFeeChargeGuardFailure({
+            input, ledger, charge: { ...charge, metadata: { ...metadata, teamId: 'victim' } }
+        })).toBe('charge_metadata_scope_mismatch');
+    });
+
+    it('allocates refunds deterministically across authoritative charges without using offline totals', () => {
+        const ledgers = [
+            {
+                type: 'stripe_charge', provider: 'stripe', stripeChargeId: 'ch_old', stripePaymentIntentId: 'pi_old',
+                refundableAmountCents: 3000, pendingRefundAmountCents: 0, paidAtMillis: 100
+            },
+            {
+                type: 'stripe_charge', provider: 'stripe', stripeChargeId: 'ch_new', stripePaymentIntentId: 'pi_new',
+                refundableAmountCents: 5000, pendingRefundAmountCents: 1000, paidAtMillis: 200
+            },
+            {
+                type: 'stripe_charge', provider: 'stripe', stripeChargeId: 'ch_disputed', stripePaymentIntentId: 'pi_disputed',
+                refundableAmountCents: 5000, pendingRefundAmountCents: 0, disputeStatus: 'open', paidAtMillis: 300
+            }
+        ];
+        expect(allocateTeamFeeRefundAcrossCharges(ledgers, 6000)).toEqual([
+            { stripeChargeId: 'ch_new', stripePaymentIntentId: 'pi_new', amountCents: 4000 },
+            { stripeChargeId: 'ch_old', stripePaymentIntentId: 'pi_old', amountCents: 2000 }
+        ]);
+        expect(allocateTeamFeeRefundAcrossCharges(ledgers, 8000)).toEqual([]);
+        expect(allocateTeamFeeRefundAcrossCharges([], 1000)).toEqual([]);
     });
 
     it('builds Stripe refund ledger updates without over-crediting balances', () => {
@@ -418,14 +474,16 @@ describe('team fee checkout function helpers', () => {
         const source = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
 
         expect(source).toContain("recipientRef.collection('refundIntents').doc(refundRequestId)");
-        expect(source).toContain('idempotencyKey: buildTeamFeeRefundIdempotencyKey(input, refundRequestId)');
-        expect(source).toContain('fetchTeamFeePaymentAdminBilling(recipientRef)');
-        expect(source).toContain('getTeamFeeStripePaymentRefs(recipient, paymentAdminBilling)');
+        expect(source).toContain("recipientRef.collection('stripeCharges').get()");
+        expect(source).toContain('allocateTeamFeeRefundAcrossCharges(chargeDocs, input.amountCents)');
+        expect(source).toContain("charge: allocation.stripeChargeId");
+        expect(source).toContain('`${buildTeamFeeRefundIdempotencyKey(input, refundRequestId)}_${allocationKey}`');
         expect(source).toContain("buildTeamFeeAdminBillingRef(recipientRef, 'latest')");
-        expect(source).toContain('const actualRefundAmount = Math.round(Number(refund.amount || 0));');
-        expect(source).toContain("stripeRefundStatus !== 'succeeded'");
+        expect(source).toContain('const amountMatches = Math.round(Number(refund.amount || 0)) === allocation.amountCents');
+        expect(source).toContain("refundStatus === 'succeeded'");
+        expect(source).toContain('preserveReservation: !definitiveFailure');
         expect(source).toContain('const ledgerRefundedAt = admin.firestore.Timestamp.now();');
-        expect(source).toContain('hasStripeRefundLedgerEntry(latestRecipient, refund.id)');
+        expect(source).toContain('pendingRefundAmountCents');
     });
 
     it('guards team fee webhook processing behind the current checkout attempt', () => {
@@ -434,7 +492,6 @@ describe('team fee checkout function helpers', () => {
 
         expect(functionsSource).toContain('checkoutAttemptToken');
         expect(functionsSource).toContain('checkoutAmountCents: amountCents');
-        expect(functionsSource).toContain('shouldApplyTeamFeeCheckoutSession({ recipient, session })');
         expect(functionsSource).toContain('getTeamFeeCheckoutGuardFailure({ recipient, session })');
         expect(functionsSource).toContain("ignoredReason");
         expect(functionsSource).toContain("recipientRef.collection('adminBilling').doc");

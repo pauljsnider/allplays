@@ -149,7 +149,7 @@ describe('server-side registration fee recomputation (issue #2243)', () => {
     it('currency is taken from the authoritative form and recorded for webhook verification', () => {
         expect(source).toContain('form?.currency\n      || registration.feeSnapshot?.currency');
         expect(source).toContain('const currency = getRegistrationCheckoutCurrency(registration, form)');
-        expect(source).toContain('checkoutCurrency: currency,');
+        expect(source).toContain('checkoutCurrency: durableReservation.currency,');
         expect(source).not.toContain('input.currency ||');
     });
 

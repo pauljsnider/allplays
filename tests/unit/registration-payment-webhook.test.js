@@ -6,8 +6,13 @@ const require = createRequire(import.meta.url);
 const {
     getRegistrationCheckoutLifecycleGuardFailure,
     getRegistrationPaidCheckoutGuardFailure,
+    getRegistrationPaymentIntentGuardFailure,
+    buildRegistrationStripeChargeLedger,
+    getRegistrationChargeGuardFailure,
+    buildRegistrationReversalUpdate,
     normalizeRegistrationCheckoutCurrency
 } = require('../../functions/registration-payment-webhook-core.cjs');
+const { reconcileStripeChargeReversal } = require('../../functions/stripe-payment-lifecycle-core.cjs');
 
 const functionsSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
 
@@ -124,6 +129,64 @@ describe('registration paid webhook guard', () => {
         }))).toBe('checkout_livemode_mismatch');
     });
 
+    it('binds the PaymentIntent and charge ledger to exact registration authority', () => {
+        const metadata = {
+            product: 'registration', teamId: 'team-a', formId: 'form-a', registrationId: 'reg-a',
+            checkoutAttemptToken: 'tok_1234567890abcdef'
+        };
+        const registration = { id: 'reg-a', teamId: 'team-a', formId: 'form-a' };
+        const session = {
+            id: 'cs_123', payment_intent: 'pi_123', amount_total: 7500, currency: 'usd', livemode: false,
+            metadata
+        };
+        const paymentIntent = {
+            id: 'pi_123', latest_charge: 'ch_123', amount_received: 7500, currency: 'usd', livemode: false,
+            metadata
+        };
+        expect(getRegistrationPaymentIntentGuardFailure({ registration, session, paymentIntent })).toBe('');
+        expect(getRegistrationPaymentIntentGuardFailure({
+            registration, session, paymentIntent: { ...paymentIntent, metadata: { ...metadata, registrationId: 'victim' } }
+        })).toBe('payment_intent_scope_mismatch');
+
+        const ledger = buildRegistrationStripeChargeLedger({
+            registration, session, paymentIntent, paymentStatusAfterCharge: 'paid', eventId: 'evt_paid', receivedAt: 'now'
+        });
+        const input = { teamId: 'team-a', formId: 'form-a', registrationId: 'reg-a' };
+        const charge = { id: 'ch_123', payment_intent: 'pi_123', amount: 7500, currency: 'usd', livemode: false, metadata };
+        expect(getRegistrationChargeGuardFailure({ input, ledger, charge })).toBe('');
+        expect(getRegistrationChargeGuardFailure({
+            input, ledger, charge: { ...charge, metadata: { ...metadata, formId: 'victim' } }
+        })).toBe('charge_metadata_scope_mismatch');
+    });
+
+    it('projects registration refunds and disputes from monotonic per-charge state', () => {
+        const charge = { id: 'ch_123', amount: 7500, amount_refunded: 2500 };
+        const ledger = {
+            amountPaidCents: 7500, refundedAmountCents: 0, disputeLostAmountCents: 0,
+            paymentStatusAfterCharge: 'paid'
+        };
+        const registration = {
+            paymentStatus: 'paid', stripeGrossPaidAmountCents: 7500,
+            stripeRefundedAmountCents: 0, stripeDisputeLostAmountCents: 0, balanceDueCents: 0
+        };
+        const partialRefund = reconcileStripeChargeReversal({ current: {}, event: {
+            id: 'evt_refund', type: 'charge.refunded', created: 200
+        }, charge });
+        const update = buildRegistrationReversalUpdate({ registration, ledger, reversal: partialRefund, charge });
+        expect(update.registrationUpdate).toMatchObject({
+            paymentStatus: 'partially_refunded', stripeRefundedAmountCents: 2500, balanceDueCents: 2500
+        });
+
+        const lost = reconcileStripeChargeReversal({ current: partialRefund, event: {
+            id: 'evt_lost', type: 'charge.dispute.closed', created: 300,
+            data: { object: { status: 'lost' } }
+        }, charge: { ...charge, amount_refunded: 2500 } });
+        const lostUpdate = buildRegistrationReversalUpdate({ registration, ledger, reversal: lost, charge });
+        expect(lostUpdate.registrationUpdate).toMatchObject({
+            paymentStatus: 'dispute_lost', stripeRefundedAmountCents: 2500, stripeDisputeLostAmountCents: 5000
+        });
+    });
+
     it('wires the guard before registration installment or paid state mutations and persists checkout currency', () => {
         const paidBranchStart = functionsSource.indexOf('if (shouldMarkRegistrationPaidFromEvent(event)) {');
         const installmentMutation = functionsSource.indexOf('const nextPaidInstallmentCount', paidBranchStart);
@@ -132,7 +195,7 @@ describe('registration paid webhook guard', () => {
         expect(paidBranchStart).toBeGreaterThanOrEqual(0);
         expect(guardCall).toBeGreaterThan(paidBranchStart);
         expect(guardCall).toBeLessThan(installmentMutation);
-        expect(functionsSource).toContain('checkoutCurrency: currency,');
+        expect(functionsSource).toContain('checkoutCurrency: durableReservation.currency,');
         expect(functionsSource).toContain('lastPaidStripeCheckoutSessionId: session.id,');
         expect(functionsSource).toContain('getRegistrationCheckoutLifecycleGuardFailure({');
         expect(functionsSource).toContain('await stripe.checkout.sessions.expire(checkoutSessionId);');
