@@ -1,0 +1,66 @@
+name: update-visual-baselines
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install app dependencies
+        run: npm ci --prefix apps/app
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Start visual fixture servers
+        run: |
+          python3 -m http.server 4173 >/tmp/allplays-visual-static.log 2>&1 &
+          npm --prefix apps/app run dev -- --host 127.0.0.1 --port 5174 >/tmp/allplays-visual-app.log 2>&1 &
+
+      - name: Wait for visual fixture servers
+        run: |
+          set -euo pipefail
+          for url in http://127.0.0.1:4173 http://127.0.0.1:5174; do
+            for attempt in {1..60}; do
+              if curl --fail --silent --show-error --max-time 2 "$url" >/dev/null; then
+                break
+              fi
+              if [ "$attempt" -eq 60 ]; then
+                cat /tmp/allplays-visual-static.log >&2 || true
+                cat /tmp/allplays-visual-app.log >&2 || true
+                exit 1
+              fi
+              sleep 1
+            done
+          done
+
+      - name: Generate Linux visual baselines
+        run: npm run test:smoke:visual:update
+        env:
+          SMOKE_BASE_URL: http://127.0.0.1:4173
+          SMOKE_APP_BASE_URL: http://127.0.0.1:5174
+          SMOKE_SUITE: preview
+
+      - name: Upload visual baselines
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-baselines-linux
+          path: tests/smoke/**/*.spec.js-snapshots/*.png
+          if-no-files-found: error

@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { expectVisualSnapshot, installVisualNetworkGuard } from './helpers/visual-regression.js';
 
 test.skip(
   process.env.SMOKE_SUITE === 'production',
@@ -48,11 +49,14 @@ async function mockDiscoverModules(page, { signedIn = false } = {}) {
 }
 
 test.describe('public sports Discover', () => {
-  test('lets anonymous visitors browse and routes contact through sign-in', async ({ page, baseURL }) => {
+  test('@visual lets anonymous visitors browse and routes contact through sign-in', async ({ page, baseURL }) => {
+    const url = appUrl(baseURL, '/discover');
+    await installVisualNetworkGuard(page, url);
     await mockDiscoverModules(page);
-    await page.goto(appUrl(baseURL, '/discover'), { waitUntil: 'domcontentloaded' });
+    await page.goto(url, { waitUntil: 'domcontentloaded' });
     await expect(page.getByRole('heading', { name: 'Find a team or your next sports opportunity' })).toBeVisible();
     await expect(page.getByText('Assistant coach wanted')).toBeVisible();
+    await expectVisualSnapshot(page, 'discover-opportunities.png');
     await page.getByRole('link', { name: 'View opportunity' }).click();
     await expect(page.getByRole('button', { name: 'Sign in to contact' })).toBeVisible();
     await page.getByRole('button', { name: 'Sign in to contact' }).click();
