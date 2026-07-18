@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
-import admin from 'firebase-admin';
+import { getApps, initializeApp } from 'firebase-admin/app';
+import { getFirestore } from 'firebase-admin/firestore';
 
 const zipCache = new Map();
 const ZIP_RESOLVE_CONCURRENCY = 10;
@@ -98,11 +99,11 @@ async function commitBatch(batch, pendingCount) {
 }
 
 async function main() {
-    if (!admin.apps.length) {
-        admin.initializeApp();
+    if (!getApps().length) {
+        initializeApp();
     }
 
-    const db = admin.firestore();
+    const db = getFirestore();
     const snapshot = await db.collection('teams')
         .where('isPublic', '==', true)
         .get();

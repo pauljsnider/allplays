@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
-import admin from 'firebase-admin';
+import { getApps, initializeApp } from 'firebase-admin/app';
+import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 
 const FIRESTORE_BATCH_LIMIT = 500;
 
@@ -83,11 +84,11 @@ async function getTeamDocs(db, teamIds) {
 async function main() {
     const options = parseArgs(process.argv.slice(2));
 
-    if (!admin.apps.length) {
-        admin.initializeApp();
+    if (!getApps().length) {
+        initializeApp();
     }
 
-    const db = admin.firestore();
+    const db = getFirestore();
     const teamDocs = await getTeamDocs(db, options.teamIds);
     let batch = db.batch();
     let pendingWrites = 0;
@@ -109,7 +110,7 @@ async function main() {
 
             batch.set(messageDoc.ref, {
                 ...updates,
-                legacyTargetFieldsBackfilledAt: admin.firestore.FieldValue.serverTimestamp()
+                legacyTargetFieldsBackfilledAt: FieldValue.serverTimestamp()
             }, { merge: true });
             pendingWrites += 1;
             updatedCount += 1;

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
-import admin from 'firebase-admin';
-import { FieldPath, Timestamp } from 'firebase-admin/firestore';
+import { getApps, initializeApp } from 'firebase-admin/app';
+import { FieldPath, getFirestore, Timestamp } from 'firebase-admin/firestore';
 import { pathToFileURL } from 'node:url';
 
 const DEFAULT_PAGE_SIZE = 400;
@@ -84,10 +84,18 @@ export async function backfillPracticePacketReminderDueAt({
     return { scanned, updated, skipped, malformed };
 }
 
+export function getMigrationFirestore({
+    getAppsFn = getApps,
+    initializeAppFn = initializeApp,
+    getFirestoreFn = getFirestore
+} = {}) {
+    if (!getAppsFn().length) initializeAppFn();
+    return getFirestoreFn();
+}
+
 async function main() {
-    if (!admin.apps.length) admin.initializeApp();
     const result = await backfillPracticePacketReminderDueAt({
-        db: admin.firestore(),
+        db: getMigrationFirestore(),
         Timestamp
     });
     console.log('[backfill-practice-packet-reminder-due-at] Done.', result);
