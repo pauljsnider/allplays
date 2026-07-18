@@ -91,8 +91,15 @@ describe('Stripe payment-authority rollout gate', () => {
         })).toBe('');
         expect(inspectTeamPassAttemptAuthority({
             teamId: 'team-a', seasonId: '2026', tier: 'team-pass',
-            attempt: { ...attempt, legacyPaymentAuthorityVersion: undefined, stripePaymentAuthorityVersion: 2 }
+            attempt: {
+                ...attempt, legacyPaymentAuthorityVersion: undefined,
+                stripePaymentAuthorityVersion: 2, stripeChargeId: 'ch_a'
+            }
         })).toBe('');
+        expect(inspectTeamPassAttemptAuthority({
+            teamId: 'team-a', seasonId: '2026', tier: 'team-pass',
+            attempt: { ...attempt, legacyPaymentAuthorityVersion: undefined, stripePaymentAuthorityVersion: 2 }
+        })).toBe('active_entitlement_invalid_checkout_attempt');
         expect(inspectTeamPassAttemptAuthority({
             teamId: 'team-a', seasonId: '2026', tier: 'team-pass',
             attempt: { ...attempt, legacyPaymentAuthorityVersion: 7, stripeChargeId: 'ch_a' }

@@ -13,6 +13,7 @@ const {
     getLegacyTeamPassCheckoutGuardFailure,
     getTeamPassCheckoutGuardFailure,
     getTeamPassChargeGuardFailure,
+    getTeamPassPaymentIntentGuardFailure,
     getTeamPassReversalStatus,
     reconcileTeamPassReversal,
     getTeamPassEffectivePaymentStatus,
@@ -226,6 +227,49 @@ describe('team pass function helpers', () => {
         });
     });
 
+    it('binds paid Team Pass settlement to the exact PaymentIntent and Charge authority', () => {
+        const metadata = buildTeamPassCheckoutMetadata({
+            teamId: 'team_123', seasonId: '2026', tier: 'team-pass', purchaserUid: 'user_123',
+            checkoutAttemptToken: 'tok_1234567890abcdef', priceId: 'price_team_pass'
+        });
+        const attempt = {
+            ...metadata, checkoutStatus: 'open', stripeCheckoutSessionId: 'cs_123',
+            checkoutAmountCents: 4900, checkoutCurrency: 'usd', livemode: false
+        };
+        const session = {
+            id: 'cs_123', metadata, amount_total: 4900, currency: 'usd', livemode: false,
+            payment_status: 'paid', payment_intent: 'pi_123'
+        };
+        const paymentIntent = {
+            id: 'pi_123', metadata, amount_received: 4900, currency: 'usd', livemode: false,
+            latest_charge: 'ch_123'
+        };
+        const charge = {
+            id: 'ch_123', metadata, payment_intent: 'pi_123', amount: 4900,
+            amount_refunded: 0, currency: 'usd', livemode: false
+        };
+        const guard = (overrides = {}) => getTeamPassPaymentIntentGuardFailure({
+            attempt, session, paymentIntent, charge, ...overrides
+        });
+
+        expect(guard()).toBe('');
+        expect(guard({ paymentIntent: { ...paymentIntent, id: 'pi_other' } })).toBe('payment_intent_mismatch');
+        expect(guard({ attempt: { ...attempt, stripePaymentIntentId: 'pi_stale' } })).toBe('payment_intent_mismatch');
+        expect(guard({ paymentIntent: { ...paymentIntent, metadata: { ...metadata, teamId: 'victim' } } })).toBe('payment_intent_scope_mismatch');
+        expect(guard({ paymentIntent: { ...paymentIntent, metadata: { ...metadata, checkoutAttemptToken: 'tok_other_1234567890' } } })).toBe('payment_intent_attempt_mismatch');
+        expect(guard({ paymentIntent: { ...paymentIntent, amount_received: 1 } })).toBe('payment_intent_amount_mismatch');
+        expect(guard({ paymentIntent: { ...paymentIntent, currency: 'eur' } })).toBe('payment_intent_currency_mismatch');
+        expect(guard({ paymentIntent: { ...paymentIntent, livemode: true } })).toBe('payment_intent_livemode_mismatch');
+        expect(guard({ paymentIntent: { ...paymentIntent, latest_charge: null } })).toBe('payment_intent_charge_missing');
+        expect(guard({ charge: { ...charge, id: 'ch_other' } })).toBe('payment_intent_charge_mismatch');
+        expect(guard({ attempt: { ...attempt, stripeChargeId: 'ch_stale' } })).toBe('charge_charge_mismatch');
+        expect(guard({ charge: { ...charge, metadata: { ...metadata, purchaserUid: 'attacker' } } })).toBe('charge_purchaser_mismatch');
+        expect(guard({ charge: { ...charge, payment_intent: 'pi_other' } })).toBe('charge_payment_intent_mismatch');
+        expect(guard({ charge: { ...charge, amount: 1 } })).toBe('charge_charge_amount_mismatch');
+        expect(guard({ charge: { ...charge, currency: 'eur' } })).toBe('charge_charge_currency_mismatch');
+        expect(guard({ charge: { ...charge, livemode: true } })).toBe('charge_livemode_mismatch');
+    });
+
     it('binds refund and dispute events to the paid attempt before changing access', () => {
         const metadata = buildTeamPassCheckoutMetadata({
             teamId: 'team_123', seasonId: '2026', tier: 'team-pass', purchaserUid: 'user_123',
@@ -240,6 +284,7 @@ describe('team pass function helpers', () => {
             amount_refunded: 4900, currency: 'usd', livemode: true
         };
         expect(getTeamPassChargeGuardFailure({ attempt, charge })).toBe('');
+        expect(getTeamPassChargeGuardFailure({ attempt: { ...attempt, stripeChargeId: 'ch_other' }, charge })).toBe('charge_mismatch');
         expect(getTeamPassChargeGuardFailure({ attempt: { ...attempt, checkoutStatus: 'dispute_lost' }, charge })).toBe('');
         expect(getTeamPassChargeGuardFailure({ attempt: { ...attempt, checkoutStatus: 'disputed_lost' }, charge })).toBe('checkout_state_mismatch');
         expect(getTeamPassChargeGuardFailure({

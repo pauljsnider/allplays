@@ -212,6 +212,7 @@ function inspectTeamPassAttemptAuthority({ teamId = '', seasonId = '', tier = 't
       || !hasEffectivePaidAuthority
       || !normalizeString(attempt.stripeCheckoutSessionId)
       || !normalizeString(attempt.stripePaymentIntentId)
+      || !normalizeString(attempt.stripeChargeId)
       || !normalizeString(attempt.purchaserUid)
       || !/^[A-Za-z0-9_-]{16,128}$/.test(normalizeString(attempt.checkoutAttemptToken))
       || !normalizeString(attempt.priceId)
@@ -219,8 +220,7 @@ function inspectTeamPassAttemptAuthority({ teamId = '', seasonId = '', tier = 't
       || amountCents <= 0
       || !normalizeString(attempt.checkoutCurrency).toLowerCase()
       || typeof attempt.livemode !== 'boolean'
-      || (!hasV2Authority && !hasV1Authority)
-      || (hasV1Authority && !normalizeString(attempt.stripeChargeId))) {
+      || (!hasV2Authority && !hasV1Authority)) {
     return 'active_entitlement_invalid_checkout_attempt';
   }
   return '';

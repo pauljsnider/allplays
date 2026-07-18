@@ -638,8 +638,14 @@ test('Team Pass checkout persists server authority and webhook writes only a saf
     const attempt = firestore.snapshot('teams/team-pass/teamPassCheckoutAttempts/2026_team-pass');
     assert.equal(attempt.checkoutStatus, 'paid');
     assert.equal(attempt.stripePaymentIntentId, 'pi_team_pass');
+    assert.equal(attempt.stripeChargeId, 'ch_pi_team_pass');
     assert.equal(attempt.stripeCustomerId, 'cus_team_pass');
     assert.equal(attempt.checkoutAmountCents, 4900);
+    assert.deepEqual(attempt.reversalState, {
+        stripeChargeId: 'ch_pi_team_pass', stripePaymentIntentId: 'pi_team_pass',
+        chargeAmountCents: 4900, refundedAmountCents: 0, refundEventCreated: 0,
+        disputeStatus: 'none', disputeEventCreated: 0, lastStripeEventId: ''
+    });
 
     const paidAttempt = clone(attempt);
     await firestore.doc('teams/team-pass/entitlements/2026_team-pass').set({ status: 'cancelled' }, { merge: true });
@@ -658,7 +664,7 @@ test('Team Pass checkout persists server authority and webhook writes only a saf
         id: 'evt_team_pass_refunded',
         type: 'charge.refunded',
         data: { object: {
-            object: 'charge', id: 'ch_team_pass', metadata: checkoutPayload.metadata,
+            object: 'charge', id: 'ch_pi_team_pass', metadata: checkoutPayload.metadata,
             payment_intent: 'pi_team_pass', amount: 4900, amount_refunded: 4900,
             currency: 'usd', livemode: false
         } }
@@ -666,6 +672,139 @@ test('Team Pass checkout persists server authority and webhook writes only a saf
     assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
     assert.equal(firestore.snapshot('teams/team-pass/entitlements/2026_team-pass').status, 'cancelled');
     assert.equal(firestore.snapshot('teams/team-pass/teamPassCheckoutAttempts/2026_team-pass').checkoutStatus, 'refunded');
+    const refundedAttempt = clone(firestore.snapshot('teams/team-pass/teamPassCheckoutAttempts/2026_team-pass'));
+    assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
+    assert.deepEqual(firestore.snapshot('teams/team-pass/teamPassCheckoutAttempts/2026_team-pass'), refundedAttempt);
+    assert.equal(firestore.snapshot('teams/team-pass/entitlements/2026_team-pass').status, 'cancelled');
+});
+
+test('Team Pass paid webhook rejects mismatched PaymentIntent and Charge authority before unlocking', async () => {
+    for (const mismatch of ['payment_intent_metadata', 'charge_metadata']) {
+        const { firestore, stripeState, mod } = loadFunctionsModule({
+            'teams/team-pass': { ownerId: 'owner-1', adminEmails: [] },
+            'users/owner-1': { email: 'owner@example.com' }
+        });
+        const checkout = await mod.createStripeTeamPassCheckout({
+            teamId: 'team-pass', seasonId: '2026', tier: 'team-pass'
+        }, { auth: { uid: 'owner-1', token: { email: 'owner@example.com' } } });
+        const session = stripeState.checkoutResponses.get(checkout.sessionId);
+        const paymentIntentId = `pi_team_pass_${mismatch}`;
+        const chargeId = `ch_team_pass_${mismatch}`;
+        const paymentIntentMetadata = mismatch === 'payment_intent_metadata'
+            ? { ...clone(session.metadata), teamId: 'victim-team' }
+            : clone(session.metadata);
+        const chargeMetadata = mismatch === 'charge_metadata'
+            ? { ...clone(session.metadata), purchaserUid: 'attacker' }
+            : clone(session.metadata);
+        stripeState.paymentIntents.set(paymentIntentId, {
+            id: paymentIntentId, amount_received: 4900, currency: 'usd', livemode: false,
+            metadata: paymentIntentMetadata, latest_charge: chargeId
+        });
+        stripeState.charges.set(chargeId, {
+            id: chargeId, object: 'charge', amount: 4900, amount_refunded: 0,
+            currency: 'usd', livemode: false, metadata: chargeMetadata,
+            payment_intent: paymentIntentId
+        });
+        stripeState.webhookEvent = {
+            id: `evt_${mismatch}`, type: 'checkout.session.completed', created: 100,
+            data: { object: { ...clone(session), payment_status: 'paid', payment_intent: paymentIntentId } }
+        };
+
+        assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
+        assert.equal(firestore.snapshot('teams/team-pass/entitlements/2026_team-pass'), undefined);
+        assert.equal(firestore.snapshot('teams/team-pass/teamPassCheckoutAttempts/2026_team-pass').checkoutStatus, 'open');
+        assert.match(
+            firestore.snapshot(`stripeEvents/evt_${mismatch}`).ignoredReason,
+            mismatch === 'payment_intent_metadata' ? /payment_intent_scope_mismatch/ : /charge_purchaser_mismatch/
+        );
+    }
+});
+
+test('Team Pass paid webhook projects a Charge already refunded before settlement as cancelled', async () => {
+    const { firestore, stripeState, mod } = loadFunctionsModule({
+        'teams/team-pass': { ownerId: 'owner-1', adminEmails: [] },
+        'users/owner-1': { email: 'owner@example.com' }
+    });
+    const checkout = await mod.createStripeTeamPassCheckout({
+        teamId: 'team-pass', seasonId: '2026', tier: 'team-pass'
+    }, { auth: { uid: 'owner-1', token: { email: 'owner@example.com' } } });
+    const session = stripeState.checkoutResponses.get(checkout.sessionId);
+    stripeState.paymentIntents.set('pi_already_refunded', {
+        id: 'pi_already_refunded', amount_received: 4900, currency: 'usd', livemode: false,
+        metadata: clone(session.metadata), latest_charge: 'ch_already_refunded'
+    });
+    stripeState.charges.set('ch_already_refunded', {
+        id: 'ch_already_refunded', object: 'charge', amount: 4900, amount_refunded: 4900,
+        currency: 'usd', livemode: false, metadata: clone(session.metadata),
+        payment_intent: 'pi_already_refunded'
+    });
+    stripeState.webhookEvent = {
+        id: 'evt_team_pass_paid_already_refunded', type: 'checkout.session.completed', created: 200,
+        data: { object: { ...clone(session), payment_status: 'paid', payment_intent: 'pi_already_refunded' } }
+    };
+
+    assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
+    assert.equal(firestore.snapshot('teams/team-pass/entitlements/2026_team-pass').status, 'cancelled');
+    const attempt = firestore.snapshot('teams/team-pass/teamPassCheckoutAttempts/2026_team-pass');
+    assert.equal(attempt.checkoutStatus, 'refunded');
+    assert.equal(attempt.stripeChargeId, 'ch_already_refunded');
+    assert.equal(attempt.refundedAmountCents, 4900);
+});
+
+test('Team Pass paid webhook fails closed when latest Charge authority is missing or stale', async () => {
+    {
+        const { firestore, stripeState, mod } = loadFunctionsModule({
+            'teams/team-pass': { ownerId: 'owner-1', adminEmails: [] },
+            'users/owner-1': { email: 'owner@example.com' }
+        });
+        const checkout = await mod.createStripeTeamPassCheckout({
+            teamId: 'team-pass', seasonId: '2026', tier: 'team-pass'
+        }, { auth: { uid: 'owner-1', token: { email: 'owner@example.com' } } });
+        const session = stripeState.checkoutResponses.get(checkout.sessionId);
+        stripeState.paymentIntents.set('pi_missing_charge', {
+            id: 'pi_missing_charge', amount_received: 4900, currency: 'usd', livemode: false,
+            metadata: clone(session.metadata), latest_charge: null
+        });
+        stripeState.webhookEvent = {
+            id: 'evt_team_pass_missing_charge', type: 'checkout.session.completed', created: 100,
+            data: { object: { ...clone(session), payment_status: 'paid', payment_intent: 'pi_missing_charge' } }
+        };
+
+        assert.equal((await deliverStripeWebhook(mod)).statusCode, 500);
+        assert.equal(firestore.snapshot('teams/team-pass/entitlements/2026_team-pass'), undefined);
+        assert.equal(firestore.snapshot('teams/team-pass/teamPassCheckoutAttempts/2026_team-pass').checkoutStatus, 'open');
+        assert.equal(firestore.snapshot('stripeEvents/evt_team_pass_missing_charge'), undefined);
+    }
+
+    {
+        const attemptPath = 'teams/team-pass/teamPassCheckoutAttempts/2026_team-pass';
+        const { firestore, stripeState, mod } = loadFunctionsModule({
+            'teams/team-pass': { ownerId: 'owner-1', adminEmails: [] },
+            'users/owner-1': { email: 'owner@example.com' }
+        });
+        const checkout = await mod.createStripeTeamPassCheckout({
+            teamId: 'team-pass', seasonId: '2026', tier: 'team-pass'
+        }, { auth: { uid: 'owner-1', token: { email: 'owner@example.com' } } });
+        const session = stripeState.checkoutResponses.get(checkout.sessionId);
+        await firestore.doc(attemptPath).set({ stripeChargeId: 'ch_stale' }, { merge: true });
+        stripeState.paymentIntents.set('pi_current', {
+            id: 'pi_current', amount_received: 4900, currency: 'usd', livemode: false,
+            metadata: clone(session.metadata), latest_charge: 'ch_current'
+        });
+        stripeState.charges.set('ch_current', {
+            id: 'ch_current', object: 'charge', amount: 4900, amount_refunded: 0,
+            currency: 'usd', livemode: false, metadata: clone(session.metadata), payment_intent: 'pi_current'
+        });
+        stripeState.webhookEvent = {
+            id: 'evt_team_pass_stale_charge', type: 'checkout.session.completed', created: 100,
+            data: { object: { ...clone(session), payment_status: 'paid', payment_intent: 'pi_current' } }
+        };
+
+        assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
+        assert.equal(firestore.snapshot('teams/team-pass/entitlements/2026_team-pass'), undefined);
+        assert.equal(firestore.snapshot(attemptPath).checkoutStatus, 'open');
+        assert.equal(firestore.snapshot('stripeEvents/evt_team_pass_stale_charge').ignoredReason, 'charge_charge_mismatch');
+    }
 });
 
 test('pre-authority Team Pass paid Session is migrated and credited instead of being acknowledged as unrelated', async () => {
@@ -1388,6 +1527,7 @@ test('payment authority rollout gate detects pointers, orphan ledgers, and paid 
             purchaserUid: 'owner-1', priceId: 'price_team_pass', checkoutAttemptToken: 'attempt_1234567890abcdef',
             stripePaymentAuthorityVersion: 2, checkoutStatus: 'paid',
             stripeCheckoutSessionId: 'cs_paid_no_entitlement', stripePaymentIntentId: 'pi_paid_no_entitlement',
+            stripeChargeId: 'ch_paid_no_entitlement',
             checkoutAmountCents: 4900, checkoutCurrency: 'usd', livemode: false
         }
     });
@@ -1485,6 +1625,12 @@ test('Team Pass reversal state remains authoritative when refund arrives before 
     assert.equal(firestore.snapshot(attemptPath).reversalState.refundedAmountCents, 4900);
     assert.equal(firestore.snapshot(entitlementPath), undefined);
 
+    stripeState.paymentIntents.set('pi_team_pass_early_refund', {
+        id: 'pi_team_pass_early_refund', amount_received: 4900, currency: 'usd', livemode: false,
+        metadata: clone(session.metadata), latest_charge: charge.id
+    });
+    stripeState.charges.set(charge.id, clone(charge));
+
     stripeState.webhookEvent = {
         id: 'evt_team_pass_paid_after_refund', type: 'checkout.session.completed', created: 300,
         data: { object: {
@@ -1527,6 +1673,13 @@ test('empty-metadata Team Pass reversal retries after exact Session authority be
     assert.equal(firestore.snapshot(`stripeEvents/${reversalEvent.id}`), undefined);
 
     await firestore.doc(attemptPath).set(durableAuthority);
+    stripeState.paymentIntents.set('pi_team_pass_empty_metadata', {
+        id: 'pi_team_pass_empty_metadata', amount_received: 4900, currency: 'usd', livemode: false,
+        metadata: clone(session.metadata), latest_charge: charge.id
+    });
+    stripeState.charges.set(charge.id, {
+        ...clone(charge), metadata: clone(session.metadata), amount_refunded: 0
+    });
     stripeState.webhookEvent = {
         id: 'evt_team_pass_paid_before_empty_metadata_retry', type: 'checkout.session.completed', created: 100,
         data: { object: { ...clone(session), status: 'complete', payment_status: 'paid' } }
@@ -1565,6 +1718,8 @@ test('Team Pass dispute close cannot be regressed by a late created event', asyn
     assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
     const wonState = firestore.snapshot(attemptPath).reversalState;
     assert.equal(wonState.disputeStatus, 'won');
+    assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
+    assert.deepEqual(firestore.snapshot(attemptPath).reversalState, wonState);
 
     stripeState.webhookEvent = {
         id: 'evt_team_pass_late_dispute_created', type: 'charge.dispute.created', created: 100,

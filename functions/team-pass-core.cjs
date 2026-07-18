@@ -239,6 +239,8 @@ function getTeamPassChargeGuardFailure({ attempt = {}, charge = {} } = {}) {
   const paymentIntentId = asTrimmedString(
     typeof charge.payment_intent === 'string' ? charge.payment_intent : charge.payment_intent?.id
   );
+  if (!asTrimmedString(charge.id)) return 'charge_missing';
+  if (attempt.stripeChargeId && charge.id !== attempt.stripeChargeId) return 'charge_mismatch';
   if (!paymentIntentId) return 'payment_intent_missing';
   if (attempt.stripePaymentIntentId && paymentIntentId !== attempt.stripePaymentIntentId) return 'payment_intent_mismatch';
   if (attempt.livemode !== undefined && Boolean(charge.livemode) !== Boolean(attempt.livemode)) return 'livemode_mismatch';
@@ -249,6 +251,77 @@ function getTeamPassChargeGuardFailure({ attempt = {}, charge = {} } = {}) {
     return 'checkout_state_mismatch';
   }
   return '';
+}
+
+function getTeamPassPaymentIntentGuardFailure({
+  attempt = {},
+  session = {},
+  paymentIntent = {},
+  charge = {}
+} = {}) {
+  const sessionPaymentIntentId = asTrimmedString(
+    typeof session.payment_intent === 'string' ? session.payment_intent : session.payment_intent?.id
+  );
+  if (!sessionPaymentIntentId || paymentIntent.id !== sessionPaymentIntentId) {
+    return 'payment_intent_mismatch';
+  }
+  if (attempt.stripePaymentIntentId && attempt.stripePaymentIntentId !== paymentIntent.id) {
+    return 'payment_intent_mismatch';
+  }
+
+  const metadata = paymentIntent.metadata || {};
+  let input;
+  try {
+    if (metadata.product !== TEAM_PASS_PRODUCT) return 'payment_intent_scope_mismatch';
+    input = normalizeTeamPassCheckoutInput(metadata);
+  } catch (error) {
+    return 'payment_intent_scope_mismatch';
+  }
+  if (input.teamId !== asTrimmedString(attempt.teamId)
+      || input.seasonId !== asTrimmedString(attempt.seasonId)
+      || input.tier !== asTrimmedString(attempt.tier)
+      || metadata.purchaserUid !== attempt.purchaserUid
+      || metadata.priceId !== attempt.priceId) {
+    return 'payment_intent_scope_mismatch';
+  }
+  const intentToken = normalizeCheckoutAttemptToken(metadata.checkoutAttemptToken);
+  const attemptToken = normalizeCheckoutAttemptToken(attempt.checkoutAttemptToken);
+  const sessionToken = normalizeCheckoutAttemptToken(session.metadata?.checkoutAttemptToken);
+  if (!intentToken || !attemptToken || !sessionToken
+      || intentToken !== attemptToken || intentToken !== sessionToken) {
+    return 'payment_intent_attempt_mismatch';
+  }
+
+  const expectedAmount = normalizePositiveInteger(attempt.checkoutAmountCents);
+  if (!expectedAmount
+      || normalizePositiveInteger(session.amount_total) !== expectedAmount
+      || normalizePositiveInteger(paymentIntent.amount_received || paymentIntent.amount) !== expectedAmount) {
+    return 'payment_intent_amount_mismatch';
+  }
+  const expectedCurrency = normalizeCurrency(attempt.checkoutCurrency);
+  if (!expectedCurrency
+      || normalizeCurrency(session.currency) !== expectedCurrency
+      || normalizeCurrency(paymentIntent.currency) !== expectedCurrency) {
+    return 'payment_intent_currency_mismatch';
+  }
+  if (attempt.livemode === undefined
+      || Boolean(session.livemode) !== Boolean(attempt.livemode)
+      || Boolean(paymentIntent.livemode) !== Boolean(attempt.livemode)) {
+    return 'payment_intent_livemode_mismatch';
+  }
+
+  const latestChargeId = asTrimmedString(
+    typeof paymentIntent.latest_charge === 'string'
+      ? paymentIntent.latest_charge
+      : paymentIntent.latest_charge?.id
+  );
+  if (!latestChargeId) return 'payment_intent_charge_missing';
+  if (asTrimmedString(charge.id) !== latestChargeId) return 'payment_intent_charge_mismatch';
+  const chargeGuardFailure = getTeamPassChargeGuardFailure({
+    attempt: { ...attempt, stripePaymentIntentId: paymentIntent.id },
+    charge
+  });
+  return chargeGuardFailure ? `charge_${chargeGuardFailure}` : '';
 }
 
 function getTeamPassReversalStatus(event = {}, charge = {}) {
@@ -363,6 +436,7 @@ module.exports = {
   getLegacyTeamPassCheckoutGuardFailure,
   shouldHandleTeamPassReversalEvent,
   getTeamPassChargeGuardFailure,
+  getTeamPassPaymentIntentGuardFailure,
   getTeamPassReversalStatus,
   reconcileTeamPassReversal,
   getTeamPassEffectivePaymentStatus,

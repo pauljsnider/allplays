@@ -18,6 +18,7 @@ const {
   getLegacyTeamPassCheckoutGuardFailure,
   shouldHandleTeamPassReversalEvent,
   getTeamPassChargeGuardFailure,
+  getTeamPassPaymentIntentGuardFailure,
   reconcileTeamPassReversal,
   getTeamPassEffectivePaymentStatus,
   getTeamPassCheckoutGuardFailure,
@@ -8058,6 +8059,17 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
   try {
     const session = teamPassSession;
     const input = normalizeTeamPassCheckoutInput(session.metadata || {});
+    const paidEvent = shouldUnlockTeamPassFromEvent(event);
+    let paymentIntent = {};
+    let charge = {};
+    if (paidEvent) {
+      const paymentIntentId = getStripeObjectId(session.payment_intent);
+      if (!paymentIntentId) throw new Error('Team Pass Checkout Session is missing its PaymentIntent.');
+      paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+      const chargeId = getStripeObjectId(paymentIntent.latest_charge);
+      if (!chargeId) throw new Error('Team Pass PaymentIntent is missing its latest Charge.');
+      charge = await stripe.charges.retrieve(chargeId);
+    }
     const receivedAt = admin.firestore.FieldValue.serverTimestamp();
     const eventRef = firestore.doc(`stripeEvents/${event.id}`);
     const attemptRef = buildTeamPassAttemptRef(input);
@@ -8071,11 +8083,28 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
 
       const attemptSnap = await transaction.get(attemptRef);
       const attempt = attemptSnap.exists ? (attemptSnap.data() || {}) : {};
-      const paidEvent = shouldUnlockTeamPassFromEvent(event);
-      const ignoredReason = getTeamPassCheckoutGuardFailure({ attempt, session, paidEvent });
+      const checkoutGuardFailure = getTeamPassCheckoutGuardFailure({ attempt, session, paidEvent });
+      const paymentIntentGuardFailure = paidEvent && !checkoutGuardFailure
+        ? getTeamPassPaymentIntentGuardFailure({ attempt, session, paymentIntent, charge })
+        : '';
+      const ignoredReason = checkoutGuardFailure || paymentIntentGuardFailure;
       if (!ignoredReason) {
         if (paidEvent) {
-          const effectivePaymentStatus = getTeamPassEffectivePaymentStatus(attempt.reversalState || {});
+          let settlementReversalState = reconcileTeamPassReversal({
+            current: attempt.reversalState || {},
+            event: { id: event.id, created: event.created, type: event.type },
+            charge
+          });
+          if (charge.disputed === true
+              && !['open', 'won', 'lost'].includes(String(settlementReversalState.disputeStatus || '').trim().toLowerCase())) {
+            settlementReversalState = {
+              ...settlementReversalState,
+              disputeStatus: 'open',
+              disputeEventCreated: Math.max(0, Number(event.created || 0)),
+              lastStripeEventId: event.id || settlementReversalState.lastStripeEventId || ''
+            };
+          }
+          const effectivePaymentStatus = getTeamPassEffectivePaymentStatus(settlementReversalState);
           const entitlementStatus = effectivePaymentStatus === 'paid'
             ? 'active'
             : effectivePaymentStatus === 'disputed'
@@ -8088,12 +8117,19 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
             ...entitlement.data,
             status: entitlementStatus
           });
-          transaction.set(attemptRef, buildTeamPassAttemptPaymentUpdate({
-            session,
-            eventId: event.id,
-            receivedAt,
-            status: effectivePaymentStatus
-          }), { merge: true });
+          transaction.set(attemptRef, {
+            ...buildTeamPassAttemptPaymentUpdate({
+              session,
+              eventId: event.id,
+              receivedAt,
+              status: effectivePaymentStatus
+            }),
+            stripePaymentIntentId: paymentIntent.id,
+            stripeChargeId: charge.id,
+            refundedAmountCents: Math.max(0, Math.round(Number(settlementReversalState.refundedAmountCents || 0))),
+            reversalState: settlementReversalState,
+            updatedAt: receivedAt
+          }, { merge: true });
         } else if (event.type === 'checkout.session.completed') {
           transaction.set(attemptRef, buildTeamPassAttemptPaymentUpdate({
             session,
