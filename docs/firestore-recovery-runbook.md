@@ -51,8 +51,19 @@ gcloud firestore databases clone \
   --destination-database='restore-drill-YYYYMMDD'
 ```
 
-Wait until `sourceInfo.progress` is `COMPLETED`, then compare collection and
-document counts for representative top-level and nested collections. Validate
+Use the operation name returned by the clone command to monitor the clone:
+
+```bash
+gcloud firestore operations describe 'OPERATION_NAME' \
+  --project="$ALLPLAYS_FIRESTORE_PROJECT_ID" \
+  --format='yaml(done,error,metadata.operationState,metadata.progressPercentage)'
+```
+
+Wait until `done` is true and `metadata.operationState` is `SUCCESSFUL`, then
+compare collection and document counts for representative top-level and nested
+collections. Use `metadata.progressPercentage` only to monitor an operation
+still in progress. If the operation reports an error or a failed or cancelled
+state, stop the drill and investigate instead of validating the clone. Validate
 at minimum `users`, `teams`, `accessCodes`, and a team subcollection. Record the
 snapshot time, operation name, counts, and result before deleting the isolated
 drill database.

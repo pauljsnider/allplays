@@ -18,8 +18,8 @@ describe('Firestore recovery delivery contract', () => {
         expect(workflow).toContain("cron: '17 15 * * *'");
         expect(workflow).toContain('environment: production');
         expect(authIndex).toBeGreaterThan(-1);
-        expect(workflow).toContain('secrets.FIREBASE_SERVICE_ACCOUNT_GAME_FLOW_C6311');
-        expect(workflow).not.toContain('secrets.FIRESTORE_RECOVERY_READ_ONLY_SERVICE_ACCOUNT_GAME_FLOW_C6311');
+        expect(workflow).toContain('secrets.FIRESTORE_RECOVERY_READ_ONLY_SERVICE_ACCOUNT_GAME_FLOW_C6311');
+        expect(workflow).not.toContain('secrets.FIREBASE_SERVICE_ACCOUNT_GAME_FLOW_C6311');
         expect(workflow).toContain('create_credentials_file: true');
         expect(workflow).toContain('cleanup_credentials: true');
         expect(setupIndex).toBeGreaterThan(authIndex);
@@ -48,5 +48,12 @@ describe('Firestore recovery delivery contract', () => {
         expect(runbook).toContain("--destination-database='backup-drill-YYYYMMDD'");
         expect(runbook).toMatch(/A managed backup restore always creates a new\s+database/);
         expect(runbook).toContain('2026-07-18 PITR clone drill');
+    });
+
+    it('checks PITR clone completion on the clone operation metadata', () => {
+        expect(runbook).toContain("gcloud firestore operations describe 'OPERATION_NAME'");
+        expect(runbook).toContain('metadata.operationState` is `SUCCESSFUL`');
+        expect(runbook).toContain('metadata.progressPercentage');
+        expect(runbook).not.toContain('sourceInfo.progress');
     });
 });
