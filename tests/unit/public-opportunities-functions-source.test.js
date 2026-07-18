@@ -108,7 +108,9 @@ describe('public opportunity callable wiring', () => {
     expect(source).toContain('initiatorId === caller.uid\n      ? caller.email');
     expect(source).toContain('await admin.auth().getUser(recipientId)');
     expect(source).toContain('userId: recipientId,\n    email: recipientEmail');
-    expect(source).toContain('batch.set(messageRef, message);');
+    expect(source).toContain('batch.create(messageRef, message);');
+    expect(source).toContain('if (!clientMessageId || !isAlreadyExistsError(error)) throw error;');
+    expect(source).toContain('existingMessage.clientMessageId !== clientMessageId');
   });
 
   it('revokes private team inquiry access and notifications from former administrators', () => {
