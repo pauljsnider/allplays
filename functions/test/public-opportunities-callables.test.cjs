@@ -414,6 +414,49 @@ test('public team discovery pages the compatibility source without exposing mana
     assert.equal(Object.hasOwn(secondPage.teams[0], 'paymentConfig'), false);
 });
 
+test('public team source cursors preserve legacy names beyond presentation limits', async () => {
+    const longSourceName = `Legacy ${'x'.repeat(110)}`;
+    const { callables } = loadCallables({
+        'teams/long-name-team': { name: longSourceName, isPublic: true, active: true },
+        'teams/zeta-team': { name: 'Zeta', isPublic: true, active: true }
+    });
+
+    const firstPage = await callables.discoverPublicTeamProfiles({ pageSize: 1 }, {});
+    assert.deepEqual(firstPage.teams.map((team) => team.id), ['long-name-team']);
+    assert.equal(firstPage.nextCursor.lastName, longSourceName);
+
+    const secondPage = await callables.discoverPublicTeamProfiles({
+        pageSize: 1,
+        cursor: firstPage.nextCursor
+    }, {});
+    assert.deepEqual(secondPage.teams.map((team) => team.id), ['zeta-team']);
+    assert.equal(secondPage.nextCursor, null);
+});
+
+test('inactive public team details are available only through the explicit replay lookup', async () => {
+    const { callables } = loadCallables({
+        'teams/inactive-public': {
+            name: 'Inactive Public Team',
+            isPublic: true,
+            active: false,
+            ownerId: 'must-not-leak'
+        }
+    });
+
+    await assert.rejects(
+        callables.getPublicTeamProfile({ teamId: 'inactive-public' }, {}),
+        (error) => error.code === 'not-found'
+    );
+
+    const result = await callables.getPublicTeamProfile({
+        teamId: 'inactive-public',
+        includeInactive: true
+    }, {});
+    assert.equal(result.item.active, false);
+    assert.equal(result.item.isPublic, true);
+    assert.equal(Object.hasOwn(result.item, 'ownerId'), false);
+});
+
 test('completed public team backfill switches discovery to validated projection rows', async () => {
     const seed = {
         'systemMigrations/publicTeamProfilesBackfill': { completed: true },

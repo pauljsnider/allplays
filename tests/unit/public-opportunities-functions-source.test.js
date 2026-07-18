@@ -87,7 +87,8 @@ describe('public opportunity callable wiring', () => {
     expect(source).toMatch(/createOpportunityInquiry[\s\S]*requireOpportunityAuth\(context, \{ verified: true \}\)/);
     expect(source).toContain('exports.getPublicTeamProfile');
     expect(source).toContain("require('./public-team-profile-core.cjs')");
-    expect(source).toMatch(/getPublicTeamProfile[\s\S]*const profile = buildPublicTeamProfile\(team\)/);
+    expect(source).toMatch(/getPublicTeamProfile[\s\S]*const includeInactive = data\?\.includeInactive === true/);
+    expect(source).toMatch(/getPublicTeamProfile[\s\S]*const profile = buildPublicTeamProfile\(team, \{ includeInactive \}\)/);
     expect(source).toContain('profile && isPublicTeamProfileSchemaValid(profile)');
     expect(source).toContain('.orderBy(admin.firestore.FieldPath.documentId())');
     expect(source).toContain("PUBLIC_TEAM_PROFILE_MIGRATION_STATE_PATH = 'systemMigrations/publicTeamProfilesBackfill'");

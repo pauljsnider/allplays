@@ -22,6 +22,7 @@ describe('homepage shared game discovery queries', () => {
 
         expect(source).toContain("collectionGroup(db, 'sharedGames')");
         expect(source).toContain('projectSharedGameForTeam(sharedGame, teamId)');
+        expect(source).toContain('const team = await getTeam(teamId, { includeInactive: true });');
 
         const upcomingSource = getFunctionSource(source, 'getUpcomingLiveGames');
         expect(upcomingSource).toContain('getSharedHomepageGames');

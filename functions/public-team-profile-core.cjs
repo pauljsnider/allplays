@@ -234,8 +234,10 @@ function buildPublicTeamSearchFields(team = {}) {
   };
 }
 
-function buildPublicTeamProfile(team = {}) {
-  if (!isPublicTeamDiscoverable(team)) return null;
+function buildPublicTeamProfile(team = {}, options = {}) {
+  const active = isPublicTeamActive(team);
+  const includeInactive = options?.includeInactive === true;
+  if (team.isPublic !== true || (!includeInactive && !active)) return null;
 
   const profile = {};
   PUBLIC_TEAM_PROFILE_FIELDS.forEach((field) => {
@@ -264,7 +266,7 @@ function buildPublicTeamProfile(team = {}) {
     ...buildPublicTeamSearchFields(team),
     publicSchemaVersion: PUBLIC_SCHEMA_VERSION,
     isPublic: true,
-    active: true,
+    active,
     sourceUpdatedAt: team.updatedAt || null
   };
 }

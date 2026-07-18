@@ -82,6 +82,20 @@ test('private and inactive teams have no public projection', () => {
   assert.equal(buildPublicTeamProfile({ name: 'Archived', isPublic: true, archived: true }), null);
 });
 
+test('an exact public detail lookup can safely present inactive replay history', () => {
+  const profile = buildPublicTeamProfile({
+    name: 'Inactive Public Team',
+    isPublic: true,
+    active: false,
+    ownerId: 'must-not-leak'
+  }, { includeInactive: true });
+
+  assert.equal(profile.name, 'Inactive Public Team');
+  assert.equal(profile.active, false);
+  assert.equal(profile.isPublic, true);
+  assert.equal(Object.hasOwn(profile, 'ownerId'), false);
+});
+
 test('projection validation rejects injected fields and nameless documents', () => {
   assert.equal(isPublicTeamProfileSchemaValid({ publicSchemaVersion: 1, name: 'Safe', isPublic: true, active: true, ownerEmail: 'leak@example.test' }), false);
   assert.equal(isPublicTeamProfileSchemaValid({

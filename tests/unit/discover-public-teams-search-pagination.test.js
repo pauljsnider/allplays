@@ -232,6 +232,23 @@ describe('public team source/projection fallback', () => {
         expect(callable).toHaveBeenCalledWith({ teamId: 'team-public' });
     });
 
+    it('preserves inactive public presentation for replay-only lookups', async () => {
+        firebaseMocks.getDoc.mockResolvedValue({ exists: () => false });
+        const callable = vi.fn().mockResolvedValue({
+            data: { item: { id: 'inactive-public', name: 'Replay Team', isPublic: true, active: false } }
+        });
+        firebaseMocks.httpsCallable.mockReturnValue(callable);
+        const { getTeam } = await import('../../js/db.js?v=91');
+
+        await expect(getTeam('inactive-public', { includeInactive: true })).resolves.toMatchObject({
+            id: 'inactive-public',
+            name: 'Replay Team',
+            isPublic: true,
+            active: false
+        });
+        expect(callable).toHaveBeenCalledWith({ teamId: 'inactive-public', includeInactive: true });
+    });
+
     it('preserves the missing-team null contract when the callable reports not found', async () => {
         firebaseMocks.getDoc.mockResolvedValue({ exists: () => false });
         const callable = vi.fn().mockRejectedValue(Object.assign(new Error('missing'), { code: 'functions/not-found' }));

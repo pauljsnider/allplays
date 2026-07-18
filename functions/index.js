@@ -12494,6 +12494,7 @@ async function normalizeTeamEmailAttachmentsForDelivery(teamId, attachments) {
 const PUBLIC_TEAM_PROFILE_MIGRATION_STATE_PATH = 'systemMigrations/publicTeamProfilesBackfill';
 const PUBLIC_TEAM_DISCOVERY_SCAN_LIMIT = 500;
 const PUBLIC_TEAM_DISCOVERY_BATCH_SIZE = 100;
+const PUBLIC_TEAM_DISCOVERY_CURSOR_VALUE_LIMIT_BYTES = 1500;
 
 function readPublicTeamBrowseCursor(rawCursor, { searchText, useProjection }) {
   const expectedSource = useProjection ? 'projection' : 'source';
@@ -12504,7 +12505,7 @@ function readPublicTeamBrowseCursor(rawCursor, { searchText, useProjection }) {
   if (!lastId || lastId.includes('/') || lastId.length > 1500) return null;
   const lastNameType = typeof lastName;
   if (lastName !== null && !['string', 'number', 'boolean'].includes(lastNameType)) return null;
-  if (String(lastName).length > 100) return null;
+  if (Buffer.byteLength(String(lastName), 'utf8') > PUBLIC_TEAM_DISCOVERY_CURSOR_VALUE_LIMIT_BYTES) return null;
   return { lastId, lastName };
 }
 
@@ -13202,6 +13203,7 @@ exports.listManagedPublicOpportunityTeams = functions.https.onCall(async (_data,
 
 exports.getPublicTeamProfile = functions.https.onCall(async (data, context = {}) => {
   assertOpportunityRateLimit(checkPublicOpportunityBrowseRateLimit, context, 'team-profile');
+  const includeInactive = data?.includeInactive === true;
   let teamId;
   try {
     teamId = normalizeFirestoreId(data?.teamId, 'teamId');
@@ -13210,7 +13212,7 @@ exports.getPublicTeamProfile = functions.https.onCall(async (data, context = {})
   }
   const teamSnap = await firestore.doc(`teams/${teamId}`).get();
   const team = teamSnap.data() || {};
-  const profile = buildPublicTeamProfile(team);
+  const profile = buildPublicTeamProfile(team, { includeInactive });
   if (!teamSnap.exists || !profile) {
     throwOpportunityError('not-found', 'Public team not found.');
   }

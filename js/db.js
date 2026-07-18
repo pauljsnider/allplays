@@ -890,14 +890,22 @@ export async function getTeam(teamId, options = {}) {
     const getPublicTeamProfile = httpsCallable(functions, 'getPublicTeamProfile');
     let result;
     try {
-        result = await getPublicTeamProfile({ teamId: normalizedTeamId });
+        result = await getPublicTeamProfile({
+            teamId: normalizedTeamId,
+            ...(includeInactive ? { includeInactive: true } : {})
+        });
     } catch (error) {
         if (isPublicProjectionNotFoundError(error)) return permissionDeniedPlaceholder();
         throw error;
     }
     const item = result.data?.item || null;
     if (!item) return permissionDeniedPlaceholder();
-    const publicTeam = { ...item, id: item.id || normalizedTeamId, isPublic: true, active: true };
+    const publicTeam = {
+        ...item,
+        id: item.id || normalizedTeamId,
+        isPublic: true,
+        active: item.active !== false
+    };
     if (!includeInactive && !isTeamActive(publicTeam)) return null;
     return publicTeam;
 }
@@ -7404,7 +7412,9 @@ async function projectSharedHomepageGame(sharedGame, shouldIncludeTeam) {
     const teamIds = getSharedHomepageTeamIds(sharedGame);
 
     for (const teamId of teamIds) {
-        const team = await getTeam(teamId);
+        // The caller-specific visibility predicate owns active-team policy.
+        // Replay history intentionally permits inactive public teams.
+        const team = await getTeam(teamId, { includeInactive: true });
         if (!team) continue;
         if (!shouldIncludeTeam(team)) {
             continue;
