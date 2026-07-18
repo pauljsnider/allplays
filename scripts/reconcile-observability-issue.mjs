@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
 export const OBSERVABILITY_REPOSITORY = 'pauljsnider/allplays';
+export const OBSERVABILITY_REF = 'refs/heads/master';
 export const OBSERVABILITY_ISSUE_TITLE = '[Observability] Critical production signals are unhealthy';
 export const OBSERVABILITY_ISSUE_MARKER = '<!-- allplays-critical-workflow-health -->';
 export const OBSERVABILITY_ISSUE_LABEL = 'security';
@@ -93,7 +94,9 @@ export function reconcileFromEnvironment(environment = process.env, dependencies
     };
     const result = required('VERIFY_RESULT');
     const repository = required('GITHUB_REPOSITORY');
+    const ref = required('GITHUB_REF');
     required('GH_TOKEN');
+    if (ref !== OBSERVABILITY_REF) throw new Error(`Reconciliation may run only from ${OBSERVABILITY_REF}.`);
     const server = required('GITHUB_SERVER_URL').replace(/\/+$/, '');
     const runId = required('GITHUB_RUN_ID');
     return reconcileObservabilityIssue({

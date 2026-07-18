@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
     evaluateCriticalWorkflowHealth,
     verifyCriticalWorkflowHealthFromEnvironment,
+    OBSERVABILITY_REF,
     OBSERVABILITY_REPOSITORY
 } from '../../scripts/verify-critical-workflow-health.mjs';
 
@@ -90,6 +91,7 @@ describe('critical workflow API boundary', () => {
         });
         const result = verifyCriticalWorkflowHealthFromEnvironment({
             GITHUB_REPOSITORY: OBSERVABILITY_REPOSITORY,
+            GITHUB_REF: OBSERVABILITY_REF,
             GITHUB_SHA: sha,
             GH_TOKEN: 'test-token'
         }, { executeGh, now });
@@ -102,8 +104,18 @@ describe('critical workflow API boundary', () => {
     it('refuses forks before making API calls', () => {
         const executeGh = vi.fn();
         expect(() => verifyCriticalWorkflowHealthFromEnvironment({
-            GITHUB_REPOSITORY: 'attacker/fork', GITHUB_SHA: sha, GH_TOKEN: 'test-token'
+            GITHUB_REPOSITORY: 'attacker/fork', GITHUB_REF: OBSERVABILITY_REF,
+            GITHUB_SHA: sha, GH_TOKEN: 'test-token'
         }, { executeGh, now })).toThrow(/only in pauljsnider\/allplays/);
+        expect(executeGh).not.toHaveBeenCalled();
+    });
+
+    it('refuses non-master dispatches before making API calls', () => {
+        const executeGh = vi.fn();
+        expect(() => verifyCriticalWorkflowHealthFromEnvironment({
+            GITHUB_REPOSITORY: OBSERVABILITY_REPOSITORY,
+            GITHUB_REF: 'refs/heads/feature', GITHUB_SHA: sha, GH_TOKEN: 'test-token'
+        }, { executeGh, now })).toThrow(/only from refs\/heads\/master/);
         expect(executeGh).not.toHaveBeenCalled();
     });
 });

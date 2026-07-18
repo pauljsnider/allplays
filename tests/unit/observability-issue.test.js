@@ -4,8 +4,10 @@ import {
     OBSERVABILITY_ISSUE_LABEL,
     OBSERVABILITY_ISSUE_MARKER,
     OBSERVABILITY_ISSUE_TITLE,
+    OBSERVABILITY_REF,
     OBSERVABILITY_REPOSITORY,
     planObservabilityIssue,
+    reconcileFromEnvironment,
     reconcileObservabilityIssue
 } from '../../scripts/reconcile-observability-issue.mjs';
 
@@ -60,5 +62,17 @@ describe('observability incident reconciliation', () => {
         expect(() => reconcileObservabilityIssue({
             result: 'failure', repository: 'attacker/fork', runUrl: 'x', runbookUrl: 'y'
         }, { executeGh })).toThrow(/only in pauljsnider\/allplays/);
+    });
+
+    it('refuses non-master dispatches before searching or mutating issues', () => {
+        const executeGh = () => { throw new Error('must not run'); };
+        expect(() => reconcileFromEnvironment({
+            VERIFY_RESULT: 'failure',
+            GITHUB_REPOSITORY: OBSERVABILITY_REPOSITORY,
+            GITHUB_REF: 'refs/heads/feature',
+            GITHUB_SERVER_URL: 'https://github.com',
+            GITHUB_RUN_ID: '1',
+            GH_TOKEN: 'test-token'
+        }, { executeGh })).toThrow(/only from refs\/heads\/master/);
     });
 });

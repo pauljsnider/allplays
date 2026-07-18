@@ -5,6 +5,7 @@ import { appendFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
 export const OBSERVABILITY_REPOSITORY = 'pauljsnider/allplays';
+export const OBSERVABILITY_REF = 'refs/heads/master';
 export const monitoredWorkflows = Object.freeze({
     deploy: 'deploy-prod.yml',
     smoke: 'post-deploy-smoke.yml',
@@ -132,10 +133,14 @@ function loadWorkflowRuns(repository, workflowFile, event, executeGh) {
 
 export function verifyCriticalWorkflowHealthFromEnvironment(environment = process.env, dependencies = {}) {
     const repository = required(environment, 'GITHUB_REPOSITORY');
+    const ref = required(environment, 'GITHUB_REF');
     const masterSha = required(environment, 'GITHUB_SHA');
     required(environment, 'GH_TOKEN');
     if (repository !== OBSERVABILITY_REPOSITORY) {
         throw new Error(`Critical workflow verification may run only in ${OBSERVABILITY_REPOSITORY}.`);
+    }
+    if (ref !== OBSERVABILITY_REF) {
+        throw new Error(`Critical workflow verification may run only from ${OBSERVABILITY_REF}.`);
     }
     const executeGh = dependencies.executeGh || runGh;
     const result = evaluateCriticalWorkflowHealth({
