@@ -30,12 +30,13 @@
     "app:validate-performance-measurements": "node scripts/validate-app-performance-measurements.mjs",
     "mobile:serve": "npm run app:dev",
     "mobile:sync": "npm run app:build && npx cap sync",
-    "mobile:build:ios": "npm run mobile:sync && DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build",
-    "mobile:build:android": "npm run mobile:sync && cd android && JAVA_HOME=\"/Applications/Android Studio.app/Contents/jbr/Contents/Home\" ./gradlew :app:assembleDebug",
+    "mobile:sync:native-debug": "npm --prefix apps/app run build:native-debug && node scripts/verify-app-bundle-visualizer.mjs && npx cap sync",
+    "mobile:build:ios": "npm run mobile:sync:native-debug && DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build",
+    "mobile:build:android": "npm run mobile:sync:native-debug && cd android && JAVA_HOME=\"/Applications/Android Studio.app/Contents/jbr/Contents/Home\" ./gradlew :app:assembleDebug",
     "mobile:open:ios": "DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer npx cap open ios",
     "mobile:open:android": "npx cap open android",
     "mobile:run:ios": "npm run app:build && DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer npx cap run ios",
-    "mobile:run:android": "npm run app:build && JAVA_HOME=\"/Applications/Android Studio.app/Contents/jbr/Contents/Home\" npx cap run android"
+    "mobile:run:android": "npm run mobile:sync:native-debug && JAVA_HOME=\"/Applications/Android Studio.app/Contents/jbr/Contents/Home\" npx cap run android"
   },
   "devDependencies": {
     "@capacitor/cli": "^8.4.1",
@@ -51,6 +52,7 @@
     "vitest": "^4.1.10"
   },
   "dependencies": {
+    "@capacitor-firebase/app-check": "8.3.0",
     "@capacitor-firebase/authentication": "^8.3.0",
     "@capacitor-firebase/messaging": "^8.3.0",
     "@capacitor-firebase/performance": "^8.3.0",

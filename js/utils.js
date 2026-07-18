@@ -178,7 +178,7 @@ export function renderHeader(container, user) {
 
     // Keep shared-header logout on the same auth bundle as page consumers.
     navLogout.addEventListener('click', async () => {
-      const { logout } = await import('./auth.js?v=50');
+      const { logout } = await import('./auth.js?v=51');
       await logout();
       window.location.href = 'index.html';
     });
@@ -190,7 +190,7 @@ export function renderHeader(container, user) {
   // Keep telemetry available on new pages that use the shared header but miss
   // the global module tag.
   try {
-    import('./telemetry.js?v=2').catch((e) => console.warn('[Telemetry] Failed to load:', e));
+    import('./telemetry.js?v=3').catch((e) => console.warn('[Telemetry] Failed to load:', e));
   } catch (e) {
     console.warn('[Telemetry] Failed to initialize:', e);
   }

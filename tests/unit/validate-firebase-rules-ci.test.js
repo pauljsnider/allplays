@@ -102,6 +102,7 @@ service firebase.storage {
           sed -E 's/\\x1B\\[[0-9;]*[[:alpha:]]//g' "$storage_log" > "$storage_plain_log"
           if [[ "$STORAGE_RULES_CHANGED" != "true" ]]; then exit 0; fi
           exit "$storage_status"
+            transient_pattern='HTTP Error:[[:space:]]*409,[[:space:]]*Requested entity already exists'
             npx firebase-tools@14.25.0 deploy --only "$deploy_targets" --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive
           env:
             FIRESTORE_CONFIG_CHANGED: \${{ steps.firestore_config.outputs.changed }}
@@ -133,6 +134,10 @@ service firebase.storage {
             'echo "changed=true" >> "$GITHUB_OUTPUT"',
             'echo "changed=false" >> "$GITHUB_OUTPUT"'
         ))).toThrow('Production successful deploy lookup failure must force Firestore-first ordering');
+        expect(() => validateProductionDeployCommand(validDeployCommand.replace(
+            'HTTP Error:[[:space:]]*409,[[:space:]]*Requested entity already exists',
+            '(^|[^[:alnum:]])409([^[:alnum:]]|$)'
+        ))).toThrow('Production Firestore release-race retry');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
             `retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore"
             retry_firebase_deploy "hosting,functions" "application"`,

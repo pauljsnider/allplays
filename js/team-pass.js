@@ -1,4 +1,5 @@
-import { auth } from './firebase.js?v=20';
+import { auth } from './firebase.js?v=22';
+import { getPrimaryAppCheckHeaders } from './firebase-app-check-rest.js?v=1';
 import { hasFullTeamAccess } from './team-access.js';
 
 function getFunctionsBaseUrl() {
@@ -19,12 +20,13 @@ export async function createTeamPassCheckout({ teamId, seasonId, tier = 'team-pa
     }
 
     const token = await user.getIdToken();
-    const response = await fetch(`${getFunctionsBaseUrl()}/createStripeTeamPassCheckout`, {
+    const requestUrl = `${getFunctionsBaseUrl()}/createStripeTeamPassCheckout`;
+    const response = await fetch(requestUrl, {
         method: 'POST',
-        headers: {
+        headers: await getPrimaryAppCheckHeaders({
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json'
-        },
+        }, requestUrl),
         body: JSON.stringify({ data: { teamId, seasonId, tier } })
     });
 
@@ -117,7 +119,7 @@ function arrayIncludesTeamId(values, teamId) {
 
 function loadFirebase(deps = {}) {
     if (deps.firebase) return deps.firebase;
-    return import('./firebase.js?v=20');
+    return import('./firebase.js?v=22');
 }
 
 function dataFromSnapshot(docSnap) {

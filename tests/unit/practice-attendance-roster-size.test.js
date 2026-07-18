@@ -7,7 +7,7 @@ const drillsHtml = readFileSync(path.resolve(process.cwd(), 'drills.html'), 'utf
 const updateDoc = vi.fn();
 const doc = vi.fn((database, ...segments) => ({ database, path: segments.join('/') }));
 
-vi.mock('../../js/firebase.js?v=20', () => ({
+vi.mock('../../js/firebase.js?v=22', () => ({
     db: { name: 'mock-db' },
     auth: {},
     storage: {},
@@ -46,7 +46,7 @@ vi.mock('../../js/firebase.js?v=20', () => ({
     deleteObject: vi.fn()
 }));
 
-vi.mock('../../js/firebase-images.js?v=9', () => ({
+vi.mock('../../js/firebase-images.js?v=10', () => ({
     imageStorage: {},
     ensureImageAuth: vi.fn(),
     requireImageAuth: vi.fn()
@@ -82,7 +82,7 @@ describe('updatePracticeAttendance roster size', () => {
     });
 
     it('loads the roster-size fix through a fresh drills page cache key', () => {
-        expect(drillsHtml).toContain("from './js/db.js?v=92';");
-        expect(drillsHtml).not.toContain("from './js/db.js?v=91';");
+        expect(drillsHtml).toContain("from './js/db.js?v=107';");
+        expect(drillsHtml).not.toContain("from './js/db.js?v=92';");
     });
 });

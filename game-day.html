@@ -68,7 +68,7 @@
         .basketball-court::before { background: rgba(255,255,255,0.2); }
         .basketball-court::after { border-color: rgba(255,255,255,0.2); }
     </style>
-  <script type="module" src="/js/telemetry.js?v=2"></script>
+  <script type="module" src="/js/telemetry.js?v=3"></script>
 </head>
 <body class="bg-gray-50 min-h-screen">
 
@@ -498,9 +498,9 @@
             getConfigs, updateGame, logStatEvent, updatePlayerStats,
             broadcastLiveEvent, subscribeLiveEvents, subscribeAggregatedStats,
             setGameLiveStatus, submitRsvpForPlayer, postChatMessage
-        } from './js/db.js?v=96';
+        } from './js/db.js?v=107';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime } from './js/utils.js?v=15';
-        import { checkAuth } from './js/auth.js?v=50';
+        import { checkAuth } from './js/auth.js?v=51';
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=5';
         import { buildRotationPlanFromGamePlan } from './js/game-plan-interop.js?v=2';
         import { getPeriodsForFormation, normalizeActivePeriod, sortSubstitutionPeriods } from './js/game-day-periods.js?v=2';

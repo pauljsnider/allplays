@@ -11,7 +11,7 @@ const firebaseMocks = vi.hoisted(() => ({
     getCountFromServer: vi.fn(),
 }));
 
-vi.mock('../../js/firebase.js?v=20', () => ({
+vi.mock('../../js/firebase.js?v=22', () => ({
     db: {},
     auth: { currentUser: null },
     storage: {},
@@ -47,7 +47,7 @@ vi.mock('../../js/firebase.js?v=20', () => ({
     deleteObject: vi.fn()
 }));
 
-vi.mock('../../js/firebase-images.js?v=9', () => ({
+vi.mock('../../js/firebase-images.js?v=10', () => ({
     imageStorage: {},
     ensureImageAuth: vi.fn(),
     requireImageAuth: vi.fn()
@@ -106,7 +106,7 @@ describe('discoverPublicTeams search pagination', () => {
             .mockResolvedValueOnce({ docs: [] })
             .mockResolvedValueOnce({ docs: [] });
 
-        const { discoverPublicTeams } = await import('../../js/db.js?v=91');
+        const { discoverPublicTeams } = await import('../../js/db.js?v=107');
 
         const firstPage = await discoverPublicTeams({ searchText: 'atlanta', pageSize: 2 });
 
@@ -149,7 +149,7 @@ describe('discoverPublicTeams search pagination', () => {
             publicSearchName: 'atlanta united 2'
         });
 
-        const { discoverPublicTeams } = await import('../../js/db.js?v=91');
+        const { discoverPublicTeams } = await import('../../js/db.js?v=107');
 
         const page = await discoverPublicTeams({
             searchText: 'atlanta',
@@ -183,7 +183,7 @@ describe('public team roster count', () => {
         firebaseMocks.getCountFromServer.mockResolvedValue({
             data: () => ({ count: 10 })
         });
-        const { getPublicTeamRosterCount } = await import('../../js/db.js?v=91');
+        const { getPublicTeamRosterCount } = await import('../../js/db.js?v=107');
 
         await expect(getPublicTeamRosterCount('team-roster-1')).resolves.toEqual({
             count: 10,
@@ -199,7 +199,7 @@ describe('public team roster count', () => {
         firebaseMocks.getCountFromServer.mockResolvedValue({
             data: () => ({ count: 201 })
         });
-        const { getPublicTeamRosterCount } = await import('../../js/db.js?v=91');
+        const { getPublicTeamRosterCount } = await import('../../js/db.js?v=107');
 
         await expect(getPublicTeamRosterCount('team-large-roster')).resolves.toEqual({
             count: 200,
@@ -217,7 +217,7 @@ describe('bounded stat tracker config reads', () => {
         firebaseMocks.getDocs.mockResolvedValue({
             docs: [createTeamDoc('config-1', { name: 'Basketball Standard', baseType: 'Basketball' })]
         });
-        const { getConfigs } = await import('../../js/db.js?v=91');
+        const { getConfigs } = await import('../../js/db.js?v=107');
 
         await expect(getConfigs('team-1', { limit: 100 })).resolves.toEqual([
             expect.objectContaining({ id: 'config-1', name: 'Basketball Standard' })

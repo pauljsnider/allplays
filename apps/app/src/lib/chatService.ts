@@ -35,6 +35,7 @@ import {
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import { loadCachedAppData } from './appDataCache';
 import { createLogger } from './logger';
+import { getPrimaryAppCheckHeaders } from './adapters/legacyFirebaseAppCheck';
 import { getNativeRestDedupKey, loadDedupedNativeRestRequest, shouldDedupNativeRestRequest } from './nativeRestDedup';
 import {
   DEFAULT_TEAM_CONVERSATION_ID,
@@ -260,16 +261,16 @@ function getFirestoreBaseUrl() {
   return `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(getProjectId())}/databases/(default)/documents`;
 }
 
-async function getNativeHeaders() {
+async function getNativeHeaders(requestUrl: string) {
   const token = await getNativeAuthIdToken(true);
   if (!token) {
     throw new Error('Native auth token is unavailable.');
   }
 
-  return {
+  return getPrimaryAppCheckHeaders({
     Authorization: `Bearer ${token}`,
     'Content-Type': 'application/json'
-  };
+  }, requestUrl);
 }
 
 async function nativeFirestoreRequest(path: string, init: RequestInit = {}) {
@@ -278,7 +279,7 @@ async function nativeFirestoreRequest(path: string, init: RequestInit = {}) {
     const response = await withTimeout(fetch(url, {
       ...init,
       headers: {
-        ...(await getNativeHeaders()),
+        ...(await getNativeHeaders(url)),
         ...(init.headers || {})
       }
     }), 'Firestore REST request');
@@ -1240,12 +1241,13 @@ async function nativeUploadChatMedia(teamId: string, file: File, conversationId 
   const safeUserId = String(userId).replace(/[^\w.-]+/g, '_');
   const isVideo = String(file.type || '').toLowerCase().startsWith('video/');
   const path = `stat-sheets/team-chat/${safeTeamId}/${safeConversationId}/${safeUserId}/${Date.now()}_${safeName}`;
-  const response = await withTimeout(fetch(`https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o?uploadType=media&name=${encodeURIComponent(path)}`, {
+  const requestUrl = `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o?uploadType=media&name=${encodeURIComponent(path)}`;
+  const response = await withTimeout(fetch(requestUrl, {
     method: 'POST',
-    headers: {
+    headers: await getPrimaryAppCheckHeaders({
       Authorization: `Bearer ${idToken}`,
       'Content-Type': file.type || 'application/octet-stream'
-    },
+    }, requestUrl),
     body: file
   }), 'Chat media upload', chatUploadTimeoutMs);
   const payload = await response.json().catch(() => ({}));

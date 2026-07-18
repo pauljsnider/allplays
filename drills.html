@@ -92,7 +92,7 @@
             box-shadow: inset 0 0 0 2px rgba(59, 130, 246, 0.45);
         }
     </style>
-  <script type="module" src="/js/telemetry.js?v=2"></script>
+  <script type="module" src="/js/telemetry.js?v=3"></script>
 </head>
 
 <body class="bg-gray-50 text-gray-900">
@@ -614,9 +614,9 @@
             createPracticeSession, updatePracticeSession,
             getPracticeSessionByEvent, upsertPracticeSessionForEvent, updatePracticeAttendance, getPracticeSessions, getPracticePacketCompletions,
             savePracticeTemplate, getPracticeTemplates, deletePracticeTemplate
-        } from './js/db.js?v=92';
+        } from './js/db.js?v=107';
         import { renderHeader, renderFooter, escapeHtml, shareOrCopy } from './js/utils.js?v=15';
-        import { requireAuth } from './js/auth.js?v=50';
+        import { requireAuth } from './js/auth.js?v=51';
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=5';
         import { DRILL_TYPES, DRILL_LEVELS, DRILL_TYPE_COLORS, getAllSkillTags } from './js/drill-constants.js?v=1';
         import { getStarterDrillById, getStarterDrills } from './js/practice-starter-drills.js?v=1';

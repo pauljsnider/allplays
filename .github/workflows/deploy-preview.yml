@@ -151,6 +151,9 @@ jobs:
         run: npm run app:build
 
       - name: Stage Firebase preview bundle
+        env:
+          ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY: ${{ vars.APP_CHECK_PREVIEW_RECAPTCHA_ENTERPRISE_SITE_KEY }}
+          ALLPLAYS_APP_CHECK_ENFORCEMENT_READY: ${{ vars.APP_CHECK_ENFORCEMENT_READY }}
         run: |
           site_dir="$RUNNER_TEMP/firebase-preview-site"
           config_file="$GITHUB_WORKSPACE/.firebase-preview.generated.json"

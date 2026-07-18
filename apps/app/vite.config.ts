@@ -1,9 +1,10 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import { visualizer } from 'rollup-plugin-visualizer';
 import { patchBundleVisualizerTooltipFile } from './build/fixBundleVisualizerTooltip.js';
+import { assertSafeAppCheckBuildEnvironment } from './build/appCheckBuildGuard.js';
 
 const appDirectory = path.dirname(fileURLToPath(import.meta.url));
 
@@ -16,11 +17,22 @@ const bundleVisualizerTooltipFixPlugin = {
   }
 };
 
-export default defineConfig({
+export default defineConfig(({ mode }) => {
+  assertSafeAppCheckBuildEnvironment(mode, loadEnv(mode, appDirectory, 'VITE_'));
+
+  return {
   base: './',
   resolve: {
     alias: {
-      '@legacy': path.resolve(appDirectory, '../../js')
+      '@legacy': path.resolve(appDirectory, '../../js'),
+      // Legacy Firebase bootstrap modules live outside apps/app, so bare
+      // imports from those files would otherwise walk toward the repository
+      // root. Resolve the native plugin from this app package explicitly so
+      // the isolated app-quality install is sufficient in CI and deployments.
+      '@capacitor-firebase/app-check': path.resolve(
+        appDirectory,
+        'node_modules/@capacitor-firebase/app-check'
+      )
     }
   },
   plugins: [
@@ -45,11 +57,18 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id) {
+          const normalizedId = id.split(path.sep).join('/');
+          const legacyFirebaseMatch = normalizedId.match(/\/js\/vendor\/firebase-([a-z-]+)\.js$/);
+          if (legacyFirebaseMatch) {
+            // Keep App Check from pulling the much larger Firestore client into
+            // the authentication bootstrap chunk through their shared app core.
+            return `legacy-firebase-${legacyFirebaseMatch[1]}`;
+          }
+
           if (!id.includes('node_modules')) {
             return undefined;
           }
 
-          const normalizedId = id.split(path.sep).join('/');
           const packageRoot = normalizedId.split('/node_modules/')[1];
           const packageName = packageRoot?.startsWith('@')
             ? packageRoot.split('/').slice(0, 2).join('/')
@@ -84,4 +103,5 @@ export default defineConfig({
       ]
     }
   }
+  };
 });

@@ -84,3 +84,6 @@ packages.microsoft.gpg
 # Generated React app assets
 apps/app/dist/
 apps/app/bundle-visualizer.html
+
+# Capacitor regenerates local SwiftPM plugin symlinks for each checkout.
+ios/App/CapApp-SPM/symlinks/

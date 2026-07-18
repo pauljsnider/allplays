@@ -7,7 +7,7 @@
     <title>Registration - ALL PLAYS</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="css/styles.css">
-    <script type="module" src="/js/telemetry.js?v=2"></script>
+    <script type="module" src="/js/telemetry.js?v=3"></script>
 </head>
 <body class="bg-gray-50 min-h-screen flex flex-col">
     <div id="header-container"></div>
@@ -98,7 +98,7 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { db, doc, getDoc, getFunctions, httpsCallable } from './js/firebase.js?v=20';
+        import { db, doc, getDoc, getFunctions, httpsCallable } from './js/firebase.js?v=22';
         import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=15';
         import { cancelStripeRegistrationCheckout, initiateStripeCheckout } from './js/stripe-service.js';
         import {

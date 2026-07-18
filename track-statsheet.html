@@ -38,7 +38,7 @@
       }
     }
   </script>
-  <script type="module" src="/js/telemetry.js?v=2"></script>
+  <script type="module" src="/js/telemetry.js?v=3"></script>
 </head>
 
 <body class="bg-gray-50 text-gray-900">
@@ -198,13 +198,13 @@
   <div id="footer-container"></div>
 
   <script type="module">
-    import { getTeam, getGame, getPlayers, getConfigs, collection, getDocs, uploadStatSheetPhoto } from './js/db.js?v=91';
-    import { db } from './js/firebase.js?v=20';
-    import { writeBatch, doc, setDoc } from './js/firebase.js?v=20';
+    import { getTeam, getGame, getPlayers, getConfigs, collection, getDocs, uploadStatSheetPhoto } from './js/db.js?v=107';
+    import { db } from './js/firebase.js?v=22';
+    import { writeBatch, doc, setDoc } from './js/firebase.js?v=22';
     import { renderHeader, renderFooter, getUrlParams, escapeHtml, formatDate } from './js/utils.js?v=15';
-    import { checkAuth } from './js/auth.js?v=50';
+    import { checkAuth } from './js/auth.js?v=51';
     import { renderTeamAdminBanner } from './js/team-admin-banner.js';
-    import { ensureImageAuth, getImageAuthError } from './js/firebase-images.js?v=9';
+    import { ensureImageAuth, getImageAuthError } from './js/firebase-images.js?v=10';
     import { validateTrackStatsheetApplyRows, buildTrackStatsheetApplyPlan } from './js/track-statsheet-apply.js?v=5';
     import { getApp } from './js/vendor/firebase-app.js';
     import { getAI, getGenerativeModel, GoogleAIBackend, Schema } from './js/vendor/firebase-ai.js';
@@ -964,7 +964,7 @@ Write the match report now:`;
       try {
         if (summaryText) {
           status.textContent = 'Saving summary…';
-          const { updateGame } = await import('./js/db.js?v=91');
+          const { updateGame } = await import('./js/db.js?v=107');
           await updateGame(currentTeamId, currentGameId, { summary: summaryText });
           status.textContent = 'Summary saved!';
         }

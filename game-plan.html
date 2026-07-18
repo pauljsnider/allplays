@@ -72,7 +72,7 @@
             50% { box-shadow: 0 0 0 6px rgba(245, 158, 11, 0.2); }
         }
     </style>
-  <script type="module" src="/js/telemetry.js?v=2"></script>
+  <script type="module" src="/js/telemetry.js?v=3"></script>
 </head>
 
 <body class="bg-gradient-to-br from-gray-50 to-gray-100 text-gray-900">
@@ -300,9 +300,9 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getPlayers, getGames, getGame, updateGame, getTrackedCalendarEventUids, getEvents } from './js/db.js?v=91';
+        import { getTeam, getPlayers, getGames, getGame, updateGame, getTrackedCalendarEventUids, getEvents } from './js/db.js?v=107';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, isTrackedCalendarEvent, escapeHtml } from './js/utils.js?v=15';
-        import { checkAuth } from './js/auth.js?v=50';
+        import { checkAuth } from './js/auth.js?v=51';
         import { getTeamAccessInfo } from './js/team-access.js';
         import { createAutoSaveController } from './js/game-plan-autosave.js?v=2';
         import { buildGamePlanIntervals } from './js/game-plan-intervals.js?v=2';

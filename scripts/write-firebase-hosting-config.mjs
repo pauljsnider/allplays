@@ -40,6 +40,16 @@ function listAppAssetHeaderRules(publicDir) {
     }));
 }
 
+function hostingIgnoreRules(publicDir, ignoreRules = []) {
+    const runtimeConfigPath = path.join(publicDir, '.well-known', 'allplays-runtime-config.json');
+    if (!fs.existsSync(runtimeConfigPath)) return ignoreRules;
+
+    // The deploy bundle is already allow-listed by stagePagesBundle. Keeping
+    // Firebase Hosting's broad dot-path ignore here would silently omit the
+    // staged App Check runtime configuration.
+    return ignoreRules.filter((rule) => rule !== '**/.*');
+}
+
 export function writeFirebaseHostingConfig(publicDir, outputFile, { rootDir = defaultRootDir } = {}) {
     if (!publicDir) {
         throw new Error('Hosting public directory is required.');
@@ -55,6 +65,7 @@ export function writeFirebaseHostingConfig(publicDir, outputFile, { rootDir = de
         ...config.hosting,
         site: config.hosting?.site ?? firebaseHostingSite,
         public: path.resolve(publicDir),
+        ignore: hostingIgnoreRules(path.resolve(publicDir), config.hosting?.ignore ?? []),
         headers: [
             ...(config.hosting?.headers ?? []),
             ...listAppAssetHeaderRules(path.resolve(publicDir))

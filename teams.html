@@ -44,7 +44,7 @@
       }
     }
   </script>
-  <script type="module" src="/js/telemetry.js?v=2"></script>
+  <script type="module" src="/js/telemetry.js?v=3"></script>
 </head>
 
 <body class="bg-gradient-to-br from-gray-50 to-gray-100 text-gray-900">
@@ -102,9 +102,9 @@
   <div id="footer-container"></div>
 
   <script type="module">
-    import { discoverPublicTeams } from './js/db.js?v=91';
+    import { discoverPublicTeams } from './js/db.js?v=107';
     import { renderHeader, renderFooter, escapeHtml, getSafeImageUrl, resolveZip } from './js/utils.js?v=15';
-    import { checkAuth } from './js/auth.js?v=50';
+    import { checkAuth } from './js/auth.js?v=51';
 
     checkAuth((user) => {
       // Allow viewing without login - user can be null

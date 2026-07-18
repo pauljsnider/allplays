@@ -968,6 +968,11 @@ async function routeCommonPageStubs(page) {
 }
 
 async function routeLiveGameStubs(page) {
+    let telemetryStubRequestCount = 0;
+    await page.route(/\/js\/telemetry\.js(?:\?v=\d+)?$/, (route) => {
+        telemetryStubRequestCount += 1;
+        return route.fulfill({ status: 200, contentType: 'application/javascript', body: '' });
+    });
     await page.route(/\/js\/db\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: LIVE_GAME_DB_STUB }));
     await page.route(/\/js\/utils\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: LIVE_GAME_UTILS_STUB }));
     await page.route(/\/js\/team-access\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: LIVE_GAME_ACCESS_STUB }));
@@ -984,6 +989,9 @@ async function routeLiveGameStubs(page) {
     await page.route('**/js/vendor/firebase-app.js', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_APP_STUB }));
     await page.route('**/js/vendor/firebase-ai.js', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_AI_STUB }));
     await page.route('https://cdn.example.test/replay.mp4', (route) => route.fulfill({ status: 200, contentType: 'video/mp4', body: '' }));
+    return {
+        getTelemetryStubRequestCount: () => telemetryStubRequestCount
+    };
 }
 
 async function collectPageErrors(page) {
@@ -1250,13 +1258,14 @@ test('live game archived replay Team Pass gate is off by default', async ({ page
         window.__LIVE_GAME_TEAM__ = {};
         window.__TEAM_PASS_ENTITLEMENT_READS__ = 0;
     });
-    await routeLiveGameStubs(page);
+    const liveGameStubs = await routeLiveGameStubs(page);
 
     await page.goto(`${baseURL}/live-game.html?teamId=team-1&gameId=game-1&replay=true`, { waitUntil: 'domcontentloaded' });
 
     await expect(page.locator('#video-paywall')).toBeHidden();
     await expect(page.locator('#recorded-replay-video')).toBeVisible();
     await expect.poll(() => page.evaluate(() => window.__TEAM_PASS_ENTITLEMENT_READS__ || 0)).toBe(0);
+    expect(liveGameStubs.getTelemetryStubRequestCount()).toBeGreaterThan(0);
     expect(pageErrors).toEqual([]);
 });
 

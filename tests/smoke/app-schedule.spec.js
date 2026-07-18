@@ -123,17 +123,18 @@ async function mockScheduleModules(page, options = {}) {
             status: 200,
             contentType: 'application/javascript',
             body: `
+                const user = {
+                    uid: 'user-1',
+                    email: 'parent@example.com',
+                    displayName: 'Pat Parent',
+                    roles: ${JSON.stringify(authRoles)},
+                    parentOf: [
+                        { teamId: 'team-1', playerId: 'player-1', playerName: 'Pat', teamName: 'Bears' },
+                        { teamId: 'team-1', playerId: 'player-2', playerName: 'Sam', teamName: 'Bears' }
+                    ]
+                };
+
                 export function useAuth() {
-                    const user = {
-                        uid: 'user-1',
-                        email: 'parent@example.com',
-                        displayName: 'Pat Parent',
-                        roles: ${JSON.stringify(authRoles)},
-                        parentOf: [
-                            { teamId: 'team-1', playerId: 'player-1', playerName: 'Pat', teamName: 'Bears' },
-                            { teamId: 'team-1', playerId: 'player-2', playerName: 'Sam', teamName: 'Bears' }
-                        ]
-                    };
                     return {
                         user,
                         profile: { parentOf: user.parentOf },

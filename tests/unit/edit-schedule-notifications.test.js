@@ -73,7 +73,7 @@ describe('edit schedule notification wiring', () => {
     it('wires the schedule notification helper and RSVP reminder action', () => {
         const source = readEditSchedule();
 
-        expect(source).toContain("from './js/schedule-notifications.js?v=5'");
+        expect(source).toContain("from './js/schedule-notifications.js?v=6'");
         expect(source).toContain('describeScheduleReminderWindow');
         expect(source).toContain('await postScheduleNotificationTargets({');
         expect(source).toContain('id="send-rsvp-reminder-btn"');

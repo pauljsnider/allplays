@@ -74,6 +74,64 @@ describe('Capacitor native config', () => {
         expect(appPnpmLock).toContain(`'@vitejs/plugin-react@${pluginReactVersion}(vite@8.1.4`);
     });
 
+    it('wires App Check into both native shells without a SwiftPM identity collision', () => {
+        const config = JSON.parse(readProjectFile('capacitor.config.json'));
+        const rootPackage = JSON.parse(readProjectFile('package.json'));
+        const appPackage = JSON.parse(readProjectFile('apps/app/package.json'));
+        const androidSettings = readProjectFile('android/capacitor.settings.gradle');
+        const androidBuild = readProjectFile('android/app/capacitor.build.gradle');
+        const iosPackage = readProjectFile('ios/App/CapApp-SPM/Package.swift');
+        const iosEntitlements = readProjectFile('ios/App/App/App.entitlements');
+        const iosAppDelegate = readProjectFile('ios/App/App/AppDelegate.swift');
+
+        expect(rootPackage.dependencies['@capacitor-firebase/app-check']).toBe('8.3.0');
+        expect(appPackage.dependencies['@capacitor-firebase/app-check']).toBe('8.3.0');
+        expect(androidSettings).toContain("include ':capacitor-firebase-app-check'");
+        expect(androidBuild).toContain("implementation project(':capacitor-firebase-app-check')");
+        expect(config.experimental.ios.spm.packageOptions['@capacitor-firebase/app-check']).toEqual({
+            symlink: true
+        });
+        expect(iosPackage).toContain('path: "symlinks/CapacitorFirebaseAppCheck"');
+        expect(iosEntitlements).toContain('com.apple.developer.devicecheck.appattest-environment');
+        expect(iosEntitlements).toContain('<string>production</string>');
+
+        const launchSetup = iosAppDelegate.slice(
+            iosAppDelegate.indexOf('didFinishLaunchingWithOptions'),
+            iosAppDelegate.indexOf('func applicationWillResignActive')
+        );
+        expect(iosAppDelegate).toContain('import FirebaseAppCheck');
+        expect(iosAppDelegate).toContain('import FirebaseCore');
+        expect(iosAppDelegate).toContain('return AppAttestProvider(app: app)');
+        expect(launchSetup).toContain('#if DEBUG');
+        expect(launchSetup).toContain('AppCheck.setAppCheckProviderFactory(AppCheckDebugProviderFactory())');
+        expect(launchSetup).toContain('#else');
+        expect(launchSetup).toContain('AppCheck.setAppCheckProviderFactory(AllPlaysAppCheckProviderFactory())');
+        expect(launchSetup.indexOf('AppCheck.setAppCheckProviderFactory')).toBeLessThan(
+            launchSetup.indexOf('return true')
+        );
+        expect(launchSetup).not.toContain('FirebaseApp.configure()');
+    });
+
+    it('uses an explicit token-free App Check debug build only for local simulator and debug APK commands', () => {
+        const rootPackage = JSON.parse(readProjectFile('package.json'));
+        const appPackage = JSON.parse(readProjectFile('apps/app/package.json'));
+
+        expect(appPackage.scripts['build:native-debug']).toContain('vite build --mode native-debug');
+        expect(appPackage.scripts['build:native-debug']).toContain('ALLPLAYS_APP_CHECK_NATIVE_DEBUG=1');
+        expect(appPackage.scripts['build:native-debug']).not.toContain('VITE_APP_CHECK_DEBUG_TOKEN');
+        expect(rootPackage.scripts['mobile:sync:native-debug']).toContain('build:native-debug');
+        expect(rootPackage.scripts['mobile:build:ios']).toContain('mobile:sync:native-debug');
+        expect(rootPackage.scripts['mobile:build:ios']).toContain('-configuration Debug');
+        expect(rootPackage.scripts['mobile:build:android']).toContain('mobile:sync:native-debug');
+        expect(rootPackage.scripts['mobile:build:android']).toContain(':app:assembleDebug');
+        expect(rootPackage.scripts['mobile:run:android']).toContain('mobile:sync:native-debug');
+        expect(rootPackage.scripts['mobile:run:android']).not.toContain('app:build');
+
+        expect(rootPackage.scripts['app:build']).not.toContain('native-debug');
+        expect(rootPackage.scripts['mobile:sync']).toBe('npm run app:build && npx cap sync');
+        expect(rootPackage.scripts['mobile:sync']).not.toContain('native-debug');
+    });
+
     it('keeps Vitest and coverage peer versions aligned in app lockfiles', () => {
         const appPackage = JSON.parse(readProjectFile('apps/app/package.json'));
         const appPackageLock = JSON.parse(readProjectFile('apps/app/package-lock.json'));

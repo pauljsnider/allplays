@@ -19,6 +19,7 @@ import {
   verifyPasswordResetCode as legacyVerifyPasswordResetCode
 } from '@legacy/vendor/firebase-auth.js';
 import { resolvePrimaryFirebaseConfig as legacyResolvePrimaryFirebaseConfig } from '@legacy/firebase-runtime-config.js';
+import { initializePrimaryAppCheck as legacyInitializePrimaryAppCheck } from '@legacy/firebase-app-check.js';
 
 /**
  * Typed adapter boundary for the vendored Firebase app/auth SDK + runtime config
@@ -28,6 +29,7 @@ import { resolvePrimaryFirebaseConfig as legacyResolvePrimaryFirebaseConfig } fr
 export const getApp = legacyGetApp as (...args: any[]) => any;
 export const getApps = legacyGetApps as () => any[];
 export const initializeApp = legacyInitializeApp as (...args: any[]) => any;
+export const initializePrimaryAppCheck = legacyInitializePrimaryAppCheck as (...args: any[]) => Promise<any>;
 export const applyActionCode = legacyApplyActionCode as (...args: any[]) => Promise<any>;
 export const confirmPasswordReset = legacyConfirmPasswordReset as (...args: any[]) => Promise<any>;
 export const createUserWithEmailAndPassword = legacyCreateUserWithEmailAndPassword as (...args: any[]) => Promise<any>;

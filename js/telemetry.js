@@ -3,6 +3,7 @@ import {
     sanitizeTelemetryProperties,
     sanitizeTelemetryText
 } from './telemetry-utils.js?v=1';
+import { getPrimaryAppCheckHeaders } from './firebase-app-check-rest.js?v=1';
 
 const TELEMETRY_VERSION = '1.0.0';
 const DEFAULT_ENDPOINT = 'https://us-central1-game-flow-c6311.cloudfunctions.net/collectTelemetry';
@@ -42,7 +43,7 @@ let firebaseAuthModulePromise = null;
 
 function loadFirebaseAuthModule() {
     if (!firebaseAuthModulePromise) {
-        firebaseAuthModulePromise = import('./firebase.js?v=20')
+        firebaseAuthModulePromise = import('./firebase.js?v=22')
             .then((module) => ({
                 auth: module.auth,
                 onAuthStateChanged: module.onAuthStateChanged
@@ -380,12 +381,15 @@ export async function sendEvents(events, keepalive = false) {
     }
     const payload = JSON.stringify(payloadObject);
 
+    // Unload delivery has to begin synchronously. Waiting for App Check here
+    // lets page teardown terminate the document before either transport starts,
+    // and sendBeacon cannot carry custom App Check headers in any case.
     if (keepalive && navigator.sendBeacon) {
         const blob = new Blob([payload], { type: 'application/json' });
         if (navigator.sendBeacon(endpoint, blob)) return;
     }
 
-    const headers = { 'Content-Type': 'application/json' };
+    const headers = await getPrimaryAppCheckHeaders({ 'Content-Type': 'application/json' }, endpoint);
     if (authToken) {
         headers.Authorization = `Bearer ${authToken}`;
     }
