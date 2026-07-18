@@ -35,7 +35,7 @@ export function assertPreviewDeploySkipHandling(deployPreview) {
     assertIncludes(deployPreview, "HTTP Error: 400, Can't release to .*resource doesn't exist or isn't a valid release target", 'Preview deploy release target error classifier');
     assertIncludes(deployPreview, 'preview_skip_reason=', 'Preview deploy skipped reason output');
     assertIncludes(deployPreview, 'skip_preview_for_release_target', 'Preview deploy release target skip');
-    assertIncludes(deployPreview, 'PREVIEW_SKIP_REASON: ${{ steps.deploy_preview.outputs.preview_skip_reason }}', 'Preview deploy skipped reason PR comment');
+    assertIncludes(deployPreview, 'PREVIEW_SKIP_REASON: ${{ needs.deploy-preview.outputs.preview_skip_reason }}', 'Preview deploy skipped reason PR comment');
 }
 
 export function extractMatchBlock(text, startMarker) {
@@ -53,7 +53,7 @@ export function validatePreviewDeployCommand(deployPreview) {
     if (/hosting:channel:deploy[^\n]*--site/.test(deployPreview)) {
         throw new Error('Preview deploy must not pass --site to hosting:channel:deploy; firebase-tools 15 rejects that option.');
     }
-    assertMatches(deployPreview, /\.\/node_modules\/\.bin\/firebase hosting:channel:deploy "\$CURRENT_CHANNEL" --project game-flow-c6311 --config "\$FIREBASE_PREVIEW_CONFIG"/, 'Preview deploy installed Firebase CLI project/config arguments');
+    assertMatches(deployPreview, /node "\$firebase_cli" hosting:channel:deploy "\$CURRENT_CHANNEL" --project game-flow-c6311 --config "\$firebase_config"/, 'Preview deploy installed Firebase CLI project/config arguments');
 }
 
 export function validateFirebaseDeployWorkloadIdentity(workflow, label) {
@@ -80,11 +80,41 @@ export function validateFirebaseDeployWorkloadIdentity(workflow, label) {
     };
     visit(parsed);
 
-    const hasOidcPermission = objects.some((value) =>
-        value.permissions && value.permissions['id-token'] === 'write'
-    );
-    if (!hasOidcPermission) {
+    const jobs = parsed?.jobs && typeof parsed.jobs === 'object' ? Object.values(parsed.jobs) : [];
+    const oidcJobs = jobs.filter((job) => job?.permissions?.['id-token'] === 'write');
+    if (oidcJobs.length === 0) {
         throw new Error(`${label} OIDC token permission is missing: id-token: write`);
+    }
+
+    for (const job of oidcJobs) {
+        const jobText = JSON.stringify(job);
+        if (/npm (?:ci|install)|stage-pages-bundle|extract-preview-hosting-artifact|write-firebase-hosting-config|actions\/artifacts\/[^/]+\/zip/.test(jobText)) {
+            throw new Error(`${label} dependency, build, and raw-artifact preparation must run in a separate no-OIDC job.`);
+        }
+        if (!Array.isArray(job.steps)) {
+            throw new Error(`${label} credentialed deploy job has no valid step list.`);
+        }
+        if (job.steps.some((step) => typeof step?.uses === 'string' &&
+            !/^actions\/download-artifact@[0-9a-f]{40}$/.test(step.uses) &&
+            !/^google-github-actions\/auth@/.test(step.uses)
+        )) {
+            throw new Error(`${label} credentialed deploy job contains an unapproved action.`);
+        }
+        if (!job.steps.some((step) =>
+            typeof step.uses === 'string' && /^actions\/download-artifact@[0-9a-f]{40}$/.test(step.uses)
+        )) {
+            throw new Error(`${label} credentialed deploy job must consume only a pinned trusted handoff artifact.`);
+        }
+    }
+
+    for (const job of jobs) {
+        if (!Array.isArray(job?.steps)) continue;
+        const hasPreparation = job.steps.some((step) => typeof step?.run === 'string' &&
+            /npm (?:ci|install)|stage-pages-bundle|extract-preview-hosting-artifact|write-firebase-hosting-config/.test(step.run)
+        );
+        if (hasPreparation && job.permissions?.['id-token'] === 'write') {
+            throw new Error(`${label} no-OIDC preparation boundary is missing.`);
+        }
     }
 
     const authSteps = objects.filter((value) =>
@@ -121,7 +151,7 @@ export function validateFirebaseDeployWorkloadIdentity(workflow, label) {
         for (let index = 0; index < object.steps.length; index += 1) {
             const step = object.steps[index];
             if (!step || typeof step.run !== 'string' ||
-                !/(?:firebase-tools@\S+|(?:^|\/)firebase)\s+(?:hosting:channel:)?deploy\b/m.test(step.run)) {
+                !/(?:firebase-tools@\S+|(?:^|\/)firebase|node\s+"\$firebase_cli")\s+(?:hosting:channel:)?deploy\b/m.test(step.run)) {
                 continue;
             }
             deployStepCount += 1;
@@ -182,7 +212,7 @@ export function validateFirebaseDeployWorkloadIdentity(workflow, label) {
 }
 
 export function validateProductionDeployCommand(deployProd) {
-    const deployCommands = Array.from(deployProd.matchAll(/^\s*npx firebase-tools@\S+ deploy\b[^\n]*$/gm), match => match[0]);
+    const deployCommands = Array.from(deployProd.matchAll(/^\s*(?:npx firebase-tools@\S+|node "\$firebase_cli") deploy\b[^\n]*$/gm), match => match[0]);
     const deployCommand = deployCommands.find(command => /--only(?:=|\s+)"\$deploy_targets"/.test(command)) || '';
     if (!deployCommand) {
         throw new Error('Production Firebase deploy command is missing.');
@@ -210,7 +240,7 @@ export function validateProductionDeployCommand(deployProd) {
     if (deployProd.includes('git diff --quiet "${{ github.event.before }}" "${{ github.sha }}" -- firestore.rules firestore.indexes.json')) {
         throw new Error('Production Firestore changes must not use the immediately previous push as the deploy baseline.');
     }
-    assertIncludes(deployProd, 'FIRESTORE_CONFIG_CHANGED: ${{ steps.firestore_config.outputs.changed }}', 'Production Firestore change output');
+    assertIncludes(deployProd, 'FIRESTORE_CONFIG_CHANGED: ${{ needs.prepare-deploy.outputs.firestore_changed }}', 'Production Firestore change output');
     assertIncludes(deployProd, 'if [[ "$FIRESTORE_CONFIG_CHANGED" == "true" ]]; then', 'Production Firestore change ordering');
     const changedBranchStart = deployProd.indexOf('if [[ "$FIRESTORE_CONFIG_CHANGED" == "true" ]]; then');
     const unchangedBranchStart = deployProd.indexOf('\n          else', changedBranchStart);
@@ -229,15 +259,15 @@ export function validateProductionDeployCommand(deployProd) {
 
     const storageDeployCommand = deployCommands.find(command => /--only(?:=|\s+)storage(?:\s|$)/.test(command)) || '';
     assertMatches(storageDeployCommand, /--project game-flow-c6311(?:\s|$)/, 'Production Storage rules deploy project');
-    assertMatches(storageDeployCommand, /--config "\$FIREBASE_PROD_CONFIG"(?:\s|$)/, 'Production Storage rules generated config');
+    assertMatches(storageDeployCommand, /--config "\$firebase_config"(?:\s|$)/, 'Production Storage rules generated config');
     assertIncludes(deployProd, 'fetch-depth: 0', 'Production Storage rules change history');
     assertIncludes(deployProd, 'git diff --quiet "${{ github.event.before }}" "${{ github.sha }}" -- storage.rules', 'Production Storage rules change detection');
-    assertIncludes(deployProd, 'STORAGE_RULES_CHANGED: ${{ steps.storage_rules.outputs.changed }}', 'Production Storage rules change output');
+    assertIncludes(deployProd, 'STORAGE_RULES_CHANGED: ${{ needs.prepare-deploy.outputs.storage_changed }}', 'Production Storage rules change output');
     assertIncludes(deployProd, "sed -E 's/\\x1B\\[[0-9;]*[[:alpha:]]//g' \"$storage_log\" > \"$storage_plain_log\"", 'Production Storage rules ANSI log normalization');
     assertIncludes(deployProd, '[[ "$STORAGE_RULES_CHANGED" != "true" ]]', 'Production Storage rules unchanged-only skip');
     assertIncludes(deployProd, 'exit "$storage_status"', 'Production Storage rules changed failure');
     assertMatches(deployCommand, /(?:^|\s)--project game-flow-c6311(?:\s|$)/, 'Production Firebase deploy project');
-    assertMatches(deployCommand, /(?:^|\s)--config "\$FIREBASE_PROD_CONFIG"(?:\s|$)/, 'Production Firebase generated config');
+    assertMatches(deployCommand, /(?:^|\s)--config "\$firebase_config"(?:\s|$)/, 'Production Firebase generated config');
 }
 
 export function validateFirebaseRulesCi() {

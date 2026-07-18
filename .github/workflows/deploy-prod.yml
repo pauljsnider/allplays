@@ -81,15 +81,16 @@ jobs:
           name: prod-regression-guards-http-log
           path: /tmp/allplays-prod-regression-guards.log
 
-  deploy:
+  prepare-deploy:
     needs: [unit-tests, regression-guards]
     runs-on: ubuntu-latest
-    environment: production
     permissions:
       actions: read
-      checks: write
       contents: read
-      id-token: write
+    outputs:
+      firestore_changed: ${{ steps.firestore_config.outputs.changed }}
+      head_sha: ${{ steps.handoff_identity.outputs.head_sha }}
+      storage_changed: ${{ steps.storage_rules.outputs.changed }}
 
     steps:
       - name: Checkout
@@ -117,11 +118,17 @@ jobs:
           ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY: ${{ vars.APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY }}
           ALLPLAYS_APP_CHECK_ENFORCEMENT_READY: ${{ vars.APP_CHECK_ENFORCEMENT_READY }}
         run: |
-          site_dir="$RUNNER_TEMP/firebase-prod-site"
-          config_file="$GITHUB_WORKSPACE/.firebase-prod.generated.json"
+          set -euo pipefail
+          bundle_dir="$RUNNER_TEMP/firebase-production-ready"
+          site_dir="$bundle_dir/site"
+          config_file="$bundle_dir/firebase-prod.generated.json"
+          mkdir -p "$bundle_dir"
           node scripts/stage-pages-bundle.mjs "$site_dir"
           node scripts/write-firebase-hosting-config.mjs "$site_dir" "$config_file"
-          echo "FIREBASE_PROD_CONFIG=$config_file" >> "$GITHUB_ENV"
+          jq '.hosting.public = "site"' "$config_file" > "$config_file.tmp"
+          mv "$config_file.tmp" "$config_file"
+          cp firestore.rules firestore.indexes.json storage.rules "$bundle_dir/"
+          echo "FIREBASE_PRODUCTION_BUNDLE=$bundle_dir" >> "$GITHUB_ENV"
 
       - name: Install Functions dependencies
         run: npm ci --prefix functions
@@ -179,10 +186,91 @@ jobs:
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
-      # Resolve/download the exact CLI before requesting the five-minute GitHub
-      # OIDC credential. Credentialed steps below are each bounded to four minutes.
-      - name: Prime exact Firebase deploy CLI
-        run: npx firebase-tools@14.25.0 --version
+      - name: Copy installed Functions runtime into trusted handoff
+        run: |
+          set -euo pipefail
+          cp -R functions "$FIREBASE_PRODUCTION_BUNDLE/functions"
+
+      - name: Install isolated Firebase deploy CLI without OIDC or lifecycle scripts
+        run: |
+          set -euo pipefail
+          npm install \
+            --prefix "$FIREBASE_PRODUCTION_BUNDLE/firebase-cli" \
+            --ignore-scripts \
+            --no-audit \
+            --no-fund \
+            --package-lock=false \
+            firebase-tools@14.25.0
+          node "$FIREBASE_PRODUCTION_BUNDLE/firebase-cli/node_modules/firebase-tools/lib/bin/firebase.js" --version
+
+      - name: Bind handoff to exact production commit
+        id: handoff_identity
+        run: |
+          set -euo pipefail
+          if [[ ! "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            exit 1
+          fi
+          printf '%s\n' "$GITHUB_SHA" > "$FIREBASE_PRODUCTION_BUNDLE/head-sha"
+          echo "head_sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Upload trusted production deploy handoff
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: firebase-production-trusted-ready
+          path: ${{ runner.temp }}/firebase-production-ready
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 1
+
+  deploy:
+    needs: prepare-deploy
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+
+    steps:
+      # Only the fixed artifact produced by the no-OIDC preparation job enters
+      # this job. No checkout, dependency install, build, or lifecycle script
+      # shares the production identity boundary.
+      - name: Download trusted production deploy handoff
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: firebase-production-trusted-ready
+          path: ${{ runner.temp }}/firebase-production-ready
+
+      - name: Validate trusted production handoff without executing its code
+        env:
+          FIRESTORE_CONFIG_CHANGED: ${{ needs.prepare-deploy.outputs.firestore_changed }}
+          PREPARED_HEAD_SHA: ${{ needs.prepare-deploy.outputs.head_sha }}
+          STORAGE_RULES_CHANGED: ${{ needs.prepare-deploy.outputs.storage_changed }}
+        run: |
+          set -euo pipefail
+          bundle="$RUNNER_TEMP/firebase-production-ready"
+          if [[ "$PREPARED_HEAD_SHA" != "$GITHUB_SHA" ]] || [[ ! "$PREPARED_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Production handoff commit does not match this workflow run." >&2
+            exit 1
+          fi
+          if [[ "$FIRESTORE_CONFIG_CHANGED" != "true" && "$FIRESTORE_CONFIG_CHANGED" != "false" ]]; then
+            echo "Invalid Firestore change state." >&2
+            exit 1
+          fi
+          if [[ "$STORAGE_RULES_CHANGED" != "true" && "$STORAGE_RULES_CHANGED" != "false" ]]; then
+            echo "Invalid Storage change state." >&2
+            exit 1
+          fi
+          grep -Fxq "$GITHUB_SHA" "$bundle/head-sha"
+          test -d "$bundle/site"
+          test -d "$bundle/functions"
+          test -f "$bundle/firestore.rules"
+          test -f "$bundle/firestore.indexes.json"
+          test -f "$bundle/storage.rules"
+          test -f "$bundle/firebase-prod.generated.json"
+          test -f "$bundle/firebase-cli/node_modules/firebase-tools/lib/bin/firebase.js"
+          jq -e '.hosting.public == "site" and .hosting.site == "game-flow-c6311" and .functions.source == "functions"' "$bundle/firebase-prod.generated.json" >/dev/null
+          echo "FIREBASE_PRODUCTION_BUNDLE=$bundle" >> "$GITHUB_ENV"
 
       - name: Authenticate Storage deploy through exact-workflow OIDC
         id: google_auth_storage
@@ -198,12 +286,17 @@ jobs:
         timeout-minutes: 4
         shell: bash
         env:
-          STORAGE_RULES_CHANGED: ${{ steps.storage_rules.outputs.changed }}
+          STORAGE_RULES_CHANGED: ${{ needs.prepare-deploy.outputs.storage_changed }}
         run: |
           set -euo pipefail
+          firebase_cli="$FIREBASE_PRODUCTION_BUNDLE/firebase-cli/node_modules/firebase-tools/lib/bin/firebase.js"
+          firebase_config="$FIREBASE_PRODUCTION_BUNDLE/firebase-prod.generated.json"
           storage_log="$RUNNER_TEMP/firebase-storage-deploy.log"
           set +e
-          npx firebase-tools@14.25.0 deploy --only storage --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive 2>&1 | tee "$storage_log"
+          (
+            cd "$FIREBASE_PRODUCTION_BUNDLE"
+            node "$firebase_cli" deploy --only storage --project game-flow-c6311 --config "$firebase_config" --non-interactive
+          ) 2>&1 | tee "$storage_log"
           storage_status="${PIPESTATUS[0]}"
           set -e
 
@@ -255,9 +348,11 @@ jobs:
         timeout-minutes: 4
         shell: bash
         env:
-          FIRESTORE_CONFIG_CHANGED: ${{ steps.firestore_config.outputs.changed }}
+          FIRESTORE_CONFIG_CHANGED: ${{ needs.prepare-deploy.outputs.firestore_changed }}
         run: |
           set -euo pipefail
+          firebase_cli="$FIREBASE_PRODUCTION_BUNDLE/firebase-cli/node_modules/firebase-tools/lib/bin/firebase.js"
+          firebase_config="$FIREBASE_PRODUCTION_BUNDLE/firebase-prod.generated.json"
           transient_pattern='(^|[^[:alnum:]])(429|500|502|503|504)([^[:alnum:]]|$)|HTTP Error:[[:space:]]*409,[[:space:]]*Requested entity already exists|service[[:space:]_-]+unavailable|econnreset|connection[[:space:]_-]+reset|network[[:space:]_-]+reset|etimedout|timed[[:space:]_-]+out|timeout'
 
           retry_firebase_deploy() {
@@ -269,7 +364,10 @@ jobs:
             for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do
               deploy_log="$RUNNER_TEMP/firebase-${deploy_label}-deploy-attempt-${attempt}.log"
               set +e
-              npx firebase-tools@14.25.0 deploy --only "$deploy_targets" --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive 2>&1 | tee "$deploy_log"
+              (
+                cd "$FIREBASE_PRODUCTION_BUNDLE"
+                node "$firebase_cli" deploy --only "$deploy_targets" --project game-flow-c6311 --config "$firebase_config" --non-interactive
+              ) 2>&1 | tee "$deploy_log"
               deploy_status="${PIPESTATUS[0]}"
               set -e
 
@@ -314,3 +412,8 @@ jobs:
           if [[ -n "$GOOGLE_CREDENTIAL_FILE" ]]; then
             rm -f -- "$GOOGLE_CREDENTIAL_FILE"
           fi
+          {
+            echo "CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE="
+            echo "GOOGLE_APPLICATION_CREDENTIALS="
+            echo "GOOGLE_GHA_CREDS_PATH="
+          } >> "$GITHUB_ENV"

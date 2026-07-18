@@ -12,11 +12,19 @@ its `workflow_run` definition from the default branch. It checks out only the
 default branch, validates the completed run and current open PR through the
 GitHub API, downloads only the verified triggering-run artifact, safely
 validates and extracts public files, and generates Firebase configuration from
-trusted default-branch code. It never checks out, imports, executes, or sources
-PR code or PR-provided Firebase configuration.
+trusted default-branch code in a job with no OIDC permission. That job installs
+the isolated Firebase CLI and uploads a sanitized same-run handoff. Only a
+minimal dependent deploy job can request OIDC; the raw PR artifact, checkout,
+dependency installation, and configuration generation never enter that job.
+The deploy job never checks out, imports, executes, or sources PR code or
+PR-provided Firebase configuration.
 
 Firebase deploy workflows authenticate with GitHub OIDC and Google Workload
 Identity Federation. They must never reference a JSON service-account key.
+Production dependency installation, app/function preparation, rule-change
+detection, and bundle construction also run in a no-OIDC job. The production
+identity exists only in a minimal dependent deploy job that consumes the fixed
+same-run handoff; it performs no checkout, package installation, or build.
 `FIREBASE_DEPLOY_WORKLOAD_IDENTITY_PROVIDER` and
 `FIREBASE_DEPLOY_SERVICE_ACCOUNT` are environment variables in
 `firebase-preview-trusted` and `production`; both environments must retain a

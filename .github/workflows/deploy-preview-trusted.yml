@@ -14,21 +14,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  deploy-preview:
+  prepare-preview:
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'pull_request' &&
       github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    environment:
-      name: firebase-preview-trusted
     permissions:
       actions: read
       contents: read
-      id-token: write
-      issues: write
-      pull-requests: write
+      pull-requests: read
+    outputs:
+      artifact_id: ${{ steps.verify_trigger.outputs.artifact_id }}
+      head_sha: ${{ steps.verify_trigger.outputs.head_sha }}
+      pr_number: ${{ steps.verify_trigger.outputs.pr_number }}
 
     steps:
       # workflow_run executes this workflow from the default branch. Only that
@@ -80,26 +80,38 @@ jobs:
             "repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID/zip" > "$archive"
           echo "PREVIEW_ARTIFACT_ARCHIVE=$archive" >> "$GITHUB_ENV"
 
-      - name: Validate and extract untrusted Hosting content
+      - name: Validate and extract untrusted Hosting content without OIDC
         run: |
           set -euo pipefail
-          site_dir="$RUNNER_TEMP/firebase-preview-site"
+          stage_dir="$RUNNER_TEMP/firebase-preview-ready"
+          site_dir="$stage_dir/site"
+          mkdir -p "$stage_dir/context"
           python3 scripts/extract-preview-hosting-artifact.py \
             --archive "$PREVIEW_ARTIFACT_ARCHIVE" \
             --destination "$site_dir"
-          echo "FIREBASE_PREVIEW_SITE=$site_dir" >> "$GITHUB_ENV"
+          echo "FIREBASE_PREVIEW_STAGE=$stage_dir" >> "$GITHUB_ENV"
 
-      - name: Generate Firebase config from trusted default branch
+      - name: Generate relocatable Firebase config from trusted code
         run: |
           set -euo pipefail
-          config_file="$RUNNER_TEMP/firebase-preview.generated.json"
-          node scripts/write-firebase-hosting-config.mjs "$FIREBASE_PREVIEW_SITE" "$config_file"
-          echo "FIREBASE_PREVIEW_CONFIG=$config_file" >> "$GITHUB_ENV"
+          config_file="$FIREBASE_PREVIEW_STAGE/firebase-preview.generated.json"
+          node scripts/write-firebase-hosting-config.mjs "$FIREBASE_PREVIEW_STAGE/site" "$config_file"
+          jq '.hosting.public = "site"' "$config_file" > "$config_file.tmp"
+          mv "$config_file.tmp" "$config_file"
 
-      - name: Install trusted Firebase CLI without lifecycle scripts
-        run: npm ci --ignore-scripts
+      - name: Install isolated Firebase CLI without OIDC or lifecycle scripts
+        run: |
+          set -euo pipefail
+          npm install \
+            --prefix "$FIREBASE_PREVIEW_STAGE/firebase-cli" \
+            --ignore-scripts \
+            --no-audit \
+            --no-fund \
+            --package-lock=false \
+            firebase-tools@15.24.0
+          node "$FIREBASE_PREVIEW_STAGE/firebase-cli/node_modules/firebase-tools/lib/bin/firebase.js" --version
 
-      - name: Re-verify current pull-request head before credentials
+      - name: Re-verify current pull-request head before trusted handoff
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ steps.verify_trigger.outputs.pr_number }}
@@ -117,9 +129,69 @@ jobs:
             --pull-request "$current_pr_json" \
             --artifacts "$RUNNER_TEMP/firebase-preview-artifacts.json" \
             --output "$recheck_output"
+          cp "$GITHUB_EVENT_PATH" "$FIREBASE_PREVIEW_STAGE/context/event.json"
+          cp "$RUNNER_TEMP/firebase-preview-run.json" "$FIREBASE_PREVIEW_STAGE/context/run.json"
+          cp "$RUNNER_TEMP/firebase-preview-artifacts.json" "$FIREBASE_PREVIEW_STAGE/context/artifacts.json"
+          cp scripts/verify-preview-deploy-trigger.mjs "$FIREBASE_PREVIEW_STAGE/context/verify-preview-deploy-trigger.mjs"
 
-      # The credential is unavailable until all identity, archive, extracted
-      # shape, and trusted-config checks have completed successfully.
+      - name: Upload sanitized trusted deploy handoff
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: firebase-preview-trusted-ready
+          path: ${{ runner.temp }}/firebase-preview-ready
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 1
+
+  deploy-preview:
+    needs: prepare-preview
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    environment:
+      name: firebase-preview-trusted
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      pull-requests: read
+    outputs:
+      preview_skip_reason: ${{ steps.deploy_preview.outputs.preview_skip_reason }}
+      preview_url: ${{ steps.deploy_preview.outputs.preview_url }}
+
+    steps:
+      # This artifact was produced by the no-OIDC job in this exact trusted
+      # workflow run. The raw pull-request artifact never enters this job.
+      - name: Download sanitized trusted deploy handoff
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: firebase-preview-trusted-ready
+          path: ${{ runner.temp }}/firebase-preview-ready
+
+      - name: Validate trusted handoff without executing artifact content
+        env:
+          ARTIFACT_ID: ${{ needs.prepare-preview.outputs.artifact_id }}
+          HEAD_SHA: ${{ needs.prepare-preview.outputs.head_sha }}
+          PR_NUMBER: ${{ needs.prepare-preview.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+          bundle="$RUNNER_TEMP/firebase-preview-ready"
+          if [[ ! "$ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]] || [[ ! "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || [[ ! "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Trusted handoff identity is invalid." >&2
+            exit 1
+          fi
+          test -d "$bundle/site"
+          test -f "$bundle/firebase-preview.generated.json"
+          test -f "$bundle/firebase-cli/node_modules/firebase-tools/lib/bin/firebase.js"
+          test -f "$bundle/context/event.json"
+          test -f "$bundle/context/run.json"
+          test -f "$bundle/context/artifacts.json"
+          test -f "$bundle/context/verify-preview-deploy-trigger.mjs"
+          if [[ -n "$(find "$bundle" -type l -print -quit)" ]]; then
+            echo "Trusted handoff must not contain symbolic links." >&2
+            exit 1
+          fi
+          jq -e '.hosting.public == "site" and .hosting.site == "game-flow-c6311"' "$bundle/firebase-preview.generated.json" >/dev/null
+
       - name: Authenticate to Google Cloud through exact-workflow OIDC
         id: google_auth
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
@@ -134,13 +206,18 @@ jobs:
         id: deploy_preview
         timeout-minutes: 4
         env:
-          CURRENT_CHANNEL: pr-${{ steps.verify_trigger.outputs.pr_number }}
+          ARTIFACT_ID: ${{ needs.prepare-preview.outputs.artifact_id }}
+          CURRENT_CHANNEL: pr-${{ needs.prepare-preview.outputs.pr_number }}
+          EXPECTED_HEAD_SHA: ${{ needs.prepare-preview.outputs.head_sha }}
           GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ steps.verify_trigger.outputs.pr_number }}
+          PR_NUMBER: ${{ needs.prepare-preview.outputs.pr_number }}
         run: |
           set -euo pipefail
-          if [[ ! "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || [[ "$CURRENT_CHANNEL" != "pr-$PR_NUMBER" ]]; then
-            echo "Verified pull request or preview channel is invalid." >&2
+          bundle="$RUNNER_TEMP/firebase-preview-ready"
+          firebase_cli="$bundle/firebase-cli/node_modules/firebase-tools/lib/bin/firebase.js"
+          firebase_config="$bundle/firebase-preview.generated.json"
+          if [[ ! "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || [[ "$CURRENT_CHANNEL" != "pr-$PR_NUMBER" ]] || [[ ! "$EXPECTED_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Verified pull request, head, or preview channel is invalid." >&2
             exit 1
           fi
           log_file="$RUNNER_TEMP/firebase-preview-deploy.log"
@@ -149,17 +226,22 @@ jobs:
             local current_pr_json="$RUNNER_TEMP/firebase-preview-pre-deploy-pr.json"
             local recheck_output="$RUNNER_TEMP/firebase-preview-pre-deploy.outputs"
             gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$current_pr_json"
-            node scripts/verify-preview-deploy-trigger.mjs \
-              --event "$GITHUB_EVENT_PATH" \
-              --run "$RUNNER_TEMP/firebase-preview-run.json" \
+            node "$bundle/context/verify-preview-deploy-trigger.mjs" \
+              --event "$bundle/context/event.json" \
+              --run "$bundle/context/run.json" \
               --pull-request "$current_pr_json" \
-              --artifacts "$RUNNER_TEMP/firebase-preview-artifacts.json" \
+              --artifacts "$bundle/context/artifacts.json" \
               --output "$recheck_output"
+            grep -Fxq "head_sha=$EXPECTED_HEAD_SHA" "$recheck_output"
+            grep -Fxq "artifact_id=$ARTIFACT_ID" "$recheck_output"
           }
 
           deploy_preview_channel() {
             : > "$log_file"
-            ./node_modules/.bin/firebase hosting:channel:deploy "$CURRENT_CHANNEL" --project game-flow-c6311 --config "$FIREBASE_PREVIEW_CONFIG" --expires 7d --non-interactive 2>&1 | tee "$log_file"
+            (
+              cd "$bundle"
+              node "$firebase_cli" hosting:channel:deploy "$CURRENT_CHANNEL" --project game-flow-c6311 --config "$firebase_config" --expires 7d --non-interactive
+            ) 2>&1 | tee "$log_file"
           }
 
           skip_preview() {
@@ -198,7 +280,7 @@ jobs:
             grep -Eiq "HTTP Error: 400, Can't release to .*resource doesn't exist or isn't a valid release target" "$log_file"
           }
 
-          # Keep this check adjacent to the external write. A newer PR head
+          # Keep this check adjacent to the only Firebase write. A newer PR head
           # cancels this PR-scoped job and also fails this exact-head binding.
           recheck_current_head
           if ! deploy_preview_channel; then
@@ -237,20 +319,55 @@ jobs:
             echo "GOOGLE_GHA_CREDS_PATH="
           } >> "$GITHUB_ENV"
 
-      - name: Report preview URL on verified pull request
-        if: success()
+  report-preview:
+    needs: [prepare-preview, deploy-preview]
+    if: needs.deploy-preview.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout trusted default-branch verifier
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Report preview URL on the still-current pull request
         continue-on-error: true
         env:
+          EXPECTED_ARTIFACT_ID: ${{ needs.prepare-preview.outputs.artifact_id }}
+          EXPECTED_HEAD_SHA: ${{ needs.prepare-preview.outputs.head_sha }}
           GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ steps.verify_trigger.outputs.pr_number }}
-          PREVIEW_URL: ${{ steps.deploy_preview.outputs.preview_url }}
-          PREVIEW_SKIP_REASON: ${{ steps.deploy_preview.outputs.preview_skip_reason }}
+          PREVIEW_SKIP_REASON: ${{ needs.deploy-preview.outputs.preview_skip_reason }}
+          PREVIEW_URL: ${{ needs.deploy-preview.outputs.preview_url }}
+          PR_NUMBER: ${{ needs.prepare-preview.outputs.pr_number }}
           JQ_FILTER: '.[] | select(.user.login == "github-actions[bot]") | select(.body | contains("<!-- allplays-preview-url -->")) | .id'
         run: |
           set -euo pipefail
-          if [[ ! "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+          if [[ ! "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || [[ ! "$EXPECTED_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]] || [[ ! "$EXPECTED_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
             exit 1
           fi
+          run_json="$RUNNER_TEMP/firebase-preview-report-run.json"
+          pr_json="$RUNNER_TEMP/firebase-preview-report-pr.json"
+          artifacts_json="$RUNNER_TEMP/firebase-preview-report-artifacts.json"
+          verify_output="$RUNNER_TEMP/firebase-preview-report.outputs"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/${{ github.event.workflow_run.id }}" > "$run_json"
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$pr_json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/${{ github.event.workflow_run.id }}/artifacts?per_page=100" > "$artifacts_json"
+          node scripts/verify-preview-deploy-trigger.mjs \
+            --event "$GITHUB_EVENT_PATH" \
+            --run "$run_json" \
+            --pull-request "$pr_json" \
+            --artifacts "$artifacts_json" \
+            --output "$verify_output"
+          grep -Fxq "head_sha=$EXPECTED_HEAD_SHA" "$verify_output"
+          grep -Fxq "artifact_id=$EXPECTED_ARTIFACT_ID" "$verify_output"
+
           marker='<!-- allplays-preview-url -->'
           if [[ -n "$PREVIEW_URL" ]]; then
             body="$(printf '%s\n\nPreview URL: %s' "$marker" "$PREVIEW_URL")"
@@ -258,18 +375,6 @@ jobs:
             body="$(printf '%s\n\nFirebase preview skipped: %s' "$marker" "${PREVIEW_SKIP_REASON:-Firebase Hosting preview was unavailable for this run.}")"
           fi
           comment_id="$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --jq "$JQ_FILTER" | head -n1)"
-
-          # Bind the comment write to the same still-current head immediately
-          # before updating the shared pull-request comment.
-          current_pr_json="$RUNNER_TEMP/firebase-preview-pre-comment-pr.json"
-          recheck_output="$RUNNER_TEMP/firebase-preview-pre-comment.outputs"
-          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$current_pr_json"
-          node scripts/verify-preview-deploy-trigger.mjs \
-            --event "$GITHUB_EVENT_PATH" \
-            --run "$RUNNER_TEMP/firebase-preview-run.json" \
-            --pull-request "$current_pr_json" \
-            --artifacts "$RUNNER_TEMP/firebase-preview-artifacts.json" \
-            --output "$recheck_output"
           if [[ -n "$comment_id" ]]; then
             gh api "repos/$GITHUB_REPOSITORY/issues/comments/$comment_id" --method PATCH -f body="$body" >/dev/null
           else
