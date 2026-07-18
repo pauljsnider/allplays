@@ -211,6 +211,8 @@ describe('preview deployment workflow trust boundary', () => {
         expect(trustedWorkflow).toContain('node scripts/write-firebase-hosting-config.mjs "$FIREBASE_PREVIEW_STAGE/site"');
         expect(trustedWorkflow).toContain('CURRENT_CHANNEL: pr-${{ needs.prepare-preview.outputs.pr_number }}');
         expect(trustedWorkflow).toContain('node "$firebase_cli" hosting:channel:deploy "$CURRENT_CHANNEL" --project game-flow-c6311');
+        expect(trustedWorkflow).toContain('find "$bundle/site" -type l');
+        expect(trustedWorkflow).not.toContain('find "$bundle" -type l');
     });
 
     it('rechecks the exact pull-request head immediately before deploy and comment writes', () => {

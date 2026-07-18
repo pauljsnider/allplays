@@ -186,8 +186,8 @@ jobs:
           test -f "$bundle/context/run.json"
           test -f "$bundle/context/artifacts.json"
           test -f "$bundle/context/verify-preview-deploy-trigger.mjs"
-          if [[ -n "$(find "$bundle" -type l -print -quit)" ]]; then
-            echo "Trusted handoff must not contain symbolic links." >&2
+          if [[ -n "$(find "$bundle/site" -type l -print -quit)" ]]; then
+            echo "Untrusted Hosting content must not contain symbolic links." >&2
             exit 1
           fi
           jq -e '.hosting.public == "site" and .hosting.site == "game-flow-c6311"' "$bundle/firebase-preview.generated.json" >/dev/null

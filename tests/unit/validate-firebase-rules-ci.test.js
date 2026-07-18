@@ -284,6 +284,20 @@ service firebase.storage {
             'Test deploy'
         )).toThrow('Test deploy must not use a long-lived Google service-account key or static ADC input');
         expect(() => validateFirebaseDeployWorkloadIdentity(
+            validWorkflow.replace(
+                'run: node "$firebase_cli" deploy --only hosting --project game-flow-c6311',
+                'run: |\n              export FIREBASE_\\\n              TOKEN="$DEPLOY_AUTH"\n              node "$firebase_cli" deploy --only hosting --project game-flow-c6311'
+            ),
+            'Test deploy'
+        )).toThrow('Test deploy must not use a long-lived Google service-account key or static ADC input');
+        expect(() => validateFirebaseDeployWorkloadIdentity(
+            validWorkflow.replace(
+                'run: node "$firebase_cli" deploy --only hosting --project game-flow-c6311',
+                'run: |\n              node "$firebase_cli" deploy --\\\n              token "$DEPLOY_AUTH" --only hosting --project game-flow-c6311'
+            ),
+            'Test deploy'
+        )).toThrow('Test deploy must not use a long-lived Google service-account key or static ADC input');
+        expect(() => validateFirebaseDeployWorkloadIdentity(
             validWorkflow.replace('timeout-minutes: 4', 'timeout-minutes: 6'),
             'Test deploy'
         )).toThrow('Test deploy credentialed deploy steps must have a four-minute timeout');

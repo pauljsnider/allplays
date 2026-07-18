@@ -199,7 +199,10 @@ export function validateFirebaseDeployWorkloadIdentity(workflow, label) {
     }
 
     const scalarPolicyText = scalarStrings
-        .flatMap((value) => value.split('\n'))
+        // Bash removes an escaped physical newline before parsing tokens. Do
+        // the same before policy matching so `--\\\ntoken` and split env names
+        // cannot hide a forbidden credential path across workflow lines.
+        .flatMap((value) => value.replace(/\\\r?\n/g, '').split('\n'))
         .filter((line) => !/^\s*echo\s+["'](?:CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE|GOOGLE_APPLICATION_CREDENTIALS|GOOGLE_GHA_CREDS_PATH)=["']\s*$/.test(line))
         .join('\n');
     const forbiddenScalarPatterns = [
