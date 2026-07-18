@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
-import admin from 'firebase-admin';
+import { getApps, initializeApp } from 'firebase-admin/app';
+import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 
 const FIRESTORE_BATCH_LIMIT = 500;
 
@@ -9,11 +10,11 @@ function isTargetedLegacyMessage(data = {}) {
 }
 
 async function main() {
-    if (!admin.apps.length) {
-        admin.initializeApp();
+    if (!getApps().length) {
+        initializeApp();
     }
 
-    const db = admin.firestore();
+    const db = getFirestore();
     const teamsSnapshot = await db.collection('teams').get();
     let batch = db.batch();
     let pendingWrites = 0;
@@ -48,7 +49,7 @@ async function main() {
             batch.set(quarantineRef, {
                 ...message,
                 originalPath: messageDoc.ref.path,
-                quarantinedAt: admin.firestore.FieldValue.serverTimestamp(),
+                quarantinedAt: FieldValue.serverTimestamp(),
                 quarantineReason: 'legacy-targeted-team-chat'
             }, { merge: true });
             batch.delete(messageDoc.ref);

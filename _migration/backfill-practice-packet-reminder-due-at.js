@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
-import admin from 'firebase-admin';
+import { getApps, initializeApp } from 'firebase-admin/app';
+import { FieldPath, getFirestore, Timestamp } from 'firebase-admin/firestore';
 import { pathToFileURL } from 'node:url';
 
 const DEFAULT_PAGE_SIZE = 400;
@@ -40,7 +41,7 @@ export async function backfillPracticePacketReminderDueAt({
 
     do {
         let query = db.collectionGroup('practiceSessions')
-            .orderBy(admin.firestore.FieldPath.documentId())
+            .orderBy(FieldPath.documentId())
             .limit(pageSize);
         if (lastDoc) query = query.startAfter(lastDoc);
 
@@ -83,11 +84,19 @@ export async function backfillPracticePacketReminderDueAt({
     return { scanned, updated, skipped, malformed };
 }
 
+export function getMigrationFirestore({
+    getAppsFn = getApps,
+    initializeAppFn = initializeApp,
+    getFirestoreFn = getFirestore
+} = {}) {
+    if (!getAppsFn().length) initializeAppFn();
+    return getFirestoreFn();
+}
+
 async function main() {
-    if (!admin.apps.length) admin.initializeApp();
     const result = await backfillPracticePacketReminderDueAt({
-        db: admin.firestore(),
-        Timestamp: admin.firestore.Timestamp
+        db: getMigrationFirestore(),
+        Timestamp
     });
     console.log('[backfill-practice-packet-reminder-due-at] Done.', result);
 }

@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
-import admin from 'firebase-admin';
+import { getApps, initializeApp } from 'firebase-admin/app';
+import { getAuth } from 'firebase-admin/auth';
+import { FieldPath, FieldValue, getFirestore } from 'firebase-admin/firestore';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
@@ -102,7 +104,7 @@ async function getUserIdsByEmails(emails) {
 
     const ids = new Set();
     const results = await Promise.allSettled(
-        uniqueEmails.map((email) => admin.auth().getUserByEmail(email))
+        uniqueEmails.map((email) => getAuth().getUserByEmail(email))
     );
     results.forEach((result) => {
         if (result.status === 'fulfilled' && result.value?.uid) {
@@ -161,7 +163,7 @@ async function buildRecipientPayload(db, teamId, team, uid) {
         roles,
         categories: normalizeNotificationTargetCategories(preferences),
         tokens,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        updatedAt: FieldValue.serverTimestamp()
     };
 }
 
@@ -220,7 +222,7 @@ async function loadTargetTeams(db, options) {
         return snaps.filter((snap) => snap.exists);
     }
 
-    let query = db.collection('teams').orderBy(admin.firestore.FieldPath.documentId());
+    let query = db.collection('teams').orderBy(FieldPath.documentId());
     if (options.limit > 0) {
         query = query.limit(options.limit);
     }
@@ -229,12 +231,12 @@ async function loadTargetTeams(db, options) {
 }
 
 async function main() {
-    if (!admin.apps.length) {
-        admin.initializeApp();
+    if (!getApps().length) {
+        initializeApp();
     }
 
     const options = parseArgs(process.argv.slice(2));
-    const db = admin.firestore();
+    const db = getFirestore();
     const teams = await loadTargetTeams(db, options);
     let totalCandidates = 0;
     let totalWritten = 0;

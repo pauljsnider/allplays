@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
     backfillPracticePacketReminderDueAt,
-    derivePracticePacketReminderDueAt
+    derivePracticePacketReminderDueAt,
+    getMigrationFirestore
 } from '../../_migration/backfill-practice-packet-reminder-due-at.js';
 
 function makeHarness(records) {
@@ -57,6 +58,29 @@ function makeHarness(records) {
 }
 
 describe('practice packet reminder due-at backfill', () => {
+    it('initializes the modular Firebase Admin app before resolving Firestore', () => {
+        const db = { name: 'migration-db' };
+        const getAppsFn = vi.fn(() => []);
+        const initializeAppFn = vi.fn();
+        const getFirestoreFn = vi.fn(() => db);
+
+        expect(getMigrationFirestore({ getAppsFn, initializeAppFn, getFirestoreFn })).toBe(db);
+        expect(initializeAppFn).toHaveBeenCalledOnce();
+        expect(getFirestoreFn).toHaveBeenCalledOnce();
+    });
+
+    it('reuses an initialized Firebase Admin app', () => {
+        const initializeAppFn = vi.fn();
+
+        getMigrationFirestore({
+            getAppsFn: vi.fn(() => [{ name: '[DEFAULT]' }]),
+            initializeAppFn,
+            getFirestoreFn: vi.fn(() => ({}))
+        });
+
+        expect(initializeAppFn).not.toHaveBeenCalled();
+    });
+
     it('derives explicit packet dueAt before falling back to the session date', () => {
         expect(derivePracticePacketReminderDueAt({
             date: '2026-07-22T18:00:00.000Z',

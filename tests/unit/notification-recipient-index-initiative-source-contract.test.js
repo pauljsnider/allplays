@@ -26,7 +26,7 @@ describe('notification recipient index initiative source contract', () => {
         expect(migrationSource).toContain('normalizeNotificationTargetCategories(preferences)');
         expect(migrationSource).toContain("db.collection('users')");
         expect(migrationSource).toContain("'parentTeamIds', 'array-contains', teamId");
-        expect(migrationSource).toContain('admin.auth().getUserByEmail(email)');
+        expect(migrationSource).toContain('getAuth().getUserByEmail(email)');
         expect(migrationSource).toContain('--dry-run');
     });
 
