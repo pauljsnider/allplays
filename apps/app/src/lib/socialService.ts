@@ -330,21 +330,27 @@ export async function loadFriendProfile(user: AuthUser, profileUserId: string): 
     }
   }
 
-  const postsQuery = query(
-    collection(db, 'socialPosts'),
-    where('visibleUserIds', 'array-contains', viewerId),
-    where('authorId', '==', targetUserId),
-    where('hidden', '==', false),
-    orderBy('createdAt', 'desc'),
-    limit(socialPostLimit)
-  );
-  const [profileSnap, postsSnapshot, hiddenPostIds] = await Promise.all([
+  const [profileSnap, hiddenPostIds] = await Promise.all([
     withTimeout(getDoc(doc(db, publicUserProfileCollection, targetUserId)), 'Friend profile'),
-    withTimeout(getDocs(postsQuery), 'Friend profile posts'),
     loadHiddenSocialPostIds(viewerId)
   ]);
+  const postDocs = await loadSocialPostQueryPages({
+    buildQuery: (cursor) => query(
+      collection(db, 'socialPosts'),
+      where('visibleUserIds', 'array-contains', viewerId),
+      where('authorId', '==', targetUserId),
+      where('hidden', '==', false),
+      orderBy('createdAt', 'desc'),
+      ...(cursor ? [startAfter(cursor)] : []),
+      limit(socialPostLimit)
+    ),
+    label: 'Friend profile posts',
+    hiddenPostIds,
+    pageSize: socialPostLimit,
+    visibleLimit: socialPostLimit
+  });
   const profile = profileSnap?.exists?.() ? profileSnap.data() || {} : {};
-  const posts = sortSocialFeedItems(snapshotToDocs(postsSnapshot)
+  const posts = sortSocialFeedItems(postDocs
     .map(mapSocialPost)
     .filter((post) => !post.hidden && !hiddenPostIds.has(post.id)));
   const viewerReactions = await loadViewerSocialPostReactions(posts, viewerId);

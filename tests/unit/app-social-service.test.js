@@ -428,6 +428,58 @@ describe('React app social service', () => {
         expect(firebaseMocks.orderBy).toHaveBeenCalledWith('createdAt', 'desc');
     });
 
+    it('pages past viewer-hidden profile posts to fill the visible timeline', async () => {
+        const { loadFriendProfile } = await import('../../apps/app/src/lib/socialService.ts');
+        const hiddenPosts = Array.from({ length: 30 }, (_, index) => ({
+            id: `hidden-${index}`,
+            authorId: 'friend-1',
+            authorName: 'Jamie Friend',
+            title: `Hidden ${index}`,
+            hidden: false,
+            createdAt: { seconds: 300 - index },
+            visibleUserIds: ['user-1']
+        }));
+        firebaseMocks.getDoc.mockImplementation(async (ref) => {
+            if (ref.path[0] === 'friendships') {
+                return {
+                    id: 'friend-1__user-1',
+                    exists: () => true,
+                    data: () => ({ status: 'accepted', memberIds: ['friend-1', 'user-1'] })
+                };
+            }
+            if (ref.path[0] === 'publicUserProfiles') {
+                return { id: 'friend-1', exists: () => true, data: () => ({ displayName: 'Jamie Friend' }) };
+            }
+            return { exists: () => false };
+        });
+        firebaseMocks.getDocs.mockImplementation(async (queryRef) => {
+            const path = queryRef.collectionRef?.path || [];
+            if (path.join('/') === 'users/user-1/hiddenSocialPosts') {
+                return snapshot(hiddenPosts.map(({ id }) => ({ id })));
+            }
+            if (path.join('/') === 'socialPosts') {
+                const cursorClause = queryRef.clauses.find((clause) => clause.cursor);
+                return cursorClause
+                    ? snapshot([{
+                        id: 'older-visible',
+                        authorId: 'friend-1',
+                        authorName: 'Jamie Friend',
+                        title: 'Older visible',
+                        hidden: false,
+                        createdAt: { seconds: 100 },
+                        visibleUserIds: ['user-1']
+                    }])
+                    : snapshot(hiddenPosts);
+            }
+            return snapshot([]);
+        });
+
+        const profile = await loadFriendProfile(user, 'friend-1');
+
+        expect(profile.posts.map((post) => post.id)).toEqual(['older-visible']);
+        expect(firebaseMocks.startAfter).toHaveBeenCalledWith(expect.objectContaining({ id: 'hidden-29' }));
+    });
+
     it('rejects non-friends before reading a profile or its posts', async () => {
         const { loadFriendProfile } = await import('../../apps/app/src/lib/socialService.ts');
         firebaseMocks.getDoc.mockResolvedValueOnce({
