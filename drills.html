@@ -622,6 +622,7 @@
         import { getStarterDrillById, getStarterDrills } from './js/practice-starter-drills.js?v=1';
         import { mergeUniqueDrills, linkifySafeText, parseMarkdown } from './js/drills-issue28-helpers.js?v=3';
         import { appendLivePracticeNote } from './js/drills-live-practice-notes.js?v=1';
+        import { createSafeImageElement, resolveSafeDrillDiagramUrl } from './js/safe-image-url.js?v=1';
         import { getAI, getGenerativeModel, GoogleAIBackend } from './js/vendor/firebase-ai.js';
         import { getApp } from './js/vendor/firebase-app.js';
 
@@ -651,6 +652,7 @@
             libTab: 'community',
             libLastDoc: null,
             currentDetailDrill: null,
+            currentDetailDiagramUrls: [],
             practiceAttendanceCollapsed: false,
             practiceNotesCollapsed: false,
             activeVoiceRecognition: null,
@@ -760,6 +762,7 @@
 
         // ==================== INIT ====================
         renderFooter(document.getElementById('footer-container'));
+        bindDrillDiagramHandlers();
 
         async function init() {
             try {
@@ -1799,6 +1802,73 @@ ${JSON.stringify({
             return getDrill(drillId);
         }
 
+        function bindDrillDiagramHandlers() {
+            const detailContent = document.getElementById('detail-content');
+            if (detailContent && !detailContent.dataset.diagramHandlersBound) {
+                detailContent.dataset.diagramHandlersBound = 'true';
+                const activateDiagram = (event) => {
+                    const image = event.target.closest('[data-diagram-index]');
+                    if (!image || !detailContent.contains(image)) return;
+                    if (event.type === 'keydown' && !['Enter', ' '].includes(event.key)) return;
+                    if (event.type === 'keydown') event.preventDefault();
+                    const index = Number(image.dataset.diagramIndex);
+                    const url = Number.isSafeInteger(index) ? state.currentDetailDiagramUrls[index] : '';
+                    if (url) openDiagramLightbox(url);
+                };
+                detailContent.addEventListener('click', activateDiagram);
+                detailContent.addEventListener('keydown', activateDiagram);
+            }
+
+            const existingDiagrams = document.getElementById('drill-existing-diagrams');
+            if (existingDiagrams && !existingDiagrams.dataset.removeHandlerBound) {
+                existingDiagrams.dataset.removeHandlerBound = 'true';
+                existingDiagrams.addEventListener('click', (event) => {
+                    const button = event.target.closest('[data-remove-diagram-index]');
+                    if (!button || !existingDiagrams.contains(button)) return;
+                    const index = Number(button.dataset.removeDiagramIndex);
+                    if (Number.isSafeInteger(index)) removeDiagram(index);
+                });
+            }
+        }
+
+        function renderDrillDetailDiagrams(diagramUrls) {
+            const container = document.getElementById('detail-diagram-list');
+            state.currentDetailDiagramUrls = [];
+            if (!container) return;
+            container.replaceChildren();
+
+            const urls = Array.isArray(diagramUrls) ? diagramUrls.slice(0, 5) : [];
+            urls.forEach((rawUrl, sourceIndex) => {
+                const safeUrl = resolveSafeDrillDiagramUrl(rawUrl);
+                if (!safeUrl) {
+                    const unavailable = document.createElement('div');
+                    unavailable.className = 'h-40 min-w-40 rounded-lg border border-gray-200 bg-gray-50 px-4 flex items-center justify-center text-center text-xs text-gray-500';
+                    unavailable.textContent = `Diagram ${sourceIndex + 1} uses an unsupported legacy link.`;
+                    container.appendChild(unavailable);
+                    return;
+                }
+
+                const diagramIndex = state.currentDetailDiagramUrls.push(safeUrl) - 1;
+                const image = createSafeImageElement({
+                    url: safeUrl,
+                    resolveUrl: resolveSafeDrillDiagramUrl,
+                    alt: `Diagram ${sourceIndex + 1}`,
+                    className: 'h-40 rounded-lg border border-gray-200 cursor-pointer flex-shrink-0 hover:shadow-lg transition-shadow',
+                    onLoadError: (failedImage) => {
+                        const unavailable = document.createElement('div');
+                        unavailable.className = 'h-40 min-w-40 rounded-lg border border-gray-200 bg-gray-50 px-4 flex items-center justify-center text-center text-xs text-gray-500';
+                        unavailable.textContent = `Diagram ${sourceIndex + 1} is unavailable.`;
+                        failedImage.replaceWith(unavailable);
+                    }
+                });
+                if (!image) return;
+                image.dataset.diagramIndex = String(diagramIndex);
+                image.tabIndex = 0;
+                image.setAttribute('role', 'button');
+                container.appendChild(image);
+            });
+        }
+
         window._openDrill = async function(drillId) {
             try {
                 const drill = await resolveDrillById(drillId);
@@ -1872,13 +1942,13 @@ ${JSON.stringify({
                         <a href="${externalUrl}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-2 text-sm text-primary-700 font-medium underline break-all">${externalUrl}</a>
                     </div>` : '');
                 })()}
-                ${(drill.diagramUrls && drill.diagramUrls.length) ? `<div class="mb-6">
+                ${(Array.isArray(drill.diagramUrls) && drill.diagramUrls.length) ? `<div class="mb-6">
                     <h3 class="text-sm font-semibold text-gray-700 mb-3">Diagrams</h3>
-                    <div class="flex gap-3 overflow-x-auto pb-2">
-                        ${drill.diagramUrls.map((url, i) => `<img src="${escapeHtml(url)}" alt="Diagram ${i+1}" class="h-40 rounded-lg border border-gray-200 cursor-pointer flex-shrink-0 hover:shadow-lg transition-shadow" onclick="openDiagramLightbox('${escapeHtml(url)}')">`).join('')}
-                    </div>
+                    <div id="detail-diagram-list" class="flex gap-3 overflow-x-auto pb-2"></div>
                 </div>` : ''}
                 ${attribution}`;
+
+                renderDrillDetailDiagrams(drill.diagramUrls);
 
                 document.getElementById('drill-detail-modal').classList.remove('hidden');
             } catch (err) {
@@ -1901,17 +1971,30 @@ ${JSON.stringify({
             return videoId ? `https://www.youtube.com/embed/${videoId}` : null;
         }
 
-        window.openDiagramLightbox = function(url) {
+        function openDiagramLightbox(url) {
+            const safeUrl = resolveSafeDrillDiagramUrl(url);
+            if (!safeUrl) return;
             const overlay = document.createElement('div');
             overlay.className = 'fixed inset-0 z-[60] bg-black/80 flex items-center justify-center p-4 cursor-pointer';
-            overlay.onclick = () => overlay.remove();
-            overlay.innerHTML = `<img src="${escapeHtml(url)}" class="max-w-full max-h-full rounded-xl shadow-2xl">`;
+            overlay.setAttribute('role', 'dialog');
+            overlay.setAttribute('aria-label', 'Drill diagram preview');
+            overlay.addEventListener('click', () => overlay.remove());
+            const image = createSafeImageElement({
+                url: safeUrl,
+                resolveUrl: resolveSafeDrillDiagramUrl,
+                alt: 'Expanded drill diagram',
+                className: 'max-w-full max-h-full rounded-xl shadow-2xl',
+                onLoadError: () => overlay.remove()
+            });
+            if (!image) return;
+            overlay.appendChild(image);
             document.body.appendChild(overlay);
-        };
+        }
 
         function closeDrillDetail() {
             document.getElementById('drill-detail-modal').classList.add('hidden');
             state.currentDetailDrill = null;
+            state.currentDetailDiagramUrls = [];
         }
 
         // ==================== FAVORITES ====================
@@ -2750,7 +2833,7 @@ ${JSON.stringify({
             // Diagram files - reset file input and previews
             document.getElementById('drillDiagramFiles').value = '';
             document.getElementById('drill-diagram-previews').innerHTML = '';
-            state.formDiagramUrls = drill?.diagramUrls ? [...drill.diagramUrls] : [];
+            state.formDiagramUrls = Array.isArray(drill?.diagramUrls) ? [...drill.diagramUrls] : [];
             renderExistingDiagrams();
 
             state.formAiHistory = [{
@@ -2765,22 +2848,43 @@ ${JSON.stringify({
             const container = document.getElementById('drill-existing-diagrams');
             if (!container) return;
             if (!state.formDiagramUrls || state.formDiagramUrls.length === 0) {
-                container.innerHTML = '';
+                container.replaceChildren();
                 return;
             }
-            container.innerHTML = state.formDiagramUrls.map((url, i) => `
-                <div class="relative group">
-                    <img src="${escapeHtml(url)}" alt="Diagram ${i+1}" class="h-20 w-20 object-cover rounded-lg border border-gray-200">
-                    <button type="button" onclick="removeDiagram(${i})" class="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold shadow hover:bg-red-600">&times;</button>
-                </div>
-            `).join('');
+            container.replaceChildren();
+            state.formDiagramUrls.slice(0, 5).forEach((url, index) => {
+                const card = document.createElement('div');
+                card.className = 'relative group';
+                const image = createSafeImageElement({
+                    url,
+                    resolveUrl: resolveSafeDrillDiagramUrl,
+                    alt: `Diagram ${index + 1}`,
+                    className: 'h-20 w-20 object-cover rounded-lg border border-gray-200'
+                });
+                if (image) {
+                    card.appendChild(image);
+                } else {
+                    const unavailable = document.createElement('div');
+                    unavailable.className = 'h-20 w-20 rounded-lg border border-gray-200 bg-gray-50 px-2 flex items-center justify-center text-center text-[10px] text-gray-500';
+                    unavailable.textContent = 'Unsupported legacy link';
+                    card.appendChild(unavailable);
+                }
+                const removeButton = document.createElement('button');
+                removeButton.type = 'button';
+                removeButton.className = 'absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold shadow hover:bg-red-600';
+                removeButton.dataset.removeDiagramIndex = String(index);
+                removeButton.setAttribute('aria-label', `Remove diagram ${index + 1}`);
+                removeButton.textContent = '\u00d7';
+                card.appendChild(removeButton);
+                container.appendChild(card);
+            });
         }
 
-        window.removeDiagram = function(index) {
+        function removeDiagram(index) {
             if (!state.formDiagramUrls) return;
             state.formDiagramUrls.splice(index, 1);
             renderExistingDiagrams();
-        };
+        }
 
         function closeDrillForm(force = false) {
             if (state.isSavingDrill && !force) {

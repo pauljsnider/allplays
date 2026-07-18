@@ -252,6 +252,10 @@ function buildModuleSource() {
             'const { isViewerChatEnabled } = deps.liveGameChat;'
         )
         .replace(
+            /import \{ createSafeImageElement, resolveSafeProfilePhotoUrl \} from '\.\/safe-image-url\.js\?v=\d+';/,
+            'const { createSafeImageElement, resolveSafeProfilePhotoUrl } = deps.safeImage;'
+        )
+        .replace(
             "import { createPlayAnnouncer } from './live-game-announcer.js?v=1';",
             'const { createPlayAnnouncer } = deps.liveGameAnnouncer;'
         )
@@ -405,6 +409,10 @@ async function bootReplayPage({ replayEvents = [], game: gameOverrides = {}, rep
             }
         },
         liveGameChat: { isViewerChatEnabled },
+        safeImage: {
+            createSafeImageElement: () => null,
+            resolveSafeProfilePhotoUrl: () => ''
+        },
         liveGameAnnouncer: {
             createPlayAnnouncer: () => ({
                 isSupported: () => true,
