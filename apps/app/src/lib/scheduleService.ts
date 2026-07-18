@@ -4248,23 +4248,48 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
 
 async function loadOwnRsvpDocuments(events: ParentScheduleEvent[], userId: string) {
   const firstEvent = events[0];
-  if (!firstEvent) return { rsvps: [], complete: true };
+  if (!firstEvent) return {
+    rsvps: [],
+    responseReadsCompleteByChild: {} as Record<string, boolean>,
+    noteReadsCompleteByChild: {} as Record<string, boolean>
+  };
   const childIds = uniqueNonEmptyStrings(events.map((event) => event.childId));
   const rsvpIds = uniqueNonEmptyStrings([userId, ...childIds.map((childId) => `${userId}__${childId}`)]);
-  const results = await Promise.allSettled(rsvpIds.flatMap((rsvpId) => [
-    getDoc(doc(db, `teams/${firstEvent.teamId}/games/${firstEvent.id}/rsvps`, rsvpId))
-      .then((snapshot: any) => snapshot.exists() ? { kind: 'rsvp' as const, value: { id: snapshot.id, ...snapshot.data() } } : null),
-    getDoc(doc(db, `teams/${firstEvent.teamId}/games/${firstEvent.id}/rsvpNotes`, rsvpId))
-      .then((snapshot: any) => snapshot.exists() ? { kind: 'note' as const, value: { id: snapshot.id, ...snapshot.data() } } : null)
+  const reads = rsvpIds.flatMap((rsvpId) => ([
+    {
+      kind: 'rsvp' as const,
+      rsvpId,
+      promise: getDoc(doc(db, `teams/${firstEvent.teamId}/games/${firstEvent.id}/rsvps`, rsvpId))
+        .then((snapshot: any) => snapshot.exists() ? { kind: 'rsvp' as const, value: { id: snapshot.id, ...snapshot.data() } } : null)
+    },
+    {
+      kind: 'note' as const,
+      rsvpId,
+      promise: getDoc(doc(db, `teams/${firstEvent.teamId}/games/${firstEvent.id}/rsvpNotes`, rsvpId))
+        .then((snapshot: any) => snapshot.exists() ? { kind: 'note' as const, value: { id: snapshot.id, ...snapshot.data() } } : null)
+    }
   ]));
+  const results = await Promise.allSettled(reads.map((read) => read.promise));
   const loaded = results
     .filter((result): result is PromiseFulfilledResult<any> => result.status === 'fulfilled' && Boolean(result.value))
     .map((result) => result.value);
+  const completedReads = new Set(
+    results.flatMap((result, index) => result.status === 'fulfilled'
+      ? [`${reads[index].kind}:${reads[index].rsvpId}`]
+      : [])
+  );
   const rsvps = loaded.filter((entry) => entry.kind === 'rsvp').map((entry) => entry.value);
   const notes = loaded.filter((entry) => entry.kind === 'note').map((entry) => entry.value);
   return {
     rsvps: mergeRsvpNotesIntoRsvps(rsvps, notes),
-    complete: results.every((result) => result.status === 'fulfilled')
+    responseReadsCompleteByChild: Object.fromEntries(childIds.map((childId) => [
+      childId,
+      completedReads.has(`rsvp:${userId}`) && completedReads.has(`rsvp:${userId}__${childId}`)
+    ])),
+    noteReadsCompleteByChild: Object.fromEntries(childIds.map((childId) => [
+      childId,
+      completedReads.has(`note:${userId}`) && completedReads.has(`note:${userId}__${childId}`)
+    ]))
   };
 }
 
@@ -4288,13 +4313,14 @@ export async function hydrateParentScheduleRsvps(
     const firstEvent = matchingEvents[0];
     if (!firstEvent) return;
     try {
-      const { rsvps, complete } = await loadOwnRsvpDocuments(matchingEvents, user.uid);
+      const { rsvps, responseReadsCompleteByChild, noteReadsCompleteByChild } = await loadOwnRsvpDocuments(matchingEvents, user.uid);
       const myRsvpByChild = resolveMyRsvpByChildForGame(schedule.events, firstEvent.teamId, firstEvent.id, rsvps, user.uid);
       const myRsvpNotesByChild = resolveMyRsvpNotesByChildForGame(schedule.events, firstEvent.teamId, firstEvent.id, rsvps, user.uid);
       matchingEvents.forEach((event) => {
-        const hydratedResponse = normalizeRsvpResponse(myRsvpByChild[event.childId]);
-        if (complete || hydratedResponse !== 'not_responded') {
-          event.myRsvp = hydratedResponse;
+        if (responseReadsCompleteByChild[event.childId]) {
+          event.myRsvp = normalizeRsvpResponse(myRsvpByChild[event.childId]);
+        }
+        if (noteReadsCompleteByChild[event.childId]) {
           event.myRsvpNote = myRsvpNotesByChild[event.childId] || null;
         }
       });

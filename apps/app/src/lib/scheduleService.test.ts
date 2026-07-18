@@ -2425,6 +2425,69 @@ describe('parent family RSVP submission', () => {
     expect(eventWithKnownResponse.myRsvpNote).toBe('Already loaded');
   });
 
+  it('preserves a known child RSVP when its override read fails after the family RSVP loads', async () => {
+    const eventWithKnownResponse = {
+      ...baseEvent,
+      id: 'game-child-read-failure',
+      myRsvp: 'going',
+      myRsvpNote: null
+    } as any;
+    mocks.getDoc.mockImplementation(async (reference: any) => {
+      if (reference.path.endsWith('/rsvps/parent-1')) {
+        return {
+          id: 'parent-1',
+          exists: () => true,
+          data: () => ({ userId: 'parent-1', playerId: 'player-1', response: 'not_going' })
+        };
+      }
+      if (reference.path.endsWith('/rsvps/parent-1__player-1')) {
+        throw new Error('child override read failed');
+      }
+      return { id: reference.path.split('/').pop(), exists: () => false, data: () => null };
+    });
+
+    await hydrateParentScheduleRsvps({ children: [], events: [eventWithKnownResponse] }, user as any);
+
+    expect(eventWithKnownResponse.myRsvp).toBe('going');
+  });
+
+  it('preserves a known child RSVP note when its private note read fails', async () => {
+    const eventWithKnownNote = {
+      ...baseEvent,
+      id: 'game-note-read-failure',
+      myRsvp: 'going',
+      myRsvpNote: 'Already loaded'
+    } as any;
+    mocks.getDoc.mockImplementation(async (reference: any) => {
+      if (reference.path.endsWith('/rsvps/parent-1')) {
+        return {
+          id: 'parent-1',
+          exists: () => true,
+          data: () => ({ userId: 'parent-1', playerId: 'player-1', response: 'going' })
+        };
+      }
+      if (reference.path.endsWith('/rsvps/parent-1__player-1')) {
+        return { id: 'parent-1__player-1', exists: () => false, data: () => null };
+      }
+      if (reference.path.endsWith('/rsvpNotes/parent-1')) {
+        return {
+          id: 'parent-1',
+          exists: () => true,
+          data: () => ({ userId: 'parent-1', note: 'Stale family note' })
+        };
+      }
+      if (reference.path.endsWith('/rsvpNotes/parent-1__player-1')) {
+        throw new Error('child note read failed');
+      }
+      return { id: reference.path.split('/').pop(), exists: () => false, data: () => null };
+    });
+
+    await hydrateParentScheduleRsvps({ children: [], events: [eventWithKnownNote] }, user as any);
+
+    expect(eventWithKnownNote.myRsvp).toBe('going');
+    expect(eventWithKnownNote.myRsvpNote).toBe('Already loaded');
+  });
+
   afterEach(() => {
     if (previousWindow === undefined) {
       delete (globalThis as any).window;
