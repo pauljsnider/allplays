@@ -22,15 +22,19 @@ describe('team chat notification delivery contract', () => {
         expect(functionsSource).toContain('mutedUids: hydratedMembers.filter((member) => member.muted).map((member) => member.uid)');
     });
 
-    it('sends mention pushes only to mentioned users and live chat pushes only to non-muted non-mentioned users', () => {
+    it('sends mention pushes only to mention-enabled users and falls other mentions back to live chat', () => {
         expect(functionsSource).toContain('function buildTeamChatNotificationPlan({ text, actorUid = null, recipientContext })');
+        expect(functionsSource).toContain('const members = Array.isArray(context.members) ? context.members : [];');
         expect(functionsSource).toContain('const mentionedUids = text');
-        expect(functionsSource).toContain('detectMentionedUids(text, mentionMembers, { allowReservedMentions: actorIsStaff }).filter((uid) => uid !== actorUid)');
+        expect(functionsSource).toContain('detectMentionedUids(text, members, { allowReservedMentions: actorIsStaff }).filter((uid) => uid !== actorUid)');
         expect(functionsSource).toContain("category: 'mentions'");
         expect(functionsSource).toContain('targets: notificationPlan.mentionTargets');
+        expect(functionsSource).toContain('inboxUids: notificationPlan.mentionInboxUids');
         expect(functionsSource).toContain("category: 'liveChat'");
         expect(functionsSource).toContain('targets: notificationPlan.liveChatTargets');
-        expect(functionsSource).toContain('!mentionedSet.has(target.uid)');
+        expect(functionsSource).toContain('inboxUids: notificationPlan.liveChatInboxUids');
+        expect(functionsSource).toContain('!mentionDeliverySet.has(uid) && !mutedSet.has(uid)');
+        expect(functionsSource).toContain('!mentionDeliverySet.has(target.uid)');
         expect(functionsSource).toContain('!mutedSet.has(target.uid)');
     });
 

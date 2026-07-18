@@ -92,6 +92,29 @@ function makeFirestore(seed) {
           .filter((entryPath) => entryPath.startsWith(`${path}/`) && entryPath.split('/').length === depth)
           .map(snapshot);
         return { docs };
+      },
+      async add(value) {
+        const nextId = (collectionCounters.get(path) || 0) + 1;
+        collectionCounters.set(path, nextId);
+        const write = { path: `${path}/auto-${nextId}`, value };
+        committedWrites.push(write);
+        state.set(write.path, value);
+        return doc(write.path);
+      },
+      orderBy() {
+        return {
+          limit() {
+            return {
+              async get() {
+                const depth = path.split('/').length + 1;
+                const docs = [...state.keys()]
+                  .filter((entryPath) => entryPath.startsWith(`${path}/`) && entryPath.split('/').length === depth)
+                  .map(snapshot);
+                return { docs };
+              }
+            };
+          }
+        };
       }
     };
   }
@@ -99,6 +122,14 @@ function makeFirestore(seed) {
   return {
     doc,
     collection,
+    findUserIdByEmail(email) {
+      const normalizedEmail = String(email || '').trim().toLowerCase();
+      const userEntry = [...state.entries()].find(([path, value]) => (
+        /^users\/[^/]+$/.test(path)
+        && String(value?.email || '').trim().toLowerCase() === normalizedEmail
+      ));
+      return userEntry ? userEntry[0].split('/').pop() : null;
+    },
     batch() {
       const writes = [];
       return {
@@ -138,7 +169,14 @@ function loadCallables(seed, storageMetadata = {}) {
       FieldValue: fieldValue,
       FieldPath: { documentId: () => '__name__' }
     }),
-    auth: () => ({ verifyIdToken: async () => null }),
+    auth: () => ({
+      verifyIdToken: async () => null,
+      getUserByEmail: async (email) => {
+        const uid = firestore.findUserIdByEmail(email);
+        if (!uid) throw new Error('User not found');
+        return { uid };
+      }
+    }),
     messaging: () => ({}),
     storage: () => ({
       bucket: () => ({
@@ -244,6 +282,8 @@ test('sendTeamEmail queues an authorized selected-member send with verified atta
 
   assert.equal(result.status, 'sent');
   assert.equal(result.recipientCount, 1);
+  assert.equal(result.inboxWriteCount, 1);
+  assert.equal(result.inboxFailureCount, 0);
   const historyWrite = firestore.committedWrites.find((write) => write.path.startsWith('teams/team-1/teamEmails/'));
   assert.ok(historyWrite);
   assert.equal(historyWrite.value.targetType, 'individuals');
@@ -267,4 +307,12 @@ test('sendTeamEmail queues an authorized selected-member send with verified atta
   assert.equal(mailWrites[0].value.metadata.teamEmailMessageId, historyWrite.path.split('/').pop());
   assert.deepEqual(mailWrites[0].value.metadata.attachments, historyWrite.value.attachments);
   assert.equal(mailWrites[0].value.metadata.attachmentTotalBytes, 2048);
+  const inboxWrites = firestore.committedWrites.filter((write) => write.path.startsWith('users/parent-1/notificationInbox/'));
+  assert.equal(inboxWrites.length, 1);
+  assert.equal(inboxWrites[0].value.category, 'team_email');
+  assert.equal(inboxWrites[0].value.title, 'Team email: Practice update');
+  assert.equal(inboxWrites[0].value.body, 'Practice moved.');
+  assert.equal(inboxWrites[0].value.appRoute, '/messages/team-1?conversationId=team');
+  assert.equal(inboxWrites[0].value.conversationId, 'team');
+  assert.equal(firestore.committedWrites.some((write) => write.path.startsWith('users/owner-1/notificationInbox/')), false);
 });

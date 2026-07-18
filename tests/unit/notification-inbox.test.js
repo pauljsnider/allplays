@@ -54,7 +54,7 @@ describe('notification inbox pipeline', () => {
         ]);
     });
 
-    it('wires inbox writes and cleanup into both notification send paths', () => {
+    it('wires inbox writes and cleanup into push, direct, and team-email send paths', () => {
         expect(NOTIFICATION_INBOX_MAX_ITEMS).toBe(50);
         expect(functionsSource).toContain('async function writeNotificationInboxRecords');
         expect(functionsSource).toContain("firestore.collection(`users/${target.uid}/notificationInbox`)");
@@ -64,9 +64,12 @@ describe('notification inbox pipeline', () => {
         expect(functionsSource).toContain('.limit(500)');
         expect(functionsSource).not.toContain('.offset(NOTIFICATION_INBOX_MAX_ITEMS)');
         expect(functionsSource.match(/const inboxResult = await writeNotificationInboxRecords\(\{/g)).toHaveLength(2);
-        expect(functionsSource.match(/inboxWriteCount: inboxResult.writeCount/g)).toHaveLength(2);
+        expect(functionsSource.match(/const inboxPromise = writeNotificationInboxRecords\(\{/g)).toHaveLength(1);
+        expect(functionsSource).toContain('await inboxPromise;\n    throw error;');
+        expect(functionsSource.match(/inboxWriteCount: inboxResult.writeCount/g)).toHaveLength(3);
         expect(functionsSource.match(/inboxCleanupCount: inboxResult.cleanupCount/g)).toHaveLength(2);
-        expect(functionsSource.match(/inboxFailureCount: inboxResult.failureCount/g)).toHaveLength(2);
+        expect(functionsSource.match(/inboxFailureCount: inboxResult.failureCount/g)).toHaveLength(3);
+        expect(functionsSource).toContain("category: 'team_email'");
     });
 
     it('exposes authenticated callable functions for individual and mark-all read state updates', () => {

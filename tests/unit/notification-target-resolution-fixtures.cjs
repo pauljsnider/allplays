@@ -60,8 +60,10 @@ const LEGACY_CATEGORY_RESOLUTION_FIXTURES = Object.freeze([
             deviceGets: 4
         },
         expectedIndexedCounts: {
-            preferenceGets: 0,
-            deviceGets: 0
+            // parent-2 has no aggregate recipient document in this partial-index
+            // fixture, so coverage repair checks its live disabled preference/device once.
+            preferenceGets: 1,
+            deviceGets: 1
         }
     },
     {
