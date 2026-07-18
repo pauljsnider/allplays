@@ -314,6 +314,8 @@ describe('preview deployment trigger verification', () => {
             'https://api.github.com/repos/attacker/allplays/actions/artifacts/50001/zip',
             'https://api.github.com/repos/pauljsnider/allplays/actions/artifacts/99999/zip',
             'https://api.github.com.evil.example/repos/pauljsnider/allplays/actions/artifacts/50001/zip',
+            'https://:@api.github.com/repos/pauljsnider/allplays/actions/artifacts/50001/zip',
+            'https://@api.github.com/repos/pauljsnider/allplays/actions/artifacts/50001/zip',
             'https://api.github.com/repos/pauljsnider/allplays/actions/artifacts/50001/zip?redirect=evil'
         ]) {
             const fixture = validTriggerFixture();

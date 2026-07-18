@@ -112,23 +112,9 @@ export function verifyPreviewDeployTrigger({ event, run, pullRequest, artifacts 
         fail(`named artifact exceeds ${MAX_PREVIEW_ARCHIVE_BYTES} compressed bytes.`);
     }
     const expectedArchivePath = `/repos/${repository}/actions/artifacts/${artifactId}/zip`;
-    try {
-        const archiveUrl = new URL(artifact.archive_download_url);
-        if (
-            archiveUrl.protocol !== 'https:'
-            || archiveUrl.username
-            || archiveUrl.password
-            || archiveUrl.hostname !== 'api.github.com'
-            || archiveUrl.port
-            || archiveUrl.pathname !== expectedArchivePath
-            || archiveUrl.search
-            || archiveUrl.hash
-        ) {
-            fail('named artifact archive URL does not match its verified GitHub artifact ID.');
-        }
-    } catch (error) {
-        if (error?.message?.startsWith('Preview deploy trust check failed:')) throw error;
-        fail('named artifact archive URL is invalid.');
+    const expectedArchiveUrl = `https://api.github.com${expectedArchivePath}`;
+    if (artifact.archive_download_url !== expectedArchiveUrl) {
+        fail('named artifact archive URL does not exactly match its verified GitHub artifact ID.');
     }
 
     return {
