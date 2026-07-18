@@ -7,6 +7,11 @@ on:
       - synchronize
       - reopened
 
+# Pull-request-controlled code runs here, so this workflow has no repository
+# permissions and receives no privileged secrets. Its only deploy input is an
+# untrusted, staged Hosting artifact consumed by the trusted workflow_run job.
+permissions: {}
+
 concurrency:
   group: preview-${{ github.event.pull_request.number }}
   cancel-in-progress: true
@@ -17,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout pull request merge
         run: |
           git init .
           git remote add origin https://github.com/${{ github.repository }}.git
@@ -25,13 +30,13 @@ jobs:
           git checkout --force refs/remotes/pull/${{ github.event.pull_request.number }}/merge
 
       - name: Setup Node
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 22
           cache: npm
 
       - name: Setup Java
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
         with:
           distribution: temurin
           java-version: 21
@@ -68,7 +73,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout pull request merge
         run: |
           git init .
           git remote add origin https://github.com/${{ github.repository }}.git
@@ -76,7 +81,7 @@ jobs:
           git checkout --force refs/remotes/pull/${{ github.event.pull_request.number }}/merge
 
       - name: Setup Node
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 22
           cache: npm
@@ -100,23 +105,18 @@ jobs:
 
       - name: Upload server log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: preview-regression-guards-http-log
           path: /tmp/allplays-preview-regression-guards.log
 
-  deploy:
+  build-preview-artifact:
     if: github.event.pull_request.head.repo.full_name == github.repository
     needs: [unit-tests, regression-guards]
     runs-on: ubuntu-latest
-    permissions:
-      checks: write
-      contents: read
-      issues: write
-      pull-requests: write
 
     steps:
-      - name: Checkout
+      - name: Checkout pull request merge
         run: |
           git init .
           git remote add origin https://github.com/${{ github.repository }}.git
@@ -124,7 +124,7 @@ jobs:
           git checkout --force refs/remotes/pull/${{ github.event.pull_request.number }}/merge
 
       - name: Setup Node
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 22
           cache: npm
@@ -150,196 +150,17 @@ jobs:
       - name: Build React app
         run: npm run app:build
 
-      - name: Stage Firebase preview bundle
+      - name: Stage untrusted Firebase Hosting bundle
         env:
           ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY: ${{ vars.APP_CHECK_PREVIEW_RECAPTCHA_ENTERPRISE_SITE_KEY }}
           ALLPLAYS_APP_CHECK_ENFORCEMENT_READY: ${{ vars.APP_CHECK_ENFORCEMENT_READY }}
-        run: |
-          site_dir="$RUNNER_TEMP/firebase-preview-site"
-          config_file="$GITHUB_WORKSPACE/.firebase-preview.generated.json"
-          node scripts/stage-pages-bundle.mjs "$site_dir"
-          node scripts/write-firebase-hosting-config.mjs "$site_dir" "$config_file"
-          echo "FIREBASE_PREVIEW_CONFIG=$config_file" >> "$GITHUB_ENV"
+        run: node scripts/stage-pages-bundle.mjs "$RUNNER_TEMP/firebase-preview-site"
 
-      - name: Configure Firebase service account
-        run: |
-          credentials_file="$RUNNER_TEMP/firebase-service-account.json"
-          printf '%s' '${{ secrets.FIREBASE_SERVICE_ACCOUNT_GAME_FLOW_C6311 }}' > "$credentials_file"
-          echo "GOOGLE_APPLICATION_CREDENTIALS=$credentials_file" >> "$GITHUB_ENV"
-
-      - name: Prune stale Firebase preview channels
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CURRENT_CHANNEL: pr-${{ github.event.pull_request.number }}
-          KEEP_RECENT_OPEN_PR_CHANNELS: '20'
-        run: |
-          set -euo pipefail
-          open_pr_numbers_file="$RUNNER_TEMP/firebase-preview-open-pr-numbers.txt"
-          if ! gh pr list --repo "${{ github.repository }}" --state open --limit 200 --json number,updatedAt --jq 'sort_by(.updatedAt) | reverse | .[].number' > "$open_pr_numbers_file"; then
-            echo "Warning: unable to list open PRs; skipping stale Firebase preview channel pruning."
-            exit 0
-          fi
-
-          channels_file="$RUNNER_TEMP/firebase-preview-channels.txt"
-          channels_log="$RUNNER_TEMP/firebase-preview-channels.log"
-          keep_file="$RUNNER_TEMP/firebase-preview-keep.txt"
-          prune_file="$RUNNER_TEMP/firebase-preview-prune.txt"
-          {
-            echo "$CURRENT_CHANNEL"
-            head -n "$KEEP_RECENT_OPEN_PR_CHANNELS" "$open_pr_numbers_file" | sed 's/^/pr-/'
-          } | sed '/^$/d' | sort -u > "$keep_file"
-          if ! ./node_modules/.bin/firebase hosting:channel:list --site game-flow-c6311 --project game-flow-c6311 > "$channels_file" 2>"$channels_log"; then
-            echo "Warning: unable to list Firebase preview channels; skipping stale Firebase preview channel pruning." >&2
-            cat "$channels_log" >&2
-            exit 0
-          fi
-          awk -F '│' 'NF > 2 {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); if ($2 ~ /^pr-/) print $2 }' "$channels_file" | sort -u > "$prune_file"
-
-          delete_channel() {
-            local channel="$1"
-            local delete_log="$RUNNER_TEMP/firebase-preview-delete-$channel.log"
-            if ! ./node_modules/.bin/firebase hosting:channel:delete "$channel" --site game-flow-c6311 --project game-flow-c6311 --force >"$delete_log" 2>&1; then
-              if grep -Eq 'HTTP Error: 404|Not Found' "$delete_log"; then
-                echo "Skipping already-missing Firebase preview channel: $channel"
-                return 0
-              fi
-              cat "$delete_log" >&2
-              return 1
-            fi
-          }
-
-          while read -r channel; do
-            if [ -z "$channel" ] || grep -qx "$channel" "$keep_file"; then
-              continue
-            fi
-            delete_channel "$channel"
-          done < "$prune_file"
-
-      - name: Deploy Firebase Hosting preview
-        id: deploy_preview
-        env:
-          CURRENT_CHANNEL: pr-${{ github.event.pull_request.number }}
-        run: |
-          set -euo pipefail
-          log_file="$RUNNER_TEMP/firebase-preview-deploy.log"
-
-          deploy_preview_channel() {
-            : > "$log_file"
-            ./node_modules/.bin/firebase hosting:channel:deploy "$CURRENT_CHANNEL" --project game-flow-c6311 --config "$FIREBASE_PREVIEW_CONFIG" --expires 7d --non-interactive 2>&1 | tee "$log_file"
-          }
-
-          skip_preview() {
-            local reason="$1"
-            {
-              echo "### Firebase preview skipped"
-              echo
-              echo "$reason"
-            } >> "$GITHUB_STEP_SUMMARY"
-            echo "preview_url=" >> "$GITHUB_OUTPUT"
-            echo "preview_skip_reason=$reason" >> "$GITHUB_OUTPUT"
-            exit 0
-          }
-
-          skip_preview_for_quota() {
-            skip_preview "Firebase Hosting preview channel quota was reached. Build and regression checks completed successfully, so this deploy-only preview limitation did not fail the PR."
-          }
-
-          skip_preview_for_auth() {
-            skip_preview "Firebase Hosting preview deploy authentication was unavailable for this run. Build and regression checks completed successfully, so this deploy-only preview limitation did not fail the PR."
-          }
-
-          skip_preview_for_release_target() {
-            skip_preview "Firebase Hosting preview channel release target was unavailable for this run. Build and regression checks completed successfully, so this deploy-only preview limitation did not fail the PR."
-          }
-
-          preview_deploy_hit_quota() {
-            grep -Eiq 'HTTP Error: 429|channel quota reached' "$log_file"
-          }
-
-          preview_deploy_hit_auth_error() {
-            grep -Eiq 'Failed to authenticate|Command requires authentication|Unable to read the credential file specified by the GOOGLE_APPLICATION_CREDENTIALS' "$log_file"
-          }
-
-          preview_deploy_hit_release_target_error() {
-            grep -Eiq "HTTP Error: 400, Can't release to .*resource doesn't exist or isn't a valid release target" "$log_file"
-          }
-
-          delete_oldest_preview_channel() {
-            channels_file="$RUNNER_TEMP/firebase-preview-channels-retry.txt"
-            delete_log="$RUNNER_TEMP/firebase-preview-delete-retry.log"
-            if ! ./node_modules/.bin/firebase hosting:channel:list --site game-flow-c6311 --project game-flow-c6311 > "$channels_file"; then
-              skip_preview_for_quota
-            fi
-            oldest_channel="$(awk -F '│' 'NF > 3 {
-              channel=$2
-              release_time=$3
-              gsub(/^[[:space:]]+|[[:space:]]+$/, "", channel)
-              gsub(/^[[:space:]]+|[[:space:]]+$/, "", release_time)
-              if (channel ~ /^pr-/ && channel != ENVIRON["CURRENT_CHANNEL"]) {
-                print release_time "\t" channel
-              }
-            }' "$channels_file" | sort | head -n1 | cut -f2)"
-            if [ -z "$oldest_channel" ]; then
-              skip_preview_for_quota
-            fi
-            echo "Deleting oldest Firebase preview channel to free quota: $oldest_channel"
-            if ! ./node_modules/.bin/firebase hosting:channel:delete "$oldest_channel" --site game-flow-c6311 --project game-flow-c6311 --force >"$delete_log" 2>&1; then
-              skip_preview_for_quota
-            fi
-          }
-
-          if ! deploy_preview_channel; then
-            if preview_deploy_hit_auth_error; then
-              skip_preview_for_auth
-            fi
-            if preview_deploy_hit_release_target_error; then
-              skip_preview_for_release_target
-            fi
-            if ! preview_deploy_hit_quota; then
-              exit 1
-            fi
-            delete_oldest_preview_channel
-            if ! deploy_preview_channel; then
-              if preview_deploy_hit_quota; then
-                skip_preview_for_quota
-              fi
-              if preview_deploy_hit_auth_error; then
-                skip_preview_for_auth
-              fi
-              if preview_deploy_hit_release_target_error; then
-                skip_preview_for_release_target
-              fi
-              exit 1
-            fi
-          fi
-
-          preview_url="$(grep -Eo 'https://[^ ]+' "$log_file" | tail -n1)"
-          if [ -z "$preview_url" ]; then
-            echo "Failed to extract preview URL from Firebase deploy output." >&2
-            exit 1
-          fi
-          echo "preview_url=$preview_url" >> "$GITHUB_OUTPUT"
-          echo "preview_skip_reason=" >> "$GITHUB_OUTPUT"
-
-      - name: Report preview URL on pull request
-        if: success()
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PREVIEW_URL: ${{ steps.deploy_preview.outputs.preview_url }}
-          PREVIEW_SKIP_REASON: ${{ steps.deploy_preview.outputs.preview_skip_reason }}
-          JQ_FILTER: '.[] | select(.user.login == "github-actions[bot]") | select(.body | contains("<!-- allplays-preview-url -->")) | .id'
-        run: |
-          set -euo pipefail
-          marker='<!-- allplays-preview-url -->'
-          if [ -n "$PREVIEW_URL" ]; then
-            body="$(printf '%s\n\nPreview URL: %s' "$marker" "$PREVIEW_URL")"
-          else
-            body="$(printf '%s\n\nFirebase preview skipped: %s' "$marker" "${PREVIEW_SKIP_REASON:-Firebase Hosting preview was unavailable for this run.}")"
-          fi
-          comment_id="$(gh api --paginate repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments --jq "$JQ_FILTER" | head -n1)"
-          if [ -n "$comment_id" ]; then
-            gh api repos/${{ github.repository }}/issues/comments/"$comment_id" --method PATCH -f body="$body" >/dev/null
-          else
-            gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments --method POST -f body="$body" >/dev/null
-          fi
+      - name: Upload staged Firebase Hosting bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: firebase-preview-hosting-bundle
+          path: ${{ runner.temp }}/firebase-preview-site
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 1
