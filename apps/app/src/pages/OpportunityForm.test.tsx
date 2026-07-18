@@ -77,13 +77,13 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe('OpportunityForm', () => {
-  it('selects the first eligible team, fills team details, and chooses the first availability option', async () => {
+  it('selects the first eligible team and fills its team details and availability', async () => {
     renderForm();
     const teamSelect = await screen.findByRole('combobox', { name: /Public team/ }) as HTMLSelectElement;
     expect(teamSelect.value).toBe('team-1');
     expect((screen.getByRole('textbox', { name: /Sport/ }) as HTMLInputElement).value).toBe('Basketball');
     expect((screen.getByRole('textbox', { name: /City/ }) as HTMLInputElement).value).toBe('Austin');
-    expect((screen.getByRole('combobox', { name: /Availability/ }) as HTMLSelectElement).value).toBe('Weeknights');
+    expect((screen.getByRole('combobox', { name: /Availability/ }) as HTMLSelectElement).value).toBe('Weekends');
     expect(screen.getByRole('status').textContent).toContain('5 of 7 complete');
   });
 
@@ -101,6 +101,7 @@ describe('OpportunityForm', () => {
     expect((screen.getByRole('textbox', { name: /Age group/ }) as HTMLInputElement).value).toBe('14U');
     expect((screen.getByRole('textbox', { name: /Competitive level/ }) as HTMLInputElement).value).toBe('Select');
     expect((screen.getByRole('textbox', { name: /Division/ }) as HTMLInputElement).value).toBe('Premier');
+    expect((screen.getByRole('combobox', { name: /Availability/ }) as HTMLSelectElement).value).toBe('Weeknights');
   });
 
   it('applies an editable AI title and description', async () => {
