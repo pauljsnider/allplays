@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 
 import {
     capturePublicRsvpFailure,
+    isPublicRsvpTelemetryEnabled,
     normalizePublicRsvpFailure
 } from '../../js/public-rsvp-telemetry.js';
 
@@ -19,6 +20,7 @@ describe('public RSVP failure telemetry', () => {
         window.__ALLPLAYS_CONFIG__ = {
             telemetryEndpoint: 'https://telemetry.example.test/collect'
         };
+        delete window.ALLPLAYS_TELEMETRY_ENABLED;
     });
 
     it('normalizes to the fixed failure property allowlist', () => {
@@ -40,15 +42,31 @@ describe('public RSVP failure telemetry', () => {
 
     it('has no automatic page collection, persistent identity, or auth path', () => {
         expect(reporterSource).not.toContain('addEventListener');
-        expect(reporterSource).not.toContain('localStorage');
         expect(reporterSource).not.toContain('sessionStorage');
+        expect(reporterSource).not.toContain('allplays.telemetry.session');
+        expect(reporterSource).not.toContain('allplays.telemetry.visitor');
         expect(reporterSource).not.toContain('Authorization');
-        expect(reporterSource).not.toContain('window.location');
         expect(reporterSource).not.toContain('document.');
         expect(reporterSource).not.toContain('navigator.');
         expect(reporterSource).not.toContain('userAgent');
         expect(reporterSource).not.toContain('referrer');
         expect(reporterSource).not.toContain('queryKeys');
+    });
+
+    it('honors the production telemetry gate without loading the full collector', async () => {
+        expect(isPublicRsvpTelemetryEnabled({ hostname: 'allplays.ai' })).toBe(true);
+        expect(isPublicRsvpTelemetryEnabled({ hostname: 'localhost' })).toBe(false);
+        expect(isPublicRsvpTelemetryEnabled({ hostname: '127.0.0.1' })).toBe(false);
+        expect(isPublicRsvpTelemetryEnabled({ hostname: 'localhost', config: { telemetryEnabled: true } })).toBe(true);
+        expect(isPublicRsvpTelemetryEnabled({ hostname: 'allplays.ai', config: { telemetryEnabled: false } })).toBe(false);
+        expect(isPublicRsvpTelemetryEnabled({ hostname: 'allplays.ai', globalEnabled: false })).toBe(false);
+        expect(isPublicRsvpTelemetryEnabled({ hostname: 'allplays.ai', optedOut: true })).toBe(false);
+        expect(isPublicRsvpTelemetryEnabled({ hostname: 'allplays.ai', search: '?telemetry=0' })).toBe(false);
+        expect(isPublicRsvpTelemetryEnabled({ hostname: 'localhost', search: '?telemetry=1' })).toBe(true);
+
+        window.__ALLPLAYS_CONFIG__.telemetryEnabled = false;
+        await expect(capturePublicRsvpFailure({ failureKind: 'missing_token' })).resolves.toBe(false);
+        expect(mockFetch).not.toHaveBeenCalled();
     });
 
     it('sends one anonymous failure event without URL secrets, answers, storage IDs, or auth', async () => {

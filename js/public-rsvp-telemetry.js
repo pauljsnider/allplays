@@ -1,4 +1,6 @@
 const DEFAULT_TELEMETRY_ENDPOINT = 'https://us-central1-game-flow-c6311.cloudfunctions.net/collectTelemetry';
+const TELEMETRY_OPT_OUT_KEY = 'allplays.telemetry.optOut';
+const LOCAL_DEVELOPMENT_HOSTNAMES = new Set(['localhost', '127.0.0.1', '0.0.0.0', '']);
 const ALLOWED_FAILURE_KINDS = new Set([
     'missing_token',
     'configuration_error',
@@ -24,6 +26,35 @@ function resolveTelemetryEndpoint() {
         : DEFAULT_TELEMETRY_ENDPOINT;
 }
 
+function readTelemetryOptOut() {
+    try {
+        return window.localStorage?.getItem(TELEMETRY_OPT_OUT_KEY) === '1';
+    } catch {
+        return false;
+    }
+}
+
+export function isPublicRsvpTelemetryEnabled({
+    config = window.__ALLPLAYS_CONFIG__ || {},
+    globalEnabled = window.ALLPLAYS_TELEMETRY_ENABLED,
+    hostname = window.location?.hostname || '',
+    search = window.location?.search || '',
+    optedOut = readTelemetryOptOut()
+} = {}) {
+    const telemetryOverride = new URLSearchParams(search).get('telemetry');
+    if (telemetryOverride === '0') return false;
+    if (telemetryOverride === '1') return true;
+    if (optedOut) return false;
+    if (config.enabled === false || config.telemetryEnabled === false || globalEnabled === false) {
+        return false;
+    }
+
+    return !LOCAL_DEVELOPMENT_HOSTNAMES.has(hostname)
+        || config.enabled === true
+        || config.telemetryEnabled === true
+        || globalEnabled === true;
+}
+
 export function normalizePublicRsvpFailure(properties = {}) {
     const providedFailureKind = String(properties.failureKind || '');
     const providedHttpStatus = Number(properties.httpStatus || 0);
@@ -43,6 +74,8 @@ export function normalizePublicRsvpFailure(properties = {}) {
 
 export async function capturePublicRsvpFailure(properties = {}) {
     try {
+        if (!isPublicRsvpTelemetryEnabled()) return false;
+
         const anonymousContextId = randomId('public_rsvp');
         const event = {
             id: randomId('event'),
