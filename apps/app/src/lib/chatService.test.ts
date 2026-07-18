@@ -458,6 +458,28 @@ describe('sendTeamChatMessage attachment uploads', () => {
     expect(result.wantsAi).toBe(true);
   });
 
+  it('keeps user and email aliases for one guardian on a group thread', async () => {
+    legacyChatServiceMocks.upsertChatConversation.mockImplementation(async (_teamId, conversation) => ({
+      id: 'group_user-1__guardian-aliases',
+      ...conversation
+    }));
+    const { sendTeamChatMessage } = await import('./chatService');
+
+    await sendTeamChatMessage({
+      ...buildSendInput([]),
+      selectedRecipientTarget: 'individuals',
+      selectedRecipientIds: ['user:guardian-1', 'email:guardian@example.test']
+    });
+
+    expect(legacyChatServiceMocks.upsertChatConversation).toHaveBeenCalledWith('team-1', expect.objectContaining({
+      type: 'group',
+      participantIds: expect.arrayContaining(['user-1', 'user:guardian-1', 'email:guardian@example.test'])
+    }));
+    expect(legacyChatServiceMocks.upsertChatConversation.mock.calls[0][1].participantIds).toHaveLength(3);
+    expect(legacyChatServiceMocks.postChatMessage).toHaveBeenCalled();
+    expect(friendMessageMocks.sendAuthorizedDirectMessage).not.toHaveBeenCalled();
+  });
+
   it('fails a revoked friend send before creating a conversation or uploading attachments', async () => {
     friendMessageMocks.canMessageAcceptedFriend.mockResolvedValue(false);
     const { sendTeamChatMessage } = await import('./chatService');

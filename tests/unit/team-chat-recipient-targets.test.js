@@ -82,7 +82,8 @@ describe('team chat recipient targets', () => {
         expect(directParticipantHelper).toContain("!userId.includes(':')");
         expect(directParticipantHelper).toContain('/^[A-Za-z0-9_-]{1,160}$/');
         expect(sendMessage).toContain('const directUserIds = getDirectParticipantUserIds(participantIds);');
-        expect(sendMessage).toContain('const isDirectConversation = directUserIds.length === 2');
+        expect(sendMessage).toContain('const isDirectConversation = participantIds.length === 2');
+        expect(sendMessage).toContain('&& directUserIds.length === 2');
         expect(sendMessage).not.toContain('const isDirectConversation = participantIds.length === 2;');
     });
 

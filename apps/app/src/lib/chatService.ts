@@ -1441,7 +1441,10 @@ export async function sendTeamChatMessage({
         ? []
         : await resolveConversationParticipantIds(teamId, user.uid, targetMetadata.recipientIds);
       const participantRoles = targetMetadata.targetType === 'staff' ? ['staff'] : [];
-      const conversationType = getDirectUserIds(user.uid, participantIds).length === 2 ? 'direct' : 'group';
+      const conversationType = participantIds.length === 2
+        && getDirectUserIds(user.uid, participantIds).length === 2
+        ? 'direct'
+        : 'group';
       const directMetadata = conversationType === 'direct'
         ? await resolveDirectConversationMetadata({ teamId, user, participantIds, canModerate })
         : {};

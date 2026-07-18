@@ -1182,12 +1182,10 @@ describe('React app chat recipient service', () => {
         dbMocks.getUsersByParentPlayerKey.mockResolvedValue([
             { id: 'parent-1', email: 'guardian@example.com', parentPlayerKeys: ['team-1::player-1'] }
         ]);
-        dbMocks.upsertChatConversation.mockResolvedValue({
+        dbMocks.upsertChatConversation.mockImplementation(async (_teamId, conversation) => ({
             id: 'group-linked-parent',
-            type: 'direct',
-            participantIds: ['coach-1', 'user:parent-1', 'email:guardian@example.com'],
-            participantRoles: []
-        });
+            ...conversation
+        }));
         dbMocks.postChatMessage.mockResolvedValue({ id: 'msg-linked-parent' });
 
         const { sendTeamChatMessage } = await import('../../apps/app/src/lib/chatService.ts');
@@ -1209,8 +1207,13 @@ describe('React app chat recipient service', () => {
 
         expect(dbMocks.getUsersByParentPlayerKey).toHaveBeenCalledWith('team-1::player-1');
         expect(dbMocks.upsertChatConversation).toHaveBeenCalledWith('team-1', expect.objectContaining({
+            type: 'group',
             participantIds: ['coach-1', 'user:parent-1', 'email:guardian@example.com']
         }));
+        expect(dbMocks.postChatMessage).toHaveBeenCalledWith('team-1', expect.objectContaining({
+            conversationId: 'group-linked-parent'
+        }));
+        expect(friendMessageMocks.sendAuthorizedDirectMessage).not.toHaveBeenCalled();
     });
 
     it('does not create undiscoverable player-token conversations when a selected player has no linked guardian', async () => {

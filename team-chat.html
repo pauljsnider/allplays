@@ -2984,7 +2984,8 @@
                         : Array.from(new Set([currentUser.uid, ...targetMetadata.recipientIds]));
                     const participantRoles = targetMetadata.targetType === 'staff' ? ['staff'] : [];
                     const directUserIds = getDirectParticipantUserIds(participantIds);
-                    const isDirectConversation = directUserIds.length === 2
+                    const isDirectConversation = participantIds.length === 2
+                        && directUserIds.length === 2
                         && directUserIds.includes(currentUser.uid);
                     if (isDirectConversation && !canModerate) {
                         throw new Error('Start friend direct messages from the ALL PLAYS app.');

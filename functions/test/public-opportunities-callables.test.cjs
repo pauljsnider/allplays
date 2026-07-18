@@ -464,7 +464,13 @@ test('direct-message callable rechecks friendship and team access on the write p
         conversationId: 'direct_sender__user%3Arecipient',
         clientMessageId: 'client-direct-1',
         text: 'Hi friend',
-        attachments: []
+        attachments: [{
+            type: 'image/jpeg',
+            url: 'https://firebasestorage.googleapis.com/v0/b/allplays-images/o/direct-photo.jpg?alt=media',
+            path: 'team-photos/1700000000000_chat_team-1_direct_sender__user%3Arecipient_sender_photo.jpg',
+            name: 'photo.jpg',
+            size: 1024
+        }]
     };
 
     const sent = await callables.sendAuthorizedDirectMessage(input, context);
@@ -476,6 +482,35 @@ test('direct-message callable rechecks friendship and team access on the write p
     assert.deepEqual(
         firestore.snapshot('teams/team-1/chatConversations/direct_sender__user%3Arecipient/chatMessages/sender__client-direct-1').recipientIds,
         ['user:recipient']
+    );
+    assert.deepEqual(
+        firestore.snapshot('teams/team-1/chatConversations/direct_sender__user%3Arecipient/chatMessages/sender__client-direct-1').attachments.map((attachment) => ({
+            type: attachment.type,
+            mimeType: attachment.mimeType
+        })),
+        [{ type: 'image', mimeType: 'image/jpeg' }]
+    );
+
+    const sentVideo = await callables.sendAuthorizedDirectMessage({
+        ...input,
+        clientMessageId: 'client-direct-video',
+        text: '',
+        attachments: [{
+            type: null,
+            mimeType: 'video/mp4',
+            url: 'https://firebasestorage.googleapis.com/v0/b/allplays-images/o/direct-video.mp4?alt=media',
+            path: 'team-videos/1700000000001_chat_team-1_direct_sender__user%3Arecipient_sender_video.mp4',
+            name: 'video.mp4',
+            size: 2048
+        }]
+    }, context);
+    assert.equal(sentVideo.id, 'sender__client-direct-video');
+    assert.deepEqual(
+        firestore.snapshot('teams/team-1/chatConversations/direct_sender__user%3Arecipient/chatMessages/sender__client-direct-video').attachments.map((attachment) => ({
+            type: attachment.type,
+            mimeType: attachment.mimeType
+        })),
+        [{ type: 'video', mimeType: 'video/mp4' }]
     );
 
     await firestore.doc('friendships/recipient__sender').update({ status: 'removed' });

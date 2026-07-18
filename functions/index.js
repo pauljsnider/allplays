@@ -12552,11 +12552,18 @@ function getDirectChatUserIds(conversation) {
 
 function normalizeAuthorizedDirectAttachment(rawAttachment, { teamId, conversationId, uid, now }) {
   const attachment = rawAttachment && typeof rawAttachment === 'object' ? rawAttachment : {};
-  const type = attachment.type === 'video' ? 'video' : attachment.type === 'image' ? 'image' : '';
+  const rawType = String(attachment.type || '').trim().toLowerCase();
+  const rawMimeType = String(attachment.mimeType || '').trim().toLowerCase();
+  const mediaMimeType = rawMimeType || (rawType.includes('/') ? rawType : '');
+  const type = rawType === 'video' || rawType.startsWith('video/') || rawMimeType.startsWith('video/')
+    ? 'video'
+    : rawType === 'image' || rawType.startsWith('image/') || rawMimeType.startsWith('image/')
+      ? 'image'
+      : '';
   const url = String(attachment.url || '').trim();
   const path = String(attachment.path || '').trim();
   const name = cleanOpportunityText(attachment.name, 240) || null;
-  const mimeType = cleanOpportunityText(attachment.mimeType, 160) || null;
+  const mimeType = cleanOpportunityText(mediaMimeType, 160) || null;
   const size = Number(attachment.size);
   let allowedUrl = false;
   try {
