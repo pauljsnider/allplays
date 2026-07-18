@@ -5,8 +5,10 @@ import react from '@vitejs/plugin-react';
 import { visualizer } from 'rollup-plugin-visualizer';
 import { patchBundleVisualizerTooltipFile } from './build/fixBundleVisualizerTooltip.js';
 import { assertSafeAppCheckBuildEnvironment } from './build/appCheckBuildGuard.js';
+import { createProductionArtifactGuard } from './build/productionArtifactGuard.js';
 
 const appDirectory = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(appDirectory, '../..');
 
 // https://vitejs.dev/config/
 const bundleVisualizerTooltipFixPlugin = {
@@ -44,7 +46,8 @@ export default defineConfig(({ mode }) => {
       brotliSize: true,
       open: false
     }),
-    bundleVisualizerTooltipFixPlugin
+    bundleVisualizerTooltipFixPlugin,
+    createProductionArtifactGuard({ appDirectory, repoRoot })
   ],
   server: {
     port: 5174,

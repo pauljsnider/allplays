@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
     isNativeAppCheckDebugBuild,
     resolveAppCheckRuntimeConfig,
@@ -185,6 +186,20 @@ describe('firebase runtime config', () => {
             'https://allplays.ai/.well-known/allplays-runtime-config.json',
             { cache: 'no-store' }
         );
+    });
+
+    it('does not expose the repository through a Vite-analyzable import-meta URL', () => {
+        const source = readFileSync(new URL('../../js/firebase-runtime-config.js', import.meta.url), 'utf8');
+
+        expect(source).not.toMatch(/new URL\([\s\S]*?import\.meta\.url/);
+        expect(source).not.toContain('import.meta.url');
+    });
+
+    it('keeps every legacy browser importer on the explicit runtime-config cache contract', () => {
+        for (const importer of ['firebase.js', 'firebase-images.js', 'firebase-app-check.js']) {
+            const source = readFileSync(new URL(`../../js/${importer}`, import.meta.url), 'utf8');
+            expect(source).toContain('firebase-runtime-config.js?v=11');
+        }
     });
 
     it('selects native debug attestation only for the explicit build mode and without a bundled token', () => {

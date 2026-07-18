@@ -102,17 +102,7 @@ export const capabilities: Capability[] = [
   capability('beta-sub-tracker', 'Substitution prototype', 'beta/sub-tracker-prototype.html', 'Beta', 'Lineup setup, playing time, and sub flow.', ['Lineup setup', 'Playing time', 'Sub flow'], undefined, 'legacy-link', staffRoles),
   capability('beta-cheer-tracker', 'Cheer tracker beta', 'beta/cheer/track-cheer-mobile.html', 'Beta', 'Floor coach tracker and routine tracking.', ['Floor coach tracker', 'Routine tracking'], undefined, 'future', staffRoles),
   capability('mockup-game-day-command', 'Game day UI mockup', 'mockups/game-day-command-center.html', 'Beta', 'Pre-game, live command, and wrap-up mockup.', ['Pre-game', 'Live command', 'Wrap-up'], undefined, 'legacy-link', staffRoles),
-  capability('mockup-practice-command', 'Practice UI mockup', 'mockups/practice-command-center.html', 'Beta', 'Drill library, practice timeline, and drill detail mockup.', ['Drill library', 'Practice timeline', 'Drill detail'], undefined, 'legacy-link', staffRoles),
-
-  capability('test-recurring-rsvp', 'Recurring RSVP regression test', 'test-fix-recurring-rsvp.html', 'Test', 'Recurring RSVP regression test.', ['Recurring RSVP regression']),
-  capability('test-schedule-drills', 'Schedule/drills regression test', 'test-fix-schedule-drills.html', 'Test', 'Schedule and drills regression test.', ['Schedule regression', 'Drills regression']),
-  capability('test-foul-tracking', 'Foul tracking test', 'test-foul-tracking.html', 'Test', 'Foul tracking and score undo test.', ['Foul tracking', 'Score undo']),
-  capability('test-game-day', 'Game day test', 'test-game-day.html', 'Test', 'Game day command center test.', ['Game day command center']),
-  capability('test-pr-changes', 'PR smoke test', 'test-pr-changes.html', 'Test', 'Basketball detection, auth flow, and live sync tests.', ['PR smoke', 'Basketball detection', 'Auth flow', 'Live sync']),
-  capability('test-statsheet-mapping', 'Statsheet mapping test', 'test-statsheet-mapping.html', 'Test', 'Statsheet mapping test.', ['Statsheet mapping']),
-  capability('test-track-live', 'Live tracker broadcasting test', 'test-track-live.html', 'Test', 'Live tracker broadcasting test.', ['Live broadcasting']),
-  capability('test-workflow-mobile-toc', 'Mobile workflow TOC test', 'test-workflow-mobile-toc-active-state.html', 'Test', 'Mobile workflow TOC active state test.', ['Mobile workflow TOC']),
-  capability('test-youtube-stream', 'Stream URL parser test', 'test-youtube-stream.html', 'Test', 'Stream URL parser test.', ['Stream URL parser'])
+  capability('mockup-practice-command', 'Practice UI mockup', 'mockups/practice-command-center.html', 'Beta', 'Drill library, practice timeline, and drill detail mockup.', ['Drill library', 'Practice timeline', 'Drill detail'], undefined, 'legacy-link', staffRoles)
 ];
 
 export const primaryCapabilities = capabilities.filter((capability) => capability.status === 'native-shell');

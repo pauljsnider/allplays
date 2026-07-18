@@ -91,24 +91,22 @@ function normalizeAppCheckConfig(rawConfig) {
 
 function runtimeConfigCandidates() {
     const candidates = new Set();
-    if (typeof window !== 'undefined' && window.location?.origin) {
-        const { origin, pathname = '/' } = window.location;
+    const runtimeLocation = typeof window !== 'undefined'
+        ? window.location
+        : globalThis.location;
+
+    if (runtimeLocation?.origin) {
+        const { origin, pathname = '/' } = runtimeLocation;
         candidates.add(new URL(`/${ALLPLAYS_RUNTIME_CONFIG_PATH}`, origin).href);
 
         const appSegment = pathname.indexOf('/app/');
         if (appSegment >= 0) {
             candidates.add(new URL(`${pathname.slice(0, appSegment + 1)}${ALLPLAYS_RUNTIME_CONFIG_PATH}`, origin).href);
-        } else if (window.location.hostname?.endsWith('.github.io')) {
+        } else if (runtimeLocation.hostname?.endsWith('.github.io')) {
             const repositoryBase = pathname.split('/').filter(Boolean)[0];
             if (repositoryBase) {
                 candidates.add(new URL(`/${repositoryBase}/${ALLPLAYS_RUNTIME_CONFIG_PATH}`, origin).href);
             }
-        }
-    } else {
-        try {
-            candidates.add(new URL(`../${ALLPLAYS_RUNTIME_CONFIG_PATH}`, import.meta.url).href);
-        } catch (_error) {
-            // Some test and native runtimes do not expose a usable import URL.
         }
     }
 

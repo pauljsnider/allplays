@@ -2,6 +2,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import {
+    assertNoUnpublishableRootDevelopmentArtifacts,
+    isUnpublishableRootDevelopmentArtifact
+} from './public-site-artifact-policy.mjs';
+
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const defaultRootDir = path.resolve(scriptDir, '..');
 
@@ -39,8 +44,14 @@ const excludedFiles = new Set([
     'package.json',
     'storage.rules'
 ]);
+const excludedPublicClaimPaths = new Set([
+    '.well-known/apple-app-site-association',
+    '.well-known/assetlinks.json'
+]);
 
 const appCheckRuntimeConfigRelativePath = path.join('.well-known', 'allplays-runtime-config.json');
+const pagesMetaUnsupportedDirectives = new Set(['frame-ancestors']);
+const widgetScoreboardRelativePath = 'widget-scoreboard.html';
 
 function normalizePublicSiteKey(value) {
     if (typeof value !== 'string') return '';
@@ -50,6 +61,167 @@ function normalizePublicSiteKey(value) {
 
 function isAppCheckEnforcementReady(value) {
     return typeof value === 'string' && ['true', '1'].includes(value.trim().toLowerCase());
+}
+
+function readFirebaseHostingHeader(firebaseConfig, source, key) {
+    const rules = firebaseConfig?.hosting?.headers;
+    if (!Array.isArray(rules)) {
+        throw new Error('firebase.json must define hosting.headers for Pages security meta staging.');
+    }
+
+    const matchingRules = rules.filter((rule) => rule?.source === source);
+    if (matchingRules.length !== 1) {
+        throw new Error(`Expected exactly one Firebase Hosting header rule for ${source}.`);
+    }
+
+    const matchingHeaders = matchingRules[0].headers?.filter(
+        (header) => typeof header?.key === 'string' && header.key.toLowerCase() === key.toLowerCase()
+    ) ?? [];
+    if (matchingHeaders.length !== 1 || typeof matchingHeaders[0].value !== 'string') {
+        throw new Error(`Expected exactly one ${key} Firebase Hosting header for ${source}.`);
+    }
+
+    const value = matchingHeaders[0].value.trim();
+    if (!value) {
+        throw new Error(`${key} Firebase Hosting header for ${source} cannot be empty.`);
+    }
+    return value;
+}
+
+export function toPagesMetaCsp(headerPolicy) {
+    if (typeof headerPolicy !== 'string' || !headerPolicy.trim()) {
+        throw new Error('A non-empty Firebase Hosting CSP is required for Pages security meta staging.');
+    }
+
+    const directives = headerPolicy
+        .split(';')
+        .map((directive) => directive.trim())
+        .filter(Boolean);
+    const metaDirectives = directives.filter((directive) => {
+        const [name] = directive.split(/\s+/, 1);
+        return !pagesMetaUnsupportedDirectives.has(name.toLowerCase());
+    });
+    const metaPolicy = metaDirectives.join('; ');
+
+    if (!metaPolicy || metaPolicy.toLowerCase().includes("'unsafe-eval'")) {
+        throw new Error('Pages security meta CSP must be non-empty and must not allow unsafe-eval.');
+    }
+    if (/(?:^|;)\s*frame-ancestors(?:\s|;|$)/i.test(metaPolicy)) {
+        throw new Error('Pages security meta CSP cannot contain frame-ancestors.');
+    }
+    return metaPolicy;
+}
+
+export function readPagesSecurityMetaPolicies(rootDir = defaultRootDir) {
+    const configPath = path.join(path.resolve(rootDir), 'firebase.json');
+    let firebaseConfig;
+    try {
+        firebaseConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    } catch (error) {
+        throw new Error(`Unable to read Firebase Hosting security policy from ${configPath}: ${error.message}`);
+    }
+
+    const referrerPolicy = readFirebaseHostingHeader(firebaseConfig, '**', 'Referrer-Policy');
+    if (referrerPolicy !== 'strict-origin-when-cross-origin') {
+        throw new Error('Pages referrer meta must remain strict-origin-when-cross-origin.');
+    }
+
+    return {
+        defaultCsp: toPagesMetaCsp(
+            readFirebaseHostingHeader(firebaseConfig, '**', 'Content-Security-Policy')
+        ),
+        widgetScoreboardCsp: toPagesMetaCsp(
+            readFirebaseHostingHeader(firebaseConfig, '/widget-scoreboard.html', 'Content-Security-Policy')
+        ),
+        referrerPolicy
+    };
+}
+
+function escapeHtmlAttribute(value) {
+    return value
+        .replaceAll('&', '&amp;')
+        .replaceAll('"', '&quot;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;');
+}
+
+function listHtmlFiles(rootDir, currentDir = rootDir, files = []) {
+    for (const entry of fs.readdirSync(currentDir, { withFileTypes: true })) {
+        const entryPath = path.join(currentDir, entry.name);
+        if (entry.isDirectory()) {
+            listHtmlFiles(rootDir, entryPath, files);
+        } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.html')) {
+            files.push(entryPath);
+        }
+    }
+    return files;
+}
+
+export function injectPagesSecurityMeta(destinationDir, { rootDir = defaultRootDir } = {}) {
+    const resolvedDestination = path.resolve(destinationDir);
+    const policies = readPagesSecurityMetaPolicies(rootDir);
+    const htmlFiles = listHtmlFiles(resolvedDestination).filter((htmlPath) => (
+        !toRelativePath(resolvedDestination, htmlPath).startsWith('app/assets/')
+    ));
+    if (htmlFiles.length === 0) {
+        throw new Error('No staged HTML files were found for Pages security meta injection.');
+    }
+
+    for (const htmlPath of htmlFiles) {
+        const relativePath = toRelativePath(resolvedDestination, htmlPath);
+        const csp = relativePath === widgetScoreboardRelativePath
+            ? policies.widgetScoreboardCsp
+            : policies.defaultCsp;
+        const html = fs.readFileSync(htmlPath, 'utf8');
+
+        if (/<meta\b[^>]*http-equiv\s*=\s*["']?content-security-policy\b/i.test(html)) {
+            throw new Error(`Staged HTML already contains a CSP meta tag: ${relativePath}`);
+        }
+        if (/<meta\b[^>]*name\s*=\s*["']?referrer\b/i.test(html)) {
+            throw new Error(`Staged HTML already contains a referrer meta tag: ${relativePath}`);
+        }
+
+        const headMatch = /<head\b[^>]*>/i.exec(html);
+        if (!headMatch) {
+            throw new Error(`Staged HTML is missing a head element: ${relativePath}`);
+        }
+
+        const securityMeta = [
+            `<meta http-equiv="Content-Security-Policy" content="${escapeHtmlAttribute(csp)}">`,
+            `<meta name="referrer" content="${escapeHtmlAttribute(policies.referrerPolicy)}">`
+        ].join('\n    ');
+        const afterHead = headMatch.index + headMatch[0].length;
+        const headCloseIndex = html.search(/<\/head\s*>/i);
+        if (headCloseIndex < afterHead) {
+            throw new Error(`Staged HTML is missing a closing head element: ${relativePath}`);
+        }
+
+        const headContent = html.slice(afterHead, headCloseIndex);
+        const charsetMatches = [...headContent.matchAll(
+            /<meta\b[^>]*charset\s*=\s*["']?[^\s"'/>]+["']?[^>]*>/gi
+        )];
+        if (charsetMatches.length > 1) {
+            throw new Error(`Staged HTML contains multiple charset meta tags: ${relativePath}`);
+        }
+
+        let htmlWithoutCharset = html;
+        let charsetMeta = '';
+        if (charsetMatches.length === 1) {
+            const charsetMatch = charsetMatches[0];
+            const charsetStart = afterHead + charsetMatch.index;
+            const charsetEnd = charsetStart + charsetMatch[0].length;
+            charsetMeta = `${charsetMatch[0]}\n    `;
+            htmlWithoutCharset = `${html.slice(0, charsetStart)}${html.slice(charsetEnd)}`;
+        }
+
+        const securedHtml = `${htmlWithoutCharset.slice(0, afterHead)}\n    ${charsetMeta}${securityMeta}${htmlWithoutCharset.slice(afterHead)}`;
+        fs.writeFileSync(htmlPath, securedHtml);
+    }
+
+    return {
+        htmlFileCount: htmlFiles.length,
+        ...policies
+    };
 }
 
 export function writeAppCheckRuntimeConfig(destinationDir, siteKey, { requireValidSiteKey = false } = {}) {
@@ -92,7 +264,10 @@ function shouldExclude(rootDir, sourcePath, entry) {
     }
 
     if (entry.isFile()) {
-        return excludedFiles.has(entry.name) || entry.name.endsWith('.md');
+        return isUnpublishableRootDevelopmentArtifact(relativePath)
+            || excludedPublicClaimPaths.has(relativePath)
+            || excludedFiles.has(entry.name)
+            || entry.name.endsWith('.md');
     }
 
     return false;
@@ -145,6 +320,7 @@ export function stagePagesBundle(destinationDir, { rootDir = defaultRootDir } = 
     fs.mkdirSync(appDestinationDir, { recursive: true });
     fs.cpSync(appDistDir, appDestinationDir, { recursive: true });
     fs.writeFileSync(path.join(resolvedDestination, '.nojekyll'), '');
+    assertNoUnpublishableRootDevelopmentArtifacts(resolvedDestination, 'Staged public site');
     const appCheckRuntimeConfigPath = writeAppCheckRuntimeConfig(
         resolvedDestination,
         process.env.ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY,
@@ -154,6 +330,7 @@ export function stagePagesBundle(destinationDir, { rootDir = defaultRootDir } = 
             )
         }
     );
+    const securityMeta = injectPagesSecurityMeta(resolvedDestination, { rootDir: resolvedRoot });
 
     const rootIndexPath = path.join(resolvedDestination, 'index.html');
     const appIndexPath = path.join(appDestinationDir, 'index.html');
@@ -168,7 +345,8 @@ export function stagePagesBundle(destinationDir, { rootDir = defaultRootDir } = 
         destinationDir: resolvedDestination,
         rootIndexPath,
         appIndexPath,
-        appCheckRuntimeConfigPath
+        appCheckRuntimeConfigPath,
+        securityMeta
     };
 }
 
