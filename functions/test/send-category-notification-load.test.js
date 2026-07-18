@@ -60,8 +60,8 @@ describe('sendCategoryNotification load coverage', () => {
 
             assert.equal(result.successCount, 500);
             assert.equal(result.failureCount, 0);
-            assert.equal(env.counts.recipientQueries, 2);
-            assert.equal(env.counts.parentQueries, 1);
+            assert.equal(env.counts.recipientQueries, 1);
+            assert.equal(env.counts.parentQueries, 0);
             assert.equal(env.counts.preferenceGets, 0);
             assert.equal(env.counts.deviceGets, 0);
             assert.equal(env.counts.inboxCleanupQueries, 501);
@@ -123,8 +123,8 @@ describe('sendCategoryNotification load coverage', () => {
 
             assert.equal(result.successCount, 1000);
             assert.equal(result.failureCount, 0);
-            assert.equal(env.counts.recipientQueries, 2);
-            assert.equal(env.counts.parentQueries, 1);
+            assert.equal(env.counts.recipientQueries, 1);
+            assert.equal(env.counts.parentQueries, 0);
             assert.equal(env.counts.preferenceGets, 0);
             assert.equal(env.counts.deviceGets, 0);
             assert.equal(env.messagingCalls.length, 2);
