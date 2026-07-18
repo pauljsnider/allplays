@@ -407,6 +407,7 @@
             "cloudFunctions": [
                 "createStripeTeamFeeCheckout",
                 "createStripeTeamPassCheckout",
+                "expireStripeTeamPassCheckout",
                 "backfillTeamPassEntitlementProjections",
                 "auditStripePaymentAuthorityRollout",
                 "expireStripeTeamFeeCheckout",

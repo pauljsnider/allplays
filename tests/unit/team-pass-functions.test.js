@@ -288,6 +288,16 @@ describe('team pass function helpers', () => {
         expect(getTeamPassEffectivePaymentStatus(lost)).toBe('dispute_lost');
     });
 
+    it('exposes admin-only recovery for abandoned durable Team Pass checkout attempts', () => {
+        const source = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
+        expect(source).toContain('exports.expireStripeTeamPassCheckout');
+        expect(source).toContain("checkoutStatus: 'recovering'");
+        expect(source).toContain('recoveryOperationId');
+        expect(source).toContain("hasTeamAdminAccess({ team, user, uid: context.auth.uid, email })");
+        expect(source).toContain('stripe.checkout.sessions.create(claimedAttempt.stripeRequest');
+        expect(source).toContain('stripe.checkout.sessions.expire(recoveredSession.id)');
+    });
+
     it('exposes a dry-run-first exact entitlement backfill with explicit write confirmation', () => {
         const source = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
         expect(source).toContain('exports.backfillTeamPassEntitlementProjections');

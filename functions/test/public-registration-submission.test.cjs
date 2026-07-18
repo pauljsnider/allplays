@@ -896,6 +896,115 @@ test('Team Pass retry reuses the durable Stripe request when purchaser email cha
     assert.equal(firestore.snapshot(attemptPath).stripeCheckoutSessionId, checkout.sessionId);
 });
 
+test('Team Pass admin recovery expires failed authority after the original purchaser loses access', async () => {
+    const attemptPath = 'teams/team-pass/teamPassCheckoutAttempts/2026_team-pass';
+    const { firestore, stripeState, mod } = loadFunctionsModule({
+        'teams/team-pass': { ownerId: 'owner-1', adminEmails: ['admin@example.com'] },
+        'users/owner-1': { email: 'owner@example.com' },
+        'users/admin-2': { email: 'admin@example.com' },
+        'users/parent-3': { email: 'parent@example.com', parentTeamIds: ['team-pass'] }
+    });
+    const request = { teamId: 'team-pass', seasonId: '2026', tier: 'team-pass' };
+    let firstCall = true;
+    stripeState.checkoutCreateHook = async () => {
+        if (!firstCall) return;
+        firstCall = false;
+        throw new Error('Injected Team Pass creation failure.');
+    };
+
+    await assert.rejects(mod.createStripeTeamPassCheckout(request, {
+        auth: { uid: 'owner-1', token: { email: 'owner@example.com' } }
+    }), /Injected Team Pass creation failure/);
+    const failedAttempt = firestore.snapshot(attemptPath);
+    await firestore.doc('teams/team-pass').set({ ownerId: 'departed-owner' }, { merge: true });
+    await assert.rejects(mod.createStripeTeamPassCheckout(request, {
+        auth: { uid: 'owner-1', token: { email: 'owner@example.com' } }
+    }), /team access/i);
+    await assert.rejects(mod.expireStripeTeamPassCheckout(request, {
+        auth: { uid: 'parent-3', token: { email: 'parent@example.com' } }
+    }), /Only team admins/i);
+    firestore.afterNextGet(attemptPath, async () => {
+        await firestore.doc('teams/team-pass').set({ adminEmails: [] }, { merge: true });
+    });
+    await assert.rejects(mod.expireStripeTeamPassCheckout(request, {
+        auth: { uid: 'admin-2', token: { email: 'admin@example.com' } }
+    }), /admin access changed/i);
+    assert.equal(stripeState.checkoutSessions.length, 1);
+    assert.equal(firestore.snapshot(attemptPath).checkoutStatus, 'creation_failed');
+    await firestore.doc('teams/team-pass').set({ adminEmails: ['admin@example.com'] }, { merge: true });
+
+    let releaseRecovery;
+    const recoveryGate = new Promise((resolve) => { releaseRecovery = resolve; });
+    let markRecoveryStarted;
+    const recoveryStarted = new Promise((resolve) => { markRecoveryStarted = resolve; });
+    stripeState.checkoutCreateHook = async () => {
+        markRecoveryStarted();
+        await recoveryGate;
+    };
+    const recoveryPromise = mod.expireStripeTeamPassCheckout(request, {
+        auth: { uid: 'admin-2', token: { email: 'admin@example.com' } }
+    });
+    await recoveryStarted;
+    await assert.rejects(mod.createStripeTeamPassCheckout(request, {
+        auth: { uid: 'admin-2', token: { email: 'admin@example.com' } }
+    }), /recovery is already in progress/i);
+    releaseRecovery();
+    const recovery = await recoveryPromise;
+
+    assert.deepEqual(recovery, { expired: true, recovered: true });
+    assert.deepEqual(stripeState.checkoutSessions[1], stripeState.checkoutSessions[0]);
+    assert.equal(stripeState.checkoutSessionOptions[1].idempotencyKey, failedAttempt.stripeIdempotencyKey);
+    assert.deepEqual(stripeState.expiredSessionIds, ['cs_test_2']);
+    assert.equal(firestore.snapshot(attemptPath).checkoutStatus, 'stale');
+
+    stripeState.checkoutCreateHook = null;
+    const replacement = await mod.createStripeTeamPassCheckout(request, {
+        auth: { uid: 'admin-2', token: { email: 'admin@example.com' } }
+    });
+    const replacementAttempt = firestore.snapshot(attemptPath);
+    assert.equal(replacementAttempt.purchaserUid, 'admin-2');
+    assert.notEqual(replacementAttempt.checkoutAttemptToken, failedAttempt.checkoutAttemptToken);
+    assert.notEqual(stripeState.checkoutSessionOptions[2].idempotencyKey, failedAttempt.stripeIdempotencyKey);
+    assert.equal(replacementAttempt.stripeCheckoutSessionId, replacement.sessionId);
+});
+
+test('Team Pass admin recovery preserves a terminal Session for webhook reconciliation', async () => {
+    const attemptPath = 'teams/team-pass/teamPassCheckoutAttempts/2026_team-pass';
+    const { firestore, stripeState, mod } = loadFunctionsModule({
+        'teams/team-pass': { ownerId: 'owner-1', adminEmails: ['admin@example.com'] },
+        'users/owner-1': { email: 'owner@example.com' },
+        'users/admin-2': { email: 'admin@example.com' }
+    });
+    const request = { teamId: 'team-pass', seasonId: '2026', tier: 'team-pass' };
+    stripeState.checkoutCreateHook = async ({ payload, options }) => {
+        if (stripeState.checkoutResponsesByIdempotencyKey.has(options.idempotencyKey)) return;
+        const terminalSession = {
+            id: 'cs_team_pass_admin_recovery_terminal',
+            url: 'https://stripe.test/checkout/team-pass-admin-recovery-terminal',
+            mode: 'payment', payment_status: 'paid', status: 'complete',
+            payment_intent: 'pi_team_pass_admin_recovery_terminal', livemode: false,
+            metadata: clone(payload.metadata), amount_total: 4900, currency: 'usd'
+        };
+        stripeState.checkoutResponses.set(terminalSession.id, clone(terminalSession));
+        stripeState.checkoutResponsesByIdempotencyKey.set(options.idempotencyKey, clone(terminalSession));
+        throw new Error('Injected post-Stripe Team Pass failure.');
+    };
+    await assert.rejects(mod.createStripeTeamPassCheckout(request, {
+        auth: { uid: 'owner-1', token: { email: 'owner@example.com' } }
+    }), /Injected post-Stripe Team Pass failure/);
+    await firestore.doc('teams/team-pass').set({ ownerId: 'departed-owner' }, { merge: true });
+
+    await assert.rejects(mod.expireStripeTeamPassCheckout(request, {
+        auth: { uid: 'admin-2', token: { email: 'admin@example.com' } }
+    }), /payment is completing/i);
+
+    const preservedAttempt = firestore.snapshot(attemptPath);
+    assert.equal(preservedAttempt.checkoutStatus, 'open');
+    assert.equal(preservedAttempt.stripeCheckoutSessionId, 'cs_team_pass_admin_recovery_terminal');
+    assert.equal(preservedAttempt.stripePaymentStatus, 'paid');
+    assert.deepEqual(stripeState.expiredSessionIds, []);
+});
+
 test('idempotent Team Pass replay supersedes an expired Session before a fresh attempt', async () => {
     const attemptPath = 'teams/team-pass/teamPassCheckoutAttempts/2026_team-pass';
     const { firestore, stripeState, mod } = loadFunctionsModule({

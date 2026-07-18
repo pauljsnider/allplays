@@ -4243,6 +4243,12 @@ exports.createStripeTeamPassCheckout = functions.https.onCall(async (data, conte
     if (attempt.checkoutStatus === 'disputed') {
       return { blockedAuthority: true };
     }
+    if (attempt.checkoutStatus === 'recovering') {
+      if (Number(attempt.recoveryReservedAtMs || 0) > reservedAtMs - 120_000) {
+        return { recoveryBusy: true };
+      }
+      return { blockedAuthority: true };
+    }
     if (attempt.checkoutStatus === 'creating'
         && Number(attempt.checkoutReservedAtMs || 0) > reservedAtMs - 120_000) {
       return { busy: true };
@@ -4340,6 +4346,9 @@ exports.createStripeTeamPassCheckout = functions.https.onCall(async (data, conte
 
   if (reservation.active) {
     throw new functions.https.HttpsError('already-exists', 'This team already has an active pass for the selected season.');
+  }
+  if (reservation.recoveryBusy) {
+    throw new functions.https.HttpsError('aborted', 'Team Pass checkout recovery is already in progress. Try again shortly.');
   }
   if (reservation.busy) {
     throw new functions.https.HttpsError('aborted', 'A team pass checkout is already being created. Try again shortly.');
@@ -4444,6 +4453,201 @@ exports.createStripeTeamPassCheckout = functions.https.onCall(async (data, conte
   }
 
   return { checkoutUrl: session.url, sessionId: session.id };
+});
+
+exports.expireStripeTeamPassCheckout = functions.https.onCall(async (data, context) => {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in before changing a team pass payment.');
+  }
+
+  const input = normalizeTeamPassCheckoutInput(data || {});
+  const teamRef = firestore.doc(`teams/${input.teamId}`);
+  const userRef = firestore.doc(`users/${context.auth.uid}`);
+  const attemptRef = buildTeamPassAttemptRef(input);
+  const [teamSnap, userSnap] = await Promise.all([
+    teamRef.get(),
+    userRef.get()
+  ]);
+  if (!teamSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Team not found.');
+  }
+  const team = { id: input.teamId, ...(teamSnap.data() || {}) };
+  const user = userSnap.exists ? (userSnap.data() || {}) : {};
+  const email = context.auth.token?.email || user.email || '';
+  if (!hasTeamAdminAccess({ team, user, uid: context.auth.uid, email })) {
+    throw new functions.https.HttpsError('permission-denied', 'Only team admins can recover this team pass payment.');
+  }
+
+  const recoveryOperationId = buildCheckoutAttemptToken();
+  const recoveryReservedAtMs = Date.now();
+  const claimedAttempt = await firestore.runTransaction(async (transaction) => {
+    const [attemptSnap, latestTeamSnap, latestUserSnap] = await Promise.all([
+      transaction.get(attemptRef),
+      transaction.get(teamRef),
+      transaction.get(userRef)
+    ]);
+    const attempt = attemptSnap.exists ? (attemptSnap.data() || {}) : {};
+    const latestTeam = { id: input.teamId, ...(latestTeamSnap.exists ? (latestTeamSnap.data() || {}) : {}) };
+    const latestUser = latestUserSnap.exists ? (latestUserSnap.data() || {}) : {};
+    if (!latestTeamSnap.exists || !hasTeamAdminAccess({
+      team: latestTeam,
+      user: latestUser,
+      uid: context.auth.uid,
+      email: context.auth.token?.email || latestUser.email || ''
+    })) {
+      return { permissionDenied: true };
+    }
+    if (!attemptSnap.exists) return { missing: true };
+    if (attempt.teamId !== input.teamId
+        || attempt.seasonId !== input.seasonId
+        || attempt.tier !== input.tier) {
+      return { blockedAuthority: true };
+    }
+    const recoverableStatus = ['creating', 'creation_failed', 'recovering'].includes(attempt.checkoutStatus);
+    if (!recoverableStatus) return { recoverable: false };
+    if (attempt.checkoutStatus === 'creating'
+        && Number(attempt.checkoutReservedAtMs || 0) > recoveryReservedAtMs - 120_000) {
+      return { busy: true };
+    }
+    if (attempt.checkoutStatus === 'recovering'
+        && Number(attempt.recoveryReservedAtMs || 0) > recoveryReservedAtMs - 120_000) {
+      return { busy: true };
+    }
+    const checkoutAttemptToken = String(attempt.checkoutAttemptToken || '').trim();
+    const stripeIdempotencyKey = `team_pass_checkout_${checkoutAttemptToken}`;
+    if (attempt.stripePaymentAuthorityVersion !== 2
+        || !/^[A-Za-z0-9_-]{16,128}$/.test(checkoutAttemptToken)
+        || attempt.stripeIdempotencyKey !== stripeIdempotencyKey
+        || !attempt.stripeRequest
+        || typeof attempt.stripeRequest !== 'object'
+        || Array.isArray(attempt.stripeRequest)
+        || !String(attempt.purchaserUid || '').trim()) {
+      return { blockedAuthority: true };
+    }
+    transaction.set(attemptRef, {
+      checkoutStatus: 'recovering',
+      recoveryOperationId,
+      recoveryActorUid: context.auth.uid,
+      recoveryReservedAtMs,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+    return {
+      recoverable: true,
+      attempt,
+      checkoutAttemptToken,
+      stripeIdempotencyKey,
+      stripeRequest: attempt.stripeRequest
+    };
+  });
+
+  if (claimedAttempt.permissionDenied) {
+    throw new functions.https.HttpsError('permission-denied', 'Team admin access changed before checkout recovery could begin.');
+  }
+  if (claimedAttempt.missing) return { expired: false, recovered: false };
+  if (claimedAttempt.busy) {
+    throw new functions.https.HttpsError('aborted', 'Team Pass checkout recovery is already in progress. Try again shortly.');
+  }
+  if (claimedAttempt.blockedAuthority) {
+    throw new functions.https.HttpsError('failed-precondition', 'Legacy or mismatched Team Pass authority must be audited before recovery.');
+  }
+  if (!claimedAttempt.recoverable) return { expired: false, recovered: false };
+
+  const stripe = createStripeClient();
+  let recoveredSession;
+  try {
+    recoveredSession = await stripe.checkout.sessions.create(claimedAttempt.stripeRequest, {
+      idempotencyKey: claimedAttempt.stripeIdempotencyKey
+    });
+  } catch (error) {
+    await firestore.runTransaction(async (transaction) => {
+      const latestSnap = await transaction.get(attemptRef);
+      const latest = latestSnap.exists ? (latestSnap.data() || {}) : {};
+      if (latest.checkoutStatus !== 'recovering'
+          || latest.recoveryOperationId !== recoveryOperationId
+          || latest.checkoutAttemptToken !== claimedAttempt.checkoutAttemptToken) return;
+      transaction.set(attemptRef, {
+        checkoutStatus: 'creation_failed',
+        recoveryOperationId: admin.firestore.FieldValue.delete(),
+        recoveryActorUid: admin.firestore.FieldValue.delete(),
+        recoveryReservedAtMs: admin.firestore.FieldValue.delete(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+    }).catch(() => {});
+    throw error;
+  }
+
+  const guardFailure = getTeamPassCheckoutGuardFailure({
+    attempt: {
+      ...claimedAttempt.attempt,
+      checkoutStatus: 'open',
+      stripeCheckoutSessionId: recoveredSession.id
+    },
+    session: recoveredSession,
+    paidEvent: false
+  });
+  if (guardFailure) {
+    await firestore.runTransaction(async (transaction) => {
+      const latestSnap = await transaction.get(attemptRef);
+      const latest = latestSnap.exists ? (latestSnap.data() || {}) : {};
+      if (latest.checkoutStatus !== 'recovering'
+          || latest.recoveryOperationId !== recoveryOperationId
+          || latest.checkoutAttemptToken !== claimedAttempt.checkoutAttemptToken) return;
+      transaction.set(attemptRef, {
+        checkoutStatus: 'creation_failed',
+        recoveryOperationId: admin.firestore.FieldValue.delete(),
+        recoveryActorUid: admin.firestore.FieldValue.delete(),
+        recoveryReservedAtMs: admin.firestore.FieldValue.delete(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+    }).catch(() => {});
+    throw new functions.https.HttpsError('failed-precondition', 'The recovered Stripe checkout does not match this Team Pass attempt.');
+  }
+  const recoveredClassification = classifyStoredStripeCheckoutSession(recoveredSession);
+  if (recoveredClassification === 'terminal') {
+    await firestore.runTransaction(async (transaction) => {
+      const latestSnap = await transaction.get(attemptRef);
+      const latest = latestSnap.exists ? (latestSnap.data() || {}) : {};
+      if (latest.checkoutStatus !== 'recovering'
+          || latest.recoveryOperationId !== recoveryOperationId
+          || latest.checkoutAttemptToken !== claimedAttempt.checkoutAttemptToken) return;
+      transaction.set(attemptRef, {
+        checkoutStatus: 'open',
+        checkoutUrl: recoveredSession.url || null,
+        stripeCheckoutSessionId: recoveredSession.id,
+        stripePaymentStatus: recoveredSession.payment_status || null,
+        livemode: Boolean(recoveredSession.livemode),
+        checkoutExpiresAt: Number(recoveredSession.expires_at || 0) || null,
+        recoveryOperationId: admin.firestore.FieldValue.delete(),
+        recoveryActorUid: admin.firestore.FieldValue.delete(),
+        recoveryReservedAtMs: admin.firestore.FieldValue.delete(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+    });
+    throw new functions.https.HttpsError('failed-precondition', 'The recovered Team Pass payment is completing. Refresh payment status first.');
+  }
+  if (recoveredSession.status === 'open') {
+    await stripe.checkout.sessions.expire(recoveredSession.id);
+  }
+  const expired = await firestore.runTransaction(async (transaction) => {
+    const latestSnap = await transaction.get(attemptRef);
+    const latest = latestSnap.exists ? (latestSnap.data() || {}) : {};
+    if (latest.checkoutStatus !== 'recovering'
+        || latest.recoveryOperationId !== recoveryOperationId
+        || latest.checkoutAttemptToken !== claimedAttempt.checkoutAttemptToken) return false;
+    transaction.set(attemptRef, {
+      checkoutStatus: 'stale',
+      checkoutUrl: admin.firestore.FieldValue.delete(),
+      stripeCheckoutSessionId: admin.firestore.FieldValue.delete(),
+      recoveredStripeCheckoutSessionId: recoveredSession.id || null,
+      recoveredAt: admin.firestore.FieldValue.serverTimestamp(),
+      recoveryOperationId: admin.firestore.FieldValue.delete(),
+      recoveryActorUid: admin.firestore.FieldValue.delete(),
+      recoveryReservedAtMs: admin.firestore.FieldValue.delete(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+    return true;
+  });
+  return { expired, recovered: true };
 });
 
 exports.backfillTeamPassEntitlementProjections = functions.https.onCall(async (data, context) => {
