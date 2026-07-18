@@ -218,17 +218,26 @@ describe('preview deployment workflow trust boundary', () => {
         const preDeployCheckIndex = trustedWorkflow.indexOf('firebase-preview-pre-deploy-pr.json');
         const deployWriteIndex = trustedWorkflow.indexOf('hosting:channel:deploy "$CURRENT_CHANNEL"');
         const commentStepIndex = trustedWorkflow.indexOf('name: Report preview URL on the still-current pull request');
-        const preCommentCheckIndex = trustedWorkflow.indexOf('firebase-preview-report-pr.json');
+        const commentDiscoveryIndex = trustedWorkflow.indexOf('comment_id="$(gh api --paginate');
+        const preCommentCheckIndex = trustedWorkflow.indexOf('firebase-preview-pre-comment-pr.json');
         const commentWriteIndex = trustedWorkflow.indexOf('issues/comments/$comment_id');
 
         expect(preDeployCheckIndex).toBeGreaterThan(deployStepIndex);
         expect(deployWriteIndex).toBeGreaterThan(preDeployCheckIndex);
         expect(preCommentCheckIndex).toBeGreaterThan(commentStepIndex);
+        expect(preCommentCheckIndex).toBeGreaterThan(commentDiscoveryIndex);
         expect(commentWriteIndex).toBeGreaterThan(preCommentCheckIndex);
         expect(trustedWorkflow).toMatch(/recheck_current_head\n\s+if ! deploy_preview_channel/);
         expect(trustedWorkflow.slice(preCommentCheckIndex, commentWriteIndex)).toContain(
             'node scripts/verify-preview-deploy-trigger.mjs'
         );
+        expect(trustedWorkflow.slice(preCommentCheckIndex, commentWriteIndex)).toContain(
+            'grep -Fxq "head_sha=$EXPECTED_HEAD_SHA"'
+        );
+        expect(trustedWorkflow.slice(preCommentCheckIndex, commentWriteIndex)).toContain(
+            'grep -Fxq "artifact_id=$EXPECTED_ARTIFACT_ID"'
+        );
+        expect(trustedWorkflow).toContain('Preview for commit `%s`: %s');
         expect(trustedWorkflow.match(/verify-preview-deploy-trigger\.mjs/g).length).toBeGreaterThanOrEqual(5);
     });
 

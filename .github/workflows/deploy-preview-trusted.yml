@@ -370,11 +370,27 @@ jobs:
 
           marker='<!-- allplays-preview-url -->'
           if [[ -n "$PREVIEW_URL" ]]; then
-            body="$(printf '%s\n\nPreview URL: %s' "$marker" "$PREVIEW_URL")"
+            body="$(printf '%s\n\nPreview for commit `%s`: %s' "$marker" "$EXPECTED_HEAD_SHA" "$PREVIEW_URL")"
           else
-            body="$(printf '%s\n\nFirebase preview skipped: %s' "$marker" "${PREVIEW_SKIP_REASON:-Firebase Hosting preview was unavailable for this run.}")"
+            body="$(printf '%s\n\nFirebase preview for commit `%s` skipped: %s' "$marker" "$EXPECTED_HEAD_SHA" "${PREVIEW_SKIP_REASON:-Firebase Hosting preview was unavailable for this run.}")"
           fi
           comment_id="$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --jq "$JQ_FILTER" | head -n1)"
+
+          # Comment discovery can take long enough for a synchronize event to
+          # land. Re-read and re-bind the exact PR head after that network call
+          # so the shared comment write is adjacent to a fresh verifier result.
+          current_pr_json="$RUNNER_TEMP/firebase-preview-pre-comment-pr.json"
+          recheck_output="$RUNNER_TEMP/firebase-preview-pre-comment.outputs"
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$current_pr_json"
+          node scripts/verify-preview-deploy-trigger.mjs \
+            --event "$GITHUB_EVENT_PATH" \
+            --run "$run_json" \
+            --pull-request "$current_pr_json" \
+            --artifacts "$artifacts_json" \
+            --output "$recheck_output"
+          grep -Fxq "head_sha=$EXPECTED_HEAD_SHA" "$recheck_output"
+          grep -Fxq "artifact_id=$EXPECTED_ARTIFACT_ID" "$recheck_output"
+
           if [[ -n "$comment_id" ]]; then
             gh api "repos/$GITHUB_REPOSITORY/issues/comments/$comment_id" --method PATCH -f body="$body" >/dev/null
           else
