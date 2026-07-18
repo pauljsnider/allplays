@@ -80,7 +80,7 @@ function monitorToken(appCheck, provider) {
     });
 }
 
-async function initializeNativeAppCheck(app, config) {
+export async function initializeNativeAppCheck(app, config) {
     const { FirebaseAppCheck } = await import('@capacitor-firebase/app-check');
     const useDebugProvider = config.nativeDebug === true;
     await FirebaseAppCheck.initialize({

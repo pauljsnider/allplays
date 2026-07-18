@@ -203,6 +203,10 @@ export function resolveImageFirebaseConfig() {
     return { ...DEFAULT_IMAGE_FIREBASE_CONFIG };
 }
 
+export function isNativeAppCheckDebugBuild(viteEnvironment = {}) {
+    return viteEnvironment.MODE === 'native-debug';
+}
+
 export async function resolveAppCheckRuntimeConfig() {
     const globalConfig = readGlobalConfig();
     const viteEnvironment = readViteEnvironment();
@@ -217,8 +221,7 @@ export async function resolveAppCheckRuntimeConfig() {
         debugToken: viteEnvironment.VITE_APP_CHECK_DEBUG_TOKEN,
         isTokenAutoRefreshEnabled: true
     });
-    const nativeDebug = viteEnvironment.DEV === true
-        && normalizeBoolean(viteEnvironment.VITE_APP_CHECK_DEBUG_TOKEN) === true;
+    const nativeDebug = isNativeAppCheckDebugBuild(viteEnvironment);
 
     return {
         isTokenAutoRefreshEnabled: true,

@@ -95,6 +95,24 @@ describe('Capacitor native config', () => {
         expect(iosEntitlements).toContain('<string>production</string>');
     });
 
+    it('uses an explicit token-free App Check debug build only for local simulator and debug APK commands', () => {
+        const rootPackage = JSON.parse(readProjectFile('package.json'));
+        const appPackage = JSON.parse(readProjectFile('apps/app/package.json'));
+
+        expect(appPackage.scripts['build:native-debug']).toContain('vite build --mode native-debug');
+        expect(appPackage.scripts['build:native-debug']).toContain('ALLPLAYS_APP_CHECK_NATIVE_DEBUG=1');
+        expect(appPackage.scripts['build:native-debug']).not.toContain('VITE_APP_CHECK_DEBUG_TOKEN');
+        expect(rootPackage.scripts['mobile:sync:native-debug']).toContain('build:native-debug');
+        expect(rootPackage.scripts['mobile:build:ios']).toContain('mobile:sync:native-debug');
+        expect(rootPackage.scripts['mobile:build:ios']).toContain('-configuration Debug');
+        expect(rootPackage.scripts['mobile:build:android']).toContain('mobile:sync:native-debug');
+        expect(rootPackage.scripts['mobile:build:android']).toContain(':app:assembleDebug');
+
+        expect(rootPackage.scripts['app:build']).not.toContain('native-debug');
+        expect(rootPackage.scripts['mobile:sync']).toBe('npm run app:build && npx cap sync');
+        expect(rootPackage.scripts['mobile:sync']).not.toContain('native-debug');
+    });
+
     it('keeps Vitest and coverage peer versions aligned in app lockfiles', () => {
         const appPackage = JSON.parse(readProjectFile('apps/app/package.json'));
         const appPackageLock = JSON.parse(readProjectFile('apps/app/package-lock.json'));

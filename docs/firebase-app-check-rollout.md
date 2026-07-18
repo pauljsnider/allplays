@@ -64,12 +64,17 @@ all use the native token.
   release and Play signing SHA-256 fingerprints, and choose integrity settings
   matching the real distribution channels.
 
-Native debug/simulator runs need Firebase App Check debug tokens. Enable the
-debug provider only in a local build with `VITE_APP_CHECK_DEBUG_TOKEN=true`,
-capture the platform token from device logs, and register it in Firebase
-Console. Native debug requires both Vite development mode and the explicit
-flag. Production workflows do not set this variable, and production builds
-reject `true`, `1`, or a token-shaped value if one is supplied.
+Native debug/simulator runs need Firebase App Check debug tokens. The documented
+`npm run mobile:build:ios` and `npm run mobile:build:android` commands use the
+explicit `native-debug` Vite build mode, which asks the native SDK to generate a
+platform registration token. Capture that token from device logs and register
+it in Firebase Console. Do not put the generated token in an environment file
+or build command.
+
+`npm run app:build`, `npm run mobile:sync`, and all CI/deployment workflows stay
+in production mode. They fail closed if a web debug value or the native-debug
+opt-in is present; only the local native debug scripts can select the bypass
+provider.
 
 ## Compatibility verification before enforcement
 

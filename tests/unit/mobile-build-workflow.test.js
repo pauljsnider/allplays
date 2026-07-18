@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 
 const workflow = readFileSync(new URL('../../.github/workflows/mobile-build.yml', import.meta.url), 'utf8');
 
@@ -65,5 +65,18 @@ describe('mobile-build CI workflow', () => {
         expect(changesResultCheckIndex).toBeGreaterThan(-1);
         expect(mobileOutputCheckIndex).toBeGreaterThan(-1);
         expect(changesResultCheckIndex).toBeLessThan(mobileOutputCheckIndex);
+    });
+
+    it('keeps every CI and release workflow on production App Check assets', () => {
+        const workflowDirectory = new URL('../../.github/workflows/', import.meta.url);
+        for (const filename of readdirSync(workflowDirectory)) {
+            const source = readFileSync(new URL(filename, workflowDirectory), 'utf8');
+            expect(source, filename).not.toContain('native-debug');
+            expect(source, filename).not.toContain('ALLPLAYS_APP_CHECK_NATIVE_DEBUG');
+        }
+
+        expect(workflow).toContain('run: npm run app:build');
+        expect(workflow).not.toContain('run: npm run mobile:build:ios');
+        expect(workflow).not.toContain('run: npm run mobile:build:android');
     });
 });

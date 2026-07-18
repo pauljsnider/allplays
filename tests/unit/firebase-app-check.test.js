@@ -23,6 +23,7 @@ import {
     getAppCheckStatus,
     getPrimaryAppCheckHeaders,
     getPrimaryAppCheckToken,
+    initializeNativeAppCheck,
     initializePrimaryAppCheck,
     isCapacitorNativeRuntime,
     isPrimaryFirebaseRestRequest
@@ -115,6 +116,20 @@ describe('Firebase App Check initialization', () => {
             isTokenAutoRefreshEnabled: true
         });
         expect(status).toMatchObject({ state: 'initialized', provider: 'native-attestation' });
+    });
+
+    it('enables the native debug provider without accepting or embedding a token value', async () => {
+        const status = await initializeNativeAppCheck(PRIMARY_APP, {
+            nativeDebug: true,
+            isTokenAutoRefreshEnabled: true
+        });
+
+        expect(nativeAppCheck.initialize).toHaveBeenCalledWith({
+            debugToken: true,
+            isTokenAutoRefreshEnabled: true
+        });
+        expect(nativeAppCheck.initialize.mock.calls[0][0]).not.toHaveProperty('token');
+        expect(status).toMatchObject({ state: 'initialized', provider: 'native-debug' });
     });
 
     it('never enables the web debug provider from production runtime config', async () => {

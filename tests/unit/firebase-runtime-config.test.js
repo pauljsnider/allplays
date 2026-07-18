@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+    isNativeAppCheckDebugBuild,
     resolveAppCheckRuntimeConfig,
     resolveImageFirebaseConfig,
     resolvePrimaryFirebaseConfig
@@ -184,5 +185,12 @@ describe('firebase runtime config', () => {
             'https://allplays.ai/.well-known/allplays-runtime-config.json',
             { cache: 'no-store' }
         );
+    });
+
+    it('selects native debug attestation only for the explicit build mode and without a bundled token', () => {
+        expect(isNativeAppCheckDebugBuild({ MODE: 'native-debug' })).toBe(true);
+        expect(isNativeAppCheckDebugBuild({ MODE: 'production' })).toBe(false);
+        expect(isNativeAppCheckDebugBuild({ MODE: 'development' })).toBe(false);
+        expect(isNativeAppCheckDebugBuild({ DEV: true, VITE_APP_CHECK_DEBUG_TOKEN: 'true' })).toBe(false);
     });
 });

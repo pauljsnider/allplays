@@ -10,6 +10,7 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "tsc --noEmit && vite build",
+    "build:native-debug": "tsc --noEmit && ALLPLAYS_APP_CHECK_NATIVE_DEBUG=1 vite build --mode native-debug",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
