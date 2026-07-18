@@ -618,6 +618,12 @@ describe('AppSearchDialog', () => {
     fireEvent.change(screen.getByLabelText('Search teams, players, actions, help'), { target: { value: 'target' } });
     const continueButton = await screen.findByRole('button', { name: 'Continue team search' });
     expect(screen.getByText('No matching teams in this scan yet')).not.toBeNull();
+    continueButton.focus();
+    fireEvent.keyDown(continueButton, { key: 'Enter' });
+
+    expect(navigateMock).not.toHaveBeenCalled();
+    expect(searchAppTeamsMock).toHaveBeenCalledTimes(1);
+
     fireEvent.click(continueButton);
 
     await waitFor(() => expect(searchAppTeamsMock).toHaveBeenNthCalledWith(2, 'target', [], null, cursor));

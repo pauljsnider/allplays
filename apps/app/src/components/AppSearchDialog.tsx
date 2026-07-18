@@ -502,6 +502,11 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
                   type="button"
                   className="text-xs font-extrabold text-primary-700 transition hover:text-primary-800 disabled:opacity-60"
                   onClick={() => void continueTeamSearch()}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.stopPropagation();
+                    }
+                  }}
                   disabled={teamsLoading}
                 >
                   {teamsLoading ? 'Continuing...' : 'Continue team search'}
