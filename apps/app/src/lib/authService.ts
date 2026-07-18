@@ -1174,6 +1174,7 @@ export async function signUpWithEmail(email: string, password: string, activatio
 
 async function signUpWithEmailInternal(email: string, password: string, activationCode: string) {
   const normalizedEmail = requireValidAuthEmail(email);
+  let signupFlowActive = true;
   const [
     dbModule,
     { redeemAdminInviteAcceptance },
@@ -1189,9 +1190,19 @@ async function signUpWithEmailInternal(email: string, password: string, activati
   const createSignupUser = isNativeRuntime()
     ? async (_auth: typeof auth, signupEmail: string, signupPassword: string) => {
       const credential = await createUserWithEmailAndPassword(auth, signupEmail, signupPassword) as UserCredential;
+      const persistedUser = await persistNativeFirebaseCredential(credential.user, true);
       return {
         ...credential,
-        user: await persistNativeFirebaseCredential(credential.user, true),
+        user: {
+          ...persistedUser,
+          // The shared signup flow invokes delete() while this outer auth
+          // mutation is still active when invite/profile redemption fails.
+          // Run that rollback inline; after the flow returns, preserve normal
+          // queued deletion for any later caller of the returned credential.
+          delete: () => signupFlowActive
+            ? deleteNativeAuthUser()
+            : runNativeAuthMutation(deleteNativeAuthUser)
+        },
         nativeRest: true
       } as UserCredential;
     }
@@ -1204,28 +1215,32 @@ async function signUpWithEmailInternal(email: string, password: string, activati
     }
     : firebaseSignOut;
 
-  return executeEmailPasswordSignup({
-    email: normalizedEmail,
-    password,
-    activationCode: normalizeCode(activationCode),
-    auth,
-    dependencies: {
-      validateAccessCode: dbModule.validateAccessCode,
-      createUserWithEmailAndPassword: createSignupUser,
-      redeemParentInvite: dbModule.redeemParentInvite,
-      redeemFriendInvite: dbModule.redeemFriendInvite,
-      redeemHouseholdInvite: dbModule.redeemHouseholdInvite,
-      redeemCoParentInvite: dbModule.redeemCoParentInvite,
-      rollbackParentInviteRedemption: dbModule.rollbackParentInviteRedemption,
-      redeemAdminInviteAcceptance,
-      updateUserProfile: dbModule.updateUserProfile,
-      markAccessCodeAsUsed: dbModule.markAccessCodeAsUsed,
-      getTeam: dbModule.getTeam,
-      getUserProfile: dbModule.getUserProfile,
-      sendVerificationEmail: queueCurrentUserVerificationEmail,
-      signOut: cleanupSignupAuth
-    }
-  }) as Promise<UserCredential>;
+  try {
+    return await executeEmailPasswordSignup({
+      email: normalizedEmail,
+      password,
+      activationCode: normalizeCode(activationCode),
+      auth,
+      dependencies: {
+        validateAccessCode: dbModule.validateAccessCode,
+        createUserWithEmailAndPassword: createSignupUser,
+        redeemParentInvite: dbModule.redeemParentInvite,
+        redeemFriendInvite: dbModule.redeemFriendInvite,
+        redeemHouseholdInvite: dbModule.redeemHouseholdInvite,
+        redeemCoParentInvite: dbModule.redeemCoParentInvite,
+        rollbackParentInviteRedemption: dbModule.rollbackParentInviteRedemption,
+        redeemAdminInviteAcceptance,
+        updateUserProfile: dbModule.updateUserProfile,
+        markAccessCodeAsUsed: dbModule.markAccessCodeAsUsed,
+        getTeam: dbModule.getTeam,
+        getUserProfile: dbModule.getUserProfile,
+        sendVerificationEmail: queueCurrentUserVerificationEmail,
+        signOut: cleanupSignupAuth
+      }
+    }) as UserCredential;
+  } finally {
+    signupFlowActive = false;
+  }
 }
 
 async function signInWithNativeGoogleCredential() {

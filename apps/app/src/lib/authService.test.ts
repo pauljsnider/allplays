@@ -489,6 +489,45 @@ describe('signUpWithEmail', () => {
     }));
   });
 
+  it('deletes a failed native signup inline without re-entering its active auth mutation', async () => {
+    const createUserMock = vi.mocked(createUserWithEmailAndPassword);
+    createUserMock.mockResolvedValueOnce({
+      user: {
+        uid: 'failed-native-user',
+        email: 'player@example.com',
+        emailVerified: false,
+        refreshToken: 'signup-refresh-token',
+        getIdToken: vi.fn(async () => createFirebaseIdToken('failed-native-user'))
+      }
+    });
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes('accounts:delete')) return createJsonResponse({});
+      throw new Error(`Unexpected Firebase endpoint: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    nativeSessionStoreMocks.session = null;
+    legacySignupFlowMocks.executeEmailPasswordSignup.mockImplementationOnce(async (options: any) => {
+      const credential = await options.dependencies.createUserWithEmailAndPassword(
+        authState,
+        options.email,
+        options.password
+      );
+      await credential.user.delete();
+      throw new Error('invite redemption failed');
+    });
+
+    await expect(signUpWithEmail('player@example.com', 'secret1', '85nsbz7k'))
+      .rejects.toThrow('invite redemption failed');
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('accounts:delete'),
+      expect.objectContaining({
+        body: JSON.stringify({ idToken: createFirebaseIdToken('failed-native-user') })
+      })
+    );
+    expect(nativeSessionStoreMocks.clearNativeAuthSession).toHaveBeenCalled();
+  });
+
   it('stops invalid signup emails before loading Firebase signup work', async () => {
     await expect(signUpWithEmail('p@paulsnider', 'secret1', '85nsbz7k')).rejects.toThrow('Enter a valid email address.');
     expect(legacySignupFlowMocks.executeEmailPasswordSignup).not.toHaveBeenCalled();
