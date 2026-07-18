@@ -112,7 +112,6 @@
       "collectionGroup": "socialPosts",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "teamIds", "arrayConfig": "CONTAINS" },
         { "fieldPath": "teamId", "order": "ASCENDING" },
         { "fieldPath": "hidden", "order": "ASCENDING" },
         { "fieldPath": "createdAt", "order": "DESCENDING" }

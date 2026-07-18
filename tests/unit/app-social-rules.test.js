@@ -260,69 +260,53 @@ describe('React app social Firestore rules', () => {
             }));
         });
 
-        it('executes rule-compatible visible-user and team feed queries', async () => {
+        it('allows bounded visible-user and team feed queries that exclude globally hidden posts', async () => {
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                const adminDb = context.firestore();
+                await setDoc(doc(adminDb, 'users', 'viewer-1'), {
+                    isAdmin: false,
+                    parentTeamIds: ['team-1']
+                });
+                await setDoc(doc(adminDb, 'teams', 'team-1'), {
+                    ownerId: 'owner-1',
+                    adminEmails: []
+                });
+                await setDoc(doc(adminDb, 'socialPosts', 'post-team'), {
+                    authorId: 'author-1',
+                    visibleUserIds: [],
+                    teamId: 'team-1',
+                    teamIds: ['team-1'],
+                    hidden: false,
+                    createdAt: Timestamp.now()
+                });
+                await setDoc(doc(adminDb, 'socialPosts', 'post-hidden'), {
+                    authorId: 'author-1',
+                    visibleUserIds: ['viewer-1'],
+                    teamId: 'team-1',
+                    teamIds: ['team-1'],
+                    hidden: true,
+                    createdAt: Timestamp.now()
+                });
+            });
             const db = viewerDb();
-            const visiblePostsQuery = query(
-                collection(db, 'socialPosts'),
+            const posts = collection(db, 'socialPosts');
+            const visibleUserFeed = query(
+                posts,
                 where('visibleUserIds', 'array-contains', 'viewer-1'),
                 where('hidden', '==', false),
                 orderBy('createdAt', 'desc'),
                 limit(30)
             );
-            const teamPostsQuery = query(
-                collection(db, 'socialPosts'),
-                where('teamIds', 'array-contains', 'team-1'),
+            const teamFeed = query(
+                posts,
                 where('teamId', '==', 'team-1'),
                 where('hidden', '==', false),
                 orderBy('createdAt', 'desc'),
                 limit(12)
             );
 
-            await testEnv.withSecurityRulesDisabled(async (context) => {
-                await setDoc(doc(context.firestore(), 'teams', 'team-1'), {
-                    ownerId: 'author-1',
-                    adminEmails: []
-                });
-                await setDoc(doc(context.firestore(), 'users', 'viewer-1'), {
-                    email: 'viewer-1@example.com',
-                    parentTeamIds: ['team-1']
-                });
-                await setDoc(doc(context.firestore(), 'socialPosts', 'post-1'), {
-                    authorId: 'author-1',
-                    type: 'manual_post',
-                    visibility: 'friends_and_team',
-                    title: 'Visible team post',
-                    visibleUserIds: ['author-1', 'viewer-1'],
-                    teamId: 'team-1',
-                    teamIds: ['team-1'],
-                    playerIds: [],
-                    playerNames: [],
-                    media: [],
-                    hidden: false,
-                    reactionCounts: {},
-                    createdAt: Timestamp.now(),
-                    updatedAt: Timestamp.now()
-                });
-                await setDoc(doc(context.firestore(), 'socialPosts', 'hidden-post'), {
-                    authorId: 'author-1',
-                    type: 'manual_post',
-                    visibility: 'friends_and_team',
-                    title: 'Hidden team post',
-                    visibleUserIds: ['author-1', 'viewer-1'],
-                    teamId: 'team-1',
-                    teamIds: ['team-1'],
-                    playerIds: [],
-                    playerNames: [],
-                    media: [],
-                    hidden: true,
-                    reactionCounts: {},
-                    createdAt: Timestamp.now(),
-                    updatedAt: Timestamp.now()
-                });
-            });
-
-            await expect(assertSucceeds(getDocs(visiblePostsQuery))).resolves.toMatchObject({ size: 1 });
-            await expect(assertSucceeds(getDocs(teamPostsQuery))).resolves.toMatchObject({ size: 1 });
+            expect((await assertSucceeds(getDocs(visibleUserFeed))).size).toBe(1);
+            expect((await assertSucceeds(getDocs(teamFeed))).size).toBe(1);
         });
     });
 
