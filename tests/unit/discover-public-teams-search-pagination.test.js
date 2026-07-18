@@ -283,6 +283,16 @@ describe('public team source/projection fallback', () => {
         expect(callable).toHaveBeenCalledWith({ teamId: 'team-public' });
     });
 
+    it('preserves the missing-team null contract when the callable reports not found', async () => {
+        firebaseMocks.getDoc.mockResolvedValue({ exists: () => false });
+        const callable = vi.fn().mockRejectedValue(Object.assign(new Error('missing'), { code: 'functions/not-found' }));
+        firebaseMocks.httpsCallable.mockReturnValue(callable);
+        const { getTeam } = await import('../../js/db.js?v=91');
+
+        await expect(getTeam('deleted-team')).resolves.toBeNull();
+        expect(callable).toHaveBeenCalledWith({ teamId: 'deleted-team' });
+    });
+
     it('falls back when projection rules lag but does not mask projection network errors', async () => {
         firebaseMocks.getDoc.mockRejectedValueOnce(Object.assign(new Error('denied'), { code: 'permission-denied' }));
         const callable = vi.fn().mockResolvedValue({ data: { item: { id: 'team-public', name: 'Public Team' } } });

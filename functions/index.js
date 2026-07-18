@@ -38,6 +38,7 @@ const { createFirestoreFixedWindowRateLimiter, createInMemoryRateLimiter, getReq
 const { buildPublicGamesIcs, canExposeEmptyPublicFeed, isPublicFanGame } = require('./public-calendar-core.cjs');
 const {
   buildPublicTeamProfile,
+  collectAllPublicTeamSourceDocuments,
   isPublicTeamProfileSchemaValid,
   matchesPublicTeamProfileSearch
 } = require('./public-team-profile-core.cjs');
@@ -13153,14 +13154,18 @@ exports.discoverPublicTeamProfiles = functions.https.onCall(async (data, context
     ? cursor.offset
     : 0;
 
-  // This path is a bounded deployment-order fallback for databases that
+  // This path is a deployment-order fallback for databases that
   // predate publicTeamProfiles. Normal browse queries read the projection
   // collection directly after the backfill.
-  const teamSnap = await firestore.collection('teams')
-    .where('isPublic', '==', true)
-    .limit(1000)
-    .get();
-  const profiles = teamSnap.docs
+  const teamDocs = await collectAllPublicTeamSourceDocuments(async ({ cursor: sourceCursor, pageSize: sourcePageSize }) => {
+    let sourceQuery = firestore.collection('teams')
+      .where('isPublic', '==', true)
+      .orderBy(admin.firestore.FieldPath.documentId())
+      .limit(sourcePageSize);
+    if (sourceCursor) sourceQuery = sourceQuery.startAfter(sourceCursor);
+    return sourceQuery.get();
+  });
+  const profiles = teamDocs
     .map((docSnap) => {
       const profile = buildPublicTeamProfile(docSnap.data() || {});
       return profile && isPublicTeamProfileSchemaValid(profile)
@@ -13177,7 +13182,7 @@ exports.discoverPublicTeamProfiles = functions.https.onCall(async (data, context
     nextCursor: nextOffset < profiles.length
       ? { kind: 'public-team-callable', searchText, offset: nextOffset }
       : null,
-    boundedSourceCount: teamSnap.size
+    scannedSourceCount: teamDocs.length
   };
 });
 

@@ -36,14 +36,17 @@ const PUBLIC_TEAM_PROFILE_FIELDS = Object.freeze([
 
 const PUBLIC_TEAM_PROFILE_FIELD_SET = new Set(PUBLIC_TEAM_PROFILE_FIELDS);
 const PUBLIC_SCHEMA_VERSION = 1;
-const MAX_NESTED_DEPTH = 6;
-const MAX_OBJECT_KEYS = 100;
 const MAX_ARRAY_ITEMS = 200;
-const MAX_NESTED_STRING_LENGTH = 2000;
-const BLOCKED_NESTED_KEY_PATTERN = /(token|secret|password|credential|private|admin|owner|manager|email|phone|contact|provider|registration|auth|api.?key|access.?key|webhook|calendar.?url)/i;
 const NESTED_PRESENTATION_FIELDS = new Set([
   'standingsConfig', 'tournament', 'tournamentDivisions',
   'tournamentPools', 'tournamentPoolOverrides'
+]);
+const STANDINGS_TIEBREAKER_VALUES = new Set([
+  'head_to_head', 'group_head_to_head',
+  'goal_diff', 'point_diff',
+  'goals_for', 'points_for',
+  'fewest_goals_allowed', 'fewest_points_against',
+  'most_games_won', 'wins', 'name'
 ]);
 const TEXT_LIMITS = Object.freeze({
   name: 100,
@@ -90,25 +93,102 @@ function isPlainObject(value) {
   return prototype === Object.prototype || prototype === null;
 }
 
-function sanitizeNestedPresentationValue(value, depth = 0) {
-  if (value === null || typeof value === 'boolean') return value;
-  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
-  if (typeof value === 'string') return value.slice(0, MAX_NESTED_STRING_LENGTH);
-  if (depth >= MAX_NESTED_DEPTH) return undefined;
-  if (Array.isArray(value)) {
-    return value.slice(0, MAX_ARRAY_ITEMS)
-      .map((item) => sanitizeNestedPresentationValue(item, depth + 1))
-      .filter((item) => item !== undefined);
+function sanitizeFiniteNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : undefined;
+}
+
+function sanitizeStandingsTiebreakers(value) {
+  if (!Array.isArray(value)) return undefined;
+  return value.slice(0, 20)
+    .map((item) => normalizeText(item).toLowerCase())
+    .filter((item) => STANDINGS_TIEBREAKER_VALUES.has(item));
+}
+
+function sanitizeStandingsConfig(value) {
+  if (!isPlainObject(value)) return undefined;
+  const result = {};
+  if (typeof value.enabled === 'boolean') result.enabled = value.enabled;
+  if (['points', 'win_pct'].includes(value.rankingMode)) result.rankingMode = value.rankingMode;
+  if (isPlainObject(value.points)) {
+    const points = {};
+    ['win', 'tie', 'loss'].forEach((key) => {
+      const number = sanitizeFiniteNumber(value.points[key]);
+      if (number !== undefined) points[key] = number;
+    });
+    if (Object.keys(points).length) result.points = points;
+  }
+  const maxGoalDiff = sanitizeFiniteNumber(value.maxGoalDiff);
+  if (maxGoalDiff !== undefined && maxGoalDiff > 0) result.maxGoalDiff = maxGoalDiff;
+  if (value.maxGoalDiff === null) result.maxGoalDiff = null;
+  ['tiebreakers', 'twoTeamTiebreakers', 'multiTeamTiebreakers'].forEach((key) => {
+    const tiebreakers = sanitizeStandingsTiebreakers(value[key]);
+    if (tiebreakers !== undefined) result[key] = tiebreakers;
+  });
+  return result;
+}
+
+function sanitizeTournamentGroup(value) {
+  if (typeof value === 'string' || typeof value === 'number') {
+    return sanitizeText(value, 200);
   }
   if (!isPlainObject(value)) return undefined;
   const result = {};
-  Object.entries(value).slice(0, MAX_OBJECT_KEYS).forEach(([key, item]) => {
-    const normalizedKey = String(key || '').trim().slice(0, 100);
-    if (!normalizedKey || BLOCKED_NESTED_KEY_PATTERN.test(normalizedKey)) return;
-    const sanitized = sanitizeNestedPresentationValue(item, depth + 1);
-    if (sanitized !== undefined) result[normalizedKey] = sanitized;
+  ['name', 'label', 'divisionName', 'division', 'poolName'].forEach((key) => {
+    const text = sanitizeText(value[key], 200);
+    if (text !== undefined) result[key] = text;
+  });
+  return Object.keys(result).length ? result : undefined;
+}
+
+function sanitizeTournamentGroups(value) {
+  if (!Array.isArray(value)) return undefined;
+  return value.slice(0, MAX_ARRAY_ITEMS)
+    .map(sanitizeTournamentGroup)
+    .filter((item) => item !== undefined);
+}
+
+function sanitizeTournament(value) {
+  if (!isPlainObject(value)) return undefined;
+  const result = {};
+  ['name', 'label'].forEach((key) => {
+    const text = sanitizeText(value[key], 200);
+    if (text !== undefined) result[key] = text;
+  });
+  ['divisions', 'pools'].forEach((key) => {
+    const groups = sanitizeTournamentGroups(value[key]);
+    if (groups !== undefined) result[key] = groups;
   });
   return result;
+}
+
+function sanitizeTournamentPoolOverrides(value) {
+  if (!isPlainObject(value)) return undefined;
+  const result = {};
+  Object.entries(value).slice(0, MAX_ARRAY_ITEMS).forEach(([rawKey, rawOverride]) => {
+    const key = sanitizeText(rawKey, 300);
+    if (!key || !isPlainObject(rawOverride)) return;
+    const override = {};
+    ['poolName', 'groupKey'].forEach((field) => {
+      const text = sanitizeText(rawOverride[field], 300);
+      if (text !== undefined) override[field] = text;
+    });
+    if (Array.isArray(rawOverride.teamOrder)) {
+      override.teamOrder = rawOverride.teamOrder.slice(0, MAX_ARRAY_ITEMS)
+        .map((teamName) => sanitizeText(teamName, 200))
+        .filter(Boolean);
+    }
+    if (Object.keys(override).length) result[key] = override;
+  });
+  return result;
+}
+
+function sanitizeNestedPresentationField(field, value) {
+  if (field === 'standingsConfig') return sanitizeStandingsConfig(value);
+  if (field === 'tournament') return sanitizeTournament(value);
+  if (field === 'tournamentDivisions' || field === 'tournamentPools') return sanitizeTournamentGroups(value);
+  if (field === 'tournamentPoolOverrides') return sanitizeTournamentPoolOverrides(value);
+  return undefined;
 }
 
 function sanitizeSocialLinks(value) {
@@ -123,21 +203,12 @@ function sanitizeSocialLinks(value) {
   return result;
 }
 
-function isSafeNestedPresentationValue(value, depth = 0) {
-  if (value === null || typeof value === 'boolean') return true;
-  if (typeof value === 'number') return Number.isFinite(value);
-  if (typeof value === 'string') return value.length <= MAX_NESTED_STRING_LENGTH;
-  if (depth >= MAX_NESTED_DEPTH) return false;
-  if (Array.isArray(value)) {
-    return value.length <= MAX_ARRAY_ITEMS && value.every((item) => isSafeNestedPresentationValue(item, depth + 1));
+function stableSerialize(value) {
+  if (Array.isArray(value)) return `[${value.map(stableSerialize).join(',')}]`;
+  if (isPlainObject(value)) {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableSerialize(value[key])}`).join(',')}}`;
   }
-  if (!isPlainObject(value)) return false;
-  const entries = Object.entries(value);
-  return entries.length <= MAX_OBJECT_KEYS && entries.every(([key, item]) => (
-    key.length > 0 && key.length <= 100 &&
-    !BLOCKED_NESTED_KEY_PATTERN.test(key) &&
-    isSafeNestedPresentationValue(item, depth + 1)
-  ));
+  return JSON.stringify(value);
 }
 
 function isPublicTeamActive(team = {}) {
@@ -181,7 +252,7 @@ function buildPublicTeamProfile(team = {}) {
       return;
     }
     if (NESTED_PRESENTATION_FIELDS.has(field)) {
-      const sanitized = sanitizeNestedPresentationValue(value);
+      const sanitized = sanitizeNestedPresentationField(field, value);
       if (sanitized !== undefined) profile[field] = sanitized;
       return;
     }
@@ -213,6 +284,21 @@ function matchesPublicTeamProfileSearch(profile = {}, searchText = '') {
   return search.split(/[\s,]+/).filter(Boolean).every((token) => combined.includes(token));
 }
 
+async function collectAllPublicTeamSourceDocuments(fetchPage, { pageSize = 500 } = {}) {
+  if (typeof fetchPage !== 'function') throw new Error('A public team page loader is required.');
+  const normalizedPageSize = Math.min(Math.max(Number(pageSize) || 500, 1), 1000);
+  const documents = [];
+  let cursor = null;
+  while (true) {
+    const page = await fetchPage({ cursor, pageSize: normalizedPageSize });
+    const pageDocuments = Array.isArray(page?.docs) ? page.docs : [];
+    documents.push(...pageDocuments);
+    if (pageDocuments.length < normalizedPageSize) break;
+    cursor = pageDocuments.at(-1);
+  }
+  return documents;
+}
+
 function findUnexpectedPublicTeamProfileFields(profile = {}) {
   return Object.keys(profile).filter((field) => !PUBLIC_TEAM_PROFILE_FIELD_SET.has(field));
 }
@@ -227,7 +313,8 @@ function isPublicTeamProfileSchemaValid(profile = {}) {
     normalizeText(profile.name).length > 0 &&
     findUnexpectedPublicTeamProfileFields(profile).length === 0 &&
     [...NESTED_PRESENTATION_FIELDS].every((field) => (
-      !Object.prototype.hasOwnProperty.call(profile, field) || isSafeNestedPresentationValue(profile[field])
+      !Object.prototype.hasOwnProperty.call(profile, field) ||
+      stableSerialize(profile[field]) === stableSerialize(sanitizeNestedPresentationField(field, profile[field]))
     )) &&
     (!Object.prototype.hasOwnProperty.call(profile, 'socialLinks') || (
       isPlainObject(profile.socialLinks) &&
@@ -240,6 +327,7 @@ module.exports = {
   PUBLIC_SCHEMA_VERSION,
   buildPublicTeamProfile,
   buildPublicTeamSearchFields,
+  collectAllPublicTeamSourceDocuments,
   findUnexpectedPublicTeamProfileFields,
   isPublicTeamActive,
   isPublicTeamDiscoverable,

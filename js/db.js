@@ -809,8 +809,12 @@ async function discoverPublicTeamsFromCallable({ searchText = '', cursor = null,
 }
 
 function isPublicProjectionFallbackError(error) {
-    const code = String(error?.code || '').replace(/^firestore\//, '');
+    const code = String(error?.code || '').replace(/^(?:firestore|functions)\//, '');
     return code === 'permission-denied' || code === 'not-found';
+}
+
+function isPublicProjectionNotFoundError(error) {
+    return String(error?.code || '').replace(/^(?:firestore|functions)\//, '') === 'not-found';
 }
 
 export async function discoverPublicTeams(options = {}) {
@@ -1103,7 +1107,13 @@ export async function getTeam(teamId, options = {}) {
     // Deployment-order fallback: the callable already returns an allow-listed
     // projection and remains safe while publicTeamProfiles is being backfilled.
     const getPublicTeamProfile = httpsCallable(functions, 'getPublicTeamProfile');
-    const result = await getPublicTeamProfile({ teamId: normalizedTeamId });
+    let result;
+    try {
+        result = await getPublicTeamProfile({ teamId: normalizedTeamId });
+    } catch (error) {
+        if (isPublicProjectionNotFoundError(error)) return null;
+        throw error;
+    }
     const item = result.data?.item || null;
     if (!item) return null;
     const publicTeam = { ...item, id: item.id || normalizedTeamId, isPublic: true, active: true };

@@ -89,6 +89,9 @@ describe('public opportunity callable wiring', () => {
     expect(source).toContain("require('./public-team-profile-core.cjs')");
     expect(source).toMatch(/getPublicTeamProfile[\s\S]*const profile = buildPublicTeamProfile\(team\)/);
     expect(source).toContain('profile && isPublicTeamProfileSchemaValid(profile)');
+    expect(source).toContain('collectAllPublicTeamSourceDocuments');
+    expect(source).toContain('.orderBy(admin.firestore.FieldPath.documentId())');
+    expect(source).not.toContain(".where('isPublic', '==', true)\n    .limit(1000)");
   });
 
   it('routes team inquiries only to current team administrators', () => {

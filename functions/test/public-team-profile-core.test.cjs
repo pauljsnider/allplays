@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const {
   PUBLIC_TEAM_PROFILE_FIELDS,
   buildPublicTeamProfile,
+  collectAllPublicTeamSourceDocuments,
   findUnexpectedPublicTeamProfileFields,
   isPublicTeamProfileSchemaValid,
   matchesPublicTeamProfileSearch
@@ -19,7 +20,17 @@ test('public team projection preserves presentation fields and strips management
     leagueUrl: 'https://league.example.test',
     socialLinks: { instagram: 'https://instagram.example.test/bluejays' },
     standingsConfig: { enabled: true, points: { win: 3 }, providerToken: 'must-not-leak' },
-    tournament: { pools: [{ name: 'Pool A', managerEmail: 'must-not-leak@example.test' }] },
+    tournament: {
+      pools: [{ name: 'Pool A', managerEmail: 'must-not-leak@example.test', notes: 'also private' }],
+      contacts: [{ name: 'Private organizer' }]
+    },
+    tournamentPoolOverrides: {
+      'Pool A': {
+        poolName: 'Pool A',
+        teamOrder: ['Blue Jays', 'Cardinals'],
+        finalizedBy: { userId: 'private-user', name: 'Private Staff', email: 'private@example.test' }
+      }
+    },
     streamUrl: 'https://youtube.example.test/live',
     isPublic: true,
     active: true,
@@ -44,6 +55,14 @@ test('public team projection preserves presentation fields and strips management
   assert.equal(profile.standingsConfig.providerToken, undefined);
   assert.equal(profile.standingsConfig.points.win, 3);
   assert.equal(profile.tournament.pools[0].managerEmail, undefined);
+  assert.equal(profile.tournament.pools[0].notes, undefined);
+  assert.equal(profile.tournament.contacts, undefined);
+  assert.deepEqual(profile.tournamentPoolOverrides['Pool A'], {
+    poolName: 'Pool A',
+    teamOrder: ['Blue Jays', 'Cardinals']
+  });
+  assert.equal(JSON.stringify(profile).includes('private-user'), false);
+  assert.equal(JSON.stringify(profile).includes('private@example.test'), false);
   assert.equal(isPublicTeamProfileSchemaValid(profile), true);
   assert.deepEqual(findUnexpectedPublicTeamProfileFields(profile), []);
 
@@ -71,6 +90,13 @@ test('projection validation rejects injected fields and nameless documents', () 
     tournament: { providerSecret: 'leak' }
   }), false);
   assert.equal(isPublicTeamProfileSchemaValid({ publicSchemaVersion: 1, name: '', isPublic: true, active: true }), false);
+  assert.equal(isPublicTeamProfileSchemaValid({
+    publicSchemaVersion: 1,
+    name: 'Unsafe Override Team', isPublic: true, active: true,
+    tournamentPoolOverrides: {
+      'Pool A': { poolName: 'Pool A', teamOrder: ['Safe'], finalizedBy: { userId: 'private-user' } }
+    }
+  }), false);
 });
 
 test('public team fallback search matches all normalized tokens without private fields', () => {
@@ -80,4 +106,17 @@ test('public team fallback search matches all normalized tokens without private 
   assert.equal(matchesPublicTeamProfileSearch(profile, 'kansas mo'), true);
   assert.equal(matchesPublicTeamProfileSearch(profile, '64110 baseball'), true);
   assert.equal(matchesPublicTeamProfileSearch(profile, 'austin'), false);
+});
+
+test('deployment fallback reads every source page instead of truncating at 1000 teams', async () => {
+  const source = Array.from({ length: 1001 }, (_, index) => ({ id: `team-${index + 1}` }));
+  const cursors = [];
+  const documents = await collectAllPublicTeamSourceDocuments(({ cursor, pageSize }) => {
+    cursors.push(cursor?.id || null);
+    const offset = cursor ? source.findIndex((item) => item.id === cursor.id) + 1 : 0;
+    return Promise.resolve({ docs: source.slice(offset, offset + pageSize) });
+  });
+
+  assert.equal(documents.length, 1001);
+  assert.deepEqual(cursors, [null, 'team-500', 'team-1000']);
 });
