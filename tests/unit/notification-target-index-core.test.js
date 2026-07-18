@@ -141,10 +141,12 @@ describe('notification target index core helpers', () => {
         expect(userIdResolverSource).toContain('firestore.getAll(...recipientRefs)');
         expect(userIdResolverSource).toContain('buildTargetsFromNotificationRecipientDoc(docSnap');
         expect(userIdResolverSource).toContain('const indexedUserIds = new Set(indexedTargets.map((target) => target.uid));');
-        expect(userIdResolverSource).toContain('!indexedUserIds.has(user.uid)');
+        expect(userIdResolverSource).toContain('const existingIndexedUserIds = new Set(recipientSnaps');
+        expect(userIdResolverSource).toContain('!existingIndexedUserIds.has(user.uid)');
+        expect(userIdResolverSource).toContain('const tokenlessIndexedTargets = recipientSnaps');
         expect(userIdResolverSource).toContain('eligibleUsers.has(user.uid)');
         expect(userIdResolverSource).toContain('? await getLegacyTargetsForCategory(teamId, category, missingUsers, actorUid, audienceContext)');
-        expect(userIdResolverSource).toContain('return [...indexedTargets, ...fallbackTargets].filter');
+        expect(userIdResolverSource).toContain('return [...indexedTargets, ...tokenlessIndexedTargets, ...fallbackTargets].filter');
         expect(userIdResolverSource).toContain('if (!recipientUserIds.has(uid)) return false;');
     });
 });

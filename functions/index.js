@@ -5849,7 +5849,7 @@ async function syncNotificationRecipientForTeamUser(teamId, uid, options = {}) {
     ? normalizeNotificationPreferences(prefSnap.data())
     : DEFAULT_NOTIFICATION_PREFERENCES;
   const tokens = buildNotificationRecipientTokens(devicesSnap);
-  if (!tokens.length || !hasEnabledNotificationCategory(preferences)) {
+  if (!hasEnabledNotificationCategory(preferences)) {
     if (!skipLegacyCleanup) {
       await cleanupLegacyNotificationRecipientDocs(teamId, normalizedUid);
     }
@@ -7303,32 +7303,34 @@ async function getTargetsForCategoryUserIds(teamId, category, userIds = [], acto
   const indexedTargets = recipientSnaps
     .filter((docSnap) => docSnap.exists)
     .flatMap((docSnap) => buildTargetsFromNotificationRecipientDoc(docSnap, { teamId, category, actorUid, eligibleUsers }));
-  const indexedEnabledUserIds = new Set(recipientSnaps
-    .filter((docSnap) => docSnap.exists && docSnap.data()?.categories?.[category] === true)
-    .map((docSnap) => getNotificationRecipientDocUid(docSnap))
-    .filter((uid) => eligibleUsers.has(uid)));
-  const indexedUserIds = new Set(recipientSnaps
+  const indexedUserIds = new Set(indexedTargets.map((target) => target.uid));
+  const existingIndexedUserIds = new Set(recipientSnaps
     .filter((docSnap) => docSnap.exists)
     .map((docSnap) => getNotificationRecipientDocUid(docSnap))
     .filter(Boolean));
+  const tokenlessIndexedTargets = recipientSnaps
+    .filter((docSnap) => {
+      if (!docSnap.exists) return false;
+      const data = docSnap.data() || {};
+      const uid = getNotificationRecipientDocUid(docSnap);
+      return uid
+        && uid !== actorUid
+        && eligibleUsers.has(uid)
+        && data.categories?.[category] === true
+        && !indexedUserIds.has(uid);
+    })
+    .map((docSnap) => ({ uid: getNotificationRecipientDocUid(docSnap), teamId }));
   const missingUsers = users.filter((user) => (
     user?.uid
     && user.uid !== actorUid
-    && !indexedUserIds.has(user.uid)
+    && !existingIndexedUserIds.has(user.uid)
     && eligibleUsers.has(user.uid)
   ));
   const fallbackTargets = missingUsers.length
     ? await getLegacyTargetsForCategory(teamId, category, missingUsers, actorUid, audienceContext)
     : [];
-  const logicalIndexedTargets = appendTokenlessNotificationTargets(
-    indexedTargets,
-    new Map(Array.from(indexedEnabledUserIds).map((uid) => [uid, eligibleUsers.get(uid)])),
-    teamId,
-    actorUid
-  );
-
   const seenTargetIds = new Set();
-  return [...logicalIndexedTargets, ...fallbackTargets].filter((target) => {
+  return [...indexedTargets, ...tokenlessIndexedTargets, ...fallbackTargets].filter((target) => {
     const uid = String(target?.uid || '').trim();
     if (!recipientUserIds.has(uid)) return false;
     const key = `${uid}:${target?.deviceId || ''}:${target?.token || ''}`;
