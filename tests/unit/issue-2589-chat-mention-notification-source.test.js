@@ -10,9 +10,9 @@ describe('issue 2589 chat mention notification source contract', () => {
         expect(functionsSource).toContain('const teamChatMentionStartRegex =');
         expect(functionsSource).toContain('function detectMentionedUids(text, members, options = {})');
         expect(functionsSource).toContain('const { allowReservedMentions = false } = options || {};');
-        expect(functionsSource).toContain('const mentionEligibleUids = new Set(mentionTargets.map((target) => target.uid));');
-        expect(functionsSource).toContain('const mentionMembers = Array.isArray(context.members)');
-        expect(functionsSource).toContain('detectMentionedUids(text, mentionMembers, { allowReservedMentions: actorIsStaff }).filter((uid) => uid !== actorUid)');
+        expect(functionsSource).toContain('const members = Array.isArray(context.members) ? context.members : [];');
+        expect(functionsSource).toContain('detectMentionedUids(text, members, { allowReservedMentions: actorIsStaff }).filter((uid) => uid !== actorUid)');
+        expect(functionsSource).toContain('mentionInboxUids: mentionedUids');
     });
 
     it('keeps mention pushes separate from regular live-chat pushes', () => {
@@ -21,7 +21,7 @@ describe('issue 2589 chat mention notification source contract', () => {
         expect(functionsSource).toContain('targets: notificationPlan.mentionTargets');
         expect(functionsSource).toContain("category: 'liveChat'");
         expect(functionsSource).toContain('targets: notificationPlan.liveChatTargets');
-        expect(functionsSource).toContain('&& !mentionedSet.has(target.uid)');
+        expect(functionsSource).toContain('&& !mentionDeliverySet.has(target.uid)');
         expect(functionsSource).toContain('&& !mutedSet.has(target.uid)');
     });
 
@@ -29,6 +29,6 @@ describe('issue 2589 chat mention notification source contract', () => {
         expect(mentionDetectionTestSource).toContain('matches a rostered multi-word display name exactly');
         expect(mentionDetectionTestSource).toContain('ignores reserved tokens unless the caller explicitly allows them');
         expect(mentionDetectionTestSource).toContain('uses per-conversation mute state before falling back to team-wide chatMuted');
-        expect(deliveryContractSource).toContain('sends mention pushes only to mentioned users and live chat pushes only to non-muted non-mentioned users');
+        expect(deliveryContractSource).toContain('sends mention pushes only to mention-enabled users and falls other mentions back to live chat');
     });
 });

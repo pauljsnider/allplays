@@ -15,6 +15,9 @@ function getSourceSlice(startMarker, endMarker) {
 
 function createFirestoreMock({ indexedTargets = [], preferences = {}, devices = {} } = {}) {
     return {
+        getAll: vi.fn(async (...refs) => refs.map((ref) => ({
+            exists: indexedTargets.some((target) => target.uid === ref.uid)
+        }))),
         collection: vi.fn((path) => {
             if (path.startsWith('teams/') && path.endsWith('/notificationRecipients')) {
                 return {
@@ -101,6 +104,7 @@ function createHarness({ candidateUsers = [], indexedTargets = [], preferences =
         'DEFAULT_NOTIFICATION_PREFERENCES',
         'normalizeNotificationPreferences',
         'getCandidateUsersForTeam',
+        'buildTeamNotificationRecipientRef',
         `${helperSource}\nreturn { getTargetsForCategory, getLegacyTargetsForCategory, canReceiveCategoryNotification };`
     );
 
@@ -110,7 +114,8 @@ function createHarness({ candidateUsers = [], indexedTargets = [], preferences =
         notificationAudienceAllowsRoles,
         { media: false },
         (prefs) => ({ media: prefs?.media === true }),
-        getCandidateUsersForTeam
+        getCandidateUsersForTeam,
+        (teamId, uid) => ({ teamId, uid })
     );
 
     return {

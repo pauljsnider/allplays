@@ -95,7 +95,7 @@ describe('notification target index core helpers', () => {
         expect(syncSource).toContain('indexRefs.forEach((ref) => batch.delete(ref));');
     });
 
-    it('uses populated team recipient indexes without legacy user scans and falls back only when empty', () => {
+    it('uses team recipient indexes and repairs partial coverage through bounded fallback', () => {
         const targetResolverSource = functionsSource.slice(
             functionsSource.indexOf('async function getLegacyTargetsForCategory'),
             functionsSource.indexOf('async function pruneInvalidTokens')
@@ -115,7 +115,10 @@ describe('notification target index core helpers', () => {
         expect(targetResolverSource).toContain('const indexedRecipientDocs = categoryRecipientDocs.filter(isAggregateNotificationRecipientDoc);');
         expect(targetResolverSource).toContain('const explicitlyEligibleLegacyRecipientDocs = categoryRecipientDocs.filter((docSnap) => (');
         expect(targetResolverSource).toContain('if (indexedRecipientDocs.length) {');
-        expect(targetResolverSource).toContain('buildIndexedEligibleUsers(indexedRecipientDocs, category, audienceContext, additionalUsers)');
+        expect(targetResolverSource).toContain('resolveMixedNotificationRecipientIndex({');
+        expect(targetResolverSource).toContain('const coverageUserIds = Array.from(eligibleUsers.keys())');
+        expect(targetResolverSource).toContain('await firestore.getAll(...recipientRefs)');
+        expect(targetResolverSource).toContain('Failed to backfill missing notification recipient index entries');
         expect(functionsSource).toContain("const albumVisibility = audienceContext?.staffOnly === true");
         expect(functionsSource).toContain("return ['private', 'staff', 'staff-only'].includes(normalized) ? 'private' : 'team';");
         expect(functionsSource).toContain('if (hasMediaAudienceConstraints(audienceContext))');
@@ -141,10 +144,12 @@ describe('notification target index core helpers', () => {
         expect(userIdResolverSource).toContain('firestore.getAll(...recipientRefs)');
         expect(userIdResolverSource).toContain('buildTargetsFromNotificationRecipientDoc(docSnap');
         expect(userIdResolverSource).toContain('const indexedUserIds = new Set(indexedTargets.map((target) => target.uid));');
-        expect(userIdResolverSource).toContain('!indexedUserIds.has(user.uid)');
+        expect(userIdResolverSource).toContain('const existingIndexedUserIds = new Set(recipientSnaps');
+        expect(userIdResolverSource).toContain('!existingIndexedUserIds.has(user.uid)');
+        expect(userIdResolverSource).toContain('const tokenlessIndexedTargets = recipientSnaps');
         expect(userIdResolverSource).toContain('eligibleUsers.has(user.uid)');
         expect(userIdResolverSource).toContain('? await getLegacyTargetsForCategory(teamId, category, missingUsers, actorUid, audienceContext)');
-        expect(userIdResolverSource).toContain('return [...indexedTargets, ...fallbackTargets].filter');
+        expect(userIdResolverSource).toContain('return [...indexedTargets, ...tokenlessIndexedTargets, ...fallbackTargets].filter');
         expect(userIdResolverSource).toContain('if (!recipientUserIds.has(uid)) return false;');
     });
 });

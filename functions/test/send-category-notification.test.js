@@ -33,8 +33,8 @@ test('getTargetsForCategory uses indexed targets without legacy per-user device 
 
             assert.equal(targets.length, 2);
             assert.equal(env.counts.recipientQueries, 1);
-            assert.equal(env.counts.parentQueries, 0);
-            assert.equal(env.counts.teamDocGets, 0);
+            assert.equal(env.counts.parentQueries, 1);
+            assert.equal(env.counts.teamDocGets, 1);
             assert.equal(env.counts.recipientCollectionGets, 0);
             assert.equal(env.counts.preferenceGets, 0);
             assert.equal(env.counts.deviceGets, 0);
@@ -141,7 +141,7 @@ test('getTargetsForCategory returns the same recipient set from indexed resoluti
 
             assert.deepEqual(normalizeTargets(indexedTargets), normalizeTargets(legacyTargets));
             assert.equal(indexed.env.counts.recipientQueries, 1);
-            assert.equal(indexed.env.counts.parentQueries, 0);
+            assert.equal(indexed.env.counts.parentQueries, 1);
             assert.equal(indexed.env.counts.preferenceGets, 0);
             assert.equal(indexed.env.counts.deviceGets, 0);
             assert.equal(legacy.env.counts.recipientQueries, 1);
@@ -171,6 +171,12 @@ test('getTargetsForCategory does not backfill repeatedly when the recipient coll
                     deviceId: 'coach-device',
                     token: 'coach-token',
                     categories: { media: false }
+                },
+                {
+                    uid: 'parent-1',
+                    deviceId: 'parent-device',
+                    token: 'parent-token',
+                    categories: { media: false }
                 }
             ],
             preferenceDocs: {
@@ -193,7 +199,7 @@ test('getTargetsForCategory does not backfill repeatedly when the recipient coll
             assert.deepEqual(targets, []);
             assert.equal(env.counts.recipientQueries, 1);
             assert.equal(env.counts.recipientCollectionGets, 1);
-            assert.equal(env.counts.parentQueries, 0);
+            assert.equal(env.counts.parentQueries, 1);
             assert.equal(env.counts.preferenceGets, 0);
             assert.equal(env.counts.deviceGets, 0);
             assert.equal(
@@ -206,13 +212,16 @@ test('getTargetsForCategory does not backfill repeatedly when the recipient coll
         }
 });
 
-test('getTargetsForCategory does not legacy-scan missing users once the recipient index exists', async () => {
+test('getTargetsForCategory repairs a mixed index and returns a tokenless eligible user', async () => {
         const { internals, env, cleanup } = loadNotificationInternals({
             teamDoc: {
                 ownerId: 'coach-1',
                 adminEmails: []
             },
             parentUserIds: ['parent-1'],
+            userDocs: {
+                'parent-1': { parentTeamIds: ['team-1'] }
+            },
             indexedTargets: [
                 {
                     uid: 'coach-1',
@@ -224,25 +233,26 @@ test('getTargetsForCategory does not legacy-scan missing users once the recipien
             preferenceDocs: {
                 'users/parent-1/notificationPreferences/team-1': { schedule: true }
             },
-            deviceDocs: {
-                'parent-1': [
-                    { id: 'parent-device', token: 'parent-token' }
-                ]
-            }
+            deviceDocs: {}
         });
 
         try {
             const targets = await internals.getTargetsForCategory('team-1', 'schedule');
 
-            assert.equal(targets.length, 1);
+            assert.equal(targets.length, 2);
             assert.equal(env.counts.recipientQueries, 1);
-            assert.equal(env.counts.parentQueries, 0);
+            assert.equal(env.counts.parentQueries, 1);
             assert.equal(env.counts.recipientCollectionGets, 0);
-            assert.equal(env.counts.preferenceGets, 0);
-            assert.equal(env.counts.deviceGets, 0);
-            assert.deepEqual(targets.map((target) => target.token).sort(), [
-                'coach-token'
+            assert.ok(env.counts.preferenceGets > 0);
+            assert.ok(env.counts.deviceGets > 0);
+            assert.deepEqual(targets.map((target) => `${target.uid}:${target.token || ''}`).sort(), [
+                'coach-1:coach-token',
+                'parent-1:'
             ]);
+            assert.equal(
+                env.dedupWrites.some((write) => write.path === 'teams/team-1/notificationRecipients/parent-1'),
+                true
+            );
         } finally {
             cleanup();
         }
@@ -282,7 +292,7 @@ test('getTargetsForCategory resolves legacy per-device recipient docs with candi
 
             assert.equal(targets.length, 2);
             assert.equal(env.counts.recipientQueries, 1);
-            assert.equal(env.counts.teamDocGets, 1);
+            assert.ok(env.counts.teamDocGets >= 1);
             assert.equal(env.counts.parentQueries, 1);
             assert.equal(env.counts.recipientCollectionGets, 0);
             assert.equal(env.counts.preferenceGets, 0);
@@ -456,7 +466,7 @@ test('getTargetsForCategory limits staff-only media notifications to staff recip
 
             assert.deepEqual(targets.map((target) => target.token), ['coach-token']);
             assert.equal(env.counts.recipientQueries, 1);
-            assert.equal(env.counts.parentQueries, 0);
+            assert.equal(env.counts.parentQueries, 1);
             assert.equal(env.counts.preferenceGets, 0);
             assert.equal(env.counts.deviceGets, 0);
         } finally {
