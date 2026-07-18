@@ -25,6 +25,7 @@ describe('stored image URL Firestore rule contracts', () => {
         expect(rules).toContain('hasCanonicalLiveChatSenderPhoto(data)');
         expect(rules).toContain('function hasValidDrillDiagramUrls(data)');
         expect(rules).toContain('function hasSafeDrillDiagramUrlUpdate()');
+        expect(rules).toContain('nextDiagramUrls.size() <= existingDiagramUrls.size()');
         expect(rules).toContain('nextDiagramUrls.hasOnly(existingDiagramUrls)');
         expect(rules).toContain('(game-flow-c6311|game-flow-img)[.]firebasestorage[.]app');
     });
@@ -179,6 +180,9 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('stored image URL rules en
 
         await assertSucceeds(updateDoc(legacyRef, { title: 'Legacy drill renamed' }));
         await assertSucceeds(updateDoc(legacyRef, { diagramUrls: ['https://legacy.example/diagram.png'] }));
+        await assertFails(updateDoc(legacyRef, {
+            diagramUrls: Array(5).fill('https://legacy.example/diagram.png')
+        }));
         await assertFails(updateDoc(legacyRef, {
             diagramUrls: ['https://legacy.example/diagram.png', trustedDiagram]
         }));

@@ -2176,6 +2176,7 @@ service cloud.firestore {
              (existingDiagramUrls is list &&
               nextDiagramUrls is list &&
               nextDiagramUrls.size() <= 5 &&
+              nextDiagramUrls.size() <= existingDiagramUrls.size() &&
               nextDiagramUrls.hasOnly(existingDiagramUrls));
     }
 
