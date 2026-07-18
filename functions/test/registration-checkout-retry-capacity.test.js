@@ -753,7 +753,10 @@ test('reserves capacity exactly once after a failed retry is retried successfull
     const stripeCreateSuccess = async () => ({
         id: 'cs_test_123',
         url: 'https://checkout.stripe.com/c/session_123',
-        payment_status: 'unpaid'
+        payment_status: 'unpaid',
+        status: 'open',
+        livemode: false,
+        expires_at: Math.floor(Date.now() / 1000) + 1800
     });
     const { firestore, createStripeRegistrationCheckout } = loadCheckoutHandler({
         seed: buildSeedState(),
@@ -845,6 +848,67 @@ test('replays the exact durable Stripe request after post-Stripe persistence fai
     assert.equal(completedRegistration.checkoutStatus, 'open');
     assert.equal(Object.prototype.hasOwnProperty.call(completedRegistration, 'checkoutCreationReservationId'), false);
     assert.equal(loaded.firestore.snapshot(reservationPath).status, 'persisted');
+});
+
+test('supersedes an expired durable replay before creating a fresh registration checkout', async () => {
+    const registrationPath = 'teams/team-1/registrationForms/form-1/registrations/reg-1';
+    const stripeCalls = [];
+    const sessionsByIdempotencyKey = new Map();
+    const stripeCreateImpl = async (payload, options) => {
+        stripeCalls.push({ payload: clone(payload), options: clone(options) });
+        if (!sessionsByIdempotencyKey.has(options.idempotencyKey)) {
+            const sequence = sessionsByIdempotencyKey.size + 1;
+            sessionsByIdempotencyKey.set(options.idempotencyKey, {
+                id: `cs_test_replay_${sequence}`,
+                url: `https://checkout.stripe.com/c/replay_${sequence}`,
+                payment_status: 'unpaid',
+                status: 'open',
+                livemode: false,
+                expires_at: Math.floor(Date.now() / 1000) + 1800,
+                metadata: clone(payload.metadata)
+            });
+        }
+        return clone(sessionsByIdempotencyKey.get(options.idempotencyKey));
+    };
+    const loaded = loadCheckoutHandler({
+        seed: buildSeedState(),
+        stripeCreateImpl,
+        firestoreOptions: {
+            onGet: ({ path, count }) => {
+                if (path === registrationPath && count === 4) {
+                    throw new Error('Injected registration projection failure.');
+                }
+            }
+        }
+    });
+
+    await assert.rejects(
+        loaded.createStripeRegistrationCheckout(checkoutInput),
+        /Injected registration projection failure\./
+    );
+    const registrationAfterFailure = loaded.firestore.snapshot(registrationPath);
+    const expiredReservationId = registrationAfterFailure.checkoutCreationReservationId;
+    const expiredReservationPath = `${registrationPath}/checkoutReservations/${expiredReservationId}`;
+    const firstIdempotencyKey = stripeCalls[0].options.idempotencyKey;
+    sessionsByIdempotencyKey.get(firstIdempotencyKey).status = 'expired';
+    sessionsByIdempotencyKey.get(firstIdempotencyKey).expires_at = Math.floor(Date.now() / 1000) - 60;
+
+    await assert.rejects(
+        loaded.createStripeRegistrationCheckout(checkoutInput),
+        (error) => error?.code === 'aborted' && /expired/.test(error.message)
+    );
+    assert.deepEqual(stripeCalls[1], stripeCalls[0]);
+    assert.equal(loaded.firestore.snapshot(expiredReservationPath).status, 'superseded');
+    const registrationAfterExpiredReplay = loaded.firestore.snapshot(registrationPath);
+    assert.equal(Object.prototype.hasOwnProperty.call(registrationAfterExpiredReplay, 'checkoutCreationReservationId'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(registrationAfterExpiredReplay, 'checkoutCreationStartedAt'), false);
+    assert.notEqual(registrationAfterExpiredReplay.checkoutStatus, 'open');
+
+    const replacement = await loaded.createStripeRegistrationCheckout(checkoutInput);
+    assert.equal(replacement.sessionId, 'cs_test_replay_2');
+    assert.notEqual(stripeCalls[2].options.idempotencyKey, firstIdempotencyKey);
+    assert.equal(loaded.firestore.snapshot(registrationPath).checkoutStatus, 'open');
+    assert.equal(loaded.firestore.snapshot(registrationPath).stripeCheckoutSessionId, 'cs_test_replay_2');
 });
 
 test('includes retryPayment on Stripe cancel returns for initial public registration checkout', async () => {

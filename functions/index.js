@@ -4503,7 +4503,8 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
   const previouslyCompletedAmountCents = (Array.isArray(initialIntent.completedAllocations) ? initialIntent.completedAllocations : [])
     .reduce((total, entry) => total + Math.max(0, Number(entry?.amountCents || 0)), 0);
   const remainingRequestedAmountCents = Math.max(0, input.amountCents - previouslyCompletedAmountCents);
-  if (recipient.paymentProvider !== 'stripe' || remainingRequestedAmountCents > getTeamFeeRefundableCents(recipient)) {
+  if (recipient.paymentProvider !== 'stripe'
+      || (!initialIntentSnap.exists && remainingRequestedAmountCents > getTeamFeeRefundableCents(recipient))) {
     throw new functions.https.HttpsError('failed-precondition', 'Refund amount exceeds the Stripe-refundable charge balance.');
   }
 
@@ -4561,7 +4562,10 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
       const allAllocations = existingIntent.allocations.map((allocation) => ({
         stripeChargeId: allocation.stripeChargeId,
         stripePaymentIntentId: allocation.stripePaymentIntentId,
-        amountCents: Number(allocation.amountCents)
+        amountCents: Number(allocation.amountCents),
+        refundedAmountCentsBefore: Number.isSafeInteger(Number(allocation.refundedAmountCentsBefore))
+          ? Math.max(0, Number(allocation.refundedAmountCentsBefore))
+          : null
       }));
       completedAllocations = Array.isArray(existingIntent.completedAllocations)
         ? existingIntent.completedAllocations.filter((entry) => entry?.stripeChargeId && entry?.stripeRefundId)
@@ -4601,7 +4605,13 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
     }
 
     const latestLedgers = ledgerSnaps.filter((snap) => snap.exists).map((snap) => ({ ref: snap.ref, id: snap.id, ...(snap.data() || {}) }));
-    allocations = allocateTeamFeeRefundAcrossCharges(latestLedgers, input.amountCents);
+    allocations = allocateTeamFeeRefundAcrossCharges(latestLedgers, input.amountCents).map((allocation) => {
+      const ledger = latestLedgers.find((entry) => entry.stripeChargeId === allocation.stripeChargeId) || {};
+      return {
+        ...allocation,
+        refundedAmountCentsBefore: Math.max(0, Number(ledger.refundedAmountCents || 0))
+      };
+    });
     if (allocations.length === 0 || input.amountCents > getTeamFeeRefundableCents(latestRecipient)) {
       throw new functions.https.HttpsError('failed-precondition', 'The Stripe-refundable balance changed before it could be reserved.');
     }
@@ -4711,15 +4721,27 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
         stripeChargeId: result.allocation.stripeChargeId,
         stripePaymentIntentId: result.allocation.stripePaymentIntentId || null,
         stripeRefundId: result.refund.id,
-        amountCents: result.allocation.amountCents
+        amountCents: result.allocation.amountCents,
+        refundedAmountCentsBefore: result.allocation.refundedAmountCentsBefore
       });
       if (adminSnap.exists) return;
-      newlyRecordedAmountCents += result.allocation.amountCents;
-      newlyRecordedRefunds.push(result.refund);
+      const currentRefundedAmountCents = Math.max(0, Number(ledger.refundedAmountCents || 0));
+      const refundBaseline = result.allocation.refundedAmountCentsBefore !== null
+        && result.allocation.refundedAmountCentsBefore !== undefined
+        && Number.isSafeInteger(Number(result.allocation.refundedAmountCentsBefore))
+        ? Math.max(0, Number(result.allocation.refundedAmountCentsBefore))
+        : currentRefundedAmountCents;
+      const targetRefundedAmountCents = Math.min(
+        Number(ledger.amountPaidCents || 0),
+        refundBaseline + result.allocation.amountCents
+      );
+      const refundDeltaCents = Math.max(0, targetRefundedAmountCents - currentRefundedAmountCents);
+      newlyRecordedAmountCents += refundDeltaCents;
+      if (refundDeltaCents > 0) newlyRecordedRefunds.push(result.refund);
       transaction.set(ledgerSnap.ref, {
-        refundedAmountCents: Math.min(Number(ledger.amountPaidCents || 0), Math.max(0, Number(ledger.refundedAmountCents || 0)) + result.allocation.amountCents),
+        refundedAmountCents: currentRefundedAmountCents + refundDeltaCents,
         pendingRefundAmountCents,
-        refundableAmountCents: Math.max(0, Number(ledger.refundableAmountCents || 0) - result.allocation.amountCents),
+        refundableAmountCents: Math.max(0, Number(ledger.refundableAmountCents || 0) - refundDeltaCents),
         lastStripeRefundId: result.refund.id,
         updatedAt: refundedAt
       }, { merge: true });
@@ -5017,6 +5039,20 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     }, { merge: true }).catch(() => {});
     throw error;
+  }
+
+  if (checkoutCreationReservation.replay) {
+    const replayClassification = classifyStoredStripeCheckoutSession(session);
+    if (replayClassification === 'terminal') {
+      throw new functions.https.HttpsError('failed-precondition', 'The registration payment is completing. Refresh before starting another checkout.');
+    }
+    if (replayClassification !== 'reusable') {
+      if (session.status === 'open') {
+        await stripe.checkout.sessions.expire(session.id).catch(() => {});
+      }
+      await clearRegistrationCheckoutCreationReservation(resolvedInput, durableReservationId);
+      throw new functions.https.HttpsError('aborted', 'The replayed registration checkout expired. Try again to create a new checkout.');
+    }
   }
 
   const now = admin.firestore.FieldValue.serverTimestamp();
@@ -5814,7 +5850,7 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
         const reversalStatus = ignoredReason ? '' : getTeamPassEffectivePaymentStatus(nextReversal);
         const reversalChanged = JSON.stringify(nextReversal) !== JSON.stringify(currentReversal);
         if (!ignoredReason && reversalStatus && reversalChanged) {
-          const checkoutWasPaid = ['paid', 'disputed', 'refunded', 'disputed_lost'].includes(String(attempt.checkoutStatus || '').toLowerCase());
+          const checkoutWasPaid = ['paid', 'disputed', 'refunded', 'dispute_lost'].includes(String(attempt.checkoutStatus || '').toLowerCase());
           teamPassUpdated = checkoutWasPaid && reversalChanged;
           const entitlementStatus = reversalStatus === 'paid'
             ? 'active'

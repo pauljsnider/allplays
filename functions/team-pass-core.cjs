@@ -141,7 +141,7 @@ function getTeamPassChargeGuardFailure({ attempt = {}, charge = {} } = {}) {
   if (normalizePositiveInteger(charge.amount) !== normalizePositiveInteger(attempt.checkoutAmountCents)) return 'charge_amount_mismatch';
   if (!normalizeCurrency(charge.currency)
       || normalizeCurrency(charge.currency) !== normalizeCurrency(attempt.checkoutCurrency)) return 'charge_currency_mismatch';
-  if (!['creating', 'open', 'async_pending', 'paid', 'disputed', 'refunded', 'disputed_lost'].includes(asTrimmedString(attempt.checkoutStatus).toLowerCase())) {
+  if (!['creating', 'open', 'async_pending', 'paid', 'disputed', 'refunded', 'dispute_lost'].includes(asTrimmedString(attempt.checkoutStatus).toLowerCase())) {
     return 'checkout_state_mismatch';
   }
   return '';

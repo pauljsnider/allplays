@@ -200,6 +200,8 @@ describe('team pass function helpers', () => {
             amount_refunded: 4900, currency: 'usd', livemode: true
         };
         expect(getTeamPassChargeGuardFailure({ attempt, charge })).toBe('');
+        expect(getTeamPassChargeGuardFailure({ attempt: { ...attempt, checkoutStatus: 'dispute_lost' }, charge })).toBe('');
+        expect(getTeamPassChargeGuardFailure({ attempt: { ...attempt, checkoutStatus: 'disputed_lost' }, charge })).toBe('checkout_state_mismatch');
         expect(getTeamPassChargeGuardFailure({
             attempt: { ...attempt, checkoutStatus: 'open', stripePaymentIntentId: '' },
             charge

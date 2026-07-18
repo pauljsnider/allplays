@@ -261,6 +261,8 @@ function installModuleStubs(firestore) {
         checkoutResponses: new Map(),
         expiredSessionIds: [],
         refundCalls: [],
+        refundCreateHook: null,
+        refundResponsesByIdempotencyKey: new Map(),
         paymentIntents: new Map(),
         charges: new Map(),
         teamPassPrice: { id: 'price_team_pass', active: true, type: 'one_time', unit_amount: 4900, currency: 'usd' },
@@ -342,13 +344,21 @@ function installModuleStubs(firestore) {
                 } },
                 refunds: { create: async (payload, options) => {
                     stripeState.refundCalls.push({ payload: clone(payload), options: clone(options) });
-                    return {
-                        id: `re_test_${stripeState.refundCalls.length}`,
-                        status: 'succeeded',
-                        amount: payload.amount,
-                        payment_intent: payload.payment_intent || null,
-                        charge: payload.charge || null
-                    };
+                    const idempotencyKey = String(options?.idempotencyKey || '');
+                    if (!stripeState.refundResponsesByIdempotencyKey.has(idempotencyKey)) {
+                        stripeState.refundResponsesByIdempotencyKey.set(idempotencyKey, {
+                            id: `re_test_${stripeState.refundResponsesByIdempotencyKey.size + 1}`,
+                            status: 'succeeded',
+                            amount: payload.amount,
+                            payment_intent: payload.payment_intent || null,
+                            charge: payload.charge || null
+                        });
+                    }
+                    const refund = clone(stripeState.refundResponsesByIdempotencyKey.get(idempotencyKey));
+                    if (typeof stripeState.refundCreateHook === 'function') {
+                        await stripeState.refundCreateHook({ refund: clone(refund), payload: clone(payload), options: clone(options) });
+                    }
+                    return refund;
                 } },
                 webhooks: { constructEvent: () => {
                     if (!stripeState.webhookEvent) {
@@ -617,6 +627,48 @@ test('Team Pass dispute close cannot be regressed by a late created event', asyn
     assert.equal(firestore.snapshot('stripeEvents/evt_team_pass_late_dispute_created').ignoredReason, 'reversal_event_out_of_order');
 });
 
+test('Team Pass can reconcile a won dispute after persisting dispute_lost', async () => {
+    const attemptPath = 'teams/team-pass/teamPassCheckoutAttempts/2026_team-pass';
+    const entitlementPath = 'teams/team-pass/entitlements/2026_team-pass';
+    const { firestore, stripeState, mod } = loadFunctionsModule({
+        'teams/team-pass': { ownerId: 'owner-1', adminEmails: [] },
+        'users/owner-1': { email: 'owner@example.com' }
+    });
+    const checkout = await mod.createStripeTeamPassCheckout({
+        teamId: 'team-pass', seasonId: '2026', tier: 'team-pass'
+    }, { auth: { uid: 'owner-1', token: { email: 'owner@example.com' } } });
+    const session = stripeState.checkoutResponses.get(checkout.sessionId);
+    stripeState.webhookEvent = {
+        id: 'evt_team_pass_paid_before_dispute', type: 'checkout.session.completed', created: 100,
+        data: { object: {
+            ...clone(session), payment_status: 'paid', payment_intent: 'pi_team_pass_lost_then_won'
+        } }
+    };
+    assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
+    const chargeId = 'ch_pi_team_pass_lost_then_won';
+    stripeState.charges.set(chargeId, {
+        object: 'charge', id: chargeId, metadata: clone(session.metadata),
+        payment_intent: 'pi_team_pass_lost_then_won', amount: 4900, amount_refunded: 0,
+        currency: 'usd', livemode: false
+    });
+
+    stripeState.webhookEvent = {
+        id: 'evt_team_pass_dispute_lost', type: 'charge.dispute.closed', created: 200,
+        data: { object: { object: 'dispute', id: 'dp_team_pass_lost_then_won', charge: chargeId, status: 'lost' } }
+    };
+    assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
+    assert.equal(firestore.snapshot(attemptPath).checkoutStatus, 'dispute_lost');
+    assert.equal(firestore.snapshot(entitlementPath).status, 'cancelled');
+
+    stripeState.webhookEvent = {
+        id: 'evt_team_pass_dispute_won_after_lost', type: 'charge.dispute.closed', created: 300,
+        data: { object: { object: 'dispute', id: 'dp_team_pass_lost_then_won', charge: chargeId, status: 'won' } }
+    };
+    assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
+    assert.equal(firestore.snapshot(attemptPath).checkoutStatus, 'paid');
+    assert.equal(firestore.snapshot(entitlementPath).status, 'active');
+});
+
 test('team fee checkout reserves one current attempt and reuses its Stripe session', async () => {
     const recipientPath = 'teams/team-fee/feeBatches/batch-1/feeRecipients/recipient-1';
     const { firestore, stripeState, mod } = loadFunctionsModule({
@@ -702,6 +754,121 @@ test('team fee webhook reconciles charge refunds through its server-owned charge
     assert.equal(recipient.stripeRefundedAmountCents, 2500);
     assert.equal(recipient.stripeRefundableAmountCents, 5000);
     assert.equal(firestore.snapshot(`${recipientPath}/stripeCharges/ch_pi_team_fee_paid`).refundedAmountCents, 2500);
+});
+
+test('team fee refund callable records only the ledger delta when its webhook wins the race', async () => {
+    const recipientPath = 'teams/team-fee/feeBatches/batch-1/feeRecipients/recipient-1';
+    const { firestore, stripeState, mod } = loadFunctionsModule({
+        'teams/team-fee': { ownerId: 'owner-1', adminEmails: [] },
+        'users/owner-1': { email: 'owner@example.com' },
+        [recipientPath]: {
+            teamId: 'team-fee', batchId: 'batch-1', collectionMode: 'online_stripe',
+            amountCents: 7500, paidAmountCents: 0, balanceDueCents: 7500,
+            status: 'unpaid', feeTitle: 'Tournament fee', playerName: 'Sam'
+        }
+    });
+    const authContext = { auth: { uid: 'owner-1', token: { email: 'owner@example.com' } } };
+    const checkout = await mod.createStripeTeamFeeCheckout({
+        teamId: 'team-fee', batchId: 'batch-1', recipientId: 'recipient-1'
+    }, authContext);
+    const session = stripeState.checkoutResponses.get(checkout.sessionId);
+    stripeState.webhookEvent = {
+        id: 'evt_team_fee_paid_before_refund_race', type: 'checkout.session.completed', created: 100,
+        data: { object: { ...clone(session), payment_status: 'paid', payment_intent: 'pi_team_fee_refund_race' } }
+    };
+    assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
+
+    stripeState.refundCreateHook = async ({ payload }) => {
+        const charge = stripeState.charges.get(payload.charge);
+        charge.amount_refunded = payload.amount;
+        stripeState.charges.set(charge.id, charge);
+        stripeState.webhookEvent = {
+            id: 'evt_team_fee_refund_won_race', type: 'charge.refunded', created: 200,
+            data: { object: clone(charge) }
+        };
+        assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
+    };
+    const request = {
+        teamId: 'team-fee', batchId: 'batch-1', recipientId: 'recipient-1',
+        amountCents: 2500, refundRequestId: 'refund_webhook_race'
+    };
+
+    const result = await mod.refundStripeTeamFeePayment(request, authContext);
+
+    assert.equal(result.status, 'succeeded');
+    assert.equal(result.amountCents, 2500);
+    const recipient = firestore.snapshot(recipientPath);
+    assert.equal(recipient.paidAmountCents, 5000);
+    assert.equal(recipient.balanceDueCents, 2500);
+    assert.equal(recipient.stripeRefundedAmountCents, 2500);
+    assert.equal(recipient.stripeRefundableAmountCents, 5000);
+    const chargeLedger = firestore.snapshot(`${recipientPath}/stripeCharges/ch_pi_team_fee_refund_race`);
+    assert.equal(chargeLedger.refundedAmountCents, 2500);
+    assert.equal(chargeLedger.refundableAmountCents, 5000);
+    assert.equal(chargeLedger.pendingRefundAmountCents, 0);
+    const refundIntent = firestore.snapshot(`${recipientPath}/refundIntents/refund_webhook_race`);
+    assert.equal(refundIntent.status, 'recorded');
+    assert.deepEqual(refundIntent.refundIds, ['re_test_1']);
+});
+
+test('team fee full refund retries after webhook reconciliation and a callable persistence crash', async () => {
+    const recipientPath = 'teams/team-fee/feeBatches/batch-1/feeRecipients/recipient-1';
+    const { firestore, stripeState, mod } = loadFunctionsModule({
+        'teams/team-fee': { ownerId: 'owner-1', adminEmails: [] },
+        'users/owner-1': { email: 'owner@example.com' },
+        [recipientPath]: {
+            teamId: 'team-fee', batchId: 'batch-1', collectionMode: 'online_stripe',
+            amountCents: 7500, paidAmountCents: 0, balanceDueCents: 7500,
+            status: 'unpaid', feeTitle: 'Tournament fee', playerName: 'Sam'
+        }
+    });
+    const authContext = { auth: { uid: 'owner-1', token: { email: 'owner@example.com' } } };
+    const checkout = await mod.createStripeTeamFeeCheckout({
+        teamId: 'team-fee', batchId: 'batch-1', recipientId: 'recipient-1'
+    }, authContext);
+    const session = stripeState.checkoutResponses.get(checkout.sessionId);
+    stripeState.webhookEvent = {
+        id: 'evt_team_fee_paid_before_refund_crash', type: 'checkout.session.completed', created: 100,
+        data: { object: { ...clone(session), payment_status: 'paid', payment_intent: 'pi_team_fee_refund_crash' } }
+    };
+    assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
+
+    stripeState.refundCreateHook = async ({ payload }) => {
+        const charge = stripeState.charges.get(payload.charge);
+        charge.amount_refunded = payload.amount;
+        stripeState.charges.set(charge.id, charge);
+        stripeState.webhookEvent = {
+            id: 'evt_team_fee_refund_before_callable_crash', type: 'charge.refunded', created: 200,
+            data: { object: clone(charge) }
+        };
+        assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
+        firestore.failNextTransaction(new Error('Injected callable reconciliation failure.'));
+        stripeState.refundCreateHook = null;
+    };
+    const request = {
+        teamId: 'team-fee', batchId: 'batch-1', recipientId: 'recipient-1',
+        amountCents: 7500, refundRequestId: 'refund_webhook_crash'
+    };
+
+    await assert.rejects(mod.refundStripeTeamFeePayment(request, authContext), /Injected callable reconciliation failure\./);
+    assert.equal(firestore.snapshot(recipientPath).stripeRefundableAmountCents, 0);
+    assert.equal(firestore.snapshot(`${recipientPath}/refundIntents/refund_webhook_crash`).status, 'processing');
+
+    const result = await mod.refundStripeTeamFeePayment(request, authContext);
+
+    assert.equal(result.status, 'succeeded');
+    assert.deepEqual(result.refundIds, ['re_test_1']);
+    assert.equal(stripeState.refundCalls.length, 2);
+    assert.deepEqual(stripeState.refundCalls[1], stripeState.refundCalls[0]);
+    const recipient = firestore.snapshot(recipientPath);
+    assert.equal(recipient.paidAmountCents, 0);
+    assert.equal(recipient.stripeRefundedAmountCents, 7500);
+    assert.equal(recipient.stripeRefundableAmountCents, 0);
+    const chargeLedger = firestore.snapshot(`${recipientPath}/stripeCharges/ch_pi_team_fee_refund_crash`);
+    assert.equal(chargeLedger.refundedAmountCents, 7500);
+    assert.equal(chargeLedger.refundableAmountCents, 0);
+    assert.equal(chargeLedger.pendingRefundAmountCents, 0);
+    assert.equal(firestore.snapshot(`${recipientPath}/refundIntents/refund_webhook_crash`).status, 'recorded');
 });
 
 test('team fee refund rejects cross-recipient Stripe authority before creating a refund', async () => {
