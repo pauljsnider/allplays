@@ -49,11 +49,6 @@ function hasCurrentTeamAccess({ team, user, userId, email }) {
     Boolean(normalizedUserEmail && adminEmails.has(normalizedUserEmail));
 }
 
-function isCurrentChatRecipient(team, recipientId) {
-  const recipientIds = normalizedUserIds(team?.chatMemberIds);
-  return recipientIds.has(recipientId);
-}
-
 function canMessageAcceptedFriendForTeam({
   friendship,
   team,
@@ -76,7 +71,7 @@ function canMessageAcceptedFriendForTeam({
     team: teamWithId,
     user: recipient,
     userId: recipientId
-  }) && isCurrentChatRecipient(teamWithId, recipientId);
+  });
 }
 
 function createCheckAcceptedFriendMessageAccessHandler({ firestore, HttpsError }) {
@@ -123,7 +118,6 @@ module.exports = {
   createCheckAcceptedFriendMessageAccessHandler,
   hasCurrentTeamAccess,
   isAcceptedFriendshipForTeam,
-  isCurrentChatRecipient,
   normalizeTeamId,
   normalizeUserId
 };

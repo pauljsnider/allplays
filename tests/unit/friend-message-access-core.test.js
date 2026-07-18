@@ -18,8 +18,7 @@ function check(overrides = {}) {
         friendship,
         team: {
             ownerId: 'owner-1',
-            adminEmails: [],
-            chatMemberIds: ['user:parent-1', 'user:owner-1']
+            adminEmails: []
         },
         sender: { parentTeamIds: ['team-1'], email: 'parent@example.com' },
         recipient: { email: 'owner@example.com' },
@@ -46,8 +45,7 @@ describe('friend message access core', () => {
             friendship: { ...friendship, memberIds: ['parent-1', 'admin-1'] },
             team: {
                 ownerId: 'owner-1',
-                adminEmails: ['admin@example.com'],
-                chatMemberIds: ['user:parent-1', 'user:admin-1']
+                adminEmails: ['admin@example.com']
             },
             recipient: { email: 'ADMIN@example.com' },
             recipientId: 'admin-1'
@@ -60,12 +58,11 @@ describe('friend message access core', () => {
             recipient: {},
             recipientId: 'former-parent',
             team: {
-                ownerId: 'owner-1',
-                chatMemberIds: ['user:parent-1', 'user:former-parent']
+                ownerId: 'owner-1'
             }
         })).toBe(false);
-        expect(check({ team: { ownerId: 'someone-else', chatMemberIds: ['user:parent-1', 'user:owner-1'] } })).toBe(false);
-        expect(check({ team: { ownerId: 'owner-1', chatMemberIds: ['user:parent-1'] } })).toBe(false);
+        expect(check({ team: { ownerId: 'someone-else' } })).toBe(false);
+        expect(check({ sender: { email: 'former-parent@example.com' } })).toBe(false);
         expect(check({ friendship: { ...friendship, status: 'pending' } })).toBe(false);
         expect(check({ friendship: { ...friendship, sharedTeamIds: ['team-2'] } })).toBe(false);
     });
@@ -73,7 +70,7 @@ describe('friend message access core', () => {
     it('wires a callable handler that reads private team and user records server-side', async () => {
         const documents = new Map([
             ['friendships/owner-1__parent-1', friendship],
-            ['teams/team-1', { ownerId: 'owner-1', chatMemberIds: ['user:parent-1', 'user:owner-1'] }],
+            ['teams/team-1', { ownerId: 'owner-1' }],
             ['users/parent-1', { parentTeamIds: ['team-1'], email: 'parent@example.com' }],
             ['users/owner-1', { email: 'owner@example.com' }]
         ]);
