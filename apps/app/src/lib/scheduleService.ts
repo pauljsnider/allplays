@@ -3851,6 +3851,7 @@ async function hydrateEventDetails(events: ParentScheduleEvent[], user: AuthUser
   )];
 
   const authoritativeRsvpEvents: ParentScheduleEvent[] = [];
+  const authoritativeRsvpResponseEvents: ParentScheduleEvent[] = [];
   await Promise.all(uniqueEventKeys.map(async (key) => {
     const [teamId, gameId] = key.split('::');
     const matchingEvents = events.filter((event) => event.teamId === teamId && event.id === gameId);
@@ -3876,6 +3877,9 @@ async function hydrateEventDetails(events: ParentScheduleEvent[], user: AuthUser
     matchingEvents.forEach((event) => {
       if (rsvpsLoaded) {
         event.myRsvp = normalizeRsvpResponse(myRsvpByChild[event.childId]);
+        if (!ownRsvpNotes.noteReadsComplete) {
+          authoritativeRsvpResponseEvents.push(event);
+        }
       }
       if (rsvpsLoaded && ownRsvpNotes.noteReadsComplete) {
         event.myRsvpNote = myRsvpNotesByChild[event.childId] || null;
@@ -3891,6 +3895,7 @@ async function hydrateEventDetails(events: ParentScheduleEvent[], user: AuthUser
     });
   }));
 
+  reconcileSessionRsvpResponses(authoritativeRsvpResponseEvents, user.uid);
   return authoritativeRsvpEvents;
 }
 

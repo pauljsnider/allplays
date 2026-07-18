@@ -1330,6 +1330,21 @@ describe('parent schedule detail hydration', () => {
     expect(serverEvent.myRsvpNote).toBe('Will be there.');
   });
 
+  it('reconciles a fresh detail response when its private note read fails', async () => {
+    const localEvent = buildHydrationEvent('partial-detail-game', new Date(Date.now() + 24 * 60 * 60 * 1000));
+    vi.mocked(submitRsvpForPlayer).mockResolvedValue(null as any);
+
+    await submitParentScheduleRsvp(localEvent, user, 'maybe', 'Local note');
+    vi.mocked(getDoc).mockRejectedValue(new Error('private RSVP note unavailable'));
+
+    const serverEvent = buildHydrationEvent('partial-detail-game', localEvent.date);
+    await hydrateParentScheduleDetails({ children: [], events: [serverEvent] }, user);
+
+    expect(serverEvent.myRsvp).toBe('going');
+    expect(serverEvent.myRsvpNote).toBe('Local note');
+    expect(serverEvent.myRsvpNoteHydrated).toBe(true);
+  });
+
   it('refreshes cached open assignment counts after assignment claim hydration', async () => {
     const nearEvent = buildHydrationEvent('near-game', new Date(Date.now() + 24 * 60 * 60 * 1000));
     nearEvent.assignments = [{ role: 'Scoreboard', claimable: true, value: '' }];
