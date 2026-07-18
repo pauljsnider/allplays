@@ -478,6 +478,37 @@ describe('Home', () => {
     expect(await screen.findByText(/Official assignments/)).toBeTruthy();
   });
 
+  it.each(['assignment', 'rideshare'] as const)('counts a lone %s action as open without duplicating it in the to-do list', async (kind) => {
+    const title = kind === 'assignment' ? 'Claim scorekeeper assignment' : 'Offer a ride to practice';
+    const actionHome = {
+      ...baseHome,
+      actionItems: [{
+        id: `${kind}:1`,
+        kind,
+        tone: 'emerald' as const,
+        title,
+        detail: 'Bears · Tomorrow',
+        to: '/schedule/team-1/event-1',
+        priority: 30,
+        date: new Date('2100-06-06T18:00:00Z')
+      }]
+    };
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValueOnce({ home: actionHome, schedule: [] });
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValueOnce(actionHome);
+
+    renderHome(signedInAuth);
+
+    expect(await screen.findByText('1 open')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: title })).toBeTruthy();
+    const toDoSection = screen.getByText('To-do list').closest('section');
+    expect(toDoSection).toBeTruthy();
+    expect(within(toDoSection!).getByRole('heading', { name: 'Priority only' })).toBeTruthy();
+    expect(within(toDoSection!).getByText('0')).toBeTruthy();
+    expect(within(toDoSection!).getByText('Priority shown above')).toBeTruthy();
+    expect(within(toDoSection!).getByText('Your only open action is highlighted above.')).toBeTruthy();
+    expect(within(toDoSection!).queryByText('All caught up')).toBeNull();
+  });
+
   it('shows network-specific Home retry copy after an initial load failure', async () => {
     homeServiceMocks.loadParentHomeSummaryBootstrap.mockRejectedValueOnce(new TypeError('Failed to fetch'));
 

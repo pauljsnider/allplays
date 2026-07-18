@@ -358,7 +358,8 @@ export function Home({ auth }: { auth: AuthState }) {
   const showInitialHomeSkeleton = loading && !hasRenderableHome;
   const canRenderHomeSections = !loading || hasRenderableHome;
   const displayName = auth.user?.displayName || auth.user?.email || 'ALL PLAYS User';
-  const openCount = home.metrics.rsvpNeeded + home.metrics.packetsReady + home.metrics.unreadMessages + home.fees.length + social.metrics.incomingRequests;
+  const standaloneActionCount = home.actionItems.filter((action) => action.kind === 'assignment' || action.kind === 'rideshare').length;
+  const openCount = home.metrics.rsvpNeeded + home.metrics.packetsReady + home.metrics.unreadMessages + home.fees.length + social.metrics.incomingRequests + standaloneActionCount;
   const today = new Date();
   const selectedComposerType = (searchParams.get('type') || 'manual_post') as SocialPostType;
   const homeSectionRoute = getHomeSectionRoute(activeSection);
@@ -676,6 +677,7 @@ function TodaySection({
   const firstUnreadTeam = unreadTeams[0] || null;
   const nextEvent = nextEvents[0] || null;
   const remainingActions = topAction ? home.actionItems.slice(1, 6) : home.actionItems.slice(0, 6);
+  const remainingActionCount = Math.max(0, home.actionItems.length - (topAction ? 1 : 0));
   const isFirstRunParent = home.players.length === 0 && home.teams.length === 0;
 
   if (isFirstRunParent) {
@@ -747,11 +749,11 @@ function TodaySection({
         <div className="flex items-center justify-between gap-3">
           <div>
             <div className="app-label">To-do list</div>
-            <h2 className="mt-1 app-section-title">{topAction ? 'More to do' : 'Needs Attention'}</h2>
+            <h2 className="mt-1 app-section-title">{topAction ? (remainingActionCount ? 'More to do' : 'Priority only') : 'Needs Attention'}</h2>
           </div>
           <div className="flex items-center gap-2">
             {home.metrics.rsvpNeeded > 1 ? <MultiRsvpLink to="/schedule?bulkRsvp=1" /> : null}
-            <span className="rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-xs font-black text-gray-600">{home.actionItems.length}</span>
+            <span className="rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-xs font-black text-gray-600">{remainingActionCount}</span>
           </div>
         </div>
         <div className="mt-3 space-y-2">
@@ -759,6 +761,14 @@ function TodaySection({
             <ActionRow key={action.id} action={action} />
           )) : !hasLoadedHomeDetails ? (
             <HomeDetailsLoadingState message="Checking for parent actions…" />
+          ) : topAction ? (
+            <div className="flex items-start gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3">
+              <CheckCircle2 className="mt-0.5 h-5 w-5 flex-none text-gray-600" aria-hidden="true" />
+              <div>
+                <div className="text-sm font-black text-gray-900">Priority shown above</div>
+                <div className="mt-0.5 text-xs font-semibold text-gray-600">Your only open action is highlighted above.</div>
+              </div>
+            </div>
           ) : (
             <div className="flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3">
               <CheckCircle2 className="mt-0.5 h-5 w-5 flex-none text-emerald-700" aria-hidden="true" />

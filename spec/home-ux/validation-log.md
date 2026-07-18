@@ -16,7 +16,8 @@
 Completed July 18, 2026.
 
 - `npx vitest run apps/app/src/pages/Home.test.tsx apps/app/src/components/AppShell.test.tsx --reporter=verbose`
-  - Passed: 65 tests across 2 files.
+  - Passed: 68 tests across 2 files, including roleless signed-in shell context,
+    assignment/rideshare badge counts, and the single-priority to-do state.
 - `npm run app:build`
   - Passed TypeScript, Vite production build, production artifact verification,
     and bundle visualizer verification.
