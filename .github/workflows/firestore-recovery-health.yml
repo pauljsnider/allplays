@@ -50,7 +50,7 @@ jobs:
           version: '557.0.0'
 
       - name: Verify PITR, delete protection, and managed backups
-        run: npm run ops:verify-firestore-recovery
+        run: node scripts/verify-firestore-recovery.mjs
 
   reconcile-recovery-status:
     needs: verify-recovery

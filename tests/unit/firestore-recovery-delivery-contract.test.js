@@ -17,7 +17,7 @@ describe('Firestore recovery delivery contract', () => {
         const preflightIndex = workflow.indexOf('node scripts/verify-firestore-recovery-identity.mjs');
         const authIndex = workflow.indexOf('uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093');
         const setupIndex = workflow.indexOf('uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db');
-        const verifyIndex = workflow.indexOf('run: npm run ops:verify-firestore-recovery');
+        const verifyIndex = workflow.indexOf('run: node scripts/verify-firestore-recovery.mjs');
 
         expect(workflow).toContain('id-token: write');
         expect(workflow).toContain('workload_identity_provider: ${{ vars.FIRESTORE_RECOVERY_WORKLOAD_IDENTITY_PROVIDER }}');
@@ -27,6 +27,7 @@ describe('Firestore recovery delivery contract', () => {
         expect(workflow).not.toContain('credentials_json');
         expect(workflow).not.toContain('SERVICE_ACCOUNT_GAME_FLOW_C6311 }}');
         expect(workflow).not.toContain('npm ci');
+        expect(workflow).not.toContain('npm run ops:verify-firestore-recovery');
         expect(preflightIndex).toBeGreaterThan(-1);
         expect(authIndex).toBeGreaterThan(preflightIndex);
         expect(setupIndex).toBeGreaterThan(authIndex);

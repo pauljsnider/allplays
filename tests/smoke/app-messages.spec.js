@@ -290,24 +290,31 @@ async function mockMessagesModules(page, options = {}) {
                         }
                     ];
                     if (options.includeLastMessages === false && options.onPreview) {
-                        setTimeout(() => options.onPreview({
-                            teamId: 'team-1',
-                            lastMessage: msg({ id: 'last-1', text: 'Practice packet is posted.' }),
-                            preferredConversationId: null,
-                            isMuted: false
-                        }), ${options.previewDelayMs || 0});
-                        setTimeout(() => options.onPreview({
-                            teamId: 'team-2',
-                            lastMessage: msg({ id: 'last-2', text: 'Tournament schedule changed.', senderName: 'Morgan' }),
-                            preferredConversationId: null,
-                            isMuted: false
-                        }), ${options.previewDelayMs || 0});
-                        setTimeout(() => options.onPreview({
-                            teamId: 'team-3',
-                            lastMessage: msg({ id: 'last-3', text: 'Lineup card is ready.', senderName: 'Coach Lee' }),
-                            preferredConversationId: null,
-                            isMuted: true
-                        }), ${options.previewDelayMs || 0});
+                        const emitPreviews = () => {
+                            options.onPreview({
+                                teamId: 'team-1',
+                                lastMessage: msg({ id: 'last-1', text: 'Practice packet is posted.' }),
+                                preferredConversationId: null,
+                                isMuted: false
+                            });
+                            options.onPreview({
+                                teamId: 'team-2',
+                                lastMessage: msg({ id: 'last-2', text: 'Tournament schedule changed.', senderName: 'Morgan' }),
+                                preferredConversationId: null,
+                                isMuted: false
+                            });
+                            options.onPreview({
+                                teamId: 'team-3',
+                                lastMessage: msg({ id: 'last-3', text: 'Lineup card is ready.', senderName: 'Coach Lee' }),
+                                preferredConversationId: null,
+                                isMuted: true
+                            });
+                        };
+                        if (${Boolean(options.deferPreviews)}) {
+                            window.__releaseChatPreviews = emitPreviews;
+                        } else {
+                            setTimeout(emitPreviews, ${options.previewDelayMs || 0});
+                        }
                     }
                     return { teams };
                 }
@@ -678,7 +685,7 @@ test('messages team thread retries a failed subscription in place on mobile', as
 });
 
 test('messages inbox stays interactive while previews hydrate on inbox and desktop routes', async ({ page, baseURL }) => {
-    await mockMessagesModules(page, { previewDelayMs: 600 });
+    await mockMessagesModules(page, { deferPreviews: true });
     await page.goto(appUrl(baseURL, '/messages'), { waitUntil: 'domcontentloaded' });
 
     await waitForMessagesRoute(page, page.getByRole('heading', { name: 'Conversations', exact: true }));
@@ -689,6 +696,7 @@ test('messages inbox stays interactive while previews hydrate on inbox and deskt
     await page.getByPlaceholder('Search conversations').fill('Falcons');
     await expect(page.getByRole('link', { name: /Falcons/ }).first()).toBeVisible();
     await page.getByPlaceholder('Search conversations').fill('');
+    await page.evaluate(() => window.__releaseChatPreviews());
     await expect(bearsInboxRow).toContainText('Coach Jamie: Practice packet is posted.', { timeout: 5000 });
     await expect(page.getByRole('link', { name: /Falcons/ }).first()).toContainText('Coach Lee: Lineup card is ready.');
 
@@ -699,6 +707,7 @@ test('messages inbox stays interactive while previews hydrate on inbox and deskt
     await expect(page.getByRole('link', { name: /Bears/ }).first()).toBeVisible();
     await expect(page.locator('.messages-chat-pane')).toContainText('Bring both jerseys.');
     await expect(page.locator('.messages-list-pane')).toContainText('No messages yet');
+    await page.evaluate(() => window.__releaseChatPreviews());
     await expect(page.locator('.messages-list-pane')).toContainText('Coach Jamie: Practice packet is posted.', { timeout: 5000 });
     await expect(page.locator('.messages-list-pane')).toContainText('Coach Lee: Lineup card is ready.');
 });
