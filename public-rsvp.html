@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>RSVP | ALL PLAYS</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script type="module" src="/js/telemetry.js?v=2"></script>
 </head>
 <body class="min-h-screen bg-gray-50 text-gray-900">
     <main class="max-w-xl mx-auto px-4 py-8">
@@ -77,6 +76,7 @@
         const token = params.get('token') || '';
         const requestedResponse = params.get('response') || '';
         const validResponses = new Set(['going', 'maybe', 'not_going']);
+        const publicRsvpTelemetryReady = import('./js/telemetry.js?v=2').catch(() => null);
 
         const states = {
             loading: document.getElementById('loading-state'),
@@ -113,13 +113,22 @@
                     : 0;
                 const normalizedStage = stage === 'submit' ? 'submit' : 'init';
 
-                window.AllPlaysTelemetry?.capture('public_rsvp_error', {
+                const properties = {
                     label: normalizedStage === 'submit' ? 'Public RSVP submit' : 'Public RSVP init',
                     stage: normalizedStage,
                     failureKind,
                     httpStatus,
                     online: navigator.onLine !== false
-                }, { flush: true });
+                };
+                const captureFailure = () => {
+                    window.AllPlaysTelemetry?.capture('public_rsvp_error', properties, { flush: true });
+                };
+
+                if (window.AllPlaysTelemetry?.capture) {
+                    captureFailure();
+                } else {
+                    void publicRsvpTelemetryReady.then(captureFailure).catch(() => {});
+                }
             } catch {
                 // Telemetry is best-effort and must never interrupt the RSVP flow.
             }

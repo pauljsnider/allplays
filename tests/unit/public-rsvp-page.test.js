@@ -33,12 +33,14 @@ describe('public RSVP page', () => {
         const reporterEnd = source.indexOf('function buildPublicRsvpRequestError', reporterStart);
         const reporterSource = source.slice(reporterStart, reporterEnd);
 
-        expect(source).toContain('<script type="module" src="/js/telemetry.js?v=2"></script>');
+        expect(source).not.toContain('<script type="module" src="/js/telemetry.js?v=2"></script>');
+        expect(source).toContain("const publicRsvpTelemetryReady = import('./js/telemetry.js?v=2').catch(() => null);");
         expect(source).toContain('<form id="rsvp-form" data-telemetry-ignore');
         expect(source).not.toContain("import { captureTelemetryEvent }");
         expect(reporterStart).toBeGreaterThanOrEqual(0);
         expect(reporterEnd).toBeGreaterThan(reporterStart);
-        expect(reporterSource).toContain("window.AllPlaysTelemetry?.capture('public_rsvp_error'");
+        expect(reporterSource).toContain("window.AllPlaysTelemetry?.capture('public_rsvp_error', properties, { flush: true });");
+        expect(reporterSource).toContain('void publicRsvpTelemetryReady.then(captureFailure).catch(() => {});');
         expect(reporterSource).toContain("const normalizedStage = stage === 'submit' ? 'submit' : 'init'");
         expect(reporterSource).toContain("label: normalizedStage === 'submit' ? 'Public RSVP submit' : 'Public RSVP init'");
         expect(reporterSource).toContain('stage: normalizedStage,');
