@@ -13,15 +13,15 @@ describe('team drill Firestore rules', () => {
             source.indexOf('match /teams/{teamId}/drillFavorites/{favoriteId} {')
         );
 
-        expect(drillLibraryBlock).toContain("allow update: if isSignedIn() &&");
-        expect(drillLibraryBlock).toContain("allow delete: if isSignedIn() &&");
+        expect(drillLibraryBlock).toContain("allow update: if isVerifiedForSensitiveWrite() &&");
+        expect(drillLibraryBlock).toContain("allow delete: if isVerifiedForSensitiveWrite() &&");
         expect(drillLibraryBlock).toContain("resource.data.source == 'custom' &&");
         expect(drillLibraryBlock).toContain("resource.data.teamId != null &&");
         expect(drillLibraryBlock).toContain("isTeamOwnerOrAdmin(resource.data.teamId)");
 
         const deleteBlock = drillLibraryBlock.slice(
-            drillLibraryBlock.indexOf('allow delete: if isSignedIn() &&'),
-            drillLibraryBlock.indexOf('    }', drillLibraryBlock.indexOf('allow delete: if isSignedIn() &&'))
+            drillLibraryBlock.indexOf('allow delete: if isVerifiedForSensitiveWrite() &&'),
+            drillLibraryBlock.indexOf('    }', drillLibraryBlock.indexOf('allow delete: if isVerifiedForSensitiveWrite() &&'))
         );
 
         expect(deleteBlock).not.toContain('request.resource.data');

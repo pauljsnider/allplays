@@ -397,7 +397,8 @@ export function validateFirebaseRulesCi() {
 
     assertIncludes(storageRules, 'match /game-clips/{teamId}/{gameId}/{userId}/{fileName}', 'Scoped Storage game clip rules');
     assertIncludes(storageRules, 'allow get: if canAccessTeamMedia(teamId);', 'Scoped Storage game clip read rules');
-    assertIncludes(storageRules, 'allow create: if canAccessTeamMedia(teamId) &&', 'Scoped Storage game clip create rules');
+    assertIncludes(storageRules, 'function isVerifiedForSensitiveWrite()', 'Staged Storage verified-email policy helper');
+    assertIncludes(storageRules, 'allow create: if isVerifiedForSensitiveWrite() &&\n        canAccessTeamMedia(teamId) &&', 'Scoped Storage game clip create rules');
     assertIncludes(storageRules, 'request.auth.uid == userId', 'Scoped Storage uploader match rules');
     assertIncludes(storageRules, 'request.resource.contentType.matches(\'video/.*\')', 'Scoped Storage video content-type rules');
     assertIncludes(storageRules, 'function canDeleteOwnTeamMediaObject(teamId, folderId, userId)', 'Team media scoped Storage delete helper');
@@ -407,15 +408,15 @@ export function validateFirebaseRulesCi() {
     assertIncludes(storageRules, 'function canManageTeamMedia(teamId)', 'Storage team media manager helper');
     assertIncludes(storageRules, "teamPermission(teamId, 'teamMediaManagement').get('mode', '') == 'selected'", 'Storage team media manager selected permission');
     assertIncludes(storageRules, "request.auth.uid in teamPermission(teamId, 'teamMediaManagement').get('memberIds', [])", 'Storage team media manager member ID check');
-    assertIncludes(teamMediaRules, 'allow delete: if canManageTeamMedia(teamId) ||\n        canDeleteOwnTeamMediaObject(teamId, folderId, userId);', 'Team media scoped Storage delete rules');
-    assertIncludes(chatFallbackRules, 'allow delete: if isTeamOwnerOrAdmin(teamId) ||\n        canDeleteOwnChatAttachment(teamId, conversationId, userId);', 'Chat fallback scoped Storage delete rules');
+    assertIncludes(teamMediaRules, 'allow delete: if isVerifiedForSensitiveWrite() &&\n        (canManageTeamMedia(teamId) || canDeleteOwnTeamMediaObject(teamId, folderId, userId));', 'Team media scoped Storage delete rules');
+    assertIncludes(chatFallbackRules, 'allow delete: if isVerifiedForSensitiveWrite() &&\n        (isTeamOwnerOrAdmin(teamId) || canDeleteOwnChatAttachment(teamId, conversationId, userId));', 'Chat fallback scoped Storage delete rules');
     for (const [label, block] of [
         ['Legacy chat fallback scoped Storage delete rules', legacyChatFallbackRules],
         ['Stat sheet scoped Storage delete rules', statSheetFallbackRules],
         ['Drill scoped Storage delete rules', drillFallbackRules],
         ['Game clip scoped Storage delete rules', clipFallbackRules]
     ]) {
-        assertIncludes(block, 'allow delete: if isTeamOwnerOrAdmin(teamId) ||\n        canDeleteOwnTeamScopedUpload(teamId, userId);', label);
+        assertIncludes(block, 'allow delete: if isVerifiedForSensitiveWrite() &&\n        (isTeamOwnerOrAdmin(teamId) || canDeleteOwnTeamScopedUpload(teamId, userId));', label);
     }
     for (const [label, block] of [
         ['Team media Storage delete rule', teamMediaRules],
@@ -461,7 +462,7 @@ export function validateFirebaseRulesCi() {
     assertIncludes(storageRules, 'return athleteProfileMatchesPathOwner(userId, profileId) &&', 'Athlete profile media public read path owner guard');
     assertIncludes(athleteProfileMediaRules, 'allow get: if canReadAthleteProfileMedia(userId, profileId);', 'Athlete profile media read guard');
     assertIncludes(athleteProfileMediaRules, 'request.auth.uid == userId &&\n        athleteProfileMatchesPathOwner(userId, profileId) &&', 'Athlete profile media create owner guard');
-    assertIncludes(athleteProfileMediaRules, 'allow delete: if isSignedIn() &&\n        request.auth.uid == userId &&\n        athleteProfileMatchesPathOwner(userId, profileId);', 'Athlete profile media delete owner guard');
+    assertIncludes(athleteProfileMediaRules, 'allow delete: if isVerifiedForSensitiveWrite() &&\n        request.auth.uid == userId &&\n        athleteProfileMatchesPathOwner(userId, profileId);', 'Athlete profile media delete owner guard');
 
     assertIncludes(regressionGuards, 'npm run ci:firebase-rules', 'Regression guard workflow');
     assertIncludes(regressionGuards, 'npm run test:smoke:team-fallback', 'Regression guard workflow');

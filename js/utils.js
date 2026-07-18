@@ -280,18 +280,103 @@ export function renderFooter(container) {
 
 // Calendar / ICS Parsing Functions
 
-/**
- * Fetch and parse an ICS calendar file
- * @param {string} url - URL to the .ics file
- * @returns {Promise<Array>} Array of parsed calendar events
- */
-export async function fetchAndParseCalendar(url, options = {}) {
-  const timeoutMs = 5000;
-  const forceRefresh = options?.forceRefresh === true;
-  const cleanedUrl = url.trim();
-  const normalizedUrl = cleanedUrl
+const MAX_REMOTE_CALENDAR_URL_LENGTH = 2048;
+const MAX_REMOTE_ICS_BYTES = 2 * 1024 * 1024;
+const MAX_CALENDAR_FUNCTION_BYTES = MAX_REMOTE_ICS_BYTES + (64 * 1024);
+const CALENDAR_ATTEMPT_TIMEOUT_MS = 5000;
+const CALENDAR_TOTAL_TIMEOUT_MS = 15_000;
+const MAX_CONCURRENT_CALENDAR_IMPORTS = 50;
+const calendarFetchInFlight = new Map();
+
+function normalizeRemoteCalendarUrl(url) {
+  if (typeof url !== 'string') {
+    throw new TypeError('Calendar URL must be a string');
+  }
+  const cleanedUrl = url.trim()
     .replace(/^webcals?:\/\//i, 'https://')
     .replace(/^http:\/\//i, 'https://');
+  if (!cleanedUrl || cleanedUrl.length > MAX_REMOTE_CALENDAR_URL_LENGTH) {
+    throw new Error('Calendar URL is missing or too long');
+  }
+  const parsed = new URL(cleanedUrl);
+  if (parsed.protocol !== 'https:') {
+    throw new Error('Only HTTPS calendar URLs are supported');
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error('Calendar URL credentials are not supported');
+  }
+  parsed.hash = '';
+  return parsed.toString();
+}
+
+function getCalendarResponseHeader(response, name) {
+  if (typeof response?.headers?.get === 'function') {
+    return response.headers.get(name) || '';
+  }
+  const headers = response?.headers || {};
+  const key = Object.keys(headers).find((candidate) => candidate.toLowerCase() === name.toLowerCase());
+  return key ? headers[key] : '';
+}
+
+function assertCalendarResponseContentType(response, allowedTypes) {
+  const rawContentType = String(getCalendarResponseHeader(response, 'content-type') || '');
+  const contentType = rawContentType.split(';', 1)[0].trim().toLowerCase();
+  // A few established calendar hosts omit Content-Type. The VCALENDAR marker
+  // below remains authoritative, but explicit HTML/image/etc. responses fail.
+  if (contentType && !allowedTypes.has(contentType)) {
+    const error = new Error('Calendar response had an unsupported content type');
+    error.code = 'CALENDAR_CONTENT_TYPE';
+    throw error;
+  }
+}
+
+async function readBoundedCalendarResponseText(response, maxBytes) {
+  const rawContentLength = String(getCalendarResponseHeader(response, 'content-length') || '');
+  const contentLength = Number.parseInt(rawContentLength, 10);
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    const error = new Error('Calendar response exceeded the size limit');
+    error.code = 'CALENDAR_RESPONSE_LIMIT';
+    throw error;
+  }
+
+  if (response?.body && typeof response.body.getReader === 'function') {
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let decoded = '';
+    let receivedBytes = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = value instanceof Uint8Array ? value : new Uint8Array(value || []);
+        receivedBytes += chunk.byteLength;
+        if (receivedBytes > maxBytes) {
+          await reader.cancel().catch(() => {});
+          const error = new Error('Calendar response exceeded the size limit');
+          error.code = 'CALENDAR_RESPONSE_LIMIT';
+          throw error;
+        }
+        decoded += decoder.decode(chunk, { stream: true });
+      }
+      decoded += decoder.decode();
+      return decoded;
+    } finally {
+      reader.releaseLock?.();
+    }
+  }
+
+  const text = await response.text();
+  if (new TextEncoder().encode(String(text)).byteLength > maxBytes) {
+    const error = new Error('Calendar response exceeded the size limit');
+    error.code = 'CALENDAR_RESPONSE_LIMIT';
+    throw error;
+  }
+  return String(text);
+}
+
+async function fetchAndParseCalendarOnce(normalizedUrl, options = {}) {
+  const forceRefresh = options?.forceRefresh === true;
+  const startedAt = Date.now();
 
   function resolveCalendarFunctionUrl() {
     const globalConfig = window.__ALLPLAYS_CONFIG__;
@@ -310,17 +395,28 @@ export async function fetchAndParseCalendar(url, options = {}) {
     const marker = 'BEGIN:VCALENDAR';
     const markerIndex = text.indexOf(marker);
     if (markerIndex === -1) {
-      return text;
+      throw new Error('Calendar response was not valid ICS');
     }
     return text.slice(markerIndex);
   }
 
   async function fetchWithTimeout(fetchUrl) {
+    const remainingMs = CALENDAR_TOTAL_TIMEOUT_MS - (Date.now() - startedAt);
+    if (remainingMs <= 0) {
+      throw new DOMException('Calendar request timed out', 'AbortError');
+    }
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-    const response = await fetch(fetchUrl, { signal: controller.signal });
-    clearTimeout(timeoutId);
-    return response;
+    const timeoutId = setTimeout(() => controller.abort(), Math.min(CALENDAR_ATTEMPT_TIMEOUT_MS, remainingMs));
+    try {
+      return await fetch(fetchUrl, {
+        signal: controller.signal,
+        credentials: 'omit',
+        redirect: 'error',
+        referrerPolicy: 'no-referrer'
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
   }
 
   async function fetchViaFunction(targetUrl) {
@@ -337,70 +433,113 @@ export async function fetchAndParseCalendar(url, options = {}) {
     if (!response.ok) {
       throw new Error(`Function fetch failed: ${response.status} ${response.statusText}`);
     }
-    const payload = await response.json();
-    if (!payload?.ok || !payload?.icsText) {
+    assertCalendarResponseContentType(response, new Set(['application/json', 'text/json']));
+    const rawPayload = await readBoundedCalendarResponseText(response, MAX_CALENDAR_FUNCTION_BYTES);
+    let payload;
+    try {
+      payload = JSON.parse(rawPayload);
+    } catch {
+      throw new Error('Calendar fetch function returned invalid JSON');
+    }
+    if (!payload?.ok || typeof payload?.icsText !== 'string') {
       throw new Error(payload?.error || 'Invalid function response');
+    }
+    if (new TextEncoder().encode(payload.icsText).byteLength > MAX_REMOTE_ICS_BYTES) {
+      const error = new Error('Calendar response exceeded the size limit');
+      error.code = 'CALENDAR_RESPONSE_LIMIT';
+      throw error;
     }
     return payload.icsText;
   }
 
-  function buildProxyUrls(targetUrl) {
-    const httpsUrl = targetUrl.trim()
-      .replace(/^webcals?:\/\//i, 'https://')
-      .replace(/^http:\/\//i, 'https://');
-    const cacheBustUrl = httpsUrl.includes('?')
-      ? `${httpsUrl}&cachebust=${Date.now()}`
-      : `${httpsUrl}?cachebust=${Date.now()}`;
-    return [
-      `https://corsproxy.io/?${encodeURIComponent(httpsUrl)}`,
-      `https://r.jina.ai/https://${cacheBustUrl.replace(/^https:\/\//i, '')}`,
-      `https://r.jina.ai/https://${httpsUrl.replace(/^https:\/\//i, '')}`,
-      `https://r.jina.ai/http://${httpsUrl.replace(/^https?:\/\//i, '')}`
-    ];
+  function buildConfiguredProxyUrls(targetUrl) {
+    const templates = window.__ALLPLAYS_CONFIG__?.calendarProxyUrlTemplates;
+    if (!Array.isArray(templates)) return [];
+    return templates
+      .filter((template) => typeof template === 'string' && template.startsWith('https://') && template.includes('{url}'))
+      .slice(0, 2)
+      .map((template) => template.replaceAll('{url}', encodeURIComponent(targetUrl)));
+  }
+
+  async function readIcsResponse(response, sourceLabel) {
+    if (!response.ok) {
+      throw new Error(`${sourceLabel} fetch failed: ${response.status} ${response.statusText}`);
+    }
+    assertCalendarResponseContentType(response, new Set([
+      'text/calendar',
+      'text/x-vcalendar',
+      'text/plain',
+      'text/ics',
+      'application/ics',
+      'application/x-ical',
+      'application/x-ics',
+      'application/calendar',
+      'application/vnd.apple.ical',
+      'application/octet-stream'
+    ]));
+    return normalizeIcsText(await readBoundedCalendarResponseText(response, MAX_REMOTE_ICS_BYTES));
   }
 
   try {
-    // First try Firebase function to avoid browser CORS/proxy issues
     try {
       const functionIcsText = await fetchViaFunction(normalizedUrl);
       return parseICS(normalizeIcsText(functionIcsText));
     } catch (functionError) {
-      console.warn('Function calendar fetch failed, falling back to client fetch:', functionError);
+      console.warn('Function calendar fetch failed, falling back to direct fetch:', functionError);
     }
 
-    // Try direct fetch first
     const response = await fetchWithTimeout(normalizedUrl);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch calendar: ${response.statusText}`);
-    }
-    const icsText = await response.text();
-    return parseICS(normalizeIcsText(icsText));
+    return parseICS(await readIcsResponse(response, 'Calendar'));
   } catch (error) {
-    // If direct fetch fails, try with proxy fallbacks
     const shouldTryProxy = error.name === 'TypeError' ||
                            error.name === 'AbortError' ||
                            error.message.includes('fetch') ||
                            error.message.includes('CORS');
     if (shouldTryProxy) {
-      const proxyUrls = buildProxyUrls(normalizedUrl);
+      const proxyUrls = buildConfiguredProxyUrls(normalizedUrl);
       for (const proxyUrl of proxyUrls) {
         try {
-          console.log('Calendar fetch failed, trying proxy:', proxyUrl);
           const response = await fetchWithTimeout(proxyUrl);
-          if (!response.ok) {
-            throw new Error(`Proxy fetch failed: ${response.status} ${response.statusText}`);
-          }
-          const icsText = await response.text();
-          return parseICS(normalizeIcsText(icsText));
+          return parseICS(await readIcsResponse(response, 'Proxy'));
         } catch (proxyError) {
-          console.warn('Proxy fetch attempt failed:', proxyError);
+          if (['CALENDAR_RESPONSE_LIMIT', 'CALENDAR_CONTENT_TYPE'].includes(proxyError?.code)) {
+            throw proxyError;
+          }
+          console.warn('Configured calendar proxy attempt failed:', proxyError);
         }
       }
-      throw new Error('Cannot fetch calendar. All proxy attempts failed.');
+      if (proxyUrls.length) {
+        throw new Error('Cannot fetch calendar. All configured proxy attempts failed.');
+      }
     }
     console.error('Error fetching calendar:', error);
     throw error;
   }
+}
+
+/**
+ * Fetch and parse an ICS calendar file
+ * @param {string} url - URL to the .ics file
+ * @returns {Promise<Array>} Array of parsed calendar events
+ */
+export async function fetchAndParseCalendar(url, options = {}) {
+  const normalizedUrl = normalizeRemoteCalendarUrl(url);
+  const forceRefresh = options?.forceRefresh === true;
+  const inFlightKey = `${forceRefresh ? 'refresh' : 'normal'}:${normalizedUrl}`;
+  const existing = calendarFetchInFlight.get(inFlightKey);
+  if (existing) return existing;
+  if (calendarFetchInFlight.size >= MAX_CONCURRENT_CALENDAR_IMPORTS) {
+    throw new Error('Too many calendar imports are already in progress');
+  }
+
+  const request = fetchAndParseCalendarOnce(normalizedUrl, { forceRefresh })
+    .finally(() => {
+      if (calendarFetchInFlight.get(inFlightKey) === request) {
+        calendarFetchInFlight.delete(inFlightKey);
+      }
+    });
+  calendarFetchInFlight.set(inFlightKey, request);
+  return request;
 }
 
 /**

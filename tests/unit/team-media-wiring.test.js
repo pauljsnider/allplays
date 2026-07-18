@@ -99,7 +99,7 @@ describe('team media page wiring', () => {
         expect(storageRules).toContain('application/pdf');
         expect(storageRules).toContain('function canDeleteOwnTeamMediaObject(teamId, folderId, userId)');
         expect(storageRules).toContain('(hasTeamMediaUploadGrant(teamId) && canUploadTeamMediaFolder(teamId, folderId))');
-        expect(storageRules).toContain('allow delete: if canManageTeamMedia(teamId) ||\n        canDeleteOwnTeamMediaObject(teamId, folderId, userId);');
+        expect(storageRules).toContain('allow delete: if isVerifiedForSensitiveWrite() &&\n        (canManageTeamMedia(teamId) || canDeleteOwnTeamMediaObject(teamId, folderId, userId));');
         expect(storageRules).not.toContain('allow delete: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;');
     });
 

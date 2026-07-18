@@ -3,6 +3,22 @@ const https = require('node:https');
 const dns = require('node:dns').promises;
 const net = require('node:net');
 
+const DEFAULT_CALENDAR_FETCH_TIMEOUT_MS = 12_000;
+const DEFAULT_CALENDAR_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
+const MAX_CALENDAR_URL_LENGTH = 2_048;
+const ALLOWED_CALENDAR_CONTENT_TYPES = new Set([
+  'text/calendar',
+  'text/x-vcalendar',
+  'text/plain',
+  'text/ics',
+  'application/ics',
+  'application/x-ical',
+  'application/x-ics',
+  'application/calendar',
+  'application/vnd.apple.ical',
+  'application/octet-stream'
+]);
+
 function getIpv4MappedAddress(ip) {
   const normalized = ip.toLowerCase();
   let embedded = null;
@@ -142,6 +158,9 @@ async function normalizeTargetUrl(rawUrl) {
   }
 
   let cleaned = rawUrl.trim();
+  if (!cleaned || cleaned.length > MAX_CALENDAR_URL_LENGTH) {
+    throw new Error('Calendar URL is too long');
+  }
   if (cleaned.startsWith('webcal://')) {
     cleaned = cleaned.replace(/^webcal:\/\//i, 'https://');
   } else if (cleaned.startsWith('http://')) {
@@ -152,6 +171,10 @@ async function normalizeTargetUrl(rawUrl) {
   if (parsed.protocol !== 'https:') {
     throw new Error('Only https calendar URLs are allowed');
   }
+  if (parsed.username || parsed.password) {
+    throw new Error('Calendar URL credentials are not allowed');
+  }
+  parsed.hash = '';
 
   const parsedHostname = parsed.hostname.toLowerCase();
   const host = parsedHostname.startsWith('[') && parsedHostname.endsWith(']')
@@ -166,18 +189,47 @@ async function normalizeTargetUrl(rawUrl) {
   };
 }
 
-async function fetchWithTimeout(url, originalHostname, publicIps, timeoutMs = 12000) {
+function normalizeCalendarContentType(headers = {}) {
+  const rawContentType = headers['content-type'] || headers['Content-Type'] || '';
+  return String(rawContentType).split(';', 1)[0].trim().toLowerCase();
+}
+
+function isAllowedCalendarContentType(headers = {}) {
+  const contentType = normalizeCalendarContentType(headers);
+  // Some legacy calendar providers omit Content-Type. The VCALENDAR marker is
+  // still validated by the caller, so absence remains a compatibility case;
+  // an explicitly incompatible type (for example text/html) fails closed.
+  return !contentType || ALLOWED_CALENDAR_CONTENT_TYPES.has(contentType);
+}
+
+function createCalendarFetchError(message, statusCode = 502) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  error.calendarFetchNonRetryable = true;
+  return error;
+}
+
+async function fetchWithTimeout(
+  url,
+  originalHostname,
+  publicIps,
+  timeoutMs = DEFAULT_CALENDAR_FETCH_TIMEOUT_MS,
+  maxResponseBytes = DEFAULT_CALENDAR_MAX_RESPONSE_BYTES
+) {
   const controller = new AbortController();
   let timeoutId = null;
   const timeoutPromise = new Promise((_, reject) => {
     timeoutId = setTimeout(() => {
       controller.abort();
-      reject(new Error('Calendar request timed out'));
+      reject(createCalendarFetchError('Calendar request timed out', 504));
     }, timeoutMs);
     controller.signal.addEventListener('abort', () => clearTimeout(timeoutId), { once: true });
   });
 
   const parsedUrl = new URL(url);
+  const responseLimit = Number.isSafeInteger(maxResponseBytes) && maxResponseBytes > 0
+    ? maxResponseBytes
+    : DEFAULT_CALENDAR_MAX_RESPONSE_BYTES;
   const isHttps = parsedUrl.protocol === 'https:';
   const clientModule = isHttps ? _https : _http;
   const hostHeader = net.isIP(originalHostname) === 6 ? `[${originalHostname}]` : originalHostname;
@@ -197,32 +249,74 @@ async function fetchWithTimeout(url, originalHostname, publicIps, timeoutMs = 12
       signal: controller.signal,
       host: targetIp,
       port: parsedUrl.port || (isHttps ? 443 : 80),
-      path: parsedUrl.pathname + parsedUrl.search + parsedUrl.hash,
+      path: parsedUrl.pathname + parsedUrl.search,
       servername: originalHostname,
       maxRedirects: 0,
     };
 
     const req = clientModule.request(requestOptions, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        res.resume?.();
         return resolve({
           ok: false,
           status: res.statusCode,
           statusText: res.statusMessage,
+          headers: res.headers || {},
           text: () => Promise.resolve(`Redirect to ${res.headers.location}`),
         });
       }
 
-      let data = '';
+      const declaredLength = Number.parseInt(String(res.headers?.['content-length'] || ''), 10);
+      if (Number.isFinite(declaredLength) && declaredLength > responseLimit) {
+        res.destroy?.();
+        reject(createCalendarFetchError('Calendar response exceeded the size limit', 413));
+        return;
+      }
+      if (!isAllowedCalendarContentType(res.headers)) {
+        res.destroy?.();
+        reject(createCalendarFetchError('Calendar response had an unsupported content type'));
+        return;
+      }
+      const contentEncoding = String(res.headers?.['content-encoding'] || '').trim().toLowerCase();
+      if (contentEncoding && contentEncoding !== 'identity') {
+        res.destroy?.();
+        reject(createCalendarFetchError('Compressed calendar responses are not supported'));
+        return;
+      }
+
+      const chunks = [];
+      let receivedBytes = 0;
+      let settled = false;
       res.on('data', (chunk) => {
-        data += chunk;
+        if (settled) return;
+        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        receivedBytes += buffer.length;
+        if (receivedBytes > responseLimit) {
+          settled = true;
+          res.destroy?.();
+          req.destroy?.();
+          reject(createCalendarFetchError('Calendar response exceeded the size limit', 413));
+          return;
+        }
+        chunks.push(buffer);
       });
       res.on('end', () => {
+        if (settled) return;
+        settled = true;
+        const data = Buffer.concat(chunks, receivedBytes).toString('utf8');
         resolve({
           ok: res.statusCode >= 200 && res.statusCode < 300,
           status: res.statusCode,
           statusText: res.statusMessage,
+          headers: res.headers || {},
+          byteLength: receivedBytes,
           text: () => Promise.resolve(data),
         });
+      });
+      res.on('error', (error) => {
+        if (settled) return;
+        settled = true;
+        reject(createCalendarFetchError(`Calendar response failed: ${error?.message || 'Unknown network error'}`));
       });
     });
 
@@ -243,6 +337,9 @@ async function fetchWithTimeout(url, originalHostname, publicIps, timeoutMs = 12
         if (controller.signal.aborted) {
           throw error;
         }
+        if (error?.calendarFetchNonRetryable) {
+          throw error;
+        }
         lastError = error;
       }
     }
@@ -258,10 +355,14 @@ async function fetchWithTimeout(url, originalHostname, publicIps, timeoutMs = 12
 }
 
 module.exports = {
+  DEFAULT_CALENDAR_FETCH_TIMEOUT_MS,
+  DEFAULT_CALENDAR_MAX_RESPONSE_BYTES,
+  MAX_CALENDAR_URL_LENGTH,
   isPrivateIpAddress,
   isBlockedHostname,
   assertPublicHost,
   normalizeTargetUrl,
+  isAllowedCalendarContentType,
   fetchWithTimeout,
   _setClientModulesForTesting,
 };

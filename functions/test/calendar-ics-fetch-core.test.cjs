@@ -33,7 +33,12 @@ function createMockResponse() {
   };
 }
 
-function createHandlerHarness({ maxRequests = 2, maxForceRefreshRequests = 1 } = {}) {
+function createHandlerHarness({
+  maxRequests = 2,
+  maxForceRefreshRequests = 1,
+  maxTargetRequests = Number.POSITIVE_INFINITY,
+  responseBody = 'BEGIN:VCALENDAR\nEND:VCALENDAR'
+} = {}) {
   let normalizationCount = 0;
   let fetchCount = 0;
   let now = 1_000;
@@ -44,10 +49,18 @@ function createHandlerHarness({ maxRequests = 2, maxForceRefreshRequests = 1 } =
     maxRequests: maxForceRefreshRequests,
     maxKeys: 10
   });
+  let targetRequests = 0;
   const handler = createCalendarIcsFetchHandler({
     cache,
     checkRateLimit: (req) => normalLimiter(req, now),
     checkForceRefreshRateLimit: (req) => forceRefreshLimiter(req, now),
+    checkTargetRateLimit: () => {
+      targetRequests += 1;
+      return {
+        allowed: targetRequests <= maxTargetRequests,
+        retryAfterSeconds: 60
+      };
+    },
     isAllowedOrigin: () => true,
     writeCorsHeaders: (_req, res) => res.set('Cache-Control', 'no-store'),
     normalizeTargetUrl: async (url) => {
@@ -58,7 +71,8 @@ function createHandlerHarness({ maxRequests = 2, maxForceRefreshRequests = 1 } =
       fetchCount += 1;
       return {
         ok: true,
-        text: async () => 'BEGIN:VCALENDAR\nEND:VCALENDAR'
+        headers: { 'content-type': 'text/calendar' },
+        text: async () => responseBody
       };
     },
     normalizeIcsText: (text) => text
@@ -89,6 +103,9 @@ function createHandlerHarness({ maxRequests = 2, maxForceRefreshRequests = 1 } =
     },
     get fetchCount() {
       return fetchCount;
+    },
+    get targetRequests() {
+      return targetRequests;
     }
   };
 }
@@ -149,6 +166,28 @@ test('fetchCalendarIcsWithCache honors forceRefresh', async () => {
   assert.strictEqual(fetchCount, 2);
   assert.strictEqual(refreshed.source, 'live');
   assert.match(refreshed.icsText, /X-SEQ:2/);
+});
+
+test('fetchCalendarIcsWithCache coalesces concurrent forced refreshes', async () => {
+  const cache = createCalendarIcsCache();
+  let fetchCount = 0;
+  let releaseFetch;
+  const fetchIcs = () => {
+    fetchCount += 1;
+    return new Promise((resolve) => {
+      releaseFetch = () => resolve({
+        fetchedAt: '2026-06-04T16:53:00.000Z',
+        icsText: 'BEGIN:VCALENDAR\nEND:VCALENDAR'
+      });
+    });
+  };
+
+  const first = fetchCalendarIcsWithCache({ cache, cacheKey: 'https://example.com/team.ics', forceRefresh: true, fetchIcs });
+  const second = fetchCalendarIcsWithCache({ cache, cacheKey: 'https://example.com/team.ics', forceRefresh: true, fetchIcs });
+  assert.strictEqual(fetchCount, 1);
+  releaseFetch();
+  const [firstResult, secondResult] = await Promise.all([first, second]);
+  assert.deepStrictEqual(secondResult, firstResult);
 });
 
 test('fetchCalendarIcsWithCache serves stale cache when refresh fails', async () => {
@@ -289,6 +328,34 @@ test('calendar handler applies a stricter forceRefresh limit before expensive wo
   assert.strictEqual(rejected.headers['Retry-After'], '60');
   assert.strictEqual(harness.normalizationCount, 1);
   assert.strictEqual(harness.fetchCount, 1);
+});
+
+test('calendar handler rate limits outbound work by canonical target without charging cache hits', async () => {
+  const harness = createHandlerHarness({ maxRequests: 10, maxTargetRequests: 1 });
+
+  const live = await harness.request();
+  const cached = await harness.request();
+  const blockedRefresh = await harness.request({ forceRefresh: true });
+
+  assert.strictEqual(live.statusCode, 200);
+  assert.strictEqual(cached.statusCode, 200);
+  assert.strictEqual(blockedRefresh.statusCode, 429);
+  assert.strictEqual(blockedRefresh.headers['Retry-After'], '60');
+  assert.strictEqual(harness.targetRequests, 2);
+  assert.strictEqual(harness.fetchCount, 1);
+});
+
+test('calendar handler rejects oversized response text even if the fetch adapter regresses', async () => {
+  const harness = createHandlerHarness({
+    maxRequests: 10,
+    responseBody: `BEGIN:VCALENDAR\n${'A'.repeat((2 * 1024 * 1024) + 1)}\nEND:VCALENDAR`
+  });
+
+  const response = await harness.request();
+
+  assert.strictEqual(response.statusCode, 413);
+  assert.strictEqual(response.body.ok, false);
+  assert.match(response.body.error, /size limit/);
 });
 
 test('calendar handler safely rejects requests with missing headers and query objects', async () => {

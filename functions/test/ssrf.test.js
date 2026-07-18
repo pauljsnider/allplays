@@ -7,11 +7,12 @@ import * as http from 'node:http';
 import * as net from 'node:net';
 import { EventEmitter } from 'node:events';
 import * as securityUtils from '../utils/security-utils.js';
-const { fetchWithTimeout, normalizeTargetUrl, assertPublicHost, isPrivateIpAddress, _setClientModulesForTesting } = securityUtils;
+const { fetchWithTimeout, normalizeTargetUrl, assertPublicHost, isPrivateIpAddress, isAllowedCalendarContentType, _setClientModulesForTesting } = securityUtils;
 
 function createMockRequest() {
   const mockRequest = new EventEmitter();
   mockRequest.end = () => {};
+  mockRequest.destroy = () => {};
   return mockRequest;
 }
 
@@ -147,6 +148,20 @@ test('normalizeTargetUrl validates bracketed IPv6 literals without DNS lookup', 
   }
 });
 
+test('normalizeTargetUrl rejects embedded credentials, overlong input, and strips fragments', async () => {
+  await assert.rejects(
+    normalizeTargetUrl('https://user:secret@8.8.8.8/team.ics'),
+    { message: 'Calendar URL credentials are not allowed' }
+  );
+  await assert.rejects(
+    normalizeTargetUrl(`https://8.8.8.8/${'a'.repeat(2050)}.ics`),
+    { message: 'Calendar URL is too long' }
+  );
+
+  const normalized = await normalizeTargetUrl('https://8.8.8.8/team.ics?token=ok#not-sent');
+  assert.strictEqual(normalized.url, 'https://8.8.8.8/team.ics?token=ok');
+});
+
 test('fetchWithTimeout uses validated IPs and falls back across failures', async () => {
   const originalDnsLookup = dns.lookup;
   const originalSetClientModules = _setClientModulesForTesting;
@@ -277,4 +292,76 @@ test('fetchWithTimeout uses validated IPs and falls back across failures', async
     dns.lookup = originalDnsLookup;
     _setClientModulesForTesting(null, null); // Restore original modules
   }
+});
+
+test('fetchWithTimeout rejects incompatible and oversized responses before buffering them', async () => {
+  const publicIp = '203.0.113.30';
+  const makeResponse = (headers) => {
+    const response = new EventEmitter();
+    response.statusCode = 200;
+    response.statusMessage = 'OK';
+    response.headers = headers;
+    response.destroy = () => {};
+    response.resume = () => {};
+    return response;
+  };
+
+  try {
+    _setClientModulesForTesting(null, {
+      request: (_options, callback) => {
+        const request = createMockRequest();
+        setImmediate(() => {
+          const response = makeResponse({ 'content-type': 'text/html' });
+          callback(response);
+        });
+        return request;
+      }
+    });
+    await assert.rejects(
+      fetchWithTimeout('https://calendar.example.test/team.ics', 'calendar.example.test', [publicIp]),
+      { message: 'Calendar response had an unsupported content type' }
+    );
+
+    _setClientModulesForTesting(null, {
+      request: (_options, callback) => {
+        const request = createMockRequest();
+        setImmediate(() => {
+          const response = makeResponse({ 'content-type': 'text/calendar' });
+          callback(response);
+          response.emit('data', Buffer.alloc(8));
+        });
+        return request;
+      }
+    });
+    await assert.rejects(
+      fetchWithTimeout('https://calendar.example.test/team.ics', 'calendar.example.test', [publicIp], 1_000, 4),
+      { message: 'Calendar response exceeded the size limit' }
+    );
+
+    _setClientModulesForTesting(null, {
+      request: (_options, callback) => {
+        const request = createMockRequest();
+        setImmediate(() => {
+          const response = makeResponse({
+            'content-type': 'text/calendar',
+            'content-length': '10'
+          });
+          callback(response);
+        });
+        return request;
+      }
+    });
+    await assert.rejects(
+      fetchWithTimeout('https://calendar.example.test/team.ics', 'calendar.example.test', [publicIp], 1_000, 4),
+      { message: 'Calendar response exceeded the size limit' }
+    );
+  } finally {
+    _setClientModulesForTesting(null, null);
+  }
+});
+
+test('calendar response MIME checks preserve common legacy providers', () => {
+  assert.strictEqual(isAllowedCalendarContentType({ 'content-type': 'application/x-ical; charset=utf-8' }), true);
+  assert.strictEqual(isAllowedCalendarContentType({ 'content-type': 'text/x-vcalendar' }), true);
+  assert.strictEqual(isAllowedCalendarContentType({ 'content-type': 'text/html' }), false);
 });

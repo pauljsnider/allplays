@@ -132,8 +132,8 @@ describe('React app social Firestore rules', () => {
         expect(source).toContain('function isFriendshipMemberUpdatePayloadValid()');
         expect(source).toContain('isSocialPostReactionAggregateUpdateValid(postId) ||');
         expect(source).toContain(".affectedKeys().hasOnly(['like'])");
-        expect(source).toContain('allow create: if isSocialPostReactionCreateValid(postId, userId);');
-        expect(source).toContain('allow delete: if isSocialPostReactionDeleteValid(postId, userId);');
+        expect(source).toContain('allow create: if isVerifiedForSensitiveWrite() && isSocialPostReactionCreateValid(postId, userId);');
+        expect(source).toContain('allow delete: if isVerifiedForSensitiveWrite() && isSocialPostReactionDeleteValid(postId, userId);');
         expect(source).toContain("request.resource.data.get('postId', '') == postId");
         expect(source).toContain("request.resource.data.keys().hasOnly(['postId', 'hiddenAt'])");
     });
@@ -328,9 +328,10 @@ describe('React app social Firestore rules', () => {
         expect(source).toContain("codeAfter.get('type', null) == 'friend_invite'");
         expect(source).toContain("codeAfter.get('generatedBy', '') == data.get('requesterId', '')");
         expect(source).toContain("codeAfter.get('usedBy', '') == request.auth.uid");
-        expect(source).toContain("allow create: if isFriendshipCreatePayloadValid(friendshipId, request.resource.data) ||");
+        expect(source).toContain("allow create: if isVerifiedForSensitiveWrite() &&");
+        expect(source).toContain("(isFriendshipCreatePayloadValid(friendshipId, request.resource.data) ||");
         expect(source).toContain("isFriendInviteAcceptedFriendshipCreateValid(friendshipId, request.resource.data)");
-        expect(source).toContain("allow update: if isFriendInviteAcceptedFriendshipUpdateValid(friendshipId) ||");
+        expect(source).toContain("(isFriendInviteAcceptedFriendshipUpdateValid(friendshipId) ||");
         expect(source).toContain("request.resource.data.get('source', '') == 'friend_invite'");
         expect(source).toContain("request.resource.data.get('inviteCodeId', '') == codeId");
         expect(source).toContain("friendshipId == buildFriendshipId(codeAfter.get('generatedBy', ''), request.auth.uid)");
@@ -454,8 +455,9 @@ describe('React app social Firestore rules', () => {
         expect(source).toContain("request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'fullName', 'photoUrl', 'updatedAt'])");
         expect(source).toContain("request.resource.data.get('discoveryTeamIds', resource.data.get('discoveryTeamIds', [])) == resource.data.get('discoveryTeamIds', [])");
         expect(source).toContain("request.resource.data.get('emailHash', resource.data.get('emailHash', null)) == resource.data.get('emailHash', null)");
-        expect(source).toContain('allow create: if (isGlobalAdmin() && isPublicUserProfilePayloadValid(userId, request.resource.data)) ||');
-        expect(source).toContain('allow update: if (isGlobalAdmin() && isPublicUserProfilePayloadValid(userId, request.resource.data)) ||');
+        expect(source).toContain('allow create: if isVerifiedForSensitiveWrite() &&');
+        expect(source).toContain('allow update: if isVerifiedForSensitiveWrite() &&');
+        expect(source).toContain('((isGlobalAdmin() && isPublicUserProfilePayloadValid(userId, request.resource.data)) ||');
         expect(source).not.toContain('allow create, update: if (isGlobalAdmin() || isOwner(userId))');
 
         expect(isOwnerPublicProfilePresentationWriteValid({

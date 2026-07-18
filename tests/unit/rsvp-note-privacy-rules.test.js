@@ -103,7 +103,7 @@ describe('RSVP note privacy Firestore rules', () => {
     expect(parentNoteWriteFunction).toContain('isOwnLinkedPlayerRsvpNoteId() &&\n                     canUseLinkedPlayerRsvp(teamId, data) &&\n                     isOwnLinkedPlayerRsvpId(rsvpId, data)');
     expect(parentNoteWriteFunction).toContain('data.userId == request.auth.uid &&\n                   isOwnRsvpNoteId()');
     expect(noteBlock).not.toContain('data.userId == request.auth.uid &&\n                     isOwnRsvpNoteDoc(data)');
-    expect(noteBlock).toContain('allow create, update: if isSignedIn() && canWriteRsvpNote(teamId, rsvpId, request.resource.data);');
+    expect(noteBlock).toContain('allow create, update: if isVerifiedForSensitiveWrite() && canWriteRsvpNote(teamId, rsvpId, request.resource.data);');
   });
 
   it('requires linked-player ownership for same-team parent RSVP note writes and deletes', () => {
