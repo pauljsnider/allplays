@@ -120,7 +120,7 @@ describe('authentication email delivery routing', () => {
 
         expect(firebaseDeployCommands).toEqual([
             'npx firebase-tools@14.25.0 deploy --only storage --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive 2>&1 | tee "$storage_log"',
-            'npx firebase-tools@14.25.0 deploy --only hosting,firestore:rules,firestore:indexes,functions --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive 2>&1 | tee "$deploy_log"'
+            'npx firebase-tools@14.25.0 deploy --only "$deploy_targets" --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive 2>&1 | tee "$deploy_log"'
         ]);
         expect(productionSource).toContain('[[ "$STORAGE_RULES_CHANGED" != "true" ]]');
         expect(productionSource).toContain('exit "$storage_status"');
@@ -129,6 +129,13 @@ describe('authentication email delivery routing', () => {
         expect(productionSource).toContain('for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do');
         expect(productionSource).toContain('if (( attempt == max_attempts )); then');
         expect(productionSource).toContain('retry_delay_seconds=$((15 * (2 ** (attempt - 1))))');
+        const changedBranchStart = productionSource.indexOf('if [[ "$FIRESTORE_CONFIG_CHANGED" == "true" ]]; then');
+        const unchangedBranchStart = productionSource.indexOf('\n          else', changedBranchStart);
+        const conditionalEnd = productionSource.indexOf('\n          fi', unchangedBranchStart);
+        const changedBranch = productionSource.slice(changedBranchStart, unchangedBranchStart);
+        const unchangedBranch = productionSource.slice(unchangedBranchStart, conditionalEnd);
+        expect(changedBranch.indexOf('"firestore"')).toBeLessThan(changedBranch.indexOf('"application"'));
+        expect(unchangedBranch.indexOf('"application"')).toBeLessThan(unchangedBranch.indexOf('"firestore"'));
     });
 
     it('retries only transient production deploy failures and fails fast otherwise', () => {
@@ -151,6 +158,6 @@ describe('authentication email delivery routing', () => {
         expect(deployStep.indexOf(transientGuard)).toBeLessThan(deployStep.indexOf(attemptLimitGuard));
         expect(deployStep.indexOf(attemptLimitGuard)).toBeLessThan(deployStep.indexOf(retryDelay));
         expect(nonTransientBranch).toContain('failed with a non-transient error; not retrying.');
-        expect(nonTransientBranch).toContain('exit "$deploy_status"');
+        expect(nonTransientBranch).toContain('return "$deploy_status"');
     });
 });
