@@ -49,6 +49,23 @@ describe('friend message access core', () => {
         })).toBe(false);
     });
 
+    it('does not restore stale parentOf access after parentTeamIds is normalized', () => {
+        expect(check({
+            sender: {
+                parentTeamIds: [],
+                parentOf: [{ teamId: 'team-1', playerId: 'former-player' }],
+                email: 'parent@example.com'
+            }
+        })).toBe(false);
+        expect(check({
+            sender: {
+                parentTeamIds: ['current-team'],
+                parentOf: [{ teamId: 'team-1', playerId: 'former-player' }],
+                email: 'parent@example.com'
+            }
+        })).toBe(false);
+    });
+
     it('allows owner-to-parent and parent-to-admin messaging', () => {
         expect(check({
             sender: { email: 'owner@example.com' },
