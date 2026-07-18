@@ -4,9 +4,14 @@ import { describe, expect, it } from 'vitest';
 const require = createRequire(import.meta.url);
 const {
     normalizeTeamPassCheckoutInput,
+    buildTeamPassCheckoutMetadata,
     isEligibleTeamPassPurchaser,
     shouldUnlockTeamPassFromEvent,
-    buildTeamPassEntitlement
+    getTeamPassCheckoutGuardFailure,
+    getTeamPassChargeGuardFailure,
+    getTeamPassReversalStatus,
+    buildTeamPassEntitlement,
+    buildTeamPassAttemptPaymentUpdate
 } = require('../../functions/team-pass-core.cjs');
 const { createInMemoryRateLimiter } = require('../../functions/rate-limit.cjs');
 
@@ -51,12 +56,14 @@ describe('team pass function helpers', () => {
     it('unlocks only paid completed checkout events with team pass metadata', () => {
         const teamPassSession = {
             payment_status: 'paid',
-            metadata: {
+            metadata: buildTeamPassCheckoutMetadata({
                 teamId: 'team_123',
                 seasonId: '2026',
                 tier: 'team-pass',
-                purchaserUid: 'user_123'
-            }
+                purchaserUid: 'user_123',
+                checkoutAttemptToken: 'tok_1234567890abcdef',
+                priceId: 'price_team_pass'
+            })
         };
 
         expect(shouldUnlockTeamPassFromEvent({
@@ -89,7 +96,8 @@ describe('team pass function helpers', () => {
                     metadata: {
                         teamId: 'team_123',
                         seasonId: '2026',
-                        tier: 'team-pass'
+                        tier: 'team-pass',
+                        product: 'team_pass'
                     }
                 }
             }
@@ -124,15 +132,74 @@ describe('team pass function helpers', () => {
         });
 
         expect(entitlement.refPath).toBe('teams/team_123/entitlements/2026_team-pass');
-        expect(entitlement.data).toMatchObject({
-            provider: 'stripe',
+        expect(entitlement.data).toEqual({
             status: 'active',
             teamId: 'team_123',
             seasonId: '2026',
             tier: 'team-pass',
-            purchasedByUid: 'user_123',
+            updatedAt: 'now'
+        });
+        expect(entitlement.data).not.toHaveProperty('purchasedByUid');
+        expect(entitlement.data).not.toHaveProperty('stripeCheckoutSessionId');
+    });
+
+    it('requires the exact server-reserved Team Pass checkout authority', () => {
+        const metadata = buildTeamPassCheckoutMetadata({
+            teamId: 'team_123', seasonId: '2026', tier: 'team-pass',
+            purchaserUid: 'user_123', checkoutAttemptToken: 'tok_1234567890abcdef',
+            priceId: 'price_team_pass'
+        });
+        const attempt = {
+            ...metadata,
+            checkoutStatus: 'open',
             stripeCheckoutSessionId: 'cs_123',
+            checkoutAmountCents: 4900,
+            checkoutCurrency: 'usd',
+            livemode: false
+        };
+        const session = {
+            id: 'cs_123', metadata, amount_total: 4900, currency: 'usd',
+            livemode: false, payment_status: 'paid'
+        };
+
+        expect(getTeamPassCheckoutGuardFailure({ attempt, session, paidEvent: true })).toBe('');
+        expect(getTeamPassCheckoutGuardFailure({ attempt, session: { ...session, id: 'cs_old' }, paidEvent: true })).toBe('checkout_session_mismatch');
+        expect(getTeamPassCheckoutGuardFailure({ attempt, session: { ...session, amount_total: 1 }, paidEvent: true })).toBe('checkout_amount_mismatch');
+        expect(getTeamPassCheckoutGuardFailure({ attempt, session: { ...session, currency: 'eur' }, paidEvent: true })).toBe('checkout_currency_mismatch');
+        expect(getTeamPassCheckoutGuardFailure({ attempt, session: { ...session, livemode: true }, paidEvent: true })).toBe('livemode_mismatch');
+        expect(getTeamPassCheckoutGuardFailure({ attempt: { ...attempt, checkoutStatus: 'refunded' }, session, paidEvent: true })).toBe('checkout_state_mismatch');
+    });
+
+    it('keeps private payment identifiers only in the server-owned attempt update', () => {
+        expect(buildTeamPassAttemptPaymentUpdate({
+            session: { id: 'cs_123', customer: 'cus_123', payment_intent: 'pi_123', payment_status: 'paid' },
+            eventId: 'evt_123', receivedAt: 'now', status: 'paid'
+        })).toMatchObject({
+            checkoutStatus: 'paid',
+            stripeCheckoutSessionId: 'cs_123',
+            stripeCustomerId: 'cus_123',
+            stripePaymentIntentId: 'pi_123',
             stripeEventId: 'evt_123'
         });
+    });
+
+    it('binds refund and dispute events to the paid attempt before changing access', () => {
+        const metadata = buildTeamPassCheckoutMetadata({
+            teamId: 'team_123', seasonId: '2026', tier: 'team-pass', purchaserUid: 'user_123',
+            checkoutAttemptToken: 'tok_1234567890abcdef', priceId: 'price_team_pass'
+        });
+        const attempt = {
+            ...metadata, checkoutStatus: 'paid', stripePaymentIntentId: 'pi_123',
+            checkoutAmountCents: 4900, checkoutCurrency: 'usd', livemode: true
+        };
+        const charge = {
+            id: 'ch_123', metadata, payment_intent: 'pi_123', amount: 4900,
+            amount_refunded: 4900, currency: 'usd', livemode: true
+        };
+        expect(getTeamPassChargeGuardFailure({ attempt, charge })).toBe('');
+        expect(getTeamPassChargeGuardFailure({ attempt, charge: { ...charge, payment_intent: 'pi_other' } })).toBe('payment_intent_mismatch');
+        expect(getTeamPassReversalStatus({ type: 'charge.refunded' }, charge)).toBe('refunded');
+        expect(getTeamPassReversalStatus({ type: 'charge.dispute.created', data: { object: {} } }, charge)).toBe('disputed');
+        expect(getTeamPassReversalStatus({ type: 'charge.dispute.closed', data: { object: { status: 'won' } } }, { ...charge, amount_refunded: 0 })).toBe('paid');
     });
 });

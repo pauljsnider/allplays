@@ -794,7 +794,8 @@ describe('public registration flow', () => {
         expect(functionsSource).toContain('Public checkout capability does not match.');
         expect(functionsSource).toContain('Current public checkout capability is required to release this reservation.');
         expect(functionsSource).toContain('checkoutAttemptToken: input.checkoutAttemptToken ||');
-        expect(functionsSource).toContain("ignoredReason: 'checkout_attempt_mismatch'");
+        expect(functionsSource).toContain('ignoredReason: lifecycleGuardFailure');
+        expect(functionsSource).toContain('getRegistrationCheckoutLifecycleGuardFailure({');
         expect(functionsSource).toContain("['pending', 'waitlisted'].includes(registration.status)");
         expect(functionsSource).toContain('Registration checkout is not releasable.');
         expect(functionsSource).toContain('shouldProcessRegistrationCheckoutEvent(event)');

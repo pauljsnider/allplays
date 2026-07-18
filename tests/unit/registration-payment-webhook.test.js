@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 const require = createRequire(import.meta.url);
 const {
+    getRegistrationCheckoutLifecycleGuardFailure,
     getRegistrationPaidCheckoutGuardFailure,
     normalizeRegistrationCheckoutCurrency
 } = require('../../functions/registration-payment-webhook-core.cjs');
@@ -83,6 +84,46 @@ describe('registration paid webhook guard', () => {
         expect(normalizeRegistrationCheckoutCurrency(' USD ')).toBe('usd');
     });
 
+    it('rejects paid events after cancellation or capacity release', () => {
+        expect(getRegistrationPaidCheckoutGuardFailure(currentCheckout({
+            registration: { checkoutStatus: 'cancelled' }
+        }))).toBe('checkout_state_mismatch');
+        expect(getRegistrationPaidCheckoutGuardFailure(currentCheckout({
+            registration: { registrationCapacityReleased: true }
+        }))).toBe('checkout_capacity_released');
+    });
+
+    it('applies non-paid events only to their current monotonic checkout state', () => {
+        const base = currentCheckout();
+        expect(getRegistrationCheckoutLifecycleGuardFailure({
+            ...base,
+            eventType: 'checkout.session.completed',
+            paidEvent: false
+        })).toBe('');
+        expect(getRegistrationCheckoutLifecycleGuardFailure({
+            ...currentCheckout({ registration: { checkoutStatus: 'async_pending' } }),
+            eventType: 'checkout.session.async_payment_failed',
+            paidEvent: false
+        })).toBe('');
+        expect(getRegistrationCheckoutLifecycleGuardFailure({
+            ...currentCheckout({ registration: { checkoutStatus: 'complete', paymentStatus: 'paid' } }),
+            eventType: 'checkout.session.expired',
+            paidEvent: false
+        })).toBe('checkout_state_already_terminal');
+        expect(getRegistrationCheckoutLifecycleGuardFailure({
+            ...currentCheckout({ registration: { checkoutStatus: 'cancelled' } }),
+            eventType: 'checkout.session.expired',
+            paidEvent: false
+        })).toBe('checkout_state_mismatch');
+    });
+
+    it('rejects signed events from the wrong Stripe mode for new checkouts', () => {
+        expect(getRegistrationPaidCheckoutGuardFailure(currentCheckout({
+            registration: { livemode: true },
+            session: { livemode: false }
+        }))).toBe('checkout_livemode_mismatch');
+    });
+
     it('wires the guard before registration installment or paid state mutations and persists checkout currency', () => {
         const paidBranchStart = functionsSource.indexOf('if (shouldMarkRegistrationPaidFromEvent(event)) {');
         const installmentMutation = functionsSource.indexOf('const nextPaidInstallmentCount', paidBranchStart);
@@ -93,5 +134,7 @@ describe('registration paid webhook guard', () => {
         expect(guardCall).toBeLessThan(installmentMutation);
         expect(functionsSource).toContain('checkoutCurrency: currency,');
         expect(functionsSource).toContain('lastPaidStripeCheckoutSessionId: session.id,');
+        expect(functionsSource).toContain('getRegistrationCheckoutLifecycleGuardFailure({');
+        expect(functionsSource).toContain('await stripe.checkout.sessions.expire(checkoutSessionId);');
     });
 });

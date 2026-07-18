@@ -3,7 +3,10 @@ import { readFileSync } from 'node:fs';
 
 const dbSource = readFileSync(new URL('../../js/db.js', import.meta.url), 'utf8');
 
-function buildUpdateTeamFeeRecipient({ db = {}, doc, updateDoc, runTransaction, serverTimestamp, arrayUnion, deleteField, setDoc }) {
+function buildUpdateTeamFeeRecipient({
+    db = {}, doc, updateDoc, runTransaction, serverTimestamp, arrayUnion, deleteField, setDoc,
+    functions = {}, httpsCallable = vi.fn(() => vi.fn(async () => ({ data: { expired: false } })))
+}) {
     const start = dbSource.indexOf('const PRIVATE_TEAM_FEE_RECIPIENT_FIELDS');
     const end = dbSource.indexOf('\nexport async function createTeamFeeBatch', start);
     expect(start).toBeGreaterThanOrEqual(0);
@@ -13,7 +16,7 @@ function buildUpdateTeamFeeRecipient({ db = {}, doc, updateDoc, runTransaction, 
         .slice(start, end)
         .replace('export async function updateTeamFeeRecipient', 'return async function updateTeamFeeRecipient');
 
-    return new Function('db', 'doc', 'updateDoc', 'runTransaction', 'serverTimestamp', 'arrayUnion', 'deleteField', 'setDoc', functionSource)(
+    return new Function('db', 'doc', 'updateDoc', 'runTransaction', 'serverTimestamp', 'arrayUnion', 'deleteField', 'setDoc', 'functions', 'httpsCallable', functionSource)(
         db,
         doc,
         updateDoc,
@@ -21,7 +24,9 @@ function buildUpdateTeamFeeRecipient({ db = {}, doc, updateDoc, runTransaction, 
         serverTimestamp,
         arrayUnion,
         deleteField,
-        setDoc
+        setDoc,
+        functions,
+        httpsCallable
     );
 }
 
@@ -120,6 +125,29 @@ describe('createTeamFeeBatch collection mode persistence', () => {
 });
 
 describe('updateTeamFeeRecipient manual payment validation', () => {
+    it('expires the server-owned Stripe checkout before invalidating fee state', async () => {
+        const order = [];
+        const expireCheckout = vi.fn(async () => { order.push('expire'); return { data: { expired: true } }; });
+        const httpsCallable = vi.fn(() => expireCheckout);
+        const updateDoc = vi.fn(async () => { order.push('update'); });
+        const updateTeamFeeRecipient = buildUpdateTeamFeeRecipient({
+            doc: vi.fn((_db, ...parts) => ({ path: parts.join('/') })),
+            updateDoc,
+            runTransaction: vi.fn(),
+            serverTimestamp: vi.fn(() => 'server-ts'),
+            arrayUnion: vi.fn((...entries) => entries),
+            deleteField: vi.fn(() => 'deleted'),
+            setDoc: vi.fn(),
+            httpsCallable
+        });
+
+        await updateTeamFeeRecipient('team-1', 'batch-1', 'recipient-1', { status: 'partial' });
+
+        expect(httpsCallable).toHaveBeenCalledWith(expect.any(Object), 'expireStripeTeamFeeCheckout');
+        expect(expireCheckout).toHaveBeenCalledWith({ teamId: 'team-1', batchId: 'batch-1', recipientId: 'recipient-1' });
+        expect(order).toEqual(['expire', 'update']);
+    });
+
     it('rejects manual payments that exceed the recipient remaining balance before persisting', async () => {
         const updateDoc = vi.fn();
         const transactionUpdate = vi.fn();
@@ -232,8 +260,7 @@ describe('updateTeamFeeRecipient manual payment validation', () => {
                 batchId: 'batch-1',
                 recipientId: 'recipient-1',
                 updatedAt: 'server-ts'
-            }),
-            { merge: true }
+            })
         );
         expect(arrayUnion).toHaveBeenCalledWith(expect.objectContaining({ type: 'offline_payment', amountCents: 1000 }));
         expect(arrayUnion.mock.calls[0][0].ledgerEntryId).toMatch(/^offline_payment_/);
@@ -278,8 +305,7 @@ describe('updateTeamFeeRecipient manual payment validation', () => {
                 batchId: 'batch-1',
                 recipientId: 'recipient-1',
                 updatedAt: 'server-ts'
-            }),
-            { merge: true }
+            })
         );
     });
 
@@ -550,8 +576,7 @@ describe('updateTeamFeeRecipient manual payment validation', () => {
                 batchId: 'batch-1',
                 recipientId: 'recipient-1',
                 updatedAt: 'server-ts'
-            }),
-            { merge: true }
+            })
         );
     });
 });

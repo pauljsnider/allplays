@@ -50,7 +50,15 @@ describe('team entitlement Firestore rules', () => {
                 });
                 await setDoc(
                     doc(firestore, 'teams/team-a/entitlements/server-active'),
-                    entitlementPayload({ provider: 'stripe' })
+                    entitlementPayload({ updatedAt: 'server-now' })
+                );
+                await setDoc(
+                    doc(firestore, 'teams/team-a/entitlements/legacy-private'),
+                    entitlementPayload({ stripePaymentIntentId: 'pi_private' })
+                );
+                await setDoc(
+                    doc(firestore, 'teams/team-a/teamPassCheckoutAttempts/2026_team-pass'),
+                    { teamId: 'team-a', seasonId: '2026', tier: 'team-pass', stripePaymentIntentId: 'pi_private' }
                 );
             });
         });
@@ -65,6 +73,14 @@ describe('team entitlement Firestore rules', () => {
 
             await assertSucceeds(getDoc(doc(ownerDb, 'teams/team-a/entitlements/server-active')));
             await assertSucceeds(getDoc(doc(publicDb, 'teams/team-a/entitlements/server-active')));
+            await assertFails(getDoc(doc(publicDb, 'teams/team-a/entitlements/legacy-private')));
+        });
+
+        it('keeps Team Pass checkout attempts server-only even from team admins', async () => {
+            const ownerDb = testEnv.authenticatedContext('owner-a').firestore();
+            const attemptRef = doc(ownerDb, 'teams/team-a/teamPassCheckoutAttempts/2026_team-pass');
+            await assertFails(getDoc(attemptRef));
+            await assertFails(setDoc(attemptRef, { teamId: 'team-a', seasonId: '2026', tier: 'team-pass' }));
         });
 
         it('denies client activation on create and update, including active-record edits', async () => {

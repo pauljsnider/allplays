@@ -5546,6 +5546,12 @@ export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updat
     ].some((key) => Object.prototype.hasOwnProperty.call(recipientUpdates, key));
 
     if (invalidatesOnlineCheckout) {
+        // Expire the authoritative Stripe session before any offline payment,
+        // refund, adjustment, or cancellation can invalidate its Firestore
+        // attempt. This prevents a bookmarked Checkout URL from charging after
+        // the client has moved the fee balance to a different state.
+        const expireCheckout = httpsCallable(functions, 'expireStripeTeamFeeCheckout');
+        await expireCheckout({ teamId, batchId, recipientId });
         updatePayload.checkoutStatus = 'stale';
         updatePayload.checkoutAttemptToken = deleteField();
         updatePayload.checkoutUrl = deleteField();
@@ -5601,7 +5607,10 @@ export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updat
 
             transaction.update(recipientRef, updatePayload);
             if (adminBillingPayload) {
-                transaction.set(adminBillingRef, adminBillingPayload, { merge: true });
+                // Replace the safe offline projection so a prior server-owned
+                // Stripe `latest` record cannot leak private authority fields.
+                // Immutable Stripe event records remain available to functions.
+                transaction.set(adminBillingRef, adminBillingPayload);
             }
         });
         return;
@@ -5609,7 +5618,7 @@ export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updat
 
     await updateDoc(recipientRef, updatePayload);
     if (adminBillingPayload) {
-        await setDoc(adminBillingRef, adminBillingPayload, { merge: true });
+        await setDoc(adminBillingRef, adminBillingPayload);
     }
 }
 

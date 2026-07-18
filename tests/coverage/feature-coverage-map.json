@@ -407,6 +407,7 @@
             "cloudFunctions": [
                 "createStripeTeamFeeCheckout",
                 "createStripeTeamPassCheckout",
+                "expireStripeTeamFeeCheckout",
                 "notifyFeeAssigned",
                 "notifyFeeMarkedPaid",
                 "refundStripeTeamFeePayment",

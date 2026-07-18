@@ -9,6 +9,7 @@ import {
     collectionGroup,
     deleteDoc,
     doc,
+    getDoc,
     getDocs,
     query,
     setDoc,
@@ -52,7 +53,7 @@ describe('team fee recipient Firestore rules', () => {
         expect(nestedRecipientBlock).toContain('hasNoIntroducedPrivateTeamFeeBillingFields()');
     });
 
-    it('blocks private billing fields on parent-readable fee recipient documents while keeping adminBilling admin-only', () => {
+    it('keeps Stripe authority server-only while allowing bounded offline billing records', () => {
         expect(rules).toContain('function hasNoPrivateTeamFeeBillingFields(data)');
         expect(rules).toContain('function hasNoIntroducedPrivateTeamFeeBillingFields()');
         expect(rules).toContain("'stripePaymentIntentId'");
@@ -61,7 +62,8 @@ describe('team fee recipient Firestore rules', () => {
         expect(rules).toContain('hasNoIntroducedPrivateTeamFeeBillingFields()');
         expect(rules).toContain("request.resource.data.get('stripePaymentIntentId', null) == null");
         expect(rules).toContain('match /adminBilling/{billingId} {');
-        expect(rules).toContain('allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);');
+        expect(rules).toContain('function isSafeOfflineTeamFeeBilling(data, teamId, batchId, recipientId)');
+        expect(rules).toContain('isSafeOfflineTeamFeeBilling(request.resource.data, teamId, batchId, recipientId)');
     });
 
     describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('fee recipient rules engine coverage', () => {
@@ -170,6 +172,36 @@ describe('team fee recipient Firestore rules', () => {
                 collectionGroup(adminDb, 'feeRecipients'),
                 where('teamId', '==', 'team-a')
             )));
+        });
+
+        it('denies forged Stripe authority and keeps server Stripe records unreadable to clients', async () => {
+            const ownerDb = authedFirestore('owner-a', 'owner-a@example.com');
+            const feeRef = recipientRef(ownerDb, 'team-a', 'batch-a', 'stripe-target');
+            await assertSucceeds(setDoc(feeRef, recipientPayload('team-a', 'batch-a')));
+            await assertFails(updateDoc(feeRef, { paymentProvider: 'stripe', stripeCheckoutSessionId: 'cs_forged' }));
+
+            await seedRecipient('teams/team-a/feeBatches/batch-a/feeRecipients/stripe-target', {
+                ...recipientPayload(),
+                paymentProvider: 'stripe',
+                hasAdminBilling: true
+            });
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                await setDoc(doc(context.firestore(), 'teams/team-a/feeBatches/batch-a/feeRecipients/stripe-target/adminBilling/latest'), {
+                    type: 'stripe_checkout_paid',
+                    provider: 'stripe',
+                    teamId: 'team-a', batchId: 'batch-a', recipientId: 'stripe-target',
+                    stripeCheckoutSessionId: 'cs_server', stripePaymentIntentId: 'pi_server'
+                });
+            });
+
+            const billingRef = doc(ownerDb, 'teams/team-a/feeBatches/batch-a/feeRecipients/stripe-target/adminBilling/latest');
+            await assertFails(getDoc(billingRef));
+            await assertFails(updateDoc(billingRef, { stripePaymentIntentId: 'pi_attacker' }));
+            await assertSucceeds(setDoc(billingRef, {
+                type: 'offline_payment', teamId: 'team-a', batchId: 'batch-a', recipientId: 'stripe-target',
+                amountPaidCents: 2500, note: 'Cash', recordedBy: 'owner-a', updatedAt: 'now'
+            }));
+            await assertSucceeds(getDoc(billingRef));
         });
     });
 });

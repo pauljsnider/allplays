@@ -217,6 +217,15 @@ function getTeamFeeCheckoutGuardFailure({ recipient = {}, session = {} } = {}) {
         return 'balance_mismatch';
     }
 
+    const expectedCurrency = normalizeString(recipient.checkoutCurrency).toLowerCase();
+    const sessionCurrency = normalizeString(session.currency).toLowerCase();
+    if (!isLegacyCheckoutSession && (!expectedCurrency || !sessionCurrency || expectedCurrency !== sessionCurrency)) {
+        return 'checkout_currency_mismatch';
+    }
+    if (!isLegacyCheckoutSession && recipient.livemode !== undefined && Boolean(session.livemode) !== Boolean(recipient.livemode)) {
+        return 'checkout_livemode_mismatch';
+    }
+
     return '';
 }
 
@@ -290,6 +299,51 @@ function getTeamFeeStripePaymentRefs(...sources) {
     }
 
     return { paymentIntentId: '', chargeId: '' };
+}
+
+function getTeamFeeRefundAuthorityFailure({ input = {}, recipient = {}, adminBilling = {}, session = {} } = {}) {
+    const metadata = session.metadata || {};
+    if (adminBilling.type !== 'stripe_checkout_paid' || adminBilling.provider !== 'stripe') {
+        return 'billing_record_not_stripe_checkout';
+    }
+    if (!adminBilling.stripeCheckoutSessionId || session.id !== adminBilling.stripeCheckoutSessionId) {
+        return 'checkout_session_mismatch';
+    }
+    if (session.payment_status !== 'paid' && session.payment_status !== 'no_payment_required') {
+        return 'checkout_not_paid';
+    }
+    if (metadata.product !== 'team_fee'
+        || metadata.teamId !== input.teamId
+        || metadata.batchId !== input.batchId
+        || metadata.recipientId !== input.recipientId) {
+        return 'checkout_scope_mismatch';
+    }
+
+    const sessionPaymentIntentId = normalizeString(
+        typeof session.payment_intent === 'string' ? session.payment_intent : session.payment_intent?.id
+    );
+    const billingPaymentIntentId = normalizeString(adminBilling.stripePaymentIntentId);
+    if (!sessionPaymentIntentId || !billingPaymentIntentId || sessionPaymentIntentId !== billingPaymentIntentId) {
+        return 'payment_intent_mismatch';
+    }
+
+    const sessionAmountCents = Math.round(Number(session.amount_total || 0));
+    const billingAmountCents = Math.round(Number(adminBilling.amountPaidCents || 0));
+    if (!Number.isSafeInteger(sessionAmountCents) || sessionAmountCents <= 0 || sessionAmountCents !== billingAmountCents) {
+        return 'checkout_amount_mismatch';
+    }
+    const sessionCurrency = normalizeString(session.currency).toLowerCase();
+    const billingCurrency = normalizeString(adminBilling.currency).toLowerCase();
+    if (!sessionCurrency || !billingCurrency || sessionCurrency !== billingCurrency) {
+        return 'checkout_currency_mismatch';
+    }
+    if (recipient.livemode !== undefined && Boolean(session.livemode) !== Boolean(recipient.livemode)) {
+        return 'checkout_livemode_mismatch';
+    }
+    if (recipient.teamId !== input.teamId || recipient.batchId !== input.batchId) {
+        return 'recipient_scope_mismatch';
+    }
+    return '';
 }
 
 function buildTeamFeeStripeRefundUpdate({ recipient = {}, refund = {}, amountCents = 0, actorId = '', reason = '', refundedAt, ledgerRefundedAt = refundedAt }) {
@@ -415,6 +469,7 @@ module.exports = {
     getTeamFeeStripePaidAmountCents,
     buildTeamFeeAdminBillingMetadata,
     getTeamFeeStripePaymentRefs,
+    getTeamFeeRefundAuthorityFailure,
     buildTeamFeePaidUpdate,
     buildTeamFeeStripeRefundUpdate
 };

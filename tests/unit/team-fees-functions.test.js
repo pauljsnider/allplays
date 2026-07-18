@@ -22,6 +22,7 @@ const {
     getTeamFeeStripePaidAmountCents,
     buildTeamFeeAdminBillingMetadata,
     getTeamFeeStripePaymentRefs,
+    getTeamFeeRefundAuthorityFailure,
     buildTeamFeePaidUpdate,
     buildTeamFeeStripeRefundUpdate
 } = require('../../functions/team-fees-core.cjs');
@@ -125,12 +126,14 @@ describe('team fee checkout function helpers', () => {
             stripeCheckoutSessionId: 'cs_current',
             checkoutAttemptToken: 'tok_current_123456',
             checkoutAmountCents: 7500,
+            checkoutCurrency: 'usd',
             amountDueCents: 7500,
             paidAmountCents: 0
         };
         const session = {
             id: 'cs_current',
             amount_total: 7500,
+            currency: 'usd',
             metadata: {
                 checkoutAttemptToken: 'tok_current_123456'
             }
@@ -152,6 +155,7 @@ describe('team fee checkout function helpers', () => {
         expect(getTeamFeeCheckoutGuardFailure({ recipient, session: { ...session, metadata: { checkoutAttemptToken: 'tok_old_1234567890' } } })).toBe('checkout_attempt_mismatch');
         expect(getTeamFeeCheckoutGuardFailure({ recipient, session: { ...session, amount_total: 7000 } })).toBe('checkout_amount_mismatch');
         expect(getTeamFeeCheckoutGuardFailure({ recipient: { ...recipient, amountDueCents: 9000 }, session })).toBe('balance_mismatch');
+        expect(getTeamFeeCheckoutGuardFailure({ recipient, session: { ...session, currency: 'eur' } })).toBe('checkout_currency_mismatch');
         expect(shouldApplyTeamFeeCheckoutSession({ recipient: legacyRecipient, session: legacySession })).toBe(true);
         expect(getTeamFeeCheckoutGuardFailure({ recipient: legacyRecipient, session: legacySession })).toBe('');
         expect(getTeamFeeCheckoutGuardFailure({ recipient: legacyRecipient, session: { ...legacySession, metadata: { checkoutAttemptToken: 'tok_new_1234567890' } } })).toBe('checkout_attempt_mismatch');
@@ -302,6 +306,33 @@ describe('team fee checkout function helpers', () => {
             paymentIntentId: 'pi_from_entry',
             chargeId: ''
         });
+    });
+
+    it('revalidates the server-only Stripe checkout scope before issuing a refund', () => {
+        const input = { teamId: 'team_123', batchId: 'batch_456', recipientId: 'recipient_789' };
+        const recipient = { ...input, paymentProvider: 'stripe', livemode: true };
+        const adminBilling = {
+            type: 'stripe_checkout_paid',
+            provider: 'stripe',
+            stripeCheckoutSessionId: 'cs_123',
+            stripePaymentIntentId: 'pi_123',
+            amountPaidCents: 7500,
+            currency: 'usd'
+        };
+        const session = {
+            id: 'cs_123', payment_status: 'paid', payment_intent: 'pi_123',
+            amount_total: 7500, currency: 'usd', livemode: true,
+            metadata: { product: 'team_fee', ...input }
+        };
+
+        expect(getTeamFeeRefundAuthorityFailure({ input, recipient, adminBilling, session })).toBe('');
+        expect(getTeamFeeRefundAuthorityFailure({ input, recipient, adminBilling, session: {
+            ...session,
+            metadata: { ...session.metadata, teamId: 'victim_team' }
+        } })).toBe('checkout_scope_mismatch');
+        expect(getTeamFeeRefundAuthorityFailure({ input, recipient, adminBilling, session: { ...session, payment_intent: 'pi_victim' } })).toBe('payment_intent_mismatch');
+        expect(getTeamFeeRefundAuthorityFailure({ input, recipient, adminBilling, session: { ...session, amount_total: 7600 } })).toBe('checkout_amount_mismatch');
+        expect(getTeamFeeRefundAuthorityFailure({ input, recipient, adminBilling, session: { ...session, livemode: false } })).toBe('checkout_livemode_mismatch');
     });
 
     it('builds Stripe refund ledger updates without over-crediting balances', () => {

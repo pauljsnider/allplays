@@ -885,6 +885,12 @@ service cloud.firestore {
 
     function hasNoPrivateTeamFeeBillingFields(data) {
       return !data.keys().hasAny([
+               'paymentProvider',
+               'checkoutAttemptToken',
+               'checkoutUrl',
+               'paymentLink',
+               'checkoutAmountCents',
+               'checkoutCurrency',
                'stripeCheckoutSessionId',
                'stripePaymentIntentId',
                'stripeCustomerId',
@@ -897,13 +903,21 @@ service cloud.firestore {
                'recordedBy',
                'internalNote',
                'adminNote',
-               'reason'
+               'reason',
+               'adminBilling',
+               'adminBillingEntries'
              ]);
     }
 
     function hasNoIntroducedPrivateTeamFeeBillingFields() {
       let affectedKeys = request.resource.data.diff(resource.data).affectedKeys();
-      return (!affectedKeys.hasAny(['stripeCheckoutSessionId']) || request.resource.data.get('stripeCheckoutSessionId', null) == null) &&
+      return (!affectedKeys.hasAny(['paymentProvider']) || request.resource.data.get('paymentProvider', null) == null) &&
+             (!affectedKeys.hasAny(['checkoutAttemptToken']) || request.resource.data.get('checkoutAttemptToken', null) == null) &&
+             (!affectedKeys.hasAny(['checkoutUrl']) || request.resource.data.get('checkoutUrl', null) == null) &&
+             (!affectedKeys.hasAny(['paymentLink']) || request.resource.data.get('paymentLink', null) == null) &&
+             (!affectedKeys.hasAny(['checkoutAmountCents']) || request.resource.data.get('checkoutAmountCents', null) == null) &&
+             (!affectedKeys.hasAny(['checkoutCurrency']) || request.resource.data.get('checkoutCurrency', null) == null) &&
+             (!affectedKeys.hasAny(['stripeCheckoutSessionId']) || request.resource.data.get('stripeCheckoutSessionId', null) == null) &&
              (!affectedKeys.hasAny(['stripePaymentIntentId']) || request.resource.data.get('stripePaymentIntentId', null) == null) &&
              (!affectedKeys.hasAny(['stripeCustomerId']) || request.resource.data.get('stripeCustomerId', null) == null) &&
              (!affectedKeys.hasAny(['stripeChargeId']) || request.resource.data.get('stripeChargeId', null) == null) &&
@@ -915,7 +929,39 @@ service cloud.firestore {
              (!affectedKeys.hasAny(['recordedBy']) || request.resource.data.get('recordedBy', null) == null) &&
              (!affectedKeys.hasAny(['internalNote']) || request.resource.data.get('internalNote', null) == null) &&
              (!affectedKeys.hasAny(['adminNote']) || request.resource.data.get('adminNote', null) == null) &&
-             (!affectedKeys.hasAny(['reason']) || request.resource.data.get('reason', null) == null);
+             (!affectedKeys.hasAny(['reason']) || request.resource.data.get('reason', null) == null) &&
+             (!affectedKeys.hasAny(['adminBilling']) || request.resource.data.get('adminBilling', null) == null) &&
+             (!affectedKeys.hasAny(['adminBillingEntries']) || request.resource.data.get('adminBillingEntries', null) == null);
+    }
+
+    function isSafeOfflineTeamFeeBilling(data, teamId, batchId, recipientId) {
+      return data.get('type', '') in ['offline_payment', 'balance_adjustment', 'offline_refund', 'cancellation'] &&
+             data.get('teamId', '') == teamId &&
+             data.get('batchId', '') == batchId &&
+             data.get('recipientId', '') == recipientId &&
+             !data.keys().hasAny([
+               'provider', 'paymentProvider', 'checkoutAttemptToken', 'checkoutUrl', 'paymentLink',
+               'checkoutAmountCents', 'checkoutCurrency', 'stripeCheckoutSessionId',
+               'stripePaymentIntentId', 'stripeCustomerId', 'stripeChargeId',
+               'stripeRefundId', 'stripeLastRefundId', 'stripeEventId',
+               'adminBilling', 'adminBillingEntries'
+             ]);
+    }
+
+    function isSafeOfflineTeamFeeBillingUpdate(data, teamId, batchId, recipientId) {
+      let affectedKeys = data.diff(resource.data).affectedKeys();
+      return isSafeOfflineTeamFeeBilling(data, teamId, batchId, recipientId) &&
+             affectedKeys.hasOnly([
+               'type', 'amountPaidCents', 'paidAt', 'note', 'recordedBy',
+               'amountCents', 'previousAmountDueCents', 'amountDueCents', 'reason', 'adjustedBy',
+               'refundAmountCents', 'refundType', 'refundMethod', 'methodLabel',
+               'canceledBy', 'updatedAt',
+               'provider', 'paymentProvider', 'checkoutAttemptToken', 'checkoutUrl', 'paymentLink',
+               'checkoutAmountCents', 'checkoutCurrency', 'stripeCheckoutSessionId',
+               'stripePaymentIntentId', 'stripeCustomerId', 'stripeChargeId',
+               'stripeRefundId', 'stripeLastRefundId', 'stripeEventId',
+               'adminBilling', 'adminBillingEntries'
+             ]);
     }
 
     function isPublishedSponsor(data) {
@@ -2788,6 +2834,12 @@ service cloud.firestore {
         allow write: if isGlobalAdmin();
       }
 
+      // Checkout attempts contain purchaser and Stripe authority data. They are
+      // written only by trusted functions and are never exposed to clients.
+      match /teamPassCheckoutAttempts/{attemptId} {
+        allow read, create, update, delete: if false;
+      }
+
       match /familyMemberships/{memberId} {
         allow read: if isOwner(userId) || isGlobalAdmin() ||
                        (isSignedIn() && resource.data.email is string && request.auth.token.email is string && resource.data.email == request.auth.token.email.lower());
@@ -3849,7 +3901,18 @@ service cloud.firestore {
                            resource.data.batchId == batchId;
 
           match /adminBilling/{billingId} {
-            allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);
+            allow read: if isTeamOwnerOrAdmin(teamId) &&
+                           isSafeOfflineTeamFeeBilling(resource.data, teamId, batchId, recipientId);
+            allow create: if isTeamOwnerOrAdmin(teamId) &&
+                             isSafeOfflineTeamFeeBilling(request.resource.data, teamId, batchId, recipientId);
+            allow update: if isTeamOwnerOrAdmin(teamId) &&
+                             (
+                               (isSafeOfflineTeamFeeBilling(resource.data, teamId, batchId, recipientId) &&
+                                isSafeOfflineTeamFeeBilling(request.resource.data, teamId, batchId, recipientId)) ||
+                               isSafeOfflineTeamFeeBillingUpdate(request.resource.data, teamId, batchId, recipientId)
+                             );
+            allow delete: if isTeamOwnerOrAdmin(teamId) &&
+                             isSafeOfflineTeamFeeBilling(resource.data, teamId, batchId, recipientId);
           }
         }
       }
