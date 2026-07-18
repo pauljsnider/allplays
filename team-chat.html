@@ -344,7 +344,7 @@
     <script type="module">
         import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=15';
         import { checkAuth } from './js/auth.js?v=50';
-        import { getTeam, getUserProfile, getPlayers, getGames, getGameEvents, getAggregatedStatsForGames, getChatConversations, upsertChatConversation, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, getTeamEmailDrafts, saveTeamEmailDraft, getTeamEmailTemplates, saveTeamEmailTemplate, deleteTeamEmailTemplate, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages, sendTeamEmail, getSentTeamEmails, uploadChatImage, deleteUploadedChatAttachments, toggleChatReaction } from './js/db.js?v=101';
+        import { getTeam, getUserProfile, getPlayers, getGames, getGameEvents, getAggregatedStatsForGames, getChatConversations, upsertChatConversation, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, getTeamEmailDrafts, saveTeamEmailDraft, getTeamEmailTemplates, saveTeamEmailTemplate, deleteTeamEmailTemplate, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages, sendTeamEmail, getSentTeamEmails, uploadChatImage, deleteUploadedChatAttachments, toggleChatReaction } from './js/db.js?v=102';
         import { DEFAULT_TEAM_CONVERSATION_ID, buildDefaultTeamConversation, getConversationDisplayName, isDefaultTeamConversation } from './js/team-chat-conversations.js?v=2';
         import { shouldUpdateChatLastRead, shouldRetryChatLastReadOnViewReturn } from './js/team-chat-last-read.js?v=3';
         import {
@@ -356,8 +356,11 @@
             getChatMediaDownloadName
         } from './js/team-chat-media.js?v=2';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
+        import { functions, httpsCallable } from './js/firebase.js?v=20';
         import { getAI, getGenerativeModel, GoogleAIBackend } from './js/vendor/firebase-ai.js';
         import { getApp } from './js/vendor/firebase-app.js';
+
+        const sendAuthorizedDirectMessageCallable = httpsCallable(functions, 'sendAuthorizedDirectMessage');
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -2612,7 +2615,7 @@
             try {
                 const needs = await inferDataNeeds(question);
                 const responseText = await askAllPlays(question, needs);
-                await postChatMessage(teamId, {
+                await postAuthorizedChatMessage({
                     text: `ALL PLAYS\n\n${responseText}`,
                     senderId: currentUser.uid,
                     senderName: currentUserProfile?.fullName || currentUser.displayName || currentUser.email || null,
@@ -2634,6 +2637,22 @@
                 aiUiPending = false;
                 renderMessages();
             }
+        }
+
+        async function postAuthorizedChatMessage(message) {
+            const conversationId = message.conversationId || DEFAULT_TEAM_CONVERSATION_ID;
+            const conversation = conversations.find((item) => item.id === conversationId);
+            if (conversation?.type === 'direct') {
+                const result = await sendAuthorizedDirectMessageCallable({
+                    teamId,
+                    conversationId,
+                    clientMessageId: message.clientMessageId || null,
+                    text: message.text || '',
+                    attachments: Array.isArray(message.attachments) ? message.attachments : []
+                });
+                return result.data;
+            }
+            return postChatMessage(teamId, message);
         }
 
         window.toggleReactionPicker = function(messageId) {
@@ -2952,12 +2971,30 @@
                         ? []
                         : Array.from(new Set([currentUser.uid, ...targetMetadata.recipientIds]));
                     const participantRoles = targetMetadata.targetType === 'staff' ? ['staff'] : [];
+                    const isDirectConversation = participantIds.length === 2;
+                    const directUserIds = isDirectConversation
+                        ? Array.from(new Set(participantIds.map((participantId) => {
+                            const normalizedId = String(participantId || '').trim();
+                            return normalizedId.toLowerCase().startsWith('user:')
+                                ? normalizedId.slice(5).trim()
+                                : normalizedId;
+                        }).filter(Boolean))).sort()
+                        : [];
+                    if (isDirectConversation && !canModerate) {
+                        throw new Error('Start friend direct messages from the ALL PLAYS app.');
+                    }
                     const conversation = await upsertChatConversation(teamId, {
-                        type: participantIds.length === 2 ? 'direct' : 'group',
+                        type: isDirectConversation ? 'direct' : 'group',
                         participantIds,
                         participantRoles,
                         mutedBy: [],
-                        name: getTargetedConversationName(targetMetadata)
+                        name: getTargetedConversationName(targetMetadata),
+                        ...(isDirectConversation ? {
+                            directAccess: 'team_admin',
+                            directUserIds,
+                            friendshipId: null,
+                            initiatedBy: currentUser.uid
+                        } : {})
                     });
                     conversationId = conversation.id;
                     if (targetMetadata.targetType === 'individuals') {
@@ -2969,6 +3006,25 @@
                     }
                     selectedConversationId = conversationId;
                     await loadConversations();
+                } else {
+                    const activeConversation = getSelectedConversation();
+                    if (activeConversation?.type === 'direct' && canModerate && !activeConversation.directAccess) {
+                        const directUserIds = Array.from(new Set((activeConversation.participantIds || []).map((participantId) => {
+                            const normalizedId = String(participantId || '').trim();
+                            return normalizedId.toLowerCase().startsWith('user:')
+                                ? normalizedId.slice(5).trim()
+                                : normalizedId;
+                        }).filter(Boolean))).sort();
+                        await upsertChatConversation(teamId, {
+                            type: 'direct',
+                            participantIds: activeConversation.participantIds || [],
+                            participantRoles: activeConversation.participantRoles || [],
+                            directAccess: 'team_admin',
+                            directUserIds,
+                            friendshipId: null,
+                            initiatedBy: currentUser.uid
+                        });
+                    }
                 }
                 if (imageFiles.length > 0) {
                     for (const file of imageFiles) {
@@ -2976,7 +3032,7 @@
                     }
                 }
                 pendingScrollToBottom = true;
-                await postChatMessage(teamId, {
+                await postAuthorizedChatMessage({
                     text,
                     senderId: currentUser.uid,
                     senderName: currentUserProfile?.fullName || null,

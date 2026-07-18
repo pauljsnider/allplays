@@ -66,6 +66,10 @@ describe('firestore mappers', () => {
             type: 'unsupported',
             participantIds: [' parent-1 ', '', 'parent-1', 'coach-1'],
             participantRoles: ['parent', 'parent', '', 'coach'],
+            directAccess: 'accepted_friend',
+            directUserIds: [' parent-1 ', 'coach-1', 'parent-1'],
+            friendshipId: ' coach-1__parent-1 ',
+            initiatedBy: ' parent-1 ',
             mutedBy: [' parent-1 ', 'parent-1', null],
             isDefault: true
         }, 'conversation-1')).toEqual({
@@ -74,6 +78,10 @@ describe('firestore mappers', () => {
             name: null,
             participantIds: ['parent-1', 'coach-1'],
             participantRoles: ['parent', 'coach'],
+            directAccess: 'accepted_friend',
+            directUserIds: ['parent-1', 'coach-1'],
+            friendshipId: 'coach-1__parent-1',
+            initiatedBy: 'parent-1',
             mutedBy: ['parent-1'],
             isDefault: true,
             isLegacy: false,

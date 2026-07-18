@@ -133,6 +133,7 @@ type PendingChatSendRequest = {
   selectedConversationId: string;
   selectedRecipientTarget: ChatTargetType;
   selectedRecipientIds: string[];
+  canModerate: boolean;
   interaction?: ReturnType<typeof startInteractionTimer>;
 };
 
@@ -1424,6 +1425,7 @@ export function ChatWindow({
         selectedConversationId: request.selectedConversationId,
         selectedRecipientTarget: request.selectedRecipientTarget,
         selectedRecipientIds: request.selectedRecipientIds,
+        canModerate: request.canModerate,
         onProgress: (stage) => {
           setComposerNotice(stage === 'uploading' ? attachmentNotice : 'Posting message...');
         },
@@ -1535,6 +1537,7 @@ export function ChatWindow({
       selectedConversationId: effectiveConversationId,
       selectedRecipientTarget,
       selectedRecipientIds: [...selectedRecipientIds],
+      canModerate,
       interaction: startPendingChatSendInteraction({
         attachmentCount: files.length,
         selectedRecipientTarget

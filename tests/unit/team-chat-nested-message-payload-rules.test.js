@@ -59,7 +59,7 @@ describe('nested team chat message payload contracts', () => {
             createValidator.indexOf('(data.text.size() > 0 || data.attachments.size() > 0)')
         );
         expect(rules).toContain('function isNestedChatMessageTargetValid(teamId, conversationId, conversationData, data)');
-        expect(rules).toContain("conversationData.get('type', '') in ['direct', 'group']");
+        expect(rules).toContain("conversationData.get('type', '') == 'group'");
         expect(rules).toContain('function hasValidNestedChatRecipientIds(conversationData, data)');
         expect(rules).toContain("conversationData.get('participantIds', []) is list");
         expect(rules).toContain('hasValidNestedChatRecipientIds(conversationData, data)');
@@ -87,7 +87,13 @@ describe('nested team chat message payload contracts', () => {
             rules.indexOf('function isNestedChatMessageEditValid')
         );
         expect(createTargetValidator).toContain('isNestedChatMessageTargetValid(teamId, conversationId, conversationData, data)');
+        expect(nestedTargetValidator).not.toContain("conversationData.get('type', '') == 'direct'");
         expect(createTargetValidator).not.toContain('isNestedChatMessageEditTargetValid');
+
+        expect(rules).toContain('function isAcceptedFriendDirectConversation(teamId, data)');
+        expect(rules).toContain("friendship.get('status', '') == 'accepted'");
+        expect(rules).toContain("teamId in friendship.get('sharedTeamIds', [])");
+        expect(rules).toContain('isDirectConversationCreateAuthorized(teamId, request.resource.data)');
 
         const nestedMessageRules = rules.slice(
             rules.indexOf('match /chatConversations/{conversationId} {'),
@@ -132,6 +138,9 @@ describe('nested team chat message payload contracts', () => {
         expect(appChatSource).toContain("setToServerValue: 'REQUEST_TIME'");
         expect(appChatSource).toContain('recipientIds: Array.isArray(createdConversation.participantIds) ? createdConversation.participantIds : participantIds');
         expect(chatPageSource).toContain('recipientIds: Array.isArray(conversation.participantIds) ? conversation.participantIds : participantIds');
+        expect(chatPageSource).toContain("httpsCallable(functions, 'sendAuthorizedDirectMessage')");
+        expect(chatPageSource).toContain("if (conversation?.type === 'direct')");
+        expect(chatPageSource).toContain('return postChatMessage(teamId, message);');
     });
 
     it('does not persist privileged AI identity fields from client conversations', () => {
@@ -151,6 +160,7 @@ describe('nested team chat message payload contracts', () => {
 describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message rules engine coverage', () => {
     let testEnv;
     const directConversationId = 'direct_parent-1__user-2';
+    const friendDirectConversationId = 'direct_parent-1__user%3Auser-2';
     const staffConversationId = 'group_role%3Astaff';
 
     beforeAll(async () => {
@@ -199,10 +209,28 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
                 isAdmin: false,
                 parentTeamIds: ['team-1']
             });
+            await setDoc(doc(firestore, 'friendships/parent-1__user-2'), {
+                requesterId: 'parent-1',
+                recipientId: 'user-2',
+                memberIds: ['parent-1', 'user-2'],
+                sharedTeamIds: ['team-1'],
+                blockedBy: [],
+                status: 'accepted'
+            });
             await setDoc(doc(firestore, `teams/team-1/chatConversations/${directConversationId}`), {
-                type: 'direct',
+                type: 'group',
                 participantIds: ['parent-1', 'user-2'],
                 participantRoles: [],
+                mutedBy: []
+            });
+            await setDoc(doc(firestore, `teams/team-1/chatConversations/${friendDirectConversationId}`), {
+                type: 'direct',
+                participantIds: ['parent-1', 'user:user-2'],
+                participantRoles: [],
+                directAccess: 'accepted_friend',
+                directUserIds: ['parent-1', 'user-2'],
+                friendshipId: 'parent-1__user-2',
+                initiatedBy: null,
                 mutedBy: []
             });
             await setDoc(doc(firestore, `teams/team-1/chatConversations/${staffConversationId}`), {
@@ -255,6 +283,24 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
             recipientIds: [],
             targetRole: null,
             conversationId: null,
+            ...overrides
+        };
+    }
+
+    function directConversationPayload(overrides = {}) {
+        return {
+            type: 'direct',
+            name: 'Private conversation',
+            participantIds: ['parent-1', 'user:user-2'],
+            participantRoles: [],
+            lastMessageAt: null,
+            mutedBy: [],
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+            directAccess: 'accepted_friend',
+            directUserIds: ['parent-1', 'user-2'],
+            friendshipId: 'parent-1__user-2',
+            initiatedBy: null,
             ...overrides
         };
     }
@@ -333,7 +379,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
         };
     }
 
-    it('allows canonical direct and staff payloads', async () => {
+    it('allows canonical targeted-group and staff payloads', async () => {
         const parentDb = authedFirestore('parent-1', 'parent@example.com');
         const coachDb = authedFirestore('coach-1', 'coach@example.com');
         const directWithoutStoredEmail = directPayload();
@@ -349,6 +395,52 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
         })));
         await assertSucceeds(setDoc(messageRef(parentDb, directConversationId, 'valid-direct-no-email'), directWithoutStoredEmail));
         await assertSucceeds(setDoc(messageRef(coachDb, staffConversationId, 'valid-staff'), staffPayload()));
+    });
+
+    it('denies direct-message client writes so the authorization callable owns that path', async () => {
+        const parentDb = authedFirestore('parent-1', 'parent@example.com');
+        await assertFails(setDoc(messageRef(parentDb, friendDirectConversationId, 'direct-client-write'), directPayload({
+            recipientIds: ['parent-1', 'user:user-2'],
+            conversationId: friendDirectConversationId
+        })));
+    });
+
+    it('authorizes direct conversation creation from current friendship or team-admin state', async () => {
+        const parentDb = authedFirestore('parent-1', 'parent@example.com');
+        const ownerDb = authedFirestore('owner-1', 'owner@example.com');
+
+        await assertSucceeds(setDoc(
+            doc(parentDb, 'teams/team-1/chatConversations/direct-new-friend'),
+            directConversationPayload()
+        ));
+        await assertFails(setDoc(
+            doc(parentDb, 'teams/team-1/chatConversations/direct-forged-admin'),
+            directConversationPayload({
+                participantIds: ['parent-1', 'user:owner-1'],
+                directAccess: 'team_admin',
+                directUserIds: ['owner-1', 'parent-1'],
+                friendshipId: null,
+                initiatedBy: 'parent-1'
+            })
+        ));
+        await assertSucceeds(setDoc(
+            doc(ownerDb, 'teams/team-1/chatConversations/direct-owner-parent'),
+            directConversationPayload({
+                participantIds: ['owner-1', 'user:parent-1'],
+                directAccess: 'team_admin',
+                directUserIds: ['owner-1', 'parent-1'],
+                friendshipId: null,
+                initiatedBy: 'owner-1'
+            })
+        ));
+
+        await testEnv.withSecurityRulesDisabled(async (context) => {
+            await updateDoc(doc(context.firestore(), 'friendships/parent-1__user-2'), { status: 'removed' });
+        });
+        await assertFails(setDoc(
+            doc(parentDb, 'teams/team-1/chatConversations/direct-revoked-friend'),
+            directConversationPayload()
+        ));
     });
 
     it('lets only team staff repair legacy canonical metadata before reading staff messages', async () => {
@@ -583,7 +675,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
         const emailConversationId = 'direct_email%3Aparent.name%40example.com__user-2';
         await testEnv.withSecurityRulesDisabled(async (context) => {
             await setDoc(doc(context.firestore(), `teams/team-1/chatConversations/${emailConversationId}`), {
-                type: 'direct',
+                type: 'group',
                 participantIds: ['parent-1', 'user-2'],
                 participantRoles: [],
                 mutedBy: []

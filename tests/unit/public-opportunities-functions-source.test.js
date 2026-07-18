@@ -21,6 +21,7 @@ describe('public opportunity callable wiring', () => {
       'getOpportunityInquiry',
       'listMyPublicOpportunities',
       'listManagedPublicOpportunityTeams',
+      'sendAuthorizedDirectMessage',
       'getPublicTeamProfile',
       'listPublicOpportunityReports',
       'moderatePublicOpportunity'
@@ -98,10 +99,21 @@ describe('public opportunity callable wiring', () => {
     expect(recipientResolver).not.toContain('new Set([String(listing.authorId');
   });
 
+  it('authorizes direct messages on the server write path', () => {
+    expect(source).toContain('exports.sendAuthorizedDirectMessage');
+    expect(source).toContain("conversation.directAccess === 'accepted_friend'");
+    expect(source).toContain("conversation.directAccess === 'team_admin'");
+    expect(source).toContain('canMessageAcceptedFriendForTeam({');
+    expect(source).toContain('hasTeamAdminAccess({');
+    expect(source).toContain('batch.set(messageRef, message);');
+  });
+
   it('revokes private team inquiry access and notifications from former administrators', () => {
     expect(source).toMatch(/canAccessOpportunityInquiry[\s\S]*isOpportunityPlatformAdmin\(caller\)[\s\S]*inquiry\.senderId === caller\.uid/);
     expect(source).toMatch(/canAccessOpportunityInquiry[\s\S]*inquiry\.participantIds\.includes\(caller\.uid\)[\s\S]*hasTeamAdminAccess/);
-    expect(source).toContain('snap.docs.map((docSnap) => canAccessOpportunityInquiry(caller, docSnap.data() || {}))');
+    expect(source).toContain('scanned.map((docSnap) => canAccessOpportunityInquiry(caller, docSnap.data() || {}))');
+    expect(source).toContain("collectionRef.where('teamId', 'in', teamIds)");
+    expect(source).toContain('listOpportunityManagedTeamDocuments(caller)');
     expect(source).toContain('const currentTeamRecipients = inquiry.teamId');
     expect(source).toContain('currentTeamRecipients.has(participantId)');
   });

@@ -188,7 +188,9 @@ const {
   buildOpportunityExpiry
 } = require('./public-opportunities-core.cjs');
 const {
-  createCheckAcceptedFriendMessageAccessHandler
+  canMessageAcceptedFriendForTeam,
+  createCheckAcceptedFriendMessageAccessHandler,
+  hasCurrentTeamAccess
 } = require('./friend-message-access-core.cjs');
 const { hasTeamAdminAccess } = require('./team-admin-access-core.cjs');
 const { createAutoAcceptParentInviteHandler } = require('./parent-invite-auto-link-callable.cjs');
@@ -12520,6 +12522,209 @@ exports.checkAcceptedFriendMessageAccess = functions.https.onCall(
   })
 );
 
+function normalizeDirectChatId(value, label) {
+  const normalized = String(value || '').trim();
+  if (!normalized || normalized.includes('/') || normalized.length > 200) {
+    throwOpportunityError('invalid-argument', `Invalid ${label}.`);
+  }
+  return normalized;
+}
+
+function normalizeDirectChatUserId(value) {
+  const normalized = String(value || '').trim();
+  const userId = normalized.toLowerCase().startsWith('user:') ? normalized.slice(5).trim() : normalized;
+  return /^[A-Za-z0-9_-]{1,160}$/.test(userId) ? userId : '';
+}
+
+function getDirectChatUserIds(conversation) {
+  const participantIds = Array.isArray(conversation?.participantIds) ? conversation.participantIds : [];
+  const directUserIds = Array.from(new Set(participantIds.map(normalizeDirectChatUserId).filter(Boolean))).sort();
+  const storedDirectUserIds = Array.from(new Set((Array.isArray(conversation?.directUserIds) ? conversation.directUserIds : [])
+    .map(normalizeDirectChatUserId)
+    .filter(Boolean)))
+    .sort();
+  if (conversation?.type !== 'direct' || participantIds.length !== 2 || directUserIds.length !== 2 ||
+      storedDirectUserIds.length !== 2 || directUserIds.join('|') !== storedDirectUserIds.join('|')) {
+    throwOpportunityError('failed-precondition', 'This direct conversation is not authorized for messaging.');
+  }
+  return directUserIds;
+}
+
+function normalizeAuthorizedDirectAttachment(rawAttachment, { teamId, conversationId, uid, now }) {
+  const attachment = rawAttachment && typeof rawAttachment === 'object' ? rawAttachment : {};
+  const type = attachment.type === 'video' ? 'video' : attachment.type === 'image' ? 'image' : '';
+  const url = String(attachment.url || '').trim();
+  const path = String(attachment.path || '').trim();
+  const name = cleanOpportunityText(attachment.name, 240) || null;
+  const mimeType = cleanOpportunityText(attachment.mimeType, 160) || null;
+  const size = Number(attachment.size);
+  let allowedUrl = false;
+  try {
+    const parsedUrl = new URL(url);
+    allowedUrl = parsedUrl.protocol === 'https:' && [
+      'firebasestorage.googleapis.com',
+      'storage.googleapis.com'
+    ].includes(parsedUrl.hostname);
+  } catch {
+    allowedUrl = false;
+  }
+  const scopedFallbackPrefix = `stat-sheets/team-chat/${teamId}/${conversationId}/${uid}/`;
+  const allowedPath = path.startsWith(scopedFallbackPrefix) || (
+    /^(team-photos|team-videos)\//.test(path) &&
+    path.includes(`_chat_${teamId}_`) &&
+    path.includes(`_${uid}_`)
+  );
+  if (!type || !allowedUrl || !allowedPath || !Number.isFinite(size) || size <= 0 || size > 5 * 1024 * 1024) {
+    throwOpportunityError('invalid-argument', 'Direct-message attachments must be valid team chat uploads of 5 MB or less.');
+  }
+  return {
+    type,
+    url,
+    path,
+    // Thumbnails are generated client-side and are not needed by the current
+    // chat renderer. Do not persist an independently supplied URL here.
+    thumbnailUrl: null,
+    name,
+    mimeType,
+    size,
+    uploadedAt: now
+  };
+}
+
+exports.sendAuthorizedDirectMessage = functions.https.onCall(async (data, context = {}) => {
+  const caller = await getOpportunityCaller(context);
+  assertOpportunityRateLimit(checkPublicOpportunityMessageRateLimit, context, `direct-message:${caller.uid}`);
+  const teamId = normalizeDirectChatId(data?.teamId, 'team');
+  const conversationId = normalizeDirectChatId(data?.conversationId, 'conversation');
+  const conversationRef = firestore.doc(`teams/${teamId}/chatConversations/${conversationId}`);
+  const [teamSnap, conversationSnap] = await Promise.all([
+    firestore.doc(`teams/${teamId}`).get(),
+    conversationRef.get()
+  ]);
+  if (!teamSnap.exists || !conversationSnap.exists) {
+    throwOpportunityError('not-found', 'Direct conversation not found.');
+  }
+  const team = teamSnap.data() || {};
+  const conversation = conversationSnap.data() || {};
+  const directUserIds = getDirectChatUserIds(conversation);
+  if (!directUserIds.includes(caller.uid)) {
+    throwOpportunityError('permission-denied', 'You are not a participant in this direct conversation.');
+  }
+  const recipientId = directUserIds.find((userId) => userId !== caller.uid);
+  const recipientSnap = await firestore.doc(`users/${recipientId}`).get();
+  const recipient = recipientSnap.exists ? recipientSnap.data() || {} : {};
+  const teamWithId = { ...team, id: teamId };
+  const callerHasAccess = hasCurrentTeamAccess({
+    team: teamWithId,
+    user: caller.user,
+    userId: caller.uid,
+    email: caller.email
+  });
+  const recipientHasAccess = hasCurrentTeamAccess({
+    team: teamWithId,
+    user: recipient,
+    userId: recipientId
+  });
+  if (!callerHasAccess || !recipientHasAccess) {
+    throwOpportunityError('permission-denied', 'Both participants must still have access to this team.');
+  }
+  if (conversation.directAccess === 'accepted_friend') {
+    const friendshipId = directUserIds.join('__');
+    if (conversation.friendshipId !== friendshipId) {
+      throwOpportunityError('permission-denied', 'This friend conversation is no longer authorized.');
+    }
+    const friendshipSnap = await firestore.doc(`friendships/${friendshipId}`).get();
+    if (!friendshipSnap.exists || !canMessageAcceptedFriendForTeam({
+      friendship: friendshipSnap.data() || {},
+      team,
+      sender: caller.user,
+      recipient,
+      senderId: caller.uid,
+      recipientId,
+      teamId,
+      senderEmail: caller.email
+    })) {
+      throwOpportunityError('permission-denied', 'This friend connection is no longer authorized for direct messages.');
+    }
+  } else if (conversation.directAccess === 'team_admin') {
+    const initiatorId = String(conversation.initiatedBy || '');
+    const initiator = initiatorId === caller.uid ? caller.user : initiatorId === recipientId ? recipient : null;
+    if (!initiator || !hasTeamAdminAccess({
+      team,
+      user: initiator,
+      uid: initiatorId,
+      email: initiator.email || initiator.profileEmail
+    })) {
+      throwOpportunityError('permission-denied', 'The team administrator who started this conversation no longer has access.');
+    }
+  } else {
+    throwOpportunityError('permission-denied', 'This direct conversation is not authorized.');
+  }
+
+  const rawText = String(data?.text || '');
+  if (rawText.length > 10000) {
+    throwOpportunityError('invalid-argument', 'Direct messages must be 10,000 characters or fewer.');
+  }
+  const text = rawText.trim();
+  const rawAttachments = Array.isArray(data?.attachments) ? data.attachments : [];
+  if (rawAttachments.length > 10 || (!text && rawAttachments.length === 0)) {
+    throwOpportunityError('invalid-argument', 'Write a message or attach up to 10 photos or videos.');
+  }
+  const now = admin.firestore.Timestamp.now();
+  const attachments = rawAttachments.map((attachment) => normalizeAuthorizedDirectAttachment(attachment, {
+    teamId,
+    conversationId,
+    uid: caller.uid,
+    now
+  }));
+  const requestedClientMessageId = String(data?.clientMessageId || '').trim();
+  const clientMessageId = requestedClientMessageId
+    ? requestedClientMessageId.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 120)
+    : '';
+  if (requestedClientMessageId && requestedClientMessageId !== clientMessageId) {
+    throwOpportunityError('invalid-argument', 'Invalid direct-message request ID.');
+  }
+  const messageRef = clientMessageId
+    // Namespace idempotency keys by sender so one participant cannot replace
+    // the other participant's message by guessing a client request ID.
+    ? conversationRef.collection('chatMessages').doc(`${caller.uid}__${clientMessageId}`)
+    : conversationRef.collection('chatMessages').doc();
+  const senderName = cleanOpportunityText(
+    caller.user?.fullName || caller.user?.displayName || context.auth?.token?.name,
+    160
+  ) || null;
+  const message = {
+    clientMessageId: clientMessageId || null,
+    text,
+    senderId: caller.uid,
+    senderName,
+    senderEmail: caller.email || null,
+    senderPhotoUrl: cleanOpportunityText(caller.user?.photoUrl, 1000) || null,
+    attachments,
+    imageUrl: null,
+    imagePath: null,
+    imageName: null,
+    imageType: null,
+    imageSize: null,
+    createdAt: now,
+    editedAt: null,
+    deleted: false,
+    ai: false,
+    aiName: null,
+    aiQuestion: null,
+    aiMeta: null,
+    targetType: 'individuals',
+    recipientIds: conversation.participantIds,
+    targetRole: null,
+    conversationId
+  };
+  const batch = firestore.batch();
+  batch.set(messageRef, message);
+  batch.update(conversationRef, { lastMessageAt: now, updatedAt: now });
+  await batch.commit();
+  return { id: messageRef.id, createdAt: now.toDate().toISOString() };
+});
+
 function encodeOpportunityCursor(docSnap) {
   if (!docSnap) return null;
   return Buffer.from(JSON.stringify({
@@ -12960,8 +13165,9 @@ exports.createOpportunityInquiry = functions.https.onCall(async (data, context =
 
 async function canAccessOpportunityInquiry(caller, inquiry) {
   if (isOpportunityPlatformAdmin(caller) || inquiry.senderId === caller.uid) return true;
-  if (!Array.isArray(inquiry.participantIds) || !inquiry.participantIds.includes(caller.uid)) return false;
-  if (!inquiry.teamId) return true;
+  if (!inquiry.teamId) {
+    return Array.isArray(inquiry.participantIds) && inquiry.participantIds.includes(caller.uid);
+  }
   const teamSnap = await firestore.doc(`teams/${normalizeOpportunityTeamId(inquiry.teamId)}`).get();
   return teamSnap.exists && hasTeamAdminAccess({
     team: teamSnap.data() || {},
@@ -12991,46 +13197,53 @@ async function requireOpportunityInquiry(inquiryId, caller) {
 exports.listOpportunityInquiries = functions.https.onCall(async (data, context = {}) => {
   const caller = await getOpportunityCaller(context);
   const cursor = decodeOpportunityInquiryCursor(data?.cursor);
-  let baseQuery = firestore.collection('opportunityInquiries')
-    .where('participantIds', 'array-contains', caller.uid)
-    .orderBy('updatedAt', 'desc')
-    .orderBy(admin.firestore.FieldPath.documentId(), 'desc');
-  if (cursor) baseQuery = baseQuery.startAfter(cursor.updatedAt, cursor.id);
-  const items = [];
   const maxScanDocuments = 500;
-  let scannedDocuments = 0;
-  let lastScanned = null;
-  let exhausted = false;
-  let stoppedBeforeEndOfScan = false;
-  while (items.length < 50 && !exhausted && scannedDocuments < maxScanDocuments) {
-    const batchSize = Math.min(50, maxScanDocuments - scannedDocuments);
-    let query = baseQuery.limit(batchSize);
-    if (lastScanned) {
-      query = firestore.collection('opportunityInquiries')
-        .where('participantIds', 'array-contains', caller.uid)
-        .orderBy('updatedAt', 'desc')
-        .orderBy(admin.firestore.FieldPath.documentId(), 'desc')
-        .startAfter(lastScanned.data().updatedAt, lastScanned.id)
-        .limit(batchSize);
-    }
-    const snap = await query.get();
-    exhausted = snap.size < batchSize;
-    const access = await Promise.all(snap.docs.map((docSnap) => canAccessOpportunityInquiry(caller, docSnap.data() || {})));
-    for (let index = 0; index < snap.docs.length; index += 1) {
-      lastScanned = snap.docs[index];
-      scannedDocuments += 1;
-      if (access[index]) items.push(serializeOpportunityInquiry(snap.docs[index]));
-      if (items.length >= 50) {
-        stoppedBeforeEndOfScan = index < snap.docs.length - 1;
-        break;
-      }
+  const collectionRef = firestore.collection('opportunityInquiries');
+  const managedTeams = isOpportunityPlatformAdmin(caller)
+    ? new Map()
+    : await listOpportunityManagedTeamDocuments(caller);
+  const queryBuilders = [];
+  if (isOpportunityPlatformAdmin(caller)) {
+    queryBuilders.push(() => collectionRef);
+  } else {
+    queryBuilders.push(() => collectionRef.where('participantIds', 'array-contains', caller.uid));
+    const managedTeamIds = Array.from(managedTeams.keys());
+    for (let index = 0; index < managedTeamIds.length; index += 30) {
+      const teamIds = managedTeamIds.slice(index, index + 30);
+      queryBuilders.push(() => collectionRef.where('teamId', 'in', teamIds));
     }
   }
+  const snapshots = await Promise.all(queryBuilders.map(async (buildQuery) => {
+    let query = buildQuery()
+      .orderBy('updatedAt', 'desc')
+      .orderBy(admin.firestore.FieldPath.documentId(), 'desc');
+    if (cursor) query = query.startAfter(cursor.updatedAt, cursor.id);
+    return query.limit(maxScanDocuments).get();
+  }));
+  const docsById = new Map();
+  snapshots.forEach((snapshot) => snapshot.docs.forEach((docSnap) => docsById.set(docSnap.id, docSnap)));
+  const candidates = Array.from(docsById.values()).sort((left, right) => {
+    const timeDifference = (right.data()?.updatedAt?.toMillis?.() || 0) - (left.data()?.updatedAt?.toMillis?.() || 0);
+    return timeDifference || right.id.localeCompare(left.id);
+  });
+  const scanned = candidates.slice(0, maxScanDocuments);
+  const access = await Promise.all(scanned.map((docSnap) => canAccessOpportunityInquiry(caller, docSnap.data() || {})));
+  const items = [];
+  let lastScanned = null;
+  for (let index = 0; index < scanned.length; index += 1) {
+    lastScanned = scanned[index];
+    if (access[index]) items.push(serializeOpportunityInquiry(scanned[index]));
+    if (items.length >= 50) break;
+  }
+  const lastScannedIndex = lastScanned ? scanned.findIndex((docSnap) => docSnap.id === lastScanned.id) : -1;
+  const sourceMayHaveMore = snapshots.some((snapshot) => snapshot.size >= maxScanDocuments);
+  const hasMore = lastScanned && (
+    lastScannedIndex < candidates.length - 1 ||
+    sourceMayHaveMore
+  );
   return {
     items,
-    nextCursor: (stoppedBeforeEndOfScan || !exhausted) && lastScanned
-      ? encodeOpportunityInquiryCursor(lastScanned)
-      : null
+    nextCursor: hasMore ? encodeOpportunityInquiryCursor(lastScanned) : null
   };
 });
 

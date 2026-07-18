@@ -6773,7 +6773,11 @@ export async function upsertChatConversation(teamId, conversation = {}) {
         participantIds = [],
         participantRoles = [],
         mutedBy = [],
-        name = null
+        name = null,
+        directAccess = null,
+        directUserIds = [],
+        friendshipId = null,
+        initiatedBy = null
     } = conversation;
     const normalizedType = normalizeConversationType(type);
     const normalizedParticipantIds = normalizeConversationParticipantIds(participantIds);
@@ -6787,6 +6791,23 @@ export async function upsertChatConversation(teamId, conversation = {}) {
     const existing = await getDoc(conversationRef);
     const normalizedMutedBy = Array.from(new Set(Array.isArray(mutedBy) ? mutedBy : []));
     const hasMutedByUpdate = Object.prototype.hasOwnProperty.call(conversation, 'mutedBy');
+    const normalizedDirectAccess = directAccess === 'accepted_friend' || directAccess === 'team_admin'
+        ? directAccess
+        : null;
+    const normalizedDirectUserIds = Array.from(new Set((Array.isArray(directUserIds) ? directUserIds : [])
+        .map((userId) => String(userId || '').trim())
+        .filter(Boolean)))
+        .sort();
+    const normalizedFriendshipId = String(friendshipId || '').trim() || null;
+    const normalizedInitiatedBy = String(initiatedBy || '').trim() || null;
+    const directMetadata = normalizedType === 'direct' && normalizedDirectAccess && normalizedDirectUserIds.length === 2
+        ? {
+            directAccess: normalizedDirectAccess,
+            directUserIds: normalizedDirectUserIds,
+            friendshipId: normalizedDirectAccess === 'accepted_friend' ? normalizedFriendshipId : null,
+            initiatedBy: normalizedDirectAccess === 'team_admin' ? normalizedInitiatedBy : null
+        }
+        : {};
     const isCanonicalStaffConversation = normalizedType === 'group' &&
         normalizedParticipantIds.length === 0 &&
         normalizedParticipantRoles.length === 1 &&
@@ -6810,7 +6831,8 @@ export async function upsertChatConversation(teamId, conversation = {}) {
                 participantRoles: normalizedParticipantRoles
             } : {}),
             ...(hasMutedByUpdate ? { mutedBy: normalizedMutedBy } : {}),
-            ...(shouldBackfillName ? { name } : {})
+            ...(shouldBackfillName ? { name } : {}),
+            ...(!existingData.directAccess && directMetadata.directAccess ? directMetadata : {})
         };
         if (Object.keys(existingUpdate).length > 0) {
             await setDoc(conversationRef, {
@@ -6832,12 +6854,19 @@ export async function upsertChatConversation(teamId, conversation = {}) {
                 updatedAt: now
             } : {}),
             ...(shouldBackfillName ? { name, updatedAt: now } : {}),
+            ...(!existingData.directAccess && directMetadata.directAccess ? { ...directMetadata, updatedAt: now } : {}),
             participantIds: shouldRepairCanonicalStaffConversation
                 ? normalizedParticipantIds
                 : (existingData.participantIds || normalizedParticipantIds),
             participantRoles: shouldRepairCanonicalStaffConversation
                 ? normalizedParticipantRoles
                 : (existingData.participantRoles || normalizedParticipantRoles),
+            ...((existingData.directAccess || directMetadata.directAccess) ? {
+                directAccess: existingData.directAccess || directMetadata.directAccess,
+                directUserIds: existingData.directUserIds || directMetadata.directUserIds || [],
+                friendshipId: existingData.friendshipId || directMetadata.friendshipId || null,
+                initiatedBy: existingData.initiatedBy || directMetadata.initiatedBy || null
+            } : {}),
             name: existingData.name || name || null
         };
     }
@@ -6847,6 +6876,7 @@ export async function upsertChatConversation(teamId, conversation = {}) {
         participantIds: normalizedParticipantIds,
         participantRoles: normalizedParticipantRoles,
         mutedBy: normalizedMutedBy,
+        ...directMetadata,
         updatedAt: now
     };
     if (name) {

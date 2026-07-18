@@ -46,6 +46,17 @@ function compact(value: unknown, maxLength: number) {
   return String(value || '').replace(/\s+/g, ' ').trim().slice(0, maxLength);
 }
 
+export function assertOpportunityAiDraftSafe(
+  input: OpportunityInput,
+  team: ManagedOpportunityTeam | null
+) {
+  const unsafeDraftValue = [...Object.values(input), ...Object.values(team || {})]
+    .find((value) => typeof value === 'string' && containsUnsafeOpportunityAiText(value));
+  if (unsafeDraftValue) {
+    throw new Error('Remove contact, school, birth, or exact-address details before using AI. Your draft was not sent.');
+  }
+}
+
 export function parseOpportunityAiSuggestion(responseText: string): OpportunityAiSuggestion {
   const source = String(responseText || '').trim();
   const objectStart = source.indexOf('{');
@@ -100,6 +111,7 @@ async function getOpportunityAiModel() {
 }
 
 export async function enhanceOpportunityDraft(input: OpportunityInput, team: ManagedOpportunityTeam | null) {
+  assertOpportunityAiDraftSafe(input, team);
   const prompt = [
     'You improve public youth-sports opportunity listings for ALL PLAYS.',
     'Return one JSON object only. Do not use Markdown.',

@@ -182,6 +182,12 @@ export function mapChatConversationRecord(value: unknown, fallbackId = ''): Chat
         name: asTrimmedString(source.name),
         participantIds: asUniqueStringArray(source.participantIds),
         participantRoles: asUniqueStringArray(source.participantRoles),
+        directAccess: source.directAccess === 'accepted_friend' || source.directAccess === 'team_admin'
+            ? source.directAccess
+            : null,
+        directUserIds: asUniqueStringArray(source.directUserIds),
+        friendshipId: asTrimmedString(source.friendshipId),
+        initiatedBy: asTrimmedString(source.initiatedBy),
         mutedBy: asUniqueStringArray(source.mutedBy),
         isDefault: source.isDefault === true,
         isLegacy: source.isLegacy === true,

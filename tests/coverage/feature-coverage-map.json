@@ -459,6 +459,7 @@
                 "markNotificationInboxItemRead",
                 "notifyConversationChatMessageCreated",
                 "notifyTeamChatMessageCreated",
+                "sendAuthorizedDirectMessage",
                 "sendTeamEmail",
                 "sweepStaleNotificationDeviceTokens",
                 "syncTeamNotificationRecipientsOnDeviceWrite",

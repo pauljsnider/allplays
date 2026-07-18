@@ -77,7 +77,10 @@ describe('upsertChatConversation', () => {
             participantIds: ['user-2', 'user-1'],
             participantRoles: ['staff', 'staff'],
             mutedBy: ['user-1', 'user-1'],
-            name: 'Private chat'
+            name: 'Private chat',
+            directAccess: 'accepted_friend',
+            directUserIds: ['user-2', 'user-1'],
+            friendshipId: 'user-1__user-2'
         });
 
         expect(setDoc).toHaveBeenCalledWith(conversationRef, {
@@ -85,6 +88,10 @@ describe('upsertChatConversation', () => {
             participantIds: ['user-1', 'user-2'],
             participantRoles: ['staff'],
             mutedBy: ['user-1'],
+            directAccess: 'accepted_friend',
+            directUserIds: ['user-1', 'user-2'],
+            friendshipId: 'user-1__user-2',
+            initiatedBy: null,
             name: 'Private chat',
             updatedAt: now,
             createdAt: now
@@ -95,6 +102,10 @@ describe('upsertChatConversation', () => {
             participantIds: ['user-1', 'user-2'],
             participantRoles: ['staff'],
             mutedBy: ['user-1'],
+            directAccess: 'accepted_friend',
+            directUserIds: ['user-1', 'user-2'],
+            friendshipId: 'user-1__user-2',
+            initiatedBy: null,
             name: 'Private chat',
             updatedAt: now,
             createdAt: now

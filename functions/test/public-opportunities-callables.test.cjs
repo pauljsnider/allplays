@@ -412,6 +412,120 @@ test('revoked team admins lose private inquiry access with bounded, resumable st
     );
 });
 
+test('current team admins can discover and open inquiries created before their assignment', async () => {
+    const createdAt = new FakeTimestamp(Date.now() - 1000);
+    const seed = {
+        'users/current-admin': { email: 'current@example.com', isAdmin: false },
+        'teams/team-1': { ownerId: 'current-admin', adminEmails: [] },
+        'opportunityInquiries/older-inquiry': {
+            senderId: 'sender-1',
+            teamId: 'team-1',
+            participantIds: ['former-admin', 'sender-1'],
+            listingTitle: 'Coach opening',
+            updatedAt: createdAt,
+            createdAt,
+            status: 'open'
+        }
+    };
+    const { callables } = loadCallables(seed);
+    const context = authContext('current-admin', { email: 'current@example.com' });
+
+    const result = await callables.listOpportunityInquiries({}, context);
+    assert.deepEqual(result.items.map((item) => item.id), ['older-inquiry']);
+    const detail = await callables.getOpportunityInquiry({ inquiryId: 'older-inquiry' }, context);
+    assert.equal(detail.inquiry.id, 'older-inquiry');
+});
+
+test('direct-message callable rechecks friendship and team access on the write path', async () => {
+    const seed = {
+        'users/sender': { email: 'sender@example.com', isAdmin: false, parentTeamIds: ['team-1'], fullName: 'Sender' },
+        'users/recipient': { email: 'recipient@example.com', isAdmin: false, parentTeamIds: ['team-1'] },
+        'teams/team-1': { ownerId: 'owner', adminEmails: [] },
+        'friendships/recipient__sender': {
+            status: 'accepted',
+            memberIds: ['recipient', 'sender'],
+            sharedTeamIds: ['team-1'],
+            blockedBy: []
+        },
+        'teams/team-1/chatConversations/direct_sender__user%3Arecipient': {
+            type: 'direct',
+            participantIds: ['sender', 'user:recipient'],
+            participantRoles: [],
+            directAccess: 'accepted_friend',
+            directUserIds: ['recipient', 'sender'],
+            friendshipId: 'recipient__sender',
+            initiatedBy: null
+        }
+    };
+    const { firestore, callables } = loadCallables(seed);
+    const context = authContext('sender', { email: 'sender@example.com' });
+    const input = {
+        teamId: 'team-1',
+        conversationId: 'direct_sender__user%3Arecipient',
+        clientMessageId: 'client-direct-1',
+        text: 'Hi friend',
+        attachments: []
+    };
+
+    const sent = await callables.sendAuthorizedDirectMessage(input, context);
+    assert.equal(sent.id, 'sender__client-direct-1');
+    assert.equal(
+        firestore.snapshot('teams/team-1/chatConversations/direct_sender__user%3Arecipient/chatMessages/sender__client-direct-1').text,
+        'Hi friend'
+    );
+
+    await firestore.doc('friendships/recipient__sender').update({ status: 'removed' });
+    await assert.rejects(
+        callables.sendAuthorizedDirectMessage({ ...input, clientMessageId: 'client-direct-2' }, context),
+        (error) => error.code === 'permission-denied'
+    );
+});
+
+test('team-admin direct conversations allow either participant to reply while the initiator remains an admin', async () => {
+    const conversationPath = 'teams/team-1/chatConversations/direct_owner__user%3Aparent';
+    const seed = {
+        'users/owner': { email: 'owner@example.com', isAdmin: false },
+        'users/parent': { email: 'parent@example.com', isAdmin: false, parentTeamIds: ['team-1'] },
+        'teams/team-1': { ownerId: 'owner', adminEmails: [] },
+        [conversationPath]: {
+            type: 'direct',
+            participantIds: ['owner', 'user:parent'],
+            participantRoles: [],
+            directAccess: 'team_admin',
+            directUserIds: ['owner', 'parent'],
+            friendshipId: null,
+            initiatedBy: 'owner'
+        }
+    };
+    const { firestore, callables } = loadCallables(seed);
+
+    const sent = await callables.sendAuthorizedDirectMessage({
+        teamId: 'team-1',
+        conversationId: 'direct_owner__user%3Aparent',
+        clientMessageId: 'parent-reply-1',
+        text: 'Thanks, coach',
+        attachments: []
+    }, authContext('parent'));
+
+    assert.equal(sent.id, 'parent__parent-reply-1');
+    assert.equal(
+        firestore.snapshot(`${conversationPath}/chatMessages/parent__parent-reply-1`).senderId,
+        'parent'
+    );
+
+    await firestore.doc('teams/team-1').update({ ownerId: 'new-owner' });
+    await assert.rejects(
+        callables.sendAuthorizedDirectMessage({
+            teamId: 'team-1',
+            conversationId: 'direct_owner__user%3Aparent',
+            clientMessageId: 'parent-reply-2',
+            text: 'Can you still see this?',
+            attachments: []
+        }, authContext('parent')),
+        (error) => error.code === 'permission-denied'
+    );
+});
+
 test('opportunity moderation trusts protected user admin state only', async () => {
     const seed = {
         'users/member': { email: 'member@example.com', isAdmin: false },

@@ -37,6 +37,11 @@ const dbMocks = vi.hoisted(() => ({
     upsertChatConversation: vi.fn()
 }));
 
+const friendMessageMocks = vi.hoisted(() => ({
+    canMessageAcceptedFriend: vi.fn(),
+    sendAuthorizedDirectMessage: vi.fn()
+}));
+
 vi.mock('@capacitor/core', () => ({
     Capacitor: {
         isNativePlatform: () => false
@@ -44,6 +49,7 @@ vi.mock('@capacitor/core', () => ({
 }));
 
 vi.mock('../../js/db.js', () => dbMocks);
+vi.mock('../../apps/app/src/lib/friendMessageService.ts', () => friendMessageMocks);
 vi.mock('../../js/vendor/firebase-app.js', () => ({
     getApp: vi.fn(() => ({}))
 }));
@@ -82,6 +88,8 @@ beforeEach(() => {
     dbMocks.getChatMessages.mockResolvedValue([]);
     dbMocks.sendTeamEmail.mockResolvedValue({ recipientCount: 8, status: 'queued' });
     dbMocks.getSentTeamEmails.mockResolvedValue([]);
+    friendMessageMocks.canMessageAcceptedFriend.mockResolvedValue(true);
+    friendMessageMocks.sendAuthorizedDirectMessage.mockResolvedValue({ id: 'direct-message-1' });
 });
 
 afterEach(() => {

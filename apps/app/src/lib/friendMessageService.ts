@@ -9,10 +9,10 @@ function normalizeUserId(value: unknown) {
   return /^[A-Za-z0-9_-]{1,160}$/.test(userId) ? userId : '';
 }
 
-function withFriendshipLookupTimeout<T>(promise: Promise<T>) {
+function withFriendshipLookupTimeout<T>(promise: Promise<T>, timeoutMs = friendshipLookupTimeoutMs) {
   let timeoutId: ReturnType<typeof globalThis.setTimeout> | undefined;
   const timeout = new Promise<T>((_, reject) => {
-    timeoutId = globalThis.setTimeout(() => reject(new Error('Friend connection check timed out.')), friendshipLookupTimeoutMs);
+    timeoutId = globalThis.setTimeout(() => reject(new Error('Friend connection check timed out.')), timeoutMs);
   });
   return Promise.race([promise, timeout]).finally(() => {
     if (timeoutId !== undefined) globalThis.clearTimeout(timeoutId);
@@ -30,4 +30,16 @@ export async function canMessageAcceptedFriend(user: AuthUser, recipientId: stri
     teamId: sharedTeamId
   }));
   return response?.data?.allowed === true;
+}
+
+export async function sendAuthorizedDirectMessage(input: {
+  teamId: string;
+  conversationId: string;
+  clientMessageId?: string | null;
+  text: string;
+  attachments: Array<Record<string, unknown>>;
+}) {
+  const callable = httpsCallable(functions, 'sendAuthorizedDirectMessage');
+  const response = await withFriendshipLookupTimeout(callable(input), 10000);
+  return response?.data;
 }
