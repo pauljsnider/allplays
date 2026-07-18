@@ -18,6 +18,7 @@ import { buildVideoTimestampMetadata, hasConfiguredLiveStream } from './live-str
 import { resolveLiveStatConfig, resolveLiveStatColumns } from './live-game-state.js?v=3';
 import { getDefaultLivePeriod, getSportPeriodLabels } from './live-sport-config.js?v=1';
 import { buildOpponentStatsSnapshotFromEntries } from './live-tracker-finish.js?v=3';
+import { resolveSafeProfilePhotoWriteUrl } from './safe-image-url.js?v=1';
 import {
   readPersistedLiveTrackerQueue,
   writePersistedLiveTrackerQueue,
@@ -1702,7 +1703,7 @@ async function sendChatMessage(text) {
       text: text.trim(),
       senderId: currentUser?.uid || null,
       senderName: currentUser?.displayName || currentUser?.email || 'Stat Keeper',
-      senderPhotoUrl: currentUser?.photoURL || null,
+      senderPhotoUrl: resolveSafeProfilePhotoWriteUrl(currentUser?.photoURL) || null,
       isAnonymous: false
     });
   } catch (error) {
