@@ -68,7 +68,7 @@ test.describe('public sports Discover', () => {
     await page.goto(appUrl(baseURL, '/discover/new'), { waitUntil: 'domcontentloaded' });
     await expect(page.getByRole('heading', { name: 'Post an opportunity' })).toBeVisible();
     await expect(page.getByLabel(/Public team/)).toHaveValue('team-1');
-    await expect(page.getByLabel(/Availability/)).toHaveValue('Weeknights');
+    await expect(page.getByLabel(/Availability/)).toHaveValue('Weekends');
     await page.getByLabel('Title').fill('Players needed for fall');
     await page.getByLabel('Description').fill('Looking for two experienced guards for fall league play.');
     await page.getByLabel('Age group').fill('12U');
