@@ -21,6 +21,19 @@ describe('scorekeeping access wiring', () => {
         const workflow = readFileSync(resolve(process.cwd(), 'workflow-track-game.html'), 'utf8');
         expect(workflow).toContain('approved scorekeeper for the scheduled game');
         expect(workflow).toContain('do not receive roster, schedule, or team settings access');
+        expect(workflow).toContain('<strong>Delegated scorekeeper</strong>: Open the scheduled game in <strong>Game Day</strong> and select <strong>Open scorekeeper</strong>');
+        expect(workflow).toContain('Scorekeeping access does not include the Schedule page.');
+        expect(workflow).toContain('<strong>Coach or admin</strong>: Open the game from Schedule and select <strong>Track</strong>');
+        expect(workflow).not.toContain('<li>Open the game from schedule.</li>');
+
+        const appHelpIndex = readFileSync(resolve(process.cwd(), 'apps/app/src/lib/helpKnowledgeIndex.ts'), 'utf8');
+        expect(appHelpIndex).toContain('Delegated scorekeeper : Open the scheduled game in Game Day and select Open scorekeeper');
+        expect(appHelpIndex).toContain('Scorekeeping access does not include the Schedule page.');
+
+        const workflowManifest = JSON.parse(readFileSync(resolve(process.cwd(), 'workflow-manifest.json'), 'utf8'));
+        const trackGameSearchText = workflowManifest.find((item) => item.file === 'workflow-track-game.html')?.searchText;
+        expect(trackGameSearchText).toContain('Open scorekeeper');
+        expect(trackGameSearchText).toContain('Scorekeeping access does not include the Schedule page.');
     });
 
     it('gates both live scoring trackers with scorekeeping access', () => {
