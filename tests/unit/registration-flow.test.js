@@ -774,14 +774,14 @@ describe('public registration flow', () => {
         expect(functionsSource).toContain("params.set('retryPayment', '1');");
         expect(functionsSource).toContain('reserveRegistrationCheckoutCapacityForRetry');
         expect(functionsSource).toContain('const amountCents = expectedAmountCents');
-        expect(functionsSource).toContain('form.currency || registration.feeSnapshot?.currency || registration.currency');
+        expect(functionsSource).toContain('form?.currency\n      || registration.feeSnapshot?.currency');
         expect(functionsSource).toContain("Current public checkout capability is required to retry this payment.");
         expect(functionsSource).toContain("This registration option is no longer available. Please restart registration or contact the organizer.");
         expect(functionsSource).toContain("Registration is currently unavailable. No registration options are available.");
         expect(functionsSource).toContain("reason: 'no-options-available'");
         expect(functionsSource).toContain("registrationCapacityReleased: false");
         expect(functionsSource).toContain("capacityReleasedAt: admin.firestore.FieldValue.delete()");
-        expect(functionsSource).toContain("const currency = String(");
+        expect(functionsSource).toContain('const currency = getRegistrationCheckoutCurrency(registration, form)');
         expect(functionsSource).toContain("form.paymentSettings?.onlineCheckoutEnabled !== true");
         expect(functionsSource).toContain("checkoutStatus: 'open'");
         expect(functionsSource).toContain("paymentStatus: 'checkout_open'");
