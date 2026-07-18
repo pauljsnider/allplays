@@ -4297,7 +4297,10 @@ async function loadOwnRsvpDocuments(events: ParentScheduleEvent[], userId: strin
     ])),
     noteReadsCompleteByChild: Object.fromEntries(childIds.map((childId) => [
       childId,
-      completedReads.has(`note:${userId}`) && completedReads.has(`note:${userId}__${childId}`)
+      completedReads.has(`rsvp:${userId}`)
+        && completedReads.has(`rsvp:${userId}__${childId}`)
+        && completedReads.has(`note:${userId}`)
+        && completedReads.has(`note:${userId}__${childId}`)
     ]))
   };
 }

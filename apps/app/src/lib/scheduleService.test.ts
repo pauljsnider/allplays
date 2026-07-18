@@ -2524,6 +2524,43 @@ describe('parent family RSVP submission', () => {
     expect(eventWithKnownNote.myRsvpNote).toBe('Already loaded');
   });
 
+  it('preserves a known child RSVP note when its prerequisite RSVP override read fails', async () => {
+    const eventWithKnownNote = {
+      ...baseEvent,
+      id: 'game-rsvp-prerequisite-read-failure',
+      myRsvp: 'going',
+      myRsvpNote: 'Already loaded'
+    } as any;
+    mocks.getDoc.mockImplementation(async (reference: any) => {
+      if (reference.path.endsWith('/rsvps/parent-1')) {
+        return {
+          id: 'parent-1',
+          exists: () => true,
+          data: () => ({ userId: 'parent-1', playerId: 'player-1', response: 'going' })
+        };
+      }
+      if (reference.path.endsWith('/rsvps/parent-1__player-1')) {
+        throw new Error('child RSVP override read failed');
+      }
+      if (reference.path.endsWith('/rsvpNotes/parent-1')) {
+        return {
+          id: 'parent-1',
+          exists: () => true,
+          data: () => ({ userId: 'parent-1', note: 'Stale family note' })
+        };
+      }
+      if (reference.path.endsWith('/rsvpNotes/parent-1__player-1')) {
+        return { id: 'parent-1__player-1', exists: () => false, data: () => null };
+      }
+      return { id: reference.path.split('/').pop(), exists: () => false, data: () => null };
+    });
+
+    await hydrateParentScheduleRsvps({ children: [], events: [eventWithKnownNote] }, user as any);
+
+    expect(eventWithKnownNote.myRsvp).toBe('going');
+    expect(eventWithKnownNote.myRsvpNote).toBe('Already loaded');
+  });
+
   afterEach(() => {
     if (previousWindow === undefined) {
       delete (globalThis as any).window;
