@@ -5018,7 +5018,9 @@ function applyTelemetryAggregateWrites(batch, event, dateKey, options = {}) {
   const serverTimestamp = admin.firestore.FieldValue.serverTimestamp;
   const isPageView = event.name === 'page_view';
   const isInteraction = event.name.startsWith('interaction_');
-  const isError = event.name.startsWith('js_') || event.name === 'public_rsvp_error';
+  const isError = event.name.startsWith('js_')
+    || event.name === 'app_load_error'
+    || event.name === 'public_rsvp_error';
 
   batch.set(db.collection('telemetryDaily').doc(dateKey), {
     date: dateKey,
