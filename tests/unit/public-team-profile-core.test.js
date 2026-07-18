@@ -1,6 +1,7 @@
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
+import { runPublicTeamProfileBackfill } from '../../_migration/backfill-public-team-profiles.js';
 
 const require = createRequire(import.meta.url);
 const {
@@ -9,6 +10,50 @@ const {
   isPublicTeamProfileSchemaValid,
   matchesPublicTeamProfileSearch
 } = require('../../functions/public-team-profile-core.cjs');
+
+function createBackfillSnapshot(id, data) {
+  return {
+    id,
+    exists: data !== null,
+    data: () => data
+  };
+}
+
+function createBackfillDb({ listedTeam, currentTeam, existingProfile = null }) {
+  const state = {
+    profile: existingProfile,
+    completion: null,
+    transactionReads: []
+  };
+  const db = {
+    collection: vi.fn(() => ({
+      get: vi.fn(async () => ({ docs: [createBackfillSnapshot('team-race', listedTeam)] }))
+    })),
+    doc: vi.fn((path) => ({
+      path,
+      get: vi.fn(async () => createBackfillSnapshot('team-race', state.profile)),
+      set: vi.fn(async (value) => {
+        if (path === 'systemMigrations/publicTeamProfilesBackfill') state.completion = value;
+      })
+    })),
+    runTransaction: vi.fn(async (handler) => handler({
+      get: vi.fn(async (ref) => {
+        state.transactionReads.push(ref.path);
+        if (ref.path === 'teams/team-race') {
+          return createBackfillSnapshot('team-race', currentTeam);
+        }
+        return createBackfillSnapshot('team-race', state.profile);
+      }),
+      set: vi.fn((ref, value) => {
+        if (ref.path === 'publicTeamProfiles/team-race') state.profile = value;
+      }),
+      delete: vi.fn((ref) => {
+        if (ref.path === 'publicTeamProfiles/team-race') state.profile = null;
+      })
+    }))
+  };
+  return { db, state };
+}
 
 describe('public team profile callable boundary', () => {
   it('builds an exact public allow-list and strips management data', () => {
@@ -84,5 +129,71 @@ describe('public team profile callable boundary', () => {
     expect(migrationSource).toContain("PUBLIC_TEAM_PROFILE_MIGRATION_STATE_PATH = 'systemMigrations/publicTeamProfilesBackfill'");
     expect(migrationSource).toContain('if (options.apply && !options.teamId)');
     expect(completionWrite).toBeGreaterThan(projectionLoop);
+  });
+
+  it('transactionally re-reads current visibility before completing an applied backfill', async () => {
+    const stalePublic = { name: 'Race Team', isPublic: true, active: true };
+    const privateRace = createBackfillDb({
+      listedTeam: stalePublic,
+      currentTeam: { ...stalePublic, isPublic: false },
+      existingProfile: buildPublicTeamProfile(stalePublic)
+    });
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const privateSummary = await runPublicTeamProfileBackfill({
+      apply: true, teamId: '', projectId: 'demo-allplays', serviceAccountPath: ''
+    }, { db: privateRace.db });
+
+    expect(privateSummary).toMatchObject({
+      projectionsUpserted: 0,
+      projectionsDeleted: 1,
+      migrationCompletionRecorded: true
+    });
+    expect(privateRace.state.profile).toBeNull();
+    expect(privateRace.state.transactionReads).toEqual([
+      'teams/team-race',
+      'publicTeamProfiles/team-race'
+    ]);
+    expect(privateRace.state.completion).toEqual({ completed: true });
+
+    const publicNow = { name: 'Newly Public Race Team', isPublic: true, active: true, state: 'MO' };
+    const publicRace = createBackfillDb({
+      listedTeam: { ...publicNow, isPublic: false },
+      currentTeam: publicNow
+    });
+    const publicSummary = await runPublicTeamProfileBackfill({
+      apply: true, teamId: '', projectId: 'demo-allplays', serviceAccountPath: ''
+    }, { db: publicRace.db });
+
+    expect(publicSummary).toMatchObject({
+      projectionsUpserted: 1,
+      projectionsDeleted: 0,
+      migrationCompletionRecorded: true
+    });
+    expect(publicRace.state.profile).toMatchObject({
+      name: 'Newly Public Race Team', isPublic: true, active: true, state: 'MO'
+    });
+    expect(publicRace.state.transactionReads).toEqual(['teams/team-race']);
+
+    const deletedRace = createBackfillDb({
+      listedTeam: stalePublic,
+      currentTeam: null,
+      existingProfile: buildPublicTeamProfile(stalePublic)
+    });
+    const deletedSummary = await runPublicTeamProfileBackfill({
+      apply: true, teamId: '', projectId: 'demo-allplays', serviceAccountPath: ''
+    }, { db: deletedRace.db });
+
+    expect(deletedSummary).toMatchObject({
+      projectionsUpserted: 0,
+      projectionsDeleted: 1,
+      migrationCompletionRecorded: true
+    });
+    expect(deletedRace.state.profile).toBeNull();
+    expect(deletedRace.state.transactionReads).toEqual([
+      'teams/team-race',
+      'publicTeamProfiles/team-race'
+    ]);
+    logSpy.mockRestore();
   });
 });

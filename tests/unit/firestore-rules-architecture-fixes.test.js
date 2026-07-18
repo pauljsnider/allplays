@@ -61,7 +61,8 @@ describe('firestore.rules architecture fixes', () => {
         expect(teamRules).toContain('canListManagedTeamDocument(resource.data);');
         expect(teamRules).toContain('canReadPublicTeamDocument(resource.data) ||');
         expect(projectionRules).toContain('allow list: if false;');
-        expect(projectionRules).toContain('allow get: if isPublicTeamProfilePayloadValid(resource.data);');
+        expect(projectionRules).toContain('allow get: if isPublicTeamProfilePayloadValid(resource.data) &&');
+        expect(projectionRules).toContain('isCurrentTeamPubliclyDiscoverable(teamId);');
         expect(projectionRules).toContain('allow create, update, delete: if false;');
         expect(teamRules).not.toContain('(!isGlobalAdmin() && canReadTeamDocument(resource.data));');
     });

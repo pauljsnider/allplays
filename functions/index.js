@@ -12542,14 +12542,27 @@ async function collectPublicTeamBrowsePage({ useProjection, searchText, pageSize
       break;
     }
 
+    // Projection writes are asynchronous. A delayed trigger or an out-of-order
+    // delivery must never make a team discoverable after the source team has
+    // become private, inactive, or deleted. Re-read each current source row and
+    // serialize from that row; the projection remains only the bounded index
+    // used to choose candidates and advance the opaque cursor.
+    const currentTeamSnapshots = useProjection
+      ? await Promise.all(snapshot.docs.map((docSnap) => firestore.doc(`teams/${docSnap.id}`).get()))
+      : [];
+
     let consumedDocumentCount = 0;
-    for (const docSnap of snapshot.docs) {
+    for (const [index, docSnap] of snapshot.docs.entries()) {
       consumedDocumentCount += 1;
       scannedDocumentCount += 1;
       scanCursor = { lastName: docSnap.data()?.name, lastId: docSnap.id };
+      const storedProfile = docSnap.data() || null;
+      const currentTeamSnapshot = currentTeamSnapshots[index];
       const profile = useProjection
-        ? docSnap.data() || null
-        : buildPublicTeamProfile(docSnap.data() || {});
+        ? (storedProfile && isPublicTeamProfileSchemaValid(storedProfile) && currentTeamSnapshot?.exists
+            ? buildPublicTeamProfile(currentTeamSnapshot.data() || {})
+            : null)
+        : buildPublicTeamProfile(storedProfile || {});
       if (profile && isPublicTeamProfileSchemaValid(profile) && matchesPublicTeamProfileSearch(profile, searchText)) {
         teams.push({ id: docSnap.id, ...profile });
       }
@@ -13530,23 +13543,29 @@ exports.closePublicOpportunitiesForPrivateTeam = functions.firestore
 
 exports.syncPublicTeamProfileOnTeamWrite = functions.firestore
   .document('teams/{teamId}')
-  .onWrite(async (change, context) => {
+  .onWrite(async (_change, context) => {
+    const teamRef = firestore.doc(`teams/${context.params.teamId}`);
     const profileRef = firestore.doc(`publicTeamProfiles/${context.params.teamId}`);
-    const team = change.after.exists ? (change.after.data() || {}) : null;
-    const profile = team ? buildPublicTeamProfile(team) : null;
+    await firestore.runTransaction(async (transaction) => {
+      // Firestore delivers triggers at least once and does not guarantee event
+      // order. Derive the projection from the current source document, not the
+      // event image, so an older event cannot restore stale public data.
+      const teamSnapshot = await transaction.get(teamRef);
+      const profile = teamSnapshot.exists
+        ? buildPublicTeamProfile(teamSnapshot.data() || {})
+        : null;
 
-    if (!profile) {
-      await profileRef.delete().catch((error) => {
-        if (error?.code !== 5 && error?.code !== 'not-found') throw error;
-      });
-      return null;
-    }
-    if (!isPublicTeamProfileSchemaValid(profile)) {
-      throw new Error(`Refusing invalid public team profile for ${context.params.teamId}.`);
-    }
+      if (!profile) {
+        transaction.delete(profileRef);
+        return;
+      }
+      if (!isPublicTeamProfileSchemaValid(profile)) {
+        throw new Error(`Refusing invalid public team profile for ${context.params.teamId}.`);
+      }
 
-    // Overwrite instead of merge so a field removed from the allowlist or the
-    // source team cannot remain exposed on an older projection document.
-    await profileRef.set(profile);
+      // Overwrite instead of merge so a field removed from the allowlist or the
+      // source team cannot remain exposed on an older projection document.
+      transaction.set(profileRef, profile);
+    });
     return null;
   });

@@ -60,6 +60,7 @@ function comparable(value) {
 
 function makeFirestore(seed = {}) {
     const state = new Map(Object.entries(seed).map(([path, value]) => [path, clone(value)]));
+    const transactionTrace = [];
     let nextAutoId = 1;
 
     function makeSnapshot(path) {
@@ -84,6 +85,9 @@ function makeFirestore(seed = {}) {
             update: async (value) => {
                 if (!state.has(path)) throw new Error(`Missing document: ${path}`);
                 state.set(path, { ...state.get(path), ...clone(value) });
+            },
+            delete: async () => {
+                state.delete(path);
             },
             collection: (name) => collection(`${path}/${name}`)
         };
@@ -163,8 +167,32 @@ function makeFirestore(seed = {}) {
 
     return {
         _state: state,
+        _transactionTrace: transactionTrace,
         doc,
         collection,
+        async runTransaction(handler) {
+            const operations = [];
+            const result = await handler({
+                get: async (ref) => {
+                    transactionTrace.push(`get:${ref.path}`);
+                    return ref.get();
+                },
+                set: (ref, value, options) => {
+                    transactionTrace.push(`set:${ref.path}`);
+                    operations.push(() => ref.set(value, options));
+                },
+                update: (ref, value) => {
+                    transactionTrace.push(`update:${ref.path}`);
+                    operations.push(() => ref.update(value));
+                },
+                delete: (ref) => {
+                    transactionTrace.push(`delete:${ref.path}`);
+                    operations.push(() => ref.delete());
+                }
+            });
+            for (const operation of operations) await operation();
+            return result;
+        },
         batch() {
             const operations = [];
             return {
@@ -482,6 +510,9 @@ test('completed public team backfill switches discovery to validated projection 
         'publicTeamProfiles/safe-team': {
             publicSchemaVersion: 1, name: 'Safe', isPublic: true, active: true, publicSearchName: 'safe'
         },
+        'teams/safe-team': {
+            name: 'Safe Current', isPublic: true, active: true, ownerId: 'must-not-return'
+        },
         'publicTeamProfiles/malformed-team': {
             publicSchemaVersion: 1, name: 'Unsafe', isPublic: true, active: true, unexpectedSecret: 'must-not-return'
         },
@@ -492,9 +523,113 @@ test('completed public team backfill switches discovery to validated projection 
     const page = await callables.discoverPublicTeamProfiles({ pageSize: 10 }, {});
 
     assert.deepEqual(page.teams.map((team) => team.id), ['safe-team']);
+    assert.equal(page.teams[0].name, 'Safe Current');
+    assert.equal(Object.hasOwn(page.teams[0], 'ownerId'), false);
     assert.equal(page.nextCursor, null);
     assert.equal(page.scannedSourceCount, 0);
     assert.equal(page.scannedProjectionCount, 2);
+});
+
+test('projection discovery revalidates candidates against the current source team', async () => {
+    const seed = {
+        'systemMigrations/publicTeamProfilesBackfill': { completed: true },
+        'publicTeamProfiles/deleted-team': {
+            publicSchemaVersion: 1, name: 'Alpha Deleted', isPublic: true, active: true,
+            publicSearchName: 'alpha deleted'
+        },
+        'publicTeamProfiles/private-team': {
+            publicSchemaVersion: 1, name: 'Beta Private', isPublic: true, active: true,
+            publicSearchName: 'beta private'
+        },
+        'teams/private-team': {
+            name: 'Beta Private', isPublic: false, active: true, ownerId: 'private-owner'
+        },
+        'publicTeamProfiles/inactive-team': {
+            publicSchemaVersion: 1, name: 'Delta Inactive', isPublic: true, active: true,
+            publicSearchName: 'delta inactive'
+        },
+        'teams/inactive-team': {
+            name: 'Delta Inactive', isPublic: true, active: false, ownerId: 'private-owner'
+        },
+        'publicTeamProfiles/current-team': {
+            publicSchemaVersion: 1, name: 'Gamma Stale', isPublic: true, active: true,
+            description: 'stale projection copy', publicSearchName: 'gamma stale'
+        },
+        'teams/current-team': {
+            name: 'Gamma Current', isPublic: true, active: true,
+            description: 'current source copy', ownerId: 'must-not-return'
+        }
+    };
+    const { callables } = loadCallables(seed);
+
+    const page = await callables.discoverPublicTeamProfiles({ pageSize: 10 }, {});
+
+    assert.deepEqual(page.teams.map((team) => team.id), ['current-team']);
+    assert.equal(page.teams[0].name, 'Gamma Current');
+    assert.equal(page.teams[0].description, 'current source copy');
+    assert.equal(Object.hasOwn(page.teams[0], 'ownerId'), false);
+    assert.equal(page.scannedProjectionCount, 4);
+    assert.equal(page.nextCursor, null);
+});
+
+test('public team profile trigger ignores stale event images and projects the current source transactionally', async () => {
+    const { firestore, callables } = loadCallables({
+        'teams/private-team': {
+            name: 'Private Current', isPublic: false, active: true, ownerId: 'private-owner'
+        },
+        'publicTeamProfiles/private-team': {
+            publicSchemaVersion: 1, name: 'Stale Public', isPublic: true, active: true,
+            publicSearchName: 'stale public'
+        },
+        'publicTeamProfiles/deleted-team': {
+            publicSchemaVersion: 1, name: 'Deleted Public', isPublic: true, active: true,
+            publicSearchName: 'deleted public'
+        },
+        'teams/public-team': {
+            name: 'Public Current', isPublic: true, active: true,
+            description: 'current source copy', ownerId: 'must-not-return'
+        }
+    });
+    const stalePublicChange = {
+        after: {
+            exists: true,
+            data: () => ({ name: 'Stale Public Event', isPublic: true, active: true })
+        }
+    };
+    const stalePrivateChange = {
+        after: {
+            exists: true,
+            data: () => ({ name: 'Stale Private Event', isPublic: false, active: true })
+        }
+    };
+
+    await callables.syncPublicTeamProfileOnTeamWrite(stalePublicChange, { params: { teamId: 'private-team' } });
+    await callables.syncPublicTeamProfileOnTeamWrite(stalePublicChange, { params: { teamId: 'deleted-team' } });
+    await callables.syncPublicTeamProfileOnTeamWrite(stalePrivateChange, { params: { teamId: 'public-team' } });
+
+    assert.equal(firestore.snapshot('publicTeamProfiles/private-team'), undefined);
+    assert.equal(firestore.snapshot('publicTeamProfiles/deleted-team'), undefined);
+    assert.deepEqual(firestore.snapshot('publicTeamProfiles/public-team'), {
+        publicSchemaVersion: 1,
+        name: 'Public Current',
+        description: 'current source copy',
+        active: true,
+        isPublic: true,
+        publicSearchName: 'public current',
+        publicSearchCity: '',
+        publicSearchState: '',
+        publicSearchZip: '',
+        publicSearchCityState: '',
+        sourceUpdatedAt: null
+    });
+    assert.deepEqual(firestore._transactionTrace, [
+        'get:teams/private-team',
+        'delete:publicTeamProfiles/private-team',
+        'get:teams/deleted-team',
+        'delete:publicTeamProfiles/deleted-team',
+        'get:teams/public-team',
+        'set:publicTeamProfiles/public-team'
+    ]);
 });
 
 test('public team discovery resumes a sparse search after its bounded scan window', async () => {
@@ -502,12 +637,18 @@ test('public team discovery resumes a sparse search after its bounded scan windo
         'systemMigrations/publicTeamProfilesBackfill': { completed: true }
     };
     for (let index = 0; index < 500; index += 1) {
-        seed[`publicTeamProfiles/alpha-${String(index).padStart(3, '0')}`] = {
+        const teamId = `alpha-${String(index).padStart(3, '0')}`;
+        seed[`publicTeamProfiles/${teamId}`] = {
             publicSchemaVersion: 1,
             name: `Alpha ${String(index).padStart(3, '0')}`,
             isPublic: true,
             active: true,
             publicSearchName: `alpha ${String(index).padStart(3, '0')}`
+        };
+        seed[`teams/${teamId}`] = {
+            name: `Alpha ${String(index).padStart(3, '0')}`,
+            isPublic: true,
+            active: true
         };
     }
     seed['publicTeamProfiles/target-team'] = {
@@ -517,6 +658,7 @@ test('public team discovery resumes a sparse search after its bounded scan windo
         active: true,
         publicSearchName: 'target team'
     };
+    seed['teams/target-team'] = { name: 'Target Team', isPublic: true, active: true };
     const { callables } = loadCallables(seed);
 
     const firstScan = await callables.discoverPublicTeamProfiles({ searchText: 'target', pageSize: 10 }, {});

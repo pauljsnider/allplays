@@ -394,6 +394,21 @@ service cloud.firestore {
       return data.isPublic is bool && data.isPublic == true;
     }
 
+    function isPublicTeamCurrentlyDiscoverable(data) {
+      return canReadPublicTeamDocument(data) &&
+             data.get('active', true) != false &&
+             data.get('archived', false) != true &&
+             (!data.keys().hasAny(['status']) ||
+              !(data.status is string) ||
+              !(data.status.lower() in ['archived', 'inactive', 'disabled']));
+    }
+
+    function isCurrentTeamPubliclyDiscoverable(teamId) {
+      let teamPath = /databases/$(database)/documents/teams/$(teamId);
+      return exists(teamPath) &&
+             isPublicTeamCurrentlyDiscoverable(get(teamPath).data);
+    }
+
     function canReadTeamMediaManagerTeamDocument(data) {
       let permission = data.get('teamPermissions', {}).get('teamMediaManagement', {});
       return isSignedIn() &&
@@ -2682,7 +2697,8 @@ service cloud.firestore {
     // Server-maintained, allow-listed presentation/search documents. The
     // corresponding teams/{teamId} source document is never a public API.
     match /publicTeamProfiles/{teamId} {
-      allow get: if isPublicTeamProfilePayloadValid(resource.data);
+      allow get: if isPublicTeamProfilePayloadValid(resource.data) &&
+                    isCurrentTeamPubliclyDiscoverable(teamId);
       // Firestore cannot prove a whole-document key allow-list from a query.
       // Keep collection reads behind the allow-listing callable instead.
       allow list: if false;

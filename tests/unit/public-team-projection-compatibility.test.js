@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { assertFails, assertSucceeds, initializeTestEnvironment } from '@firebase/rules-unit-testing';
-import { collection, doc, getDoc, getDocs, limit, query, setDoc, where } from 'firebase/firestore';
+import { collection, deleteDoc, doc, getDoc, getDocs, limit, query, setDoc, where } from 'firebase/firestore';
 
 const rules = readFileSync(resolve(process.cwd(), 'firestore.rules'), 'utf8');
 const dbSource = readFileSync(resolve(process.cwd(), 'js/db.js'), 'utf8');
@@ -76,6 +76,36 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('public team projection co
             where('active', '==', true),
             limit(100)
         )));
+    });
+
+    it('fails closed when a projection outlives a private, inactive, or deleted source team', async () => {
+        const db = testEnv.unauthenticatedContext().firestore();
+
+        await testEnv.withSecurityRulesDisabled(async (context) => {
+            await setDoc(doc(context.firestore(), 'teams/public-team'), {
+                name: 'Private Current', isPublic: false, active: true
+            });
+        });
+        await assertFails(getDoc(doc(db, 'publicTeamProfiles/public-team')));
+
+        await testEnv.withSecurityRulesDisabled(async (context) => {
+            await setDoc(doc(context.firestore(), 'teams/public-team'), {
+                name: 'Inactive Current', isPublic: true, active: false
+            });
+        });
+        await assertFails(getDoc(doc(db, 'publicTeamProfiles/public-team')));
+
+        await testEnv.withSecurityRulesDisabled(async (context) => {
+            await setDoc(doc(context.firestore(), 'teams/public-team'), {
+                name: 'Archived Current', isPublic: true, active: true, status: 'ARCHIVED'
+            });
+        });
+        await assertFails(getDoc(doc(db, 'publicTeamProfiles/public-team')));
+
+        await testEnv.withSecurityRulesDisabled(async (context) => {
+            await deleteDoc(doc(context.firestore(), 'teams/public-team'));
+        });
+        await assertFails(getDoc(doc(db, 'publicTeamProfiles/public-team')));
     });
 
     it('keeps projection writes server-only', async () => {

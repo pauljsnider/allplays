@@ -49,9 +49,34 @@ async function listTeams(db, teamId) {
     return teamSnap.exists ? [teamSnap] : [];
 }
 
-export async function runPublicTeamProfileBackfill(options = parsePublicTeamBackfillArgs()) {
-    initializeAdmin(options);
-    const db = getFirestore();
+async function applyCurrentPublicTeamProfile(db, teamId) {
+    const teamRef = db.doc(`teams/${teamId}`);
+    const profileRef = db.doc(`publicTeamProfiles/${teamId}`);
+
+    return db.runTransaction(async (transaction) => {
+        // Read the source inside the write transaction so a visibility change
+        // cannot commit between projection generation and the projection write.
+        const currentTeamSnap = await transaction.get(teamRef);
+        const profile = currentTeamSnap.exists
+            ? buildPublicTeamProfile(currentTeamSnap.data() || {})
+            : null;
+        if (!profile) {
+            const existing = await transaction.get(profileRef);
+            if (!existing.exists) return 'unchanged';
+            transaction.delete(profileRef);
+            return 'deleted';
+        }
+        if (!isPublicTeamProfileSchemaValid(profile)) {
+            throw new Error(`Invalid generated public team profile for ${teamId}.`);
+        }
+        transaction.set(profileRef, profile);
+        return 'upserted';
+    });
+}
+
+export async function runPublicTeamProfileBackfill(options = parsePublicTeamBackfillArgs(), dependencies = {}) {
+    if (!dependencies.db) initializeAdmin(options);
+    const db = dependencies.db || getFirestore();
     const teamDocs = await listTeams(db, options.teamId);
     const summary = {
         dryRun: !options.apply,
@@ -62,20 +87,25 @@ export async function runPublicTeamProfileBackfill(options = parsePublicTeamBack
     };
 
     for (const teamSnap of teamDocs) {
+        if (options.apply) {
+            const result = await applyCurrentPublicTeamProfile(db, teamSnap.id);
+            if (result === 'upserted') summary.projectionsUpserted += 1;
+            if (result === 'deleted') summary.projectionsDeleted += 1;
+            continue;
+        }
+
         const profileRef = db.doc(`publicTeamProfiles/${teamSnap.id}`);
         const profile = buildPublicTeamProfile(teamSnap.data() || {});
         if (!profile) {
             const existing = await profileRef.get();
             if (!existing.exists) continue;
             summary.projectionsDeleted += 1;
-            if (options.apply) await profileRef.delete();
             continue;
         }
         if (!isPublicTeamProfileSchemaValid(profile)) {
             throw new Error(`Invalid generated public team profile for ${teamSnap.id}.`);
         }
         summary.projectionsUpserted += 1;
-        if (options.apply) await profileRef.set(profile);
     }
 
     if (options.apply && !options.teamId) {
