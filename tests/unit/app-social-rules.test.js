@@ -338,6 +338,8 @@ describe('React app social Firestore rules', () => {
         expect(source).toContain('match /publicUserProfiles/{userId}');
         expect(source).toContain('function canReadPublicUserProfile(userId, data)');
         expect(source).toContain("data.get('discoveryTeamIds', []).hasAny(currentUserPublicProfileTeamIds())");
+        expect(source).toContain('isAcceptedFriendOf(userId)');
+        expect(source).toContain("get(friendshipPath).data.get('status', '') == 'accepted'");
         expect(source).toContain("data.keys().hasOnly(['displayName', 'fullName', 'photoUrl', 'discoveryTeamIds', 'emailHash', 'updatedAt'])");
         expect(source).toContain("!data.keys().hasAny(['email', 'phone', 'parentOf', 'parentTeamIds', 'parentPlayerKeys'])");
         expect(source).toContain("function userMembershipFields()");
@@ -375,6 +377,18 @@ describe('React app social Firestore rules', () => {
         expect(isOwnerUserMembershipUpdateValid({
             affectedKeys: ['parentTeamIds', 'parentPlayerKeys']
         })).toBe(false);
+    });
+
+    it('defines the compound index for viewer-scoped profile timelines', () => {
+        const indexes = JSON.parse(readFileSync(new URL('../../firestore.indexes.json', import.meta.url), 'utf8'));
+        const profileTimelineIndex = indexes.indexes.find((index) =>
+            index.collectionGroup === 'socialPosts' &&
+            index.fields.some((field) => field.fieldPath === 'visibleUserIds' && field.arrayConfig === 'CONTAINS') &&
+            index.fields.some((field) => field.fieldPath === 'authorId' && field.order === 'ASCENDING') &&
+            index.fields.some((field) => field.fieldPath === 'createdAt' && field.order === 'DESCENDING')
+        );
+
+        expect(profileTimelineIndex).toBeTruthy();
     });
 
     it('prevents profile owners from forging public discovery team ids or email hashes', () => {
@@ -497,6 +511,38 @@ describe('React app social Firestore rules', () => {
                 displayName: 'Other User Edit',
                 updatedAt: serverTimestamp()
             }, { merge: true }));
+        });
+
+        it('allows accepted friends without a shared team to read a public profile', async () => {
+            await seedPublicProfile('profile-friend', { discoveryTeamIds: [] });
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                await setDoc(doc(context.firestore(), 'friendships', 'profile-friend__viewer-friend'), {
+                    requesterId: 'profile-friend',
+                    recipientId: 'viewer-friend',
+                    memberIds: ['profile-friend', 'viewer-friend'],
+                    status: 'accepted'
+                });
+            });
+
+            const viewer = testEnv.authenticatedContext('viewer-friend', { email: 'viewer-friend@example.com' });
+            await assertSucceeds(getDoc(profileRef('profile-friend', viewer)));
+        });
+
+        it('denies pending friends and unrelated users without a shared team', async () => {
+            await seedPublicProfile('profile-private', { discoveryTeamIds: [] });
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                await setDoc(doc(context.firestore(), 'friendships', 'profile-private__viewer-pending'), {
+                    requesterId: 'profile-private',
+                    recipientId: 'viewer-pending',
+                    memberIds: ['profile-private', 'viewer-pending'],
+                    status: 'pending'
+                });
+            });
+
+            const pendingViewer = testEnv.authenticatedContext('viewer-pending', { email: 'viewer-pending@example.com' });
+            const unrelatedViewer = testEnv.authenticatedContext('viewer-unrelated', { email: 'viewer-unrelated@example.com' });
+            await assertFails(getDoc(profileRef('profile-private', pendingViewer)));
+            await assertFails(getDoc(profileRef('profile-private', unrelatedViewer)));
         });
 
         it('denies owner writes to membership fields while allowing presentation profile updates', async () => {

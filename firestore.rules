@@ -1539,8 +1539,19 @@ service cloud.firestore {
       return isSignedIn() && (
         userId == request.auth.uid ||
         isGlobalAdmin() ||
-        data.get('discoveryTeamIds', []).hasAny(currentUserPublicProfileTeamIds())
+        data.get('discoveryTeamIds', []).hasAny(currentUserPublicProfileTeamIds()) ||
+        isAcceptedFriendOf(userId)
       );
+    }
+
+    function isAcceptedFriendOf(userId) {
+      let friendshipPath = /databases/$(database)/documents/friendships/$(buildFriendshipId(request.auth.uid, userId));
+      return isSignedIn() &&
+             userId != request.auth.uid &&
+             exists(friendshipPath) &&
+             get(friendshipPath).data.get('status', '') == 'accepted' &&
+             request.auth.uid in get(friendshipPath).data.get('memberIds', []) &&
+             userId in get(friendshipPath).data.get('memberIds', []);
     }
 
     function isPublicUserProfilePayloadValid(userId, data) {

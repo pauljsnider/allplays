@@ -1172,6 +1172,7 @@ function FeedSection({
                 key={item.id}
                 item={item}
                 auth={auth}
+                canViewAuthorProfile={item.authorId === auth.user?.uid || social.friends.some((friend) => friend.userId === item.authorId)}
                 onRefresh={onRefresh}
                 onStatus={onStatus}
               />
@@ -1228,11 +1229,13 @@ function FeedSection({
 function SocialFeedCard({
   item,
   auth,
+  canViewAuthorProfile,
   onRefresh,
   onStatus
 }: {
   item: SocialFeedItem;
   auth: AuthState;
+  canViewAuthorProfile: boolean;
   onRefresh: () => Promise<void> | void;
   onStatus: (status: { tone: 'error' | 'success'; message: string } | null) => void;
 }) {
@@ -1324,7 +1327,11 @@ function SocialFeedCard({
           <p className="mt-1 text-sm font-semibold leading-5 text-gray-600">{item.detail}</p>
           {item.caption ? <p className="mt-2 rounded-xl bg-gray-50 p-3 text-sm font-semibold leading-5 text-gray-800">{item.caption}</p> : null}
           <div className="mt-2 flex flex-wrap items-center gap-2 text-xs font-bold text-gray-500">
-            <span>{item.authorName}</span>
+            {item.authorId && canViewAuthorProfile ? (
+              <Link to={`/people/${encodeURIComponent(item.authorId)}`} className="rounded text-primary-700 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500">
+                {item.authorName}
+              </Link>
+            ) : <span>{item.authorName}</span>}
             {item.teamName ? <span>· {item.teamName}</span> : null}
             {item.playerNames.length ? <span>· {item.playerNames.join(', ')}</span> : null}
             <span>· {formatSocialDate(item.createdAt)}</span>
@@ -1681,13 +1688,25 @@ function FriendCard({
   return (
     <div className="rounded-xl border border-gray-200 bg-white p-3">
       <div className="flex items-start gap-3">
-        {friend.photoUrl ? (
+        {friend.status === 'accepted' ? (
+          <Link to={`/people/${encodeURIComponent(friend.userId)}`} aria-label={`View ${friend.name}'s profile`} className="flex-none rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2">
+            {friend.photoUrl ? (
+              <AvatarImage src={friend.photoUrl} alt="" loading="lazy" decoding="async" className="h-10 w-10 rounded-full object-cover" fallback={<div className="flex h-10 w-10 items-center justify-center rounded-full bg-gray-950 text-xs font-black text-white">{getFriendInitials(friend.name)}</div>} />
+            ) : (
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gray-950 text-xs font-black text-white">{getFriendInitials(friend.name)}</div>
+            )}
+          </Link>
+        ) : friend.photoUrl ? (
           <AvatarImage src={friend.photoUrl} alt="" loading="lazy" decoding="async" className="h-10 w-10 flex-none rounded-full object-cover" fallback={<div className="flex h-10 w-10 flex-none items-center justify-center rounded-full bg-gray-950 text-xs font-black text-white">{getFriendInitials(friend.name)}</div>} />
         ) : (
           <div className="flex h-10 w-10 flex-none items-center justify-center rounded-full bg-gray-950 text-xs font-black text-white">{getFriendInitials(friend.name)}</div>
         )}
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-black text-gray-950">{friend.name}</div>
+          {friend.status === 'accepted' ? (
+            <Link to={`/people/${encodeURIComponent(friend.userId)}`} className="block truncate rounded text-sm font-black text-gray-950 hover:text-primary-700 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500">
+              {friend.name}
+            </Link>
+          ) : <div className="truncate text-sm font-black text-gray-950">{friend.name}</div>}
           <div className="mt-0.5 truncate text-xs font-semibold text-gray-500">{friend.email || 'ALL PLAYS parent'}</div>
           {friend.sharedTeamNames.length ? <div className="mt-1 truncate text-xs font-bold text-primary-700">{friend.sharedTeamNames.join(' · ')}</div> : null}
         </div>
