@@ -4552,6 +4552,33 @@ exports.expireStripeTeamPassCheckout = functions.https.onCall(async (data, conte
   }
   if (!claimedAttempt.recoverable) return { expired: false, recovered: false };
 
+  const hasCurrentRecoveryAdminAccess = async () => {
+    const [latestTeamSnap, latestUserSnap] = await Promise.all([teamRef.get(), userRef.get()]);
+    const latestTeam = { id: input.teamId, ...(latestTeamSnap.exists ? (latestTeamSnap.data() || {}) : {}) };
+    const latestUser = latestUserSnap.exists ? (latestUserSnap.data() || {}) : {};
+    return latestTeamSnap.exists && hasTeamAdminAccess({
+      team: latestTeam,
+      user: latestUser,
+      uid: context.auth.uid,
+      email: context.auth.token?.email || latestUser.email || ''
+    });
+  };
+  const releaseRecoveryClaim = async () => firestore.runTransaction(async (transaction) => {
+    const latestSnap = await transaction.get(attemptRef);
+    const latest = latestSnap.exists ? (latestSnap.data() || {}) : {};
+    if (latest.checkoutStatus !== 'recovering'
+        || latest.recoveryOperationId !== recoveryOperationId
+        || latest.checkoutAttemptToken !== claimedAttempt.checkoutAttemptToken) return false;
+    transaction.set(attemptRef, {
+      checkoutStatus: 'creation_failed',
+      recoveryOperationId: admin.firestore.FieldValue.delete(),
+      recoveryActorUid: admin.firestore.FieldValue.delete(),
+      recoveryReservedAtMs: admin.firestore.FieldValue.delete(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+    return true;
+  });
+
   const stripe = createStripeClient();
   let recoveredSession;
   try {
@@ -4559,20 +4586,7 @@ exports.expireStripeTeamPassCheckout = functions.https.onCall(async (data, conte
       idempotencyKey: claimedAttempt.stripeIdempotencyKey
     });
   } catch (error) {
-    await firestore.runTransaction(async (transaction) => {
-      const latestSnap = await transaction.get(attemptRef);
-      const latest = latestSnap.exists ? (latestSnap.data() || {}) : {};
-      if (latest.checkoutStatus !== 'recovering'
-          || latest.recoveryOperationId !== recoveryOperationId
-          || latest.checkoutAttemptToken !== claimedAttempt.checkoutAttemptToken) return;
-      transaction.set(attemptRef, {
-        checkoutStatus: 'creation_failed',
-        recoveryOperationId: admin.firestore.FieldValue.delete(),
-        recoveryActorUid: admin.firestore.FieldValue.delete(),
-        recoveryReservedAtMs: admin.firestore.FieldValue.delete(),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp()
-      }, { merge: true });
-    }).catch(() => {});
+    await releaseRecoveryClaim().catch(() => {});
     throw error;
   }
 
@@ -4586,20 +4600,7 @@ exports.expireStripeTeamPassCheckout = functions.https.onCall(async (data, conte
     paidEvent: false
   });
   if (guardFailure) {
-    await firestore.runTransaction(async (transaction) => {
-      const latestSnap = await transaction.get(attemptRef);
-      const latest = latestSnap.exists ? (latestSnap.data() || {}) : {};
-      if (latest.checkoutStatus !== 'recovering'
-          || latest.recoveryOperationId !== recoveryOperationId
-          || latest.checkoutAttemptToken !== claimedAttempt.checkoutAttemptToken) return;
-      transaction.set(attemptRef, {
-        checkoutStatus: 'creation_failed',
-        recoveryOperationId: admin.firestore.FieldValue.delete(),
-        recoveryActorUid: admin.firestore.FieldValue.delete(),
-        recoveryReservedAtMs: admin.firestore.FieldValue.delete(),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp()
-      }, { merge: true });
-    }).catch(() => {});
+    await releaseRecoveryClaim().catch(() => {});
     throw new functions.https.HttpsError('failed-precondition', 'The recovered Stripe checkout does not match this Team Pass attempt.');
   }
   const recoveredClassification = classifyStoredStripeCheckoutSession(recoveredSession);
@@ -4625,15 +4626,40 @@ exports.expireStripeTeamPassCheckout = functions.https.onCall(async (data, conte
     });
     throw new functions.https.HttpsError('failed-precondition', 'The recovered Team Pass payment is completing. Refresh payment status first.');
   }
+  if (!await hasCurrentRecoveryAdminAccess()) {
+    await releaseRecoveryClaim().catch(() => {});
+    throw new functions.https.HttpsError('permission-denied', 'Team admin access changed before the recovered checkout could be expired.');
+  }
   if (recoveredSession.status === 'open') {
     await stripe.checkout.sessions.expire(recoveredSession.id);
   }
-  const expired = await firestore.runTransaction(async (transaction) => {
-    const latestSnap = await transaction.get(attemptRef);
+  const expirationResult = await firestore.runTransaction(async (transaction) => {
+    const [latestSnap, latestTeamSnap, latestUserSnap] = await Promise.all([
+      transaction.get(attemptRef),
+      transaction.get(teamRef),
+      transaction.get(userRef)
+    ]);
     const latest = latestSnap.exists ? (latestSnap.data() || {}) : {};
     if (latest.checkoutStatus !== 'recovering'
         || latest.recoveryOperationId !== recoveryOperationId
-        || latest.checkoutAttemptToken !== claimedAttempt.checkoutAttemptToken) return false;
+        || latest.checkoutAttemptToken !== claimedAttempt.checkoutAttemptToken) return { expired: false };
+    const latestTeam = { id: input.teamId, ...(latestTeamSnap.exists ? (latestTeamSnap.data() || {}) : {}) };
+    const latestUser = latestUserSnap.exists ? (latestUserSnap.data() || {}) : {};
+    if (!latestTeamSnap.exists || !hasTeamAdminAccess({
+      team: latestTeam,
+      user: latestUser,
+      uid: context.auth.uid,
+      email: context.auth.token?.email || latestUser.email || ''
+    })) {
+      transaction.set(attemptRef, {
+        checkoutStatus: 'creation_failed',
+        recoveryOperationId: admin.firestore.FieldValue.delete(),
+        recoveryActorUid: admin.firestore.FieldValue.delete(),
+        recoveryReservedAtMs: admin.firestore.FieldValue.delete(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+      return { expired: false, permissionDenied: true };
+    }
     transaction.set(attemptRef, {
       checkoutStatus: 'stale',
       checkoutUrl: admin.firestore.FieldValue.delete(),
@@ -4645,9 +4671,12 @@ exports.expireStripeTeamPassCheckout = functions.https.onCall(async (data, conte
       recoveryReservedAtMs: admin.firestore.FieldValue.delete(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
-    return true;
+    return { expired: true };
   });
-  return { expired, recovered: true };
+  if (expirationResult.permissionDenied) {
+    throw new functions.https.HttpsError('permission-denied', 'Team admin access changed before recovered authority could be released.');
+  }
+  return { expired: expirationResult.expired, recovered: true };
 });
 
 exports.backfillTeamPassEntitlementProjections = functions.https.onCall(async (data, context) => {

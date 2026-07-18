@@ -328,6 +328,7 @@ function installModuleStubs(firestore) {
         checkoutResponses: new Map(),
         checkoutResponsesByIdempotencyKey: new Map(),
         checkoutCreateHook: null,
+        checkoutExpireHook: null,
         expiredSessionIds: [],
         refundCalls: [],
         refundCreateHook: null,
@@ -399,7 +400,13 @@ function installModuleStubs(firestore) {
                     const session = stripeState.checkoutResponses.get(sessionId);
                     if (!session) throw new Error('Checkout session not found.');
                     session.status = 'expired';
+                    for (const storedResponse of stripeState.checkoutResponsesByIdempotencyKey.values()) {
+                        if (storedResponse.id === sessionId) storedResponse.status = 'expired';
+                    }
                     stripeState.expiredSessionIds.push(sessionId);
+                    if (typeof stripeState.checkoutExpireHook === 'function') {
+                        await stripeState.checkoutExpireHook({ sessionId, session: clone(session) });
+                    }
                     return clone(session);
                 } } },
                 prices: { retrieve: async () => clone(stripeState.teamPassPrice) },
@@ -948,23 +955,31 @@ test('Team Pass admin recovery expires failed authority after the original purch
     await assert.rejects(mod.createStripeTeamPassCheckout(request, {
         auth: { uid: 'admin-2', token: { email: 'admin@example.com' } }
     }), /recovery is already in progress/i);
+    await firestore.doc('teams/team-pass').set({ adminEmails: [] }, { merge: true });
     releaseRecovery();
-    const recovery = await recoveryPromise;
+    await assert.rejects(recoveryPromise, /access changed before the recovered checkout could be expired/i);
+    assert.deepEqual(stripeState.expiredSessionIds, []);
+    assert.equal(firestore.snapshot(attemptPath).checkoutStatus, 'creation_failed');
 
+    await firestore.doc('teams/team-pass').set({ adminEmails: ['admin@example.com'] }, { merge: true });
+    stripeState.checkoutCreateHook = null;
+    const recovery = await mod.expireStripeTeamPassCheckout(request, {
+        auth: { uid: 'admin-2', token: { email: 'admin@example.com' } }
+    });
     assert.deepEqual(recovery, { expired: true, recovered: true });
     assert.deepEqual(stripeState.checkoutSessions[1], stripeState.checkoutSessions[0]);
-    assert.equal(stripeState.checkoutSessionOptions[1].idempotencyKey, failedAttempt.stripeIdempotencyKey);
+    assert.deepEqual(stripeState.checkoutSessions[2], stripeState.checkoutSessions[0]);
+    assert.equal(stripeState.checkoutSessionOptions[2].idempotencyKey, failedAttempt.stripeIdempotencyKey);
     assert.deepEqual(stripeState.expiredSessionIds, ['cs_test_2']);
     assert.equal(firestore.snapshot(attemptPath).checkoutStatus, 'stale');
 
-    stripeState.checkoutCreateHook = null;
     const replacement = await mod.createStripeTeamPassCheckout(request, {
         auth: { uid: 'admin-2', token: { email: 'admin@example.com' } }
     });
     const replacementAttempt = firestore.snapshot(attemptPath);
     assert.equal(replacementAttempt.purchaserUid, 'admin-2');
     assert.notEqual(replacementAttempt.checkoutAttemptToken, failedAttempt.checkoutAttemptToken);
-    assert.notEqual(stripeState.checkoutSessionOptions[2].idempotencyKey, failedAttempt.stripeIdempotencyKey);
+    assert.notEqual(stripeState.checkoutSessionOptions[3].idempotencyKey, failedAttempt.stripeIdempotencyKey);
     assert.equal(replacementAttempt.stripeCheckoutSessionId, replacement.sessionId);
 });
 
@@ -1003,6 +1018,45 @@ test('Team Pass admin recovery preserves a terminal Session for webhook reconcil
     assert.equal(preservedAttempt.stripeCheckoutSessionId, 'cs_team_pass_admin_recovery_terminal');
     assert.equal(preservedAttempt.stripePaymentStatus, 'paid');
     assert.deepEqual(stripeState.expiredSessionIds, []);
+});
+
+test('Team Pass admin recovery rechecks authorization before releasing expired authority', async () => {
+    const attemptPath = 'teams/team-pass/teamPassCheckoutAttempts/2026_team-pass';
+    const { firestore, stripeState, mod } = loadFunctionsModule({
+        'teams/team-pass': { ownerId: 'owner-1', adminEmails: ['admin@example.com'] },
+        'users/owner-1': { email: 'owner@example.com' },
+        'users/admin-2': { email: 'admin@example.com' }
+    });
+    const request = { teamId: 'team-pass', seasonId: '2026', tier: 'team-pass' };
+    let firstCall = true;
+    stripeState.checkoutCreateHook = async () => {
+        if (!firstCall) return;
+        firstCall = false;
+        throw new Error('Injected Team Pass creation failure.');
+    };
+    await assert.rejects(mod.createStripeTeamPassCheckout(request, {
+        auth: { uid: 'owner-1', token: { email: 'owner@example.com' } }
+    }), /Injected Team Pass creation failure/);
+    await firestore.doc('teams/team-pass').set({ ownerId: 'departed-owner' }, { merge: true });
+    stripeState.checkoutExpireHook = async () => {
+        await firestore.doc('teams/team-pass').set({ adminEmails: [] }, { merge: true });
+    };
+
+    await assert.rejects(mod.expireStripeTeamPassCheckout(request, {
+        auth: { uid: 'admin-2', token: { email: 'admin@example.com' } }
+    }), /access changed before recovered authority could be released/i);
+
+    assert.deepEqual(stripeState.expiredSessionIds, ['cs_test_2']);
+    assert.equal(firestore.snapshot(attemptPath).checkoutStatus, 'creation_failed');
+    await firestore.doc('teams/team-pass').set({ adminEmails: ['admin@example.com'] }, { merge: true });
+    stripeState.checkoutExpireHook = null;
+    const recovery = await mod.expireStripeTeamPassCheckout(request, {
+        auth: { uid: 'admin-2', token: { email: 'admin@example.com' } }
+    });
+
+    assert.deepEqual(recovery, { expired: true, recovered: true });
+    assert.deepEqual(stripeState.expiredSessionIds, ['cs_test_2']);
+    assert.equal(firestore.snapshot(attemptPath).checkoutStatus, 'stale');
 });
 
 test('idempotent Team Pass replay supersedes an expired Session before a fresh attempt', async () => {

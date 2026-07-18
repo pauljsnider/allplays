@@ -6,6 +6,7 @@ import {
     initializeTestEnvironment
 } from '@firebase/rules-unit-testing';
 import {
+    deleteField,
     deleteDoc,
     doc,
     getDoc,
@@ -34,6 +35,8 @@ describe('team entitlement Firestore rules', () => {
         expect(rules).toContain("request.resource.data.keys().hasOnly(['status', 'teamId', 'seasonId', 'tier', 'updatedAt'])");
         expect(rules).toContain('match /checkoutReservations/{reservationId} {');
         expect(rules).toContain('!hasActiveRegistrationStripeAuthority(resource.data)');
+        expect(rules).toContain('!hasSettledRegistrationStripeAuthority(resource.data)');
+        expect(rules).toContain('hasSettledRegistrationStripeAuthority(request.resource.data)');
         expect(rules).toContain('hasNoRegistrationStripeAuthorityMutation()');
     });
 
@@ -74,6 +77,15 @@ describe('team entitlement Firestore rules', () => {
                 await setDoc(doc(firestore, 'teams/team-a/registrationForms/form-a'), { published: true });
                 await setDoc(doc(firestore, 'teams/team-a/registrationForms/form-a/registrations/reg-a'), {
                     teamId: 'team-a', formId: 'form-a', status: 'pending'
+                });
+                await setDoc(doc(firestore, 'teams/team-a/registrationForms/form-a/registrations/settled-provider'), {
+                    teamId: 'team-a', formId: 'form-a', status: 'approved', paymentProvider: 'stripe'
+                });
+                await setDoc(doc(firestore, 'teams/team-a/registrationForms/form-a/registrations/settled-complete'), {
+                    teamId: 'team-a', formId: 'form-a', status: 'approved', checkoutStatus: 'complete'
+                });
+                await setDoc(doc(firestore, 'teams/team-a/registrationForms/form-a/registrations/settled-gross'), {
+                    teamId: 'team-a', formId: 'form-a', status: 'approved', stripeGrossPaidAmountCents: 5000
                 });
             });
         });
@@ -139,6 +151,22 @@ describe('team entitlement Firestore rules', () => {
                 checkoutStatus: 'creating', checkoutAttemptToken: 'tok_forged_1234567890'
             }));
             await assertSucceeds(deleteDoc(clearedRef));
+        });
+
+        it('preserves settled registration scope and parent authority while allowing safe status edits', async () => {
+            const ownerDb = testEnv.authenticatedContext('owner-a').firestore();
+            const providerRef = doc(ownerDb, 'teams/team-a/registrationForms/form-a/registrations/settled-provider');
+            const completeRef = doc(ownerDb, 'teams/team-a/registrationForms/form-a/registrations/settled-complete');
+            const grossRef = doc(ownerDb, 'teams/team-a/registrationForms/form-a/registrations/settled-gross');
+
+            await assertSucceeds(updateDoc(providerRef, { status: 'archived' }));
+            await assertFails(updateDoc(providerRef, { teamId: 'team-b' }));
+            await assertFails(updateDoc(providerRef, { formId: 'form-b' }));
+            await assertFails(updateDoc(completeRef, { checkoutStatus: deleteField() }));
+            await assertFails(updateDoc(grossRef, { stripeGrossPaidAmountCents: deleteField() }));
+            await assertFails(deleteDoc(providerRef));
+            await assertFails(deleteDoc(completeRef));
+            await assertFails(deleteDoc(grossRef));
         });
 
         it('denies client activation on create and update, including active-record edits', async () => {

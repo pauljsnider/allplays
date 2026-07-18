@@ -967,6 +967,22 @@ service cloud.firestore {
               data.get('checkoutCreationReservationId', '').size() > 0);
     }
 
+    function hasSettledRegistrationStripeAuthority(data) {
+      return data.get('paymentProvider', '') == 'stripe' ||
+             data.get('checkoutStatus', '') in ['paid', 'complete', 'disputed', 'refunded', 'dispute_lost'] ||
+             data.get('paymentStatus', '') in ['paid', 'complete', 'disputed', 'refunded', 'dispute_lost'] ||
+             data.keys().hasAny([
+               'stripeGrossPaidAmountCents',
+               'stripeRefundedAmountCents',
+               'stripeDisputeLostAmountCents',
+               'stripeFinancialStatus'
+             ]) ||
+             (data.get('lastPaidStripeCheckoutSessionId', '') is string &&
+              data.get('lastPaidStripeCheckoutSessionId', '').size() > 0) ||
+             (data.get('lastPaidStripeChargeId', '') is string &&
+              data.get('lastPaidStripeChargeId', '').size() > 0);
+    }
+
     function hasNoRegistrationStripeAuthorityFields(data) {
       return !data.keys().hasAny([
         'paymentProvider', 'checkoutStatus', 'paymentStatus', 'checkoutAttemptToken',
@@ -3310,9 +3326,18 @@ service cloud.firestore {
           allow read: if isTeamOwnerOrAdmin(teamId) || isCurrentUserRegistrationGuardian(resource.data);
           allow update: if isTeamOwnerOrAdmin(teamId) &&
                            !hasActiveRegistrationStripeAuthority(resource.data) &&
+                           (!hasSettledRegistrationStripeAuthority(resource.data) ||
+                            hasSettledRegistrationStripeAuthority(request.resource.data)) &&
+                           resource.data.teamId == teamId &&
+                           resource.data.formId == formId &&
+                           request.resource.data.teamId == teamId &&
+                           request.resource.data.formId == formId &&
                            hasNoRegistrationStripeAuthorityMutation();
           allow delete: if isTeamOwnerOrAdmin(teamId) &&
-                           !hasActiveRegistrationStripeAuthority(resource.data);
+                           !hasActiveRegistrationStripeAuthority(resource.data) &&
+                           !hasSettledRegistrationStripeAuthority(resource.data) &&
+                           resource.data.teamId == teamId &&
+                           resource.data.formId == formId;
           allow create: if isTeamOwnerOrAdmin(teamId) &&
                           request.resource.data.status == 'pending' &&
                           hasNoRegistrationStripeAuthorityFields(request.resource.data);

@@ -28,6 +28,9 @@ describe('parent dashboard registration application statuses', () => {
         expect(registrationRules).toContain('allow read: if isTeamOwnerOrAdmin(teamId) || isCurrentUserRegistrationGuardian(resource.data);');
         expect(registrationRules).toContain('allow update: if isTeamOwnerOrAdmin(teamId) &&');
         expect(registrationRules).toContain('!hasActiveRegistrationStripeAuthority(resource.data) &&');
+        expect(registrationRules).toContain('!hasSettledRegistrationStripeAuthority(resource.data)');
+        expect(registrationRules).toContain('request.resource.data.teamId == teamId');
+        expect(registrationRules).toContain('request.resource.data.formId == formId');
         expect(registrationRules).toContain('hasNoRegistrationStripeAuthorityMutation();');
         expect(registrationRules).not.toContain('allow update: if isTeamOwnerOrAdmin(teamId) || isCurrentUserRegistrationGuardian(resource.data);');
     });
