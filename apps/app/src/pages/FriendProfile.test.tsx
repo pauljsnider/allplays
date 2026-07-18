@@ -65,7 +65,7 @@ describe('FriendProfile', () => {
     expect(screen.getAllByRole('link', { name: /settings/i }).length).toBeGreaterThan(0);
 
     fireEvent.click(screen.getByRole('button', { name: 'Copy profile link' }));
-    await waitFor(() => expect(publicActionMocks.copyPublicText).toHaveBeenCalledWith('https://allplays.ai/app/#/people/user-1'));
+    await waitFor(() => expect(publicActionMocks.copyPublicText).toHaveBeenCalledWith(`${window.location.origin}/app/#/people/user-1`));
   });
 
   it('shows a direct message action for an accepted friend profile', async () => {

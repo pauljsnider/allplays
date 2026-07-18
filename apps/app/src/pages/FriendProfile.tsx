@@ -10,6 +10,7 @@ import {
 } from '../lib/socialService';
 import { getSocialTypeLabel, getSocialVisibilityLabel, type SocialFeedItem } from '../lib/socialLogic';
 import { copyPublicText } from '../lib/publicActions';
+import { getPublicBaseUrl } from '../lib/inviteUrls';
 import type { AuthState } from '../lib/types';
 
 export function FriendProfile({ auth, profileUserId }: { auth: AuthState; profileUserId?: string }) {
@@ -90,7 +91,7 @@ export function FriendProfile({ auth, profileUserId }: { auth: AuthState; profil
   };
 
   const copyProfileLink = async () => {
-    const link = `https://allplays.ai/app/#/people/${encodeURIComponent(userId)}`;
+    const link = `${getPublicBaseUrl()}/app/#/people/${encodeURIComponent(userId)}`;
     const result = await copyPublicText(link);
     setStatus(result === 'copied' ? 'Profile link copied.' : 'Unable to copy the profile link.');
   };

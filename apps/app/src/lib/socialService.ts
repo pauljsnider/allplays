@@ -24,6 +24,7 @@ import { uploadTeamChatAttachment } from './chatService';
 import type { AuthUser } from './types';
 import { getPublicTeamDetail } from './publicTeamsService';
 import { buildAthleteProfileShareUrl } from './adapters/legacyPlayerProfile';
+import { getPublicBaseUrl } from './inviteUrls';
 import {
   buildFriendshipId,
   buildSocialHomeModel,
@@ -378,7 +379,7 @@ export async function loadFriendProfile(user: AuthUser, profileUserId: string): 
     name: compactString(child.athlete?.name) || 'Athlete profile',
     headline: compactString(child.athlete?.headline),
     photoUrl: compactString(child.profilePhoto?.url || child.profilePhotoUrl) || null,
-    shareUrl: buildAthleteProfileShareUrl('https://allplays.ai', child.id)
+    shareUrl: buildAthleteProfileShareUrl(getPublicBaseUrl(), child.id)
   })) : [];
   const posts = sortSocialFeedItems(postDocs
     .map(mapSocialPost)
