@@ -322,6 +322,10 @@ async function mockMessagesModules(page, options = {}) {
                     ];
                 }
 
+                export async function loadChatConversationById() {
+                    return null;
+                }
+
                 export async function ensureStaffChatConversation() {
                     return { id: 'group_role%3Astaff', type: 'group', name: 'Staff only', participantIds: ['user-1'], participantRoles: ['staff'] };
                 }

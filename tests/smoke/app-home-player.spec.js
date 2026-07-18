@@ -690,6 +690,8 @@ async function mockHomePlayerModules(page) {
                     return [{ id: 'team', label: 'Full team', targetType: 'full_team', unreadCount: 0, isMuted: false }];
                 }
 
+                export async function loadChatConversationById() { return null; }
+
                 export function subscribeToTeamChatMessages(_teamId, _conversationId, onSnapshot) {
                     const message = {
                         ...team.lastMessage,
