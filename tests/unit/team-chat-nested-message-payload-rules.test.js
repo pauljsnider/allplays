@@ -146,7 +146,10 @@ describe('nested team chat message payload contracts', () => {
     it('does not persist privileged AI identity fields from client conversations', () => {
         expect(dbSource).toContain('ai: false,\n        aiName: null,\n        aiQuestion: null,\n        aiMeta: null,');
         expect(appChatSource).toContain('ai: false,\n    aiName: null,\n    aiQuestion: null,\n    aiMeta: null,');
-        expect(appAiSource).toContain('text: `ALL PLAYS\\n\\n${responseText}`');
+        expect(appAiSource).toContain('const answerText = `ALL PLAYS\\n\\n${responseText}`');
+        expect(appAiSource).toContain("selectedConversation?.type === 'direct'");
+        expect(appAiSource).toContain('await sendAuthorizedDirectMessage({');
+        expect(appAiSource).toContain('text: answerText');
         expect(appAiSource).toContain('ai: false');
         expect(appAiSource).toContain('aiName: null');
         expect(appAiSource).toContain('aiMeta: null');

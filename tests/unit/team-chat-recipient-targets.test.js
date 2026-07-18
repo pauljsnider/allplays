@@ -68,6 +68,24 @@ describe('team chat recipient targets', () => {
         expect(sendMessage).toContain('if (!validateChatAudienceSelection()) return;');
     });
 
+    it('keeps email-only guardian audiences in group conversations', () => {
+        const html = readRepoFile('team-chat.html');
+        const directParticipantHelper = html.slice(
+            html.indexOf('function getDirectParticipantUserIds'),
+            html.indexOf('async function sendMessage()')
+        );
+        const sendMessage = html.slice(
+            html.indexOf('async function sendMessage()'),
+            html.indexOf('window.removeSelectedMedia = function')
+        );
+
+        expect(directParticipantHelper).toContain("!userId.includes(':')");
+        expect(directParticipantHelper).toContain('/^[A-Za-z0-9_-]{1,160}$/');
+        expect(sendMessage).toContain('const directUserIds = getDirectParticipantUserIds(participantIds);');
+        expect(sendMessage).toContain('const isDirectConversation = directUserIds.length === 2');
+        expect(sendMessage).not.toContain('const isDirectConversation = participantIds.length === 2;');
+    });
+
     it('keeps follow-up messages in staff-only conversations targeted to staff', () => {
         const html = readRepoFile('team-chat.html');
         const buildTargetMetadata = html.slice(

@@ -2943,6 +2943,18 @@
             sendMessage();
         }
 
+        function getDirectParticipantUserIds(participantIds = []) {
+            return Array.from(new Set((participantIds || []).map((participantId) => {
+                const normalizedId = String(participantId || '').trim();
+                const userId = normalizedId.toLowerCase().startsWith('user:')
+                    ? normalizedId.slice(5).trim()
+                    : normalizedId;
+                return userId && !userId.includes(':') && /^[A-Za-z0-9_-]{1,160}$/.test(userId)
+                    ? userId
+                    : '';
+            }).filter(Boolean))).sort();
+        }
+
         async function sendMessage() {
             const input = document.getElementById('message-input');
             const sendBtn = document.getElementById('send-btn');
@@ -2971,15 +2983,9 @@
                         ? []
                         : Array.from(new Set([currentUser.uid, ...targetMetadata.recipientIds]));
                     const participantRoles = targetMetadata.targetType === 'staff' ? ['staff'] : [];
-                    const isDirectConversation = participantIds.length === 2;
-                    const directUserIds = isDirectConversation
-                        ? Array.from(new Set(participantIds.map((participantId) => {
-                            const normalizedId = String(participantId || '').trim();
-                            return normalizedId.toLowerCase().startsWith('user:')
-                                ? normalizedId.slice(5).trim()
-                                : normalizedId;
-                        }).filter(Boolean))).sort()
-                        : [];
+                    const directUserIds = getDirectParticipantUserIds(participantIds);
+                    const isDirectConversation = directUserIds.length === 2
+                        && directUserIds.includes(currentUser.uid);
                     if (isDirectConversation && !canModerate) {
                         throw new Error('Start friend direct messages from the ALL PLAYS app.');
                     }
@@ -3009,12 +3015,7 @@
                 } else {
                     const activeConversation = getSelectedConversation();
                     if (activeConversation?.type === 'direct' && canModerate && !activeConversation.directAccess) {
-                        const directUserIds = Array.from(new Set((activeConversation.participantIds || []).map((participantId) => {
-                            const normalizedId = String(participantId || '').trim();
-                            return normalizedId.toLowerCase().startsWith('user:')
-                                ? normalizedId.slice(5).trim()
-                                : normalizedId;
-                        }).filter(Boolean))).sort();
+                        const directUserIds = getDirectParticipantUserIds(activeConversation.participantIds || []);
                         await upsertChatConversation(teamId, {
                             type: 'direct',
                             participantIds: activeConversation.participantIds || [],
