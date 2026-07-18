@@ -55,6 +55,9 @@ function makeFunctionsStub() {
         storage: {
             object: () => triggerChain
         },
+        auth: {
+            user: () => triggerChain
+        },
         runWith: () => triggerChain,
         region: () => triggerChain,
         logger: {
@@ -575,6 +578,35 @@ test('backfill sync preserves legacy recipient docs when skipLegacyCleanup is en
     }
 });
 
+test('sync keeps opted-in users indexed when they have no push devices', async () => {
+    const env = loadNotificationRecipientIndexEnv({
+        teamDocs: {
+            'team-1': { ownerId: 'coach-1', adminEmails: [] }
+        },
+        userDocs: {
+            'parent-1': { email: 'parent@example.com', parentTeamIds: ['team-1'] }
+        },
+        preferenceDocs: {
+            'users/parent-1/notificationPreferences/team-1': { schedule: true }
+        }
+    });
+
+    try {
+        const result = await env.internals.syncNotificationRecipientForTeamUser('team-1', 'parent-1');
+
+        assert.deepEqual(result, {
+            uid: 'parent-1',
+            teamId: 'team-1',
+            roles: ['parent'],
+            tokenCount: 0
+        });
+        assert.deepEqual(env.getDoc('teams/team-1/notificationRecipients/parent-1')?.tokens, []);
+        assert.equal(env.getDoc('teams/team-1/notificationRecipients/parent-1')?.categories?.schedule, true);
+    } finally {
+        env.cleanup();
+    }
+});
+
 test('device writes refresh token lists for every team the user belongs to', async () => {
     const env = loadNotificationRecipientIndexEnv({
         teamDocs: {
@@ -815,6 +847,7 @@ test('getTargetsForCategory expands aggregated recipient token lists', async () 
     try {
         const targets = await env.internals.getTargetsForCategory('team-1', 'schedule');
         assert.deepEqual(targets.map((target) => `${target.uid}:${target.deviceId}:${target.token}`).sort(), [
+            'coach-1:undefined:undefined',
             'parent-1:device-a:token-a',
             'parent-1:device-b:token-b'
         ]);
