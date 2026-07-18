@@ -1,4 +1,4 @@
-import { imageStorage, requireImageAuth } from '../firebase-images.js?v=10';
+import { imageStorage, requireImageAuth } from '../firebase-images.js?v=11';
 import {
     db,
     collection,

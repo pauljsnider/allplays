@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({
     ref: vi.fn()
 }));
 
-vi.mock('../../js/firebase-images.js?v=10', () => ({
+vi.mock('../../js/firebase-images.js?v=11', () => ({
     imageStorage: {},
     requireImageAuth: mocks.requireImageAuth
 }));

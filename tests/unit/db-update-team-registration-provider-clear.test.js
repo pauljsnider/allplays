@@ -40,7 +40,7 @@ vi.mock('../../js/firebase.js?v=22', () => ({
     deleteObject: vi.fn()
 }));
 
-vi.mock('../../js/firebase-images.js?v=10', () => ({
+vi.mock('../../js/firebase-images.js?v=11', () => ({
     imageStorage: {},
     ensureImageAuth: vi.fn(),
     requireImageAuth: vi.fn()
