@@ -36,6 +36,11 @@ describe('Firestore recovery posture', () => {
             databaseId: '(default)',
             maxBackupAgeHours: 36
         });
+        expect(parseFirestoreRecoveryArgs(['--project=demo-project'], {})).toMatchObject({
+            projectId: 'demo-project',
+            databaseId: '(default)',
+            maxBackupAgeHours: 36
+        });
     });
 
     it('accepts PITR, delete protection, 14-day daily backups, and a fresh ready backup', () => {

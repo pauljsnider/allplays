@@ -72,7 +72,11 @@ export function evaluateFirestoreRecoveryPosture({
 
 function readFlag(argv, name, fallback) {
     const index = argv.indexOf(name);
-    return index >= 0 ? String(argv[index + 1] || '').trim() : fallback;
+    if (index >= 0) return String(argv[index + 1] || '').trim();
+
+    const prefix = `${name}=`;
+    const assignment = argv.find((argument) => String(argument).startsWith(prefix));
+    return assignment == null ? fallback : String(assignment).slice(prefix.length).trim();
 }
 
 function runGcloudJson(args) {
