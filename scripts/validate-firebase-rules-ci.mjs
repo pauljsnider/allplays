@@ -203,6 +203,8 @@ export function validateFirebaseDeployWorkloadIdentity(workflow, label) {
         /GOOGLE_APPLICATION_CREDENTIALS/i,
         /gcloud\s+auth\s+activate-service-account/i,
         /--key-file(?:=|\s)/i,
+        /--token(?:=|\s)/i,
+        /secrets\.[A-Z0-9_]*FIREBASE[A-Z0-9_]*TOKEN/i,
         /secrets\.[A-Z0-9_]*(?:SERVICE_ACCOUNT|GOOGLE[^\s}]*(?:KEY|CREDENTIAL))/i,
         /["']?type["']?\s*:\s*["']service_account["']/i
     ];
