@@ -1035,7 +1035,7 @@ test('notifyTeamChatMessageCreated falls mentioned users back to live chat when 
     }
 });
 
-test('notifyTeamChatMessageCreated honors conversation mutes while preserving direct mentions', async () => {
+test('notifyTeamChatMessageCreated honors conversation mutes for inbox while preserving direct mention push', async () => {
     const { moduleExports, env, cleanup } = loadNotificationInternals({
         teamDoc: { ownerId: 'coach-1', adminEmails: ['assistant@example.com'] },
         parentUserIds: ['parent-1', 'parent-2'],
@@ -1092,7 +1092,7 @@ test('notifyTeamChatMessageCreated honors conversation mutes while preserving di
         ]);
         assert.equal(env.messagingCalls.some((call) => call.tokens.includes('parent-2-token')), false);
         assert.equal(env.inboxWrites.some((write) => write.uid === 'parent-2'), false);
-        assert.deepEqual(env.inboxWrites.map((write) => write.uid).sort(), ['coach-2', 'parent-1']);
+        assert.deepEqual(env.inboxWrites.map((write) => write.uid), ['coach-2']);
         assert.equal(env.messagingCalls.every((call) => call.data.conversationId === 'thread-7'), true);
         assert.deepEqual(env.updatedDocs, [{ path: 'teams/team-1/chatMessages/message-2', value: { mentionedUids: ['parent-1'] } }]);
     } finally {

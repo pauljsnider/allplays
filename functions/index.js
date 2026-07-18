@@ -8217,7 +8217,7 @@ async function registerScheduleImportBatchEvent({ teamId, gameId, game, batch })
 
 async function sendDirectTargetsNotification({
   targets,
-  inboxUids = [],
+  inboxUids = null,
   category,
   title,
   body,
@@ -8233,10 +8233,11 @@ async function sendDirectTargetsNotification({
   timeSensitive = false
 }) {
   const pushTargets = Array.isArray(targets) ? targets : [];
-  const inboxTargets = getUniqueNotificationInboxTargets([
-    ...pushTargets,
-    ...(Array.isArray(inboxUids) ? inboxUids : []).map((uid) => ({ uid }))
-  ]);
+  const inboxTargets = getUniqueNotificationInboxTargets(
+    Array.isArray(inboxUids)
+      ? inboxUids.map((uid) => ({ uid }))
+      : pushTargets
+  );
   if (!pushTargets.length && !inboxTargets.length) return null;
 
   const link = linkOverride || buildNotificationLink({ category, teamId, gameId, eventId: eventId || gameId, batchId, recipientId, conversationId, childId });
@@ -10267,7 +10268,7 @@ function buildTeamChatNotificationPlan({ text, actorUid = null, recipientContext
 
   return {
     mentionedUids,
-    mentionInboxUids: mentionedUids.filter((uid) => mentionDeliverySet.has(uid)),
+    mentionInboxUids: mentionedUids.filter((uid) => mentionDeliverySet.has(uid) && !mutedSet.has(uid)),
     mentionTargets: mentionTargets.filter((target) => target.uid !== actorUid && mentionDeliverySet.has(target.uid)),
     liveChatInboxUids,
     liveChatTargets: liveChatTargets.filter((target) => (
