@@ -198,17 +198,74 @@ function getRegistrationChargeGuardFailure({ input = {}, ledger = {}, charge = {
     return '';
 }
 
-function buildRegistrationReversalUpdate({ registration = {}, ledger = {}, reversal = {}, charge = {} } = {}) {
-    const financialStatus = getStripeChargeFinancialStatus(reversal);
+function getRegistrationAggregateFinancialState({ registration = {}, ledgers = [] } = {}) {
+    const normalized = Array.isArray(ledgers) ? ledgers : [];
+    const seenChargeIds = new Set();
+    const valid = normalized.length > 0 && normalized.every((ledger) => {
+        const stripeChargeId = normalizeString(ledger?.stripeChargeId);
+        const amountPaidCents = Number(ledger?.amountPaidCents);
+        const refundedAmountCents = Number(ledger?.refundedAmountCents || 0);
+        const disputeLostAmountCents = Number(ledger?.disputeLostAmountCents || 0);
+        const disputeStatus = normalizeString(ledger?.disputeStatus || 'none').toLowerCase();
+        if (ledger?.type !== 'stripe_charge'
+            || ledger?.provider !== 'stripe'
+            || ledger?.product !== 'registration'
+            || ledger?.teamId !== registration.teamId
+            || ledger?.formId !== registration.formId
+            || ledger?.registrationId !== registration.id
+            || !stripeChargeId
+            || seenChargeIds.has(stripeChargeId)
+            || !normalizeString(ledger?.stripePaymentIntentId)
+            || !normalizeString(ledger?.stripeCheckoutSessionId)
+            || !normalizeCurrency(ledger?.currency)
+            || typeof ledger?.livemode !== 'boolean'
+            || !['none', 'open', 'won', 'lost'].includes(disputeStatus)
+            || ![amountPaidCents, refundedAmountCents, disputeLostAmountCents]
+                .every((amount) => Number.isSafeInteger(amount) && amount >= 0)
+            || amountPaidCents <= 0
+            || refundedAmountCents + disputeLostAmountCents > amountPaidCents) return false;
+        seenChargeIds.add(stripeChargeId);
+        return true;
+    });
+    const grossPaidAmountCents = normalized.reduce((total, ledger) => total + Math.max(0, Number(ledger.amountPaidCents || 0)), 0);
+    const refundedAmountCents = normalized.reduce((total, ledger) => total + Math.max(0, Number(ledger.refundedAmountCents || 0)), 0);
+    const disputeLostAmountCents = normalized.reduce((total, ledger) => total + Math.max(0, Number(ledger.disputeLostAmountCents || 0)), 0);
+    const disputeStatuses = normalized.map((ledger) => normalizeString(ledger.disputeStatus || 'none').toLowerCase());
+    const financialStatus = disputeStatuses.includes('open')
+        ? 'disputed'
+        : disputeStatuses.includes('lost') || disputeLostAmountCents > 0
+            ? 'dispute_lost'
+            : refundedAmountCents > 0
+                ? refundedAmountCents >= grossPaidAmountCents ? 'refunded' : 'partially_refunded'
+                : grossPaidAmountCents > 0 ? 'paid' : 'unpaid';
+    return {
+        valid,
+        financialStatus,
+        grossPaidAmountCents,
+        refundedAmountCents,
+        disputeLostAmountCents
+    };
+}
+
+function buildRegistrationReversalUpdate({
+    registration = {}, ledger = {}, reversal = {}, charge = {}, aggregateFinancialState = null
+} = {}) {
+    const financialStatus = aggregateFinancialState?.financialStatus || getStripeChargeFinancialStatus(reversal);
     const chargeAmountCents = normalizePositiveInteger(charge.amount || ledger.amountPaidCents);
     const refundedAmountCents = Math.min(chargeAmountCents, Math.max(0, Number(reversal.refundedAmountCents || 0)));
     const lostAmountCents = getStripeChargeLostAmountCents(reversal, chargeAmountCents);
     const previousLedgerRefunded = Math.max(0, Number(ledger.refundedAmountCents || 0));
     const previousLedgerLost = Math.max(0, Number(ledger.disputeLostAmountCents || 0));
-    const nextTotalRefunded = Math.max(0, Number(registration.stripeRefundedAmountCents || 0) + refundedAmountCents - previousLedgerRefunded);
-    const nextTotalLost = Math.max(0, Number(registration.stripeDisputeLostAmountCents || 0) + lostAmountCents - previousLedgerLost);
+    const nextTotalRefunded = aggregateFinancialState
+        ? aggregateFinancialState.refundedAmountCents
+        : Math.max(0, Number(registration.stripeRefundedAmountCents || 0) + refundedAmountCents - previousLedgerRefunded);
+    const nextTotalLost = aggregateFinancialState
+        ? aggregateFinancialState.disputeLostAmountCents
+        : Math.max(0, Number(registration.stripeDisputeLostAmountCents || 0) + lostAmountCents - previousLedgerLost);
     const reversalBalanceDelta = (refundedAmountCents - previousLedgerRefunded) + (lostAmountCents - previousLedgerLost);
-    const grossPaid = Math.max(chargeAmountCents, Number(registration.stripeGrossPaidAmountCents || 0));
+    const grossPaid = aggregateFinancialState
+        ? aggregateFinancialState.grossPaidAmountCents
+        : Math.max(chargeAmountCents, Number(registration.stripeGrossPaidAmountCents || 0));
     const basePaymentStatus = normalizeString(registration.paymentStatusBeforeStripeReversal || ledger.paymentStatusAfterCharge || 'paid');
     const paymentStatus = financialStatus === 'disputed'
         ? 'disputed'
@@ -247,6 +304,7 @@ module.exports = {
     getRegistrationPaymentIntentGuardFailure,
     buildRegistrationStripeChargeLedger,
     getRegistrationChargeGuardFailure,
+    getRegistrationAggregateFinancialState,
     buildRegistrationReversalUpdate,
     normalizeRegistrationCheckoutCurrency: normalizeCurrency
 };

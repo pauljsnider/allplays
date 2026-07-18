@@ -136,7 +136,7 @@ function inspectTeamPassAttemptAuthority({ teamId = '', seasonId = '', tier = 't
       || normalizeString(attempt.teamId) !== normalizeString(teamId)
       || normalizeString(attempt.seasonId) !== normalizeString(seasonId)
       || normalizeString(attempt.tier) !== normalizeString(tier)
-      || !['paid', 'disputed', 'refunded', 'dispute_lost'].includes(normalizeString(attempt.checkoutStatus).toLowerCase())
+      || normalizeString(attempt.checkoutStatus).toLowerCase() !== 'paid'
       || !normalizeString(attempt.stripeCheckoutSessionId)
       || !normalizeString(attempt.stripePaymentIntentId)
       || amountCents === null

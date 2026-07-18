@@ -91,6 +91,12 @@ describe('Stripe payment-authority rollout gate', () => {
             teamId: 'team-a', seasonId: '2026', tier: 'team-pass',
             attempt: { ...attempt, legacyPaymentAuthorityVersion: undefined, stripePaymentAuthorityVersion: 2 }
         })).toBe('');
+        for (const checkoutStatus of ['disputed', 'refunded', 'dispute_lost']) {
+            expect(inspectTeamPassAttemptAuthority({
+                teamId: 'team-a', seasonId: '2026', tier: 'team-pass',
+                attempt: { ...attempt, stripeChargeId: 'ch_a', checkoutStatus }
+            })).toBe('active_entitlement_invalid_checkout_attempt');
+        }
     });
 
     it('keeps the callable dry-run-first and requires an explicit empty assertion', () => {

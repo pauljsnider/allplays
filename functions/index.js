@@ -53,6 +53,7 @@ const {
   getRegistrationPaymentIntentGuardFailure,
   buildRegistrationStripeChargeLedger,
   getRegistrationChargeGuardFailure,
+  getRegistrationAggregateFinancialState,
   buildRegistrationReversalUpdate,
   normalizeRegistrationCheckoutCurrency
 } = require('./registration-payment-webhook-core.cjs');
@@ -334,6 +335,11 @@ function buildTeamPassAttemptRef({ teamId, seasonId, tier }) {
 function buildLegacyTeamPassAttemptRef({ teamId }, stripeCheckoutSessionId) {
   const sessionHash = crypto.createHash('sha256').update(String(stripeCheckoutSessionId || '')).digest('hex').slice(0, 40);
   return firestore.doc(`teams/${teamId}/teamPassCheckoutAttempts/legacy_${sessionHash}`);
+}
+
+function buildHistoricalTeamPassAttemptRef({ teamId }, stripeChargeId) {
+  const chargeHash = crypto.createHash('sha256').update(String(stripeChargeId || '')).digest('hex').slice(0, 40);
+  return firestore.doc(`teams/${teamId}/teamPassCheckoutAttempts/history_${chargeHash}`);
 }
 
 function buildCheckoutAttemptToken() {
@@ -1091,7 +1097,14 @@ function getRegistrationPaymentPlanPaidInstallmentCount(registration = {}) {
 }
 
 function shouldKeepRegistrationCapacityReserved(registration = {}) {
-  return registration.paymentPlan?.id === 'installments' && getRegistrationPaymentPlanPaidInstallmentCount(registration) > 0;
+  if (registration.paymentPlan?.id === 'installments'
+      && getRegistrationPaymentPlanPaidInstallmentCount(registration) > 0) return true;
+  const grossPaidAmountCents = Math.max(0, Math.round(Number(registration.stripeGrossPaidAmountCents || 0) || 0));
+  return grossPaidAmountCents > 0 && Boolean(
+    String(registration.lastPaidStripeChargeId || '').trim()
+    || String(registration.lastPaidStripeCheckoutSessionId || '').trim()
+    || ['paid', 'installment_in_progress'].includes(String(registration.paymentStatusBeforeStripeReversal || '').trim())
+  );
 }
 
 function getRegistrationSubmittedAtDate(registration = {}, fallback = new Date()) {
@@ -1782,6 +1795,19 @@ async function releaseRegistrationCheckoutCapacity(input, statusUpdate = {}, opt
       if (!canReleaseRetryCapacityReservation) {
         throw new functions.https.HttpsError('failed-precondition', 'Public checkout capability does not match.');
       }
+    }
+
+    // Cancelling a later installment or reversal-repayment checkout must only
+    // revoke that payment attempt. The registration already owns enrolled
+    // capacity from an earlier authoritative charge, so decrementing the form
+    // count here would make a still-enrolled player invisible to capacity.
+    if (shouldKeepRegistrationCapacityReserved(registration)) {
+      transaction.set(registrationRef, {
+        ...registrationUpdate,
+        registrationCapacityReleased: false,
+        capacityReleasedAt: admin.firestore.FieldValue.delete()
+      }, { merge: true });
+      return { released: false, preserved: true };
     }
 
     const selectedOption = registration.selectedOption || {};
@@ -4018,6 +4044,9 @@ exports.createStripeTeamPassCheckout = functions.https.onCall(async (data, conte
       }
       return { blockedAuthority: true };
     }
+    if (attempt.checkoutStatus === 'disputed') {
+      return { blockedAuthority: true };
+    }
     if (attempt.checkoutStatus === 'creating'
         && Number(attempt.checkoutReservedAtMs || 0) > reservedAtMs - 120_000) {
       return { busy: true };
@@ -4035,6 +4064,27 @@ exports.createStripeTeamPassCheckout = functions.https.onCall(async (data, conte
     const checkoutAttemptToken = canRetrySameAttempt
       ? attempt.checkoutAttemptToken
       : buildCheckoutAttemptToken();
+    if (['refunded', 'dispute_lost'].includes(String(attempt.checkoutStatus || '').trim().toLowerCase())) {
+      const historicalChargeId = String(attempt.stripeChargeId || '').trim();
+      if (!historicalChargeId) return { blockedAuthority: true };
+      const historicalAttemptRef = buildHistoricalTeamPassAttemptRef({ teamId }, historicalChargeId);
+      const historicalAttemptSnap = await transaction.get(historicalAttemptRef);
+      const historicalAttempt = historicalAttemptSnap.exists ? (historicalAttemptSnap.data() || {}) : {};
+      if (historicalAttemptSnap.exists && (
+        historicalAttempt.stripeChargeId !== historicalChargeId
+        || historicalAttempt.stripeCheckoutSessionId !== attempt.stripeCheckoutSessionId
+        || historicalAttempt.stripePaymentIntentId !== attempt.stripePaymentIntentId
+        || historicalAttempt.teamId !== teamId
+        || historicalAttempt.seasonId !== seasonId
+        || historicalAttempt.tier !== tier
+      )) return { blockedAuthority: true };
+      transaction.set(historicalAttemptRef, {
+        ...attempt,
+        historicalAuthority: true,
+        archivedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+    }
     transaction.set(attemptRef, {
       product: TEAM_PASS_PRODUCT,
       teamId,
@@ -4451,7 +4501,8 @@ exports.createStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
   const expectedLivemode = getExpectedStripeLivemode(secretKey);
   const { successUrl, cancelUrl } = buildTeamFeeCheckoutUrls(appUrl, input);
   const initialAmountCents = getTeamFeeBalanceCents(recipient);
-  if (canReuseTeamFeeCheckoutSession(recipient, initialAmountCents)) {
+  if (['open', 'stale'].includes(String(recipient.checkoutStatus || '').trim().toLowerCase())
+      && recipient.stripeCheckoutSessionId) {
     let existingSession;
     try {
       existingSession = await stripe.checkout.sessions.retrieve(recipient.stripeCheckoutSessionId);
@@ -4466,14 +4517,15 @@ exports.createStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
     const classification = existingSession
       ? classifyStoredStripeCheckoutSession(existingSession)
       : 'stale';
-    if (!guardFailure && classification === 'reusable') {
+    if (canReuseTeamFeeCheckoutSession(recipient, initialAmountCents)
+        && !guardFailure && classification === 'reusable') {
       const existingPayerUid = String(recipient.checkoutPayerUid || existingSession.metadata?.payerUid || '').trim();
       if (!existingPayerUid || existingPayerUid !== context.auth.uid) {
         throw new functions.https.HttpsError('aborted', 'Another payer already has an active checkout for this team fee. Try again after it expires.');
       }
       return { checkoutUrl: existingSession.url || recipient.checkoutUrl, sessionId: existingSession.id };
     }
-    if (!guardFailure && classification === 'terminal') {
+    if (classification === 'terminal') {
       throw new functions.https.HttpsError('failed-precondition', 'The existing fee payment is completing. Refresh before starting another checkout.');
     }
     if (existingSession?.status === 'open') {
@@ -4486,7 +4538,7 @@ exports.createStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
     await firestore.runTransaction(async (transaction) => {
       const latestSnap = await transaction.get(recipientRef);
       const latest = latestSnap.exists ? (latestSnap.data() || {}) : {};
-      if (latest.checkoutStatus !== 'open'
+      if (!['open', 'stale'].includes(String(latest.checkoutStatus || '').trim().toLowerCase())
           || latest.stripeCheckoutSessionId !== recipient.stripeCheckoutSessionId
           || latest.checkoutAttemptToken !== recipient.checkoutAttemptToken) return;
       transaction.set(recipientRef, {
@@ -5342,7 +5394,8 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
   const stripe = createStripeClient();
   const { secretKey, appUrl } = getStripeConfig();
   const expectedLivemode = getExpectedStripeLivemode(secretKey);
-  if (canReuseRegistrationCheckoutSession(registration, amountCents, resolvedInput)) {
+  if (['open', 'stale'].includes(String(registration.checkoutStatus || '').trim().toLowerCase())
+      && registration.stripeCheckoutSessionId) {
     let existingSession;
     try {
       existingSession = await stripe.checkout.sessions.retrieve(registration.stripeCheckoutSessionId);
@@ -5371,14 +5424,12 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
     const classification = existingSession
       ? classifyStoredStripeCheckoutSession(existingSession)
       : 'stale';
-    if (!storedGuardFailure && classification === 'reusable') {
+    if (canReuseRegistrationCheckoutSession(registration, amountCents, resolvedInput)
+        && !storedGuardFailure && classification === 'reusable') {
       return { checkoutUrl: existingSession.url || registration.checkoutUrl, sessionId: existingSession.id };
     }
-    if (!storedGuardFailure && classification === 'terminal') {
+    if (classification === 'terminal') {
       throw new functions.https.HttpsError('failed-precondition', 'The existing registration payment is completing. Refresh before starting another checkout.');
-    }
-    if (storedGuardFailure && !['checkout_capacity_released', 'checkout_state_mismatch', 'checkout_session_missing'].includes(storedGuardFailure)) {
-      throw new functions.https.HttpsError('failed-precondition', 'The existing Stripe checkout does not match this registration.');
     }
     if (existingSession?.status === 'open') {
       await stripe.checkout.sessions.expire(existingSession.id);
@@ -5386,7 +5437,7 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
     await firestore.runTransaction(async (transaction) => {
       const latestSnap = await transaction.get(resolvedInput.registrationRef);
       const latest = latestSnap.exists ? (latestSnap.data() || {}) : {};
-      if (latest.checkoutStatus !== 'open'
+      if (!['open', 'stale'].includes(String(latest.checkoutStatus || '').trim().toLowerCase())
           || latest.stripeCheckoutSessionId !== registration.stripeCheckoutSessionId) return;
       transaction.set(resolvedInput.registrationRef, {
         checkoutStatus: 'stale',
@@ -5396,6 +5447,14 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
         updatedAt: admin.firestore.FieldValue.serverTimestamp()
       }, { merge: true });
     });
+    if (storedGuardFailure && ![
+      'checkout_amount_mismatch',
+      'checkout_capacity_released',
+      'checkout_state_mismatch',
+      'checkout_session_missing'
+    ].includes(storedGuardFailure)) {
+      throw new functions.https.HttpsError('failed-precondition', 'The existing Stripe checkout did not match this registration and was revoked. Retry to create current authority.');
+    }
   }
 
   const retryCapacityReservationId = resolvedInput.retryPayment ? crypto.randomUUID() : '';
@@ -5697,7 +5756,8 @@ async function recoverLegacyReversalCheckoutSession(stripe, charge = {}) {
   if (sessions.length !== 1) throw new Error('Stripe PaymentIntent matched multiple Checkout Sessions.');
   const session = sessions[0] || {};
   const metadata = session.metadata || {};
-  const product = String(metadata.product || '').trim();
+  const product = String(metadata.product || '').trim()
+    || (hasLegacyTeamPassMetadata(session) ? TEAM_PASS_PRODUCT : '');
   const expectedClientReference = product === 'registration'
     ? `${metadata.teamId}:${metadata.formId}:${metadata.registrationId}`
     : product === 'team_fee'
@@ -5714,7 +5774,7 @@ async function recoverLegacyReversalCheckoutSession(stripe, charge = {}) {
       || Boolean(session.livemode) !== Boolean(charge.livemode)) {
     throw new Error('Legacy Stripe reversal Checkout Session authority did not match the charge.');
   }
-  return session;
+  return { ...session, recoveredProduct: product };
 }
 
 exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
@@ -6223,11 +6283,38 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
             });
             return;
           }
+          const chargeLedgerQuerySnap = await transaction.get(recipientRef.collection('stripeCharges'));
+          const existingChargeLedgers = (chargeLedgerQuerySnap.docs || []).map((docSnap) => docSnap.data() || {});
+          const previousAggregateFinancialState = existingChargeLedgers.length > 0
+            ? getTeamFeeAggregateFinancialState(existingChargeLedgers)
+            : {
+                valid: true,
+                grossPaidAmountCents: 0,
+                refundedAmountCents: 0,
+                disputeLostAmountCents: 0,
+                refundableAmountCents: 0
+              };
+          if (!previousAggregateFinancialState.valid) {
+            throw new Error('Existing team fee charge ledger aggregate is invalid.');
+          }
+          const aggregateFinancialState = getTeamFeeAggregateFinancialState([
+            ...existingChargeLedgers,
+            chargeLedger
+          ]);
+          if (!aggregateFinancialState.valid) {
+            throw new Error('Team fee charge ledger aggregate is invalid.');
+          }
           const { adminBilling, ...recipientUpdate } = buildTeamFeePaidUpdate({
             recipient,
             session,
             eventId: event.id,
-            receivedAt
+            receivedAt,
+            aggregateFinancialState,
+            previousStripeNetPaidCents: Math.max(0,
+              previousAggregateFinancialState.grossPaidAmountCents
+              - previousAggregateFinancialState.refundedAmountCents
+              - previousAggregateFinancialState.disputeLostAmountCents
+            )
           });
           transaction.set(recipientRef, withTeamFeeParentBillingClears(recipientUpdate), { merge: true });
           transaction.set(chargeRef, chargeLedger);
@@ -6321,7 +6408,11 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
         }
         if (!product && Object.keys(charge.metadata || {}).length === 0) {
           recoveredLegacyReversalSession = await recoverLegacyReversalCheckoutSession(stripe, charge);
-          product = String(recoveredLegacyReversalSession?.metadata?.product || '').trim();
+          product = String(
+            recoveredLegacyReversalSession?.metadata?.product
+            || recoveredLegacyReversalSession?.recoveredProduct
+            || ''
+          ).trim();
         }
       }
 
@@ -6335,10 +6426,11 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
         const receivedAt = admin.firestore.FieldValue.serverTimestamp();
         let registrationUpdated = false;
         await firestore.runTransaction(async (transaction) => {
-          const [eventSnap, registrationSnap, ledgerSnap] = await Promise.all([
+          const [eventSnap, registrationSnap, ledgerSnap, chargeLedgerQuerySnap] = await Promise.all([
             transaction.get(eventRef),
             transaction.get(registrationRef),
-            transaction.get(chargeRef)
+            transaction.get(chargeRef),
+            transaction.get(registrationRef.collection('stripeCharges'))
           ]);
           if (eventSnap.exists) return;
           if (!registrationSnap.exists || !ledgerSnap.exists) {
@@ -6354,11 +6446,32 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
           });
           const reversalChanged = JSON.stringify(reversal) !== JSON.stringify(ledger.reversalState || {});
           if (!guardFailure && reversalChanged) {
-            const { registrationUpdate, ledgerUpdate } = buildRegistrationReversalUpdate({
+            const provisionalUpdate = buildRegistrationReversalUpdate({
               registration,
               ledger,
               reversal,
               charge
+            });
+            const nextLedger = {
+              ...ledger,
+              ...provisionalUpdate.ledgerUpdate,
+              reversalState: reversal
+            };
+            const aggregateFinancialState = getRegistrationAggregateFinancialState({
+              registration,
+              ledgers: (chargeLedgerQuerySnap.docs || []).map((docSnap) => (
+                docSnap.id === chargeRef.id ? nextLedger : (docSnap.data() || {})
+              ))
+            });
+            if (!aggregateFinancialState.valid) {
+              throw new Error('Registration charge ledger aggregate is invalid.');
+            }
+            const { registrationUpdate, ledgerUpdate } = buildRegistrationReversalUpdate({
+              registration,
+              ledger,
+              reversal,
+              charge,
+              aggregateFinancialState
             });
             transaction.set(registrationRef, { ...registrationUpdate, updatedAt: receivedAt }, { merge: true });
             transaction.set(chargeRef, { ...ledgerUpdate, reversalState: reversal, updatedAt: receivedAt }, { merge: true });
@@ -6489,10 +6602,31 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
       let attemptRef;
       if (charge?.metadata?.product === TEAM_PASS_PRODUCT) {
         input = normalizeTeamPassCheckoutInput(charge.metadata);
-        attemptRef = buildTeamPassAttemptRef(input);
-      } else if (recoveredLegacyReversalSession?.metadata?.product === TEAM_PASS_PRODUCT) {
+        const exactAttemptSnap = await firestore.collectionGroup('teamPassCheckoutAttempts')
+          .where('stripeChargeId', '==', charge.id)
+          .limit(2)
+          .get();
+        const exactAttemptDocs = exactAttemptSnap.docs || [];
+        if (exactAttemptDocs.length > 1) {
+          throw new Error('Stripe charge matched multiple Team Pass attempts.');
+        }
+        if (exactAttemptDocs.length === 1) {
+          const exactAttempt = exactAttemptDocs[0].data() || {};
+          if (exactAttempt.teamId !== input.teamId
+              || exactAttempt.seasonId !== input.seasonId
+              || exactAttempt.tier !== input.tier) {
+            throw new Error('Stripe charge matched a Team Pass attempt outside its metadata scope.');
+          }
+          attemptRef = exactAttemptDocs[0].ref;
+        } else {
+          attemptRef = buildTeamPassAttemptRef(input);
+        }
+      } else if ((recoveredLegacyReversalSession?.metadata?.product
+          || recoveredLegacyReversalSession?.recoveredProduct) === TEAM_PASS_PRODUCT) {
         input = normalizeTeamPassCheckoutInput(recoveredLegacyReversalSession.metadata);
-        attemptRef = buildTeamPassAttemptRef(input);
+        attemptRef = hasLegacyTeamPassMetadata(recoveredLegacyReversalSession)
+          ? buildLegacyTeamPassAttemptRef(input, recoveredLegacyReversalSession.id)
+          : buildTeamPassAttemptRef(input);
       } else if (Object.keys(charge?.metadata || {}).length === 0 && getStripeObjectId(charge?.payment_intent)) {
         const legacyAttemptSnap = await firestore.collectionGroup('teamPassCheckoutAttempts')
           .where('stripePaymentIntentId', '==', getStripeObjectId(charge.payment_intent))

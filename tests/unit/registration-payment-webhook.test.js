@@ -9,6 +9,7 @@ const {
     getRegistrationPaymentIntentGuardFailure,
     buildRegistrationStripeChargeLedger,
     getRegistrationChargeGuardFailure,
+    getRegistrationAggregateFinancialState,
     buildRegistrationReversalUpdate,
     normalizeRegistrationCheckoutCurrency
 } = require('../../functions/registration-payment-webhook-core.cjs');
@@ -208,6 +209,74 @@ describe('registration paid webhook guard', () => {
             stripeDisputeLostAmountCents: 5000, stripeReversalBalanceCents: 7500,
             balanceDueCents: 7500
         });
+    });
+
+    it('aggregates all registration charge ledgers with open disputes taking priority', () => {
+        const registration = { id: 'reg-a', teamId: 'team-a', formId: 'form-a' };
+        const common = {
+            type: 'stripe_charge', provider: 'stripe', product: 'registration',
+            teamId: 'team-a', formId: 'form-a', registrationId: 'reg-a',
+            amountPaidCents: 5000, disputeLostAmountCents: 0, currency: 'usd', livemode: false
+        };
+        const aggregate = getRegistrationAggregateFinancialState({
+            registration,
+            ledgers: [
+                {
+                    ...common, stripeCheckoutSessionId: 'cs_a', stripePaymentIntentId: 'pi_a', stripeChargeId: 'ch_a',
+                    refundedAmountCents: 0, disputeStatus: 'open'
+                },
+                {
+                    ...common, stripeCheckoutSessionId: 'cs_b', stripePaymentIntentId: 'pi_b', stripeChargeId: 'ch_b',
+                    refundedAmountCents: 1000, disputeStatus: 'none'
+                }
+            ]
+        });
+        expect(aggregate).toEqual({
+            valid: true,
+            financialStatus: 'disputed',
+            grossPaidAmountCents: 10000,
+            refundedAmountCents: 1000,
+            disputeLostAmountCents: 0
+        });
+
+        const update = buildRegistrationReversalUpdate({
+            registration: {
+                ...registration, paymentStatus: 'disputed', paymentStatusBeforeStripeReversal: 'installment_in_progress',
+                stripeGrossPaidAmountCents: 10000, stripeRefundedAmountCents: 0, stripeDisputeLostAmountCents: 0
+            },
+            ledger: { amountPaidCents: 5000, refundedAmountCents: 0, disputeLostAmountCents: 0, paymentStatusAfterCharge: 'installment_in_progress' },
+            reversal: { chargeAmountCents: 5000, refundedAmountCents: 1000, disputeStatus: 'none' },
+            charge: { amount: 5000 },
+            aggregateFinancialState: aggregate
+        });
+        expect(update.registrationUpdate).toMatchObject({
+            paymentStatus: 'disputed', stripeFinancialStatus: 'disputed',
+            stripeGrossPaidAmountCents: 10000, stripeRefundedAmountCents: 1000
+        });
+    });
+
+    it('fails closed when any registration charge ledger is malformed or duplicated', () => {
+        const registration = { id: 'reg-a', teamId: 'team-a', formId: 'form-a' };
+        const ledger = {
+            type: 'stripe_charge', provider: 'stripe', product: 'registration',
+            teamId: 'team-a', formId: 'form-a', registrationId: 'reg-a',
+            stripeCheckoutSessionId: 'cs_a', stripePaymentIntentId: 'pi_a', stripeChargeId: 'ch_a',
+            amountPaidCents: 5000, refundedAmountCents: 0, disputeLostAmountCents: 0,
+            disputeStatus: 'none', currency: 'usd', livemode: false
+        };
+        expect(getRegistrationAggregateFinancialState({ registration, ledgers: [] }).valid).toBe(false);
+        expect(getRegistrationAggregateFinancialState({
+            registration,
+            ledgers: [ledger, { ...ledger, stripePaymentIntentId: 'pi_b', stripeCheckoutSessionId: 'cs_b' }]
+        }).valid).toBe(false);
+        expect(getRegistrationAggregateFinancialState({
+            registration,
+            ledgers: [{ ...ledger, registrationId: 'reg-victim' }]
+        }).valid).toBe(false);
+        expect(getRegistrationAggregateFinancialState({
+            registration,
+            ledgers: [{ ...ledger, refundedAmountCents: 5001 }]
+        }).valid).toBe(false);
     });
 
     it('wires the guard before registration installment or paid state mutations and persists checkout currency', () => {

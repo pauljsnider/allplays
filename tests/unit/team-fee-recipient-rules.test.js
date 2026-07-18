@@ -8,6 +8,7 @@ import {
 import {
     collectionGroup,
     deleteDoc,
+    deleteField,
     doc,
     getDoc,
     getDocs,
@@ -64,7 +65,8 @@ describe('team fee recipient Firestore rules', () => {
         expect(rules).toContain("request.resource.data.get('stripePaymentIntentId', null) == null");
         expect(rules).toContain("request.resource.data.get('checkoutPayerUid', null) == null");
         expect(rules).toContain("request.resource.data.get('stripePaymentAuthorityVersion', null) == null");
-        expect(rules).toContain("request.resource.data.get('stripeRefundableAmountCents', null) == null");
+        expect(rules).toContain("!affectedKeys.hasAny([\n               'stripeGrossPaidAmountCents'");
+        expect(rules).toContain("(billingId == 'latest' &&");
         expect(rules).toContain('match /adminBilling/{billingId} {');
         expect(rules).toContain('match /stripeCharges/{chargeId} {');
         expect(rules).toContain('function isSafeOfflineTeamFeeBilling(data, teamId, batchId, recipientId)');
@@ -214,6 +216,67 @@ describe('team fee recipient Firestore rules', () => {
                 amountPaidCents: 2500, note: 'Cash', recordedBy: 'owner-a', updatedAt: 'now'
             }));
             await assertSucceeds(getDoc(billingRef));
+        });
+
+        it('keeps settled Stripe financial aggregates immutable while allowing checkout cleanup', async () => {
+            await seedRecipient('teams/team-a/feeBatches/batch-a/feeRecipients/settled-stripe', {
+                ...recipientPayload(),
+                paymentProvider: 'stripe',
+                checkoutStatus: 'complete',
+                checkoutAttemptToken: 'tok_settled_1234567890',
+                checkoutUrl: 'https://checkout.stripe.test/settled',
+                stripeCheckoutSessionId: 'cs_settled',
+                stripeGrossPaidAmountCents: 2500,
+                stripeRefundedAmountCents: 500,
+                stripeRefundableAmountCents: 2000,
+                stripeDisputeLostAmountCents: 0,
+                stripeFinancialStatus: 'partially_refunded'
+            });
+            const ownerDb = authedFirestore('owner-a', 'owner-a@example.com');
+            const feeRef = recipientRef(ownerDb, 'team-a', 'batch-a', 'settled-stripe');
+
+            await assertFails(updateDoc(feeRef, {
+                stripeGrossPaidAmountCents: deleteField(),
+                stripeRefundedAmountCents: deleteField(),
+                stripeRefundableAmountCents: deleteField(),
+                stripeDisputeLostAmountCents: deleteField(),
+                stripeFinancialStatus: deleteField()
+            }));
+            await assertFails(updateDoc(feeRef, { stripeFinancialStatus: null }));
+            await assertFails(updateDoc(feeRef, { stripeRefundedAmountCents: 0 }));
+            await assertSucceeds(updateDoc(feeRef, {
+                checkoutStatus: 'stale',
+                checkoutAttemptToken: deleteField(),
+                checkoutUrl: deleteField(),
+                stripeCheckoutSessionId: deleteField()
+            }));
+        });
+
+        it('allows Stripe-to-offline billing migration only for the latest projection', async () => {
+            const basePath = 'teams/team-a/feeBatches/batch-a/feeRecipients/billing-migration';
+            await seedRecipient(basePath, {
+                ...recipientPayload(),
+                paymentProvider: 'stripe',
+                hasAdminBilling: true
+            });
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                const firestore = context.firestore();
+                const serverStripeBilling = {
+                    type: 'stripe_checkout_paid', provider: 'stripe',
+                    teamId: 'team-a', batchId: 'batch-a', recipientId: 'billing-migration',
+                    stripeCheckoutSessionId: 'cs_server', stripePaymentIntentId: 'pi_server'
+                };
+                await setDoc(doc(firestore, `${basePath}/adminBilling/latest`), serverStripeBilling);
+                await setDoc(doc(firestore, `${basePath}/adminBilling/evt_server_paid`), serverStripeBilling);
+            });
+            const ownerDb = authedFirestore('owner-a', 'owner-a@example.com');
+            const safeOfflineBilling = {
+                type: 'offline_payment', teamId: 'team-a', batchId: 'batch-a', recipientId: 'billing-migration',
+                amountPaidCents: 2500, note: 'Cash', recordedBy: 'owner-a', updatedAt: 'now'
+            };
+
+            await assertSucceeds(setDoc(doc(ownerDb, `${basePath}/adminBilling/latest`), safeOfflineBilling));
+            await assertFails(setDoc(doc(ownerDb, `${basePath}/adminBilling/evt_server_paid`), safeOfflineBilling));
         });
 
         it('blocks stale admin clients from mutating or deleting a recipient until server checkout authority is cleared', async () => {

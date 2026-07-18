@@ -923,7 +923,14 @@ service cloud.firestore {
 
     function hasNoIntroducedPrivateTeamFeeBillingFields() {
       let affectedKeys = request.resource.data.diff(resource.data).affectedKeys();
-      return (!affectedKeys.hasAny(['paymentProvider']) || request.resource.data.get('paymentProvider', null) == null) &&
+      return !affectedKeys.hasAny([
+               'stripeGrossPaidAmountCents',
+               'stripeRefundedAmountCents',
+               'stripeRefundableAmountCents',
+               'stripeDisputeLostAmountCents',
+               'stripeFinancialStatus'
+             ]) &&
+             (!affectedKeys.hasAny(['paymentProvider']) || request.resource.data.get('paymentProvider', null) == null) &&
              (!affectedKeys.hasAny(['checkoutAttemptToken']) || request.resource.data.get('checkoutAttemptToken', null) == null) &&
              (!affectedKeys.hasAny(['checkoutPayerUid']) || request.resource.data.get('checkoutPayerUid', null) == null) &&
              (!affectedKeys.hasAny(['checkoutUrl']) || request.resource.data.get('checkoutUrl', null) == null) &&
@@ -936,11 +943,6 @@ service cloud.firestore {
              (!affectedKeys.hasAny(['checkoutCreatedAt']) || request.resource.data.get('checkoutCreatedAt', null) == null) &&
              (!affectedKeys.hasAny(['stripePaymentStatus']) || request.resource.data.get('stripePaymentStatus', null) == null) &&
              (!affectedKeys.hasAny(['livemode']) || request.resource.data.get('livemode', null) == null) &&
-             (!affectedKeys.hasAny(['stripeGrossPaidAmountCents']) || request.resource.data.get('stripeGrossPaidAmountCents', null) == null) &&
-             (!affectedKeys.hasAny(['stripeRefundedAmountCents']) || request.resource.data.get('stripeRefundedAmountCents', null) == null) &&
-             (!affectedKeys.hasAny(['stripeRefundableAmountCents']) || request.resource.data.get('stripeRefundableAmountCents', null) == null) &&
-             (!affectedKeys.hasAny(['stripeDisputeLostAmountCents']) || request.resource.data.get('stripeDisputeLostAmountCents', null) == null) &&
-             (!affectedKeys.hasAny(['stripeFinancialStatus']) || request.resource.data.get('stripeFinancialStatus', null) == null) &&
              (!affectedKeys.hasAny(['stripeCheckoutSessionId']) || request.resource.data.get('stripeCheckoutSessionId', null) == null) &&
              (!affectedKeys.hasAny(['stripePaymentIntentId']) || request.resource.data.get('stripePaymentIntentId', null) == null) &&
              (!affectedKeys.hasAny(['stripeCustomerId']) || request.resource.data.get('stripeCustomerId', null) == null) &&
@@ -3991,7 +3993,8 @@ service cloud.firestore {
                              (
                                (isSafeOfflineTeamFeeBilling(resource.data, teamId, batchId, recipientId) &&
                                 isSafeOfflineTeamFeeBilling(request.resource.data, teamId, batchId, recipientId)) ||
-                               isSafeOfflineTeamFeeBillingUpdate(request.resource.data, teamId, batchId, recipientId)
+                               (billingId == 'latest' &&
+                                isSafeOfflineTeamFeeBillingUpdate(request.resource.data, teamId, batchId, recipientId))
                              );
             allow delete: if isTeamOwnerOrAdmin(teamId) &&
                              isSafeOfflineTeamFeeBilling(resource.data, teamId, batchId, recipientId);

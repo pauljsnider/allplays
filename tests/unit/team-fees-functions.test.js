@@ -580,4 +580,28 @@ describe('team fee checkout function helpers', () => {
             balanceDueCents: 2500
         });
     });
+
+    it('projects paid events from aggregate charge state without masking a sibling dispute', () => {
+        const update = buildTeamFeePaidUpdate({
+            recipient: {
+                amountCents: 10000, paidAmountCents: 5000,
+                stripeGrossPaidAmountCents: 5000, stripeRefundedAmountCents: 0,
+                stripeDisputeLostAmountCents: 0, stripeRefundableAmountCents: 5000
+            },
+            eventId: 'evt_second_paid',
+            receivedAt: 'now',
+            session: { id: 'cs_second', payment_intent: 'pi_second', amount_total: 5000, currency: 'usd' },
+            aggregateFinancialState: {
+                valid: true, financialStatus: 'disputed', grossPaidAmountCents: 10000,
+                refundedAmountCents: 0, disputeLostAmountCents: 0, refundableAmountCents: 10000
+            }
+        });
+
+        expect(update).toMatchObject({
+            status: 'paid', paidAmountCents: 10000, balanceDueCents: 0,
+            stripeGrossPaidAmountCents: 10000, stripeRefundedAmountCents: 0,
+            stripeDisputeLostAmountCents: 0, stripeRefundableAmountCents: 10000,
+            stripeFinancialStatus: 'disputed'
+        });
+    });
 });

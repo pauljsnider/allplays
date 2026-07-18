@@ -576,10 +576,29 @@ function buildTeamFeeStripeRefundUpdate({ recipient = {}, refund = {}, amountCen
     };
 }
 
-function buildTeamFeePaidUpdate({ recipient = {}, session = {}, eventId, receivedAt }) {
+function buildTeamFeePaidUpdate({
+    recipient = {}, session = {}, eventId, receivedAt,
+    aggregateFinancialState = null, previousStripeNetPaidCents = null
+}) {
     const existingPaidCents = getTeamFeePaidCents(recipient);
     const stripePaidAmountCents = getTeamFeeStripePaidAmountCents({ recipient, session });
-    const paidAmountCents = existingPaidCents + stripePaidAmountCents;
+    const priorStripeNetPaidCents = Number.isSafeInteger(previousStripeNetPaidCents)
+        && previousStripeNetPaidCents >= 0
+        ? previousStripeNetPaidCents
+        : Math.max(0,
+            getTeamFeeStripeGrossPaidCents(recipient)
+            - getTeamFeeStripeRefundedCents(recipient)
+            - Math.max(0, Math.round(Number(recipient.stripeDisputeLostAmountCents || 0)))
+        );
+    const offlinePaidCents = Math.max(0, existingPaidCents - priorStripeNetPaidCents);
+    const aggregateStripeNetPaidCents = aggregateFinancialState
+        ? Math.max(0,
+            aggregateFinancialState.grossPaidAmountCents
+            - aggregateFinancialState.refundedAmountCents
+            - aggregateFinancialState.disputeLostAmountCents
+        )
+        : priorStripeNetPaidCents + stripePaidAmountCents;
+    const paidAmountCents = offlinePaidCents + aggregateStripeNetPaidCents;
     const balanceDueCents = Math.max(0, getTeamFeeTotalCents(recipient) - paidAmountCents);
 
     return {
@@ -593,10 +612,15 @@ function buildTeamFeePaidUpdate({ recipient = {}, session = {}, eventId, receive
         checkoutUrl: null,
         paymentLink: null,
         paymentProvider: 'stripe',
-        stripeGrossPaidAmountCents: getTeamFeeStripeGrossPaidCents(recipient) + stripePaidAmountCents,
-        stripeRefundedAmountCents: getTeamFeeStripeRefundedCents(recipient),
-        stripeRefundableAmountCents: getTeamFeeRefundableCents(recipient) + stripePaidAmountCents,
-        stripeFinancialStatus: 'paid',
+        stripeGrossPaidAmountCents: aggregateFinancialState?.grossPaidAmountCents
+            ?? getTeamFeeStripeGrossPaidCents(recipient) + stripePaidAmountCents,
+        stripeRefundedAmountCents: aggregateFinancialState?.refundedAmountCents
+            ?? getTeamFeeStripeRefundedCents(recipient),
+        stripeDisputeLostAmountCents: aggregateFinancialState?.disputeLostAmountCents
+            ?? Math.max(0, Math.round(Number(recipient.stripeDisputeLostAmountCents || 0))),
+        stripeRefundableAmountCents: aggregateFinancialState?.refundableAmountCents
+            ?? getTeamFeeRefundableCents(recipient) + stripePaidAmountCents,
+        stripeFinancialStatus: aggregateFinancialState?.financialStatus || 'paid',
         stripeCheckoutSessionId: null,
         stripePaymentAmountCents: stripePaidAmountCents,
         hasAdminBilling: true,
