@@ -191,6 +191,7 @@ export type ParentScheduleEvent = {
   visibility?: string | null;
   myRsvp?: RsvpResponse;
   myRsvpNote?: string | null;
+  myRsvpNoteHydrated?: boolean;
   rsvpSummary?: ScheduleRsvpSummary | null;
   rideshareSummary?: ScheduleRideSummary | null;
   assignments: ScheduleAssignment[];

@@ -248,6 +248,7 @@ function applySessionRsvpState(events: ParentScheduleEvent[], userId: string) {
     if (!entry) return;
     event.myRsvp = entry.response;
     event.myRsvpNote = entry.note || null;
+    event.myRsvpNoteHydrated = true;
   });
   return events;
 }
@@ -3311,6 +3312,7 @@ function createScheduleEvent(input: {
     visibility: input.visibility || null,
     myRsvp: 'not_responded',
     myRsvpNote: null,
+    myRsvpNoteHydrated: false,
     rsvpSummary: input.rsvpSummary || null,
     rideshareSummary: null,
     assignments: Array.isArray(input.assignments) ? input.assignments : [],
@@ -3852,6 +3854,7 @@ async function hydrateEventDetails(events: ParentScheduleEvent[], user: AuthUser
       }
       if (rsvpsLoaded && ownRsvpNotes.noteReadsComplete) {
         event.myRsvpNote = myRsvpNotesByChild[event.childId] || null;
+        event.myRsvpNoteHydrated = true;
         authoritativeRsvpEvents.push(event);
       }
       event.rsvpSummary = summary;
@@ -4360,6 +4363,7 @@ export async function hydrateParentScheduleRsvps(
         }
         if (noteReadsCompleteByChild[event.childId]) {
           event.myRsvpNote = myRsvpNotesByChild[event.childId] || null;
+          event.myRsvpNoteHydrated = true;
         }
       });
       reconcileSessionRsvpState(

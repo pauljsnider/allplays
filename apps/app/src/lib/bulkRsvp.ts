@@ -36,6 +36,10 @@ export function getNeededBulkRsvpEventKeys(events: ParentScheduleEvent[]) {
     .map((event) => event.eventKey);
 }
 
+export function getBulkRsvpNoteReadyCandidates(events: ParentScheduleEvent[]) {
+  return events.filter((event) => event.myRsvpNoteHydrated === true);
+}
+
 export function groupBulkRsvpEvents(events: ParentScheduleEvent[]) {
   const groups = new Map<string, ParentScheduleEvent[]>();
   events.forEach((event) => {

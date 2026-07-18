@@ -58,6 +58,7 @@ import { loadScheduleStaffTools } from '../components/schedule/loadScheduleStaff
 import {
   applyBulkRsvpResponse,
   getBulkRsvpCandidates,
+  getBulkRsvpNoteReadyCandidates,
   getBulkRsvpResultMessage,
   getNeededBulkRsvpEventKeys,
   groupBulkRsvpSubmissions
@@ -224,7 +225,12 @@ export function Schedule({ auth }: { auth: AuthState }) {
         if (pendingRsvpEventKeysRef.current.has(event.eventKey)) return event;
         const hydrated = hydratedByKey.get(event.eventKey);
         return hydrated
-          ? { ...event, myRsvp: hydrated.myRsvp, myRsvpNote: hydrated.myRsvpNote }
+          ? {
+              ...event,
+              myRsvp: hydrated.myRsvp,
+              myRsvpNote: hydrated.myRsvpNote,
+              myRsvpNoteHydrated: hydrated.myRsvpNoteHydrated
+            }
           : event;
       }));
     };
@@ -477,12 +483,17 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const visibleEvents = useMemo(() => (
     filterParentScheduleEvents(events, { filter, playerId: selectedPlayerId, teamId: selectedTeamId, timeRange })
   ), [events, filter, selectedPlayerId, selectedTeamId, timeRange]);
-  const bulkRsvpCandidates = useMemo(() => getBulkRsvpCandidates(filterParentScheduleEvents(events, {
+  const allBulkRsvpCandidates = useMemo(() => getBulkRsvpCandidates(filterParentScheduleEvents(events, {
     filter: 'upcoming-all',
     playerId: selectedPlayerId,
     teamId: selectedTeamId,
     timeRange: 'all'
   })), [events, selectedPlayerId, selectedTeamId]);
+  const bulkRsvpCandidates = useMemo(
+    () => getBulkRsvpNoteReadyCandidates(allBulkRsvpCandidates),
+    [allBulkRsvpCandidates]
+  );
+  const unavailableBulkRsvpCount = allBulkRsvpCandidates.length - bulkRsvpCandidates.length;
   const scheduleRoute = `/schedule${searchParams.toString() ? `?${searchParams.toString()}` : ''}`;
 
   useViewLoadTimer({
@@ -671,6 +682,13 @@ export function Schedule({ auth }: { auth: AuthState }) {
 
     const selectedKeySet = new Set(selectedEventKeys);
     const targetEvents = bulkRsvpCandidates.filter((event) => selectedKeySet.has(event.eventKey));
+    if (targetEvents.length !== selectedEventKeys.length) {
+      setBulkRsvpResult({
+        tone: 'error',
+        message: 'Some RSVP notes are still unavailable. Refresh before updating those events.'
+      });
+      return { failedEventKeys: selectedEventKeys };
+    }
     const previousByKey = new Map(targetEvents.map((event) => [event.eventKey, {
       response: normalizeRsvpResponse(event.myRsvp),
       note: event.myRsvpNote || null
@@ -927,6 +945,9 @@ export function Schedule({ auth }: { auth: AuthState }) {
           ) : null}
           {statusMessage ? <Status tone="success" message={statusMessage} /> : null}
           {bulkRsvpResult ? <Status tone={bulkRsvpResult.tone} message={bulkRsvpResult.message} /> : null}
+          {!rsvpHydrationPending && unavailableBulkRsvpCount > 0 ? (
+            <Status tone="error" message={`${unavailableBulkRsvpCount} ${unavailableBulkRsvpCount === 1 ? 'RSVP is' : 'RSVPs are'} waiting for private note data. Refresh before updating ${unavailableBulkRsvpCount === 1 ? 'it' : 'them'}.`} />
+          ) : null}
           {scheduleReadError ? <Status tone="error" message={scheduleLoadError ? getScheduleLoadErrorMessage(scheduleLoadError, hasLoadedSchedule) : scheduleReadError} /> : null}
           {bulkRsvpCandidates.length > 1 ? (
             <BulkRsvpLauncher

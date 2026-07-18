@@ -136,6 +136,7 @@ function buildScheduleEvent(index: number, overrides: Partial<ParentScheduleEven
     isCancelled: false,
     isLinkedParentChild: true,
     myRsvp: 'not_responded' as const,
+    myRsvpNoteHydrated: true,
     assignments: [],
     openAssignmentCount: 0,
     ...overrides
@@ -411,6 +412,34 @@ describe('Schedule', () => {
     expect(scheduleServiceMocks.submitParentScheduleRsvp).toHaveBeenCalledWith(expect.objectContaining({ id: 'event-2' }), auth.user, 'going', 'Needs a ride');
     expect(await screen.findByText('2 RSVPs saved as going.')).toBeTruthy();
     expect(screen.queryByRole('dialog', { name: 'Respond to multiple events' })).toBeNull();
+  });
+
+  it('excludes an RSVP whose private note did not hydrate from the bulk update', async () => {
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [{ playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }],
+      events: [
+        buildScheduleEvent(1),
+        buildScheduleEvent(2, { type: 'practice', title: 'Team practice', opponent: null }),
+        buildScheduleEvent(3, { myRsvpNote: null, myRsvpNoteHydrated: false })
+      ]
+    });
+    scheduleServiceMocks.submitParentScheduleRsvp.mockResolvedValue(null);
+
+    renderSchedule();
+
+    expect(await screen.findByText('1 RSVP is waiting for private note data. Refresh before updating it.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Review RSVPs' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Respond to multiple events' });
+    expect(within(dialog).getByText('2 selected')).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Going' }));
+
+    await waitFor(() => expect(scheduleServiceMocks.submitParentScheduleRsvp).toHaveBeenCalledTimes(2));
+    expect(scheduleServiceMocks.submitParentScheduleRsvp).not.toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'event-3' }),
+      expect.anything(),
+      expect.anything(),
+      expect.anything()
+    );
   });
 
   it('uses one family RSVP write for siblings selected on the same event', async () => {

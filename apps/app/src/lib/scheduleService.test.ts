@@ -1253,6 +1253,7 @@ describe('parent schedule detail hydration', () => {
     expect(getRsvps).not.toHaveBeenCalledWith('team-1', 'future-game');
     expect(nearEvent.myRsvp).toBe('going');
     expect(nearEvent.myRsvpNote).toBe('Will be there.');
+    expect(nearEvent.myRsvpNoteHydrated).toBe(true);
     expect(nearEvent.rsvpSummary).toEqual({
       going: 1,
       maybe: 0,
@@ -2487,6 +2488,7 @@ describe('parent family RSVP submission', () => {
 
     expect(reloadedEvent.myRsvp).toBe('going');
     expect(reloadedEvent.myRsvpNote).toBe('Local note');
+    expect(reloadedEvent.myRsvpNoteHydrated).toBe(true);
   });
 
   it('does not replace a known RSVP with missing when progressive detail reads fail', async () => {
@@ -2545,7 +2547,8 @@ describe('parent family RSVP submission', () => {
       ...baseEvent,
       id: 'game-note-read-failure',
       myRsvp: 'going',
-      myRsvpNote: 'Already loaded'
+      myRsvpNote: 'Already loaded',
+      myRsvpNoteHydrated: false
     } as any;
     mocks.getDoc.mockImplementation(async (reference: any) => {
       if (reference.path.endsWith('/rsvps/parent-1')) {
@@ -2575,6 +2578,7 @@ describe('parent family RSVP submission', () => {
 
     expect(eventWithKnownNote.myRsvp).toBe('going');
     expect(eventWithKnownNote.myRsvpNote).toBe('Already loaded');
+    expect(eventWithKnownNote.myRsvpNoteHydrated).toBe(false);
   });
 
   it('preserves a known child RSVP note when its prerequisite RSVP override read fails', async () => {

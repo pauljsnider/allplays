@@ -3,6 +3,7 @@ import type { ParentScheduleEvent } from './scheduleLogic';
 import {
   applyBulkRsvpResponse,
   getBulkRsvpCandidates,
+  getBulkRsvpNoteReadyCandidates,
   getBulkRsvpResultMessage,
   getNeededBulkRsvpEventKeys,
   groupBulkRsvpEvents,
@@ -29,6 +30,7 @@ function event(index: number, overrides: Partial<ParentScheduleEvent> = {}): Par
     isCancelled: false,
     isLinkedParentChild: true,
     myRsvp: 'not_responded',
+    myRsvpNoteHydrated: true,
     assignments: [],
     openAssignmentCount: 0,
     ...overrides
@@ -57,6 +59,18 @@ describe('bulk RSVP helpers', () => {
 
     expect(candidates).toHaveLength(maxBulkRsvpEvents);
     expect(getNeededBulkRsvpEventKeys(withResponse)).toHaveLength(maxBulkRsvpEvents - 1);
+  });
+
+  it('excludes rows whose private RSVP note did not finish hydrating', () => {
+    const knownEmptyNote = event(1, { myRsvpNote: null, myRsvpNoteHydrated: true });
+    const unknownNote = event(2, { myRsvpNote: null, myRsvpNoteHydrated: false });
+    const missingHydrationMarker = event(3, { myRsvpNoteHydrated: undefined });
+
+    expect(getBulkRsvpNoteReadyCandidates([
+      knownEmptyNote,
+      unknownNote,
+      missingHydrationMarker
+    ])).toEqual([knownEmptyNote]);
   });
 
   it('groups child rows for the same event and updates only selected rows', () => {
