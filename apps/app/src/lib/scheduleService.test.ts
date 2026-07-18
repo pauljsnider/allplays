@@ -2455,6 +2455,40 @@ describe('parent family RSVP submission', () => {
     expect(reloadedEvent.myRsvpNote).toBe('Server note');
   });
 
+  it('reconciles a session RSVP response when its private note read fails', async () => {
+    const sessionEvent = {
+      ...baseEvent,
+      id: 'game-session-note-read-failure',
+      myRsvp: 'not_responded',
+      myRsvpNote: null
+    } as any;
+    vi.mocked(submitRsvpForPlayer).mockResolvedValue(null as any);
+
+    await submitParentScheduleRsvp(sessionEvent, user as any, 'maybe', 'Local note');
+    mocks.getDoc.mockImplementation(async (reference: any) => {
+      if (reference.path.endsWith('/rsvps/parent-1')) {
+        return {
+          id: 'parent-1',
+          exists: () => true,
+          data: () => ({ userId: 'parent-1', playerId: 'player-1', response: 'going' })
+        };
+      }
+      if (reference.path.endsWith('/rsvps/parent-1__player-1')) {
+        return { id: 'parent-1__player-1', exists: () => false, data: () => null };
+      }
+      if (reference.path.endsWith('/rsvpNotes/parent-1__player-1')) {
+        throw new Error('child note read denied');
+      }
+      return { id: reference.path.split('/').pop(), exists: () => false, data: () => null };
+    });
+    const reloadedEvent = { ...sessionEvent, myRsvp: 'not_responded', myRsvpNote: null };
+
+    await hydrateParentScheduleRsvps({ children: [], events: [reloadedEvent] }, user as any);
+
+    expect(reloadedEvent.myRsvp).toBe('going');
+    expect(reloadedEvent.myRsvpNote).toBe('Local note');
+  });
+
   it('does not replace a known RSVP with missing when progressive detail reads fail', async () => {
     const eventWithKnownResponse = {
       ...baseEvent,

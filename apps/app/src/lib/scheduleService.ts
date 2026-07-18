@@ -4369,7 +4369,6 @@ export async function hydrateParentScheduleRsvps(
         )),
         user.uid
       );
-      applySessionRsvpState(matchingEvents, user.uid);
       options.onProgress?.([...schedule.events]);
     } catch (error) {
       logScheduleWarning('Failed to hydrate parent RSVP state.', 'parent-rsvp-hydration', error, {
