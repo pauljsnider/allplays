@@ -366,7 +366,7 @@ describe('Home', () => {
 
     resolveBootstrap({ home: baseHome, schedule: [] });
 
-    expect(await screen.findByRole('heading', { name: 'Today for your players' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Your day' })).toBeTruthy();
     await waitFor(() => {
       expect(uxTimingMocks.recordFirstMeaningfulRender).toHaveBeenCalledWith('home');
     });
@@ -383,21 +383,28 @@ describe('Home', () => {
 
     renderHome(signedInAuth);
 
-    expect(await screen.findByRole('heading', { name: 'Today for your players' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Your day' })).toBeTruthy();
     expect(screen.getByText('Checking responses…')).toBeTruthy();
     expect(screen.queryByText('Loading Home')).toBeNull();
     expect(uxTimingMocks.recordFirstMeaningfulRender).toHaveBeenCalledWith('home');
   });
 
-  it('renders the feed for signed-out users without crashing', async () => {
+  it('renders a dedicated welcome instead of personalized Home for signed-out users', async () => {
     renderHome(signedOutAuth, '/home?section=feed');
 
-    expect(await screen.findByRole('heading', { name: 'Feed' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Your sports day, organized' })).toBeTruthy();
+    const createAccountLink = screen.getByRole('link', { name: /Create account/i });
+    expect(createAccountLink.getAttribute('href')).toBe('/auth?mode=signup&next=%2Fhome');
+    expect(createAccountLink.className).toContain('!bg-none');
+    expect(screen.getByRole('link', { name: /Sign in/i }).getAttribute('href')).toBe('/auth?next=%2Fhome');
+    expect(screen.queryByRole('button', { name: 'Refresh Home' })).toBeNull();
+    expect(screen.queryByRole('navigation', { name: 'Home sections' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Feed' })).toBeNull();
     expect(homeServiceMocks.loadParentHomeSummaryBootstrap).not.toHaveBeenCalled();
   });
 
   it('loads an empty opportunities feed only once', async () => {
-    renderHome(signedOutAuth, '/home?section=feed');
+    renderHome(signedInAuth, '/home?section=feed');
 
     expect(await screen.findByRole('heading', { name: 'Feed' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Opportunities' }));
@@ -407,10 +414,12 @@ describe('Home', () => {
     expect(opportunityServiceMocks.listPublicOpportunities).toHaveBeenCalledTimes(1);
   });
 
-  it('renders signed-out Today without waiting for parent or officials hydration', async () => {
+  it('renders signed-out welcome without waiting for parent or officials hydration', async () => {
     renderHome(signedOutAuth);
 
-    expect(await screen.findByRole('heading', { name: 'Get linked to your player' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Your sports day, organized' })).toBeTruthy();
+    expect(screen.queryByText('ALL PLAYS User')).toBeNull();
+    expect(screen.queryByText('Caught up')).toBeNull();
     expect(screen.queryByText('Loading Home')).toBeNull();
     expect(homeServiceMocks.loadParentHomeSummaryBootstrap).not.toHaveBeenCalled();
     expect(scheduleServiceMocks.loadOfficialAssignmentsAccess).not.toHaveBeenCalled();
@@ -437,8 +446,67 @@ describe('Home', () => {
 
     fireEvent.click(screen.getByRole('link', { name: 'Home nav' }));
 
-    expect(await screen.findByRole('heading', { name: 'Today for your players' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Your day' })).toBeTruthy();
     expect(screen.queryByRole('heading', { name: 'Feed' })).toBeNull();
+  });
+
+  it('exposes Home sections as navigation with the current route identified', async () => {
+    renderHome(signedInAuth, '/home?section=feed');
+
+    await screen.findByRole('heading', { name: 'Feed' });
+    const navigation = screen.getByRole('navigation', { name: 'Home sections' });
+    expect(within(navigation).getAllByRole('link')).toHaveLength(5);
+    expect(within(navigation).getByRole('link', { name: 'Feed' }).getAttribute('aria-current')).toBe('page');
+    expect(within(navigation).getByRole('link', { name: 'Today' }).getAttribute('href')).toBe('/home');
+    expect(within(navigation).getByRole('link', { name: 'Friends' }).getAttribute('href')).toBe('/home?section=friends');
+  });
+
+  it.each([
+    [{ ...signedInAuth, isParent: true, isCoach: false, isAdmin: false, isPlatformAdmin: false }, 'Family home'],
+    [{ ...signedInAuth, roles: ['coach'], isParent: false, isCoach: true, isAdmin: false, isPlatformAdmin: false }, 'Coach home'],
+    [{ ...signedInAuth, roles: ['admin'], isParent: false, isCoach: false, isAdmin: true, isPlatformAdmin: false }, 'Administration']
+  ])('renders role-aware Home context', async (auth, expectedContext) => {
+    renderHome(auth as AuthState);
+
+    expect(await screen.findByText(new RegExp(expectedContext))).toBeTruthy();
+  });
+
+  it('uses official context when assignments are available', async () => {
+    scheduleServiceMocks.loadOfficialAssignmentsAccess.mockResolvedValueOnce({ hasAccess: true, teamCount: 1 });
+    renderHome({ ...signedInAuth, roles: [], isParent: false } as AuthState);
+
+    expect(await screen.findByText(/Official assignments/)).toBeTruthy();
+  });
+
+  it.each(['assignment', 'rideshare'] as const)('counts a lone %s action as open without duplicating it in the to-do list', async (kind) => {
+    const title = kind === 'assignment' ? 'Claim scorekeeper assignment' : 'Offer a ride to practice';
+    const actionHome = {
+      ...baseHome,
+      actionItems: [{
+        id: `${kind}:1`,
+        kind,
+        tone: 'emerald' as const,
+        title,
+        detail: 'Bears · Tomorrow',
+        to: '/schedule/team-1/event-1',
+        priority: 30,
+        date: new Date('2100-06-06T18:00:00Z')
+      }]
+    };
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValueOnce({ home: actionHome, schedule: [] });
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValueOnce(actionHome);
+
+    renderHome(signedInAuth);
+
+    expect(await screen.findByText('1 open')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: title })).toBeTruthy();
+    const toDoSection = screen.getByText('To-do list').closest('section');
+    expect(toDoSection).toBeTruthy();
+    expect(within(toDoSection!).getByRole('heading', { name: 'Priority only' })).toBeTruthy();
+    expect(within(toDoSection!).getByText('0')).toBeTruthy();
+    expect(within(toDoSection!).getByText('Priority shown above')).toBeTruthy();
+    expect(within(toDoSection!).getByText('Your only open action is highlighted above.')).toBeTruthy();
+    expect(within(toDoSection!).queryByText('All caught up')).toBeNull();
   });
 
   it('shows network-specific Home retry copy after an initial load failure', async () => {
@@ -457,7 +525,7 @@ describe('Home', () => {
     renderHome(signedInAuth);
 
     expect(await screen.findByText('Home details could not refresh while offline.')).toBeTruthy();
-    expect(screen.getByRole('heading', { name: 'Today for your players' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Your day' })).toBeTruthy();
     expect(screen.queryByText('Home could not connect')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Retry loading Home' })).toBeNull();
   });
@@ -476,6 +544,22 @@ describe('Home', () => {
     expect(screen.queryByText('Availability')).toBeNull();
     expect(screen.queryByText('Team chats')).toBeNull();
     expect(screen.queryByText('Practice packets')).toBeNull();
+  });
+
+  it('provides recovery actions in Players and Teams empty states', async () => {
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValue({ home: emptyHome, schedule: [] });
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValue(emptyHome);
+
+    const { unmount } = renderHome(signedInAuth, '/home?section=players');
+    expect(await screen.findByText('No players linked yet')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Accept invite' }).getAttribute('href')).toBe('/accept-invite');
+    expect(screen.getByRole('link', { name: 'Request player access' }).getAttribute('href')).toBe('/parent-tools/access');
+    unmount();
+
+    renderHome(signedInAuth, '/home?section=teams');
+    expect(await screen.findByText('No teams available')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Request player access' }).getAttribute('href')).toBe('/parent-tools/access');
+    expect(screen.getByRole('link', { name: 'Find teams' }).getAttribute('href')).toBe('/teams/browse');
   });
 
   it('defers the parent first-run card while secondary Home data is still pending', async () => {
@@ -575,7 +659,7 @@ describe('Home', () => {
   it('keeps the normal Today dashboard when at least one player or team is linked', async () => {
     renderHome(signedInAuth);
 
-    expect(await screen.findByRole('heading', { name: 'Today for your players' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Your day' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'All caught up' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Team feed' })).toBeTruthy();
     expect(screen.queryByRole('heading', { name: 'Get linked to your player' })).toBeNull();
@@ -634,6 +718,15 @@ describe('Home', () => {
     await waitFor(() => {
       expect(socialServiceMocks.loadSocialHome).toHaveBeenCalledTimes(2);
     });
+  });
+
+  it('labels Feed filters and gives an empty Feed one primary next action', async () => {
+    renderHome(signedInAuth, '/home?section=feed');
+
+    await screen.findByRole('heading', { name: 'Feed' });
+    const filters = screen.getByRole('group', { name: 'Feed filters' });
+    expect(within(filters).getAllByRole('button')).toHaveLength(6);
+    expect(screen.getByRole('button', { name: 'Create a post' })).toBeTruthy();
   });
 
   it('optimistically updates likes and blocks rapid double taps from writing twice', async () => {
@@ -859,6 +952,7 @@ describe('Home', () => {
 
     expect(await screen.findByText('Pat Player highlight just posted')).toBeTruthy();
     expect(screen.getByText('Posted to your ALL PLAYS feed.')).toBeTruthy();
+    expect(screen.getByRole('status').textContent).toContain('Posted to your ALL PLAYS feed.');
     expect(socialServiceMocks.loadSocialHome).toHaveBeenCalledTimes(2);
     resolveRefresh({ ...baseSocial, feedItems: [createdPost], metrics: { ...baseSocial.metrics, feedItems: 1 } });
     await waitFor(() => {
@@ -873,10 +967,11 @@ describe('Home', () => {
 
     renderHome(signedInAuth);
 
-    await screen.findByRole('heading', { name: 'Today for your players' });
+    await screen.findByRole('heading', { name: 'Your day' });
     fireEvent.click(screen.getByRole('button', { name: 'Refresh Home' }));
 
     expect(await screen.findByText('Unable to refresh Home because access was denied. Showing the last loaded Home.')).toBeTruthy();
+    expect(screen.getByRole('alert').textContent).toContain('Unable to refresh Home because access was denied.');
   });
 
   it('refreshes the social feed after responding to a friend request', async () => {
@@ -904,6 +999,7 @@ describe('Home', () => {
     renderHome(signedInAuth, '/home?section=friends');
 
     await screen.findByRole('heading', { name: 'Friends' });
+    expect(screen.getByLabelText('Search friends by name, email, or team')).toBeTruthy();
     await waitFor(() => {
       expect(socialServiceMocks.loadSocialHome).toHaveBeenCalledTimes(1);
     });
@@ -944,12 +1040,12 @@ describe('Home', () => {
 
     renderHome(signedInAuth);
 
-    expect(await screen.findByRole('heading', { name: 'Today for your players' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Your day' })).toBeTruthy();
     expect(screen.getByText('Upcoming')).toBeTruthy();
-    expect(screen.getAllByText('Player 1 needs availability').length).toBeGreaterThan(0);
-    expect(screen.getByRole('link', { name: /do\s*player 1 needs availability/i }).getAttribute('href')).toBe('/schedule/team-1/upcoming-1');
-    expect(screen.getByRole('link', { name: /Availability.*2.*Needs a response/i })).toHaveAttribute('href', '/schedule?bulkRsvp=1');
-    expect(screen.getByRole('link', { name: 'Multi RSVP' })).toHaveAttribute('href', '/schedule?bulkRsvp=1');
+    expect(screen.getAllByText('Player 1 needs availability')).toHaveLength(1);
+    expect(screen.getByRole('link', { name: 'Open action' }).getAttribute('href')).toBe('/schedule/team-1/upcoming-1');
+    expect(screen.getByRole('link', { name: /Availability.*2.*Needs a response/i }).getAttribute('href')).toBe('/schedule?bulkRsvp=1');
+    expect(screen.getByRole('link', { name: 'Multi RSVP' }).getAttribute('href')).toBe('/schedule?bulkRsvp=1');
     expect(screen.getByText('Falcons')).toBeTruthy();
     expect(screen.getAllByText('Tournament fee').length).toBeGreaterThan(0);
 
@@ -960,7 +1056,7 @@ describe('Home', () => {
       expect(homeServiceMocks.loadParentHomeWithSecondaryData).toHaveBeenCalledTimes(2);
     });
 
-    expect(screen.getByRole('heading', { name: 'Today for your players' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Your day' })).toBeTruthy();
     expect(screen.getByText('1 unread message')).toBeTruthy();
   });
 });

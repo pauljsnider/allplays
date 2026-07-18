@@ -186,6 +186,7 @@ export function Home({ auth }: { auth: AuthState }) {
   const { loading, error, clearError, run: runPrimaryLoad } = useAsyncOperation();
   const { loading: socialLoading, run: runSecondaryLoad } = useAsyncOperation();
   const hasStartedInitialHomeLoadRef = useRef(false);
+  const homeSectionNavRef = useRef<HTMLElement | null>(null);
 
   const authUserId = auth.user?.uid || null;
   const hasHomePreview = Boolean(authUserId) && authUserId === previewHomeUserId;
@@ -345,13 +346,20 @@ export function Home({ auth }: { auth: AuthState }) {
     setComposerOpen(searchParams.get('social') === 'create');
   }, [searchParams]);
 
-  const topAction = home.actionItems[0] || null;
+  useEffect(() => {
+    const activeLink = homeSectionNavRef.current?.querySelector<HTMLElement>(`[data-home-section="${activeSection}"]`);
+    if (activeLink && typeof activeLink.scrollIntoView === 'function') {
+      activeLink.scrollIntoView({ block: 'nearest', inline: 'center' });
+    }
+  }, [activeSection]);
+
   const hasRenderableHome = !authUserId || hasHomePreview || hasLoadedHomeDetails;
   const showBlockingErrorState = !loading && !hasRenderableHome && Boolean(homeLoadError);
   const showInitialHomeSkeleton = loading && !hasRenderableHome;
   const canRenderHomeSections = !loading || hasRenderableHome;
   const displayName = auth.user?.displayName || auth.user?.email || 'ALL PLAYS User';
-  const openCount = home.metrics.rsvpNeeded + home.metrics.packetsReady + home.metrics.unreadMessages + home.fees.length + social.metrics.incomingRequests;
+  const standaloneActionCount = home.actionItems.filter((action) => action.kind === 'assignment' || action.kind === 'rideshare').length;
+  const openCount = home.metrics.rsvpNeeded + home.metrics.packetsReady + home.metrics.unreadMessages + home.fees.length + social.metrics.incomingRequests + standaloneActionCount;
   const today = new Date();
   const selectedComposerType = (searchParams.get('type') || 'manual_post') as SocialPostType;
   const homeSectionRoute = getHomeSectionRoute(activeSection);
@@ -382,6 +390,10 @@ export function Home({ auth }: { auth: AuthState }) {
     })
   });
 
+  if (!auth.user) {
+    return <SignedOutHome />;
+  }
+
   const openComposer = (type: SocialPostType = 'manual_post') => {
     const nextParams = new URLSearchParams(searchParams);
     nextParams.set('section', 'feed');
@@ -398,11 +410,7 @@ export function Home({ auth }: { auth: AuthState }) {
 
   const selectSection = (sectionId: HomeSectionId) => {
     setActiveSection(sectionId);
-    const nextParams = new URLSearchParams(searchParams);
-    nextParams.set('section', sectionId);
-    nextParams.delete('social');
-    nextParams.delete('type');
-    setSearchParams(nextParams, { replace: true });
+    setComposerOpen(false);
     window.requestAnimationFrame(() => {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     });
@@ -469,29 +477,24 @@ export function Home({ auth }: { auth: AuthState }) {
             <div className="flex min-w-0 items-center gap-2">
               <span className="app-label">Home</span>
               <span className={`rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.04em] ${homeDetailsPending ? 'bg-gray-100 text-gray-600' : openCount ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}`}>
-                {homeDetailsPending ? 'Loading' : openCount ? `${openCount} open` : 'Clear'}
+                {homeDetailsPending ? 'Loading' : openCount ? `${openCount} open` : 'Caught up'}
               </span>
             </div>
-            <h1 className="mt-0.5 truncate text-xl font-black leading-tight text-gray-950">Today for your players</h1>
-            <p className="mt-0.5 truncate text-xs font-semibold text-gray-600">{displayName}</p>
+            <h1 className="mt-0.5 text-xl font-black leading-tight text-gray-950">Your day</h1>
+            <p className="mt-0.5 truncate text-xs font-semibold text-gray-600">{displayName} · {getHomeRoleContext(auth, resolvedOfficialsAccess)}</p>
           </div>
-          <button type="button" className="ghost-button !h-9 !min-h-9 !w-9 !p-0 sm:!w-auto sm:!px-3 text-xs" onClick={() => refreshHome({ force: true })} disabled={loading} aria-label="Refresh Home" title="Refresh Home">
+          <button type="button" className="ghost-button !h-11 !min-h-11 !w-11 !p-0 sm:!w-auto sm:!px-3 text-xs" onClick={() => refreshHome({ force: true })} disabled={loading} aria-label="Refresh Home" title="Refresh Home">
             {loading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <RefreshCw className="h-4 w-4" aria-hidden="true" />}
             <span className="hidden sm:inline">Refresh</span>
           </button>
         </div>
         <div className="hidden gap-1.5 overflow-x-auto border-t border-gray-100 px-3 py-2 sm:flex sm:px-4">
-          {topAction ? <TopAction action={topAction} /> : homeDetailsPending ? (
+          {homeDetailsPending ? (
             <div className="flex min-h-8 flex-none items-center gap-1.5 rounded-full border border-gray-200 bg-gray-50 px-2.5 text-xs font-black text-gray-600" role="status">
               <Loader2 className="h-3.5 w-3.5 flex-none animate-spin" aria-hidden="true" />
               Checking actions
             </div>
-          ) : (
-            <div className="flex min-h-8 flex-none items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 text-xs font-black text-emerald-800">
-              <CheckCircle2 className="h-3.5 w-3.5 flex-none" aria-hidden="true" />
-              Clear
-            </div>
-          )}
+          ) : null}
           <PulseChip icon={UserRound} label="Players" value={String(home.metrics.players)} />
           <PulseChip icon={Users} label="Teams" value={String(home.metrics.teams)} />
           <PulseChip icon={ClipboardCheck} label="RSVP" value={String(home.metrics.rsvpNeeded)} urgent={home.metrics.rsvpNeeded > 0} />
@@ -502,24 +505,27 @@ export function Home({ auth }: { auth: AuthState }) {
         </div>
       </section>
 
-      <div className="home-section-nav sticky top-24 z-30 -mx-1 overflow-x-auto bg-gray-50/95 py-2 backdrop-blur">
-        <div className="grid min-w-max grid-cols-5 gap-1 rounded-2xl border border-gray-200 bg-white p-1 shadow-sm">
-          {homeSections.map((section) => {
-            const active = activeSection === section.id;
-            return (
-              <button
-                key={section.id}
-                type="button"
-                className={`min-h-10 rounded-xl px-3 text-sm font-black transition ${active ? 'bg-primary-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-950'}`}
-                onClick={() => selectSection(section.id)}
-                aria-pressed={active}
-              >
-                {section.label}
-              </button>
-            );
-          })}
+      <nav ref={homeSectionNavRef} className="home-section-nav sticky top-24 z-30 -mx-1 bg-gray-50/95 py-2 backdrop-blur" aria-label="Home sections">
+        <div className="home-section-scroll overflow-x-auto px-1">
+          <div className="grid min-w-max grid-cols-5 gap-1 rounded-2xl border border-gray-200 bg-white p-1 shadow-sm">
+            {homeSections.map((section) => {
+              const active = activeSection === section.id;
+              return (
+                <Link
+                  key={section.id}
+                  to={getHomeSectionRoute(section.id)}
+                  data-home-section={section.id}
+                  className={`flex min-h-11 snap-start items-center justify-center rounded-xl px-3 text-sm font-black transition ${active ? 'bg-primary-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-950'}`}
+                  onClick={() => selectSection(section.id)}
+                  aria-current={active ? 'page' : undefined}
+                >
+                  {section.label}
+                </Link>
+              );
+            })}
+          </div>
         </div>
-      </div>
+      </nav>
 
       {error ? <Status tone="error" message={error} /> : null}
       {socialStatus ? <Status tone={socialStatus.tone} message={socialStatus.message} /> : null}
@@ -583,6 +589,69 @@ export function Home({ auth }: { auth: AuthState }) {
   );
 }
 
+function SignedOutHome() {
+  return (
+    <div className="home-public-welcome mx-auto max-w-4xl space-y-4">
+      <section className="app-card overflow-hidden border-primary-100">
+        <div className="bg-gradient-to-br from-primary-700 via-primary-600 to-indigo-500 px-5 py-7 text-white sm:px-8 sm:py-9">
+          <div className="app-label !text-primary-100">ALL PLAYS</div>
+          <h1 className="mt-2 max-w-2xl text-3xl font-black leading-tight sm:text-4xl">Your sports day, organized</h1>
+          <p className="mt-3 max-w-2xl text-sm font-semibold leading-6 text-primary-50 sm:text-base">
+            Keep schedules, team updates, player access, availability, and family tasks together in one trusted place.
+          </p>
+          <div className="mt-5 flex flex-col gap-2 sm:flex-row">
+            <Link to="/auth?mode=signup&next=%2Fhome" className="primary-button !min-h-11 justify-center !bg-white !bg-none !text-primary-700 hover:!bg-primary-50">
+              <UserPlus className="h-5 w-5" aria-hidden="true" />
+              Create account
+            </Link>
+            <Link to="/auth?next=%2Fhome" className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-white/40 bg-white/10 px-4 text-sm font-black text-white transition hover:bg-white/20">
+              <Shield className="h-5 w-5" aria-hidden="true" />
+              Sign in
+            </Link>
+          </div>
+        </div>
+        <div className="grid gap-3 bg-gray-50 p-3 sm:grid-cols-2 sm:p-4">
+          <PublicBenefitCard icon={CalendarDays} title="Know what is next" detail="See upcoming games, practices, availability requests, and assignments." />
+          <PublicBenefitCard icon={Users} title="Keep everyone connected" detail="Link players and teams to bring messages, packets, fees, and updates into Home." />
+        </div>
+      </section>
+
+      <section className="app-card flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="text-base font-black text-gray-950">Want to explore first?</h2>
+          <p className="mt-1 text-sm font-semibold text-gray-600">Browse public teams and sports opportunities without creating an account.</p>
+        </div>
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <Link to="/discover" className="ghost-button !min-h-11 justify-center">Discover</Link>
+          <Link to="/teams/browse" className="ghost-button !min-h-11 justify-center">Find teams</Link>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function PublicBenefitCard({ icon: Icon, title, detail }: { icon: LucideIcon; title: string; detail: string }) {
+  return (
+    <div className="flex items-start gap-3 rounded-xl border border-gray-200 bg-white p-4">
+      <div className="flex h-11 w-11 flex-none items-center justify-center rounded-xl bg-primary-50 text-primary-700 ring-1 ring-primary-100">
+        <Icon className="h-5 w-5" aria-hidden="true" />
+      </div>
+      <div className="min-w-0">
+        <h2 className="text-sm font-black text-gray-950">{title}</h2>
+        <p className="mt-1 text-xs font-semibold leading-5 text-gray-600">{detail}</p>
+      </div>
+    </div>
+  );
+}
+
+function getHomeRoleContext(auth: AuthState, officialsAccess: { hasAccess: boolean; teamCount: number } | null) {
+  if (auth.isPlatformAdmin || auth.isAdmin) return 'Administration';
+  if (auth.isCoach) return 'Coach home';
+  if (officialsAccess?.hasAccess) return 'Official assignments';
+  if (auth.isParent) return 'Family home';
+  return 'Teams and updates';
+}
+
 function TodaySection({
   home,
   social,
@@ -608,6 +677,7 @@ function TodaySection({
   const firstUnreadTeam = unreadTeams[0] || null;
   const nextEvent = nextEvents[0] || null;
   const remainingActions = topAction ? home.actionItems.slice(1, 6) : home.actionItems.slice(0, 6);
+  const remainingActionCount = Math.max(0, home.actionItems.length - (topAction ? 1 : 0));
   const isFirstRunParent = home.players.length === 0 && home.teams.length === 0;
 
   if (isFirstRunParent) {
@@ -679,11 +749,11 @@ function TodaySection({
         <div className="flex items-center justify-between gap-3">
           <div>
             <div className="app-label">To-do list</div>
-            <h2 className="mt-1 app-section-title">{topAction ? 'More to do' : 'Needs Attention'}</h2>
+            <h2 className="mt-1 app-section-title">{topAction ? (remainingActionCount ? 'More to do' : 'Priority only') : 'Needs Attention'}</h2>
           </div>
           <div className="flex items-center gap-2">
             {home.metrics.rsvpNeeded > 1 ? <MultiRsvpLink to="/schedule?bulkRsvp=1" /> : null}
-            <span className="rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-xs font-black text-gray-600">{home.actionItems.length}</span>
+            <span className="rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-xs font-black text-gray-600">{remainingActionCount}</span>
           </div>
         </div>
         <div className="mt-3 space-y-2">
@@ -691,6 +761,14 @@ function TodaySection({
             <ActionRow key={action.id} action={action} />
           )) : !hasLoadedHomeDetails ? (
             <HomeDetailsLoadingState message="Checking for parent actions…" />
+          ) : topAction ? (
+            <div className="flex items-start gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3">
+              <CheckCircle2 className="mt-0.5 h-5 w-5 flex-none text-gray-600" aria-hidden="true" />
+              <div>
+                <div className="text-sm font-black text-gray-900">Priority shown above</div>
+                <div className="mt-0.5 text-xs font-semibold text-gray-600">Your only open action is highlighted above.</div>
+              </div>
+            </div>
           ) : (
             <div className="flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3">
               <CheckCircle2 className="mt-0.5 h-5 w-5 flex-none text-emerald-700" aria-hidden="true" />
@@ -885,7 +963,19 @@ function SignalCard({ icon: Icon, label, value, detail, to, urgent = false }: { 
 
 function PlayersSection({ players }: { players: ParentHomePlayer[] }) {
   if (!players.length) {
-    return <EmptyCard icon={UserRound} title="No players linked yet" detail="Redeem an invite code or request team access." />;
+    return (
+      <EmptyCard
+        icon={UserRound}
+        title="No players linked yet"
+        detail="Accept an invite or request access to bring a player's schedule and team activity into Home."
+        actions={(
+          <>
+            <Link to="/accept-invite" className="primary-button !min-h-11 justify-center text-sm">Accept invite</Link>
+            <Link to="/parent-tools/access" className="ghost-button !min-h-11 justify-center text-sm">Request player access</Link>
+          </>
+        )}
+      />
+    );
   }
 
   const rsvpPlayers = players.filter((player) => player.rsvpNeeded > 0);
@@ -915,7 +1005,19 @@ function PlayersSection({ players }: { players: ParentHomePlayer[] }) {
 
 function TeamsSection({ teams, players }: { teams: ParentHomeTeam[]; players: ParentHomePlayer[] }) {
   if (!teams.length) {
-    return <EmptyCard icon={Users} title="No teams available" detail="Team access appears after a player is linked." />;
+    return (
+      <EmptyCard
+        icon={Users}
+        title="No teams available"
+        detail="Request player access for a private team or browse teams that are public."
+        actions={(
+          <>
+            <Link to="/parent-tools/access" className="primary-button !min-h-11 justify-center text-sm">Request player access</Link>
+            <Link to="/teams/browse" className="ghost-button !min-h-11 justify-center text-sm">Find teams</Link>
+          </>
+        )}
+      />
+    );
   }
 
   const rsvpTeamIds = [...new Set(players.filter((player) => player.rsvpNeeded > 0).map((player) => player.teamId))];
@@ -1174,31 +1276,33 @@ function FeedSection({
             <p className="mt-1 text-xs font-semibold text-gray-500">Posts and highlights shared by you, friends, and your teams.</p>
           </div>
           <div className="flex flex-none items-center gap-2">
-            <button type="button" className="ghost-button !h-9 !min-h-9 !w-9 !p-0" onClick={() => onRefresh()} disabled={loading} aria-label="Refresh feed" title="Refresh feed">
+            <button type="button" className="ghost-button !h-11 !min-h-11 !w-11 !p-0" onClick={() => onRefresh()} disabled={loading} aria-label="Refresh feed" title="Refresh feed">
               {loading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <RefreshCw className="h-4 w-4" aria-hidden="true" />}
             </button>
-            {filter === 'opportunities' ? <Link to="/discover/new" className="primary-button !min-h-9 !px-3 text-xs">
+            {filter === 'opportunities' ? <Link to="/discover/new" className="primary-button !min-h-11 !px-3 text-xs">
               <Plus className="h-4 w-4" aria-hidden="true" />
               Post opportunity
-            </Link> : <button type="button" className="primary-button !min-h-9 !px-3 text-xs" onClick={() => onOpenComposer()}>
+            </Link> : <button type="button" className="primary-button !min-h-11 !px-3 text-xs" onClick={() => onOpenComposer()}>
               <Plus className="h-4 w-4" aria-hidden="true" />
               Post
             </button>}
           </div>
         </div>
-        <div className="overflow-x-auto border-b border-gray-100 px-3 py-2">
-          <div className="flex min-w-max gap-1">
-            {socialFeedFilters.map((option) => (
-              <button
-                key={option.id}
-                type="button"
-                className={`min-h-8 rounded-full px-3 text-xs font-black transition ${filter === option.id ? 'bg-gray-950 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-950'}`}
-                onClick={() => setFilter(option.id)}
-                aria-pressed={filter === option.id}
-              >
-                {option.label}
-              </button>
-            ))}
+        <div className="feed-filter-nav relative border-b border-gray-100">
+          <div className="feed-filter-scroll overflow-x-auto px-3 py-2" role="group" aria-label="Feed filters">
+            <div className="flex min-w-max gap-1">
+              {socialFeedFilters.map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  className={`min-h-11 snap-start rounded-full px-3 text-xs font-black transition ${filter === option.id ? 'bg-gray-950 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-950'}`}
+                  onClick={() => setFilter(option.id)}
+                  aria-pressed={filter === option.id}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
         <div className="grid gap-3 p-3 xl:grid-cols-[minmax(0,1fr)_280px]">
@@ -1216,7 +1320,16 @@ function FeedSection({
                 onOptimisticHide={setPostOptimisticallyHidden}
               />
             )) : (
-              <EmptyCard icon={Newspaper} title="No posts for this filter" detail={home.teams.length ? 'Try another filter or create a post for your team.' : 'Link a team or player to unlock team feed activity.'} />
+              <EmptyCard
+                icon={Newspaper}
+                title="No posts for this filter"
+                detail={home.teams.length ? 'Create the first update or choose another filter.' : 'Link a team or player to unlock team feed activity.'}
+                actions={home.teams.length ? (
+                  <button type="button" className="primary-button !min-h-11 justify-center text-sm" onClick={() => onOpenComposer()}>Create a post</button>
+                ) : (
+                  <Link to="/parent-tools/access" className="primary-button !min-h-11 justify-center text-sm">Link a player</Link>
+                )}
+              />
             )}
           </div>
           <aside className="space-y-3">
@@ -1230,18 +1343,21 @@ function FeedSection({
                 <MiniMetric label="Requests" value={social.metrics.incomingRequests} urgent={social.metrics.incomingRequests > 0} />
                 <MiniMetric label="Ideas" value={social.metrics.suggestions} />
               </div>
-              <Link to="/home?section=friends" className="mt-3 flex min-h-9 items-center justify-between rounded-lg bg-white px-3 text-xs font-black text-primary-700 ring-1 ring-gray-200">
+              <Link to="/home?section=friends" className="mt-3 flex min-h-11 items-center justify-between rounded-lg bg-white px-3 text-xs font-black text-primary-700 ring-1 ring-gray-200">
                 Manage friends
                 <ChevronRight className="h-4 w-4" aria-hidden="true" />
               </Link>
             </section>
-            <section className="rounded-xl border border-primary-100 bg-primary-50 p-3">
-              <div className="flex items-center gap-2 text-sm font-black text-primary-900">
-                <Sparkles className="h-4 w-4 text-primary-700" aria-hidden="true" />
-                Quick shares
-              </div>
+            <details className="group rounded-xl border border-primary-100 bg-primary-50 p-3">
+              <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 text-sm font-black text-primary-900">
+                <span className="flex items-center gap-2">
+                  <Sparkles className="h-4 w-4 text-primary-700" aria-hidden="true" />
+                  Quick shares
+                </span>
+                <ChevronRight className="h-4 w-4 flex-none text-primary-500 transition group-open:rotate-90" aria-hidden="true" />
+              </summary>
               <div className="mt-2 grid gap-2">
-                <Link to="/discover/new" className="flex min-h-10 items-center justify-between rounded-lg bg-amber-50 px-3 text-left text-xs font-black text-amber-900 ring-1 ring-amber-100">
+                <Link to="/discover/new" className="flex min-h-11 items-center justify-between rounded-lg bg-amber-50 px-3 text-left text-xs font-black text-amber-900 ring-1 ring-amber-100">
                   Post public opportunity
                   <ChevronRight className="h-4 w-4 flex-none text-amber-600" aria-hidden="true" />
                 </Link>
@@ -1249,7 +1365,7 @@ function FeedSection({
                   <button
                     key={preset.id}
                     type="button"
-                    className="flex min-h-10 items-center justify-between rounded-lg bg-white px-3 text-left text-xs font-black text-primary-900 ring-1 ring-primary-100 transition hover:ring-primary-300"
+                    className="flex min-h-11 items-center justify-between rounded-lg bg-white px-3 text-left text-xs font-black text-primary-900 ring-1 ring-primary-100 transition hover:ring-primary-300"
                     onClick={() => onOpenComposer(preset.type)}
                   >
                     {preset.label}
@@ -1257,7 +1373,7 @@ function FeedSection({
                   </button>
                 ))}
               </div>
-            </section>
+            </details>
           </aside>
         </div>
       </div>
@@ -1579,7 +1695,9 @@ function FriendsSection({
           <h2 className="mt-1 app-section-title">Friends</h2>
           <p className="mt-1 text-xs font-semibold leading-5 text-gray-500">Find trusted families, approve requests, and choose who can see player moments.</p>
           <form className="mt-3 flex gap-2" onSubmit={handleSearch}>
+            <label htmlFor="home-friend-search" className="sr-only">Search friends by name, email, or team</label>
             <input
+              id="home-friend-search"
               value={queryText}
               onChange={(event) => setQueryText(event.target.value)}
               className="min-h-11 min-w-0 flex-1 rounded-xl border border-gray-200 bg-gray-50 px-3 text-sm font-semibold outline-none focus:border-primary-400 focus:bg-white focus:ring-2 focus:ring-primary-100"
@@ -1598,7 +1716,7 @@ function FriendsSection({
                 <div className="text-sm font-black text-rose-800">Couldn't load friend requests</div>
                 <div className="mt-0.5 text-xs font-semibold text-rose-700">{social.friendshipsError}</div>
               </div>
-              <button type="button" className="secondary-button !min-h-9" onClick={() => onRefresh()} disabled={loading}>Retry</button>
+              <button type="button" className="secondary-button !min-h-11" onClick={() => onRefresh()} disabled={loading}>Retry</button>
             </div>
           ) : null}
 
@@ -2304,12 +2422,13 @@ function PlayerAvatar({ name }: { name: string }) {
   );
 }
 
-function EmptyCard({ icon: Icon, title, detail }: { icon: LucideIcon; title: string; detail: string }) {
+function EmptyCard({ icon: Icon, title, detail, actions }: { icon: LucideIcon; title: string; detail: string; actions?: ReactNode }) {
   return (
     <section className="app-card p-5 text-center">
       <Icon className="mx-auto h-8 w-8 text-gray-300" aria-hidden="true" />
       <div className="mt-3 text-sm font-black text-gray-900">{title}</div>
       <div className="mt-1 text-xs font-semibold text-gray-500">{detail}</div>
+      {actions ? <div className="mx-auto mt-4 grid max-w-md gap-2 sm:grid-cols-2">{actions}</div> : null}
     </section>
   );
 }
@@ -2317,11 +2436,11 @@ function EmptyCard({ icon: Icon, title, detail }: { icon: LucideIcon; title: str
 function HomeLoadErrorState({ error, onRetry, retrying }: { error: AppServiceError | null; onRetry: () => void; retrying: boolean }) {
   const copy = getHomeLoadErrorStateCopy(error);
   return (
-    <section className="app-card p-5 text-center">
+    <section className="app-card p-5 text-center" role="alert">
       <AlertCircle className="mx-auto h-8 w-8 text-rose-400" aria-hidden="true" />
-      <div className="mt-3 text-sm font-black text-gray-900">{copy.title}</div>
+      <h2 className="mt-3 text-sm font-black text-gray-900">{copy.title}</h2>
       <div className="mt-1 text-xs font-semibold text-gray-500">{copy.detail}</div>
-      <button type="button" className="primary-button mx-auto mt-4 !min-h-10 !px-4 text-sm" onClick={onRetry} disabled={retrying} aria-label="Retry loading Home">
+      <button type="button" className="primary-button mx-auto mt-4 !min-h-11 !px-4 text-sm" onClick={onRetry} disabled={retrying} aria-label="Retry loading Home">
         {retrying ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <RefreshCw className="h-4 w-4" aria-hidden="true" />}
         Retry
       </button>
@@ -2332,7 +2451,12 @@ function HomeLoadErrorState({ error, onRetry, retrying }: { error: AppServiceErr
 function Status({ tone, message }: { tone: 'error' | 'success'; message: string }) {
   const isError = tone === 'error';
   return (
-    <div className={`flex items-start gap-2 rounded-xl border px-3 py-2 text-sm font-semibold ${isError ? 'border-rose-200 bg-rose-50 text-rose-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}>
+    <div
+      className={`flex items-start gap-2 rounded-xl border px-3 py-2 text-sm font-semibold ${isError ? 'border-rose-200 bg-rose-50 text-rose-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}
+      role={isError ? 'alert' : 'status'}
+      aria-live={isError ? 'assertive' : 'polite'}
+      aria-atomic="true"
+    >
       {isError ? <AlertCircle className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" /> : <CheckCircle2 className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" />}
       {message}
     </div>
