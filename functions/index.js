@@ -64,6 +64,7 @@ const {
   buildRsvpTokenAuditPayload
 } = require('./rsvp-token-core.cjs');
 const { isAllowedPublicRsvpOrigin } = require('./public-rsvp-cors-core.cjs');
+const { isAllowedTelemetryOrigin } = require('./telemetry-cors-core.cjs');
 const {
   normalizeText,
   resolveTeamEmailRecipients,
@@ -4794,10 +4795,6 @@ function isAllowedOrigin(origin) {
   return allowedOriginSet.has(origin);
 }
 
-function isAllowedTelemetryOrigin(origin) {
-  return !!origin && allowedOriginSet.has(origin);
-}
-
 function writeCorsHeaders(req, res, methods = 'GET,OPTIONS') {
   const origin = req.headers.origin;
   if (origin && allowedOriginSet.has(origin)) {
@@ -4806,6 +4803,17 @@ function writeCorsHeaders(req, res, methods = 'GET,OPTIONS') {
   }
   res.set('Access-Control-Allow-Methods', methods);
   res.set('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Firebase-AppCheck');
+  res.set('Cache-Control', 'no-store');
+}
+
+function writeTelemetryCorsHeaders(req, res) {
+  const origin = req.headers.origin;
+  if (isAllowedTelemetryOrigin(origin, allowedOriginSet)) {
+    res.set('Access-Control-Allow-Origin', origin);
+    res.set('Vary', 'Origin');
+  }
+  res.set('Access-Control-Allow-Methods', 'POST,OPTIONS');
+  res.set('Access-Control-Allow-Headers', 'Authorization, Content-Type');
   res.set('Cache-Control', 'no-store');
 }
 
@@ -12385,9 +12393,9 @@ exports.collectTelemetry = functions
   .runWith({ timeoutSeconds: 15, memory: '256MB' })
   .https
   .onRequest(async (req, res) => {
-    writeCorsHeaders(req, res, 'POST,OPTIONS');
+    writeTelemetryCorsHeaders(req, res);
 
-    if (!isAllowedTelemetryOrigin(req.headers.origin)) {
+    if (!isAllowedTelemetryOrigin(req.headers.origin, allowedOriginSet)) {
       res.status(403).json({ ok: false, error: 'Origin not allowed' });
       return;
     }
