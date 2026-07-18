@@ -126,15 +126,6 @@ jobs:
       - name: Install Functions dependencies
         run: npm ci --prefix functions
 
-      - name: Authenticate to Google Cloud through exact-workflow OIDC
-        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
-        with:
-          workload_identity_provider: ${{ vars.FIREBASE_DEPLOY_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ vars.FIREBASE_DEPLOY_SERVICE_ACCOUNT }}
-          project_id: game-flow-c6311
-          create_credentials_file: true
-          cleanup_credentials: true
-
       - name: Detect Storage rules changes
         id: storage_rules
         shell: bash
@@ -188,7 +179,23 @@ jobs:
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
+      # Resolve/download the exact CLI before requesting the five-minute GitHub
+      # OIDC credential. Credentialed steps below are each bounded to four minutes.
+      - name: Prime exact Firebase deploy CLI
+        run: npx firebase-tools@14.25.0 --version
+
+      - name: Authenticate Storage deploy through exact-workflow OIDC
+        id: google_auth_storage
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.FIREBASE_DEPLOY_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.FIREBASE_DEPLOY_SERVICE_ACCOUNT }}
+          project_id: game-flow-c6311
+          create_credentials_file: true
+          cleanup_credentials: true
+
       - name: Deploy Firebase Storage rules when available
+        timeout-minutes: 4
         shell: bash
         env:
           STORAGE_RULES_CHANGED: ${{ steps.storage_rules.outputs.changed }}
@@ -219,7 +226,33 @@ jobs:
           fi
           exit "$storage_status"
 
+      - name: Remove Storage deploy credential
+        if: always()
+        env:
+          GOOGLE_CREDENTIAL_FILE: ${{ steps.google_auth_storage.outputs.credentials_file_path }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$GOOGLE_CREDENTIAL_FILE" ]]; then
+            rm -f -- "$GOOGLE_CREDENTIAL_FILE"
+          fi
+          {
+            echo "CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE="
+            echo "GOOGLE_APPLICATION_CREDENTIALS="
+            echo "GOOGLE_GHA_CREDS_PATH="
+          } >> "$GITHUB_ENV"
+
+      - name: Authenticate production deploy through exact-workflow OIDC
+        id: google_auth_production
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.FIREBASE_DEPLOY_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.FIREBASE_DEPLOY_SERVICE_ACCOUNT }}
+          project_id: game-flow-c6311
+          create_credentials_file: true
+          cleanup_credentials: true
+
       - name: Deploy Firebase production
+        timeout-minutes: 4
         shell: bash
         env:
           FIRESTORE_CONFIG_CHANGED: ${{ steps.firestore_config.outputs.changed }}
@@ -270,4 +303,14 @@ jobs:
             # production deployment. Do not make a redundant Rules API write: an
             # unrelated Rules API outage must not fail a Hosting/Functions-only fix.
             retry_firebase_deploy "hosting,functions" "application"
+          fi
+
+      - name: Remove production deploy credential
+        if: always()
+        env:
+          GOOGLE_CREDENTIAL_FILE: ${{ steps.google_auth_production.outputs.credentials_file_path }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$GOOGLE_CREDENTIAL_FILE" ]]; then
+            rm -f -- "$GOOGLE_CREDENTIAL_FILE"
           fi

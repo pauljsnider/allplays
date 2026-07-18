@@ -132,6 +132,7 @@ jobs:
 
       - name: Deploy fixed Firebase Hosting preview channel
         id: deploy_preview
+        timeout-minutes: 4
         env:
           CURRENT_CHANNEL: pr-${{ steps.verify_trigger.outputs.pr_number }}
           GH_TOKEN: ${{ github.token }}
@@ -190,7 +191,7 @@ jobs:
           }
 
           preview_deploy_hit_auth_error() {
-            grep -Eiq 'Failed to authenticate|Command requires authentication|Unable to read the credential file specified by the GOOGLE_APPLICATION_CREDENTIALS' "$log_file"
+            grep -Eiq 'Failed to authenticate|Command requires authentication|Unable to read the credential file' "$log_file"
           }
 
           preview_deploy_hit_release_target_error() {
@@ -230,6 +231,11 @@ jobs:
           if [[ -n "$GOOGLE_CREDENTIAL_FILE" ]]; then
             rm -f -- "$GOOGLE_CREDENTIAL_FILE"
           fi
+          {
+            echo "CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE="
+            echo "GOOGLE_APPLICATION_CREDENTIALS="
+            echo "GOOGLE_GHA_CREDS_PATH="
+          } >> "$GITHUB_ENV"
 
       - name: Report preview URL on verified pull request
         if: success()

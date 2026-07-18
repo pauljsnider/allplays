@@ -159,6 +159,8 @@ service firebase.storage {
       contents: read
       id-token: write
     steps:
+      - name: Prime exact Firebase deploy CLI
+        run: npx firebase-tools@14.25.0 --version
       - name: Authenticate to Google Cloud through exact-workflow OIDC
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
@@ -167,6 +169,9 @@ service firebase.storage {
           project_id: game-flow-c6311
           create_credentials_file: true
           cleanup_credentials: true
+      - name: Deploy Firebase
+        timeout-minutes: 4
+        run: npx firebase-tools@14.25.0 deploy --only hosting --project game-flow-c6311
         `;
 
         expect(() => validateFirebaseDeployWorkloadIdentity(validWorkflow, 'Test deploy')).not.toThrow();
@@ -181,11 +186,47 @@ service firebase.storage {
         expect(() => validateFirebaseDeployWorkloadIdentity(
             validWorkflow.replace('workload_identity_provider:', 'provider:'),
             'Test deploy'
-        )).toThrow('Test deploy workload identity provider variable');
+        )).toThrow('Test deploy workload identity provider variable is missing or changed');
         expect(() => validateFirebaseDeployWorkloadIdentity(
-            `${validWorkflow}\ncredentials_json: \${{ secrets.FIREBASE_SERVICE_ACCOUNT_GAME_FLOW_C6311 }}`,
+            validWorkflow.replace(
+                'create_credentials_file: true',
+                'create_credentials_file: true\n          credentials_json: \${{ secrets.FIREBASE_SERVICE_ACCOUNT_GAME_FLOW_C6311 }}'
+            ),
             'Test deploy'
-        )).toThrow('Test deploy must not use a long-lived Google service-account key');
+        )).toThrow('Test deploy must not use a long-lived Google service-account key or static ADC input');
+        expect(() => validateFirebaseDeployWorkloadIdentity(
+            validWorkflow.replace(
+                'run: npx firebase-tools@14.25.0 deploy',
+                'env:\n          GOOGLE_APPLICATION_CREDENTIALS : \${{ secrets.RENAMED_KEY }}\n        run: npx firebase-tools@14.25.0 deploy'
+            ),
+            'Test deploy'
+        )).toThrow('Test deploy must not use a long-lived Google service-account key or static ADC input');
+        expect(() => validateFirebaseDeployWorkloadIdentity(
+            validWorkflow.replace('credentials_file: true', 'credentials_file: true\n          credentials_json : \${{ secrets.RENAMED_KEY }}'),
+            'Test deploy'
+        )).toThrow('Test deploy must not use a long-lived Google service-account key or static ADC input');
+        expect(() => validateFirebaseDeployWorkloadIdentity(
+            validWorkflow.replace(
+                'npx firebase-tools@14.25.0 deploy --only hosting',
+                'gcloud auth activate-service-account --key-file /tmp/key.json\n          npx firebase-tools@14.25.0 deploy --only hosting'
+            ),
+            'Test deploy'
+        )).toThrow('Test deploy must not use a long-lived Google service-account key or static ADC input');
+        expect(() => validateFirebaseDeployWorkloadIdentity(
+            validWorkflow.replace('timeout-minutes: 4', 'timeout-minutes: 6'),
+            'Test deploy'
+        )).toThrow('Test deploy credentialed deploy steps must have a four-minute timeout');
+        expect(() => validateFirebaseDeployWorkloadIdentity(
+            validWorkflow.replace(
+                '      - name: Deploy Firebase',
+                '      - name: Delay after authentication\n        run: sleep 1\n      - name: Deploy Firebase'
+            ),
+            'Test deploy'
+        )).toThrow('Test deploy must authenticate immediately before each Firebase deploy step');
+        expect(() => validateFirebaseDeployWorkloadIdentity(
+            validWorkflow.replace('run: npx firebase-tools@14.25.0 --version', 'run: echo not-primed'),
+            'Test deploy'
+        )).toThrow('Test deploy must resolve the exact Firebase CLI before requesting OIDC');
     });
 
     it('requires preview deploy release-target outage handling', () => {

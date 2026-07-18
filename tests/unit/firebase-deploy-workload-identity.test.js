@@ -29,8 +29,11 @@ describe('Firebase deploy Workload Identity boundary', () => {
             expect(workflow).toContain('create_credentials_file: true');
             expect(workflow).toContain('cleanup_credentials: true');
             expect(workflow).not.toContain('secrets.FIREBASE_SERVICE_ACCOUNT_GAME_FLOW_C6311');
-            expect(workflow).not.toContain('credentials_json:');
+            expect(workflow).not.toMatch(/credentials_json\s*:/i);
+            expect(workflow).not.toMatch(/^\s*GOOGLE_APPLICATION_CREDENTIALS\s*:\s*\S+/m);
         }
+        expect(production.match(/google-github-actions\/auth@[0-9a-f]{40}/g)).toHaveLength(2);
+        expect(preview.match(/google-github-actions\/auth@[0-9a-f]{40}/g)).toHaveLength(1);
     });
 
     it('withholds preview OIDC until all untrusted input checks finish', () => {
@@ -39,6 +42,7 @@ describe('Firebase deploy Workload Identity boundary', () => {
         const install = preview.indexOf('run: npm ci --ignore-scripts');
         const exactHeadCheck = preview.indexOf('name: Re-verify current pull-request head before credentials');
         const authentication = preview.indexOf('uses: google-github-actions/auth@');
+        const deployStep = preview.indexOf('name: Deploy fixed Firebase Hosting preview channel');
         const deploy = preview.indexOf('hosting:channel:deploy "$CURRENT_CHANNEL"');
         const cleanup = preview.indexOf('name: Remove ephemeral Google credential file');
         const comment = preview.indexOf('name: Report preview URL on verified pull request');
@@ -51,6 +55,29 @@ describe('Firebase deploy Workload Identity boundary', () => {
         expect(deploy).toBeGreaterThan(authentication);
         expect(cleanup).toBeGreaterThan(deploy);
         expect(comment).toBeGreaterThan(cleanup);
+        expect(preview.slice(authentication, deployStep)).not.toContain('- name:');
+        expect(preview.slice(deployStep, cleanup)).toContain('timeout-minutes: 4');
+    });
+
+    it('refreshes production OIDC after every preflight and bounds each credentialed deploy', () => {
+        const firestoreDetection = production.indexOf('name: Detect Firestore configuration changes');
+        const primeCli = production.indexOf('name: Prime exact Firebase deploy CLI');
+        const storageAuth = production.indexOf('name: Authenticate Storage deploy through exact-workflow OIDC');
+        const storageDeploy = production.indexOf('name: Deploy Firebase Storage rules when available');
+        const storageCleanup = production.indexOf('name: Remove Storage deploy credential');
+        const productionAuth = production.indexOf('name: Authenticate production deploy through exact-workflow OIDC');
+        const productionDeploy = production.indexOf('name: Deploy Firebase production');
+
+        expect(primeCli).toBeGreaterThan(firestoreDetection);
+        expect(storageAuth).toBeGreaterThan(primeCli);
+        expect(storageDeploy).toBeGreaterThan(storageAuth);
+        expect(storageCleanup).toBeGreaterThan(storageDeploy);
+        expect(productionAuth).toBeGreaterThan(storageCleanup);
+        expect(productionDeploy).toBeGreaterThan(productionAuth);
+        expect(production.slice(storageAuth, storageDeploy)).not.toContain('run:');
+        expect(production.slice(productionAuth, productionDeploy)).not.toContain('run:');
+        expect(production.slice(storageDeploy, storageCleanup)).toContain('timeout-minutes: 4');
+        expect(production.slice(productionDeploy)).toContain('timeout-minutes: 4');
     });
 
     it('keeps rule-changing releases rules-first and skips unchanged rule writes', () => {

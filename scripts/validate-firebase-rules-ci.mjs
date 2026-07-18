@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
+import { parse as parseYaml } from 'yaml';
 
 function readText(path) {
     return readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
@@ -56,28 +57,127 @@ export function validatePreviewDeployCommand(deployPreview) {
 }
 
 export function validateFirebaseDeployWorkloadIdentity(workflow, label) {
-    assertIncludes(workflow, 'id-token: write', `${label} OIDC token permission`);
-    assertMatches(
-        workflow,
-        /uses: google-github-actions\/auth@[0-9a-f]{40}(?:\s+# v3)?/,
-        `${label} pinned Google authentication action`
+    let parsed;
+    try {
+        parsed = parseYaml(workflow);
+    } catch (error) {
+        throw new Error(`${label} workflow YAML is invalid: ${error.message}`);
+    }
+
+    const objects = [];
+    const scalarStrings = [];
+    const visit = (value) => {
+        if (Array.isArray(value)) {
+            for (const item of value) visit(item);
+            return;
+        }
+        if (value && typeof value === 'object') {
+            objects.push(value);
+            for (const child of Object.values(value)) visit(child);
+            return;
+        }
+        if (typeof value === 'string') scalarStrings.push(value);
+    };
+    visit(parsed);
+
+    const hasOidcPermission = objects.some((value) =>
+        value.permissions && value.permissions['id-token'] === 'write'
     );
-    assertIncludes(
-        workflow,
-        'workload_identity_provider: ${{ vars.FIREBASE_DEPLOY_WORKLOAD_IDENTITY_PROVIDER }}',
-        `${label} workload identity provider variable`
+    if (!hasOidcPermission) {
+        throw new Error(`${label} OIDC token permission is missing: id-token: write`);
+    }
+
+    const authSteps = objects.filter((value) =>
+        typeof value.uses === 'string' && value.uses.startsWith('google-github-actions/auth@')
     );
-    assertIncludes(
-        workflow,
-        'service_account: ${{ vars.FIREBASE_DEPLOY_SERVICE_ACCOUNT }}',
-        `${label} service account variable`
-    );
-    assertIncludes(workflow, 'project_id: game-flow-c6311', `${label} Firebase project binding`);
-    assertIncludes(workflow, 'create_credentials_file: true', `${label} ADC credential file`);
-    assertIncludes(workflow, 'cleanup_credentials: true', `${label} credential cleanup`);
-    if (workflow.includes('secrets.FIREBASE_SERVICE_ACCOUNT_GAME_FLOW_C6311') ||
-        workflow.includes('credentials_json:')) {
-        throw new Error(`${label} must not use a long-lived Google service-account key.`);
+    if (authSteps.length === 0 || authSteps.some((step) =>
+        !/^google-github-actions\/auth@[0-9a-f]{40}$/.test(step.uses)
+    )) {
+        throw new Error(`${label} pinned Google authentication action did not match an exact commit.`);
+    }
+
+    for (const step of authSteps) {
+        const inputs = step.with || {};
+        if (inputs.workload_identity_provider !== '${{ vars.FIREBASE_DEPLOY_WORKLOAD_IDENTITY_PROVIDER }}') {
+            throw new Error(`${label} workload identity provider variable is missing or changed.`);
+        }
+        if (inputs.service_account !== '${{ vars.FIREBASE_DEPLOY_SERVICE_ACCOUNT }}') {
+            throw new Error(`${label} service account variable is missing or changed.`);
+        }
+        if (inputs.project_id !== 'game-flow-c6311') {
+            throw new Error(`${label} Firebase project binding is missing or changed.`);
+        }
+        if (inputs.create_credentials_file !== true) {
+            throw new Error(`${label} ADC credential file must be enabled.`);
+        }
+        if (inputs.cleanup_credentials !== true) {
+            throw new Error(`${label} credential cleanup must be enabled.`);
+        }
+    }
+
+    let deployStepCount = 0;
+    for (const object of objects) {
+        if (!Array.isArray(object.steps)) continue;
+        for (let index = 0; index < object.steps.length; index += 1) {
+            const step = object.steps[index];
+            if (!step || typeof step.run !== 'string' ||
+                !/(?:firebase-tools@\S+|(?:^|\/)firebase)\s+(?:hosting:channel:)?deploy\b/m.test(step.run)) {
+                continue;
+            }
+            deployStepCount += 1;
+            if (!Number.isInteger(step['timeout-minutes']) || step['timeout-minutes'] > 4) {
+                throw new Error(`${label} credentialed deploy steps must have a four-minute timeout.`);
+            }
+            const authStep = object.steps[index - 1];
+            if (!authStep || typeof authStep.uses !== 'string' ||
+                !/^google-github-actions\/auth@[0-9a-f]{40}$/.test(authStep.uses)) {
+                throw new Error(`${label} must authenticate immediately before each Firebase deploy step.`);
+            }
+
+            const npxCli = step.run.match(/npx\s+(firebase-tools@[^\s]+)\s+deploy\b/);
+            if (npxCli) {
+                const primedBeforeAuth = object.steps.slice(0, index - 1).some((candidate) =>
+                    typeof candidate?.run === 'string' &&
+                    candidate.run.includes(`npx ${npxCli[1]} --version`)
+                );
+                if (!primedBeforeAuth) {
+                    throw new Error(`${label} must resolve the exact Firebase CLI before requesting OIDC.`);
+                }
+            }
+        }
+    }
+    if (deployStepCount === 0) {
+        throw new Error(`${label} Firebase deploy step is missing.`);
+    }
+
+    const forbiddenMappingKeys = new Set([
+        'credentials_json',
+        'firebase_token',
+        'google_application_credentials',
+        'google_credentials'
+    ]);
+    for (const object of objects) {
+        for (const key of Object.keys(object)) {
+            if (forbiddenMappingKeys.has(key.trim().toLowerCase())) {
+                throw new Error(`${label} must not use a long-lived Google service-account key or static ADC input.`);
+            }
+        }
+    }
+
+    const scalarPolicyText = scalarStrings
+        .flatMap((value) => value.split('\n'))
+        .filter((line) => !/^\s*echo\s+["'](?:CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE|GOOGLE_APPLICATION_CREDENTIALS|GOOGLE_GHA_CREDS_PATH)=["']\s*$/.test(line))
+        .join('\n');
+    const forbiddenScalarPatterns = [
+        /credentials[\s_-]*json\s*:/i,
+        /GOOGLE_APPLICATION_CREDENTIALS/i,
+        /gcloud\s+auth\s+activate-service-account/i,
+        /--key-file(?:=|\s)/i,
+        /secrets\.[A-Z0-9_]*(?:SERVICE_ACCOUNT|GOOGLE[^\s}]*(?:KEY|CREDENTIAL))/i,
+        /["']?type["']?\s*:\s*["']service_account["']/i
+    ];
+    if (forbiddenScalarPatterns.some((pattern) => pattern.test(scalarPolicyText))) {
+        throw new Error(`${label} must not use a long-lived Google service-account key or static ADC input.`);
     }
 }
 
