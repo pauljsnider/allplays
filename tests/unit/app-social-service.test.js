@@ -12,7 +12,10 @@ const firebaseMocks = vi.hoisted(() => ({
     updateDoc: vi.fn(),
     query: vi.fn((collectionRef, ...clauses) => ({ collectionRef, clauses })),
     where: vi.fn((field, op, value) => ({ field, op, value })),
+    orderBy: vi.fn((field, direction) => ({ field, direction })),
     limit: vi.fn((count) => ({ count })),
+    startAfter: vi.fn((cursor) => ({ cursor })),
+    runTransaction: vi.fn(),
     Timestamp: { now: vi.fn(() => ({ seconds: 4102444800, toDate: () => new Date('2100-01-01T00:00:00Z') })) },
     serverTimestamp: vi.fn(() => ({ __serverTimestamp: true }))
 }));
@@ -80,7 +83,7 @@ describe('React app social service', () => {
     it('creates user-authored social posts with team, player, media, and visibility metadata', async () => {
         const { createSocialPost } = await import('../../apps/app/src/lib/socialService.ts');
 
-        const id = await createSocialPost(user, {
+        const post = await createSocialPost(user, {
             type: 'player_moment',
             visibility: 'friends_and_team',
             title: 'Pat Star highlight',
@@ -95,7 +98,12 @@ describe('React app social service', () => {
             visibleUserIds: ['friend-1']
         });
 
-        expect(id).toBe('post-new');
+        expect(post).toMatchObject({
+            id: 'post-new',
+            authorId: 'user-1',
+            title: 'Pat Star highlight',
+            viewerHasLiked: false
+        });
         expect(firebaseMocks.addDoc).toHaveBeenCalledWith(
             expect.objectContaining({ path: ['socialPosts'] }),
             expect.objectContaining({
@@ -161,7 +169,7 @@ describe('React app social service', () => {
         expect(firebaseMocks.updateDoc).toHaveBeenCalledWith(expect.objectContaining({ path: ['friendships', 'friend-1__user-1'] }), expect.objectContaining({ status: 'blocked', blockedBy: ['user-1'] }));
     });
 
-    it('loads visible posts, friendships, suggestions, and derived prompts into the social home model', async () => {
+    it('loads only persisted visible posts, friendships, and suggestions into the social home model', async () => {
         const { loadSocialHome } = await import('../../apps/app/src/lib/socialService.ts');
         const home = {
             players: [{
@@ -224,13 +232,132 @@ describe('React app social service', () => {
 
         const model = await loadSocialHome(user, home);
 
-        expect(model.feedItems.map((item) => item.id)).toEqual(expect.arrayContaining(['post-1', 'derived:player:team-1:player-1']));
+        expect(model.feedItems.map((item) => item.id)).toEqual(['post-1']);
+        expect(model.feedItems.some((item) => item.id.startsWith('derived:'))).toBe(false);
         expect(model.incomingRequests).toEqual([expect.objectContaining({ userId: 'friend-1', name: 'Jamie Friend' })]);
         expect(model.suggestions).toEqual([expect.objectContaining({ userId: 'friend-2', name: 'Morgan Parent' })]);
-        expect(model.metrics.feedItems).toBeGreaterThanOrEqual(2);
+        expect(model.metrics.feedItems).toBe(1);
         expect(firebaseMocks.where).toHaveBeenCalledWith('requesterId', '==', 'user-1');
         expect(firebaseMocks.where).toHaveBeenCalledWith('recipientId', '==', 'user-1');
         expect(firebaseMocks.where).not.toHaveBeenCalledWith('memberIds', 'array-contains', 'user-1');
+    });
+
+    it('merges query results newest-first and applies viewer-local hide and reaction state', async () => {
+        const { loadVisibleSocialPosts } = await import('../../apps/app/src/lib/socialService.ts');
+        firebaseMocks.getDocs.mockImplementation(async (queryRef) => {
+            const path = queryRef.collectionRef?.path || [];
+            if (path.join('/') === 'users/user-1/hiddenSocialPosts') {
+                return snapshot([{ id: 'post-hidden', postId: 'post-hidden' }]);
+            }
+            if (path.join('/') === 'socialPosts') {
+                const whereClause = queryRef.clauses.find((clause) => clause.field);
+                if (whereClause?.field === 'teamId') {
+                    return snapshot([
+                        { id: 'post-newest', authorId: 'friend-2', title: 'Newest', createdAt: { seconds: 4102444900 }, playerIds: [], playerNames: [], media: [] }
+                    ]);
+                }
+                return snapshot([
+                    { id: 'post-hidden', authorId: 'friend-1', title: 'Hidden', createdAt: { seconds: 4102444700 }, playerIds: [], playerNames: [], media: [] },
+                    { id: 'post-visible', authorId: 'friend-1', title: 'Visible', createdAt: { seconds: 4102444800 }, playerIds: [], playerNames: [], media: [] }
+                ]);
+            }
+            return snapshot([]);
+        });
+        firebaseMocks.getDoc.mockImplementation(async (ref) => ({
+            exists: () => ref.path.includes('reactions') && ref.path.includes('post-visible')
+        }));
+
+        const posts = await loadVisibleSocialPosts(user, {
+            players: [], teams: [{ teamId: 'team-1', teamName: 'Bears' }], upcomingEvents: [], actionItems: [], fees: [],
+            metrics: { players: 0, teams: 1, rsvpNeeded: 0, unreadMessages: 0, packetsReady: 0 }
+        });
+
+        expect(posts).toEqual([
+            expect.objectContaining({ id: 'post-newest', viewerHasLiked: false }),
+            expect.objectContaining({ id: 'post-visible', viewerHasLiked: true })
+        ]);
+        const socialPostQueries = firebaseMocks.getDocs.mock.calls
+            .map(([queryRef]) => queryRef)
+            .filter((queryRef) => queryRef.collectionRef?.path?.join('/') === 'socialPosts');
+        expect(socialPostQueries).toHaveLength(2);
+        socialPostQueries.forEach((queryRef) => {
+            expect(queryRef.clauses).toContainEqual({ field: 'hidden', op: '==', value: false });
+        });
+        expect(socialPostQueries).toContainEqual(expect.objectContaining({
+            clauses: expect.arrayContaining([{ field: 'teamId', op: '==', value: 'team-1' }])
+        }));
+        expect(firebaseMocks.orderBy).toHaveBeenCalledWith('createdAt', 'desc');
+        expect(firebaseMocks.where).toHaveBeenCalledWith('teamId', '==', 'team-1');
+        expect(firebaseMocks.where).toHaveBeenCalledWith('hidden', '==', false);
+    });
+
+    it('pages past a full hidden post window to return older visible feed items', async () => {
+        const { loadVisibleSocialPosts } = await import('../../apps/app/src/lib/socialService.ts');
+        const hiddenPosts = Array.from({ length: 30 }, (_, index) => ({
+            id: `hidden-${index}`,
+            authorId: 'friend-1',
+            title: `Hidden ${index}`,
+            createdAt: { seconds: 4102444900 - index },
+            playerIds: [],
+            playerNames: [],
+            media: []
+        }));
+        firebaseMocks.getDocs.mockImplementation(async (queryRef) => {
+            const path = queryRef.collectionRef?.path || [];
+            if (path.join('/') === 'users/user-1/hiddenSocialPosts') {
+                return snapshot(hiddenPosts.map(({ id }) => ({ id, postId: id })));
+            }
+            if (path.join('/') === 'socialPosts') {
+                const cursorClause = queryRef.clauses.find((clause) => clause.cursor);
+                return cursorClause
+                    ? snapshot([{
+                        id: 'older-visible',
+                        authorId: 'friend-1',
+                        title: 'Older visible post',
+                        createdAt: { seconds: 4102444700 },
+                        playerIds: [],
+                        playerNames: [],
+                        media: []
+                    }])
+                    : snapshot(hiddenPosts);
+            }
+            return snapshot([]);
+        });
+
+        const posts = await loadVisibleSocialPosts(user, {
+            players: [], teams: [], upcomingEvents: [], actionItems: [], fees: [],
+            metrics: { players: 0, teams: 0, rsvpNeeded: 0, unreadMessages: 0, packetsReady: 0 }
+        });
+
+        expect(posts.map((post) => post.id)).toEqual(['older-visible']);
+        expect(firebaseMocks.startAfter).toHaveBeenCalledWith(expect.objectContaining({ id: 'hidden-29' }));
+    });
+
+    it('loads every hidden-post page so hides beyond the first 200 stay durable', async () => {
+        const { loadVisibleSocialPosts } = await import('../../apps/app/src/lib/socialService.ts');
+        const firstHiddenPage = Array.from({ length: 200 }, (_, index) => ({ id: `hidden-${index}` }));
+        firebaseMocks.getDocs.mockImplementation(async (queryRef) => {
+            const path = queryRef.collectionRef?.path || [];
+            if (path.join('/') === 'users/user-1/hiddenSocialPosts') {
+                const cursorClause = queryRef.clauses.find((clause) => clause.cursor);
+                return cursorClause ? snapshot([{ id: 'hidden-200' }]) : snapshot(firstHiddenPage);
+            }
+            if (path.join('/') === 'socialPosts') {
+                return snapshot([
+                    { id: 'hidden-200', authorId: 'friend-1', title: 'Still hidden', createdAt: { seconds: 4102444900 }, playerIds: [], playerNames: [], media: [] },
+                    { id: 'visible-post', authorId: 'friend-1', title: 'Visible', createdAt: { seconds: 4102444800 }, playerIds: [], playerNames: [], media: [] }
+                ]);
+            }
+            return snapshot([]);
+        });
+
+        const posts = await loadVisibleSocialPosts(user, {
+            players: [], teams: [], upcomingEvents: [], actionItems: [], fees: [],
+            metrics: { players: 0, teams: 0, rsvpNeeded: 0, unreadMessages: 0, packetsReady: 0 }
+        });
+
+        expect(posts.map((post) => post.id)).toEqual(['visible-post']);
+        expect(firebaseMocks.startAfter).toHaveBeenCalledWith(expect.objectContaining({ id: 'hidden-199' }));
     });
 
     it('merges requested and received friendship queries without duplicate friends', async () => {
@@ -339,23 +466,62 @@ describe('React app social service', () => {
         });
     });
 
-    it('hides social posts with moderation fields only', async () => {
+    it('hides social posts only for the current viewer', async () => {
         const { hideSocialPost } = await import('../../apps/app/src/lib/socialService.ts');
 
         await hideSocialPost('post-1', user);
 
-        expect(firebaseMocks.updateDoc).toHaveBeenCalledWith(
-            expect.objectContaining({ path: ['socialPosts', 'post-1'] }),
+        expect(firebaseMocks.setDoc).toHaveBeenCalledWith(
+            expect.objectContaining({ path: ['users', 'user-1', 'hiddenSocialPosts', 'post-1'] }),
             {
-                hidden: true,
-                hiddenBy: 'user-1',
-                hiddenAt: { __serverTimestamp: true },
-                updatedAt: { __serverTimestamp: true }
+                postId: 'post-1',
+                hiddenAt: { __serverTimestamp: true }
             }
         );
-        expect(firebaseMocks.updateDoc.mock.calls[0][1]).not.toHaveProperty('teamId');
-        expect(firebaseMocks.updateDoc.mock.calls[0][1]).not.toHaveProperty('teamIds');
-        expect(firebaseMocks.updateDoc.mock.calls[0][1]).not.toHaveProperty('visibility');
-        expect(firebaseMocks.updateDoc.mock.calls[0][1]).not.toHaveProperty('visibleUserIds');
+        expect(firebaseMocks.updateDoc).not.toHaveBeenCalled();
+    });
+
+    it('atomically toggles the viewer reaction and parent like count', async () => {
+        const transaction = {
+            get: vi.fn()
+                .mockResolvedValueOnce({ exists: () => true, data: () => ({ reactionCounts: { like: 2 } }) })
+                .mockResolvedValueOnce({ exists: () => false }),
+            set: vi.fn(),
+            delete: vi.fn(),
+            update: vi.fn()
+        };
+        firebaseMocks.runTransaction.mockImplementationOnce(async (_db, callback) => callback(transaction));
+        const { reactToSocialPost } = await import('../../apps/app/src/lib/socialService.ts');
+
+        const result = await reactToSocialPost('post-1', user);
+
+        expect(result).toEqual({ liked: true, count: 3 });
+        expect(transaction.set).toHaveBeenCalledWith(
+            expect.objectContaining({ path: ['socialPosts', 'post-1', 'reactions', 'user-1'] }),
+            expect.objectContaining({ userId: 'user-1', reactionKey: 'like' })
+        );
+        expect(transaction.update).toHaveBeenCalledWith(
+            expect.objectContaining({ path: ['socialPosts', 'post-1'] }),
+            expect.objectContaining({ 'reactionCounts.like': 3 })
+        );
+    });
+
+    it('atomically removes an existing viewer reaction', async () => {
+        const transaction = {
+            get: vi.fn()
+                .mockResolvedValueOnce({ exists: () => true, data: () => ({ reactionCounts: { like: 2 } }) })
+                .mockResolvedValueOnce({ exists: () => true }),
+            set: vi.fn(),
+            delete: vi.fn(),
+            update: vi.fn()
+        };
+        firebaseMocks.runTransaction.mockImplementationOnce(async (_db, callback) => callback(transaction));
+        const { reactToSocialPost } = await import('../../apps/app/src/lib/socialService.ts');
+
+        const result = await reactToSocialPost('post-1', user);
+
+        expect(result).toEqual({ liked: false, count: 1 });
+        expect(transaction.delete).toHaveBeenCalledWith(expect.objectContaining({ path: ['socialPosts', 'post-1', 'reactions', 'user-1'] }));
+        expect(transaction.set).not.toHaveBeenCalled();
     });
 });

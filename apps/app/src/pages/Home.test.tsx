@@ -650,12 +650,12 @@ describe('Home', () => {
     renderHome(signedInAuth, '/home?section=feed');
 
     await screen.findByRole('heading', { name: 'Feed' });
-    const likeButton = await screen.findByRole('button', { name: /2$/ });
+    const likeButton = await screen.findByRole('button', { name: 'Like post, 2 likes' });
 
     fireEvent.click(likeButton);
     fireEvent.click(likeButton);
 
-    expect(screen.getByRole('button', { name: /3$/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Unlike post, 3 likes' })).toBeTruthy();
     expect(socialServiceMocks.reactToSocialPost).toHaveBeenCalledTimes(1);
 
     resolveLike();
@@ -663,6 +663,91 @@ describe('Home', () => {
     await waitFor(() => {
       expect(socialServiceMocks.loadSocialHome).toHaveBeenCalledTimes(2);
     });
+  });
+
+  it('optimistically removes an existing like', async () => {
+    let resolveUnlike: () => void = () => {};
+    socialServiceMocks.loadSocialHome.mockResolvedValueOnce({
+      ...baseSocial,
+      feedItems: [{ ...baseFeedItem, viewerHasLiked: true }],
+      metrics: { ...baseSocial.metrics, feedItems: 1 }
+    });
+    socialServiceMocks.reactToSocialPost.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveUnlike = () => resolve({ liked: false, count: 1 });
+    }));
+
+    renderHome(signedInAuth, '/home?section=feed');
+
+    const unlikeButton = await screen.findByRole('button', { name: 'Unlike post, 2 likes' });
+    fireEvent.click(unlikeButton);
+
+    expect(screen.getByRole('button', { name: 'Like post, 1 like' })).toBeTruthy();
+    resolveUnlike();
+    await waitFor(() => expect(socialServiceMocks.loadSocialHome).toHaveBeenCalledTimes(2));
+  });
+
+  it('optimistically hides a post, blocks duplicate taps, and refreshes once', async () => {
+    let resolveHide: () => void = () => {};
+    socialServiceMocks.loadSocialHome.mockResolvedValueOnce({
+      ...baseSocial,
+      feedItems: [baseFeedItem],
+      metrics: { ...baseSocial.metrics, feedItems: 1 }
+    });
+    socialServiceMocks.hideSocialPost.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveHide = () => resolve(undefined);
+    }));
+
+    renderHome(signedInAuth, '/home?section=feed');
+
+    const hideButton = await screen.findByRole('button', { name: 'Hide' });
+    fireEvent.click(hideButton);
+    fireEvent.click(hideButton);
+    expect(screen.queryByText('Pat Player highlight')).toBeNull();
+    expect(socialServiceMocks.hideSocialPost).toHaveBeenCalledTimes(1);
+
+    resolveHide();
+    await waitFor(() => expect(socialServiceMocks.loadSocialHome).toHaveBeenCalledTimes(2));
+  });
+
+  it('restores an optimistically hidden post when the hide write fails', async () => {
+    let rejectHide: () => void = () => {};
+    socialServiceMocks.loadSocialHome.mockResolvedValueOnce({
+      ...baseSocial,
+      feedItems: [baseFeedItem],
+      metrics: { ...baseSocial.metrics, feedItems: 1 }
+    });
+    socialServiceMocks.hideSocialPost.mockImplementationOnce(() => new Promise((_, reject) => {
+      rejectHide = () => reject(new Error('Hide unavailable.'));
+    }));
+
+    renderHome(signedInAuth, '/home?section=feed');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Hide' }));
+    expect(screen.queryByText('Pat Player highlight')).toBeNull();
+
+    rejectHide();
+
+    expect(await screen.findByText('Pat Player highlight')).toBeTruthy();
+    expect(await screen.findByText('Hide unavailable.')).toBeTruthy();
+    expect(socialServiceMocks.loadSocialHome).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a successfully hidden post removed when the follow-up refresh fails', async () => {
+    socialServiceMocks.loadSocialHome
+      .mockResolvedValueOnce({
+        ...baseSocial,
+        feedItems: [baseFeedItem],
+        metrics: { ...baseSocial.metrics, feedItems: 1 }
+      })
+      .mockRejectedValueOnce(new Error('Refresh unavailable.'));
+
+    renderHome(signedInAuth, '/home?section=feed');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Hide' }));
+
+    await waitFor(() => expect(socialServiceMocks.loadSocialHome).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText('Pat Player highlight')).toBeNull();
+    expect(await screen.findByText('Post hidden from your feed. Refresh to see the latest feed.')).toBeTruthy();
   });
 
   it('optimistically clears comment input, increments the count, and blocks duplicate submits', async () => {
@@ -743,6 +828,41 @@ describe('Home', () => {
     await waitFor(() => {
       expect(socialServiceMocks.createSocialPost).toHaveBeenCalledTimes(1);
       expect(socialServiceMocks.loadSocialHome).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it('shows a newly created post before background feed reconciliation completes', async () => {
+    let resolveRefresh: (value: any) => void = () => {};
+    const createdPost = {
+      ...baseFeedItem,
+      id: 'post-new',
+      authorId: 'parent-1',
+      authorName: 'Pat Parent',
+      title: 'Pat Player highlight just posted',
+      createdAt: new Date('2100-06-02T18:00:00Z'),
+      reactionCounts: {},
+      commentCount: 0,
+      viewerHasLiked: false
+    };
+    socialServiceMocks.loadSocialHome
+      .mockResolvedValueOnce(baseSocial)
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolveRefresh = resolve;
+      }));
+    socialServiceMocks.createSocialPost.mockResolvedValueOnce(createdPost);
+
+    renderHome(signedInAuth, '/home?section=feed&social=create&type=player_moment');
+
+    const dialog = await screen.findByRole('dialog', { name: 'Create social post' });
+    fireEvent.change(within(dialog).getByPlaceholderText('What stood out today?'), { target: { value: 'Great effort.' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Post' }));
+
+    expect(await screen.findByText('Pat Player highlight just posted')).toBeTruthy();
+    expect(screen.getByText('Posted to your ALL PLAYS feed.')).toBeTruthy();
+    expect(socialServiceMocks.loadSocialHome).toHaveBeenCalledTimes(2);
+    resolveRefresh({ ...baseSocial, feedItems: [createdPost], metrics: { ...baseSocial.metrics, feedItems: 1 } });
+    await waitFor(() => {
+      expect(screen.getByText('Posted to your ALL PLAYS feed.')).toBeTruthy();
     });
   });
 
