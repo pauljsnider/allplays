@@ -14,11 +14,16 @@ describe('appDataCache', () => {
     removeItem: ReturnType<typeof vi.fn>;
     setItem: ReturnType<typeof vi.fn>;
   };
+  let sessionStorageMock: Storage & {
+    removeItem: ReturnType<typeof vi.fn>;
+    setItem: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.useRealTimers();
-    localStorageMock = installLocalStorageMock();
+    localStorageMock = installStorageMock('localStorage');
+    sessionStorageMock = installStorageMock('sessionStorage');
     vi.resetModules();
   });
 
@@ -53,7 +58,7 @@ describe('appDataCache', () => {
 
     await expect(load).resolves.toEqual({ userId: 'previous-user' });
     expect(cache.getCachedAppData('signed-out:key')).toBeNull();
-    expect(window.localStorage.getItem('allplays:appDataCache:signed-out%3Akey')).toBeNull();
+    expect(window.sessionStorage.getItem('allplays:appDataCache:signed-out%3Akey')).toBeNull();
   });
 
   it('caches falsy values until their TTL expires', async () => {
@@ -93,6 +98,25 @@ describe('appDataCache', () => {
     expect(cached?.count).toBe(1);
     expect(cached?.startsAt).toBeInstanceOf(Date);
     expect(cached?.startsAt.toISOString()).toBe('2026-06-12T18:30:00.000Z');
+    expect(window.localStorage.getItem('allplays:appDataCache:persisted%3Akey')).toBeNull();
+    expect(window.sessionStorage.getItem('allplays:appDataCache:persisted%3Akey')).not.toBeNull();
+  });
+
+  it('moves legacy persistent browser cache data into session storage and removes the plaintext durable copy', async () => {
+    const storageKey = 'allplays:appDataCache:legacy%3Akey';
+    const serialized = JSON.stringify({
+      version: 1,
+      value: { schedule: 'warm' },
+      expiresAt: Date.now() + 60_000
+    });
+    localStorageMock.setItem(storageKey, serialized);
+
+    const cache = await loadCacheModule();
+    await cache.initializeAppDataCachePersistence();
+
+    expect(window.localStorage.getItem(storageKey)).toBeNull();
+    expect(window.sessionStorage.getItem(storageKey)).toBe(serialized);
+    expect(cache.getCachedAppData('legacy:key')).toEqual({ schedule: 'warm' });
   });
 
   it('awaits a fresh loader result when a hydrated entry is stale by default', async () => {
@@ -136,7 +160,7 @@ describe('appDataCache', () => {
   it('falls back to memory cache when storage persistence fails', async () => {
     const cache = await loadCacheModule();
     vi.spyOn(console, 'warn').mockImplementation(() => {});
-    localStorageMock.setItem.mockImplementation(() => {
+    sessionStorageMock.setItem.mockImplementation(() => {
       throw new DOMException('Quota exceeded', 'QuotaExceededError');
     });
 
@@ -170,8 +194,8 @@ describe('appDataCache', () => {
     firstCache.invalidateCachedAppData('schedule:key');
 
     expect(firstCache.getCachedAppData('schedule:key')).toBeNull();
-    expect(window.localStorage.getItem('allplays:appDataCache:schedule%3Akey')).toBeNull();
-    expect(window.localStorage.getItem('allplays:appDataCache:other%3Akey')).toContain('other');
+    expect(window.sessionStorage.getItem('allplays:appDataCache:schedule%3Akey')).toBeNull();
+    expect(window.sessionStorage.getItem('allplays:appDataCache:other%3Akey')).toContain('other');
     await expect(firstCache.loadCachedAppData('schedule:key', loader, { ttlMs: 60_000 })).resolves.toEqual({ version: 2 });
     expect(loader).toHaveBeenCalledTimes(2);
   });
@@ -184,7 +208,7 @@ describe('appDataCache', () => {
       .mockResolvedValueOnce({ version: 2 });
 
     await cache.loadCachedAppData('schedule:key', loader, { ttlMs: 60_000 });
-    localStorageMock.removeItem.mockImplementation(() => {
+    sessionStorageMock.removeItem.mockImplementation(() => {
       throw new DOMException('Storage disabled', 'SecurityError');
     });
 
@@ -213,8 +237,8 @@ describe('appDataCache', () => {
     await expect(otherLoad).resolves.toEqual({ other: 'fresh' });
     expect(cache.getCachedAppData('schedule:key')).toBeNull();
     expect(cache.getCachedAppData('other:key')).toEqual({ other: 'fresh' });
-    expect(window.localStorage.getItem('allplays:appDataCache:schedule%3Akey')).toBeNull();
-    expect(window.localStorage.getItem('allplays:appDataCache:other%3Akey')).toContain('fresh');
+    expect(window.sessionStorage.getItem('allplays:appDataCache:schedule%3Akey')).toBeNull();
+    expect(window.sessionStorage.getItem('allplays:appDataCache:other%3Akey')).toContain('fresh');
   });
 
   it('uses one shared key for parent schedule summaries across pages', async () => {
@@ -230,7 +254,7 @@ describe('appDataCache', () => {
   });
 });
 
-function installLocalStorageMock() {
+function installStorageMock(name: 'localStorage' | 'sessionStorage') {
   const store = new Map<string, string>();
   const storage = {
     get length() {
@@ -249,7 +273,7 @@ function installLocalStorageMock() {
     })
   } as unknown as Storage & { setItem: ReturnType<typeof vi.fn> };
 
-  Object.defineProperty(window, 'localStorage', {
+  Object.defineProperty(window, name, {
     configurable: true,
     value: storage
   });

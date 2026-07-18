@@ -311,7 +311,7 @@ function Protected({ auth, children }: { auth: AuthState; children: ReactNode })
   const [bootstrapGraceExpired, setBootstrapGraceExpired] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
-  const hasAuthBootstrapHint = Boolean(readAuthBootstrapHint()?.uid);
+  const hasAuthBootstrapHint = readAuthBootstrapHint()?.authenticatedRecently === true;
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {

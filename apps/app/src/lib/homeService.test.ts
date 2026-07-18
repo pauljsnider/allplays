@@ -35,9 +35,9 @@ const user = {
     displayName: 'Pat Parent'
 } as any;
 
-function installTestLocalStorage() {
+function installTestStorage(name: 'localStorage' | 'sessionStorage') {
     const store = new Map<string, string>();
-    Object.defineProperty(window, 'localStorage', {
+    Object.defineProperty(window, name, {
         configurable: true,
         value: {
             getItem: vi.fn((key: string) => store.get(key) || null),
@@ -61,9 +61,11 @@ function installTestLocalStorage() {
 describe('homeService Teams bootstrap reuse', () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        installTestLocalStorage();
+        installTestStorage('localStorage');
+        installTestStorage('sessionStorage');
         clearAppDataCache();
         window.localStorage.clear();
+        window.sessionStorage.clear();
         chatServiceMocks.loadChatInbox.mockResolvedValue({ teams: [] });
         feesMocks.listParentTeamFeeRecipients.mockResolvedValue([]);
         scheduleServiceMocks.hydrateParentScheduleDetails.mockImplementation(async (schedule) => schedule);
@@ -120,6 +122,6 @@ describe('homeService Teams bootstrap reuse', () => {
         expect(partial.isPartial).toBe(true);
         expect(complete.isPartial).toBe(false);
         expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
-        expect(window.localStorage.getItem('allplays:appDataCache:app-schedule-summary%3Aparent-1')).toContain('event-1');
+        expect(window.sessionStorage.getItem('allplays:appDataCache:app-schedule-summary%3Aparent-1')).toContain('event-1');
     });
 });

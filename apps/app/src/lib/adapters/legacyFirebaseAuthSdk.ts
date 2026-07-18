@@ -6,6 +6,7 @@ import {
   getAuth as legacyGetAuth,
   getRedirectResult as legacyGetRedirectResult,
   GoogleAuthProvider as LegacyGoogleAuthProvider,
+  inMemoryPersistence as legacyInMemoryPersistence,
   indexedDBLocalPersistence as legacyIndexedDBLocalPersistence,
   initializeAuth as legacyInitializeAuth,
   isSignInWithEmailLink as legacyIsSignInWithEmailLink,
@@ -15,6 +16,7 @@ import {
   signInWithPopup as legacySignInWithPopup,
   signInWithRedirect as legacySignInWithRedirect,
   signOut as legacySignOut,
+  setPersistence as legacySetPersistence,
   updatePassword as legacyUpdatePassword,
   verifyPasswordResetCode as legacyVerifyPasswordResetCode
 } from '@legacy/vendor/firebase-auth.js';
@@ -36,6 +38,7 @@ export const createUserWithEmailAndPassword = legacyCreateUserWithEmailAndPasswo
 export const getAuth = legacyGetAuth as (...args: any[]) => any;
 export const getRedirectResult = legacyGetRedirectResult as (...args: any[]) => Promise<any>;
 export const GoogleAuthProvider = LegacyGoogleAuthProvider as any;
+export const inMemoryPersistence = legacyInMemoryPersistence as any;
 export const indexedDBLocalPersistence = legacyIndexedDBLocalPersistence as any;
 export const initializeAuth = legacyInitializeAuth as (...args: any[]) => any;
 export const isSignInWithEmailLink = legacyIsSignInWithEmailLink as (...args: any[]) => boolean;
@@ -45,6 +48,7 @@ export const signInWithEmailLink = legacySignInWithEmailLink as (...args: any[])
 export const signInWithPopup = legacySignInWithPopup as (...args: any[]) => Promise<any>;
 export const signInWithRedirect = legacySignInWithRedirect as (...args: any[]) => Promise<any>;
 export const signOut = legacySignOut as (...args: any[]) => Promise<any>;
+export const setPersistence = legacySetPersistence as (...args: any[]) => Promise<void>;
 export const updatePassword = legacyUpdatePassword as (...args: any[]) => Promise<any>;
 export const verifyPasswordResetCode = legacyVerifyPasswordResetCode as (...args: any[]) => Promise<any>;
 export const resolvePrimaryFirebaseConfig = legacyResolvePrimaryFirebaseConfig as (...args: any[]) => Promise<any>;

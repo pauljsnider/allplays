@@ -1,4 +1,11 @@
 import { createLogger } from './logger';
+import { isNativeRuntime } from './nativeRuntime';
+import {
+  getNativeSecureItem,
+  listNativeSecureKeys,
+  removeNativeSecureItem,
+  setNativeSecureItem
+} from './nativeSecureStorage';
 
 type CacheEntry<T> = {
   value?: T;
@@ -10,10 +17,14 @@ type CacheEntry<T> = {
 const defaultTtlMs = 60 * 1000;
 const defaultMaxStaleMs = 24 * 60 * 60 * 1000;
 const storagePrefix = 'allplays:appDataCache:';
+const secureStoragePrefix = 'app-data-cache:';
 const cache = new Map<string, CacheEntry<unknown>>();
+const nativeStoredEntries = new Map<string, string>();
 let cacheInvalidationVersion = 0;
 const cacheKeyInvalidationVersions = new Map<string, number>();
 const logger = createLogger('app-data-cache');
+let persistenceInitialization: Promise<void> | null = null;
+let persistenceQueue = Promise.resolve();
 
 type LoadCachedAppDataOptions<T> = {
   ttlMs?: number;
@@ -41,6 +52,22 @@ export function getParentHomeSecondaryCacheKey(userId: string) {
 
 export function getTeamsSummaryBootstrapCacheKey(userId: string) {
   return `teams-summary-bootstrap:${userId}`;
+}
+
+/**
+ * Hydrates encrypted native cache values before React renders. Browser cache
+ * entries stay session-scoped, while iOS/Android use Keychain/Keystore-backed
+ * storage so offline and stale-while-revalidate behavior survives app restarts
+ * without leaving schedule, fee, or home data in WebView localStorage.
+ */
+export function initializeAppDataCachePersistence(): Promise<void> {
+  persistenceInitialization ||= initializePersistence();
+  return persistenceInitialization;
+}
+
+export async function flushAppDataCachePersistence(): Promise<void> {
+  await initializeAppDataCachePersistence();
+  await persistenceQueue;
 }
 
 export function getCachedAppData<T>(key: string, { maxStaleMs = defaultMaxStaleMs }: { maxStaleMs?: number } = {}): T | null {
@@ -213,27 +240,25 @@ function hydrateMemoryCache<T>(key: string, now: number, maxStaleMs: number) {
 function readStoredCacheEntry<T>(key: string, now: number, maxStaleMs: number): CacheEntry<T> | null {
   if (getCacheKeyInvalidationVersion(key) > 0) return null;
 
-  const storage = getCacheStorage();
-  if (!storage) return null;
-
-  const storageKey = toStorageKey(key);
   let parsed: StoredCacheEntry | null = null;
   try {
-    const raw = storage.getItem(storageKey);
+    const raw = isNativeRuntime()
+      ? nativeStoredEntries.get(key) || null
+      : getCacheStorage()?.getItem(toStorageKey(key)) || null;
     parsed = raw ? JSON.parse(raw, reviveCacheValue) : null;
   } catch (error) {
     logger.warn('Unable to read cached data.', { error });
-    storage.removeItem(storageKey);
+    removeStoredCacheEntry(key);
     return null;
   }
 
   if (!parsed || parsed.version !== 1 || !Number.isFinite(parsed.expiresAt)) {
-    storage.removeItem(storageKey);
+    removeStoredCacheEntry(key);
     return null;
   }
 
   if (parsed.expiresAt + maxStaleMs <= now) {
-    storage.removeItem(storageKey);
+    removeStoredCacheEntry(key);
     return null;
   }
 
@@ -246,23 +271,42 @@ function readStoredCacheEntry<T>(key: string, now: number, maxStaleMs: number): 
 
 function writeStoredCacheEntry<T>(key: string, entry: CacheEntry<T>) {
   if (!hasCachedValue(entry)) return;
-
-  const storage = getCacheStorage();
-  if (!storage) return;
-
   try {
     const stored: StoredCacheEntry = {
       version: 1,
       value: entry.value,
       expiresAt: entry.expiresAt
     };
-    storage.setItem(toStorageKey(key), JSON.stringify(stored, replaceCacheValue));
+    const serialized = JSON.stringify(stored, replaceCacheValue);
+    if (isNativeRuntime()) {
+      nativeStoredEntries.set(key, serialized);
+      queuePersistence(() => setNativeSecureItem(toSecureStorageKey(key), serialized));
+      return;
+    }
+    getCacheStorage()?.setItem(toStorageKey(key), serialized);
   } catch (error) {
     logger.warn('Unable to persist cached data.', { error });
   }
 }
 
 function removeStoredCacheEntries(prefix: string) {
+  if (isNativeRuntime()) {
+    [...nativeStoredEntries.keys()].forEach((key) => {
+      if (!prefix || key.startsWith(prefix)) {
+        nativeStoredEntries.delete(key);
+        queuePersistence(() => removeNativeSecureItem(toSecureStorageKey(key)));
+      }
+    });
+    queuePersistence(async () => {
+      const keys = await listNativeSecureKeys();
+      await Promise.all(keys
+        .filter((storageKey) => storageKey.startsWith(secureStoragePrefix))
+        .filter((storageKey) => !prefix || fromSecureStorageKey(storageKey).startsWith(prefix))
+        .map((storageKey) => removeNativeSecureItem(storageKey)));
+    });
+    return;
+  }
+
   const storage = getCacheStorage();
   if (!storage) return;
 
@@ -281,6 +325,12 @@ function removeStoredCacheEntries(prefix: string) {
 }
 
 function removeStoredCacheEntry(key: string) {
+  if (isNativeRuntime()) {
+    nativeStoredEntries.delete(key);
+    queuePersistence(() => removeNativeSecureItem(toSecureStorageKey(key)));
+    return;
+  }
+
   const storage = getCacheStorage();
   if (!storage) return;
   try {
@@ -293,7 +343,7 @@ function removeStoredCacheEntry(key: string) {
 function getCacheStorage() {
   if (typeof window === 'undefined') return null;
   try {
-    const storage = window.localStorage;
+    const storage = window.sessionStorage;
     if (
       !storage
       || typeof storage.getItem !== 'function'
@@ -320,6 +370,107 @@ function toStorageKey(key: string) {
 
 function fromStorageKey(key: string) {
   return decodeURIComponent(key.slice(storagePrefix.length));
+}
+
+function toSecureStorageKey(key: string) {
+  return `${secureStoragePrefix}${encodeURIComponent(key)}`;
+}
+
+function fromSecureStorageKey(key: string) {
+  return decodeURIComponent(key.slice(secureStoragePrefix.length));
+}
+
+function queuePersistence(operation: () => Promise<unknown>) {
+  persistenceQueue = persistenceQueue
+    .then(operation)
+    .then(() => undefined)
+    .catch((error) => {
+      logger.warn('Unable to update encrypted cached data.', { error });
+    });
+}
+
+async function initializePersistence() {
+  if (typeof window === 'undefined') return;
+  if (!isNativeRuntime()) {
+    migrateLegacyBrowserCacheToSession();
+    return;
+  }
+
+  try {
+    const keys = await listNativeSecureKeys();
+    await Promise.all(keys
+      .filter((key) => key.startsWith(secureStoragePrefix))
+      .map(async (storageKey) => {
+        const serialized = await getNativeSecureItem(storageKey);
+        if (serialized !== null) nativeStoredEntries.set(fromSecureStorageKey(storageKey), serialized);
+      }));
+    await migrateLegacyNativeCacheToSecureStorage();
+  } catch (error) {
+    // Cache persistence is an optimization. If the secure store is unavailable,
+    // the app remains fully functional with its in-memory cache only.
+    logger.warn('Unable to initialize encrypted native app-data cache.', { error });
+    clearLegacyLocalCache();
+  }
+}
+
+function getLegacyLocalCacheEntries() {
+  const entries: Array<[string, string]> = [];
+  try {
+    const storage = window.localStorage;
+    for (let index = storage.length - 1; index >= 0; index -= 1) {
+      const storageKey = storage.key(index);
+      if (!storageKey?.startsWith(storagePrefix)) continue;
+      const serialized = storage.getItem(storageKey);
+      if (serialized !== null) entries.push([fromStorageKey(storageKey), serialized]);
+    }
+  } catch {
+    return [];
+  }
+  return entries;
+}
+
+function clearLegacyLocalCache() {
+  try {
+    const storage = window.localStorage;
+    for (let index = storage.length - 1; index >= 0; index -= 1) {
+      const storageKey = storage.key(index);
+      if (storageKey?.startsWith(storagePrefix)) storage.removeItem(storageKey);
+    }
+  } catch {
+    // Cleanup remains best-effort when WebView storage is disabled.
+  }
+}
+
+function migrateLegacyBrowserCacheToSession() {
+  const sessionStorage = getCacheStorage();
+  if (!sessionStorage) {
+    clearLegacyLocalCache();
+    return;
+  }
+  getLegacyLocalCacheEntries().forEach(([key, serialized]) => {
+    try {
+      if (sessionStorage.getItem(toStorageKey(key)) === null) {
+        sessionStorage.setItem(toStorageKey(key), serialized);
+      }
+    } catch (error) {
+      logger.warn('Unable to migrate a legacy browser cache entry.', { error });
+    }
+  });
+  clearLegacyLocalCache();
+}
+
+async function migrateLegacyNativeCacheToSecureStorage() {
+  const legacyEntries = getLegacyLocalCacheEntries();
+  try {
+    await Promise.all(legacyEntries.map(async ([key, serialized]) => {
+      if (!nativeStoredEntries.has(key)) {
+        await setNativeSecureItem(toSecureStorageKey(key), serialized);
+        nativeStoredEntries.set(key, serialized);
+      }
+    }));
+  } finally {
+    clearLegacyLocalCache();
+  }
 }
 
 function replaceCacheValue(this: Record<string, unknown>, key: string, value: unknown) {

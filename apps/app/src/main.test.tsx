@@ -54,7 +54,8 @@ describe('main startup telemetry wiring', () => {
     });
     vi.stubGlobal('requestAnimationFrame', requestAnimationFrameMock);
 
-    await import('./main');
+    const { appStartupPromise } = await import('./main');
+    await appStartupPromise;
 
     expect(telemetryMocks.initializeAppErrorTracking).toHaveBeenCalledTimes(1);
     expect(telemetryMocks.installReactErrorTelemetry).toHaveBeenCalledTimes(1);
@@ -72,7 +73,8 @@ describe('main startup telemetry wiring', () => {
     });
     vi.stubGlobal('requestAnimationFrame', vi.fn());
 
-    await expect(import('./main')).rejects.toThrow('render failed');
+    const { appStartupPromise } = await import('./main');
+    await expect(appStartupPromise).rejects.toThrow('render failed');
 
     expect(telemetryMocks.initializeAppErrorTracking).toHaveBeenCalledTimes(1);
     expect(telemetryMocks.captureAppStartupFailure).toHaveBeenCalledWith(startupError, { phase: 'initial-render' });

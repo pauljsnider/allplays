@@ -60,6 +60,26 @@ describe('Capacitor native config', () => {
         expect(iosPackage).toContain('CapacitorStatusBar');
     });
 
+    it('pins and wires secure storage into both native platforms', () => {
+        const rootPackage = JSON.parse(readProjectFile('package.json'));
+        const appPackage = JSON.parse(readProjectFile('apps/app/package.json'));
+        const rootPackageLock = readProjectFile('package-lock.json');
+        const appPackageLock = readProjectFile('apps/app/package-lock.json');
+        const appPnpmLock = readProjectFile('apps/app/pnpm-lock.yaml');
+        const androidSettings = readProjectFile('android/capacitor.settings.gradle');
+        const androidBuild = readProjectFile('android/app/capacitor.build.gradle');
+        const iosPackage = readProjectFile('ios/App/CapApp-SPM/Package.swift');
+
+        expect(rootPackage.dependencies['@aparajita/capacitor-secure-storage']).toBe('8.0.0');
+        expect(appPackage.dependencies['@aparajita/capacitor-secure-storage']).toBe('8.0.0');
+        expect(rootPackageLock).toContain('"node_modules/@aparajita/capacitor-secure-storage"');
+        expect(appPackageLock).toContain('"node_modules/@aparajita/capacitor-secure-storage"');
+        expect(appPnpmLock).toContain("'@aparajita/capacitor-secure-storage@8.0.0':");
+        expect(androidSettings).toContain("include ':aparajita-capacitor-secure-storage'");
+        expect(androidBuild).toContain("implementation project(':aparajita-capacitor-secure-storage')");
+        expect(iosPackage).toContain('AparajitaCapacitorSecureStorage');
+    });
+
     it('pins the app Vite dependency version in both lockfiles', () => {
         const appPackage = JSON.parse(readProjectFile('apps/app/package.json'));
         const appPackageLock = JSON.parse(readProjectFile('apps/app/package-lock.json'));
@@ -206,12 +226,12 @@ describe('Capacitor native config', () => {
         expect(iosEntitlements).toContain('applinks:allplays.ai');
     });
 
-    it('disables Android backup so the persisted Firebase session cannot be exfiltrated via adb backup (#3417)', () => {
+    it('keeps Android backup disabled as defense in depth for private app data (#3417)', () => {
         const androidManifest = readProjectFile('android/app/src/main/AndroidManifest.xml');
         const extractionRules = readProjectFile('android/app/src/main/res/xml/data_extraction_rules.xml');
 
-        // The WebView stores a Firebase refresh/ID token in localStorage, so no app
-        // data may be captured by backup or device transfer.
+        // Auth tokens now use Keystore-backed encrypted storage. Backups remain
+        // disabled so other private WebView/app data cannot transfer off-device.
         expect(androidManifest).toContain('android:allowBackup="false"');
         expect(androidManifest).not.toContain('android:allowBackup="true"');
         expect(androidManifest).toContain('android:fullBackupContent="false"');

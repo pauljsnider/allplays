@@ -202,7 +202,7 @@ async function mockHomePlayerModules(page) {
                 export async function setCurrentUserPassword() {}
                 export async function redeemInviteForUser() { return { message: 'Invite accepted.', redirectUrl: '/home' }; }
                 export function rememberPendingInvite(code, type = 'parent') {
-                    try { window.localStorage.setItem('pendingInvite', JSON.stringify({ code, type })); } catch {}
+                    try { window.sessionStorage.setItem('pendingInvite', JSON.stringify({ code, type })); } catch {}
                 }
                 export function readPendingInvite() { return { code: '', type: 'parent' }; }
                 export function clearPendingInvite() {}

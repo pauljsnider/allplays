@@ -28,7 +28,13 @@ import {
 } from './adapters/legacyAuth';
 import { createLogger } from './logger';
 import { getPrimaryAppCheckHeaders } from './adapters/legacyFirebaseAppCheck';
-import { clearAppDataCache } from './appDataCache';
+import { clearAppDataCache, flushAppDataCachePersistence } from './appDataCache';
+import {
+  clearNativeAuthSession,
+  readNativeAuthSession,
+  writeNativeAuthSession
+} from './nativeAuthSessionStore';
+import type { NativeAuthSession } from './nativeAuthSessionStore';
 import type { AuthUser, UserRole } from './types';
 
 export const firebaseAuth = auth;
@@ -37,13 +43,14 @@ export const passwordResetConfirmationMessage = "If an account exists for that e
 const pendingActivationCodeKey = 'pendingActivationCode';
 const pendingInviteCodeKey = 'allplays-app-pending-invite-code';
 const pendingInviteTypeKey = 'allplays-app-pending-invite-type';
+const pendingInviteSavedAtKey = 'allplays-app-pending-invite-saved-at';
+const pendingInviteMaxAgeMs = 2 * 60 * 60 * 1000;
 const authTimeoutMs = 15000;
 const nativeAuthObserverTimeoutMs = 4000;
 const profileHydrationTimeoutMs = 8000;
 const signOutCleanupTimeoutMs = 2500;
 const firebaseAuthStorageDb = 'firebaseLocalStorageDb';
 const firebaseAuthStorageStore = 'firebaseLocalStorage';
-const nativeAuthSessionStorageKey = 'allplays-native-auth-session';
 const logger = createLogger('app-auth');
 
 type FirebaseUser = {
@@ -52,6 +59,7 @@ type FirebaseUser = {
   displayName?: string | null;
   photoURL?: string | null;
   emailVerified?: boolean;
+  refreshToken?: string;
   metadata?: {
     creationTime?: string;
     lastSignInTime?: string;
@@ -73,19 +81,6 @@ type UserCredential = {
 type HydratedUser = {
   user: AuthUser;
   profile: Record<string, unknown>;
-};
-
-type NativeAuthSession = {
-  uid: string;
-  email: string;
-  idToken: string;
-  refreshToken?: string;
-  expirationTime: number;
-  apiKey: string;
-  displayName?: string | null;
-  photoUrl?: string | null;
-  emailVerified?: boolean;
-  provider?: 'rest' | 'native-plugin';
 };
 
 type NativeProviderInfo = {
@@ -255,36 +250,10 @@ function getFirebaseAuthStorageKey() {
   return `firebase:authUser:${apiKey}:${appName}`;
 }
 
-function readNativeAuthSession(): NativeAuthSession | null {
-  try {
-    const rawSession = window.localStorage?.getItem(nativeAuthSessionStorageKey);
-    return rawSession ? JSON.parse(rawSession) as NativeAuthSession : null;
-  } catch (error) {
-    logger.warn('Unable to read native auth fallback session.', { error });
-    return null;
-  }
-}
-
-function writeNativeAuthSession(session: NativeAuthSession) {
-  try {
-    window.localStorage?.setItem(nativeAuthSessionStorageKey, JSON.stringify(session));
-  } catch (error) {
-    logger.warn('Unable to update native auth fallback session.', { error });
-  }
-}
-
-function clearNativeAuthSession() {
-  try {
-    window.localStorage?.removeItem(nativeAuthSessionStorageKey);
-  } catch (error) {
-    logger.warn('Unable to clear native auth fallback session.', { error });
-  }
-}
-
 /**
  * Drop every persisted app-data cache entry (schedule summary, home dashboard,
  * fees, event details, etc.). Sign-out and account switches must call this so a
- * previous user's data is never served from localStorage on a shared device.
+ * previous user's data is never served from persisted storage on a shared device.
  */
 function clearCachedUserData() {
   try {
@@ -394,7 +363,7 @@ async function refreshNativeAuthSession(session: NativeAuthSession) {
     refreshToken: payload.refresh_token || session.refreshToken,
     expirationTime: Date.now() + Math.max(expiresInSeconds - 30, 60) * 1000
   };
-  writeNativeAuthSession(nextSession);
+  await writeNativeAuthSession(nextSession);
   return nextSession;
 }
 
@@ -432,12 +401,11 @@ async function refreshNativePluginAuthSession(session: NativeAuthSession) {
     emailVerified: currentUser.emailVerified === true || session.emailVerified === true,
     provider: 'native-plugin'
   };
-  writeNativeAuthSession(nextSession);
+  await writeNativeAuthSession(nextSession);
   return nextSession;
 }
 
-function getNativeAuthFallbackUser(): FirebaseUser | null {
-  const session = readNativeAuthSession();
+function buildNativeAuthFallbackUser(session: NativeAuthSession | null): FirebaseUser | null {
   if (!session?.uid || !session?.idToken || (!session.refreshToken && session.provider !== 'native-plugin')) {
     return null;
   }
@@ -450,7 +418,7 @@ function getNativeAuthFallbackUser(): FirebaseUser | null {
     photoURL: session.photoUrl || null,
     isNativeRestSession: true,
     async getIdToken(forceRefresh = false) {
-      let currentSession = readNativeAuthSession() || session;
+      let currentSession = await readNativeAuthSession() || session;
       if (forceRefresh || Number(currentSession.expirationTime || 0) < Date.now() + 60000) {
         currentSession = currentSession.provider === 'native-plugin'
           ? await refreshNativePluginAuthSession(currentSession)
@@ -464,8 +432,12 @@ function getNativeAuthFallbackUser(): FirebaseUser | null {
   };
 }
 
+async function getNativeAuthFallbackUser(): Promise<FirebaseUser | null> {
+  return buildNativeAuthFallbackUser(await readNativeAuthSession());
+}
+
 export async function getNativeAuthIdToken(forceRefresh = false): Promise<string | null> {
-  const fallbackUser = getNativeAuthFallbackUser();
+  const fallbackUser = await getNativeAuthFallbackUser();
   if (!fallbackUser?.getIdToken) {
     return null;
   }
@@ -487,7 +459,7 @@ async function getNativeAccessCodeValidationOptions(result: UserCredential) {
 
 async function persistNativeRestAuthSession(signInPayload: NativeRestSignInPayload, lookupUser: NativeRestLookupUser = {}): Promise<FirebaseUser> {
   const email = signInPayload.email || lookupUser.email || '';
-  const previousUid = auth.currentUser?.uid || readNativeAuthSession()?.uid || null;
+  const previousUid = auth.currentUser?.uid || (await readNativeAuthSession())?.uid || null;
   if (previousUid && previousUid !== signInPayload.localId) {
     clearCachedUserData();
   }
@@ -522,7 +494,7 @@ async function persistNativeRestAuthSession(signInPayload: NativeRestSignInPaylo
     appName: auth.app?.name || '[DEFAULT]'
   };
 
-  writeNativeAuthSession({
+  await writeNativeAuthSession({
     uid: authUser.uid,
     email: authUser.email,
     idToken: signInPayload.idToken,
@@ -535,21 +507,10 @@ async function persistNativeRestAuthSession(signInPayload: NativeRestSignInPaylo
     provider: 'rest'
   });
 
-  const database = await openFirebaseAuthStorage();
-  try {
-    await new Promise<void>((resolve, reject) => {
-      const transaction = database.transaction(firebaseAuthStorageStore, 'readwrite');
-      transaction.objectStore(firebaseAuthStorageStore).put({
-        fbase_key: getFirebaseAuthStorageKey(),
-        value: authUser
-      });
-      transaction.oncomplete = () => resolve();
-      transaction.onerror = () => reject(transaction.error || new Error('Unable to persist auth session.'));
-      transaction.onabort = () => reject(transaction.error || new Error('Auth session persistence was aborted.'));
-    });
-  } finally {
-    database.close();
-  }
+  // Native REST sessions are intentionally kept out of Firebase's WebView
+  // IndexedDB store. Native requests obtain the token through this module,
+  // while the encrypted Keychain/Keystore entry survives app restarts.
+  await clearFirebaseAuthStorageSession();
 
   return {
     uid: authUser.uid,
@@ -561,7 +522,7 @@ async function persistNativeRestAuthSession(signInPayload: NativeRestSignInPaylo
     isNativeRestSession: true,
     isNewUser: authUser.isNewUser,
     async getIdToken(forceRefresh = false) {
-      let currentSession = readNativeAuthSession();
+      let currentSession = await readNativeAuthSession();
       if (!currentSession) {
         currentSession = {
           uid: authUser.uid,
@@ -582,6 +543,29 @@ async function persistNativeRestAuthSession(signInPayload: NativeRestSignInPaylo
       await deleteNativeAuthUser();
     }
   };
+}
+
+async function persistNativeFirebaseCredential(user: FirebaseUser, isNewUser = false): Promise<FirebaseUser> {
+  const idToken = await user.getIdToken?.(true);
+  if (!idToken || !user.refreshToken) {
+    throw new Error('Firebase did not return a refreshable native auth session.');
+  }
+
+  return persistNativeRestAuthSession({
+    localId: user.uid,
+    email: user.email || '',
+    displayName: user.displayName || undefined,
+    profilePicture: user.photoURL || undefined,
+    idToken,
+    refreshToken: user.refreshToken,
+    expiresIn: '3600',
+    isNewUser
+  }, {
+    email: user.email || '',
+    emailVerified: user.emailVerified === true,
+    displayName: user.displayName || undefined,
+    photoUrl: user.photoURL || undefined
+  });
 }
 
 function nativeMetadataToAuthMetadata(metadata: NativePluginUser['metadata'] = {}) {
@@ -615,7 +599,7 @@ async function persistNativePluginAuthSession(nativeResult: NativePluginSignInRe
   const expirationTime = Date.now() + 55 * 60 * 1000;
   const isNewUser = nativeResult.additionalUserInfo?.isNewUser === true;
 
-  writeNativeAuthSession({
+  await writeNativeAuthSession({
     uid: pluginUser.uid,
     email,
     idToken,
@@ -641,7 +625,7 @@ async function persistNativePluginAuthSession(nativeResult: NativePluginSignInRe
     isNativeRestSession: true,
     isNewUser,
     async getIdToken(forceRefresh = false) {
-      let currentSession = readNativeAuthSession();
+      let currentSession = await readNativeAuthSession();
       if (!currentSession) {
         currentSession = {
           uid: pluginUser.uid || '',
@@ -708,9 +692,9 @@ async function callFirebaseAuthRest(endpoint: string, payload: Record<string, un
 }
 
 async function deleteNativeAuthUser() {
-  const session = readNativeAuthSession();
+  const session = await readNativeAuthSession();
   if (!session?.idToken) {
-    clearNativeAuthSession();
+    await clearNativeAuthSession();
     await clearFirebaseAuthStorageSession();
     return;
   }
@@ -724,7 +708,7 @@ async function deleteNativeAuthUser() {
       });
     }
   } finally {
-    clearNativeAuthSession();
+    await clearNativeAuthSession();
     await clearFirebaseAuthStorageSession();
   }
 }
@@ -957,8 +941,11 @@ export async function hydrateFirebaseUser(user: FirebaseUser): Promise<HydratedU
 export function observeFirebaseUser(callback: (user: FirebaseUser | null) => void) {
   let timeoutId: number | undefined;
   let lastObservedUid: string | null | undefined;
+  let disposed = false;
+  let webAuthUserObserved = false;
 
   const emit = (user: FirebaseUser | null) => {
+    if (disposed) return;
     const nextUid = user?.uid ?? null;
     // When the signed-in account changes (including sign-out), purge any cached
     // app data so the incoming user can never read the previous user's data.
@@ -970,11 +957,14 @@ export function observeFirebaseUser(callback: (user: FirebaseUser | null) => voi
   };
 
   if (isNativeRuntime()) {
+    // Remove the pre-v2 REST session copy that older builds wrote into the
+    // Firebase Web SDK's IndexedDB store. The encrypted native session remains
+    // the only durable source of truth after migration.
+    void clearFirebaseAuthStorageSession();
     timeoutId = window.setTimeout(() => {
-      const fallbackUser = getNativeAuthFallbackUser();
-      if (fallbackUser) {
-        emit(fallbackUser);
-      }
+      void readNativeAuthSession().then((session) => {
+        if (!webAuthUserObserved) emit(buildNativeAuthFallbackUser(session));
+      });
     }, nativeAuthObserverTimeoutMs);
   }
 
@@ -984,13 +974,22 @@ export function observeFirebaseUser(callback: (user: FirebaseUser | null) => voi
       timeoutId = undefined;
     }
     if (user) {
+      webAuthUserObserved = true;
       emit(user);
       return;
     }
-    emit(isNativeRuntime() ? getNativeAuthFallbackUser() : null);
+    if (!isNativeRuntime()) {
+      emit(null);
+      return;
+    }
+    webAuthUserObserved = false;
+    void readNativeAuthSession().then((session) => {
+      if (!webAuthUserObserved) emit(buildNativeAuthFallbackUser(session));
+    });
   });
 
   return () => {
+    disposed = true;
     if (timeoutId) {
       window.clearTimeout(timeoutId);
     }
@@ -1045,6 +1044,24 @@ export async function signUpWithEmail(email: string, password: string, activatio
     loadLegacyAuthEmail()
   ]);
 
+  const createSignupUser = isNativeRuntime()
+    ? async (_auth: typeof auth, signupEmail: string, signupPassword: string) => {
+      const credential = await createUserWithEmailAndPassword(auth, signupEmail, signupPassword) as UserCredential;
+      return {
+        ...credential,
+        user: await persistNativeFirebaseCredential(credential.user, true),
+        nativeRest: true
+      } as UserCredential;
+    }
+    : createUserWithEmailAndPassword;
+  const cleanupSignupAuth = isNativeRuntime()
+    ? async (authInstance: typeof auth) => {
+      await clearNativeAuthSession();
+      await clearFirebaseAuthStorageSession();
+      return firebaseSignOut(authInstance);
+    }
+    : firebaseSignOut;
+
   return executeEmailPasswordSignup({
     email: normalizedEmail,
     password,
@@ -1052,7 +1069,7 @@ export async function signUpWithEmail(email: string, password: string, activatio
     auth,
     dependencies: {
       validateAccessCode: dbModule.validateAccessCode,
-      createUserWithEmailAndPassword,
+      createUserWithEmailAndPassword: createSignupUser,
       redeemParentInvite: dbModule.redeemParentInvite,
       redeemFriendInvite: dbModule.redeemFriendInvite,
       redeemHouseholdInvite: dbModule.redeemHouseholdInvite,
@@ -1064,7 +1081,7 @@ export async function signUpWithEmail(email: string, password: string, activatio
       getTeam: dbModule.getTeam,
       getUserProfile: dbModule.getUserProfile,
       sendVerificationEmail: queueCurrentUserVerificationEmail,
-      signOut: firebaseSignOut
+      signOut: cleanupSignupAuth
     }
   }) as Promise<UserCredential>;
 }
@@ -1242,8 +1259,8 @@ export async function resendVerificationEmail() {
 }
 
 async function refreshNativeFallbackVerification() {
-  const session = readNativeAuthSession();
-  const fallbackUser = getNativeAuthFallbackUser();
+  const session = await readNativeAuthSession();
+  const fallbackUser = buildNativeAuthFallbackUser(session);
   if (!session || !fallbackUser?.getIdToken) {
     return false;
   }
@@ -1254,9 +1271,9 @@ async function refreshNativeFallbackVerification() {
   }) as { users?: NativeRestLookupUser[] };
   const lookupUser = Array.isArray(lookupPayload.users) ? lookupPayload.users[0] || {} : {};
   const verified = lookupUser.emailVerified === true;
-  const refreshedSession = readNativeAuthSession() || session;
+  const refreshedSession = await readNativeAuthSession() || session;
 
-  writeNativeAuthSession({
+  await writeNativeAuthSession({
     ...refreshedSession,
     idToken,
     email: lookupUser.email || refreshedSession.email,
@@ -1297,13 +1314,20 @@ export function isEmailLink(url: string) {
 export async function completeEmailLink(email: string, url: string) {
   const normalizedEmail = requireValidAuthEmail(email);
   const result = await signInWithEmailLink(auth, normalizedEmail, url) as UserCredential;
+  const credential = isNativeRuntime()
+    ? {
+      ...result,
+      user: await persistNativeFirebaseCredential(result.user),
+      nativeRest: true
+    } as UserCredential
+    : result;
   const { updateUserProfile } = await loadLegacyAuthDb();
-  await updateUserProfile(result.user.uid, {
+  await updateUserProfile(credential.user.uid, {
     email: normalizedEmail,
     lastLogin: new Date(),
     signInMethod: 'emailLink'
   });
-  return result;
+  return credential;
 }
 
 export async function setCurrentUserPassword(newPassword: string) {
@@ -1318,7 +1342,7 @@ export async function setCurrentUserPassword(newPassword: string) {
     return;
   }
 
-  const fallbackUser = getNativeAuthFallbackUser();
+  const fallbackUser = await getNativeAuthFallbackUser();
   const idToken = await getNativeAuthIdToken();
   if (!fallbackUser || !idToken) {
     throw new Error('No user is currently signed in.');
@@ -1374,23 +1398,62 @@ export async function redeemInviteForUser(userId: string, code: string, authEmai
 export function rememberPendingInvite(code: string, type = 'parent') {
   const normalizedCode = normalizeCode(code);
   if (normalizedCode) {
-    window.localStorage.setItem(pendingInviteCodeKey, normalizedCode);
-    window.localStorage.setItem(pendingInviteTypeKey, type);
+    try {
+      window.sessionStorage.setItem(pendingInviteCodeKey, normalizedCode);
+      window.sessionStorage.setItem(pendingInviteTypeKey, String(type || 'parent'));
+      window.sessionStorage.setItem(pendingInviteSavedAtKey, `${Date.now()}`);
+    } catch (error) {
+      logger.warn('Unable to remember the pending invite for this session.', { error });
+    }
   }
+  clearLegacyPendingInviteStorage();
 }
 
 export function readPendingInvite() {
-  return {
-    code: window.localStorage.getItem(pendingInviteCodeKey) || window.localStorage.getItem('inviteCode') || '',
-    type: window.localStorage.getItem(pendingInviteTypeKey) || window.localStorage.getItem('inviteType') || 'parent'
-  };
+  try {
+    let code = window.sessionStorage.getItem(pendingInviteCodeKey) || '';
+    let type = window.sessionStorage.getItem(pendingInviteTypeKey) || 'parent';
+    const savedAt = Number(window.sessionStorage.getItem(pendingInviteSavedAtKey) || 0);
+
+    if (!code) {
+      code = window.localStorage.getItem(pendingInviteCodeKey) || window.localStorage.getItem('inviteCode') || '';
+      type = window.localStorage.getItem(pendingInviteTypeKey) || window.localStorage.getItem('inviteType') || 'parent';
+      if (code) rememberPendingInvite(code, type);
+    }
+
+    if (savedAt > 0 && savedAt + pendingInviteMaxAgeMs <= Date.now()) {
+      clearPendingInvite();
+      return { code: '', type: 'parent' };
+    }
+
+    return { code: normalizeCode(code), type: String(type || 'parent') };
+  } catch (error) {
+    logger.warn('Unable to read the pending invite.', { error });
+    clearLegacyPendingInviteStorage();
+    return { code: '', type: 'parent' };
+  }
 }
 
 export function clearPendingInvite() {
-  window.localStorage.removeItem(pendingInviteCodeKey);
-  window.localStorage.removeItem(pendingInviteTypeKey);
-  window.localStorage.removeItem('inviteCode');
-  window.localStorage.removeItem('inviteType');
+  try {
+    window.sessionStorage.removeItem(pendingInviteCodeKey);
+    window.sessionStorage.removeItem(pendingInviteTypeKey);
+    window.sessionStorage.removeItem(pendingInviteSavedAtKey);
+  } catch {
+    // Cleanup remains best-effort when session storage is disabled.
+  }
+  clearLegacyPendingInviteStorage();
+}
+
+function clearLegacyPendingInviteStorage() {
+  try {
+    window.localStorage.removeItem(pendingInviteCodeKey);
+    window.localStorage.removeItem(pendingInviteTypeKey);
+    window.localStorage.removeItem('inviteCode');
+    window.localStorage.removeItem('inviteType');
+  } catch {
+    // Cleanup remains best-effort when legacy storage is disabled.
+  }
 }
 
 export function getRouteForUser(user: AuthUser | null) {
@@ -1416,8 +1479,9 @@ export function mapLegacyRedirectToAppRoute(redirectUrl?: string) {
 }
 
 export async function signOut() {
-  clearNativeAuthSession();
+  await clearNativeAuthSession();
   clearCachedUserData();
+  await flushAppDataCachePersistence();
   await runBestEffortAuthCleanup('Firebase auth storage cleanup', clearFirebaseAuthStorageSession);
   await runBestEffortAuthCleanup('Native Firebase sign-out', async () => {
     if ((Capacitor as any).isPluginAvailable?.('FirebaseAuthentication')) {

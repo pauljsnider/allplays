@@ -50,7 +50,20 @@ const parentMembershipMocks = vi.hoisted(() => ({
 }));
 
 const appDataCacheMocks = vi.hoisted(() => ({
-  clearAppDataCache: vi.fn()
+  clearAppDataCache: vi.fn(),
+  flushAppDataCachePersistence: vi.fn()
+}));
+
+const nativeSessionStoreMocks = vi.hoisted(() => ({
+  session: null as any,
+  readNativeAuthSession: vi.fn(async () => nativeSessionStoreMocks.session),
+  writeNativeAuthSession: vi.fn(async (session: any) => {
+    nativeSessionStoreMocks.session = session;
+    return true;
+  }),
+  clearNativeAuthSession: vi.fn(async () => {
+    nativeSessionStoreMocks.session = null;
+  })
 }));
 
 const authObserverMocks = vi.hoisted(() => ({
@@ -95,7 +108,14 @@ vi.mock('./adapters/legacyAuth', () => ({
 }));
 
 vi.mock('./appDataCache', () => ({
-  clearAppDataCache: appDataCacheMocks.clearAppDataCache
+  clearAppDataCache: appDataCacheMocks.clearAppDataCache,
+  flushAppDataCachePersistence: appDataCacheMocks.flushAppDataCachePersistence
+}));
+
+vi.mock('./nativeAuthSessionStore', () => ({
+  readNativeAuthSession: nativeSessionStoreMocks.readNativeAuthSession,
+  writeNativeAuthSession: nativeSessionStoreMocks.writeNativeAuthSession,
+  clearNativeAuthSession: nativeSessionStoreMocks.clearNativeAuthSession
 }));
 
 vi.mock('./logger', () => ({
@@ -106,7 +126,12 @@ vi.mock('./logger', () => ({
   })
 }));
 
-import { signInWithPopup, signInWithRedirect } from './firebaseAuthRuntime';
+import {
+  createUserWithEmailAndPassword,
+  signInWithEmailLink,
+  signInWithPopup,
+  signInWithRedirect
+} from './firebaseAuthRuntime';
 import { Capacitor } from '@capacitor/core';
 import {
   describeAuthError,
@@ -114,6 +139,10 @@ import {
   hydrateFirebaseUser,
   isValidAuthEmail,
   observeFirebaseUser,
+  readPendingInvite,
+  rememberPendingInvite,
+  clearPendingInvite,
+  completeEmailLink,
   resendVerificationEmail,
   sendResetEmail,
   signInWithEmail,
@@ -121,6 +150,43 @@ import {
   signOut,
   signUpWithEmail
 } from './authService';
+
+describe('pending invite storage', () => {
+  beforeEach(() => {
+    vi.useRealTimers();
+    installTestLocalStorage();
+    installTestSessionStorage();
+  });
+
+  it('keeps invite capabilities session-scoped and removes legacy durable copies', () => {
+    window.localStorage.setItem('inviteCode', 'OLD12345');
+    window.localStorage.setItem('inviteType', 'parent');
+
+    expect(readPendingInvite()).toEqual({ code: 'OLD12345', type: 'parent' });
+    expect(window.localStorage.getItem('inviteCode')).toBeNull();
+    expect(window.localStorage.getItem('allplays-app-pending-invite-code')).toBeNull();
+    expect(window.sessionStorage.getItem('allplays-app-pending-invite-code')).toBe('OLD12345');
+  });
+
+  it('expires pending invite hints without bypassing backend redemption', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-17T12:00:00Z'));
+    rememberPendingInvite('abcd1234', 'coparent');
+    vi.advanceTimersByTime(2 * 60 * 60 * 1000 + 1);
+
+    expect(readPendingInvite()).toEqual({ code: '', type: 'parent' });
+    expect(window.sessionStorage.getItem('allplays-app-pending-invite-code')).toBeNull();
+  });
+
+  it('clears both session-scoped and legacy invite hints', () => {
+    rememberPendingInvite('abcd1234', 'parent');
+    window.localStorage.setItem('inviteCode', 'ABCD1234');
+    clearPendingInvite();
+
+    expect(readPendingInvite()).toEqual({ code: '', type: 'parent' });
+    expect(window.localStorage.getItem('inviteCode')).toBeNull();
+  });
+});
 
 describe('auth email validation', () => {
   it('rejects Firebase-invalid emails before they reach the auth SDK', () => {
@@ -233,11 +299,16 @@ describe('hydrateFirebaseUser', () => {
 describe('signOut', () => {
   beforeEach(() => {
     appDataCacheMocks.clearAppDataCache.mockReset();
+    appDataCacheMocks.flushAppDataCachePersistence.mockReset();
+    appDataCacheMocks.flushAppDataCachePersistence.mockResolvedValue(undefined);
+    nativeSessionStoreMocks.clearNativeAuthSession.mockClear();
   });
 
   it('clears persisted app-data cache so the next user cannot read cached data', async () => {
     await signOut();
     expect(appDataCacheMocks.clearAppDataCache).toHaveBeenCalledTimes(1);
+    expect(appDataCacheMocks.flushAppDataCachePersistence).toHaveBeenCalledTimes(1);
+    expect(nativeSessionStoreMocks.clearNativeAuthSession).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -263,9 +334,69 @@ describe('signUpWithEmail', () => {
     }));
   });
 
+  it('bridges native Firebase signup credentials into the encrypted REST session', async () => {
+    const createUserMock = vi.mocked(createUserWithEmailAndPassword);
+    createUserMock.mockResolvedValueOnce({
+      user: {
+        uid: 'new-native-user',
+        email: 'player@example.com',
+        emailVerified: false,
+        refreshToken: 'signup-refresh-token',
+        getIdToken: vi.fn(async () => 'signup-id-token')
+      }
+    });
+    nativeSessionStoreMocks.session = null;
+    nativeSessionStoreMocks.writeNativeAuthSession.mockClear();
+
+    await signUpWithEmail('player@example.com', 'secret1', '85nsbz7k');
+    const signupOptions = legacySignupFlowMocks.executeEmailPasswordSignup.mock.calls[0]?.[0];
+    const credential = await signupOptions.dependencies.createUserWithEmailAndPassword(
+      authState,
+      'player@example.com',
+      'secret1'
+    );
+
+    expect(credential.nativeRest).toBe(true);
+    expect(credential.user).toMatchObject({ uid: 'new-native-user', isNativeRestSession: true });
+    expect(nativeSessionStoreMocks.writeNativeAuthSession).toHaveBeenCalledWith(expect.objectContaining({
+      uid: 'new-native-user',
+      idToken: 'signup-id-token',
+      refreshToken: 'signup-refresh-token'
+    }));
+  });
+
   it('stops invalid signup emails before loading Firebase signup work', async () => {
     await expect(signUpWithEmail('p@paulsnider', 'secret1', '85nsbz7k')).rejects.toThrow('Enter a valid email address.');
     expect(legacySignupFlowMocks.executeEmailPasswordSignup).not.toHaveBeenCalled();
+  });
+});
+
+describe('native email-link completion', () => {
+  it('moves the one-time Firebase credential into encrypted native persistence', async () => {
+    vi.mocked(signInWithEmailLink).mockResolvedValueOnce({
+      user: {
+        uid: 'email-link-user',
+        email: 'parent@example.com',
+        emailVerified: true,
+        refreshToken: 'email-link-refresh-token',
+        getIdToken: vi.fn(async () => 'email-link-id-token')
+      }
+    });
+    legacyAuthMocks.updateUserProfile.mockResolvedValueOnce(undefined);
+    nativeSessionStoreMocks.session = null;
+    nativeSessionStoreMocks.writeNativeAuthSession.mockClear();
+
+    const credential = await completeEmailLink(
+      'parent@example.com',
+      'https://allplays.ai/app/#/accept-invite?mode=email-link'
+    );
+
+    expect(credential.nativeRest).toBe(true);
+    expect(credential.user).toMatchObject({ uid: 'email-link-user', isNativeRestSession: true });
+    expect(nativeSessionStoreMocks.writeNativeAuthSession).toHaveBeenCalledWith(expect.objectContaining({
+      idToken: 'email-link-id-token',
+      refreshToken: 'email-link-refresh-token'
+    }));
   });
 });
 
@@ -441,6 +572,25 @@ function installTestLocalStorage() {
   });
 }
 
+function installTestSessionStorage() {
+  const values = new Map<string, string>();
+  Object.defineProperty(window, 'sessionStorage', {
+    configurable: true,
+    value: {
+      getItem: vi.fn((key: string) => values.get(key) ?? null),
+      setItem: vi.fn((key: string, value: string) => {
+        values.set(key, String(value));
+      }),
+      removeItem: vi.fn((key: string) => {
+        values.delete(key);
+      }),
+      clear: vi.fn(() => {
+        values.clear();
+      })
+    }
+  });
+}
+
 describe('native REST sign-in', () => {
   beforeEach(() => {
     authState.currentUser = null;
@@ -450,6 +600,9 @@ describe('native REST sign-in', () => {
     installTestLocalStorage();
     window.localStorage.clear();
     installIndexedDbMock();
+    nativeSessionStoreMocks.session = null;
+    nativeSessionStoreMocks.readNativeAuthSession.mockClear();
+    nativeSessionStoreMocks.writeNativeAuthSession.mockClear();
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       if (url.includes('accounts:signInWithPassword')) {
         return createJsonResponse({
@@ -471,7 +624,7 @@ describe('native REST sign-in', () => {
   });
 
   it('clears cached user data before replacing a persisted native REST session with a different uid', async () => {
-    window.localStorage.setItem('allplays-native-auth-session', JSON.stringify({
+    nativeSessionStoreMocks.session = {
       uid: 'previous-user',
       email: 'previous@example.com',
       idToken: 'previous-id-token',
@@ -479,13 +632,19 @@ describe('native REST sign-in', () => {
       expirationTime: Date.now() + 3600_000,
       apiKey: 'test-api-key',
       provider: 'rest'
-    }));
+    };
 
     const result = await signInWithEmail('new@example.com', 'password123');
 
     expect(result.nativeRest).toBe(true);
     expect(result.user.uid).toBe('new-user');
     expect(appDataCacheMocks.clearAppDataCache).toHaveBeenCalledTimes(1);
+    expect(nativeSessionStoreMocks.writeNativeAuthSession).toHaveBeenCalledWith(expect.objectContaining({
+      uid: 'new-user',
+      idToken: 'new-id-token',
+      refreshToken: 'new-refresh-token'
+    }));
+    expect(window.localStorage.getItem('allplays-native-auth-session')).toBeNull();
   });
 });
 
@@ -518,10 +677,12 @@ describe('observeFirebaseUser', () => {
     expect(appDataCacheMocks.clearAppDataCache).toHaveBeenCalledTimes(1);
   });
 
-  it('clears cached data when the session transitions to signed-out', () => {
+  it('clears cached data when the session transitions to signed-out', async () => {
     const emit = wireObserver();
     emit({ uid: 'user-a' });
     emit(null);
+    await Promise.resolve();
+    await Promise.resolve();
     expect(appDataCacheMocks.clearAppDataCache).toHaveBeenCalledTimes(1);
   });
 

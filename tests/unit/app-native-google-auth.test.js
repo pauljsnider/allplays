@@ -21,6 +21,24 @@ const nativeAuthMocks = vi.hoisted(() => ({
     deleteUser: vi.fn()
 }));
 
+const secureStorageMocks = vi.hoisted(() => {
+    const records = new Map();
+    return {
+        records,
+        setSynchronize: vi.fn(async () => {}),
+        setDefaultKeychainAccess: vi.fn(async () => {}),
+        setKeyPrefix: vi.fn(async () => {}),
+        getItem: vi.fn(async (key) => records.get(String(key)) ?? null),
+        setItem: vi.fn(async (key, value) => {
+            records.set(String(key), String(value));
+        }),
+        removeItem: vi.fn(async (key) => {
+            records.delete(String(key));
+        }),
+        keys: vi.fn(async () => Array.from(records.keys()))
+    };
+});
+
 const firebaseMocks = vi.hoisted(() => ({
     auth: {
         currentUser: null,
@@ -76,6 +94,18 @@ vi.mock('../../apps/app/node_modules/@capacitor/core/dist/index.cjs.js', () => (
 
 vi.mock('@capacitor-firebase/authentication', () => ({
     FirebaseAuthentication: nativeAuthMocks
+}));
+
+vi.mock('@aparajita/capacitor-secure-storage', () => ({
+    KeychainAccess: { whenUnlockedThisDeviceOnly: 1 },
+    SecureStorage: secureStorageMocks
+}));
+
+vi.mock('../../apps/app/src/lib/nativeSecureStorage.ts', () => ({
+    getNativeSecureItem: secureStorageMocks.getItem,
+    setNativeSecureItem: secureStorageMocks.setItem,
+    removeNativeSecureItem: secureStorageMocks.removeItem,
+    listNativeSecureKeys: secureStorageMocks.keys
 }));
 
 vi.mock('../../apps/app/node_modules/@capacitor-firebase/authentication/dist/plugin.cjs.js', () => ({
@@ -229,7 +259,8 @@ beforeEach(() => {
     vi.clearAllMocks();
     capacitorState.isNative = true;
     capacitorState.platform = 'android';
-    capacitorState.plugins = new Set(['FirebaseAuthentication']);
+    capacitorState.plugins = new Set(['FirebaseAuthentication', 'SecureStorage']);
+    secureStorageMocks.records.clear();
     firebaseMocks.auth.currentUser = null;
     dbMocks.updateUserProfile.mockResolvedValue(undefined);
     nativeAuthMocks.signInWithGoogle.mockResolvedValue({
@@ -257,7 +288,7 @@ afterEach(() => {
 });
 
 describe('React app native Google auth', () => {
-    it('uses the previous Google account picker path on Android and stores a REST-backed app session', async () => {
+    it('uses the previous Google account picker path on Android and stores the REST-backed app session only in native secure storage', async () => {
         const { signInWithGoogleAccount } = await loadAuthService();
 
         const result = await signInWithGoogleAccount();
@@ -280,7 +311,7 @@ describe('React app native Google auth', () => {
             fullName: 'Parent User',
             photoUrl: 'https://example.com/photo.png'
         }));
-        const savedSession = JSON.parse(window.localStorage.getItem('allplays-native-auth-session'));
+        const savedSession = JSON.parse(secureStorageMocks.records.get('native-auth-session-v2'));
         expect(savedSession).toMatchObject({
             uid: 'native-google-user',
             email: 'parent@example.com',
@@ -288,6 +319,7 @@ describe('React app native Google auth', () => {
             refreshToken: 'firebase-refresh-token',
             provider: 'rest'
         });
+        expect(window.localStorage.getItem('allplays-native-auth-session')).toBeNull();
     });
 
     it('keeps iOS on native Google sign-in without forcing Android Credential Manager options', async () => {

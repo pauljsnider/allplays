@@ -149,20 +149,20 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
                 }
 
                 export function rememberPendingInvite(code, type = 'parent') {
-                    window.localStorage.setItem('allplays-app-pending-invite-code', String(code || '').toUpperCase());
-                    window.localStorage.setItem('allplays-app-pending-invite-type', type);
+                    window.sessionStorage.setItem('allplays-app-pending-invite-code', String(code || '').toUpperCase());
+                    window.sessionStorage.setItem('allplays-app-pending-invite-type', type);
                 }
 
                 export function readPendingInvite() {
                     return {
-                        code: window.localStorage.getItem('allplays-app-pending-invite-code') || '',
-                        type: window.localStorage.getItem('allplays-app-pending-invite-type') || 'parent'
+                        code: window.sessionStorage.getItem('allplays-app-pending-invite-code') || '',
+                        type: window.sessionStorage.getItem('allplays-app-pending-invite-type') || 'parent'
                     };
                 }
 
                 export function clearPendingInvite() {
-                    window.localStorage.removeItem('allplays-app-pending-invite-code');
-                    window.localStorage.removeItem('allplays-app-pending-invite-type');
+                    window.sessionStorage.removeItem('allplays-app-pending-invite-code');
+                    window.sessionStorage.removeItem('allplays-app-pending-invite-type');
                 }
 
                 export async function signInWithEmail(email, password) {
@@ -613,7 +613,8 @@ test('signed-out manual invite code redirects through auth with the code preserv
     await page.getByRole('button', { name: 'Continue with code' }).click();
 
     await expect(page).toHaveURL(/#\/auth\?code=ZXCV1234&type=parent&mode=login/);
-    expect(await page.evaluate(() => window.localStorage.getItem('allplays-app-pending-invite-code'))).toBe('ZXCV1234');
+    expect(await page.evaluate(() => window.sessionStorage.getItem('allplays-app-pending-invite-code'))).toBe('ZXCV1234');
+    expect(await page.evaluate(() => window.localStorage.getItem('allplays-app-pending-invite-code'))).toBeNull();
 });
 
 test('signed-in invite and account action routes process existing site flows', async ({ page, baseURL }) => {
