@@ -3040,11 +3040,15 @@ service cloud.firestore {
               'providerCustomerId', 'providerSubscriptionId', 'billingEmail'
             ])
           );
+        // Team admins may stage or deactivate non-active records, but only a
+        // trusted Admin SDK path (for example the verified Stripe webhook) may
+        // create or preserve an active paid entitlement. Admin SDK writes
+        // bypass these client rules; existing active entitlements remain readable.
         allow create, update: if isTeamOwnerOrAdmin(teamId) &&
           request.resource.data.teamId == teamId &&
           request.resource.data.seasonId is string &&
           request.resource.data.tier == 'team-pass' &&
-          request.resource.data.status in ['active', 'inactive', 'expired', 'cancelled'];
+          request.resource.data.status in ['inactive', 'expired', 'cancelled'];
         allow delete: if isTeamOwnerOrAdmin(teamId);
       }
 
