@@ -81,6 +81,18 @@ describe('Firestore recovery posture', () => {
         });
     });
 
+    it.each([undefined, 'CREATING'])('rejects a backup whose state is %s', (state) => {
+        const input = healthyInput();
+        input.schedules[0].createTime = '2026-07-16T00:00:00Z';
+        input.backups[0].state = state;
+
+        expect(evaluateFirestoreRecoveryPosture(input)).toMatchObject({
+            healthy: false,
+            failures: ['The daily schedule has not produced a ready backup within its initial 36-hour window.'],
+            newestBackup: null
+        });
+    });
+
     it('allows only the documented first-backup grace window', () => {
         const input = healthyInput();
         input.schedules[0].createTime = '2026-07-18T02:42:05Z';

@@ -50,7 +50,7 @@ export function evaluateFirestoreRecoveryPosture({
         .filter((backup) => (
             currentDatabaseUid
             && String(backup?.databaseUid || '').trim() === currentDatabaseUid
-            && (!backup?.state || backup.state === 'READY')
+            && backup?.state === 'READY'
         ))
         .sort((left, right) => timestampMillis(right.snapshotTime || right.createTime) - timestampMillis(left.snapshotTime || left.createTime));
     const newestBackup = readyBackups[0] || null;
