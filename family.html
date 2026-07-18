@@ -173,7 +173,7 @@
   <div id="footer-container"></div>
 
   <script type="module">
-    import { getFamilyShareToken, resolveFamilyShareTokenChildren, getTeam, getGames, getTrackedCalendarEventUids } from './js/db.js?v=110';
+    import { getFamilyShareToken, getFamilyShareView, resolveFamilyShareTokenChildren, getTeam, getGames, getTrackedCalendarEventUids } from './js/db.js?v=110';
     import { resolveScheduleWatchCta } from './js/schedule-watch-cta.js?v=1';
     import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } from './js/utils.js?v=17';
 
@@ -252,12 +252,28 @@
       }
 
       let token;
+      let viewProjection = null;
       try {
-        token = await getFamilyShareToken(tokenId);
+        viewProjection = await getFamilyShareView(tokenId);
+        if (Number(viewProjection?.projectionVersion) === 2) {
+          token = {
+            label: viewProjection?.presentation?.label || 'Family Page',
+            expiresAt: viewProjection?.presentation?.expiresAt || null,
+            active: true
+          };
+        } else {
+          token = await getFamilyShareToken(tokenId);
+        }
       } catch (err) {
-        console.error('[family] Failed to load token:', err);
-        showError();
-        return;
+        // Passive rollout fallback for an older functions deployment. Once
+        // parity is verified, Firestore rules deny anonymous token documents.
+        try {
+          token = await getFamilyShareToken(tokenId);
+        } catch (legacyError) {
+          console.error('[family] Failed to load token projection:', err, legacyError);
+          showError();
+          return;
+        }
       }
 
       if (!token || token.active === false) {
@@ -283,7 +299,9 @@
 
       document.title = (token.label || 'Family Page') + ' - ALL PLAYS';
 
-      const children = await resolveFamilyPageChildren(token);
+      const children = Number(viewProjection?.projectionVersion) === 2
+        ? normalizeFamilyPageChildren(viewProjection.children)
+        : await resolveFamilyPageChildren(token);
 
       renderPlayers(children);
       renderTeams(children);
@@ -291,7 +309,12 @@
       // Load schedule
       const extraCalendarUrls = Array.isArray(token.extraCalendarUrls) ? token.extraCalendarUrls : [];
       externalCalendarFailures = [];
-      const events = await buildCombinedSchedule(children, extraCalendarUrls);
+      if (Number(viewProjection?.projectionVersion) === 2) {
+        (Array.isArray(viewProjection.calendarWarnings) ? viewProjection.calendarWarnings : []).forEach((label, index) => {
+          externalCalendarFailures.push({ url: `projected-${index}`, label: String(label || 'Shared calendar') });
+        });
+      }
+      const events = await buildCombinedSchedule(children, extraCalendarUrls, viewProjection);
       allScheduleEvents = events;
       renderExternalCalendarStatus();
 
@@ -433,8 +456,14 @@
       statusEl.classList.remove('hidden');
     }
 
-    async function buildCombinedSchedule(children, extraCalendarUrls = []) {
+    async function buildCombinedSchedule(children, extraCalendarUrls = [], projection = null) {
       if (!children || children.length === 0) return [];
+
+      const projectedTeamsById = new Map(
+        (Array.isArray(projection?.teams) ? projection.teams : [])
+          .filter(team => team?.teamId)
+          .map(team => [String(team.teamId), team])
+      );
 
       const byTeam = new Map();
       for (const child of children) {
@@ -447,16 +476,23 @@
       const batches = await Promise.all(Array.from(byTeam.entries()).map(async ([teamId, teamChildren]) => {
         const teamEvents = [];
         let team, dbGames, trackedUids;
-        try {
-          [team, dbGames, trackedUids] = await Promise.all([
-            getTeam(teamId),
-            getGames(teamId),
-            getTrackedCalendarEventUids(teamId)
-          ]);
-          if (!team) return teamEvents;
-        } catch (err) {
-          console.warn('[family] Failed to load team data:', teamId, err);
-          return teamEvents;
+        const projectedTeam = projectedTeamsById.get(teamId);
+        if (projectedTeam) {
+          team = { name: projectedTeam.teamName || teamChildren[0]?.teamName || 'Team', calendarUrls: [] };
+          dbGames = Array.isArray(projectedTeam.games) ? projectedTeam.games : [];
+          trackedUids = dbGames.map(game => String(game?.calendarEventUid || '')).filter(Boolean);
+        } else {
+          try {
+            [team, dbGames, trackedUids] = await Promise.all([
+              getTeam(teamId),
+              getGames(teamId),
+              getTrackedCalendarEventUids(teamId)
+            ]);
+            if (!team) return teamEvents;
+          } catch (err) {
+            console.warn('[family] Failed to load team data:', teamId, err);
+            return teamEvents;
+          }
         }
         if (!Array.isArray(dbGames)) dbGames = [];
         if (!Array.isArray(trackedUids)) trackedUids = [];
@@ -583,8 +619,36 @@
 
       batches.forEach(batch => allEvents.push(...batch));
 
+      if (Number(projection?.projectionVersion) === 2) {
+        (Array.isArray(projection.externalEvents) ? projection.externalEvents : []).forEach(rawEvent => {
+          const date = toDateSafe(rawEvent?.date);
+          if (!date) return;
+          const childIds = Array.isArray(rawEvent.childIds) ? rawEvent.childIds.map(String) : [];
+          const childNames = Array.isArray(rawEvent.childNames) ? rawEvent.childNames.map(String) : [];
+          allEvents.push({
+            type: rawEvent.type === 'practice' ? 'practice' : 'game',
+            date,
+            location: String(rawEvent.location || 'TBD'),
+            opponent: String(rawEvent.opponent || 'TBD'),
+            teamId: String(rawEvent.teamId || ''),
+            teamName: String(rawEvent.teamName || rawEvent.sourceLabel || 'Shared calendar'),
+            id: String(rawEvent.id || rawEvent.eventKey || ''),
+            isDbGame: false,
+            childIds,
+            childNames,
+            childId: childIds[0] || '',
+            childName: childNames[0] || '',
+            title: String(rawEvent.title || ''),
+            status: String(rawEvent.status || 'scheduled'),
+            isCancelled: rawEvent.isCancelled === true,
+            isShareExtraCalendar: true,
+            sourceLabel: String(rawEvent.sourceLabel || 'Shared calendar')
+          });
+        });
+      }
+
       // Extra calendar URLs from the share token (not tied to any specific team)
-      if (extraCalendarUrls && extraCalendarUrls.length > 0) {
+      if (!projection && extraCalendarUrls && extraCalendarUrls.length > 0) {
         // Collect all existing DB game timestamps for conflict-checking
         const dbTimestamps = allEvents
           .filter(ev => ev.isDbGame)
@@ -656,7 +720,7 @@
       const now = new Date();
       const cutoff = new Date(now.getTime() - 3 * 60 * 60 * 1000);
       let events = selectedPlayerId
-        ? allScheduleEvents.filter(ev => ev.childId === selectedPlayerId)
+        ? allScheduleEvents.filter(ev => ev.childId === selectedPlayerId || ev.childIds?.includes?.(selectedPlayerId))
         : [...allScheduleEvents];
       if (scheduleViewFilter === 'upcoming-all') {
         events = events.filter(ev => new Date(ev.date) >= cutoff);

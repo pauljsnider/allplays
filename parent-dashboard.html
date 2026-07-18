@@ -367,7 +367,7 @@
             getUserProfile,
             submitRsvp,
             submitRsvpForPlayer,
-            getRsvps,
+            getMyRsvps,
             getRsvpSummaries,
             createRideOffer,
             listRideOffersForEvent,
@@ -1719,7 +1719,7 @@
             const unsummarizedByTeam = new Map();
             uniqueGameKeys.forEach((key) => {
                 const [teamId, gameId] = parseTeamGameKey(key);
-                const shouldLoadSummary = allScheduleEvents.some((event) => event.teamId === teamId && event.id === gameId && !event.rsvpSummary);
+                const shouldLoadSummary = allScheduleEvents.some((event) => event.teamId === teamId && event.id === gameId && event.isTeamAdmin && !event.rsvpSummary);
                 if (!shouldLoadSummary) return;
                 if (!unsummarizedByTeam.has(teamId)) unsummarizedByTeam.set(teamId, []);
                 unsummarizedByTeam.get(teamId).push(gameId);
@@ -1738,7 +1738,11 @@
             await Promise.all(uniqueGameKeys.map(async (key) => {
                 const [teamId, gameId] = parseTeamGameKey(key);
                 try {
-                    const rsvps = await getRsvps(teamId, gameId);
+                    const linkedPlayerIds = allScheduleEvents
+                        .filter((event) => event?.teamId === teamId && event?.id === gameId)
+                        .map((event) => event?.childId || event?.playerId || '')
+                        .filter(Boolean);
+                    const rsvps = await getMyRsvps(teamId, gameId, userId, linkedPlayerIds);
                     const eventForPrefs = allScheduleEvents.find((event) => event.teamId === teamId && event.id === gameId);
                     const availabilityNotes = buildAvailabilityNoteRows(rsvps, eventForPrefs?.availabilityPreferences, !!eventForPrefs?.isTeamAdmin);
                     const myRsvpByChild = resolveMyRsvpByChildForGame(allScheduleEvents, teamId, gameId, rsvps, userId);

@@ -8663,6 +8663,11 @@ function normalizeRsvpResponse(response) {
     return 'not_responded';
 }
 
+function normalizeRsvpDisplayName(value) {
+    const normalized = typeof value === 'string' ? value.trim().slice(0, 160) : '';
+    return normalized && !normalized.includes('@') ? normalized : null;
+}
+
 const rsvpSummaryHydrationCacheByTeam = new Map();
 
 function getRsvpSummaryHydrationCache(teamId) {
@@ -8860,7 +8865,10 @@ async function writeRsvpNote(teamId, gameId, rsvpId, { userId, displayName, play
     const primaryPlayerId = normalizedPlayerIds.length === 1 ? normalizedPlayerIds[0] : null;
     await setDoc(noteRef, {
         userId,
-        displayName: displayName || null,
+        parentEmail: deleteField(),
+        email: deleteField(),
+        guardianEmail: deleteField(),
+        displayName: normalizeRsvpDisplayName(displayName),
         playerIds: normalizedPlayerIds,
         playerId: primaryPlayerId,
         childId: primaryPlayerId,
@@ -8987,7 +8995,7 @@ export async function submitRsvp(teamId, gameId, userId, { displayName, playerId
     const primaryPlayerId = normalizedPlayerIds.length === 1 ? normalizedPlayerIds[0] : null;
     const rsvpPayload = {
         userId: effectiveUserId,
-        displayName: displayName || null,
+        displayName: normalizeRsvpDisplayName(displayName),
         playerIds: normalizedPlayerIds,
         playerId: primaryPlayerId,
         childId: primaryPlayerId,
@@ -9058,7 +9066,7 @@ export async function submitRsvpForPlayer(teamId, gameId, userId, { displayName,
     const respondedAt = Timestamp.now();
     await setDoc(rsvpRef, {
         userId: effectiveUserId,
-        displayName: displayName || null,
+        displayName: normalizeRsvpDisplayName(displayName),
         playerIds: [normalizedPlayerId],
         playerId: normalizedPlayerId,
         childId: normalizedPlayerId,
@@ -9099,6 +9107,27 @@ export async function getRsvps(teamId, gameId) {
     const rsvps = snap.docs.map(d => stripRsvpPrivateNoteFields({ id: d.id, ...d.data() }));
     const notes = await loadAccessibleRsvpNotes(teamId, gameId);
     return mergeRsvpNotesIntoRsvps(rsvps, notes);
+}
+
+export async function getMyRsvps(teamId, gameId, userId, playerIds = []) {
+    const normalizedUserId = String(userId || '').trim();
+    if (!normalizedUserId) return [];
+    const linkedPlayerIds = uniqueNonEmptyIds(playerIds);
+    const collectionPath = `teams/${teamId}/games/${gameId}/rsvps`;
+    const requestedIds = uniqueNonEmptyIds([
+        normalizedUserId,
+        ...linkedPlayerIds.map((playerId) => buildCoachOverrideRsvpDocId(normalizedUserId, playerId))
+    ]);
+    const results = await Promise.allSettled(requestedIds.map(async (rsvpId) => {
+        const snap = await getDoc(doc(db, collectionPath, rsvpId));
+        if (!snap.exists()) return null;
+        const data = stripRsvpPrivateNoteFields({ id: snap.id, ...snap.data() });
+        return data.userId === normalizedUserId ? data : null;
+    }));
+    const rsvps = results
+        .filter((result) => result.status === 'fulfilled' && result.value)
+        .map((result) => result.value);
+    return mergeRsvpNotesForExistingRsvps(teamId, gameId, rsvps);
 }
 
 export async function getMyRsvp(teamId, gameId, userId, playerIds = []) {
@@ -9596,6 +9625,14 @@ export async function resolveFamilyShareTokenChildren(tokenId) {
     const callable = httpsCallable(functions, 'resolveFamilyShareTokenChildren');
     const response = await callable({ tokenId: normalizedTokenId });
     return normalizeFamilyShareChildren(response?.data?.children || []);
+}
+
+export async function getFamilyShareView(tokenId) {
+    const normalizedTokenId = String(tokenId || '').trim();
+    if (!normalizedTokenId) return null;
+    const callable = httpsCallable(functions, 'getFamilyShareView');
+    const response = await callable({ tokenId: normalizedTokenId });
+    return response?.data || null;
 }
 
 export async function listFamilyShareTokens(ownerUserId) {

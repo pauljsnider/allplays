@@ -433,6 +433,12 @@ describe('family plan helpers', () => {
         ]);
     });
 
+    it('bounds family share calendar URL count and individual URL length', () => {
+        const urls = Array.from({ length: 12 }, (_, index) => `https://league.example/${index}.ics`);
+        expect(normalizeFamilyShareCalendarUrls([...urls, `https://league.example/${'x'.repeat(2050)}.ics`]))
+            .toEqual(urls.slice(0, 8));
+    });
+
     it('normalizes family share children and drops incomplete player links', () => {
         expect(normalizeFamilyShareChildren([
             { teamId: ' team-1 ', teamName: ' Tigers ', playerId: ' player-1 ', playerName: ' Sam ', playerNumber: ' 9 ', playerPhotoUrl: 'photo.jpg' },

@@ -42,6 +42,7 @@ vi.mock('./adapters/legacyScheduleDb', () => ({
   getPracticeSessionByEvent: vi.fn(),
   getPracticeSessions: vi.fn(),
   getPlayers: vi.fn(),
+  getMyRsvps: vi.fn(),
   getRsvpBreakdownByPlayer: vi.fn(),
   getRsvps: vi.fn(),
   getRsvpSummaries: vi.fn(),
@@ -214,7 +215,7 @@ vi.mock('./appDataCache', () => ({
   getParentScheduleSummaryCacheKey: (userId: string) => `app-schedule-summary:${userId}`
 }));
 
-import { addGame, addPractice, broadcastLiveEvent, buildSingleLegacyTournamentGameDocument, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, claimOpenOfficiatingSlot, clearOccurrenceOverride, releaseAssignmentClaim, respondToOfficiatingAssignment, updateEvent, updateGame, updateOccurrence, getAssignmentClaims, getGame, getGames, getPlayers, getPracticeSession, getPracticeSessions, getRsvpBreakdownByPlayer, getRsvpSummaries, getRsvps, getStaffTeams, getTeam, getTeams, listRideOffersForEvent, submitRsvp, submitRsvpForPlayer, updatePracticeAttendance, getDoc, getDocs } from './adapters/legacyScheduleDb';
+import { addGame, addPractice, broadcastLiveEvent, buildSingleLegacyTournamentGameDocument, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, claimOpenOfficiatingSlot, clearOccurrenceOverride, releaseAssignmentClaim, respondToOfficiatingAssignment, updateEvent, updateGame, updateOccurrence, getAssignmentClaims, getGame, getGames, getMyRsvps, getPlayers, getPracticeSession, getPracticeSessions, getRsvpBreakdownByPlayer, getRsvpSummaries, getRsvps, getStaffTeams, getTeam, getTeams, listRideOffersForEvent, submitRsvp, submitRsvpForPlayer, updatePracticeAttendance, getDoc, getDocs } from './adapters/legacyScheduleDb';
 import { getNativeAuthIdToken } from './authService';
 import { expandRecurrence, fetchAndParseCalendar, isTeamActive, mergeAssignmentsWithClaims } from './adapters/legacyScheduleHelpers';
 import { getCachedAppData, invalidateCachedAppData, loadCachedAppData } from './appDataCache';
@@ -1224,7 +1225,7 @@ describe('parent schedule detail hydration', () => {
     vi.clearAllMocks();
     vi.mocked(loadCachedAppData).mockImplementation((_key: string, loader: () => Promise<unknown>) => loader());
     vi.mocked(getRsvpSummaries).mockResolvedValue(new Map() as any);
-    vi.mocked(getRsvps).mockResolvedValue([
+    vi.mocked(getMyRsvps).mockResolvedValue([
       { id: 'parent-1__player-1', userId: 'parent-1', playerId: 'player-1', response: 'going' }
     ] as any);
     vi.mocked(getDoc).mockImplementation(async (ref: any) => {
@@ -1249,8 +1250,9 @@ describe('parent schedule detail hydration', () => {
     await hydrateParentScheduleDetails({ children: [], events: [nearEvent, futureEvent] }, user);
 
     expect(getRsvpSummaries).not.toHaveBeenCalled();
-    expect(getRsvps).toHaveBeenCalledWith('team-1', 'near-game');
-    expect(getRsvps).not.toHaveBeenCalledWith('team-1', 'future-game');
+    expect(getMyRsvps).toHaveBeenCalledWith('team-1', 'near-game', 'parent-1', ['player-1']);
+    expect(getMyRsvps).not.toHaveBeenCalledWith('team-1', 'future-game', 'parent-1', ['player-1']);
+    expect(getRsvps).not.toHaveBeenCalled();
     expect(nearEvent.myRsvp).toBe('going');
     expect(nearEvent.myRsvpNote).toBe('Will be there.');
     expect(nearEvent.myRsvpNoteHydrated).toBe(true);
@@ -1265,7 +1267,7 @@ describe('parent schedule detail hydration', () => {
   });
 
   it('hydrates a surviving child RSVP and note ahead of a newer-clock family document', async () => {
-    vi.mocked(getRsvps).mockResolvedValue([
+    vi.mocked(getMyRsvps).mockResolvedValue([
       {
         id: 'parent-1',
         userId: 'parent-1',
@@ -1376,7 +1378,8 @@ describe('parent schedule detail hydration', () => {
     await hydrateParentScheduleDetails({ children: [], events: [nearEvent] }, user);
 
     expect(getRsvpSummaries).not.toHaveBeenCalled();
-    expect(getRsvps).toHaveBeenCalledWith('team-1', 'near-game');
+    expect(getMyRsvps).toHaveBeenCalledWith('team-1', 'near-game', 'parent-1', ['player-1']);
+    expect(getRsvps).not.toHaveBeenCalled();
     expect(nearEvent.rsvpSummary).toEqual({
       going: 8,
       maybe: 1,
@@ -1405,11 +1408,12 @@ describe('parent schedule detail hydration', () => {
     }, user);
 
     expect(loadCachedAppData).toHaveBeenCalledWith(
-      'event-details:team-1:game-1',
+      'event-details:team-1:game-1:own:parent-1:player-1',
       expect.any(Function),
       expect.objectContaining({ persist: false, ttlMs: 30000 })
     );
-    expect(getRsvps).toHaveBeenCalledTimes(1);
+    expect(getMyRsvps).toHaveBeenCalledTimes(1);
+    expect(getRsvps).not.toHaveBeenCalled();
     expect(listRideOffersForEvent).toHaveBeenCalledTimes(1);
     expect(getAssignmentClaims).toHaveBeenCalledTimes(1);
   });

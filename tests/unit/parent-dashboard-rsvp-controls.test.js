@@ -93,7 +93,7 @@ describe('parent dashboard RSVP controller', () => {
         }, 'not_going');
 
         expect(submitRsvpForPlayer).toHaveBeenCalledWith('team-1', 'game-1', 'parent-1', {
-            displayName: 'parent@example.com',
+            displayName: null,
             playerId: 'child-a',
             response: 'not_going'
         });

@@ -644,6 +644,7 @@
                 "notifyRideOfferCancelled",
                 "notifyRideOfferCreated",
                 "getFamilyShareSchedule",
+                "getFamilyShareView",
                 "revokeHouseholdMemberAccess",
                 "resolveFamilyShareTokenChildren",
                 "sendPracticePacketDueTomorrowReminders"
@@ -659,7 +660,8 @@
                 "tests/unit/household-access-revocation-rules.test.js",
                 "tests/unit/household-access-revocation.test.js",
                 "tests/unit/family-share-legacy-token.test.js",
-                "tests/unit/family-share-token-rules.test.js"
+                "tests/unit/family-share-token-rules.test.js",
+                "functions/test/family-share-view-core.test.cjs"
             ],
             "integrationTests": [
                 "apps/app/src/pages/FamilyShare.test.tsx",
@@ -673,6 +675,7 @@
             "workflowTests": [
                 "tests/smoke/app-family-share.spec.js",
                 "tests/smoke/app-parent-tools.spec.js",
+                "tests/smoke/family-share-projection.spec.js",
                 "tests/smoke/parent-dashboard-family-share.spec.js"
             ],
             "knownGaps": [

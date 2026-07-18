@@ -4,7 +4,14 @@ const Stripe = require('stripe');
 const { Resend } = require('resend');
 const crypto = require('node:crypto');
 const { isPrivateIpAddress, isBlockedHostname, assertPublicHost, normalizeTargetUrl, fetchWithTimeout } = require('./utils/security-utils');
-const { createCalendarIcsCache, createCalendarIcsFetchHandler } = require('./calendar-ics-fetch-core.cjs');
+const { createCalendarIcsCache, createCalendarIcsFetchHandler, fetchCalendarIcsWithCache } = require('./calendar-ics-fetch-core.cjs');
+const {
+  MAX_FAMILY_SHARE_CALENDAR_URLS,
+  MAX_FAMILY_SHARE_DB_EVENTS,
+  MAX_FAMILY_SHARE_TEAMS,
+  buildExternalCalendarEvents,
+  sanitizeFamilyShareViewResponse
+} = require('./family-share-view-core.cjs');
 const { createVerifiedEmailSensitiveActionGuard } = require('./verified-email-policy.cjs');
 const { isAllPlaysFirebaseHostingOrigin } = require('./hosting-origin-policy.cjs');
 const {
@@ -278,6 +285,16 @@ const checkCalendarForceRefreshRateLimit = createInMemoryRateLimiter({
 const checkCalendarTargetFetchRateLimit = createInMemoryRateLimiter({
   windowMs: 60_000,
   maxRequests: 30,
+  maxKeys: 10_000
+});
+const checkFamilyShareViewRateLimit = createInMemoryRateLimiter({
+  windowMs: 60_000,
+  maxRequests: 60,
+  maxKeys: 10_000
+});
+const checkFamilyShareCalendarTargetRateLimit = createInMemoryRateLimiter({
+  windowMs: 60_000,
+  maxRequests: 20,
   maxKeys: 10_000
 });
 
@@ -5388,12 +5405,16 @@ function normalizeFamilyShareCallableChildren(children = []) {
 async function loadReadableFamilyShareToken(tokenId) {
   const tokenSnap = await firestore.doc(`familyShareTokens/${tokenId}`).get();
   if (!tokenSnap.exists) {
-    throw new functions.https.HttpsError('not-found', 'Family share token not found.');
+    throw new functions.https.HttpsError('not-found', 'Family share token not found.', { reason: 'invalid' });
   }
 
   const token = tokenSnap.data() || {};
   if (!isFamilyShareTokenReadable(token)) {
-    throw new functions.https.HttpsError('permission-denied', 'Family share token is no longer active.');
+    const expiresAt = token.expiresAt?.toMillis?.() || token.expiresAt?.toDate?.()?.getTime?.() || new Date(token.expiresAt || 0).getTime();
+    const reason = Number.isFinite(expiresAt) && expiresAt > 0 && expiresAt <= Date.now()
+      ? 'expired'
+      : 'revoked';
+    throw new functions.https.HttpsError('permission-denied', 'Family share token is no longer active.', { reason });
   }
   return token;
 }
@@ -5554,13 +5575,14 @@ function projectFamilyShareSharedGameForTeam(docSnap, teamId) {
   };
 }
 
-async function loadFamilyShareSharedGamesForTeam(teamId) {
+async function loadFamilyShareSharedGamesForTeam(teamId, maxGames = 0) {
   if (typeof firestore.collectionGroup !== 'function') return [];
   const sharedGamesRef = firestore.collectionGroup('sharedGames');
+  const boundQuery = (query) => maxGames > 0 && typeof query.limit === 'function' ? query.limit(maxGames) : query;
   const queries = [
-    sharedGamesRef.where('homeTeamId', '==', teamId),
-    sharedGamesRef.where('awayTeamId', '==', teamId),
-    sharedGamesRef.where('teamIds', 'array-contains', teamId)
+    boundQuery(sharedGamesRef.where('homeTeamId', '==', teamId)),
+    boundQuery(sharedGamesRef.where('awayTeamId', '==', teamId)),
+    boundQuery(sharedGamesRef.where('teamIds', 'array-contains', teamId))
   ];
   const snapshots = await Promise.allSettled(queries.map((query) => query.get()));
   snapshots
@@ -5593,22 +5615,31 @@ async function loadFamilyShareSharedGamesForTeam(teamId) {
     .filter(Boolean);
 }
 
-async function loadFamilyShareScheduleTeams(children) {
-  const teamIds = [...new Set(children.map((child) => child.teamId).filter(Boolean))];
+async function loadFamilyShareScheduleTeams(children, {
+  includePrivateCalendarUrls = false,
+  maxGamesPerTeam = 0,
+  maxTeams = 0
+} = {}) {
+  let teamIds = [...new Set(children.map((child) => child.teamId).filter(Boolean))];
+  if (maxTeams > 0) teamIds = teamIds.slice(0, maxTeams);
   const teams = await Promise.all(teamIds.map(async (teamId) => {
     const teamSnap = await firestore.doc(`teams/${teamId}`).get();
     if (!teamSnap.exists) return null;
     const team = teamSnap.data() || {};
     if (!isFamilyShareTeamActive(team)) return null;
 
+    const gamesQuery = firestore.collection(`teams/${teamId}/games`);
+    const boundedGamesQuery = maxGamesPerTeam > 0 && typeof gamesQuery.limit === 'function'
+      ? gamesQuery.limit(maxGamesPerTeam)
+      : gamesQuery;
     const [gamesSnap, sharedGames] = await Promise.all([
-      firestore.collection(`teams/${teamId}/games`).get(),
-      loadFamilyShareSharedGamesForTeam(teamId)
+      boundedGamesQuery.get(),
+      loadFamilyShareSharedGamesForTeam(teamId, maxGamesPerTeam)
     ]);
     return {
       teamId,
       teamName: normalizeFamilyShareText(team.name) || children.find((child) => child.teamId === teamId)?.teamName || 'Team',
-      calendarUrls: team.isPublic === true
+      calendarUrls: includePrivateCalendarUrls || team.isPublic === true
         ? (Array.isArray(team.calendarUrls) ? team.calendarUrls : [])
           .map(normalizeFamilyShareText)
           .filter(Boolean)
@@ -5633,6 +5664,139 @@ exports.getFamilyShareSchedule = functions.https.onCall(async (data) => {
   const teams = await loadFamilyShareScheduleTeams(children);
   return { children, teams };
 });
+
+function assertFamilyShareViewRateLimit(context) {
+  const result = checkFamilyShareViewRateLimit(context?.rawRequest || {});
+  if (!result.allowed) {
+    throw new functions.https.HttpsError('resource-exhausted', 'Too many family page requests. Try again shortly.', {
+      retryAfterSeconds: result.retryAfterSeconds
+    });
+  }
+}
+
+function getFamilyShareCalendarSourceLabel(index, teamName = '') {
+  return normalizeFamilyShareText(teamName) || `Shared calendar ${index + 1}`;
+}
+
+async function fetchFamilyShareCalendarEvents({ url, index, children, teamId = '', teamName = '' }) {
+  const normalized = await normalizeTargetUrl(url);
+  const targetLimit = checkFamilyShareCalendarTargetRateLimit({
+    ip: `family-calendar:${crypto.createHash('sha256').update(normalized.url).digest('hex')}`
+  });
+  if (!targetLimit.allowed) {
+    const error = new Error('Shared calendar is temporarily busy');
+    error.statusCode = 429;
+    throw error;
+  }
+
+  const result = await fetchCalendarIcsWithCache({
+    cache: calendarIcsCache,
+    cacheKey: normalized.url,
+    fetchIcs: async () => {
+      const response = await fetchWithTimeout(normalized.url, normalized.hostname, normalized.publicIps);
+      if (!response.ok) {
+        const error = new Error(`Calendar fetch failed: ${response.status}`);
+        error.statusCode = 502;
+        throw error;
+      }
+      const icsText = normalizeIcsText(await response.text());
+      if (!icsText.includes('BEGIN:VCALENDAR')) {
+        const error = new Error('Response was not valid ICS');
+        error.statusCode = 502;
+        throw error;
+      }
+      return { fetchedAt: new Date().toISOString(), icsText };
+    }
+  });
+  const sourceId = crypto.createHash('sha256').update(normalized.url).digest('hex');
+  return buildExternalCalendarEvents(result.icsText, {
+    sourceId,
+    sourceLabel: getFamilyShareCalendarSourceLabel(index, teamName),
+    children,
+    teamId,
+    teamName
+  });
+}
+
+async function loadFamilyShareExternalEventProjection(token, children, teams) {
+  const inputs = [];
+  const seenUrls = new Set();
+  const addInput = (url, details) => {
+    const normalizedUrl = normalizeFamilyShareText(url);
+    if (!normalizedUrl || seenUrls.has(normalizedUrl) || inputs.length >= MAX_FAMILY_SHARE_CALENDAR_URLS) return;
+    seenUrls.add(normalizedUrl);
+    inputs.push({ url: normalizedUrl, ...details });
+  };
+
+  (Array.isArray(token.extraCalendarUrls) ? token.extraCalendarUrls : []).forEach((url) => {
+    addInput(url, { children });
+  });
+  teams.forEach((team) => {
+    const teamChildren = children.filter((child) => child.teamId === team.teamId);
+    (Array.isArray(team.calendarUrls) ? team.calendarUrls : []).forEach((url) => {
+      addInput(url, {
+        children: teamChildren,
+        teamId: team.teamId,
+        teamName: team.teamName
+      });
+    });
+  });
+
+  const settled = await Promise.allSettled(inputs.map((input, index) => (
+    fetchFamilyShareCalendarEvents({ ...input, index })
+  )));
+  const externalEvents = [];
+  const calendarWarnings = [];
+  const dbTimestamps = teams.flatMap((team) => (Array.isArray(team.games) ? team.games : []))
+    .map((game) => new Date(game?.date).getTime())
+    .filter(Number.isFinite);
+  const trackedUidsByTeam = new Map(teams.map((team) => [
+    team.teamId,
+    new Set((Array.isArray(team.games) ? team.games : [])
+      .map((game) => normalizeFamilyShareText(game?.calendarEventUid))
+      .filter(Boolean))
+  ]));
+  settled.forEach((result, index) => {
+    if (result.status === 'fulfilled') {
+      const input = inputs[index] || {};
+      const trackedUids = trackedUidsByTeam.get(input.teamId) || new Set();
+      externalEvents.push(...result.value.filter((event) => {
+        if (trackedUids.has(normalizeFamilyShareText(event.id))) return false;
+        const eventTime = new Date(event.date).getTime();
+        return !Number.isFinite(eventTime) || !dbTimestamps.some((timestamp) => Math.abs(timestamp - eventTime) < 60_000);
+      }));
+      return;
+    }
+    functions.logger.warn('Family share calendar projection failed', {
+      sourceIndex: index,
+      errorCode: result.reason?.statusCode || result.reason?.code || result.reason?.name || 'calendar-fetch-failed'
+    });
+    calendarWarnings.push(`${getFamilyShareCalendarSourceLabel(index, inputs[index]?.teamName)} could not be loaded.`);
+  });
+  return { externalEvents, calendarWarnings };
+}
+
+exports.getFamilyShareView = functions
+  .runWith({ timeoutSeconds: 30, memory: '256MB' })
+  .https
+  .onCall(async (data, context) => {
+    assertFamilyShareViewRateLimit(context);
+    const token = await loadReadableFamilyShareToken(requireFamilyShareTokenId(data));
+    const children = await resolveReadableFamilyShareChildren(token);
+    const teams = await loadFamilyShareScheduleTeams(children, {
+      includePrivateCalendarUrls: true,
+      maxGamesPerTeam: MAX_FAMILY_SHARE_DB_EVENTS,
+      maxTeams: MAX_FAMILY_SHARE_TEAMS
+    });
+    const { externalEvents, calendarWarnings } = await loadFamilyShareExternalEventProjection(token, children, teams);
+    return sanitizeFamilyShareViewResponse({
+      token,
+      children,
+      teams,
+      externalEvents,
+      calendarWarnings
+    });
+  });
 
 exports.fetchCalendarIcs = functions
   .runWith(fetchCalendarRuntime)
@@ -11756,6 +11920,11 @@ function normalizePublicRsvpText(value) {
   return String(value || '').trim();
 }
 
+function normalizePublicRsvpDisplayName(value) {
+  const normalized = normalizePublicRsvpText(value).slice(0, 160);
+  return normalized && !normalized.includes('@') ? normalized : 'Parent RSVP';
+}
+
 function publicRsvpHashToken(token) {
   return crypto.createHash('sha256').update(String(token || '')).digest('hex');
 }
@@ -12404,12 +12573,14 @@ exports.submitPublicRsvp = functions.https.onRequest(async (req, res) => {
     const batch = firestore.batch();
     batch.set(firestore.doc(`teams/${tokenData.teamId}/games/${tokenData.gameId}/rsvps/${docId}`), {
       userId: docId,
-      displayName: tokenData.parentName || tokenData.parentEmail || 'Parent RSVP',
+      parentEmail: admin.firestore.FieldValue.delete(),
+      email: admin.firestore.FieldValue.delete(),
+      guardianEmail: admin.firestore.FieldValue.delete(),
+      displayName: normalizePublicRsvpDisplayName(tokenData.parentName),
       playerIds: [tokenData.playerId],
       response,
       note: null,
       publicRsvp: true,
-      parentEmail: tokenData.parentEmail || null,
       respondedAt: admin.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
     batch.set(firestore.doc(`publicRsvpTokens/${tokenHash}`), {

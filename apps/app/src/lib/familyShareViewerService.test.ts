@@ -148,6 +148,61 @@ describe('familyShareViewerService', () => {
     ]);
   });
 
+  it('uses the versioned view projection without reading token source fields or fetching raw calendars', async () => {
+    const viewCallable = vi.fn(async () => ({
+      data: {
+        projectionVersion: 2,
+        presentation: { label: 'Grandma schedule', expiresAt: '2026-08-01T00:00:00.000Z' },
+        children: [{ teamId: 'team-private', teamName: 'Bears', playerId: 'player-1', playerName: 'Sam Player' }],
+        teams: [{
+          teamId: 'team-private',
+          teamName: 'Bears',
+          games: [{ id: 'game-1', type: 'game', date: '2026-07-13T18:00:00.000Z', opponent: 'Tigers' }]
+        }],
+        externalEvents: [{
+          eventKey: 'external-1',
+          id: 'external-1',
+          teamId: '',
+          teamName: 'Shared calendar',
+          type: 'practice',
+          date: '2026-07-14T18:00:00.000Z',
+          title: 'Skills practice',
+          location: 'Field 2',
+          childIds: ['player-1'],
+          childNames: ['Sam Player']
+        }],
+        calendarWarnings: []
+      }
+    }));
+    familyShareMocks.httpsCallable.mockImplementation((_functions, name) => {
+      expect(name).toBe('getFamilyShareView');
+      return viewCallable;
+    });
+
+    const model = await loadFamilyShareView('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+
+    expect(familyShareMocks.getFamilyShareToken).not.toHaveBeenCalled();
+    expect(scheduleDbMocks.getTeam).not.toHaveBeenCalled();
+    expect(scheduleDbMocks.getGames).not.toHaveBeenCalled();
+    expect(scheduleHelperMocks.fetchAndParseCalendar).not.toHaveBeenCalled();
+    expect(model.events.map((event) => event.id)).toEqual(['game-1', 'external-1']);
+    expect(JSON.stringify(model)).not.toContain('extraCalendarUrls');
+    expect(JSON.stringify(model)).not.toContain('ownerUserId');
+  });
+
+  it('preserves authoritative expired projection errors without falling back to the raw token document', async () => {
+    const callable = vi.fn(async () => {
+      throw { code: 'functions/permission-denied', details: { reason: 'expired' } };
+    });
+    familyShareMocks.httpsCallable.mockReturnValue(callable);
+
+    await expect(loadFamilyShareView('token-expired-projection')).rejects.toMatchObject({
+      name: 'FamilyShareTokenError',
+      reason: 'expired'
+    });
+    expect(familyShareMocks.getFamilyShareToken).not.toHaveBeenCalled();
+  });
+
   it('honors a successful empty server projection without trusting stored token children', async () => {
     const scheduleCallable = vi.fn(async () => ({
       data: {

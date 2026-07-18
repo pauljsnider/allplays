@@ -2,7 +2,7 @@ export function normalizeFamilyShareCalendarUrls(urls = []) {
     const seen = new Set();
     return (urls || [])
         .map((url) => String(url || '').trim())
-        .filter(Boolean)
+        .filter((url) => url.length > 0 && url.length <= 2048)
         .filter((url) => {
             try {
                 const parsed = new URL(url);
@@ -15,7 +15,8 @@ export function normalizeFamilyShareCalendarUrls(urls = []) {
             if (seen.has(url)) return false;
             seen.add(url);
             return true;
-        });
+        })
+        .slice(0, 8);
 }
 
 function compactString(value) {

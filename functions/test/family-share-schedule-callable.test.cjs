@@ -258,6 +258,48 @@ test('family share schedule callable validates bearer token and projects private
   ]);
 });
 
+test('family share view projection omits owner UID and raw calendar URLs from the network payload', async () => {
+  const tokenId = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+  const sentinelUrl = 'https://calendar.example.test/feed.ics?secret=SENTINEL_CALENDAR_SECRET';
+  const callables = loadCallables({
+    [`familyShareTokens/${tokenId}`]: {
+      active: true,
+      ownerUserId: 'SENTINEL_OWNER_UID',
+      label: 'Grandma',
+      expiresAt: new FakeTimestamp(Date.parse('2026-08-20T00:00:00Z')),
+      children: [{ teamId: 'private-team', playerId: 'player-1' }],
+      extraCalendarUrls: []
+    },
+    'users/SENTINEL_OWNER_UID': {
+      parentPlayerKeys: ['private-team::player-1']
+    },
+    'teams/private-team': {
+      name: 'Bears',
+      isPublic: false,
+      calendarUrls: [sentinelUrl]
+    },
+    'teams/private-team/players/player-1': { name: 'Sam Player' },
+    'teams/private-team/games/game-1': {
+      type: 'game',
+      date: new FakeTimestamp(Date.parse('2026-07-20T18:00:00Z')),
+      opponent: 'Tigers',
+      internalNotes: 'SENTINEL_STAFF_NOTE'
+    }
+  });
+
+  const result = await callables.getFamilyShareView({ tokenId }, { rawRequest: { ip: '203.0.113.8' } });
+  const payload = JSON.stringify(result);
+
+  assert.equal(result.projectionVersion, 2);
+  assert.equal(result.presentation.label, 'Grandma');
+  assert.equal(payload.includes('SENTINEL_OWNER_UID'), false);
+  assert.equal(payload.includes('SENTINEL_CALENDAR_SECRET'), false);
+  assert.equal(payload.includes('SENTINEL_STAFF_NOTE'), false);
+  assert.equal(payload.includes('ownerUserId'), false);
+  assert.equal(payload.includes('extraCalendarUrls'), false);
+  assert.equal(payload.includes('calendarUrls'), false);
+});
+
 test('family share schedule callable includes organization shared games for scoped teams', async () => {
   const tokenId = 'dddddddddddddddddddddddddddddddddddddddd';
   const callables = loadCallables({

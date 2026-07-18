@@ -45,6 +45,7 @@ function loadGetAllEvents() {
         let getRsvpSummaries = context.getRsvpSummaries;
         let buildAvailabilityNoteRows = context.buildAvailabilityNoteRows;
         let getRsvps = context.getRsvps;
+        let getMyRsvps = context.getMyRsvps;
         let getMyRsvp = context.getMyRsvp;
         let isAvailabilityLocked = context.isAvailabilityLocked;
         let expandRecurrence = context.expandRecurrence;
@@ -336,13 +337,14 @@ describe('team schedule filtering', () => {
             isPracticeEvent: () => false,
             extractOpponent: () => 'Opponent',
             normalizeAvailabilityPreferences: (prefs) => prefs,
-            canManageTeamAvailability: () => false,
+            canManageTeamAvailability: () => true,
             getRsvpSummaries: async (_teamId, gameIds) => {
                 requestedSummaryIds.push(...gameIds);
                 return new Map([[gameIds[1], { going: 1, maybe: 0, notGoing: 0 }]]);
             },
             buildAvailabilityNoteRows: () => [],
             getRsvps: async () => [],
+            getMyRsvps: async () => [],
             getMyRsvp: async (_teamId, gameId) => {
                 requestedMyRsvpIds.push(gameId);
                 return gameId === 'practice-series__2026-01-12' ? { response: 'going' } : null;

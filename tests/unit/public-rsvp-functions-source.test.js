@@ -49,6 +49,10 @@ describe('public RSVP function safeguards', () => {
         expect(submitSource).toContain('latestQueuedJobId: jobRef.id');
         expect(submitSource).toContain('batch.set(jobRef, {');
         expect(submitSource).toContain('await batch.commit()');
+        expect(submitSource).toContain('displayName: normalizePublicRsvpDisplayName(tokenData.parentName)');
+        expect(submitSource).not.toContain('displayName: tokenData.parentName || tokenData.parentEmail');
+        expect(submitSource).not.toContain('parentEmail: tokenData.parentEmail');
+        expect(submitSource).toContain('parentEmail: admin.firestore.FieldValue.delete()');
         expect(submitSource).not.toContain('await buildPublicRsvpSummary');
         expect(submitSource).not.toContain("firestore.collection(`teams/${tokenData.teamId}/players`).get()");
         expect(submitSource).not.toContain("firestore.collection(`teams/${tokenData.teamId}/games/${tokenData.gameId}/rsvps`).get()");
