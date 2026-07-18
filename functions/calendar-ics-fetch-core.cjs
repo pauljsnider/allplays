@@ -21,13 +21,14 @@ function normalizeMaxEntries(maxEntries) {
 function pruneCalendarIcsCache(cache) {
   const now = Date.now();
   for (const [key, entry] of cache.entries) {
-    if (!entry?.promise && entry?.expiresAt <= now) {
+    if (!hasCalendarIcsRequestInFlight(cache, key) && entry?.expiresAt <= now) {
       cache.entries.delete(key);
     }
   }
 
   while (cache.entries.size > cache.maxEntries) {
-    const oldestKey = cache.entries.keys().next().value;
+    const oldestKey = [...cache.entries.keys()]
+      .find((key) => !hasCalendarIcsRequestInFlight(cache, key));
     if (typeof oldestKey === 'undefined') {
       break;
     }
@@ -45,8 +46,26 @@ function createCalendarIcsCache({ ttlMs = DEFAULT_TTL_MS, maxEntries = DEFAULT_M
   return {
     ttlMs: normalizeTtlMs(ttlMs),
     maxEntries: normalizeMaxEntries(maxEntries),
-    entries: new Map()
+    entries: new Map(),
+    inFlight: new Map()
   };
+}
+
+function getCalendarIcsInFlightMap(cache) {
+  if (!(cache.inFlight instanceof Map)) {
+    cache.inFlight = new Map();
+  }
+  return cache.inFlight;
+}
+
+function getCalendarIcsFlightKey(cacheKey, forceRefresh) {
+  return `${forceRefresh ? 'force' : 'normal'}:${cacheKey}`;
+}
+
+function hasCalendarIcsRequestInFlight(cache, cacheKey) {
+  if (!(cache?.inFlight instanceof Map)) return false;
+  return cache.inFlight.has(getCalendarIcsFlightKey(cacheKey, false)) ||
+    cache.inFlight.has(getCalendarIcsFlightKey(cacheKey, true));
 }
 
 async function fetchCalendarIcsWithCache({ cache, cacheKey, forceRefresh = false, fetchIcs }) {
@@ -62,6 +81,8 @@ async function fetchCalendarIcsWithCache({ cache, cacheKey, forceRefresh = false
 
   const now = Date.now();
   const cachedEntry = cache.entries.get(cacheKey);
+  const inFlight = getCalendarIcsInFlightMap(cache);
+  const flightKey = getCalendarIcsFlightKey(cacheKey, forceRefresh);
   if (!forceRefresh && cachedEntry?.icsText && cachedEntry.expiresAt > now) {
     return {
       source: 'cache',
@@ -70,10 +91,12 @@ async function fetchCalendarIcsWithCache({ cache, cacheKey, forceRefresh = false
     };
   }
 
-  // A force refresh bypasses stored text, but it must not fan out duplicate
-  // upstream requests while another refresh for the same canonical URL is live.
-  if (cachedEntry?.promise) {
-    return cachedEntry.promise;
+  // Same-mode callers coalesce. Normal and forced refreshes remain separate:
+  // normal callers may accept stale data after an upstream failure, while a
+  // forced caller must surface that failure and never inherit stale fallback.
+  const existingPromise = inFlight.get(flightKey);
+  if (existingPromise) {
+    return existingPromise;
   }
 
   const fetchPromise = (async () => {
@@ -102,17 +125,13 @@ async function fetchCalendarIcsWithCache({ cache, cacheKey, forceRefresh = false
       }
       throw error;
     } finally {
-      const latestEntry = cache.entries.get(cacheKey);
-      if (latestEntry?.promise === fetchPromise) {
-        delete latestEntry.promise;
+      if (inFlight.get(flightKey) === fetchPromise) {
+        inFlight.delete(flightKey);
       }
     }
   })();
 
-  setCalendarIcsCacheEntry(cache, cacheKey, {
-    ...(cachedEntry || {}),
-    promise: fetchPromise
-  });
+  inFlight.set(flightKey, fetchPromise);
 
   return fetchPromise;
 }

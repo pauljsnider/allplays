@@ -190,6 +190,110 @@ test('fetchCalendarIcsWithCache coalesces concurrent forced refreshes', async ()
   assert.deepStrictEqual(secondResult, firstResult);
 });
 
+test('fetchCalendarIcsWithCache coalesces concurrent normal refreshes', async () => {
+  const cache = createCalendarIcsCache();
+  let fetchCount = 0;
+  let releaseFetch;
+  const fetchIcs = () => {
+    fetchCount += 1;
+    return new Promise((resolve) => {
+      releaseFetch = () => resolve({
+        fetchedAt: '2026-06-04T16:53:00.000Z',
+        icsText: 'BEGIN:VCALENDAR\nEND:VCALENDAR'
+      });
+    });
+  };
+
+  const first = fetchCalendarIcsWithCache({ cache, cacheKey: 'https://example.com/normal.ics', fetchIcs });
+  const second = fetchCalendarIcsWithCache({ cache, cacheKey: 'https://example.com/normal.ics', fetchIcs });
+  assert.strictEqual(fetchCount, 1);
+  releaseFetch();
+  const [firstResult, secondResult] = await Promise.all([first, second]);
+  assert.deepStrictEqual(secondResult, firstResult);
+});
+
+test('force refresh does not inherit stale fallback from a normal refresh in flight', async () => {
+  const cache = createCalendarIcsCache({ ttlMs: 1 });
+  const cacheKey = 'https://example.com/team.ics';
+  await fetchCalendarIcsWithCache({
+    cache,
+    cacheKey,
+    fetchIcs: async () => ({
+      fetchedAt: '2026-06-04T16:53:00.000Z',
+      icsText: 'BEGIN:VCALENDAR\nX-SEQ:stale\nEND:VCALENDAR'
+    })
+  });
+  await new Promise((resolve) => setTimeout(resolve, 5));
+
+  let rejectNormal;
+  let normalFetchCount = 0;
+  let forcedFetchCount = 0;
+  const normalRefresh = fetchCalendarIcsWithCache({
+    cache,
+    cacheKey,
+    fetchIcs: () => {
+      normalFetchCount += 1;
+      return new Promise((_resolve, reject) => { rejectNormal = reject; });
+    }
+  });
+  const forcedRefresh = fetchCalendarIcsWithCache({
+    cache,
+    cacheKey,
+    forceRefresh: true,
+    fetchIcs: async () => {
+      forcedFetchCount += 1;
+      throw new Error('forced upstream timeout');
+    }
+  });
+  const forcedFailure = assert.rejects(forcedRefresh, /forced upstream timeout/);
+
+  assert.strictEqual(normalFetchCount, 1);
+  assert.strictEqual(forcedFetchCount, 1);
+  rejectNormal(new Error('normal upstream timeout'));
+
+  const [normalResult] = await Promise.all([normalRefresh, forcedFailure]);
+  assert.strictEqual(normalResult.source, 'stale-cache');
+  assert.match(normalResult.icsText, /X-SEQ:stale/);
+});
+
+test('normal refresh retains stale fallback while a forced refresh is in flight', async () => {
+  const cache = createCalendarIcsCache({ ttlMs: 1 });
+  const cacheKey = 'https://example.com/inverse.ics';
+  await fetchCalendarIcsWithCache({
+    cache,
+    cacheKey,
+    fetchIcs: async () => ({
+      fetchedAt: '2026-06-04T16:53:00.000Z',
+      icsText: 'BEGIN:VCALENDAR\nX-SEQ:stale\nEND:VCALENDAR'
+    })
+  });
+  await new Promise((resolve) => setTimeout(resolve, 5));
+
+  let rejectForced;
+  let normalFetchCount = 0;
+  const forcedRefresh = fetchCalendarIcsWithCache({
+    cache,
+    cacheKey,
+    forceRefresh: true,
+    fetchIcs: () => new Promise((_resolve, reject) => { rejectForced = reject; })
+  });
+  const normalRefresh = fetchCalendarIcsWithCache({
+    cache,
+    cacheKey,
+    fetchIcs: async () => {
+      normalFetchCount += 1;
+      throw new Error('normal upstream timeout');
+    }
+  });
+
+  assert.strictEqual(normalFetchCount, 1);
+  const normalResult = await normalRefresh;
+  assert.strictEqual(normalResult.source, 'stale-cache');
+  assert.match(normalResult.icsText, /X-SEQ:stale/);
+  rejectForced(new Error('forced upstream timeout'));
+  await assert.rejects(forcedRefresh, /forced upstream timeout/);
+});
+
 test('fetchCalendarIcsWithCache serves stale cache when refresh fails', async () => {
   const cache = createCalendarIcsCache({ ttlMs: 1 });
   let fetchCount = 0;
