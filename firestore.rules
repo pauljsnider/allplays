@@ -1625,18 +1625,21 @@ service cloud.firestore {
       return !data.keys().hasAny([fieldName]) || data.get(fieldName, null) is bool;
     }
 
-    function isOptionalPublicTeamProfileMap(data, fieldName) {
-      return !data.keys().hasAny([fieldName]) || data.get(fieldName, null) is map;
-    }
-
-    function isOptionalPublicTeamProfileList(data, fieldName) {
-      return !data.keys().hasAny([fieldName]) || data.get(fieldName, null) is list;
-    }
-
     function isOptionalPublicTeamProfileTimestamp(data, fieldName) {
       return !data.keys().hasAny([fieldName]) ||
              data.get(fieldName, null) == null ||
              data.get(fieldName, null) is timestamp;
+    }
+
+    function hasNoCallableOnlyPublicTeamPresentationFields(data) {
+      // Firestore rules cannot exhaustively allow-list every member of dynamic
+      // tournament arrays and override maps. Keep these sanitized structures
+      // behind getPublicTeamProfile instead of treating their container type as
+      // a sufficient public-read boundary.
+      return !data.keys().hasAny([
+        'standingsConfig',
+        'tournament', 'tournamentDivisions', 'tournamentPools', 'tournamentPoolOverrides'
+      ]);
     }
 
     function isPublicTeamProfileSocialLinksValid(data) {
@@ -1692,11 +1695,7 @@ service cloud.firestore {
              isOptionalPublicTeamProfileString(data, 'livestreamUrl') &&
              isOptionalPublicTeamProfileString(data, 'streamEmbedUrl') &&
              isOptionalPublicTeamProfileString(data, 'youtubeEmbedUrl') &&
-             isOptionalPublicTeamProfileMap(data, 'standingsConfig') &&
-             isOptionalPublicTeamProfileMap(data, 'tournament') &&
-             isOptionalPublicTeamProfileList(data, 'tournamentDivisions') &&
-             isOptionalPublicTeamProfileList(data, 'tournamentPools') &&
-             isOptionalPublicTeamProfileMap(data, 'tournamentPoolOverrides') &&
+             hasNoCallableOnlyPublicTeamPresentationFields(data) &&
              isOptionalPublicTeamProfileBool(data, 'appAccess') &&
              isOptionalPublicTeamProfileBool(data, 'webAccess') &&
              isOptionalPublicTeamProfileBool(data, 'archived') &&

@@ -308,13 +308,27 @@ describe('public team source/projection fallback', () => {
         expect(callable).toHaveBeenCalledWith({ teamId: 'deleted-team' });
     });
 
-    it('falls back when projection rules lag but does not mask projection network errors', async () => {
+    it('falls back to callable-only nested presentation without masking projection network errors', async () => {
         firebaseMocks.getDoc.mockRejectedValueOnce(Object.assign(new Error('denied'), { code: 'permission-denied' }));
-        const callable = vi.fn().mockResolvedValue({ data: { item: { id: 'team-public', name: 'Public Team' } } });
+        const callable = vi.fn().mockResolvedValue({
+            data: {
+                item: {
+                    id: 'team-public',
+                    name: 'Public Team',
+                    standingsConfig: { enabled: true },
+                    tournament: { pools: [{ name: 'Pool A' }] }
+                }
+            }
+        });
         firebaseMocks.httpsCallable.mockReturnValue(callable);
         const { getTeam } = await import('../../js/db.js?v=91');
 
-        await expect(getTeam('team-public')).resolves.toMatchObject({ id: 'team-public', name: 'Public Team' });
+        await expect(getTeam('team-public')).resolves.toMatchObject({
+            id: 'team-public',
+            name: 'Public Team',
+            standingsConfig: { enabled: true },
+            tournament: { pools: [{ name: 'Pool A' }] }
+        });
 
         const unavailable = Object.assign(new Error('offline'), { code: 'unavailable' });
         firebaseMocks.getDoc.mockRejectedValueOnce(unavailable);

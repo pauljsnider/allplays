@@ -16,6 +16,9 @@ describe('public team projection compatibility contract', () => {
         expect(dbSource).toContain("httpsCallable(functions, 'getPublicTeamProfile')");
         expect(dbSource).toContain('if (!isPublicProjectionFallbackError(error)) throw error;');
         expect(dbSource).toMatch(/discoverPublicTeams[\s\S]*discoverPublicTeamsFromCallable/);
+        expect(rules).toContain('function hasNoCallableOnlyPublicTeamPresentationFields(data)');
+        expect(rules).toContain("'tournament', 'tournamentDivisions', 'tournamentPools', 'tournamentPoolOverrides'");
+        expect(rules).toContain('hasNoCallableOnlyPublicTeamPresentationFields(data)');
     });
 
     it('preserves public external schedules without putting calendar credentials in the profile projection', () => {
@@ -98,6 +101,30 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('public team projection co
             where('active', '==', true),
             limit(100)
         )));
+    });
+
+    it('keeps nested presentation structures behind the sanitizing callable', async () => {
+        const callableOnlyFields = [
+            { standingsConfig: { enabled: true, providerToken: 'must-not-return' } },
+            { tournament: { pools: [{ name: 'Pool A', managerEmail: 'private@example.test' }] } },
+            { tournamentDivisions: [{ name: 'Division A', managerEmail: 'private@example.test' }] },
+            { tournamentPools: [{ name: 'Pool A', managerEmail: 'private@example.test' }] },
+            { tournamentPoolOverrides: { 'Pool A': { groupKey: 'a', managerEmail: 'private@example.test' } } }
+        ];
+        const publicDb = testEnv.unauthenticatedContext().firestore();
+
+        for (const callableOnlyField of callableOnlyFields) {
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                await setDoc(doc(context.firestore(), 'publicTeamProfiles/public-team'), {
+                    publicSchemaVersion: 1,
+                    name: 'Public Team',
+                    isPublic: true,
+                    active: true,
+                    ...callableOnlyField
+                });
+            });
+            await assertFails(getDoc(doc(publicDb, 'publicTeamProfiles/public-team')));
+        }
     });
 
     it('fails closed when any allow-listed projection field has a malformed type', async () => {
