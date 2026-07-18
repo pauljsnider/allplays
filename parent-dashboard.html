@@ -1969,7 +1969,7 @@
                             console.log(`[parent-dashboard] Got ${calendarEvents.length} events from calendar`);
                             return { calendarUrl, calendarEvents };
                         } catch (err) {
-                            console.error('Error fetching calendar for parent dashboard:', calendarUrl, err);
+                            console.warn('Calendar import unavailable for parent dashboard:', calendarUrl, err);
                             return { calendarUrl, calendarEvents: [] };
                         }
                     }));

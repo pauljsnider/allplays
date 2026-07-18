@@ -201,6 +201,7 @@ describe('fetchAndParseCalendar', () => {
   });
 
   it('rejects declared oversized and explicitly incompatible direct responses', async () => {
+    const fatalLog = vi.spyOn(console, 'error').mockImplementation(() => {});
     const oversizedFetch = vi.fn()
       .mockResolvedValueOnce(makeJsonResponse({ ok: false }, { status: 500 }))
       .mockResolvedValueOnce(makeTextResponse(sampleIcs(), {
@@ -218,6 +219,7 @@ describe('fetchAndParseCalendar', () => {
     vi.stubGlobal('fetch', htmlFetch);
     await expect(fetchAndParseCalendar('https://example.com/team.ics?html=1'))
       .rejects.toThrow('unsupported content type');
+    expect(fatalLog).not.toHaveBeenCalled();
   });
 
   it('retains compatibility with legacy calendar MIME types', async () => {

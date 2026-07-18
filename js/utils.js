@@ -512,7 +512,10 @@ async function fetchAndParseCalendarOnce(normalizedUrl, options = {}) {
         throw new Error('Cannot fetch calendar. All configured proxy attempts failed.');
       }
     }
-    console.error('Error fetching calendar:', error);
+    // Remote calendar availability is optional for page boot. Surface failures
+    // to callers and diagnostics without reporting an expected network/CORS
+    // miss as a fatal browser-console error.
+    console.warn('Calendar import unavailable:', error);
     throw error;
   }
 }
