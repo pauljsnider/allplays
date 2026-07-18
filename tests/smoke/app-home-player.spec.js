@@ -1215,7 +1215,7 @@ test('home dashboard drills into player detail with section submenus', async ({ 
     await mockHomePlayerModules(page);
     await page.goto(appUrl(baseURL, '/home'), { waitUntil: 'domcontentloaded' });
 
-    await expect(page.getByRole('heading', { name: 'Today for your players' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Your day' })).toBeVisible();
     await expect(page.getByText('Do first')).toBeVisible();
     await expect(page.getByText('Team chats')).toBeVisible();
     await expect(page.getByText('2 unread messages')).toBeVisible();
@@ -1227,16 +1227,18 @@ test('home dashboard drills into player detail with section submenus', async ({ 
         const box = await page.locator('.home-hero').boundingBox();
         return Math.round(box?.height || 0);
     }).toBeLessThan(170);
+    const homeSectionNavigation = page.getByRole('navigation', { name: 'Home sections' });
 
-    await page.getByRole('button', { name: 'Teams' }).click();
+    await homeSectionNavigation.getByRole('link', { name: 'Teams', exact: true }).click();
     await expect(page.locator('a[href="#/teams?selectedTeamId=team-1&from=home"]')).toBeVisible();
 
-    await page.getByRole('button', { name: 'Feed' }).click();
+    await homeSectionNavigation.getByRole('link', { name: 'Feed', exact: true }).click();
     await expect(page.getByText('Quick shares')).toBeVisible();
     await expect(page.getByText('Jamie Friend')).toBeVisible();
     await expect(page.getByText('Great ball movement in the second half.')).toBeVisible();
     await expect(page.locator('a[href="#/players/team-1/player-1"]').first()).toBeVisible();
-    await expect(page.locator('a[href="#/home?section=friends"]')).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Manage friends' })).toHaveAttribute('href', '#/home?section=friends');
+    await page.getByText('Quick shares').click();
     await page.getByRole('button', { name: 'Player moment' }).click();
     await expect(page.getByRole('heading', { name: 'What happened?' })).toBeVisible();
     await expect(page.getByText('Pick one')).toHaveCount(0);
@@ -1256,13 +1258,13 @@ test('home dashboard drills into player detail with section submenus', async ({ 
         playerIds: ['player-1']
     }));
 
-    await page.locator('.home-section-nav').getByRole('button', { name: 'Friends' }).click();
+    await page.locator('.home-section-nav').getByRole('link', { name: 'Friends' }).click();
     await expect(page.getByText('Needs response')).toBeVisible();
     await expect(page.getByText('Casey Parent')).toBeVisible();
     await expect(page.getByText('Morgan Parent')).toBeVisible();
     await expect(page.getByText('Jamie Friend')).toBeVisible();
 
-    await page.getByRole('button', { name: 'Players' }).click();
+    await homeSectionNavigation.getByRole('link', { name: 'Players', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'My players' })).toBeVisible();
     await page.locator('a[href="#/players/team-1/player-1"]').click();
 
@@ -1369,7 +1371,7 @@ test('parent core workflows emit baseline timers from Home drill-ins', async ({ 
             startHash: '/home',
             expectedTargetPage: 'schedule',
             expectedTargetRoute: '/schedule',
-            readyHome: (testPage) => testPage.getByRole('heading', { name: 'Today for your players' }),
+            readyHome: (testPage) => testPage.getByRole('heading', { name: 'Your day' }),
             action: async (testPage) => {
                 await testPage.locator('.home-upcoming-section a[href="#/schedule"]').click();
             },
@@ -1383,7 +1385,7 @@ test('parent core workflows emit baseline timers from Home drill-ins', async ({ 
             startHash: '/home',
             expectedTargetPage: 'schedule_event',
             expectedTargetRoute: '/schedule/team-1/game-next?childId=player-1&section=availability',
-            readyHome: (testPage) => testPage.getByRole('heading', { name: 'Today for your players' }),
+            readyHome: (testPage) => testPage.getByRole('heading', { name: 'Your day' }),
             action: async (testPage) => {
                 await testPage.getByRole('link', { name: /Open action/ }).click();
             },
@@ -1422,7 +1424,7 @@ test('parent core workflows emit baseline timers from Home drill-ins', async ({ 
             startHash: '/home',
             expectedTargetPage: 'messages',
             expectedTargetRoute: '/messages/team-1',
-            readyHome: (testPage) => testPage.getByRole('heading', { name: 'Today for your players' }),
+            readyHome: (testPage) => testPage.getByRole('heading', { name: 'Your day' }),
             action: async (testPage) => {
                 await testPage.locator('a[href="#/messages/team-1"]').first().click();
             },
@@ -1435,7 +1437,7 @@ test('parent core workflows emit baseline timers from Home drill-ins', async ({ 
             startHash: '/home',
             expectedTargetPage: 'fees',
             expectedTargetRoute: '/parent-tools/fees',
-            readyHome: (testPage) => testPage.getByRole('heading', { name: 'Today for your players' }),
+            readyHome: (testPage) => testPage.getByRole('heading', { name: 'Your day' }),
             action: async (testPage) => {
                 await testPage.locator('a[href="#/parent-tools/fees"]').click();
             },
@@ -1448,7 +1450,7 @@ test('parent core workflows emit baseline timers from Home drill-ins', async ({ 
             startHash: '/home',
             expectedTargetPage: 'officials',
             expectedTargetRoute: '/officials',
-            readyHome: (testPage) => testPage.getByRole('heading', { name: 'Today for your players' }),
+            readyHome: (testPage) => testPage.getByRole('heading', { name: 'Your day' }),
             action: async (testPage) => {
                 await testPage.locator('a[href="#/officials"]').click();
             },
@@ -1526,7 +1528,7 @@ test('requested app workflows emit DB-ready view load baseline timers', async ({
             route: '/home',
             startHash: '/home',
             ready: async (testPage) => {
-                await waitForHomeRoute(testPage, testPage.getByRole('heading', { name: 'Today for your players' }));
+                await waitForHomeRoute(testPage, testPage.getByRole('heading', { name: 'Your day' }));
             }
         },
         {
@@ -1868,6 +1870,36 @@ test('my teams opens from Home data with selected team, player, and chat routes'
     await expect(page.getByText('Yours')).toBeVisible();
 });
 
+test.describe('narrow mobile Home workspace', () => {
+    test.use({ viewport: { width: 320, height: 720 }, hasTouch: true });
+
+    test('keeps section navigation and feed controls reachable without page overflow', async ({ page, baseURL }) => {
+        await mockHomePlayerModules(page);
+        await page.goto(appUrl(baseURL, '/home'), { waitUntil: 'domcontentloaded' });
+
+        await waitForHomeRoute(page, page.getByRole('heading', { name: 'Your day' }));
+        const sectionNav = page.getByRole('navigation', { name: 'Home sections' });
+        await expect(sectionNav.getByRole('link')).toHaveCount(5);
+        await expect(sectionNav.getByRole('link', { name: 'Today' })).toHaveAttribute('aria-current', 'page');
+
+        await sectionNav.getByRole('link', { name: 'Friends' }).click();
+        await expect(sectionNav.getByRole('link', { name: 'Friends' })).toHaveAttribute('aria-current', 'page');
+        await expect(page.getByRole('heading', { name: 'Friends', exact: true })).toBeVisible();
+
+        await sectionNav.getByRole('link', { name: 'Feed' }).click();
+        const feedFilters = page.getByRole('group', { name: 'Feed filters' });
+        await expect(feedFilters).toBeVisible();
+        const opportunitiesFilter = feedFilters.getByRole('button', { name: 'Opportunities' });
+        await opportunitiesFilter.scrollIntoViewIfNeeded();
+        await expect(opportunitiesFilter).toBeVisible();
+        await expect.poll(async () => {
+            const box = await opportunitiesFilter.boundingBox();
+            return Math.round(box?.height || 0);
+        }).toBeGreaterThanOrEqual(44);
+        await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+    });
+});
+
 test.describe('desktop Home workspace', () => {
     test.use({ viewport: { width: 1440, height: 900 }, hasTouch: false });
 
@@ -1875,12 +1907,13 @@ test.describe('desktop Home workspace', () => {
         await mockHomePlayerModules(page);
         await page.goto(appUrl(baseURL, '/home'), { waitUntil: 'domcontentloaded' });
 
-        await waitForHomeRoute(page, page.getByRole('heading', { name: 'Today for your players' }));
-        await expect(page.getByRole('button', { name: 'Today' })).toHaveAttribute('aria-pressed', 'true');
-        await expect(page.getByRole('button', { name: 'Feed' })).toBeVisible();
-        await expect(page.getByRole('button', { name: 'Players' })).toBeVisible();
-        await expect(page.getByRole('button', { name: 'Teams' })).toBeVisible();
-        await expect(page.getByRole('button', { name: 'Friends' })).toBeVisible();
+        await waitForHomeRoute(page, page.getByRole('heading', { name: 'Your day' }));
+        const sectionNav = page.getByRole('navigation', { name: 'Home sections' });
+        await expect(sectionNav.getByRole('link', { name: 'Today', exact: true })).toHaveAttribute('aria-current', 'page');
+        await expect(sectionNav.getByRole('link', { name: 'Feed', exact: true })).toBeVisible();
+        await expect(sectionNav.getByRole('link', { name: 'Players', exact: true })).toBeVisible();
+        await expect(sectionNav.getByRole('link', { name: 'Teams', exact: true })).toBeVisible();
+        await expect(sectionNav.getByRole('link', { name: 'Friends', exact: true })).toBeVisible();
         await expect.poll(async () => {
             const box = await page.locator('.home-hero').boundingBox();
             return Math.round(box?.height || 0);

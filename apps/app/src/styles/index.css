@@ -417,6 +417,36 @@
   font-size: 1rem;
 }
 
+.home-section-scroll,
+.feed-filter-scroll {
+  scroll-snap-type: x proximity;
+  scrollbar-width: none;
+}
+
+.home-section-scroll::-webkit-scrollbar,
+.feed-filter-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.home-section-nav::after,
+.feed-filter-nav::after {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 28px;
+  content: '';
+  pointer-events: none;
+}
+
+.home-section-nav::after {
+  background: linear-gradient(to left, rgba(246, 248, 251, 0.98), rgba(246, 248, 251, 0));
+}
+
+.feed-filter-nav::after {
+  background: linear-gradient(to left, #fff, rgba(255, 255, 255, 0));
+}
+
 @media (max-width: 639px) {
   .home-signal-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -524,7 +554,10 @@
   align-items: start;
 }
 
-.desktop-app-page .home-page-live,
+.desktop-app-page .home-page-live {
+  display: block;
+}
+
 .desktop-app-page .player-detail-page {
   display: grid;
   grid-template-columns: 236px minmax(0, 1fr);
@@ -537,12 +570,48 @@
   grid-column: 1 / -1;
 }
 
-.desktop-app-page .home-page-live .home-hero,
+.desktop-app-page .home-page-live .home-hero {
+  margin-bottom: 12px;
+}
+
 .desktop-app-page .player-detail-page .player-summary-card {
   grid-column: 1 / -1;
 }
 
-.desktop-app-page .home-page-live .home-section-nav,
+.desktop-app-page .home-page-live .home-section-nav {
+  top: 65px;
+  margin: 0 0 12px;
+  overflow: visible;
+  background: #f6f8fb;
+  padding: 8px 0;
+}
+
+.desktop-app-page .home-page-live .home-section-nav::after {
+  display: none;
+}
+
+.desktop-app-page .home-page-live .home-section-scroll {
+  overflow: visible;
+  padding: 0;
+}
+
+.desktop-app-page .home-page-live .home-section-scroll > div {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 4px;
+  border-radius: 12px;
+  padding: 6px;
+}
+
+.desktop-app-page .home-page-live .home-section-nav a {
+  justify-content: center;
+  border-radius: 10px;
+  padding-left: 12px;
+  padding-right: 12px;
+  text-align: center;
+}
+
 .desktop-app-page .player-detail-page .player-section-nav {
   grid-column: 1;
   top: 84px;
@@ -552,7 +621,6 @@
   padding: 0;
 }
 
-.desktop-app-page .home-page-live .home-section-nav > div,
 .desktop-app-page .player-detail-page .player-section-nav > div {
   display: flex;
   min-width: 0;
@@ -562,7 +630,6 @@
   padding: 8px;
 }
 
-.desktop-app-page .home-page-live .home-section-nav button,
 .desktop-app-page .player-detail-page .player-section-nav button {
   justify-content: flex-start;
   border-radius: 10px;
@@ -571,9 +638,6 @@
   text-align: left;
 }
 
-.desktop-app-page .home-page-live .home-section-content,
-.desktop-app-page .home-page-live > .app-card:not(.home-hero),
-.desktop-app-page .home-page-live > .home-upcoming-section,
 .desktop-app-page .player-detail-page .player-section-content,
 .desktop-app-page .player-detail-page > .app-card:not(.player-summary-card) {
   grid-column: 2;

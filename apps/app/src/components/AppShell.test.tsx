@@ -223,6 +223,20 @@ describe('AppShell', () => {
     expect(screen.queryByRole('link', { name: 'Family' })).toBeNull();
   });
 
+  it('labels the signed-out brand as public exploration instead of an account preview', () => {
+    render(
+      <MemoryRouter initialEntries={['/discover']}>
+        <Routes>
+          <Route path="/discover" element={<AppShell auth={{ ...auth, roles: [] }}><div>Discover</div></AppShell>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(screen.getByText('Explore ALL PLAYS')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Go to Discover' })).toBeTruthy();
+    expect(screen.queryByText('Signed out preview')).toBeNull();
+  });
+
   it('announces notification count changes through a live region', () => {
     render(
       <MemoryRouter initialEntries={['/home']}>

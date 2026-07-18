@@ -359,13 +359,13 @@ export function AppShell({ auth, children }: AppShellProps) {
                 type="button"
                 className="flex min-w-0 flex-1 items-center gap-3 text-left"
                 onClick={() => navigate(hasSignedInSession ? '/home' : '/discover')}
-                aria-label="Go to home"
+                aria-label={hasSignedInSession ? 'Go to home' : 'Go to Discover'}
               >
                 <img src="./logo_small.png" alt="" className="h-10 w-10 flex-none rounded-xl shadow-sm" />
                 <span className="min-w-0">
                   <span className="block truncate text-base font-black leading-tight text-gray-950">ALL PLAYS</span>
                   <span className="block truncate text-xs font-bold text-gray-500">
-                    {auth.roles.length ? auth.roles.join(' + ') : 'Signed out preview'}
+                    {auth.roles.length ? auth.roles.join(' + ') : 'Explore ALL PLAYS'}
                   </span>
                 </span>
               </button>
@@ -467,13 +467,13 @@ export function AppShell({ auth, children }: AppShellProps) {
                 type="button"
                 className="flex min-w-0 flex-1 items-center gap-3 text-left"
                 onClick={() => navigate(hasSignedInSession ? '/home' : '/discover')}
-                aria-label="Go to home"
+                aria-label={hasSignedInSession ? 'Go to home' : 'Go to Discover'}
               >
                 <img src="./logo_small.png" alt="" className="h-10 w-10 flex-none rounded-xl shadow-sm" />
                 <span className="min-w-0">
                   <span className="block truncate text-base font-black leading-tight text-gray-950">ALL PLAYS</span>
                   <span className="block truncate text-xs font-bold text-gray-500">
-                    {auth.roles.length ? auth.roles.join(' + ') : 'Signed out preview'}
+                    {auth.roles.length ? auth.roles.join(' + ') : 'Explore ALL PLAYS'}
                   </span>
                 </span>
               </button>
