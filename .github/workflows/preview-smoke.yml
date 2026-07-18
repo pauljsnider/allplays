@@ -70,6 +70,22 @@ jobs:
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
+      - name: Bootstrap Linux visual baselines
+        if: github.head_ref == 'agent/visual-regression'
+        run: npm run test:smoke:visual:update
+        env:
+          SMOKE_BASE_URL: http://127.0.0.1:4173
+          SMOKE_APP_BASE_URL: http://127.0.0.1:5174
+          SMOKE_SUITE: preview
+
+      - name: Upload bootstrapped Linux visual baselines
+        if: github.head_ref == 'agent/visual-regression'
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-baselines-linux
+          path: tests/smoke/**/*.spec.js-snapshots/*.png
+          if-no-files-found: error
+
       - name: Run static-hosting smoke
         run: npx playwright test --config=playwright.smoke.config.js --reporter=line
         env:
