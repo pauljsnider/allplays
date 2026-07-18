@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
     assertPreviewDeploySkipHandling,
     extractMatchBlock,
+    validateFirebaseDeployWorkloadIdentity,
     validatePreviewDeployCommand,
     validateProductionDeployCommand,
     validateFirebaseRulesCi
@@ -111,7 +112,6 @@ service firebase.storage {
             retry_firebase_deploy "hosting,functions" "application"
           else
             retry_firebase_deploy "hosting,functions" "application"
-            retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore"
           fi
         `;
 
@@ -146,12 +146,46 @@ service firebase.storage {
         ))).toThrow('Production Firestore deploy must run first when its configuration changed');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
             `else
-            retry_firebase_deploy "hosting,functions" "application"
-            retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore"`,
+            retry_firebase_deploy "hosting,functions" "application"`,
             `else
             retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore"
             retry_firebase_deploy "hosting,functions" "application"`
-        ))).toThrow('Production application deploy must run first when Firestore configuration is unchanged');
+        ))).toThrow('Production must not redeploy unchanged Firestore configuration');
+    });
+
+    it('requires pinned keyless Google authentication for Firebase deployers', () => {
+        const validWorkflow = `
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Authenticate to Google Cloud through exact-workflow OIDC
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: \${{ vars.FIREBASE_DEPLOY_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: \${{ vars.FIREBASE_DEPLOY_SERVICE_ACCOUNT }}
+          project_id: game-flow-c6311
+          create_credentials_file: true
+          cleanup_credentials: true
+        `;
+
+        expect(() => validateFirebaseDeployWorkloadIdentity(validWorkflow, 'Test deploy')).not.toThrow();
+        expect(() => validateFirebaseDeployWorkloadIdentity(
+            validWorkflow.replace('id-token: write', 'id-token: none'),
+            'Test deploy'
+        )).toThrow('Test deploy OIDC token permission');
+        expect(() => validateFirebaseDeployWorkloadIdentity(
+            validWorkflow.replace(/@[0-9a-f]{40}/, '@v3'),
+            'Test deploy'
+        )).toThrow('Test deploy pinned Google authentication action');
+        expect(() => validateFirebaseDeployWorkloadIdentity(
+            validWorkflow.replace('workload_identity_provider:', 'provider:'),
+            'Test deploy'
+        )).toThrow('Test deploy workload identity provider variable');
+        expect(() => validateFirebaseDeployWorkloadIdentity(
+            `${validWorkflow}\ncredentials_json: \${{ secrets.FIREBASE_SERVICE_ACCOUNT_GAME_FLOW_C6311 }}`,
+            'Test deploy'
+        )).toThrow('Test deploy must not use a long-lived Google service-account key');
     });
 
     it('requires preview deploy release-target outage handling', () => {

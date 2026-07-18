@@ -135,7 +135,8 @@ describe('authentication email delivery routing', () => {
         const changedBranch = productionSource.slice(changedBranchStart, unchangedBranchStart);
         const unchangedBranch = productionSource.slice(unchangedBranchStart, conditionalEnd);
         expect(changedBranch.indexOf('"firestore"')).toBeLessThan(changedBranch.indexOf('"application"'));
-        expect(unchangedBranch.indexOf('"application"')).toBeLessThan(unchangedBranch.indexOf('"firestore"'));
+        expect(unchangedBranch).toContain('"application"');
+        expect(unchangedBranch).not.toContain('"firestore"');
     });
 
     it('retries only transient production deploy failures and fails fast otherwise', () => {

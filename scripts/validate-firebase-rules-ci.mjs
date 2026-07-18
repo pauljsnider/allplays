@@ -55,6 +55,32 @@ export function validatePreviewDeployCommand(deployPreview) {
     assertMatches(deployPreview, /\.\/node_modules\/\.bin\/firebase hosting:channel:deploy "\$CURRENT_CHANNEL" --project game-flow-c6311 --config "\$FIREBASE_PREVIEW_CONFIG"/, 'Preview deploy installed Firebase CLI project/config arguments');
 }
 
+export function validateFirebaseDeployWorkloadIdentity(workflow, label) {
+    assertIncludes(workflow, 'id-token: write', `${label} OIDC token permission`);
+    assertMatches(
+        workflow,
+        /uses: google-github-actions\/auth@[0-9a-f]{40}(?:\s+# v3)?/,
+        `${label} pinned Google authentication action`
+    );
+    assertIncludes(
+        workflow,
+        'workload_identity_provider: ${{ vars.FIREBASE_DEPLOY_WORKLOAD_IDENTITY_PROVIDER }}',
+        `${label} workload identity provider variable`
+    );
+    assertIncludes(
+        workflow,
+        'service_account: ${{ vars.FIREBASE_DEPLOY_SERVICE_ACCOUNT }}',
+        `${label} service account variable`
+    );
+    assertIncludes(workflow, 'project_id: game-flow-c6311', `${label} Firebase project binding`);
+    assertIncludes(workflow, 'create_credentials_file: true', `${label} ADC credential file`);
+    assertIncludes(workflow, 'cleanup_credentials: true', `${label} credential cleanup`);
+    if (workflow.includes('secrets.FIREBASE_SERVICE_ACCOUNT_GAME_FLOW_C6311') ||
+        workflow.includes('credentials_json:')) {
+        throw new Error(`${label} must not use a long-lived Google service-account key.`);
+    }
+}
+
 export function validateProductionDeployCommand(deployProd) {
     const deployCommands = Array.from(deployProd.matchAll(/^\s*npx firebase-tools@\S+ deploy\b[^\n]*$/gm), match => match[0]);
     const deployCommand = deployCommands.find(command => /--only(?:=|\s+)"\$deploy_targets"/.test(command)) || '';
@@ -94,8 +120,11 @@ export function validateProductionDeployCommand(deployProd) {
     if (changedBranch.indexOf('"firestore"') > changedBranch.indexOf('"application"')) {
         throw new Error('Production Firestore deploy must run first when its configuration changed.');
     }
-    if (unchangedBranch.indexOf('"application"') > unchangedBranch.indexOf('"firestore"')) {
-        throw new Error('Production application deploy must run first when Firestore configuration is unchanged.');
+    if (!unchangedBranch.includes('"application"')) {
+        throw new Error('Production application deploy is missing when Firestore configuration is unchanged.');
+    }
+    if (unchangedBranch.includes('"firestore"')) {
+        throw new Error('Production must not redeploy unchanged Firestore configuration.');
     }
 
     const storageDeployCommand = deployCommands.find(command => /--only(?:=|\s+)storage(?:\s|$)/.test(command)) || '';
@@ -203,10 +232,12 @@ export function validateFirebaseRulesCi() {
     assertIncludes(firestoreRules, 'isNestedChatMessageCreateValid(', 'Nested chat create rules');
 
     validateProductionDeployCommand(deployProd);
+    validateFirebaseDeployWorkloadIdentity(deployProd, 'Production deploy');
     assertMatches(deployProd, /needs:\s*\[\s*unit-tests\s*,\s*regression-guards\s*\]/, 'Production deploy gate');
 
     assertMatches(deployPreviewBuild, /needs:\s*\[\s*unit-tests\s*,\s*regression-guards\s*\]/, 'Preview artifact build gate');
     validatePreviewDeployCommand(deployPreviewTrusted);
+    validateFirebaseDeployWorkloadIdentity(deployPreviewTrusted, 'Trusted preview deploy');
     assertPreviewDeploySkipHandling(deployPreviewTrusted);
 
     assertIncludes(storageRules, 'match /game-clips/{teamId}/{gameId}/{userId}/{fileName}', 'Scoped Storage game clip rules');

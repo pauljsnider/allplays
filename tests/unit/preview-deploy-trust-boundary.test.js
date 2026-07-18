@@ -32,6 +32,7 @@ const trustBoundaryRunbook = fs.readFileSync(
     path.join(repoRoot, 'docs', 'preview-deploy-trust-boundary.md'),
     'utf8'
 );
+const gitignore = fs.readFileSync(path.join(repoRoot, '.gitignore'), 'utf8');
 const tempDirectories = [];
 
 function validTriggerFixture() {
@@ -238,9 +239,9 @@ describe('preview deployment workflow trust boundary', () => {
         const configIndex = trustedWorkflow.indexOf('node scripts/write-firebase-hosting-config.mjs');
         const installIndex = trustedWorkflow.indexOf('run: npm ci --ignore-scripts');
         const recheckIndex = trustedWorkflow.indexOf('name: Re-verify current pull-request head before credentials');
-        const credentialIndex = trustedWorkflow.indexOf('secrets.FIREBASE_SERVICE_ACCOUNT_GAME_FLOW_C6311');
+        const credentialIndex = trustedWorkflow.indexOf('uses: google-github-actions/auth@');
         const deployIndex = trustedWorkflow.indexOf('hosting:channel:deploy');
-        const cleanupIndex = trustedWorkflow.indexOf('name: Remove Firebase credential file');
+        const cleanupIndex = trustedWorkflow.indexOf('name: Remove ephemeral Google credential file');
         const commentIndex = trustedWorkflow.indexOf('name: Report preview URL on verified pull request');
 
         expect(triggerIndex).toBeGreaterThan(-1);
@@ -254,6 +255,12 @@ describe('preview deployment workflow trust boundary', () => {
         expect(cleanupIndex).toBeGreaterThan(deployIndex);
         expect(commentIndex).toBeGreaterThan(cleanupIndex);
         expect(trustedWorkflow.slice(cleanupIndex, commentIndex)).toContain('if: always()');
+        expect(trustedWorkflow).toContain('id-token: write');
+        expect(trustedWorkflow).toContain('workload_identity_provider: ${{ vars.FIREBASE_DEPLOY_WORKLOAD_IDENTITY_PROVIDER }}');
+        expect(trustedWorkflow).toContain('service_account: ${{ vars.FIREBASE_DEPLOY_SERVICE_ACCOUNT }}');
+        expect(trustedWorkflow).toContain('cleanup_credentials: true');
+        expect(trustedWorkflow).not.toContain('secrets.FIREBASE_SERVICE_ACCOUNT_GAME_FLOW_C6311');
+        expect(gitignore).toContain('gha-creds-*.json');
     });
 
     it('pins every third-party action used by both preview workflows', () => {
@@ -286,8 +293,8 @@ describe('preview deployment workflow trust boundary', () => {
         expect(scheduledProdSmokeWorkflow).toContain('ref: master');
     });
 
-    it('documents the environment-only credential and exact-head operational contract', () => {
-        expect(trustBoundaryRunbook).toContain('must remain absent from repository');
+    it('documents the keyless credential and exact-head operational contract', () => {
+        expect(trustBoundaryRunbook).toContain('must remain absent');
         expect(trustBoundaryRunbook).toContain('firebase-preview-trusted');
         expect(trustBoundaryRunbook).toContain('production-smoke');
         expect(trustBoundaryRunbook).toContain('SMOKE_AUTH_EMAIL');
@@ -297,6 +304,9 @@ describe('preview deployment workflow trust boundary', () => {
         expect(trustBoundaryRunbook).toContain('Any new commit invalidates prior review evidence.');
         expect(trustBoundaryRunbook).toContain('Cloud Audit Logs for the old key ID');
         expect(trustBoundaryRunbook).toContain('Workload Identity Federation');
+        expect(trustBoundaryRunbook).toContain('FIREBASE_DEPLOY_WORKLOAD_IDENTITY_PROVIDER');
+        expect(trustBoundaryRunbook).toContain('FIREBASE_DEPLOY_SERVICE_ACCOUNT');
+        expect(trustBoundaryRunbook).toContain('exact workflow_ref');
     });
 });
 

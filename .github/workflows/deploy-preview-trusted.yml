@@ -26,6 +26,7 @@ jobs:
     permissions:
       actions: read
       contents: read
+      id-token: write
       issues: write
       pull-requests: write
 
@@ -119,15 +120,15 @@ jobs:
 
       # The credential is unavailable until all identity, archive, extracted
       # shape, and trusted-config checks have completed successfully.
-      - name: Configure Firebase service account
-        env:
-          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_GAME_FLOW_C6311 }}
-        run: |
-          set -euo pipefail
-          credentials_file="$RUNNER_TEMP/firebase-service-account.json"
-          umask 077
-          printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$credentials_file"
-          echo "GOOGLE_APPLICATION_CREDENTIALS=$credentials_file" >> "$GITHUB_ENV"
+      - name: Authenticate to Google Cloud through exact-workflow OIDC
+        id: google_auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.FIREBASE_DEPLOY_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.FIREBASE_DEPLOY_SERVICE_ACCOUNT }}
+          project_id: game-flow-c6311
+          create_credentials_file: true
+          cleanup_credentials: true
 
       - name: Deploy fixed Firebase Hosting preview channel
         id: deploy_preview
@@ -220,9 +221,15 @@ jobs:
           echo "preview_url=$preview_url" >> "$GITHUB_OUTPUT"
           echo "preview_skip_reason=" >> "$GITHUB_OUTPUT"
 
-      - name: Remove Firebase credential file
+      - name: Remove ephemeral Google credential file
         if: always()
-        run: rm -f "$RUNNER_TEMP/firebase-service-account.json"
+        env:
+          GOOGLE_CREDENTIAL_FILE: ${{ steps.google_auth.outputs.credentials_file_path }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$GOOGLE_CREDENTIAL_FILE" ]]; then
+            rm -f -- "$GOOGLE_CREDENTIAL_FILE"
+          fi
 
       - name: Report preview URL on verified pull request
         if: success()

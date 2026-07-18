@@ -41,6 +41,7 @@ _project-docs/
 # Firebase - NEVER commit these
 .firebaserc
 .firebase-*.generated.json
+gha-creds-*.json
 firebase-debug.log
 firebase-debug.*.log
 firestore-debug.log
