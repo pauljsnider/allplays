@@ -4,7 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const secureStorageMocks = vi.hoisted(() => ({
   getNativeSecureItem: vi.fn(),
   setNativeSecureItem: vi.fn(),
-  removeNativeSecureItem: vi.fn()
+  removeNativeSecureItem: vi.fn(),
+  removeNativeSecureItemEventually: vi.fn()
 }));
 
 vi.mock('./nativeRuntime', () => ({
@@ -38,9 +39,11 @@ describe('nativeAuthSessionStore', () => {
     secureStorageMocks.getNativeSecureItem.mockReset();
     secureStorageMocks.setNativeSecureItem.mockReset();
     secureStorageMocks.removeNativeSecureItem.mockReset();
+    secureStorageMocks.removeNativeSecureItemEventually.mockReset();
     secureStorageMocks.getNativeSecureItem.mockResolvedValue(null);
     secureStorageMocks.setNativeSecureItem.mockResolvedValue(undefined);
     secureStorageMocks.removeNativeSecureItem.mockResolvedValue(undefined);
+    secureStorageMocks.removeNativeSecureItemEventually.mockResolvedValue(undefined);
   });
 
   it('restores an encrypted session without writing credentials to localStorage', async () => {
@@ -98,12 +101,30 @@ describe('nativeAuthSessionStore', () => {
     await store.clearNativeAuthSession();
 
     expect(window.localStorage.getItem('allplays-native-auth-session')).toBeNull();
-    expect(secureStorageMocks.removeNativeSecureItem).toHaveBeenCalledTimes(2);
+    expect(secureStorageMocks.removeNativeSecureItemEventually).toHaveBeenCalledTimes(2);
     await expect(store.readNativeAuthSession()).resolves.toBeNull();
   });
 
+  it('keeps the tombstone until an uncancelled removal behind a late secure write finishes', async () => {
+    const removal = createDeferred<void>();
+    secureStorageMocks.removeNativeSecureItemEventually.mockReturnValueOnce(removal.promise);
+    const store = await loadStore();
+
+    const cleanup = store.clearNativeAuthSession();
+    await Promise.resolve();
+
+    expect(secureStorageMocks.removeNativeSecureItemEventually)
+      .toHaveBeenCalledWith('native-auth-session-v2');
+    expect(secureStorageMocks.removeNativeSecureItem).not.toHaveBeenCalled();
+    expect(window.localStorage.getItem('allplays-native-auth-signed-out-v2')).toBe('1');
+
+    removal.resolve();
+    await cleanup;
+    expect(window.localStorage.getItem('allplays-native-auth-signed-out-v2')).toBeNull();
+  });
+
   it('keeps a non-secret sign-out tombstone when encrypted deletion fails so a stale token cannot restore', async () => {
-    secureStorageMocks.removeNativeSecureItem.mockRejectedValue(new Error('keychain locked'));
+    secureStorageMocks.removeNativeSecureItemEventually.mockRejectedValue(new Error('keychain locked'));
     const store = await loadStore();
 
     await store.clearNativeAuthSession();
@@ -115,6 +136,16 @@ describe('nativeAuthSessionStore', () => {
     expect(window.localStorage.getItem('allplays-native-auth-session')).toBeNull();
   });
 });
+
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
 
 function installLocalStorage() {
   const records = new Map<string, string>();

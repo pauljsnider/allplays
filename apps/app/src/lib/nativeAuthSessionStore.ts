@@ -3,6 +3,7 @@ import { isNativeRuntime } from './nativeRuntime';
 import {
   getNativeSecureItem,
   removeNativeSecureItem,
+  removeNativeSecureItemEventually,
   setNativeSecureItem
 } from './nativeSecureStorage';
 
@@ -174,7 +175,10 @@ export async function clearNativeAuthSession(): Promise<void> {
   removeLegacyPlaintextSession();
   setSignedOutMarker();
   try {
-    await removeNativeSecureItem(secureSessionStorageKey);
+    // A prior write may already have timed out while its native plugin call is
+    // still running. Queue an uncancelled removal behind that real write so it
+    // cannot restore a signed-out user's refresh token after cleanup returns.
+    await removeNativeSecureItemEventually(secureSessionStorageKey);
     clearSignedOutMarker();
   } catch (error) {
     logger.warn('Unable to clear the encrypted native auth session.', { error });

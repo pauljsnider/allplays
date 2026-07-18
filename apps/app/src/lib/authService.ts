@@ -616,7 +616,7 @@ async function persistNativeRestAuthSession(signInPayload: NativeRestSignInPaylo
       String(auth.app?.name || '[DEFAULT]')
     );
     holdNativeAuthMutationQueueUntil(secureRemoval);
-    await clearNativeAuthSession();
+    await runBestEffortAuthCleanup('Native fallback auth cleanup', clearNativeAuthSession);
     try {
       await withTimeout(
         secureRemoval,
@@ -1248,9 +1248,9 @@ async function signUpWithEmailInternal(email: string, password: string, activati
     : createUserWithEmailAndPassword;
   const cleanupSignupAuth = isNativeRuntime()
     ? async (authInstance: typeof auth) => {
-      await clearNativeAuthSession();
-      await clearFirebaseAuthStorageSession();
-      return firebaseSignOut(authInstance);
+      await runBestEffortAuthCleanup('Failed native signup fallback auth cleanup', clearNativeAuthSession);
+      await runBestEffortAuthCleanup('Failed native signup storage cleanup', clearFirebaseAuthStorageSession);
+      await runBestEffortAuthCleanup('Failed native signup Firebase sign-out', () => firebaseSignOut(authInstance));
     }
     : firebaseSignOut;
 

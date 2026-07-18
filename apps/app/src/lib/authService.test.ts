@@ -462,6 +462,10 @@ describe('signUpWithEmail', () => {
     vi.mocked(firebaseSignOutMock).mockResolvedValue(undefined);
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('normalizes signup input and delegates to the shared access-code redemption flow', async () => {
     await signUpWithEmail(' Player@Example.COM ', 'secret1', ' 85nsbz7k ');
 
@@ -544,6 +548,36 @@ describe('signUpWithEmail', () => {
       })
     );
     expect(nativeSessionStoreMocks.clearNativeAuthSession).toHaveBeenCalled();
+  });
+
+  it('returns a failed signup after bounded cleanup but blocks replacement auth until late fallback removal finishes', async () => {
+    vi.useFakeTimers();
+    const fallbackRemoval = createDeferred<void>();
+    nativeSessionStoreMocks.clearNativeAuthSession.mockReturnValueOnce(fallbackRemoval.promise);
+    legacySignupFlowMocks.executeEmailPasswordSignup
+      .mockImplementationOnce(async (options: any) => {
+        await options.dependencies.signOut(authState);
+        throw new Error('invite redemption failed');
+      })
+      .mockResolvedValueOnce({
+        user: { uid: 'replacement-user', email: 'replacement@example.com' }
+      });
+
+    const failedSignup = signUpWithEmail('player@example.com', 'secret1', '85nsbz7k');
+    const failedSignupRejection = expect(failedSignup).rejects.toThrow('invite redemption failed');
+    await vi.advanceTimersByTimeAsync(2_500);
+    await failedSignupRejection;
+
+    const replacementSignup = signUpWithEmail('replacement@example.com', 'secret1', '85nsbz7k');
+    await Promise.resolve();
+    expect(legacySignupFlowMocks.executeEmailPasswordSignup).toHaveBeenCalledTimes(1);
+
+    fallbackRemoval.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(replacementSignup).resolves.toMatchObject({
+      user: { uid: 'replacement-user' }
+    });
+    expect(legacySignupFlowMocks.executeEmailPasswordSignup).toHaveBeenCalledTimes(2);
   });
 
   it('deletes and signs out a just-created native user when secure persistence fails', async () => {

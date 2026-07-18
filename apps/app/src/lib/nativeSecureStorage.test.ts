@@ -134,6 +134,28 @@ describe('nativeSecureStorage', () => {
     expect(secureStorageMocks.setItem.mock.invocationCallOrder[0])
       .toBeLessThan(secureStorageMocks.removeItem.mock.invocationCallOrder[0]);
   });
+
+  it('removes a fallback refresh token after the secure session write finishes late', async () => {
+    vi.useFakeTimers();
+    const lateWrite = createDeferred<void>();
+    secureStorageMocks.setItem.mockReturnValueOnce(lateWrite.promise);
+    const storage = await loadStorage();
+
+    const writePromise = storage.setNativeSecureItem('native-auth-session-v2', 'failed-refresh-token');
+    const writeRejection = expect(writePromise).rejects.toThrow('write timed out');
+    await vi.advanceTimersByTimeAsync(1_500);
+    await writeRejection;
+
+    const removalPromise = storage.removeNativeSecureItemEventually('native-auth-session-v2');
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(secureStorageMocks.removeItem).not.toHaveBeenCalled();
+
+    lateWrite.resolve();
+    await vi.runAllTimersAsync();
+    await expect(removalPromise).resolves.toBeUndefined();
+    expect(secureStorageMocks.setItem.mock.invocationCallOrder[0])
+      .toBeLessThan(secureStorageMocks.removeItem.mock.invocationCallOrder[0]);
+  });
 });
 
 function createDeferred<T>() {
