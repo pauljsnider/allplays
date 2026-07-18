@@ -239,14 +239,17 @@ describe('Stripe payment-authority rollout gate', () => {
         ]) {
             expect(runbook).toContain(`\`${callable}\``);
         }
-        expect(runbook).toContain('Save each full IAM policy, etag, and revision');
+        expect(runbook).toContain('save its full IAM policy, etag, and revision');
+        expect(runbook).toContain('record a verified `NOT_DEPLOYED` entry');
+        expect(runbook).toContain('Do not infer quiescence from an IAM command succeeding or treat a nonexistent function as an IAM success');
         expect(runbook).toContain('returns HTTP 403 before callable code runs');
         expect(runbook).toContain('webhook, audit, and cleanup endpoints remain invokable');
         expect(runbook).toContain('bindingFailureCount');
         expect(runbook).toContain('liveModeMatched');
         expect(runbook).toContain('testModeMatched');
         expect(runbook).toContain('require the same empty result twice');
-        expect(runbook).toContain('Run the explicit empty assertion again after IAM restoration');
+        expect(runbook).toContain('Run the explicit empty assertion again after all intended invoker policies are active');
+        expect(runbook).toContain('there is no pre-freeze policy to restore');
         expect(runbook).toContain('clear `paymentAuthorityRollout/control.frozen` as the final reopening step');
         expect(runbook).toContain('Do not call the ordering atomic.');
     });

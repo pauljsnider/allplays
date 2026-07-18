@@ -9,7 +9,7 @@ The final assertion is valid only inside a verified payment-maintenance window. 
 After the PR's exact head has clean CI and independent security review, use this ordering:
 
 1. Create `paymentAuthorityRollout/control` with `frozen: true` through an authenticated, audited administrator operation. Record the write time and exact document contents.
-2. Remove the public invoker binding from all seven legacy payment-mutation callables before scanning:
+2. Inventory all seven intended payment-mutation callable names before scanning:
 
    - `createStripeRegistrationCheckout`
    - `cancelStripeRegistrationCheckout`
@@ -19,7 +19,7 @@ After the PR's exact head has clean CI and independent security review, use this
    - `createStripeTeamPassCheckout`
    - `expireStripeTeamPassCheckout`
 
-   First enumerate the actual deployed generation, region, backing service, URI, and current IAM policy for every target. Save each full IAM policy, etag, and revision in a permission-restricted rollback manifest. Remove only the applicable Gen 1 `roles/cloudfunctions.invoker` or Gen 2 `roles/run.invoker` public grant from each exact target. Verify the transport now returns HTTP 403 before callable code runs. Separately verify the webhook, audit, and cleanup endpoints remain invokable. Do not infer quiescence from an IAM command succeeding.
+   Do not assume every name already exists: the two `expireStripe*` recovery callables may be new at cutover time. Enumerate the actual deployed generation, region, backing service, URI, and current IAM policy for every target. For an absent target, record a verified `NOT_DEPLOYED` entry in the manifest and ensure it remains absent during bootstrap. For every deployed target, save its full IAM policy, etag, and revision in a permission-restricted rollback manifest, then remove only the applicable Gen 1 `roles/cloudfunctions.invoker` or Gen 2 `roles/run.invoker` public grant. Verify each deployed transport now returns HTTP 403 before callable code runs. Separately verify the webhook, audit, and cleanup endpoints remain invokable. Do not infer quiescence from an IAM command succeeding or treat a nonexistent function as an IAM success.
 3. Deploy the reviewed Firestore rules while `frozen: true`. The control document is server-only and immutable to every client, including platform administrators. These rules freeze registration forms/records, Team Fee batches/recipients/offline billing, and Team Pass entitlement mutations while preserving safe reads and unrelated team operations. Verify representative payment writes are denied and representative nonpayment reads/writes still work. Webhooks use Admin SDK, bypass rules, remain invokable, and must never be disabled during drainage.
 4. Bootstrap only the two reviewed rollout callables:
 
@@ -57,7 +57,7 @@ Verify both exact functions are active before continuing. Do not include payment
 
 11. Capture the sanitized result fields (`ready`, `complete`, `asserted`, all scanned counts, and `blockerCount`) plus the audit document ID and timestamp. Do not copy user, payment, or Stripe identifiers into PR evidence.
 12. While the IAM and rules freeze still hold, merge the exact reviewed head and deploy the hardened payment handlers/webhook. Every new mutation handler independently checks the frozen control and returns maintenance/unavailable before changing authority. Re-check effective IAM and control state before and after deployment; if deployment restored a public grant, remove it again before continuing.
-13. Verify every deployed handler revision, restore the exact pre-freeze callable invoker grants from the saved IAM manifests while `frozen: true`, and confirm the hardened handlers still reject payment mutation because of the control document. Run the explicit empty assertion again after IAM restoration. Only after that post-deploy assertion is clean may the operator clear `paymentAuthorityRollout/control.frozen` as the final reopening step. Verify a new checkout uses durable v2 authority before considering the cutover complete.
+13. Verify every deployed handler revision. While `frozen: true`, restore the exact pre-freeze callable invoker grants only for targets that existed in the saved manifest. For a newly created `expireStripeTeamFeeCheckout` or `expireStripeTeamPassCheckout`, apply a separately reviewed callable invoker policy matching the intended client transport and record that new policy; there is no pre-freeze policy to restore. Confirm every now-invokable hardened mutation callable still rejects payment mutation because of the control document. Run the explicit empty assertion again after all intended invoker policies are active. Only after that post-deploy assertion is clean may the operator clear `paymentAuthorityRollout/control.frozen` as the final reopening step. Verify a new checkout and each required expiration/recovery flow use durable v2 authority before considering the cutover complete.
 
 Do not call the ordering atomic. IAM changes, rules deployment, Functions deployment, webhook drainage, assertion, and reopening are separate observable steps. Safety comes from keeping both the callable IAM block and Firestore rules freeze in force across every gap, verifying each transition, and repeating the assertion after hardened code is deployed.
 
