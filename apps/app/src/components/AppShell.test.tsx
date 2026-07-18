@@ -237,6 +237,31 @@ describe('AppShell', () => {
     expect(screen.queryByText('Signed out preview')).toBeNull();
   });
 
+  it('labels a roleless signed-in session as signed in instead of public exploration', () => {
+    render(
+      <MemoryRouter initialEntries={['/home']}>
+        <Routes>
+          <Route
+            path="/home"
+            element={(
+              <AppShell auth={{
+                ...signedInAuth,
+                roles: [],
+                user: signedInAuth.user ? { ...signedInAuth.user, roles: [] } : null,
+              }}>
+                <div>Home</div>
+              </AppShell>
+            )}
+          />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(screen.getByText('Signed in')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Go to home' })).toBeTruthy();
+    expect(screen.queryByText('Explore ALL PLAYS')).toBeNull();
+  });
+
   it('announces notification count changes through a live region', () => {
     render(
       <MemoryRouter initialEntries={['/home']}>

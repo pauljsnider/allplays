@@ -270,6 +270,11 @@ export function AppShell({ auth, children }: AppShellProps) {
 
   const addWorkflows = buildAddWorkflows();
   const hasSignedInSession = Boolean(auth.user || auth.roles.length);
+  const brandContextLabel = auth.roles.length
+    ? auth.roles.join(' + ')
+    : hasSignedInSession
+      ? 'Signed in'
+      : 'Explore ALL PLAYS';
   const activeNavItems = hasSignedInSession ? navItems : publicNavItems;
   const activeDesktopNavItems = hasSignedInSession ? desktopNavItems : publicNavItems;
   const commonAddWorkflows = commonAddWorkflowIds
@@ -365,7 +370,7 @@ export function AppShell({ auth, children }: AppShellProps) {
                 <span className="min-w-0">
                   <span className="block truncate text-base font-black leading-tight text-gray-950">ALL PLAYS</span>
                   <span className="block truncate text-xs font-bold text-gray-500">
-                    {auth.roles.length ? auth.roles.join(' + ') : 'Explore ALL PLAYS'}
+                    {brandContextLabel}
                   </span>
                 </span>
               </button>
@@ -473,7 +478,7 @@ export function AppShell({ auth, children }: AppShellProps) {
                 <span className="min-w-0">
                   <span className="block truncate text-base font-black leading-tight text-gray-950">ALL PLAYS</span>
                   <span className="block truncate text-xs font-bold text-gray-500">
-                    {auth.roles.length ? auth.roles.join(' + ') : 'Explore ALL PLAYS'}
+                    {brandContextLabel}
                   </span>
                 </span>
               </button>
