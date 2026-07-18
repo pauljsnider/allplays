@@ -454,6 +454,7 @@
                 "apps/app/src/pages/messages/state/emailReducer.ts"
             ],
             "cloudFunctions": [
+                "checkAcceptedFriendMessageAccess",
                 "markAllNotificationInboxRead",
                 "markNotificationInboxItemRead",
                 "notifyConversationChatMessageCreated",
@@ -475,9 +476,11 @@
                 "functions/test/team-email-core.test.cjs",
                 "tests/unit/app-chat-email-drafts-service.test.ts",
                 "tests/unit/app-chat-service-recipients.test.js",
+                "tests/unit/app-friend-message-service.test.js",
                 "tests/unit/app-messages-accessibility.test.tsx",
                 "tests/unit/app-notification-inbox-review.test.tsx",
-                "tests/unit/chat-notification-delivery-contract.test.js"
+                "tests/unit/chat-notification-delivery-contract.test.js",
+                "tests/unit/friend-message-access-core.test.js"
             ],
             "integrationTests": [
                 "apps/app/src/pages/Messages.test.ts",

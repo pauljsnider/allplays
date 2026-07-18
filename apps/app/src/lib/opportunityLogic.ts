@@ -188,6 +188,9 @@ export function emptyOpportunityInput(kind: OpportunityKind = 'team_seeking_play
 
 export function applyOpportunityTeamDefaults(input: OpportunityInput, team: ManagedOpportunityTeam | null | undefined): OpportunityInput {
   if (!team || input.kind === 'player_seeking_team') return input;
+  const availability = input.teamId
+    ? input.availability
+    : team.availability || input.availability || opportunityAvailabilityOptions[0];
   return {
     ...input,
     teamId: team.id,
@@ -198,7 +201,7 @@ export function applyOpportunityTeamDefaults(input: OpportunityInput, team: Mana
     ageGroup: input.ageGroup || team.ageGroup,
     competitiveLevel: input.competitiveLevel || team.competitiveLevel,
     division: input.division || team.division,
-    availability: input.availability || team.availability || opportunityAvailabilityOptions[0]
+    availability
   };
 }
 
@@ -226,6 +229,10 @@ export function switchOpportunityTeamDefaults(
       nextInput[key] = nextTeam?.[key] || '';
     }
   });
+  const previousAvailabilityDefault = previousTeam?.availability || opportunityAvailabilityOptions[0];
+  if (!input.availability || (previousTeam && input.availability === previousAvailabilityDefault)) {
+    nextInput.availability = nextTeam?.availability || opportunityAvailabilityOptions[0];
+  }
   return nextInput;
 }
 

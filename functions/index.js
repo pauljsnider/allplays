@@ -187,6 +187,9 @@ const {
   serializePublicOpportunity,
   buildOpportunityExpiry
 } = require('./public-opportunities-core.cjs');
+const {
+  createCheckAcceptedFriendMessageAccessHandler
+} = require('./friend-message-access-core.cjs');
 const { hasTeamAdminAccess } = require('./team-admin-access-core.cjs');
 const { createAutoAcceptParentInviteHandler } = require('./parent-invite-auto-link-callable.cjs');
 const {
@@ -12509,6 +12512,13 @@ async function getOpportunityCaller(context, options = {}) {
 function isOpportunityPlatformAdmin(caller) {
   return caller?.user?.isAdmin === true;
 }
+
+exports.checkAcceptedFriendMessageAccess = functions.https.onCall(
+  createCheckAcceptedFriendMessageAccessHandler({
+    firestore,
+    HttpsError: functions.https.HttpsError
+  })
+);
 
 function encodeOpportunityCursor(docSnap) {
   if (!docSnap) return null;
