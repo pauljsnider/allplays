@@ -4,7 +4,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { stagePagesBundle, writeAppCheckRuntimeConfig } from '../../scripts/stage-pages-bundle.mjs';
+import {
+    injectPagesSecurityMeta,
+    readPagesSecurityMetaPolicies,
+    stagePagesBundle,
+    toPagesMetaCsp,
+    writeAppCheckRuntimeConfig
+} from '../../scripts/stage-pages-bundle.mjs';
 import { writeFirebaseHostingConfig } from '../../scripts/write-firebase-hosting-config.mjs';
 
 const tempDirs = [];
@@ -20,6 +26,37 @@ function makeTempDir() {
 function writeFile(filePath, contents = '') {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, contents);
+}
+
+function makePagesSecurityFirebaseConfig() {
+    return {
+        hosting: {
+            headers: [
+                {
+                    source: '**',
+                    headers: [
+                        {
+                            key: 'Content-Security-Policy',
+                            value: "default-src 'self'; script-src 'self'; frame-ancestors 'self'; upgrade-insecure-requests"
+                        },
+                        {
+                            key: 'Referrer-Policy',
+                            value: 'strict-origin-when-cross-origin'
+                        }
+                    ]
+                },
+                {
+                    source: '/widget-scoreboard.html',
+                    headers: [
+                        {
+                            key: 'Content-Security-Policy',
+                            value: "default-src 'self'; script-src 'self' https://www.gstatic.com; frame-ancestors *; upgrade-insecure-requests"
+                        }
+                    ]
+                }
+            ]
+        }
+    };
 }
 
 beforeEach(() => {
@@ -75,18 +112,19 @@ describe('pages bundle staging', () => {
         const rootDir = makeTempDir();
         const destinationDir = path.join(makeTempDir(), 'site');
 
-        writeFile(path.join(rootDir, 'index.html'), '<h1>ALL PLAYS</h1>');
+        writeFile(path.join(rootDir, 'index.html'), '<!doctype html><html><head><meta charset="UTF-8"><script src="/js/site.js"></script></head><body><h1>ALL PLAYS</h1></body></html>');
+        writeFile(path.join(rootDir, 'widget-scoreboard.html'), '<!doctype html><html><head></head><body>Score</body></html>');
         writeFile(path.join(rootDir, 'css', 'site.css'), 'body {}');
         writeFile(path.join(rootDir, 'js', 'site.js'), 'export const ok = true;');
         writeFile(path.join(rootDir, 'CNAME'), 'allplays.ai');
         writeFile(path.join(rootDir, '.well-known', 'assetlinks.json'), '[]');
         writeFile(path.join(rootDir, '.well-known', 'apple-app-site-association'), '{}');
         writeFile(path.join(rootDir, 'package.json'), '{}');
-        writeFile(path.join(rootDir, 'firebase.json'), '{}');
+        writeFile(path.join(rootDir, 'firebase.json'), JSON.stringify(makePagesSecurityFirebaseConfig()));
         writeFile(path.join(rootDir, '.firebaserc'), '{}');
         writeFile(path.join(rootDir, 'README.md'), '# private docs');
         writeFile(path.join(rootDir, 'apps', 'app', 'src', 'main.tsx'), 'source');
-        writeFile(path.join(rootDir, 'apps', 'app', 'dist', 'index.html'), '<div id="root"></div>');
+        writeFile(path.join(rootDir, 'apps', 'app', 'dist', 'index.html'), '<!doctype html><html><head></head><body><div id="root"></div></body></html>');
         writeFile(path.join(rootDir, 'apps', 'app', 'dist', 'assets', 'index.js'), 'console.log("app");');
         writeFile(path.join(rootDir, 'tests', 'unit', 'example.test.js'), 'test');
 
@@ -101,6 +139,29 @@ describe('pages bundle staging', () => {
         expect(fs.existsSync(path.join(destinationDir, '.well-known', 'apple-app-site-association'))).toBe(true);
         expect(fs.existsSync(path.join(destinationDir, 'app', 'assets', 'index.js'))).toBe(true);
         expect(fs.existsSync(path.join(destinationDir, '.nojekyll'))).toBe(true);
+        expect(result.securityMeta.htmlFileCount).toBe(3);
+
+        const rootHtml = fs.readFileSync(result.rootIndexPath, 'utf8');
+        const appHtml = fs.readFileSync(result.appIndexPath, 'utf8');
+        const widgetHtml = fs.readFileSync(path.join(destinationDir, 'widget-scoreboard.html'), 'utf8');
+        for (const html of [rootHtml, appHtml, widgetHtml]) {
+            expect(html.match(/http-equiv="Content-Security-Policy"/g)).toHaveLength(1);
+            expect(html.match(/name="referrer"/g)).toHaveLength(1);
+            expect(html).toContain('content="strict-origin-when-cross-origin"');
+            expect(html).not.toContain('frame-ancestors');
+            expect(html).not.toContain("'unsafe-eval'");
+        }
+        expect(rootHtml).toContain(`content="${result.securityMeta.defaultCsp}"`);
+        expect(appHtml).toContain(`content="${result.securityMeta.defaultCsp}"`);
+        expect(widgetHtml).toContain(`content="${result.securityMeta.widgetScoreboardCsp}"`);
+        expect(rootHtml.indexOf('charset="UTF-8"')).toBeLessThan(
+            rootHtml.indexOf('http-equiv="Content-Security-Policy"')
+        );
+        expect(rootHtml.indexOf('http-equiv="Content-Security-Policy"')).toBeLessThan(
+            rootHtml.indexOf('<script')
+        );
+        expect(widgetHtml).toContain('https://www.gstatic.com');
+        expect(widgetHtml).not.toContain(`content="${result.securityMeta.defaultCsp}"`);
 
         expect(fs.existsSync(path.join(destinationDir, 'package.json'))).toBe(false);
         expect(fs.existsSync(path.join(destinationDir, 'firebase.json'))).toBe(false);
@@ -202,6 +263,57 @@ describe('pages bundle staging', () => {
             .toThrow(/enforcement-ready staging requires a valid/);
     });
 
+    it('derives Pages meta policies from Firebase Hosting without unsupported directives', () => {
+        const repoRoot = path.resolve(import.meta.dirname, '../..');
+        const firebaseConfig = JSON.parse(
+            fs.readFileSync(path.join(repoRoot, 'firebase.json'), 'utf8')
+        );
+        const policies = readPagesSecurityMetaPolicies(repoRoot);
+        const globalRule = firebaseConfig.hosting.headers.find((rule) => rule.source === '**');
+        const widgetRule = firebaseConfig.hosting.headers.find(
+            (rule) => rule.source === '/widget-scoreboard.html'
+        );
+        const headerValue = (rule, key) => rule.headers.find((header) => header.key === key).value;
+
+        expect(policies.defaultCsp).toBe(
+            toPagesMetaCsp(headerValue(globalRule, 'Content-Security-Policy'))
+        );
+        expect(policies.widgetScoreboardCsp).toBe(
+            toPagesMetaCsp(headerValue(widgetRule, 'Content-Security-Policy'))
+        );
+        expect(policies.referrerPolicy).toBe(headerValue(globalRule, 'Referrer-Policy'));
+        expect(policies.defaultCsp).not.toMatch(/frame-ancestors/i);
+        expect(policies.widgetScoreboardCsp).not.toMatch(/frame-ancestors/i);
+        expect(policies.defaultCsp).not.toContain("'unsafe-eval'");
+        expect(policies.widgetScoreboardCsp).not.toContain("'unsafe-eval'");
+    });
+
+    it('fails closed when staged HTML cannot receive exactly one early security meta pair', () => {
+        const rootDir = makeTempDir();
+        const destinationDir = makeTempDir();
+        writeFile(
+            path.join(rootDir, 'firebase.json'),
+            JSON.stringify(makePagesSecurityFirebaseConfig())
+        );
+        writeFile(path.join(destinationDir, 'missing-head.html'), '<main>No head</main>');
+
+        expect(() => injectPagesSecurityMeta(destinationDir, { rootDir }))
+            .toThrow(/missing a head element/);
+
+        fs.rmSync(path.join(destinationDir, 'missing-head.html'));
+        writeFile(
+            path.join(destinationDir, 'duplicate.html'),
+            '<html><head><meta name="referrer" content="unsafe-url"></head></html>'
+        );
+        expect(() => injectPagesSecurityMeta(destinationDir, { rootDir }))
+            .toThrow(/already contains a referrer meta tag/);
+    });
+
+    it('rejects unsafe-eval if it drifts into the centralized Hosting policy', () => {
+        expect(() => toPagesMetaCsp("default-src 'self'; script-src 'self' 'unsafe-eval'"))
+            .toThrow(/must not allow unsafe-eval/);
+    });
+
     it('wires production, Pages, and preview staging to explicit repository variables', () => {
         const repoRoot = path.resolve(import.meta.dirname, '../..');
         const productionWorkflow = fs.readFileSync(
@@ -224,6 +336,29 @@ describe('pages bundle staging', () => {
         expect(pagesWorkflow).toContain('vars.APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY');
         expect(previewWorkflow).toContain('vars.APP_CHECK_PREVIEW_RECAPTCHA_ENTERPRISE_SITE_KEY');
         expect(previewWorkflow).not.toContain('APP_CHECK_PREVIEW_RECAPTCHA_ENTERPRISE_SITE_KEY ||');
+    });
+
+    it('preserves hidden Pages files and verifies them after artifact download', () => {
+        const repoRoot = path.resolve(import.meta.dirname, '../..');
+        const pagesWorkflow = fs.readFileSync(
+            path.join(repoRoot, '.github', 'workflows', 'app-github-pages.yml'),
+            'utf8'
+        );
+        const intermediateUpload = pagesWorkflow.slice(
+            pagesWorkflow.indexOf('- name: Upload app Pages bundle artifact'),
+            pagesWorkflow.indexOf('\n  deploy:')
+        );
+        const deployJob = pagesWorkflow.slice(pagesWorkflow.indexOf('\n  deploy:'));
+        const downloadIndex = deployJob.indexOf('- name: Download staged Pages bundle');
+        const verifyIndex = deployJob.indexOf('- name: Verify staged Pages deployment artifact');
+        const pagesUploadIndex = deployJob.indexOf('- name: Upload GitHub Pages artifact');
+
+        expect(intermediateUpload).toContain('include-hidden-files: true');
+        expect(deployJob).toContain('ALLPLAYS_APP_CHECK_ENFORCEMENT_READY: ${{ vars.APP_CHECK_ENFORCEMENT_READY }}');
+        expect(deployJob).toContain('node scripts/verify-pages-deploy-artifact.mjs "$RUNNER_TEMP/allplays-pages"');
+        expect(downloadIndex).toBeGreaterThan(-1);
+        expect(verifyIndex).toBeGreaterThan(downloadIndex);
+        expect(pagesUploadIndex).toBeGreaterThan(verifyIndex);
     });
 
     it('adds immutable headers only for concrete staged app asset files', () => {
