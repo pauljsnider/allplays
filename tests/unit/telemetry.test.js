@@ -225,6 +225,7 @@ describe('telemetry.js payload handling', () => {
     });
 
     it('deduplicates repeated error fingerprints for one minute', async () => {
+        vi.setSystemTime(0);
         window.__ALLPLAYS_CONFIG__.telemetrySampleRate = 0;
         telemetryModule.captureTelemetryEvent('js_error', {
             errorName: 'TypeError', errorType: 'runtime', source: '/app/main.js', line: 12

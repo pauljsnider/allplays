@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const sentryMocks = vi.hoisted(() => {
   const scope = {
@@ -50,6 +50,10 @@ describe('app telemetry bridge', () => {
     delete window.ALLPLAYS_ENVIRONMENT;
     delete window.ALLPLAYS_RELEASE;
     document.body.innerHTML = '<div id="root"></div>';
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('emits timing and handled errors through telemetry and the error tracker', async () => {
@@ -474,6 +478,23 @@ describe('app telemetry bridge', () => {
         message: '[REDACTED]'
       })
     }));
+  });
+
+  it('deduplicates repeated tracker errors even at the Unix epoch', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    window.__ALLPLAYS_CONFIG__ = {
+      errorTrackingDsn: 'https://public@example.ingest.sentry.io/dedupe'
+    };
+
+    const telemetry = await import('./telemetry');
+    await telemetry.initializeAppErrorTracking({ isProduction: false });
+    const repeated = new Error('same private detail');
+    telemetry.captureHandledAppError('same code label', repeated);
+    telemetry.captureHandledAppError('same code label', repeated);
+
+    expect(sentryMocks.captureException).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
   });
 
   it('degrades safely when the telemetry pipeline is unavailable', async () => {

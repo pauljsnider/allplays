@@ -324,9 +324,9 @@ function shouldKeepEvent(event) {
     const lowValue = /^(?:interaction_|page_|scroll_depth|visibility_change|app_web_vital)/.test(event.name);
     const now = Date.now();
     const fingerprint = eventFingerprint(event);
-    const previous = recentEventFingerprints.get(fingerprint) || 0;
+    const previous = recentEventFingerprints.get(fingerprint);
     const dedupeWindow = critical ? ERROR_DEDUPE_WINDOW_MS : lowValue ? LOW_VALUE_DEDUPE_WINDOW_MS : 0;
-    if (dedupeWindow && previous && now - previous < dedupeWindow) return false;
+    if (dedupeWindow && previous !== undefined && now - previous < dedupeWindow) return false;
 
     const sampleRate = getEventSampleRate(event.name);
     if (sampleRate <= 0 || (sampleRate < 1 && stableSampleValue(`${event.sessionId}|${event.name}`) >= sampleRate)) {

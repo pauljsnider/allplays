@@ -420,8 +420,8 @@ function captureErrorTrackingException(
   const sanitizedContext = sanitizeForTracking({ label, ...context });
   const fingerprint = getErrorFingerprint(label, normalizedError);
   const now = Date.now();
-  const previous = recentErrorFingerprints.get(fingerprint) || 0;
-  if (previous && now - previous < errorDedupeWindowMs) {
+  const previous = recentErrorFingerprints.get(fingerprint);
+  if (previous !== undefined && now - previous < errorDedupeWindowMs) {
     return;
   }
   recentErrorFingerprints.set(fingerprint, now);
