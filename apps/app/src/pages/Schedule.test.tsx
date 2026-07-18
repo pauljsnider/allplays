@@ -361,7 +361,7 @@ describe('Schedule', () => {
     );
   });
 
-  it('keeps bulk RSVP disabled until current responses finish hydrating', async () => {
+  it('waits for RSVP hydration before preselecting only unanswered bulk events', async () => {
     const schedule = {
       children: [{ playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }],
       events: [buildScheduleEvent(1), buildScheduleEvent(2)]
@@ -378,8 +378,12 @@ describe('Schedule', () => {
     expect(checkingButton).toBeDisabled();
     expect(screen.getByText('Checking your current responses before selecting events.')).toBeTruthy();
 
+    schedule.events[0].myRsvp = 'going';
     finishHydration(schedule);
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Review RSVPs' })).toBeEnabled());
+    const reviewButton = await screen.findByRole('button', { name: 'Review RSVPs' });
+    await waitFor(() => expect(reviewButton).toBeEnabled());
+    fireEvent.click(reviewButton);
+    expect(within(await screen.findByRole('dialog', { name: 'Respond to multiple events' })).getByText('1 selected')).toBeTruthy();
   });
 
   it('submits one response across multiple upcoming games and practices', async () => {

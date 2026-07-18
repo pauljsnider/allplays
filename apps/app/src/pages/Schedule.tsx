@@ -678,7 +678,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     selectedEventKeys.forEach((eventKey) => pendingRsvpEventKeysRef.current.add(eventKey));
     updateScheduleEvents((current) => applyBulkRsvpResponse(current, selectedKeySet, response));
 
-    const settledGroups = await Promise.all(groupBulkRsvpSubmissions(targetEvents, bulkRsvpCandidates).map(async (group) => {
+    const settledGroups = await Promise.all(groupBulkRsvpSubmissions(targetEvents, eventsRef.current).map(async (group) => {
       try {
         if (group.length > 1) {
           await submitParentScheduleRsvpForChildren(group, user, response);
