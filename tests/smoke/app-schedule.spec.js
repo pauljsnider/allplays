@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { expectVisualSnapshot, installVisualNetworkGuard } from './helpers/visual-regression.js';
 
 test.skip(
     process.env.SMOKE_SUITE === 'production',
@@ -1180,9 +1181,11 @@ async function mockScheduleModules(page, options = {}) {
     });
 }
 
-test('app schedule loads agenda filters, player select, calendar, export, and game detail link', async ({ page, baseURL }) => {
+test('@visual app schedule loads agenda filters, player select, calendar, export, and game detail link', async ({ page, baseURL }) => {
+    const url = appUrl(baseURL, '/schedule');
+    await installVisualNetworkGuard(page, url);
     await mockScheduleModules(page);
-    await page.goto(appUrl(baseURL, '/schedule'), { waitUntil: 'domcontentloaded' });
+    await page.goto(url, { waitUntil: 'domcontentloaded' });
 
     await waitForScheduleRoute(page, page.getByRole('heading', { name: 'Games, practices, RSVP' }));
     await expect(page.locator('.schedule-header').getByText('RSVP Needed', { exact: true })).toBeVisible();
@@ -1194,6 +1197,7 @@ test('app schedule loads agenda filters, player select, calendar, export, and ga
     await expect(page.getByText('Snacks: Open')).toHaveCount(0);
     await expect(page.getByText('Rideshare')).toHaveCount(0);
     expect(await page.evaluate(() => window.__scheduleCalls.loads)).toBeGreaterThanOrEqual(1);
+    await expectVisualSnapshot(page, 'family-schedule.png');
 
     await page.getByRole('button', { name: 'Upcoming Practices' }).click();
     await expect(page.getByRole('heading', { name: 'Practice', exact: true })).toBeVisible();
