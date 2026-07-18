@@ -6711,6 +6711,23 @@ function normalizeRequestedChatConversationId(conversationId) {
     return normalized;
 }
 
+async function loadChatConversationQuerySnapshots(
+    participantQueries,
+    legacyDirectParticipantQueries,
+    loadQuery = getDocs
+) {
+    const [snapshots, legacyResults] = await Promise.all([
+        Promise.all(participantQueries.map((conversationQuery) => loadQuery(conversationQuery))),
+        Promise.allSettled(legacyDirectParticipantQueries.map((conversationQuery) => loadQuery(conversationQuery)))
+    ]);
+    return [
+        ...snapshots,
+        ...legacyResults
+            .filter((result) => result.status === 'fulfilled')
+            .map((result) => result.value)
+    ];
+}
+
 export async function getChatConversations(teamId, user = null, {
     team = null,
     canModerate = false,
@@ -6730,19 +6747,22 @@ export async function getChatConversations(teamId, user = null, {
         ...(user?.uid ? [
             query(conversationsRef, where('directUserIds', 'array-contains', user.uid), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize)),
             query(conversationsRef, where('participantIds', 'array-contains', user.uid), where('type', 'in', ['team', 'group']), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize)),
-            query(conversationsRef, where('participantIds', 'array-contains', `user:${user.uid}`), where('type', 'in', ['team', 'group']), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize)),
-            // Legacy direct conversations predate directUserIds/directAccess. Keep
-            // these participant-constrained reads until opening the thread can
-            // upgrade its authorization metadata.
-            query(conversationsRef, where('participantIds', 'array-contains', user.uid), where('type', '==', 'direct'), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize)),
-            query(conversationsRef, where('participantIds', 'array-contains', `user:${user.uid}`), where('type', '==', 'direct'), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize))
+            query(conversationsRef, where('participantIds', 'array-contains', `user:${user.uid}`), where('type', 'in', ['team', 'group']), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize))
         ] : []),
         ...(normalizedEmail ? [
             query(conversationsRef, where('participantIds', 'array-contains', `email:${normalizedEmail}`), where('type', 'in', ['team', 'group']), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize))
         ] : [])
     ];
+    // Legacy direct conversations predate directUserIds/directAccess. Their
+    // participant-only queries cannot prove the modern directUserIds rule for
+    // every potential document, so keep them best-effort: a denied legacy read
+    // must not discard the modern participant-safe inbox queries above.
+    const legacyDirectParticipantQueries = user?.uid ? [
+        query(conversationsRef, where('participantIds', 'array-contains', user.uid), where('type', '==', 'direct'), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize)),
+        query(conversationsRef, where('participantIds', 'array-contains', `user:${user.uid}`), where('type', '==', 'direct'), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize))
+    ] : [];
     const snapshots = participantQueries.length > 0
-        ? await Promise.all(participantQueries.map((conversationQuery) => getDocs(conversationQuery)))
+        ? await loadChatConversationQuerySnapshots(participantQueries, legacyDirectParticipantQueries)
         : [];
     const conversationsById = new Map();
     snapshots.forEach((snapshot) => {

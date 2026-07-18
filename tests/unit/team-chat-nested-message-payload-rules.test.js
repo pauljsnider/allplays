@@ -5,7 +5,7 @@ import {
     assertSucceeds,
     initializeTestEnvironment
 } from '@firebase/rules-unit-testing';
-import { collection, doc, getDoc, getDocs, query, serverTimestamp, setDoc, Timestamp, updateDoc, where } from 'firebase/firestore';
+import { collection, deleteDoc, doc, getDoc, getDocs, query, serverTimestamp, setDoc, Timestamp, updateDoc, where } from 'firebase/firestore';
 
 const rules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
 const dbSource = readFileSync(new URL('../../js/db.js', import.meta.url), 'utf8');
@@ -481,6 +481,32 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
             collection(parentDb, 'teams/team-1/chatConversations'),
             where('directUserIds', 'array-contains', 'parent-1')
         )));
+
+    });
+
+    it('denies a legacy-shaped direct query when an inconsistent modern private thread could match', async () => {
+        const parentDb = authedFirestore('parent-1', 'parent@example.com');
+        const malformedConversationPath = 'teams/team-1/chatConversations/direct-malformed-private';
+        await testEnv.withSecurityRulesDisabled(async (context) => {
+            await setDoc(doc(context.firestore(), malformedConversationPath), {
+                type: 'direct',
+                participantIds: ['parent-1', 'user:attacker-1'],
+                participantRoles: [],
+                directAccess: 'accepted_friend',
+                directUserIds: ['attacker-1', 'user-2'],
+                friendshipId: 'attacker-1__user-2',
+                initiatedBy: null,
+                mutedBy: []
+            });
+        });
+        await assertFails(getDocs(query(
+            collection(parentDb, 'teams/team-1/chatConversations'),
+            where('participantIds', 'array-contains', 'parent-1'),
+            where('type', '==', 'direct')
+        )));
+        await testEnv.withSecurityRulesDisabled(async (context) => {
+            await deleteDoc(doc(context.firestore(), malformedConversationPath));
+        });
     });
 
     it('lets only a direct participant upgrade legacy direct authorization metadata', async () => {
