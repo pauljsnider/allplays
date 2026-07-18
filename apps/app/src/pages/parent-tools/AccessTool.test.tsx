@@ -307,6 +307,29 @@ describe('AccessTool manual public team discovery', () => {
         await waitFor(() => expect(accessServiceMocks.loadParentAccessPlayers).toHaveBeenCalledWith('team-b'));
     });
 
+    it('keeps an empty bounded scan resumable without claiming discovery is exhausted', async () => {
+        accessServiceMocks.discoverParentAccessTeams
+            .mockResolvedValueOnce({ teams: [], nextCursor: 'scan-cursor-2' })
+            .mockResolvedValueOnce({
+                teams: [{ id: 'team-b', name: 'Austin Comets', state: 'TX' }],
+                nextCursor: null
+            });
+
+        const view = renderTool('');
+        fireEvent.click(await view.findByRole('button', { name: 'Request access without a code' }));
+        fireEvent.change(view.getByPlaceholderText('Team name, city, state, or zip'), { target: { value: 'Austin' } });
+        fireEvent.click(view.getByRole('button', { name: 'Search' }));
+
+        expect(await view.findByRole('option', { name: 'No matches in this scan yet' })).toBeTruthy();
+        expect(view.queryByRole('option', { name: 'No public teams found' })).toBeNull();
+        fireEvent.click(view.getByRole('button', { name: 'Load more teams' }));
+
+        await waitFor(() => expect(accessServiceMocks.discoverParentAccessTeams).toHaveBeenLastCalledWith({
+            searchText: 'Austin', cursor: 'scan-cursor-2', pageSize: 20
+        }));
+        expect(await view.findByRole('option', { name: 'Austin Comets - TX' })).toBeTruthy();
+    });
+
     it('clears team and player selection when the search text changes', async () => {
         const view = renderTool('');
 

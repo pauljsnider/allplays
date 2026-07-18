@@ -438,7 +438,7 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
                                 <div className="min-w-0">
                                     <label className="app-label" htmlFor="parent-access-team">Team</label>
                                     <select id="parent-access-team" aria-label="Team" className="auth-input mt-1" value={selectedTeamId} onChange={(event) => setSelectedTeamId(event.target.value)} disabled={loadingTeams || !teams.length}>
-                                        <option value="">{loadingTeams ? 'Loading public teams...' : teams.length ? 'Choose a team' : teamDiscoveryStarted ? 'No public teams found' : 'Search or browse teams'}</option>
+                                        <option value="">{loadingTeams ? 'Loading public teams...' : teams.length ? 'Choose a team' : teamNextCursor ? 'No matches in this scan yet' : teamDiscoveryStarted ? 'No public teams found' : 'Search or browse teams'}</option>
                                         {teams.map((team) => (
                                             <option key={team.id} value={team.id}>{formatTeamOption(team)}</option>
                                         ))}
