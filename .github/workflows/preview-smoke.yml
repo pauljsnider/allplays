@@ -40,9 +40,6 @@ jobs:
             sleep 15
           done
 
-      - name: Install Playwright test runner
-        run: npm install --no-save @playwright/test@1.54.2
-
       - name: Start local static server
         run: python3 -m http.server 4173 >/tmp/allplays-preview-smoke.log 2>&1 &
 
@@ -71,7 +68,7 @@ jobs:
           done
 
       - name: Install Playwright Chromium
-        run: npx playwright install chromium
+        run: npx playwright install --with-deps chromium
 
       - name: Run static-hosting smoke
         run: npx playwright test --config=playwright.smoke.config.js --reporter=line

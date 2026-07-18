@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { expectVisualSnapshot, installVisualNetworkGuard } from './helpers/visual-regression.js';
 
 test.skip(
     process.env.SMOKE_SUITE === 'production',
@@ -585,15 +586,18 @@ async function mockTeamCreationModule(page) {
 test.describe('mobile My Teams', () => {
     test.use({ viewport: { width: 390, height: 844 }, hasTouch: true });
 
-    test('opens parent and staff teams, keeps tools compact, and opens website resources through the adapter', async ({ page, baseURL }) => {
+    test('@visual opens parent and staff teams, keeps tools compact, and opens website resources through the adapter', async ({ page, baseURL }) => {
+        const url = appUrl(baseURL, '/teams?selectedTeamId=team-staff&from=home');
+        await installVisualNetworkGuard(page, url);
         await mockTeamsModules(page);
-        await page.goto(appUrl(baseURL, '/teams?selectedTeamId=team-staff&from=home'), { waitUntil: 'domcontentloaded' });
+        await page.goto(url, { waitUntil: 'domcontentloaded' });
 
         const teamsReadyHeading = page.getByRole('heading', { name: '3 teams ready' });
         await waitForTeamsRoute(page, teamsReadyHeading);
         await expect(teamsReadyHeading).toBeVisible();
         await expect(page.getByText('Choose a team')).toBeVisible();
         await expect(page.getByPlaceholder('Search teams or players')).toBeVisible();
+        await expectVisualSnapshot(page, 'my-teams-mobile.png', { fullPage: false });
         await page.getByPlaceholder('Search teams or players').fill('Riley');
         await expect(page.getByRole('link', { name: 'Open Rockets' }).first()).toBeVisible();
         await expect(page.getByRole('link', { name: 'Open Staff Wolves' })).toHaveCount(0);

@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { expectVisualSnapshot, installVisualNetworkGuard } from './helpers/visual-regression.js';
 
 test.skip(
     process.env.SMOKE_SUITE === 'production',
@@ -460,13 +461,16 @@ async function mockMessagesModules(page, options = {}) {
     });
 }
 
-test('messages inbox and team chat exercise real migrated chat UX', async ({ page, baseURL }) => {
+test('@visual messages inbox and team chat exercise real migrated chat UX', async ({ page, baseURL }) => {
+    const url = appUrl(baseURL, '/messages');
+    await installVisualNetworkGuard(page, url);
     await mockMessagesModules(page);
-    await page.goto(appUrl(baseURL, '/messages'), { waitUntil: 'domcontentloaded' });
+    await page.goto(url, { waitUntil: 'domcontentloaded' });
 
     await waitForMessagesRoute(page, page.getByRole('heading', { name: 'Team chats' }));
     await expect(page.getByRole('link', { name: /Bears/ }).first()).toBeVisible();
     await expect(page.getByText('Coach Jamie: Practice packet is posted.')).toBeVisible();
+    await expectVisualSnapshot(page, 'messages-inbox-mobile.png');
     const searchInput = page.getByPlaceholder('Search team chats');
     await expect(searchInput).toBeVisible();
     await expect.poll(() => searchInput.evaluate((element) => window.getComputedStyle(element).fontSize)).toBe('16px');
