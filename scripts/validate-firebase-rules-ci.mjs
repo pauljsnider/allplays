@@ -128,7 +128,8 @@ export function validateFirebaseRulesCi() {
     const gameEventsRules = (firestoreRules.match(/match \/events\/\{eventId} \{[\s\S]*?\n\s*}/) || [''])[0];
     const aggregatedStatsRules = (firestoreRules.match(/match \/aggregatedStats\/\{statId} \{[\s\S]*?\n\s*}/) || [''])[0];
     const deployProd = readText('.github/workflows/deploy-prod.yml');
-    const deployPreview = readText('.github/workflows/deploy-preview.yml');
+    const deployPreviewBuild = readText('.github/workflows/deploy-preview.yml');
+    const deployPreviewTrusted = readText('.github/workflows/deploy-preview-trusted.yml');
     const regressionGuards = readText('.github/workflows/regression-guards.yml');
 
     if (firebaseJson.firestore?.rules !== 'firestore.rules') {
@@ -204,9 +205,9 @@ export function validateFirebaseRulesCi() {
     validateProductionDeployCommand(deployProd);
     assertMatches(deployProd, /needs:\s*\[\s*unit-tests\s*,\s*regression-guards\s*\]/, 'Production deploy gate');
 
-    assertMatches(deployPreview, /needs:\s*\[\s*unit-tests\s*,\s*regression-guards\s*\]/, 'Preview deploy gate');
-    validatePreviewDeployCommand(deployPreview);
-    assertPreviewDeploySkipHandling(deployPreview);
+    assertMatches(deployPreviewBuild, /needs:\s*\[\s*unit-tests\s*,\s*regression-guards\s*\]/, 'Preview artifact build gate');
+    validatePreviewDeployCommand(deployPreviewTrusted);
+    assertPreviewDeploySkipHandling(deployPreviewTrusted);
 
     assertIncludes(storageRules, 'match /game-clips/{teamId}/{gameId}/{userId}/{fileName}', 'Scoped Storage game clip rules');
     assertIncludes(storageRules, 'allow get: if canAccessTeamMedia(teamId);', 'Scoped Storage game clip read rules');
