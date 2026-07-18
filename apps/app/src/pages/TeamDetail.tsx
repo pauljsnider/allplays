@@ -132,6 +132,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
   const [insightsLoading, setInsightsLoading] = useState(false);
   const [insightsError, setInsightsError] = useState('');
   const [insightsLoaded, setInsightsLoaded] = useState(false);
+  const [insightsReloadVersion, setInsightsReloadVersion] = useState(0);
   const [sponsorsLoading, setSponsorsLoading] = useState(false);
   const [sponsorsError, setSponsorsError] = useState('');
   const [sponsorsLoaded, setSponsorsLoaded] = useState(false);
@@ -182,6 +183,9 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
     }
 
     const nextSearch = nextParams.toString();
+    if (nextTab === 'insights' && insightsError && !insightsLoadingRef.current) {
+      setInsightsReloadVersion((version) => version + 1);
+    }
     navigate({
       pathname: location.pathname,
       search: nextSearch ? `?${nextSearch}` : ''
@@ -210,6 +214,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
           setInsightsLoading(false);
           setInsightsError('');
           setInsightsLoaded(false);
+          setInsightsReloadVersion(0);
           setSponsorsLoading(false);
           setSponsorsError('');
           setSponsorsLoaded(false);
@@ -337,7 +342,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [authUserId, hasTeamModel, insightsLoaded, teamId]);
+  }, [authUserId, hasTeamModel, insightsLoaded, insightsReloadVersion, teamId]);
 
   useEffect(() => {
     let cancelled = false;

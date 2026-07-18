@@ -90,7 +90,7 @@ describe('CapabilityPage launch CTAs', () => {
     it('keeps native-shell capabilities on the internal app route CTA', async () => {
         const { container, root } = await renderCapabilityPage('/capabilities/profile');
 
-        expect(linkByText(container, 'Open app route').getAttribute('href')).toBe('/profile');
+        expect(linkByText(container, 'Open app route').getAttribute('href')).toBe('/profile/settings');
         expect(container.textContent).not.toContain('Open current page');
         expect(openPublicUrl).not.toHaveBeenCalled();
 
