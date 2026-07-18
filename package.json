@@ -36,7 +36,7 @@
     "mobile:open:ios": "DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer npx cap open ios",
     "mobile:open:android": "npx cap open android",
     "mobile:run:ios": "npm run app:build && DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer npx cap run ios",
-    "mobile:run:android": "npm run app:build && JAVA_HOME=\"/Applications/Android Studio.app/Contents/jbr/Contents/Home\" npx cap run android"
+    "mobile:run:android": "npm run mobile:sync:native-debug && JAVA_HOME=\"/Applications/Android Studio.app/Contents/jbr/Contents/Home\" npx cap run android"
   },
   "devDependencies": {
     "@capacitor/cli": "^8.4.1",
