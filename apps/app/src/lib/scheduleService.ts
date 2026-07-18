@@ -252,6 +252,15 @@ function applySessionRsvpState(events: ParentScheduleEvent[], userId: string) {
   return events;
 }
 
+function reconcileSessionRsvpState(events: ParentScheduleEvent[], userId: string) {
+  if (!userId || !events.length) return;
+  const state = getSessionRsvpState(userId);
+  const changed = events.reduce((removed, event) => (
+    state.delete(getSessionRsvpEventKey(event)) || removed
+  ), false);
+  if (changed) persistSessionRsvpState(userId, state);
+}
+
 function getScheduleEventHydrationCacheKey(teamId: string, eventId: string) {
   return `event-details:${teamId}:${eventId}`;
 }
@@ -4324,6 +4333,13 @@ export async function hydrateParentScheduleRsvps(
           event.myRsvpNote = myRsvpNotesByChild[event.childId] || null;
         }
       });
+      reconcileSessionRsvpState(
+        matchingEvents.filter((event) => (
+          responseReadsCompleteByChild[event.childId]
+          && noteReadsCompleteByChild[event.childId]
+        )),
+        user.uid
+      );
       applySessionRsvpState(matchingEvents, user.uid);
       options.onProgress?.([...schedule.events]);
     } catch (error) {
