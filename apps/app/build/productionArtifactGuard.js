@@ -109,7 +109,7 @@ export function assertSafeProductionDist(
     publicDirectory
   }
 ) {
-  const publicFiles = new Set(listFiles(publicDirectory));
+  const publicFiles = new Set(publicDirectory ? listFiles(publicDirectory) : []);
   const distFiles = listFiles(distDirectory);
   const violations = [];
   let javascriptCount = 0;
@@ -152,12 +152,18 @@ export function assertSafeProductionDist(
 }
 
 export function createProductionArtifactGuard({ appDirectory, repoRoot }) {
-  const distDirectory = path.join(appDirectory, 'dist');
-  const publicDirectory = path.join(appDirectory, 'public');
+  let distDirectory = path.join(appDirectory, 'dist');
+  let publicDirectory = path.join(appDirectory, 'public');
 
   return {
     name: 'allplays-production-artifact-guard',
     apply: 'build',
+    configResolved(config) {
+      distDirectory = path.resolve(config.root, config.build.outDir);
+      publicDirectory = config.publicDir === false
+        ? ''
+        : path.resolve(config.root, config.publicDir);
+    },
     generateBundle(_outputOptions, bundle) {
       assertSafeProductionModuleGraph(this.getModuleIds(), { appDirectory, repoRoot });
       assertSafeProductionBundle(bundle);

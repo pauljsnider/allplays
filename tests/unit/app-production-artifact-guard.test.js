@@ -6,7 +6,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
     assertSafeProductionBundle,
     assertSafeProductionDist,
-    assertSafeProductionModuleGraph
+    assertSafeProductionModuleGraph,
+    createProductionArtifactGuard
 } from '../../apps/app/build/productionArtifactGuard.js';
 
 const temporaryDirectories = [];
@@ -90,5 +91,23 @@ describe('app production artifact guard', () => {
         writeFile(distDirectory, 'assets/secret.js', 'const leaked = "-----BEGIN PRIVATE KEY-----";');
         expect(() => assertSafeProductionDist(distDirectory, { publicDirectory }))
             .toThrow(/private key material/);
+    });
+
+    it('verifies the resolved Vite output directory instead of a hard-coded dist path', () => {
+        const repoRoot = makeTemporaryDirectory();
+        const appDirectory = path.join(repoRoot, 'apps/app');
+        const customOutDirectory = path.join(repoRoot, 'custom-build-output');
+        writeFile(customOutDirectory, 'index.html', '<div id="root"></div>');
+        writeFile(customOutDirectory, 'assets/index.js', 'console.log("ok")');
+        writeFile(customOutDirectory, 'assets/index.css', 'body{}');
+
+        const plugin = createProductionArtifactGuard({ appDirectory, repoRoot });
+        plugin.configResolved({
+            root: appDirectory,
+            build: { outDir: customOutDirectory },
+            publicDir: false
+        });
+
+        expect(() => plugin.closeBundle()).not.toThrow();
     });
 });
