@@ -409,7 +409,7 @@ export function Home({ auth }: { auth: AuthState }) {
 
   const refreshSocial = async (
     nextHome = home,
-    options: { preserveStatus?: boolean } = {}
+    options: { preserveStatus?: boolean; rethrow?: boolean } = {}
   ) => {
     const user = auth.user;
     if (!user) return;
@@ -420,7 +420,7 @@ export function Home({ auth }: { auth: AuthState }) {
       },
       {
         getErrorMessage: (loadError) => getAsyncErrorMessage(loadError, 'Unable to refresh Feed.'),
-        rethrow: false,
+        rethrow: Boolean(options.rethrow),
         onError: (loadError) => {
           if (!options.preserveStatus) {
             setSocialStatus({ tone: 'error', message: getAsyncErrorMessage(loadError, 'Unable to refresh Feed.') });
@@ -543,7 +543,7 @@ export function Home({ auth }: { auth: AuthState }) {
           loading={socialLoading}
           auth={auth}
           home={home}
-          onRefresh={() => refreshSocial()}
+          onRefresh={(options) => refreshSocial(home, options)}
           onOpenComposer={openComposer}
           onStatus={setSocialStatus}
         />
@@ -1102,7 +1102,7 @@ function FeedSection({
   loading: boolean;
   auth: AuthState;
   home: ParentHomeModel;
-  onRefresh: () => Promise<void> | void;
+  onRefresh: (options?: { rethrow?: boolean }) => Promise<void> | void;
   onOpenComposer: (type?: SocialPostType) => void;
   onStatus: (status: { tone: 'error' | 'success'; message: string } | null) => void;
 }) {
@@ -1246,7 +1246,7 @@ function SocialFeedCard({
 }: {
   item: SocialFeedItem;
   auth: AuthState;
-  onRefresh: () => Promise<void> | void;
+  onRefresh: (options?: { rethrow?: boolean }) => Promise<void> | void;
   onStatus: (status: { tone: 'error' | 'success'; message: string } | null) => void;
   onOptimisticHide: (postId: string, hidden: boolean) => void;
 }) {
@@ -1301,7 +1301,15 @@ function SocialFeedCard({
     }
     try {
       await action();
-      await onRefresh();
+      try {
+        await onRefresh({ rethrow: true });
+      } catch {
+        onStatus({
+          tone: 'success',
+          message: `${success} Refresh to see the latest feed.`
+        });
+        return;
+      }
       onStatus({ tone: 'success', message: success });
     } catch (error: any) {
       rollback?.();

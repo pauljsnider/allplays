@@ -732,6 +732,24 @@ describe('Home', () => {
     expect(socialServiceMocks.loadSocialHome).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps a successfully hidden post removed when the follow-up refresh fails', async () => {
+    socialServiceMocks.loadSocialHome
+      .mockResolvedValueOnce({
+        ...baseSocial,
+        feedItems: [baseFeedItem],
+        metrics: { ...baseSocial.metrics, feedItems: 1 }
+      })
+      .mockRejectedValueOnce(new Error('Refresh unavailable.'));
+
+    renderHome(signedInAuth, '/home?section=feed');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Hide' }));
+
+    await waitFor(() => expect(socialServiceMocks.loadSocialHome).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText('Pat Player highlight')).toBeNull();
+    expect(await screen.findByText('Post hidden from your feed. Refresh to see the latest feed.')).toBeTruthy();
+  });
+
   it('optimistically clears comment input, increments the count, and blocks duplicate submits', async () => {
     let resolveComment: () => void = () => {};
     socialServiceMocks.loadSocialHome.mockResolvedValueOnce({
