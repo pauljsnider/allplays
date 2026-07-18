@@ -296,6 +296,7 @@
                 "createScopedRsvpToken",
                 "dispatchDuePreEventReminders",
                 "fetchCalendarIcs",
+                "getPublicTeamExternalCalendarIcs",
                 "getPublicRsvp",
                 "notifyGameCreated",
                 "notifyGameUpdated",
@@ -311,6 +312,7 @@
             ],
             "unitTests": [
                 "functions/test/calendar-ics-fetch-core.test.cjs",
+                "functions/test/public-external-calendar-core.test.cjs",
                 "tests/unit/app-schedule-availability-panels.test.tsx",
                 "tests/unit/app-schedule-event-detail-cancel.test.js",
                 "tests/unit/app-schedule-service-contracts.test.js",

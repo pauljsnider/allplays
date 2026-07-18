@@ -916,6 +916,17 @@ export async function getTeam(teamId, options = {}) {
     return publicTeam;
 }
 
+export async function getPublicTeamExternalCalendarIcs(teamId) {
+    const normalizedTeamId = String(teamId || '').trim();
+    if (!normalizedTeamId) return [];
+    const callable = httpsCallable(functions, 'getPublicTeamExternalCalendarIcs');
+    const result = await callable({ teamId: normalizedTeamId });
+    const calendars = Array.isArray(result.data?.calendars) ? result.data.calendars : [];
+    return calendars
+        .filter((icsText) => typeof icsText === 'string' && icsText.includes('BEGIN:VCALENDAR'))
+        .slice(0, 10);
+}
+
 function getTeamMediaFoldersRef(teamId) {
     return collection(db, `teams/${teamId}/mediaFolders`);
 }

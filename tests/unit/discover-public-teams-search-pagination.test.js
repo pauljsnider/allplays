@@ -242,6 +242,21 @@ describe('public team source/projection fallback', () => {
         firebaseMocks.auth.currentUser = null;
     });
 
+    it('loads only bounded sanitized ICS payloads from the public calendar callable', async () => {
+        const validCalendars = Array.from({ length: 12 }, (_, index) => `BEGIN:VCALENDAR\nX-ID:${index}\nEND:VCALENDAR`);
+        const callable = vi.fn().mockResolvedValue({
+            data: { calendars: [...validCalendars, null, { private: true }, 'not a calendar'] }
+        });
+        firebaseMocks.httpsCallable.mockReturnValue(callable);
+        const { getPublicTeamExternalCalendarIcs } = await import('../../js/db.js?v=91');
+
+        await expect(getPublicTeamExternalCalendarIcs(' team-public ')).resolves.toEqual(validCalendars.slice(0, 10));
+        expect(firebaseMocks.httpsCallable).toHaveBeenCalledWith(expect.anything(), 'getPublicTeamExternalCalendarIcs');
+        expect(callable).toHaveBeenCalledWith({ teamId: 'team-public' });
+        await expect(getPublicTeamExternalCalendarIcs('  ')).resolves.toEqual([]);
+        expect(callable).toHaveBeenCalledTimes(1);
+    });
+
     it('reads the strict projection directly for anonymous public detail', async () => {
         firebaseMocks.getDoc.mockResolvedValue({
             id: 'team-public',

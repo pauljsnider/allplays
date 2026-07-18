@@ -52,6 +52,11 @@ export async function getTeam(teamId) {
     return { ...clone(team), id: teamId };
 }
 
+export async function getPublicTeamExternalCalendarIcs(teamId) {
+    window.__publicTeamCalendarCalls = (window.__publicTeamCalendarCalls || []).concat(teamId);
+    return ['BEGIN:VCALENDAR\\r\\nEND:VCALENDAR'];
+}
+
 export async function getPlayers() {
     return [];
 }
@@ -173,6 +178,13 @@ export function formatTime(value) {
 }
 
 export async function fetchAndParseCalendar() {
+    return calendarEvents.map((event) => ({
+        ...event,
+        dtstart: new Date(event.dtstart)
+    }));
+}
+
+export function parseICS() {
     return calendarEvents.map((event) => ({
         ...event,
         dtstart: new Date(event.dtstart)
@@ -500,6 +512,38 @@ async function gotoCalendarMonth(page, fromDate, targetDate) {
 
     throw new Error(`Unable to navigate calendar to ${targetDate.toISOString()}`);
 }
+
+test('public projection team keeps external calendar events through the sanitized server feed', async ({ page, baseURL }) => {
+    const now = new Date();
+    const externalGameDate = addDays(now, 8, 18);
+    const scenario = {
+        team: {
+            name: 'Projected Team',
+            sport: 'Soccer',
+            isPublic: true,
+            active: true
+        },
+        games: [],
+        trackedUids: [],
+        calendarEvents: [
+            {
+                uid: 'projected-calendar-game',
+                dtstart: makeIso(externalGameDate),
+                summary: 'Projected Team vs Comets',
+                location: 'Public Field',
+                status: 'CONFIRMED'
+            }
+        ]
+    };
+
+    await mockTeamPageModules(page, scenario);
+    await page.goto(buildUrl(baseURL, '/team.html#teamId=team-a'), { waitUntil: 'domcontentloaded' });
+
+    await page.locator('#schedule-filter-all-upcoming').click();
+    await expect(page.locator('#schedule-list')).toContainText('Comets');
+    await expect(page.locator('#schedule-list')).toContainText('Public Field');
+    await expect.poll(() => page.evaluate(() => window.__publicTeamCalendarCalls || [])).toEqual(['team-a']);
+});
 
 test('team schedule calendar shows only practices in the dedicated practice filter and modal', async ({ page, baseURL }) => {
     const now = new Date();

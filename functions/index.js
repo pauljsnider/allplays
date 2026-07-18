@@ -4,7 +4,12 @@ const Stripe = require('stripe');
 const { Resend } = require('resend');
 const crypto = require('node:crypto');
 const { isPrivateIpAddress, isBlockedHostname, assertPublicHost, normalizeTargetUrl, fetchWithTimeout } = require('./utils/security-utils');
-const { createCalendarIcsCache, createCalendarIcsFetchHandler } = require('./calendar-ics-fetch-core.cjs');
+const {
+  createCalendarIcsCache,
+  createCalendarIcsFetchHandler,
+  fetchCalendarIcsWithCache
+} = require('./calendar-ics-fetch-core.cjs');
+const { sanitizePublicExternalCalendarIcs } = require('./public-external-calendar-core.cjs');
 const {
   normalizeTeamPassCheckoutInput,
   isEligibleTeamPassPurchaser,
@@ -38,6 +43,7 @@ const { createFirestoreFixedWindowRateLimiter, createInMemoryRateLimiter, getReq
 const { buildPublicGamesIcs, canExposeEmptyPublicFeed, isPublicFanGame } = require('./public-calendar-core.cjs');
 const {
   buildPublicTeamProfile,
+  isPublicTeamDiscoverable,
   isPublicTeamProfileSchemaValid,
   matchesPublicTeamProfileSearch
 } = require('./public-team-profile-core.cjs');
@@ -5127,10 +5133,74 @@ const fetchCalendarRuntime = calendarServiceAccount
 const calendarIcsCache = createCalendarIcsCache({
   ttlMs: process.env.CALENDAR_ICS_CACHE_TTL_MS
 });
+const MAX_PUBLIC_EXTERNAL_CALENDAR_SOURCES = 10;
 
 function getCalendarFeedGamesQuery(teamId) {
   return buildCalendarFeedGamesQuery(firestore.collection(`teams/${teamId}/games`));
 }
+
+async function fetchSanitizedPublicExternalCalendarIcs(rawUrl) {
+  const normalizedUrl = await normalizeTargetUrl(rawUrl);
+  const result = await fetchCalendarIcsWithCache({
+    cache: calendarIcsCache,
+    cacheKey: normalizedUrl.url,
+    fetchIcs: async () => {
+      const response = await fetchWithTimeout(
+        normalizedUrl.url,
+        normalizedUrl.hostname,
+        normalizedUrl.publicIps
+      );
+      if (!response.ok) {
+        const upstreamError = new Error(`Calendar fetch failed: ${response.status} ${response.statusText}`);
+        upstreamError.statusCode = 502;
+        throw upstreamError;
+      }
+      const rawText = await response.text();
+      const icsText = normalizeIcsText(rawText);
+      if (!icsText.includes('BEGIN:VCALENDAR')) {
+        const invalidIcsError = new Error('Response was not valid ICS');
+        invalidIcsError.statusCode = 502;
+        throw invalidIcsError;
+      }
+      return { fetchedAt: new Date().toISOString(), icsText };
+    }
+  });
+  return sanitizePublicExternalCalendarIcs(result.icsText);
+}
+
+exports.getPublicTeamExternalCalendarIcs = functions
+  .runWith(fetchCalendarRuntime)
+  .https
+  .onCall(async (data, context) => {
+    const rateLimit = checkCalendarFetchRateLimit(context.rawRequest || {});
+    if (!rateLimit.allowed) {
+      throw new functions.https.HttpsError('resource-exhausted', 'Too many calendar requests.');
+    }
+
+    const teamId = String(data?.teamId || '').trim();
+    if (!teamId || !/^[A-Za-z0-9_-]{1,128}$/.test(teamId)) {
+      throw new functions.https.HttpsError('invalid-argument', 'A valid teamId is required.');
+    }
+
+    const teamSnap = await firestore.doc(`teams/${teamId}`).get();
+    const team = teamSnap.exists ? teamSnap.data() || {} : null;
+    if (!team || !isPublicTeamDiscoverable(team)) {
+      throw new functions.https.HttpsError('not-found', 'Public team calendar not found.');
+    }
+
+    const calendarUrls = (Array.isArray(team.calendarUrls) ? team.calendarUrls : [])
+      .filter((url) => typeof url === 'string' && url.trim())
+      .slice(0, MAX_PUBLIC_EXTERNAL_CALENDAR_SOURCES);
+    const results = await Promise.allSettled(calendarUrls.map(fetchSanitizedPublicExternalCalendarIcs));
+    const calendars = results
+      .filter((result) => result.status === 'fulfilled' && result.value)
+      .map((result) => result.value);
+
+    return {
+      calendars,
+      unavailableCount: results.length - calendars.length
+    };
+  });
 
 exports.publicTeamGamesIcs = functions
   .runWith(fetchCalendarRuntime)

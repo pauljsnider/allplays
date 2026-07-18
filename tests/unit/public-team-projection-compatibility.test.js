@@ -6,6 +6,8 @@ import { collection, deleteDoc, doc, getDoc, getDocs, limit, query, setDoc, wher
 
 const rules = readFileSync(resolve(process.cwd(), 'firestore.rules'), 'utf8');
 const dbSource = readFileSync(resolve(process.cwd(), 'js/db.js'), 'utf8');
+const functionsSource = readFileSync(resolve(process.cwd(), 'functions/index.js'), 'utf8');
+const teamPageSource = readFileSync(resolve(process.cwd(), 'team.html'), 'utf8');
 
 describe('public team projection compatibility contract', () => {
     it('keeps strict projection detail reads and callable-only collection discovery', () => {
@@ -14,6 +16,22 @@ describe('public team projection compatibility contract', () => {
         expect(dbSource).toContain("httpsCallable(functions, 'getPublicTeamProfile')");
         expect(dbSource).toContain('if (!isPublicProjectionFallbackError(error)) throw error;');
         expect(dbSource).toMatch(/discoverPublicTeams[\s\S]*discoverPublicTeamsFromCallable/);
+    });
+
+    it('preserves public external schedules without putting calendar credentials in the profile projection', () => {
+        expect(dbSource).toContain("httpsCallable(functions, 'getPublicTeamExternalCalendarIcs')");
+        expect(teamPageSource).toContain('getPublicTeamExternalCalendarIcs(currentTeamId)');
+        expect(teamPageSource).toContain('appendExternalCalendarEvents(parseICS(icsText))');
+        expect(teamPageSource).toContain("from './js/db.js?v=103'");
+
+        const callableStart = functionsSource.indexOf('exports.getPublicTeamExternalCalendarIcs');
+        const callableEnd = functionsSource.indexOf('\nexports.publicTeamGamesIcs', callableStart);
+        const callableSource = functionsSource.slice(callableStart, callableEnd);
+        expect(callableSource).toContain('isPublicTeamDiscoverable(team)');
+        expect(functionsSource).toContain('sanitizePublicExternalCalendarIcs(result.icsText)');
+        expect(callableSource).toContain('calendarUrls.map(fetchSanitizedPublicExternalCalendarIcs)');
+        expect(callableSource).toContain('return {\n      calendars,');
+        expect(callableSource).not.toContain('return { calendarUrls');
     });
 });
 
