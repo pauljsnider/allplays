@@ -26,6 +26,7 @@ describe('native back button helpers', () => {
     expect(getNativeBackTarget('/parent-tools/registrations/team-1/form-1')).toBe('/parent-tools/registrations');
     expect(getNativeBackTarget('/parent-tools/registrations')).toBe('/parent-tools');
     expect(getNativeBackTarget('/parent-tools/fees')).toBe('/parent-tools');
+    expect(getNativeBackTarget('/people/friend-1')).toBe('/home?section=friends');
     expect(getNativeBackTarget('/help/game-day')).toBe('/help');
     expect(getNativeBackTarget('/home', '?section=feed&social=create')).toBe('/home?section=feed');
     expect(getNativeBackTarget('/home', '?section=friends')).toBe('/home');

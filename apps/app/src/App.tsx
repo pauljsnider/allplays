@@ -38,6 +38,7 @@ const TeamRegistrationForms = lazy(() => import('./pages/TeamRegistrationForms')
 const PlayerDetail = lazy(() => import('./pages/PlayerDetail').then((module) => ({ default: module.PlayerDetail })));
 const PrivateAiChat = lazy(() => import('./pages/PrivateAiChat').then((module) => ({ default: module.PrivateAiChat })));
 const Profile = lazy(() => import('./pages/Profile').then((module) => ({ default: module.Profile })));
+const FriendProfile = lazy(() => import('./pages/FriendProfile').then((module) => ({ default: module.FriendProfile })));
 const PublicTeamsBrowse = lazy(() => import('./pages/PublicTeamsBrowse').then((module) => ({ default: module.PublicTeamsBrowse })));
 const PublicTeamDetail = lazy(() => import('./pages/PublicTeamDetail').then((module) => ({ default: module.PublicTeamDetail })));
 const Discover = lazy(() => import('./pages/Discover').then((module) => ({ default: module.Discover })));
@@ -264,6 +265,7 @@ export default function App() {
         <Route path="/help" element={<Protected auth={auth}><HelpPortal auth={auth} /></Protected>} />
         <Route path="/help/:helpId" element={<Protected auth={auth}><HelpArticle /></Protected>} />
         <Route path="/profile" element={<Protected auth={auth}><Profile auth={auth} /></Protected>} />
+        <Route path="/people/:userId" element={<Protected auth={auth}><FriendProfile auth={auth} /></Protected>} />
         <Route path="/capabilities/:capabilityId" element={<Protected auth={auth}><CapabilityPage /></Protected>} />
         <Route path="*" element={<Navigate to={auth.user ? signedInDefaultRoute : '/auth'} replace />} />
       </Routes>

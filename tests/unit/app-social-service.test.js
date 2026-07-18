@@ -385,6 +385,142 @@ describe('React app social service', () => {
         expect(firebaseMocks.getDoc).toHaveBeenCalledTimes(1);
     });
 
+    it('loads an accepted friend profile with only viewer-visible posts in newest-first order', async () => {
+        const { loadFriendProfile } = await import('../../apps/app/src/lib/socialService.ts');
+        firebaseMocks.getDoc.mockImplementation(async (ref) => {
+            if (ref.path[0] === 'friendships') {
+                return {
+                    id: 'friend-1__user-1',
+                    exists: () => true,
+                    data: () => ({
+                        status: 'accepted',
+                        memberIds: ['friend-1', 'user-1'],
+                        sharedTeamNames: ['Bears']
+                    })
+                };
+            }
+            if (ref.path[0] === 'publicUserProfiles') {
+                return {
+                    id: 'friend-1',
+                    exists: () => true,
+                    data: () => ({ displayName: 'Jamie Friend', photoUrl: 'https://img.example.test/friend.png' })
+                };
+            }
+            return {
+                exists: () => ref.path.includes('post-new') && ref.path.includes('reactions')
+            };
+        });
+        firebaseMocks.getDocs.mockImplementation(async (queryRef) => {
+            const authorClause = queryRef.clauses?.find((clause) => clause.field === 'authorId');
+            if (authorClause) {
+                return snapshot([
+                    { id: 'post-old', authorId: 'friend-1', authorName: 'Jamie Friend', title: 'Old', createdAt: { seconds: 100 }, visibleUserIds: ['user-1'] },
+                    { id: 'post-new', authorId: 'friend-1', authorName: 'Jamie Friend', title: 'New', createdAt: { seconds: 200 }, visibleUserIds: ['user-1'] }
+                ]);
+            }
+            return snapshot([]);
+        });
+
+        const profile = await loadFriendProfile(user, 'friend-1');
+
+        expect(profile).toMatchObject({
+            userId: 'friend-1',
+            name: 'Jamie Friend',
+            photoUrl: 'https://img.example.test/friend.png',
+            sharedTeamNames: ['Bears'],
+            isSelf: false
+        });
+        expect(profile.posts).toEqual([
+            expect.objectContaining({ id: 'post-new', viewerHasLiked: true }),
+            expect.objectContaining({ id: 'post-old', viewerHasLiked: false })
+        ]);
+        expect(firebaseMocks.where).toHaveBeenCalledWith('visibleUserIds', 'array-contains', 'user-1');
+        expect(firebaseMocks.where).toHaveBeenCalledWith('authorId', '==', 'friend-1');
+        expect(firebaseMocks.where).toHaveBeenCalledWith('hidden', '==', false);
+        expect(firebaseMocks.orderBy).toHaveBeenCalledWith('createdAt', 'desc');
+    });
+
+    it('pages past a full hidden post window on a friend profile', async () => {
+        const { loadFriendProfile } = await import('../../apps/app/src/lib/socialService.ts');
+        const hiddenPosts = Array.from({ length: 30 }, (_, index) => ({
+            id: `hidden-${index}`,
+            authorId: 'friend-1',
+            authorName: 'Jamie Friend',
+            title: `Hidden ${index}`,
+            createdAt: { seconds: 200 - index }
+        }));
+        const olderVisiblePosts = Array.from({ length: 30 }, (_, index) => ({
+            id: `visible-${index}`,
+            authorId: 'friend-1',
+            authorName: 'Jamie Friend',
+            title: `Visible ${index}`,
+            createdAt: { seconds: 100 - index }
+        }));
+        firebaseMocks.getDoc.mockImplementation(async (ref) => {
+            if (ref.path[0] === 'friendships') {
+                return {
+                    id: 'friend-1__user-1',
+                    exists: () => true,
+                    data: () => ({ status: 'accepted', memberIds: ['friend-1', 'user-1'] })
+                };
+            }
+            if (ref.path[0] === 'publicUserProfiles') {
+                return {
+                    id: 'friend-1',
+                    exists: () => true,
+                    data: () => ({ displayName: 'Jamie Friend' })
+                };
+            }
+            return { exists: () => false };
+        });
+        firebaseMocks.getDocs.mockImplementation(async (queryRef) => {
+            const path = queryRef.collectionRef?.path || [];
+            if (path.join('/') === 'users/user-1/hiddenSocialPosts') {
+                return snapshot(hiddenPosts.map(({ id }) => ({ id, postId: id })));
+            }
+            if (path.join('/') === 'socialPosts') {
+                const cursorClause = queryRef.clauses.find((clause) => clause.cursor);
+                return cursorClause ? snapshot(olderVisiblePosts) : snapshot(hiddenPosts);
+            }
+            return snapshot([]);
+        });
+
+        const profile = await loadFriendProfile(user, 'friend-1');
+
+        expect(profile.posts).toHaveLength(30);
+        expect(profile.posts.map((post) => post.id)).toEqual(olderVisiblePosts.map((post) => post.id));
+        expect(firebaseMocks.startAfter).toHaveBeenCalledWith(expect.objectContaining({ id: 'hidden-29' }));
+    });
+
+    it('rejects non-friends before reading a profile or its posts', async () => {
+        const { loadFriendProfile } = await import('../../apps/app/src/lib/socialService.ts');
+        firebaseMocks.getDoc.mockResolvedValueOnce({
+            id: 'friend-1__user-1',
+            exists: () => true,
+            data: () => ({ status: 'pending', memberIds: ['friend-1', 'user-1'] })
+        });
+
+        await expect(loadFriendProfile(user, 'friend-1')).rejects.toThrow('accepted friends only');
+
+        expect(firebaseMocks.getDoc).toHaveBeenCalledTimes(1);
+        expect(firebaseMocks.getDoc).toHaveBeenCalledWith(expect.objectContaining({ path: ['friendships', 'friend-1__user-1'] }));
+        expect(firebaseMocks.getDocs).not.toHaveBeenCalled();
+    });
+
+    it('allows a user to load their own profile without a friendship lookup', async () => {
+        const { loadFriendProfile } = await import('../../apps/app/src/lib/socialService.ts');
+        firebaseMocks.getDoc.mockImplementation(async (ref) => ({
+            id: ref.path[1],
+            exists: () => ref.path[0] === 'publicUserProfiles',
+            data: () => ({ displayName: 'Pat Parent' })
+        }));
+
+        const profile = await loadFriendProfile(user, 'user-1');
+
+        expect(profile).toMatchObject({ userId: 'user-1', name: 'Pat Parent', isSelf: true });
+        expect(firebaseMocks.doc).not.toHaveBeenCalledWith(firebaseMocks.db, 'friendships', expect.anything());
+    });
+
     it('does not drop received requests when the requested query reaches its limit', async () => {
         const { loadFriendships } = await import('../../apps/app/src/lib/socialService.ts');
         const requested = Array.from({ length: 50 }, (_, index) => ({
