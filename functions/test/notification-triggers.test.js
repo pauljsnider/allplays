@@ -67,9 +67,14 @@ test('notifyGameCreated writes schedule inbox items for recipients without push 
     const { moduleExports, env, cleanup } = loadNotificationInternals({
         teamDoc: { ownerId: 'coach-1', adminEmails: [] },
         parentUserIds: ['parent-1', 'parent-2'],
+        userDocs: {
+            'parent-1': { parentTeamIds: ['team-1'] }
+        },
+        preferenceDocs: {
+            'users/parent-1/notificationPreferences/team-1': { schedule: true }
+        },
         indexedRecipients: [
             { uid: 'coach-1', roles: ['staff'], tokens: [], categories: { schedule: true } },
-            { uid: 'parent-1', roles: ['parent'], tokens: [], categories: { schedule: true } },
             { uid: 'parent-2', roles: ['parent'], deviceId: 'parent-device', token: 'parent-token', categories: { schedule: true } }
         ]
     });
@@ -88,6 +93,10 @@ test('notifyGameCreated writes schedule inbox items for recipients without push 
         assert.deepEqual(env.messagingCalls.map((call) => call.tokens), [['parent-token']]);
         assert.deepEqual(env.inboxWrites.map((write) => write.uid).sort(), ['parent-1', 'parent-2']);
         assert.deepEqual(env.auditWrites[0].value.targetUserIds.sort(), ['parent-1', 'parent-2']);
+        assert.equal(
+            env.dedupWrites.some((write) => write.path === 'teams/team-1/notificationRecipients/parent-1'),
+            true
+        );
     } finally {
         cleanup();
     }

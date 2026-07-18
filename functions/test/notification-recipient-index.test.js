@@ -847,6 +847,7 @@ test('getTargetsForCategory expands aggregated recipient token lists', async () 
     try {
         const targets = await env.internals.getTargetsForCategory('team-1', 'schedule');
         assert.deepEqual(targets.map((target) => `${target.uid}:${target.deviceId}:${target.token}`).sort(), [
+            'coach-1:undefined:undefined',
             'parent-1:device-a:token-a',
             'parent-1:device-b:token-b'
         ]);

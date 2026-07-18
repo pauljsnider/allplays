@@ -37,12 +37,17 @@ describe('notification recipient index foundation', () => {
         expect(functionsSource).toContain(".document('teams/{teamId}')");
     });
 
-    it('falls back to live preference/device reads and backfills after empty indexed lookups', () => {
+    it('repairs partial recipient indexes and falls back after empty indexed lookups', () => {
         expect(functionsSource).toContain('async function getTargetsForCategory(teamId, category');
+        expect(functionsSource).toContain('async function resolveMixedNotificationRecipientIndex({');
         expect(functionsSource).toContain('function isAggregateNotificationRecipientDoc(docSnap) {');
         expect(functionsSource).toContain('const categoryRecipientDocs = targetSnap.docs || [];');
         expect(functionsSource).toContain('const indexedRecipientDocs = categoryRecipientDocs.filter(isAggregateNotificationRecipientDoc);');
-        expect(functionsSource).toContain('const eligibleUsers = buildIndexedEligibleUsers(indexedRecipientDocs, category, audienceContext, additionalUsers);');
+        expect(functionsSource).toContain('const candidateUsers = await getCandidateUsersForTeam(teamId);');
+        expect(functionsSource).toContain('const coverageUserIds = Array.from(eligibleUsers.keys())');
+        expect(functionsSource).toContain('const recipientSnaps = recipientRefs.length ? await firestore.getAll(...recipientRefs) : [];');
+        expect(functionsSource).toContain('const missingUsers = Array.from(eligibleUsers.values()).filter((user) => (');
+        expect(functionsSource).toContain('const { eligibleUsers, fallbackTargets } = await resolveMixedNotificationRecipientIndex({');
         expect(functionsSource).toContain('const explicitlyEligibleLegacyRecipientDocs = categoryRecipientDocs.filter((docSnap) => (');
         expect(functionsSource).toContain('await teamNotificationRecipientIndexIsEmpty(teamId)');
         expect(functionsSource).toContain('some((docSnap) => isAggregateNotificationRecipientDoc(docSnap))');
