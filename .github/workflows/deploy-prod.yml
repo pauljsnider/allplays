@@ -86,6 +86,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     permissions:
+      actions: read
       checks: write
       contents: read
 
@@ -137,6 +138,49 @@ jobs:
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Detect Firestore configuration changes
+        id: firestore_config
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          last_success_sha=""
+          lookup_succeeded="false"
+          lookup_max_attempts=3
+          for ((lookup_attempt = 1; lookup_attempt <= lookup_max_attempts; lookup_attempt += 1)); do
+            if last_success_sha="$(gh api --method GET "repos/${GITHUB_REPOSITORY}/actions/workflows/deploy-prod.yml/runs" \
+              -f branch="$GITHUB_REF_NAME" \
+              -f status=success \
+              -F per_page=1 \
+              --jq '.workflow_runs[0].head_sha // ""')"; then
+              lookup_succeeded="true"
+              break
+            fi
+
+            if (( lookup_attempt < lookup_max_attempts )); then
+              sleep $((5 * lookup_attempt))
+            fi
+          done
+
+          if [[ "$lookup_succeeded" != "true" ]]; then
+            echo "::warning::The successful production deploy lookup failed; forcing Firestore-first ordering."
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ ! "$last_success_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::warning::No valid successful production deploy baseline was found; forcing Firestore-first ordering."
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          elif ! git cat-file -e "${last_success_sha}^{commit}" 2>/dev/null; then
+            echo "::warning::The last successful production deploy commit is unavailable locally; forcing Firestore-first ordering."
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          elif git diff --quiet "$last_success_sha" "$GITHUB_SHA" -- firestore.rules firestore.indexes.json; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Deploy Firebase Storage rules when available
         shell: bash
         env:
@@ -170,33 +214,53 @@ jobs:
 
       - name: Deploy Firebase production
         shell: bash
+        env:
+          FIRESTORE_CONFIG_CHANGED: ${{ steps.firestore_config.outputs.changed }}
         run: |
           set -euo pipefail
-          max_attempts=3
           transient_pattern='(^|[^[:alnum:]])(429|500|502|503|504)([^[:alnum:]]|$)|service[[:space:]_-]+unavailable|econnreset|connection[[:space:]_-]+reset|network[[:space:]_-]+reset|etimedout|timed[[:space:]_-]+out|timeout'
 
-          for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do
-            deploy_log="$RUNNER_TEMP/firebase-prod-deploy-attempt-${attempt}.log"
-            set +e
-            npx firebase-tools@14.25.0 deploy --only hosting,firestore:rules,firestore:indexes,functions --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive 2>&1 | tee "$deploy_log"
-            deploy_status="${PIPESTATUS[0]}"
-            set -e
+          retry_firebase_deploy() {
+            local deploy_targets="$1"
+            local deploy_label="$2"
+            local max_attempts=3
+            local attempt deploy_log deploy_status retry_delay_seconds
 
-            if (( deploy_status == 0 )); then
-              exit 0
-            fi
+            for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do
+              deploy_log="$RUNNER_TEMP/firebase-${deploy_label}-deploy-attempt-${attempt}.log"
+              set +e
+              npx firebase-tools@14.25.0 deploy --only "$deploy_targets" --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive 2>&1 | tee "$deploy_log"
+              deploy_status="${PIPESTATUS[0]}"
+              set -e
 
-            if ! grep -Eiq "$transient_pattern" "$deploy_log"; then
-              echo "Firebase production deploy failed with a non-transient error; not retrying." >&2
-              exit "$deploy_status"
-            fi
+              if (( deploy_status == 0 )); then
+                return 0
+              fi
 
-            if (( attempt == max_attempts )); then
-              echo "Firebase production deploy failed after ${max_attempts} transient attempts." >&2
-              exit "$deploy_status"
-            fi
+              if ! grep -Eiq "$transient_pattern" "$deploy_log"; then
+                echo "Firebase ${deploy_label} deploy failed with a non-transient error; not retrying." >&2
+                return "$deploy_status"
+              fi
 
-            retry_delay_seconds=$((15 * (2 ** (attempt - 1))))
-            echo "Transient Firebase deploy failure; retrying in ${retry_delay_seconds} seconds (attempt $((attempt + 1))/${max_attempts})." >&2
-            sleep "$retry_delay_seconds"
-          done
+              if (( attempt == max_attempts )); then
+                echo "Firebase ${deploy_label} deploy failed after ${max_attempts} transient attempts." >&2
+                return "$deploy_status"
+              fi
+
+              retry_delay_seconds=$((15 * (2 ** (attempt - 1))))
+              echo "Transient Firebase ${deploy_label} deploy failure; retrying in ${retry_delay_seconds} seconds (attempt $((attempt + 1))/${max_attempts})." >&2
+              sleep "$retry_delay_seconds"
+            done
+          }
+
+          if [[ "$FIRESTORE_CONFIG_CHANGED" == "true" ]]; then
+            # Keep coupled authorization/index changes fail-closed: application code
+            # must not publish until its Firestore configuration is active.
+            retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore"
+            retry_firebase_deploy "hosting,functions" "application"
+          else
+            # Publish user-facing code first so an unrelated Rules API outage cannot
+            # prevent Hosting and Functions-only fixes from reaching production.
+            retry_firebase_deploy "hosting,functions" "application"
+            retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore"
+          fi
