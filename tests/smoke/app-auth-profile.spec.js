@@ -663,7 +663,7 @@ test('profile exposes account, notification, invite, verification, password, upl
         roles: ['parent']
     };
     await mockAppModules(page, { user });
-    await page.goto(appUrl(baseURL, '/profile'), { waitUntil: 'domcontentloaded' });
+    await page.goto(appUrl(baseURL, '/profile/settings'), { waitUntil: 'domcontentloaded' });
 
     await expect(page.getByRole('heading', { name: 'Your Account' })).toBeVisible();
     await expect.poll(async () => page.evaluate(() => window.__appProfileCalls.pushModuleLoads)).toBe(0);
@@ -731,7 +731,7 @@ test('profile exposes account, notification, invite, verification, password, upl
     await expect(recipientPage.getByRole('link', { name: 'Create account with code' })).toBeVisible();
     await recipientPage.close();
 
-    await page.goto(appUrl(baseURL, '/profile'), { waitUntil: 'domcontentloaded' });
+    await page.goto(appUrl(baseURL, '/profile/settings'), { waitUntil: 'domcontentloaded' });
 
     await page.getByRole('button', { name: 'Security', exact: true }).click();
     await expect(page.getByText('Email not verified')).toBeVisible();
@@ -791,7 +791,7 @@ test('mobile profile exposes a persistent shortcut to Family workflows', async (
         parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
     };
     await mockAppModules(page, { user });
-    await page.goto(appUrl(baseURL, '/profile'), { waitUntil: 'domcontentloaded' });
+    await page.goto(appUrl(baseURL, '/profile/settings'), { waitUntil: 'domcontentloaded' });
 
     const familyShortcut = page.getByRole('link', { name: 'Open Family workflows' });
     await expect(familyShortcut).toBeVisible();
@@ -815,7 +815,7 @@ test('profile keeps destructive alert actions disabled until a failed team load 
             { value: { liveChat: false, liveScore: true, schedule: false } }
         ];
     });
-    await page.goto(appUrl(baseURL, '/profile'), { waitUntil: 'domcontentloaded' });
+    await page.goto(appUrl(baseURL, '/profile/settings'), { waitUntil: 'domcontentloaded' });
 
     await page.getByRole('button', { name: 'Alerts', exact: true }).click();
     await expect(page.getByLabel('Team')).toHaveValue('team-1');
@@ -872,7 +872,7 @@ test('profile alerts recover from blocked native notification permissions', asyn
             }
         ];
     });
-    await page.goto(appUrl(baseURL, '/profile'), { waitUntil: 'domcontentloaded' });
+    await page.goto(appUrl(baseURL, '/profile/settings'), { waitUntil: 'domcontentloaded' });
 
     await page.getByRole('button', { name: 'Alerts', exact: true }).click();
     await expect(page.getByText('Notifications are off in device settings')).toBeVisible();

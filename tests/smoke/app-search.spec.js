@@ -224,7 +224,7 @@ async function mockSearchModules(page) {
                         { id: 'my-teams', kind: 'action', title: 'My Teams', subtitle: 'Open your team hubs', route: '/teams' },
                         { id: 'schedule', kind: 'action', title: 'Schedule', subtitle: 'Games, practices, availability, rides, and packets', route: '/schedule' },
                         { id: 'messages', kind: 'action', title: 'Messages', subtitle: 'Team chat and staff threads', route: '/messages' },
-                        { id: 'profile', kind: 'action', title: 'Profile', subtitle: 'Account settings and notifications', route: '/profile' }
+                        { id: 'profile', kind: 'action', title: 'Profile', subtitle: 'Account settings and notifications', route: '/profile/settings' }
                     ];
                     const teamItems = teams.map((team) => ({
                         id: 'team:' + team.id,

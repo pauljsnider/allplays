@@ -1664,8 +1664,8 @@ test('requested app workflows emit DB-ready view load baseline timers', async ({
             workflow: 'profile_account',
             label: 'profile account load',
             viewName: 'profile account',
-            route: '/profile',
-            startHash: '/profile',
+            route: '/profile/settings',
+            startHash: '/profile/settings',
             ready: async (testPage) => {
                 await expect(async () => {
                     await expect(testPage.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 3000 });
@@ -1677,8 +1677,8 @@ test('requested app workflows emit DB-ready view load baseline timers', async ({
             workflow: 'profile_alerts',
             label: 'profile alerts load',
             viewName: 'profile alerts',
-            route: '/profile?section=alerts',
-            startHash: '/profile?section=alerts',
+            route: '/profile/settings?section=alerts',
+            startHash: '/profile/settings?section=alerts',
             ready: async (testPage) => {
                 await expect(async () => {
                     await expect(testPage.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 3000 });
@@ -1691,8 +1691,8 @@ test('requested app workflows emit DB-ready view load baseline timers', async ({
             workflow: 'profile_invites',
             label: 'profile invites load',
             viewName: 'profile invites',
-            route: '/profile?section=invites',
-            startHash: '/profile?section=invites',
+            route: '/profile/settings?section=invites',
+            startHash: '/profile/settings?section=invites',
             ready: async (testPage) => {
                 await expect(async () => {
                     await expect(testPage.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 3000 });
@@ -1705,8 +1705,8 @@ test('requested app workflows emit DB-ready view load baseline timers', async ({
             workflow: 'profile_security',
             label: 'profile security load',
             viewName: 'profile security',
-            route: '/profile?section=security',
-            startHash: '/profile?section=security',
+            route: '/profile/settings?section=security',
+            startHash: '/profile/settings?section=security',
             ready: async (testPage) => {
                 await expect(async () => {
                     await expect(testPage.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 3000 });
