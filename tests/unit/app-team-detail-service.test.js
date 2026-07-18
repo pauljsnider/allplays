@@ -1426,12 +1426,18 @@ describe('React app team detail model', () => {
         getLocalAttractionSponsors.mockResolvedValue([{ id: 'local-1', name: 'Museum', description: 'Visit downtown', imageUrl: null, websiteUrl: 'https://museum.example.test' }]);
         getAdSpaceSponsors.mockResolvedValue([{ id: 'ad-1', name: 'Pizza Place', description: 'After game', imageUrl: null, websiteUrl: 'https://pizza.example.test' }]);
 
-        const insights = await loadTeamDetailInsights('team-1', { uid: 'parent-1', email: 'parent@example.com', displayName: 'Parent', roles: ['parent'], parentOf: [{ teamId: 'team-1', playerId: 'player-1' }] });
+        const insightUser = { uid: 'parent-1', email: 'parent@example.com', displayName: 'Parent', roles: ['parent'], parentOf: [{ teamId: 'team-1', playerId: 'player-1' }] };
+        const [insights, cachedInsights] = await Promise.all([
+            loadTeamDetailInsights('team-1', insightUser),
+            loadTeamDetailInsights('team-1', insightUser)
+        ]);
         const sponsors = await loadTeamDetailSponsors('team-1');
 
         expect(getAggregatedStatsForGames).toHaveBeenCalledWith('team-1', ['game-1']);
         expect(getPublicTrackingItems).toHaveBeenCalledWith('team-1');
         expect(getPlayerTrackingStatuses).toHaveBeenCalledWith('team-1', ['player-1']);
+        expect(getAggregatedStatsForGames).toHaveBeenCalledTimes(1);
+        expect(cachedInsights).toBe(insights);
         expect(insights.leaderboards[0].leaders[0]).toMatchObject({ playerId: 'player-1', formattedValue: '88' });
         expect(insights.trackingSummaries[0].items[0]).toMatchObject({ title: 'Bring ball', isComplete: true });
         expect(getLocalAttractionSponsors).toHaveBeenCalledWith('team-1');

@@ -46,7 +46,7 @@ export function getNativeBackTarget(pathname: string, search = '') {
   const messagesStateTarget = getNativeMessagesBackTarget(path, normalizedSearch);
   if (messagesStateTarget) return messagesStateTarget;
   if (isNativeExitRoute(path, search)) return null;
-  if (['/schedule', '/messages', '/teams', '/officials', '/parent-tools', '/profile', '/ai', '/help'].includes(path)) return '/home';
+  if (['/schedule', '/messages', '/teams', '/officials', '/parent-tools', '/profile', '/profile/settings', '/ai', '/help'].includes(path)) return '/home';
   if (/^\/schedule\/[^/]+\/[^/]+/.test(path)) return '/schedule';
   if (/^\/messages\/[^/]+/.test(path)) return '/messages';
   if (path === '/teams/browse') return '/teams';
@@ -94,13 +94,13 @@ function getNativeHomeBackTarget(pathname: string, search: string) {
 }
 
 function getNativeProfileBackTarget(pathname: string, search: string) {
-  if (pathname !== '/profile' || !search) return null;
+  if ((pathname !== '/profile' && pathname !== '/profile/settings') || !search) return null;
 
   const params = new URLSearchParams(search);
   const activeSection = params.get('section');
   const hasNonDefaultSection = Boolean(activeSection && activeSection !== 'account');
   if (hasNonDefaultSection || params.has('teamId')) {
-    return '/profile';
+    return pathname;
   }
 
   return null;

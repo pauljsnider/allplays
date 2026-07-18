@@ -28,9 +28,19 @@ const chatMocks = vi.hoisted(() => ({
     uploadTeamChatAttachment: vi.fn()
 }));
 
+const publicTeamMocks = vi.hoisted(() => ({
+    getPublicTeamDetail: vi.fn()
+}));
+
+const athleteProfileMocks = vi.hoisted(() => ({
+    buildAthleteProfileShareUrl: vi.fn((origin, profileId) => `${origin}/athlete-profile.html?profileId=${encodeURIComponent(profileId)}`)
+}));
+
 vi.mock('../../js/firebase.js', () => firebaseMocks);
 vi.mock(import('../../apps/app/src/lib/homeService.ts'), () => homeMocks);
 vi.mock(import('../../apps/app/src/lib/chatService.ts'), () => chatMocks);
+vi.mock(import('../../apps/app/src/lib/publicTeamsService.ts'), () => publicTeamMocks);
+vi.mock(import('../../apps/app/src/lib/adapters/legacyPlayerProfile.ts'), () => athleteProfileMocks);
 
 const user = {
     uid: 'user-1',
@@ -77,9 +87,69 @@ beforeEach(() => {
         name: 'upload.png',
         thumbnailUrl: null
     });
+    publicTeamMocks.getPublicTeamDetail.mockResolvedValue(null);
 });
 
 describe('React app social service', () => {
+    it('loads only public teams and public athlete profiles for an accepted friend', async () => {
+        publicTeamMocks.getPublicTeamDetail.mockImplementation(async (teamId) => {
+            if (teamId !== 'team-1') throw new Error('Not public');
+            return { id: 'team-1', name: 'Bears', sport: 'Basketball', photoUrl: null };
+        });
+        firebaseMocks.getDoc.mockImplementation(async (ref) => {
+            const path = ref.path.join('/');
+            if (path === 'friendships/friend-2__user-1') {
+                return {
+                    id: 'friend-2__user-1',
+                    exists: () => true,
+                    data: () => ({
+                        status: 'accepted',
+                        memberIds: ['friend-2', 'user-1'],
+                        sharedTeamIds: ['team-1'],
+                        sharedTeamNames: ['Bears']
+                    })
+                };
+            }
+            if (path === 'publicUserProfiles/friend-2') {
+                return {
+                    id: 'friend-2',
+                    exists: () => true,
+                    data: () => ({ displayName: 'Jamie Friend', discoveryTeamIds: ['team-1', 'private-team'] })
+                };
+            }
+            return { id: ref.path.at(-1), exists: () => false, data: () => ({}) };
+        });
+        firebaseMocks.getDocs.mockImplementation(async (queryRef) => {
+            const path = queryRef.collectionRef?.path?.join('/') || '';
+            if (path === 'athleteProfiles') {
+                return snapshot([{
+                    id: 'athlete-1',
+                    parentUserId: 'friend-2',
+                    privacy: 'public',
+                    athlete: { name: 'Jamie Jr.', headline: 'Goalkeeper' },
+                    profilePhoto: { url: 'https://img.example.test/athlete.png' }
+                }]);
+            }
+            return snapshot([]);
+        });
+
+        const { loadFriendProfile } = await import('../../apps/app/src/lib/socialService.ts');
+        const profile = await loadFriendProfile(user, 'friend-2');
+
+        expect(profile.publicTeams).toEqual([{ id: 'team-1', name: 'Bears', sport: 'Basketball', photoUrl: null }]);
+        expect(profile.publicChildren).toEqual([expect.objectContaining({
+            id: 'athlete-1',
+            name: 'Jamie Jr.',
+            shareUrl: 'https://allplays.ai/athlete-profile.html?profileId=athlete-1'
+        })]);
+        expect(profile.messageRoute).toBe('/messages/team-1?compose=user%3Afriend-2&recipientName=Jamie+Friend');
+        const athleteQuery = firebaseMocks.getDocs.mock.calls.map(([queryRef]) => queryRef).find((queryRef) => queryRef.collectionRef?.path?.join('/') === 'athleteProfiles');
+        expect(athleteQuery.clauses).toEqual(expect.arrayContaining([
+            { field: 'parentUserId', op: '==', value: 'friend-2' },
+            { field: 'privacy', op: '==', value: 'public' }
+        ]));
+    });
+
     it('creates user-authored social posts with team, player, media, and visibility metadata', async () => {
         const { createSocialPost } = await import('../../apps/app/src/lib/socialService.ts');
 

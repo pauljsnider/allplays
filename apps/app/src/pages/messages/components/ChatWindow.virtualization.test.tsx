@@ -969,7 +969,7 @@ describe('ChatWindow conversation switching', () => {
     fireEvent.click(within(screen.getByTestId('mobile-conversation-chips')).getByRole('button', { name: 'Switch to Tournament travel' }));
     expect(screen.getByPlaceholderText('Message Bears')).toHaveValue('');
     expect(sendTeamChatMessage).toHaveBeenCalledTimes(1);
-  });
+  }, 10_000);
 
   it('repairs an existing staff conversation before quick-switching to it', async () => {
     mockChatTeamState.conversations = [

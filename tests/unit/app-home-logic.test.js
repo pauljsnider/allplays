@@ -177,6 +177,52 @@ describe('React app Home model helpers', () => {
         expect(actions).toEqual([]);
     });
 
+    it('does not surface RSVP or assignment actions before private event state is authoritative', () => {
+        const bootstrapEvent = event({
+            myRsvp: 'not_responded',
+            myRsvpNoteHydrated: false,
+            assignmentClaimsHydrated: false,
+            assignments: [{ role: 'Snacks', value: '', claimable: true, claim: null }]
+        });
+
+        const bootstrapModel = buildParentHomeModel({
+            children: [child()],
+            events: [bootstrapEvent],
+            inboxTeams: [],
+            fees: [],
+            now: new Date('2100-05-30T12:00:00Z')
+        });
+
+        expect(bootstrapModel.actionItems).toEqual([]);
+        expect(bootstrapModel.metrics.rsvpNeeded).toBe(0);
+        expect(bootstrapModel.players[0]).toMatchObject({ rsvpNeeded: 0, openAssignments: 0 });
+
+        const hydratedModel = buildParentHomeModel({
+            children: [child()],
+            events: [{
+                ...bootstrapEvent,
+                myRsvpNoteHydrated: true,
+                assignmentClaimsHydrated: true,
+                assignments: [{ role: 'Snacks', value: '', claimable: true, claim: { claimedByUserId: 'coach-1' } }]
+            }],
+            inboxTeams: [],
+            fees: [],
+            now: new Date('2100-05-30T12:00:00Z')
+        });
+
+        expect(hydratedModel.actionItems.map((action) => action.kind)).toEqual(['rsvp']);
+        expect(hydratedModel.players[0].openAssignments).toBe(0);
+    });
+
+    it('removes availability actions for every completed RSVP response', () => {
+        for (const response of ['going', 'not_going', 'maybe']) {
+            expect(buildHomeActionItems({
+                events: [event({ myRsvp: response, myRsvpNoteHydrated: true })],
+                now: new Date('2100-05-30T12:00:00Z')
+            }).filter((action) => action.kind === 'rsvp')).toEqual([]);
+        }
+    });
+
     it('includes chat-access teams without linked players so Home and Messages stay aligned', () => {
         const model = buildParentHomeModel({
             children: [

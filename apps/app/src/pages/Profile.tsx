@@ -91,7 +91,7 @@ function loadPushService() {
 }
 
 function getProfileSectionRoute(section: ProfileSectionId) {
-  return section === 'account' ? '/profile' : `/profile?section=${section}`;
+  return section === 'account' ? '/profile/settings' : `/profile/settings?section=${section}`;
 }
 
 function getLoadErrorMessage(error: unknown, fallback: string) {
@@ -1256,6 +1256,10 @@ export function Profile({ auth }: { auth: AuthState }) {
             {busy === 'logout' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <LogOut className="h-4 w-4" aria-hidden="true" />}
           </button>
         </div>
+        <Link to="/profile" className="secondary-button mt-3 !min-h-9 text-xs">
+          <UserCircle className="h-4 w-4" aria-hidden="true" />
+          View public profile
+        </Link>
       </section>
 
       <div className="profile-section-nav sticky top-24 z-30 bg-gray-50/95 py-2 backdrop-blur">

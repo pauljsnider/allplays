@@ -637,7 +637,7 @@ describe('React app TeamDetail page', () => {
         const { container } = await renderTeamDetail();
 
         expect(teamDetailMocks.loadParentTeamDetail).toHaveBeenCalledTimes(1);
-        expect(teamDetailMocks.loadTeamDetailInsights).not.toHaveBeenCalled();
+        expect(teamDetailMocks.loadTeamDetailInsights).toHaveBeenCalledTimes(1);
         expect(teamDetailMocks.loadTeamDetailSponsors).not.toHaveBeenCalled();
 
         await clickButton(container, 'Insights');

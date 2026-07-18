@@ -22,10 +22,13 @@ import { toAppServiceError } from './appErrors';
 import type { ParentHomeModel } from './homeLogic';
 import { uploadTeamChatAttachment } from './chatService';
 import type { AuthUser } from './types';
+import { getPublicTeamDetail } from './publicTeamsService';
+import { buildAthleteProfileShareUrl } from './adapters/legacyPlayerProfile';
 import {
   buildFriendshipId,
   buildSocialHomeModel,
   emptySocialHome,
+  getFriendMessageRoute,
   normalizeSocialFriend,
   sortSocialFeedItems,
   toSocialDate,
@@ -70,6 +73,9 @@ export type FriendProfileModel = {
   name: string;
   photoUrl: string | null;
   sharedTeamNames: string[];
+  publicTeams: Array<{ id: string; name: string; sport: string | null; photoUrl: string | null }>;
+  publicChildren: Array<{ id: string; name: string; headline: string; photoUrl: string | null; shareUrl: string }>;
+  messageRoute: string | null;
   isSelf: boolean;
   posts: SocialFeedItem[];
 };
@@ -332,9 +338,15 @@ export async function loadFriendProfile(user: AuthUser, profileUserId: string): 
     }
   }
 
-  const [profileSnap, hiddenPostIds] = await Promise.all([
+  const [profileSnap, hiddenPostIds, publicChildSnap] = await Promise.all([
     withTimeout(getDoc(doc(db, publicUserProfileCollection, targetUserId)), 'Friend profile'),
-    loadHiddenSocialPostIds(viewerId)
+    loadHiddenSocialPostIds(viewerId),
+    withTimeout(getDocs(query(
+      collection(db, 'athleteProfiles'),
+      where('parentUserId', '==', targetUserId),
+      where('privacy', '==', 'public'),
+      limit(12)
+    )), 'Public athlete profiles').catch(() => null)
   ]);
   const postDocs = await loadSocialPostQueryPages({
     buildQuery: (cursor) => query(
@@ -352,6 +364,22 @@ export async function loadFriendProfile(user: AuthUser, profileUserId: string): 
     visibleLimit: socialPostLimit
   });
   const profile = profileSnap?.exists?.() ? profileSnap.data() || {} : {};
+  const sharedTeamIds = isSelf ? [] : uniqueStrings(friendship?.sharedTeamIds || []);
+  const publicTeams = (await Promise.all(
+    uniqueStrings(profile.discoveryTeamIds || []).slice(0, 12).map((teamId) => getPublicTeamDetail(teamId).catch(() => null))
+  )).filter((team): team is NonNullable<typeof team> => Boolean(team)).map((team) => ({
+    id: team.id,
+    name: team.name,
+    sport: team.sport,
+    photoUrl: team.photoUrl
+  }));
+  const publicChildren = publicChildSnap ? snapshotToDocs(publicChildSnap).map((child) => ({
+    id: child.id,
+    name: compactString(child.athlete?.name) || 'Athlete profile',
+    headline: compactString(child.athlete?.headline),
+    photoUrl: compactString(child.profilePhoto?.url || child.profilePhotoUrl) || null,
+    shareUrl: buildAthleteProfileShareUrl('https://allplays.ai', child.id)
+  })) : [];
   const posts = sortSocialFeedItems(postDocs
     .map(mapSocialPost)
     .filter((post) => !post.hidden && !hiddenPostIds.has(post.id)));
@@ -363,9 +391,17 @@ export async function loadFriendProfile(user: AuthUser, profileUserId: string): 
 
   return {
     userId: targetUserId,
-    name: compactString(profile.displayName || profile.fullName) || hydratedPosts[0]?.authorName || 'ALL PLAYS member',
+    name: compactString(profile.displayName || profile.fullName) || (isSelf ? getUserDisplayName(user) : '') || hydratedPosts[0]?.authorName || 'ALL PLAYS member',
     photoUrl: compactString(profile.photoUrl) || null,
     sharedTeamNames: isSelf ? [] : uniqueStrings(friendship?.sharedTeamNames || []),
+    publicTeams,
+    publicChildren,
+    messageRoute: isSelf ? null : getFriendMessageRoute({
+      status: 'accepted',
+      userId: targetUserId,
+      name: compactString(profile.displayName || profile.fullName) || hydratedPosts[0]?.authorName || 'Friend',
+      sharedTeamIds
+    }),
     isSelf,
     posts: hydratedPosts
   };

@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { AlertCircle, ArrowLeft, Heart, Loader2, UsersRound } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
+import { AlertCircle, ArrowLeft, Copy, Heart, Loader2, MessageCircle, Settings, Trophy, UserRound, UsersRound } from 'lucide-react';
 import { AvatarImage } from '../components/AvatarImage';
 import {
   loadFriendProfile,
@@ -8,10 +9,12 @@ import {
   type FriendProfileModel
 } from '../lib/socialService';
 import { getSocialTypeLabel, getSocialVisibilityLabel, type SocialFeedItem } from '../lib/socialLogic';
+import { copyPublicText } from '../lib/publicActions';
 import type { AuthState } from '../lib/types';
 
-export function FriendProfile({ auth }: { auth: AuthState }) {
-  const { userId = '' } = useParams();
+export function FriendProfile({ auth, profileUserId }: { auth: AuthState; profileUserId?: string }) {
+  const { userId: routeUserId = '' } = useParams();
+  const userId = profileUserId || routeUserId;
   const [profile, setProfile] = useState<FriendProfileModel | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -86,6 +89,12 @@ export function FriendProfile({ auth }: { auth: AuthState }) {
     }
   };
 
+  const copyProfileLink = async () => {
+    const link = `https://allplays.ai/app/#/people/${encodeURIComponent(userId)}`;
+    const result = await copyPublicText(link);
+    setStatus(result === 'copied' ? 'Profile link copied.' : 'Unable to copy the profile link.');
+  };
+
   if (loading) {
     return (
       <main className="mx-auto flex min-h-[45vh] max-w-3xl items-center justify-center px-4" aria-busy="true">
@@ -114,12 +123,21 @@ export function FriendProfile({ auth }: { auth: AuthState }) {
   }
 
   const initials = getInitials(profile.name);
+  const publicTeams = profile.publicTeams || [];
+  const publicChildren = profile.publicChildren || [];
   return (
     <main className="mx-auto max-w-3xl px-4 py-5 sm:py-7">
-      <Link to="/home?section=friends" className="ghost-button !inline-flex !min-h-10 !px-3 text-sm">
-        <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-        Back to friends
-      </Link>
+      {profile.isSelf ? (
+        <Link to="/profile/settings" className="ghost-button !inline-flex !min-h-10 !px-3 text-sm">
+          <Settings className="h-4 w-4" aria-hidden="true" />
+          Profile settings
+        </Link>
+      ) : (
+        <Link to="/home?section=friends" className="ghost-button !inline-flex !min-h-10 !px-3 text-sm">
+          <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+          Back to friends
+        </Link>
+      )}
 
       <header className="app-card mt-4 overflow-hidden">
         <div className="h-24 bg-gradient-to-br from-primary-700 via-primary-600 to-sky-500 sm:h-32" />
@@ -146,12 +164,52 @@ export function FriendProfile({ auth }: { auth: AuthState }) {
               Connected through {profile.sharedTeamNames.join(' · ')}
             </p>
           ) : null}
+          <div className="mt-4 flex flex-wrap gap-2">
+            {profile.messageRoute ? (
+              <Link to={profile.messageRoute} className="primary-button !min-h-10 text-sm">
+                <MessageCircle className="h-4 w-4" aria-hidden="true" />
+                Message
+              </Link>
+            ) : null}
+            <button type="button" className="secondary-button !min-h-10 text-sm" onClick={copyProfileLink}>
+              <Copy className="h-4 w-4" aria-hidden="true" />
+              Copy profile link
+            </button>
+            {profile.isSelf ? (
+              <Link to="/profile/settings" className="secondary-button !min-h-10 text-sm">
+                <Settings className="h-4 w-4" aria-hidden="true" />
+                Settings
+              </Link>
+            ) : null}
+          </div>
           <div className="mt-4 flex gap-5 border-t border-gray-100 pt-4 text-sm">
             <div><span className="font-black text-gray-950">{profile.posts.length}</span> <span className="font-semibold text-gray-500">shared posts</span></div>
-            <div><span className="font-black text-gray-950">{profile.sharedTeamNames.length}</span> <span className="font-semibold text-gray-500">shared teams</span></div>
+            <div><span className="font-black text-gray-950">{publicTeams.length}</span> <span className="font-semibold text-gray-500">public teams</span></div>
+            <div><span className="font-black text-gray-950">{publicChildren.length}</span> <span className="font-semibold text-gray-500">public players</span></div>
           </div>
         </div>
       </header>
+
+      {status ? <div className="mt-3 rounded-xl bg-gray-950 px-3 py-2 text-sm font-bold text-white" role="status">{status}</div> : null}
+
+      <div className="mt-6 grid gap-4 sm:grid-cols-2">
+        <ProfileCollection title="Public teams" icon={Trophy} empty="No public teams shared.">
+          {publicTeams.map((team) => (
+            <Link key={team.id} to={`/teams/${encodeURIComponent(team.id)}/public`} className="flex items-center gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3 hover:border-primary-200">
+              {team.photoUrl ? <img src={team.photoUrl} alt="" className="h-10 w-10 rounded-xl object-cover" /> : <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-50 text-primary-700"><Trophy className="h-5 w-5" /></span>}
+              <span className="min-w-0"><span className="block truncate text-sm font-black text-gray-950">{team.name}</span><span className="block truncate text-xs font-semibold text-gray-500">{team.sport || 'Public team'}</span></span>
+            </Link>
+          ))}
+        </ProfileCollection>
+        <ProfileCollection title="Public players" icon={UserRound} empty="No public player profiles shared.">
+          {publicChildren.map((child) => (
+            <a key={child.id} href={child.shareUrl} target="_blank" rel="noreferrer" className="flex items-center gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3 hover:border-primary-200">
+              {child.photoUrl ? <img src={child.photoUrl} alt="" className="h-10 w-10 rounded-xl object-cover" /> : <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-gray-950 text-white"><UserRound className="h-5 w-5" /></span>}
+              <span className="min-w-0"><span className="block truncate text-sm font-black text-gray-950">{child.name}</span><span className="block truncate text-xs font-semibold text-gray-500">{child.headline || 'View public profile'}</span></span>
+            </a>
+          ))}
+        </ProfileCollection>
+      </div>
 
       <section className="mt-6" aria-labelledby="profile-posts-heading">
         <div className="flex items-end justify-between gap-3">
@@ -161,7 +219,6 @@ export function FriendProfile({ auth }: { auth: AuthState }) {
           </div>
           <span className="text-xs font-bold text-gray-500">Newest first</span>
         </div>
-        {status ? <div className="mt-3 rounded-xl bg-gray-950 px-3 py-2 text-sm font-bold text-white" role="status">{status}</div> : null}
         <div className="mt-3 space-y-3">
           {profile.posts.length ? profile.posts.map((post) => (
             <article key={post.id} className="app-card overflow-hidden p-4 sm:p-5">
@@ -205,6 +262,16 @@ export function FriendProfile({ auth }: { auth: AuthState }) {
         </div>
       </section>
     </main>
+  );
+}
+
+function ProfileCollection({ title, icon: Icon, empty, children }: { title: string; icon: LucideIcon; empty: string; children: ReactNode }) {
+  const hasChildren = Array.isArray(children) ? children.length > 0 : Boolean(children);
+  return (
+    <section className="app-card p-4">
+      <h2 className="flex items-center gap-2 text-base font-black text-gray-950"><Icon className="h-4 w-4 text-primary-700" aria-hidden="true" />{title}</h2>
+      <div className="mt-3 space-y-2">{hasChildren ? children : <p className="text-sm font-semibold text-gray-500">{empty}</p>}</div>
+    </section>
   );
 }
 
