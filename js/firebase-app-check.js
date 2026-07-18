@@ -117,10 +117,21 @@ export function normalizeNativeAppCheckToken(result, now = Date.now()) {
 export async function initializeNativeAppCheck(app, config) {
     const { FirebaseAppCheck } = await import('@capacitor-firebase/app-check');
     const useDebugProvider = config.nativeDebug === true;
-    await FirebaseAppCheck.initialize({
-        debugToken: useDebugProvider,
-        isTokenAutoRefreshEnabled: config.isTokenAutoRefreshEnabled !== false
-    });
+    const isIos = typeof window !== 'undefined'
+        && window.Capacitor?.getPlatform?.() === 'ios';
+    const isTokenAutoRefreshEnabled = config.isTokenAutoRefreshEnabled !== false;
+    if (isIos) {
+        // AppDelegate installs the iOS factory before FirebaseApp.configure().
+        // Calling initialize() here would attempt to replace it too late.
+        await FirebaseAppCheck.setTokenAutoRefreshEnabled({
+            enabled: isTokenAutoRefreshEnabled
+        });
+    } else {
+        await FirebaseAppCheck.initialize({
+            debugToken: useDebugProvider,
+            isTokenAutoRefreshEnabled
+        });
+    }
 
     const provider = new CustomProvider({
         getToken: async () => normalizeNativeAppCheckToken(
@@ -129,7 +140,7 @@ export async function initializeNativeAppCheck(app, config) {
     });
     const appCheck = initializeAppCheck(app, {
         provider,
-        isTokenAutoRefreshEnabled: config.isTokenAutoRefreshEnabled !== false
+        isTokenAutoRefreshEnabled
     });
     registerPrimaryAppCheckContext({
         tokenGetter: (forceRefresh) => getToken(appCheck, forceRefresh)

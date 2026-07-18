@@ -1,6 +1,13 @@
 import UIKit
 import Capacitor
+import FirebaseCore
 import FirebaseAppCheck
+
+private final class AllPlaysAppCheckProviderFactory: NSObject, AppCheckProviderFactory {
+    func createProvider(with app: FirebaseApp) -> AppCheckProvider? {
+        return AppAttestProvider(app: app)
+    }
+}
 
 @UIApplicationMain
 class AppDelegate: UIResponder, UIApplicationDelegate {
@@ -13,7 +20,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         #if DEBUG
         AppCheck.setAppCheckProviderFactory(AppCheckDebugProviderFactory())
         #else
-        AppCheck.setAppCheckProviderFactory(AppAttestProviderFactory())
+        AppCheck.setAppCheckProviderFactory(AllPlaysAppCheckProviderFactory())
         #endif
 
         return true

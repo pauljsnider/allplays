@@ -100,13 +100,16 @@ describe('Capacitor native config', () => {
             iosAppDelegate.indexOf('func applicationWillResignActive')
         );
         expect(iosAppDelegate).toContain('import FirebaseAppCheck');
+        expect(iosAppDelegate).toContain('import FirebaseCore');
+        expect(iosAppDelegate).toContain('return AppAttestProvider(app: app)');
         expect(launchSetup).toContain('#if DEBUG');
         expect(launchSetup).toContain('AppCheck.setAppCheckProviderFactory(AppCheckDebugProviderFactory())');
         expect(launchSetup).toContain('#else');
-        expect(launchSetup).toContain('AppCheck.setAppCheckProviderFactory(AppAttestProviderFactory())');
+        expect(launchSetup).toContain('AppCheck.setAppCheckProviderFactory(AllPlaysAppCheckProviderFactory())');
         expect(launchSetup.indexOf('AppCheck.setAppCheckProviderFactory')).toBeLessThan(
             launchSetup.indexOf('return true')
         );
+        expect(launchSetup).not.toContain('FirebaseApp.configure()');
     });
 
     it('uses an explicit token-free App Check debug build only for local simulator and debug APK commands', () => {

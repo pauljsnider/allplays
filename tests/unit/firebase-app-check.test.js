@@ -13,7 +13,8 @@ const appCheckSdk = vi.hoisted(() => ({
 
 const nativeAppCheck = vi.hoisted(() => ({
     initialize: vi.fn(),
-    getToken: vi.fn()
+    getToken: vi.fn(),
+    setTokenAutoRefreshEnabled: vi.fn()
 }));
 
 vi.mock('../../js/vendor/firebase-app-check.js', () => appCheckSdk);
@@ -62,6 +63,7 @@ describe('Firebase App Check initialization', () => {
         appCheckSdk.getToken.mockResolvedValue({ token: 'not-logged-or-exposed' });
         nativeAppCheck.initialize.mockResolvedValue(undefined);
         nativeAppCheck.getToken.mockResolvedValue({ token: 'native-token', expireTimeMillis: Date.now() + 60_000 });
+        nativeAppCheck.setTokenAutoRefreshEnabled.mockResolvedValue(undefined);
     });
 
     afterEach(() => {
@@ -104,7 +106,10 @@ describe('Firebase App Check initialization', () => {
             protocol: 'capacitor:',
             pathname: '/'
         };
-        globalThis.window.Capacitor = { isNativePlatform: () => true };
+        globalThis.window.Capacitor = {
+            isNativePlatform: () => true,
+            getPlatform: () => 'android'
+        };
         globalThis.window.__ALLPLAYS_CONFIG__.appCheck = {};
 
         expect(isCapacitorNativeRuntime()).toBe(true);
@@ -117,6 +122,22 @@ describe('Firebase App Check initialization', () => {
             isTokenAutoRefreshEnabled: true
         });
         expect(status).toMatchObject({ state: 'initialized', provider: 'native-attestation' });
+    });
+
+    it('does not replace the iOS provider after native startup configures Firebase', async () => {
+        globalThis.window.Capacitor = {
+            isNativePlatform: () => true,
+            getPlatform: () => 'ios'
+        };
+
+        const status = await initializeNativeAppCheck(PRIMARY_APP, {
+            nativeDebug: true,
+            isTokenAutoRefreshEnabled: true
+        });
+
+        expect(nativeAppCheck.initialize).not.toHaveBeenCalled();
+        expect(nativeAppCheck.setTokenAutoRefreshEnabled).toHaveBeenCalledWith({ enabled: true });
+        expect(status).toMatchObject({ state: 'initialized', provider: 'native-debug' });
     });
 
     it('enables the native debug provider without accepting or embedding a token value', async () => {
