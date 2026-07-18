@@ -14,6 +14,7 @@ const firebaseMocks = vi.hoisted(() => ({
     where: vi.fn((field, op, value) => ({ field, op, value })),
     orderBy: vi.fn((field, direction) => ({ field, direction })),
     limit: vi.fn((count) => ({ count })),
+    startAfter: vi.fn((cursor) => ({ cursor })),
     runTransaction: vi.fn(),
     Timestamp: { now: vi.fn(() => ({ seconds: 4102444800, toDate: () => new Date('2100-01-01T00:00:00Z') })) },
     serverTimestamp: vi.fn(() => ({ __serverTimestamp: true }))
@@ -276,6 +277,75 @@ describe('React app social service', () => {
             expect.objectContaining({ id: 'post-visible', viewerHasLiked: true })
         ]);
         expect(firebaseMocks.orderBy).toHaveBeenCalledWith('createdAt', 'desc');
+    });
+
+    it('pages past a full hidden post window to return older visible feed items', async () => {
+        const { loadVisibleSocialPosts } = await import('../../apps/app/src/lib/socialService.ts');
+        const hiddenPosts = Array.from({ length: 30 }, (_, index) => ({
+            id: `hidden-${index}`,
+            authorId: 'friend-1',
+            title: `Hidden ${index}`,
+            createdAt: { seconds: 4102444900 - index },
+            playerIds: [],
+            playerNames: [],
+            media: []
+        }));
+        firebaseMocks.getDocs.mockImplementation(async (queryRef) => {
+            const path = queryRef.collectionRef?.path || [];
+            if (path.join('/') === 'users/user-1/hiddenSocialPosts') {
+                return snapshot(hiddenPosts.map(({ id }) => ({ id, postId: id })));
+            }
+            if (path.join('/') === 'socialPosts') {
+                const cursorClause = queryRef.clauses.find((clause) => clause.cursor);
+                return cursorClause
+                    ? snapshot([{
+                        id: 'older-visible',
+                        authorId: 'friend-1',
+                        title: 'Older visible post',
+                        createdAt: { seconds: 4102444700 },
+                        playerIds: [],
+                        playerNames: [],
+                        media: []
+                    }])
+                    : snapshot(hiddenPosts);
+            }
+            return snapshot([]);
+        });
+
+        const posts = await loadVisibleSocialPosts(user, {
+            players: [], teams: [], upcomingEvents: [], actionItems: [], fees: [],
+            metrics: { players: 0, teams: 0, rsvpNeeded: 0, unreadMessages: 0, packetsReady: 0 }
+        });
+
+        expect(posts.map((post) => post.id)).toEqual(['older-visible']);
+        expect(firebaseMocks.startAfter).toHaveBeenCalledWith(expect.objectContaining({ id: 'hidden-29' }));
+    });
+
+    it('loads every hidden-post page so hides beyond the first 200 stay durable', async () => {
+        const { loadVisibleSocialPosts } = await import('../../apps/app/src/lib/socialService.ts');
+        const firstHiddenPage = Array.from({ length: 200 }, (_, index) => ({ id: `hidden-${index}` }));
+        firebaseMocks.getDocs.mockImplementation(async (queryRef) => {
+            const path = queryRef.collectionRef?.path || [];
+            if (path.join('/') === 'users/user-1/hiddenSocialPosts') {
+                const cursorClause = queryRef.clauses.find((clause) => clause.cursor);
+                return cursorClause ? snapshot([{ id: 'hidden-200' }]) : snapshot(firstHiddenPage);
+            }
+            if (path.join('/') === 'socialPosts') {
+                return snapshot([
+                    { id: 'hidden-200', authorId: 'friend-1', title: 'Still hidden', createdAt: { seconds: 4102444900 }, playerIds: [], playerNames: [], media: [] },
+                    { id: 'visible-post', authorId: 'friend-1', title: 'Visible', createdAt: { seconds: 4102444800 }, playerIds: [], playerNames: [], media: [] }
+                ]);
+            }
+            return snapshot([]);
+        });
+
+        const posts = await loadVisibleSocialPosts(user, {
+            players: [], teams: [], upcomingEvents: [], actionItems: [], fees: [],
+            metrics: { players: 0, teams: 0, rsvpNeeded: 0, unreadMessages: 0, packetsReady: 0 }
+        });
+
+        expect(posts.map((post) => post.id)).toEqual(['visible-post']);
+        expect(firebaseMocks.startAfter).toHaveBeenCalledWith(expect.objectContaining({ id: 'hidden-199' }));
     });
 
     it('merges requested and received friendship queries without duplicate friends', async () => {

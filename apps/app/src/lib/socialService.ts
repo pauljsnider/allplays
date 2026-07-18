@@ -11,6 +11,7 @@ import {
   runTransaction,
   serverTimestamp,
   setDoc,
+  startAfter,
   Timestamp,
   updateDoc,
   where
@@ -38,7 +39,8 @@ import {
 
 const primaryDataTimeoutMs = 5000;
 const socialPostLimit = 30;
-const hiddenSocialPostLimit = 200;
+const hiddenSocialPostPageSize = 200;
+const teamSocialPostLimit = 12;
 const friendSuggestionLimit = 8;
 const publicUserProfileCollection = 'publicUserProfiles';
 const logger = createLogger('social-service');
@@ -201,47 +203,100 @@ export async function loadSocialHome(user: AuthUser | null, homeOverride?: Paren
 }
 
 export async function loadVisibleSocialPosts(user: AuthUser, home: ParentHomeModel): Promise<SocialFeedItem[]> {
+  const hiddenPostIds = await loadHiddenSocialPostIds(user.uid);
   const postDocs = new Map<string, FirestoreDoc>();
-  const visibleQuery = query(
-    collection(db, 'socialPosts'),
-    where('visibleUserIds', 'array-contains', user.uid),
-    orderBy('createdAt', 'desc'),
-    limit(socialPostLimit)
-  );
-  const visibleSnapshot = await withTimeout(getDocs(visibleQuery), 'Social feed');
-  snapshotToDocs(visibleSnapshot).forEach((post) => postDocs.set(post.id, post));
-
-  const teamPostSnapshots = await Promise.all(getHomeTeamIds(home).slice(0, 8).map(async (teamId) => {
-    const teamQuery = query(
-      collection(db, 'socialPosts'),
-      where('teamIds', 'array-contains', teamId),
-      orderBy('createdAt', 'desc'),
-      limit(12)
-    );
-    const teamSnapshot = await withTimeout(getDocs(teamQuery), `Team social feed ${teamId}`).catch(() => null);
-    return teamSnapshot ? snapshotToDocs(teamSnapshot) : [];
-  }));
+  const [visiblePosts, teamPostSnapshots] = await Promise.all([
+    loadSocialPostQueryPages({
+      buildQuery: (cursor) => query(
+        collection(db, 'socialPosts'),
+        where('visibleUserIds', 'array-contains', user.uid),
+        orderBy('createdAt', 'desc'),
+        ...(cursor ? [startAfter(cursor)] : []),
+        limit(socialPostLimit)
+      ),
+      label: 'Social feed',
+      hiddenPostIds,
+      pageSize: socialPostLimit,
+      visibleLimit: socialPostLimit
+    }),
+    Promise.all(getHomeTeamIds(home).slice(0, 8).map((teamId) => loadSocialPostQueryPages({
+      buildQuery: (cursor) => query(
+        collection(db, 'socialPosts'),
+        where('teamIds', 'array-contains', teamId),
+        orderBy('createdAt', 'desc'),
+        ...(cursor ? [startAfter(cursor)] : []),
+        limit(teamSocialPostLimit)
+      ),
+      label: `Team social feed ${teamId}`,
+      hiddenPostIds,
+      pageSize: teamSocialPostLimit,
+      visibleLimit: teamSocialPostLimit
+    }).catch(() => [])))
+  ]);
+  visiblePosts.forEach((post) => postDocs.set(post.id, post));
   teamPostSnapshots.flat().forEach((post) => postDocs.set(post.id, post));
 
   const posts = sortSocialFeedItems([...postDocs.values()]
     .map(mapSocialPost)
-    .filter((post) => !post.hidden))
+    .filter((post) => !post.hidden && !hiddenPostIds.has(post.id)))
     .slice(0, socialPostLimit);
-  const [hiddenPostIds, viewerReactions] = await Promise.all([
-    loadHiddenSocialPostIds(user.uid),
-    loadViewerSocialPostReactions(posts, user.uid)
-  ]);
-  return posts
-    .filter((post) => !hiddenPostIds.has(post.id))
-    .map((post) => ({ ...post, viewerHasLiked: viewerReactions.has(post.id) }));
+  const viewerReactions = await loadViewerSocialPostReactions(posts, user.uid);
+  return posts.map((post) => ({ ...post, viewerHasLiked: viewerReactions.has(post.id) }));
+}
+
+async function loadSocialPostQueryPages({
+  buildQuery,
+  label,
+  hiddenPostIds,
+  pageSize,
+  visibleLimit
+}: {
+  buildQuery: (cursor: any | null) => any;
+  label: string;
+  hiddenPostIds: Set<string>;
+  pageSize: number;
+  visibleLimit: number;
+}) {
+  const visiblePosts: FirestoreDoc[] = [];
+  let cursor: any | null = null;
+  let previousCursorId = '';
+  while (visiblePosts.length < visibleLimit) {
+    const snapshot = await withTimeout(getDocs(buildQuery(cursor)), label);
+    const snapshotDocs = Array.isArray(snapshot?.docs) ? snapshot.docs : [];
+    snapshotToDocs(snapshot).forEach((post) => {
+      if (!post.hidden && !hiddenPostIds.has(post.id) && visiblePosts.length < visibleLimit) {
+        visiblePosts.push(post);
+      }
+    });
+    if (snapshotDocs.length < pageSize || visiblePosts.length >= visibleLimit) break;
+    const nextCursor = snapshotDocs[snapshotDocs.length - 1];
+    if (!nextCursor?.id || nextCursor.id === previousCursorId) break;
+    cursor = nextCursor;
+    previousCursorId = nextCursor.id;
+  }
+  return visiblePosts;
 }
 
 async function loadHiddenSocialPostIds(userId: string) {
-  const snapshot = await withTimeout(getDocs(query(
-    collection(db, 'users', userId, 'hiddenSocialPosts'),
-    limit(hiddenSocialPostLimit)
-  )), 'Hidden social posts').catch(() => null);
-  return new Set(snapshot ? snapshotToDocs(snapshot).map((entry) => entry.id) : []);
+  const hiddenPostIds = new Set<string>();
+  let cursor: any | null = null;
+  let previousCursorId = '';
+  while (true) {
+    const snapshot = await withTimeout(getDocs(query(
+      collection(db, 'users', userId, 'hiddenSocialPosts'),
+      ...(cursor ? [startAfter(cursor)] : []),
+      limit(hiddenSocialPostPageSize)
+    )), 'Hidden social posts').catch(() => null);
+    if (!snapshot) break;
+    const snapshotDocs = Array.isArray(snapshot.docs) ? snapshot.docs : [];
+    snapshotToDocs(snapshot).forEach((entry) => hiddenPostIds.add(entry.id));
+    if (snapshotDocs.length < hiddenSocialPostPageSize) break;
+    const nextCursor = snapshotDocs[snapshotDocs.length - 1];
+    if (!nextCursor?.id || nextCursor.id === previousCursorId) break;
+    cursor = nextCursor;
+    previousCursorId = nextCursor.id;
+  }
+  return hiddenPostIds;
 }
 
 async function loadViewerSocialPostReactions(posts: SocialFeedItem[], userId: string) {
