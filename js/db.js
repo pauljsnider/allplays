@@ -6791,7 +6791,8 @@ export async function upsertChatConversation(teamId, conversation = {}) {
         directAccess = null,
         directUserIds = [],
         friendshipId = null,
-        initiatedBy = null
+        initiatedBy = null,
+        createOnly = false
     } = conversation;
     const normalizedType = normalizeConversationType(type);
     const normalizedParticipantIds = normalizeConversationParticipantIds(participantIds);
@@ -6802,7 +6803,6 @@ export async function upsertChatConversation(teamId, conversation = {}) {
     const conversationId = buildConversationId(normalizedType, normalizedParticipantIds, normalizedParticipantRoles);
     const now = Timestamp.now();
     const conversationRef = doc(db, 'teams', teamId, 'chatConversations', conversationId);
-    const existing = await getDoc(conversationRef);
     const normalizedMutedBy = Array.from(new Set(Array.isArray(mutedBy) ? mutedBy : []));
     const hasMutedByUpdate = Object.prototype.hasOwnProperty.call(conversation, 'mutedBy');
     const normalizedDirectAccess = directAccess === 'accepted_friend' || directAccess === 'team_admin'
@@ -6826,6 +6826,44 @@ export async function upsertChatConversation(teamId, conversation = {}) {
         normalizedParticipantIds.length === 0 &&
         normalizedParticipantRoles.length === 1 &&
         normalizedParticipantRoles[0] === 'staff';
+
+    const payload = {
+        type: normalizedType,
+        participantIds: normalizedParticipantIds,
+        participantRoles: normalizedParticipantRoles,
+        mutedBy: normalizedMutedBy,
+        ...directMetadata,
+        updatedAt: now
+    };
+    if (name) {
+        payload.name = name;
+    }
+    payload.createdAt = now;
+
+    let createError = null;
+    if (createOnly) {
+        try {
+            // A blind write lets Firestore evaluate this as a create without a
+            // forbidden get of a missing participant-private direct thread.
+            // If another client won the deterministic-ID race, the update is
+            // rejected and the existing participant can safely read it below.
+            await setDoc(conversationRef, payload);
+            return { id: conversationId, ...payload };
+        } catch (error) {
+            createError = error;
+        }
+    }
+
+    let existing;
+    try {
+        existing = await getDoc(conversationRef);
+    } catch (error) {
+        if (createError) throw createError;
+        throw error;
+    }
+    if (createError && !existing.exists()) {
+        throw createError;
+    }
 
     if (existing.exists()) {
         const existingData = existing.data() || {};
@@ -6885,18 +6923,6 @@ export async function upsertChatConversation(teamId, conversation = {}) {
         };
     }
 
-    const payload = {
-        type: normalizedType,
-        participantIds: normalizedParticipantIds,
-        participantRoles: normalizedParticipantRoles,
-        mutedBy: normalizedMutedBy,
-        ...directMetadata,
-        updatedAt: now
-    };
-    if (name) {
-        payload.name = name;
-    }
-    payload.createdAt = now;
     await setDoc(conversationRef, payload, { merge: true });
     return { id: conversationId, ...payload };
 }

@@ -1455,6 +1455,7 @@ export async function sendTeamChatMessage({
         participantRoles,
         mutedBy: [],
         name: targetMetadata.targetType === 'staff' ? 'Staff only' : null,
+        ...(conversationType === 'direct' ? { createOnly: true } : {}),
         ...directMetadata
       })), 'Chat conversation create') as ChatConversation;
       conversationId = createdConversation.id;

@@ -56,6 +56,90 @@ function makeSnapshot(data) {
 }
 
 describe('upsertChatConversation', () => {
+    it('creates a first-time private conversation without pre-reading the missing document', async () => {
+        const now = { seconds: 123 };
+        const getDoc = vi.fn().mockRejectedValue(new Error('missing private conversation reads are denied'));
+        const setDoc = vi.fn().mockResolvedValue(undefined);
+        const conversationRef = { path: 'teams/team-1/chatConversations/direct-user-1-user-2' };
+        const upsertChatConversation = buildUpsertChatConversation({
+            normalizeConversationType: vi.fn((value) => value),
+            normalizeConversationParticipantIds: vi.fn((ids) => [...ids].sort()),
+            buildConversationId: vi.fn(() => 'direct-user-1-user-2'),
+            Timestamp: { now: vi.fn(() => now) },
+            doc: vi.fn(() => conversationRef),
+            db: {},
+            getDoc,
+            setDoc
+        });
+
+        const result = await upsertChatConversation('team-1', {
+            type: 'direct',
+            participantIds: ['user-2', 'user-1'],
+            directAccess: 'accepted_friend',
+            directUserIds: ['user-2', 'user-1'],
+            friendshipId: 'user-1__user-2',
+            createOnly: true
+        });
+
+        expect(getDoc).not.toHaveBeenCalled();
+        expect(setDoc).toHaveBeenCalledWith(conversationRef, expect.objectContaining({
+            type: 'direct',
+            participantIds: ['user-1', 'user-2'],
+            directAccess: 'accepted_friend',
+            directUserIds: ['user-1', 'user-2'],
+            friendshipId: 'user-1__user-2',
+            createdAt: now,
+            updatedAt: now
+        }));
+        expect(result).toEqual(expect.objectContaining({
+            id: 'direct-user-1-user-2',
+            directAccess: 'accepted_friend',
+            friendshipId: 'user-1__user-2'
+        }));
+    });
+
+    it('falls back to an existing participant-readable thread after a concurrent create wins', async () => {
+        const now = { seconds: 123 };
+        const existingConversation = {
+            type: 'direct',
+            participantIds: ['user-1', 'user-2'],
+            participantRoles: [],
+            mutedBy: ['user-2'],
+            directAccess: 'accepted_friend',
+            directUserIds: ['user-1', 'user-2'],
+            friendshipId: 'user-1__user-2',
+            initiatedBy: null,
+            createdAt: { seconds: 100 },
+            updatedAt: { seconds: 101 }
+        };
+        const getDoc = vi.fn().mockResolvedValue(makeSnapshot(existingConversation));
+        const setDoc = vi.fn().mockRejectedValueOnce(new Error('conversation already exists'));
+        const conversationRef = { path: 'teams/team-1/chatConversations/direct-user-1-user-2' };
+        const upsertChatConversation = buildUpsertChatConversation({
+            normalizeConversationType: vi.fn((value) => value),
+            normalizeConversationParticipantIds: vi.fn((ids) => [...ids].sort()),
+            buildConversationId: vi.fn(() => 'direct-user-1-user-2'),
+            Timestamp: { now: vi.fn(() => now) },
+            doc: vi.fn(() => conversationRef),
+            db: {},
+            getDoc,
+            setDoc
+        });
+
+        const result = await upsertChatConversation('team-1', {
+            type: 'direct',
+            participantIds: ['user-2', 'user-1'],
+            directAccess: 'accepted_friend',
+            directUserIds: ['user-2', 'user-1'],
+            friendshipId: 'user-1__user-2',
+            createOnly: true
+        });
+
+        expect(getDoc).toHaveBeenCalledWith(conversationRef);
+        expect(setDoc).toHaveBeenCalledTimes(1);
+        expect(result).toEqual({ id: 'direct-user-1-user-2', ...existingConversation, name: null });
+    });
+
     it('creates a new targeted conversation with participant membership on first write', async () => {
         const now = { seconds: 123 };
         const getDoc = vi.fn().mockResolvedValue(makeSnapshot(null));

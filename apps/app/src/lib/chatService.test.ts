@@ -425,6 +425,7 @@ describe('sendTeamChatMessage attachment uploads', () => {
     );
     expect(legacyChatServiceMocks.upsertChatConversation).toHaveBeenCalledWith('team-1', expect.objectContaining({
       type: 'direct',
+      createOnly: true,
       directAccess: 'accepted_friend',
       directUserIds: ['friend-1', 'user-1'],
       friendshipId: 'friend-1__user-1',

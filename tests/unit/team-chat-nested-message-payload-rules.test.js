@@ -427,11 +427,13 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
     it('authorizes direct conversation creation from current friendship or team-admin state', async () => {
         const parentDb = authedFirestore('parent-1', 'parent@example.com');
         const ownerDb = authedFirestore('owner-1', 'owner@example.com');
+        const newFriendConversationRef = doc(
+            parentDb,
+            'teams/team-1/chatConversations/direct-new-friend'
+        );
 
-        await assertSucceeds(setDoc(
-            doc(parentDb, 'teams/team-1/chatConversations/direct-new-friend'),
-            directConversationPayload()
-        ));
+        await assertFails(getDoc(newFriendConversationRef));
+        await assertSucceeds(setDoc(newFriendConversationRef, directConversationPayload()));
         await assertFails(setDoc(
             doc(parentDb, 'teams/team-1/chatConversations/direct-forged-admin'),
             directConversationPayload({
