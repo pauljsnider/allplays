@@ -16,6 +16,8 @@
     "test:functions:auth-email": "node --test functions/test/auth-email-*.test.cjs",
     "test:functions:team-email": "node --test functions/test/team-email-*.test.cjs",
     "test:smoke": "playwright test --config=playwright.smoke.config.js",
+    "test:smoke:visual": "playwright test --config=playwright.smoke.config.js --grep @visual",
+    "test:smoke:visual:update": "playwright test --config=playwright.smoke.config.js --grep @visual --update-snapshots",
     "test:smoke:team-fallback": "playwright test tests/smoke/team-fallback-regressions.spec.js --config=playwright.smoke.config.js --reporter=line",
     "ci:firebase-rules": "node scripts/validate-firebase-rules-ci.mjs",
     "stage:pages": "node scripts/stage-pages-bundle.mjs",

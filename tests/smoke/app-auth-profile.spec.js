@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { expectVisualSnapshot, installVisualNetworkGuard } from './helpers/visual-regression.js';
 
 test.skip(
     process.env.SMOKE_SUITE === 'production',
@@ -577,9 +578,11 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
     });
 }
 
-test('app auth screen exposes sign in, sign up, Google, activation code, invite, and reset flows', async ({ page, baseURL }) => {
+test('@visual app auth screen exposes sign in, sign up, Google, activation code, invite, and reset flows', async ({ page, baseURL }) => {
+    const url = appUrl(baseURL, '/auth?code=AB12CD34&type=parent');
+    await installVisualNetworkGuard(page, url);
     await mockAppModules(page);
-    await page.goto(appUrl(baseURL, '/auth?code=AB12CD34&type=parent'), { waitUntil: 'domcontentloaded' });
+    await page.goto(url, { waitUntil: 'domcontentloaded' });
 
     await expect(page.getByRole('heading', { name: 'Create your account' })).toBeVisible();
     await expect(page.getByText('Join code entered: AB12CD34')).toBeVisible();
@@ -588,6 +591,7 @@ test('app auth screen exposes sign in, sign up, Google, activation code, invite,
     await expect(page.getByRole('button', { name: 'Continue with Google' })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Enter join code' })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Account action' })).toHaveCount(0);
+    await expectVisualSnapshot(page, 'auth-join-code-signup.png');
 
     await page.getByRole('button', { name: 'Sign in' }).first().click();
     await page.getByRole('button', { name: 'Forgot password?' }).click();
