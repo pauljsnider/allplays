@@ -66,6 +66,20 @@ test('builds separate subject, network, and form abuse boundaries', () => {
   assert.doesNotMatch(boundaries.form, /parent@example\.com|203\.0\.113\.10/);
 });
 
+test('keeps checkout subject throttles stable across rotating client IPs', () => {
+  const input = validInput({ checkoutAttemptToken: 'checkout_token_1234567890' });
+  const first = buildPublicRegistrationRateLimitBoundaries(input, {}, {
+    operation: 'create-checkout', requestIp: '203.0.113.10'
+  });
+  const rotated = buildPublicRegistrationRateLimitBoundaries(input, {}, {
+    operation: 'create-checkout', requestIp: '198.51.100.24'
+  });
+
+  assert.equal(rotated.subject, first.subject);
+  assert.notEqual(rotated.network, first.network);
+  assert.doesNotMatch(first.subject, /203\.0\.113\.10/);
+});
+
 test('creates deterministic opaque document ids and canonical payload fingerprints', () => {
   const key = 'submission_token_1234567890';
   const first = validInput({

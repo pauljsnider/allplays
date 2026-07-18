@@ -1133,7 +1133,10 @@ exports.submitPublicRegistration = functions.https.onCall(async (data, context =
 
   const formRef = buildRegistrationFormRef(input);
   const deterministicRegistrationId = buildPublicRegistrationDocumentId(input);
-  const registrationRef = formRef.collection('registrations').doc(deterministicRegistrationId || undefined);
+  const registrationsRef = formRef.collection('registrations');
+  const registrationRef = deterministicRegistrationId
+    ? registrationsRef.doc(deterministicRegistrationId)
+    : registrationsRef.doc();
   const submissionFingerprint = input.submissionIdempotencyKey
     ? buildPublicRegistrationSubmissionFingerprint(input)
     : '';

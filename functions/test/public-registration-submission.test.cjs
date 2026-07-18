@@ -123,7 +123,10 @@ function makeFirestore(seed = {}) {
         return {
             path,
             doc(id) {
-                const docId = id || `auto-${nextAutoId++}`;
+                if (arguments.length > 0 && typeof id !== 'string') {
+                    throw new Error('Document path must be a string when provided.');
+                }
+                const docId = arguments.length === 0 ? `auto-${nextAutoId++}` : id;
                 return doc(`${path}/${docId}`);
             }
         };
