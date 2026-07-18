@@ -4,6 +4,7 @@ import { isNativeRuntime } from './nativeRuntime';
 
 type PersistenceValue = Record<string, unknown> | string;
 type StorageEventListener = (value: PersistenceValue | null) => void;
+const signedOutMarkerStorageKeyPrefix = 'allplays-native-firebase-auth-signed-out:';
 
 /**
  * Firebase Auth's public Persistence type intentionally exposes only `type`,
@@ -26,9 +27,20 @@ export class NativeSecureFirebaseAuthPersistence implements Persistence {
 
   async _set(key: string, value: PersistenceValue) {
     await setNativeSecureItem(toSecureStorageKey(key), JSON.stringify(value));
+    clearSignedOutMarker(key);
   }
 
   async _get<T extends PersistenceValue>(key: string): Promise<T | null> {
+    if (hasSignedOutMarker(key)) {
+      try {
+        await removeNativeSecureItem(toSecureStorageKey(key));
+        clearSignedOutMarker(key);
+      } catch {
+        // Keep the tombstone so stale credentials remain ignored until secure
+        // storage is available and the old record can be deleted.
+      }
+      return null;
+    }
     const rawValue = await getNativeSecureItem(toSecureStorageKey(key));
     if (!rawValue) return null;
     try {
@@ -41,7 +53,9 @@ export class NativeSecureFirebaseAuthPersistence implements Persistence {
   }
 
   async _remove(key: string) {
+    setSignedOutMarker(key);
     await removeNativeSecureItem(toSecureStorageKey(key));
+    clearSignedOutMarker(key);
   }
 
   _addListener(_key: string, _listener: StorageEventListener) {
@@ -74,4 +88,35 @@ export async function clearNativeFirebaseAuthUser(apiKey: string, appName: strin
 
 function toSecureStorageKey(firebasePersistenceKey: string) {
   return `firebase-auth-${encodeURIComponent(firebasePersistenceKey)}`;
+}
+
+function toSignedOutMarkerStorageKey(firebasePersistenceKey: string) {
+  return `${signedOutMarkerStorageKeyPrefix}${encodeURIComponent(firebasePersistenceKey)}`;
+}
+
+function hasSignedOutMarker(firebasePersistenceKey: string) {
+  if (typeof window === 'undefined') return false;
+  try {
+    return window.localStorage?.getItem(toSignedOutMarkerStorageKey(firebasePersistenceKey)) === '1';
+  } catch {
+    return true;
+  }
+}
+
+function setSignedOutMarker(firebasePersistenceKey: string) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage?.setItem(toSignedOutMarkerStorageKey(firebasePersistenceKey), '1');
+  } catch {
+    // Secure deletion is still attempted when WebView storage is disabled.
+  }
+}
+
+function clearSignedOutMarker(firebasePersistenceKey: string) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage?.removeItem(toSignedOutMarkerStorageKey(firebasePersistenceKey));
+  } catch {
+    // Cleanup is best-effort when WebView storage is disabled.
+  }
 }

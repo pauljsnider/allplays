@@ -21,6 +21,7 @@ import {
 describe('NativeSecureFirebaseAuthPersistence', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    window.localStorage.clear();
     runtimeState.native = true;
     secureStorageMocks.getNativeSecureItem.mockResolvedValue(null);
     secureStorageMocks.setNativeSecureItem.mockResolvedValue(undefined);
@@ -73,5 +74,35 @@ describe('NativeSecureFirebaseAuthPersistence', () => {
     expect(secureStorageMocks.removeNativeSecureItem).toHaveBeenCalledWith(
       'firebase-auth-firebase%3AauthUser%3Aapi-key%3A%5BDEFAULT%5D'
     );
+  });
+
+  it('tombstones a failed removal so stale secure auth cannot restore on relaunch', async () => {
+    const persistence = new NativeSecureFirebaseAuthPersistence();
+    const key = 'firebase:authUser:api-key:[DEFAULT]';
+    secureStorageMocks.removeNativeSecureItem.mockRejectedValue(new Error('secure storage unavailable'));
+
+    await expect(persistence._remove(key)).rejects.toThrow('secure storage unavailable');
+    expect(window.localStorage.getItem(
+      'allplays-native-firebase-auth-signed-out:firebase%3AauthUser%3Aapi-key%3A%5BDEFAULT%5D'
+    )).toBe('1');
+
+    secureStorageMocks.getNativeSecureItem.mockResolvedValue(JSON.stringify({ uid: 'stale-user' }));
+    await expect(persistence._get(key)).resolves.toBeNull();
+    expect(secureStorageMocks.getNativeSecureItem).not.toHaveBeenCalled();
+  });
+
+  it('clears a failed-removal tombstone only after stale auth is deleted or replaced', async () => {
+    const persistence = new NativeSecureFirebaseAuthPersistence();
+    const key = 'firebase:key';
+    const markerKey = 'allplays-native-firebase-auth-signed-out:firebase%3Akey';
+    window.localStorage.setItem(markerKey, '1');
+
+    await expect(persistence._get(key)).resolves.toBeNull();
+    expect(secureStorageMocks.removeNativeSecureItem).toHaveBeenCalledWith('firebase-auth-firebase%3Akey');
+    expect(window.localStorage.getItem(markerKey)).toBeNull();
+
+    window.localStorage.setItem(markerKey, '1');
+    await persistence._set(key, { uid: 'new-user' });
+    expect(window.localStorage.getItem(markerKey)).toBeNull();
   });
 });
