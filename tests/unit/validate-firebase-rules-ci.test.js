@@ -235,6 +235,34 @@ service firebase.storage {
             'Test deploy'
         )).toThrow('Test deploy must not use a long-lived Google service-account key or static ADC input');
         expect(() => validateFirebaseDeployWorkloadIdentity(
+            validWorkflow.replace(
+                'run: node "$firebase_cli" deploy',
+                'env:\n              CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE: /tmp/renamed.json\n            run: node "$firebase_cli" deploy'
+            ),
+            'Test deploy'
+        )).toThrow('Test deploy must not use a long-lived Google service-account key or static ADC input');
+        expect(() => validateFirebaseDeployWorkloadIdentity(
+            validWorkflow.replace(
+                'run: node "$firebase_cli" deploy',
+                'env:\n              FIREBASE_DEPLOY_TOKEN: renamed-token\n            run: node "$firebase_cli" deploy'
+            ),
+            'Test deploy'
+        )).toThrow('Test deploy must not use a long-lived Google service-account key or static ADC input');
+        expect(() => validateFirebaseDeployWorkloadIdentity(
+            validWorkflow.replace(
+                'node "$firebase_cli" deploy --only hosting',
+                'export FIREBASE_TOKEN="$DEPLOY_AUTH"\n              node "$firebase_cli" deploy --only hosting'
+            ),
+            'Test deploy'
+        )).toThrow('Test deploy must not use a long-lived Google service-account key or static ADC input');
+        expect(() => validateFirebaseDeployWorkloadIdentity(
+            validWorkflow.replace(
+                'run: node "$firebase_cli" deploy',
+                'env:\n              RENAMED_AUTH: \${{ secrets.RENAMED }}\n            run: node "$firebase_cli" deploy'
+            ),
+            'Test deploy'
+        )).toThrow('Test deploy must not use a long-lived Google service-account key or static ADC input');
+        expect(() => validateFirebaseDeployWorkloadIdentity(
             validWorkflow.replace('timeout-minutes: 4', 'timeout-minutes: 6'),
             'Test deploy'
         )).toThrow('Test deploy credentialed deploy steps must have a four-minute timeout');

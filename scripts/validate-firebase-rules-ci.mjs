@@ -181,10 +181,13 @@ export function validateFirebaseDeployWorkloadIdentity(workflow, label) {
     }
 
     const forbiddenMappingKeys = new Set([
+        'cloudsdk_auth_credential_file_override',
         'credentials_json',
+        'firebase_deploy_token',
         'firebase_token',
         'google_application_credentials',
-        'google_credentials'
+        'google_credentials',
+        'google_gha_creds_path'
     ]);
     for (const object of objects) {
         for (const key of Object.keys(object)) {
@@ -199,8 +202,12 @@ export function validateFirebaseDeployWorkloadIdentity(workflow, label) {
         .filter((line) => !/^\s*echo\s+["'](?:CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE|GOOGLE_APPLICATION_CREDENTIALS|GOOGLE_GHA_CREDS_PATH)=["']\s*$/.test(line))
         .join('\n');
     const forbiddenScalarPatterns = [
+        /\$\{\{\s*secrets\./i,
+        /CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE/i,
         /credentials[\s_-]*json\s*:/i,
+        /\bFIREBASE[A-Z0-9_]*TOKEN\b/i,
         /GOOGLE_APPLICATION_CREDENTIALS/i,
+        /GOOGLE_GHA_CREDS_PATH/i,
         /gcloud\s+auth\s+activate-service-account/i,
         /--key-file(?:=|\s)/i,
         /--token(?:=|\s)/i,
