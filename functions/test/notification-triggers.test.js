@@ -63,6 +63,36 @@ test('notifyGameCreated sends a schedule notification once and records audit out
     }
 });
 
+test('notifyGameCreated writes schedule inbox items for recipients without push devices', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        parentUserIds: ['parent-1', 'parent-2'],
+        indexedRecipients: [
+            { uid: 'coach-1', roles: ['staff'], tokens: [], categories: { schedule: true } },
+            { uid: 'parent-1', roles: ['parent'], tokens: [], categories: { schedule: true } },
+            { uid: 'parent-2', roles: ['parent'], deviceId: 'parent-device', token: 'parent-token', categories: { schedule: true } }
+        ]
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/games/game-tokenless');
+        const result = await moduleExports.notifyGameCreated(makeSnapshot(ref, {
+            title: 'Game at Lions',
+            type: 'game',
+            opponent: 'Lions',
+            date: '2026-06-20T16:00:00.000Z',
+            createdBy: 'coach-1'
+        }), { params: { teamId: 'team-1', gameId: 'game-tokenless' } });
+
+        assert.equal(result?.successCount, 1);
+        assert.deepEqual(env.messagingCalls.map((call) => call.tokens), [['parent-token']]);
+        assert.deepEqual(env.inboxWrites.map((write) => write.uid).sort(), ['parent-1', 'parent-2']);
+        assert.deepEqual(env.auditWrites[0].value.targetUserIds.sort(), ['parent-1', 'parent-2']);
+    } finally {
+        cleanup();
+    }
+});
+
 test('notifyGameCreated sends one team summary for schedule import batches over three events', async () => {
     const { moduleExports, env, cleanup } = loadNotificationInternals({
         teamDoc: { ownerId: 'coach-1', name: 'Team Bears', adminEmails: [] },
@@ -1673,6 +1703,36 @@ test('notifyFeeAssigned falls back to the trigger recipient when a payer sibling
         assert.equal(env.messagingCalls.length, 1);
         assert.equal(env.messagingCalls[0].title, 'New fee assigned: Spring dues ($25.00)');
         assert.equal(env.counts.feeRecipientDocGets, 0);
+    } finally {
+        cleanup();
+    }
+});
+
+test('notifyFeeAssigned writes a fees inbox item when the payer has no push device', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        userDocs: {
+            'parent-1': { parentPlayerKeys: ['team-1::player-1'] }
+        },
+        indexedRecipients: [
+            { uid: 'parent-1', roles: ['parent'], tokens: [], categories: { fees: true } }
+        ]
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/feeBatches/batch-tokenless/feeRecipients/player-1');
+        const result = await moduleExports.notifyFeeAssigned(makeSnapshot(ref, {
+            playerKey: 'team-1::player-1',
+            feeTitle: 'Spring dues',
+            amountCents: 2500
+        }), { params: { teamId: 'team-1', batchId: 'batch-tokenless', recipientId: 'player-1' } });
+
+        assert.equal(result?.successCount, 0);
+        assert.equal(env.messagingCalls.length, 0);
+        assert.deepEqual(env.inboxWrites.map((write) => ({
+            uid: write.uid,
+            category: write.value.category
+        })), [{ uid: 'parent-1', category: 'fees' }]);
     } finally {
         cleanup();
     }
