@@ -2,6 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import { assertNoUnpublishableRootDevelopmentArtifacts } from './public-site-artifact-policy.mjs';
+
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const defaultRootDir = path.resolve(scriptDir, '..');
 const firebaseHostingSite = 'game-flow-c6311';
@@ -57,6 +59,11 @@ export function writeFirebaseHostingConfig(publicDir, outputFile, { rootDir = de
     if (!outputFile) {
         throw new Error('Output config path is required.');
     }
+
+    assertNoUnpublishableRootDevelopmentArtifacts(
+        path.resolve(publicDir),
+        'Firebase Hosting public directory'
+    );
 
     const firebaseConfigPath = path.join(rootDir, 'firebase.json');
     const config = JSON.parse(fs.readFileSync(firebaseConfigPath, 'utf8'));

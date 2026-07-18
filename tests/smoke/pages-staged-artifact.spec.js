@@ -30,7 +30,24 @@ test.describe('exact staged GitHub Pages artifact', () => {
 
         for (const path of [
             '/.well-known/apple-app-site-association',
-            '/.well-known/assetlinks.json'
+            '/.well-known/assetlinks.json',
+            '/github_run_log.txt',
+            '/playwright.smoke.config.js',
+            '/test-family-sharing.html',
+            '/test-fix-recurring-rsvp.html',
+            '/test-fix-schedule-drills.html',
+            '/test-foul-tracking.html',
+            '/test-game-day.html',
+            '/test-pr-changes.html',
+            '/test-results.png',
+            '/test-statsheet-mapping.html',
+            '/test-track-finish-batch-limit.js',
+            '/test-track-live.html',
+            '/test-track-zero-stat-player-history.js',
+            '/test-workflow-mobile-toc-active-state.html',
+            '/test-youtube-stream.html',
+            '/vite.config.js',
+            '/vitest.config.ts'
         ]) {
             const response = await request.get(path);
             expect(response.status()).toBe(404);

@@ -2,6 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+import { assertNoUnpublishableRootDevelopmentArtifacts } from './public-site-artifact-policy.mjs';
+
 const runtimeConfigRelativePath = path.join('.well-known', 'allplays-runtime-config.json');
 const unpublishedMobileAssociationRelativePaths = [
     path.join('.well-known', 'apple-app-site-association'),
@@ -27,6 +29,7 @@ export function verifyPagesDeployArtifact(
     if (!fs.existsSync(noJekyllPath) || !fs.statSync(noJekyllPath).isFile()) {
         throw new Error('Pages deployment artifact is missing the required .nojekyll file.');
     }
+    assertNoUnpublishableRootDevelopmentArtifacts(resolvedArtifactDir, 'Pages deployment artifact');
 
     for (const relativePath of unpublishedMobileAssociationRelativePaths) {
         const associationPath = path.join(resolvedArtifactDir, relativePath);

@@ -108,6 +108,16 @@ describe('Pages deployment artifact verification', () => {
         })).toThrow(/must not publish \.well-known.assetlinks\.json until real mobile app association identifiers are configured/);
     });
 
+    it('rejects local development artifacts from a downloaded Pages bundle', () => {
+        const artifactDir = makeArtifact();
+        writeFile(path.join(artifactDir, '.nojekyll'));
+        writeFile(path.join(artifactDir, 'github_run_log.txt'), 'internal CI log');
+
+        expect(() => verifyPagesDeployArtifact(artifactDir, {
+            expectedSiteKey: 'public-enterprise-site-key_123'
+        })).toThrow(/Pages deployment artifact must not publish development artifacts: github_run_log\.txt/);
+    });
+
     it('accepts the hidden runtime config without returning its key', () => {
         const artifactDir = makeArtifact();
         writeFile(path.join(artifactDir, '.nojekyll'));

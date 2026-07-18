@@ -2,6 +2,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import {
+    assertNoUnpublishableRootDevelopmentArtifacts,
+    isUnpublishableRootDevelopmentArtifact
+} from './public-site-artifact-policy.mjs';
+
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const defaultRootDir = path.resolve(scriptDir, '..');
 
@@ -259,7 +264,8 @@ function shouldExclude(rootDir, sourcePath, entry) {
     }
 
     if (entry.isFile()) {
-        return excludedPublicClaimPaths.has(relativePath)
+        return isUnpublishableRootDevelopmentArtifact(relativePath)
+            || excludedPublicClaimPaths.has(relativePath)
             || excludedFiles.has(entry.name)
             || entry.name.endsWith('.md');
     }
@@ -314,6 +320,7 @@ export function stagePagesBundle(destinationDir, { rootDir = defaultRootDir } = 
     fs.mkdirSync(appDestinationDir, { recursive: true });
     fs.cpSync(appDistDir, appDestinationDir, { recursive: true });
     fs.writeFileSync(path.join(resolvedDestination, '.nojekyll'), '');
+    assertNoUnpublishableRootDevelopmentArtifacts(resolvedDestination, 'Staged public site');
     const appCheckRuntimeConfigPath = writeAppCheckRuntimeConfig(
         resolvedDestination,
         process.env.ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY,

@@ -122,6 +122,14 @@ describe('pages bundle staging', () => {
         writeFile(path.join(rootDir, 'css', 'site.css'), 'body {}');
         writeFile(path.join(rootDir, 'js', 'site.js'), 'export const ok = true;');
         writeFile(path.join(rootDir, 'CNAME'), 'allplays.ai');
+        writeFile(path.join(rootDir, 'testing-guide.html'), '<!doctype html><html><head></head><body>Product testing guide</body></html>');
+        writeFile(path.join(rootDir, 'test-manual.html'), '<!doctype html><html><head></head><body>Internal harness</body></html>');
+        writeFile(path.join(rootDir, 'test-helper.js'), 'console.log("internal test");');
+        writeFile(path.join(rootDir, 'test-results.png'), 'internal screenshot');
+        writeFile(path.join(rootDir, 'github_run_log.txt'), 'internal CI log');
+        writeFile(path.join(rootDir, 'playwright.smoke.config.js'), 'export default {};');
+        writeFile(path.join(rootDir, 'vite.config.js'), 'export default {};');
+        writeFile(path.join(rootDir, 'vitest.config.ts'), 'export default {};');
         writeFile(
             path.join(rootDir, '.well-known', 'assetlinks.json'),
             '[{"target":{"sha256_cert_fingerprints":["REPLACE_WITH_RELEASE_CERT_SHA256_FINGERPRINT"]}}]'
@@ -148,6 +156,14 @@ describe('pages bundle staging', () => {
         expect(fs.existsSync(path.join(destinationDir, 'css', 'site.css'))).toBe(true);
         expect(fs.existsSync(path.join(destinationDir, 'js', 'site.js'))).toBe(true);
         expect(fs.existsSync(path.join(destinationDir, 'CNAME'))).toBe(true);
+        expect(fs.existsSync(path.join(destinationDir, 'testing-guide.html'))).toBe(true);
+        expect(fs.existsSync(path.join(destinationDir, 'test-manual.html'))).toBe(false);
+        expect(fs.existsSync(path.join(destinationDir, 'test-helper.js'))).toBe(false);
+        expect(fs.existsSync(path.join(destinationDir, 'test-results.png'))).toBe(false);
+        expect(fs.existsSync(path.join(destinationDir, 'github_run_log.txt'))).toBe(false);
+        expect(fs.existsSync(path.join(destinationDir, 'playwright.smoke.config.js'))).toBe(false);
+        expect(fs.existsSync(path.join(destinationDir, 'vite.config.js'))).toBe(false);
+        expect(fs.existsSync(path.join(destinationDir, 'vitest.config.ts'))).toBe(false);
         expect(fs.existsSync(path.join(destinationDir, '.well-known', 'assetlinks.json'))).toBe(false);
         expect(fs.existsSync(path.join(destinationDir, '.well-known', 'apple-app-site-association'))).toBe(false);
         expect(fs.existsSync(path.join(destinationDir, 'app', 'assets', 'index.js'))).toBe(true);
@@ -157,7 +173,7 @@ describe('pages bundle staging', () => {
         expect(sha256(stagedHashedAssetHtml)).toBe(sha256(hashedAssetHtml));
         expect(stagedHashedAssetHtml).not.toContain('Content-Security-Policy');
         expect(fs.existsSync(path.join(destinationDir, '.nojekyll'))).toBe(true);
-        expect(result.securityMeta.htmlFileCount).toBe(3);
+        expect(result.securityMeta.htmlFileCount).toBe(4);
 
         const rootHtml = fs.readFileSync(result.rootIndexPath, 'utf8');
         const appHtml = fs.readFileSync(result.appIndexPath, 'utf8');
@@ -187,6 +203,23 @@ describe('pages bundle staging', () => {
         expect(fs.existsSync(path.join(destinationDir, 'README.md'))).toBe(false);
         expect(fs.existsSync(path.join(destinationDir, 'apps', 'app', 'src', 'main.tsx'))).toBe(false);
         expect(fs.existsSync(path.join(destinationDir, 'tests', 'unit', 'example.test.js'))).toBe(false);
+    });
+
+    it('keeps local test harnesses out of production links and smoke routing', () => {
+        const repoRoot = path.resolve(import.meta.dirname, '../..');
+        const productHtml = fs.readdirSync(repoRoot)
+            .filter((file) => file.endsWith('.html') && !/^test-.*\.html$/i.test(file))
+            .map((file) => fs.readFileSync(path.join(repoRoot, file), 'utf8'));
+        const productionSources = [
+            ...productHtml,
+            fs.readFileSync(path.join(repoRoot, 'apps/app/src/data/capabilities.ts'), 'utf8'),
+            fs.readFileSync(path.join(repoRoot, 'apps/app/src/lib/helpKnowledgeIndex.ts'), 'utf8'),
+            fs.readFileSync(path.join(repoRoot, 'tests/smoke/page-registry.js'), 'utf8')
+        ];
+
+        for (const source of productionSources) {
+            expect(source).not.toMatch(/\btest-[a-z0-9-]+\.html\b/i);
+        }
     });
 
     it('writes a Firebase config that points hosting at the staged bundle', () => {
@@ -239,6 +272,18 @@ describe('pages bundle staging', () => {
         expect(config.hosting.ignore).not.toContain('**/.*');
         expect(config.hosting.ignore).toContain('firebase.json');
         expect(config.hosting.ignore).toContain('**/node_modules/**');
+    });
+
+    it('refuses a Firebase Hosting directory that still contains local development artifacts', () => {
+        const rootDir = makeTempDir();
+        const publicDir = path.join(makeTempDir(), 'site');
+        const outputFile = path.join(rootDir, '.firebase-generated.json');
+
+        writeFile(path.join(rootDir, 'firebase.json'), JSON.stringify({ hosting: { public: '.' } }));
+        writeFile(path.join(publicDir, 'test-manual.html'), '<h1>Local only</h1>');
+
+        expect(() => writeFirebaseHostingConfig(publicDir, outputFile, { rootDir }))
+            .toThrow(/Firebase Hosting public directory must not publish development artifacts: test-manual\.html/);
     });
 
     it('stages only a public App Check site key in well-known runtime config', () => {
