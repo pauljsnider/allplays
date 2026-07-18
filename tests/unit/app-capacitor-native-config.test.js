@@ -65,13 +65,13 @@ describe('Capacitor native config', () => {
         const appPackageLock = JSON.parse(readProjectFile('apps/app/package-lock.json'));
         const appPnpmLock = readProjectFile('apps/app/pnpm-lock.yaml');
 
-        expect(appPackage.devDependencies.vite).toBe('^8.1.4');
-        expect(appPackageLock.packages[''].devDependencies.vite).toBe('^8.1.4');
-        expect(appPackageLock.packages['node_modules/vite'].version).toBe('8.1.4');
-        expect(appPnpmLock).toContain('vite@8.1.4:');
+        expect(appPackage.devDependencies.vite).toBe('^8.1.5');
+        expect(appPackageLock.packages[''].devDependencies.vite).toBe('^8.1.5');
+        expect(appPackageLock.packages['node_modules/vite'].version).toBe('8.1.5');
+        expect(appPnpmLock).toContain('vite@8.1.5:');
         const pluginReactVersion = appPackage.devDependencies['@vitejs/plugin-react'].replace(/^\^/, '');
         expect(appPackageLock.packages['node_modules/@vitejs/plugin-react'].version).toBe(pluginReactVersion);
-        expect(appPnpmLock).toContain(`'@vitejs/plugin-react@${pluginReactVersion}(vite@8.1.4`);
+        expect(appPnpmLock).toContain(`'@vitejs/plugin-react@${pluginReactVersion}(vite@8.1.5`);
     });
 
     it('wires App Check into both native shells without a SwiftPM identity collision', () => {
