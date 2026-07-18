@@ -251,7 +251,7 @@ describe('React app social service', () => {
             }
             if (path.join('/') === 'socialPosts') {
                 const whereClause = queryRef.clauses.find((clause) => clause.field);
-                if (whereClause?.field === 'teamIds') {
+                if (whereClause?.field === 'teamId') {
                     return snapshot([
                         { id: 'post-newest', authorId: 'friend-2', title: 'Newest', createdAt: { seconds: 4102444900 }, playerIds: [], playerNames: [], media: [] }
                     ]);
@@ -276,6 +276,16 @@ describe('React app social service', () => {
             expect.objectContaining({ id: 'post-newest', viewerHasLiked: false }),
             expect.objectContaining({ id: 'post-visible', viewerHasLiked: true })
         ]);
+        const socialPostQueries = firebaseMocks.getDocs.mock.calls
+            .map(([queryRef]) => queryRef)
+            .filter((queryRef) => queryRef.collectionRef?.path?.join('/') === 'socialPosts');
+        expect(socialPostQueries).toHaveLength(2);
+        socialPostQueries.forEach((queryRef) => {
+            expect(queryRef.clauses).toContainEqual({ field: 'hidden', op: '==', value: false });
+        });
+        expect(socialPostQueries).toContainEqual(expect.objectContaining({
+            clauses: expect.arrayContaining([{ field: 'teamId', op: '==', value: 'team-1' }])
+        }));
         expect(firebaseMocks.orderBy).toHaveBeenCalledWith('createdAt', 'desc');
     });
 

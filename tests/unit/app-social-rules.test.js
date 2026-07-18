@@ -10,6 +10,8 @@ import {
     doc,
     getDoc,
     getDocs,
+    limit,
+    orderBy,
     query,
     runTransaction,
     serverTimestamp,
@@ -256,6 +258,55 @@ describe('React app social Firestore rules', () => {
                 postId: 'post-1',
                 hiddenAt: Timestamp.now()
             }));
+        });
+
+        it('allows bounded visible-user and team feed queries that exclude globally hidden posts', async () => {
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                const adminDb = context.firestore();
+                await setDoc(doc(adminDb, 'users', 'viewer-1'), {
+                    isAdmin: false,
+                    parentTeamIds: ['team-1']
+                });
+                await setDoc(doc(adminDb, 'teams', 'team-1'), {
+                    ownerId: 'owner-1',
+                    adminEmails: []
+                });
+                await setDoc(doc(adminDb, 'socialPosts', 'post-team'), {
+                    authorId: 'author-1',
+                    visibleUserIds: [],
+                    teamId: 'team-1',
+                    teamIds: ['team-1'],
+                    hidden: false,
+                    createdAt: Timestamp.now()
+                });
+                await setDoc(doc(adminDb, 'socialPosts', 'post-hidden'), {
+                    authorId: 'author-1',
+                    visibleUserIds: ['viewer-1'],
+                    teamId: 'team-1',
+                    teamIds: ['team-1'],
+                    hidden: true,
+                    createdAt: Timestamp.now()
+                });
+            });
+            const db = viewerDb();
+            const posts = collection(db, 'socialPosts');
+            const visibleUserFeed = query(
+                posts,
+                where('visibleUserIds', 'array-contains', 'viewer-1'),
+                where('hidden', '==', false),
+                orderBy('createdAt', 'desc'),
+                limit(30)
+            );
+            const teamFeed = query(
+                posts,
+                where('teamId', '==', 'team-1'),
+                where('hidden', '==', false),
+                orderBy('createdAt', 'desc'),
+                limit(12)
+            );
+
+            expect((await assertSucceeds(getDocs(visibleUserFeed))).size).toBe(1);
+            expect((await assertSucceeds(getDocs(teamFeed))).size).toBe(1);
         });
     });
 
