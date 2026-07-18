@@ -125,6 +125,7 @@ vi.mock('../../apps/app/src/lib/nativeSecureStorage.ts', () => ({
     getNativeSecureItem: secureStorageMocks.getItem,
     setNativeSecureItem: secureStorageMocks.setItem,
     removeNativeSecureItem: secureStorageMocks.removeItem,
+    removeNativeSecureItemEventually: secureStorageMocks.removeItem,
     listNativeSecureKeys: secureStorageMocks.keys
 }));
 
@@ -223,7 +224,7 @@ function createMemoryStorage() {
     };
 }
 
-function mockFirebaseAuthRest({ isNewUser = false } = {}) {
+function mockFirebaseAuthRest({ isNewUser = false, lookupError = null } = {}) {
     const fetchMock = vi.fn(async (url) => {
         const endpoint = String(url);
         if (endpoint.includes('accounts:signInWithIdp')) {
@@ -243,6 +244,7 @@ function mockFirebaseAuthRest({ isNewUser = false } = {}) {
         }
 
         if (endpoint.includes('accounts:lookup')) {
+            if (lookupError) throw lookupError;
             return {
                 ok: true,
                 json: async () => ({
@@ -264,6 +266,13 @@ function mockFirebaseAuthRest({ isNewUser = false } = {}) {
             };
         }
 
+        if (endpoint.includes('accounts:delete')) {
+            return {
+                ok: true,
+                json: async () => ({})
+            };
+        }
+
         throw new Error(`Unexpected Firebase Auth REST request: ${endpoint}`);
     });
 
@@ -282,6 +291,15 @@ beforeEach(() => {
     capacitorState.platform = 'android';
     capacitorState.plugins = new Set(['FirebaseAuthentication', 'SecureStorage']);
     secureStorageMocks.records.clear();
+    secureStorageMocks.getItem.mockImplementation(async (key) => (
+        secureStorageMocks.records.get(String(key)) ?? null
+    ));
+    secureStorageMocks.setItem.mockImplementation(async (key, value) => {
+        secureStorageMocks.records.set(String(key), String(value));
+    });
+    secureStorageMocks.removeItem.mockImplementation(async (key) => {
+        secureStorageMocks.records.delete(String(key));
+    });
     firebaseMocks.auth.currentUser = null;
     dbMocks.updateUserProfile.mockResolvedValue(undefined);
     nativeAuthMocks.signInWithGoogle.mockResolvedValue({
@@ -395,5 +413,48 @@ describe('React app native Google auth', () => {
             'parent@example.com'
         );
         expect(dbMocks.markAccessCodeAsUsed).not.toHaveBeenCalled();
+    });
+
+    it('deletes a newly created Google Auth user when the post-IdP lookup fails', async () => {
+        const lookupError = new Error('lookup unavailable');
+        const fetchMock = mockFirebaseAuthRest({ isNewUser: true, lookupError });
+        const { signInWithGoogleAccount } = await loadAuthService();
+
+        await expect(signInWithGoogleAccount('native123')).rejects.toThrow('lookup unavailable');
+
+        expect(fetchMock).toHaveBeenCalledWith(
+            expect.stringContaining('accounts:delete'),
+            expect.objectContaining({
+                body: JSON.stringify({ idToken: nativeGoogleFirebaseIdToken })
+            })
+        );
+    });
+
+    it('deletes a newly created Google Auth user when secure persistence fails', async () => {
+        const fetchMock = mockFirebaseAuthRest({ isNewUser: true });
+        secureStorageMocks.setItem.mockRejectedValue(new Error('keychain unavailable'));
+        const { signInWithGoogleAccount } = await loadAuthService();
+
+        await expect(signInWithGoogleAccount('native123')).rejects.toThrow('keychain unavailable');
+
+        expect(fetchMock).toHaveBeenCalledWith(
+            expect.stringContaining('accounts:delete'),
+            expect.objectContaining({
+                body: JSON.stringify({ idToken: nativeGoogleFirebaseIdToken })
+            })
+        );
+        expect(secureStorageMocks.records.has('native-auth-session-v2')).toBe(false);
+    });
+
+    it('never deletes an existing Google Auth user when post-IdP setup fails', async () => {
+        const fetchMock = mockFirebaseAuthRest({
+            isNewUser: false,
+            lookupError: new Error('lookup unavailable')
+        });
+        const { signInWithGoogleAccount } = await loadAuthService();
+
+        await expect(signInWithGoogleAccount()).rejects.toThrow('lookup unavailable');
+
+        expect(fetchMock.mock.calls.some(([url]) => String(url).includes('accounts:delete'))).toBe(false);
     });
 });

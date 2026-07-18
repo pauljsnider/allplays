@@ -910,11 +910,27 @@ async function signInWithNativeGoogleRestSession(googleIdToken: string, googleAc
     returnIdpCredential: true,
     returnSecureToken: true
   }) as NativeRestSignInPayload;
-  const lookupPayload = await callFirebaseAuthRest('accounts:lookup', {
-    idToken: signInPayload.idToken
-  }) as { users?: NativeRestLookupUser[] };
-  const lookupUser = Array.isArray(lookupPayload.users) ? lookupPayload.users[0] || {} : {};
-  return persistNativeRestAuthSession(signInPayload, lookupUser);
+  try {
+    const lookupPayload = await callFirebaseAuthRest('accounts:lookup', {
+      idToken: signInPayload.idToken
+    }) as { users?: NativeRestLookupUser[] };
+    const lookupUser = Array.isArray(lookupPayload.users) ? lookupPayload.users[0] || {} : {};
+    return await persistNativeRestAuthSession(signInPayload, lookupUser);
+  } catch (error) {
+    // signInWithIdp creates the Firebase Auth account before lookup and secure
+    // persistence. If either later step fails, delete only the account this
+    // exchange just created; an existing Google account must remain untouched.
+    if (signInPayload.isNewUser === true && signInPayload.idToken) {
+      try {
+        await callFirebaseAuthRest('accounts:delete', {
+          idToken: signInPayload.idToken
+        });
+      } catch (deleteError) {
+        logger.error('Error deleting a new native Google user after sign-in setup failed.', { error: deleteError });
+      }
+    }
+    throw error;
+  }
 }
 
 function isNewFirebaseUser(user: FirebaseUser) {
