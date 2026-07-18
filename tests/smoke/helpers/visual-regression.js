@@ -30,6 +30,11 @@ export async function installVisualNetworkGuard(page, pageUrl) {
 }
 
 export async function expectVisualSnapshot(page, snapshotName, options = {}) {
+    // The committed baselines are deliberately CI-native Linux/Chromium
+    // images. Keep the behavioral smoke coverage active on developer machines
+    // without asking Playwright for nonexistent darwin/win32 baselines.
+    if (process.platform !== 'linux') return;
+
     await page.evaluate(async () => {
         if (document.fonts?.ready) await document.fonts.ready;
     });
