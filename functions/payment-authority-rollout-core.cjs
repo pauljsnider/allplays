@@ -17,6 +17,7 @@ function isLegacyStripeRegistrationCandidate(data = {}) {
   ].some((value) => Boolean(normalizeString(value)));
   return paymentProvider === 'stripe'
     || hasStripeReference
+    || Boolean(normalizeString(data.checkoutCreationReservationId))
     || Number(data.stripeGrossPaidAmountCents || 0) > 0;
 }
 
@@ -77,6 +78,10 @@ function inspectStripeChargeLedgerCoverage({ product = '', record = {}, ledgers 
   for (const ledger of ledgers) {
     const chargeId = normalizeString(ledger.stripeChargeId);
     const amountPaidCents = asNonNegativeSafeInteger(ledger.amountPaidCents);
+    const refundedAmountCents = asNonNegativeSafeInteger(ledger.refundedAmountCents || 0);
+    const disputeLostAmountCents = asNonNegativeSafeInteger(ledger.disputeLostAmountCents || 0);
+    const refundableAmountCents = asNonNegativeSafeInteger(ledger.refundableAmountCents || 0);
+    const disputeStatus = normalizeString(ledger.disputeStatus || 'none').toLowerCase();
     if (ledger.type !== 'stripe_charge'
         || ledger.provider !== 'stripe'
         || ledger.product !== normalizedProduct
@@ -88,7 +93,14 @@ function inspectStripeChargeLedgerCoverage({ product = '', record = {}, ledgers 
         || amountPaidCents === null
         || amountPaidCents <= 0
         || !normalizeString(ledger.currency).toLowerCase()
-        || typeof ledger.livemode !== 'boolean') {
+        || typeof ledger.livemode !== 'boolean'
+        || !['none', 'open', 'won', 'lost'].includes(disputeStatus)
+        || refundedAmountCents === null
+        || disputeLostAmountCents === null
+        || refundableAmountCents === null
+        || refundedAmountCents + disputeLostAmountCents > amountPaidCents
+        || (normalizedProduct === 'team_fee'
+          && refundedAmountCents + disputeLostAmountCents + refundableAmountCents !== amountPaidCents)) {
       return 'stripe_charge_ledger_invalid';
     }
     seenCharges.add(chargeId);
@@ -109,9 +121,25 @@ function inspectStripeChargeLedgerCoverage({ product = '', record = {}, ledgers 
     ['stripeDisputeLostAmountCents', 'disputeLostAmountCents'],
     ['stripeRefundableAmountCents', 'refundableAmountCents']
   ]) {
-    if (record[recordField] !== undefined) {
+    if (record[recordField] !== undefined || normalizedProduct === 'team_fee') {
       const aggregate = asNonNegativeSafeInteger(record[recordField]);
       if (aggregate === null || aggregate !== sum(ledgerField)) return 'stripe_charge_ledger_aggregate_mismatch';
+    }
+  }
+
+  if (normalizedProduct === 'team_fee') {
+    const disputeStatuses = ledgers.map((ledger) => normalizeString(ledger.disputeStatus || 'none').toLowerCase());
+    const refundedAmountCents = sum('refundedAmountCents');
+    const disputeLostAmountCents = sum('disputeLostAmountCents');
+    const expectedFinancialStatus = disputeStatuses.includes('open')
+      ? 'disputed'
+      : disputeStatuses.includes('lost') || disputeLostAmountCents > 0
+        ? 'dispute_lost'
+        : refundedAmountCents > 0
+          ? refundedAmountCents >= grossPaidAmountCents ? 'refunded' : 'partially_refunded'
+          : 'paid';
+    if (normalizeString(record.stripeFinancialStatus).toLowerCase() !== expectedFinancialStatus) {
+      return 'stripe_charge_ledger_financial_status_mismatch';
     }
   }
 
@@ -132,7 +160,10 @@ function inspectStripeChargeLedgerCoverage({ product = '', record = {}, ledgers 
 }
 
 function inspectTeamPassAttemptAuthority({ teamId = '', seasonId = '', tier = 'team-pass', attempt = {} } = {}) {
-  const authorityVersion = Number(attempt.stripePaymentAuthorityVersion || attempt.legacyPaymentAuthorityVersion || 1);
+  const hasV2Authority = Number(attempt.stripePaymentAuthorityVersion) === 2
+    && attempt.legacyPaymentAuthorityVersion === undefined;
+  const hasV1Authority = Number(attempt.legacyPaymentAuthorityVersion) === 1
+    && attempt.stripePaymentAuthorityVersion === undefined;
   const amountCents = asNonNegativeSafeInteger(attempt.checkoutAmountCents);
   const reversalState = attempt.reversalState;
   const hasValidReversalState = reversalState === undefined
@@ -181,11 +212,15 @@ function inspectTeamPassAttemptAuthority({ teamId = '', seasonId = '', tier = 't
       || !hasEffectivePaidAuthority
       || !normalizeString(attempt.stripeCheckoutSessionId)
       || !normalizeString(attempt.stripePaymentIntentId)
+      || !normalizeString(attempt.purchaserUid)
+      || !/^[A-Za-z0-9_-]{16,128}$/.test(normalizeString(attempt.checkoutAttemptToken))
+      || !normalizeString(attempt.priceId)
       || amountCents === null
       || amountCents <= 0
       || !normalizeString(attempt.checkoutCurrency).toLowerCase()
       || typeof attempt.livemode !== 'boolean'
-      || (authorityVersion !== 2 && !normalizeString(attempt.stripeChargeId))) {
+      || (!hasV2Authority && !hasV1Authority)
+      || (hasV1Authority && !normalizeString(attempt.stripeChargeId))) {
     return 'active_entitlement_invalid_checkout_attempt';
   }
   return '';

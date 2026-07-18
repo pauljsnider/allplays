@@ -325,11 +325,36 @@ describe('team fee recipient Firestore rules', () => {
                 status: 'paid',
                 paidAmountCents: 2500
             });
+            await seedRecipient('teams/team-a/feeBatches/batch-a/feeRecipients/providerless-charge', {
+                ...recipientPayload(),
+                checkoutStatus: 'stale',
+                stripeChargeId: 'ch_providerless'
+            });
+            await seedRecipient('teams/team-a/feeBatches/batch-a/feeRecipients/providerless-refund', {
+                ...recipientPayload(),
+                checkoutStatus: 'stale',
+                stripeRefundId: 're_providerless'
+            });
+            await seedRecipient('teams/team-a/feeBatches/batch-a/feeRecipients/providerless-last-refund', {
+                ...recipientPayload(),
+                checkoutStatus: 'stale',
+                stripeLastRefundId: 're_last_providerless'
+            });
             const ownerDb = authedFirestore('owner-a', 'owner-a@example.com');
 
             await assertFails(deleteDoc(recipientRef(ownerDb, 'team-a', 'batch-a', 'legacy-charge')));
             await assertSucceeds(deleteDoc(recipientRef(ownerDb, 'team-a', 'batch-a', 'expired-unpaid-offline-paid')));
             await assertSucceeds(deleteDoc(recipientRef(ownerDb, 'team-a', 'batch-a', 'offline-paid')));
+            for (const [recipientId, evidenceField] of [
+                ['providerless-charge', 'stripeChargeId'],
+                ['providerless-refund', 'stripeRefundId'],
+                ['providerless-last-refund', 'stripeLastRefundId']
+            ]) {
+                const ref = recipientRef(ownerDb, 'team-a', 'batch-a', recipientId);
+                await assertSucceeds(updateDoc(ref, { status: 'partial' }));
+                await assertFails(updateDoc(ref, { [evidenceField]: deleteField() }));
+                await assertFails(deleteDoc(ref));
+            }
         });
     });
 });

@@ -5,6 +5,10 @@ const dbSource = readFileSync(new URL('../../js/db.js', import.meta.url), 'utf8'
 
 function buildUpdateTeamFeeRecipient({
     db = {}, doc, updateDoc, runTransaction, serverTimestamp, arrayUnion, deleteField, setDoc,
+    getDoc = vi.fn(async () => ({
+        exists: () => true,
+        data: () => ({ collectionMode: 'online_stripe', paymentProvider: 'stripe' })
+    })),
     functions = {}, httpsCallable = vi.fn(() => vi.fn(async () => ({ data: { expired: false } })))
 }) {
     const start = dbSource.indexOf('const PRIVATE_TEAM_FEE_RECIPIENT_FIELDS');
@@ -16,9 +20,10 @@ function buildUpdateTeamFeeRecipient({
         .slice(start, end)
         .replace('export async function updateTeamFeeRecipient', 'return async function updateTeamFeeRecipient');
 
-    return new Function('db', 'doc', 'updateDoc', 'runTransaction', 'serverTimestamp', 'arrayUnion', 'deleteField', 'setDoc', 'functions', 'httpsCallable', functionSource)(
+    return new Function('db', 'doc', 'getDoc', 'updateDoc', 'runTransaction', 'serverTimestamp', 'arrayUnion', 'deleteField', 'setDoc', 'functions', 'httpsCallable', functionSource)(
         db,
         doc,
+        getDoc,
         updateDoc,
         runTransaction,
         serverTimestamp,
@@ -125,6 +130,48 @@ describe('createTeamFeeBatch collection mode persistence', () => {
 });
 
 describe('updateTeamFeeRecipient manual payment validation', () => {
+    it('updates an explicitly pure offline fee without calling Functions', async () => {
+        const expireCheckout = vi.fn(async () => {
+            throw new Error('Functions unavailable');
+        });
+        const httpsCallable = vi.fn(() => expireCheckout);
+        const transactionUpdate = vi.fn();
+        const runTransaction = vi.fn(async (_db, handler) => handler({
+            get: vi.fn(async () => ({
+                exists: () => true,
+                data: () => ({ collectionMode: 'offline_manual', amountDueCents: 2500, amountPaidCents: 0 })
+            })),
+            update: transactionUpdate,
+            set: vi.fn()
+        }));
+        const updateTeamFeeRecipient = buildUpdateTeamFeeRecipient({
+            doc: vi.fn((_db, ...parts) => ({ path: parts.join('/') })),
+            getDoc: vi.fn(async () => ({
+                exists: () => true,
+                data: () => ({ collectionMode: 'offline_manual', amountDueCents: 2500, amountPaidCents: 0 })
+            })),
+            updateDoc: vi.fn(),
+            runTransaction,
+            serverTimestamp: vi.fn(() => 'server-ts'),
+            arrayUnion: vi.fn((...entries) => entries),
+            deleteField: vi.fn(() => 'deleted'),
+            setDoc: vi.fn(),
+            httpsCallable
+        });
+
+        await expect(updateTeamFeeRecipient('team-1', 'batch-1', 'recipient-1', {
+            manualPayment: { amountPaidCents: 1000 },
+            ledgerEntries: [{ type: 'offline_payment', amountCents: 1000 }]
+        })).resolves.toBeUndefined();
+
+        expect(httpsCallable).not.toHaveBeenCalled();
+        expect(expireCheckout).not.toHaveBeenCalled();
+        expect(transactionUpdate).toHaveBeenCalledWith(
+            { path: 'teams/team-1/feeBatches/batch-1/feeRecipients/recipient-1' },
+            expect.objectContaining({ amountPaidCents: 1000, remainingBalanceCents: 1500, status: 'partial' })
+        );
+    });
+
     it('expires the server-owned Stripe checkout before invalidating fee state', async () => {
         const order = [];
         const expireCheckout = vi.fn(async () => { order.push('expire'); return { data: { expired: true } }; });
@@ -146,6 +193,29 @@ describe('updateTeamFeeRecipient manual payment validation', () => {
         expect(httpsCallable).toHaveBeenCalledWith(expect.any(Object), 'expireStripeTeamFeeCheckout');
         expect(expireCheckout).toHaveBeenCalledWith({ teamId: 'team-1', batchId: 'batch-1', recipientId: 'recipient-1' });
         expect(order).toEqual(['expire', 'update']);
+    });
+
+    it('treats even zero-valued Stripe aggregate projections as ambiguous authority', async () => {
+        const expireCheckout = vi.fn(async () => ({ data: { expired: false } }));
+        const httpsCallable = vi.fn(() => expireCheckout);
+        const updateTeamFeeRecipient = buildUpdateTeamFeeRecipient({
+            doc: vi.fn((_db, ...parts) => ({ path: parts.join('/') })),
+            getDoc: vi.fn(async () => ({
+                exists: () => true,
+                data: () => ({ collectionMode: 'offline_manual', stripeGrossPaidAmountCents: 0 })
+            })),
+            updateDoc: vi.fn(async () => undefined),
+            runTransaction: vi.fn(),
+            serverTimestamp: vi.fn(() => 'server-ts'),
+            arrayUnion: vi.fn((...entries) => entries),
+            deleteField: vi.fn(() => 'deleted'),
+            setDoc: vi.fn(),
+            httpsCallable
+        });
+
+        await updateTeamFeeRecipient('team-1', 'batch-1', 'recipient-1', { status: 'partial' });
+
+        expect(expireCheckout).toHaveBeenCalledTimes(1);
     });
 
     it('rejects manual payments that exceed the recipient remaining balance before persisting', async () => {

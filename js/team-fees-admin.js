@@ -592,14 +592,17 @@ export function buildCancelRecipientUpdate({ note, actorId, currentPaidCents }) 
     };
 }
 
-export function buildOnlineRefundRequest({ amount, reason, teamId, batchId, recipientId }) {
+export function buildOnlineRefundRequest({ amount, reason, teamId, batchId, recipientId, refundRequestId: suppliedRefundRequestId }) {
     const amountCents = toFeeCents(amount);
     if (amountCents === null || amountCents <= 0) {
         throw new Error('Enter a refund amount greater than $0.');
     }
-    const refundRequestId = globalThis.crypto?.randomUUID
+    const refundRequestId = normalizeString(suppliedRefundRequestId) || (globalThis.crypto?.randomUUID
         ? globalThis.crypto.randomUUID()
-        : `refund_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+        : `refund_${Date.now()}_${Math.random().toString(36).slice(2)}`);
+    if (!/^[A-Za-z0-9_.-]{8,128}$/.test(refundRequestId)) {
+        throw new Error('Refund request could not be identified safely.');
+    }
 
     return {
         teamId: normalizeString(teamId),
@@ -1217,7 +1220,56 @@ async function renderManageMode({ container, teamId, batchId, team, user, getTea
                 updates = buildBalanceAdjustmentUpdate({ ...data, actorId: user.uid, currentBalanceCents: article?.dataset?.balanceCents, currentPaidCents: article?.dataset?.paidCents });
                 await updateTeamFeeRecipient(teamId, batchId, recipientId, updates);
             } else if (form.dataset.action === 'refund') {
-                await submitOnlineTeamFeeRefund(buildOnlineRefundRequest({ ...data, teamId, batchId, recipientId }));
+                const refundFingerprint = JSON.stringify({
+                    recipientId: normalizeString(recipientId),
+                    amountCents: toFeeCents(data.amount),
+                    reason: normalizeString(data.reason)
+                });
+                const refundRetryStorageKey = [
+                    'allplays:pending-team-fee-refund',
+                    normalizeString(teamId),
+                    normalizeString(batchId),
+                    normalizeString(recipientId)
+                ].join(':');
+                if (form.dataset.refundFingerprint !== refundFingerprint) {
+                    delete form.dataset.refundRequestId;
+                    form.dataset.refundFingerprint = refundFingerprint;
+                }
+                if (!form.dataset.refundRequestId) {
+                    try {
+                        const storedRetry = JSON.parse(globalThis.sessionStorage?.getItem(refundRetryStorageKey) || 'null');
+                        if (storedRetry?.fingerprint === refundFingerprint) {
+                            form.dataset.refundRequestId = normalizeString(storedRetry.refundRequestId);
+                        }
+                    } catch (_error) {
+                        // Storage is an optional refresh-safety layer. The form
+                        // dataset still preserves one ID for in-page retries.
+                    }
+                }
+                const refundRequest = buildOnlineRefundRequest({
+                    ...data,
+                    teamId,
+                    batchId,
+                    recipientId,
+                    refundRequestId: form.dataset.refundRequestId
+                });
+                form.dataset.refundRequestId = refundRequest.refundRequestId;
+                try {
+                    globalThis.sessionStorage?.setItem(refundRetryStorageKey, JSON.stringify({
+                        fingerprint: refundFingerprint,
+                        refundRequestId: refundRequest.refundRequestId
+                    }));
+                } catch (_error) {
+                    // Continue with the form-held operation ID when storage is unavailable.
+                }
+                await submitOnlineTeamFeeRefund(refundRequest);
+                delete form.dataset.refundRequestId;
+                delete form.dataset.refundFingerprint;
+                try {
+                    globalThis.sessionStorage?.removeItem(refundRetryStorageKey);
+                } catch (_error) {
+                    // A completed server intent is idempotent even if stale local state remains.
+                }
             } else {
                 updates = buildCancelRecipientUpdate({ ...data, actorId: user.uid, currentPaidCents: article?.dataset?.paidCents });
                 await updateTeamFeeRecipient(teamId, batchId, recipientId, updates);
@@ -1251,7 +1303,7 @@ async function initTeamFeesAdminPage() {
     renderFooter(document.getElementById('footer-container'));
 
     const [{ getTeam, getPlayers, getUserProfile, createTeamFeeBatch, getTeamFeeBatch, listTeamFeeBatches, listTeamFeeRecipients, updateTeamFeeRecipient, canModerateChat }, { requireAuth }] = await Promise.all([
-        import('./db.js?v=108'),
+        import('./db.js?v=109'),
         import('./auth.js?v=52')
     ]);
 

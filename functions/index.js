@@ -342,6 +342,100 @@ function buildHistoricalTeamPassAttemptRef({ teamId }, stripeChargeId) {
   return firestore.doc(`teams/${teamId}/teamPassCheckoutAttempts/history_${chargeHash}`);
 }
 
+function buildStripePaymentAuthorityRolloutControlRef() {
+  return firestore.doc('paymentAuthorityRollout/control');
+}
+
+async function assertStripePaymentAuthorityMutationIsNotFrozen() {
+  const controlSnap = await buildStripePaymentAuthorityRolloutControlRef().get();
+  if (controlSnap.exists && controlSnap.data()?.frozen === true) {
+    throw new functions.https.HttpsError(
+      'unavailable',
+      'Online payment maintenance is in progress. No payment authority was changed.'
+    );
+  }
+}
+
+function isTeamPassAttemptInScope(attempt = {}, { teamId, seasonId, tier } = {}) {
+  return String(attempt.teamId || '').trim() === String(teamId || '').trim()
+    && String(attempt.seasonId || '').trim() === String(seasonId || '').trim()
+    && String(attempt.tier || '').trim() === String(tier || '').trim();
+}
+
+function getTeamPassAggregateEntitlementStatus({ input, attemptDocs = [], overrides = new Map() } = {}) {
+  let hasValidPaidAuthority = false;
+  let hasDisputedAuthority = false;
+  let hasInvalidPaidAuthority = false;
+  for (const attemptDoc of attemptDocs) {
+    const base = attemptDoc.data ? (attemptDoc.data() || {}) : (attemptDoc || {});
+    const attempt = overrides.get(attemptDoc.ref?.path || attemptDoc.path || '') || base;
+    if (!isTeamPassAttemptInScope(attempt, input)) continue;
+    const checkoutStatus = String(attempt.checkoutStatus || '').trim().toLowerCase();
+    if (checkoutStatus === 'paid') {
+      if (!inspectTeamPassAttemptAuthority({ ...input, attempt })) hasValidPaidAuthority = true;
+      else hasInvalidPaidAuthority = true;
+    }
+    if (checkoutStatus === 'disputed') hasDisputedAuthority = true;
+  }
+  return {
+    status: hasValidPaidAuthority ? 'active' : hasDisputedAuthority ? 'inactive' : 'cancelled',
+    hasValidPaidAuthority,
+    hasInvalidPaidAuthority,
+    hasDisputedAuthority
+  };
+}
+
+async function expireTeamPassReplacementAuthorityBeforePaidRestoration({
+  stripe,
+  input,
+  targetAttemptRef,
+  event,
+  charge
+} = {}) {
+  const targetAttemptSnap = await targetAttemptRef.get();
+  if (!targetAttemptSnap.exists) return [];
+  const targetAttempt = targetAttemptSnap.data() || {};
+  const ignoredReason = getTeamPassChargeGuardFailure({ attempt: targetAttempt, charge });
+  if (ignoredReason) return [];
+  const nextReversal = reconcileTeamPassReversal({
+    current: targetAttempt.reversalState || {},
+    event,
+    charge
+  });
+  if (getTeamPassEffectivePaymentStatus(nextReversal) !== 'paid') return [];
+
+  const attemptsSnap = await firestore.collection(`teams/${input.teamId}/teamPassCheckoutAttempts`).get();
+  const expired = [];
+  for (const attemptDoc of attemptsSnap.docs || []) {
+    if (attemptDoc.ref.path === targetAttemptRef.path) continue;
+    const attempt = attemptDoc.data() || {};
+    if (!isTeamPassAttemptInScope(attempt, input)
+        || String(attempt.checkoutStatus || '').trim().toLowerCase() !== 'open') continue;
+    const sessionId = String(attempt.stripeCheckoutSessionId || '').trim();
+    if (!sessionId) {
+      throw new Error('A replacement Team Pass checkout lacks a verifiable Session.');
+    }
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
+    const guardFailure = getTeamPassCheckoutGuardFailure({ attempt, session, paidEvent: false });
+    if (guardFailure) {
+      throw new Error('A replacement Team Pass checkout could not be verified before paid authority restoration.');
+    }
+    const classification = classifyStoredStripeCheckoutSession(session);
+    if (classification === 'terminal') {
+      throw new Error('A replacement Team Pass payment is completing before earlier paid authority can be restored.');
+    }
+    if (classification === 'reusable') {
+      await stripe.checkout.sessions.expire(sessionId);
+    }
+    expired.push({
+      path: attemptDoc.ref.path,
+      stripeCheckoutSessionId: sessionId,
+      checkoutAttemptToken: attempt.checkoutAttemptToken
+    });
+  }
+  return expired;
+}
+
 function buildCheckoutAttemptToken() {
   return (crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex')).replace(/-/g, '');
 }
@@ -392,9 +486,10 @@ function withTeamFeeParentBillingClears(update = {}) {
 
 function buildTeamFeeRefundRequestId(input, uid) {
   const requested = String(input.refundRequestId || '').trim();
-  if (requested) return requested;
-  const suffix = crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex');
-  return `refund_${uid}_${suffix}`.replace(/[^\w.-]+/g, '_').slice(0, 120);
+  if (!/^[A-Za-z0-9_.-]{8,128}$/.test(requested)) {
+    throw new Error('A stable refund request ID is required.');
+  }
+  return requested;
 }
 
 function buildTeamFeeRefundIdempotencyKey(input, refundRequestId) {
@@ -4122,6 +4217,7 @@ exports.createStripeTeamPassCheckout = functions.https.onCall(async (data, conte
   if (!context.auth?.uid) {
     throw new functions.https.HttpsError('unauthenticated', 'Sign in before purchasing a team pass.');
   }
+  await assertStripePaymentAuthorityMutationIsNotFrozen();
 
   const { teamId, seasonId, tier } = normalizeTeamPassCheckoutInput(data || {});
   const teamRef = firestore.doc(`teams/${teamId}`);
@@ -4153,6 +4249,7 @@ exports.createStripeTeamPassCheckout = functions.https.onCall(async (data, conte
   const { successUrl, cancelUrl } = buildTeamPassCheckoutUrls(appUrl, teamId);
 
   const attemptRef = buildTeamPassAttemptRef({ teamId, seasonId, tier });
+  const attemptCollectionRef = firestore.collection(`teams/${teamId}/teamPassCheckoutAttempts`);
   const entitlementRef = firestore.doc(`teams/${teamId}/entitlements/${seasonId}_${tier}`);
   const expectedLivemode = getExpectedStripeLivemode(secretKey);
   const existingAttemptSnap = await attemptRef.get();
@@ -4206,8 +4303,9 @@ exports.createStripeTeamPassCheckout = functions.https.onCall(async (data, conte
   }
   const reservedAtMs = Date.now();
   const reservation = await firestore.runTransaction(async (transaction) => {
-    const [attemptSnap, entitlementSnap, latestTeamSnap, latestUserSnap] = await Promise.all([
+    const [attemptSnap, attemptCollectionSnap, entitlementSnap, latestTeamSnap, latestUserSnap] = await Promise.all([
       transaction.get(attemptRef),
+      transaction.get(attemptCollectionRef),
       transaction.get(entitlementRef),
       transaction.get(teamRef),
       transaction.get(userRef)
@@ -4224,7 +4322,14 @@ exports.createStripeTeamPassCheckout = functions.https.onCall(async (data, conte
     })) {
       throw new functions.https.HttpsError('permission-denied', 'Team access changed before checkout could be reserved.');
     }
-    if (entitlement.status === 'active') {
+    const scopedAttemptDocs = (attemptCollectionSnap.docs || []).filter((attemptDoc) => (
+      isTeamPassAttemptInScope(attemptDoc.data() || {}, { teamId, seasonId, tier })
+    ));
+    const aggregateAuthority = getTeamPassAggregateEntitlementStatus({
+      input: { teamId, seasonId, tier },
+      attemptDocs: scopedAttemptDocs
+    });
+    if (aggregateAuthority.hasValidPaidAuthority) {
       transaction.set(entitlementRef, buildSafeTeamPassEntitlementProjection({
         teamId,
         seasonId,
@@ -4233,6 +4338,16 @@ exports.createStripeTeamPassCheckout = functions.https.onCall(async (data, conte
         updatedAt: admin.firestore.FieldValue.serverTimestamp()
       }));
       return { active: true };
+    }
+    const hasAmbiguousSiblingAuthority = scopedAttemptDocs.some((attemptDoc) => (
+      ['creating', 'creation_failed', 'open', 'async_pending', 'recovering', 'disputed']
+        .includes(String(attemptDoc.data()?.checkoutStatus || '').trim().toLowerCase())
+      && attemptDoc.ref.path !== attemptRef.path
+    ));
+    if (entitlement.status === 'active'
+        || aggregateAuthority.hasInvalidPaidAuthority
+        || hasAmbiguousSiblingAuthority) {
+      return { blockedAuthority: true };
     }
     if (attempt.checkoutStatus === 'open') {
       if (attempt.checkoutUrl && attempt.stripeCheckoutSessionId) {
@@ -4459,6 +4574,7 @@ exports.expireStripeTeamPassCheckout = functions.https.onCall(async (data, conte
   if (!context.auth?.uid) {
     throw new functions.https.HttpsError('unauthenticated', 'Sign in before changing a team pass payment.');
   }
+  await assertStripePaymentAuthorityMutationIsNotFrozen();
 
   const input = normalizeTeamPassCheckoutInput(data || {});
   const teamRef = firestore.doc(`teams/${input.teamId}`);
@@ -4805,6 +4921,243 @@ function buildRolloutInspection({ product, path, reason = '', complete = true })
   };
 }
 
+function getStripePaymentAuthoritySessionProduct(session = {}) {
+  const product = String(session.metadata?.product || '').trim().toLowerCase();
+  if (['registration', 'team_fee', TEAM_PASS_PRODUCT].includes(product)) return product;
+  return hasLegacyTeamPassMetadata(session) ? TEAM_PASS_PRODUCT : '';
+}
+
+function getStripePaymentAuthoritySessionBindingFailure(session = {}, expectedLivemode = null) {
+  const product = getStripePaymentAuthoritySessionProduct(session);
+  if (!product) return 'payment_product_unrecognized';
+  if (String(session.mode || '').trim().toLowerCase() !== 'payment') return 'checkout_mode_mismatch';
+  if (expectedLivemode !== null && expectedLivemode !== undefined
+      && Boolean(session.livemode) !== Boolean(expectedLivemode)) return 'livemode_mismatch';
+  try {
+    if (product === 'registration') {
+      const input = normalizeRegistrationCheckoutCancelInput(session.metadata || {});
+      if (String(session.client_reference_id || '').trim()
+          !== `${input.teamId}:${input.formId}:${input.registrationId}`) return 'client_reference_mismatch';
+      return '';
+    }
+    if (product === 'team_fee') {
+      const input = normalizeTeamFeeCheckoutInput(session.metadata || {});
+      if (String(session.client_reference_id || '').trim()
+          !== `${input.teamId}:${input.batchId}:${input.recipientId}`) return 'client_reference_mismatch';
+      return '';
+    }
+    const input = normalizeTeamPassCheckoutInput(session.metadata || {});
+    const purchaserUid = String(session.metadata?.purchaserUid || '').trim();
+    if (!purchaserUid) return 'purchaser_missing';
+    if (!hasLegacyTeamPassMetadata(session)) buildTeamPassCheckoutMetadata(session.metadata || {});
+    if (String(session.client_reference_id || '').trim()
+        !== `${input.teamId}:${input.seasonId}:${purchaserUid}`) return 'client_reference_mismatch';
+    return '';
+  } catch (error) {
+    return 'metadata_scope_invalid';
+  }
+}
+
+async function readStripeCheckoutSessionsByStatus(stripe, status) {
+  const pageSize = 100;
+  const maximumDocuments = 10_000;
+  const sessions = [];
+  let startingAfter = '';
+  while (sessions.length < maximumDocuments) {
+    const response = await stripe.checkout.sessions.list({
+      status,
+      limit: pageSize,
+      ...(startingAfter ? { starting_after: startingAfter } : {})
+    });
+    const page = Array.isArray(response?.data) ? response.data : [];
+    sessions.push(...page);
+    if (response?.has_more !== true) {
+      return { sessions, complete: true };
+    }
+    if (page.length === 0) return { sessions, complete: false };
+    startingAfter = String(page[page.length - 1]?.id || '').trim();
+    if (!startingAfter) return { sessions, complete: false };
+  }
+  return { sessions, complete: false };
+}
+
+async function inspectSettledStripeCheckoutSessionAuthority(session, expectedLivemode) {
+  const product = getStripePaymentAuthoritySessionProduct(session);
+  const sessionPath = `stripeCheckoutSessions/${String(session.id || 'missing')}`;
+  if (!product) return null;
+  if (getStripePaymentAuthoritySessionBindingFailure(session, expectedLivemode)) {
+    return { product, path: sessionPath, reason: 'stripe_checkout_session_binding_invalid' };
+  }
+  if (!['paid', 'no_payment_required'].includes(String(session.payment_status || '').trim().toLowerCase())) {
+    return { product, path: sessionPath, reason: 'stripe_checkout_session_payment_pending' };
+  }
+  try {
+    if (product === 'registration') {
+      const input = normalizeRegistrationCheckoutCancelInput(session.metadata || {});
+      const parentRef = firestore.doc(
+        `teams/${input.teamId}/registrationForms/${input.formId}/registrations/${input.registrationId}`
+      );
+      const [parentSnap, chargeScan] = await Promise.all([
+        parentRef.get(),
+        readPaymentAuthoritySubcollection(parentRef.collection('stripeCharges'))
+      ]);
+      const hasSessionLedger = chargeScan.docs.some((ledgerSnap) => (
+        String(ledgerSnap.data()?.stripeCheckoutSessionId || '').trim() === String(session.id || '').trim()
+      ));
+      if (!chargeScan.complete) return { product, path: sessionPath, reason: 'stripe_charge_ledger_scan_incomplete' };
+      if (!parentSnap.exists || !hasSessionLedger) {
+        return { product, path: sessionPath, reason: 'settled_stripe_session_missing_charge_ledger' };
+      }
+      return null;
+    }
+    if (product === 'team_fee') {
+      const input = normalizeTeamFeeCheckoutInput(session.metadata || {});
+      const parentRef = buildTeamFeeRecipientRef(input);
+      const [parentSnap, chargeScan] = await Promise.all([
+        parentRef.get(),
+        readPaymentAuthoritySubcollection(parentRef.collection('stripeCharges'))
+      ]);
+      const hasSessionLedger = chargeScan.docs.some((ledgerSnap) => (
+        String(ledgerSnap.data()?.stripeCheckoutSessionId || '').trim() === String(session.id || '').trim()
+      ));
+      if (!chargeScan.complete) return { product, path: sessionPath, reason: 'stripe_charge_ledger_scan_incomplete' };
+      if (!parentSnap.exists || !hasSessionLedger) {
+        return { product, path: sessionPath, reason: 'settled_stripe_session_missing_charge_ledger' };
+      }
+      return null;
+    }
+    const input = normalizeTeamPassCheckoutInput(session.metadata || {});
+    const attemptScan = await readPaymentAuthoritySubcollection(
+      firestore.collection(`teams/${input.teamId}/teamPassCheckoutAttempts`)
+    );
+    if (!attemptScan.complete) return { product, path: sessionPath, reason: 'team_pass_checkout_attempt_scan_incomplete' };
+    const matchingAttempt = attemptScan.docs.find((attemptDoc) => (
+      String(attemptDoc.data()?.stripeCheckoutSessionId || '').trim() === String(session.id || '').trim()
+      && isTeamPassAttemptInScope(attemptDoc.data() || {}, input)
+    ));
+    if (!matchingAttempt || inspectTeamPassAttemptAuthority({ ...input, attempt: matchingAttempt.data() || {} })) {
+      return { product, path: sessionPath, reason: 'settled_stripe_session_missing_checkout_attempt' };
+    }
+    return null;
+  } catch (error) {
+    return { product, path: sessionPath, reason: 'stripe_checkout_session_scope_invalid' };
+  }
+}
+
+async function scanStripePaymentAuthoritySessions(stripe) {
+  const { secretKey } = getStripeConfig();
+  const expectedLivemode = getExpectedStripeLivemode(secretKey);
+  const [openScan, completeScan] = await Promise.all([
+    readStripeCheckoutSessionsByStatus(stripe, 'open'),
+    readStripeCheckoutSessionsByStatus(stripe, 'complete')
+  ]);
+  const advertisedOpenSessions = openScan.sessions.filter((session) => getStripePaymentAuthoritySessionProduct(session));
+  const relevantOpenSessions = advertisedOpenSessions.filter((session) => (
+    !getStripePaymentAuthoritySessionBindingFailure(session, expectedLivemode)
+  ));
+  const blockers = advertisedOpenSessions.map((session) => ({
+    product: getStripePaymentAuthoritySessionProduct(session),
+    path: `stripeCheckoutSessions/${String(session.id || 'missing')}`,
+    reason: getStripePaymentAuthoritySessionBindingFailure(session, expectedLivemode)
+      ? 'stripe_checkout_session_binding_invalid'
+      : 'open_stripe_checkout_session_must_be_expired'
+  }));
+  const relevantCompleteSessions = completeScan.sessions.filter((session) => getStripePaymentAuthoritySessionProduct(session));
+  for (let offset = 0; offset < relevantCompleteSessions.length; offset += 25) {
+    const inspections = await Promise.all(
+      relevantCompleteSessions.slice(offset, offset + 25)
+        .map((session) => inspectSettledStripeCheckoutSessionAuthority(session, expectedLivemode))
+    );
+    blockers.push(...inspections.filter(Boolean));
+  }
+  return {
+    scanned: openScan.sessions.length + completeScan.sessions.length,
+    blockers,
+    complete: openScan.complete && completeScan.complete,
+    relevantOpenSessions
+  };
+}
+
+async function inspectStripeChargeLedgerParent(docSnap) {
+  const ledger = docSnap.data() || {};
+  const parts = docSnap.ref.path.split('/');
+  const product = String(ledger.product || '').trim().toLowerCase();
+  const registrationPath = product === 'registration'
+    && parts.length === 8
+    && parts[0] === 'teams'
+    && parts[2] === 'registrationForms'
+    && parts[4] === 'registrations'
+    && parts[6] === 'stripeCharges';
+  const teamFeePath = product === 'team_fee'
+    && parts.length === 8
+    && parts[0] === 'teams'
+    && parts[2] === 'feeBatches'
+    && parts[4] === 'feeRecipients'
+    && parts[6] === 'stripeCharges';
+  if (!registrationPath && !teamFeePath) {
+    return buildRolloutInspection({
+      product: ['registration', 'team_fee'].includes(product) ? product : 'team_fee',
+      path: docSnap.ref.path,
+      reason: 'stripe_charge_ledger_scope_invalid'
+    });
+  }
+  const parentPath = parts.slice(0, -2).join('/');
+  const parentSnap = await firestore.doc(parentPath).get();
+  if (!parentSnap.exists) {
+    return buildRolloutInspection({ product, path: docSnap.ref.path, reason: 'orphan_stripe_charge_ledger' });
+  }
+  const parent = parentSnap.data() || {};
+  const isCandidate = product === 'registration'
+    ? isLegacyStripeRegistrationCandidate(parent)
+    : isLegacyStripeTeamFeeCandidate(parent);
+  return buildRolloutInspection({
+    product,
+    path: docSnap.ref.path,
+    reason: isCandidate ? '' : 'stripe_charge_parent_missing_payment_evidence'
+  });
+}
+
+async function inspectTeamPassAttemptRollout(docSnap) {
+  const attempt = docSnap.data() || {};
+  const parts = docSnap.ref.path.split('/');
+  const teamId = parts.length === 4 && parts[0] === 'teams' && parts[2] === 'teamPassCheckoutAttempts'
+    ? parts[1]
+    : '';
+  const seasonId = String(attempt.seasonId || '').trim();
+  const tier = String(attempt.tier || '').trim();
+  const checkoutStatus = String(attempt.checkoutStatus || '').trim().toLowerCase();
+  if (!teamId || !seasonId || tier !== 'team-pass' || String(attempt.teamId || '').trim() !== teamId) {
+    return buildRolloutInspection({ product: 'team_pass', path: docSnap.ref.path, reason: 'team_pass_checkout_attempt_scope_invalid' });
+  }
+  if (['creating', 'creation_failed', 'open', 'async_pending', 'recovering'].includes(checkoutStatus)) {
+    return buildRolloutInspection({ product: 'team_pass', path: docSnap.ref.path, reason: 'team_pass_checkout_attempt_in_flight' });
+  }
+  if (checkoutStatus === 'disputed') {
+    return buildRolloutInspection({ product: 'team_pass', path: docSnap.ref.path, reason: 'team_pass_checkout_attempt_disputed' });
+  }
+  if (!['paid', 'stale', 'expired', 'payment_failed', 'refunded', 'dispute_lost'].includes(checkoutStatus)) {
+    return buildRolloutInspection({ product: 'team_pass', path: docSnap.ref.path, reason: 'team_pass_checkout_attempt_status_invalid' });
+  }
+  if (checkoutStatus !== 'paid') return buildRolloutInspection({ product: 'team_pass', path: docSnap.ref.path });
+  const invalidReason = inspectTeamPassAttemptAuthority({ teamId, seasonId, tier, attempt });
+  if (invalidReason) {
+    return buildRolloutInspection({ product: 'team_pass', path: docSnap.ref.path, reason: invalidReason });
+  }
+  const entitlementRef = firestore.doc(`teams/${teamId}/entitlements/${seasonId}_${tier}`);
+  const entitlementSnap = await entitlementRef.get();
+  const entitlement = entitlementSnap.exists ? (entitlementSnap.data() || {}) : {};
+  const hasActiveEntitlement = entitlementSnap.exists
+    && entitlement.status === 'active'
+    && entitlement.teamId === teamId
+    && entitlement.seasonId === seasonId
+    && entitlement.tier === tier;
+  return buildRolloutInspection({
+    product: 'team_pass',
+    path: docSnap.ref.path,
+    reason: hasActiveEntitlement ? '' : 'paid_team_pass_attempt_missing_active_entitlement'
+  });
+}
+
 exports.auditStripePaymentAuthorityRollout = functions.runWith({ timeoutSeconds: 540, memory: '1GB' }).https.onCall(async (data, context) => {
   if (!context.auth?.uid) {
     throw new functions.https.HttpsError('unauthenticated', 'Sign in before auditing payment authority.');
@@ -4817,14 +5170,22 @@ exports.auditStripePaymentAuthorityRollout = functions.runWith({ timeoutSeconds:
   if (assertEmpty && data?.confirmation !== 'assert_no_legacy_stripe_payment_authority_v1') {
     throw new functions.https.HttpsError('failed-precondition', 'Explicit empty-authority assertion confirmation is required.');
   }
+  const stripe = createStripeClient();
 
-  const [registrations, teamFees, teamPasses] = await Promise.all([
+  const [registrations, teamFees, teamPasses, stripeChargeLedgers, teamPassAttempts, stripeSessions] = await Promise.all([
     scanPaymentAuthorityRolloutCollection({
       collectionGroupName: 'registrations',
       isCandidate: isLegacyStripeRegistrationCandidate,
       inspectAuthority: async (docSnap) => {
-        const chargeScan = await readPaymentAuthoritySubcollection(docSnap.ref.collection('stripeCharges'));
         const record = { id: docSnap.id, ...(docSnap.data() || {}) };
+        if (String(record.checkoutCreationReservationId || '').trim()) {
+          return buildRolloutInspection({
+            product: 'registration',
+            path: docSnap.ref.path,
+            reason: 'registration_checkout_creation_in_flight'
+          });
+        }
+        const chargeScan = await readPaymentAuthoritySubcollection(docSnap.ref.collection('stripeCharges'));
         const reason = chargeScan.complete
           ? inspectStripeChargeLedgerCoverage({
             product: 'registration', record, ledgers: chargeScan.docs.map((ledgerSnap) => ledgerSnap.data() || {})
@@ -4875,10 +5236,37 @@ exports.auditStripePaymentAuthorityRollout = functions.runWith({ timeoutSeconds:
             : 'active_entitlement_missing_checkout_attempt';
         return buildRolloutInspection({ product: 'team_pass', path: docSnap.ref.path, reason, complete: attemptScan.complete });
       }
-    })
+    }),
+    scanPaymentAuthorityRolloutCollection({
+      collectionGroupName: 'stripeCharges',
+      isCandidate: () => true,
+      inspectAuthority: inspectStripeChargeLedgerParent
+    }),
+    scanPaymentAuthorityRolloutCollection({
+      collectionGroupName: 'teamPassCheckoutAttempts',
+      isCandidate: () => true,
+      inspectAuthority: inspectTeamPassAttemptRollout
+    }),
+    scanStripePaymentAuthoritySessions(stripe)
   ]);
-  const complete = registrations.complete && teamFees.complete && teamPasses.complete;
-  const blockers = [...registrations.blockers, ...teamFees.blockers, ...teamPasses.blockers];
+  const complete = registrations.complete
+    && teamFees.complete
+    && teamPasses.complete
+    && stripeChargeLedgers.complete
+    && teamPassAttempts.complete
+    && stripeSessions.complete;
+  const blockers = [
+    ...registrations.blockers,
+    ...teamFees.blockers,
+    ...teamPasses.blockers,
+    ...stripeChargeLedgers.blockers,
+    ...teamPassAttempts.blockers,
+    ...stripeSessions.blockers
+  ].filter((blocker, index, all) => all.findIndex((candidate) => (
+    candidate.product === blocker.product
+    && candidate.path === blocker.path
+    && candidate.reason === blocker.reason
+  )) === index);
   const result = {
     ready: complete && blockers.length === 0,
     complete,
@@ -4886,7 +5274,10 @@ exports.auditStripePaymentAuthorityRollout = functions.runWith({ timeoutSeconds:
     scanned: {
       registrations: registrations.scanned,
       teamFeeRecipients: teamFees.scanned,
-      teamPassEntitlements: teamPasses.scanned
+      teamPassEntitlements: teamPasses.scanned,
+      stripeChargeLedgers: stripeChargeLedgers.scanned,
+      teamPassCheckoutAttempts: teamPassAttempts.scanned,
+      stripeCheckoutSessions: stripeSessions.scanned
     },
     blockerCount: blockers.length,
     blockers: blockers.slice(0, 100)
@@ -4906,10 +5297,84 @@ exports.auditStripePaymentAuthorityRollout = functions.runWith({ timeoutSeconds:
   return result;
 });
 
+exports.expireOpenStripePaymentAuthoritySessionsForRollout = functions.runWith({ timeoutSeconds: 540, memory: '1GB' }).https.onCall(async (data, context) => {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in before expiring rollout checkout sessions.');
+  }
+  const user = await getUserForEligibility(context.auth.uid);
+  if (user.isAdmin !== true) {
+    throw new functions.https.HttpsError('permission-denied', 'Only platform administrators can expire rollout checkout sessions.');
+  }
+  const dryRun = data?.dryRun !== false;
+  if (!dryRun && data?.confirmation !== 'expire_open_legacy_stripe_checkout_sessions_v1') {
+    throw new functions.https.HttpsError('failed-precondition', 'Explicit rollout Session expiration confirmation is required.');
+  }
+  const stripe = createStripeClient();
+  const { secretKey } = getStripeConfig();
+  const expectedLivemode = getExpectedStripeLivemode(secretKey);
+  const openScan = await readStripeCheckoutSessionsByStatus(stripe, 'open');
+  if (!openScan.complete) {
+    throw new functions.https.HttpsError('resource-exhausted', 'Open Stripe Checkout Session scan exceeded its safety cap.');
+  }
+  const advertisedSessions = openScan.sessions.filter((session) => getStripePaymentAuthoritySessionProduct(session));
+  const bindingFailureCount = advertisedSessions.filter((session) => (
+    getStripePaymentAuthoritySessionBindingFailure(session, expectedLivemode)
+  )).length;
+  const relevantSessions = advertisedSessions.filter((session) => (
+    !getStripePaymentAuthoritySessionBindingFailure(session, expectedLivemode)
+  ));
+  const liveModeMatched = relevantSessions.filter((session) => session.livemode === true).length;
+  const testModeMatched = relevantSessions.filter((session) => session.livemode === false).length;
+  let expired = 0;
+  let failureCount = 0;
+  for (const session of (dryRun || bindingFailureCount > 0) ? [] : relevantSessions) {
+    try {
+      await stripe.checkout.sessions.expire(session.id);
+      expired += 1;
+    } catch (error) {
+      failureCount += 1;
+      functions.logger.error('Failed to expire a rollout Stripe Checkout Session.', {
+        checkoutSessionId: session.id,
+        product: getStripePaymentAuthoritySessionProduct(session),
+        error: error?.message || error
+      });
+    }
+  }
+  const result = {
+    dryRun,
+    complete: openScan.complete && failureCount === 0 && bindingFailureCount === 0,
+    scanned: openScan.sessions.length,
+    matched: relevantSessions.length,
+    expired,
+    failureCount,
+    bindingFailureCount,
+    liveModeMatched,
+    testModeMatched
+  };
+  await firestore.collection('paymentAuthorityRolloutSessionExpirations').doc().set({
+    ...result,
+    actorId: context.auth.uid,
+    confirmation: dryRun ? null : 'expire_open_legacy_stripe_checkout_sessions_v1',
+    createdAt: admin.firestore.FieldValue.serverTimestamp()
+  });
+  if (bindingFailureCount > 0) {
+    throw new functions.https.HttpsError(
+      'failed-precondition',
+      'Recognized Checkout Sessions failed exact AllPlays binding validation; none were expired.',
+      result
+    );
+  }
+  if (failureCount > 0) {
+    throw new functions.https.HttpsError('unavailable', 'One or more rollout Checkout Sessions could not be expired.', result);
+  }
+  return result;
+});
+
 exports.createStripeTeamFeeCheckout = functions.https.onCall(async (data, context) => {
   if (!context.auth?.uid) {
     throw new functions.https.HttpsError('unauthenticated', 'Sign in before paying a team fee.');
   }
+  await assertStripePaymentAuthorityMutationIsNotFrozen();
 
   let input;
   try {
@@ -4934,7 +5399,6 @@ exports.createStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
   if (recipient.teamId !== input.teamId || recipient.batchId !== input.batchId) {
     throw new functions.https.HttpsError('failed-precondition', 'Fee recipient does not match the requested fee batch.');
   }
-
   if (!isTeamFeeCheckoutEligible(recipient)) {
     throw new functions.https.HttpsError('failed-precondition', 'This team fee is not eligible for online checkout.');
   }
@@ -5293,6 +5757,7 @@ exports.expireStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
   if (!context.auth?.uid) {
     throw new functions.https.HttpsError('unauthenticated', 'Sign in before changing a team fee payment.');
   }
+  await assertStripePaymentAuthorityMutationIsNotFrozen();
   let input;
   try {
     input = normalizeTeamFeeCheckoutInput(data || {});
@@ -5301,8 +5766,10 @@ exports.expireStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
   }
 
   const recipientRef = buildTeamFeeRecipientRef(input);
+  const teamRef = firestore.doc(`teams/${input.teamId}`);
+  const userRef = firestore.doc(`users/${context.auth.uid}`);
   const [teamSnap, recipientSnap, user] = await Promise.all([
-    firestore.doc(`teams/${input.teamId}`).get(),
+    teamRef.get(),
     recipientRef.get(),
     getUserForEligibility(context.auth.uid)
   ]);
@@ -5319,14 +5786,50 @@ exports.expireStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
   if (recipient.teamId !== input.teamId || recipient.batchId !== input.batchId) {
     throw new functions.https.HttpsError('failed-precondition', 'Fee recipient does not match the requested fee batch.');
   }
+  const hasCurrentTeamFeeAdminAccess = async () => {
+    const [latestTeamSnap, latestUserSnap] = await Promise.all([teamRef.get(), userRef.get()]);
+    const latestTeam = { id: input.teamId, ...(latestTeamSnap.exists ? (latestTeamSnap.data() || {}) : {}) };
+    const latestUser = latestUserSnap.exists ? (latestUserSnap.data() || {}) : {};
+    return latestTeamSnap.exists && hasTeamAdminAccess({
+      team: latestTeam,
+      user: latestUser,
+      uid: context.auth.uid,
+      email: context.auth.token?.email || latestUser.email || ''
+    });
+  };
   if (recipient.checkoutStatus === 'creating' && !recipient.stripeCheckoutSessionId) {
     throw new functions.https.HttpsError('aborted', 'Checkout creation must be retried before this fee can be changed.');
   }
   if (recipient.checkoutStatus === 'creation_failed' && !recipient.stripeCheckoutSessionId) {
     const checkoutAttemptToken = String(recipient.checkoutAttemptToken || '').trim();
     const checkoutReservationRef = recipientRef.collection('checkoutReservations').doc(checkoutAttemptToken || 'missing');
-    const checkoutReservationSnap = checkoutAttemptToken ? await checkoutReservationRef.get() : null;
-    const checkoutReservation = checkoutReservationSnap?.exists ? (checkoutReservationSnap.data() || {}) : {};
+    const recoveryClaim = await firestore.runTransaction(async (transaction) => {
+      const [latestRecipientSnap, checkoutReservationSnap, latestTeamSnap, latestUserSnap] = await Promise.all([
+        transaction.get(recipientRef),
+        transaction.get(checkoutReservationRef),
+        transaction.get(teamRef),
+        transaction.get(userRef)
+      ]);
+      const latestRecipient = latestRecipientSnap.exists ? (latestRecipientSnap.data() || {}) : {};
+      const checkoutReservation = checkoutReservationSnap.exists ? (checkoutReservationSnap.data() || {}) : {};
+      const latestTeam = { id: input.teamId, ...(latestTeamSnap.exists ? (latestTeamSnap.data() || {}) : {}) };
+      const latestUser = latestUserSnap.exists ? (latestUserSnap.data() || {}) : {};
+      if (!latestTeamSnap.exists || !hasTeamAdminAccess({
+        team: latestTeam,
+        user: latestUser,
+        uid: context.auth.uid,
+        email: context.auth.token?.email || latestUser.email || ''
+      })) return { permissionDenied: true };
+      if (latestRecipient.checkoutStatus !== 'creation_failed'
+          || latestRecipient.stripeCheckoutSessionId
+          || latestRecipient.checkoutAttemptToken !== checkoutAttemptToken) return { changed: true };
+      return { latestRecipient, checkoutReservation };
+    });
+    if (recoveryClaim.permissionDenied) {
+      throw new functions.https.HttpsError('permission-denied', 'Team admin access changed before fee checkout recovery.');
+    }
+    if (recoveryClaim.changed) return { expired: false, recovered: false };
+    const checkoutReservation = recoveryClaim.checkoutReservation || {};
     if (recipient.stripePaymentAuthorityVersion !== 2
         || checkoutReservation.checkoutAttemptToken !== checkoutAttemptToken
         || checkoutReservation.stripeIdempotencyKey !== `team_fee_checkout_${checkoutAttemptToken}`
@@ -5341,15 +5844,30 @@ exports.expireStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
     if (recoveredClassification === 'terminal') {
       throw new functions.https.HttpsError('failed-precondition', 'The recovered fee payment is completing. Refresh payment status first.');
     }
+    if (!await hasCurrentTeamFeeAdminAccess()) {
+      throw new functions.https.HttpsError('permission-denied', 'Team admin access changed before the recovered fee checkout could be expired.');
+    }
     if (recoveredSession.status === 'open') {
       await stripe.checkout.sessions.expire(recoveredSession.id);
     }
-    const expired = await firestore.runTransaction(async (transaction) => {
-      const latestSnap = await transaction.get(recipientRef);
+    const expirationResult = await firestore.runTransaction(async (transaction) => {
+      const [latestSnap, latestTeamSnap, latestUserSnap] = await Promise.all([
+        transaction.get(recipientRef),
+        transaction.get(teamRef),
+        transaction.get(userRef)
+      ]);
       const latest = latestSnap.exists ? (latestSnap.data() || {}) : {};
+      const latestTeam = { id: input.teamId, ...(latestTeamSnap.exists ? (latestTeamSnap.data() || {}) : {}) };
+      const latestUser = latestUserSnap.exists ? (latestUserSnap.data() || {}) : {};
+      if (!latestTeamSnap.exists || !hasTeamAdminAccess({
+        team: latestTeam,
+        user: latestUser,
+        uid: context.auth.uid,
+        email: context.auth.token?.email || latestUser.email || ''
+      })) return { permissionDenied: true, expired: false };
       if (latest.checkoutStatus !== 'creation_failed'
           || latest.checkoutAttemptToken !== checkoutAttemptToken
-          || latest.checkoutPayerUid !== checkoutReservation.payerUid) return false;
+          || latest.checkoutPayerUid !== checkoutReservation.payerUid) return { expired: false };
       transaction.set(recipientRef, {
         checkoutStatus: 'expired',
         stripeCheckoutSessionId: null,
@@ -5366,12 +5884,40 @@ exports.expireStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
         stripeCheckoutSessionId: recoveredSession.id || null,
         updatedAt: admin.firestore.FieldValue.serverTimestamp()
       }, { merge: true });
-      return true;
+      return { expired: true };
     });
-    return { expired, recovered: true };
+    if (expirationResult.permissionDenied) {
+      throw new functions.https.HttpsError('permission-denied', 'Team admin access changed before recovered fee authority could be released.');
+    }
+    return { expired: expirationResult.expired, recovered: true };
   }
   const sessionId = String(recipient.stripeCheckoutSessionId || '').trim();
   if (recipient.checkoutStatus !== 'open' || !sessionId) return { expired: false };
+
+  const openClaim = await firestore.runTransaction(async (transaction) => {
+    const [latestRecipientSnap, latestTeamSnap, latestUserSnap] = await Promise.all([
+      transaction.get(recipientRef),
+      transaction.get(teamRef),
+      transaction.get(userRef)
+    ]);
+    const latestRecipient = latestRecipientSnap.exists ? (latestRecipientSnap.data() || {}) : {};
+    const latestTeam = { id: input.teamId, ...(latestTeamSnap.exists ? (latestTeamSnap.data() || {}) : {}) };
+    const latestUser = latestUserSnap.exists ? (latestUserSnap.data() || {}) : {};
+    if (!latestTeamSnap.exists || !hasTeamAdminAccess({
+      team: latestTeam,
+      user: latestUser,
+      uid: context.auth.uid,
+      email: context.auth.token?.email || latestUser.email || ''
+    })) return { permissionDenied: true };
+    if (latestRecipient.checkoutStatus !== 'open'
+        || latestRecipient.stripeCheckoutSessionId !== sessionId
+        || latestRecipient.checkoutAttemptToken !== recipient.checkoutAttemptToken) return { changed: true };
+    return { latestRecipient };
+  });
+  if (openClaim.permissionDenied) {
+    throw new functions.https.HttpsError('permission-denied', 'Team admin access changed before fee checkout expiration.');
+  }
+  if (openClaim.changed) return { expired: false };
 
   const stripe = createStripeClient();
   let session;
@@ -5387,16 +5933,31 @@ exports.expireStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
   if (session.payment_status === 'paid' || session.status === 'complete') {
     throw new functions.https.HttpsError('failed-precondition', 'A completed Stripe checkout cannot be invalidated. Refresh payment status first.');
   }
+  if (!await hasCurrentTeamFeeAdminAccess()) {
+    throw new functions.https.HttpsError('permission-denied', 'Team admin access changed before the fee checkout could be expired.');
+  }
   if (session.status !== 'expired') {
     await stripe.checkout.sessions.expire(sessionId);
   }
 
-  const expired = await firestore.runTransaction(async (transaction) => {
-    const latestSnap = await transaction.get(recipientRef);
+  const expirationResult = await firestore.runTransaction(async (transaction) => {
+    const [latestSnap, latestTeamSnap, latestUserSnap] = await Promise.all([
+      transaction.get(recipientRef),
+      transaction.get(teamRef),
+      transaction.get(userRef)
+    ]);
     const latest = latestSnap.exists ? (latestSnap.data() || {}) : {};
+    const latestTeam = { id: input.teamId, ...(latestTeamSnap.exists ? (latestTeamSnap.data() || {}) : {}) };
+    const latestUser = latestUserSnap.exists ? (latestUserSnap.data() || {}) : {};
+    if (!latestTeamSnap.exists || !hasTeamAdminAccess({
+      team: latestTeam,
+      user: latestUser,
+      uid: context.auth.uid,
+      email: context.auth.token?.email || latestUser.email || ''
+    })) return { permissionDenied: true, expired: false };
     if (latest.checkoutStatus !== 'open'
         || latest.stripeCheckoutSessionId !== sessionId
-        || latest.checkoutAttemptToken !== recipient.checkoutAttemptToken) return false;
+        || latest.checkoutAttemptToken !== recipient.checkoutAttemptToken) return { expired: false };
     transaction.set(recipientRef, {
       checkoutStatus: 'expired',
       stripeCheckoutSessionId: null,
@@ -5408,15 +5969,19 @@ exports.expireStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
       checkoutCurrency: null,
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
-    return true;
+    return { expired: true };
   });
-  return { expired };
+  if (expirationResult.permissionDenied) {
+    throw new functions.https.HttpsError('permission-denied', 'Team admin access changed before expired fee authority could be released.');
+  }
+  return { expired: expirationResult.expired };
 });
 
 exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context) => {
   if (!context.auth?.uid) {
     throw new functions.https.HttpsError('unauthenticated', 'Sign in before refunding a team fee.');
   }
+  await assertStripePaymentAuthorityMutationIsNotFrozen();
   let input;
   try {
     input = normalizeTeamFeeRefundInput(data || {});
@@ -5425,10 +5990,12 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
   }
 
   const recipientRef = buildTeamFeeRecipientRef(input);
-  const refundRequestId = buildTeamFeeRefundRequestId(input, context.auth.uid);
+  const teamRef = firestore.doc(`teams/${input.teamId}`);
+  const userRef = firestore.doc(`users/${context.auth.uid}`);
+  const refundRequestId = buildTeamFeeRefundRequestId(input);
   const refundIntentRef = recipientRef.collection('refundIntents').doc(refundRequestId);
   const [teamSnap, recipientSnap, user, chargeQuerySnap, initialIntentSnap] = await Promise.all([
-    firestore.doc(`teams/${input.teamId}`).get(),
+    teamRef.get(),
     recipientRef.get(),
     getUserForEligibility(context.auth.uid),
     recipientRef.collection('stripeCharges').get(),
@@ -5446,6 +6013,17 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
   if (recipient.teamId !== input.teamId || recipient.batchId !== input.batchId) {
     throw new functions.https.HttpsError('failed-precondition', 'Fee recipient does not match the requested fee batch.');
   }
+  const hasCurrentTeamFeeRefundAdminAccess = async () => {
+    const [latestTeamSnap, latestUserSnap] = await Promise.all([teamRef.get(), userRef.get()]);
+    const latestTeam = { id: input.teamId, ...(latestTeamSnap.exists ? (latestTeamSnap.data() || {}) : {}) };
+    const latestUser = latestUserSnap.exists ? (latestUserSnap.data() || {}) : {};
+    return latestTeamSnap.exists && hasTeamAdminAccess({
+      team: latestTeam,
+      user: latestUser,
+      uid: context.auth.uid,
+      email: context.auth.token?.email || latestUser.email || ''
+    });
+  };
   const initialIntent = initialIntentSnap.exists ? (initialIntentSnap.data() || {}) : {};
   if (initialIntentSnap.exists && Number(initialIntent.amountCents || 0) !== input.amountCents) {
     throw new functions.https.HttpsError('already-exists', 'Refund request ID already exists for a different amount.');
@@ -5488,13 +6066,25 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
   let completedAllocations = [];
   let existingRefundResult = null;
   await firestore.runTransaction(async (transaction) => {
-    const [latestRecipientSnap, intentSnap, ...ledgerSnaps] = await Promise.all([
+    const [latestRecipientSnap, intentSnap, latestTeamSnap, latestUserSnap, ...ledgerSnaps] = await Promise.all([
       transaction.get(recipientRef),
       transaction.get(refundIntentRef),
+      transaction.get(teamRef),
+      transaction.get(userRef),
       ...chargeDocs.map((entry) => transaction.get(entry.ref))
     ]);
     if (!latestRecipientSnap.exists) throw new functions.https.HttpsError('not-found', 'Fee recipient not found.');
     const latestRecipient = { id: input.recipientId, ...(latestRecipientSnap.data() || {}) };
+    const latestTeam = { id: input.teamId, ...(latestTeamSnap.exists ? (latestTeamSnap.data() || {}) : {}) };
+    const latestUser = latestUserSnap.exists ? (latestUserSnap.data() || {}) : {};
+    if (!latestTeamSnap.exists || !hasTeamAdminAccess({
+      team: latestTeam,
+      user: latestUser,
+      uid: context.auth.uid,
+      email: context.auth.token?.email || latestUser.email || ''
+    })) {
+      throw new functions.https.HttpsError('permission-denied', 'Team admin access changed before the refund could be reserved.');
+    }
     const existingIntent = intentSnap.exists ? (intentSnap.data() || {}) : {};
     if (intentSnap.exists && Number(existingIntent.amountCents || 0) !== input.amountCents) {
       throw new functions.https.HttpsError('already-exists', 'Refund request ID already exists for a different amount.');
@@ -5589,7 +6179,21 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
   if (existingRefundResult) return existingRefundResult;
 
   const results = [];
+  let authorizationLost = false;
   for (const allocation of allocations) {
+    if (!await hasCurrentTeamFeeRefundAdminAccess()) {
+      authorizationLost = true;
+      results.push({
+        allocation,
+        error: new functions.https.HttpsError(
+          'permission-denied',
+          'Team admin access changed before Stripe could issue the refund.'
+        ),
+        ok: false,
+        preserveReservation: true
+      });
+      continue;
+    }
     try {
       const allocationKey = crypto.createHash('sha256').update(allocation.stripeChargeId).digest('hex').slice(0, 16);
       const refund = await stripe.refunds.create({
@@ -5771,6 +6375,14 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
   const { newlyRecordedRefunds, recordedRefundIds } = reconciliation;
   const failures = results.filter((result) => !result.ok);
   if (failures.length > 0) {
+    if (authorizationLost) {
+      throw new functions.https.HttpsError(
+        'permission-denied',
+        newlyRecordedRefunds.length > 0
+          ? 'Team admin access changed after only part of the Stripe refund completed. An authorized admin must retry the same request ID.'
+          : 'Team admin access changed before Stripe could issue the refund.'
+      );
+    }
     throw new functions.https.HttpsError('failed-precondition', newlyRecordedRefunds.length > 0
       ? 'Only part of the Stripe refund completed. Retry the same request ID to reconcile the remaining allocation.'
       : failures[0].error?.message || 'Stripe refund failed.');
@@ -5780,6 +6392,7 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
 });
 
 exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) => {
+  await assertStripePaymentAuthorityMutationIsNotFrozen();
   let input;
   try {
     input = normalizeRegistrationCheckoutInput(data || {});
@@ -6150,6 +6763,7 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
 });
 
 exports.cancelStripeRegistrationCheckout = functions.https.onCall(async (data) => {
+  await assertStripePaymentAuthorityMutationIsNotFrozen();
   let input;
   try {
     input = normalizeRegistrationCheckoutCancelInput(data || {});
@@ -7150,9 +7764,27 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
       const eventRef = firestore.doc(`stripeEvents/${event.id}`);
       const receivedAt = admin.firestore.FieldValue.serverTimestamp();
       let teamPassUpdated = false;
+      const chargeAuthority = Object.keys(charge.metadata || {}).length === 0
+        && recoveredLegacyReversalSession?.metadata?.product === TEAM_PASS_PRODUCT
+        ? { ...charge, metadata: recoveredLegacyReversalSession.metadata }
+        : charge;
+      const existingEventSnap = await eventRef.get();
+      const expiredReplacementAuthorities = existingEventSnap.exists
+        ? []
+        : await expireTeamPassReplacementAuthorityBeforePaidRestoration({
+          stripe,
+          input,
+          targetAttemptRef: attemptRef,
+          event,
+          charge: chargeAuthority
+        });
+      const attemptCollectionRef = firestore.collection(`teams/${input.teamId}/teamPassCheckoutAttempts`);
 
       await firestore.runTransaction(async (transaction) => {
-        const eventSnap = await transaction.get(eventRef);
+        const [eventSnap, attemptCollectionSnap] = await Promise.all([
+          transaction.get(eventRef),
+          transaction.get(attemptCollectionRef)
+        ]);
         if (eventSnap.exists) return;
         const attemptSnap = await transaction.get(attemptRef);
         if (!attemptSnap.exists) {
@@ -7162,10 +7794,6 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
           throw new Error('Team Pass checkout attempt is not ready for reversal reconciliation.');
         }
         const attempt = attemptSnap.exists ? (attemptSnap.data() || {}) : {};
-        const chargeAuthority = Object.keys(charge.metadata || {}).length === 0
-          && recoveredLegacyReversalSession?.metadata?.product === TEAM_PASS_PRODUCT
-          ? { ...charge, metadata: recoveredLegacyReversalSession.metadata }
-          : charge;
         const ignoredReason = getTeamPassChargeGuardFailure({ attempt, charge: chargeAuthority });
         const currentReversal = attempt.reversalState || {};
         const nextReversal = ignoredReason ? currentReversal : reconcileTeamPassReversal({
@@ -7177,35 +7805,61 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
         const reversalChanged = JSON.stringify(nextReversal) !== JSON.stringify(currentReversal);
         if (!ignoredReason && reversalStatus && reversalChanged) {
           const checkoutWasPaid = ['paid', 'disputed', 'refunded', 'dispute_lost'].includes(String(attempt.checkoutStatus || '').toLowerCase());
-          const isHistoricalAttempt = attempt.historicalAuthority === true
-            || String(attemptRef.id || '').startsWith('history_');
           teamPassUpdated = checkoutWasPaid && reversalChanged;
-          const entitlementStatus = reversalStatus === 'paid'
-            ? 'active'
-            : reversalStatus === 'disputed'
-              ? 'inactive'
-              : 'cancelled';
-          // Archived charge authority remains reconcilable for audit/refund
-          // accuracy, but it no longer owns the live season entitlement. A
-          // delayed reversal for an older charge must never overwrite a newer
-          // paid repurchase.
-          if (checkoutWasPaid && !isHistoricalAttempt) {
-            transaction.set(entitlementRef, {
-              ...entitlement.data,
-              status: entitlementStatus,
-              updatedAt: receivedAt
-            });
-          }
-          transaction.set(attemptRef, {
+          const targetNextAttempt = {
+            ...attempt,
             ...(checkoutWasPaid ? { checkoutStatus: reversalStatus } : {}),
             stripeEventId: event.id,
             stripeChargeId: charge.id || null,
             stripePaymentIntentId: getStripeObjectId(charge.payment_intent),
             disputeId: eventObject.object === 'dispute' ? eventObject.id || null : null,
             refundedAmountCents: Math.max(0, Math.round(Number(charge.amount_refunded || 0))),
-            reversalState: nextReversal,
-            updatedAt: receivedAt
-          }, { merge: true });
+            reversalState: nextReversal
+          };
+          const attemptOverrides = new Map([[attemptRef.path, targetNextAttempt]]);
+          for (const expiredAuthority of expiredReplacementAuthorities) {
+            const matchingDoc = (attemptCollectionSnap.docs || []).find((docSnap) => docSnap.ref.path === expiredAuthority.path);
+            const siblingAttempt = matchingDoc?.data() || {};
+            if (String(siblingAttempt.checkoutStatus || '').trim().toLowerCase() === 'open') {
+              if (siblingAttempt.stripeCheckoutSessionId !== expiredAuthority.stripeCheckoutSessionId
+                  || siblingAttempt.checkoutAttemptToken !== expiredAuthority.checkoutAttemptToken) {
+                throw new Error('Replacement Team Pass authority changed after Stripe expiration.');
+              }
+              const staleSibling = {
+                ...siblingAttempt,
+                checkoutStatus: 'stale'
+              };
+              attemptOverrides.set(expiredAuthority.path, staleSibling);
+              transaction.set(matchingDoc.ref, {
+                checkoutStatus: 'stale',
+                checkoutUrl: admin.firestore.FieldValue.delete(),
+                stripeCheckoutSessionId: admin.firestore.FieldValue.delete(),
+                updatedAt: receivedAt
+              }, { merge: true });
+            }
+          }
+          const stillOpenSibling = (attemptCollectionSnap.docs || []).some((docSnap) => {
+            const candidate = attemptOverrides.get(docSnap.ref.path) || (docSnap.data() || {});
+            return docSnap.ref.path !== attemptRef.path
+              && isTeamPassAttemptInScope(candidate, input)
+              && String(candidate.checkoutStatus || '').trim().toLowerCase() === 'open';
+          });
+          if (reversalStatus === 'paid' && stillOpenSibling) {
+            throw new Error('Replacement Team Pass authority is still open during paid authority restoration.');
+          }
+          const aggregateAuthority = getTeamPassAggregateEntitlementStatus({
+            input,
+            attemptDocs: attemptCollectionSnap.docs || [],
+            overrides: attemptOverrides
+          });
+          if (checkoutWasPaid) {
+            transaction.set(entitlementRef, {
+              ...entitlement.data,
+              status: aggregateAuthority.status,
+              updatedAt: receivedAt
+            });
+          }
+          transaction.set(attemptRef, { ...targetNextAttempt, updatedAt: receivedAt }, { merge: true });
         }
         transaction.set(eventRef, {
           provider: 'stripe',

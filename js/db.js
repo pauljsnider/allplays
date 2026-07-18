@@ -5128,7 +5128,7 @@ function normalizeInviteEmail(email) {
 }
 
 export async function redeemParentInvite(userId, code, authEmail = null) {
-    console.log('[redeemParentInvite] start', { userId, code });
+    console.log('[redeemParentInvite] start');
     if (!userId) {
         throw new Error('You must be signed in to accept a parent invite');
     }
@@ -5143,7 +5143,7 @@ export async function redeemParentInvite(userId, code, authEmail = null) {
 
     await syncPublicUserProfile(userId);
 
-    console.log('[redeemParentInvite] completed', { codeId: payload.codeId });
+    console.log('[redeemParentInvite] completed');
     return {
         success: payload.success === true,
         teamId: payload.teamId || null,
@@ -5155,7 +5155,7 @@ export async function redeemParentInvite(userId, code, authEmail = null) {
 }
 
 export async function redeemCoParentInvite(userId, code, authEmail = null) {
-    console.log('[redeemCoParentInvite] start', { userId, code });
+    console.log('[redeemCoParentInvite] start');
     if (!userId) {
         throw new Error('You must be signed in to accept a co-parent invite');
     }
@@ -5170,7 +5170,7 @@ export async function redeemCoParentInvite(userId, code, authEmail = null) {
 
     await syncPublicUserProfile(userId);
 
-    console.log('[redeemCoParentInvite] completed', { codeId: payload.codeId });
+    console.log('[redeemCoParentInvite] completed');
     return {
         success: payload.success === true,
         teamId: payload.teamId || null,
@@ -5187,7 +5187,7 @@ function normalizeHouseholdInviteEmail(email) {
 }
 
 export async function redeemHouseholdInvite(userId, code) {
-    console.log('[redeemHouseholdInvite] start', { userId, code });
+    console.log('[redeemHouseholdInvite] start');
     if (!userId) {
         throw new Error('You must be signed in to accept a household invite');
     }
@@ -5202,7 +5202,7 @@ export async function redeemHouseholdInvite(userId, code) {
 
     await syncPublicUserProfile(userId);
 
-    console.log('[redeemHouseholdInvite] completed', { codeId: payload.codeId });
+    console.log('[redeemHouseholdInvite] completed');
     return {
         success: payload.success === true,
         teamId: payload.teamId || null,
@@ -5294,7 +5294,7 @@ export async function redeemFriendInvite(userId, code, fallbackEmail = null) {
 }
 
 export async function rollbackParentInviteRedemption(userId, code) {
-    console.log('[rollbackParentInviteRedemption] start', { userId, code });
+    console.log('[rollbackParentInviteRedemption] start');
 
     const normalizedCode = String(code || '').toUpperCase();
     if (!userId || !normalizedCode) {
@@ -5308,7 +5308,7 @@ export async function rollbackParentInviteRedemption(userId, code) {
     });
     const payload = result?.data || result || {};
 
-    console.log('[rollbackParentInviteRedemption] completed', payload);
+    console.log('[rollbackParentInviteRedemption] completed');
     return payload;
 }
 
@@ -5545,7 +5545,49 @@ export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updat
         'lastRefundedAt'
     ].some((key) => Object.prototype.hasOwnProperty.call(recipientUpdates, key));
 
+    let hasStripeCheckoutAuthority = false;
     if (invalidatesOnlineCheckout) {
+        const currentRecipientSnapshot = await getDoc(recipientRef);
+        if (!currentRecipientSnapshot.exists()) {
+            throw new Error('Fee recipient not found.');
+        }
+        const currentRecipient = currentRecipientSnapshot.data() || {};
+        const collectionMode = String(currentRecipient.collectionMode || '').trim().toLowerCase();
+        const stripeAggregateFields = [
+            'stripeGrossPaidAmountCents',
+            'stripeRefundedAmountCents',
+            'stripeRefundableAmountCents',
+            'stripeDisputeLostAmountCents'
+        ];
+        const hasStripeAggregateProjection = stripeAggregateFields.some((field) => (
+            Object.prototype.hasOwnProperty.call(currentRecipient, field)
+        ));
+        const hasStripeLifecycleStatus = [
+            'creating', 'creation_failed', 'open', 'async_pending', 'recovering',
+            'paid', 'complete', 'disputed', 'refunded', 'dispute_lost'
+        ].includes(String(currentRecipient.checkoutStatus || '').trim().toLowerCase())
+            || ['paid', 'disputed', 'refunded', 'dispute_lost']
+                .includes(String(currentRecipient.stripePaymentStatus || '').trim().toLowerCase());
+        const isExplicitPureOffline = collectionMode === 'offline_manual'
+            && String(currentRecipient.paymentProvider || '').trim().toLowerCase() !== 'stripe'
+            && ![
+                currentRecipient.checkoutAttemptToken,
+                currentRecipient.checkoutCreationReservationId,
+                currentRecipient.checkoutPayerUid,
+                currentRecipient.stripeCheckoutSessionId,
+                currentRecipient.stripePaymentIntentId,
+                currentRecipient.stripeChargeId,
+                currentRecipient.stripeRefundId,
+                currentRecipient.stripeLastRefundId,
+                currentRecipient.stripeFinancialStatus,
+                currentRecipient.stripePaymentAuthorityVersion
+            ].some((value) => String(value || '').trim())
+            && !hasStripeAggregateProjection
+            && !hasStripeLifecycleStatus;
+        hasStripeCheckoutAuthority = !isExplicitPureOffline;
+    }
+
+    if (invalidatesOnlineCheckout && hasStripeCheckoutAuthority) {
         // Expire the authoritative Stripe session before any offline payment,
         // refund, adjustment, or cancellation can invalidate its Firestore
         // attempt. This prevents a bookmarked Checkout URL from charging after

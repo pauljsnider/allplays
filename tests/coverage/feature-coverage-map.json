@@ -410,6 +410,7 @@
                 "expireStripeTeamPassCheckout",
                 "backfillTeamPassEntitlementProjections",
                 "auditStripePaymentAuthorityRollout",
+                "expireOpenStripePaymentAuthoritySessionsForRollout",
                 "expireStripeTeamFeeCheckout",
                 "notifyFeeAssigned",
                 "notifyFeeMarkedPaid",

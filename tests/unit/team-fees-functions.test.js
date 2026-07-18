@@ -310,6 +310,13 @@ describe('team fee checkout function helpers', () => {
             paidAmountCents: 8000,
             refundedAmountCents: 2000
         })).toBe(0);
+        expect(() => normalizeTeamFeeRefundInput({
+            teamId: 'team_123', batchId: 'batch_456', recipientId: 'recipient_789', amount: 12.34
+        })).toThrow('Refund request ID is invalid.');
+        expect(() => normalizeTeamFeeRefundInput({
+            teamId: 'team_123', batchId: 'batch_456', recipientId: 'recipient_789', amount: 12.34,
+            refundRequestId: 'short'
+        })).toThrow('Refund request ID is invalid.');
     });
 
     it('resolves private Stripe payment refs from admin billing metadata', () => {
@@ -442,6 +449,9 @@ describe('team fee checkout function helpers', () => {
         expect(getTeamFeeAggregateFinancialState([
             { ...ledger, stripeChargeId: 'ch_valid' },
             { stripeChargeId: 'ch_invalid', amountPaidCents: 5000 }
+        ]).valid).toBe(false);
+        expect(getTeamFeeAggregateFinancialState([
+            { ...ledger, stripeChargeId: 'ch_invalid_dispute', disputeStatus: 'mystery' }
         ]).valid).toBe(false);
     });
 

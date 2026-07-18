@@ -21,8 +21,8 @@ describe('team fees admin page routing', () => {
         const adminSource = readFileSync(new URL('../../js/team-fees-admin.js', import.meta.url), 'utf8');
         const pageSource = readFileSync(new URL('../../team-fees.html', import.meta.url), 'utf8');
 
-        expect(adminSource).toContain("import('./db.js?v=108')");
-        expect(pageSource).toContain('<script type="module" src="./js/team-fees-admin.js?v=17"></script>');
+        expect(adminSource).toContain("import('./db.js?v=109')");
+        expect(pageSource).toContain('<script type="module" src="./js/team-fees-admin.js?v=18"></script>');
     });
 
     it('routes the manage view back link with the teamId hash parameter that team.html reads', () => {
@@ -296,6 +296,32 @@ describe('online team fee refunds', () => {
             reason: 'duplicate payment'
         });
         expect(request.refundRequestId).toEqual(expect.any(String));
+    });
+
+    it('reuses one stable refund operation id across ambiguous retries and rotates it when inputs change', () => {
+        const first = buildOnlineRefundRequest({
+            teamId: 'team_1', batchId: 'batch_1', recipientId: 'recipient_1',
+            amount: '12.34', reason: 'duplicate payment'
+        });
+        const retry = buildOnlineRefundRequest({
+            teamId: 'team_1', batchId: 'batch_1', recipientId: 'recipient_1',
+            amount: '12.34', reason: 'duplicate payment', refundRequestId: first.refundRequestId
+        });
+        expect(retry).toEqual(first);
+
+        const source = readFileSync(new URL('../../js/team-fees-admin.js', import.meta.url), 'utf8');
+        expect(source).toContain('form.dataset.refundFingerprint !== refundFingerprint');
+        expect(source).toContain('refundRequestId: form.dataset.refundRequestId');
+        expect(source).toContain('form.dataset.refundRequestId = refundRequest.refundRequestId');
+        expect(source).toContain("globalThis.sessionStorage?.getItem(refundRetryStorageKey)");
+        expect(source).toContain("globalThis.sessionStorage?.setItem(refundRetryStorageKey");
+        expect(source).toContain('globalThis.sessionStorage?.removeItem(refundRetryStorageKey)');
+        expect(source.indexOf('form.dataset.refundRequestId = refundRequest.refundRequestId'))
+            .toBeLessThan(source.indexOf('await submitOnlineTeamFeeRefund(refundRequest)'));
+        expect(source.indexOf('globalThis.sessionStorage?.setItem(refundRetryStorageKey'))
+            .toBeLessThan(source.indexOf('await submitOnlineTeamFeeRefund(refundRequest)'));
+        expect(source.indexOf('globalThis.sessionStorage?.removeItem(refundRetryStorageKey)'))
+            .toBeGreaterThan(source.indexOf('await submitOnlineTeamFeeRefund(refundRequest)'));
     });
 
     it('detects eligible Stripe payments and remaining refundable amount', () => {

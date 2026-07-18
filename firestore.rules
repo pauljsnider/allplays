@@ -1023,12 +1023,17 @@ service cloud.firestore {
                'stripeDisputeLostAmountCents',
                'stripeFinancialStatus'
              ]) ||
+             (data.get('stripeChargeId', '') is string && data.get('stripeChargeId', '').size() > 0) ||
+             (data.get('stripeRefundId', '') is string && data.get('stripeRefundId', '').size() > 0) ||
+             (data.get('stripeLastRefundId', '') is string && data.get('stripeLastRefundId', '').size() > 0) ||
              (data.get('paymentProvider', '') == 'stripe' &&
               (data.get('checkoutStatus', '') in ['paid', 'complete'] ||
-               data.get('stripePaymentStatus', '') == 'paid' ||
-               (data.get('stripeChargeId', '') is string && data.get('stripeChargeId', '').size() > 0) ||
-               (data.get('stripeRefundId', '') is string && data.get('stripeRefundId', '').size() > 0) ||
-               (data.get('stripeLastRefundId', '') is string && data.get('stripeLastRefundId', '').size() > 0)));
+               data.get('stripePaymentStatus', '') == 'paid'));
+    }
+
+    function isStripePaymentAuthorityRolloutFrozen() {
+      return exists(/databases/$(database)/documents/paymentAuthorityRollout/control) &&
+             get(/databases/$(database)/documents/paymentAuthorityRollout/control).data.get('frozen', false) == true;
     }
 
     function isSafeOfflineTeamFeeBilling(data, teamId, batchId, recipientId) {
@@ -3319,12 +3324,15 @@ service cloud.firestore {
 
       match /registrationForms/{formId} {
         allow read: if isPublishedRegistrationForm(resource.data) || isTeamOwnerOrAdmin(teamId);
-        allow create, delete: if isTeamOwnerOrAdmin(teamId);
-        allow update: if isTeamOwnerOrAdmin(teamId);
+        allow create, delete: if isTeamOwnerOrAdmin(teamId) &&
+                                !isStripePaymentAuthorityRolloutFrozen();
+        allow update: if isTeamOwnerOrAdmin(teamId) &&
+                        !isStripePaymentAuthorityRolloutFrozen();
 
         match /registrations/{registrationId} {
           allow read: if isTeamOwnerOrAdmin(teamId) || isCurrentUserRegistrationGuardian(resource.data);
           allow update: if isTeamOwnerOrAdmin(teamId) &&
+                           !isStripePaymentAuthorityRolloutFrozen() &&
                            !hasActiveRegistrationStripeAuthority(resource.data) &&
                            (!hasSettledRegistrationStripeAuthority(resource.data) ||
                             hasSettledRegistrationStripeAuthority(request.resource.data)) &&
@@ -3334,11 +3342,13 @@ service cloud.firestore {
                            request.resource.data.formId == formId &&
                            hasNoRegistrationStripeAuthorityMutation();
           allow delete: if isTeamOwnerOrAdmin(teamId) &&
+                           !isStripePaymentAuthorityRolloutFrozen() &&
                            !hasActiveRegistrationStripeAuthority(resource.data) &&
                            !hasSettledRegistrationStripeAuthority(resource.data) &&
                            resource.data.teamId == teamId &&
                            resource.data.formId == formId;
           allow create: if isTeamOwnerOrAdmin(teamId) &&
+                          !isStripePaymentAuthorityRolloutFrozen() &&
                           request.resource.data.status == 'pending' &&
                           hasNoRegistrationStripeAuthorityFields(request.resource.data);
 
@@ -3410,7 +3420,8 @@ service cloud.firestore {
         // trusted Admin SDK path (for example the verified Stripe webhook) may
         // create or preserve an active paid entitlement. Admin SDK writes
         // bypass these client rules; existing active entitlements remain readable.
-        allow create, update: if isTeamOwnerOrAdmin(teamId) &&
+        allow create: if isTeamOwnerOrAdmin(teamId) &&
+          !isStripePaymentAuthorityRolloutFrozen() &&
           request.resource.data.keys().hasOnly(['status', 'teamId', 'seasonId', 'tier', 'updatedAt']) &&
           request.resource.data.keys().hasAll(['status', 'teamId', 'seasonId', 'tier', 'updatedAt']) &&
           request.resource.data.teamId == teamId &&
@@ -3418,7 +3429,19 @@ service cloud.firestore {
           request.resource.data.tier == 'team-pass' &&
           request.resource.data.status in ['inactive', 'expired', 'cancelled'] &&
           request.resource.data.updatedAt is timestamp;
-        allow delete: if isTeamOwnerOrAdmin(teamId);
+        allow update: if isTeamOwnerOrAdmin(teamId) &&
+          !isStripePaymentAuthorityRolloutFrozen() &&
+          resource.data.status != 'active' &&
+          request.resource.data.keys().hasOnly(['status', 'teamId', 'seasonId', 'tier', 'updatedAt']) &&
+          request.resource.data.keys().hasAll(['status', 'teamId', 'seasonId', 'tier', 'updatedAt']) &&
+          request.resource.data.teamId == teamId &&
+          request.resource.data.seasonId is string &&
+          request.resource.data.tier == 'team-pass' &&
+          request.resource.data.status in ['inactive', 'expired', 'cancelled'] &&
+          request.resource.data.updatedAt is timestamp;
+        allow delete: if isTeamOwnerOrAdmin(teamId) &&
+          !isStripePaymentAuthorityRolloutFrozen() &&
+          resource.data.status != 'active';
       }
 
       // Checkout attempts contain purchaser and Stripe authority data. This
@@ -4004,16 +4027,19 @@ service cloud.firestore {
       // Team fee batches store only safe payment metadata; Stripe secrets and raw payment methods stay server-side.
       match /feeBatches/{batchId} {
         allow read: if isTeamOwnerOrAdmin(teamId);
-        allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
+        allow create, update, delete: if isTeamOwnerOrAdmin(teamId) &&
+                                       !isStripePaymentAuthorityRolloutFrozen();
 
         match /feeRecipients/{recipientId} {
           allow read: if isTeamOwnerOrAdmin(teamId) ||
                          isTeamFeeRecipientForCurrentParent(resource.data, teamId);
           allow create: if isTeamOwnerOrAdmin(teamId) &&
+                           !isStripePaymentAuthorityRolloutFrozen() &&
                            request.resource.data.teamId == teamId &&
                            request.resource.data.batchId == batchId &&
                            hasNoPrivateTeamFeeBillingFields(request.resource.data);
           allow update: if isTeamOwnerOrAdmin(teamId) &&
+                           !isStripePaymentAuthorityRolloutFrozen() &&
                            !hasActiveTeamFeeStripeAuthority(resource.data) &&
                            (!hasSettledTeamFeeStripeAuthority(resource.data) ||
                             hasSettledTeamFeeStripeAuthority(request.resource.data)) &&
@@ -4023,6 +4049,7 @@ service cloud.firestore {
                            request.resource.data.batchId == batchId &&
                            hasNoIntroducedPrivateTeamFeeBillingFields();
           allow delete: if isTeamOwnerOrAdmin(teamId) &&
+                           !isStripePaymentAuthorityRolloutFrozen() &&
                            !hasActiveTeamFeeStripeAuthority(resource.data) &&
                            !hasSettledTeamFeeStripeAuthority(resource.data) &&
                            resource.data.teamId == teamId &&
@@ -4032,8 +4059,10 @@ service cloud.firestore {
             allow read: if isTeamOwnerOrAdmin(teamId) &&
                            isSafeOfflineTeamFeeBilling(resource.data, teamId, batchId, recipientId);
             allow create: if isTeamOwnerOrAdmin(teamId) &&
+                             !isStripePaymentAuthorityRolloutFrozen() &&
                              isSafeOfflineTeamFeeBilling(request.resource.data, teamId, batchId, recipientId);
             allow update: if isTeamOwnerOrAdmin(teamId) &&
+                             !isStripePaymentAuthorityRolloutFrozen() &&
                              (
                                (isSafeOfflineTeamFeeBilling(resource.data, teamId, batchId, recipientId) &&
                                 isSafeOfflineTeamFeeBilling(request.resource.data, teamId, batchId, recipientId)) ||
@@ -4041,6 +4070,7 @@ service cloud.firestore {
                                 isSafeOfflineTeamFeeBillingUpdate(request.resource.data, teamId, batchId, recipientId))
                              );
             allow delete: if isTeamOwnerOrAdmin(teamId) &&
+                             !isStripePaymentAuthorityRolloutFrozen() &&
                              isSafeOfflineTeamFeeBilling(resource.data, teamId, batchId, recipientId);
           }
 
@@ -4240,6 +4270,13 @@ service cloud.firestore {
                        request.resource.data.expiresAt > request.time;
       allow delete: if isSignedIn() &&
                        (resource.data.ownerUserId == request.auth.uid || isGlobalAdmin());
+    }
+
+    // Rollout freeze state is controlled only through authenticated operator
+    // tooling/Admin SDK. No client, including a platform administrator, may
+    // read, create, change, or clear this safety boundary.
+    match /paymentAuthorityRollout/{controlId} {
+      allow read, write: if false;
     }
 
     // Deny all other paths

@@ -328,6 +328,7 @@ function installModuleStubs(firestore) {
         checkoutResponses: new Map(),
         checkoutResponsesByIdempotencyKey: new Map(),
         checkoutCreateHook: null,
+        checkoutRetrieveHook: null,
         checkoutExpireHook: null,
         expiredSessionIds: [],
         refundCalls: [],
@@ -335,6 +336,7 @@ function installModuleStubs(firestore) {
         refundResponsesByIdempotencyKey: new Map(),
         paymentIntents: new Map(),
         charges: new Map(),
+        chargeRetrieveHook: null,
         teamPassPrice: { id: 'price_team_pass', active: true, type: 'one_time', unit_amount: 4900, currency: 'usd' },
         webhookEvent: null,
         nextCheckoutResponse: null
@@ -383,15 +385,26 @@ function installModuleStubs(firestore) {
                 }, retrieve: async (sessionId) => {
                     const session = stripeState.checkoutResponses.get(sessionId);
                     if (!session) throw new Error('Checkout session not found.');
+                    if (typeof stripeState.checkoutRetrieveHook === 'function') {
+                        await stripeState.checkoutRetrieveHook({ sessionId, session: clone(session) });
+                    }
                     return clone(session);
-                }, list: async ({ payment_intent: paymentIntentId, limit = 10 } = {}) => ({
-                    data: [...stripeState.checkoutResponses.values()]
-                        .filter((session) => String(typeof session.payment_intent === 'string'
+                }, list: async ({ payment_intent: paymentIntentId, status, starting_after: startingAfter, limit = 10 } = {}) => {
+                    let sessions = [...stripeState.checkoutResponses.values()]
+                        .sort((left, right) => String(left.id).localeCompare(String(right.id)));
+                    if (paymentIntentId) {
+                        sessions = sessions.filter((session) => String(typeof session.payment_intent === 'string'
                             ? session.payment_intent
-                            : session.payment_intent?.id || '') === paymentIntentId)
-                        .slice(0, limit)
-                        .map(clone)
-                }), listLineItems: async () => ({ data: [{
+                            : session.payment_intent?.id || '') === paymentIntentId);
+                    }
+                    if (status) sessions = sessions.filter((session) => String(session.status || '') === status);
+                    if (startingAfter) {
+                        const cursorIndex = sessions.findIndex((session) => session.id === startingAfter);
+                        sessions = cursorIndex >= 0 ? sessions.slice(cursorIndex + 1) : [];
+                    }
+                    const page = sessions.slice(0, limit);
+                    return { data: page.map(clone), has_more: sessions.length > page.length };
+                }, listLineItems: async () => ({ data: [{
                     quantity: 1,
                     amount_total: stripeState.teamPassPrice.unit_amount,
                     currency: stripeState.teamPassPrice.currency,
@@ -436,6 +449,9 @@ function installModuleStubs(firestore) {
                     return clone(paymentIntent);
                 } },
                 charges: { retrieve: async (chargeId) => {
+                    if (typeof stripeState.chargeRetrieveHook === 'function') {
+                        await stripeState.chargeRetrieveHook({ chargeId });
+                    }
                     if (stripeState.charges.has(chargeId)) return clone(stripeState.charges.get(chargeId));
                     const eventObject = stripeState.webhookEvent?.data?.object || {};
                     if (eventObject.id === chargeId) return clone(eventObject);
@@ -624,6 +640,19 @@ test('Team Pass checkout persists server authority and webhook writes only a saf
     assert.equal(attempt.stripePaymentIntentId, 'pi_team_pass');
     assert.equal(attempt.stripeCustomerId, 'cus_team_pass');
     assert.equal(attempt.checkoutAmountCents, 4900);
+
+    const paidAttempt = clone(attempt);
+    await firestore.doc('teams/team-pass/entitlements/2026_team-pass').set({ status: 'cancelled' }, { merge: true });
+    await assert.rejects(mod.createStripeTeamPassCheckout({
+        teamId: 'team-pass', seasonId: '2026', tier: 'team-pass'
+    }, { auth: { uid: 'owner-1', token: { email: 'owner@example.com' } } }), /already has an active pass/i);
+    firestore._state.delete('teams/team-pass/entitlements/2026_team-pass');
+    await assert.rejects(mod.createStripeTeamPassCheckout({
+        teamId: 'team-pass', seasonId: '2026', tier: 'team-pass'
+    }, { auth: { uid: 'owner-1', token: { email: 'owner@example.com' } } }), /already has an active pass/i);
+    assert.deepEqual(firestore.snapshot('teams/team-pass/teamPassCheckoutAttempts/2026_team-pass'), paidAttempt);
+    assert.equal(stripeState.checkoutSessions.length, 1);
+    assert.equal(firestore.snapshot('teams/team-pass/entitlements/2026_team-pass').status, 'active');
 
     stripeState.webhookEvent = {
         id: 'evt_team_pass_refunded',
@@ -1138,13 +1167,14 @@ test('payment authority rollout gate audits blockers and requires an explicit em
         [feePath]: {
             id: 'fee-a', teamId: 'team-a', batchId: 'batch-a', paymentProvider: 'stripe',
             stripeGrossPaidAmountCents: 2500, stripeRefundedAmountCents: 0,
-            stripeDisputeLostAmountCents: 0, stripeRefundableAmountCents: 2500
+            stripeDisputeLostAmountCents: 0, stripeRefundableAmountCents: 2500,
+            stripeFinancialStatus: 'paid'
         },
         [`${feePath}/stripeCharges/ch_fee`]: {
             type: 'stripe_charge', provider: 'stripe', product: 'team_fee',
             teamId: 'team-a', batchId: 'batch-a', recipientId: 'fee-a',
             stripeCheckoutSessionId: 'cs_fee', stripePaymentIntentId: 'pi_fee', stripeChargeId: 'ch_fee',
-            amountPaidCents: 2500, refundedAmountCents: 0, disputeLostAmountCents: 0,
+            amountPaidCents: 2500, refundedAmountCents: 0, disputeLostAmountCents: 0, disputeStatus: 'none',
             refundableAmountCents: 2500, currency: 'usd', livemode: false
         }
     });
@@ -1189,10 +1219,10 @@ test('payment authority rollout gate audits blockers and requires an explicit em
         type: 'stripe_charge', provider: 'stripe', product: 'team_fee',
         teamId: 'team-a', batchId: 'batch-a', recipientId: 'fee-a',
         stripeCheckoutSessionId: 'cs_fee_2', stripePaymentIntentId: 'pi_fee_2', stripeChargeId: 'ch_fee_2',
-        amountPaidCents: 2500, refundedAmountCents: 0, disputeLostAmountCents: 0,
-        refundableAmountCents: 0, currency: 'usd', livemode: false
+        amountPaidCents: 2500, refundedAmountCents: 0, disputeLostAmountCents: 0, disputeStatus: 'none',
+        refundableAmountCents: 2500, currency: 'usd', livemode: false
     });
-    await firestore.doc(feePath).set({ stripeRefundableAmountCents: 2500 }, { merge: true });
+    await firestore.doc(feePath).set({ stripeRefundableAmountCents: 5000 }, { merge: true });
     const completeHistory = await mod.auditStripePaymentAuthorityRollout({ assertEmpty: false }, adminContext);
     assert.equal(completeHistory.ready, true);
     assert.equal(completeHistory.blockerCount, 0);
@@ -1209,30 +1239,55 @@ test('payment authority rollout gate requires structurally complete Team Pass at
             product: 'team_pass', teamId: 'team-pass', seasonId: '2026', tier: 'team-pass',
             checkoutStatus: 'paid', stripeCheckoutSessionId: 'cs_team_pass',
             stripePaymentIntentId: 'pi_team_pass', checkoutAmountCents: 4900,
-            checkoutCurrency: 'usd', livemode: false, legacyPaymentAuthorityVersion: 1
+            checkoutCurrency: 'usd', livemode: false, legacyPaymentAuthorityVersion: 1,
+            purchaserUid: 'owner-1', checkoutAttemptToken: 'legacy_1234567890abcdef', priceId: 'price_team_pass'
         }
     });
     const adminContext = { auth: { uid: 'platform-admin', token: { email: 'admin@example.com' } } };
 
     const invalid = await mod.auditStripePaymentAuthorityRollout({ assertEmpty: false }, adminContext);
     assert.equal(invalid.ready, false);
-    assert.deepEqual(invalid.blockers, [{
-        product: 'team_pass', path: entitlementPath, reason: 'active_entitlement_invalid_checkout_attempt'
-    }]);
+    assert.deepEqual(invalid.blockers, [
+        { product: 'team_pass', path: entitlementPath, reason: 'active_entitlement_invalid_checkout_attempt' },
+        { product: 'team_pass', path: attemptPath, reason: 'active_entitlement_invalid_checkout_attempt' }
+    ]);
 
     await firestore.doc(attemptPath).set({ stripeChargeId: 'ch_team_pass' }, { merge: true });
     const valid = await mod.auditStripePaymentAuthorityRollout({ assertEmpty: false }, adminContext);
-    assert.equal(valid.ready, true);
+    assert.equal(valid.ready, true, JSON.stringify(valid.blockers));
     assert.equal(valid.blockerCount, 0);
     const validAttempt = clone(firestore.snapshot(attemptPath));
+    await firestore.doc(entitlementPath).set({ status: 'inactive' }, { merge: true });
+
+    for (const checkoutStatus of ['', 'unexpected']) {
+        await firestore.doc(attemptPath).set({ ...validAttempt, checkoutStatus });
+        const invalidStatus = await mod.auditStripePaymentAuthorityRollout({ assertEmpty: false }, adminContext);
+        assert.equal(invalidStatus.ready, false);
+        assert.deepEqual(invalidStatus.blockers, [
+            { product: 'team_pass', path: attemptPath, reason: 'team_pass_checkout_attempt_status_invalid' }
+        ]);
+    }
+
+    for (const checkoutStatus of ['stale', 'expired', 'payment_failed', 'refunded', 'dispute_lost']) {
+        await firestore.doc(attemptPath).set({ ...validAttempt, checkoutStatus });
+        const terminalStatus = await mod.auditStripePaymentAuthorityRollout({ assertEmpty: false }, adminContext);
+        assert.equal(terminalStatus.ready, true, `${checkoutStatus}: ${JSON.stringify(terminalStatus.blockers)}`);
+    }
+
+    await firestore.doc(entitlementPath).set({ status: 'active' }, { merge: true });
 
     for (const checkoutStatus of ['disputed', 'refunded', 'dispute_lost']) {
         await firestore.doc(attemptPath).set({ checkoutStatus }, { merge: true });
         const financiallyIneffective = await mod.auditStripePaymentAuthorityRollout({ assertEmpty: false }, adminContext);
         assert.equal(financiallyIneffective.ready, false);
-        assert.deepEqual(financiallyIneffective.blockers, [{
+        assert.deepEqual(financiallyIneffective.blockers[0], {
             product: 'team_pass', path: entitlementPath, reason: 'active_entitlement_invalid_checkout_attempt'
-        }]);
+        });
+        if (checkoutStatus === 'disputed') {
+            assert.deepEqual(financiallyIneffective.blockers[1], {
+                product: 'team_pass', path: attemptPath, reason: 'team_pass_checkout_attempt_disputed'
+            });
+        }
     }
 
     await firestore.doc(attemptPath).set({
@@ -1242,9 +1297,10 @@ test('payment authority rollout gate requires structurally complete Team Pass at
     });
     const stalePaidStatus = await mod.auditStripePaymentAuthorityRollout({ assertEmpty: false }, adminContext);
     assert.equal(stalePaidStatus.ready, false);
-    assert.deepEqual(stalePaidStatus.blockers, [{
-        product: 'team_pass', path: entitlementPath, reason: 'active_entitlement_invalid_checkout_attempt'
-    }]);
+    assert.deepEqual(stalePaidStatus.blockers, [
+        { product: 'team_pass', path: entitlementPath, reason: 'active_entitlement_invalid_checkout_attempt' },
+        { product: 'team_pass', path: attemptPath, reason: 'active_entitlement_invalid_checkout_attempt' }
+    ]);
 
     await firestore.doc('teams/team-pass/teamPassCheckoutAttempts/history_repurchase').set({
         ...validAttempt,
@@ -1254,8 +1310,10 @@ test('payment authority rollout gate requires structurally complete Team Pass at
         stripeChargeId: 'ch_team_pass_repurchase'
     });
     const effectiveRepurchase = await mod.auditStripePaymentAuthorityRollout({ assertEmpty: false }, adminContext);
-    assert.equal(effectiveRepurchase.ready, true);
-    assert.equal(effectiveRepurchase.blockerCount, 0);
+    assert.equal(effectiveRepurchase.ready, false);
+    assert.deepEqual(effectiveRepurchase.blockers, [{
+        product: 'team_pass', path: attemptPath, reason: 'active_entitlement_invalid_checkout_attempt'
+    }]);
 });
 
 test('payment authority rollout gate paginates and validates every charge ledger', async () => {
@@ -1265,7 +1323,8 @@ test('payment authority rollout gate paginates and validates every charge ledger
         [feePath]: {
             id: 'fee-many', teamId: 'team-a', batchId: 'batch-a', paymentProvider: 'stripe',
             stripeGrossPaidAmountCents: 251, stripeRefundedAmountCents: 0,
-            stripeDisputeLostAmountCents: 0, stripeRefundableAmountCents: 251
+            stripeDisputeLostAmountCents: 0, stripeRefundableAmountCents: 251,
+            stripeFinancialStatus: 'paid'
         }
     };
     for (let index = 0; index < 251; index += 1) {
@@ -1275,7 +1334,7 @@ test('payment authority rollout gate paginates and validates every charge ledger
             teamId: 'team-a', batchId: 'batch-a', recipientId: 'fee-many',
             stripeCheckoutSessionId: `cs_${suffix}`, stripePaymentIntentId: `pi_${suffix}`,
             stripeChargeId: `ch_${suffix}`, amountPaidCents: 1,
-            refundedAmountCents: 0, disputeLostAmountCents: 0, refundableAmountCents: 1,
+            refundedAmountCents: 0, disputeLostAmountCents: 0, refundableAmountCents: 1, disputeStatus: 'none',
             currency: 'usd', livemode: false
         };
     }
@@ -1287,6 +1346,88 @@ test('payment authority rollout gate paginates and validates every charge ledger
     assert.equal(audit.complete, true);
     assert.equal(audit.ready, true);
     assert.equal(audit.blockerCount, 0);
+});
+
+test('payment authority rollout gate detects pointers, orphan ledgers, and paid attempts without entitlements', async () => {
+    const registrationPath = 'teams/team-a/registrationForms/form-a/registrations/reg-pointer';
+    const orphanLedgerPath = 'teams/team-a/feeBatches/batch-a/feeRecipients/missing-parent/stripeCharges/ch_orphan';
+    const attemptPath = 'teams/team-pass/teamPassCheckoutAttempts/2027_team-pass';
+    const { firestore, mod } = loadFunctionsModule({
+        'users/platform-admin': { email: 'admin@example.com', isAdmin: true },
+        [registrationPath]: {
+            teamId: 'team-a', formId: 'form-a', checkoutCreationReservationId: 'reservation_pointer_only'
+        },
+        [orphanLedgerPath]: {
+            type: 'stripe_charge', provider: 'stripe', product: 'team_fee',
+            teamId: 'team-a', batchId: 'batch-a', recipientId: 'missing-parent',
+            stripeCheckoutSessionId: 'cs_orphan', stripePaymentIntentId: 'pi_orphan', stripeChargeId: 'ch_orphan',
+            amountPaidCents: 2500, refundedAmountCents: 0, disputeLostAmountCents: 0,
+            refundableAmountCents: 2500, disputeStatus: 'none', currency: 'usd', livemode: false
+        },
+        [attemptPath]: {
+            product: 'team_pass', teamId: 'team-pass', seasonId: '2027', tier: 'team-pass',
+            purchaserUid: 'owner-1', priceId: 'price_team_pass', checkoutAttemptToken: 'attempt_1234567890abcdef',
+            stripePaymentAuthorityVersion: 2, checkoutStatus: 'paid',
+            stripeCheckoutSessionId: 'cs_paid_no_entitlement', stripePaymentIntentId: 'pi_paid_no_entitlement',
+            checkoutAmountCents: 4900, checkoutCurrency: 'usd', livemode: false
+        }
+    });
+    const audit = await mod.auditStripePaymentAuthorityRollout({ assertEmpty: false }, {
+        auth: { uid: 'platform-admin', token: { email: 'admin@example.com' } }
+    });
+
+    assert.equal(audit.ready, false);
+    assert.deepEqual(audit.blockers, [
+        { product: 'registration', path: registrationPath, reason: 'registration_checkout_creation_in_flight' },
+        { product: 'team_fee', path: orphanLedgerPath, reason: 'orphan_stripe_charge_ledger' },
+        { product: 'team_pass', path: attemptPath, reason: 'paid_team_pass_attempt_missing_active_entitlement' }
+    ]);
+    assert.equal(audit.scanned.stripeChargeLedgers, 1);
+    assert.equal(audit.scanned.teamPassCheckoutAttempts, 1);
+});
+
+test('rollout cleanup dry-runs and expires only exactly bound AllPlays open Sessions', async () => {
+    const { stripeState, mod } = loadFunctionsModule({
+        'users/platform-admin': { email: 'admin@example.com', isAdmin: true }
+    });
+    stripeState.checkoutResponses.set('cs_rollout_team_pass', {
+        id: 'cs_rollout_team_pass', mode: 'payment', status: 'open', payment_status: 'unpaid', livemode: false,
+        client_reference_id: 'team-pass:2026:owner-1',
+        metadata: { teamId: 'team-pass', seasonId: '2026', tier: 'team-pass', purchaserUid: 'owner-1' }
+    });
+    for (let index = 0; index < 99; index += 1) {
+        const id = `cs_unrelated_${String(index).padStart(3, '0')}`;
+        stripeState.checkoutResponses.set(id, {
+            id, mode: 'payment', status: 'open', payment_status: 'unpaid', livemode: false,
+            client_reference_id: 'unrelated', metadata: { product: 'other_product' }
+        });
+    }
+    const adminContext = { auth: { uid: 'platform-admin', token: { email: 'admin@example.com' } } };
+
+    const auditBefore = await mod.auditStripePaymentAuthorityRollout({ assertEmpty: false }, adminContext);
+    assert.deepEqual(auditBefore.blockers, [{
+        product: 'team_pass', path: 'stripeCheckoutSessions/cs_rollout_team_pass',
+        reason: 'open_stripe_checkout_session_must_be_expired'
+    }]);
+    const dryRun = await mod.expireOpenStripePaymentAuthoritySessionsForRollout({ dryRun: true }, adminContext);
+    assert.deepEqual(dryRun, {
+        dryRun: true, complete: true, scanned: 100, matched: 1, expired: 0,
+        failureCount: 0, bindingFailureCount: 0, liveModeMatched: 0, testModeMatched: 1
+    });
+    assert.equal(stripeState.checkoutResponses.get('cs_rollout_team_pass').status, 'open');
+    await assert.rejects(
+        mod.expireOpenStripePaymentAuthoritySessionsForRollout({ dryRun: false }, adminContext),
+        /confirmation is required/i
+    );
+    const expired = await mod.expireOpenStripePaymentAuthoritySessionsForRollout({
+        dryRun: false,
+        confirmation: 'expire_open_legacy_stripe_checkout_sessions_v1'
+    }, adminContext);
+    assert.equal(expired.expired, 1);
+    assert.deepEqual(stripeState.expiredSessionIds, ['cs_rollout_team_pass']);
+    assert.equal(stripeState.checkoutResponses.get('cs_unrelated_000').status, 'open');
+    const auditAfter = await mod.auditStripePaymentAuthorityRollout({ assertEmpty: false }, adminContext);
+    assert.equal(auditAfter.ready, true);
 });
 
 test('Team Pass reversal state remains authoritative when refund arrives before paid', async () => {
@@ -1446,7 +1587,7 @@ test('Team Pass can reconcile a won dispute after persisting dispute_lost', asyn
     assert.equal(firestore.snapshot(entitlementPath).status, 'active');
 });
 
-test('Team Pass archived reversal authority never mutates a live repurchase entitlement', async () => {
+test('Team Pass entitlement aggregates historical paid authority with a replacement purchase', async () => {
     const attemptPath = 'teams/team-pass/teamPassCheckoutAttempts/2026_team-pass';
     const entitlementPath = 'teams/team-pass/entitlements/2026_team-pass';
     const request = { teamId: 'team-pass', seasonId: '2026', tier: 'team-pass' };
@@ -1492,19 +1633,9 @@ test('Team Pass archived reversal authority never mutates a live repurchase enti
     assert.equal(historicalEntries.length, 1);
     assert.equal(historicalEntries[0][1].checkoutStatus, 'dispute_lost');
 
-    stripeState.webhookEvent = {
-        id: 'evt_team_pass_original_dispute_won_after_repurchase', type: 'charge.dispute.closed', created: 300,
-        data: { object: { object: 'dispute', id: 'dp_team_pass_original', charge: originalChargeId, status: 'won' } }
-    };
-    assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
-    assert.equal(firestore.snapshot(entitlementPath).status, 'cancelled');
-    assert.equal(firestore.snapshot(historicalEntries[0][0]).checkoutStatus, 'paid');
-    assert.equal(firestore.snapshot(attemptPath).stripeCheckoutSessionId, replacementCheckout.sessionId);
-    assert.equal(firestore.snapshot(attemptPath).checkoutStatus, 'open');
-
     const replacementSession = stripeState.checkoutResponses.get(replacementCheckout.sessionId);
     stripeState.webhookEvent = {
-        id: 'evt_team_pass_replacement_paid', type: 'checkout.session.completed', created: 400,
+        id: 'evt_team_pass_replacement_paid', type: 'checkout.session.completed', created: 300,
         data: { object: {
             ...clone(replacementSession), status: 'complete', payment_status: 'paid',
             payment_intent: 'pi_team_pass_replacement'
@@ -1515,14 +1646,79 @@ test('Team Pass archived reversal authority never mutates a live repurchase enti
     assert.equal(firestore.snapshot(attemptPath).checkoutStatus, 'paid');
 
     stripeState.webhookEvent = {
-        id: 'evt_team_pass_original_refunded_after_repurchase', type: 'charge.refunded', created: 500,
-        data: { object: { ...clone(originalCharge), amount_refunded: 4900 } }
+        id: 'evt_team_pass_original_dispute_won_after_repurchase', type: 'charge.dispute.closed', created: 400,
+        data: { object: { object: 'dispute', id: 'dp_team_pass_original', charge: originalChargeId, status: 'won' } }
     };
     assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
-    assert.equal(firestore.snapshot(historicalEntries[0][0]).checkoutStatus, 'refunded');
+    assert.equal(firestore.snapshot(historicalEntries[0][0]).checkoutStatus, 'paid');
     assert.equal(firestore.snapshot(entitlementPath).status, 'active');
     assert.equal(firestore.snapshot(attemptPath).stripeCheckoutSessionId, replacementCheckout.sessionId);
     assert.equal(firestore.snapshot(attemptPath).checkoutStatus, 'paid');
+
+    const replacementCharge = {
+        object: 'charge', id: 'ch_pi_team_pass_replacement', metadata: clone(replacementSession.metadata),
+        payment_intent: 'pi_team_pass_replacement', amount: 4900, amount_refunded: 0,
+        currency: 'usd', livemode: false
+    };
+    stripeState.charges.set(replacementCharge.id, clone(replacementCharge));
+    stripeState.webhookEvent = {
+        id: 'evt_team_pass_replacement_refunded_after_original_won', type: 'charge.refunded', created: 500,
+        data: { object: { ...clone(replacementCharge), amount_refunded: 4900 } }
+    };
+    assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
+    assert.equal(firestore.snapshot(attemptPath).checkoutStatus, 'refunded');
+    assert.equal(firestore.snapshot(historicalEntries[0][0]).checkoutStatus, 'paid');
+    assert.equal(firestore.snapshot(entitlementPath).status, 'active');
+});
+
+test('Team Pass paid-authority restoration expires an open replacement before reactivation', async () => {
+    const attemptPath = 'teams/team-pass/teamPassCheckoutAttempts/2026_team-pass';
+    const entitlementPath = 'teams/team-pass/entitlements/2026_team-pass';
+    const request = { teamId: 'team-pass', seasonId: '2026', tier: 'team-pass' };
+    const authContext = { auth: { uid: 'owner-1', token: { email: 'owner@example.com' } } };
+    const { firestore, stripeState, mod } = loadFunctionsModule({
+        'teams/team-pass': { ownerId: 'owner-1', adminEmails: [] },
+        'users/owner-1': { email: 'owner@example.com' }
+    });
+    const originalCheckout = await mod.createStripeTeamPassCheckout(request, authContext);
+    const originalSession = stripeState.checkoutResponses.get(originalCheckout.sessionId);
+    stripeState.webhookEvent = {
+        id: 'evt_restore_original_paid', type: 'checkout.session.completed', created: 100,
+        data: { object: {
+            ...clone(originalSession), status: 'complete', payment_status: 'paid',
+            payment_intent: 'pi_restore_original'
+        } }
+    };
+    assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
+    const originalChargeId = 'ch_pi_restore_original';
+    const originalCharge = {
+        object: 'charge', id: originalChargeId, metadata: clone(originalSession.metadata),
+        payment_intent: 'pi_restore_original', amount: 4900, amount_refunded: 0,
+        currency: 'usd', livemode: false
+    };
+    stripeState.charges.set(originalChargeId, originalCharge);
+    stripeState.webhookEvent = {
+        id: 'evt_restore_original_lost', type: 'charge.dispute.closed', created: 200,
+        data: { object: { object: 'dispute', id: 'dp_restore_original', charge: originalChargeId, status: 'lost' } }
+    };
+    assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
+
+    const replacementCheckout = await mod.createStripeTeamPassCheckout(request, authContext);
+    const historyPath = [...firestore._state.keys()].find((path) => (
+        path.startsWith('teams/team-pass/teamPassCheckoutAttempts/history_')
+    ));
+    stripeState.webhookEvent = {
+        id: 'evt_restore_original_won', type: 'charge.dispute.closed', created: 300,
+        data: { object: { object: 'dispute', id: 'dp_restore_original', charge: originalChargeId, status: 'won' } }
+    };
+    assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
+
+    assert.deepEqual(stripeState.expiredSessionIds, [replacementCheckout.sessionId]);
+    assert.equal(firestore.snapshot(attemptPath).checkoutStatus, 'stale');
+    assert.equal(firestore.snapshot(historyPath).checkoutStatus, 'paid');
+    assert.equal(firestore.snapshot(entitlementPath).status, 'active');
+    await assert.rejects(mod.createStripeTeamPassCheckout(request, authContext), /already has an active pass/i);
+    assert.equal(stripeState.checkoutSessions.length, 2);
 });
 
 test('team fee checkout reserves one current attempt and reuses its Stripe session', async () => {
@@ -1730,6 +1926,60 @@ test('admin invalidation recovers and expires a sessionless failed team fee chec
     assert.equal(recipient.checkoutAttemptToken, null);
     const reservationPath = `${recipientPath}/checkoutReservations/${stripeState.checkoutSessions[0].metadata.checkoutAttemptToken}`;
     assert.equal(firestore.snapshot(reservationPath).status, 'superseded');
+});
+
+test('team fee expiration rechecks admin access immediately before Stripe invalidation', async () => {
+    const recipientPath = 'teams/team-fee/feeBatches/batch-1/feeRecipients/recipient-1';
+    const { firestore, stripeState, mod } = loadFunctionsModule({
+        'teams/team-fee': { ownerId: 'owner-1', adminEmails: [] },
+        'users/owner-1': { email: 'owner@example.com' },
+        [recipientPath]: {
+            teamId: 'team-fee', batchId: 'batch-1', collectionMode: 'online_stripe',
+            amountCents: 7500, paidAmountCents: 0, balanceDueCents: 7500,
+            status: 'unpaid', feeTitle: 'Tournament fee', playerName: 'Sam'
+        }
+    });
+    const request = { teamId: 'team-fee', batchId: 'batch-1', recipientId: 'recipient-1' };
+    const authContext = { auth: { uid: 'owner-1', token: { email: 'owner@example.com' } } };
+    await mod.createStripeTeamFeeCheckout(request, authContext);
+    stripeState.checkoutRetrieveHook = async () => {
+        stripeState.checkoutRetrieveHook = null;
+        await firestore.doc('teams/team-fee').set({ ownerId: 'departed-owner' }, { merge: true });
+    };
+
+    await assert.rejects(mod.expireStripeTeamFeeCheckout(request, authContext), /access changed before the fee checkout could be expired/i);
+    assert.deepEqual(stripeState.expiredSessionIds, []);
+    assert.equal(firestore.snapshot(recipientPath).checkoutStatus, 'open');
+});
+
+test('team fee failed-checkout recovery rechecks admin access before expiring replayed authority', async () => {
+    const recipientPath = 'teams/team-fee/feeBatches/batch-1/feeRecipients/recipient-1';
+    const { firestore, stripeState, mod } = loadFunctionsModule({
+        'teams/team-fee': { ownerId: 'owner-1', adminEmails: [] },
+        'users/owner-1': { email: 'owner@example.com' },
+        [recipientPath]: {
+            teamId: 'team-fee', batchId: 'batch-1', collectionMode: 'online_stripe',
+            amountCents: 7500, paidAmountCents: 0, balanceDueCents: 7500,
+            status: 'unpaid', feeTitle: 'Tournament fee', playerName: 'Sam'
+        }
+    });
+    const request = { teamId: 'team-fee', batchId: 'batch-1', recipientId: 'recipient-1' };
+    const authContext = { auth: { uid: 'owner-1', token: { email: 'owner@example.com' } } };
+    let firstCreate = true;
+    stripeState.checkoutCreateHook = async () => {
+        if (!firstCreate) return;
+        firstCreate = false;
+        throw new Error('Injected fee creation failure.');
+    };
+    await assert.rejects(mod.createStripeTeamFeeCheckout(request, authContext), /Injected fee creation failure/);
+    stripeState.checkoutCreateHook = async () => {
+        stripeState.checkoutCreateHook = null;
+        await firestore.doc('teams/team-fee').set({ ownerId: 'departed-owner' }, { merge: true });
+    };
+
+    await assert.rejects(mod.expireStripeTeamFeeCheckout(request, authContext), /access changed before the recovered fee checkout could be expired/i);
+    assert.deepEqual(stripeState.expiredSessionIds, []);
+    assert.equal(firestore.snapshot(recipientPath).checkoutStatus, 'creation_failed');
 });
 
 test('idempotent team fee replay classifies an expired Session before allowing a fresh attempt', async () => {
@@ -2304,6 +2554,90 @@ test('team fee refund rejects cross-recipient Stripe authority before creating a
     assert.equal(stripeState.refundCalls.length, 1);
     assert.equal(stripeState.refundCalls[0].payload.charge, 'ch_team_fee');
     assert.match(stripeState.refundCalls[0].options.idempotencyKey, /^team_fee_refund_/);
+});
+
+test('team fee refund transaction rechecks admin access before any Stripe refund side effect', async () => {
+    const recipientPath = 'teams/team-fee/feeBatches/batch-1/feeRecipients/recipient-1';
+    const { firestore, stripeState, mod } = loadFunctionsModule({
+        'teams/team-fee': { ownerId: 'owner-1', adminEmails: [] },
+        'users/owner-1': { email: 'owner@example.com' },
+        [recipientPath]: {
+            teamId: 'team-fee', batchId: 'batch-1', paymentProvider: 'stripe',
+            amountCents: 7500, paidAmountCents: 7500, balanceDueCents: 0,
+            status: 'paid', livemode: false, stripeGrossPaidAmountCents: 7500,
+            stripeRefundedAmountCents: 0, stripeDisputeLostAmountCents: 0,
+            stripeRefundableAmountCents: 7500, stripeFinancialStatus: 'paid'
+        },
+        [`${recipientPath}/stripeCharges/ch_team_fee`]: {
+            type: 'stripe_charge', provider: 'stripe', product: 'team_fee',
+            teamId: 'team-fee', batchId: 'batch-1', recipientId: 'recipient-1',
+            stripeCheckoutSessionId: 'cs_team_fee', stripePaymentIntentId: 'pi_team_fee', stripeChargeId: 'ch_team_fee',
+            amountPaidCents: 7500, refundedAmountCents: 0, disputeLostAmountCents: 0,
+            pendingRefundAmountCents: 0, refundableAmountCents: 7500, disputeStatus: 'none',
+            currency: 'usd', livemode: false
+        }
+    });
+    stripeState.charges.set('ch_team_fee', {
+        id: 'ch_team_fee', object: 'charge', payment_intent: 'pi_team_fee',
+        amount: 7500, amount_refunded: 0, currency: 'usd', livemode: false,
+        metadata: { product: 'team_fee', teamId: 'team-fee', batchId: 'batch-1', recipientId: 'recipient-1' }
+    });
+    stripeState.chargeRetrieveHook = async () => {
+        stripeState.chargeRetrieveHook = null;
+        await firestore.doc('teams/team-fee').set({ ownerId: 'departed-owner' }, { merge: true });
+    };
+
+    await assert.rejects(mod.refundStripeTeamFeePayment({
+        teamId: 'team-fee', batchId: 'batch-1', recipientId: 'recipient-1',
+        amountCents: 2500, refundRequestId: 'refund_revoked_admin'
+    }, { auth: { uid: 'owner-1', token: { email: 'owner@example.com' } } }), /access changed before the refund could be reserved/i);
+
+    assert.deepEqual(stripeState.refundCalls, []);
+    assert.equal(firestore.snapshot(`${recipientPath}/refundIntents/refund_revoked_admin`), undefined);
+    assert.equal(firestore.snapshot(`${recipientPath}/stripeCharges/ch_team_fee`).pendingRefundAmountCents, 0);
+});
+
+test('team fee refund rechecks admin access after reservation and immediately before Stripe', async () => {
+    const recipientPath = 'teams/team-fee/feeBatches/batch-1/feeRecipients/recipient-1';
+    const { firestore, stripeState, mod } = loadFunctionsModule({
+        'teams/team-fee': { ownerId: 'owner-1', adminEmails: [] },
+        'users/owner-1': { email: 'owner@example.com' },
+        [recipientPath]: {
+            teamId: 'team-fee', batchId: 'batch-1', paymentProvider: 'stripe',
+            amountCents: 7500, paidAmountCents: 7500, balanceDueCents: 0,
+            status: 'paid', livemode: false, stripeGrossPaidAmountCents: 7500,
+            stripeRefundedAmountCents: 0, stripeDisputeLostAmountCents: 0,
+            stripeRefundableAmountCents: 7500, stripeFinancialStatus: 'paid'
+        },
+        [`${recipientPath}/stripeCharges/ch_team_fee`]: {
+            type: 'stripe_charge', provider: 'stripe', product: 'team_fee',
+            teamId: 'team-fee', batchId: 'batch-1', recipientId: 'recipient-1',
+            stripeCheckoutSessionId: 'cs_team_fee', stripePaymentIntentId: 'pi_team_fee', stripeChargeId: 'ch_team_fee',
+            amountPaidCents: 7500, refundedAmountCents: 0, disputeLostAmountCents: 0,
+            pendingRefundAmountCents: 0, refundableAmountCents: 7500, disputeStatus: 'none',
+            currency: 'usd', livemode: false
+        }
+    });
+    stripeState.charges.set('ch_team_fee', {
+        id: 'ch_team_fee', object: 'charge', payment_intent: 'pi_team_fee',
+        amount: 7500, amount_refunded: 0, currency: 'usd', livemode: false,
+        metadata: { product: 'team_fee', teamId: 'team-fee', batchId: 'batch-1', recipientId: 'recipient-1' }
+    });
+    stripeState.chargeRetrieveHook = async () => {
+        stripeState.chargeRetrieveHook = null;
+        firestore.afterNextGet('teams/team-fee', async () => {
+            await firestore.doc('teams/team-fee').set({ ownerId: 'departed-owner' }, { merge: true });
+        });
+    };
+
+    await assert.rejects(mod.refundStripeTeamFeePayment({
+        teamId: 'team-fee', batchId: 'batch-1', recipientId: 'recipient-1',
+        amountCents: 2500, refundRequestId: 'refund_revoked_after_reservation'
+    }, { auth: { uid: 'owner-1', token: { email: 'owner@example.com' } } }), /access changed before Stripe could issue the refund/i);
+
+    assert.deepEqual(stripeState.refundCalls, []);
+    assert.equal(firestore.snapshot(`${recipientPath}/refundIntents/refund_revoked_after_reservation`).status, 'processing');
+    assert.equal(firestore.snapshot(`${recipientPath}/stripeCharges/ch_team_fee`).pendingRefundAmountCents, 2500);
 });
 
 test('team fee offline invalidation expires Checkout before a late paid event can change the balance', async () => {

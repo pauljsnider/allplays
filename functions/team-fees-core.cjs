@@ -32,7 +32,7 @@ function normalizeTeamFeeRefundInput(data = {}) {
     if (!Number.isFinite(amountCents) || amountCents <= 0) {
         throw new Error('Refund amount must be greater than $0.');
     }
-    if (refundRequestId && refundRequestId.includes('/')) {
+    if (!/^[A-Za-z0-9_.-]{8,128}$/.test(refundRequestId)) {
         throw new Error('Refund request ID is invalid.');
     }
 
@@ -40,7 +40,7 @@ function normalizeTeamFeeRefundInput(data = {}) {
         ...input,
         amountCents,
         reason,
-        ...(refundRequestId ? { refundRequestId } : {})
+        refundRequestId
     };
 }
 
@@ -484,12 +484,14 @@ function getTeamFeeAggregateFinancialState(ledgers = []) {
         const refundedAmountCents = Number(ledger?.refundedAmountCents || 0);
         const disputeLostAmountCents = Number(ledger?.disputeLostAmountCents || 0);
         const refundableAmountCents = Number(ledger?.refundableAmountCents || 0);
+        const disputeStatus = normalizeString(ledger?.disputeStatus || 'none').toLowerCase();
         const amounts = [amountPaidCents, refundedAmountCents, disputeLostAmountCents, refundableAmountCents];
         if (ledger?.type !== 'stripe_charge'
             || ledger?.provider !== 'stripe'
             || ledger?.product !== 'team_fee'
             || !stripeChargeId
             || seenChargeIds.has(stripeChargeId)
+            || !['none', 'open', 'won', 'lost'].includes(disputeStatus)
             || !amounts.every((amount) => Number.isSafeInteger(amount) && amount >= 0)
             || amountPaidCents <= 0
             || refundedAmountCents + disputeLostAmountCents + refundableAmountCents !== amountPaidCents) return false;

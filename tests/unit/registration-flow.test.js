@@ -423,7 +423,8 @@ describe('public registration flow', () => {
 
         const rules = fs.readFileSync('firestore.rules', 'utf8');
         expect(rules).toContain('match /registrationForms/{formId}');
-        expect(rules).toContain('allow update: if isTeamOwnerOrAdmin(teamId);');
+        expect(rules).toContain('allow update: if isTeamOwnerOrAdmin(teamId) &&');
+        expect(rules).toContain('!isStripePaymentAuthorityRolloutFrozen();');
         expect(rules).toContain('allow create: if isTeamOwnerOrAdmin(teamId) &&');
         expect(rules).toContain("request.resource.data.status == 'pending' &&");
         expect(rules).toContain('hasNoRegistrationStripeAuthorityFields(request.resource.data);');

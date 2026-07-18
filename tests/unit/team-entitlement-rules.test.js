@@ -71,6 +71,10 @@ describe('team entitlement Firestore rules', () => {
                     entitlementPayload({ harmlessExtra: true })
                 );
                 await setDoc(
+                    doc(firestore, 'teams/team-a/entitlements/server-inactive'),
+                    entitlementPayload({ status: 'inactive' })
+                );
+                await setDoc(
                     doc(firestore, 'teams/team-a/teamPassCheckoutAttempts/2026_team-pass'),
                     { teamId: 'team-a', seasonId: '2026', tier: 'team-pass', stripePaymentIntentId: 'pi_private' }
                 );
@@ -84,8 +88,17 @@ describe('team entitlement Firestore rules', () => {
                 await setDoc(doc(firestore, 'teams/team-a/registrationForms/form-a/registrations/settled-complete'), {
                     teamId: 'team-a', formId: 'form-a', status: 'approved', checkoutStatus: 'complete'
                 });
+                await setDoc(doc(firestore, 'teams/team-a/registrationForms/form-a/registrations/settled-complete/stripeCharges/ch-complete'), {
+                    type: 'stripe_charge', product: 'registration', stripeChargeId: 'ch-complete'
+                });
                 await setDoc(doc(firestore, 'teams/team-a/registrationForms/form-a/registrations/settled-gross'), {
                     teamId: 'team-a', formId: 'form-a', status: 'approved', stripeGrossPaidAmountCents: 5000
+                });
+                await setDoc(doc(firestore, 'teams/team-a/feeBatches/batch-a'), {
+                    teamId: 'team-a', title: 'Tournament dues'
+                });
+                await setDoc(doc(firestore, 'teams/team-a/feeBatches/batch-a/feeRecipients/recipient-a'), {
+                    teamId: 'team-a', batchId: 'batch-a', status: 'unpaid', amountDueCents: 2500
                 });
             });
         });
@@ -180,14 +193,64 @@ describe('team entitlement Firestore rules', () => {
             await assertFails(updateDoc(stagedRef, { status: 'active' }));
             await assertFails(updateDoc(stagedRef, { arbitraryClientField: true }));
             await assertFails(updateDoc(existingActiveRef, { expiresAt: '2099-01-01T00:00:00.000Z' }));
+            await assertFails(deleteDoc(existingActiveRef));
         });
 
-        it('allows team admins to deactivate an active entitlement but not reactivate it', async () => {
+        it('keeps active entitlements server-owned while preserving non-active admin cleanup', async () => {
             const adminDb = testEnv.authenticatedContext('admin-a', { email: 'admin-a@example.com' }).firestore();
             const activeRef = doc(adminDb, 'teams/team-a/entitlements/server-active');
+            const inactiveRef = doc(adminDb, 'teams/team-a/entitlements/server-inactive');
 
-            await assertSucceeds(updateDoc(activeRef, { status: 'cancelled' }));
+            await assertFails(updateDoc(activeRef, { status: 'cancelled' }));
             await assertFails(updateDoc(activeRef, { status: 'active' }));
+            await assertSucceeds(updateDoc(inactiveRef, { status: 'cancelled' }));
+            await assertSucceeds(deleteDoc(inactiveRef));
+        });
+
+        it('freezes every client payment mutation while preserving reads and unrelated team work', async () => {
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                await setDoc(doc(context.firestore(), 'paymentAuthorityRollout/control'), {
+                    frozen: true,
+                    reason: 'payment authority cutover'
+                });
+            });
+            const ownerDb = testEnv.authenticatedContext('owner-a').firestore();
+            const controlRef = doc(ownerDb, 'paymentAuthorityRollout/control');
+            const formRef = doc(ownerDb, 'teams/team-a/registrationForms/form-a');
+            const registrationRef = doc(ownerDb, 'teams/team-a/registrationForms/form-a/registrations/reg-a');
+            const batchRef = doc(ownerDb, 'teams/team-a/feeBatches/batch-a');
+            const recipientRef = doc(ownerDb, 'teams/team-a/feeBatches/batch-a/feeRecipients/recipient-a');
+            const billingRef = doc(ownerDb, 'teams/team-a/feeBatches/batch-a/feeRecipients/recipient-a/adminBilling/latest');
+            const inactiveRef = doc(ownerDb, 'teams/team-a/entitlements/server-inactive');
+
+            await assertFails(getDoc(controlRef));
+            await assertFails(setDoc(controlRef, { frozen: false }));
+            await assertSucceeds(getDoc(formRef));
+            await assertSucceeds(getDoc(registrationRef));
+            await assertSucceeds(getDoc(recipientRef));
+            await assertSucceeds(getDoc(doc(ownerDb, 'teams/team-a/entitlements/server-active')));
+            await assertSucceeds(setDoc(
+                doc(ownerDb, 'teams/team-a/practiceTemplates/nonpayment-a'),
+                { name: 'Unrelated practice template' }
+            ));
+
+            await assertFails(updateDoc(formRef, { programName: 'Blocked during cutover' }));
+            await assertFails(setDoc(
+                doc(ownerDb, 'teams/team-a/registrationForms/form-a/registrations/frozen-create'),
+                { teamId: 'team-a', formId: 'form-a', status: 'pending' }
+            ));
+            await assertFails(updateDoc(registrationRef, { status: 'approved' }));
+            await assertFails(deleteDoc(registrationRef));
+            await assertFails(updateDoc(batchRef, { title: 'Blocked during cutover' }));
+            await assertFails(deleteDoc(batchRef));
+            await assertFails(updateDoc(recipientRef, { status: 'paid' }));
+            await assertFails(deleteDoc(recipientRef));
+            await assertFails(setDoc(billingRef, {
+                type: 'offline_payment', teamId: 'team-a', batchId: 'batch-a', recipientId: 'recipient-a',
+                amountPaidCents: 2500, recordedBy: 'owner-a'
+            }));
+            await assertFails(updateDoc(inactiveRef, { status: 'cancelled' }));
+            await assertFails(deleteDoc(inactiveRef));
         });
 
         it('keeps non-admin clients from staging entitlement records', async () => {
