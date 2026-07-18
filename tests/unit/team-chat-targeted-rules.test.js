@@ -109,6 +109,8 @@ describe('targeted team chat Firestore rules', () => {
         expect(dbSource).toContain("query(conversationsRef, where('directUserIds', 'array-contains', user.uid), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize))");
         expect(dbSource).toContain("query(conversationsRef, where('participantIds', 'array-contains', user.uid), where('type', 'in', ['team', 'group']), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize))");
         expect(dbSource).toContain("query(conversationsRef, where('participantIds', 'array-contains', `user:${user.uid}`), where('type', 'in', ['team', 'group']), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize))");
+        expect(dbSource).toContain("query(conversationsRef, where('participantIds', 'array-contains', user.uid), where('type', '==', 'direct'), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize))");
+        expect(dbSource).toContain("query(conversationsRef, where('participantIds', 'array-contains', `user:${user.uid}`), where('type', '==', 'direct'), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize))");
         expect(dbSource).toContain("query(conversationsRef, where('participantIds', 'array-contains', `email:${normalizedEmail}`), where('type', 'in', ['team', 'group']), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize))");
         expect(dbSource).toContain('const boundedStored = stored.slice(0, conversationPageSize);');
         expect(dbSource).toContain("const requestedConversationSnap = await getDoc(doc(db, 'teams', teamId, 'chatConversations', requestedConversationId));");

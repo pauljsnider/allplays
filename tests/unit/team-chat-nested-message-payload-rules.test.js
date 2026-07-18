@@ -498,6 +498,12 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
             updatedAt: serverTimestamp()
         };
 
+        await assertSucceeds(getDocs(query(
+            collection(authedFirestore('parent-1', 'parent@example.com'), 'teams/team-1/chatConversations'),
+            where('participantIds', 'array-contains', 'parent-1'),
+            where('type', '==', 'direct')
+        )));
+
         await assertFails(updateDoc(
             doc(authedFirestore('attacker-1', 'attacker@example.com'), `teams/team-1/chatConversations/${conversationId}`),
             upgrade

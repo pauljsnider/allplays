@@ -76,6 +76,8 @@ describe('team chat conversations', () => {
         expect(db).toContain("where('participantIds', 'array-contains', user.uid)");
         expect(db).toContain("where('participantIds', 'array-contains', `user:${user.uid}`)");
         expect(db).toContain("where('participantIds', 'array-contains', `email:${normalizedEmail}`)");
+        expect(db).toContain("where('participantIds', 'array-contains', user.uid), where('type', '==', 'direct')");
+        expect(db).toContain("where('participantIds', 'array-contains', `user:${user.uid}`), where('type', '==', 'direct')");
         expect(db).toContain("where('directUserIds', 'array-contains', user.uid)");
         expect(db).toContain("where('directAccess', '==', 'team_admin')");
         expect(rules).toContain('function isParticipantOnlyAcceptedFriendConversation(data)');

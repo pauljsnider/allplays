@@ -6724,7 +6724,12 @@ export async function getChatConversations(teamId, user = null, {
         ...(user?.uid ? [
             query(conversationsRef, where('directUserIds', 'array-contains', user.uid), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize)),
             query(conversationsRef, where('participantIds', 'array-contains', user.uid), where('type', 'in', ['team', 'group']), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize)),
-            query(conversationsRef, where('participantIds', 'array-contains', `user:${user.uid}`), where('type', 'in', ['team', 'group']), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize))
+            query(conversationsRef, where('participantIds', 'array-contains', `user:${user.uid}`), where('type', 'in', ['team', 'group']), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize)),
+            // Legacy direct conversations predate directUserIds/directAccess. Keep
+            // these participant-constrained reads until opening the thread can
+            // upgrade its authorization metadata.
+            query(conversationsRef, where('participantIds', 'array-contains', user.uid), where('type', '==', 'direct'), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize)),
+            query(conversationsRef, where('participantIds', 'array-contains', `user:${user.uid}`), where('type', '==', 'direct'), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize))
         ] : []),
         ...(normalizedEmail ? [
             query(conversationsRef, where('participantIds', 'array-contains', `email:${normalizedEmail}`), where('type', 'in', ['team', 'group']), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize))
