@@ -77,7 +77,7 @@ describe('scoped fallback uploads', () => {
     });
 
     it('uploads chat attachments directly to the primary scoped path without image-project auth', async () => {
-        const { uploadChatImage } = await import('../../js/db.js?v=102-scoped-fallback-uploads');
+        const { uploadChatImage } = await import('../../js/db.js?v=107-scoped-fallback-uploads');
 
         const result = await uploadChatImage('team/alpha', {
             name: 'family photo (1).png',
@@ -96,7 +96,7 @@ describe('scoped fallback uploads', () => {
     });
 
     it('deletes new scoped chat media from primary storage and legacy chat media from image storage', async () => {
-        const { deleteUploadedChatAttachments } = await import('../../js/db.js?v=102-scoped-fallback-uploads');
+        const { deleteUploadedChatAttachments } = await import('../../js/db.js?v=107-scoped-fallback-uploads');
 
         await deleteUploadedChatAttachments([
             { path: 'stat-sheets/team-chat/team-a/team/user-42/new.jpg' },
@@ -112,7 +112,7 @@ describe('scoped fallback uploads', () => {
     });
 
     it('falls back to a team-scoped stat sheet path when image storage rejects the upload', async () => {
-        const { uploadStatSheetPhoto } = await import('../../js/db.js?v=102-scoped-fallback-uploads');
+        const { uploadStatSheetPhoto } = await import('../../js/db.js?v=107-scoped-fallback-uploads');
 
         const url = await uploadStatSheetPhoto('team/alpha', {
             name: 'box score (1).png',
@@ -126,7 +126,7 @@ describe('scoped fallback uploads', () => {
     });
 
     it('falls back to a team-scoped drill path when image storage rejects the upload', async () => {
-        const { uploadDrillDiagram } = await import('../../js/db.js?v=102-scoped-fallback-uploads');
+        const { uploadDrillDiagram } = await import('../../js/db.js?v=107-scoped-fallback-uploads');
 
         const url = await uploadDrillDiagram('team/alpha', 'drill 7', {
             name: 'diagram #1.png',
