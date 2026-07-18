@@ -34,13 +34,14 @@ describe('public RSVP page', () => {
         const reporterSource = source.slice(reporterStart, reporterEnd);
 
         expect(source).not.toContain('<script type="module" src="/js/telemetry.js?v=2"></script>');
-        expect(source).toContain("const publicRsvpTelemetryReady = import('./js/telemetry.js?v=2').catch(() => null);");
+        expect(source).not.toContain("import('./js/telemetry.js");
+        expect(source).toContain("publicRsvpTelemetryModulePromise = import('./js/public-rsvp-telemetry.js?v=1');");
         expect(source).toContain('<form id="rsvp-form" data-telemetry-ignore');
         expect(source).not.toContain("import { captureTelemetryEvent }");
         expect(reporterStart).toBeGreaterThanOrEqual(0);
         expect(reporterEnd).toBeGreaterThan(reporterStart);
-        expect(reporterSource).toContain("window.AllPlaysTelemetry?.capture('public_rsvp_error', properties, { flush: true });");
-        expect(reporterSource).toContain('void publicRsvpTelemetryReady.then(captureFailure).catch(() => {});');
+        expect(reporterSource).toContain('.then(({ capturePublicRsvpFailure }) => capturePublicRsvpFailure(properties))');
+        expect(reporterSource).not.toContain('window.AllPlaysTelemetry');
         expect(reporterSource).toContain("const normalizedStage = stage === 'submit' ? 'submit' : 'init'");
         expect(reporterSource).toContain("label: normalizedStage === 'submit' ? 'Public RSVP submit' : 'Public RSVP init'");
         expect(reporterSource).toContain('stage: normalizedStage,');

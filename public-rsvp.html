@@ -76,7 +76,7 @@
         const token = params.get('token') || '';
         const requestedResponse = params.get('response') || '';
         const validResponses = new Set(['going', 'maybe', 'not_going']);
-        const publicRsvpTelemetryReady = import('./js/telemetry.js?v=2').catch(() => null);
+        let publicRsvpTelemetryModulePromise = null;
 
         const states = {
             loading: document.getElementById('loading-state'),
@@ -88,6 +88,13 @@
         function showState(name) {
             Object.values(states).forEach((el) => el.classList.add('hidden'));
             states[name].classList.remove('hidden');
+        }
+
+        function loadPublicRsvpTelemetry() {
+            if (!publicRsvpTelemetryModulePromise) {
+                publicRsvpTelemetryModulePromise = import('./js/public-rsvp-telemetry.js?v=1');
+            }
+            return publicRsvpTelemetryModulePromise;
         }
 
         function reportPublicRsvpFailure(stage, error = {}) {
@@ -120,15 +127,9 @@
                     httpStatus,
                     online: navigator.onLine !== false
                 };
-                const captureFailure = () => {
-                    window.AllPlaysTelemetry?.capture('public_rsvp_error', properties, { flush: true });
-                };
-
-                if (window.AllPlaysTelemetry?.capture) {
-                    captureFailure();
-                } else {
-                    void publicRsvpTelemetryReady.then(captureFailure).catch(() => {});
-                }
+                void loadPublicRsvpTelemetry()
+                    .then(({ capturePublicRsvpFailure }) => capturePublicRsvpFailure(properties))
+                    .catch(() => {});
             } catch {
                 // Telemetry is best-effort and must never interrupt the RSVP flow.
             }
