@@ -439,6 +439,7 @@ describe('signOut', () => {
 
 describe('signUpWithEmail', () => {
   beforeEach(() => {
+    authState.currentUser = null;
     legacySignupFlowMocks.executeEmailPasswordSignup.mockReset();
     legacySignupFlowMocks.executeEmailPasswordSignup.mockResolvedValue({
       user: { uid: 'new-user', email: 'player@example.com' }
@@ -576,6 +577,55 @@ describe('signUpWithEmail', () => {
     );
     expect(deleteCreatedUser).toHaveBeenCalledTimes(1);
     expect(firebaseSignOutMock).toHaveBeenCalledWith(authState);
+  });
+
+  it('rolls back a native account when the SDK rejects while persisting its new current user', async () => {
+    const deleteCreatedUser = vi.fn(async () => {});
+    const sdkCreatedUser = {
+      uid: 'sdk-persistence-failed-user',
+      email: 'player@example.com',
+      delete: deleteCreatedUser
+    };
+    vi.mocked(createUserWithEmailAndPassword).mockImplementationOnce(async () => {
+      authState.currentUser = sdkCreatedUser as any;
+      throw new Error('secure persistence write timed out');
+    });
+    legacySignupFlowMocks.executeEmailPasswordSignup.mockImplementationOnce(async (options: any) => (
+      options.dependencies.createUserWithEmailAndPassword(
+        authState,
+        options.email,
+        options.password
+      )
+    ));
+
+    await expect(signUpWithEmail('player@example.com', 'secret1', '85nsbz7k'))
+      .rejects.toThrow('secure persistence write timed out');
+
+    expect(deleteCreatedUser).toHaveBeenCalledTimes(1);
+    expect(firebaseSignOutMock).toHaveBeenCalledWith(authState);
+  });
+
+  it('does not delete a preexisting user when native account creation fails before replacement', async () => {
+    const deletePreviousUser = vi.fn(async () => {});
+    authState.currentUser = {
+      uid: 'previous-user',
+      email: 'previous@example.com',
+      delete: deletePreviousUser
+    } as any;
+    vi.mocked(createUserWithEmailAndPassword).mockRejectedValueOnce(new Error('network unavailable'));
+    legacySignupFlowMocks.executeEmailPasswordSignup.mockImplementationOnce(async (options: any) => (
+      options.dependencies.createUserWithEmailAndPassword(
+        authState,
+        options.email,
+        options.password
+      )
+    ));
+
+    await expect(signUpWithEmail('player@example.com', 'secret1', '85nsbz7k'))
+      .rejects.toThrow('network unavailable');
+
+    expect(deletePreviousUser).not.toHaveBeenCalled();
+    expect(firebaseSignOutMock).not.toHaveBeenCalled();
   });
 
   it('continues failed-signup deletion cleanup when secure removal fails', async () => {

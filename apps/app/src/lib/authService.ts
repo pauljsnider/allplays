@@ -1200,38 +1200,50 @@ async function signUpWithEmailInternal(email: string, password: string, activati
 
   const createSignupUser = isNativeRuntime()
     ? async (_auth: typeof auth, signupEmail: string, signupPassword: string) => {
-      const credential = await createUserWithEmailAndPassword(auth, signupEmail, signupPassword) as UserCredential;
-      let persistedUser: FirebaseUser;
+      const previousUser = auth.currentUser as FirebaseUser | null;
+      let credential: UserCredential | null = null;
       try {
-        persistedUser = await persistNativeFirebaseCredential(credential.user, true);
+        credential = await createUserWithEmailAndPassword(auth, signupEmail, signupPassword) as UserCredential;
+        const persistedUser = await persistNativeFirebaseCredential(credential.user, true);
+        return {
+          ...credential,
+          user: {
+            ...persistedUser,
+            // The shared signup flow invokes delete() while this outer auth
+            // mutation is still active when invite/profile redemption fails.
+            // Run that rollback inline; after the flow returns, preserve normal
+            // queued deletion for any later caller of the returned credential.
+            delete: () => signupFlowActive
+              ? deleteNativeAuthUser()
+              : runNativeAuthMutation(deleteNativeAuthUser)
+          },
+          nativeRest: true
+        } as UserCredential;
       } catch (error) {
-        // Firebase has already created and signed in this account. Roll it back
-        // before reporting secure-persistence failure so a retry does not hit
-        // email-already-in-use, while preserving the original persistence error.
-        if (credential.user.delete) {
+        // The SDK assigns auth.currentUser before awaiting its persistence
+        // write, so account creation can reject without returning a credential.
+        // Delete only a user introduced by this call; never touch a preexisting
+        // session when validation/network failure happens before creation.
+        const currentUser = auth.currentUser as FirebaseUser | null;
+        const rollbackUser = credential?.user || (
+          currentUser
+          && currentUser !== previousUser
+          && currentUser.uid !== previousUser?.uid
+            ? currentUser
+            : null
+        );
+        if (rollbackUser?.delete) {
           await runBestEffortAuthCleanup(
             'Failed native signup account deletion',
-            () => credential.user.delete!()
+            () => rollbackUser.delete!()
           );
         }
-        await runBestEffortAuthCleanup('Failed native signup Firebase sign-out', () => firebaseSignOut(auth));
-        await runBestEffortAuthCleanup('Failed native signup storage cleanup', clearFirebaseAuthStorageSession);
+        if (rollbackUser) {
+          await runBestEffortAuthCleanup('Failed native signup Firebase sign-out', () => firebaseSignOut(auth));
+          await runBestEffortAuthCleanup('Failed native signup storage cleanup', clearFirebaseAuthStorageSession);
+        }
         throw error;
       }
-      return {
-        ...credential,
-        user: {
-          ...persistedUser,
-          // The shared signup flow invokes delete() while this outer auth
-          // mutation is still active when invite/profile redemption fails.
-          // Run that rollback inline; after the flow returns, preserve normal
-          // queued deletion for any later caller of the returned credential.
-          delete: () => signupFlowActive
-            ? deleteNativeAuthUser()
-            : runNativeAuthMutation(deleteNativeAuthUser)
-        },
-        nativeRest: true
-      } as UserCredential;
     }
     : createUserWithEmailAndPassword;
   const cleanupSignupAuth = isNativeRuntime()
