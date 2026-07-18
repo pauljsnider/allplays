@@ -173,16 +173,23 @@ async function mockSearchModules(page) {
                     }).slice(0, 20);
                 }
 
-                export async function searchAppTeams(queryText, appAccessTeams = []) {
+                export async function searchAppTeamsPage(queryText, appAccessTeams = []) {
                     window.__teamSearchQueries.push(String(queryText || ''));
                     const q = String(queryText || '').trim().toLowerCase();
                     const publicTeams = q.includes('bea') ? [
                         { id: 'team-1', name: 'Bears', sport: 'Basketball', zip: '66210', isPublic: true }
                     ] : [];
-                    return [...appAccessTeams, ...publicTeams].filter((team) => {
-                        const haystack = [team.name, team.sport, team.zip].filter(Boolean).join(' ').toLowerCase();
-                        return haystack.includes(q);
-                    }).slice(0, 20);
+                    return {
+                        teams: [...appAccessTeams, ...publicTeams].filter((team) => {
+                            const haystack = [team.name, team.sport, team.zip].filter(Boolean).join(' ').toLowerCase();
+                            return haystack.includes(q);
+                        }).slice(0, 20),
+                        nextCursor: null
+                    };
+                }
+
+                export async function searchAppTeams(queryText, appAccessTeams = []) {
+                    return (await searchAppTeamsPage(queryText, appAccessTeams)).teams;
                 }
 
                 export async function searchAppPlayers(queryText) {
