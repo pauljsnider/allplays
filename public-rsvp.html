@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>RSVP | ALL PLAYS</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module" src="/js/telemetry.js?v=2"></script>
 </head>
 <body class="min-h-screen bg-gray-50 text-gray-900">
     <main class="max-w-xl mx-auto px-4 py-8">
@@ -89,11 +90,55 @@
             states[name].classList.remove('hidden');
         }
 
+        function reportPublicRsvpFailure(stage, error = {}) {
+            try {
+                const allowedFailureKinds = new Set([
+                    'missing_token',
+                    'configuration_error',
+                    'request_rejected',
+                    'rate_limited',
+                    'server_error',
+                    'network_error',
+                    'unexpected_error'
+                ]);
+                const providedFailureKind = String(error.publicRsvpFailureKind || '');
+                const failureKind = allowedFailureKinds.has(providedFailureKind)
+                    ? providedFailureKind
+                    : error instanceof TypeError
+                        ? 'network_error'
+                        : 'unexpected_error';
+                const providedHttpStatus = Number(error.publicRsvpHttpStatus || 0);
+                const httpStatus = Number.isInteger(providedHttpStatus) && providedHttpStatus >= 400 && providedHttpStatus <= 599
+                    ? providedHttpStatus
+                    : 0;
+                const normalizedStage = stage === 'submit' ? 'submit' : 'init';
+
+                window.AllPlaysTelemetry?.capture('public_rsvp_error', {
+                    label: normalizedStage === 'submit' ? 'Public RSVP submit' : 'Public RSVP init',
+                    stage: normalizedStage,
+                    failureKind,
+                    httpStatus,
+                    online: navigator.onLine !== false
+                }, { flush: true });
+            } catch {
+                // Telemetry is best-effort and must never interrupt the RSVP flow.
+            }
+        }
+
+        function buildPublicRsvpRequestError(message, failureKind, httpStatus = 0) {
+            const error = new Error(message);
+            error.publicRsvpFailureKind = failureKind;
+            error.publicRsvpHttpStatus = httpStatus;
+            return error;
+        }
+
         function getFunctionsBaseUrl() {
             const configured = window.__ALLPLAYS_CONFIG__?.functionsBaseUrl || window.__ALLPLAYS_CONFIG__?.functions?.baseUrl;
             if (configured) return String(configured).replace(/\/$/, '');
             const projectId = auth.app?.options?.projectId;
-            if (!projectId) throw new Error('Firebase project ID is not configured.');
+            if (!projectId) {
+                throw buildPublicRsvpRequestError('Firebase project ID is not configured.', 'configuration_error');
+            }
             return `https://us-central1-${projectId}.cloudfunctions.net`;
         }
 
@@ -101,7 +146,12 @@
             const response = await fetch(`${getFunctionsBaseUrl()}/${path}`, options);
             const payload = await response.json().catch(() => ({}));
             if (!response.ok || payload.ok === false) {
-                throw new Error(payload.error || 'RSVP link unavailable.');
+                const failureKind = response.status === 429
+                    ? 'rate_limited'
+                    : response.status >= 500
+                        ? 'server_error'
+                        : 'request_rejected';
+                throw buildPublicRsvpRequestError(payload.error || 'RSVP link unavailable.', failureKind, response.status);
             }
             return payload;
         }
@@ -116,6 +166,7 @@
 
         async function init() {
             if (!token) {
+                reportPublicRsvpFailure('init', { publicRsvpFailureKind: 'missing_token' });
                 document.getElementById('error-message').textContent = 'Missing RSVP link token.';
                 showState('error');
                 return;
@@ -130,6 +181,7 @@
                 }
                 showState('form');
             } catch (error) {
+                reportPublicRsvpFailure('init', error);
                 document.getElementById('error-message').textContent = error.message || 'The link is invalid, expired, or no longer available.';
                 showState('error');
             }
@@ -150,6 +202,7 @@
                 document.getElementById('success-message').textContent = 'Thanks. Your RSVP was recorded and team summaries were updated.';
                 showState('success');
             } catch (error) {
+                reportPublicRsvpFailure('submit', error);
                 document.getElementById('error-message').textContent = error.message || 'Unable to submit RSVP.';
                 showState('error');
             } finally {

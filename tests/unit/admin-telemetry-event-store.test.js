@@ -28,6 +28,8 @@ describe('admin telemetry event store dashboard', () => {
             'auth_context',
             'js_error',
             'js_unhandled_rejection',
+            'app_load_error',
+            'public_rsvp_error',
             'interaction_rage_click',
             'app_initial_load',
             'app_ux_timing',

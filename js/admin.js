@@ -281,6 +281,7 @@ let telemetryState = {
 const telemetryIssueEvents = [
     { name: 'js_error', label: 'JS errors' },
     { name: 'js_unhandled_rejection', label: 'Unhandled rejections' },
+    { name: 'app_load_error', label: 'App errors' },
     { name: 'interaction_rage_click', label: 'Rage clicks' }
 ];
 
@@ -871,8 +872,8 @@ function renderTelemetryNeedsAttention() {
 
     if (!totalIssues) {
         element.innerHTML = `
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">${countCards}</div>
-            <p class="text-sm text-gray-500">No errors or rage clicks recorded for this range.</p>
+            <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">${countCards}</div>
+            <p class="text-sm text-gray-500">No tracked errors or rage clicks recorded for this range.</p>
         `;
         return;
     }
@@ -895,7 +896,7 @@ function renderTelemetryNeedsAttention() {
         .join('') || '<p class="text-sm text-gray-500">No recent raw examples loaded for this range.</p>';
 
     element.innerHTML = `
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">${countCards}</div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">${countCards}</div>
         <div>
             <p class="text-xs font-semibold text-gray-500 uppercase mb-2">Recent examples</p>
             <div class="space-y-2">${recentRows}</div>
