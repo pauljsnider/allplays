@@ -205,6 +205,12 @@ export function validateFirebaseDeployWorkloadIdentity(workflow, label) {
         .flatMap((value) => value.replace(/\\\r?\n/g, '').split('\n'))
         .filter((line) => !/^\s*echo\s+["'](?:CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE|GOOGLE_APPLICATION_CREDENTIALS|GOOGLE_GHA_CREDS_PATH)=["']\s*$/.test(line))
         .join('\n');
+    // Shell concatenates adjacent quoted and unquoted word fragments. Mirror
+    // that behavior for environment-like identifiers so constructs such as
+    // GOOGLE_"APPLICATION"_CREDENTIALS cannot bypass the static-key guard.
+    const normalizedCredentialPolicyText = scalarPolicyText
+        .replace(/(["'])([A-Z0-9_]*)\1/gi, '$2')
+        .replace(/(?<=[A-Z0-9_])["'](?=[A-Z0-9_])/gi, '');
     const forbiddenScalarPatterns = [
         /\bsecrets\b/i,
         /CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE/i,
@@ -220,7 +226,7 @@ export function validateFirebaseDeployWorkloadIdentity(workflow, label) {
         /secrets\.[A-Z0-9_]*(?:SERVICE_ACCOUNT|GOOGLE[^\s}]*(?:KEY|CREDENTIAL))/i,
         /["']?type["']?\s*:\s*["']service_account["']/i
     ];
-    if (forbiddenScalarPatterns.some((pattern) => pattern.test(scalarPolicyText))) {
+    if (forbiddenScalarPatterns.some((pattern) => pattern.test(normalizedCredentialPolicyText))) {
         throw new Error(`${label} must not use a long-lived Google service-account key or static ADC input.`);
     }
 }

@@ -210,6 +210,20 @@ service firebase.storage {
             'Test deploy'
         )).toThrow('Test deploy must not use a long-lived Google service-account key or static ADC input');
         expect(() => validateFirebaseDeployWorkloadIdentity(
+            validWorkflow.replace(
+                'node "$firebase_cli" deploy --only hosting',
+                'export GOOGLE_"APPLICATION"_CREDENTIALS=/tmp/key.json\n              node "$firebase_cli" deploy --only hosting'
+            ),
+            'Test deploy'
+        )).toThrow('Test deploy must not use a long-lived Google service-account key or static ADC input');
+        expect(() => validateFirebaseDeployWorkloadIdentity(
+            validWorkflow.replace(
+                'node "$firebase_cli" deploy --only hosting',
+                "export GOO'GLE'_''APPLICATION'_CREDENTIALS=/tmp/key.json\n              node \"$firebase_cli\" deploy --only hosting"
+            ),
+            'Test deploy'
+        )).toThrow('Test deploy must not use a long-lived Google service-account key or static ADC input');
+        expect(() => validateFirebaseDeployWorkloadIdentity(
             validWorkflow.replace('credentials_file: true', 'credentials_file: true\n              credentials_json : \${{ secrets.RENAMED_KEY }}'),
             'Test deploy'
         )).toThrow('Test deploy must not use a long-lived Google service-account key or static ADC input');

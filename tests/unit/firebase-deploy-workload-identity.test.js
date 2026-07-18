@@ -95,6 +95,7 @@ describe('Firebase deploy Workload Identity boundary', () => {
         expect(oidcJobs).toHaveLength(1);
         expect(JSON.stringify(oidcJobs[0])).not.toMatch(/npm (?:ci|install)|stage-pages-bundle|write-firebase-hosting-config/);
         expect(JSON.stringify(oidcJobs[0])).toMatch(/actions\/download-artifact@[0-9a-f]{40}/);
+        expect(production).toMatch(/name: Upload trusted production deploy handoff[\s\S]*retention-days: 30/);
     });
 
     it('keeps rule-changing releases rules-first and skips unchanged rule writes', () => {
