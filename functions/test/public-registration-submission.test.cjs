@@ -864,6 +864,38 @@ test('failed Team Pass checkout authority cannot be replaced by another eligible
     assert.equal(retriedAttempt.stripeCheckoutSessionId, checkout.sessionId);
 });
 
+test('Team Pass retry reuses the durable Stripe request when purchaser email changes', async () => {
+    const attemptPath = 'teams/team-pass/teamPassCheckoutAttempts/2026_team-pass';
+    const { firestore, stripeState, mod } = loadFunctionsModule({
+        'teams/team-pass': { ownerId: 'owner-1', adminEmails: [] },
+        'users/owner-1': { email: 'owner@example.com' }
+    });
+    const request = { teamId: 'team-pass', seasonId: '2026', tier: 'team-pass' };
+    let firstCall = true;
+    stripeState.checkoutCreateHook = async () => {
+        if (!firstCall) return;
+        firstCall = false;
+        throw new Error('Injected Team Pass creation failure.');
+    };
+
+    await assert.rejects(mod.createStripeTeamPassCheckout(request, {
+        auth: { uid: 'owner-1', token: { email: 'owner@example.com' } }
+    }), /Injected Team Pass creation failure/);
+    const failedAttempt = firestore.snapshot(attemptPath);
+    assert.equal(failedAttempt.stripeRequest.customer_email, 'owner@example.com');
+    assert.equal(failedAttempt.stripeIdempotencyKey, stripeState.checkoutSessionOptions[0].idempotencyKey);
+
+    await firestore.doc('users/owner-1').set({ email: 'changed@example.com' }, { merge: true });
+    const checkout = await mod.createStripeTeamPassCheckout(request, {
+        auth: { uid: 'owner-1', token: { email: 'changed@example.com' } }
+    });
+
+    assert.deepEqual(stripeState.checkoutSessions[1], stripeState.checkoutSessions[0]);
+    assert.equal(stripeState.checkoutSessions[1].customer_email, 'owner@example.com');
+    assert.equal(stripeState.checkoutSessionOptions[1].idempotencyKey, stripeState.checkoutSessionOptions[0].idempotencyKey);
+    assert.equal(firestore.snapshot(attemptPath).stripeCheckoutSessionId, checkout.sessionId);
+});
+
 test('idempotent Team Pass replay supersedes an expired Session before a fresh attempt', async () => {
     const attemptPath = 'teams/team-pass/teamPassCheckoutAttempts/2026_team-pass';
     const { firestore, stripeState, mod } = loadFunctionsModule({

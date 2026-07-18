@@ -4150,6 +4150,7 @@ exports.createStripeTeamPassCheckout = functions.https.onCall(async (data, conte
   if (price?.active !== true || price?.type !== 'one_time' || checkoutAmountCents <= 0 || !checkoutCurrency) {
     throw new functions.https.HttpsError('failed-precondition', 'Stripe team pass price must be an active one-time price.');
   }
+  const { successUrl, cancelUrl } = buildTeamPassCheckoutUrls(appUrl, teamId);
 
   const attemptRef = buildTeamPassAttemptRef({ teamId, seasonId, tier });
   const entitlementRef = firestore.doc(`teams/${teamId}/entitlements/${seasonId}_${tier}`);
@@ -4247,18 +4248,49 @@ exports.createStripeTeamPassCheckout = functions.https.onCall(async (data, conte
       return { busy: true };
     }
 
-    const canRetrySameAttempt = ['creating', 'creation_failed'].includes(attempt.checkoutStatus)
+    let canRetrySameAttempt = ['creating', 'creation_failed'].includes(attempt.checkoutStatus)
       && attempt.purchaserUid === context.auth.uid
       && attempt.priceId === teamPassPriceId
       && Number(attempt.checkoutAmountCents) === checkoutAmountCents
       && attempt.checkoutCurrency === checkoutCurrency
       && /^[A-Za-z0-9_-]{16,128}$/.test(String(attempt.checkoutAttemptToken || ''));
+    if (canRetrySameAttempt) {
+      const expectedIdempotencyKey = `team_pass_checkout_${attempt.checkoutAttemptToken}`;
+      canRetrySameAttempt = attempt.stripeIdempotencyKey === expectedIdempotencyKey
+        && attempt.stripeRequest
+        && typeof attempt.stripeRequest === 'object'
+        && !Array.isArray(attempt.stripeRequest);
+    }
     if (['creating', 'creation_failed'].includes(attempt.checkoutStatus) && !canRetrySameAttempt) {
       return { blockedAuthority: true };
     }
     const checkoutAttemptToken = canRetrySameAttempt
       ? attempt.checkoutAttemptToken
       : buildCheckoutAttemptToken();
+    const metadata = buildTeamPassCheckoutMetadata({
+      teamId,
+      seasonId,
+      tier,
+      purchaserUid: context.auth.uid,
+      checkoutAttemptToken,
+      priceId: teamPassPriceId
+    });
+    const customerEmail = String(context.auth.token?.email || latestUser.email || '').trim();
+    const stripeIdempotencyKey = canRetrySameAttempt
+      ? attempt.stripeIdempotencyKey
+      : `team_pass_checkout_${checkoutAttemptToken}`;
+    const stripeRequest = canRetrySameAttempt
+      ? attempt.stripeRequest
+      : {
+        mode: 'payment',
+        line_items: [{ price: teamPassPriceId, quantity: 1 }],
+        success_url: successUrl,
+        cancel_url: cancelUrl,
+        ...(customerEmail ? { customer_email: customerEmail } : {}),
+        client_reference_id: `${teamId}:${seasonId}:${context.auth.uid}`,
+        metadata,
+        payment_intent_data: { metadata }
+      };
     if (['refunded', 'dispute_lost'].includes(String(attempt.checkoutStatus || '').trim().toLowerCase())) {
       const historicalChargeId = String(attempt.stripeChargeId || '').trim();
       if (!historicalChargeId) return { blockedAuthority: true };
@@ -4292,11 +4324,18 @@ exports.createStripeTeamPassCheckout = functions.https.onCall(async (data, conte
       stripePaymentAuthorityVersion: 2,
       livemode: expectedLivemode,
       checkoutAttemptToken,
+      stripeIdempotencyKey,
+      stripeRequest,
       checkoutStatus: 'creating',
       checkoutReservedAtMs: reservedAtMs,
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     });
-    return { checkoutAttemptToken, replay: canRetrySameAttempt };
+    return {
+      checkoutAttemptToken,
+      replay: canRetrySameAttempt,
+      stripeIdempotencyKey,
+      stripeRequest
+    };
   });
 
   if (reservation.active) {
@@ -4310,28 +4349,10 @@ exports.createStripeTeamPassCheckout = functions.https.onCall(async (data, conte
   }
   if (reservation.checkoutUrl) return reservation;
 
-  const { successUrl, cancelUrl } = buildTeamPassCheckoutUrls(appUrl, teamId);
-  const metadata = buildTeamPassCheckoutMetadata({
-    teamId,
-    seasonId,
-    tier,
-    purchaserUid: context.auth.uid,
-    checkoutAttemptToken: reservation.checkoutAttemptToken,
-    priceId: teamPassPriceId
-  });
   let session;
   try {
-    session = await stripe.checkout.sessions.create({
-      mode: 'payment',
-      line_items: [{ price: teamPassPriceId, quantity: 1 }],
-      success_url: successUrl,
-      cancel_url: cancelUrl,
-      customer_email: email || undefined,
-      client_reference_id: `${teamId}:${seasonId}:${context.auth.uid}`,
-      metadata,
-      payment_intent_data: { metadata }
-    }, {
-      idempotencyKey: `team_pass_checkout_${reservation.checkoutAttemptToken}`
+    session = await stripe.checkout.sessions.create(reservation.stripeRequest, {
+      idempotencyKey: reservation.stripeIdempotencyKey
     });
   } catch (error) {
     await firestore.runTransaction(async (transaction) => {
