@@ -167,6 +167,49 @@ describe('parent scope normalization', () => {
         });
     });
 
+    it('preserves a private-team parent link when the team source read is permission denied', async () => {
+        const getTeam = vi.fn().mockResolvedValue({
+            id: 'private-team', active: true, blockedByPermissions: true
+        });
+        const getDoc = vi.fn().mockResolvedValue(makeSnap('private-player', {
+            name: 'Private Player', number: '7', active: true
+        }));
+        const doc = vi.fn((_db, collectionPath, playerId) => ({ path: `${collectionPath}/${playerId}` }));
+        const normalizeParentScopeLinks = buildNormalizeParentScopeLinks({
+            getTeam,
+            getDoc,
+            doc,
+            db: {},
+            isTeamActive: (team) => team?.active !== false
+        });
+
+        const result = await normalizeParentScopeLinks([{
+            teamId: 'private-team',
+            playerId: 'private-player',
+            teamName: 'Private Team',
+            playerName: 'Old Player Name'
+        }]);
+
+        expect(getTeam).toHaveBeenCalledWith('private-team', {
+            includeInactive: true,
+            preservePermissionDenied: true
+        });
+        expect(result).toEqual({
+            activeLinks: [{
+                teamId: 'private-team',
+                playerId: 'private-player',
+                teamName: 'Private Team',
+                playerName: 'Private Player',
+                playerNumber: '7',
+                playerPhotoUrl: null
+            }],
+            parentTeamIds: ['private-team'],
+            parentPlayerKeys: ['private-team::private-player'],
+            blockedLinkCount: 1,
+            staleLinkCount: 0
+        });
+    });
+
     it('backfills cleaned parent access scope fields instead of raw parentOf links', async () => {
         const getUserProfile = vi.fn().mockResolvedValue({
             parentOf: [

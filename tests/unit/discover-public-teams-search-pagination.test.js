@@ -144,6 +144,28 @@ describe('discoverPublicTeams search pagination', () => {
         await expect(discoverPublicTeams()).rejects.toBe(unavailable);
         expect(firebaseMocks.getDocs).not.toHaveBeenCalled();
     });
+
+    it('continues bounded empty scan pages so sparse search matches are not reported missing', async () => {
+        const scanCursor = {
+            kind: 'public-team-callable-v2', source: 'projection', searchText: 'target', lastName: 'Middle', lastId: 'middle'
+        };
+        const callable = vi.fn()
+            .mockResolvedValueOnce({ data: { teams: [], nextCursor: scanCursor } })
+            .mockResolvedValueOnce({
+                data: {
+                    teams: [{ id: 'target', name: 'Target Team', isPublic: true, active: true }],
+                    nextCursor: null
+                }
+            });
+        firebaseMocks.httpsCallable.mockReturnValue(callable);
+        const { discoverPublicTeams } = await import('../../js/db.js?v=91');
+
+        await expect(discoverPublicTeams({ searchText: 'target' })).resolves.toEqual({
+            teams: [{ id: 'target', name: 'Target Team', isPublic: true, active: true }],
+            nextCursor: null
+        });
+        expect(callable).toHaveBeenNthCalledWith(2, { searchText: 'target', cursor: scanCursor, pageSize: 24 });
+    });
 });
 
 describe('public team roster count', () => {
@@ -263,6 +285,25 @@ describe('public team source/projection fallback', () => {
         await expect(getTeam('public-team')).resolves.toMatchObject({ name: 'Public Team' });
         expect(firebaseMocks.getDoc).toHaveBeenCalledTimes(2);
     });
+
+    it('returns an explicit placeholder only when parent-link normalization must preserve denied private scope', async () => {
+        firebaseMocks.auth.currentUser = { uid: 'parent-1' };
+        firebaseMocks.getDoc
+            .mockRejectedValueOnce(Object.assign(new Error('private team source denied'), { code: 'permission-denied' }))
+            .mockResolvedValueOnce({ exists: () => false });
+        const callable = vi.fn().mockRejectedValue(Object.assign(new Error('not public'), { code: 'functions/not-found' }));
+        firebaseMocks.httpsCallable.mockReturnValue(callable);
+        const { getTeam } = await import('../../js/db.js?v=91');
+
+        await expect(getTeam('private-team', {
+            includeInactive: true,
+            preservePermissionDenied: true
+        })).resolves.toEqual({
+            id: 'private-team',
+            active: true,
+            blockedByPermissions: true
+        });
+    });
 });
 
 describe('bounded stat tracker config reads', () => {
@@ -324,5 +365,38 @@ describe('complete legacy collection helpers', () => {
         expect(firebaseMocks.limit).toHaveBeenNthCalledWith(1, 100);
         expect(firebaseMocks.limit).toHaveBeenNthCalledWith(2, 100);
         expect(firebaseMocks.startAfter).toHaveBeenCalledWith(firstPage.at(-1));
+    });
+
+    it('continues callable public-team pages past 1000 results', async () => {
+        const callable = vi.fn();
+        for (let pageIndex = 0; pageIndex < 11; pageIndex += 1) {
+            const resultCount = pageIndex < 10 ? 100 : 1;
+            const start = pageIndex * 100;
+            callable.mockResolvedValueOnce({
+                data: {
+                    teams: Array.from({ length: resultCount }, (_, index) => ({
+                        id: `public-${start + index + 1}`,
+                        name: `Public ${String(start + index + 1).padStart(4, '0')}`,
+                        isPublic: true,
+                        active: true
+                    })),
+                    nextCursor: pageIndex < 10
+                        ? {
+                            kind: 'public-team-callable-v2',
+                            source: 'projection',
+                            lastId: `public-${start + resultCount}`
+                        }
+                        : null
+                }
+            });
+        }
+        firebaseMocks.httpsCallable.mockReturnValue(callable);
+
+        const { getTeams } = await import('../../js/db.js?v=85');
+        const teams = await getTeams({ publicOnly: true });
+
+        expect(teams).toHaveLength(1001);
+        expect(callable).toHaveBeenCalledTimes(11);
+        expect(callable.mock.calls.at(-1)?.[0]?.cursor).toMatchObject({ lastId: 'public-1000' });
     });
 });

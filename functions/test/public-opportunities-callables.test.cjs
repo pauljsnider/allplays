@@ -435,6 +435,40 @@ test('completed public team backfill switches discovery to validated projection 
     assert.equal(page.scannedProjectionCount, 2);
 });
 
+test('public team discovery resumes a sparse search after its bounded scan window', async () => {
+    const seed = {
+        'systemMigrations/publicTeamProfilesBackfill': { completed: true }
+    };
+    for (let index = 0; index < 500; index += 1) {
+        seed[`publicTeamProfiles/alpha-${String(index).padStart(3, '0')}`] = {
+            publicSchemaVersion: 1,
+            name: `Alpha ${String(index).padStart(3, '0')}`,
+            isPublic: true,
+            active: true,
+            publicSearchName: `alpha ${String(index).padStart(3, '0')}`
+        };
+    }
+    seed['publicTeamProfiles/target-team'] = {
+        publicSchemaVersion: 1,
+        name: 'Target Team',
+        isPublic: true,
+        active: true,
+        publicSearchName: 'target team'
+    };
+    const { callables } = loadCallables(seed);
+
+    const firstScan = await callables.discoverPublicTeamProfiles({ searchText: 'target', pageSize: 10 }, {});
+    assert.deepEqual(firstScan.teams, []);
+    assert.equal(firstScan.scannedProjectionCount, 500);
+    assert.equal(firstScan.nextCursor.kind, 'public-team-callable-v2');
+
+    const secondScan = await callables.discoverPublicTeamProfiles({
+        searchText: 'target', pageSize: 10, cursor: firstScan.nextCursor
+    }, {});
+    assert.deepEqual(secondScan.teams.map((team) => team.id), ['target-team']);
+    assert.equal(secondScan.nextCursor, null);
+});
+
 test('revoked team admins lose private inquiry access with bounded, resumable stale-row scans', async () => {
     const seed = {
         'users/former-admin': { email: 'former@example.com', isAdmin: false },

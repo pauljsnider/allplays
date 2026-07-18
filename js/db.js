@@ -128,13 +128,16 @@ export async function normalizeParentScopeLinks(parentLinks = []) {
 
         let team = teamCache.get(teamId);
         if (team === undefined) {
-            team = await getTeam(teamId, { includeInactive: true });
+            team = await getTeam(teamId, { includeInactive: true, preservePermissionDenied: true });
             teamCache.set(teamId, team || null);
         }
         if (!team || !isTeamActive(team)) {
             staleLinkCount += 1;
             continue;
         }
+
+        const teamReadBlocked = team.blockedByPermissions === true;
+        if (teamReadBlocked) blockedLinkCount += 1;
 
         let playerSnap = playerCache.get(playerKey);
         if (playerSnap === undefined) {
@@ -143,7 +146,7 @@ export async function normalizeParentScopeLinks(parentLinks = []) {
             } catch (error) {
                 if (error?.code === 'permission-denied') {
                     console.warn('[parent-scope] Preserving legacy player link while roster permissions are being repaired:', error);
-                    blockedLinkCount += 1;
+                    if (!teamReadBlocked) blockedLinkCount += 1;
                     playerSnap = { blockedByPermissions: true };
                 } else {
                     throw error;
@@ -676,14 +679,26 @@ function normalizePublicTeamSearchInput(value) {
 
 async function discoverPublicTeamsFromCallable({ searchText = '', cursor = null, pageSize = DEFAULT_PUBLIC_TEAM_DISCOVERY_PAGE_SIZE } = {}) {
     const discoverProfiles = httpsCallable(functions, 'discoverPublicTeamProfiles');
-    const result = await discoverProfiles({ searchText, cursor, pageSize });
-    const teams = Array.isArray(result.data?.teams)
-        ? result.data.teams.filter((team) => team?.isPublic === true && isTeamActive(team))
-        : [];
-    return {
-        teams,
-        nextCursor: result.data?.nextCursor || null
-    };
+    const seenEmptyPageCursors = new Set();
+    let currentCursor = cursor;
+
+    while (true) {
+        const result = await discoverProfiles({ searchText, cursor: currentCursor, pageSize });
+        const teams = Array.isArray(result.data?.teams)
+            ? result.data.teams.filter((team) => team?.isPublic === true && isTeamActive(team))
+            : [];
+        const nextCursor = result.data?.nextCursor || null;
+        if (teams.length > 0 || !nextCursor) {
+            return { teams, nextCursor };
+        }
+
+        const cursorKey = JSON.stringify(nextCursor);
+        if (seenEmptyPageCursors.has(cursorKey)) {
+            throw new Error('Public team discovery returned a repeated empty-page cursor.');
+        }
+        seenEmptyPageCursors.add(cursorKey);
+        currentCursor = nextCursor;
+    }
 }
 
 function isPublicProjectionFallbackError(error) {
@@ -762,7 +777,7 @@ async function getAllPublicTeamProfiles() {
         const page = await discoverPublicTeamsFromCallable({ cursor, pageSize: 100 });
         teams.push(...page.teams);
         cursor = page.nextCursor;
-    } while (cursor && teams.length < 1000);
+    } while (cursor);
     return teams;
 }
 
@@ -837,8 +852,14 @@ export async function getTeams(options = {}) {
 
 export async function getTeam(teamId, options = {}) {
     const includeInactive = !!options.includeInactive;
+    const preservePermissionDenied = options.preservePermissionDenied === true;
     const normalizedTeamId = String(teamId || '').trim();
     if (!normalizedTeamId) return null;
+    let sourceReadDenied = false;
+
+    const permissionDeniedPlaceholder = () => sourceReadDenied && preservePermissionDenied
+        ? { id: normalizedTeamId, active: true, blockedByPermissions: true }
+        : null;
 
     if (auth.currentUser) {
         try {
@@ -849,6 +870,7 @@ export async function getTeam(teamId, options = {}) {
             return sourceTeam;
         } catch (error) {
             if (!isPublicProjectionFallbackError(error)) throw error;
+            sourceReadDenied = String(error?.code || '').replace(/^(?:firestore|functions)\//, '') === 'permission-denied';
         }
     }
 
@@ -870,11 +892,11 @@ export async function getTeam(teamId, options = {}) {
     try {
         result = await getPublicTeamProfile({ teamId: normalizedTeamId });
     } catch (error) {
-        if (isPublicProjectionNotFoundError(error)) return null;
+        if (isPublicProjectionNotFoundError(error)) return permissionDeniedPlaceholder();
         throw error;
     }
     const item = result.data?.item || null;
-    if (!item) return null;
+    if (!item) return permissionDeniedPlaceholder();
     const publicTeam = { ...item, id: item.id || normalizedTeamId, isPublic: true, active: true };
     if (!includeInactive && !isTeamActive(publicTeam)) return null;
     return publicTeam;
