@@ -4815,6 +4815,9 @@ exports.createStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
         checkoutAttemptToken,
         checkoutAmountCents: amountCents
       });
+      const customerEmail = String(
+        context.auth.token?.email || latestUser.email || latest.parentEmail || latest.email || ''
+      ).trim();
       durableReservation = {
         product: 'team_fee',
         teamId: input.teamId,
@@ -4838,7 +4841,7 @@ exports.createStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
           }],
           success_url: successUrl,
           cancel_url: cancelUrl,
-          customer_email: context.auth.token?.email || latestUser.email || latest.parentEmail || latest.email || undefined,
+          ...(customerEmail ? { customer_email: customerEmail } : {}),
           client_reference_id: `${input.teamId}:${input.batchId}:${input.recipientId}`,
           metadata,
           payment_intent_data: { metadata }

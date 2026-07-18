@@ -40,7 +40,7 @@ function setNested(target, path, value) {
     cursor[parts[parts.length - 1]] = value;
 }
 
-function makeFirestore(seed = {}) {
+function makeFirestore(seed = {}, firestoreOptions = {}) {
     const state = new Map(Object.entries(clone(seed)));
     let nextAutoId = 1;
     let nextTransactionError = null;
@@ -79,9 +79,16 @@ function makeFirestore(seed = {}) {
         return target;
     }
 
-    function write(path, value, options = {}) {
+    function write(path, value, writeOptions = {}) {
+        const hasUndefined = (candidate) => candidate === undefined
+            || (Array.isArray(candidate) && candidate.some(hasUndefined))
+            || (candidate && typeof candidate === 'object'
+                && Object.values(candidate).some(hasUndefined));
+        if (firestoreOptions.rejectUndefinedWrites === true && hasUndefined(value)) {
+            throw new Error(`Firestore write contains undefined value: ${path}`);
+        }
         const current = state.get(path);
-        state.set(path, applyPatch(current, value, options.merge === true));
+        state.set(path, applyPatch(current, value, writeOptions.merge === true));
     }
 
     function doc(path) {
@@ -456,9 +463,9 @@ function installModuleStubs(firestore) {
     };
 }
 
-function loadFunctionsModule(seed) {
+function loadFunctionsModule(seed, firestoreOptions) {
     delete require.cache[repoIndexPath];
-    const firestore = makeFirestore(seed);
+    const firestore = makeFirestore(seed, firestoreOptions);
     installModuleStubs(firestore);
     const mod = require('../index.js');
     return {
@@ -1349,6 +1356,31 @@ test('team fee checkout reserves one current attempt and reuses its Stripe sessi
     assert.equal(recipient.stripeCheckoutSessionId, first.sessionId);
     assert.equal(recipient.checkoutAmountCents, 7500);
     assert.equal(recipient.checkoutCurrency, 'usd');
+});
+
+test('team fee checkout omits customer_email when a UID-eligible payer has no email', async () => {
+    const recipientPath = 'teams/team-fee/feeBatches/batch-1/feeRecipients/recipient-1';
+    const { firestore, stripeState, mod } = loadFunctionsModule({
+        'teams/team-fee': { ownerId: 'owner-1', adminEmails: [] },
+        [recipientPath]: {
+            teamId: 'team-fee', batchId: 'batch-1', collectionMode: 'online_stripe',
+            amountCents: 7500, paidAmountCents: 0, balanceDueCents: 7500,
+            status: 'unpaid', feeTitle: 'Tournament fee', playerName: 'Sam'
+        }
+    }, { rejectUndefinedWrites: true });
+
+    const checkout = await mod.createStripeTeamFeeCheckout(
+        { teamId: 'team-fee', batchId: 'batch-1', recipientId: 'recipient-1' },
+        { auth: { uid: 'owner-1', token: {} } }
+    );
+
+    assert.equal(checkout.sessionId, 'cs_test_1');
+    assert.equal(stripeState.checkoutSessions.length, 1);
+    assert.equal(Object.prototype.hasOwnProperty.call(stripeState.checkoutSessions[0], 'customer_email'), false);
+    const token = stripeState.checkoutSessions[0].metadata.checkoutAttemptToken;
+    const reservation = firestore.snapshot(`${recipientPath}/checkoutReservations/${token}`);
+    assert.equal(Object.prototype.hasOwnProperty.call(reservation.stripeRequest, 'customer_email'), false);
+    assert.equal(firestore.snapshot(recipientPath).checkoutStatus, 'open');
 });
 
 test('late duplicate team fee projection cannot downgrade or expire the persisted reservation', async () => {
