@@ -680,10 +680,11 @@ export function Schedule({ auth }: { auth: AuthState }) {
 
     const settledGroups = await Promise.all(groupBulkRsvpSubmissions(targetEvents, eventsRef.current).map(async (group) => {
       try {
+        const savedNote = String(group[0]?.myRsvpNote || '');
         if (group.length > 1) {
-          await submitParentScheduleRsvpForChildren(group, user, response);
+          await submitParentScheduleRsvpForChildren(group, user, response, savedNote);
         } else if (group[0]) {
-          await submitParentScheduleRsvp(group[0], user, response);
+          await submitParentScheduleRsvp(group[0], user, response, savedNote);
         }
         return { ok: true as const, eventKeys: group.map((event) => event.eventKey) };
       } catch {

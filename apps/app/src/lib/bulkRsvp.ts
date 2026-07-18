@@ -59,7 +59,8 @@ export function groupBulkRsvpSubmissions(
     const first = group[0];
     if (!first) return [];
     const scheduleCount = scheduleCountByEvent.get(`${first.teamId}::${first.id}`) || 0;
-    if (group.length > 1 && group.length === scheduleCount) {
+    const savedNotes = new Set(group.map((event) => String(event.myRsvpNote || '').trim()));
+    if (group.length > 1 && group.length === scheduleCount && savedNotes.size === 1) {
       return [group];
     }
     return group.map((event) => [event]);

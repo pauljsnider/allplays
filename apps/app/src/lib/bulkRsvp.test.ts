@@ -75,14 +75,19 @@ describe('bulk RSVP helpers', () => {
     ]);
   });
 
-  it('keeps complete sibling selections atomic and splits partial selections into per-child writes', () => {
+  it('keeps complete sibling selections atomic only when their saved notes match', () => {
     const first = event(1);
     const sibling = event(2, { eventKey: 'team-1::game-1::player-2', id: 'game-1' });
     const siblingOutsideBulkScope = event(3, { eventKey: 'team-1::game-1::player-3', id: 'game-1' });
+    const siblingWithDifferentNote = { ...sibling, myRsvpNote: 'Needs a ride' };
 
     expect(groupBulkRsvpSubmissions([first, sibling], [first, sibling])).toEqual([[first, sibling]]);
     expect(groupBulkRsvpSubmissions([first], [first, sibling])).toEqual([[first]]);
     expect(groupBulkRsvpSubmissions([first, sibling], [first, sibling, siblingOutsideBulkScope])).toEqual([[first], [sibling]]);
+    expect(groupBulkRsvpSubmissions(
+      [first, siblingWithDifferentNote],
+      [first, siblingWithDifferentNote]
+    )).toEqual([[first], [siblingWithDifferentNote]]);
   });
 
   it('formats complete and partial result summaries', () => {
