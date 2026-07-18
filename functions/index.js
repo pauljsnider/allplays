@@ -1272,6 +1272,90 @@ function buildRegistrationCheckoutMetadata({ input, registration }) {
   };
 }
 
+function normalizeRegistrationCheckoutReservationUrlForComparison(value) {
+  try {
+    const parsed = new URL(String(value || ''));
+    // The capability rotates only after the durable Stripe Session is
+    // projected. It authenticates the return URL, but is not part of the
+    // economic/payment-plan state that determines whether an in-flight
+    // reservation can still be replayed.
+    parsed.searchParams.delete('publicCheckoutCapability');
+    parsed.searchParams.sort();
+    return parsed.toString();
+  } catch (error) {
+    return '';
+  }
+}
+
+function normalizeRegistrationCheckoutReservationMetadataForComparison(metadata = {}) {
+  return {
+    product: String(metadata.product || '').trim(),
+    teamId: String(metadata.teamId || '').trim(),
+    formId: String(metadata.formId || '').trim(),
+    registrationId: String(metadata.registrationId || '').trim(),
+    selectedOptionId: String(metadata.selectedOptionId || '').trim(),
+    paymentPlanId: String(metadata.paymentPlanId || '').trim(),
+    paymentPurpose: String(metadata.paymentPurpose || '').trim()
+  };
+}
+
+function getRegistrationCheckoutReservationProposalFingerprint(proposal = {}) {
+  const stripeRequest = proposal.stripeRequest || {};
+  const comparable = {
+    amountCents: Math.max(0, Math.round(Number(proposal.amountCents || 0) || 0)),
+    currency: String(proposal.currency || '').trim().toLowerCase(),
+    livemode: proposal.livemode === null || proposal.livemode === undefined
+      ? null
+      : Boolean(proposal.livemode),
+    mode: String(stripeRequest.mode || '').trim(),
+    lineItems: stripeRequest.line_items || [],
+    successUrl: normalizeRegistrationCheckoutReservationUrlForComparison(stripeRequest.success_url),
+    cancelUrl: normalizeRegistrationCheckoutReservationUrlForComparison(stripeRequest.cancel_url),
+    customerEmail: String(stripeRequest.customer_email || '').trim().toLowerCase(),
+    clientReferenceId: String(stripeRequest.client_reference_id || '').trim(),
+    metadata: normalizeRegistrationCheckoutReservationMetadataForComparison(stripeRequest.metadata),
+    paymentIntentMetadata: normalizeRegistrationCheckoutReservationMetadataForComparison(
+      stripeRequest.payment_intent_data?.metadata
+    )
+  };
+  return crypto.createHash('sha256').update(JSON.stringify(comparable)).digest('hex');
+}
+
+function registrationCheckoutReservationMatchesProposal(existingReservation = {}, reservationProposal = {}, input = {}) {
+  const existingStripeRequest = existingReservation.stripeRequest || {};
+  const existingMetadata = existingStripeRequest.metadata || {};
+  const existingPaymentIntentMetadata = existingStripeRequest.payment_intent_data?.metadata || {};
+  const issuedCapability = normalizePublicCheckoutCapability(existingReservation.issuedPublicCheckoutCapability);
+  const issuedAttemptToken = normalizeCheckoutAttemptToken(existingReservation.issuedCheckoutAttemptToken);
+  const urls = [existingStripeRequest.success_url, existingStripeRequest.cancel_url].map((value) => {
+    try {
+      return new URL(String(value || ''));
+    } catch (error) {
+      return null;
+    }
+  });
+  const hasConsistentDurableAuthority = Boolean(
+    issuedCapability
+    && issuedAttemptToken
+    && existingMetadata.publicCheckoutCapability === issuedCapability
+    && existingPaymentIntentMetadata.publicCheckoutCapability === issuedCapability
+    && existingMetadata.checkoutAttemptToken === issuedAttemptToken
+    && existingPaymentIntentMetadata.checkoutAttemptToken === issuedAttemptToken
+    && urls.every((url) => url?.searchParams.get('publicCheckoutCapability') === issuedCapability)
+  );
+  return Boolean(
+    existingReservation.status !== 'superseded'
+    && existingReservation.teamId === input.teamId
+    && existingReservation.formId === input.formId
+    && existingReservation.registrationId === input.registrationId
+    && existingStripeRequest
+    && existingReservation.stripeIdempotencyKey
+    && hasConsistentDurableAuthority
+    && getRegistrationCheckoutReservationProposalFingerprint(existingReservation)
+      === getRegistrationCheckoutReservationProposalFingerprint(reservationProposal)
+  );
+}
+
 function buildPublicCheckoutCapabilityError() {
   return new functions.https.HttpsError('failed-precondition', 'Public checkout capability is invalid or expired.');
 }
@@ -1592,6 +1676,7 @@ async function reserveRegistrationCheckoutCapacityForRetry(input, options = {}) 
 }
 
 async function reserveRegistrationCheckoutCreation(input, options = {}) {
+  const formRef = buildRegistrationFormRef(input);
   const registrationRef = buildRegistrationRef(input);
   const checkoutCreationReservationId = String(options.checkoutCreationReservationId || '').trim();
   const amountCents = Math.max(0, Math.round(Number(options.amountCents || 0) || 0));
@@ -1599,12 +1684,25 @@ async function reserveRegistrationCheckoutCreation(input, options = {}) {
   const now = admin.firestore.FieldValue.serverTimestamp();
 
   return firestore.runTransaction(async (transaction) => {
-    const registrationSnap = await transaction.get(registrationRef);
+    const [formSnap, registrationSnap] = await Promise.all([
+      transaction.get(formRef),
+      transaction.get(registrationRef)
+    ]);
+    if (!formSnap.exists) {
+      throw new functions.https.HttpsError('not-found', 'Registration form not found.');
+    }
     if (!registrationSnap.exists) {
       throw new functions.https.HttpsError('not-found', 'Registration not found.');
     }
 
+    const form = formSnap.data() || {};
     const registration = registrationSnap.data() || {};
+    if (form.published !== true && form.status !== 'published') {
+      throw new functions.https.HttpsError('failed-precondition', 'This registration form is not accepting submissions.');
+    }
+    if (form.paymentSettings?.onlineCheckoutEnabled !== true) {
+      throw new functions.https.HttpsError('failed-precondition', 'Online checkout is not enabled for this registration.');
+    }
     if (registration.teamId !== input.teamId || registration.formId !== input.formId) {
       throw new functions.https.HttpsError('failed-precondition', 'Registration does not match the requested form.');
     }
@@ -1625,10 +1723,41 @@ async function reserveRegistrationCheckoutCreation(input, options = {}) {
       throw new functions.https.HttpsError('failed-precondition', 'Current public checkout capability is required.');
     }
     const reversalBalanceCents = Math.max(0, Math.round(Number(registration.stripeReversalBalanceCents || 0) || 0));
-    const paymentPurpose = String(reservationProposal.stripeRequest?.metadata?.paymentPurpose || '').trim();
+    const proposalStripeRequest = reservationProposal.stripeRequest || {};
+    const proposalMetadata = proposalStripeRequest.metadata || {};
+    const paymentPurpose = String(proposalMetadata.paymentPurpose || '').trim();
     if ((reversalBalanceCents > 0 && (paymentPurpose !== 'reversal_repayment' || amountCents !== reversalBalanceCents))
         || (reversalBalanceCents === 0 && paymentPurpose === 'reversal_repayment')) {
       throw new functions.https.HttpsError('aborted', 'Registration reversal balance changed before checkout could be reserved. Retry with current payment state.');
+    }
+    const currentAmountCents = getRegistrationCheckoutAmountCents(registration, form);
+    const currentCurrency = getRegistrationCheckoutCurrency(registration, form);
+    const currentMetadataPaymentPlanId = String(registration.paymentPlan?.id || '').trim();
+    const currentPaymentPlanId = currentMetadataPaymentPlanId || 'pay_full';
+    const currentPaidInstallmentCount = currentPaymentPlanId === 'installments'
+      ? getRegistrationPaymentPlanPaidInstallmentCount(registration) + (reversalBalanceCents > 0 ? 0 : 1)
+      : 0;
+    let proposalPaidInstallmentCount = 0;
+    try {
+      proposalPaidInstallmentCount = Math.max(0, Math.floor(Number(
+        new URL(String(proposalStripeRequest.success_url || '')).searchParams.get('paidInstallmentCount') || 0
+      ) || 0));
+    } catch (error) {
+      proposalPaidInstallmentCount = -1;
+    }
+    const proposalTitle = String(
+      proposalStripeRequest.line_items?.[0]?.price_data?.product_data?.name || ''
+    );
+    const currentTitle = registration.programName || form.programName || form.title || form.name || 'Program registration';
+    if (currentAmountCents !== amountCents
+        || currentCurrency !== String(reservationProposal.currency || '').trim().toLowerCase()
+        || String(proposalMetadata.paymentPlanId || '').trim() !== currentMetadataPaymentPlanId
+        || proposalPaidInstallmentCount !== currentPaidInstallmentCount
+        || String(proposalMetadata.selectedOptionId || '').trim() !== String(registration.selectedOption?.id || '').trim()
+        || String(proposalStripeRequest.customer_email || '').trim().toLowerCase()
+          !== String(getRegistrationCustomerEmail(registration) || '').trim().toLowerCase()
+        || proposalTitle !== currentTitle) {
+      throw new functions.https.HttpsError('aborted', 'Registration checkout details changed before payment authority could be reserved. Retry with current state.');
     }
     if (canReuseRegistrationCheckoutSession(registration, amountCents, input)) {
       throw new functions.https.HttpsError('aborted', 'An existing registration checkout must be revalidated before reuse.');
@@ -1639,16 +1768,28 @@ async function reserveRegistrationCheckoutCreation(input, options = {}) {
       const existingReservationSnap = await transaction.get(existingReservationRef);
       if (existingReservationSnap.exists) {
         const existingReservation = existingReservationSnap.data() || {};
+        if (registrationCheckoutReservationMatchesProposal(existingReservation, reservationProposal, input)) {
+          return {
+            reserved: true,
+            replay: true,
+            reservation: existingReservation,
+            retryCapacityReservationId: String(registration.retryCapacityReservationId || '').trim() || null
+          };
+        }
         if (existingReservation.status !== 'superseded'
             && existingReservation.teamId === input.teamId
             && existingReservation.formId === input.formId
             && existingReservation.registrationId === input.registrationId
             && existingReservation.stripeRequest
             && existingReservation.stripeIdempotencyKey) {
+          // Recover and revoke this exact idempotent Stripe request outside the
+          // transaction before current authority can replace it. This closes
+          // both the known-session and ambiguous creation_failed cases without
+          // leaving a second chargeable Session live.
           return {
-            reserved: true,
-            replay: true,
-            reservation: existingReservation,
+            reserved: false,
+            replay: false,
+            staleReservation: existingReservation,
             retryCapacityReservationId: String(registration.retryCapacityReservationId || '').trim() || null
           };
         }
@@ -1714,6 +1855,60 @@ async function clearRegistrationCheckoutCreationReservation(input, checkoutCreat
       checkoutCreationReservationId: admin.firestore.FieldValue.delete(),
       checkoutCreationStartedAt: admin.firestore.FieldValue.delete(),
       updatedAt: now
+    }, { merge: true });
+    return true;
+  });
+}
+
+async function supersedeStaleRegistrationCheckoutReservation(input, reservation, stripe) {
+  const reservationId = String(reservation?.reservationId || '').trim();
+  const stripeIdempotencyKey = String(reservation?.stripeIdempotencyKey || '').trim();
+  if (!reservationId || !stripeIdempotencyKey || !reservation?.stripeRequest) {
+    throw new functions.https.HttpsError('failed-precondition', 'Registration checkout reservation requires payment authority audit.');
+  }
+
+  const recoveredSession = await stripe.checkout.sessions.create(reservation.stripeRequest, {
+    idempotencyKey: stripeIdempotencyKey
+  });
+  if (reservation.livemode !== null
+      && reservation.livemode !== undefined
+      && Boolean(recoveredSession.livemode) !== Boolean(reservation.livemode)) {
+    throw new functions.https.HttpsError('failed-precondition', 'Recovered registration checkout mode did not match its durable reservation.');
+  }
+  const classification = classifyStoredStripeCheckoutSession(recoveredSession);
+  if (classification === 'terminal') {
+    throw new functions.https.HttpsError('failed-precondition', 'The stale registration payment is completing. Refresh payment status before retrying.');
+  }
+  if (recoveredSession.status === 'open') {
+    await stripe.checkout.sessions.expire(recoveredSession.id);
+  }
+
+  const registrationRef = buildRegistrationRef(input);
+  const reservationRef = buildRegistrationCheckoutReservationRef(registrationRef, reservationId);
+  const supersededAt = admin.firestore.FieldValue.serverTimestamp();
+  return firestore.runTransaction(async (transaction) => {
+    const [registrationSnap, reservationSnap] = await Promise.all([
+      transaction.get(registrationRef),
+      transaction.get(reservationRef)
+    ]);
+    const registration = registrationSnap.exists ? (registrationSnap.data() || {}) : {};
+    const latestReservation = reservationSnap.exists ? (reservationSnap.data() || {}) : {};
+    if (!registrationSnap.exists
+        || !reservationSnap.exists
+        || String(registration.checkoutCreationReservationId || '').trim() !== reservationId
+        || String(latestReservation.stripeIdempotencyKey || '').trim() !== stripeIdempotencyKey) {
+      return false;
+    }
+    transaction.set(reservationRef, {
+      status: 'superseded',
+      stripeCheckoutSessionId: recoveredSession.id || latestReservation.stripeCheckoutSessionId || null,
+      supersededReason: 'current_checkout_authority_changed',
+      updatedAt: supersededAt
+    }, { merge: true });
+    transaction.set(registrationRef, {
+      checkoutCreationReservationId: admin.firestore.FieldValue.delete(),
+      checkoutCreationStartedAt: admin.firestore.FieldValue.delete(),
+      updatedAt: supersededAt
     }, { merge: true });
     return true;
   });
@@ -5515,19 +5710,31 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
   };
   let checkoutCreationReservation;
   try {
-    checkoutCreationReservation = await reserveRegistrationCheckoutCreation(resolvedInput, {
-      checkoutCreationReservationId,
+    const reservationProposal = {
+      issuedPublicCheckoutCapability,
+      issuedCheckoutAttemptToken,
       amountCents,
-      reservationProposal: {
-        issuedPublicCheckoutCapability,
-        issuedCheckoutAttemptToken,
+      currency,
+      livemode: expectedLivemode,
+      stripeIdempotencyKey: registrationCheckoutIdempotencyKey,
+      stripeRequest: proposedStripeRequest
+    };
+    for (let reservationAttempt = 0; reservationAttempt < 2; reservationAttempt += 1) {
+      checkoutCreationReservation = await reserveRegistrationCheckoutCreation(resolvedInput, {
+        checkoutCreationReservationId,
         amountCents,
-        currency,
-        livemode: expectedLivemode,
-        stripeIdempotencyKey: registrationCheckoutIdempotencyKey,
-        stripeRequest: proposedStripeRequest
-      }
-    });
+        reservationProposal
+      });
+      if (!checkoutCreationReservation.staleReservation) break;
+      await supersedeStaleRegistrationCheckoutReservation(
+        resolvedInput,
+        checkoutCreationReservation.staleReservation,
+        stripe
+      );
+    }
+    if (!checkoutCreationReservation?.reserved) {
+      throw new functions.https.HttpsError('aborted', 'Registration checkout authority changed again while stale payment authority was being revoked. Retry with current state.');
+    }
   } catch (error) {
     if (retryCapacityReservation.reserved) {
       await releaseRegistrationCheckoutCapacity(resolvedInput, {}, {
@@ -6713,13 +6920,19 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
         const reversalChanged = JSON.stringify(nextReversal) !== JSON.stringify(currentReversal);
         if (!ignoredReason && reversalStatus && reversalChanged) {
           const checkoutWasPaid = ['paid', 'disputed', 'refunded', 'dispute_lost'].includes(String(attempt.checkoutStatus || '').toLowerCase());
+          const isHistoricalAttempt = attempt.historicalAuthority === true
+            || String(attemptRef.id || '').startsWith('history_');
           teamPassUpdated = checkoutWasPaid && reversalChanged;
           const entitlementStatus = reversalStatus === 'paid'
             ? 'active'
             : reversalStatus === 'disputed'
               ? 'inactive'
               : 'cancelled';
-          if (checkoutWasPaid) {
+          // Archived charge authority remains reconcilable for audit/refund
+          // accuracy, but it no longer owns the live season entitlement. A
+          // delayed reversal for an older charge must never overwrite a newer
+          // paid repurchase.
+          if (checkoutWasPaid && !isHistoricalAttempt) {
             transaction.set(entitlementRef, {
               ...entitlement.data,
               status: entitlementStatus,

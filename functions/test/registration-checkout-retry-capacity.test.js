@@ -422,6 +422,36 @@ test('checkout reserves the registration before Stripe creation so concurrent re
     assert.equal(Object.prototype.hasOwnProperty.call(completedRegistration, 'checkoutCreationReservationId'), false);
 });
 
+test('checkout transaction rejects a form price change after preflight without calling Stripe', async () => {
+    const registrationPath = 'teams/team-1/registrationForms/form-1/registrations/reg-1';
+    const formPath = 'teams/team-1/registrationForms/form-1';
+    let stripeCreateCalls = 0;
+    const loaded = loadCheckoutHandler({
+        seed: buildSeedState({ registrationCapacityReleased: false }),
+        stripeCreateImpl: async () => {
+            stripeCreateCalls += 1;
+            throw new Error('Stripe must not be called for stale checkout details.');
+        },
+        firestoreOptions: {
+            onGet: ({ path, count, write }) => {
+                if (path === registrationPath && count === 1) {
+                    write(formPath, { feeAmountCents: 6500 }, { merge: true });
+                }
+            }
+        }
+    });
+
+    await assert.rejects(
+        loaded.createStripeRegistrationCheckout({ ...checkoutInput, retryPayment: false }),
+        (error) => error?.code === 'aborted' && /details changed/.test(error.message)
+    );
+
+    assert.equal(stripeCreateCalls, 0);
+    const registration = loaded.firestore.snapshot(registrationPath);
+    assert.equal(Object.prototype.hasOwnProperty.call(registration, 'checkoutCreationReservationId'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(registration, 'stripeCheckoutSessionId'), false);
+});
+
 test('checkout replaces an abandoned creation reservation after its timeout', async () => {
     let stripeCreateCalls = 0;
     const staleStartedAtSeconds = Math.floor((Date.now() - (16 * 60 * 1000)) / 1000);
@@ -849,6 +879,84 @@ test('replays the exact durable Stripe request after post-Stripe persistence fai
     assert.equal(completedRegistration.checkoutStatus, 'open');
     assert.equal(Object.prototype.hasOwnProperty.call(completedRegistration, 'checkoutCreationReservationId'), false);
     assert.equal(loaded.firestore.snapshot(reservationPath).status, 'persisted');
+});
+
+test('revokes a stale durable reservation before creating current registration charge authority', async () => {
+    const registrationPath = 'teams/team-1/registrationForms/form-1/registrations/reg-1';
+    const formPath = 'teams/team-1/registrationForms/form-1';
+    const stripeCalls = [];
+    const expiredSessionIds = [];
+    const sessionsByIdempotencyKey = new Map();
+    const stripeCreateImpl = async (payload, options) => {
+        stripeCalls.push({ payload: clone(payload), options: clone(options) });
+        if (!sessionsByIdempotencyKey.has(options.idempotencyKey)) {
+            const sequence = sessionsByIdempotencyKey.size + 1;
+            sessionsByIdempotencyKey.set(options.idempotencyKey, {
+                id: `cs_test_current_authority_${sequence}`,
+                url: `https://checkout.stripe.com/c/current_authority_${sequence}`,
+                payment_status: 'unpaid',
+                status: 'open',
+                livemode: false,
+                expires_at: Math.floor(Date.now() / 1000) + 1800,
+                metadata: clone(payload.metadata)
+            });
+        }
+        return clone(sessionsByIdempotencyKey.get(options.idempotencyKey));
+    };
+    const stripeExpireImpl = async (sessionId) => {
+        expiredSessionIds.push(sessionId);
+        for (const session of sessionsByIdempotencyKey.values()) {
+            if (session.id === sessionId) session.status = 'expired';
+        }
+        return { id: sessionId, status: 'expired' };
+    };
+    const loaded = loadCheckoutHandler({
+        seed: buildSeedState(),
+        stripeCreateImpl,
+        stripeExpireImpl,
+        firestoreOptions: {
+            onGet: ({ path, count }) => {
+                if (path === registrationPath && count === 4) {
+                    throw new Error('Injected registration projection failure.');
+                }
+            }
+        }
+    });
+
+    await assert.rejects(
+        loaded.createStripeRegistrationCheckout(checkoutInput),
+        /Injected registration projection failure\./
+    );
+    const staleReservationId = loaded.firestore.snapshot(registrationPath).checkoutCreationReservationId;
+    const staleReservationPath = `${registrationPath}/checkoutReservations/${staleReservationId}`;
+    const staleIdempotencyKey = stripeCalls[0].options.idempotencyKey;
+    assert.equal(stripeCalls[0].payload.line_items[0].price_data.unit_amount, 5000);
+
+    await loaded.firestore.doc(formPath).set({ feeAmountCents: 6500, currency: 'CAD' }, { merge: true });
+    delete require.cache[repoIndexPath];
+    installModuleStubs({ firestore: loaded.firestore, stripeCreateImpl, stripeExpireImpl });
+    const mod = require('../index.js');
+    const result = await mod.createStripeRegistrationCheckout(checkoutInput);
+
+    assert.equal(stripeCalls.length, 3);
+    assert.deepEqual(stripeCalls[1], stripeCalls[0]);
+    assert.equal(expiredSessionIds[0], 'cs_test_current_authority_1');
+    assert.notEqual(stripeCalls[2].options.idempotencyKey, staleIdempotencyKey);
+    assert.equal(stripeCalls[2].payload.line_items[0].price_data.unit_amount, 6500);
+    assert.equal(stripeCalls[2].payload.line_items[0].price_data.currency, 'cad');
+    assert.equal(loaded.firestore.snapshot(staleReservationPath).status, 'superseded');
+    assert.equal(
+        loaded.firestore.snapshot(staleReservationPath).supersededReason,
+        'current_checkout_authority_changed'
+    );
+    assert.deepEqual(result, {
+        checkoutUrl: 'https://checkout.stripe.com/c/current_authority_2',
+        sessionId: 'cs_test_current_authority_2'
+    });
+    const registration = loaded.firestore.snapshot(registrationPath);
+    assert.equal(registration.checkoutAmountCents, 6500);
+    assert.equal(registration.checkoutCurrency, 'cad');
+    assert.equal(registration.stripeCheckoutSessionId, 'cs_test_current_authority_2');
 });
 
 test('terminal registration replay is preserved for webhook reconciliation instead of projected as open', async () => {

@@ -1244,7 +1244,7 @@ test('Team Pass can reconcile a won dispute after persisting dispute_lost', asyn
     assert.equal(firestore.snapshot(entitlementPath).status, 'active');
 });
 
-test('Team Pass repurchase preserves lost-charge authority for a later dispute win', async () => {
+test('Team Pass archived reversal authority never mutates a live repurchase entitlement', async () => {
     const attemptPath = 'teams/team-pass/teamPassCheckoutAttempts/2026_team-pass';
     const entitlementPath = 'teams/team-pass/entitlements/2026_team-pass';
     const request = { teamId: 'team-pass', seasonId: '2026', tier: 'team-pass' };
@@ -1264,11 +1264,12 @@ test('Team Pass repurchase preserves lost-charge authority for a later dispute w
     };
     assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
     const originalChargeId = 'ch_pi_team_pass_original';
-    stripeState.charges.set(originalChargeId, {
+    const originalCharge = {
         object: 'charge', id: originalChargeId, metadata: clone(originalSession.metadata),
         payment_intent: 'pi_team_pass_original', amount: 4900, amount_refunded: 0,
         currency: 'usd', livemode: false
-    });
+    };
+    stripeState.charges.set(originalChargeId, originalCharge);
 
     stripeState.webhookEvent = {
         id: 'evt_team_pass_original_dispute_lost', type: 'charge.dispute.closed', created: 200,
@@ -1294,10 +1295,32 @@ test('Team Pass repurchase preserves lost-charge authority for a later dispute w
         data: { object: { object: 'dispute', id: 'dp_team_pass_original', charge: originalChargeId, status: 'won' } }
     };
     assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
-    assert.equal(firestore.snapshot(entitlementPath).status, 'active');
+    assert.equal(firestore.snapshot(entitlementPath).status, 'cancelled');
     assert.equal(firestore.snapshot(historicalEntries[0][0]).checkoutStatus, 'paid');
     assert.equal(firestore.snapshot(attemptPath).stripeCheckoutSessionId, replacementCheckout.sessionId);
     assert.equal(firestore.snapshot(attemptPath).checkoutStatus, 'open');
+
+    const replacementSession = stripeState.checkoutResponses.get(replacementCheckout.sessionId);
+    stripeState.webhookEvent = {
+        id: 'evt_team_pass_replacement_paid', type: 'checkout.session.completed', created: 400,
+        data: { object: {
+            ...clone(replacementSession), status: 'complete', payment_status: 'paid',
+            payment_intent: 'pi_team_pass_replacement'
+        } }
+    };
+    assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
+    assert.equal(firestore.snapshot(entitlementPath).status, 'active');
+    assert.equal(firestore.snapshot(attemptPath).checkoutStatus, 'paid');
+
+    stripeState.webhookEvent = {
+        id: 'evt_team_pass_original_refunded_after_repurchase', type: 'charge.refunded', created: 500,
+        data: { object: { ...clone(originalCharge), amount_refunded: 4900 } }
+    };
+    assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
+    assert.equal(firestore.snapshot(historicalEntries[0][0]).checkoutStatus, 'refunded');
+    assert.equal(firestore.snapshot(entitlementPath).status, 'active');
+    assert.equal(firestore.snapshot(attemptPath).stripeCheckoutSessionId, replacementCheckout.sessionId);
+    assert.equal(firestore.snapshot(attemptPath).checkoutStatus, 'paid');
 });
 
 test('team fee checkout reserves one current attempt and reuses its Stripe session', async () => {
