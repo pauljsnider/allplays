@@ -30,6 +30,16 @@ describe('Firestore recovery delivery contract', () => {
         expect(runbook).toContain('npm run ops:verify-firestore-recovery -- --project="$ALLPLAYS_FIRESTORE_PROJECT_ID"');
     });
 
+    it('documents the complete least-privilege IAM contract for verification', () => {
+        expect(runbook).toContain('datastore.databases.getMetadata');
+        expect(runbook).toContain('datastore.backupSchedules.list');
+        expect(runbook).toContain('datastore.backups.list');
+        expect(runbook).toContain('roles/datastore.viewer');
+        expect(runbook).toContain('roles/datastore.backupSchedulesViewer');
+        expect(runbook).toContain('roles/datastore.backupsViewer');
+        expect(runbook).toContain('`roles/datastore.viewer` can also read application');
+    });
+
     it('keeps restore drills isolated from the production database', () => {
         expect(runbook).toContain('Never restore over `(default)`');
         expect(runbook).toContain("--destination-database='restore-drill-YYYYMMDD'");

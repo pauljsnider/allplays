@@ -13,8 +13,21 @@ created schedule gets one 36-hour grace window to produce its first backup.
 
 ## Verify the recovery posture
 
-Authenticate `gcloud` as a principal with Firestore backup-viewer access, then
-run:
+Authenticate `gcloud` as a principal with a project-level custom role containing
+exactly these read-only Firestore permissions:
+
+- `datastore.databases.getMetadata` for the database posture;
+- `datastore.backupSchedules.list` for the managed-backup schedule; and
+- `datastore.backups.list` for backup lineage and freshness.
+
+No single read-only Firestore predefined role contains all three permissions.
+If a custom role is unavailable, grant the principal all of
+`roles/datastore.viewer`, `roles/datastore.backupSchedulesViewer`, and
+`roles/datastore.backupsViewer`. That predefined-role combination is broader
+than the custom role because `roles/datastore.viewer` can also read application
+documents.
+
+Then run:
 
 ```bash
 export ALLPLAYS_FIRESTORE_PROJECT_ID='YOUR_PROJECT_ID'
