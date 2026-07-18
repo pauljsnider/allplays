@@ -112,6 +112,28 @@ describe('nativeSecureStorage', () => {
     await expect(storage.setNativeSecureItem('firebase-auth-user', 'user-b')).resolves.toBeUndefined();
     expect(secureStorageMocks.setItem).toHaveBeenCalledTimes(1);
   });
+
+  it('keeps a fail-closed removal queued after a timed-out secure auth write', async () => {
+    vi.useFakeTimers();
+    const lateWrite = createDeferred<void>();
+    secureStorageMocks.setItem.mockReturnValueOnce(lateWrite.promise);
+    const storage = await loadStorage();
+
+    const writePromise = storage.setNativeSecureItem('firebase-auth-user', 'failed-user');
+    const writeRejection = expect(writePromise).rejects.toThrow('write timed out');
+    await vi.advanceTimersByTimeAsync(1_500);
+    await writeRejection;
+
+    const removalPromise = storage.removeNativeSecureItemEventually('firebase-auth-user');
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(secureStorageMocks.removeItem).not.toHaveBeenCalled();
+
+    lateWrite.resolve();
+    await vi.runAllTimersAsync();
+    await expect(removalPromise).resolves.toBeUndefined();
+    expect(secureStorageMocks.setItem.mock.invocationCallOrder[0])
+      .toBeLessThan(secureStorageMocks.removeItem.mock.invocationCallOrder[0]);
+  });
 });
 
 function createDeferred<T>() {

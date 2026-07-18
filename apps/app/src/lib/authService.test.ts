@@ -84,7 +84,8 @@ const nativeSessionStoreMocks = vi.hoisted(() => ({
 
 const nativeFirebasePersistenceMocks = vi.hoisted(() => ({
   persistNativeFirebaseAuthUser: vi.fn(async () => {}),
-  clearNativeFirebaseAuthUser: vi.fn(async () => {})
+  clearNativeFirebaseAuthUser: vi.fn(async () => {}),
+  queueNativeFirebaseAuthUserRemoval: vi.fn(async () => {})
 }));
 
 const imageUploadSessionMocks = vi.hoisted(() => ({
@@ -442,6 +443,22 @@ describe('signUpWithEmail', () => {
     legacySignupFlowMocks.executeEmailPasswordSignup.mockResolvedValue({
       user: { uid: 'new-user', email: 'player@example.com' }
     });
+    nativeSessionStoreMocks.session = null;
+    nativeSessionStoreMocks.clearNativeAuthSession.mockReset();
+    nativeSessionStoreMocks.clearNativeAuthSession.mockResolvedValue(undefined);
+    nativeFirebasePersistenceMocks.persistNativeFirebaseAuthUser.mockReset();
+    nativeFirebasePersistenceMocks.persistNativeFirebaseAuthUser.mockResolvedValue(undefined);
+    nativeFirebasePersistenceMocks.queueNativeFirebaseAuthUserRemoval.mockReset();
+    nativeFirebasePersistenceMocks.queueNativeFirebaseAuthUserRemoval.mockResolvedValue(undefined);
+    nativeFirebasePersistenceMocks.clearNativeFirebaseAuthUser.mockReset();
+    nativeFirebasePersistenceMocks.clearNativeFirebaseAuthUser.mockResolvedValue(undefined);
+    appDataCacheMocks.clearAppDataCache.mockReset();
+    appDataCacheMocks.flushAppDataCachePersistence.mockReset();
+    appDataCacheMocks.flushAppDataCachePersistence.mockResolvedValue(undefined);
+    imageUploadSessionMocks.clearImageUploadSession.mockReset();
+    imageUploadSessionMocks.clearImageUploadSession.mockResolvedValue(undefined);
+    vi.mocked(firebaseSignOutMock).mockReset();
+    vi.mocked(firebaseSignOutMock).mockResolvedValue(undefined);
   });
 
   it('normalizes signup input and delegates to the shared access-code redemption flow', async () => {
@@ -526,6 +543,73 @@ describe('signUpWithEmail', () => {
       })
     );
     expect(nativeSessionStoreMocks.clearNativeAuthSession).toHaveBeenCalled();
+  });
+
+  it('deletes and signs out a just-created native user when secure persistence fails', async () => {
+    const deleteCreatedUser = vi.fn(async () => {});
+    vi.mocked(createUserWithEmailAndPassword).mockResolvedValueOnce({
+      user: {
+        uid: 'unpersisted-native-user',
+        email: 'player@example.com',
+        emailVerified: false,
+        refreshToken: 'signup-refresh-token',
+        getIdToken: vi.fn(async () => createFirebaseIdToken('unpersisted-native-user')),
+        delete: deleteCreatedUser
+      }
+    });
+    nativeFirebasePersistenceMocks.persistNativeFirebaseAuthUser
+      .mockRejectedValueOnce(new Error('keychain locked'));
+    legacySignupFlowMocks.executeEmailPasswordSignup.mockImplementationOnce(async (options: any) => (
+      options.dependencies.createUserWithEmailAndPassword(
+        authState,
+        options.email,
+        options.password
+      )
+    ));
+
+    await expect(signUpWithEmail('player@example.com', 'secret1', '85nsbz7k'))
+      .rejects.toThrow('keychain locked');
+
+    expect(nativeFirebasePersistenceMocks.queueNativeFirebaseAuthUserRemoval).toHaveBeenCalledWith(
+      'test-api-key',
+      '[DEFAULT]'
+    );
+    expect(deleteCreatedUser).toHaveBeenCalledTimes(1);
+    expect(firebaseSignOutMock).toHaveBeenCalledWith(authState);
+  });
+
+  it('continues failed-signup deletion cleanup when secure removal fails', async () => {
+    vi.mocked(createUserWithEmailAndPassword).mockResolvedValueOnce({
+      user: {
+        uid: 'failed-cleanup-user',
+        email: 'player@example.com',
+        emailVerified: false,
+        refreshToken: 'signup-refresh-token',
+        getIdToken: vi.fn(async () => createFirebaseIdToken('failed-cleanup-user'))
+      }
+    });
+    nativeFirebasePersistenceMocks.clearNativeFirebaseAuthUser
+      .mockRejectedValueOnce(new Error('keychain locked'));
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('accounts:delete')) return createJsonResponse({});
+      throw new Error(`Unexpected Firebase endpoint: ${url}`);
+    }));
+    legacySignupFlowMocks.executeEmailPasswordSignup.mockImplementationOnce(async (options: any) => {
+      const credential = await options.dependencies.createUserWithEmailAndPassword(
+        authState,
+        options.email,
+        options.password
+      );
+      await credential.user.delete();
+      throw new Error('invite redemption failed');
+    });
+
+    await expect(signUpWithEmail('player@example.com', 'secret1', '85nsbz7k'))
+      .rejects.toThrow('invite redemption failed');
+
+    expect(imageUploadSessionMocks.clearImageUploadSession).toHaveBeenCalled();
+    expect(appDataCacheMocks.clearAppDataCache).toHaveBeenCalled();
+    expect(appDataCacheMocks.flushAppDataCachePersistence).toHaveBeenCalled();
   });
 
   it('stops invalid signup emails before loading Firebase signup work', async () => {
@@ -821,6 +905,8 @@ describe('native REST sign-in', () => {
     nativeSessionStoreMocks.clearNativeAuthSession.mockClear();
     nativeFirebasePersistenceMocks.persistNativeFirebaseAuthUser.mockReset();
     nativeFirebasePersistenceMocks.persistNativeFirebaseAuthUser.mockResolvedValue(undefined);
+    nativeFirebasePersistenceMocks.queueNativeFirebaseAuthUserRemoval.mockReset();
+    nativeFirebasePersistenceMocks.queueNativeFirebaseAuthUserRemoval.mockResolvedValue(undefined);
     imageUploadSessionMocks.clearImageUploadSession.mockReset();
     imageUploadSessionMocks.clearImageUploadSession.mockResolvedValue(undefined);
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
@@ -924,6 +1010,10 @@ describe('native REST sign-in', () => {
 
     expect(nativeSessionStoreMocks.writeNativeAuthSession).toHaveBeenCalledTimes(1);
     expect(nativeSessionStoreMocks.clearNativeAuthSession).toHaveBeenCalledTimes(1);
+    expect(nativeFirebasePersistenceMocks.queueNativeFirebaseAuthUserRemoval).toHaveBeenCalledWith(
+      'test-api-key',
+      '[DEFAULT]'
+    );
   });
 
   it('blocks direct production REST calls when Firebase Auth is configured for an emulator', async () => {

@@ -4,7 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const secureStorageMocks = vi.hoisted(() => ({
   getNativeSecureItem: vi.fn(),
   setNativeSecureItem: vi.fn(),
-  removeNativeSecureItem: vi.fn()
+  removeNativeSecureItem: vi.fn(),
+  removeNativeSecureItemEventually: vi.fn()
 }));
 const runtimeState = vi.hoisted(() => ({ native: true }));
 
@@ -16,6 +17,7 @@ import {
   getFirebaseAuthPersistenceKey,
   NativeSecureFirebaseAuthPersistence,
   persistNativeFirebaseAuthUser,
+  queueNativeFirebaseAuthUserRemoval,
   shouldBlockNativeFirebaseAuthMigration
 } from './nativeFirebaseAuthPersistence';
 
@@ -28,6 +30,7 @@ describe('NativeSecureFirebaseAuthPersistence', () => {
     secureStorageMocks.getNativeSecureItem.mockResolvedValue(null);
     secureStorageMocks.setNativeSecureItem.mockResolvedValue(undefined);
     secureStorageMocks.removeNativeSecureItem.mockResolvedValue(undefined);
+    secureStorageMocks.removeNativeSecureItemEventually.mockResolvedValue(undefined);
   });
 
   it('stores Firebase auth state only through the native secure-storage bridge', async () => {
@@ -77,6 +80,39 @@ describe('NativeSecureFirebaseAuthPersistence', () => {
       'firebase-auth-firebase%3AauthUser%3Aapi-key%3A%5BDEFAULT%5D'
     );
     expect(shouldBlockNativeFirebaseAuthMigration('api-key')).toBe(true);
+  });
+
+  it('hydrates the active Firebase Auth owner after an external REST persistence write', async () => {
+    const key = getFirebaseAuthPersistenceKey('api-key', '[DEFAULT]');
+    let secureValue: string | null = null;
+    secureStorageMocks.setNativeSecureItem.mockImplementation(async (_key: string, value: string) => {
+      secureValue = value;
+    });
+    secureStorageMocks.getNativeSecureItem.mockImplementation(async () => secureValue);
+    const sdkPersistence = new NativeSecureFirebaseAuthPersistence();
+    let currentUser: Record<string, unknown> | null = null;
+    const sdkStorageListener = vi.fn(async () => {
+      currentUser = await sdkPersistence._get(key);
+    });
+    sdkPersistence._addListener(key, sdkStorageListener);
+
+    await persistNativeFirebaseAuthUser('api-key', '[DEFAULT]', { uid: 'rest-user' });
+
+    expect(sdkStorageListener).toHaveBeenCalledWith({ uid: 'rest-user' });
+    expect(currentUser).toEqual({ uid: 'rest-user' });
+    sdkPersistence._removeListener(key, sdkStorageListener);
+  });
+
+  it('tombstones and queues an eventual removal for a failed secure write', async () => {
+    const removal = queueNativeFirebaseAuthUserRemoval('api-key', '[DEFAULT]');
+
+    expect(window.localStorage.getItem(
+      'allplays-native-firebase-auth-signed-out:firebase%3AauthUser%3Aapi-key%3A%5BDEFAULT%5D'
+    )).toBe('1');
+    expect(secureStorageMocks.removeNativeSecureItemEventually).toHaveBeenCalledWith(
+      'firebase-auth-firebase%3AauthUser%3Aapi-key%3A%5BDEFAULT%5D'
+    );
+    await expect(removal).resolves.toBeUndefined();
   });
 
   it('tombstones a failed removal so stale secure auth cannot restore on relaunch', async () => {

@@ -37,7 +37,8 @@ import {
 import type { NativeAuthSession } from './nativeAuthSessionStore';
 import {
   clearNativeFirebaseAuthUser,
-  persistNativeFirebaseAuthUser
+  persistNativeFirebaseAuthUser,
+  queueNativeFirebaseAuthUserRemoval
 } from './nativeFirebaseAuthPersistence';
 import { assertFirebaseIdTokenIdentity } from './firebaseIdTokenIdentity';
 import { assertNativeAuthBackendPolicy } from './nativeAuthBackendPolicy';
@@ -607,10 +608,24 @@ async function persistNativeRestAuthSession(signInPayload: NativeRestSignInPaylo
       authUser
     );
   } catch (error) {
-    // Never leave the fallback session restorable when Firebase's secure
-    // persistence failed. The clear operation writes a non-secret tombstone
-    // if the OS secure store itself is temporarily unavailable.
+    // The native set may finish after its caller-facing timeout. Tombstone now
+    // and queue an uncancelled same-key removal behind that write; keep the auth
+    // mutation closed until the real plugin operation settles.
+    const secureRemoval = queueNativeFirebaseAuthUserRemoval(
+      String(auth.app?.options?.apiKey || ''),
+      String(auth.app?.name || '[DEFAULT]')
+    );
+    holdNativeAuthMutationQueueUntil(secureRemoval);
     await clearNativeAuthSession();
+    try {
+      await withTimeout(
+        secureRemoval,
+        'Failed native auth persistence cleanup timed out.',
+        signOutCleanupTimeoutMs
+      );
+    } catch (cleanupError) {
+      logger.warn('Failed native auth persistence cleanup is still pending.', { error: cleanupError });
+    }
     throw error;
   }
 
@@ -815,15 +830,7 @@ async function callFirebaseAuthRest(endpoint: string, payload: Record<string, un
 async function deleteNativeAuthUser() {
   const session = await readNativeAuthSession();
   if (!session?.idToken) {
-    await clearNativeAuthSession();
-    await clearNativeFirebaseAuthUser(
-      String(auth.app?.options?.apiKey || ''),
-      String(auth.app?.name || '[DEFAULT]')
-    );
-    await clearFirebaseAuthStorageSession();
-    clearCachedUserData();
-    await runBestEffortAuthCleanup('Image upload auth cleanup', clearImageUploadSession);
-    await flushAppDataCachePersistence();
+    await clearDeletedNativeAuthState();
     return;
   }
 
@@ -836,16 +843,20 @@ async function deleteNativeAuthUser() {
       });
     }
   } finally {
-    await clearNativeAuthSession();
-    await clearNativeFirebaseAuthUser(
-      String(auth.app?.options?.apiKey || ''),
-      String(auth.app?.name || '[DEFAULT]')
-    );
-    await clearFirebaseAuthStorageSession();
-    clearCachedUserData();
-    await runBestEffortAuthCleanup('Image upload auth cleanup', clearImageUploadSession);
-    await flushAppDataCachePersistence();
+    await clearDeletedNativeAuthState();
   }
+}
+
+async function clearDeletedNativeAuthState() {
+  await runBestEffortAuthCleanup('Native fallback auth cleanup', clearNativeAuthSession);
+  await runBestEffortAuthCleanup('Secure Firebase auth cleanup', () => clearNativeFirebaseAuthUser(
+    String(auth.app?.options?.apiKey || ''),
+    String(auth.app?.name || '[DEFAULT]')
+  ));
+  await runBestEffortAuthCleanup('Firebase auth storage cleanup', clearFirebaseAuthStorageSession);
+  clearCachedUserData();
+  await runBestEffortAuthCleanup('Image upload auth cleanup', clearImageUploadSession);
+  await runBestEffortAuthCleanup('App data cache persistence cleanup', flushAppDataCachePersistence);
 }
 
 async function signInWithNativeRestSession(email: string, password: string) {
@@ -1190,7 +1201,23 @@ async function signUpWithEmailInternal(email: string, password: string, activati
   const createSignupUser = isNativeRuntime()
     ? async (_auth: typeof auth, signupEmail: string, signupPassword: string) => {
       const credential = await createUserWithEmailAndPassword(auth, signupEmail, signupPassword) as UserCredential;
-      const persistedUser = await persistNativeFirebaseCredential(credential.user, true);
+      let persistedUser: FirebaseUser;
+      try {
+        persistedUser = await persistNativeFirebaseCredential(credential.user, true);
+      } catch (error) {
+        // Firebase has already created and signed in this account. Roll it back
+        // before reporting secure-persistence failure so a retry does not hit
+        // email-already-in-use, while preserving the original persistence error.
+        if (credential.user.delete) {
+          await runBestEffortAuthCleanup(
+            'Failed native signup account deletion',
+            () => credential.user.delete!()
+          );
+        }
+        await runBestEffortAuthCleanup('Failed native signup Firebase sign-out', () => firebaseSignOut(auth));
+        await runBestEffortAuthCleanup('Failed native signup storage cleanup', clearFirebaseAuthStorageSession);
+        throw error;
+      }
       return {
         ...credential,
         user: {

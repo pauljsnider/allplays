@@ -88,7 +88,8 @@ async function getConfiguredStorage() {
 function runKeyedSecureStorageOperation<T>(
   key: string,
   operation: (storage: SecureStorageApi) => Promise<T>,
-  timeoutMessage: string
+  timeoutMessage: string,
+  waitWithoutCallerTimeout = false
 ) {
   const previousTail = secureStorageOperationTails.get(key) || Promise.resolve();
   let started = false;
@@ -111,6 +112,10 @@ function runKeyedSecureStorageOperation<T>(
       secureStorageOperationTails.delete(key);
     }
   });
+
+  if (waitWithoutCallerTimeout) {
+    return scheduled;
+  }
 
   return withSecureStorageTimeout(scheduled, timeoutMessage).catch((error) => {
     if (!started) cancelled = true;
@@ -135,6 +140,21 @@ export async function removeNativeSecureItem(key: string) {
     key,
     (storage) => storage.removeItem(key),
     'Native secure-storage removal timed out.'
+  );
+}
+
+/**
+ * Queue a removal that must survive beyond the caller-facing timeout of an
+ * earlier write. This is reserved for fail-closed auth rollback: the returned
+ * promise represents the real native operation and can be registered as an
+ * auth-mutation barrier while the UI receives its own bounded wait.
+ */
+export async function removeNativeSecureItemEventually(key: string) {
+  await runKeyedSecureStorageOperation(
+    key,
+    (storage) => storage.removeItem(key),
+    'Native secure-storage removal timed out.',
+    true
   );
 }
 

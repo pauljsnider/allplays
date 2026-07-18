@@ -1,10 +1,16 @@
 import type { Persistence } from './adapters/legacyFirebaseAuthSdk';
-import { getNativeSecureItem, removeNativeSecureItem, setNativeSecureItem } from './nativeSecureStorage';
+import {
+  getNativeSecureItem,
+  removeNativeSecureItem,
+  removeNativeSecureItemEventually,
+  setNativeSecureItem
+} from './nativeSecureStorage';
 import { isNativeRuntime } from './nativeRuntime';
 
 type PersistenceValue = Record<string, unknown> | string;
-type StorageEventListener = (value: PersistenceValue | null) => void;
+type StorageEventListener = (value: PersistenceValue | null) => void | Promise<void>;
 const signedOutMarkerStorageKeyPrefix = 'allplays-native-firebase-auth-signed-out:';
+const storageEventListeners = new Map<string, Set<StorageEventListener>>();
 
 /**
  * Firebase Auth's public Persistence type intentionally exposes only `type`,
@@ -59,13 +65,16 @@ export class NativeSecureFirebaseAuthPersistence implements Persistence {
     await removeNativeSecureItem(toSecureStorageKey(key));
   }
 
-  _addListener(_key: string, _listener: StorageEventListener) {
-    // A native WebView has a single Firebase Auth owner. There is no second tab
-    // to synchronize, and Firebase updates the active instance directly.
+  _addListener(key: string, listener: StorageEventListener) {
+    const listeners = storageEventListeners.get(key) || new Set<StorageEventListener>();
+    listeners.add(listener);
+    storageEventListeners.set(key, listeners);
   }
 
-  _removeListener(_key: string, _listener: StorageEventListener) {
-    // See _addListener.
+  _removeListener(key: string, listener: StorageEventListener) {
+    const listeners = storageEventListeners.get(key);
+    listeners?.delete(listener);
+    if (listeners?.size === 0) storageEventListeners.delete(key);
   }
 }
 
@@ -79,12 +88,28 @@ export async function persistNativeFirebaseAuthUser(
   authUser: Record<string, unknown>
 ) {
   const persistence = new NativeSecureFirebaseAuthPersistence();
-  await persistence._set(getFirebaseAuthPersistenceKey(apiKey, appName), authUser);
+  const key = getFirebaseAuthPersistenceKey(apiKey, appName);
+  await persistence._set(key, authUser);
+  // REST-backed native sign-in writes outside Firebase Auth. Notify the SDK's
+  // registered persistence listener and await its _onStorageEvent hydration so
+  // Firestore/callable requests can use auth.currentUser immediately.
+  await notifyStorageEventListeners(key, authUser);
 }
 
 export async function clearNativeFirebaseAuthUser(apiKey: string, appName: string) {
   const persistence = new NativeSecureFirebaseAuthPersistence();
   await persistence._remove(getFirebaseAuthPersistenceKey(apiKey, appName));
+}
+
+/**
+ * Tombstone immediately, then queue an uncancelled secure removal behind any
+ * write whose caller has already timed out. The auth mutation queue owns the
+ * returned promise as a barrier so a late write cannot restore a failed login.
+ */
+export function queueNativeFirebaseAuthUserRemoval(apiKey: string, appName: string) {
+  const key = getFirebaseAuthPersistenceKey(apiKey, appName);
+  setSignedOutMarker(key);
+  return removeNativeSecureItemEventually(toSecureStorageKey(key));
 }
 
 /**
@@ -130,4 +155,9 @@ function clearSignedOutMarker(firebasePersistenceKey: string) {
   } catch {
     // Cleanup is best-effort when WebView storage is disabled.
   }
+}
+
+async function notifyStorageEventListeners(key: string, value: PersistenceValue | null) {
+  const listeners = Array.from(storageEventListeners.get(key) || []);
+  await Promise.all(listeners.map((listener) => listener(value)));
 }
