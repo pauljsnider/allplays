@@ -1602,6 +1602,33 @@ service cloud.firestore {
               isOwnerUserEmailAuthBound(request.resource.data));
     }
 
+    function isPublicTeamProfilePayloadValid(data) {
+      return data.keys().hasOnly([
+               'publicSchemaVersion',
+               'name', 'sport', 'description', 'photoUrl', 'city', 'state', 'zip',
+               'leagueUrl', 'websiteUrl', 'socialLinks',
+               'twitchChannel', 'streamUrl', 'livestreamUrl', 'streamEmbedUrl', 'youtubeEmbedUrl',
+               'standingsConfig',
+               'tournament', 'tournamentDivisions', 'tournamentPools', 'tournamentPoolOverrides',
+               'appAccess', 'webAccess', 'active', 'archived', 'status', 'isPublic',
+               'publicSearchName', 'publicSearchCity', 'publicSearchState', 'publicSearchZip',
+               'publicSearchCityState', 'sourceUpdatedAt'
+             ]) &&
+             data.get('publicSchemaVersion', 0) == 1 &&
+             data.get('isPublic', false) == true &&
+             data.get('active', false) == true &&
+             data.get('name', '') is string &&
+             data.get('name', '').size() > 0 &&
+             (!data.keys().hasAny(['socialLinks']) || data.socialLinks is map) &&
+             (!data.keys().hasAny(['standingsConfig']) || data.standingsConfig is map) &&
+             (!data.keys().hasAny(['tournament']) || data.tournament is map) &&
+             (!data.keys().hasAny(['tournamentDivisions']) || data.tournamentDivisions is list) &&
+             (!data.keys().hasAny(['tournamentPools']) || data.tournamentPools is list) &&
+             (!data.keys().hasAny(['tournamentPoolOverrides']) || data.tournamentPoolOverrides is map) &&
+             (!data.keys().hasAny(['appAccess']) || data.appAccess is bool) &&
+             (!data.keys().hasAny(['webAccess']) || data.webAccess is bool);
+    }
+
     function isOwnerUserEmailAuthBound(data) {
       return !data.keys().hasAny(['email']) ||
              (request.auth.token.email is string &&
@@ -2650,6 +2677,16 @@ service cloud.firestore {
       allow update: if (isGlobalAdmin() && isPublicUserProfilePayloadValid(userId, request.resource.data)) ||
                     isOwnerPublicUserProfilePresentationUpdateValid(userId);
       allow delete: if isGlobalAdmin() || isOwner(userId);
+    }
+
+    // Server-maintained, allow-listed presentation/search documents. The
+    // corresponding teams/{teamId} source document is never a public API.
+    match /publicTeamProfiles/{teamId} {
+      allow get: if isPublicTeamProfilePayloadValid(resource.data);
+      // Firestore cannot prove the full projection schema for a collection
+      // query. Keep list reads fail-closed; discovery uses the bounded callable.
+      allow list: if false;
+      allow create, update, delete: if false;
     }
 
     // Users collection - users should only write their own profile.

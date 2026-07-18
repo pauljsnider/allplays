@@ -1,7 +1,8 @@
 # Migration Scripts
 
 One-off Node.js scripts for Firestore data fixes and migrations. They run with
-the `firebase-admin` SDK against production using a service account key.
+the `firebase-admin` SDK against production using Application Default
+Credentials or an explicitly supplied service account key.
 
 ## Requirements
 
@@ -16,6 +17,29 @@ the `firebase-admin` SDK against production using a service account key.
   reviewed before applying.
 
 ## Scripts
+
+### backfill-public-team-profiles.js
+
+Creates or refreshes the strict `publicTeamProfiles/{teamId}` projection for
+active public teams and removes stale projections for private/inactive teams.
+It does not modify source team documents, so it is safe to deploy while legacy
+clients continue reading public `teams` documents. Dry run is the default:
+
+```bash
+node _migration/backfill-public-team-profiles.js
+node _migration/backfill-public-team-profiles.js --team TEAM_ID
+node _migration/backfill-public-team-profiles.js --apply
+```
+
+Safe rollout order:
+
+1. Deploy the projection rules, Functions sync trigger/callable fallbacks, and
+   projection-first frontend readers while retaining legacy source reads.
+2. Run and review this backfill's dry run, then apply it.
+3. Verify old source-team readers and new projection readers in production.
+
+Public browse and detail reads retain allow-listed callable fallbacks during
+the backfill window, including when there are zero projection documents.
 
 ### fix-orphaned-invite-redemptions.js
 

@@ -36,6 +36,11 @@ const {
 } = require('./registration-payment-webhook-core.cjs');
 const { createFirestoreFixedWindowRateLimiter, createInMemoryRateLimiter, getRequestIp } = require('./rate-limit.cjs');
 const { buildPublicGamesIcs, canExposeEmptyPublicFeed, isPublicFanGame } = require('./public-calendar-core.cjs');
+const {
+  buildPublicTeamProfile,
+  isPublicTeamProfileSchemaValid,
+  matchesPublicTeamProfileSearch
+} = require('./public-team-profile-core.cjs');
 const { buildCalendarFeedGamesQuery } = require('./calendar-feed-window-core.cjs');
 const {
   buildPublicRsvpSummaryProjection,
@@ -13122,20 +13127,57 @@ exports.getPublicTeamProfile = functions.https.onCall(async (data, context = {})
   }
   const teamSnap = await firestore.doc(`teams/${teamId}`).get();
   const team = teamSnap.data() || {};
-  if (!teamSnap.exists || !isOpportunityTeamDiscoverable(team)) {
+  const profile = buildPublicTeamProfile(team);
+  if (!teamSnap.exists || !profile) {
     throwOpportunityError('not-found', 'Public team not found.');
   }
   return {
     item: {
       id: teamSnap.id,
-      name: cleanOpportunityText(team.name, 100),
-      sport: cleanOpportunityText(team.sport, 60) || null,
-      description: cleanOpportunityText(team.description, 1000) || null,
-      photoUrl: cleanOpportunityText(team.photoUrl, 1000) || null,
-      city: cleanOpportunityText(team.city, 80) || null,
-      state: cleanOpportunityText(team.state, 40) || null,
-      zip: cleanOpportunityText(team.zip, 10) || null
+      ...profile
     }
+  };
+});
+
+exports.discoverPublicTeamProfiles = functions.https.onCall(async (data, context = {}) => {
+  assertOpportunityRateLimit(checkPublicOpportunityBrowseRateLimit, context, 'team-discovery-fallback');
+  const searchText = cleanOpportunityText(data?.searchText, 120).toLowerCase();
+  const requestedPageSize = Number(data?.pageSize);
+  const pageSize = Number.isFinite(requestedPageSize)
+    ? Math.min(Math.max(Math.floor(requestedPageSize), 1), 100)
+    : 24;
+  const cursor = data?.cursor && typeof data.cursor === 'object' ? data.cursor : null;
+  const cursorMatches = cursor?.kind === 'public-team-callable' &&
+    cleanOpportunityText(cursor.searchText, 120).toLowerCase() === searchText;
+  const offset = cursorMatches && Number.isInteger(cursor.offset) && cursor.offset >= 0
+    ? cursor.offset
+    : 0;
+
+  // This path is a bounded deployment-order fallback for databases that
+  // predate publicTeamProfiles. Normal browse queries read the projection
+  // collection directly after the backfill.
+  const teamSnap = await firestore.collection('teams')
+    .where('isPublic', '==', true)
+    .limit(1000)
+    .get();
+  const profiles = teamSnap.docs
+    .map((docSnap) => {
+      const profile = buildPublicTeamProfile(docSnap.data() || {});
+      return profile && isPublicTeamProfileSchemaValid(profile)
+        ? { id: docSnap.id, ...profile }
+        : null;
+    })
+    .filter(Boolean)
+    .filter((profile) => matchesPublicTeamProfileSearch(profile, searchText))
+    .sort((left, right) => String(left.name || '').localeCompare(String(right.name || '')) || left.id.localeCompare(right.id));
+  const items = profiles.slice(offset, offset + pageSize);
+  const nextOffset = offset + items.length;
+  return {
+    teams: items,
+    nextCursor: nextOffset < profiles.length
+      ? { kind: 'public-team-callable', searchText, offset: nextOffset }
+      : null,
+    boundedSourceCount: teamSnap.size
   };
 });
 
@@ -13417,5 +13459,28 @@ exports.closePublicOpportunitiesForPrivateTeam = functions.firestore
       }));
       await batch.commit();
     }
+    return null;
+  });
+
+exports.syncPublicTeamProfileOnTeamWrite = functions.firestore
+  .document('teams/{teamId}')
+  .onWrite(async (change, context) => {
+    const profileRef = firestore.doc(`publicTeamProfiles/${context.params.teamId}`);
+    const team = change.after.exists ? (change.after.data() || {}) : null;
+    const profile = team ? buildPublicTeamProfile(team) : null;
+
+    if (!profile) {
+      await profileRef.delete().catch((error) => {
+        if (error?.code !== 5 && error?.code !== 'not-found') throw error;
+      });
+      return null;
+    }
+    if (!isPublicTeamProfileSchemaValid(profile)) {
+      throw new Error(`Refusing invalid public team profile for ${context.params.teamId}.`);
+    }
+
+    // Overwrite instead of merge so a field removed from the allowlist or the
+    // source team cannot remain exposed on an older projection document.
+    await profileRef.set(profile);
     return null;
   });

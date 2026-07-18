@@ -1,6 +1,86 @@
 {
   "indexes": [
     {
+      "collectionGroup": "publicTeamProfiles",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "publicSchemaVersion", "order": "ASCENDING" },
+        { "fieldPath": "isPublic", "order": "ASCENDING" },
+        { "fieldPath": "active", "order": "ASCENDING" },
+        { "fieldPath": "publicSearchName", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "publicTeamProfiles",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "publicSchemaVersion", "order": "ASCENDING" },
+        { "fieldPath": "isPublic", "order": "ASCENDING" },
+        { "fieldPath": "active", "order": "ASCENDING" },
+        { "fieldPath": "name", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "publicTeamProfiles",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "publicSchemaVersion", "order": "ASCENDING" },
+        { "fieldPath": "isPublic", "order": "ASCENDING" },
+        { "fieldPath": "active", "order": "ASCENDING" },
+        { "fieldPath": "publicSearchZip", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "publicTeamProfiles",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "publicSchemaVersion", "order": "ASCENDING" },
+        { "fieldPath": "isPublic", "order": "ASCENDING" },
+        { "fieldPath": "active", "order": "ASCENDING" },
+        { "fieldPath": "zip", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "publicTeamProfiles",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "publicSchemaVersion", "order": "ASCENDING" },
+        { "fieldPath": "isPublic", "order": "ASCENDING" },
+        { "fieldPath": "active", "order": "ASCENDING" },
+        { "fieldPath": "publicSearchState", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "publicTeamProfiles",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "publicSchemaVersion", "order": "ASCENDING" },
+        { "fieldPath": "isPublic", "order": "ASCENDING" },
+        { "fieldPath": "active", "order": "ASCENDING" },
+        { "fieldPath": "state", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "publicTeamProfiles",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "publicSchemaVersion", "order": "ASCENDING" },
+        { "fieldPath": "isPublic", "order": "ASCENDING" },
+        { "fieldPath": "active", "order": "ASCENDING" },
+        { "fieldPath": "publicSearchCity", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "publicTeamProfiles",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "publicSchemaVersion", "order": "ASCENDING" },
+        { "fieldPath": "isPublic", "order": "ASCENDING" },
+        { "fieldPath": "active", "order": "ASCENDING" },
+        { "fieldPath": "city", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "teams",
       "queryScope": "COLLECTION",
       "fields": [

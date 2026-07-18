@@ -86,7 +86,9 @@ describe('public opportunity callable wiring', () => {
   it('requires verified inquiry senders and allow-lists public team profiles', () => {
     expect(source).toMatch(/createOpportunityInquiry[\s\S]*requireOpportunityAuth\(context, \{ verified: true \}\)/);
     expect(source).toContain('exports.getPublicTeamProfile');
-    expect(source).toContain("description: cleanOpportunityText(team.description, 1000) || null");
+    expect(source).toContain("require('./public-team-profile-core.cjs')");
+    expect(source).toMatch(/getPublicTeamProfile[\s\S]*const profile = buildPublicTeamProfile\(team\)/);
+    expect(source).toContain('profile && isPublicTeamProfileSchemaValid(profile)');
   });
 
   it('routes team inquiries only to current team administrators', () => {

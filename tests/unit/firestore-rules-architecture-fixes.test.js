@@ -47,16 +47,22 @@ describe('firestore.rules architecture fixes', () => {
         expect(getUserByEmailBody).toContain('where("email", "==", email), limitQuery(1)');
     });
 
-    it('preserves unbounded public team list queries while keeping broad admin lists bounded', () => {
+    it('adds the strict projection while preserving unbounded legacy public team queries during rollout', () => {
         const teamsStart = rules.indexOf('match /teams/{teamId}');
         const teamsEnd = rules.indexOf('\n    }', teamsStart) + '\n    }'.length;
         const teamRules = rules.slice(teamsStart, teamsEnd);
+        const projectionStart = rules.indexOf('match /publicTeamProfiles/{teamId}');
+        const projectionEnd = rules.indexOf('\n    }', projectionStart) + '\n    }'.length;
+        const projectionRules = rules.slice(projectionStart, projectionEnd);
 
         expect(rules).toContain('function canReadPublicTeamDocument(data)');
         expect(rules).toContain('function canListManagedTeamDocument(data)');
         expect(teamRules).toContain('allow list: if isBoundedGlobalAdminListQuery() ||');
-        expect(teamRules).toContain('canReadPublicTeamDocument(resource.data) ||');
         expect(teamRules).toContain('canListManagedTeamDocument(resource.data);');
+        expect(teamRules).toContain('canReadPublicTeamDocument(resource.data) ||');
+        expect(projectionRules).toContain('allow list: if false;');
+        expect(projectionRules).toContain('allow get: if isPublicTeamProfilePayloadValid(resource.data);');
+        expect(projectionRules).toContain('allow create, update, delete: if false;');
         expect(teamRules).not.toContain('(!isGlobalAdmin() && canReadTeamDocument(resource.data));');
     });
 

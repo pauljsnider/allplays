@@ -796,6 +796,23 @@ function readPublicTeamSearchPageCursor(cursor, searchText, strategyCount) {
     };
 }
 
+async function discoverPublicTeamsFromCallable({ searchText = '', cursor = null, pageSize = DEFAULT_PUBLIC_TEAM_DISCOVERY_PAGE_SIZE } = {}) {
+    const discoverProfiles = httpsCallable(functions, 'discoverPublicTeamProfiles');
+    const result = await discoverProfiles({ searchText, cursor, pageSize });
+    const teams = Array.isArray(result.data?.teams)
+        ? result.data.teams.filter((team) => team?.isPublic === true && isTeamActive(team))
+        : [];
+    return {
+        teams,
+        nextCursor: result.data?.nextCursor || null
+    };
+}
+
+function isPublicProjectionFallbackError(error) {
+    const code = String(error?.code || '').replace(/^firestore\//, '');
+    return code === 'permission-denied' || code === 'not-found';
+}
+
 export async function discoverPublicTeams(options = {}) {
     const rawPageSize = Number(options.pageSize);
     const pageSize = Number.isFinite(rawPageSize)
@@ -803,15 +820,33 @@ export async function discoverPublicTeams(options = {}) {
         : DEFAULT_PUBLIC_TEAM_DISCOVERY_PAGE_SIZE;
     const searchText = normalizePublicTeamSearchInput(options.searchText || options.locationFilter || '');
     const cursor = options.cursor || null;
-    const teamsRef = collection(db, 'teams');
+    const teamsRef = collection(db, 'publicTeamProfiles');
+
+    if (cursor?.kind === 'public-team-callable') {
+        return discoverPublicTeamsFromCallable({ searchText, cursor, pageSize });
+    }
 
     if (!searchText) {
-        const constraints = [where('isPublic', '==', true), orderBy('name')];
+        const constraints = [
+            where('publicSchemaVersion', '==', 1),
+            where('isPublic', '==', true),
+            where('active', '==', true),
+            orderBy('name')
+        ];
         if (cursor) {
             constraints.push(startAfterQuery(cursor));
         }
         constraints.push(limitQuery(pageSize));
-        const snapshot = await getDocs(query(teamsRef, ...constraints));
+        let snapshot;
+        try {
+            snapshot = await getDocs(query(teamsRef, ...constraints));
+        } catch (error) {
+            if (!isPublicProjectionFallbackError(error)) throw error;
+            return discoverPublicTeamsFromCallable({ searchText, cursor: null, pageSize });
+        }
+        if (!cursor && snapshot.docs.length === 0) {
+            return discoverPublicTeamsFromCallable({ searchText, pageSize });
+        }
         const teams = filterTeamsByActive(snapshot.docs.map((teamDoc) => ({ id: teamDoc.id, ...teamDoc.data() })), false);
         return {
             teams,
@@ -840,15 +875,27 @@ export async function discoverPublicTeams(options = {}) {
             ? [startAfterQuery(previousPageCursor.strategyCursors[index])]
             : []
     }));
-    const snapshots = await Promise.all(strategies.map((strategy) => getDocs(query(
-        teamsRef,
-        where('isPublic', '==', true),
-        where(strategy.field, '>=', strategy.start),
-        where(strategy.field, '<=', strategy.end),
-        orderBy(strategy.field),
-        ...strategy.startAfterConstraint,
-        limitQuery(pageSize)
-    ))));
+    let snapshots;
+    try {
+        snapshots = await Promise.all(strategies.map((strategy) => getDocs(query(
+            teamsRef,
+            where('publicSchemaVersion', '==', 1),
+            where('isPublic', '==', true),
+            where('active', '==', true),
+            where(strategy.field, '>=', strategy.start),
+            where(strategy.field, '<=', strategy.end),
+            orderBy(strategy.field),
+            ...strategy.startAfterConstraint,
+            limitQuery(pageSize)
+        ))));
+    } catch (error) {
+        if (!isPublicProjectionFallbackError(error)) throw error;
+        return discoverPublicTeamsFromCallable({ searchText, cursor: null, pageSize });
+    }
+
+    if (!cursor && snapshots.every((snapshot) => snapshot.docs.length === 0)) {
+        return discoverPublicTeamsFromCallable({ searchText, pageSize });
+    }
 
     const teamsById = new Map(previousPageCursor.bufferedTeams
         .filter((team) => team?.id)
@@ -927,6 +974,34 @@ async function getAllOrderedCollectionDocuments(collectionRef, fieldName) {
     return documents;
 }
 
+async function getAllPublicTeamProfilesWithFallback(publicTeamsRef) {
+    let snapshot;
+    try {
+        snapshot = await getDocs(query(
+            publicTeamsRef,
+            where('publicSchemaVersion', '==', 1),
+            where('isPublic', '==', true),
+            where('active', '==', true),
+            orderBy('name')
+        ));
+    } catch (error) {
+        if (!isPublicProjectionFallbackError(error)) throw error;
+        snapshot = { docs: [] };
+    }
+    if (snapshot.docs.length > 0) {
+        return snapshot.docs.map((teamDoc) => ({ id: teamDoc.id, ...teamDoc.data() }));
+    }
+
+    const teams = [];
+    let cursor = null;
+    do {
+        const page = await discoverPublicTeamsFromCallable({ cursor, pageSize: 100 });
+        teams.push(...page.teams);
+        cursor = page.nextCursor;
+    } while (cursor && teams.length < 1000);
+    return teams;
+}
+
 export async function getTeams(options = {}) {
     const includeInactive = !!options.includeInactive;
     const publicOnly = options.publicOnly === true;
@@ -934,19 +1009,19 @@ export async function getTeams(options = {}) {
     const locationFilter = String(options.locationFilter || '').trim().toLowerCase();
 
     const teamsRef = collection(db, "teams");
+    const publicTeamsRef = collection(db, 'publicTeamProfiles');
     let teams = [];
     if (includePrivate) {
         teams = (await getAllOrderedCollectionDocuments(teamsRef, "name"))
             .map(doc => ({ id: doc.id, ...doc.data() }));
     } else if (publicOnly) {
-        teams = (await getDocs(query(teamsRef, where("isPublic", "==", true)))).docs
-            .map(doc => ({ id: doc.id, ...doc.data() }))
+        teams = (await getAllPublicTeamProfilesWithFallback(publicTeamsRef))
             .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
     } else {
         const currentUser = auth.currentUser;
         const currentUserEmail = String(currentUser?.email || '').trim().toLowerCase();
         const teamSnapshots = await Promise.all([
-            getDocs(query(teamsRef, where("isPublic", "==", true))),
+            getAllPublicTeamProfilesWithFallback(publicTeamsRef),
             currentUser?.uid
                 ? getDocs(query(teamsRef, where("ownerId", "==", currentUser.uid)))
                 : Promise.resolve({ docs: [] }),
@@ -955,7 +1030,11 @@ export async function getTeams(options = {}) {
                 : Promise.resolve({ docs: [] })
         ]);
         const teamsById = new Map();
-        teamSnapshots.forEach((snapshot) => {
+        teamSnapshots.forEach((snapshot, index) => {
+            if (index === 0) {
+                snapshot.forEach((team) => teamsById.set(team.id, team));
+                return;
+            }
             snapshot.docs.forEach(doc => teamsById.set(doc.id, { id: doc.id, ...doc.data() }));
         });
         teams = Array.from(teamsById.values()).sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
@@ -995,15 +1074,41 @@ export async function getTeams(options = {}) {
 
 export async function getTeam(teamId, options = {}) {
     const includeInactive = !!options.includeInactive;
-    const docRef = doc(db, "teams", teamId);
-    const docSnap = await getDoc(docRef);
-    if (docSnap.exists()) {
-        const team = { id: docSnap.id, ...docSnap.data() };
-        if (!includeInactive && !isTeamActive(team)) return null;
-        return team;
-    } else {
-        return null;
+    const normalizedTeamId = String(teamId || '').trim();
+    if (!normalizedTeamId) return null;
+
+    if (auth.currentUser) {
+        try {
+            const sourceSnap = await getDoc(doc(db, 'teams', normalizedTeamId));
+            if (!sourceSnap.exists()) return null;
+            const sourceTeam = { id: sourceSnap.id, ...sourceSnap.data() };
+            if (!includeInactive && !isTeamActive(sourceTeam)) return null;
+            return sourceTeam;
+        } catch (error) {
+            if (!isPublicProjectionFallbackError(error)) throw error;
+        }
     }
+
+    try {
+        const publicSnap = await getDoc(doc(db, 'publicTeamProfiles', normalizedTeamId));
+        if (publicSnap.exists()) {
+            const publicTeam = { id: publicSnap.id, ...publicSnap.data(), isPublic: true };
+            if (!includeInactive && !isTeamActive(publicTeam)) return null;
+            return publicTeam;
+        }
+    } catch (error) {
+        if (!isPublicProjectionFallbackError(error)) throw error;
+    }
+
+    // Deployment-order fallback: the callable already returns an allow-listed
+    // projection and remains safe while publicTeamProfiles is being backfilled.
+    const getPublicTeamProfile = httpsCallable(functions, 'getPublicTeamProfile');
+    const result = await getPublicTeamProfile({ teamId: normalizedTeamId });
+    const item = result.data?.item || null;
+    if (!item) return null;
+    const publicTeam = { ...item, id: item.id || normalizedTeamId, isPublic: true, active: true };
+    if (!includeInactive && !isTeamActive(publicTeam)) return null;
+    return publicTeam;
 }
 
 function getTeamMediaFoldersRef(teamId) {
@@ -7508,12 +7613,8 @@ async function projectSharedHomepageGame(sharedGame, shouldIncludeTeam) {
     const teamIds = getSharedHomepageTeamIds(sharedGame);
 
     for (const teamId of teamIds) {
-        const teamSnap = await getDoc(doc(db, 'teams', teamId));
-        if (!teamSnap.exists()) {
-            continue;
-        }
-
-        const team = { id: teamSnap.id, ...teamSnap.data() };
+        const team = await getTeam(teamId);
+        if (!team) continue;
         if (!shouldIncludeTeam(team)) {
             continue;
         }

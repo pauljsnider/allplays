@@ -228,6 +228,7 @@
                 "queueInviteEmail",
                 "queueParentInviteEmail",
                 "syncApprovedParentMembershipRequestUserLink",
+                "syncPublicTeamProfileOnTeamWrite",
                 "syncPublicUserProfileProjection"
             ],
             "unitTests": [
@@ -751,6 +752,7 @@
                 "closePublicOpportunity",
                 "createOpportunityInquiry",
                 "createPublicOpportunity",
+                "discoverPublicTeamProfiles",
                 "getOpportunityInquiry",
                 "getPublicOpportunity",
                 "getPublicTeamProfile",

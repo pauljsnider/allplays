@@ -1,24 +1,28 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const firebaseMocks = vi.hoisted(() => ({
+    auth: { currentUser: null },
     collection: vi.fn((database, name) => ({ database, name })),
+    doc: vi.fn((database, ...segments) => ({ database, path: segments.join('/') })),
     query: vi.fn((...parts) => parts),
     where: vi.fn((field, op, value) => ({ type: 'where', field, op, value })),
     orderBy: vi.fn((field) => ({ type: 'orderBy', field })),
     limit: vi.fn((value) => ({ type: 'limit', value })),
     startAfter: vi.fn((value) => ({ type: 'startAfter', value })),
     getDocs: vi.fn(),
+    getDoc: vi.fn(),
     getCountFromServer: vi.fn(),
+    httpsCallable: vi.fn(),
 }));
 
 vi.mock('../../js/firebase.js?v=22', () => ({
     db: {},
-    auth: { currentUser: null },
+    auth: firebaseMocks.auth,
     storage: {},
     collection: firebaseMocks.collection,
     getDocs: firebaseMocks.getDocs,
-    getDoc: vi.fn(),
-    doc: vi.fn(),
+    getDoc: firebaseMocks.getDoc,
+    doc: firebaseMocks.doc,
     addDoc: vi.fn(),
     updateDoc: vi.fn(),
     deleteDoc: vi.fn(),
@@ -40,7 +44,7 @@ vi.mock('../../js/firebase.js?v=22', () => ({
     writeBatch: vi.fn(),
     runTransaction: vi.fn(),
     functions: {},
-    httpsCallable: vi.fn(),
+    httpsCallable: firebaseMocks.httpsCallable,
     ref: vi.fn(),
     uploadBytes: vi.fn(),
     getDownloadURL: vi.fn(),
@@ -70,6 +74,7 @@ function createTeamDoc(id, data) {
 describe('discoverPublicTeams search pagination', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        firebaseMocks.auth.currentUser = null;
     });
 
     it('returns opaque cursors for searched results and uses them on the next page', async () => {
@@ -111,6 +116,10 @@ describe('discoverPublicTeams search pagination', () => {
         const firstPage = await discoverPublicTeams({ searchText: 'atlanta', pageSize: 2 });
 
         expect(firstPage.teams.map((team) => team.id)).toEqual(['team-atl-1', 'team-atl-2']);
+        expect(firebaseMocks.collection).toHaveBeenCalledWith(expect.anything(), 'publicTeamProfiles');
+        expect(firebaseMocks.where).toHaveBeenCalledWith('publicSchemaVersion', '==', 1);
+        expect(firebaseMocks.where).toHaveBeenCalledWith('isPublic', '==', true);
+        expect(firebaseMocks.where).toHaveBeenCalledWith('active', '==', true);
         expect(firstPage.nextCursor).toMatchObject({
             kind: 'public-team-search',
             searchText: 'atlanta',
@@ -172,6 +181,42 @@ describe('discoverPublicTeams search pagination', () => {
         expect(firebaseMocks.getDocs).not.toHaveBeenCalled();
         expect(firebaseMocks.startAfter).not.toHaveBeenCalled();
     });
+
+    it('preserves browse during an upgrade with preexisting public teams and zero projection docs', async () => {
+        firebaseMocks.getDocs.mockResolvedValue({ docs: [] });
+        const callable = vi.fn().mockResolvedValue({
+            data: {
+                teams: [{ id: 'legacy-public', name: 'Legacy Public', isPublic: true, active: true }],
+                nextCursor: { kind: 'public-team-callable', searchText: '', offset: 1 }
+            }
+        });
+        firebaseMocks.httpsCallable.mockReturnValue(callable);
+        const { discoverPublicTeams } = await import('../../js/db.js?v=91');
+
+        await expect(discoverPublicTeams({ pageSize: 24 })).resolves.toEqual({
+            teams: [{ id: 'legacy-public', name: 'Legacy Public', isPublic: true, active: true }],
+            nextCursor: { kind: 'public-team-callable', searchText: '', offset: 1 }
+        });
+        expect(firebaseMocks.collection).toHaveBeenCalledWith(expect.anything(), 'publicTeamProfiles');
+        expect(firebaseMocks.httpsCallable).toHaveBeenCalledWith(expect.anything(), 'discoverPublicTeamProfiles');
+        expect(callable).toHaveBeenCalledWith({ searchText: '', cursor: null, pageSize: 24 });
+    });
+
+    it('uses the callable when projection rules are not deployed yet without masking network failures', async () => {
+        const denied = Object.assign(new Error('projection rules not deployed'), { code: 'permission-denied' });
+        firebaseMocks.getDocs.mockRejectedValueOnce(denied);
+        const callable = vi.fn().mockResolvedValue({
+            data: { teams: [{ id: 'safe-team', name: 'Safe Team', isPublic: true, active: true }], nextCursor: null }
+        });
+        firebaseMocks.httpsCallable.mockReturnValue(callable);
+        const { discoverPublicTeams } = await import('../../js/db.js?v=91');
+
+        await expect(discoverPublicTeams()).resolves.toMatchObject({ teams: [expect.objectContaining({ id: 'safe-team' })] });
+
+        const unavailable = Object.assign(new Error('offline'), { code: 'unavailable' });
+        firebaseMocks.getDocs.mockRejectedValueOnce(unavailable);
+        await expect(discoverPublicTeams()).rejects.toBe(unavailable);
+    });
 });
 
 describe('public team roster count', () => {
@@ -205,6 +250,81 @@ describe('public team roster count', () => {
             count: 200,
             isCapped: true
         });
+    });
+});
+
+describe('public team source/projection fallback', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        firebaseMocks.auth.currentUser = null;
+    });
+
+    it('reads the strict projection directly for anonymous public detail', async () => {
+        firebaseMocks.getDoc.mockResolvedValue({
+            id: 'team-public',
+            exists: () => true,
+            data: () => ({ name: 'Public Team', isPublic: true, active: true })
+        });
+        const { getTeam } = await import('../../js/db.js?v=91');
+
+        await expect(getTeam('team-public')).resolves.toMatchObject({ id: 'team-public', name: 'Public Team' });
+        expect(firebaseMocks.doc).toHaveBeenCalledWith(expect.anything(), 'publicTeamProfiles', 'team-public');
+        expect(firebaseMocks.httpsCallable).not.toHaveBeenCalled();
+    });
+
+    it('falls back to an allow-listed callable while a projection is missing', async () => {
+        firebaseMocks.getDoc.mockResolvedValue({ exists: () => false });
+        const callable = vi.fn().mockResolvedValue({ data: { item: { id: 'team-public', name: 'Public Team', sport: 'Soccer' } } });
+        firebaseMocks.httpsCallable.mockReturnValue(callable);
+        const { getTeam } = await import('../../js/db.js?v=91');
+
+        await expect(getTeam('team-public')).resolves.toMatchObject({ id: 'team-public', name: 'Public Team', isPublic: true });
+        expect(firebaseMocks.httpsCallable).toHaveBeenCalledWith(expect.anything(), 'getPublicTeamProfile');
+        expect(callable).toHaveBeenCalledWith({ teamId: 'team-public' });
+    });
+
+    it('falls back when projection rules lag but does not mask projection network errors', async () => {
+        firebaseMocks.getDoc.mockRejectedValueOnce(Object.assign(new Error('denied'), { code: 'permission-denied' }));
+        const callable = vi.fn().mockResolvedValue({ data: { item: { id: 'team-public', name: 'Public Team' } } });
+        firebaseMocks.httpsCallable.mockReturnValue(callable);
+        const { getTeam } = await import('../../js/db.js?v=91');
+
+        await expect(getTeam('team-public')).resolves.toMatchObject({ id: 'team-public', name: 'Public Team' });
+
+        const unavailable = Object.assign(new Error('offline'), { code: 'unavailable' });
+        firebaseMocks.getDoc.mockRejectedValueOnce(unavailable);
+        await expect(getTeam('team-public')).rejects.toBe(unavailable);
+    });
+
+    it('uses the source for an authorized manager and never masks network errors', async () => {
+        firebaseMocks.auth.currentUser = { uid: 'owner-1' };
+        firebaseMocks.getDoc.mockResolvedValueOnce({
+            id: 'private-team',
+            exists: () => true,
+            data: () => ({ name: 'Private Team', isPublic: false, active: true, ownerId: 'owner-1' })
+        });
+        const { getTeam } = await import('../../js/db.js?v=91');
+        await expect(getTeam('private-team')).resolves.toMatchObject({ name: 'Private Team', ownerId: 'owner-1' });
+
+        const networkError = Object.assign(new Error('offline'), { code: 'unavailable' });
+        firebaseMocks.getDoc.mockRejectedValueOnce(networkError);
+        await expect(getTeam('public-team')).rejects.toBe(networkError);
+        expect(firebaseMocks.httpsCallable).not.toHaveBeenCalled();
+    });
+
+    it('falls back for a logged-in public nonmember only on permission denial', async () => {
+        firebaseMocks.auth.currentUser = { uid: 'other-1' };
+        firebaseMocks.getDoc
+            .mockRejectedValueOnce(Object.assign(new Error('denied'), { code: 'permission-denied' }))
+            .mockResolvedValueOnce({
+                id: 'public-team',
+                exists: () => true,
+                data: () => ({ name: 'Public Team', isPublic: true, active: true })
+            });
+        const { getTeam } = await import('../../js/db.js?v=91');
+
+        await expect(getTeam('public-team')).resolves.toMatchObject({ name: 'Public Team' });
+        expect(firebaseMocks.getDoc).toHaveBeenCalledTimes(2);
     });
 });
 

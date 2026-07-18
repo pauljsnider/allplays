@@ -12,10 +12,14 @@ describe('public teams visibility', () => {
         expect(source).toContain('const publicOnly = options.publicOnly === true;');
         expect(source).toContain('const includePrivate = options.includePrivate === true || includeInactive;');
         expect(source).toContain('} else if (publicOnly) {');
-        expect(source).toContain('getDocs(query(teamsRef, where("isPublic", "==", true)))');
+        expect(source).toContain("const publicTeamsRef = collection(db, 'publicTeamProfiles');");
+        expect(source).toContain("where('publicSchemaVersion', '==', 1)");
+        expect(source).toContain("where('isPublic', '==', true)");
+        expect(source).toContain("where('active', '==', true)");
         expect(source).toContain('.sort((a, b) => String(a.name || \'\').localeCompare(String(b.name || \'\')))');
         expect(source).toContain('export async function discoverPublicTeams(options = {})');
-        expect(source).toContain("where('isPublic', '==', true), orderBy('name')");
+        expect(source).toContain("const teamsRef = collection(db, 'publicTeamProfiles');");
+        expect(source).toContain("const constraints = [\n            where('publicSchemaVersion', '==', 1)");
         expect(source).toContain('getDocs(query(teamsRef, where("ownerId", "==", currentUser.uid)))');
         expect(source).toContain('getDocs(query(teamsRef, where("adminEmails", "array-contains", currentUserEmail)))');
         expect(source).not.toContain('const q = includePrivate');
@@ -23,25 +27,12 @@ describe('public teams visibility', () => {
 
     it('keeps discovery on indexed queries and removes the runtime zip-resolution fallback', () => {
         const source = readRepoFile('js/db.js');
-        const indexes = JSON.parse(readRepoFile('firestore.indexes.json'));
-        const teamIndexes = indexes.indexes
-            .filter((index) => index.collectionGroup === 'teams' && index.queryScope === 'COLLECTION')
-            .map((index) => index.fields.map((field) => field.fieldPath).join(','));
-
         expect(source).not.toContain('appendResolvedZipPublicTeamMatches');
         expect(source).not.toContain("const publicTeamsSnapshot = await getDocs(query(teamsRef, where('isPublic', '==', true)));");
         expect(source).not.toContain('await appendResolvedZipPublicTeamMatches(teamsRef, searchDescriptor, teamsById);');
-        expect(source).toContain('const snapshots = await Promise.all(strategies.map((strategy) => getDocs(query(');
-        expect(teamIndexes).toEqual(expect.arrayContaining([
-            'isPublic,publicSearchName',
-            'isPublic,name',
-            'isPublic,publicSearchCity',
-            'isPublic,city',
-            'isPublic,publicSearchState',
-            'isPublic,state',
-            'isPublic,publicSearchZip',
-            'isPublic,zip'
-        ]));
+        expect(source).toContain('snapshots = await Promise.all(strategies.map((strategy) => getDocs(query(');
+        expect(source).toContain('if (!isPublicProjectionFallbackError(error)) throw error;');
+        expect(source).not.toContain("teamsRef,\n        where('isPublic', '==', true),");
     });
 
     it('keeps zip-backed state filters on indexed fields and avoids blocking saves on ZIP resolution', () => {
@@ -74,7 +65,7 @@ describe('public teams visibility', () => {
         expect(source).not.toContain('getTeams(locationFilter ? { locationFilter } : {})');
     });
 
-    it('does not allow anonymous reads of private team documents in Firestore rules', () => {
+    it('keeps legacy public source reads during the projection compatibility phase', () => {
         const rules = readRepoFile('firestore.rules');
 
         expect(rules).toContain('function canReadTeamDocument(data)');
@@ -84,6 +75,7 @@ describe('public teams visibility', () => {
         expect(rules).toContain('allow list: if isBoundedGlobalAdminListQuery() ||');
         expect(rules).toContain('canReadPublicTeamDocument(resource.data) ||');
         expect(rules).toContain('canListManagedTeamDocument(resource.data);');
+        expect(rules).toContain('match /publicTeamProfiles/{teamId}');
         expect(rules).not.toContain('allow read: if true;  // Public teams for browsing');
     });
 });
