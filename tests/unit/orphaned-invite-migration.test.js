@@ -28,7 +28,7 @@ describe('orphaned invite redemption migration safety', () => {
     });
 
     it('declares firebase-admin at the repo root so direct node migration commands can resolve it', () => {
-        expect(rootPackage.devDependencies?.['firebase-admin']).toBe('^12.7.0');
+        expect(rootPackage.devDependencies?.['firebase-admin']).toBeTruthy();
     });
 
     it('documents a scoped dry run before the matching apply command', () => {

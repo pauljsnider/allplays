@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import admin from 'firebase-admin';
+import { FieldPath, Timestamp } from 'firebase-admin/firestore';
 import { pathToFileURL } from 'node:url';
 
 const DEFAULT_PAGE_SIZE = 400;
@@ -40,7 +41,7 @@ export async function backfillPracticePacketReminderDueAt({
 
     do {
         let query = db.collectionGroup('practiceSessions')
-            .orderBy(admin.firestore.FieldPath.documentId())
+            .orderBy(FieldPath.documentId())
             .limit(pageSize);
         if (lastDoc) query = query.startAfter(lastDoc);
 
@@ -87,7 +88,7 @@ async function main() {
     if (!admin.apps.length) admin.initializeApp();
     const result = await backfillPracticePacketReminderDueAt({
         db: admin.firestore(),
-        Timestamp: admin.firestore.Timestamp
+        Timestamp
     });
     console.log('[backfill-practice-packet-reminder-due-at] Done.', result);
 }
