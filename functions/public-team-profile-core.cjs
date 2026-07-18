@@ -284,16 +284,21 @@ function matchesPublicTeamProfileSearch(profile = {}, searchText = '') {
   return search.split(/[\s,]+/).filter(Boolean).every((token) => combined.includes(token));
 }
 
-async function collectAllPublicTeamSourceDocuments(fetchPage, { pageSize = 500 } = {}) {
+async function collectAllPublicTeamSourceDocuments(fetchPage, { pageSize = 500, maxDocuments } = {}) {
   if (typeof fetchPage !== 'function') throw new Error('A public team page loader is required.');
   const normalizedPageSize = Math.min(Math.max(Number(pageSize) || 500, 1), 1000);
+  const numericMaxDocuments = Number(maxDocuments);
+  const normalizedMaxDocuments = Number.isFinite(numericMaxDocuments) && numericMaxDocuments > 0
+    ? Math.floor(numericMaxDocuments)
+    : Number.POSITIVE_INFINITY;
   const documents = [];
   let cursor = null;
-  while (true) {
-    const page = await fetchPage({ cursor, pageSize: normalizedPageSize });
+  while (documents.length < normalizedMaxDocuments) {
+    const requestedPageSize = Math.min(normalizedPageSize, normalizedMaxDocuments - documents.length);
+    const page = await fetchPage({ cursor, pageSize: requestedPageSize });
     const pageDocuments = Array.isArray(page?.docs) ? page.docs : [];
-    documents.push(...pageDocuments);
-    if (pageDocuments.length < normalizedPageSize) break;
+    documents.push(...pageDocuments.slice(0, requestedPageSize));
+    if (pageDocuments.length < requestedPageSize) break;
     cursor = pageDocuments.at(-1);
   }
   return documents;

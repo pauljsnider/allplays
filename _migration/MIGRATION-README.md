@@ -36,7 +36,10 @@ Safe rollout order:
 1. Deploy the projection rules, Functions sync trigger/callable fallbacks, and
    projection-first frontend readers while retaining legacy source reads.
 2. Run and review this backfill's dry run, then apply it.
-3. Verify old source-team readers and new projection readers in production.
+3. The full apply records `systemMigrations/publicTeamProfilesBackfill` only
+   after every source team is processed; browse then switches atomically from
+   the compatibility source query to the strict projection indexes.
+4. Verify old source-team readers and new projection readers in production.
 
 Public browse and detail reads retain allow-listed callable fallbacks during
 the backfill window, including when there are zero projection documents.

@@ -15,6 +15,7 @@ const {
     buildPublicTeamProfile,
     isPublicTeamProfileSchemaValid
 } = require('../functions/public-team-profile-core.cjs');
+const PUBLIC_TEAM_PROFILE_MIGRATION_STATE_PATH = 'systemMigrations/publicTeamProfilesBackfill';
 
 function readFlag(argv, flag) {
     const index = argv.indexOf(flag);
@@ -56,7 +57,8 @@ export async function runPublicTeamProfileBackfill(options = parsePublicTeamBack
         dryRun: !options.apply,
         teamsScanned: teamDocs.length,
         projectionsUpserted: 0,
-        projectionsDeleted: 0
+        projectionsDeleted: 0,
+        migrationCompletionRecorded: false
     };
 
     for (const teamSnap of teamDocs) {
@@ -74,6 +76,11 @@ export async function runPublicTeamProfileBackfill(options = parsePublicTeamBack
         }
         summary.projectionsUpserted += 1;
         if (options.apply) await profileRef.set(profile);
+    }
+
+    if (options.apply && !options.teamId) {
+        await db.doc(PUBLIC_TEAM_PROFILE_MIGRATION_STATE_PATH).set({ completed: true }, { merge: true });
+        summary.migrationCompletionRecorded = true;
     }
 
     console.log(JSON.stringify(summary, null, 2));

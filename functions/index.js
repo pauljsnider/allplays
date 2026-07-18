@@ -38,7 +38,6 @@ const { createFirestoreFixedWindowRateLimiter, createInMemoryRateLimiter, getReq
 const { buildPublicGamesIcs, canExposeEmptyPublicFeed, isPublicFanGame } = require('./public-calendar-core.cjs');
 const {
   buildPublicTeamProfile,
-  collectAllPublicTeamSourceDocuments,
   isPublicTeamProfileSchemaValid,
   matchesPublicTeamProfileSearch
 } = require('./public-team-profile-core.cjs');
@@ -12492,6 +12491,89 @@ async function normalizeTeamEmailAttachmentsForDelivery(teamId, attachments) {
 // Public sports opportunity board. Public responses are serialized through an
 // explicit allow-list; Firestore rules deny direct client access to the source
 // documents because they also contain author and recipient identifiers.
+const PUBLIC_TEAM_PROFILE_MIGRATION_STATE_PATH = 'systemMigrations/publicTeamProfilesBackfill';
+const PUBLIC_TEAM_DISCOVERY_SCAN_LIMIT = 500;
+const PUBLIC_TEAM_DISCOVERY_BATCH_SIZE = 100;
+
+function readPublicTeamBrowseCursor(rawCursor, { searchText, useProjection }) {
+  const expectedSource = useProjection ? 'projection' : 'source';
+  if (!rawCursor || rawCursor.kind !== 'public-team-callable-v2' || rawCursor.source !== expectedSource) return null;
+  if (cleanOpportunityText(rawCursor.searchText, 120).toLowerCase() !== searchText) return null;
+  const lastId = String(rawCursor.lastId || '').trim();
+  const lastName = rawCursor.lastName;
+  if (!lastId || lastId.includes('/') || lastId.length > 1500) return null;
+  const lastNameType = typeof lastName;
+  if (lastName !== null && !['string', 'number', 'boolean'].includes(lastNameType)) return null;
+  if (String(lastName).length > 100) return null;
+  return { lastId, lastName };
+}
+
+async function collectPublicTeamBrowsePage({ useProjection, searchText, pageSize, cursor }) {
+  const collectionName = useProjection ? 'publicTeamProfiles' : 'teams';
+  let scanCursor = readPublicTeamBrowseCursor(cursor, { searchText, useProjection });
+  let scannedDocumentCount = 0;
+  let exhausted = false;
+  const teams = [];
+
+  while (teams.length < pageSize && scannedDocumentCount < PUBLIC_TEAM_DISCOVERY_SCAN_LIMIT && !exhausted) {
+    const remainingScanBudget = PUBLIC_TEAM_DISCOVERY_SCAN_LIMIT - scannedDocumentCount;
+    const requestedBatchSize = Math.min(PUBLIC_TEAM_DISCOVERY_BATCH_SIZE, remainingScanBudget);
+    let browseQuery = firestore.collection(collectionName);
+    if (useProjection) {
+      browseQuery = browseQuery
+        .where('publicSchemaVersion', '==', 1)
+        .where('isPublic', '==', true)
+        .where('active', '==', true)
+        .orderBy('name');
+    } else {
+      browseQuery = browseQuery
+        .where('isPublic', '==', true)
+        .orderBy('name');
+    }
+    browseQuery = browseQuery
+      .orderBy(admin.firestore.FieldPath.documentId())
+      .limit(requestedBatchSize);
+    if (scanCursor) browseQuery = browseQuery.startAfter(scanCursor.lastName, scanCursor.lastId);
+
+    const snapshot = await browseQuery.get();
+    if (snapshot.empty) {
+      exhausted = true;
+      break;
+    }
+
+    let consumedDocumentCount = 0;
+    for (const docSnap of snapshot.docs) {
+      consumedDocumentCount += 1;
+      scannedDocumentCount += 1;
+      scanCursor = { lastName: docSnap.data()?.name, lastId: docSnap.id };
+      const profile = useProjection
+        ? docSnap.data() || null
+        : buildPublicTeamProfile(docSnap.data() || {});
+      if (profile && isPublicTeamProfileSchemaValid(profile) && matchesPublicTeamProfileSearch(profile, searchText)) {
+        teams.push({ id: docSnap.id, ...profile });
+      }
+      if (teams.length >= pageSize) break;
+    }
+
+    exhausted = consumedDocumentCount === snapshot.docs.length && snapshot.docs.length < requestedBatchSize;
+  }
+
+  const hasMore = !exhausted && scanCursor && scannedDocumentCount > 0;
+  return {
+    teams,
+    nextCursor: hasMore
+      ? {
+          kind: 'public-team-callable-v2',
+          source: useProjection ? 'projection' : 'source',
+          searchText,
+          lastName: scanCursor.lastName,
+          lastId: scanCursor.lastId
+        }
+      : null,
+    scannedDocumentCount
+  };
+}
+
 function throwOpportunityError(code, message, details = {}) {
   throw new functions.https.HttpsError(code, message, details);
 }
@@ -13141,48 +13223,25 @@ exports.getPublicTeamProfile = functions.https.onCall(async (data, context = {})
 });
 
 exports.discoverPublicTeamProfiles = functions.https.onCall(async (data, context = {}) => {
-  assertOpportunityRateLimit(checkPublicOpportunityBrowseRateLimit, context, 'team-discovery-fallback');
+  assertOpportunityRateLimit(checkPublicOpportunityBrowseRateLimit, context, 'team-discovery');
   const searchText = cleanOpportunityText(data?.searchText, 120).toLowerCase();
   const requestedPageSize = Number(data?.pageSize);
   const pageSize = Number.isFinite(requestedPageSize)
     ? Math.min(Math.max(Math.floor(requestedPageSize), 1), 100)
     : 24;
   const cursor = data?.cursor && typeof data.cursor === 'object' ? data.cursor : null;
-  const cursorMatches = cursor?.kind === 'public-team-callable' &&
-    cleanOpportunityText(cursor.searchText, 120).toLowerCase() === searchText;
-  const offset = cursorMatches && Number.isInteger(cursor.offset) && cursor.offset >= 0
-    ? cursor.offset
-    : 0;
 
-  // This path is a deployment-order fallback for databases that
-  // predate publicTeamProfiles. Normal browse queries read the projection
-  // collection directly after the backfill.
-  const teamDocs = await collectAllPublicTeamSourceDocuments(async ({ cursor: sourceCursor, pageSize: sourcePageSize }) => {
-    let sourceQuery = firestore.collection('teams')
-      .where('isPublic', '==', true)
-      .orderBy(admin.firestore.FieldPath.documentId())
-      .limit(sourcePageSize);
-    if (sourceCursor) sourceQuery = sourceQuery.startAfter(sourceCursor);
-    return sourceQuery.get();
-  });
-  const profiles = teamDocs
-    .map((docSnap) => {
-      const profile = buildPublicTeamProfile(docSnap.data() || {});
-      return profile && isPublicTeamProfileSchemaValid(profile)
-        ? { id: docSnap.id, ...profile }
-        : null;
-    })
-    .filter(Boolean)
-    .filter((profile) => matchesPublicTeamProfileSearch(profile, searchText))
-    .sort((left, right) => String(left.name || '').localeCompare(String(right.name || '')) || left.id.localeCompare(right.id));
-  const items = profiles.slice(offset, offset + pageSize);
-  const nextOffset = offset + items.length;
+  // Until the full backfill records completion, use the bounded source path so
+  // a partial projection cannot hide teams. Afterwards, only the allow-listed
+  // projection and its dedicated indexes serve anonymous browse requests.
+  const migrationStateSnap = await firestore.doc(PUBLIC_TEAM_PROFILE_MIGRATION_STATE_PATH).get();
+  const useProjection = migrationStateSnap.exists && migrationStateSnap.data()?.completed === true;
+  const page = await collectPublicTeamBrowsePage({ useProjection, searchText, pageSize, cursor });
   return {
-    teams: items,
-    nextCursor: nextOffset < profiles.length
-      ? { kind: 'public-team-callable', searchText, offset: nextOffset }
-      : null,
-    scannedSourceCount: teamDocs.length
+    teams: page.teams,
+    nextCursor: page.nextCursor,
+    scannedSourceCount: useProjection ? 0 : page.scannedDocumentCount,
+    scannedProjectionCount: useProjection ? page.scannedDocumentCount : 0
   };
 });
 

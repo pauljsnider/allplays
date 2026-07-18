@@ -89,8 +89,13 @@ describe('public opportunity callable wiring', () => {
     expect(source).toContain("require('./public-team-profile-core.cjs')");
     expect(source).toMatch(/getPublicTeamProfile[\s\S]*const profile = buildPublicTeamProfile\(team\)/);
     expect(source).toContain('profile && isPublicTeamProfileSchemaValid(profile)');
-    expect(source).toContain('collectAllPublicTeamSourceDocuments');
     expect(source).toContain('.orderBy(admin.firestore.FieldPath.documentId())');
+    expect(source).toContain("PUBLIC_TEAM_PROFILE_MIGRATION_STATE_PATH = 'systemMigrations/publicTeamProfilesBackfill'");
+    expect(source).toContain("const collectionName = useProjection ? 'publicTeamProfiles' : 'teams';");
+    expect(source).toContain(".where('publicSchemaVersion', '==', 1)");
+    expect(source).toContain('PUBLIC_TEAM_DISCOVERY_SCAN_LIMIT = 500');
+    expect(source).toContain('PUBLIC_TEAM_DISCOVERY_BATCH_SIZE = 100');
+    expect(source).toContain('while (teams.length < pageSize && scannedDocumentCount < PUBLIC_TEAM_DISCOVERY_SCAN_LIMIT && !exhausted)');
     expect(source).not.toContain(".where('isPublic', '==', true)\n    .limit(1000)");
   });
 

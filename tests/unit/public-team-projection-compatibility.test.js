@@ -2,17 +2,18 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { assertFails, assertSucceeds, initializeTestEnvironment } from '@firebase/rules-unit-testing';
-import { collection, doc, getDoc, getDocs, query, setDoc, where } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, limit, query, setDoc, where } from 'firebase/firestore';
 
 const rules = readFileSync(resolve(process.cwd(), 'firestore.rules'), 'utf8');
 const dbSource = readFileSync(resolve(process.cwd(), 'js/db.js'), 'utf8');
 
 describe('public team projection compatibility contract', () => {
-    it('adds projection-first readers and preserves the callable deployment fallback', () => {
-        expect(dbSource).toContain("collection(db, 'publicTeamProfiles')");
+    it('keeps strict projection detail reads and callable-only collection discovery', () => {
+        expect(dbSource).toContain("doc(db, 'publicTeamProfiles', normalizedTeamId)");
         expect(dbSource).toContain("httpsCallable(functions, 'discoverPublicTeamProfiles')");
         expect(dbSource).toContain("httpsCallable(functions, 'getPublicTeamProfile')");
         expect(dbSource).toContain('if (!isPublicProjectionFallbackError(error)) throw error;');
+        expect(dbSource).toMatch(/discoverPublicTeams[\s\S]*discoverPublicTeamsFromCallable/);
     });
 });
 
@@ -37,11 +38,6 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('public team projection co
                 publicSchemaVersion: 1,
                 name: 'Public Team', isPublic: true, active: true, publicSearchName: 'public team'
             });
-            await setDoc(doc(db, 'publicTeamProfiles/malformed-team'), {
-                publicSchemaVersion: 1,
-                name: 'Malformed Team', isPublic: true, active: true,
-                unexpectedSecret: 'must-not-list'
-            });
         });
     });
 
@@ -53,12 +49,32 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('public team projection co
         await assertSucceeds(getDocs(query(collection(db, 'teams'), where('isPublic', '==', true))));
         const projection = await assertSucceeds(getDoc(doc(db, 'publicTeamProfiles/public-team')));
         expect(projection.data()).toMatchObject({ name: 'Public Team', isPublic: true });
+        await assertFails(getDocs(query(
+            collection(db, 'publicTeamProfiles'),
+            where('publicSchemaVersion', '==', 1),
+            where('isPublic', '==', true),
+            where('active', '==', true),
+            limit(100)
+        )));
+        await assertFails(getDocs(query(collection(db, 'publicTeamProfiles'), limit(101))));
+    });
+
+    it('fails closed if a privileged writer ever creates a malformed projection', async () => {
+        await testEnv.withSecurityRulesDisabled(async (context) => {
+            await setDoc(doc(context.firestore(), 'publicTeamProfiles/malformed-team'), {
+                publicSchemaVersion: 1,
+                name: 'Malformed Team', isPublic: true, active: true,
+                unexpectedSecret: 'must-not-list'
+            });
+        });
+        const db = testEnv.unauthenticatedContext().firestore();
         await assertFails(getDoc(doc(db, 'publicTeamProfiles/malformed-team')));
         await assertFails(getDocs(query(
             collection(db, 'publicTeamProfiles'),
             where('publicSchemaVersion', '==', 1),
             where('isPublic', '==', true),
-            where('active', '==', true)
+            where('active', '==', true),
+            limit(100)
         )));
     });
 

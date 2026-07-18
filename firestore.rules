@@ -2683,8 +2683,8 @@ service cloud.firestore {
     // corresponding teams/{teamId} source document is never a public API.
     match /publicTeamProfiles/{teamId} {
       allow get: if isPublicTeamProfilePayloadValid(resource.data);
-      // Firestore cannot prove the full projection schema for a collection
-      // query. Keep list reads fail-closed; discovery uses the bounded callable.
+      // Firestore cannot prove a whole-document key allow-list from a query.
+      // Keep collection reads behind the allow-listing callable instead.
       allow list: if false;
       allow create, update, delete: if false;
     }

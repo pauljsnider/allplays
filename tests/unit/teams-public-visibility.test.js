@@ -12,33 +12,34 @@ describe('public teams visibility', () => {
         expect(source).toContain('const publicOnly = options.publicOnly === true;');
         expect(source).toContain('const includePrivate = options.includePrivate === true || includeInactive;');
         expect(source).toContain('} else if (publicOnly) {');
-        expect(source).toContain("const publicTeamsRef = collection(db, 'publicTeamProfiles');");
-        expect(source).toContain("where('publicSchemaVersion', '==', 1)");
-        expect(source).toContain("where('isPublic', '==', true)");
-        expect(source).toContain("where('active', '==', true)");
+        expect(source).toContain("httpsCallable(functions, 'discoverPublicTeamProfiles')");
+        expect(source).toContain('async function getAllPublicTeamProfiles()');
         expect(source).toContain('.sort((a, b) => String(a.name || \'\').localeCompare(String(b.name || \'\')))');
         expect(source).toContain('export async function discoverPublicTeams(options = {})');
-        expect(source).toContain("const teamsRef = collection(db, 'publicTeamProfiles');");
-        expect(source).toContain("const constraints = [\n            where('publicSchemaVersion', '==', 1)");
+        expect(source).toMatch(/export async function discoverPublicTeams[\s\S]*discoverPublicTeamsFromCallable/);
         expect(source).toContain('getDocs(query(teamsRef, where("ownerId", "==", currentUser.uid)))');
         expect(source).toContain('getDocs(query(teamsRef, where("adminEmails", "array-contains", currentUserEmail)))');
         expect(source).not.toContain('const q = includePrivate');
     });
 
-    it('keeps discovery on indexed queries and removes the runtime zip-resolution fallback', () => {
+    it('keeps discovery behind the server projection boundary and removes runtime source scans', () => {
         const source = readRepoFile('js/db.js');
+        const functionsSource = readRepoFile('functions/index.js');
         expect(source).not.toContain('appendResolvedZipPublicTeamMatches');
         expect(source).not.toContain("const publicTeamsSnapshot = await getDocs(query(teamsRef, where('isPublic', '==', true)));");
         expect(source).not.toContain('await appendResolvedZipPublicTeamMatches(teamsRef, searchDescriptor, teamsById);');
-        expect(source).toContain('snapshots = await Promise.all(strategies.map((strategy) => getDocs(query(');
-        expect(source).toContain('if (!isPublicProjectionFallbackError(error)) throw error;');
+        expect(functionsSource).toContain("const collectionName = useProjection ? 'publicTeamProfiles' : 'teams';");
+        expect(functionsSource).toContain(".where('publicSchemaVersion', '==', 1)");
+        expect(functionsSource).toContain(".orderBy('name')");
+        expect(functionsSource).toContain('PUBLIC_TEAM_DISCOVERY_SCAN_LIMIT = 500');
+        expect(functionsSource).toContain("kind: 'public-team-callable-v2'");
         expect(source).not.toContain("teamsRef,\n        where('isPublic', '==', true),");
     });
 
     it('keeps zip-backed state filters on indexed fields and avoids blocking saves on ZIP resolution', () => {
         const source = readRepoFile('js/db.js');
 
-        expect(source).toContain("String(team.publicSearchState || team.state || '').trim().toUpperCase().startsWith(normalizedState)");
+        expect(source).toContain('searchFields.publicSearchState = normalizePublicTeamSearchValue(teamData.state, { uppercase: true });');
         expect(source).toContain('Object.assign(teamData, buildPublicTeamSearchFields(teamData));');
         expect(source).not.toContain('buildMaterializedPublicTeamSearchFields');
     });

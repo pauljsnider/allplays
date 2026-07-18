@@ -392,6 +392,49 @@ test('public opportunity reads strip private fields and resume from returned cur
     assert.deepEqual(secondPage.items.map((item) => item.id), ['older']);
 });
 
+test('public team discovery pages the compatibility source without exposing management fields', async () => {
+    const seed = {
+        'teams/team-a': { name: 'Alpha', isPublic: true, active: true, ownerId: 'private-owner-a' },
+        'teams/team-b': { name: 'Bravo', isPublic: true, active: true, adminEmails: ['private@example.test'] },
+        'teams/team-c': { name: 'Charlie', isPublic: true, active: true, paymentConfig: { secret: true } },
+        'teams/private-team': { name: 'Private', isPublic: false, active: true, ownerId: 'private-owner' }
+    };
+    const { callables } = loadCallables(seed);
+
+    const firstPage = await callables.discoverPublicTeamProfiles({ pageSize: 2 }, {});
+    assert.deepEqual(firstPage.teams.map((team) => team.id), ['team-a', 'team-b']);
+    assert.equal(firstPage.nextCursor.kind, 'public-team-callable-v2');
+    assert.equal(firstPage.nextCursor.source, 'source');
+    assert.equal(Object.hasOwn(firstPage.teams[0], 'ownerId'), false);
+    assert.equal(Object.hasOwn(firstPage.teams[1], 'adminEmails'), false);
+
+    const secondPage = await callables.discoverPublicTeamProfiles({ pageSize: 2, cursor: firstPage.nextCursor }, {});
+    assert.deepEqual(secondPage.teams.map((team) => team.id), ['team-c']);
+    assert.equal(secondPage.nextCursor, null);
+    assert.equal(Object.hasOwn(secondPage.teams[0], 'paymentConfig'), false);
+});
+
+test('completed public team backfill switches discovery to validated projection rows', async () => {
+    const seed = {
+        'systemMigrations/publicTeamProfilesBackfill': { completed: true },
+        'publicTeamProfiles/safe-team': {
+            publicSchemaVersion: 1, name: 'Safe', isPublic: true, active: true, publicSearchName: 'safe'
+        },
+        'publicTeamProfiles/malformed-team': {
+            publicSchemaVersion: 1, name: 'Unsafe', isPublic: true, active: true, unexpectedSecret: 'must-not-return'
+        },
+        'teams/legacy-only': { name: 'Legacy Only', isPublic: true, active: true }
+    };
+    const { callables } = loadCallables(seed);
+
+    const page = await callables.discoverPublicTeamProfiles({ pageSize: 10 }, {});
+
+    assert.deepEqual(page.teams.map((team) => team.id), ['safe-team']);
+    assert.equal(page.nextCursor, null);
+    assert.equal(page.scannedSourceCount, 0);
+    assert.equal(page.scannedProjectionCount, 2);
+});
+
 test('revoked team admins lose private inquiry access with bounded, resumable stale-row scans', async () => {
     const seed = {
         'users/former-admin': { email: 'former@example.com', isAdmin: false },

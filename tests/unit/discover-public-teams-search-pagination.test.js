@@ -58,8 +58,8 @@ vi.mock('../../js/firebase-images.js?v=10', () => ({
 }));
 
 vi.mock('../../js/team-visibility.js?v=2', () => ({
-    isTeamActive: vi.fn(() => true),
-    filterTeamsByActive: vi.fn((teams) => teams),
+    isTeamActive: vi.fn((team) => team?.active !== false && team?.archived !== true),
+    filterTeamsByActive: vi.fn((teams) => teams.filter((team) => team?.active !== false && team?.archived !== true)),
     shouldIncludeTeamInLiveOrUpcoming: vi.fn(() => true),
     shouldIncludeTeamInReplay: vi.fn(() => true)
 }));
@@ -77,145 +77,72 @@ describe('discoverPublicTeams search pagination', () => {
         firebaseMocks.auth.currentUser = null;
     });
 
-    it('returns opaque cursors for searched results and uses them on the next page', async () => {
-        const firstAtlantaDoc = createTeamDoc('team-atl-1', {
-            name: 'Atlanta Fire',
-            isPublic: true,
-            publicSearchName: 'atlanta fire',
-            publicSearchCity: 'atlanta'
-        });
-        const secondAtlantaDoc = createTeamDoc('team-atl-2', {
-            name: 'Atlanta United 2',
-            isPublic: true,
-            publicSearchName: 'atlanta united 2',
-            publicSearchCity: 'atlanta'
-        });
-        const kansasDoc = createTeamDoc('team-kc-1', {
-            name: 'Kansas City Current',
-            isPublic: true,
-            publicSearchCity: 'atlanta'
-        });
-        const zebrasDoc = createTeamDoc('team-zebras-1', {
-            name: 'Zebras FC',
-            isPublic: true,
-            publicSearchName: 'zebras fc'
-        });
-
-        firebaseMocks.getDocs
-            .mockResolvedValueOnce({ docs: [firstAtlantaDoc, secondAtlantaDoc] })
-            .mockResolvedValueOnce({ docs: [] })
-            .mockResolvedValueOnce({ docs: [firstAtlantaDoc, kansasDoc] })
-            .mockResolvedValueOnce({ docs: [] })
-            .mockResolvedValueOnce({ docs: [zebrasDoc] })
-            .mockResolvedValueOnce({ docs: [] })
-            .mockResolvedValueOnce({ docs: [] })
-            .mockResolvedValueOnce({ docs: [] });
-
+    it('uses the allow-listing callable as the primary browse boundary and forwards opaque cursors', async () => {
+        const firstCursor = {
+            kind: 'public-team-callable-v2',
+            source: 'projection',
+            searchText: 'atlanta',
+            lastName: 'Atlanta United',
+            lastId: 'team-atl-2'
+        };
+        const callable = vi.fn()
+            .mockResolvedValueOnce({
+                data: {
+                    teams: [
+                        { id: 'team-atl-1', name: 'Atlanta Fire', isPublic: true, active: true },
+                        { id: 'team-atl-2', name: 'Atlanta United', isPublic: true, active: true }
+                    ],
+                    nextCursor: firstCursor
+                }
+            })
+            .mockResolvedValueOnce({
+                data: {
+                    teams: [{ id: 'team-atl-3', name: 'Atlanta Wave', isPublic: true, active: true }],
+                    nextCursor: null
+                }
+            });
+        firebaseMocks.httpsCallable.mockReturnValue(callable);
         const { discoverPublicTeams } = await import('../../js/db.js?v=107');
 
-        const firstPage = await discoverPublicTeams({ searchText: 'atlanta', pageSize: 2 });
-
+        const firstPage = await discoverPublicTeams({ searchText: ' Atlanta ', pageSize: 2 });
         expect(firstPage.teams.map((team) => team.id)).toEqual(['team-atl-1', 'team-atl-2']);
-        expect(firebaseMocks.collection).toHaveBeenCalledWith(expect.anything(), 'publicTeamProfiles');
-        expect(firebaseMocks.where).toHaveBeenCalledWith('publicSchemaVersion', '==', 1);
-        expect(firebaseMocks.where).toHaveBeenCalledWith('isPublic', '==', true);
-        expect(firebaseMocks.where).toHaveBeenCalledWith('active', '==', true);
-        expect(firstPage.nextCursor).toMatchObject({
-            kind: 'public-team-search',
-            searchText: 'atlanta',
-            bufferedTeams: [expect.objectContaining({ id: 'team-kc-1' })]
-        });
+        expect(firstPage.nextCursor).toEqual(firstCursor);
 
-        const secondPage = await discoverPublicTeams({
-            searchText: 'atlanta',
-            pageSize: 2,
-            cursor: firstPage.nextCursor
-        });
-
-        expect(secondPage.teams.map((team) => team.id)).toEqual(['team-kc-1', 'team-zebras-1']);
-        expect(secondPage.nextCursor).toBeNull();
-        expect(firebaseMocks.startAfter).toHaveBeenCalledTimes(2);
-        expect(firebaseMocks.startAfter).toHaveBeenNthCalledWith(1, secondAtlantaDoc);
-        expect(firebaseMocks.startAfter).toHaveBeenNthCalledWith(2, kansasDoc);
-    });
-
-    it('serves the next page from buffered search teams before querying Firestore again', async () => {
-        const bufferedAtlantaTeam = {
-            id: 'team-atl-3',
-            name: 'Atlanta United 3',
-            isPublic: true,
-            publicSearchName: 'atlanta united 3'
-        };
-        const bufferedKansasTeam = {
-            id: 'team-kc-2',
-            name: 'Kansas City Wave',
-            isPublic: true,
-            publicSearchCity: 'atlanta'
-        };
-        const persistedCursorDoc = createTeamDoc('team-atl-2', {
-            name: 'Atlanta United 2',
-            isPublic: true,
-            publicSearchName: 'atlanta united 2'
-        });
-
-        const { discoverPublicTeams } = await import('../../js/db.js?v=107');
-
-        const page = await discoverPublicTeams({
-            searchText: 'atlanta',
-            pageSize: 2,
-            cursor: {
-                kind: 'public-team-search',
-                searchText: 'atlanta',
-                strategyCursors: [persistedCursorDoc, null, null, null],
-                bufferedTeams: [bufferedAtlantaTeam, bufferedKansasTeam]
-            }
-        });
-
-        expect(page.teams.map((team) => team.id)).toEqual(['team-atl-3', 'team-kc-2']);
-        expect(page.nextCursor).toMatchObject({
-            kind: 'public-team-search',
-            searchText: 'atlanta',
-            strategyCursors: [persistedCursorDoc, null, null, null],
-            bufferedTeams: []
-        });
+        const secondPage = await discoverPublicTeams({ searchText: 'atlanta', pageSize: 2, cursor: firstCursor });
+        expect(secondPage.teams.map((team) => team.id)).toEqual(['team-atl-3']);
+        expect(callable).toHaveBeenNthCalledWith(1, { searchText: 'Atlanta', cursor: null, pageSize: 2 });
+        expect(callable).toHaveBeenNthCalledWith(2, { searchText: 'atlanta', cursor: firstCursor, pageSize: 2 });
         expect(firebaseMocks.getDocs).not.toHaveBeenCalled();
-        expect(firebaseMocks.startAfter).not.toHaveBeenCalled();
     });
 
-    it('preserves browse during an upgrade with preexisting public teams and zero projection docs', async () => {
-        firebaseMocks.getDocs.mockResolvedValue({ docs: [] });
+    it('clamps page size and rejects non-public or inactive callable output defensively', async () => {
         const callable = vi.fn().mockResolvedValue({
             data: {
-                teams: [{ id: 'legacy-public', name: 'Legacy Public', isPublic: true, active: true }],
-                nextCursor: { kind: 'public-team-callable', searchText: '', offset: 1 }
+                teams: [
+                    { id: 'safe-team', name: 'Safe Team', isPublic: true, active: true },
+                    { id: 'private-team', name: 'Private Team', isPublic: false, active: true },
+                    { id: 'inactive-team', name: 'Inactive Team', isPublic: true, active: false }
+                ],
+                nextCursor: null
             }
         });
         firebaseMocks.httpsCallable.mockReturnValue(callable);
         const { discoverPublicTeams } = await import('../../js/db.js?v=91');
 
-        await expect(discoverPublicTeams({ pageSize: 24 })).resolves.toEqual({
-            teams: [{ id: 'legacy-public', name: 'Legacy Public', isPublic: true, active: true }],
-            nextCursor: { kind: 'public-team-callable', searchText: '', offset: 1 }
+        await expect(discoverPublicTeams({ pageSize: 1000 })).resolves.toEqual({
+            teams: [{ id: 'safe-team', name: 'Safe Team', isPublic: true, active: true }],
+            nextCursor: null
         });
-        expect(firebaseMocks.collection).toHaveBeenCalledWith(expect.anything(), 'publicTeamProfiles');
-        expect(firebaseMocks.httpsCallable).toHaveBeenCalledWith(expect.anything(), 'discoverPublicTeamProfiles');
-        expect(callable).toHaveBeenCalledWith({ searchText: '', cursor: null, pageSize: 24 });
+        expect(callable).toHaveBeenCalledWith({ searchText: '', cursor: null, pageSize: 100 });
     });
 
-    it('uses the callable when projection rules are not deployed yet without masking network failures', async () => {
-        const denied = Object.assign(new Error('projection rules not deployed'), { code: 'permission-denied' });
-        firebaseMocks.getDocs.mockRejectedValueOnce(denied);
-        const callable = vi.fn().mockResolvedValue({
-            data: { teams: [{ id: 'safe-team', name: 'Safe Team', isPublic: true, active: true }], nextCursor: null }
-        });
-        firebaseMocks.httpsCallable.mockReturnValue(callable);
+    it('propagates callable failures instead of returning incomplete discovery data', async () => {
+        const unavailable = Object.assign(new Error('offline'), { code: 'functions/unavailable' });
+        firebaseMocks.httpsCallable.mockReturnValue(vi.fn().mockRejectedValue(unavailable));
         const { discoverPublicTeams } = await import('../../js/db.js?v=91');
 
-        await expect(discoverPublicTeams()).resolves.toMatchObject({ teams: [expect.objectContaining({ id: 'safe-team' })] });
-
-        const unavailable = Object.assign(new Error('offline'), { code: 'unavailable' });
-        firebaseMocks.getDocs.mockRejectedValueOnce(unavailable);
         await expect(discoverPublicTeams()).rejects.toBe(unavailable);
+        expect(firebaseMocks.getDocs).not.toHaveBeenCalled();
     });
 });
 

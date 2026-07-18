@@ -638,15 +638,6 @@ function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     return uppercase ? normalized.toUpperCase() : normalized.toLowerCase();
 }
 
-function toTitleCase(value) {
-    return String(value || '')
-        .trim()
-        .split(/\s+/)
-        .filter(Boolean)
-        .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1).toLowerCase())
-        .join(' ');
-}
-
 function buildPublicTeamSearchFields(teamData = {}) {
     const searchFields = {};
 
@@ -683,119 +674,6 @@ function normalizePublicTeamSearchInput(value) {
     return String(value || '').trim();
 }
 
-function buildPublicTeamSearchDescriptor(searchText = '') {
-    const trimmed = normalizePublicTeamSearchInput(searchText);
-    if (!trimmed) return null;
-
-    if (/^\d{1,5}$/.test(trimmed)) {
-        return {
-            type: 'zip',
-            normalized: trimmed
-        };
-    }
-
-    if (/^[A-Za-z]{2}$/.test(trimmed) && !trimmed.includes(',')) {
-        return {
-            type: 'state',
-            normalized: trimmed.toLowerCase(),
-            state: trimmed.toUpperCase()
-        };
-    }
-
-    return {
-        type: 'location',
-        normalized: trimmed.toLowerCase()
-    };
-}
-
-function buildPublicTeamSearchStrategies(searchText = '') {
-    const descriptor = buildPublicTeamSearchDescriptor(searchText);
-    const rawTrimmed = normalizePublicTeamSearchInput(searchText);
-    const trimmed = descriptor?.normalized || rawTrimmed;
-    if (!descriptor) return [];
-
-    const strategies = [];
-    const normalizedName = normalizePublicTeamSearchValue(rawTrimmed);
-    const legacyNameSearch = toTitleCase(rawTrimmed);
-    if (normalizedName) {
-        strategies.push(
-            { field: 'publicSearchName', start: normalizedName, end: `${normalizedName}\uf8ff` },
-            { field: 'name', start: legacyNameSearch, end: `${legacyNameSearch}\uf8ff` }
-        );
-    }
-
-    if (descriptor.type === 'zip') {
-        strategies.push(
-            { field: 'publicSearchZip', start: trimmed, end: `${trimmed}\uf8ff` },
-            { field: 'zip', start: trimmed, end: `${trimmed}\uf8ff` }
-        );
-        return strategies;
-    }
-
-    const [rawCityPart, rawStatePart = ''] = trimmed.split(',').map((part) => part.trim()).filter((part, index, parts) => index === 0 || part || parts.length > 1);
-
-    if (descriptor.type === 'state') {
-        const normalizedState = descriptor.state;
-        strategies.push(
-            { field: 'publicSearchState', start: normalizedState, end: `${normalizedState}\uf8ff` },
-            { field: 'state', start: normalizedState, end: `${normalizedState}\uf8ff` }
-        );
-        return strategies;
-    }
-
-    const citySearch = normalizePublicTeamSearchValue(rawCityPart || trimmed);
-    const legacyCitySearch = toTitleCase(rawCityPart || trimmed);
-    const normalizedState = rawStatePart ? rawStatePart.toUpperCase() : '';
-    const filterByState = normalizedState
-        ? (team) => String(team.publicSearchState || team.state || '').trim().toUpperCase().startsWith(normalizedState)
-        : null;
-
-    strategies.push(
-        { field: 'publicSearchCity', start: citySearch, end: `${citySearch}\uf8ff`, filter: filterByState },
-        { field: 'city', start: legacyCitySearch, end: `${legacyCitySearch}\uf8ff`, filter: filterByState }
-    );
-
-    return strategies;
-}
-
-function sortTeamsByName(teams = []) {
-    return [...teams].sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
-}
-
-function buildPublicTeamSearchPageCursor(searchText, strategyCursors = [], bufferedTeams = []) {
-    if (!bufferedTeams.length && !strategyCursors.some(Boolean)) {
-        return null;
-    }
-
-    return {
-        kind: 'public-team-search',
-        searchText,
-        strategyCursors,
-        bufferedTeams
-    };
-}
-
-function readPublicTeamSearchPageCursor(cursor, searchText, strategyCount) {
-    if (!cursor || typeof cursor !== 'object' || cursor.kind !== 'public-team-search') {
-        return {
-            strategyCursors: Array.from({ length: strategyCount }, () => null),
-            bufferedTeams: []
-        };
-    }
-
-    if (normalizePublicTeamSearchInput(cursor.searchText || '') !== searchText) {
-        return {
-            strategyCursors: Array.from({ length: strategyCount }, () => null),
-            bufferedTeams: []
-        };
-    }
-
-    return {
-        strategyCursors: Array.from({ length: strategyCount }, (_, index) => cursor.strategyCursors?.[index] || null),
-        bufferedTeams: Array.isArray(cursor.bufferedTeams) ? cursor.bufferedTeams : []
-    };
-}
-
 async function discoverPublicTeamsFromCallable({ searchText = '', cursor = null, pageSize = DEFAULT_PUBLIC_TEAM_DISCOVERY_PAGE_SIZE } = {}) {
     const discoverProfiles = httpsCallable(functions, 'discoverPublicTeamProfiles');
     const result = await discoverProfiles({ searchText, cursor, pageSize });
@@ -823,112 +701,11 @@ export async function discoverPublicTeams(options = {}) {
         ? Math.min(Math.max(Math.floor(rawPageSize), 1), 100)
         : DEFAULT_PUBLIC_TEAM_DISCOVERY_PAGE_SIZE;
     const searchText = normalizePublicTeamSearchInput(options.searchText || options.locationFilter || '');
-    const cursor = options.cursor || null;
-    const teamsRef = collection(db, 'publicTeamProfiles');
-
-    if (cursor?.kind === 'public-team-callable') {
-        return discoverPublicTeamsFromCallable({ searchText, cursor, pageSize });
-    }
-
-    if (!searchText) {
-        const constraints = [
-            where('publicSchemaVersion', '==', 1),
-            where('isPublic', '==', true),
-            where('active', '==', true),
-            orderBy('name')
-        ];
-        if (cursor) {
-            constraints.push(startAfterQuery(cursor));
-        }
-        constraints.push(limitQuery(pageSize));
-        let snapshot;
-        try {
-            snapshot = await getDocs(query(teamsRef, ...constraints));
-        } catch (error) {
-            if (!isPublicProjectionFallbackError(error)) throw error;
-            return discoverPublicTeamsFromCallable({ searchText, cursor: null, pageSize });
-        }
-        if (!cursor && snapshot.docs.length === 0) {
-            return discoverPublicTeamsFromCallable({ searchText, pageSize });
-        }
-        const teams = filterTeamsByActive(snapshot.docs.map((teamDoc) => ({ id: teamDoc.id, ...teamDoc.data() })), false);
-        return {
-            teams,
-            nextCursor: snapshot.docs.length === pageSize ? snapshot.docs[snapshot.docs.length - 1] : null
-        };
-    }
-
-    let strategies = buildPublicTeamSearchStrategies(searchText);
-    if (!strategies.length) {
-        return { teams: [], nextCursor: null };
-    }
-
-    const previousPageCursor = readPublicTeamSearchPageCursor(cursor, searchText, strategies.length);
-    if (previousPageCursor.bufferedTeams.length >= pageSize) {
-        const teams = previousPageCursor.bufferedTeams.slice(0, pageSize);
-        const bufferedTeams = previousPageCursor.bufferedTeams.slice(pageSize);
-        return {
-            teams,
-            nextCursor: buildPublicTeamSearchPageCursor(searchText, previousPageCursor.strategyCursors, bufferedTeams)
-        };
-    }
-
-    strategies = strategies.map((strategy, index) => ({
-        ...strategy,
-        startAfterConstraint: previousPageCursor.strategyCursors[index]
-            ? [startAfterQuery(previousPageCursor.strategyCursors[index])]
-            : []
-    }));
-    let snapshots;
-    try {
-        snapshots = await Promise.all(strategies.map((strategy) => getDocs(query(
-            teamsRef,
-            where('publicSchemaVersion', '==', 1),
-            where('isPublic', '==', true),
-            where('active', '==', true),
-            where(strategy.field, '>=', strategy.start),
-            where(strategy.field, '<=', strategy.end),
-            orderBy(strategy.field),
-            ...strategy.startAfterConstraint,
-            limitQuery(pageSize)
-        ))));
-    } catch (error) {
-        if (!isPublicProjectionFallbackError(error)) throw error;
-        return discoverPublicTeamsFromCallable({ searchText, cursor: null, pageSize });
-    }
-
-    if (!cursor && snapshots.every((snapshot) => snapshot.docs.length === 0)) {
-        return discoverPublicTeamsFromCallable({ searchText, pageSize });
-    }
-
-    const teamsById = new Map(previousPageCursor.bufferedTeams
-        .filter((team) => team?.id)
-        .map((team) => [team.id, team]));
-    snapshots.forEach((snapshot, index) => {
-        const strategy = strategies[index];
-        snapshot.docs.forEach((teamDoc) => {
-            const team = { id: teamDoc.id, ...teamDoc.data() };
-            if (typeof strategy.filter === 'function' && !strategy.filter(team)) {
-                return;
-            }
-            teamsById.set(team.id, team);
-        });
+    return discoverPublicTeamsFromCallable({
+        searchText,
+        cursor: options.cursor || null,
+        pageSize
     });
-
-    const sortedTeams = filterTeamsByActive(sortTeamsByName(Array.from(teamsById.values())), false);
-    const teams = sortedTeams.slice(0, pageSize);
-    const bufferedTeams = sortedTeams.slice(pageSize);
-    const strategyCursors = snapshots.map((snapshot, index) => snapshot.docs.length
-        ? snapshot.docs[snapshot.docs.length - 1]
-        : previousPageCursor.strategyCursors[index] || null);
-    const hasMorePages = bufferedTeams.length > 0 || snapshots.some((snapshot) => snapshot.docs.length === pageSize);
-
-    return {
-        teams,
-        nextCursor: hasMorePages
-            ? buildPublicTeamSearchPageCursor(searchText, strategyCursors, bufferedTeams)
-            : null
-    };
 }
 
 export async function getPublicTeamRosterCount(teamId) {
@@ -978,24 +755,7 @@ async function getAllOrderedCollectionDocuments(collectionRef, fieldName) {
     return documents;
 }
 
-async function getAllPublicTeamProfilesWithFallback(publicTeamsRef) {
-    let snapshot;
-    try {
-        snapshot = await getDocs(query(
-            publicTeamsRef,
-            where('publicSchemaVersion', '==', 1),
-            where('isPublic', '==', true),
-            where('active', '==', true),
-            orderBy('name')
-        ));
-    } catch (error) {
-        if (!isPublicProjectionFallbackError(error)) throw error;
-        snapshot = { docs: [] };
-    }
-    if (snapshot.docs.length > 0) {
-        return snapshot.docs.map((teamDoc) => ({ id: teamDoc.id, ...teamDoc.data() }));
-    }
-
+async function getAllPublicTeamProfiles() {
     const teams = [];
     let cursor = null;
     do {
@@ -1013,19 +773,18 @@ export async function getTeams(options = {}) {
     const locationFilter = String(options.locationFilter || '').trim().toLowerCase();
 
     const teamsRef = collection(db, "teams");
-    const publicTeamsRef = collection(db, 'publicTeamProfiles');
     let teams = [];
     if (includePrivate) {
         teams = (await getAllOrderedCollectionDocuments(teamsRef, "name"))
             .map(doc => ({ id: doc.id, ...doc.data() }));
     } else if (publicOnly) {
-        teams = (await getAllPublicTeamProfilesWithFallback(publicTeamsRef))
+        teams = (await getAllPublicTeamProfiles())
             .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
     } else {
         const currentUser = auth.currentUser;
         const currentUserEmail = String(currentUser?.email || '').trim().toLowerCase();
         const teamSnapshots = await Promise.all([
-            getAllPublicTeamProfilesWithFallback(publicTeamsRef),
+            getAllPublicTeamProfiles(),
             currentUser?.uid
                 ? getDocs(query(teamsRef, where("ownerId", "==", currentUser.uid)))
                 : Promise.resolve({ docs: [] }),
