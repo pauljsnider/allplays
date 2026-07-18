@@ -696,6 +696,16 @@ describe('React app messages integration', () => {
         const { container } = await renderMessages('/messages/team-1?compose=user%3Acoach-1&recipientName=Coach+Jamie');
         await waitForText(container, 'Direct message to Coach Jamie is ready.');
 
+        const textarea = container.querySelector('.chat-composer-textarea');
+        await setFieldValue(textarea, 'Private friend draft');
+        const photoInput = container.querySelector('input[type="file"][accept="image/*"]');
+        const photo = new File(['private-photo'], 'private.jpg', { type: 'image/jpeg' });
+        Object.defineProperty(photoInput, 'files', { configurable: true, value: [photo] });
+        await act(async () => {
+            photoInput.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        await flush();
+
         const teamLink = container.querySelector('a[href="/messages/team-1"]');
         expect(teamLink).toBeTruthy();
         await act(async () => {
@@ -705,8 +715,10 @@ describe('React app messages integration', () => {
             () => chatMocks.subscribeToTeamChatMessages.mock.calls.at(-1)?.[1] === 'team',
             'default team conversation subscription'
         );
+        expect(textarea.value).toBe('');
+        expect(container.textContent).not.toContain('private.jpg');
+        expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:chat-upload');
 
-        const textarea = container.querySelector('.chat-composer-textarea');
         await setFieldValue(textarea, 'Update for everyone');
         await click(container, 'Send message');
 

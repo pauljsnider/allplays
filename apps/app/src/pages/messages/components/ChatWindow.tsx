@@ -882,6 +882,21 @@ export function ChatWindow({
       );
       initialRecipientLookupKeyRef.current = '';
       if (hadPreparedRouteRecipient) {
+        if (isDefaultTeamConversation(effectiveConversationId)) {
+          composerDraftsRef.current.delete(activeComposerDraftKeyRef.current);
+          latestComposerDraftRef.current = {
+            text: '',
+            filePreviews: [],
+            selectedRecipientTarget: 'full_team',
+            selectedRecipientIds: []
+          };
+          setText('');
+          setFilePreviews((current) => {
+            current.forEach((preview) => URL.revokeObjectURL(preview.url));
+            return [];
+          });
+          setComposerCursorPosition(undefined);
+        }
         preparedInitialRecipientKeyRef.current = '';
         setInitialRecipientLookup({ key: '', status: 'idle' });
         setSelectedRecipientTarget('full_team');
