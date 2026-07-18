@@ -2125,9 +2125,10 @@ service cloud.firestore {
              value.size() > 0 &&
              value.size() <= 2048 &&
              value.matches('https://[A-Za-z0-9.-]+/[A-Za-z0-9._~:/?#@!$&()*+,;=%-]*') &&
-             (value.matches('https://firebasestorage[.]googleapis[.]com/.*') ||
-              value.matches('https://storage[.]googleapis[.]com/.*') ||
-              value.matches('https://[A-Za-z0-9-]+[.]firebasestorage[.]app/.*'));
+             (value.matches('https://firebasestorage[.]googleapis[.]com/v0/b/(game-flow-c6311|game-flow-img)[.]firebasestorage[.]app/o/.*') ||
+              value.matches('https://storage[.]googleapis[.]com/(game-flow-c6311|game-flow-img)[.]firebasestorage[.]app/.*') ||
+              value.matches('https://storage[.]googleapis[.]com/download/storage/v1/b/(game-flow-c6311|game-flow-img)[.]firebasestorage[.]app/o/.*') ||
+              value.matches('https://(game-flow-c6311|game-flow-img)[.]firebasestorage[.]app/.*'));
     }
 
     function isAllowedLiveChatSenderPhotoUrl(value) {

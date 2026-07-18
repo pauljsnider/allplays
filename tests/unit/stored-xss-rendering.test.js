@@ -11,11 +11,12 @@ describe('stored image URL XSS rendering contracts', () => {
         expect(liveGameSource).toContain('resolveUrl: resolveSafeProfilePhotoUrl');
         expect(liveGameSource).toContain('row.appendChild(avatar || fallback);');
         expect(liveGameSource).not.toContain('<img src="${msg.senderPhotoUrl}"');
+        expect(liveGameSource).toContain('senderPhotoUrl: resolveSafeProfilePhotoWriteUrl(state.user?.photoURL) || null');
         expect(liveGameSource).not.toContain('senderPhotoUrl: state.user?.photoURL || null');
     });
 
     it('normalizes React app chat avatars before constructing the write payload', () => {
-        expect(appLiveGameChatSource).toContain('senderPhotoUrl: resolveSafeProfilePhotoUrl(user?.photoUrl) || null');
+        expect(appLiveGameChatSource).toContain('senderPhotoUrl: resolveSafeProfilePhotoWriteUrl(user?.photoUrl) || null');
         expect(appLiveGameChatSource).not.toContain('senderPhotoUrl: compactString(user?.photoUrl) || null');
     });
 

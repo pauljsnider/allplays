@@ -3,7 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import {
     createSafeImageElement,
     resolveSafeDrillDiagramUrl,
-    resolveSafeProfilePhotoUrl
+    resolveSafeProfilePhotoUrl,
+    resolveSafeProfilePhotoWriteUrl
 } from '../../js/safe-image-url.js';
 
 const firebaseDiagram = 'https://firebasestorage.googleapis.com/v0/b/game-flow-img.firebasestorage.app/o/drills%2Fdiagram.png?alt=media&token=token-1';
@@ -15,6 +16,22 @@ describe('trusted persisted image URLs', () => {
             .toBe('https://storage.googleapis.com/allplays-images/drills/diagram.webp');
         expect(resolveSafeProfilePhotoUrl('https://lh3.googleusercontent.com/a/profile-photo'))
             .toBe('https://lh3.googleusercontent.com/a/profile-photo');
+        [
+            firebaseDiagram,
+            'https://firebasestorage.googleapis.com/v0/b/game-flow-c6311.firebasestorage.app/o/profiles%2Fphoto.png?alt=media',
+            'https://storage.googleapis.com/game-flow-img.firebasestorage.app/profiles/photo.png',
+            'https://storage.googleapis.com/download/storage/v1/b/game-flow-c6311.firebasestorage.app/o/profiles%2Fphoto.png?alt=media',
+            'https://game-flow-img.firebasestorage.app/profiles/photo.png'
+        ].forEach((url) => expect(resolveSafeProfilePhotoWriteUrl(url)).toBe(url));
+    });
+
+    it('keeps legacy Firebase images renderable but restricts future profile-photo writes to first-party buckets', () => {
+        const attackerOwnedBucket = 'https://firebasestorage.googleapis.com/v0/b/attacker-owned.firebasestorage.app/o/avatar.png?alt=media';
+        expect(resolveSafeProfilePhotoUrl(attackerOwnedBucket)).toBe(attackerOwnedBucket);
+        expect(resolveSafeDrillDiagramUrl(attackerOwnedBucket)).toBe(attackerOwnedBucket);
+        expect(resolveSafeProfilePhotoWriteUrl(attackerOwnedBucket)).toBe('');
+        expect(resolveSafeProfilePhotoWriteUrl('https://storage.googleapis.com/attacker-owned.firebasestorage.app/avatar.png')).toBe('');
+        expect(resolveSafeProfilePhotoWriteUrl('https://attacker-owned.firebasestorage.app/avatar.png')).toBe('');
     });
 
     it.each([
@@ -29,6 +46,7 @@ describe('trusted persisted image URLs', () => {
     ])('rejects unsafe or untrusted image URL %s', (payload) => {
         expect(resolveSafeDrillDiagramUrl(payload)).toBe('');
         expect(resolveSafeProfilePhotoUrl(payload)).toBe('');
+        expect(resolveSafeProfilePhotoWriteUrl(payload)).toBe('');
     });
 
     it('constructs image attributes through the DOM without creating executable attributes', () => {

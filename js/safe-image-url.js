@@ -4,6 +4,10 @@ const FIREBASE_IMAGE_HOSTS = new Set([
     'firebasestorage.googleapis.com',
     'storage.googleapis.com'
 ]);
+const FIRST_PARTY_FIREBASE_STORAGE_BUCKETS = new Set([
+    'game-flow-c6311.firebasestorage.app',
+    'game-flow-img.firebasestorage.app'
+]);
 
 function hasTrustedHostname(hostname, { exactHosts = new Set(), suffixes = [] } = {}) {
     const normalized = String(hostname || '').toLowerCase();
@@ -32,6 +36,38 @@ export function resolveSafeProfilePhotoUrl(value) {
         exactHosts: new Set([...FIREBASE_IMAGE_HOSTS, 'allplays.ai', 'www.allplays.ai']),
         suffixes: ['.googleusercontent.com', '.firebasestorage.app']
     });
+}
+
+function isFirstPartyFirebaseStorageUrl(value) {
+    try {
+        const parsed = new URL(value);
+        const hostname = parsed.hostname.toLowerCase();
+        if (FIRST_PARTY_FIREBASE_STORAGE_BUCKETS.has(hostname)) return true;
+
+        return [...FIRST_PARTY_FIREBASE_STORAGE_BUCKETS].some((bucket) => {
+            if (hostname === 'firebasestorage.googleapis.com') {
+                return parsed.pathname.startsWith(`/v0/b/${bucket}/o/`);
+            }
+            if (hostname === 'storage.googleapis.com') {
+                return parsed.pathname.startsWith(`/${bucket}/`) ||
+                    parsed.pathname.startsWith(`/download/storage/v1/b/${bucket}/o/`);
+            }
+            return false;
+        });
+    } catch (error) {
+        return false;
+    }
+}
+
+export function resolveSafeProfilePhotoWriteUrl(value) {
+    const safeUrl = resolveSafeProfilePhotoUrl(value);
+    if (!safeUrl) return '';
+
+    const hostname = new URL(safeUrl).hostname.toLowerCase();
+    if (hostname === 'allplays.ai' || hostname === 'www.allplays.ai' || hostname.endsWith('.googleusercontent.com')) {
+        return safeUrl;
+    }
+    return isFirstPartyFirebaseStorageUrl(safeUrl) ? safeUrl : '';
 }
 
 export function resolveSafeDrillDiagramUrl(value) {

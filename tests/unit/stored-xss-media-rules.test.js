@@ -10,6 +10,14 @@ import { doc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 const rules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
 const trustedPhoto = 'https://lh3.googleusercontent.com/a/trusted-photo';
 const trustedDiagram = 'https://firebasestorage.googleapis.com/v0/b/game-flow-img.firebasestorage.app/o/drills%2Fdiagram.png?alt=media&token=token-1';
+const attackerFirebaseDiagram = 'https://firebasestorage.googleapis.com/v0/b/attacker-owned.firebasestorage.app/o/drills%2Fdiagram.svg?alt=media';
+const trustedDiagramForms = [
+    trustedDiagram,
+    'https://firebasestorage.googleapis.com/v0/b/game-flow-c6311.firebasestorage.app/o/drills%2Fprimary.png?alt=media',
+    'https://storage.googleapis.com/game-flow-img.firebasestorage.app/drills/path-form.png',
+    'https://storage.googleapis.com/download/storage/v1/b/game-flow-c6311.firebasestorage.app/o/drills%2Frest-form.png?alt=media',
+    'https://game-flow-img.firebasestorage.app/drills/direct-form.png'
+];
 
 describe('stored image URL Firestore rule contracts', () => {
     it('requires canonical trusted live-chat photos and compatibility-aware drill diagram updates', () => {
@@ -18,6 +26,7 @@ describe('stored image URL Firestore rule contracts', () => {
         expect(rules).toContain('function hasValidDrillDiagramUrls(data)');
         expect(rules).toContain('function hasSafeDrillDiagramUrlUpdate()');
         expect(rules).toContain('nextDiagramUrls.hasOnly(existingDiagramUrls)');
+        expect(rules).toContain('(game-flow-c6311|game-flow-img)[.]firebasestorage[.]app');
     });
 });
 
@@ -54,7 +63,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('stored image URL rules en
                 createdBy: 'owner-1',
                 title: 'Legacy drill',
                 publishedToCommunity: false,
-                diagramUrls: ['javascript:alert(1)', 'https://legacy.example/diagram.png']
+                diagramUrls: ['javascript:alert(1)', attackerFirebaseDiagram, 'https://legacy.example/diagram.png']
             });
         });
     });
@@ -92,12 +101,24 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('stored image URL rules en
             doc(db, 'teams/team-1/games/game-1/liveChat/no-photo'),
             liveChatPayload(null)
         ));
+
+        await testEnv.withSecurityRulesDisabled(async (context) => {
+            await updateDoc(doc(context.firestore(), 'users/owner-1'), { photoUrl: trustedDiagram });
+        });
+        const firebasePhotoDb = ownerDb(trustedDiagram);
+        await assertSucceeds(setDoc(
+            doc(firebasePhotoDb, 'teams/team-1/games/game-1/liveChat/firebase-photo'),
+            liveChatPayload(trustedDiagram)
+        ));
     });
 
     it.each([
         'javascript:alert(1)',
         'data:image/svg+xml,<svg onload=alert(1)>',
         'https://attacker.example/avatar.png',
+        'https://firebasestorage.googleapis.com/v0/b/attacker-owned.firebasestorage.app/o/avatar.png?alt=media',
+        'https://storage.googleapis.com/attacker-owned.firebasestorage.app/avatar.png',
+        'https://attacker-owned.firebasestorage.app/avatar.png',
         'https://firebasestorage.googleapis.com@attacker.example/avatar.png',
         'https://firebasestorage.googleapis.com/avatar.png" onerror="alert(1)',
         'https://firebasestorage.googleapis.com/avatar.png&#39; onerror=alert(1)'
@@ -120,7 +141,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('stored image URL rules en
             createdBy: 'owner-1',
             title: 'Safe drill',
             publishedToCommunity: false,
-            diagramUrls: [trustedDiagram]
+            diagramUrls: trustedDiagramForms
         }));
         await assertSucceeds(setDoc(doc(db, 'drillLibrary/no-diagram-drill'), {
             source: 'custom',
@@ -135,6 +156,9 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('stored image URL rules en
             'javascript:alert(1)',
             'data:image/svg+xml,<svg onload=alert(1)>',
             'https://attacker.example/diagram.png',
+            attackerFirebaseDiagram,
+            'https://storage.googleapis.com/attacker-owned.firebasestorage.app/drills/diagram.svg',
+            'https://attacker-owned.firebasestorage.app/drills/diagram.svg',
             'https://firebasestorage.googleapis.com@attacker.example/diagram.png',
             'https://firebasestorage.googleapis.com/diagram.png" onerror="alert(1)'
         ].entries()) {

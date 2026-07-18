@@ -4,7 +4,7 @@ const adapterMocks = vi.hoisted(() => ({
     postLiveChatMessage: vi.fn(),
     subscribeLiveChat: vi.fn(() => vi.fn()),
     isViewerChatEnabled: vi.fn(),
-    resolveSafeProfilePhotoUrl: vi.fn((value: unknown) => (
+    resolveSafeProfilePhotoWriteUrl: vi.fn((value: unknown) => (
         typeof value === 'string' && value.startsWith('https://lh3.googleusercontent.com/') ? value : ''
     ))
 }));
@@ -74,8 +74,17 @@ describe('liveGameChatService', () => {
             }).senderPhotoUrl
         ).toBeNull();
 
-        expect(adapterMocks.resolveSafeProfilePhotoUrl).toHaveBeenCalledWith(trustedPhotoUrl);
-        expect(adapterMocks.resolveSafeProfilePhotoUrl).toHaveBeenCalledWith('https://example.com/photo.png');
+        const attackerFirebasePhoto = 'https://firebasestorage.googleapis.com/v0/b/attacker-owned.firebasestorage.app/o/avatar.png?alt=media';
+        expect(
+            buildLiveGameChatPayload({
+                text: 'Third-party Firebase avatar',
+                user: { uid: 'user-3', displayName: 'Coach Ray', email: 'ray@example.com', photoUrl: attackerFirebasePhoto, roles: [] }
+            }).senderPhotoUrl
+        ).toBeNull();
+
+        expect(adapterMocks.resolveSafeProfilePhotoWriteUrl).toHaveBeenCalledWith(trustedPhotoUrl);
+        expect(adapterMocks.resolveSafeProfilePhotoWriteUrl).toHaveBeenCalledWith('https://example.com/photo.png');
+        expect(adapterMocks.resolveSafeProfilePhotoWriteUrl).toHaveBeenCalledWith(attackerFirebasePhoto);
     });
 
     it('subscribes and posts through the legacy live chat data layer', async () => {

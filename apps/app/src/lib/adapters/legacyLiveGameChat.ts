@@ -1,6 +1,6 @@
 import { postLiveChatMessage as legacyPostLiveChatMessage, subscribeLiveChat as legacySubscribeLiveChat } from '@legacy/db.js';
 import { isViewerChatEnabled as legacyIsViewerChatEnabled } from '@legacy/live-game-chat.js';
-import { resolveSafeProfilePhotoUrl as legacyResolveSafeProfilePhotoUrl } from '@legacy/safe-image-url.js';
+import { resolveSafeProfilePhotoWriteUrl as legacyResolveSafeProfilePhotoWriteUrl } from '@legacy/safe-image-url.js';
 
 /**
  * Typed adapter boundary for the legacy js/ live-game chat helpers (#2066), so
@@ -37,6 +37,6 @@ export function isViewerChatEnabled(game: unknown, options?: LegacyViewerChatOpt
   return legacyIsViewerChatEnabled(game, options) === true;
 }
 
-export function resolveSafeProfilePhotoUrl(value: unknown): string {
-  return legacyResolveSafeProfilePhotoUrl(value);
+export function resolveSafeProfilePhotoWriteUrl(value: unknown): string {
+  return legacyResolveSafeProfilePhotoWriteUrl(value);
 }

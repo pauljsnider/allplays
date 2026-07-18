@@ -40,7 +40,7 @@ import { getApp } from './vendor/firebase-app.js';
 import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, renderViewerLineupSections, renderOpponentStatsCards, applyResetEventState, applyViewerEventToState, shouldResetViewerFromGameDoc, collectVisibleLiveEventsSequentially } from './live-game-state.js?v=7';
 import { getDefaultLivePeriod } from './live-sport-config.js?v=2';
 import { BROADCAST_STREAM_HEARTBEAT_MS, buildBroadcastRuntimeSession } from './game-day-broadcast.js?v=5';
-import { createSafeImageElement, resolveSafeProfilePhotoUrl } from './safe-image-url.js?v=1';
+import { createSafeImageElement, resolveSafeProfilePhotoUrl, resolveSafeProfilePhotoWriteUrl } from './safe-image-url.js?v=1';
 
 const state = {
   teamId: null,
@@ -1878,7 +1878,7 @@ function initChat() {
         text,
         senderId: state.user?.uid || null,
         senderName: state.user?.displayName || state.anonName,
-        senderPhotoUrl: resolveSafeProfilePhotoUrl(state.user?.photoURL) || null,
+        senderPhotoUrl: resolveSafeProfilePhotoWriteUrl(state.user?.photoURL) || null,
         isAnonymous: !state.user
       });
     } catch (error) {
@@ -2002,7 +2002,7 @@ function initReactions() {
         text: emoji,
         senderId: state.user?.uid || null,
         senderName: state.user?.displayName || state.anonName,
-        senderPhotoUrl: resolveSafeProfilePhotoUrl(state.user?.photoURL) || null,
+        senderPhotoUrl: resolveSafeProfilePhotoWriteUrl(state.user?.photoURL) || null,
         isAnonymous: !state.user
       }).catch(err => console.warn('Reaction chat failed:', err));
     }
