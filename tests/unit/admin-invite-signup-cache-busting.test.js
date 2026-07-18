@@ -3,7 +3,19 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 function collectVersionedSourceFiles(dir, root = dir) {
-    const ignoredDirs = new Set(['.claude', '.git', '_temp', 'coverage', 'dist', 'docs', 'node_modules', 'spec', 'tests']);
+    const ignoredDirs = new Set([
+        '.claude',
+        '.git',
+        '_temp',
+        'android',
+        'coverage',
+        'dist',
+        'docs',
+        'ios',
+        'node_modules',
+        'spec',
+        'tests'
+    ]);
     const files = [];
 
     for (const entry of readdirSync(dir)) {
@@ -86,7 +98,7 @@ describe('admin invite signup cache busting', () => {
         expect(utilsSource).not.toContain("const { logout } = await import('./auth.js?v=41');");
     });
 
-    it('pins every deployed auth consumer to v51 without stale auth or db wrappers', () => {
+    it('pins every deployed auth and db consumer to the App Check-aware module keys', () => {
         const deployedSources = collectVersionedSourceFiles(process.cwd());
         const authConsumers = deployedSources.flatMap((relativePath) => {
             const source = readFileSync(resolve(process.cwd(), relativePath), 'utf8');
@@ -95,7 +107,7 @@ describe('admin invite signup cache busting', () => {
         });
         const staleConsumers = deployedSources.flatMap((relativePath) => {
             const source = readFileSync(resolve(process.cwd(), relativePath), 'utf8');
-            const staleImports = source.match(/(?:(?<![\w-])auth\.js\?v=(?!51\b)\d+|(?<![\w-])utils\.js\?v=(?!15\b)\d+|db\.js\?v=(?:76|77|78))\b/g) || [];
+            const staleImports = source.match(/(?:(?<![\w-])auth\.js\?v=(?!51\b)\d+|(?<![\w-])db\.js\?v=(?!102\b)\d+|(?<![\w-])utils\.js\?v=(?!15\b)\d+)\b/g) || [];
             return staleImports.map((importPath) => `${relativePath}: ${importPath}`);
         });
 

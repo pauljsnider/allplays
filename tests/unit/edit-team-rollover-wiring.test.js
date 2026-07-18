@@ -11,7 +11,7 @@ describe('edit team rollover cache delivery', () => {
         const source = readEditTeamSource();
 
         expect(source).toContain("from './js/db.js?v=102';");
-        expect(source).not.toContain("from './js/db.js?v=96';");
+        expect(source).not.toContain("from './js/db.js?v=101';");
     });
 });
 

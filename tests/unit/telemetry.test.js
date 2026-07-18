@@ -49,7 +49,9 @@ vi.mock('../../js/firebase.js?v=22', () => {
     };
 });
 
-vi.mock('../../js/firebase-app-check-rest.js?v=1', () => appCheckMocks);
+vi.mock('../../js/firebase-app-check-rest.js?v=1', () => ({
+    getPrimaryAppCheckHeaders: appCheckMocks.getPrimaryAppCheckHeaders
+}));
 
 describe('telemetry.js payload handling', () => {
     let telemetryModule;
@@ -195,16 +197,17 @@ describe('telemetry.js payload handling', () => {
         });
     });
 
-    it('starts the unload beacon before awaiting App Check headers', async () => {
+    it('starts an unload beacon synchronously without waiting for App Check', async () => {
         appCheckMocks.getPrimaryAppCheckHeaders.mockImplementation(() => new Promise(() => {}));
-        telemetryModule.captureTelemetryEvent('pagehide_event');
+        telemetryModule.captureTelemetryEvent('page_teardown');
         mockSendBeacon.mockClear();
+        appCheckMocks.getPrimaryAppCheckHeaders.mockClear();
 
         const flushPromise = telemetryModule.flush(true);
 
         expect(mockSendBeacon).toHaveBeenCalledTimes(1);
         expect(appCheckMocks.getPrimaryAppCheckHeaders).not.toHaveBeenCalled();
-        await flushPromise;
+        await expect(flushPromise).resolves.toBeUndefined();
     });
 
     it('buffers bursts larger than the old 40-event cap without dropping', async () => {

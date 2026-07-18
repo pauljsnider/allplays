@@ -381,9 +381,9 @@ export async function sendEvents(events, keepalive = false) {
     }
     const payload = JSON.stringify(payloadObject);
 
-    // App Check token acquisition can still be pending when pagehide fires.
-    // Start the headerless beacon synchronously so navigation cannot tear down
-    // the page before telemetry delivery begins.
+    // Unload delivery has to begin synchronously. Waiting for App Check here
+    // lets page teardown terminate the document before either transport starts,
+    // and sendBeacon cannot carry custom App Check headers in any case.
     if (keepalive && navigator.sendBeacon) {
         const blob = new Blob([payload], { type: 'application/json' });
         if (navigator.sendBeacon(endpoint, blob)) return;
