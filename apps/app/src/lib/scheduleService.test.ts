@@ -1310,6 +1310,25 @@ describe('parent schedule detail hydration', () => {
     expect(nearEvent.myRsvpNote).toBe('Child correction');
   });
 
+  it('reconciles sticky session state after a complete detail hydration', async () => {
+    const localEvent = buildHydrationEvent('server-newer-game', new Date(Date.now() + 24 * 60 * 60 * 1000));
+    vi.mocked(submitRsvpForPlayer).mockResolvedValue(null as any);
+
+    await submitParentScheduleRsvp(localEvent, user, 'maybe', 'Local note');
+
+    const serverEvent = buildHydrationEvent('server-newer-game', localEvent.date);
+    await hydrateParentScheduleDetails({ children: [], events: [serverEvent] }, user);
+
+    expect(serverEvent.myRsvp).toBe('going');
+    expect(serverEvent.myRsvpNote).toBe('Will be there.');
+
+    vi.mocked(getDoc).mockRejectedValue(new Error('offline after hydration'));
+    await hydrateParentScheduleRsvps({ children: [], events: [serverEvent] }, user);
+
+    expect(serverEvent.myRsvp).toBe('going');
+    expect(serverEvent.myRsvpNote).toBe('Will be there.');
+  });
+
   it('refreshes cached open assignment counts after assignment claim hydration', async () => {
     const nearEvent = buildHydrationEvent('near-game', new Date(Date.now() + 24 * 60 * 60 * 1000));
     nearEvent.assignments = [{ role: 'Scoreboard', claimable: true, value: '' }];

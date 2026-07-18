@@ -5,7 +5,7 @@ import {
   assertSucceeds,
   initializeTestEnvironment
 } from '@firebase/rules-unit-testing';
-import { deleteDoc, doc, setDoc, Timestamp, updateDoc, writeBatch } from 'firebase/firestore';
+import { deleteDoc, doc, getDoc, setDoc, Timestamp, updateDoc, writeBatch } from 'firebase/firestore';
 import { extractMatchBlock } from '../../scripts/validate-firebase-rules-ci.mjs';
 
 const rules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
@@ -82,7 +82,8 @@ describe('RSVP note privacy Firestore rules', () => {
     expect(noteBlock).toContain('isOwnRsvpNoteDoc(data)');
     expect(noteBlock).toContain("data.get('visibility', 'admins') == 'team'");
     expect(noteBlock).toContain("get('noteVisibility', 'admins') == 'team'");
-    expect(noteBlock).toContain('allow read: if canReadRsvpNote(teamId, resource.data);');
+    expect(noteBlock).toContain('allow get: if (resource == null && isOwnRsvpNoteId() && isParentForTeam(teamId)) ||');
+    expect(noteBlock).toContain('allow list: if canReadRsvpNote(teamId, resource.data);');
   });
 
   it('requires an explicit safe RSVP note document shape and writer-owned ID for writes', () => {
@@ -292,6 +293,14 @@ describe('RSVP note privacy Firestore rules', () => {
       });
 
       await assertSucceeds(batch.commit());
+    });
+
+    it('returns missing own note overrides to a parent without exposing another user path', async () => {
+      const parentDb = authedFirestore('parent-1', 'parent@example.com');
+
+      await assertSucceeds(getDoc(baseNoteRef(parentDb)));
+      await assertSucceeds(getDoc(noteRef(parentDb, 'player-a')));
+      await assertFails(getDoc(noteRef(parentDb, 'player-a', 'other-parent')));
     });
 
     it('denies same-team different-player parent RSVP note create, update, and delete', async () => {

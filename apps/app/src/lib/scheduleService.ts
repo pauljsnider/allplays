@@ -261,6 +261,15 @@ function reconcileSessionRsvpState(events: ParentScheduleEvent[], userId: string
   if (changed) persistSessionRsvpState(userId, state);
 }
 
+function finalizeSessionRsvpHydration(
+  events: ParentScheduleEvent[],
+  authoritativeEvents: ParentScheduleEvent[],
+  userId: string
+) {
+  reconcileSessionRsvpState(authoritativeEvents, userId);
+  return applySessionRsvpState(events, userId);
+}
+
 function getScheduleEventHydrationCacheKey(teamId: string, eventId: string) {
   return `event-details:${teamId}:${eventId}`;
 }
@@ -2991,13 +3000,18 @@ async function mergeOwnRsvpNotes(teamId: string, gameId: string, rsvps: any[], u
     .filter((rsvp) => compactString(rsvp?.userId) === userId)
     .map((rsvp) => compactString(rsvp?.id))
     .filter(Boolean))];
-  if (ownRsvpIds.length === 0) return rsvps;
+  if (ownRsvpIds.length === 0) {
+    return { rsvps, noteReadsComplete: true };
+  }
 
   const results = await Promise.allSettled(ownRsvpIds.map((rsvpId) => loadRsvpNoteById(teamId, gameId, rsvpId)));
   const notes = results
     .filter((result) => result.status === 'fulfilled' && result.value)
     .map((result) => (result as PromiseFulfilledResult<any>).value);
-  return mergeRsvpNotesIntoRsvps(rsvps, notes);
+  return {
+    rsvps: mergeRsvpNotesIntoRsvps(rsvps, notes),
+    noteReadsComplete: results.every((result) => result.status === 'fulfilled')
+  };
 }
 
 async function loadRideOffers(teamId: string, gameId: string, fallbackGameIds: string[] = []) {
@@ -3809,14 +3823,18 @@ async function hydrateEventDetails(events: ParentScheduleEvent[], user: AuthUser
       .map((event) => `${event.teamId}::${event.id}`)
   )];
 
+  const authoritativeRsvpEvents: ParentScheduleEvent[] = [];
   await Promise.all(uniqueEventKeys.map(async (key) => {
     const [teamId, gameId] = key.split('::');
     const matchingEvents = events.filter((event) => event.teamId === teamId && event.id === gameId);
     const firstEvent = matchingEvents[0];
     if (!firstEvent) return;
 
-    const { rsvps: loadedRsvps, offers, claims } = await loadCachedEventHydrationDetails(teamId, gameId);
-    const rsvps = await mergeOwnRsvpNotes(teamId, gameId, loadedRsvps, user.uid);
+    const { rsvps: loadedRsvps, rsvpsLoaded, offers, claims } = await loadCachedEventHydrationDetails(teamId, gameId);
+    const ownRsvpNotes = rsvpsLoaded
+      ? await mergeOwnRsvpNotes(teamId, gameId, loadedRsvps, user.uid)
+      : { rsvps: loadedRsvps, noteReadsComplete: false };
+    const rsvps = ownRsvpNotes.rsvps;
     const myRsvpByChild = resolveMyRsvpByChildForGame(events, teamId, gameId, rsvps, user.uid);
     const myRsvpNotesByChild = resolveMyRsvpNotesByChildForGame(events, teamId, gameId, rsvps, user.uid);
     const summary = firstEvent.rsvpSummary || summarizeRsvps(rsvps);
@@ -3829,8 +3847,13 @@ async function hydrateEventDetails(events: ParentScheduleEvent[], user: AuthUser
     const availabilityNotes = buildAvailabilityNoteRows(rsvps, preferences, isTeamAdmin);
 
     matchingEvents.forEach((event) => {
-      event.myRsvp = normalizeRsvpResponse(myRsvpByChild[event.childId]);
-      event.myRsvpNote = myRsvpNotesByChild[event.childId] || null;
+      if (rsvpsLoaded) {
+        event.myRsvp = normalizeRsvpResponse(myRsvpByChild[event.childId]);
+      }
+      if (rsvpsLoaded && ownRsvpNotes.noteReadsComplete) {
+        event.myRsvpNote = myRsvpNotesByChild[event.childId] || null;
+        authoritativeRsvpEvents.push(event);
+      }
       event.rsvpSummary = summary;
       event.rideshareSummary = rideshareSummary;
       event.assignments = assignments;
@@ -3840,7 +3863,7 @@ async function hydrateEventDetails(events: ParentScheduleEvent[], user: AuthUser
     });
   }));
 
-  return events;
+  return authoritativeRsvpEvents;
 }
 
 function shouldEagerlyHydrateParentHomeEvent(event: ParentScheduleEvent, nowMs = Date.now()) {
@@ -3866,6 +3889,7 @@ function loadCachedEventHydrationDetails(teamId: string, gameId: string) {
       const [rsvpsResult, offersResult, claimsResult] = results;
       return {
         rsvps: rsvpsResult.status === 'fulfilled' ? rsvpsResult.value : [],
+        rsvpsLoaded: rsvpsResult.status === 'fulfilled',
         offers: offersResult.status === 'fulfilled' ? offersResult.value : [],
         claims: claimsResult.status === 'fulfilled' ? claimsResult.value : {}
       };
@@ -3881,7 +3905,9 @@ export async function hydrateParentScheduleDetails(schedule: ParentScheduleLoadR
   if (!user?.uid || !schedule.events.length) {
     return schedule;
   }
-  await hydrateEventDetails(schedule.events.filter((event) => shouldEagerlyHydrateParentHomeEvent(event)), user);
+  const hydratedEvents = schedule.events.filter((event) => shouldEagerlyHydrateParentHomeEvent(event));
+  const authoritativeEvents = await hydrateEventDetails(hydratedEvents, user);
+  finalizeSessionRsvpHydration(hydratedEvents, authoritativeEvents, user.uid);
   return schedule;
 }
 
@@ -3987,10 +4013,10 @@ export async function loadParentScheduleEventDetail(user: AuthUser | null, optio
       teamEventRows = teamEvents.length;
       events = teamEvents.filter((event) => event.id === requestedEventId);
     }
-    if (hydrateDetails && events.length) {
-      await hydrateEventDetails(events, user);
-    }
-    applySessionRsvpState(events, user.uid);
+    const authoritativeEvents = hydrateDetails && events.length
+      ? await hydrateEventDetails(events, user)
+      : [];
+    finalizeSessionRsvpHydration(events, authoritativeEvents, user.uid);
     timer.end({
       hydrateDetails,
       expandStaffPlayers,
@@ -4053,10 +4079,10 @@ export async function loadParentPlayerSchedule(user: AuthUser | null, options: P
 
     // Single-player view: keep full history so past games still appear.
     const events = await buildTeamSchedule(child.teamId, [child], user, { includePastGames: true });
-    if (hydrateDetails && events.length) {
-      await hydrateEventDetails(events, user);
-    }
-    applySessionRsvpState(events, user.uid);
+    const authoritativeEvents = hydrateDetails && events.length
+      ? await hydrateEventDetails(events, user)
+      : [];
+    finalizeSessionRsvpHydration(events, authoritativeEvents, user.uid);
     timer.end({
       hydrateDetails,
       requestedTeamId: requestedTeamId || null,
@@ -4234,10 +4260,10 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
     }
 
     const events = teamResults.flatMap((result) => result.events).sort((a, b) => a.date.getTime() - b.date.getTime());
-    if (hydrateDetails) {
-      await hydrateEventDetails(events, user);
-    }
-    applySessionRsvpState(events, user.uid);
+    const authoritativeEvents = hydrateDetails
+      ? await hydrateEventDetails(events, user)
+      : [];
+    finalizeSessionRsvpHydration(events, authoritativeEvents, user.uid);
     const isPartial = failedTeamLoads.length > 0;
     timer.end({
       hydrateDetails,
