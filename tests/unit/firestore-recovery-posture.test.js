@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { evaluateFirestoreRecoveryPosture } from '../../scripts/verify-firestore-recovery.mjs';
+import {
+    evaluateFirestoreRecoveryPosture,
+    parseFirestoreRecoveryArgs
+} from '../../scripts/verify-firestore-recovery.mjs';
 
 const now = Date.parse('2026-07-18T12:00:00Z');
 
@@ -26,6 +29,15 @@ function healthyInput() {
 }
 
 describe('Firestore recovery posture', () => {
+    it('requires an explicit project instead of silently targeting production', () => {
+        expect(() => parseFirestoreRecoveryArgs([], {})).toThrow(/FIREBASE_PROJECT_ID.*--project/);
+        expect(parseFirestoreRecoveryArgs(['--project', 'demo-project'], {})).toMatchObject({
+            projectId: 'demo-project',
+            databaseId: '(default)',
+            maxBackupAgeHours: 36
+        });
+    });
+
     it('accepts PITR, delete protection, 14-day daily backups, and a fresh ready backup', () => {
         expect(evaluateFirestoreRecoveryPosture(healthyInput())).toMatchObject({
             healthy: true,

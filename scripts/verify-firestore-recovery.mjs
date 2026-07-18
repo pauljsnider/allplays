@@ -3,7 +3,6 @@
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
-const DEFAULT_PROJECT_ID = 'game-flow-c6311';
 const DEFAULT_DATABASE_ID = '(default)';
 const DEFAULT_MAX_BACKUP_AGE_HOURS = 36;
 const MINIMUM_DAILY_RETENTION_SECONDS = 14 * 24 * 60 * 60;
@@ -77,21 +76,39 @@ function readFlag(argv, name, fallback) {
 }
 
 function runGcloudJson(args) {
-    const output = execFileSync('gcloud', args, {
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'inherit']
-    });
-    return JSON.parse(output || 'null');
+    try {
+        const output = execFileSync('gcloud', args, {
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'inherit']
+        });
+        return JSON.parse(output || 'null');
+    } catch (error) {
+        const command = args.filter((arg) => !String(arg).startsWith('--format=')).slice(0, 4).join(' ');
+        throw new Error(
+            `gcloud ${command} failed. Verify Cloud SDK installation, authentication, project access, and Firestore permissions.`,
+            { cause: error }
+        );
+    }
+}
+
+export function parseFirestoreRecoveryArgs(argv = process.argv.slice(2), environment = process.env) {
+    const projectId = readFlag(argv, '--project', environment.FIREBASE_PROJECT_ID || '');
+    if (!projectId) {
+        throw new Error('Set FIREBASE_PROJECT_ID or pass --project before checking Firestore recovery.');
+    }
+    return {
+        projectId,
+        databaseId: readFlag(argv, '--database', environment.FIRESTORE_DATABASE_ID || DEFAULT_DATABASE_ID),
+        maxBackupAgeHours: Number(readFlag(
+            argv,
+            '--max-backup-age-hours',
+            environment.FIRESTORE_MAX_BACKUP_AGE_HOURS || String(DEFAULT_MAX_BACKUP_AGE_HOURS)
+        ))
+    };
 }
 
 export function verifyFirestoreRecovery(argv = process.argv.slice(2)) {
-    const projectId = readFlag(argv, '--project', process.env.FIREBASE_PROJECT_ID || DEFAULT_PROJECT_ID);
-    const databaseId = readFlag(argv, '--database', process.env.FIRESTORE_DATABASE_ID || DEFAULT_DATABASE_ID);
-    const maxBackupAgeHours = Number(readFlag(
-        argv,
-        '--max-backup-age-hours',
-        process.env.FIRESTORE_MAX_BACKUP_AGE_HOURS || String(DEFAULT_MAX_BACKUP_AGE_HOURS)
-    ));
+    const { projectId, databaseId, maxBackupAgeHours } = parseFirestoreRecoveryArgs(argv);
 
     const database = runGcloudJson([
         'firestore', 'databases', 'describe',
@@ -133,5 +150,10 @@ export function verifyFirestoreRecovery(argv = process.argv.slice(2)) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-    verifyFirestoreRecovery();
+    try {
+        verifyFirestoreRecovery();
+    } catch (error) {
+        console.error(error?.message || 'Firestore recovery verification failed.');
+        process.exitCode = 1;
+    }
 }

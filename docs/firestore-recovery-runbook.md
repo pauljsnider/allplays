@@ -17,7 +17,8 @@ Authenticate `gcloud` as a principal with Firestore backup-viewer access, then
 run:
 
 ```bash
-npm run ops:verify-firestore-recovery
+export ALLPLAYS_FIRESTORE_PROJECT_ID='YOUR_PROJECT_ID'
+npm run ops:verify-firestore-recovery -- --project="$ALLPLAYS_FIRESTORE_PROJECT_ID"
 ```
 
 The command prints only recovery metadata. It does not read application
@@ -29,9 +30,10 @@ Never restore over `(default)`. A drill creates a separate, temporary database
 from a whole-minute PITR timestamp:
 
 ```bash
+export ALLPLAYS_FIRESTORE_PROJECT_ID='YOUR_PROJECT_ID'
 gcloud firestore databases clone \
-  --project=game-flow-c6311 \
-  --source-database='projects/game-flow-c6311/databases/(default)' \
+  --project="$ALLPLAYS_FIRESTORE_PROJECT_ID" \
+  --source-database="projects/$ALLPLAYS_FIRESTORE_PROJECT_ID/databases/(default)" \
   --snapshot-time='YYYY-MM-DDTHH:MM:00Z' \
   --destination-database='restore-drill-YYYYMMDD'
 ```
@@ -46,7 +48,7 @@ Delete only the exact drill database after validation:
 
 ```bash
 gcloud firestore databases delete \
-  --project=game-flow-c6311 \
+  --project="$ALLPLAYS_FIRESTORE_PROJECT_ID" \
   --database='restore-drill-YYYYMMDD' \
   --quiet
 ```
@@ -57,10 +59,10 @@ After the first scheduled backup reaches `READY`, exercise the independent
 managed-backup path at least quarterly:
 
 ```bash
-gcloud firestore backups list --project=game-flow-c6311
+gcloud firestore backups list --project="$ALLPLAYS_FIRESTORE_PROJECT_ID"
 gcloud firestore databases restore \
-  --project=game-flow-c6311 \
-  --source-backup='projects/game-flow-c6311/locations/nam5/backups/BACKUP_ID' \
+  --project="$ALLPLAYS_FIRESTORE_PROJECT_ID" \
+  --source-backup="projects/$ALLPLAYS_FIRESTORE_PROJECT_ID/locations/nam5/backups/BACKUP_ID" \
   --destination-database='backup-drill-YYYYMMDD'
 ```
 
