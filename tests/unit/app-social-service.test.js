@@ -354,6 +354,7 @@ describe('React app social service', () => {
         ]);
         expect(firebaseMocks.where).toHaveBeenCalledWith('visibleUserIds', 'array-contains', 'user-1');
         expect(firebaseMocks.where).toHaveBeenCalledWith('authorId', '==', 'friend-1');
+        expect(firebaseMocks.where).toHaveBeenCalledWith('hidden', '==', false);
         expect(firebaseMocks.orderBy).toHaveBeenCalledWith('createdAt', 'desc');
     });
 

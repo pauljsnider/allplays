@@ -279,6 +279,7 @@ export async function loadFriendProfile(user: AuthUser, profileUserId: string): 
     collection(db, 'socialPosts'),
     where('visibleUserIds', 'array-contains', viewerId),
     where('authorId', '==', targetUserId),
+    where('hidden', '==', false),
     orderBy('createdAt', 'desc'),
     limit(socialPostLimit)
   );

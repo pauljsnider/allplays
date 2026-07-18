@@ -385,6 +385,7 @@ describe('React app social Firestore rules', () => {
             index.collectionGroup === 'socialPosts' &&
             index.fields.some((field) => field.fieldPath === 'visibleUserIds' && field.arrayConfig === 'CONTAINS') &&
             index.fields.some((field) => field.fieldPath === 'authorId' && field.order === 'ASCENDING') &&
+            index.fields.some((field) => field.fieldPath === 'hidden' && field.order === 'ASCENDING') &&
             index.fields.some((field) => field.fieldPath === 'createdAt' && field.order === 'DESCENDING')
         );
 
