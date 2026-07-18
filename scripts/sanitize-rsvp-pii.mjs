@@ -66,6 +66,13 @@ for (let collectionIndex = state.collectionIndex; collectionIndex < collectionGr
       await saveState(options.stateFile, state);
       break;
     }
+    const lastDocument = snapshot.docs.at(-1);
+    if (!lastDocument) {
+      state.collectionIndex = collectionIndex + 1;
+      state.cursorPath = '';
+      await saveState(options.stateFile, state);
+      break;
+    }
 
     const batch = db.batch();
     let pageChanges = 0;
@@ -82,7 +89,7 @@ for (let collectionIndex = state.collectionIndex; collectionIndex < collectionGr
     });
     if (options.apply && pageChanges > 0) await batch.commit();
     pages += 1;
-    cursorPath = snapshot.docs.at(-1).ref.path;
+    cursorPath = lastDocument.ref.path;
     state.collectionIndex = collectionIndex;
     state.cursorPath = cursorPath;
     await saveState(options.stateFile, state);

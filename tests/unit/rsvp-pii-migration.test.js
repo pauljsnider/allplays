@@ -31,6 +31,9 @@ describe('RSVP PII migration planning', () => {
     expect(runnerSource).toContain("options.confirmProject !== options.projectId");
     expect(runnerSource).toContain("orderBy(FieldPath.documentId()).limit(options.pageSize)");
     expect(runnerSource).toContain('query.startAfter(cursorPath)');
+    expect(runnerSource).toContain('if (!lastDocument)');
+    expect(runnerSource).toContain('cursorPath = lastDocument.ref.path');
+    expect(runnerSource).not.toContain('cursorPath = snapshot.docs.at(-1).ref.path');
     expect(runnerSource).toContain('{ lastUpdateTime: docSnap.updateTime }');
     expect(runnerSource).toContain("writeFile(tempPath");
     expect(runnerSource).toContain("{ mode: 0o600 }");
