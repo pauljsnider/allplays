@@ -1,0 +1,6 @@
+{
+  "appCheck": {
+    "enabled": false,
+    "isTokenAutoRefreshEnabled": true
+  }
+}

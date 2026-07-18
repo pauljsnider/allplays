@@ -38,6 +38,25 @@ afterEach(() => {
 });
 
 describe('pages bundle staging', () => {
+    it('keeps raw static hosting fail-open without a configured App Check key', () => {
+        const repoRoot = path.resolve(import.meta.dirname, '../..');
+        const runtimeConfigPath = path.join(
+            repoRoot,
+            '.well-known',
+            'allplays-runtime-config.json'
+        );
+        const runtimeConfig = JSON.parse(fs.readFileSync(runtimeConfigPath, 'utf8'));
+
+        expect(runtimeConfig).toEqual({
+            appCheck: {
+                enabled: false,
+                isTokenAutoRefreshEnabled: true
+            }
+        });
+        expect(runtimeConfig.appCheck).not.toHaveProperty('recaptchaEnterpriseSiteKey');
+        expect(runtimeConfig.appCheck).not.toHaveProperty('debugToken');
+    });
+
     it('does not track generated dependency directories', () => {
         const trackedFiles = execFileSync('git', [
             'ls-files',
