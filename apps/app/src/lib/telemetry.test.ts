@@ -250,11 +250,17 @@ describe('app telemetry bridge', () => {
       dsn: 'https://public@example.ingest.sentry.io/456',
       environment: 'production',
       release: 'app@1.2.3',
+      sampleRate: 0.2,
+      sendDefaultPii: false,
+      maxBreadcrumbs: 0,
       beforeSend: expect.any(Function)
     }));
 
     const beforeSend = sentryMocks.init.mock.calls[0][0].beforeSend as (event: Record<string, unknown>) => Record<string, unknown>;
     const sanitized = beforeSend({
+      message: 'parent@example.com could not join team secret-team-id',
+      fingerprint: ['parent@example.com', 'secret-team-id'],
+      user: { id: 'parent-user-id', email: 'parent@example.com' },
       request: {
         headers: {
           Authorization: 'Bearer secret-token'
@@ -267,11 +273,14 @@ describe('app telemetry bridge', () => {
           apiKey: 'private-key'
         }
       },
+      threads: {
+        values: [{ stacktrace: { frames: [{ vars: { password: 'unsafe' } }] } }]
+      },
       exception: {
         values: [{
           stacktrace: {
             frames: [{
-              filename: '/app/main.tsx',
+              filename: '/accept-invite/AB12CD34?email=parent@example.com',
               function: 'renderHome',
               lineno: 27
             }]
@@ -280,23 +289,18 @@ describe('app telemetry bridge', () => {
       }
     });
 
-    expect(sanitized.request).toEqual(expect.objectContaining({
-      headers: {
-        Authorization: '[REDACTED]'
-      },
-      url: 'https://example.test?access_token=[REDACTED]'
-    }));
-    expect(sanitized.extra).toEqual({
-      refreshToken: '[REDACTED]',
-      nested: {
-        apiKey: '[REDACTED]'
-      }
-    });
-    expect(sanitized.exception).toEqual({
+    expect(sanitized.message).toBeUndefined();
+    expect(sanitized.fingerprint).toBeUndefined();
+    expect(sanitized.user).toBeUndefined();
+    expect(sanitized.request).toBeUndefined();
+    expect(sanitized.extra).toBeUndefined();
+    expect(sanitized.threads).toBeUndefined();
+    expect(sanitized.exception).toMatchObject({
       values: [{
+        value: '[redacted error detail]',
         stacktrace: {
           frames: [{
-            filename: '/app/main.tsx',
+            filename: '/accept-invite/:id',
             function: 'renderHome',
             lineno: 27
           }]
@@ -423,7 +427,7 @@ describe('app telemetry bridge', () => {
     expect(capturedError.message).toBe('Native auth failed with token=[REDACTED]');
     expect(capturedError.cause).toEqual(expect.objectContaining({
       name: 'BridgeFailure',
-      message: 'Native auth failed with token=[REDACTED]',
+      message: '[REDACTED]',
       details: {
         clientSecret: '[REDACTED]'
       }
@@ -431,7 +435,7 @@ describe('app telemetry bridge', () => {
     expect(sentryMocks.scope.setContext).toHaveBeenCalledWith('allplays', expect.objectContaining({
       label: 'native auth bridge',
       accessToken: '[REDACTED]',
-      retryUrl: 'https://example.test/retry?password=[REDACTED]'
+      retryUrl: '[REDACTED]'
     }));
   });
 
@@ -467,7 +471,7 @@ describe('app telemetry bridge', () => {
     expect(sentryMocks.scope.setContext).toHaveBeenCalledWith('allplays', expect.objectContaining({
       label: 'unhandled promise rejection',
       reason: expect.objectContaining({
-        message: 'token=[REDACTED]'
+        message: '[REDACTED]'
       })
     }));
   });

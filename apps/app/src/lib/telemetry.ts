@@ -26,6 +26,7 @@ type RuntimeConfig = {
     dsn?: string;
     environment?: string;
     release?: string;
+    sampleRate?: number;
   };
   errorTrackingDsn?: string;
   errorTrackingEnvironment?: string;
@@ -33,6 +34,8 @@ type RuntimeConfig = {
   sentryDsn?: string;
   sentryEnvironment?: string;
   sentryRelease?: string;
+  errorTrackingSampleRate?: number;
+  sentrySampleRate?: number;
   environment?: string;
   release?: string;
 };
@@ -60,6 +63,19 @@ let globalErrorHandlersInstalled = false;
 // it lazily so it no longer blocks first paint; until it resolves, error
 // capture is a best-effort no-op.
 let sentryModule: typeof import('@sentry/browser') | null = null;
+const recentErrorFingerprints = new Map<string, number>();
+const errorDedupeWindowMs = 60_000;
+const safeTrackingTextKeys = new Set([
+  'allplays', 'boundaryName', 'category', 'errorName', 'errorType', 'kind', 'label', 'name',
+  'location', 'operation', 'outcome', 'release', 'route', 'source', 'stage', 'status',
+  'type', 'viewName', 'workflowName'
+]);
+const trackingDynamicRouteParents = new Set([
+  'accept-invite', 'athletes', 'calendar', 'capabilities', 'conversations', 'events',
+  'families', 'family', 'fees', 'games', 'inquiries', 'invite', 'messages',
+  'opportunities', 'organizations', 'people', 'players', 'registrations', 'rsvp',
+  'schedules', 'share', 'team', 'teams', 'users'
+]);
 
 export function startAppStartupTimer() {
   return createAppTimer('app startup', { stage: 'startup' });
@@ -223,6 +239,12 @@ export async function initializeAppErrorTracking(options: ErrorTrackingInitOptio
       dsn: config.dsn,
       environment: config.environment,
       release: config.release,
+      sampleRate: config.sampleRate,
+      sendDefaultPii: false,
+      maxBreadcrumbs: 0,
+      beforeBreadcrumb() {
+        return null;
+      },
       beforeSend(event) {
         return sanitizeErrorTrackingEvent(event);
       }
@@ -343,8 +365,21 @@ function resolveErrorTrackingConfig() {
       window.ALLPLAYS_ERROR_TRACKING_RELEASE,
       window.ALLPLAYS_SENTRY_RELEASE,
       window.ALLPLAYS_RELEASE
-    )
+    ),
+    sampleRate: firstValidSampleRate(
+      config.errorTracking?.sampleRate,
+      config.errorTrackingSampleRate,
+      config.sentrySampleRate
+    ) ?? 0.2
   };
+}
+
+function firstValidSampleRate(...values: unknown[]) {
+  for (const value of values) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 1) return parsed;
+  }
+  return undefined;
 }
 
 function installGlobalErrorTrackingHandlers() {
@@ -383,6 +418,18 @@ function captureErrorTrackingException(
   const Sentry = sentryModule;
   const normalizedError = normalizeError(error, label);
   const sanitizedContext = sanitizeForTracking({ label, ...context });
+  const fingerprint = getErrorFingerprint(label, normalizedError);
+  const now = Date.now();
+  const previous = recentErrorFingerprints.get(fingerprint) || 0;
+  if (previous && now - previous < errorDedupeWindowMs) {
+    return;
+  }
+  recentErrorFingerprints.set(fingerprint, now);
+  if (recentErrorFingerprints.size > 200) {
+    for (const [key, timestamp] of recentErrorFingerprints) {
+      if (now - timestamp > errorDedupeWindowMs) recentErrorFingerprints.delete(key);
+    }
+  }
 
   Sentry.withScope((scope) => {
     scope.setTag('allplays_error_label', label);
@@ -395,8 +442,78 @@ function captureErrorTrackingException(
 }
 
 function sanitizeErrorTrackingEvent(event: SentryErrorEvent) {
-  const sanitized = sanitizeForTracking(event);
-  return (sanitized && typeof sanitized === 'object') ? sanitized as SentryErrorEvent : event;
+  const allplaysContext = sanitizeForTracking(event.contexts?.allplays, 'allplays');
+  const safeEvent: SentryErrorEvent = {
+    type: event.type,
+    event_id: event.event_id,
+    timestamp: event.timestamp,
+    platform: event.platform,
+    level: event.level,
+    environment: event.environment ? sanitizeTrackingText(event.environment, 80) : undefined,
+    release: event.release ? sanitizeTrackingText(event.release, 120) : undefined,
+    contexts: (allplaysContext && typeof allplaysContext === 'object' && !Array.isArray(allplaysContext)
+      ? { allplays: allplaysContext as Record<string, unknown> }
+      : {}) as SentryErrorEvent['contexts'],
+    tags: Object.fromEntries(
+      Object.entries(event.tags || {})
+        .filter(([key]) => key.startsWith('allplays_'))
+        .map(([key, value]) => [key, sanitizeTrackingText(String(value || ''), 80)])
+    )
+  };
+  if (event.exception?.values) {
+    safeEvent.exception = {
+      values: event.exception.values.slice(0, 3).map((exception) => ({
+        type: sanitizeTrackingText(exception.type || 'Error', 80),
+        value: '[redacted error detail]',
+        mechanism: exception.mechanism ? {
+          handled: exception.mechanism.handled,
+          type: sanitizeTrackingText(exception.mechanism.type || '', 40)
+        } : undefined,
+        stacktrace: exception.stacktrace?.frames ? {
+          frames: exception.stacktrace.frames.slice(-30).map((frame) => ({
+            filename: sanitizeTrackingUrl(frame.filename || ''),
+            function: sanitizeTrackingText(frame.function || '', 100),
+            lineno: frame.lineno,
+            colno: frame.colno,
+            in_app: frame.in_app
+          }))
+        } : undefined
+      }))
+    };
+  }
+  return safeEvent;
+}
+
+function sanitizeTrackingUrl(value: string) {
+  try {
+    const url = new URL(value, window.location.origin);
+    if (url.origin !== window.location.origin) return 'external';
+    const path = url.pathname
+      .split('/')
+      .map((segment, index, segments) => {
+        const previous = String(segments[index - 1] || '').toLowerCase();
+        return trackingDynamicRouteParents.has(previous)
+          || /^[A-Za-z0-9_-]{16,}$/.test(segment)
+          || /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9_-]{6,}$/.test(segment)
+          ? ':id'
+          : segment;
+      })
+      .join('/');
+    return path;
+  } catch (_error) {
+    return '';
+  }
+}
+
+function sanitizeTrackingText(value: string, maxLength: number) {
+  const sanitized = sanitizeForLogging(value);
+  return String(typeof sanitized === 'string' ? sanitized : '').slice(0, maxLength);
+}
+
+function getErrorFingerprint(label: string, error: Error) {
+  const firstFrame = String(error.stack || '').split('\n').slice(1, 2).join('');
+  const frameUrl = firstFrame.match(/((?:https?:\/\/|\/)[^\s)]+)/)?.[1] || '';
+  return `${label}|${error.name}|${sanitizeTrackingUrl(frameUrl)}`;
 }
 
 function normalizeError(error: unknown, fallbackMessage: string) {
@@ -421,7 +538,10 @@ function sanitizeForTracking(value: unknown, keyHint = '', seen = new WeakSet<ob
   }
 
   if (typeof value === 'string') {
-    return shouldRedactKey(keyHint) ? redactedValue : redactSensitiveText(value);
+    if (shouldRedactKey(keyHint)) return redactedValue;
+    return !keyHint || safeTrackingTextKeys.has(keyHint)
+      ? redactSensitiveText(value)
+      : redactedValue;
   }
 
   if (typeof value !== 'object') {
@@ -464,7 +584,9 @@ function sanitizeForTracking(value: unknown, keyHint = '', seen = new WeakSet<ob
 }
 
 function shouldRedactKey(key: string) {
-  return isSensitiveLogKey(key);
+  return isSensitiveLogKey(key)
+    || /(?:Id|Ids|Key|Keys)$/.test(key)
+    || /(?:address|body|chat|comment|content|description|first.?name|last.?name|display.?name|message|note|phone|text)/i.test(key);
 }
 
 function redactSensitiveText(value: string) {

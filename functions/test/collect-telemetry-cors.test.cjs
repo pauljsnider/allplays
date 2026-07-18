@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const { collectTelemetry } = require('../index.js');
 const admin = require('firebase-admin');
+const functions = require('firebase-functions');
 
 const ALLOWED_ORIGIN = 'https://allplays.ai';
 const APP_CHECK_HEADER = 'X-Firebase-AppCheck';
@@ -61,7 +62,7 @@ test('collectTelemetry handles a POST carrying App Check without exposing its to
   const appCheckToken = 'opaque-app-check-value-never-log';
   const loggedErrors = [];
   let transactionStarted = false;
-  t.mock.method(console, 'error', (...args) => loggedErrors.push(args));
+  t.mock.method(functions.logger, 'error', (...args) => loggedErrors.push(args));
   t.mock.method(admin.firestore(), 'runTransaction', async (updateFunction) => {
     transactionStarted = true;
     await updateFunction({
@@ -91,8 +92,8 @@ test('collectTelemetry handles a POST carrying App Check without exposing its to
     }
   }, response);
 
-  assert.equal(response.statusCode, 400);
-  assert.deepEqual(response.body, { ok: false, error: 'Simulated telemetry persistence failure' });
+  assert.equal(response.statusCode, 500);
+  assert.deepEqual(response.body, { ok: false, error: 'Telemetry collection failed' });
   assert.equal(transactionStarted, true);
   assertTelemetryCorsPolicy(response);
   for (const args of loggedErrors) {
@@ -101,6 +102,14 @@ test('collectTelemetry handles a POST carrying App Check without exposing its to
       assert.equal(value.includes(appCheckToken), false);
     }
   }
+  assert.deepEqual(loggedErrors[0], [
+    'Telemetry collection failed.',
+    {
+      eventType: 'operational_telemetry_collection_failure',
+      errorCode: 'Error',
+      contentLengthBucket: 'small'
+    }
+  ]);
   for (const [name, value] of response.headers) {
     assert.equal(name.includes(appCheckToken), false);
     assert.equal(String(value).includes(appCheckToken), false);

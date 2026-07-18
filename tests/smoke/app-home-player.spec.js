@@ -1338,22 +1338,22 @@ test('parent core player drill-in sends workflow timer to telemetry storage payl
             sessionId: expect.any(String),
             visitorId: expect.any(String),
             pagePath: '/',
-            appRoute: '/players/team-1/player-1',
+            appRoute: '/players/:id/:id',
             properties: expect.objectContaining({
                 workflowName: 'parent core workflow drill in',
                 outcome: 'success',
                 source: 'parent_core',
                 sourcePage: 'home',
                 targetPage: 'player',
-                targetRoute: '/players/team-1/player-1',
+                targetRoute: '/players/:id/:id',
                 trigger: 'player_card',
                 actionKind: 'player',
-                teamId: 'team-1',
-                playerId: 'player-1',
+                teamId: '[id]',
+                playerId: '[id]',
                 completedPage: 'player',
-                completedRoute: '/players/team-1/player-1',
-                expectedTargetRoute: '/players/team-1/player-1',
-                playerName: 'Pat Star',
+                completedRoute: '/players/:id/:id',
+                expectedTargetRoute: '/players/:id/:id',
+                playerName: '[redacted-text]',
                 durationMs: expect.any(Number)
             })
         })
@@ -1384,7 +1384,7 @@ test('parent core workflows emit baseline timers from Home drill-ins', async ({ 
             label: 'home_to_schedule_event',
             startHash: '/home',
             expectedTargetPage: 'schedule_event',
-            expectedTargetRoute: '/schedule/team-1/game-next?childId=player-1&section=availability',
+            expectedTargetRoute: '/schedule/:id/:id',
             readyHome: (testPage) => testPage.getByRole('heading', { name: 'Your day' }),
             action: async (testPage) => {
                 await testPage.getByRole('link', { name: /Open action/ }).click();
@@ -1397,7 +1397,7 @@ test('parent core workflows emit baseline timers from Home drill-ins', async ({ 
             label: 'home_to_teams',
             startHash: '/home?section=teams',
             expectedTargetPage: 'teams',
-            expectedTargetRoute: '/teams?selectedTeamId=team-1&from=home',
+            expectedTargetRoute: '/teams',
             readyHome: (testPage) => testPage.getByRole('heading', { name: 'Teams' }),
             action: async (testPage) => {
                 await testPage.locator('a[href="#/teams?selectedTeamId=team-1&from=home"]').click();
@@ -1410,7 +1410,7 @@ test('parent core workflows emit baseline timers from Home drill-ins', async ({ 
             label: 'home_to_player_detail',
             startHash: '/home?section=players',
             expectedTargetPage: 'player',
-            expectedTargetRoute: '/players/team-1/player-1',
+            expectedTargetRoute: '/players/:id/:id',
             readyHome: (testPage) => testPage.getByRole('heading', { name: 'My players' }),
             action: async (testPage) => {
                 await testPage.locator('a[href="#/players/team-1/player-1"]').click();
@@ -1423,7 +1423,7 @@ test('parent core workflows emit baseline timers from Home drill-ins', async ({ 
             label: 'home_to_messages',
             startHash: '/home',
             expectedTargetPage: 'messages',
-            expectedTargetRoute: '/messages/team-1',
+            expectedTargetRoute: '/messages/:id',
             readyHome: (testPage) => testPage.getByRole('heading', { name: 'Your day' }),
             action: async (testPage) => {
                 await testPage.locator('a[href="#/messages/team-1"]').first().click();
@@ -1535,7 +1535,7 @@ test('requested app workflows emit DB-ready view load baseline timers', async ({
             workflow: 'home_feed',
             label: 'home feed load',
             viewName: 'home feed',
-            route: '/home?section=feed',
+            route: '/home',
             startHash: '/home?section=feed',
             ready: async (testPage) => {
                 await waitForHomeRoute(testPage, testPage.getByText('Quick shares'));
@@ -1546,7 +1546,7 @@ test('requested app workflows emit DB-ready view load baseline timers', async ({
             workflow: 'home_players',
             label: 'home players load',
             viewName: 'home players',
-            route: '/home?section=players',
+            route: '/home',
             startHash: '/home?section=players',
             ready: async (testPage) => {
                 await waitForHomeRoute(testPage, testPage.getByRole('heading', { name: 'My players' }));
@@ -1556,7 +1556,7 @@ test('requested app workflows emit DB-ready view load baseline timers', async ({
             workflow: 'home_teams',
             label: 'home teams load',
             viewName: 'home teams',
-            route: '/home?section=teams',
+            route: '/home',
             startHash: '/home?section=teams',
             ready: async (testPage) => {
                 await waitForHomeRoute(testPage, testPage.getByRole('heading', { name: 'Teams' }));
@@ -1566,7 +1566,7 @@ test('requested app workflows emit DB-ready view load baseline timers', async ({
             workflow: 'home_friends',
             label: 'home friends load',
             viewName: 'home friends',
-            route: '/home?section=friends',
+            route: '/home',
             startHash: '/home?section=friends',
             ready: async (testPage) => {
                 await waitForHomeRoute(testPage, testPage.getByText('Needs response'));
@@ -1591,7 +1591,7 @@ test('requested app workflows emit DB-ready view load baseline timers', async ({
             workflow: 'messages_choose_team',
             label: 'messages choose team load',
             viewName: 'messages choose team',
-            route: '/messages/team-1',
+            route: '/messages/:id',
             startHash: '/messages/team-1',
             ready: async (testPage) => {
                 await expect(async () => {
@@ -1604,7 +1604,7 @@ test('requested app workflows emit DB-ready view load baseline timers', async ({
             workflow: 'my_teams_team_schedule',
             label: 'my teams team schedule load',
             viewName: 'my teams team schedule',
-            route: '/teams/team-1?tab=schedule',
+            route: '/teams/:id',
             startHash: '/teams/team-1?tab=schedule',
             ready: async (testPage) => {
                 await expect(async () => {
@@ -1619,7 +1619,7 @@ test('requested app workflows emit DB-ready view load baseline timers', async ({
             workflow: 'my_teams_team_roster',
             label: 'my teams team roster load',
             viewName: 'my teams team roster',
-            route: '/teams/team-1?tab=roster',
+            route: '/teams/:id',
             startHash: '/teams/team-1?tab=roster',
             ready: async (testPage) => {
                 await expect(async () => {
@@ -1635,7 +1635,7 @@ test('requested app workflows emit DB-ready view load baseline timers', async ({
             workflow: 'my_teams_team_insights',
             label: 'my teams team insights load',
             viewName: 'my teams team insights',
-            route: '/teams/team-1?tab=insights',
+            route: '/teams/:id',
             startHash: '/teams/team-1?tab=insights',
             ready: async (testPage) => {
                 await expect(async () => {
@@ -1651,7 +1651,7 @@ test('requested app workflows emit DB-ready view load baseline timers', async ({
             workflow: 'my_teams_team_more',
             label: 'my teams team more load',
             viewName: 'my teams team more',
-            route: '/teams/team-1?tab=more',
+            route: '/teams/:id',
             startHash: '/teams/team-1?tab=more',
             ready: async (testPage) => {
                 await expect(async () => {
@@ -1679,7 +1679,7 @@ test('requested app workflows emit DB-ready view load baseline timers', async ({
             workflow: 'profile_alerts',
             label: 'profile alerts load',
             viewName: 'profile alerts',
-            route: '/profile/settings?section=alerts',
+            route: '/profile/settings',
             startHash: '/profile/settings?section=alerts',
             ready: async (testPage) => {
                 await expect(async () => {
@@ -1693,7 +1693,7 @@ test('requested app workflows emit DB-ready view load baseline timers', async ({
             workflow: 'profile_invites',
             label: 'profile invites load',
             viewName: 'profile invites',
-            route: '/profile/settings?section=invites',
+            route: '/profile/settings',
             startHash: '/profile/settings?section=invites',
             ready: async (testPage) => {
                 await expect(async () => {
@@ -1707,7 +1707,7 @@ test('requested app workflows emit DB-ready view load baseline timers', async ({
             workflow: 'profile_security',
             label: 'profile security load',
             viewName: 'profile security',
-            route: '/profile/settings?section=security',
+            route: '/profile/settings',
             startHash: '/profile/settings?section=security',
             ready: async (testPage) => {
                 await expect(async () => {

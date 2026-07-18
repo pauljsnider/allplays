@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+    REDACTED_IDENTIFIER,
+    REDACTED_TEXT,
     sanitizeTelemetryKey,
     sanitizeTelemetryProperties,
+    sanitizeTelemetryRoute,
     sanitizeTelemetryText
 } from '../../js/telemetry-utils.js';
 
@@ -24,8 +27,8 @@ describe('telemetry privacy utilities', () => {
             }
         });
 
-        expect(properties.label_text).toBe('Pay for player [number]');
-        expect(properties.nested.email).toBe('[email]');
+        expect(properties.label_text).toBe(REDACTED_TEXT);
+        expect(properties.nested.email).toBe(REDACTED_TEXT);
     });
 
     it('masks sensitive numeric property values without string coercion by callers', () => {
@@ -35,9 +38,31 @@ describe('telemetry privacy utilities', () => {
             loadMs: 240
         });
 
-        expect(properties.phone).toBe('[phone]');
-        expect(properties.playerId).toBe('[number]');
+        expect(properties.phone).toBe(REDACTED_TEXT);
+        expect(properties.playerId).toBe(REDACTED_IDENTIFIER);
         expect(properties.loadMs).toBe(240);
+    });
+
+    it('templates dynamic routes and drops query and fragment data', () => {
+        expect(sanitizeTelemetryRoute('/players/team-123/player-456?token=secret#notes'))
+            .toBe('/players/:id/:id');
+        expect(sanitizeTelemetryRoute('/accept-invite/AB12CD34?email=parent@example.com'))
+            .toBe('/accept-invite/:id');
+        expect(sanitizeTelemetryRoute('/messages/conversation-secret')).toBe('/messages/:id');
+        expect(sanitizeTelemetryRoute('/family/public-share-token')).toBe('/family/:id');
+        expect(sanitizeTelemetryRoute('/app/profile')).toBe('/app/profile');
+    });
+
+    it('redacts unknown strings while retaining code-defined categories', () => {
+        expect(sanitizeTelemetryProperties({
+            outcome: 'success',
+            arbitrary: 'Taylor wrote a private note',
+            targetRoute: '/teams/team-1/games/game-2'
+        })).toEqual({
+            outcome: 'success',
+            arbitrary: REDACTED_TEXT,
+            targetRoute: '/teams/:id/games/:id'
+        });
     });
 
     it('keeps telemetry keys bounded and machine-friendly', () => {
