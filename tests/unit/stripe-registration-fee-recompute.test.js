@@ -146,9 +146,11 @@ describe('server-side registration fee recomputation (issue #2243)', () => {
         expect(source).not.toContain('input.amountCents ?? expectedAmountCents');
     });
 
-    it('currency is taken from the authoritative form document, not from client-submitted feeSnapshot', () => {
-        // currency should prefer form.currency over client-side feeSnapshot.currency
-        expect(source).toContain('form.currency || registration.feeSnapshot?.currency || registration.currency');
+    it('currency is taken from the authoritative form and recorded for webhook verification', () => {
+        expect(source).toContain('form?.currency\n      || registration.feeSnapshot?.currency');
+        expect(source).toContain('const currency = getRegistrationCheckoutCurrency(registration, form)');
+        expect(source).toContain('checkoutCurrency: currency,');
+        expect(source).not.toContain('input.currency ||');
     });
 
     it('the server-side fee helper recomputes the same amount as the client-side helper when the form has no discounts', () => {

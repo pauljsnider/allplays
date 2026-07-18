@@ -810,6 +810,7 @@ test('records installment payment progress after Stripe marks the first installm
                 payment_status: 'paid',
                 payment_intent: 'pi_test_1',
                 amount_total: 4166,
+                currency: 'usd',
                 metadata: {
                     product: 'registration',
                     teamId: 'team-1',
@@ -838,6 +839,124 @@ test('records installment payment progress after Stripe marks the first installm
     assert.equal(registration.paymentPlan.paidInstallmentCount, 1);
     assert.equal(registration.paymentPlan.remainingBalanceCents, 8334);
     assert.equal(registration.paymentPlan.nextDueDate, '2026-07-31');
+});
+
+async function createInstallmentCheckoutFixture() {
+    const fixture = loadFunctionsModule(buildSeedState({
+        feeAmountCents: 12500,
+        paymentSettings: { offlinePaymentEnabled: true, onlineCheckoutEnabled: true },
+        installmentPlan: {
+            enabled: true,
+            title: 'Monthly installments',
+            installmentCount: 3,
+            firstDueDate: '2026-07-01',
+            intervalDays: 30
+        }
+    }));
+    const submission = await fixture.mod.submitPublicRegistration(buildSubmission({
+        selectedPaymentPlanId: 'installments',
+        checkoutAttemptToken: 'checkouttoken123456'
+    }), context);
+    await fixture.mod.createStripeRegistrationCheckout({
+        teamId: 'team-1',
+        formId: 'form-1',
+        registrationId: submission.registrationId,
+        checkoutAttemptToken: 'checkouttoken123456'
+    });
+    return {
+        ...fixture,
+        submission,
+        registrationPath: `teams/team-1/registrationForms/form-1/registrations/${submission.registrationId}`
+    };
+}
+
+function buildPaidInstallmentWebhookEvent({ eventId, registrationId, sessionId = 'cs_test_1', amountTotal = 4166, currency = 'usd' }) {
+    return {
+        id: eventId,
+        type: 'checkout.session.completed',
+        data: {
+            object: {
+                id: sessionId,
+                payment_status: 'paid',
+                payment_intent: `pi_${eventId}`,
+                amount_total: amountTotal,
+                currency,
+                metadata: {
+                    product: 'registration',
+                    teamId: 'team-1',
+                    formId: 'form-1',
+                    registrationId,
+                    checkoutAttemptToken: 'checkouttoken123456'
+                }
+            }
+        }
+    };
+}
+
+async function deliverStripeWebhook(mod) {
+    const response = createMockResponse();
+    await mod.stripeTeamPassWebhook({
+        method: 'POST',
+        rawBody: Buffer.from('event'),
+        headers: { 'stripe-signature': 'sig_test' }
+    }, response);
+    return response;
+}
+
+test('ignores a signed stale registration checkout success without advancing installments', async () => {
+    const { firestore, stripeState, mod, submission, registrationPath } = await createInstallmentCheckoutFixture();
+    stripeState.webhookEvent = buildPaidInstallmentWebhookEvent({
+        eventId: 'evt_installment_stale',
+        registrationId: submission.registrationId,
+        sessionId: 'cs_stale'
+    });
+
+    const response = await deliverStripeWebhook(mod);
+
+    assert.equal(response.statusCode, 200);
+    const registration = firestore.snapshot(registrationPath);
+    assert.equal(registration.paymentStatus, 'checkout_open');
+    assert.equal(Number(registration.paymentPlan.paidInstallmentCount || 0), 0);
+    assert.equal(registration.stripeCheckoutSessionId, 'cs_test_1');
+    assert.equal(firestore.snapshot('stripeEvents/evt_installment_stale').ignoredReason, 'checkout_session_mismatch');
+});
+
+test('ignores a signed registration checkout success with the wrong amount', async () => {
+    const { firestore, stripeState, mod, submission, registrationPath } = await createInstallmentCheckoutFixture();
+    stripeState.webhookEvent = buildPaidInstallmentWebhookEvent({
+        eventId: 'evt_installment_wrong_amount',
+        registrationId: submission.registrationId,
+        amountTotal: 1
+    });
+
+    const response = await deliverStripeWebhook(mod);
+
+    assert.equal(response.statusCode, 200);
+    const registration = firestore.snapshot(registrationPath);
+    assert.equal(registration.paymentStatus, 'checkout_open');
+    assert.equal(Number(registration.paymentPlan.paidInstallmentCount || 0), 0);
+    assert.equal(firestore.snapshot('stripeEvents/evt_installment_wrong_amount').ignoredReason, 'checkout_amount_mismatch');
+});
+
+test('deduplicates distinct paid events for one registration checkout session', async () => {
+    const { firestore, stripeState, mod, submission, registrationPath } = await createInstallmentCheckoutFixture();
+    stripeState.webhookEvent = buildPaidInstallmentWebhookEvent({
+        eventId: 'evt_installment_first_delivery',
+        registrationId: submission.registrationId
+    });
+    assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
+
+    stripeState.webhookEvent = buildPaidInstallmentWebhookEvent({
+        eventId: 'evt_installment_replay_distinct_event',
+        registrationId: submission.registrationId
+    });
+    assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
+
+    const registration = firestore.snapshot(registrationPath);
+    assert.equal(registration.paymentStatus, 'installment_in_progress');
+    assert.equal(registration.paymentPlan.paidInstallmentCount, 1);
+    assert.equal(registration.lastPaidStripeCheckoutSessionId, 'cs_test_1');
+    assert.equal(firestore.snapshot('stripeEvents/evt_installment_replay_distinct_event').ignoredReason, 'checkout_session_already_processed');
 });
 
 test('keeps capacity reserved when a later installment payment fails', async () => {

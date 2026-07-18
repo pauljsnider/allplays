@@ -65,12 +65,14 @@ describe('team entitlement helpers', () => {
         expect(html).toContain('Team Pass required');
     });
 
-    it('documents security rules for entitlement writes', () => {
+    it('routes active entitlement writes through trusted server paths', () => {
         const rules = readRepoFile('firestore.rules');
 
         expect(rules).toContain('match /entitlements/{entitlementId}');
         expect(rules).toContain('allow create, update: if isTeamOwnerOrAdmin(teamId)');
         expect(rules).toContain("request.resource.data.tier == 'team-pass'");
+        expect(rules).toContain("request.resource.data.status in ['inactive', 'expired', 'cancelled']");
+        expect(rules).not.toContain("request.resource.data.status in ['active', 'inactive', 'expired', 'cancelled']");
         expect(rules).toContain('allow delete: if isTeamOwnerOrAdmin(teamId);');
     });
 });
