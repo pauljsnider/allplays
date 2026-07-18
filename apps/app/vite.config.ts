@@ -24,7 +24,15 @@ export default defineConfig(({ mode }) => {
   base: './',
   resolve: {
     alias: {
-      '@legacy': path.resolve(appDirectory, '../../js')
+      '@legacy': path.resolve(appDirectory, '../../js'),
+      // Legacy Firebase bootstrap modules live outside apps/app, so bare
+      // imports from those files would otherwise walk toward the repository
+      // root. Resolve the native plugin from this app package explicitly so
+      // the isolated app-quality install is sufficient in CI and deployments.
+      '@capacitor-firebase/app-check': path.resolve(
+        appDirectory,
+        'node_modules/@capacitor-firebase/app-check'
+      )
     }
   },
   plugins: [
