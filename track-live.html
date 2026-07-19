@@ -680,6 +680,7 @@
         import { summarizePersistedTrackingState, buildTrackLiveResetUpdate, resolveTrackLiveClockResume, buildTrackLiveResumeState, runTrackLiveResetPersistence } from './js/track-live-state.js?v=4';
         import { getDefaultLivePeriod, getSportPeriodLabels, resolveLiveSport, isFootballSport } from './js/live-sport-config.js?v=3';
         import { applyGoalSportScore, buildGoalSportEvent, resolveGoalSportScorer } from './js/live-scorekeeping-goal-sports.js?v=2';
+        import { resolveSafeProfilePhotoWriteUrl } from './js/safe-image-url.js?v=1';
 
         import { applyVolleyballServeOutcome, createVolleyballUndoState, restoreVolleyballUndoState, isVolleyballSport } from './js/live-scorekeeping-volleyball.js?v=2';
 
@@ -3141,7 +3142,7 @@
                 text: clean,
                 senderId: currentUser?.uid || null,
                 senderName: currentUser?.displayName || currentUser?.email || 'Stat Keeper',
-                senderPhotoUrl: currentUser?.photoURL || null
+                senderPhotoUrl: resolveSafeProfilePhotoWriteUrl(currentUser?.photoURL) || null
             });
         }
 

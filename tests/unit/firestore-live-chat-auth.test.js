@@ -95,7 +95,7 @@ describe('firestore rules — liveChat authentication requirements', () => {
         expect(liveChatValidatorBlock).toContain('data.createdAt == request.time');
         expect(liveChatValidatorBlock).toContain('data.senderName == null');
         expect(liveChatValidatorBlock).toContain('data.senderName.size() <= 80');
-        expect(liveChatValidatorBlock).toContain('data.senderPhotoUrl.size() <= 2048');
+        expect(liveChatValidatorBlock).toContain('hasCanonicalLiveChatSenderPhoto(data)');
         expect(liveChatValidatorBlock).toContain("!('isAnonymous' in data) || data.isAnonymous is bool");
         expect(liveChatValidatorBlock).not.toContain("'ai'");
         expect(liveChatValidatorBlock).not.toContain("'aiQuestion'");

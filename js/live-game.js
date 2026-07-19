@@ -40,6 +40,7 @@ import { getApp } from './vendor/firebase-app.js';
 import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, renderViewerLineupSections, renderOpponentStatsCards, applyResetEventState, applyViewerEventToState, shouldResetViewerFromGameDoc, collectVisibleLiveEventsSequentially } from './live-game-state.js?v=7';
 import { getDefaultLivePeriod } from './live-sport-config.js?v=2';
 import { BROADCAST_STREAM_HEARTBEAT_MS, buildBroadcastRuntimeSession } from './game-day-broadcast.js?v=5';
+import { createSafeImageElement, resolveSafeProfilePhotoUrl, resolveSafeProfilePhotoWriteUrl } from './safe-image-url.js?v=1';
 
 const state = {
   teamId: null,
@@ -1775,20 +1776,37 @@ function renderLineup() {
 
 function renderChat() {
   if (!els.chatMessages) return;
-  els.chatMessages.innerHTML = state.chatMessages.slice().reverse().map(msg => `
-    <div class="flex gap-2 ${msg.ai ? 'bg-teal/10 -mx-3 px-3 py-2 rounded' : ''}">
-      ${msg.senderPhotoUrl ?
-        `<img src="${msg.senderPhotoUrl}" class="w-7 h-7 rounded-full" alt="${escapeHtml(msg.senderName || 'Fan')}">` :
-        `<div class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold ${msg.ai ? 'bg-teal text-ink' : 'bg-teal/20 text-teal'}">
-          ${msg.ai ? 'AP' : escapeHtml((msg.senderName || 'F')[0])}
-        </div>`
-      }
-      <div class="flex-1 min-w-0">
-        <span class="text-teal text-xs font-medium">${msg.ai ? 'ALL PLAYS' : escapeHtml(msg.senderName || 'Fan')}</span>
-        <p class="text-sand text-sm break-words">${formatChatMessage(msg.text || '')}</p>
-      </div>
-    </div>
-  `).join('');
+  const fragment = document.createDocumentFragment();
+  state.chatMessages.slice().reverse().forEach((msg) => {
+    const row = document.createElement('div');
+    row.className = `flex gap-2 ${msg.ai ? 'bg-teal/10 -mx-3 px-3 py-2 rounded' : ''}`.trim();
+
+    const fallback = document.createElement('div');
+    fallback.className = `w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold ${msg.ai ? 'bg-teal text-ink' : 'bg-teal/20 text-teal'}`;
+    fallback.textContent = msg.ai ? 'AP' : String(msg.senderName || 'F').charAt(0);
+
+    const avatar = createSafeImageElement({
+      url: msg.senderPhotoUrl,
+      resolveUrl: resolveSafeProfilePhotoUrl,
+      alt: `${msg.senderName || 'Fan'} profile photo`,
+      className: 'w-7 h-7 rounded-full object-cover',
+      onLoadError: (image) => image.replaceWith(fallback)
+    });
+    row.appendChild(avatar || fallback);
+
+    const content = document.createElement('div');
+    content.className = 'flex-1 min-w-0';
+    const sender = document.createElement('span');
+    sender.className = 'text-teal text-xs font-medium';
+    sender.textContent = msg.ai ? 'ALL PLAYS' : String(msg.senderName || 'Fan');
+    const message = document.createElement('p');
+    message.className = 'text-sand text-sm break-words';
+    message.innerHTML = formatChatMessage(msg.text || '');
+    content.append(sender, message);
+    row.appendChild(content);
+    fragment.appendChild(row);
+  });
+  els.chatMessages.replaceChildren(fragment);
   els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
   updateChatUnread();
 }
@@ -1860,7 +1878,7 @@ function initChat() {
         text,
         senderId: state.user?.uid || null,
         senderName: state.user?.displayName || state.anonName,
-        senderPhotoUrl: state.user?.photoURL || null,
+        senderPhotoUrl: resolveSafeProfilePhotoWriteUrl(state.user?.photoURL) || null,
         isAnonymous: !state.user
       });
     } catch (error) {
@@ -1984,7 +2002,7 @@ function initReactions() {
         text: emoji,
         senderId: state.user?.uid || null,
         senderName: state.user?.displayName || state.anonName,
-        senderPhotoUrl: state.user?.photoURL || null,
+        senderPhotoUrl: resolveSafeProfilePhotoWriteUrl(state.user?.photoURL) || null,
         isAnonymous: !state.user
       }).catch(err => console.warn('Reaction chat failed:', err));
     }

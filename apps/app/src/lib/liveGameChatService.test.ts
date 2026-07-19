@@ -3,7 +3,10 @@ import { describe, expect, it, vi } from 'vitest';
 const adapterMocks = vi.hoisted(() => ({
     postLiveChatMessage: vi.fn(),
     subscribeLiveChat: vi.fn(() => vi.fn()),
-    isViewerChatEnabled: vi.fn()
+    isViewerChatEnabled: vi.fn(),
+    resolveSafeProfilePhotoWriteUrl: vi.fn((value: unknown) => (
+        typeof value === 'string' && value.startsWith('https://lh3.googleusercontent.com/') ? value : ''
+    ))
 }));
 
 vi.mock('./adapters/legacyLiveGameChat', () => adapterMocks);
@@ -52,6 +55,36 @@ describe('liveGameChatService', () => {
 
         expect(() => buildLiveGameChatPayload({ text: '   ', anonymousDisplayName: 'Pat' })).toThrow('Enter a message');
         expect(() => buildLiveGameChatPayload({ text: 'Hi', anonymousDisplayName: '   ' })).toThrow('Add a display name');
+    });
+
+    it('keeps trusted profile photos and drops legacy untrusted photos without blocking chat', () => {
+        const trustedPhotoUrl = 'https://lh3.googleusercontent.com/a/profile-photo';
+
+        expect(
+            buildLiveGameChatPayload({
+                text: 'Trusted avatar',
+                user: { uid: 'user-1', displayName: 'Coach Kim', email: 'coach@example.com', photoUrl: trustedPhotoUrl, roles: [] }
+            }).senderPhotoUrl
+        ).toBe(trustedPhotoUrl);
+
+        expect(
+            buildLiveGameChatPayload({
+                text: 'Legacy avatar',
+                user: { uid: 'user-2', displayName: 'Coach Lee', email: 'lee@example.com', photoUrl: 'https://example.com/photo.png', roles: [] }
+            }).senderPhotoUrl
+        ).toBeNull();
+
+        const attackerFirebasePhoto = 'https://firebasestorage.googleapis.com/v0/b/attacker-owned.firebasestorage.app/o/avatar.png?alt=media';
+        expect(
+            buildLiveGameChatPayload({
+                text: 'Third-party Firebase avatar',
+                user: { uid: 'user-3', displayName: 'Coach Ray', email: 'ray@example.com', photoUrl: attackerFirebasePhoto, roles: [] }
+            }).senderPhotoUrl
+        ).toBeNull();
+
+        expect(adapterMocks.resolveSafeProfilePhotoWriteUrl).toHaveBeenCalledWith(trustedPhotoUrl);
+        expect(adapterMocks.resolveSafeProfilePhotoWriteUrl).toHaveBeenCalledWith('https://example.com/photo.png');
+        expect(adapterMocks.resolveSafeProfilePhotoWriteUrl).toHaveBeenCalledWith(attackerFirebasePhoto);
     });
 
     it('subscribes and posts through the legacy live chat data layer', async () => {

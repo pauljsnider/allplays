@@ -202,6 +202,11 @@ function buildModuleSource(source = readFileSync(new URL('../../js/live-tracker.
     './auth.js',
     'const { checkAuth } = deps.auth;'
   );
+  rewritten = replaceNamedImportByModulePath(
+    rewritten,
+    './safe-image-url.js',
+    'const { resolveSafeProfilePhotoWriteUrl } = deps.safeImageUrl;'
+  );
   rewritten = replaceImport(
     rewritten,
     /import\s*\{(?=[\s\S]*\bwriteBatch\b)(?=[\s\S]*\bonSnapshot\b)[\s\S]*?\}\s*from\s*['"]\.\/firebase\.js(?:\?v=[^'"]+)?['"];?\s*/,
@@ -409,6 +414,9 @@ async function bootLiveTracker({ game, snapshots }) {
     },
     auth: {
       checkAuth: () => {}
+    },
+    safeImageUrl: {
+      resolveSafeProfilePhotoWriteUrl: () => ''
     },
     firebaseAi: {
       getAI: () => ({}),

@@ -2120,6 +2120,66 @@ service cloud.firestore {
               value.matches('https://storage[.]googleapis[.]com/.*'));
     }
 
+    function isAllowedFirebaseStorageImageUrl(value) {
+      return value is string &&
+             value.size() > 0 &&
+             value.size() <= 2048 &&
+             value.matches('https://[A-Za-z0-9.-]+/[A-Za-z0-9._~:/?#@!$&()*+,;=%-]*') &&
+             (value.matches('https://firebasestorage[.]googleapis[.]com/v0/b/(game-flow-c6311|game-flow-img)[.]firebasestorage[.]app/o/.*') ||
+              value.matches('https://storage[.]googleapis[.]com/(game-flow-c6311|game-flow-img)[.]firebasestorage[.]app/.*') ||
+              value.matches('https://storage[.]googleapis[.]com/download/storage/v1/b/(game-flow-c6311|game-flow-img)[.]firebasestorage[.]app/o/.*') ||
+              value.matches('https://(game-flow-c6311|game-flow-img)[.]firebasestorage[.]app/.*'));
+    }
+
+    function isAllowedLiveChatSenderPhotoUrl(value) {
+      return isAllowedFirebaseStorageImageUrl(value) ||
+             (value is string &&
+              value.size() <= 2048 &&
+              value.matches('https://[A-Za-z0-9.-]+/[A-Za-z0-9._~:/?#@!$&()*+,;=%-]*') &&
+              (value.matches('https://[A-Za-z0-9.-]+[.]googleusercontent[.]com/.*') ||
+               value.matches('https://allplays[.]ai/.*') ||
+               value.matches('https://www[.]allplays[.]ai/.*')));
+    }
+
+    function hasCanonicalLiveChatSenderPhoto(data) {
+      let userPath = /databases/$(database)/documents/users/$(request.auth.uid);
+      let userData = exists(userPath) ? get(userPath).data : {};
+      let senderPhotoUrl = data.get('senderPhotoUrl', null);
+      return senderPhotoUrl == null ||
+             (isAllowedLiveChatSenderPhotoUrl(senderPhotoUrl) &&
+              senderPhotoUrl in [
+                request.auth.token.get('picture', null),
+                userData.get('photoUrl', null),
+                userData.get('photoURL', null)
+              ]);
+    }
+
+    function hasValidDrillDiagramUrls(data) {
+      let diagramUrls = data.get('diagramUrls', []);
+      return !data.keys().hasAny(['diagramUrls']) ||
+             diagramUrls == null ||
+             (diagramUrls is list &&
+              diagramUrls.size() <= 5 &&
+              (diagramUrls.size() == 0 || isAllowedFirebaseStorageImageUrl(diagramUrls[0])) &&
+              (diagramUrls.size() <= 1 || isAllowedFirebaseStorageImageUrl(diagramUrls[1])) &&
+              (diagramUrls.size() <= 2 || isAllowedFirebaseStorageImageUrl(diagramUrls[2])) &&
+              (diagramUrls.size() <= 3 || isAllowedFirebaseStorageImageUrl(diagramUrls[3])) &&
+              (diagramUrls.size() <= 4 || isAllowedFirebaseStorageImageUrl(diagramUrls[4])));
+    }
+
+    function hasSafeDrillDiagramUrlUpdate() {
+      let affectedKeys = request.resource.data.diff(resource.data).affectedKeys();
+      let existingDiagramUrls = resource.data.get('diagramUrls', []);
+      let nextDiagramUrls = request.resource.data.get('diagramUrls', []);
+      return !affectedKeys.hasAny(['diagramUrls']) ||
+             hasValidDrillDiagramUrls(request.resource.data) ||
+             (existingDiagramUrls is list &&
+              nextDiagramUrls is list &&
+              nextDiagramUrls.size() <= 5 &&
+              nextDiagramUrls.size() <= existingDiagramUrls.size() &&
+              nextDiagramUrls.hasOnly(existingDiagramUrls));
+    }
+
     function isSafeNestedChatRegexSegment(value) {
       return value is string &&
              value.size() > 0 &&
@@ -2894,6 +2954,7 @@ service cloud.firestore {
                      isTeamOwnerOrAdmin(resource.data.teamId));
       // Create: global admin for community, team owner/admin for custom
       allow create: if isSignedIn() &&
+                      hasValidDrillDiagramUrls(request.resource.data) &&
                       (
                         (request.resource.data.source == 'community' && isGlobalAdmin()) ||
                         (
@@ -2909,6 +2970,7 @@ service cloud.firestore {
                       );
       // Update: global admin for community, team owner/admin for custom
       allow update: if isSignedIn() &&
+                      hasSafeDrillDiagramUrlUpdate() &&
                       (
                         (resource.data.source == 'community' && isGlobalAdmin()) ||
                         (
@@ -3339,10 +3401,7 @@ service cloud.firestore {
                    (data.senderName is string &&
                     data.senderName.size() > 0 &&
                     data.senderName.size() <= 80)) &&
-                 (!('senderPhotoUrl' in data) ||
-                   data.senderPhotoUrl == null ||
-                   (data.senderPhotoUrl is string &&
-                    data.senderPhotoUrl.size() <= 2048)) &&
+                 hasCanonicalLiveChatSenderPhoto(data) &&
                  (!('isAnonymous' in data) || data.isAnonymous is bool);
         }
 

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { hydrateOpponentStats } from '../../js/live-tracker-opponent-stats.js';
+import { resolveSafeProfilePhotoWriteUrl } from '../../js/safe-image-url.js';
 import {
   readPersistedLiveTrackerPendingFinish,
   readPersistedLiveTrackerQueue,
@@ -160,6 +161,11 @@ function buildModuleSource(source = readFileSync(new URL('../../js/live-tracker.
     './auth.js',
     'const { checkAuth } = deps.auth;'
   );
+  rewritten = replaceNamedImportByModulePath(
+    rewritten,
+    './safe-image-url.js',
+    'const { resolveSafeProfilePhotoWriteUrl } = deps.safeImageUrl;'
+  );
   rewritten = replaceImport(
     rewritten,
     /import\s*\{(?=[\s\S]*\bwriteBatch\b)(?=[\s\S]*\bonSnapshot\b)[\s\S]*?\}\s*from\s*['"]\.\/firebase\.js(?:\?v=[^'"]+)?['"];?\s*/,
@@ -256,11 +262,17 @@ return {
   addSelectedOpponentRoster,
   setLinkedOpponentTeam,
   loadOpponentRoster,
+  sendChatMessage,
   setContext(context = {}) {
     currentTeamId = context.teamId || null;
     currentGameId = context.gameId || null;
     currentConfig = context.config || null;
     currentGame = context.game || null;
+  },
+  setChatContext(context = {}) {
+    currentTeamId = context.teamId || null;
+    currentGameId = context.gameId || null;
+    currentUser = context.user || null;
   },
   setOpponentRoster(players = [], selectedIds = []) {
     opponentRoster = players;
@@ -281,7 +293,12 @@ const runModule = new AsyncFunction(
   moduleSource
 );
 
-async function bootLiveTracker({ updateGame, getPlayers = async () => [] }) {
+async function bootLiveTracker({
+  updateGame,
+  getPlayers = async () => [],
+  postLiveChatMessage = async () => {},
+  resolveProfilePhotoWriteUrl = resolveSafeProfilePhotoWriteUrl
+}) {
   const { document } = createEnvironment();
   const scheduledTimeouts = new Map();
   let nextTimeoutId = 1;
@@ -299,7 +316,7 @@ async function bootLiveTracker({ updateGame, getPlayers = async () => [] }) {
       query: () => ({}),
       broadcastLiveEvent: async () => {},
       subscribeLiveChat: () => () => {},
-      postLiveChatMessage: async () => {},
+      postLiveChatMessage,
       setGameLiveStatus: async () => {}
     },
     firebase: {
@@ -316,6 +333,9 @@ async function bootLiveTracker({ updateGame, getPlayers = async () => [] }) {
     },
     auth: {
       checkAuth: () => {}
+    },
+    safeImageUrl: {
+      resolveSafeProfilePhotoWriteUrl: resolveProfilePhotoWriteUrl
     },
     firebaseAi: {
       getAI: () => ({}),
@@ -473,6 +493,59 @@ describe('live tracker opponent stats harness', () => {
     expect(rewritten).toContain('const { getTeam, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } = deps.db;');
     expect(rewritten).toContain('const { db, writeBatch, doc, setDoc, addDoc, onSnapshot } = deps.firebase;');
     expect(rewritten).not.toMatch(/import\s*\{[\s\S]*?\}\s*from\s*['"]\.\/(?:db|firebase|utils|auth)\.js\?v=/);
+  });
+
+  it('falls back to a null avatar without blocking scorer chat writes', async () => {
+    const writes = [];
+    const page = await bootLiveTracker({
+      updateGame: async () => {},
+      postLiveChatMessage: async (...args) => writes.push(args)
+    });
+    page.setChatContext({
+      teamId: 'team-1',
+      gameId: 'game-1',
+      user: {
+        uid: 'scorekeeper-1',
+        displayName: 'Score Keeper',
+        photoURL: 'https://firebasestorage.googleapis.com/v0/b/attacker-owned.firebasestorage.app/o/avatar.png?alt=media'
+      }
+    });
+
+    await page.sendChatMessage(' Go team! ');
+
+    expect(writes).toEqual([[
+      'team-1',
+      'game-1',
+      {
+        text: 'Go team!',
+        senderId: 'scorekeeper-1',
+        senderName: 'Score Keeper',
+        senderPhotoUrl: null,
+        isAnonymous: false
+      }
+    ]]);
+  });
+
+  it('preserves a first-party scorer avatar in the chat write', async () => {
+    const writes = [];
+    const trustedPhotoUrl = 'https://firebasestorage.googleapis.com/v0/b/game-flow-img.firebasestorage.app/o/avatar.png?alt=media';
+    const page = await bootLiveTracker({
+      updateGame: async () => {},
+      postLiveChatMessage: async (...args) => writes.push(args)
+    });
+    page.setChatContext({
+      teamId: 'team-1',
+      gameId: 'game-1',
+      user: {
+        uid: 'scorekeeper-1',
+        displayName: 'Score Keeper',
+        photoURL: trustedPhotoUrl
+      }
+    });
+
+    await page.sendChatMessage('Defense!');
+
+    expect(writes[0][2].senderPhotoUrl).toBe(trustedPhotoUrl);
   });
 });
 
