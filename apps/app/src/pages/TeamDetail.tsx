@@ -2342,6 +2342,10 @@ function StaffPermissionsCard({ model, auth, onInviteSuccess }: { model: TeamDet
     setError('');
     try {
       const inviteResult = await inviteTeamAdminForApp(model.team.id, normalizedEmail, auth.user || null);
+      if (inviteResult.status === 'fallback_code' && !inviteResult.code && !inviteResult.acceptInviteUrl) {
+        setError('Unable to create an admin invite code. Try again.');
+        return;
+      }
       setResult(inviteResult);
       setEmail('');
       await onInviteSuccess();

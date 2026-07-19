@@ -1724,6 +1724,51 @@ describe('TeamDetail', () => {
     await waitFor(() => expect(teamDetailServiceMocks.revokeTeamAdminAccessForApp).toHaveBeenCalledWith('team-1', 'coach@example.com', auth.user));
   });
 
+  it('shows an error when an admin fallback invite has no code or link to share', async () => {
+    const managedModel = {
+      ...model,
+      canManageTeam: true,
+      canManageAdmins: true,
+      staffPermissions: {
+        staff: [{ label: 'owner@example.com', role: 'Owner' }],
+        pendingInvites: [],
+        helperPermissions: [],
+        scorekeepingMode: 'selected',
+        scorekeeperGrantTargets: [],
+        teamMediaManagerGrantTargets: [],
+        videographerGrantTargets: [],
+        hasAnyStaff: true
+      }
+    };
+    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue(managedModel);
+    teamDetailServiceMocks.loadTeamStaffPermissions.mockResolvedValue(managedModel.staffPermissions);
+    teamDetailServiceMocks.inviteTeamAdminForApp.mockResolvedValue({
+      email: 'newcoach@example.com',
+      status: 'fallback_code',
+      code: null,
+      teamName: 'Bears',
+      acceptInviteUrl: null
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /more/i }));
+    fireEvent.change(screen.getByLabelText('Admin email'), { target: { value: ' NewCoach@Example.com ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send invite' }));
+
+    expect(await screen.findByText('Unable to create an admin invite code. Try again.')).toBeTruthy();
+    expect(screen.queryByText('newcoach@example.com already has an account and was added as an admin.')).toBeNull();
+    expect(screen.getByLabelText('Admin email')).toHaveValue('NewCoach@Example.com');
+    expect(teamDetailServiceMocks.loadTeamStaffPermissions).not.toHaveBeenCalled();
+  });
+
   it('shows staff permissions read-only for team managers who cannot manage admins', async () => {
     const managerAuth: AuthState = {
       ...auth,

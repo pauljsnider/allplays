@@ -2,7 +2,7 @@ import { useCallback, useState, type ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import { AlertCircle, CheckCircle2, Copy, Link2, Loader2, RefreshCw, Share2 } from 'lucide-react';
 import { toAppServiceError, type AppServiceError } from '../../lib/appErrors';
-import { sharePublicUrl } from '../../lib/publicActions';
+import { copyPublicText, sharePublicUrl } from '../../lib/publicActions';
 import { useAsyncOperation } from '../../lib/useAsyncOperation';
 
 type ParentToolAsyncOptions<T> = {
@@ -162,12 +162,8 @@ export function EmptyState({ icon: Icon, title, detail }: { icon: LucideIcon; ti
 }
 
 export async function copyText(value: string, setMessage: (message: string) => void) {
-    try {
-        await navigator.clipboard.writeText(value);
-        setMessage('Copied.');
-    } catch {
-        setMessage('Copy is not available in this browser.');
-    }
+    const result = await copyPublicText(value);
+    setMessage(result === 'copied' ? 'Copied.' : 'Copy is not available in this browser.');
 }
 
 export type InviteResultCardProps = {
