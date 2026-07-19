@@ -41,9 +41,18 @@ const nativePersistenceMock = vi.hoisted(() => ({
   NativeSecureFirebaseAuthPersistence: class NativeSecureFirebaseAuthPersistence {},
   shouldBlockNativeFirebaseAuthMigration: vi.fn(() => false)
 }));
+const nativeInstallEpochMock = vi.hoisted(() => ({
+  seedNativeInstallEpochObserveOnly: vi.fn(() =>
+    Promise.resolve({
+      phase: 'seed-observe-v1',
+      status: 'not-native'
+    })
+  )
+}));
 
 vi.mock('./adapters/legacyFirebaseAuthSdk', () => firebaseAuthSdk);
 vi.mock('./nativeFirebaseAuthPersistence', () => nativePersistenceMock);
+vi.mock('./nativeInstallEpoch', () => nativeInstallEpochMock);
 
 vi.mock('./logger', () => ({
   createLogger: vi.fn(() => ({
@@ -65,6 +74,11 @@ describe('firebaseAuthRuntime', () => {
     firebaseAuthSdk.resolvePrimaryFirebaseConfig.mockResolvedValue(firebaseAuthSdk.resolvedConfig);
     nativePersistenceMock.shouldBlockNativeFirebaseAuthMigration.mockReset();
     nativePersistenceMock.shouldBlockNativeFirebaseAuthMigration.mockReturnValue(false);
+    nativeInstallEpochMock.seedNativeInstallEpochObserveOnly.mockReset();
+    nativeInstallEpochMock.seedNativeInstallEpochObserveOnly.mockResolvedValue({
+      phase: 'seed-observe-v1',
+      status: 'not-native'
+    });
     Object.defineProperty(window, 'Capacitor', {
       configurable: true,
       value: undefined
@@ -114,6 +128,11 @@ describe('firebaseAuthRuntime', () => {
       }
     );
     expect(runtime.auth).toEqual({ app: { name: '[DEFAULT]', created: true }, nativeAuth: true });
+    await expect(runtime.nativeInstallEpochSeedPromise).resolves.toEqual({
+      phase: 'seed-observe-v1',
+      status: 'not-native'
+    });
+    expect(nativeInstallEpochMock.seedNativeInstallEpochObserveOnly).toHaveBeenCalledTimes(1);
   });
 
   it('omits IndexedDB from the native hierarchy while a signed-out tombstone is active', async () => {

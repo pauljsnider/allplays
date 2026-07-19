@@ -95,17 +95,23 @@ describe('Pages deployment artifact verification', () => {
         })).toThrow(/not enabled with the expected public site key/);
     });
 
-    it('rejects unpublished mobile association claims even when hidden files are preserved', () => {
+    it.each([
+        '.well-known/apple-app-site-association',
+        '.well-known/assetlinks.json'
+    ])('rejects unpublished mobile association claim %s even when hidden files are preserved', (relativePath) => {
         const artifactDir = makeArtifact();
         writeFile(path.join(artifactDir, '.nojekyll'));
         writeFile(
-            path.join(artifactDir, '.well-known', 'assetlinks.json'),
-            '[{"target":{"sha256_cert_fingerprints":["REPLACE_WITH_RELEASE_CERT_SHA256_FINGERPRINT"]}}]'
+            path.join(artifactDir, relativePath),
+            '{"placeholder":true}'
         );
 
         expect(() => verifyPagesDeployArtifact(artifactDir, {
             expectedSiteKey: 'public-enterprise-site-key_123'
-        })).toThrow(/must not publish \.well-known.assetlinks\.json until real mobile app association identifiers are configured/);
+        })).toThrow(new RegExp(
+            `must not publish ${relativePath.replaceAll('.', '\\.')}`
+            + ' until real mobile app association identifiers are configured'
+        ));
     });
 
     it('rejects local development artifacts from a downloaded Pages bundle', () => {

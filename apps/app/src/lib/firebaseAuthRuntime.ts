@@ -23,6 +23,7 @@ import {
   verifyPasswordResetCode
 } from './adapters/legacyFirebaseAuthSdk';
 import { createLogger } from './logger';
+import { seedNativeInstallEpochObserveOnly } from './nativeInstallEpoch';
 import { NativeSecureFirebaseAuthPersistence, shouldBlockNativeFirebaseAuthMigration } from './nativeFirebaseAuthPersistence';
 
 const logger = createLogger('firebase');
@@ -34,6 +35,13 @@ const firebaseConfig = await resolvePrimaryFirebaseConfig();
 const existingDefaultApp = getApps().find((candidate) => candidate?.name === '[DEFAULT]');
 const app = existingDefaultApp || initializeApp(firebaseConfig);
 await initializePrimaryAppCheck(app);
+
+// Phase one only seeds/observes the install boundary. It deliberately runs
+// alongside auth initialization and never purges a session, so unknown legacy
+// upgrades cannot be signed out. A later enforcement release must await and
+// interpret the marker before Firebase persistence initializes.
+export const nativeInstallEpochSeedPromise = seedNativeInstallEpochObserveOnly();
+void nativeInstallEpochSeedPromise.catch(() => undefined);
 
 function isCapacitorNativeRuntime() {
   const protocol = typeof window !== 'undefined' ? window.location?.protocol : '';
