@@ -1,3 +1,5 @@
+import { getPrimaryAppCheckHeaders } from './firebase-app-check-rest.js?v=1';
+
 export function getUrlParams() {
   // Combine params from both search (?) and hash (#)
   const searchParams = new URLSearchParams(window.location.search);
@@ -466,7 +468,7 @@ async function fetchAndParseCalendarOnce(normalizedUrl, options = {}) {
     return DEFAULT_CALENDAR_FETCH_FUNCTION_URL;
   }
 
-  async function fetchWithTimeout(fetchUrl) {
+  async function fetchWithTimeout(fetchUrl, headers = {}) {
     const remainingMs = CALENDAR_TOTAL_TIMEOUT_MS - (Date.now() - startedAt);
     if (remainingMs <= 0) {
       throw new DOMException('Calendar request timed out', 'AbortError');
@@ -476,6 +478,7 @@ async function fetchAndParseCalendarOnce(normalizedUrl, options = {}) {
     try {
       return await fetch(fetchUrl, {
         signal: controller.signal,
+        headers,
         credentials: 'omit',
         redirect: 'error',
         referrerPolicy: 'no-referrer'
@@ -491,8 +494,9 @@ async function fetchAndParseCalendarOnce(normalizedUrl, options = {}) {
     if (forceRefresh) {
       params.set('forceRefresh', 'true');
     }
-    const functionUrl = `${calendarFetchFunctionUrl}?${params.toString()}`;
-    const response = await fetchWithTimeout(functionUrl);
+    const requestUrl = `${calendarFetchFunctionUrl}?${params.toString()}`;
+    const headers = await getPrimaryAppCheckHeaders({}, requestUrl);
+    const response = await fetchWithTimeout(requestUrl, headers);
     if (!response.ok) {
       const error = new Error(`Function fetch failed: ${response.status} ${response.statusText}`);
       if ([400, 401, 403, 413, 422, 429].includes(response.status)) {

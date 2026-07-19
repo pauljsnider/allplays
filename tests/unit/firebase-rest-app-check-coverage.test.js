@@ -11,7 +11,8 @@ const primaryRestCallers = [
     '../../apps/app/src/lib/teamDetailService.ts',
     '../../js/schedule-notifications.js',
     '../../js/team-pass.js',
-    '../../js/telemetry.js'
+    '../../js/telemetry.js',
+    '../../js/utils.js'
 ];
 const repoRoot = fileURLToPath(new URL('../../', import.meta.url));
 const functionsSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
@@ -52,7 +53,8 @@ describe('raw Firebase REST App Check coverage', () => {
             'apps/app/src/lib/teamDetailService.ts',
             'js/schedule-notifications.js',
             'js/team-pass.js',
-            'js/telemetry.js'
+            'js/telemetry.js',
+            'js/utils.js'
         ]);
     });
 

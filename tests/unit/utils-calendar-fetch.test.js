@@ -330,7 +330,7 @@ describe('fetchAndParseCalendar', () => {
 
     const first = fetchAndParseCalendar('https://example.com/coalesced.ics');
     const second = fetchAndParseCalendar('https://example.com/coalesced.ics');
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     resolveFetch(makeJsonResponse({ ok: true, icsText: sampleIcs('coalesced') }));
 
     const [firstEvents, secondEvents] = await Promise.all([first, second]);
