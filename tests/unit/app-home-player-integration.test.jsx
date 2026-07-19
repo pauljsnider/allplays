@@ -632,7 +632,11 @@ describe('React app Home and player drill-in integration', () => {
 
         await clickLinkByHref(container, '/players/team-1/player-1');
         await waitForText(container, 'Pat Star');
-        expect(playerMocks.loadParentPlayerDetail).toHaveBeenCalledWith(auth.user, 'team-1', 'player-1');
+        expect(playerMocks.loadParentPlayerDetail).toHaveBeenCalledWith(expect.objectContaining({
+            uid: auth.user.uid,
+            email: auth.user.email,
+            displayName: auth.user.displayName
+        }), 'team-1', 'player-1');
         expect(container.textContent).toContain('Availability needed');
 
         await clickButton(container, 'Reports');
