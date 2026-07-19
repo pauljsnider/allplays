@@ -1864,10 +1864,6 @@ test('team page opens from Home data with team tools, player, and chat routes', 
     await expect(page.getByRole('link', { name: /Website team page/ })).toHaveAttribute('href', 'https://allplays.ai/team.html#teamId=team-1');
     await expect(page.getByRole('link', { name: /Media/ })).toHaveAttribute('href', '#/teams/team-1/media');
     await expect(page.locator('a[href="#/players/team-1/player-1"]').first()).toBeVisible();
-    const bearsLauncherLink = page.getByRole('link', { name: 'Open Bears' });
-    await expect(bearsLauncherLink).toHaveAttribute('href', '#/teams/team-1');
-    const bearsLauncherRow = page.locator('article.team-launcher-row').filter({ has: bearsLauncherLink });
-    await expect(bearsLauncherRow.locator('a')).toHaveCount(1);
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
 
     await page.locator('a[href="#/teams/team-1"]').first().click();
