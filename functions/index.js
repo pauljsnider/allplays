@@ -4865,6 +4865,13 @@ function getAllowedOriginPolicy() {
 
 const allowedOriginPolicy = getAllowedOriginPolicy();
 const allowedOriginSet = new Set(allowedOriginPolicy.origins);
+// Capacitor's WebViews use these exact origins. Keep the exception scoped to
+// passive telemetry so it does not broaden the calendar endpoint's CORS policy.
+const telemetryAllowedOriginSet = new Set([
+  ...allowedOriginSet,
+  'capacitor://localhost',
+  'http://localhost'
+]);
 
 function isAllowedOrigin(origin) {
   if (!origin) {
@@ -4875,12 +4882,14 @@ function isAllowedOrigin(origin) {
 }
 
 function isAllowedTelemetryOrigin(origin) {
-  return !!origin && isAllowedOrigin(origin);
+  return !!origin && telemetryAllowedOriginSet.has(origin);
 }
 
-function writeCorsHeaders(req, res, methods = 'GET,OPTIONS') {
+function writeCorsHeaders(req, res, methods = 'GET,OPTIONS', endpointAllowedOriginSet = null) {
   const origin = req.headers.origin;
-  if (origin && isAllowedOrigin(origin)) {
+  if (origin && (endpointAllowedOriginSet
+    ? endpointAllowedOriginSet.has(origin)
+    : isAllowedOrigin(origin))) {
     res.set('Access-Control-Allow-Origin', origin);
     res.set('Vary', 'Origin');
   }
@@ -12758,7 +12767,7 @@ exports.collectTelemetry = functions
   .runWith({ timeoutSeconds: 15, memory: '256MB' })
   .https
   .onRequest(async (req, res) => {
-    writeCorsHeaders(req, res, 'POST,OPTIONS');
+    writeCorsHeaders(req, res, 'POST,OPTIONS', telemetryAllowedOriginSet);
 
     if (!isAllowedTelemetryOrigin(req.headers.origin)) {
       res.status(403).json({ ok: false, error: 'Origin not allowed' });

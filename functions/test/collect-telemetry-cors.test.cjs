@@ -5,6 +5,10 @@ const admin = require('firebase-admin');
 const functions = require('firebase-functions');
 
 const ALLOWED_ORIGIN = 'https://allplays.ai';
+const NATIVE_ORIGINS = [
+  'capacitor://localhost',
+  'http://localhost'
+];
 const APP_CHECK_HEADER = 'X-Firebase-AppCheck';
 const ALLOWED_HEADERS = `Authorization, Content-Type, ${APP_CHECK_HEADER}`;
 
@@ -32,8 +36,8 @@ function createResponse() {
   };
 }
 
-function assertTelemetryCorsPolicy(response) {
-  assert.equal(response.headers.get('access-control-allow-origin'), ALLOWED_ORIGIN);
+function assertTelemetryCorsPolicy(response, expectedOrigin = ALLOWED_ORIGIN) {
+  assert.equal(response.headers.get('access-control-allow-origin'), expectedOrigin);
   assert.equal(response.headers.get('access-control-allow-methods'), 'POST,OPTIONS');
   assert.equal(response.headers.get('access-control-allow-headers'), ALLOWED_HEADERS);
   assert.equal(response.headers.get('access-control-allow-credentials'), undefined);
@@ -56,6 +60,44 @@ test('collectTelemetry accepts an App Check browser preflight without changing i
   assert.equal(response.statusCode, 204);
   assert.equal(response.body, '');
   assertTelemetryCorsPolicy(response);
+});
+
+for (const origin of NATIVE_ORIGINS) {
+  test(`collectTelemetry accepts the native app origin ${origin}`, async () => {
+    const response = createResponse();
+
+    await collectTelemetry({
+      method: 'OPTIONS',
+      headers: {
+        origin,
+        'access-control-request-method': 'POST',
+        'access-control-request-headers': 'content-type'
+      }
+    }, response);
+
+    assert.equal(response.statusCode, 204);
+    assert.equal(response.body, '');
+    assertTelemetryCorsPolicy(response, origin);
+  });
+}
+
+test('collectTelemetry rejects lookalike native origins without reflecting them', async () => {
+  const response = createResponse();
+
+  await collectTelemetry({
+    method: 'OPTIONS',
+    headers: {
+      origin: 'http://localhost.evil.example',
+      'access-control-request-method': 'POST',
+      'access-control-request-headers': 'content-type'
+    }
+  }, response);
+
+  assert.equal(response.statusCode, 403);
+  assert.deepEqual(response.body, { ok: false, error: 'Origin not allowed' });
+  assert.equal(response.headers.get('access-control-allow-origin'), undefined);
+  assert.equal(response.headers.get('vary'), undefined);
+  assert.equal(response.headers.get('cache-control'), 'no-store');
 });
 
 test('collectTelemetry handles a POST carrying App Check without exposing its token', async (t) => {
