@@ -84,10 +84,11 @@ describe('fallback media paths and Storage rules', () => {
         expect(chatFallbackRules).toContain('allow get: if canAccessChatAttachment(teamId, conversationId);');
         expect(rules).toContain("('user:' + request.auth.uid) in participantIds");
         expect(rules).toContain("('email:' + request.auth.token.email.lower()) in participantIds");
+        expect(chatFallbackRules).toContain("allow create: if (isVerifiedForSensitiveWrite() ||\n        (isSignedIn() && conversationId == 'team')) &&");
         expect(chatFallbackRules).toContain('request.auth.uid == userId');
         expect(chatFallbackRules).toContain('isAllowedChatAttachmentUpload(request.resource.contentType, request.resource.size);');
         expect(rules).toContain('function canDeleteOwnChatAttachment(teamId, conversationId, userId)');
-        expect(chatFallbackRules).toContain('allow delete: if isVerifiedForSensitiveWrite() &&\n        (isTeamOwnerOrAdmin(teamId) || canDeleteOwnChatAttachment(teamId, conversationId, userId));');
+        expect(chatFallbackRules).toContain('allow delete: if (isVerifiedForSensitiveWrite() && isTeamOwnerOrAdmin(teamId)) ||\n        canDeleteOwnChatAttachment(teamId, conversationId, userId);');
         expect(chatFallbackRules).not.toContain('allow delete: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;');
         expect(legacyChatFallbackRules).toContain('allow get: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;');
         expect(legacyChatFallbackRules).toContain('allow create: if false;');
@@ -134,6 +135,14 @@ describe('fallback media paths and Storage rules', () => {
             isTeamParent: true,
             size: 512 * 1024,
             contentType: 'video/mp4'
+        })).toBe(true);
+
+        expect(canCreateChatFallback({
+            authUid: 'parent-1',
+            pathUserId: 'parent-1',
+            isTeamParent: true,
+            size: 512 * 1024,
+            contentType: 'image/jpeg'
         })).toBe(true);
 
         expect(canCreateChatFallback({
