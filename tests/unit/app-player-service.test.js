@@ -364,6 +364,21 @@ describe('React app parent player detail service', () => {
         expect(detail.athleteProfile.profile).toBeNull();
     });
 
+    it('keeps the player profile available when its schedule read times out', async () => {
+        scheduleMocks.loadParentPlayerSchedule.mockRejectedValueOnce(new Error('games team-1 timed out.'));
+
+        const detail = await loadParentPlayerDetail(user(), 'team-1', 'player-1');
+
+        expect(detail.player).toMatchObject({
+            id: 'player-1',
+            name: 'Pat Star',
+            teamName: 'Bears'
+        });
+        expect(detail.events).toEqual([]);
+        expect(detail.nextEvent).toBeNull();
+        expect(detail.scheduleLoadError).toBe('Schedule is temporarily unavailable. Refresh the player to try again.');
+    });
+
     it('saves parent-editable player fields through the restricted profile helper', async () => {
         const file = new File(['avatar'], 'avatar.png', { type: 'image/png' });
 

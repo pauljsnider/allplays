@@ -604,6 +604,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
       </div>
 
       {error ? <Status tone="error" message={error.message} /> : null}
+      {data.scheduleLoadError ? <ScheduleLoadNotice message={data.scheduleLoadError} /> : null}
       {activeSection === 'overview' ? <OverviewSection data={data} /> : null}
       {activeSection === 'schedule' ? <PlayerScheduleSection events={data.events} /> : null}
       {activeSection === 'performance' ? (
@@ -2648,6 +2649,20 @@ function Status({ tone, message }: { tone: 'error' | 'success'; message: string 
       aria-atomic="true"
     >
       {isError ? <AlertCircle className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" /> : <CheckCircle2 className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" />}
+      {message}
+    </div>
+  );
+}
+
+function ScheduleLoadNotice({ message }: { message: string }) {
+  return (
+    <div
+      className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-900"
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+    >
+      <AlertCircle className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" />
       {message}
     </div>
   );
