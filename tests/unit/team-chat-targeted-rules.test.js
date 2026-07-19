@@ -193,7 +193,7 @@ describe('targeted team chat Firestore rules', () => {
     it('keeps targeted conversation traffic under conversation-scoped rules', () => {
         expect(rules).toContain('match /chatConversations/{conversationId} {');
         expect(rules).toContain('match /chatMessages/{messageId} {');
-        expect(rules).toContain('allow create: if canAccessChatConversation(teamId, conversationId, get(/databases/$(database)/documents/teams/$(teamId)/chatConversations/$(conversationId)).data) &&');
+        expect(rules).toContain('allow create: if isVerifiedForSensitiveWrite() &&\n                           canAccessChatConversation(teamId, conversationId, get(/databases/$(database)/documents/teams/$(teamId)/chatConversations/$(conversationId)).data) &&');
         expect(rules).toContain('isNestedChatMessageCreateValid(');
     });
 

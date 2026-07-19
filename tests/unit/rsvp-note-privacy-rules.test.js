@@ -120,8 +120,8 @@ describe('RSVP note privacy Firestore rules', () => {
     expect(parentNoteDeleteFunction).toContain('isOwnLinkedPlayerRsvpId(rsvpId, data)');
     expect(writeFunction).toContain('canWriteOwnParentRsvpNote(teamId, rsvpId, data)');
     expect(writeFunction).not.toContain('isParentForTeam(teamId) ||');
-    expect(noteBlock).toContain('resource == null && isOwnRsvpNoteId() && isParentForTeam(teamId)');
-    expect(noteBlock).toContain('canDeleteOwnParentRsvpNote(teamId, rsvpId, resource.data);');
+    expect(noteBlock).toContain('allow delete: if (resource == null && isOwnRsvpNoteId() && isParentForTeam(teamId)) ||');
+    expect(noteBlock).toContain('(isVerifiedForSensitiveWrite() &&\n                            (isTeamOwnerOrAdmin(teamId) ||\n                             canDeleteOwnParentRsvpNote(teamId, rsvpId, resource.data)));');
   });
 
   describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('RSVP linked-player rules engine coverage', () => {
@@ -313,6 +313,32 @@ describe('RSVP note privacy Firestore rules', () => {
       await seedRsvpDoc('teams/team-1/games/game-1/rsvpNotes/parent-1__player-b', notePayload('player-b'));
       await assertFails(updateDoc(playerBNoteRef, { note: 'Still available', updatedAt: now }));
       await assertFails(deleteDoc(playerBNoteRef));
+    });
+
+    it('enforces verified email for existing note deletes while preserving missing-child cleanup', async () => {
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        const firestore = context.firestore();
+        await setDoc(doc(firestore, 'securityPolicies/verifiedEmail'), {
+          mode: 'enforce',
+          exemptUserIds: []
+        });
+        await setDoc(
+          doc(firestore, 'teams/team-1/games/game-1/rsvpNotes/parent-1'),
+          notePayload('player-a')
+        );
+      });
+      const unverifiedParentDb = testEnv.authenticatedContext('parent-1', {
+        email: 'parent@example.com',
+        email_verified: false
+      }).firestore();
+      const verifiedParentDb = testEnv.authenticatedContext('parent-1', {
+        email: 'parent@example.com',
+        email_verified: true
+      }).firestore();
+
+      await assertFails(deleteDoc(baseNoteRef(unverifiedParentDb)));
+      await assertSucceeds(deleteDoc(baseNoteRef(verifiedParentDb)));
+      await assertSucceeds(deleteDoc(noteRef(unverifiedParentDb, 'player-c')));
     });
 
     it('keeps team owner writes available for player-scoped RSVP docs and notes', async () => {

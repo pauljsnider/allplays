@@ -105,6 +105,7 @@ describe('nested team chat message payload contracts', () => {
             rules.indexOf('match /chatConversations/{conversationId} {'),
             rules.indexOf('// Server-only dedup log')
         );
+        expect(nestedMessageRules).toContain('allow create: if isVerifiedForSensitiveWrite() &&\n                           canAccessChatConversation');
         expect(nestedMessageRules).toContain('request.resource.data.diff(resource.data).affectedKeys()\n                               .hasOnly([\'text\', \'editedAt\'])');
         expect(nestedMessageRules).toContain('resource.data.senderId == request.auth.uid');
         expect(nestedMessageRules).toContain('isNestedChatMessageEditTargetValid(');
@@ -414,6 +415,32 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
         })));
         await assertSucceeds(setDoc(messageRef(parentDb, directConversationId, 'valid-direct-no-email'), directWithoutStoredEmail));
         await assertSucceeds(setDoc(messageRef(coachDb, staffConversationId, 'valid-staff'), staffPayload()));
+    });
+
+    it('enforces verified email for nested message creates without changing observe-mode access', async () => {
+        await testEnv.withSecurityRulesDisabled(async (context) => {
+            await setDoc(doc(context.firestore(), 'securityPolicies/verifiedEmail'), {
+                mode: 'enforce',
+                exemptUserIds: []
+            });
+        });
+        const unverifiedParentDb = testEnv.authenticatedContext('parent-1', {
+            email: 'parent@example.com',
+            email_verified: false
+        }).firestore();
+        const verifiedParentDb = testEnv.authenticatedContext('parent-1', {
+            email: 'parent@example.com',
+            email_verified: true
+        }).firestore();
+
+        await assertFails(setDoc(
+            messageRef(unverifiedParentDb, directConversationId, 'blocked-unverified'),
+            directPayload()
+        ));
+        await assertSucceeds(setDoc(
+            messageRef(verifiedParentDb, directConversationId, 'allowed-verified'),
+            directPayload()
+        ));
     });
 
     it('denies direct-message client writes so the authorization callable owns that path', async () => {

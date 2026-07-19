@@ -16,6 +16,8 @@ describe('staged verified-email policy rules', () => {
     expect(firestoreRules).toContain("get(policyPath).data.get('mode', 'observe') != 'enforce'");
     expect(firestoreRules).toContain('match /securityPolicies/{policyId}');
     expect(firestoreRules).toContain('allow create: if isVerifiedForSensitiveWrite() && request.resource.data.ownerId == request.auth.uid;');
+    expect(firestoreRules).toContain('allow create: if isVerifiedForSensitiveWrite() &&\n                           canAccessChatConversation');
+    expect(firestoreRules).toContain('allow delete: if (resource == null && isOwnRsvpNoteId() && isParentForTeam(teamId)) ||\n                           (isVerifiedForSensitiveWrite() &&');
     expect(firestoreRules).toContain('allow create: if isGlobalAdmin() ||\n                    (isOwner(userId) && isOwnerUserCreatePayloadValid(request.resource.data));');
     expect(storageRules).toContain('function isVerifiedForSensitiveWrite()');
   });

@@ -3698,9 +3698,10 @@ service cloud.firestore {
                         canReadRsvpNote(teamId, resource.data);
           allow list: if canReadRsvpNote(teamId, resource.data);
           allow create, update: if isVerifiedForSensitiveWrite() && canWriteRsvpNote(teamId, rsvpId, request.resource.data);
-          allow delete: if isTeamOwnerOrAdmin(teamId) ||
-                           (resource == null && isOwnRsvpNoteId() && isParentForTeam(teamId)) ||
-                           canDeleteOwnParentRsvpNote(teamId, rsvpId, resource.data);
+          allow delete: if (resource == null && isOwnRsvpNoteId() && isParentForTeam(teamId)) ||
+                           (isVerifiedForSensitiveWrite() &&
+                            (isTeamOwnerOrAdmin(teamId) ||
+                             canDeleteOwnParentRsvpNote(teamId, rsvpId, resource.data)));
         }
 
         // Rideshare offers for games/practices.
@@ -4025,7 +4026,8 @@ service cloud.firestore {
 
         match /chatMessages/{messageId} {
           allow read: if canAccessChatConversation(teamId, conversationId, get(/databases/$(database)/documents/teams/$(teamId)/chatConversations/$(conversationId)).data);
-          allow create: if canAccessChatConversation(teamId, conversationId, get(/databases/$(database)/documents/teams/$(teamId)/chatConversations/$(conversationId)).data) &&
+          allow create: if isVerifiedForSensitiveWrite() &&
+                           canAccessChatConversation(teamId, conversationId, get(/databases/$(database)/documents/teams/$(teamId)/chatConversations/$(conversationId)).data) &&
                            isNestedChatMessageCreateValid(
                              teamId,
                              conversationId,
