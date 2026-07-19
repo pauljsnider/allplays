@@ -939,16 +939,20 @@ function assertLinkedParent(user: AuthUser | null, teamId: string, playerId: str
   if (!user?.uid) {
     throw new Error('A signed-in parent account is required.');
   }
-  const linked = (user.parentOf || []).some((entry: any) => entry?.teamId === teamId && entry?.playerId === playerId);
+  const linked = isLinkedParent(user, teamId, playerId);
   if (!linked && !user.isAdmin && !user.roles?.includes('admin') && !user.roles?.includes('platformAdmin')) {
     throw new Error('This player is not linked to your account.');
   }
 }
 
 function isLinkedParent(user: AuthUser | null, teamId: string, playerId: string) {
-  return !!(user?.parentOf || []).some((entry: any) => (
+  const linkedByParentOf = (user?.parentOf || []).some((entry: any) => (
     entry?.teamId === teamId && (entry?.playerId === playerId || entry?.childId === playerId)
   ));
+  if (linkedByParentOf) return true;
+
+  const playerKey = `${teamId}::${playerId}`;
+  return !!(user?.parentPlayerKeys || []).some((key) => String(key || '').trim() === playerKey);
 }
 
 function isElevatedAppAdmin(user: AuthUser | null) {

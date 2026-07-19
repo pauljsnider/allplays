@@ -379,6 +379,21 @@ describe('React app parent player detail service', () => {
         expect(detail.scheduleLoadError).toBe('Schedule is temporarily unavailable. Refresh the player to try again.');
     });
 
+    it('preserves key-only parent access when the player schedule times out', async () => {
+        scheduleMocks.loadParentPlayerSchedule.mockRejectedValueOnce(new Error('games team-1 timed out.'));
+        const keyOnlyParent = {
+            ...user(),
+            parentOf: [],
+            parentPlayerKeys: ['team-1::player-1']
+        };
+
+        const detail = await loadParentPlayerDetail(keyOnlyParent, 'team-1', 'player-1');
+
+        expect(detail.access.isLinkedParent).toBe(true);
+        expect(detail.player).toMatchObject({ id: 'player-1', name: 'Pat Star' });
+        expect(detail.scheduleLoadError).toBe('Schedule is temporarily unavailable. Refresh the player to try again.');
+    });
+
     it('saves parent-editable player fields through the restricted profile helper', async () => {
         const file = new File(['avatar'], 'avatar.png', { type: 'image/png' });
 
