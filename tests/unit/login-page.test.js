@@ -1,15 +1,19 @@
 import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { createLoginRedirectCoordinator, createLoginAuthStateManager, shouldInitializeSignupMode, getGoogleAuthModeForLoginPage } from '../../js/login-page.js';
+import { createLoginRedirectCoordinator, createLoginAuthStateManager, shouldInitializeSignupMode, getGoogleAuthModeForLoginPage, PENDING_LOGIN_INVITE_CODE_STORAGE_KEY } from '../../js/login-page.js';
 
 function createCoordinator({
     search = '?code=ab12cd34&type=parent',
     postGoogleAuthMode = null,
+    pendingLoginInviteCode = null,
     defaultRedirect = 'parent-dashboard.html'
 } = {}) {
     const sessionState = new Map();
     if (postGoogleAuthMode !== null) {
         sessionState.set('postGoogleAuthMode', postGoogleAuthMode);
+    }
+    if (pendingLoginInviteCode !== null) {
+        sessionState.set(PENDING_LOGIN_INVITE_CODE_STORAGE_KEY, pendingLoginInviteCode);
     }
 
     const windowObject = {
@@ -20,6 +24,9 @@ function createCoordinator({
             getItem: vi.fn((key) => sessionState.get(key) ?? null),
             removeItem: vi.fn((key) => {
                 sessionState.delete(key);
+            }),
+            setItem: vi.fn((key, value) => {
+                sessionState.set(key, value);
             })
         }
     };
@@ -76,7 +83,7 @@ describe('login page redirect coordination', () => {
     it('loads the cache-busted login page module that knows friend invite redirects', () => {
         const html = readFileSync(new URL('../../login.html', import.meta.url), 'utf8');
 
-        expect(html).toContain("import * as loginPageModule from './js/login-page.js?v=9';");
+        expect(html).toContain("import * as loginPageModule from './js/login-page.js?v=10';");
         expect(html).not.toContain("import * as loginPageModule from './js/login-page.js?v=7';");
     });
 
@@ -179,6 +186,20 @@ describe('login page redirect coordination', () => {
 
         expect(coordinator.getGoogleRedirectUrl(user)).toBe('parent-dashboard.html');
         expect(coordinator.getAutoRedirectUrl(user)).toBe('parent-dashboard.html');
+    });
+
+    it('redeems a pending manual invite code after existing-account Google recovery', () => {
+        const { coordinator, windowObject } = createCoordinator({
+            search: '',
+            postGoogleAuthMode: 'login',
+            pendingLoginInviteCode: 'manual12',
+            defaultRedirect: 'dashboard.html'
+        });
+
+        expect(coordinator.getGoogleRedirectUrl({ uid: 'user-1' }))
+            .toBe('accept-invite.html?code=MANUAL12');
+        expect(windowObject.sessionStorage.removeItem)
+            .toHaveBeenCalledWith(PENDING_LOGIN_INVITE_CODE_STORAGE_KEY);
     });
 
     it('still redeems the invite for authenticated users who directly open an invite link', () => {

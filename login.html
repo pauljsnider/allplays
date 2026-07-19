@@ -101,7 +101,7 @@
         import { getUserProfile } from './js/db.js?v=113';
         import { renderHeader, renderFooter } from './js/utils.js?v=18';
         import { getPostAuthRedirectUrl } from './js/invite-redirect.js?v=3';
-        import * as loginPageModule from './js/login-page.js?v=9';
+        import * as loginPageModule from './js/login-page.js?v=10';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -128,6 +128,7 @@
         });
         const authState = createLoginAuthStateManager();
         const { urlCodeParam, shouldRedeemInviteFromLogin } = redirectCoordinator;
+        const pendingLoginInviteCodeStorageKey = loginPageModule.PENDING_LOGIN_INVITE_CODE_STORAGE_KEY || 'pendingLoginInviteCode';
 
         function redirectAuthenticatedUser(user) {
             window.location.href = redirectCoordinator.getAutoRedirectUrl(user);
@@ -364,6 +365,13 @@
                     if (!activationCode) {
                         throw new Error('Activation code is required for new accounts');
                     }
+                } else if (pendingLoginInviteCode) {
+                    activationCode = pendingLoginInviteCode;
+                }
+                if (pendingLoginInviteCode) {
+                    window.sessionStorage.setItem(pendingLoginInviteCodeStorageKey, pendingLoginInviteCode);
+                } else {
+                    window.sessionStorage.removeItem(pendingLoginInviteCodeStorageKey);
                 }
 
                 // Hybrid flow: tries popup first, falls back to redirect if blocked
@@ -374,13 +382,22 @@
                     console.log('[Login Page] Popup succeeded, redirecting...');
                     const profile = await getUserProfile(result.user.uid);
                     const userWithRoles = { ...result.user, ...profile };
-                    const shouldRedeemInvite = shouldRedeemInviteFromLogin &&
-                        (googleAuthMode === 'login' || googleAuthMode === 'invite');
-                    window.location.href = redirectCoordinator.getPostAuthRedirect(userWithRoles, shouldRedeemInvite);
+                    const shouldRedeemInvite = (shouldRedeemInviteFromLogin &&
+                        (googleAuthMode === 'login' || googleAuthMode === 'invite')) ||
+                        Boolean(pendingLoginInviteCode);
+                    const redirectUrl = redirectCoordinator.getPostAuthRedirect(
+                        userWithRoles,
+                        shouldRedeemInvite,
+                        pendingLoginInviteCode
+                    );
+                    window.sessionStorage.removeItem(pendingLoginInviteCodeStorageKey);
+                    pendingLoginInviteCode = null;
+                    window.location.href = redirectUrl;
                 }
                 // If result is null, redirect flow was triggered - page will reload
             } catch (error) {
                 window.sessionStorage.removeItem('postGoogleAuthMode');
+                window.sessionStorage.removeItem(pendingLoginInviteCodeStorageKey);
                 errorDiv.textContent = error.message;
                 errorDiv.classList.remove('hidden');
                 console.error(error);

@@ -87,6 +87,7 @@ const REDEEMABLE_INVITE_TYPES = new Set([
     'friend',
     'friend_invite'
 ]);
+export const PENDING_LOGIN_INVITE_CODE_STORAGE_KEY = 'pendingLoginInviteCode';
 
 export function createLoginRedirectCoordinator({
     windowObject = window,
@@ -113,11 +114,14 @@ export function createLoginRedirectCoordinator({
 
     function getGoogleRedirectUrl(userWithRoles) {
         const googleAuthMode = windowObject.sessionStorage.getItem('postGoogleAuthMode');
+        const pendingInviteCode = windowObject.sessionStorage.getItem(PENDING_LOGIN_INVITE_CODE_STORAGE_KEY);
         windowObject.sessionStorage.removeItem('postGoogleAuthMode');
-        const shouldRedeemInvite = shouldRedeemInviteFromLogin &&
-            (googleAuthMode === 'login' || googleAuthMode === 'invite');
+        windowObject.sessionStorage.removeItem(PENDING_LOGIN_INVITE_CODE_STORAGE_KEY);
+        const shouldRedeemInvite = (shouldRedeemInviteFromLogin &&
+            (googleAuthMode === 'login' || googleAuthMode === 'invite')) ||
+            Boolean(pendingInviteCode);
         inviteRedemptionOverride = shouldRedeemInvite;
-        return getPostAuthRedirect(userWithRoles, shouldRedeemInvite);
+        return getPostAuthRedirect(userWithRoles, shouldRedeemInvite, pendingInviteCode);
     }
 
     function getAutoRedirectUrl(userWithRoles) {
