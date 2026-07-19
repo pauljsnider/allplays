@@ -18,7 +18,7 @@ vi.mock('../../lib/parentToolsAccessService', () => accessServiceMocks);
 vi.mock('../../lib/inviteRedemption', () => ({ redeemSignedInInvite: vi.fn() }));
 vi.mock('lucide-react', () => {
     const Icon = () => null;
-    return { AlertCircle: Icon, CheckCircle2: Icon, KeyRound: Icon, Loader2: Icon, RefreshCw: Icon, Search: Icon, Shield: Icon, Users: Icon };
+    return { AlertCircle: Icon, CheckCircle2: Icon, Copy: Icon, KeyRound: Icon, Link2: Icon, Loader2: Icon, RefreshCw: Icon, Search: Icon, Share2: Icon, Shield: Icon, Users: Icon };
 });
 
 const auth = {

@@ -280,7 +280,7 @@ describe('PlayerDetail athlete profile season selection', () => {
     await waitFor(() => {
       expect(writeText).toHaveBeenCalledWith('mom@allplays.ai');
     });
-    expect(screen.getByText('Invite Co-Parent')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Create invite' })).toBeTruthy();
   });
 
   it('lazy-loads video clips once when the Video Clips report opens', async () => {
