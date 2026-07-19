@@ -1229,6 +1229,48 @@ describe('Schedule', () => {
     });
   });
 
+  it('uses schedule metric buttons to switch filters and packet view', async () => {
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [
+        { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
+      ],
+      events: [
+        buildScheduleEvent(1),
+        buildScheduleEvent(2, {
+          eventKey: 'team-1::practice-2::player-1::2100-06-02T18:00:00.000Z::practice',
+          id: 'practice-2',
+          type: 'practice',
+          isDbGame: false,
+          title: 'Skills practice',
+          opponent: null,
+          myRsvp: 'going'
+        }),
+        buildPracticePacketEvent(3, {
+          myRsvp: 'going'
+        })
+      ]
+    });
+
+    renderSchedule();
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(1);
+      expect(screen.queryByRole('status', { name: 'Loading schedule' })).toBeNull();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show games' }));
+    expect((screen.getAllByLabelText('Schedule filter')[0] as HTMLSelectElement).value).toBe('upcoming-games');
+    expect(screen.getByRole('button', { name: 'Show games' }).getAttribute('aria-pressed')).toBe('true');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show rsvp needed' }));
+    expect((screen.getAllByLabelText('Schedule filter')[0] as HTMLSelectElement).value).toBe('availability');
+    expect(screen.getByRole('button', { name: 'Show rsvp needed' }).getAttribute('aria-pressed')).toBe('true');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show packets' }));
+    expect(screen.getByRole('button', { name: 'Show packets' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getAllByRole('button', { name: 'Packets' }).some((button) => button.getAttribute('aria-pressed') === 'true')).toBe(true);
+  });
+
   it('renders web-created tournament game metadata and the create tournament flow', async () => {
     scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
       children: [
