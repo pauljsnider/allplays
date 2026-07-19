@@ -51,11 +51,32 @@ ngrok config add-authtoken <your-token>   # once
 ngrok http 8787
 ```
 
-Then in ChatGPT → Settings → Apps & Connectors → Advanced → Developer Mode →
-add a connector with `https://<your-ngrok-host>/mcp` and the refresh token as
-the bearer token. Ask: "What does my family have this weekend?" — ChatGPT
-should call `list_schedule` and answer with permission-filtered events and
-deep links into AllPlays.
+Then in ChatGPT → Settings → Apps → Advanced settings → Developer mode → New
+App:
+
+- Server URL: `https://<your-ngrok-host>/mcp`
+- Authentication: **OAuth** — ChatGPT discovers the broker automatically
+  (`/.well-known/oauth-authorization-server`), registers itself, and sends the
+  user to the AllPlays sign-in page; tokens are per-user, PKCE-protected.
+
+Ask: "What does my family have this weekend?" — ChatGPT should call
+`list_schedule` and answer with permission-filtered events and deep links.
+
+### OAuth broker
+
+`src/oauth.js` implements the slice of OAuth 2.1 the MCP spec requires:
+dynamic client registration, authorization code + PKCE (S256 only), refresh
+grant, and opaque access tokens that map to the signed-in user's Firebase
+refresh token. Codes are single-use with a 10-minute TTL; access tokens last
+1 hour. Storage is in-memory — restart logs everyone out; Firestore-backed
+storage is a prerequisite for multi-instance Cloud Run.
+
+Sign-in accepts AllPlays email/password (proxied to Firebase Identity Toolkit
+with the site referer; the password is never stored). Google sign-in is a
+follow-up.
+
+For manual curl testing you can still bypass OAuth: a Firebase refresh token
+or ID token works directly as the MCP bearer.
 
 ## Deploy (dev Cloud Run)
 
