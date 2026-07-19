@@ -287,9 +287,9 @@ function buildBaseEvent(name, properties = {}) {
 
 function getEventSampleRate(eventName) {
     if (/^(?:js_|security_|operational_|app_load_error)/.test(eventName)) return 1;
-    const config = window.__ALLPLAYS_CONFIG__ || {};
-    const configured = Number(config.telemetrySampleRate ?? window.ALLPLAYS_TELEMETRY_SAMPLE_RATE);
-    if (Number.isFinite(configured) && configured >= 0 && configured <= 1) return configured;
+    // Keep this event-class policy identical to the server. An anonymous
+    // client may decide whether to send an event, but must never choose the
+    // aggregate multiplier, and explicit workflow baselines remain complete.
     if (/^(?:interaction_|scroll_depth)/.test(eventName)) return 0.1;
     if (/^(?:page_|visibility_change|app_web_vital)/.test(eventName)) return 0.25;
     return 1;

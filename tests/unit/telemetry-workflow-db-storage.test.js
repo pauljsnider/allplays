@@ -130,8 +130,9 @@ describe('telemetry workflow DB storage', () => {
         const harness = createFirestoreHarness();
         const { normalizeTelemetryEvent, commitTelemetryEvents } = loadTelemetryCollectorHelpers()(harness.admin, crypto);
         const event = normalizeTelemetryEvent(rawEvent({
-            name: 'page_view', sampleRate: 0.25, sampleWeight: 99
+            name: 'page_view', sampleRate: 0.01, sampleWeight: 99
         }), new Date('2030-06-01T12:00:00.000Z'));
+        expect(event).toMatchObject({ sampleRate: 0.25, sampleWeight: 4 });
         await commitTelemetryEvents(harness.db, [event], '2030-06-01');
 
         const daily = harness.sets.find((write) => write.ref.collectionName === 'telemetryDaily');
@@ -159,6 +160,16 @@ describe('telemetry workflow DB storage', () => {
         }), new Date('2030-06-01T12:00:00.000Z'));
 
         expect(event).toMatchObject({ sampleRate: 1, sampleWeight: 1, signedIn: false });
+    });
+
+    it('keeps explicit workflow telemetry unsampled regardless of client input', () => {
+        const harness = createFirestoreHarness();
+        const { normalizeTelemetryEvent } = loadTelemetryCollectorHelpers()(harness.admin, crypto);
+        const event = normalizeTelemetryEvent(rawEvent({
+            name: 'app_workflow_timing', sampleRate: 0.01, sampleWeight: 100
+        }), new Date('2030-06-01T12:00:00.000Z'));
+
+        expect(event).toMatchObject({ sampleRate: 1, sampleWeight: 1 });
     });
 
     it('derives a deterministic daily deduplication hash without storing the client id', () => {

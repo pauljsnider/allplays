@@ -56,6 +56,12 @@ describe('telemetry.js payload handling', () => {
         window.__ALLPLAYS_CONFIG__ = { telemetryEndpoint: 'http://mock-telemetry-endpoint.com' };
         window.history.replaceState({}, '', '/?telemetry=1');
         Object.defineProperty(document, 'readyState', { value: 'complete', configurable: true });
+        window.sessionStorage.clear();
+        window.sessionStorage.setItem('allplays.telemetry.session', JSON.stringify({
+            id: 'unit-session-2173',
+            startedAt: Date.now(),
+            lastSeen: Date.now()
+        }));
 
         telemetryModule = await import('../../js/telemetry.js');
         await telemetryModule.flush();
@@ -170,9 +176,8 @@ describe('telemetry.js payload handling', () => {
     });
 
     it('starts an unload beacon synchronously without waiting for App Check', async () => {
-        window.__ALLPLAYS_CONFIG__.telemetrySampleRate = 1;
         appCheckMocks.getPrimaryAppCheckHeaders.mockImplementation(() => new Promise(() => {}));
-        telemetryModule.captureTelemetryEvent('page_teardown');
+        telemetryModule.captureTelemetryEvent('app_workflow_timing', { workflowName: 'page teardown' });
         mockSendBeacon.mockClear();
         appCheckMocks.getPrimaryAppCheckHeaders.mockClear();
 
@@ -226,7 +231,6 @@ describe('telemetry.js payload handling', () => {
 
     it('deduplicates repeated error fingerprints for one minute', async () => {
         vi.setSystemTime(0);
-        window.__ALLPLAYS_CONFIG__.telemetrySampleRate = 0;
         telemetryModule.captureTelemetryEvent('js_error', {
             errorName: 'TypeError', errorType: 'runtime', source: '/app/main.js', line: 12
         });
@@ -250,7 +254,6 @@ describe('telemetry.js payload handling', () => {
     });
 
     it('keeps distinct low-value signals when no privacy-safe control identity exists', async () => {
-        window.__ALLPLAYS_CONFIG__.telemetrySampleRate = 1;
         telemetryModule.captureTelemetryEvent('interaction_click', { tagName: 'button' });
         telemetryModule.captureTelemetryEvent('interaction_click', { tagName: 'button' });
         telemetryModule.captureTelemetryEvent('scroll_depth', { depthPercent: 25 });
@@ -266,5 +269,15 @@ describe('telemetry.js payload handling', () => {
         expect(events.filter((event) => event.name === 'scroll_depth').map((event) => event.properties.depthPercent)).toEqual([25, 50]);
         expect(events.filter((event) => event.name === 'interaction_click' && event.properties.telemetryName === 'save')).toHaveLength(1);
         expect(events.filter((event) => event.name === 'interaction_change').map((event) => event.properties.hasValue)).toEqual([true, false]);
+    });
+
+    it('keeps explicit workflow baselines at full sampling', async () => {
+        telemetryModule.captureTelemetryEvent('app_workflow_timing', { workflowName: 'schedule create game' });
+        telemetryModule.captureTelemetryEvent('app_ux_timing', { label: 'schedule load' });
+        await telemetryModule.flush();
+
+        const events = mockFetch.mock.calls.flatMap(([, options]) => JSON.parse(options.body).events);
+        expect(events.filter((event) => event.name === 'app_workflow_timing')[0]).toMatchObject({ sampleRate: 1, sampleWeight: 1 });
+        expect(events.filter((event) => event.name === 'app_ux_timing')[0]).toMatchObject({ sampleRate: 1, sampleWeight: 1 });
     });
 });

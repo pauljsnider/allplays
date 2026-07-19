@@ -5099,15 +5099,9 @@ function normalizeTelemetryEvent(rawEvent, receivedAt) {
   const dateKey = getDateKey(receivedAt);
   const sessionId = hashTelemetryIdentifier('session', rawSessionId, dateKey);
   const eventIdSource = rawEventId || `${rawSessionId}|${name}|${clientTimestamp}`;
-  const requestedSampleRate = Number(rawEvent.sampleRate);
-  const criticalEvent = /^(?:js_|security_|operational_|app_load_error)/.test(name);
-  const sampleRate = criticalEvent
-    ? 1
-    : Number.isFinite(requestedSampleRate) && requestedSampleRate > 0 && requestedSampleRate <= 1
-      ? requestedSampleRate
-      : 1;
-  // Derive weight from the bounded rate rather than trusting a caller-supplied
-  // multiplier. Anonymous clients must not be able to amplify one write.
+  // Derive both values entirely from the event class. The collector is
+  // anonymous, so neither a supplied rate nor multiplier is authoritative.
+  const sampleRate = getTelemetrySampleRate(name);
   const sampleWeight = Math.min(100, Math.max(1, Math.round(1 / sampleRate)));
 
   return {
@@ -5138,6 +5132,13 @@ function normalizeTelemetryEvent(rawEvent, receivedAt) {
     userAgent: '',
     properties
   };
+}
+
+function getTelemetrySampleRate(eventName) {
+  if (/^(?:js_|security_|operational_|app_load_error)/.test(eventName)) return 1;
+  if (/^(?:interaction_|scroll_depth)/.test(eventName)) return 0.1;
+  if (/^(?:page_|visibility_change|app_web_vital)/.test(eventName)) return 0.25;
+  return 1;
 }
 
 function telemetryDocId(value) {
