@@ -15,16 +15,16 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
       - name: Setup Node
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 22
           cache: npm
 
       - name: Setup Java
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
         with:
           distribution: temurin
           java-version: 21
@@ -49,10 +49,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
       - name: Setup Node
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 22
           cache: npm
@@ -76,28 +76,30 @@ jobs:
 
       - name: Upload server log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: prod-regression-guards-http-log
           path: /tmp/allplays-prod-regression-guards.log
 
-  deploy:
+  prepare-deploy:
     needs: [unit-tests, regression-guards]
     runs-on: ubuntu-latest
-    environment: production
     permissions:
       actions: read
-      checks: write
       contents: read
+    outputs:
+      firestore_changed: ${{ steps.firestore_config.outputs.changed }}
+      head_sha: ${{ steps.handoff_identity.outputs.head_sha }}
+      storage_changed: ${{ steps.storage_rules.outputs.changed }}
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           fetch-depth: 0
 
       - name: Setup Node
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 22
           cache: npm
@@ -116,20 +118,20 @@ jobs:
           ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY: ${{ vars.APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY }}
           ALLPLAYS_APP_CHECK_ENFORCEMENT_READY: ${{ vars.APP_CHECK_ENFORCEMENT_READY }}
         run: |
-          site_dir="$RUNNER_TEMP/firebase-prod-site"
-          config_file="$GITHUB_WORKSPACE/.firebase-prod.generated.json"
+          set -euo pipefail
+          bundle_dir="$RUNNER_TEMP/firebase-production-ready"
+          site_dir="$bundle_dir/site"
+          config_file="$bundle_dir/firebase-prod.generated.json"
+          mkdir -p "$bundle_dir"
           node scripts/stage-pages-bundle.mjs "$site_dir"
           node scripts/write-firebase-hosting-config.mjs "$site_dir" "$config_file"
-          echo "FIREBASE_PROD_CONFIG=$config_file" >> "$GITHUB_ENV"
+          jq '.hosting.public = "site"' "$config_file" > "$config_file.tmp"
+          mv "$config_file.tmp" "$config_file"
+          cp firestore.rules firestore.indexes.json storage.rules "$bundle_dir/"
+          echo "FIREBASE_PRODUCTION_BUNDLE=$bundle_dir" >> "$GITHUB_ENV"
 
       - name: Install Functions dependencies
         run: npm ci --prefix functions
-
-      - name: Configure Firebase service account
-        run: |
-          credentials_file="$RUNNER_TEMP/firebase-service-account.json"
-          printf '%s' '${{ secrets.FIREBASE_SERVICE_ACCOUNT_GAME_FLOW_C6311 }}' > "$credentials_file"
-          echo "GOOGLE_APPLICATION_CREDENTIALS=$credentials_file" >> "$GITHUB_ENV"
 
       - name: Detect Storage rules changes
         id: storage_rules
@@ -184,15 +186,136 @@ jobs:
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Deploy Firebase Storage rules when available
-        shell: bash
-        env:
-          STORAGE_RULES_CHANGED: ${{ steps.storage_rules.outputs.changed }}
+      - name: Archive installed Functions runtime into trusted handoff
         run: |
           set -euo pipefail
+          # actions/upload-artifact intentionally normalizes file modes and
+          # does not preserve symlinks. Keep the installed Functions runtime
+          # inside tar so npm executable bits and .bin links survive handoff.
+          tar --format=posix \
+            -cf "$FIREBASE_PRODUCTION_BUNDLE/functions-runtime.tar" \
+            functions
+          mkdir -p "$FIREBASE_PRODUCTION_BUNDLE/context"
+          cp scripts/extract-production-functions-handoff.py "$FIREBASE_PRODUCTION_BUNDLE/context/"
+
+      - name: Install isolated Firebase deploy CLI without OIDC or lifecycle scripts
+        run: |
+          set -euo pipefail
+          npm install \
+            --prefix "$FIREBASE_PRODUCTION_BUNDLE/firebase-cli" \
+            --ignore-scripts \
+            --no-audit \
+            --no-fund \
+            --package-lock=false \
+            firebase-tools@14.25.0
+          node "$FIREBASE_PRODUCTION_BUNDLE/firebase-cli/node_modules/firebase-tools/lib/bin/firebase.js" --version
+
+      - name: Bind handoff to exact production commit
+        id: handoff_identity
+        run: |
+          set -euo pipefail
+          if [[ ! "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            exit 1
+          fi
+          printf '%s\n' "$GITHUB_SHA" > "$FIREBASE_PRODUCTION_BUNDLE/head-sha"
+          echo "head_sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Upload trusted production deploy handoff
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: firebase-production-trusted-ready
+          path: ${{ runner.temp }}/firebase-production-ready
+          if-no-files-found: error
+          include-hidden-files: true
+          # Keep the trusted, credential-free handoff available across
+          # production approval queues and environment wait timers.
+          retention-days: 30
+
+  deploy:
+    needs: prepare-deploy
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+
+    steps:
+      # Only the fixed artifact produced by the no-OIDC preparation job enters
+      # this job. No checkout, dependency install, build, or lifecycle script
+      # shares the production identity boundary.
+      - name: Download trusted production deploy handoff
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: firebase-production-trusted-ready
+          path: ${{ runner.temp }}/firebase-production-ready
+
+      - name: Validate and extract trusted production handoff before OIDC
+        env:
+          FIRESTORE_CONFIG_CHANGED: ${{ needs.prepare-deploy.outputs.firestore_changed }}
+          PREPARED_HEAD_SHA: ${{ needs.prepare-deploy.outputs.head_sha }}
+          STORAGE_RULES_CHANGED: ${{ needs.prepare-deploy.outputs.storage_changed }}
+        run: |
+          set -euo pipefail
+          bundle="$RUNNER_TEMP/firebase-production-ready"
+          if [[ "$PREPARED_HEAD_SHA" != "$GITHUB_SHA" ]] || [[ ! "$PREPARED_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Production handoff commit does not match this workflow run." >&2
+            exit 1
+          fi
+          if [[ "$FIRESTORE_CONFIG_CHANGED" != "true" && "$FIRESTORE_CONFIG_CHANGED" != "false" ]]; then
+            echo "Invalid Firestore change state." >&2
+            exit 1
+          fi
+          if [[ "$STORAGE_RULES_CHANGED" != "true" && "$STORAGE_RULES_CHANGED" != "false" ]]; then
+            echo "Invalid Storage change state." >&2
+            exit 1
+          fi
+          grep -Fxq "$GITHUB_SHA" "$bundle/head-sha"
+          test -d "$bundle/site"
+          test -f "$bundle/functions-runtime.tar"
+          test -f "$bundle/context/extract-production-functions-handoff.py"
+          test ! -L "$bundle/context/extract-production-functions-handoff.py"
+          test -f "$bundle/firestore.rules"
+          test -f "$bundle/firestore.indexes.json"
+          test -f "$bundle/storage.rules"
+          test -f "$bundle/firebase-prod.generated.json"
+          test -f "$bundle/firebase-cli/node_modules/firebase-tools/lib/bin/firebase.js"
+          jq -e '.hosting.public == "site" and .hosting.site == "game-flow-c6311" and .functions.source == "functions"' "$bundle/firebase-prod.generated.json" >/dev/null
+          expected_extractor_sha256='0acd0a7041df6ffc53befb388c6591efd149d4f82d4cfed2ea37d7349394165f'
+          printf '%s  %s\n' \
+            "$expected_extractor_sha256" \
+            "$bundle/context/extract-production-functions-handoff.py" \
+            | sha256sum --check --strict -
+          python3 "$bundle/context/extract-production-functions-handoff.py" \
+            "$bundle/functions-runtime.tar" \
+            "$bundle"
+          echo "FIREBASE_PRODUCTION_BUNDLE=$bundle" >> "$GITHUB_ENV"
+
+      - name: Authenticate Storage deploy through exact-workflow OIDC
+        id: google_auth_storage
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.FIREBASE_DEPLOY_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.FIREBASE_DEPLOY_SERVICE_ACCOUNT }}
+          project_id: game-flow-c6311
+          create_credentials_file: true
+          cleanup_credentials: true
+
+      - name: Deploy Firebase Storage rules when available
+        timeout-minutes: 4
+        shell: bash
+        env:
+          STORAGE_RULES_CHANGED: ${{ needs.prepare-deploy.outputs.storage_changed }}
+        run: |
+          set -euo pipefail
+          firebase_cli="$FIREBASE_PRODUCTION_BUNDLE/firebase-cli/node_modules/firebase-tools/lib/bin/firebase.js"
+          firebase_config="$FIREBASE_PRODUCTION_BUNDLE/firebase-prod.generated.json"
           storage_log="$RUNNER_TEMP/firebase-storage-deploy.log"
           set +e
-          npx firebase-tools@14.25.0 deploy --only storage --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive 2>&1 | tee "$storage_log"
+          (
+            cd "$FIREBASE_PRODUCTION_BUNDLE"
+            node "$firebase_cli" deploy --only storage --project game-flow-c6311 --config "$firebase_config" --non-interactive
+          ) 2>&1 | tee "$storage_log"
           storage_status="${PIPESTATUS[0]}"
           set -e
 
@@ -215,12 +338,40 @@ jobs:
           fi
           exit "$storage_status"
 
-      - name: Deploy Firebase production
-        shell: bash
+      - name: Remove Storage deploy credential
+        if: always()
         env:
-          FIRESTORE_CONFIG_CHANGED: ${{ steps.firestore_config.outputs.changed }}
+          GOOGLE_CREDENTIAL_FILE: ${{ steps.google_auth_storage.outputs.credentials_file_path }}
         run: |
           set -euo pipefail
+          if [[ -n "$GOOGLE_CREDENTIAL_FILE" ]]; then
+            rm -f -- "$GOOGLE_CREDENTIAL_FILE"
+          fi
+          {
+            echo "CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE="
+            echo "GOOGLE_APPLICATION_CREDENTIALS="
+            echo "GOOGLE_GHA_CREDS_PATH="
+          } >> "$GITHUB_ENV"
+
+      - name: Authenticate production deploy through exact-workflow OIDC
+        id: google_auth_production
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.FIREBASE_DEPLOY_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.FIREBASE_DEPLOY_SERVICE_ACCOUNT }}
+          project_id: game-flow-c6311
+          create_credentials_file: true
+          cleanup_credentials: true
+
+      - name: Deploy Firebase production
+        timeout-minutes: 4
+        shell: bash
+        env:
+          FIRESTORE_CONFIG_CHANGED: ${{ needs.prepare-deploy.outputs.firestore_changed }}
+        run: |
+          set -euo pipefail
+          firebase_cli="$FIREBASE_PRODUCTION_BUNDLE/firebase-cli/node_modules/firebase-tools/lib/bin/firebase.js"
+          firebase_config="$FIREBASE_PRODUCTION_BUNDLE/firebase-prod.generated.json"
           transient_pattern='(^|[^[:alnum:]])(429|500|502|503|504)([^[:alnum:]]|$)|HTTP Error:[[:space:]]*409,[[:space:]]*Requested entity already exists|service[[:space:]_-]+unavailable|econnreset|connection[[:space:]_-]+reset|network[[:space:]_-]+reset|etimedout|timed[[:space:]_-]+out|timeout'
 
           retry_firebase_deploy() {
@@ -232,7 +383,10 @@ jobs:
             for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do
               deploy_log="$RUNNER_TEMP/firebase-${deploy_label}-deploy-attempt-${attempt}.log"
               set +e
-              npx firebase-tools@14.25.0 deploy --only "$deploy_targets" --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive 2>&1 | tee "$deploy_log"
+              (
+                cd "$FIREBASE_PRODUCTION_BUNDLE"
+                node "$firebase_cli" deploy --only "$deploy_targets" --project game-flow-c6311 --config "$firebase_config" --non-interactive
+              ) 2>&1 | tee "$deploy_log"
               deploy_status="${PIPESTATUS[0]}"
               set -e
 
@@ -262,8 +416,23 @@ jobs:
             retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore"
             retry_firebase_deploy "hosting,functions" "application"
           else
-            # Publish user-facing code first so an unrelated Rules API outage cannot
-            # prevent Hosting and Functions-only fixes from reaching production.
+            # No authorization/index drift exists relative to the last successful
+            # production deployment. Do not make a redundant Rules API write: an
+            # unrelated Rules API outage must not fail a Hosting/Functions-only fix.
             retry_firebase_deploy "hosting,functions" "application"
-            retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore"
           fi
+
+      - name: Remove production deploy credential
+        if: always()
+        env:
+          GOOGLE_CREDENTIAL_FILE: ${{ steps.google_auth_production.outputs.credentials_file_path }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$GOOGLE_CREDENTIAL_FILE" ]]; then
+            rm -f -- "$GOOGLE_CREDENTIAL_FILE"
+          fi
+          {
+            echo "CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE="
+            echo "GOOGLE_APPLICATION_CREDENTIALS="
+            echo "GOOGLE_GHA_CREDS_PATH="
+          } >> "$GITHUB_ENV"

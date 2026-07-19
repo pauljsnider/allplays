@@ -32,6 +32,7 @@ const trustBoundaryRunbook = fs.readFileSync(
     path.join(repoRoot, 'docs', 'preview-deploy-trust-boundary.md'),
     'utf8'
 );
+const gitignore = fs.readFileSync(path.join(repoRoot, '.gitignore'), 'utf8');
 const tempDirectories = [];
 
 function validTriggerFixture() {
@@ -201,47 +202,62 @@ describe('preview deployment workflow trust boundary', () => {
         expect(trustedWorkflow).toContain('persist-credentials: false');
         expect(trustedWorkflow).not.toContain('refs/pull/');
         expect(trustedWorkflow).not.toContain('github.event.workflow_run.head_sha');
-        expect(trustedWorkflow).not.toContain('actions/download-artifact');
+        expect(trustedWorkflow).toMatch(/actions\/download-artifact@[0-9a-f]{40}/);
         expect(trustedWorkflow).not.toContain('hosting:channel:delete');
         expect(trustedWorkflow).not.toContain('hosting:channel:list');
         expect(trustedWorkflow).toContain('actions/runs/$WORKFLOW_RUN_ID/artifacts?per_page=100');
         expect(trustedWorkflow).toContain('actions/artifacts/$ARTIFACT_ID/zip');
         expect(trustedWorkflow).toContain('scripts/extract-preview-hosting-artifact.py');
-        expect(trustedWorkflow).toContain('node scripts/write-firebase-hosting-config.mjs "$FIREBASE_PREVIEW_SITE"');
-        expect(trustedWorkflow).toContain('CURRENT_CHANNEL: pr-${{ steps.verify_trigger.outputs.pr_number }}');
-        expect(trustedWorkflow).toContain('hosting:channel:deploy "$CURRENT_CHANNEL" --project game-flow-c6311');
+        expect(trustedWorkflow).toContain('node scripts/write-firebase-hosting-config.mjs "$FIREBASE_PREVIEW_STAGE/site"');
+        expect(trustedWorkflow).toContain('CURRENT_CHANNEL: pr-${{ needs.prepare-preview.outputs.pr_number }}');
+        expect(trustedWorkflow).toContain('node "$firebase_cli" hosting:channel:deploy "$CURRENT_CHANNEL" --project game-flow-c6311');
+        expect(trustedWorkflow).not.toContain('--no-authorized-domains');
+        expect(trustedWorkflow).toContain('preview_deploy_hit_auth_domain_sync_error()');
+        expect(trustedWorkflow).toContain('refusing to report a partially functional preview');
+        expect(trustedWorkflow).toContain('find "$bundle/site" -type l');
+        expect(trustedWorkflow).not.toContain('find "$bundle" -type l');
     });
 
     it('rechecks the exact pull-request head immediately before deploy and comment writes', () => {
         const deployStepIndex = trustedWorkflow.indexOf('name: Deploy fixed Firebase Hosting preview channel');
         const preDeployCheckIndex = trustedWorkflow.indexOf('firebase-preview-pre-deploy-pr.json');
         const deployWriteIndex = trustedWorkflow.indexOf('hosting:channel:deploy "$CURRENT_CHANNEL"');
-        const commentStepIndex = trustedWorkflow.indexOf('name: Report preview URL on verified pull request');
+        const commentStepIndex = trustedWorkflow.indexOf('name: Report preview URL on the still-current pull request');
+        const commentDiscoveryIndex = trustedWorkflow.indexOf('comment_id="$(gh api --paginate');
         const preCommentCheckIndex = trustedWorkflow.indexOf('firebase-preview-pre-comment-pr.json');
         const commentWriteIndex = trustedWorkflow.indexOf('issues/comments/$comment_id');
 
         expect(preDeployCheckIndex).toBeGreaterThan(deployStepIndex);
         expect(deployWriteIndex).toBeGreaterThan(preDeployCheckIndex);
         expect(preCommentCheckIndex).toBeGreaterThan(commentStepIndex);
+        expect(preCommentCheckIndex).toBeGreaterThan(commentDiscoveryIndex);
         expect(commentWriteIndex).toBeGreaterThan(preCommentCheckIndex);
         expect(trustedWorkflow).toMatch(/recheck_current_head\n\s+if ! deploy_preview_channel/);
         expect(trustedWorkflow.slice(preCommentCheckIndex, commentWriteIndex)).toContain(
             'node scripts/verify-preview-deploy-trigger.mjs'
         );
-        expect(trustedWorkflow.match(/node scripts\/verify-preview-deploy-trigger\.mjs/g)).toHaveLength(4);
+        expect(trustedWorkflow.slice(preCommentCheckIndex, commentWriteIndex)).toContain(
+            'grep -Fxq "head_sha=$EXPECTED_HEAD_SHA"'
+        );
+        expect(trustedWorkflow.slice(preCommentCheckIndex, commentWriteIndex)).toContain(
+            'grep -Fxq "artifact_id=$EXPECTED_ARTIFACT_ID"'
+        );
+        expect(trustedWorkflow).toContain('Preview for commit `%s`: %s');
+        expect(trustedWorkflow.match(/verify-preview-deploy-trigger\.mjs/g).length).toBeGreaterThanOrEqual(5);
     });
 
-    it('withholds the Firebase credential until identity, archive, shape, config, and install checks pass', () => {
+    it('keeps raw artifact validation and dependency installation outside the OIDC job', () => {
         const triggerIndex = trustedWorkflow.indexOf('node scripts/verify-preview-deploy-trigger.mjs');
         const downloadIndex = trustedWorkflow.indexOf('actions/artifacts/$ARTIFACT_ID/zip');
         const extractionIndex = trustedWorkflow.indexOf('python3 scripts/extract-preview-hosting-artifact.py');
         const configIndex = trustedWorkflow.indexOf('node scripts/write-firebase-hosting-config.mjs');
-        const installIndex = trustedWorkflow.indexOf('run: npm ci --ignore-scripts');
-        const recheckIndex = trustedWorkflow.indexOf('name: Re-verify current pull-request head before credentials');
-        const credentialIndex = trustedWorkflow.indexOf('secrets.FIREBASE_SERVICE_ACCOUNT_GAME_FLOW_C6311');
+        const installIndex = trustedWorkflow.indexOf('firebase-tools@15.24.0');
+        const recheckIndex = trustedWorkflow.indexOf('name: Re-verify current pull-request head before trusted handoff');
+        const handoffIndex = trustedWorkflow.indexOf('name: Upload sanitized trusted deploy handoff');
+        const credentialIndex = trustedWorkflow.indexOf('uses: google-github-actions/auth@');
         const deployIndex = trustedWorkflow.indexOf('hosting:channel:deploy');
-        const cleanupIndex = trustedWorkflow.indexOf('name: Remove Firebase credential file');
-        const commentIndex = trustedWorkflow.indexOf('name: Report preview URL on verified pull request');
+        const cleanupIndex = trustedWorkflow.indexOf('name: Remove ephemeral Google credential file');
+        const commentIndex = trustedWorkflow.indexOf('name: Report preview URL on the still-current pull request');
 
         expect(triggerIndex).toBeGreaterThan(-1);
         expect(downloadIndex).toBeGreaterThan(triggerIndex);
@@ -249,11 +265,20 @@ describe('preview deployment workflow trust boundary', () => {
         expect(configIndex).toBeGreaterThan(extractionIndex);
         expect(installIndex).toBeGreaterThan(configIndex);
         expect(recheckIndex).toBeGreaterThan(installIndex);
-        expect(credentialIndex).toBeGreaterThan(recheckIndex);
+        expect(handoffIndex).toBeGreaterThan(recheckIndex);
+        expect(credentialIndex).toBeGreaterThan(handoffIndex);
         expect(deployIndex).toBeGreaterThan(credentialIndex);
         expect(cleanupIndex).toBeGreaterThan(deployIndex);
         expect(commentIndex).toBeGreaterThan(cleanupIndex);
         expect(trustedWorkflow.slice(cleanupIndex, commentIndex)).toContain('if: always()');
+        expect(trustedWorkflow.slice(0, credentialIndex)).toContain('permissions:\n      actions: read\n      contents: read\n      pull-requests: read');
+        expect(trustedWorkflow.slice(credentialIndex)).not.toContain('npm install');
+        expect(trustedWorkflow).toContain('id-token: write');
+        expect(trustedWorkflow).toContain('workload_identity_provider: ${{ vars.FIREBASE_DEPLOY_WORKLOAD_IDENTITY_PROVIDER }}');
+        expect(trustedWorkflow).toContain('service_account: ${{ vars.FIREBASE_DEPLOY_SERVICE_ACCOUNT }}');
+        expect(trustedWorkflow).toContain('cleanup_credentials: true');
+        expect(trustedWorkflow).not.toContain('secrets.FIREBASE_SERVICE_ACCOUNT_GAME_FLOW_C6311');
+        expect(gitignore).toContain('gha-creds-*.json');
     });
 
     it('pins every third-party action used by both preview workflows', () => {
@@ -286,8 +311,8 @@ describe('preview deployment workflow trust boundary', () => {
         expect(scheduledProdSmokeWorkflow).toContain('ref: master');
     });
 
-    it('documents the environment-only credential and exact-head operational contract', () => {
-        expect(trustBoundaryRunbook).toContain('must remain absent from repository');
+    it('documents the keyless credential and exact-head operational contract', () => {
+        expect(trustBoundaryRunbook).toContain('must remain absent');
         expect(trustBoundaryRunbook).toContain('firebase-preview-trusted');
         expect(trustBoundaryRunbook).toContain('production-smoke');
         expect(trustBoundaryRunbook).toContain('SMOKE_AUTH_EMAIL');
@@ -297,6 +322,12 @@ describe('preview deployment workflow trust boundary', () => {
         expect(trustBoundaryRunbook).toContain('Any new commit invalidates prior review evidence.');
         expect(trustBoundaryRunbook).toContain('Cloud Audit Logs for the old key ID');
         expect(trustBoundaryRunbook).toContain('Workload Identity Federation');
+        expect(trustBoundaryRunbook).toContain('FIREBASE_DEPLOY_WORKLOAD_IDENTITY_PROVIDER');
+        expect(trustBoundaryRunbook).toContain('FIREBASE_DEPLOY_SERVICE_ACCOUNT');
+        expect(trustBoundaryRunbook).toContain('exact workflow_ref');
+        expect(trustBoundaryRunbook).toContain('allplaysPreviewAuthDomainUpdater');
+        expect(trustBoundaryRunbook).toContain('`firebaseauth.configs.get` and `firebaseauth.configs.update`');
+        expect(trustBoundaryRunbook).toContain('Do not replace it with Identity Platform Admin');
     });
 });
 

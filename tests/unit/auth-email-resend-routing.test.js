@@ -116,12 +116,13 @@ describe('authentication email delivery routing', () => {
         const firebaseDeployCommands = productionSource
             .split('\n')
             .map(line => line.trim())
-            .filter(line => /^(run: )?npx firebase-tools@14\.25\.0 deploy/.test(line));
+            .filter(line => /^node "\$firebase_cli" deploy/.test(line));
 
         expect(firebaseDeployCommands).toEqual([
-            'npx firebase-tools@14.25.0 deploy --only storage --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive 2>&1 | tee "$storage_log"',
-            'npx firebase-tools@14.25.0 deploy --only "$deploy_targets" --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive 2>&1 | tee "$deploy_log"'
+            'node "$firebase_cli" deploy --only storage --project game-flow-c6311 --config "$firebase_config" --non-interactive',
+            'node "$firebase_cli" deploy --only "$deploy_targets" --project game-flow-c6311 --config "$firebase_config" --non-interactive'
         ]);
+        expect(productionSource).toContain('firebase-tools@14.25.0');
         expect(productionSource).toContain('[[ "$STORAGE_RULES_CHANGED" != "true" ]]');
         expect(productionSource).toContain('exit "$storage_status"');
         expect(productionSource.match(/--force/g) ?? []).toHaveLength(0);
@@ -135,7 +136,8 @@ describe('authentication email delivery routing', () => {
         const changedBranch = productionSource.slice(changedBranchStart, unchangedBranchStart);
         const unchangedBranch = productionSource.slice(unchangedBranchStart, conditionalEnd);
         expect(changedBranch.indexOf('"firestore"')).toBeLessThan(changedBranch.indexOf('"application"'));
-        expect(unchangedBranch.indexOf('"application"')).toBeLessThan(unchangedBranch.indexOf('"firestore"'));
+        expect(unchangedBranch).toContain('"application"');
+        expect(unchangedBranch).not.toContain('"firestore"');
     });
 
     it('retries only transient production deploy failures and fails fast otherwise', () => {
