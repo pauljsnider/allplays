@@ -5,6 +5,7 @@ import {
   doc,
   getAI,
   getApp,
+  getDoc,
   getDocs,
   getGenerativeModel,
   getUserProfile,
@@ -20,13 +21,19 @@ import { searchHelpKnowledge } from './helpKnowledgeService';
 import { loadParentHome } from './homeService';
 import { createLogger } from './logger';
 import {
+  createParentFamilyShare,
+  createParentHouseholdMemberInvite,
+  loadFamilyShareModel,
   loadParentCertificates,
   loadParentFeesForApp,
+  loadParentHouseholdInviteModel,
   loadParentRegistrations
 } from './parentToolsService';
 import {
   loadParentPlayerDetailWithAthleteProfile,
-  loadParentPlayerVideoClips
+  loadParentPlayerStatTotals,
+  loadParentPlayerVideoClips,
+  updateParentPlayerEditableProfile
 } from './playerService';
 import {
   formatEventDateLabel,
@@ -34,9 +41,21 @@ import {
   getOpenScheduleAssignments,
   getScheduleTitle,
   normalizeScheduleDate,
+  normalizeRsvpResponse,
   type ParentScheduleEvent
 } from './scheduleLogic';
-import { loadParentSchedule } from './scheduleService';
+import {
+  cancelParentScheduleRideRequest,
+  createParentScheduleRideOffer,
+  loadParentSchedule,
+  loadParentScheduleEventDetail,
+  loadParentScheduleRideOffers,
+  requestParentScheduleRideSpot,
+  setParentScheduleRideOfferStatus,
+  submitParentScheduleRsvp,
+  submitParentScheduleRsvpForChildren,
+  summarizeParentScheduleRideOffers
+} from './scheduleService';
 import { loadParentTeamDetail } from './teamDetailService';
 import type { AuthUser } from './types';
 
@@ -70,6 +89,8 @@ export type PrivateAiToolResult = {
   ok: boolean;
   data?: unknown;
   error?: string;
+  requiresConfirmation?: boolean;
+  confirmationId?: string;
 };
 
 export type PrivateAiSendResult = {
@@ -80,6 +101,7 @@ export type PrivateAiSendResult = {
 
 const privateAiCollectionName = 'privateAiMessages';
 const privateAiConversationCollectionName = 'privateAiConversations';
+const privateAiPendingActionCollectionName = 'privateAiPendingActions';
 const logger = createLogger('private-ai');
 export const DEFAULT_PRIVATE_AI_CONVERSATION_ID = 'default';
 export const DRAFT_PRIVATE_AI_CONVERSATION_ID = '__draft__';
@@ -89,11 +111,40 @@ const maxToolRounds = 2;
 const maxToolCallsPerRound = 3;
 const maxPromptCharacters = 1800;
 const maxAnswerCharacters = 2400;
+const confirmationIdPrefix = 'ai';
 
 let aiModelCache: any = null;
+const pendingActionMemory = new Map<string, PrivateAiPendingAction>();
+
+type PrivateAiToolMode = 'read' | 'write';
+
+type PrivateAiPendingAction = {
+  id: string;
+  userId: string;
+  toolName: string;
+  args: Record<string, unknown>;
+  summary: string;
+  createdAt: string;
+  conversationId?: string;
+  confirmationGroupId?: string;
+};
+
+type PrivateAiToolDefinition = {
+  name: string;
+  mode: PrivateAiToolMode;
+  description: string;
+  aliases?: string[];
+  resolve: (user: AuthUser, args: Record<string, unknown>) => Promise<unknown>;
+};
+
+type PrivateAiToolContext = {
+  conversationId?: string;
+  confirmationGroupId?: string;
+};
 
 export function resetPrivateAiModel() {
   aiModelCache = null;
+  pendingActionMemory.clear();
 }
 
 export async function loadPrivateAiConversations(user: AuthUser | null, conversationLimit = 30): Promise<PrivateAiConversation[]> {
@@ -196,7 +247,9 @@ export async function sendPrivateAiMessage(
   }).catch(() => {});
 
   try {
-    const aiResult = await generatePrivateAiAnswer(user, question, priorMessages);
+    const aiResult = await generatePrivateAiAnswer(user, question, priorMessages, {
+      conversationId: activeConversationId
+    });
     const assistantMessage = await savePrivateAiMessage(user, {
       role: 'assistant',
       text: aiResult.answer,
@@ -237,11 +290,41 @@ export async function sendPrivateAiMessage(
 export async function generatePrivateAiAnswer(
   user: AuthUser,
   question: string,
-  priorMessages: PrivateAiMessage[] = []
+  priorMessages: PrivateAiMessage[] = [],
+  context: PrivateAiToolContext = {}
 ): Promise<{ answer: string; toolResults: PrivateAiToolResult[] }> {
+  const naturalConfirmation = isNaturalConfirmation(question);
+  const explicitConfirmationId = parseConfirmationId(question);
+  const confirmedActionIds = explicitConfirmationId
+    ? [explicitConfirmationId]
+    : naturalConfirmation
+      ? await resolvePendingActionIdsForNaturalConfirmation(user, priorMessages, context)
+      : [];
+  if (confirmedActionIds.length) {
+    const confirmationResults = await Promise.all(confirmedActionIds.map((id) => executeConfirmedPrivateAiAction(user, id)));
+    const failedResult = confirmationResults.find((result) => !result.ok);
+    return {
+      answer: failedResult
+        ? `I could not complete that confirmed action: ${failedResult.error || 'Action failed.'}`
+        : `Confirmed. ${summarizeExecutedActions(confirmationResults)}`,
+      toolResults: confirmationResults
+    };
+  }
+  if (naturalConfirmation) {
+    return {
+      answer: 'I do not have a pending change to confirm. Tell me what you want updated and I will stage it for approval.',
+      toolResults: []
+    };
+  }
+
   const model = await getPrivateAiModel();
   const history = summarizeChatHistory(priorMessages);
   const toolResults: PrivateAiToolResult[] = [];
+  const confirmationGroupId = createConfirmationGroupId();
+  const toolContext = {
+    ...context,
+    confirmationGroupId
+  };
   if (looksLikeFunctionalHelpQuestion(question)) {
     toolResults.push(await runPrivateAiTool(user, {
       name: 'get_help',
@@ -249,7 +332,7 @@ export async function generatePrivateAiAnswer(
         query: question,
         limit: 5
       }
-    }));
+    }, toolContext));
   }
   let plannerInput = buildPlannerPrompt({ user, question, history, toolResults });
 
@@ -272,7 +355,7 @@ export async function generatePrivateAiAnswer(
       };
     }
 
-    const roundResults = await Promise.all(calls.map((call) => runPrivateAiTool(user, call)));
+    const roundResults = await Promise.all(calls.map((call) => runPrivateAiTool(user, call, toolContext)));
     toolResults.push(...roundResults);
     plannerInput = buildPlannerPrompt({ user, question, history, toolResults });
   }
@@ -304,102 +387,39 @@ export function parsePrivateAiPlannerResponse(text: string): { answer: string; t
   return { answer, toolCalls };
 }
 
-export async function runPrivateAiTool(user: AuthUser, call: PrivateAiToolCall): Promise<PrivateAiToolResult> {
+export async function runPrivateAiTool(user: AuthUser, call: PrivateAiToolCall, context: PrivateAiToolContext = {}): Promise<PrivateAiToolResult> {
   const name = compactText(call.name);
   const args = isPlainObject(call.args) ? call.args : {};
+  const definition = getPrivateAiToolDefinition(name);
 
   try {
-    switch (name) {
-      case 'get_profile':
-        return {
-          name,
-          ok: true,
-          data: summarizeProfile(user, await getUserProfile(user.uid).catch(() => null))
-        };
-      case 'get_home':
-        return {
-          name,
-          ok: true,
-          data: summarizeHome(await loadParentHome(user))
-        };
-      case 'get_schedule': {
-        const range = compactText(args.range).toLowerCase();
-        return {
-          name,
-          ok: true,
-          data: summarizeSchedule(await loadParentSchedule(user, {
-            includePastGames: range === 'all'
-          }), args)
-        };
-      }
-      case 'get_messages':
-        return {
-          name,
-          ok: true,
-          data: summarizeMessages(await loadChatInbox(user))
-        };
-      case 'get_team_detail': {
-        const teamId = await resolveAccessibleTeamId(user, args);
-        if (!teamId) {
-          return { name, ok: false, error: 'No matching team was found for this account.' };
-        }
-        return {
-          name,
-          ok: true,
-          data: summarizeTeamDetail(await loadParentTeamDetail(teamId, user))
-        };
-      }
-      case 'get_player_development': {
-        const player = await resolveAccessiblePlayer(user, args);
-        if (!player) {
-          return { name, ok: false, error: 'No matching player was found for this account.' };
-        }
-        const [detail, clips] = await Promise.all([
-          loadParentPlayerDetailWithAthleteProfile(user, player.teamId, player.playerId),
-          loadParentPlayerVideoClips(user, player.teamId, player.playerId).catch(() => [])
-        ]);
-        return {
-          name,
-          ok: true,
-          data: summarizePlayerDevelopment({
-            ...detail,
-            clips
-          })
-        };
-      }
-      case 'get_fees':
-        return {
-          name,
-          ok: true,
-          data: summarizeFees(await loadParentFeesForApp(user))
-        };
-      case 'get_parent_tools': {
-        const [registrations, certificates] = await Promise.all([
-          loadParentRegistrations(user).catch(() => []),
-          loadParentCertificates(user).catch(() => [])
-        ]);
-        return {
-          name,
-          ok: true,
-          data: {
-            registrations: registrations.slice(0, 10),
-            certificates: certificates.slice(0, 10)
-          }
-        };
-      }
-      case 'get_help':
-        return {
-          name,
-          ok: true,
-          data: summarizeHelpKnowledge(searchHelpKnowledge({
-            query: compactText(args.query) || compactText(args.topic) || compactText(args.question),
-            roles: user.roles || [],
-            limit: Number(args.limit || 5)
-          }))
-        };
-      default:
-        return { name, ok: false, error: `Unsupported tool: ${name}` };
+    if (!definition) {
+      return { name, ok: false, error: `Unsupported tool: ${name}` };
     }
+
+    if (definition.mode === 'write' && args.__confirmed !== true) {
+      const pending = await savePrivateAiPendingAction(user, definition, args, context);
+      return {
+        name,
+        ok: true,
+        requiresConfirmation: true,
+        confirmationId: pending.id,
+        data: {
+          summary: pending.summary,
+          confirmationText: 'Reply "yes" to apply this change.'
+        }
+      };
+    }
+
+    const data = await definition.resolve(user, args);
+    if (definition.mode === 'write') {
+      await savePrivateAiActionAudit(user, definition.name, args, data).catch(() => {});
+    }
+    return {
+      name,
+      ok: true,
+      data
+    };
   } catch (error: any) {
     return {
       name,
@@ -407,6 +427,598 @@ export async function runPrivateAiTool(user: AuthUser, call: PrivateAiToolCall):
       error: error?.message || 'Tool failed.'
     };
   }
+}
+
+const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
+  {
+    name: 'get_profile',
+    mode: 'read',
+    description: 'Account profile, roles, notification preferences, linked teams, and linked players.',
+    resolve: async (user) => summarizeProfile(user, await getUserProfile(user.uid).catch(() => null))
+  },
+  {
+    name: 'get_home',
+    mode: 'read',
+    description: 'Parent dashboard tasks, players, teams, next events, unread messages, packets, fees, and priority actions.',
+    aliases: ['list_tasks'],
+    resolve: async (user) => summarizeHome(await loadParentHome(user))
+  },
+  {
+    name: 'list_schedule',
+    mode: 'read',
+    description: 'Schedule events with RSVP, rideshare, assignments, score, location, and player context.',
+    aliases: ['get_schedule'],
+    resolve: async (user, args) => {
+      const range = compactText(args.range).toLowerCase();
+      return summarizeSchedule(await loadParentSchedule(user, {
+        includePastGames: range === 'all'
+      }), args);
+    }
+  },
+  {
+    name: 'get_schedule_event',
+    mode: 'read',
+    description: 'One schedule event with detail context. Args: eventId, teamId, playerName, teamName.',
+    resolve: async (user, args) => {
+      const event = await resolveAccessibleScheduleEvent(user, args);
+      if (!event) throw new Error('No matching event was found for this account.');
+      const detail = await loadParentScheduleEventDetail(user, {
+        teamId: event.teamId,
+        eventId: event.id,
+        childId: event.childId,
+        eventType: event.type
+      } as any).catch(() => null);
+      return {
+        event: summarizeScheduleEvent(event),
+        childEvents: (detail?.events || []).slice(0, 8).map(summarizeScheduleEvent)
+      };
+    }
+  },
+  {
+    name: 'list_rsvps',
+    mode: 'read',
+    description: 'RSVP status and summaries for schedule events.',
+    resolve: async (user, args) => {
+      const schedule = await loadParentSchedule(user, { includePastGames: compactText(args.range).toLowerCase() === 'all' });
+      return {
+        events: summarizeSchedule(schedule, args).events.map((event: any) => pickFields(event, [
+          'eventId',
+          'teamId',
+          'teamName',
+          'title',
+          'childId',
+          'childName',
+          'date',
+          'dateLabel',
+          'timeLabel',
+          'myRsvp',
+          'rsvpSummary'
+        ]))
+      };
+    }
+  },
+  {
+    name: 'list_ride_offers',
+    mode: 'read',
+    description: 'Rideshare offers and requests for one event. Args: eventId, teamId, playerName, teamName.',
+    resolve: async (user, args) => {
+      const event = await resolveAccessibleScheduleEvent(user, args);
+      if (!event) throw new Error('No matching event was found for this account.');
+      const offers = await loadParentScheduleRideOffers(event);
+      return {
+        event: summarizeScheduleEvent(event),
+        summary: summarizeParentScheduleRideOffers(offers),
+        offers: offers.slice(0, 20).map(summarizeRideOffer)
+      };
+    }
+  },
+  {
+    name: 'get_messages',
+    mode: 'read',
+    description: 'Team chat inbox, unread counts, and latest previews.',
+    resolve: async (user) => summarizeMessages(await loadChatInbox(user))
+  },
+  {
+    name: 'get_team_detail',
+    mode: 'read',
+    description: 'Accessible team detail, roster sample, upcoming events, recent results, leaderboards, and tracking summaries.',
+    aliases: ['get_teams'],
+    resolve: async (user, args) => {
+      const teamId = await resolveAccessibleTeamId(user, args);
+      if (!teamId) throw new Error('No matching team was found for this account.');
+      return summarizeTeamDetail(await loadParentTeamDetail(teamId, user));
+    }
+  },
+  {
+    name: 'get_player_stats',
+    mode: 'read',
+    description: 'Linked player profile, recent game stats/data, tracking, incentives, certificates, clips, and development context.',
+    aliases: ['get_player_development', 'get_players'],
+    resolve: async (user, args) => summarizePlayerDevelopment(await loadPlayerDetailForAi(user, args))
+  },
+  {
+    name: 'get_fees',
+    mode: 'read',
+    description: 'Parent fee records, balances, statuses, due dates, line items, and checkout availability.',
+    resolve: async (user) => summarizeFees(await loadParentFeesForApp(user))
+  },
+  {
+    name: 'get_registrations',
+    mode: 'read',
+    description: 'Published parent registration options for linked teams.',
+    aliases: ['get_parent_tools'],
+    resolve: async (user) => {
+      const [registrations, certificates] = await Promise.all([
+        loadParentRegistrations(user).catch(() => []),
+        loadParentCertificates(user).catch(() => [])
+      ]);
+      return {
+        registrations: registrations.slice(0, 10),
+        certificates: certificates.slice(0, 10)
+      };
+    }
+  },
+  {
+    name: 'get_certificates',
+    mode: 'read',
+    description: 'Published certificates for linked players.',
+    resolve: async (user) => ({ certificates: (await loadParentCertificates(user)).slice(0, 20) })
+  },
+  {
+    name: 'get_household',
+    mode: 'read',
+    description: 'Linked players and household invite/member state.',
+    resolve: async (user) => summarizeHousehold(await loadParentHouseholdInviteModel(user))
+  },
+  {
+    name: 'get_family_share',
+    mode: 'read',
+    description: 'Family share children and share links.',
+    resolve: async (user) => summarizeFamilyShare(await loadFamilyShareModel(user))
+  },
+  {
+    name: 'get_help',
+    mode: 'read',
+    description: 'ALL PLAYS help/workflow documentation.',
+    resolve: async (user, args) => summarizeHelpKnowledge(searchHelpKnowledge({
+      query: compactText(args.query) || compactText(args.topic) || compactText(args.question),
+      roles: user.roles || [],
+      limit: Number(args.limit || 5)
+    }))
+  },
+  {
+    name: 'update_rsvp',
+    mode: 'write',
+    description: 'Update one linked child RSVP. Args: eventId, teamId, childId/playerId optional, response going|maybe|not_going, note.',
+    resolve: async (user, args) => {
+      const event = await resolveAccessibleScheduleEvent(user, args);
+      if (!event) throw new Error('No matching event was found for this account.');
+      const response = normalizeAiRsvp(args.response);
+      const result = await submitParentScheduleRsvp(event, user, response, compactText(args.note));
+      return { event: summarizeScheduleEvent({ ...event, myRsvp: response, myRsvpNote: compactText(args.note) }), result };
+    }
+  },
+  {
+    name: 'update_rsvps_for_children',
+    mode: 'write',
+    description: 'Update multiple linked children on the same event. Args: eventId, teamId, response going|maybe|not_going, note.',
+    resolve: async (user, args) => {
+      const event = await resolveAccessibleScheduleEvent(user, args);
+      if (!event) throw new Error('No matching event was found for this account.');
+      const schedule = await loadParentSchedule(user, { includePastGames: true });
+      const events = (schedule.events || []).filter((candidate: ParentScheduleEvent) => (
+        candidate.teamId === event.teamId && candidate.id === event.id && candidate.isLinkedParentChild === true
+      ));
+      const response = normalizeAiRsvp(args.response);
+      const summary = await submitParentScheduleRsvpForChildren(events, user, response, compactText(args.note));
+      return { updatedChildren: events.map((candidate) => candidate.childName), response, summary };
+    }
+  },
+  {
+    name: 'create_ride_offer',
+    mode: 'write',
+    description: 'Create a rideshare offer. Args: eventId, teamId, seatCapacity, direction to|from|round-trip, note.',
+    resolve: async (user, args) => {
+      const event = await resolveAccessibleScheduleEvent(user, args);
+      if (!event) throw new Error('No matching event was found for this account.');
+      const result = await createParentScheduleRideOffer(event, user, {
+        seatCapacity: Number(args.seatCapacity || args.seats || 0),
+        direction: compactText(args.direction) as any,
+        note: compactText(args.note)
+      });
+      return { event: summarizeScheduleEvent(event), result };
+    }
+  },
+  {
+    name: 'request_ride_spot',
+    mode: 'write',
+    description: 'Request a seat for a linked child. Args: eventId, teamId, offerId, childId/playerId optional.',
+    resolve: async (user, args) => {
+      const { event, offer } = await resolveAccessibleRideOffer(user, args);
+      const childId = compactText(args.childId || args.playerId) || event.childId;
+      const childName = compactText(args.childName || args.playerName) || event.childName || 'Player';
+      const result = await requestParentScheduleRideSpot(event, offer, user, { childId, childName });
+      return { event: summarizeScheduleEvent(event), offer: summarizeRideOffer(offer), result };
+    }
+  },
+  {
+    name: 'cancel_ride_request',
+    mode: 'write',
+    description: 'Cancel a ride request. Args: eventId, teamId, offerId, requestId.',
+    resolve: async (user, args) => {
+      const { event, offer } = await resolveAccessibleRideOffer(user, args);
+      const requestId = compactText(args.requestId);
+      if (!requestId) throw new Error('requestId is required.');
+      await cancelParentScheduleRideRequest(event, offer, requestId);
+      return { event: summarizeScheduleEvent(event), offerId: offer.id, requestId, cancelled: true };
+    }
+  },
+  {
+    name: 'set_ride_offer_status',
+    mode: 'write',
+    description: 'Close or reopen a ride offer. Args: eventId, teamId, offerId, status open|closed|cancelled.',
+    aliases: ['close_or_reopen_ride_offer'],
+    resolve: async (user, args) => {
+      const { event, offer } = await resolveAccessibleRideOffer(user, args);
+      const status = compactText(args.status).toLowerCase();
+      if (!['open', 'closed', 'cancelled'].includes(status)) throw new Error('Status must be open, closed, or cancelled.');
+      await setParentScheduleRideOfferStatus(event, offer, status as any);
+      return { event: summarizeScheduleEvent(event), offerId: offer.id, status };
+    }
+  },
+  {
+    name: 'create_household_invite',
+    mode: 'write',
+    description: 'Invite a household contact for a linked player. Args: playerKey or teamId+playerId, email, displayName, relation.',
+    resolve: async (user, args) => {
+      const playerKey = compactText(args.playerKey) || `${compactText(args.teamId)}::${compactText(args.playerId)}`;
+      return createParentHouseholdMemberInvite(user, {
+        playerKey,
+        email: compactText(args.email),
+        displayName: compactText(args.displayName),
+        relation: compactText(args.relation) || 'Parent'
+      });
+    }
+  },
+  {
+    name: 'create_family_share_link',
+    mode: 'write',
+    description: 'Create a family share link. Args: label, extraCalendarUrls.',
+    resolve: async (user, args) => createParentFamilyShare(
+      user,
+      compactText(args.label) || 'Family share',
+      Array.isArray(args.extraCalendarUrls) ? args.extraCalendarUrls.map(compactText).filter(Boolean) : []
+    )
+  },
+  {
+    name: 'update_player_profile',
+    mode: 'write',
+    description: 'Update parent-editable private player profile fields. Args: teamId, playerId, emergencyContactName, emergencyContactPhone, medicalInfo.',
+    resolve: async (user, args) => {
+      const mergedArgs = await buildMergedPlayerEditableProfileArgs(user, args);
+      return updateParentPlayerEditableProfile(mergedArgs);
+    }
+  }
+];
+
+function getPrivateAiToolDefinition(name: string) {
+  const normalized = compactText(name);
+  return privateAiToolDefinitions.find((definition) => (
+    definition.name === normalized || (definition.aliases || []).includes(normalized)
+  )) || null;
+}
+
+async function loadPlayerDetailForAi(user: AuthUser, args: Record<string, unknown>) {
+  const player = await resolveAccessiblePlayer(user, args);
+  if (!player) {
+    throw new Error('No matching player was found for this account.');
+  }
+  const [detail, clips, statTotals] = await Promise.all([
+    loadParentPlayerDetailWithAthleteProfile(user, player.teamId, player.playerId),
+    loadParentPlayerVideoClips(user, player.teamId, player.playerId).catch(() => []),
+    loadParentPlayerStatTotals(user, player.teamId, player.playerId).catch(() => null)
+  ]);
+  return {
+    ...detail,
+    clips,
+    seasonStatTotals: statTotals
+  };
+}
+
+async function buildMergedPlayerEditableProfileArgs(user: AuthUser, args: Record<string, unknown>) {
+  const teamId = compactText(args.teamId);
+  const playerId = compactText(args.playerId);
+  if (!teamId || !playerId) {
+    throw new Error('teamId and playerId are required.');
+  }
+
+  const detail = await loadParentPlayerDetailWithAthleteProfile(user, teamId, playerId);
+  const existingPrivateProfile = isPlainObject(detail.privateProfile) ? detail.privateProfile : {};
+  const existingEmergencyContact = isPlainObject(existingPrivateProfile.emergencyContact)
+    ? existingPrivateProfile.emergencyContact
+    : {};
+  return {
+    user,
+    teamId,
+    playerId,
+    emergencyContactName: hasOwn(args, 'emergencyContactName')
+      ? compactText(args.emergencyContactName)
+      : compactText(existingEmergencyContact.name),
+    emergencyContactPhone: hasOwn(args, 'emergencyContactPhone')
+      ? compactText(args.emergencyContactPhone)
+      : compactText(existingEmergencyContact.phone),
+    medicalInfo: hasOwn(args, 'medicalInfo')
+      ? compactText(args.medicalInfo)
+      : compactText(existingPrivateProfile.medicalInfo)
+  };
+}
+
+async function resolveAccessibleScheduleEvent(user: AuthUser, args: Record<string, unknown>): Promise<ParentScheduleEvent | null> {
+  const requestedEventId = compactText(args.eventId || args.gameId || args.id);
+  const requestedTeamId = compactText(args.teamId);
+  const requestedChildId = compactText(args.childId || args.playerId);
+  const requestedTeamName = compactText(args.teamName).toLowerCase();
+  const requestedPlayerName = compactText(args.playerName || args.childName).toLowerCase();
+  const requestedTitle = compactText(args.title || args.opponent).toLowerCase();
+  const schedule = await loadParentSchedule(user, { includePastGames: true });
+  const events = Array.isArray(schedule.events) ? schedule.events : [];
+
+  return events.find((event: ParentScheduleEvent) => {
+    if (requestedEventId && event.id !== requestedEventId) return false;
+    if (requestedTeamId && event.teamId !== requestedTeamId) return false;
+    if (requestedChildId && event.childId !== requestedChildId) return false;
+    if (requestedTeamName && !event.teamName.toLowerCase().includes(requestedTeamName)) return false;
+    if (requestedPlayerName && !event.childName.toLowerCase().includes(requestedPlayerName)) return false;
+    if (requestedTitle) {
+      const title = `${getScheduleTitle(event)} ${event.opponent || ''}`.toLowerCase();
+      if (!title.includes(requestedTitle)) return false;
+    }
+    return true;
+  }) || null;
+}
+
+async function resolveAccessibleRideOffer(user: AuthUser, args: Record<string, unknown>) {
+  const event = await resolveAccessibleScheduleEvent(user, args);
+  if (!event) {
+    throw new Error('No matching event was found for this account.');
+  }
+  const offerId = compactText(args.offerId);
+  if (!offerId) {
+    throw new Error('offerId is required.');
+  }
+  const offers = await loadParentScheduleRideOffers(event);
+  const offer = offers.find((candidate) => candidate.id === offerId);
+  if (!offer) {
+    throw new Error('No matching ride offer was found for this event.');
+  }
+  return { event, offer };
+}
+
+function normalizeAiRsvp(value: unknown): 'going' | 'maybe' | 'not_going' {
+  const normalized = normalizeRsvpResponse(value);
+  if (normalized === 'going' || normalized === 'maybe' || normalized === 'not_going') {
+    return normalized;
+  }
+  throw new Error('RSVP response must be going, maybe, or not_going.');
+}
+
+async function savePrivateAiPendingAction(
+  user: AuthUser,
+  definition: PrivateAiToolDefinition,
+  args: Record<string, unknown>,
+  context: PrivateAiToolContext = {}
+): Promise<PrivateAiPendingAction> {
+  const id = createConfirmationId();
+  const pending: PrivateAiPendingAction = {
+    id,
+    userId: user.uid,
+    toolName: definition.name,
+    args: sanitizePendingActionArgs(args),
+    summary: buildPendingActionSummary(definition, args),
+    createdAt: new Date().toISOString(),
+    conversationId: normalizeConversationId(context.conversationId),
+    confirmationGroupId: compactText(context.confirmationGroupId)
+  };
+  pendingActionMemory.set(`${user.uid}:${id}`, pending);
+  await setDoc(doc(db, 'users', user.uid, privateAiPendingActionCollectionName, id), {
+    ...pending,
+    createdAt: serverTimestamp(),
+    clientCreatedAt: pending.createdAt,
+    status: 'pending'
+  }).catch((error) => {
+    logger.warn('Unable to persist private AI pending action.', { error, toolName: definition.name });
+  });
+  return pending;
+}
+
+async function executeConfirmedPrivateAiAction(user: AuthUser, confirmationId: string): Promise<PrivateAiToolResult> {
+  const id = compactText(confirmationId);
+  const pending = await loadPrivateAiPendingAction(user, id);
+  if (!pending) {
+    return { name: 'confirm_action', ok: false, error: 'No pending AI action matched that confirmation code.' };
+  }
+  const definition = getPrivateAiToolDefinition(pending.toolName);
+  if (!definition || definition.mode !== 'write') {
+    return { name: pending.toolName || 'confirm_action', ok: false, error: 'That pending AI action is no longer supported.' };
+  }
+
+  const result = await runPrivateAiTool(user, {
+    name: definition.name,
+    args: {
+      ...pending.args,
+      __confirmed: true
+    }
+  });
+  if (result.ok) {
+    pendingActionMemory.delete(`${user.uid}:${id}`);
+    await setDoc(doc(db, 'users', user.uid, privateAiPendingActionCollectionName, id), {
+      status: 'completed',
+      completedAt: serverTimestamp()
+    }, { merge: true }).catch(() => {});
+  }
+  return {
+    ...result,
+    confirmationId: id
+  };
+}
+
+async function loadPrivateAiPendingAction(user: AuthUser, confirmationId: string): Promise<PrivateAiPendingAction | null> {
+  const memoryKey = `${user.uid}:${confirmationId}`;
+  const fromMemory = pendingActionMemory.get(memoryKey);
+  if (fromMemory) return fromMemory;
+
+  const snapshot = await getDoc(doc(db, 'users', user.uid, privateAiPendingActionCollectionName, confirmationId)).catch(() => null);
+  const data = typeof snapshot?.data === 'function' ? snapshot.data() : null;
+  if (!snapshot?.exists?.() || !isPlainObject(data) || data.status !== 'pending') return null;
+  if (compactText(data.userId) !== user.uid) return null;
+  return {
+    id: confirmationId,
+    userId: user.uid,
+    toolName: compactText(data.toolName),
+    args: isPlainObject(data.args) ? data.args : {},
+    summary: compactText(data.summary),
+    createdAt: normalizeScheduleDate(data.createdAt)?.toISOString() || compactText(data.clientCreatedAt) || new Date().toISOString(),
+    conversationId: normalizeConversationId(data.conversationId),
+    confirmationGroupId: compactText(data.confirmationGroupId)
+  };
+}
+
+async function resolvePendingActionIdsForNaturalConfirmation(
+  user: AuthUser,
+  priorMessages: PrivateAiMessage[] = [],
+  context: PrivateAiToolContext = {}
+) {
+  const conversationId = normalizeConversationId(context.conversationId);
+  const fromHistory = [...priorMessages]
+    .reverse()
+    .map((message) => parseConfirmationId(message.text))
+    .find(Boolean);
+  if (fromHistory) return [fromHistory];
+
+  const fromMemory = selectPendingActionsForNaturalConfirmation(
+    [...pendingActionMemory.values()].filter((pending) => pending.userId === user.uid && normalizeConversationId(pending.conversationId) === conversationId)
+  );
+  if (fromMemory.length) return fromMemory.map((pending) => pending.id);
+
+  const snapshot = await getDocs(query(
+    collection(db, 'users', user.uid, privateAiPendingActionCollectionName),
+    orderBy('createdAt', 'desc'),
+    limit(5)
+  )).catch(() => null);
+  const pendingActions = (snapshot?.docs || []).map((candidate: any) => {
+    const data = typeof candidate?.data === 'function' ? candidate.data() : null;
+    if (!isPlainObject(data) || data.status !== 'pending' || compactText(data.userId) !== user.uid) return null;
+    if (normalizeConversationId(data.conversationId) !== conversationId) return null;
+    return {
+      id: compactText(candidate?.id),
+      userId: user.uid,
+      toolName: compactText(data.toolName),
+      args: isPlainObject(data.args) ? data.args : {},
+      summary: compactText(data.summary),
+      createdAt: normalizeScheduleDate(data.createdAt)?.toISOString() || compactText(data.clientCreatedAt) || new Date().toISOString(),
+      conversationId,
+      confirmationGroupId: compactText(data.confirmationGroupId)
+    };
+  }).filter((pending: PrivateAiPendingAction | null): pending is PrivateAiPendingAction => Boolean(pending?.id));
+  return selectPendingActionsForNaturalConfirmation(pendingActions).map((pending) => pending.id);
+}
+
+async function savePrivateAiActionAudit(
+  user: AuthUser,
+  toolName: string,
+  args: Record<string, unknown>,
+  result: unknown
+) {
+  const auditId = createConfirmationId();
+  await setDoc(doc(db, 'users', user.uid, 'privateAiActionAudit', auditId), {
+    toolName,
+    args: sanitizePendingActionArgs(args),
+    result: summarizeAuditResult(result),
+    createdAt: serverTimestamp(),
+    clientCreatedAt: new Date().toISOString()
+  });
+}
+
+function parseConfirmationId(question: string) {
+  const match = compactText(question).match(/\bconfirm\s+([a-z0-9_-]{4,24})\b/i);
+  return match?.[1] || '';
+}
+
+function isNaturalConfirmation(question: string) {
+  return /^(yes|y|yeah|yep|confirm|confirmed|do it|go ahead|please do|apply it|looks good|ok|okay)$/i.test(compactText(question));
+}
+
+function createConfirmationId() {
+  const random = globalThis.crypto?.randomUUID?.().replace(/-/g, '').slice(0, 8)
+    || Math.random().toString(36).slice(2, 10);
+  return `${confirmationIdPrefix}_${random}`.toLowerCase();
+}
+
+function createConfirmationGroupId() {
+  const random = globalThis.crypto?.randomUUID?.().replace(/-/g, '').slice(0, 8)
+    || Math.random().toString(36).slice(2, 10);
+  return `group_${random}`.toLowerCase();
+}
+
+function selectPendingActionsForNaturalConfirmation(actions: PrivateAiPendingAction[]) {
+  const sorted = actions
+    .filter((pending) => pending.id)
+    .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
+  const latest = sorted[0];
+  if (!latest) return [];
+  if (!latest.confirmationGroupId) return [latest];
+  return sorted
+    .filter((pending) => pending.confirmationGroupId === latest.confirmationGroupId)
+    .sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt));
+}
+
+function hasOwn(value: Record<string, unknown>, key: string) {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function sanitizePendingActionArgs(args: Record<string, unknown>) {
+  const blocked = new Set(['__confirmed', 'photoFile', 'file', 'profilePhotoFile', 'highlightClipFile']);
+  return Object.entries(args).reduce<Record<string, unknown>>((acc, [key, value]) => {
+    if (blocked.has(key)) return acc;
+    if (value === undefined || typeof value === 'function') return acc;
+    acc[key] = value;
+    return acc;
+  }, {});
+}
+
+function buildPendingActionSummary(definition: PrivateAiToolDefinition, args: Record<string, unknown>) {
+  const bits = [
+    definition.description,
+    compactText(args.teamName || args.teamId) ? `Team: ${compactText(args.teamName || args.teamId)}` : '',
+    compactText(args.playerName || args.childName || args.playerId || args.childId) ? `Player: ${compactText(args.playerName || args.childName || args.playerId || args.childId)}` : '',
+    compactText(args.eventId || args.gameId) ? `Event: ${compactText(args.eventId || args.gameId)}` : '',
+    compactText(args.response) ? `RSVP: ${compactText(args.response)}` : '',
+    compactText(args.status) ? `Status: ${compactText(args.status)}` : '',
+    compactText(args.email) ? `Email: ${compactText(args.email)}` : ''
+  ].filter(Boolean);
+  return bits.join(' | ');
+}
+
+function summarizeExecutedAction(result: PrivateAiToolResult) {
+  if (result.name === 'update_rsvp') return 'RSVP updated.';
+  if (result.name === 'update_rsvps_for_children') return 'Family RSVPs updated.';
+  if (result.name === 'create_ride_offer') return 'Ride offer created.';
+  if (result.name === 'request_ride_spot') return 'Ride request submitted.';
+  if (result.name === 'cancel_ride_request') return 'Ride request cancelled.';
+  if (result.name === 'set_ride_offer_status') return 'Ride offer updated.';
+  if (result.name === 'create_household_invite') return 'Household invite created.';
+  if (result.name === 'create_family_share_link') return 'Family share link created.';
+  if (result.name === 'update_player_profile') return 'Player profile updated.';
+  return `${result.name} completed.`;
+}
+
+function summarizeExecutedActions(results: PrivateAiToolResult[]) {
+  return results.map(summarizeExecutedAction).join(' ');
+}
+
+function summarizeAuditResult(result: unknown) {
+  if (!isPlainObject(result)) return result;
+  return pickFields(result, ['event', 'offerId', 'requestId', 'status', 'response', 'updatedChildren', 'tokenId', 'url', 'email']);
 }
 
 async function savePrivateAiMessage(user: AuthUser, input: {
@@ -524,22 +1136,17 @@ function buildPlannerPrompt({
     `You may answer from conversation context for general navigation. For account-specific facts, request tools first.\n` +
     `Use only the available tools; never ask for or invent Firestore paths.\n` +
     `Return strict JSON only, with no markdown.\n` +
-    `If you need data, return {"toolCalls":[{"name":"get_schedule","args":{"range":"upcoming","limit":8}}]}.\n` +
+    `If you need data, return {"toolCalls":[{"name":"list_schedule","args":{"range":"upcoming","limit":8}}]}.\n` +
+    `For writes, call the write tool with normalized args. The app will stage it and require user confirmation before execution.\n` +
     `If you have enough information, return {"answer":"..."}.\n\n` +
     `AVAILABLE TOOLS:\n` +
-    `- get_profile: account profile and role summary.\n` +
-    `- get_home: players, teams, next events, unread messages, packets, fees, and priority actions.\n` +
-    `- get_schedule: schedule events. Args: range upcoming|recent|all, type game|practice, teamId, teamName, playerName, limit.\n` +
-    `- get_messages: team chat inbox, unread counts, and latest previews.\n` +
-    `- get_team_detail: one accessible team. Args: teamId or teamName.\n` +
-    `- get_player_development: one linked player, recent stats, tracking summaries, incentives, profile, clips, and next actions for coaching/development. Args: playerId, teamId, playerName.\n` +
-    `- get_fees: open parent fee records.\n` +
-    `- get_parent_tools: registrations and certificates.\n` +
-    `- get_help: ALL PLAYS help/workflow documentation for how-to, setup, feature, and troubleshooting questions. Args: query, limit.\n\n` +
+    privateAiToolDefinitions.map((definition) => (
+      `- ${definition.name} (${definition.mode}): ${definition.description}`
+    )).join('\n') + `\n\n` +
     `USER:\n${JSON.stringify(summarizeSignedInUser(user))}\n\n` +
     `RECENT CHAT HISTORY:\n${JSON.stringify(history)}\n\n` +
     `QUESTION:\n${question}\n\n` +
-    `TOOL RESULTS SO FAR:\n${JSON.stringify(toolResults)}\n`;
+    `TOOL RESULTS SO FAR:\n${JSON.stringify(formatToolResultsForPrompt(toolResults))}\n`;
 }
 
 function buildFinalAnswerPrompt({
@@ -556,12 +1163,23 @@ function buildFinalAnswerPrompt({
   return `You are ALL PLAYS, a private assistant for the signed-in youth sports parent or coach.\n` +
     `Use ONLY this account-scoped data. If the data is missing, say what is missing.\n` +
     `For product/how-to questions, use help documentation results and include the relevant help page when useful.\n` +
+    `If a tool result requires confirmation, state the proposed change clearly and tell the user they can reply "yes" to confirm. Do not mention internal confirmation IDs or codes.\n` +
     `Answer concisely. Include dates, times, team names, and player names when relevant.\n` +
     `Return strict JSON only: {"answer":"..."}.\n\n` +
     `USER:\n${JSON.stringify(summarizeSignedInUser(user))}\n\n` +
     `RECENT CHAT HISTORY:\n${JSON.stringify(history)}\n\n` +
     `QUESTION:\n${question}\n\n` +
-    `TOOL RESULTS:\n${JSON.stringify(toolResults)}\n`;
+    `TOOL RESULTS:\n${JSON.stringify(formatToolResultsForPrompt(toolResults))}\n`;
+}
+
+function formatToolResultsForPrompt(toolResults: PrivateAiToolResult[]) {
+  return toolResults.map((result) => ({
+    name: result.name,
+    ok: result.ok,
+    data: result.data,
+    error: result.error,
+    requiresConfirmation: result.requiresConfirmation === true
+  }));
 }
 
 function summarizeSignedInUser(user: AuthUser) {
@@ -721,6 +1339,10 @@ function summarizePlayerDevelopment(detail: any) {
       event: summarizeScheduleEvent(row.event),
       stats: row.stats || {}
     })),
+    seasonStatTotals: detail.seasonStatTotals ? {
+      gameCount: detail.seasonStatTotals.gameCount,
+      totals: detail.seasonStatTotals.totals || {}
+    } : summarizeStatRowsTotals(detail.statRows || []),
     trackingSummary: (detail.trackingSummary || []).slice(0, 12),
     incentives: detail.incentives ? {
       activeRules: (detail.incentives.currentRules || []).slice(0, 8),
@@ -758,6 +1380,86 @@ function summarizeFees(fees: any[]) {
       'balanceDueCents',
       'totalAmountCents',
       'checkoutUrl'
+    ]))
+  };
+}
+
+function summarizeStatRowsTotals(rows: any[]) {
+  const totals = (Array.isArray(rows) ? rows : []).reduce<Record<string, number>>((acc, row) => {
+    Object.entries(row?.stats || {}).forEach(([key, value]) => {
+      const numeric = Number(value);
+      if (key && Number.isFinite(numeric)) {
+        acc[key] = (acc[key] || 0) + numeric;
+      }
+    });
+    return acc;
+  }, {});
+  return {
+    gameCount: Array.isArray(rows) ? rows.length : 0,
+    totals
+  };
+}
+
+function summarizeRideOffer(offer: any) {
+  return {
+    id: offer.id,
+    sourceGameId: offer.sourceGameId || null,
+    driverUserId: offer.driverUserId || null,
+    driverName: offer.driverName || null,
+    seatCapacity: offer.seatCapacity,
+    seatCountConfirmed: offer.seatCountConfirmed,
+    seatsLeft: Math.max(0, Number(offer.seatCapacity || 0) - Number(offer.seatCountConfirmed || 0)),
+    direction: offer.direction,
+    status: offer.status,
+    note: offer.note || null,
+    requests: (offer.requests || []).slice(0, 12).map((request: any) => pickFields(request, [
+      'id',
+      'parentUserId',
+      'childId',
+      'childName',
+      'status'
+    ]))
+  };
+}
+
+function summarizeHousehold(model: any) {
+  return {
+    linkedPlayers: (model.linkedPlayers || []).slice(0, 20).map((player: any) => pickFields(player, [
+      'teamId',
+      'teamName',
+      'playerId',
+      'playerName',
+      'playerNumber'
+    ])),
+    members: (model.members || []).slice(0, 20).map((member: any) => pickFields(member, [
+      'id',
+      'email',
+      'displayName',
+      'status',
+      'teamName',
+      'playerName',
+      'relation',
+      'inviteUrl'
+    ]))
+  };
+}
+
+function summarizeFamilyShare(model: any) {
+  return {
+    children: (model.children || []).slice(0, 20).map((child: any) => pickFields(child, [
+      'teamId',
+      'teamName',
+      'playerId',
+      'playerName',
+      'playerNumber'
+    ])),
+    tokens: (model.tokens || []).slice(0, 20).map((token: any) => pickFields(token, [
+      'id',
+      'label',
+      'statusLabel',
+      'expired',
+      'childCount',
+      'url'
     ]))
   };
 }

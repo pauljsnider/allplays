@@ -10,6 +10,7 @@ const firebaseMocks = vi.hoisted(() => ({
     addDoc: vi.fn(),
     collection: vi.fn((db, ...path) => ({ db, path })),
     doc: vi.fn((db, ...path) => ({ db, path })),
+    getDoc: vi.fn(),
     getDocs: vi.fn(),
     limit: vi.fn((count) => ({ type: 'limit', count })),
     orderBy: vi.fn((field, direction) => ({ type: 'orderBy', field, direction })),
@@ -41,7 +42,16 @@ const homeMocks = vi.hoisted(() => ({
 }));
 
 const scheduleMocks = vi.hoisted(() => ({
-    loadParentSchedule: vi.fn()
+    cancelParentScheduleRideRequest: vi.fn(),
+    createParentScheduleRideOffer: vi.fn(),
+    loadParentSchedule: vi.fn(),
+    loadParentScheduleEventDetail: vi.fn(),
+    loadParentScheduleRideOffers: vi.fn(),
+    requestParentScheduleRideSpot: vi.fn(),
+    setParentScheduleRideOfferStatus: vi.fn(),
+    submitParentScheduleRsvp: vi.fn(),
+    submitParentScheduleRsvpForChildren: vi.fn(),
+    summarizeParentScheduleRideOffers: vi.fn()
 }));
 
 const teamMocks = vi.hoisted(() => ({
@@ -50,17 +60,24 @@ const teamMocks = vi.hoisted(() => ({
 
 const playerMocks = vi.hoisted(() => {
     const loadParentPlayerDetailWithAthleteProfile = vi.fn();
+    const loadParentPlayerStatTotals = vi.fn();
     const loadParentPlayerVideoClips = vi.fn();
     return {
         loadParentPlayerDetail: loadParentPlayerDetailWithAthleteProfile,
         loadParentPlayerDetailWithAthleteProfile,
-        loadParentPlayerVideoClips
+        loadParentPlayerStatTotals,
+        loadParentPlayerVideoClips,
+        updateParentPlayerEditableProfile: vi.fn()
     };
 });
 
 const toolsMocks = vi.hoisted(() => ({
+    createParentFamilyShare: vi.fn(),
+    createParentHouseholdMemberInvite: vi.fn(),
+    loadFamilyShareModel: vi.fn(),
     loadParentCertificates: vi.fn(),
     loadParentFeesForApp: vi.fn(),
+    loadParentHouseholdInviteModel: vi.fn(),
     loadParentRegistrations: vi.fn()
 }));
 
@@ -123,6 +140,7 @@ beforeEach(async () => {
     vi.clearAllMocks();
     aiMocks.model.generateContent.mockReset();
     firebaseMocks.getDocs.mockResolvedValue({ docs: [] });
+    firebaseMocks.getDoc.mockResolvedValue({ exists: () => false, data: () => null });
     firebaseMocks.setDoc.mockResolvedValue();
     let docIndex = 0;
     firebaseMocks.addDoc.mockImplementation(async () => ({ id: `ai-message-${++docIndex}` }));
@@ -149,6 +167,8 @@ beforeEach(async () => {
         children: [{ playerId: 'player-1', name: 'Avery', teamId: 'team-1', teamName: 'Bears' }],
         events: [futureEvent()]
     });
+    scheduleMocks.loadParentScheduleRideOffers.mockResolvedValue([]);
+    scheduleMocks.summarizeParentScheduleRideOffers.mockReturnValue({ offerCount: 0, seatsLeft: 0, requests: 0, pending: 0, confirmed: 0, isFull: false });
     teamMocks.loadParentTeamDetail.mockResolvedValue({
         team: { id: 'team-1', name: 'Bears', sport: 'Basketball' },
         players: [{ id: 'player-1', name: 'Avery', number: '9' }],
@@ -176,11 +196,25 @@ beforeEach(async () => {
             unpaidCents: 200,
             seasonGameEarnings: []
         },
+        privateProfile: {
+            emergencyContact: {
+                name: 'Morgan Parent',
+                phone: '555-0100'
+            },
+            medicalInfo: 'Carries inhaler'
+        },
         athleteProfile: { profile: { headline: 'Two-way guard' }, shareUrl: 'https://allplays.ai/athlete-profile.html?id=profile-1', builderUrl: 'https://allplays.ai/athlete-profile-builder.html' },
         certificates: [],
         clips: []
     });
     playerMocks.loadParentPlayerVideoClips.mockResolvedValue([]);
+    playerMocks.loadParentPlayerStatTotals.mockResolvedValue({
+        teamId: 'team-1',
+        playerId: 'player-1',
+        gameCount: 8,
+        gameIds: ['game-0'],
+        totals: { goals: 7, assists: 3 }
+    });
     toolsMocks.loadParentFeesForApp.mockResolvedValue([]);
     toolsMocks.loadParentRegistrations.mockResolvedValue([]);
     toolsMocks.loadParentCertificates.mockResolvedValue([]);
@@ -388,6 +422,13 @@ describe('private AI service', () => {
                     totalEarnedCents: 800,
                     unpaidCents: 200
                 }),
+                seasonStatTotals: {
+                    gameCount: 8,
+                    totals: {
+                        goals: 7,
+                        assists: 3
+                    }
+                },
                 clips: [
                     expect.objectContaining({
                         id: 'clip-1',
@@ -399,10 +440,12 @@ describe('private AI service', () => {
         });
         expect(playerMocks.loadParentPlayerDetailWithAthleteProfile).toHaveBeenCalledWith(authUser, 'team-1', 'player-1');
         expect(playerMocks.loadParentPlayerVideoClips).toHaveBeenCalledWith(authUser, 'team-1', 'player-1');
+        expect(playerMocks.loadParentPlayerStatTotals).toHaveBeenCalledWith(authUser, 'team-1', 'player-1');
     });
 
     it('keeps player development answers available when optional video clips fail to load', async () => {
         playerMocks.loadParentPlayerVideoClips.mockRejectedValueOnce(new Error('Games unavailable'));
+        playerMocks.loadParentPlayerStatTotals.mockRejectedValueOnce(new Error('Totals unavailable'));
         const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
 
         await expect(runPrivateAiTool(authUser, { name: 'get_player_development', args: { playerName: 'ave' } })).resolves.toMatchObject({
@@ -412,7 +455,14 @@ describe('private AI service', () => {
                     id: 'player-1',
                     name: 'Avery'
                 }),
-                clips: []
+                clips: [],
+                seasonStatTotals: {
+                    gameCount: 1,
+                    totals: {
+                        points: 8,
+                        rebounds: 4
+                    }
+                }
             })
         });
         expect(playerMocks.loadParentPlayerDetailWithAthleteProfile).toHaveBeenCalledWith(authUser, 'team-1', 'player-1');
@@ -447,6 +497,165 @@ describe('private AI service', () => {
 
         expect(toolsMocks.loadParentRegistrations).toHaveBeenCalledWith(authUser);
         expect(toolsMocks.loadParentCertificates).toHaveBeenCalledWith(authUser);
+    });
+
+    it('stages parent workflow writes for confirmation instead of executing immediately', async () => {
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await runPrivateAiTool(authUser, {
+            name: 'update_rsvp',
+            args: {
+                teamId: 'team-1',
+                eventId: 'game-1',
+                playerId: 'player-1',
+                response: 'going',
+                note: 'Arriving late'
+            }
+        });
+
+        expect(result).toMatchObject({
+            name: 'update_rsvp',
+            ok: true,
+            requiresConfirmation: true,
+            confirmationId: expect.stringMatching(/^ai_/),
+            data: {
+                confirmationText: 'Reply "yes" to apply this change.'
+            }
+        });
+        expect(scheduleMocks.submitParentScheduleRsvp).not.toHaveBeenCalled();
+        expect(firebaseMocks.setDoc).toHaveBeenCalledWith(
+            expect.objectContaining({ path: ['users', 'user-1', 'privateAiPendingActions', result.confirmationId] }),
+            expect.objectContaining({
+                toolName: 'update_rsvp',
+                status: 'pending',
+                args: expect.objectContaining({
+                    eventId: 'game-1',
+                    response: 'going'
+                })
+            })
+        );
+    });
+
+    it('executes confirmed pending RSVP writes through the app schedule service', async () => {
+        scheduleMocks.submitParentScheduleRsvp.mockResolvedValueOnce({ going: 5, notResponded: 2 });
+        const { generatePrivateAiAnswer, runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+        const staged = await runPrivateAiTool(authUser, {
+            name: 'update_rsvp',
+            args: {
+                teamId: 'team-1',
+                eventId: 'game-1',
+                playerId: 'player-1',
+                response: 'going',
+                note: 'Arriving late'
+            }
+        });
+
+        const result = await generatePrivateAiAnswer(authUser, `confirm ${staged.confirmationId}`);
+
+        expect(scheduleMocks.submitParentScheduleRsvp).toHaveBeenCalledWith(
+            expect.objectContaining({ id: 'game-1', teamId: 'team-1', childId: 'player-1' }),
+            authUser,
+            'going',
+            'Arriving late'
+        );
+        expect(result.answer).toContain('RSVP updated');
+        expect(result.toolResults[0]).toMatchObject({
+            name: 'update_rsvp',
+            ok: true,
+            confirmationId: staged.confirmationId
+        });
+    });
+
+    it('lets a natural yes confirm the latest pending parent workflow write', async () => {
+        scheduleMocks.submitParentScheduleRsvp.mockResolvedValueOnce({ going: 5, notResponded: 2 });
+        const { generatePrivateAiAnswer, runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+        await runPrivateAiTool(authUser, {
+            name: 'update_rsvp',
+            args: {
+                teamId: 'team-1',
+                eventId: 'game-1',
+                playerId: 'player-1',
+                response: 'going',
+                note: ''
+            }
+        });
+
+        const result = await generatePrivateAiAnswer(authUser, 'yes');
+
+        expect(scheduleMocks.submitParentScheduleRsvp).toHaveBeenCalledWith(
+            expect.objectContaining({ id: 'game-1', teamId: 'team-1', childId: 'player-1' }),
+            authUser,
+            'going',
+            ''
+        );
+        expect(result.answer).toContain('RSVP updated');
+        expect(result.toolResults[0]).toMatchObject({
+            name: 'update_rsvp',
+            ok: true
+        });
+    });
+
+    it('confirms all pending writes from the latest group in the active conversation', async () => {
+        scheduleMocks.submitParentScheduleRsvp.mockResolvedValue({ going: 5, notResponded: 2 });
+        const { generatePrivateAiAnswer, runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+        await runPrivateAiTool(authUser, {
+            name: 'update_rsvp',
+            args: { teamId: 'team-1', eventId: 'game-1', playerId: 'player-1', response: 'maybe', note: 'Old tab' }
+        }, { conversationId: 'other-conversation', confirmationGroupId: 'group-other' });
+        await runPrivateAiTool(authUser, {
+            name: 'update_rsvp',
+            args: { teamId: 'team-1', eventId: 'game-1', playerId: 'player-1', response: 'going', note: 'First current action' }
+        }, { conversationId: 'current-conversation', confirmationGroupId: 'group-current' });
+        await runPrivateAiTool(authUser, {
+            name: 'update_rsvp',
+            args: { teamId: 'team-1', eventId: 'game-1', playerId: 'player-1', response: 'not_going', note: 'Second current action' }
+        }, { conversationId: 'current-conversation', confirmationGroupId: 'group-current' });
+
+        const result = await generatePrivateAiAnswer(authUser, 'yes', [], { conversationId: 'current-conversation' });
+
+        expect(scheduleMocks.submitParentScheduleRsvp).toHaveBeenCalledTimes(2);
+        expect(scheduleMocks.submitParentScheduleRsvp).toHaveBeenNthCalledWith(
+            1,
+            expect.objectContaining({ id: 'game-1', teamId: 'team-1', childId: 'player-1' }),
+            authUser,
+            'going',
+            'First current action'
+        );
+        expect(scheduleMocks.submitParentScheduleRsvp).toHaveBeenNthCalledWith(
+            2,
+            expect.objectContaining({ id: 'game-1', teamId: 'team-1', childId: 'player-1' }),
+            authUser,
+            'not_going',
+            'Second current action'
+        );
+        expect(result.toolResults).toHaveLength(2);
+        expect(result.answer).toContain('RSVP updated');
+    });
+
+    it('preserves omitted private player profile fields during AI profile writes', async () => {
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        await expect(runPrivateAiTool(authUser, {
+            name: 'update_player_profile',
+            args: {
+                teamId: 'team-1',
+                playerId: 'player-1',
+                emergencyContactPhone: '555-0199',
+                __confirmed: true
+            }
+        })).resolves.toMatchObject({
+            name: 'update_player_profile',
+            ok: true
+        });
+
+        expect(playerMocks.updateParentPlayerEditableProfile).toHaveBeenCalledWith({
+            user: authUser,
+            teamId: 'team-1',
+            playerId: 'player-1',
+            emergencyContactName: 'Morgan Parent',
+            emergencyContactPhone: '555-0199',
+            medicalInfo: 'Carries inhaler'
+        });
     });
 
     it('retrieves help workflow pages for functional questions', async () => {
