@@ -238,11 +238,15 @@ test('google redirect login mode keeps existing admin invites on accept-invite',
 
 test('signup hash opens signup mode and passes activation code to Google signup', async ({ page, baseURL }) => {
     await mockInviteLoginModules(page);
+    await page.addInitScript(() => {
+        window.sessionStorage.setItem('pendingLoginInviteCode', 'STALE999');
+    });
 
     await page.goto(buildUrl(baseURL, '/login.html#signup'), {
         waitUntil: 'domcontentloaded'
     });
 
+    await expect.poll(() => page.evaluate(() => window.sessionStorage.getItem('pendingLoginInviteCode'))).toBe(null);
     await expect(page.locator('#form-title')).toHaveText('Sign Up');
     await expect(page.locator('#confirm-password-field')).toBeVisible();
     await expect(page.locator('#activation-code-field')).toBeVisible();

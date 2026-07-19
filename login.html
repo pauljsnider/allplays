@@ -278,6 +278,8 @@
                 });
                 isActivationCodeInitiallyHidden = true; // Set flag if invite code was in URL
             } else {
+                pendingLoginInviteCode = null;
+                window.sessionStorage.removeItem(pendingLoginInviteCodeStorageKey);
                 showSignupMode();
             }
         }
