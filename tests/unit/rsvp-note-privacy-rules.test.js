@@ -5,7 +5,7 @@ import {
   assertSucceeds,
   initializeTestEnvironment
 } from '@firebase/rules-unit-testing';
-import { collection, deleteDoc, doc, getDoc, getDocs, setDoc, Timestamp, updateDoc, writeBatch } from 'firebase/firestore';
+import { deleteDoc, doc, getDoc, setDoc, Timestamp, updateDoc, writeBatch } from 'firebase/firestore';
 import { extractMatchBlock } from '../../scripts/validate-firebase-rules-ci.mjs';
 
 const rules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
@@ -32,8 +32,6 @@ describe('RSVP note privacy Firestore rules', () => {
 
     expect(rsvpBlock).toContain('function isRsvpStatusPayloadSafe(data)');
     expect(rsvpBlock).toContain("'note'");
-    expect(rsvpBlock).toContain("'parentEmail'");
-    expect(rsvpBlock).toContain("'guardianEmail'");
     expect(rsvpBlock).toContain("'adminOnlyNote'");
     expect(rsvpBlock).toContain("'privateAvailabilityNote'");
     expect(rsvpBlock).toContain('isRsvpStatusPayloadSafe(request.resource.data)');
@@ -52,8 +50,8 @@ describe('RSVP note privacy Firestore rules', () => {
     expect(gamesBlock).toContain('isParentForPlayer(teamId, playerId)');
     expect(gamesBlock).toContain('isParentForRsvpPlayerAt(teamId, playerIds, 9)');
     expect(gamesBlock).toContain('rsvpId == request.auth.uid + "__" + playerId');
-    expect(rsvpBlock).toContain('canWriteOwnParentRsvp(resource.data)');
-    expect(rsvpBlock).toContain('allow list: if isTeamOwnerOrAdmin(teamId);');
+    expect(rsvpBlock).toContain('canUseLinkedPlayerRsvp(teamId, resource.data)');
+    expect(rsvpBlock).toContain('isOwnLinkedPlayerRsvpId(rsvpId, resource.data)');
     expect(parentWriteFunction).toContain('isOwnBaseRsvpDoc() &&\n                    isParentForTeam(teamId) &&\n                    (!hasRsvpPlayerScope(data) ||\n                     canUseLinkedPlayerRsvp(teamId, data) ||\n                     canUseGroupedLinkedPlayerRsvp(teamId, data))');
     expect(parentWriteFunction).toContain('isOwnLinkedPlayerRsvpDoc() &&\n                    canUseLinkedPlayerRsvp(teamId, data) &&\n                    isOwnLinkedPlayerRsvpId(rsvpId, data)');
     expect(rsvpBlock).not.toContain('isParentForTeam(teamId) ||\n                                    (canUseLinkedPlayerRsvp');
@@ -76,16 +74,16 @@ describe('RSVP note privacy Firestore rules', () => {
     expect(deleteRule).not.toContain('isParentForTeam(teamId) ||');
   });
 
-  it('restricts note docs to admins or the note owner even when legacy notes are team-visible', () => {
+  it('restricts note docs to admins, the note owner, or explicit team-visible notes', () => {
     const noteBlock = extractNestedBlock(gamesBlock, 'match /rsvpNotes/{rsvpId} {');
 
     expect(noteBlock).toContain('function canReadRsvpNote(teamId, data)');
     expect(noteBlock).toContain('isTeamOwnerOrAdmin(teamId)');
     expect(noteBlock).toContain('isOwnRsvpNoteDoc(data)');
+    expect(noteBlock).toContain("data.get('visibility', 'admins') == 'team'");
     expect(noteBlock).toContain("get('noteVisibility', 'admins') == 'team'");
     expect(noteBlock).toContain('allow get: if (resource == null && isOwnRsvpNoteId() && isParentForTeam(teamId)) ||');
-    expect(noteBlock).toContain('allow list: if isTeamOwnerOrAdmin(teamId);');
-    expect(extractNestedBlock(noteBlock, 'function canReadRsvpNote(teamId, data) {')).not.toContain('isTeamVisibleRsvpNote');
+    expect(noteBlock).toContain('allow list: if canReadRsvpNote(teamId, resource.data);');
   });
 
   it('requires an explicit safe RSVP note document shape and writer-owned ID for writes', () => {
@@ -161,16 +159,6 @@ describe('RSVP note privacy Firestore rules', () => {
         await setDoc(doc(firestore, 'users/owner-1'), {
           email: 'owner@example.com',
           isAdmin: false
-        });
-        await setDoc(doc(firestore, 'users/parent-2'), {
-          email: 'other-parent@example.com',
-          isAdmin: false,
-          parentTeamIds: ['team-1'],
-          parentPlayerKeys: ['team-1::player-b']
-        });
-        await setDoc(doc(firestore, 'users/global-admin'), {
-          email: 'global@example.com',
-          isAdmin: true
         });
       });
     });
@@ -307,12 +295,9 @@ describe('RSVP note privacy Firestore rules', () => {
       await assertSucceeds(batch.commit());
     });
 
-    it('returns missing own RSVP and note overrides without exposing another user path', async () => {
+    it('returns missing own note overrides to a parent without exposing another user path', async () => {
       const parentDb = authedFirestore('parent-1', 'parent@example.com');
 
-      await assertSucceeds(getDoc(baseRsvpRef(parentDb)));
-      await assertSucceeds(getDoc(rsvpRef(parentDb, 'player-a')));
-      await assertFails(getDoc(rsvpRef(parentDb, 'player-a', 'other-parent')));
       await assertSucceeds(getDoc(baseNoteRef(parentDb)));
       await assertSucceeds(getDoc(noteRef(parentDb, 'player-a')));
       await assertFails(getDoc(noteRef(parentDb, 'player-a', 'other-parent')));
@@ -363,41 +348,6 @@ describe('RSVP note privacy Firestore rules', () => {
 
       await assertSucceeds(setDoc(ownerRsvpRef, rsvpPayload('player-b', 'owner-1')));
       await assertSucceeds(setDoc(ownerNoteRef, notePayload('player-b', 'owner-1')));
-    });
-
-    it('prevents cross-family RSVP reads while preserving own gets, staff lists, and aggregate game reads', async () => {
-      await seedRsvpDoc('teams/team-1/games/game-1/rsvps/parent-1__player-a', rsvpPayload('player-a'));
-      await seedRsvpDoc('teams/team-1/games/game-1/rsvps/parent-2__player-b', rsvpPayload('player-b', 'parent-2'));
-      await seedRsvpDoc('teams/team-1/games/game-1/rsvpNotes/parent-1__player-a', { ...notePayload('player-a'), visibility: 'team' });
-      await seedRsvpDoc('teams/team-1/games/game-1/rsvpNotes/parent-2__player-b', { ...notePayload('player-b', 'parent-2'), visibility: 'team' });
-
-      const parentDb = authedFirestore('parent-1', 'parent@example.com');
-      const ownerDb = authedFirestore('owner-1', 'owner@example.com');
-      const globalDb = authedFirestore('global-admin', 'global@example.com');
-      const rsvpCollection = collection(parentDb, 'teams/team-1/games/game-1/rsvps');
-
-      await assertSucceeds(getDoc(rsvpRef(parentDb, 'player-a')));
-      await assertFails(getDoc(rsvpRef(parentDb, 'player-b', 'parent-2')));
-      await assertFails(getDocs(rsvpCollection));
-      await assertSucceeds(getDoc(noteRef(parentDb, 'player-a')));
-      await assertFails(getDoc(noteRef(parentDb, 'player-b', 'parent-2')));
-      await assertFails(getDocs(collection(parentDb, 'teams/team-1/games/game-1/rsvpNotes')));
-      await assertSucceeds(getDocs(collection(ownerDb, 'teams/team-1/games/game-1/rsvps')));
-      await assertSucceeds(getDocs(collection(ownerDb, 'teams/team-1/games/game-1/rsvpNotes')));
-      await assertSucceeds(getDocs(collection(globalDb, 'teams/team-1/games/game-1/rsvps')));
-      await assertSucceeds(getDoc(doc(parentDb, 'teams/team-1/games/game-1')));
-    });
-
-    it('rejects new RSVP status writes containing direct parent email PII', async () => {
-      const parentDb = authedFirestore('parent-1', 'parent@example.com');
-      await assertFails(setDoc(rsvpRef(parentDb, 'player-a'), {
-        ...rsvpPayload('player-a'),
-        parentEmail: 'SENTINEL_PARENT@example.test'
-      }));
-      await assertFails(setDoc(rsvpRef(parentDb, 'player-a'), {
-        ...rsvpPayload('player-a'),
-        guardianEmail: 'SENTINEL_GUARDIAN@example.test'
-      }));
     });
   });
 });

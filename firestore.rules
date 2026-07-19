@@ -3576,9 +3576,6 @@ service cloud.firestore {
           }
           function isRsvpStatusPayloadSafe(data) {
             return !data.keys().hasAny([
-              'parentEmail',
-              'email',
-              'guardianEmail',
               'note',
               'notes',
               'adminNote',
@@ -3588,18 +3585,13 @@ service cloud.firestore {
               'privateAvailabilityNote'
             ]);
           }
-          // Staff retain the roster-wide list. Parents use exact document gets
-          // for their own base/player-scoped RSVP and the game-level aggregate.
-          allow get: if isTeamOwnerOrAdmin(teamId) ||
-                        (isSignedIn() &&
-                         isOwnRsvpDoc() &&
-                         resource == null &&
-                         isParentForTeam(teamId)) ||
-                        (isSignedIn() &&
-                         resource != null &&
-                         resource.data.userId == request.auth.uid &&
-                         canWriteOwnParentRsvp(resource.data));
-          allow list: if isTeamOwnerOrAdmin(teamId);
+          allow read: if isTeamOwnerOrAdmin(teamId) ||
+                         isParentForTeam(teamId) ||
+                         (isSignedIn() &&
+                          isOwnRsvpDoc() &&
+                          resource.data.userId == request.auth.uid &&
+                          canUseLinkedPlayerRsvp(teamId, resource.data) &&
+                          isOwnLinkedPlayerRsvpId(rsvpId, resource.data));
           allow create, update: if (isTeamOwnerOrAdmin(teamId) ||
                                     canWriteOwnParentRsvp(request.resource.data)) &&
                                    isSignedIn() && isOwnRsvpDoc() &&
@@ -3662,7 +3654,8 @@ service cloud.firestore {
           }
           function canReadRsvpNote(teamId, data) {
             return isTeamOwnerOrAdmin(teamId) ||
-                   isOwnRsvpNoteDoc(data);
+                   isOwnRsvpNoteDoc(data) ||
+                   (isParentForTeam(teamId) && isTeamVisibleRsvpNote(teamId, data));
           }
           function isRsvpNotePayloadValid(teamId, data) {
             return data.keys().hasOnly([
@@ -3702,8 +3695,8 @@ service cloud.firestore {
           // child override resolves as a missing document instead of a denied
           // read. Existing documents still use the data-aware privacy check.
           allow get: if (resource == null && isOwnRsvpNoteId() && isParentForTeam(teamId)) ||
-                        (resource != null && canReadRsvpNote(teamId, resource.data));
-          allow list: if isTeamOwnerOrAdmin(teamId);
+                        canReadRsvpNote(teamId, resource.data);
+          allow list: if canReadRsvpNote(teamId, resource.data);
           allow create, update: if isVerifiedForSensitiveWrite() && canWriteRsvpNote(teamId, rsvpId, request.resource.data);
           allow delete: if (resource == null && isOwnRsvpNoteId() && isParentForTeam(teamId)) ||
                            (isVerifiedForSensitiveWrite() &&
@@ -4074,10 +4067,17 @@ service cloud.firestore {
       }
     }
 
-    // Family share token documents are owner/admin control-plane records. Bearer
-    // viewers receive a server-side projection and never read this source doc.
+    // Family share tokens — parent-created read-only share links for grandparents/friends.
+    // The tokenId is a 40-char hex string that serves as a bearer credential.
     match /familyShareTokens/{tokenId} {
-      allow get: if (isSignedIn() && resource.data.ownerUserId == request.auth.uid) ||
+      // Anyone who has the token ID can read it (to validate and load the family page).
+      // Legacy revoked tokens may use revoked/revokedAt without active=false, so honor all revocation markers.
+      // Owner can always read their own tokens (including revoked ones).
+      allow get: if (resource.data.get('active', true) == true &&
+                     resource.data.get('revoked', false) != true &&
+                     resource.data.get('revokedAt', null) == null &&
+                     (resource.data.get('expiresAt', null) == null || resource.data.expiresAt > request.time)) ||
+                    (isSignedIn() && resource.data.ownerUserId == request.auth.uid) ||
                     isGlobalAdmin();
       // Only the owner can list their own tokens (rule applied per-document).
       allow list: if isSignedIn() && resource.data.ownerUserId == request.auth.uid;

@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { looksLikeEmail, parsePositiveBound, planRsvpPiiSanitization } from '../../scripts/rsvp-pii-migration-core.mjs';
 
 const runnerSource = readFileSync(new URL('../../scripts/sanitize-rsvp-pii.mjs', import.meta.url), 'utf8');
+const rolloutSource = readFileSync(new URL('../../docs/security/rsvp-family-projection-rollout.md', import.meta.url), 'utf8');
 
 describe('RSVP PII migration planning', () => {
   it('deletes direct email fields and email-derived display names idempotently', () => {
@@ -37,5 +38,14 @@ describe('RSVP PII migration planning', () => {
     expect(runnerSource).toContain('{ lastUpdateTime: docSnap.updateTime }');
     expect(runnerSource).toContain("writeFile(tempPath");
     expect(runnerSource).toContain("{ mode: 0o600 }");
+  });
+
+  it('keeps restrictive rules behind application, native-adoption, and rules-first rollback gates', () => {
+    expect(rolloutSource).toContain('Its `firestore.rules` and `firestore.indexes.json` must remain byte-identical');
+    expect(rolloutSource).toContain('Release signed, compatible iOS and Android builds');
+    expect(rolloutSource).toContain('app-store submission');
+    expect(rolloutSource).toContain('do not remove the\n  projection callable or projection-first clients while the closure remains');
+    expect(rolloutSource).toContain('Roll back the Phase B rules first before a functionality rollback');
+    expect(rolloutSource).not.toContain('revert to the prior release only while source-token reads\n  remain closed');
   });
 });

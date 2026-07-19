@@ -1,24 +1,50 @@
 # RSVP and family-share privacy rollout
 
-This change is intentionally deployable in phases. Do not deploy the Firestore
-rule closure before the callable and both clients have passed preview parity.
+This delivery is intentionally split because the production workflow evaluates
+Firestore configuration before application deployment:
+
+- **Phase A** contains the additive projection callable, legacy and React
+  projection-first clients, PII-free RSVP writes, and dry-run sanitizer tooling.
+  Its `firestore.rules` and `firestore.indexes.json` must remain byte-identical to
+  the current production base. The legacy source-token fallback remains passive
+  and available during this phase.
+- **Phase B** contains only the restrictive Firestore rule closure and its
+  rule-specific validator and actor-matrix coverage. Keep Phase B held until
+  Phase A is live, parity is verified, and compatible native releases have
+  propagated to the supported iOS and Android population.
+
+Do not combine or reorder these phases. A web deployment alone is not sufficient
+evidence for Phase B because installed native builds package the React family
+viewer and RSVP hydration paths, and do not receive Hosting updates. Older
+native builds directly read family-token source documents and list RSVP/note
+collections, both of which Phase B closes.
 
 ## Safe rollout
 
-1. Deploy only `getFamilyShareView` and the updated RSVP functions. Confirm the
-   callable returns `projectionVersion: 2` and that serialized responses contain
-   none of `ownerUserId`, `extraCalendarUrls`, `calendarUrls`, or planted sentinel
-   URL query values.
-2. Deploy Hosting and the React app. Exercise legacy `family.html` and
+1. Deploy Phase A. Confirm `getFamilyShareView` returns `projectionVersion: 2`
+   and that serialized responses contain none of `ownerUserId`,
+   `extraCalendarUrls`, `calendarUrls`, or planted sentinel URL query values.
+   Because Phase A has no Firestore configuration delta, the production
+   workflow's configuration-first step is a no-op.
+2. Exercise legacy `family.html` and
    `/app/#/family/:token` against active, revoked, expired, private-team,
    recurring-practice, external-calendar-failure, and multi-child fixtures.
    During this window clients try the projection first and retain the old read as
    a passive compatibility path.
-3. Capture parity evidence (event counts/IDs/dates, child filters, calendar
-   export, and failure states), then deploy `firestore.rules`. The closure denies
-   anonymous token-source reads and parent RSVP/note collection lists. Token
-   owners still manage their records, while staff retain roster RSVP lists.
-4. Monitor permission-denied and callable error rates. Roll back the rules alone
+3. Release signed, compatible iOS and Android builds and verify the supported
+   installed population uses the projection-first viewer and exact-document RSVP
+   hydration.
+   Treat app-store submission,
+   approval, or web parity alone as insufficient; require release propagation
+   evidence or a separately reviewed backward-compatible bridge before closure.
+4. Capture parity evidence (event counts/IDs/dates, child filters, calendar
+   export, failure states, native versions, and callable/fallback telemetry).
+   Rebase Phase B onto the then-current master and verify its diff is limited to
+   the intended rules closure, validator, actor-matrix tests, and this gate.
+5. Only then deploy Phase B. The closure denies anonymous token-source reads and
+   parent RSVP/note collection lists. Token owners still manage their records,
+   while staff retain roster RSVP lists.
+6. Monitor permission-denied and callable error rates. Roll back the rules alone
    if projection availability regresses; do not roll back the PII-free writes.
 
 The projection reuses the hardened calendar SSRF fetch path and its shared
@@ -63,9 +89,12 @@ notes. Re-running after completion is a no-op.
 
 ## Rollback boundaries
 
-- Functions/clients: revert to the prior release only while source-token reads
-  remain closed or after restoring the projection callable; otherwise a bearer
-  token could again receive raw owner/calendar data.
+- Functions/clients: before Phase B, Phase A may be rolled back because legacy
+  source-token reads remain open, explicitly accepting the return to the prior
+  raw-data exposure. After Phase B closes those reads, do not remove the
+  projection callable or projection-first clients while the closure remains.
+  Roll back the Phase B rules first before a functionality rollback, explicitly
+  accepting that raw source-token exposure is restored.
 - Rules: the family-token and RSVP read closures are independently reversible.
 - Backfill: field deletion is not automatically reversible. Export Firestore
   before apply. RSVP behavior does not depend on the deleted fields, and staff
