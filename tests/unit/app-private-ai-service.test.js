@@ -216,6 +216,7 @@ beforeEach(async () => {
         standings: { enabled: false },
         leaderboards: [],
         trackingSummaries: [],
+        canManageTeam: true,
         counts: { games: 4, practices: 2, completedGames: 4 }
     });
     playerMocks.loadParentPlayerDetailWithAthleteProfile.mockResolvedValue({
@@ -637,6 +638,9 @@ describe('private AI service', () => {
                 threads: [expect.objectContaining({ id: 'default' })]
             }
         });
+        expect(chatMocks.loadChatConversations).toHaveBeenCalledWith('team-1', authUser, expect.objectContaining({ id: 'team-1' }), true, {
+            activeConversationId: null
+        });
         await expect(runPrivateAiTool(authUser, { name: 'get_access_requests', args: { query: 'Bears', teamId: 'team-1' } })).resolves.toMatchObject({
             ok: true,
             data: {
@@ -681,6 +685,35 @@ describe('private AI service', () => {
         expect(toolsMocks.submitParentAccessRequest).toHaveBeenCalledWith('team-1', 'player-1', 'Parent');
         expect(toolsMocks.revokeParentFamilyShare).toHaveBeenCalledWith('share-1');
         expect(toolsMocks.updateParentFamilyShareCalendars).toHaveBeenCalledWith('share-1', ['https://calendar.example/feed.ics']);
+    });
+
+    it('fails closed when AI write selectors are ambiguous or unmatched', async () => {
+        const practiceEvent = futureEvent({
+            id: 'practice-1',
+            eventKey: 'team-1:practice-1:player-1',
+            type: 'practice',
+            practiceHomePacketSummary: { count: 1 },
+            practiceHomePacket: { note: 'Bring cleats' }
+        });
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            children: [{ playerId: 'player-1', name: 'Avery', teamId: 'team-1', teamName: 'Bears' }],
+            events: [practiceEvent]
+        });
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        await expect(runPrivateAiTool(authUser, { name: 'revoke_family_share_link', args: { __confirmed: true } })).resolves.toMatchObject({
+            ok: false,
+            error: 'tokenId is required for family share changes.'
+        });
+        await expect(runPrivateAiTool(authUser, {
+            name: 'mark_practice_packet_complete',
+            args: { eventId: 'practice-1', teamId: 'team-1', playerName: 'Missing Child', __confirmed: true }
+        })).resolves.toMatchObject({
+            ok: false,
+            error: 'No matching child was found for this practice packet.'
+        });
+        expect(toolsMocks.revokeParentFamilyShare).not.toHaveBeenCalled();
+        expect(scheduleMocks.markParentPracticePacketComplete).not.toHaveBeenCalled();
     });
 
     it('executes confirmed AI player incentive writes', async () => {

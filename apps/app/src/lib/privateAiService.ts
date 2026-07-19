@@ -568,7 +568,7 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
     mode: 'read',
     description: 'Parent practice/home packet details and completion status for a practice. Args: eventId, teamId, playerName, teamName.',
     resolve: async (user, args) => {
-      const event = await resolveAccessibleScheduleEvent(user, { ...args, type: 'practice' });
+      const event = await resolveAccessibleScheduleEvent(user, buildPracticePacketEventArgs(args));
       if (!event) throw new Error('No matching practice was found for this account.');
       const packet = await loadPracticePacketForAi(user, event);
       if (!packet) throw new Error('No practice packet was found for this practice.');
@@ -590,7 +590,7 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
       const teamId = await resolveAccessibleTeamId(user, args);
       if (!teamId) throw new Error('No matching team was found for this account.');
       const detail = await loadParentTeamDetail(teamId, user);
-      const conversations = await loadChatConversations(teamId, user, detail.team || { id: teamId }, false, {
+      const conversations = await loadChatConversations(teamId, user, detail.team || { id: teamId }, Boolean(detail.canManageTeam), {
         activeConversationId: compactText(args.conversationId) || null
       });
       return summarizeMessageThreads(teamId, detail.team, conversations);
@@ -745,7 +745,7 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
     description: 'Mark a practice/home packet complete for a linked child. Args: eventId, teamId, childId/playerId optional, playerName optional.',
     aliases: ['complete_practice_packet'],
     resolve: async (user, args) => {
-      const event = await resolveAccessibleScheduleEvent(user, { ...args, type: 'practice' });
+      const event = await resolveAccessibleScheduleEvent(user, buildPracticePacketEventArgs(args));
       if (!event) throw new Error('No matching practice was found for this account.');
       const packet = await loadPracticePacketForAi(user, event);
       if (!packet) throw new Error('No practice packet was found for this practice.');
@@ -1065,6 +1065,17 @@ async function loadPracticePacketForAi(user: AuthUser, event: ParentScheduleEven
     eventType: event.type
   } as any).catch(() => null);
   return loadParentPracticePacket(event, detail?.events || []);
+}
+
+function buildPracticePacketEventArgs(args: Record<string, unknown>) {
+  return {
+    ...args,
+    childId: '',
+    childName: '',
+    playerId: '',
+    playerName: '',
+    type: 'practice'
+  };
 }
 
 async function resolveAccessibleRideOffer(user: AuthUser, args: Record<string, unknown>) {
@@ -1913,18 +1924,26 @@ function resolvePracticePacketChild(packet: any, args: Record<string, unknown>) 
   const requestedChildId = compactText(args.childId || args.playerId);
   const requestedPlayerName = compactText(args.playerName || args.childName).toLowerCase();
   const children = Array.isArray(packet.children) ? packet.children : [];
+  if ((requestedChildId || requestedPlayerName) && !children.length) {
+    throw new Error('No linked child was found for this practice packet.');
+  }
   const child = children.find((candidate: any) => (
     (!requestedChildId || candidate.id === requestedChildId)
     && (!requestedPlayerName || compactText(candidate.name).toLowerCase().includes(requestedPlayerName))
-  )) || children[0];
-  if (!child) throw new Error('No linked child was found for this practice packet.');
-  return child;
+  ));
+  if ((requestedChildId || requestedPlayerName) && !child) {
+    throw new Error('No matching child was found for this practice packet.');
+  }
+  const fallbackChild = child || children[0];
+  if (!fallbackChild) throw new Error('No linked child was found for this practice packet.');
+  return fallbackChild;
 }
 
 async function resolveFamilyShareToken(user: AuthUser, args: Record<string, unknown>) {
   const tokenId = compactText(args.tokenId || args.id);
+  if (!tokenId) throw new Error('tokenId is required for family share changes.');
   const model = await loadFamilyShareModel(user);
-  const token = (model.tokens || []).find((candidate: any) => !tokenId || candidate.id === tokenId);
+  const token = (model.tokens || []).find((candidate: any) => candidate.id === tokenId);
   if (!token) throw new Error('No matching family share link was found.');
   return token;
 }
