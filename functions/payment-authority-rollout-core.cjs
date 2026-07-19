@@ -257,9 +257,17 @@ function inspectSettledTeamPassAttemptAuthority({ teamId = '', seasonId = '', ti
   const explicitFinancialStatuses = [attempt.reversalStatus, attempt.financialStatus, attempt.stripeFinancialStatus]
     .map((value) => normalizeString(value).toLowerCase())
     .filter(Boolean);
-  const storedDisputeLostAmounts = [attempt.disputeLostAmountCents, reversalState?.disputeLostAmountCents]
-    .filter((value) => value !== undefined)
-    .map(asNonNegativeSafeInteger);
+  const topLevelDisputeLostAmountCents = attempt.disputeLostAmountCents === undefined
+    ? null
+    : asNonNegativeSafeInteger(attempt.disputeLostAmountCents);
+  const reversalDisputeLostAmountCents = reversalState?.disputeLostAmountCents === undefined
+    ? null
+    : asNonNegativeSafeInteger(reversalState.disputeLostAmountCents);
+  const hasValidDisputeLostAmounts = checkoutStatus === 'dispute_lost'
+    ? topLevelDisputeLostAmountCents === expectedDisputeLostAmountCents
+      && reversalDisputeLostAmountCents === expectedDisputeLostAmountCents
+    : [topLevelDisputeLostAmountCents, reversalDisputeLostAmountCents]
+      .every((amount) => amount === null || amount === expectedDisputeLostAmountCents);
 
   if (!['refunded', 'dispute_lost'].includes(checkoutStatus)
       || normalizeString(attempt.product) !== 'team_pass'
@@ -291,7 +299,7 @@ function inspectSettledTeamPassAttemptAuthority({ teamId = '', seasonId = '', ti
       || normalizeString(reversalState.stripeChargeId) !== normalizeString(attempt.stripeChargeId)
       || effectiveStatus !== checkoutStatus
       || explicitFinancialStatuses.some((status) => status !== checkoutStatus)
-      || storedDisputeLostAmounts.some((amount) => amount === null || amount !== expectedDisputeLostAmountCents)) {
+      || !hasValidDisputeLostAmounts) {
     return 'team_pass_checkout_attempt_invalid';
   }
   return '';

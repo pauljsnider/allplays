@@ -5097,6 +5097,14 @@ function getStripeChargeDisputeSignalFailure(charge = {}, disputeStatus = 'none'
   return '';
 }
 
+function withTeamPassDisputeLostAuthority(reversal = {}) {
+  const chargeAmountCents = Math.max(0, Math.round(Number(reversal.chargeAmountCents || 0)));
+  return {
+    ...reversal,
+    disputeLostAmountCents: getStripeChargeLostAmountCents(reversal, chargeAmountCents)
+  };
+}
+
 function getSettledStripeChargeLedgerFailure({
   product,
   input,
@@ -8080,11 +8088,13 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
         const attempt = attemptSnap.exists ? (attemptSnap.data() || {}) : {};
         const ignoredReason = getTeamPassChargeGuardFailure({ attempt, charge: chargeAuthority });
         const currentReversal = attempt.reversalState || {};
-        const nextReversal = ignoredReason ? currentReversal : reconcileTeamPassReversal({
-          current: currentReversal,
-          event,
-          charge
-        });
+        const nextReversal = ignoredReason
+          ? currentReversal
+          : withTeamPassDisputeLostAuthority(reconcileTeamPassReversal({
+            current: currentReversal,
+            event,
+            charge
+          }));
         const reversalStatus = ignoredReason ? '' : getTeamPassEffectivePaymentStatus(nextReversal);
         const reversalChanged = JSON.stringify(nextReversal) !== JSON.stringify(currentReversal);
         if (!ignoredReason && reversalStatus && reversalChanged) {
@@ -8097,7 +8107,8 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
             stripeChargeId: charge.id || null,
             stripePaymentIntentId: getStripeObjectId(charge.payment_intent),
             disputeId: eventObject.object === 'dispute' ? eventObject.id || null : null,
-            refundedAmountCents: Math.max(0, Math.round(Number(charge.amount_refunded || 0))),
+            refundedAmountCents: Math.max(0, Math.round(Number(nextReversal.refundedAmountCents || 0))),
+            disputeLostAmountCents: Math.max(0, Math.round(Number(nextReversal.disputeLostAmountCents || 0))),
             reversalState: nextReversal
           };
           const attemptOverrides = new Map([[attemptRef.path, targetNextAttempt]]);
@@ -8237,7 +8248,7 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
             updatedAt: receivedAt
           };
           if (paidEvent) {
-            const reversalState = existingAttempt.reversalState || {
+            const reversalState = withTeamPassDisputeLostAuthority(existingAttempt.reversalState || {
               stripeChargeId,
               stripePaymentIntentId,
               chargeAmountCents: authority.checkoutAmountCents,
@@ -8246,7 +8257,7 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
               disputeStatus: 'none',
               disputeEventCreated: 0,
               lastStripeEventId: event.id || ''
-            };
+            });
             const paymentStatus = getTeamPassEffectivePaymentStatus(reversalState);
             const entitlementStatus = paymentStatus === 'paid'
               ? 'active'
@@ -8263,6 +8274,8 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
               }),
               stripePaymentIntentId,
               stripeChargeId,
+              refundedAmountCents: Math.max(0, Math.round(Number(reversalState.refundedAmountCents || 0))),
+              disputeLostAmountCents: Math.max(0, Math.round(Number(reversalState.disputeLostAmountCents || 0))),
               reversalState
             }, { merge: true });
           } else {
@@ -8341,21 +8354,17 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
       const ignoredReason = checkoutGuardFailure || paymentIntentGuardFailure;
       if (!ignoredReason) {
         if (paidEvent) {
-          let settlementReversalState = reconcileTeamPassReversal({
+          const settlementReversalState = reconcileTeamPassReversal({
             current: attempt.reversalState || {},
             event: { id: event.id, created: event.created, type: event.type },
             charge
           });
           if (charge.disputed === true
               && !['open', 'won', 'lost'].includes(String(settlementReversalState.disputeStatus || '').trim().toLowerCase())) {
-            settlementReversalState = {
-              ...settlementReversalState,
-              disputeStatus: 'open',
-              disputeEventCreated: Math.max(0, Number(event.created || 0)),
-              lastStripeEventId: event.id || settlementReversalState.lastStripeEventId || ''
-            };
+            throw new Error('Team Pass Charge has a historical dispute signal without durable dispute-event authority.');
           }
-          const effectivePaymentStatus = getTeamPassEffectivePaymentStatus(settlementReversalState);
+          const authoritativeReversalState = withTeamPassDisputeLostAuthority(settlementReversalState);
+          const effectivePaymentStatus = getTeamPassEffectivePaymentStatus(authoritativeReversalState);
           const entitlementStatus = effectivePaymentStatus === 'paid'
             ? 'active'
             : effectivePaymentStatus === 'disputed'
@@ -8377,8 +8386,9 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
             }),
             stripePaymentIntentId: paymentIntent.id,
             stripeChargeId: charge.id,
-            refundedAmountCents: Math.max(0, Math.round(Number(settlementReversalState.refundedAmountCents || 0))),
-            reversalState: settlementReversalState,
+            refundedAmountCents: Math.max(0, Math.round(Number(authoritativeReversalState.refundedAmountCents || 0))),
+            disputeLostAmountCents: Math.max(0, Math.round(Number(authoritativeReversalState.disputeLostAmountCents || 0))),
+            reversalState: authoritativeReversalState,
             updatedAt: receivedAt
           }, { merge: true });
         } else if (event.type === 'checkout.session.completed') {

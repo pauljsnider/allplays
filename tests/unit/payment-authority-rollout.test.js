@@ -201,6 +201,30 @@ describe('Stripe payment-authority rollout gate', () => {
             checkoutStatus: 'dispute_lost',
             refundedAmountCents: 0,
             reversalState: { ...attempt.reversalState, refundedAmountCents: 0, disputeStatus: 'lost' }
+        })).toBe('team_pass_checkout_attempt_invalid');
+        expect(inspect({
+            ...attempt,
+            checkoutStatus: 'dispute_lost',
+            refundedAmountCents: 0,
+            disputeLostAmountCents: 4900,
+            reversalState: {
+                ...attempt.reversalState,
+                refundedAmountCents: 0,
+                disputeStatus: 'lost',
+                disputeLostAmountCents: 4900
+            }
+        })).toBe('');
+        expect(inspect({
+            ...attempt,
+            checkoutStatus: 'dispute_lost',
+            refundedAmountCents: 100,
+            disputeLostAmountCents: 4800,
+            reversalState: {
+                ...attempt.reversalState,
+                refundedAmountCents: 100,
+                disputeStatus: 'lost',
+                disputeLostAmountCents: 4800
+            }
         })).toBe('');
         expect(inspect({
             ...attempt,
