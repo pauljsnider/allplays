@@ -703,7 +703,7 @@ test('profile exposes account, notification, invite, verification, password, upl
     await expect(page.getByRole('button', { name: 'Show more codes' })).toBeVisible();
     await page.getByLabel('Recipient email').fill('friend@example.com');
     await page.getByRole('button', { name: 'Create invite' }).click();
-    await expect(page.getByText('Invite code')).toBeVisible();
+    await expect(page.getByText('Invite code', { exact: true })).toBeVisible();
     const shareInviteLink = page.getByRole('button', { name: 'Share invite' });
     await expect(shareInviteLink).toBeVisible();
     await expect(shareInviteLink).toHaveClass(/primary-button/);
