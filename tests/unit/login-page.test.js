@@ -195,8 +195,11 @@ describe('login page redirect coordination', () => {
             pendingLoginInviteCode: 'manual12',
             defaultRedirect: 'dashboard.html'
         });
+        const user = { uid: 'user-1' };
 
-        expect(coordinator.getGoogleRedirectUrl({ uid: 'user-1' }))
+        expect(coordinator.getGoogleRedirectUrl(user))
+            .toBe('accept-invite.html?code=MANUAL12');
+        expect(coordinator.getAutoRedirectUrl(user))
             .toBe('accept-invite.html?code=MANUAL12');
         expect(windowObject.sessionStorage.removeItem)
             .toHaveBeenCalledWith(PENDING_LOGIN_INVITE_CODE_STORAGE_KEY);

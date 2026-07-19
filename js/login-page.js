@@ -101,6 +101,8 @@ export function createLoginRedirectCoordinator({
         : '';
     const shouldRedeemInviteFromLogin = Boolean(urlCodeParam) && REDEEMABLE_INVITE_TYPES.has(urlInviteType);
     let inviteRedemptionOverride = null;
+    let inviteCodeOverride = null;
+    let inviteTypeOverride = null;
 
     function getPostAuthRedirect(userWithRoles, shouldRedeemInvite = false, inviteCodeOverride = null, inviteTypeOverride = null) {
         const defaultRedirect = getRedirectUrl(userWithRoles);
@@ -121,12 +123,14 @@ export function createLoginRedirectCoordinator({
             (googleAuthMode === 'login' || googleAuthMode === 'invite')) ||
             Boolean(pendingInviteCode);
         inviteRedemptionOverride = shouldRedeemInvite;
+        inviteCodeOverride = pendingInviteCode || null;
+        inviteTypeOverride = pendingInviteCode ? '' : null;
         return getPostAuthRedirect(userWithRoles, shouldRedeemInvite, pendingInviteCode);
     }
 
     function getAutoRedirectUrl(userWithRoles) {
         const shouldRedeemInvite = inviteRedemptionOverride ?? shouldRedeemInviteFromLogin;
-        return getPostAuthRedirect(userWithRoles, shouldRedeemInvite);
+        return getPostAuthRedirect(userWithRoles, shouldRedeemInvite, inviteCodeOverride, inviteTypeOverride);
     }
 
     return {
