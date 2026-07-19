@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
-import { Copy, Loader2, RefreshCw, Users } from 'lucide-react';
-import { createParentHouseholdMemberInvite, loadParentHouseholdInviteModel, type ParentHouseholdFamilyMember, type ParentHouseholdLinkedPlayer } from '../../lib/parentHouseholdService';
+import { CheckCircle2, Copy, Loader2, RefreshCw, Users } from 'lucide-react';
+import { createParentHouseholdMemberInvite, loadParentHouseholdInviteModel, type ParentHouseholdFamilyContact, type ParentHouseholdFamilyMember, type ParentHouseholdLinkedPlayer } from '../../lib/parentHouseholdService';
 import { toAppServiceError } from '../../lib/appErrors';
 import type { AuthState } from '../../lib/types';
 import { EmptyState, LoadingBlock, RetryableStatus, Status, ToolHeader, copyText, useParentToolAsyncOperation } from './shared';
@@ -8,12 +8,14 @@ import { EmptyState, LoadingBlock, RetryableStatus, Status, ToolHeader, copyText
 export function HouseholdInviteTool({ auth, refreshVersion }: { auth: AuthState; refreshVersion: number }) {
     const [linkedPlayers, setLinkedPlayers] = useState<ParentHouseholdLinkedPlayer[]>([]);
     const [members, setMembers] = useState<ParentHouseholdFamilyMember[]>([]);
+    const [linkedContacts, setLinkedContacts] = useState<ParentHouseholdFamilyContact[]>([]);
     const [playerKey, setPlayerKey] = useState('');
     const [displayName, setDisplayName] = useState('');
     const [email, setEmail] = useState('');
     const [relation, setRelation] = useState('');
     const [createdInvite, setCreatedInvite] = useState<{ code: string; inviteUrl: string; email: string; emailSent: boolean } | null>(null);
     const [message, setMessage] = useState('');
+    const [copiedEmail, setCopiedEmail] = useState('');
     const loadOperation = useParentToolAsyncOperation();
     const submitOperation = useParentToolAsyncOperation();
     const runLoad = loadOperation.run;
@@ -37,6 +39,7 @@ export function HouseholdInviteTool({ auth, refreshVersion }: { auth: AuthState;
                 onSuccess: (model) => {
                     setLinkedPlayers(model.linkedPlayers);
                     setMembers(model.members);
+                    setLinkedContacts(model.linkedContacts || []);
                     setPlayerKey((current) => current || (model.linkedPlayers[0] ? `${model.linkedPlayers[0].teamId}::${model.linkedPlayers[0].playerId}` : ''));
                 }
             }
@@ -89,6 +92,14 @@ export function HouseholdInviteTool({ auth, refreshVersion }: { auth: AuthState;
         );
     };
 
+    const copyEmail = async (nextEmail: string) => {
+        const normalizedEmail = String(nextEmail || '').trim();
+        if (!normalizedEmail) return;
+        await copyText(normalizedEmail, setMessage);
+        setCopiedEmail(normalizedEmail);
+        window.setTimeout(() => setCopiedEmail((current) => current === normalizedEmail ? '' : current), 1400);
+    };
+
     return (
         <div className="space-y-3">
             <section className="app-card p-4">
@@ -123,6 +134,42 @@ export function HouseholdInviteTool({ auth, refreshVersion }: { auth: AuthState;
                         </button>
                     </form>
                 )}
+            </section>
+
+            <section className="app-card p-4">
+                <ToolHeader icon={Users} title="Already linked family" detail="Parent and guardian accounts or contacts already connected to your linked players." />
+                <div className="mt-3 grid gap-2 lg:grid-cols-2">
+                    {linkedContacts.length ? linkedContacts.map((contact) => {
+                        const label = contact.name || contact.email || contact.phone || 'Family contact';
+                        const showEmailMeta = Boolean(contact.email && contact.email !== label);
+                        return (
+                            <div key={`${contact.teamId}-${contact.playerId}-${contact.id}`} className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+                                <div className="flex items-center justify-between gap-2">
+                                    <div className="min-w-0 flex-1">
+                                        <div className="flex min-w-0 items-center gap-2">
+                                            <div className="truncate text-sm font-black leading-5 text-gray-950">{label}</div>
+                                            {contact.email ? (
+                                                <button type="button" className="ghost-button !h-7 !min-h-7 !w-7 !flex-none !p-0" onClick={() => copyEmail(contact.email)} aria-label={`Copy ${contact.email}`} title={copiedEmail === contact.email ? 'Copied' : 'Copy email'}>
+                                                    {copiedEmail === contact.email ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" aria-hidden="true" />}
+                                                </button>
+                                            ) : null}
+                                        </div>
+                                        <div className="text-xs font-semibold leading-4 text-gray-600">{contact.relation || 'Parent/guardian'} for {contact.playerName || 'Player'}{contact.playerNumber ? ` #${contact.playerNumber}` : ''}{contact.teamName ? ` - ${contact.teamName}` : ''}</div>
+                                    </div>
+                                    <span className={`flex-none rounded-full border px-2 py-0.5 text-[11px] font-black uppercase leading-4 ${contact.status === 'linked' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-gray-200 bg-white text-gray-600'}`}>
+                                        {contact.status === 'linked' ? 'Linked' : 'Contact'}
+                                    </span>
+                                </div>
+                                {showEmailMeta || contact.phone ? (
+                                    <div className="mt-1 flex min-w-0 flex-wrap gap-x-3 gap-y-0.5 text-xs font-semibold leading-4 text-gray-600">
+                                        {showEmailMeta ? <span className="truncate">{contact.email}</span> : null}
+                                        {contact.phone ? <span className="truncate">{contact.phone}</span> : null}
+                                    </div>
+                                ) : null}
+                            </div>
+                        );
+                    }) : <EmptyState icon={Users} title="No linked family contacts" detail="Linked parent and guardian contacts will appear here after they are saved on the player." />}
+                </div>
             </section>
 
             <section className="app-card p-4">
