@@ -699,20 +699,17 @@ test('profile exposes account, notification, invite, verification, password, upl
     await expect(page.getByText('Notification preferences saved.')).toBeVisible();
 
     await page.getByRole('button', { name: 'Invites', exact: true }).click();
-    await expect(page.getByText('Invite codes')).toBeVisible();
+    await expect(page.getByText('Create invite')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Show more codes' })).toBeVisible();
-    await expect(page.getByText('Advanced: add recipient label')).toBeVisible();
-    await page.getByText('Advanced: add recipient label').click();
-    await page.getByLabel('Invite email label').fill('friend@example.com');
-    await page.getByRole('button', { name: 'Generate invite link' }).click();
-    await expect(page.getByText('Generated invite link')).toBeVisible();
-    const shareInviteLink = page.getByRole('button', { name: 'Share invite link' });
+    await page.getByLabel('Recipient email').fill('friend@example.com');
+    await page.getByRole('button', { name: 'Create invite' }).click();
+    await expect(page.getByText('Invite code')).toBeVisible();
+    const shareInviteLink = page.getByRole('button', { name: 'Share invite' });
     await expect(shareInviteLink).toBeVisible();
     await expect(shareInviteLink).toHaveClass(/primary-button/);
-    await expect(page.getByRole('button', { name: 'Copy invite link' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Copy link' })).toBeVisible();
     await shareInviteLink.click();
-    await expect(page.getByText('Share sheet opened.')).toBeVisible();
-    await expect(page.getByText('Fallback code')).toBeVisible();
+    await expect(page.getByText('Invite shared.')).toBeVisible();
     await expect(page.getByText('NEWMVP42', { exact: true }).first()).toBeVisible();
     await expect(page.getByRole('button', { name: 'Copy code' })).toBeVisible();
 
