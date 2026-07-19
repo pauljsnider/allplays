@@ -331,14 +331,25 @@ async function nativeSaveProfileDocument(userId: string, profile: ProfileDocumen
 }
 
 async function nativeLoadNotificationTeams(userId: string, email?: string | null): Promise<NotificationTeam[]> {
-  const [profile, ownedTeams, adminTeams] = await Promise.all([
-    nativeLoadProfileDocument(userId).catch(() => ({})),
+  const profile = await nativeLoadProfileDocument(userId).catch(() => ({}));
+  const emailCandidates = Array.from(new Set([
+    String(email || '').trim(),
+    String((profile as any)?.email || '').trim(),
+    String(email || (profile as any)?.email || '').trim().toLowerCase()
+  ].filter(Boolean)));
+  const normalizedEmail = emailCandidates.find((candidate) => candidate === candidate.toLowerCase()) || '';
+  const ownerEmailLookups = emailCandidates.map((ownerEmail) =>
+    nativeRunQuery('teams', 'ownerEmail', 'EQUAL', ownerEmail).catch(() => [])
+  );
+  const [ownedTeams, adminTeams, ownerEmailLowerTeams, ...ownerEmailTeams] = await Promise.all([
     nativeRunQuery('teams', 'ownerId', 'EQUAL', userId).catch(() => []),
-    email ? nativeRunQuery('teams', 'adminEmails', 'ARRAY_CONTAINS', email.toLowerCase()).catch(() => []) : Promise.resolve([])
+    normalizedEmail ? nativeRunQuery('teams', 'adminEmails', 'ARRAY_CONTAINS', normalizedEmail).catch(() => []) : Promise.resolve([]),
+    normalizedEmail ? nativeRunQuery('teams', 'ownerEmailLower', 'EQUAL', normalizedEmail).catch(() => []) : Promise.resolve([]),
+    ...ownerEmailLookups
   ]);
   const parentTeams = await nativeLoadTeamsByIds(getProfileParentTeamIds(profile));
   const map = new Map<string, NotificationTeam>();
-  filterActiveTeams([...ownedTeams, ...adminTeams, ...parentTeams]).forEach((team: any) => {
+  filterActiveTeams([...ownedTeams, ...adminTeams, ...ownerEmailLowerTeams, ...ownerEmailTeams.flat(), ...parentTeams]).forEach((team: any) => {
     if (team?.id) {
       map.set(team.id, { id: team.id, name: team.name || team.id });
     }
