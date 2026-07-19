@@ -642,9 +642,9 @@ function TeamHero({ model }: { model: TeamDetailModel }) {
         </div>
       </div>
       <div className="grid grid-cols-3 gap-2 p-3">
-        <SummaryStat icon={Trophy} label="Record" value={formatRecord(model.record)} />
-        <SummaryStat icon={Users} label="Roster" value={String(model.players.length)} />
-        <SummaryStat icon={CalendarDays} label="Upcoming" value={String(model.upcomingEvents.length)} />
+        <SummaryStat icon={Trophy} label="Record" value={formatRecord(model.record)} to={`/schedule?teamId=${encodeURIComponent(model.team.id)}&filter=recent-results`} />
+        <SummaryStat icon={Users} label="Roster" value={String(model.players.length)} to={`/teams/${encodeURIComponent(model.team.id)}?tab=roster`} />
+        <SummaryStat icon={CalendarDays} label="Upcoming" value={String(model.upcomingEvents.length)} to={`/teams/${encodeURIComponent(model.team.id)}?tab=schedule`} />
       </div>
       {team.description ? <p className="border-t border-gray-100 px-4 py-3 text-sm font-semibold leading-6 text-gray-600">{team.description}</p> : null}
     </section>
@@ -655,9 +655,9 @@ function OverviewTab({ model }: { model: TeamDetailModel }) {
   return (
     <div className="space-y-4">
       <section className="grid gap-3 sm:grid-cols-2">
-        <InfoCard icon={Trophy} title={`Season record (${model.record.label})`} value={formatRecord(model.record)} detail={model.record.gamesPlayed ? `${model.record.gamesPlayed} completed ${model.record.gamesPlayed === 1 ? 'game' : 'games'}${model.record.winPercentage !== null ? ` · ${model.record.winPercentage}%` : ''}` : 'No completed games yet'} />
+        <InfoCard icon={Trophy} title={`Season record (${model.record.label})`} value={formatRecord(model.record)} detail={model.record.gamesPlayed ? `${model.record.gamesPlayed} completed ${model.record.gamesPlayed === 1 ? 'game' : 'games'}${model.record.winPercentage !== null ? ` · ${model.record.winPercentage}%` : ''}` : 'No completed games yet'} to={`/schedule?teamId=${encodeURIComponent(model.team.id)}&filter=recent-results`} />
         <InfoCard icon={CalendarDays} title="Next event" value={model.nextEvent ? formatEventDate(model.nextEvent.date) : 'No upcoming'} detail={model.nextEvent ? `${model.nextEvent.title} · ${model.nextEvent.location}` : 'Schedule is clear for now'} to={`/schedule?teamId=${encodeURIComponent(model.team.id)}`} />
-        <InfoCard icon={Users} title="Roster size" value={`${model.players.length}`} detail={`${model.linkedPlayers.length || 0} linked to your account`} />
+        <InfoCard icon={Users} title="Roster size" value={`${model.players.length}`} detail={`${model.linkedPlayers.length || 0} linked to your account`} to={`/teams/${encodeURIComponent(model.team.id)}?tab=roster`} />
         <InfoCard icon={BarChart3} title="Standings" value={getStandingValue(model)} detail={getStandingDetail(model)} href={model.team.leagueUrl || undefined} />
       </section>
 
@@ -2737,14 +2737,16 @@ function InfoCard({ icon: Icon, title, value, detail, to, href }: { icon: Lucide
   return <div className="app-card p-4">{body}</div>;
 }
 
-function SummaryStat({ icon: Icon, label, value }: { icon: LucideIcon; label: string; value: string }) {
-  return (
-    <div className="rounded-xl border border-gray-200 bg-gray-50 p-2">
+function SummaryStat({ icon: Icon, label, value, to }: { icon: LucideIcon; label: string; value: string; to?: string }) {
+  const body = (
+    <>
       <Icon className="h-4 w-4 text-primary-600" aria-hidden="true" />
       <div className="mt-1 truncate text-sm font-black text-gray-950">{value}</div>
       <div className="truncate text-[10px] font-extrabold uppercase tracking-[0.04em] text-gray-500">{label}</div>
-    </div>
+    </>
   );
+  const className = 'block rounded-xl border border-gray-200 bg-gray-50 p-2 text-left transition hover:border-primary-200 hover:bg-primary-50/40';
+  return to ? <Link to={to} className={className}>{body}</Link> : <div className="rounded-xl border border-gray-200 bg-gray-50 p-2">{body}</div>;
 }
 
 function TeamEventRow({ event, model, auth, reminderPreviewLoader, onOpenStatTrackerConfigs }: { event: TeamDetailEvent; model: TeamDetailModel; auth: AuthState; reminderPreviewLoader: ReturnType<typeof createStaffRsvpReminderPreviewLoader>; onOpenStatTrackerConfigs: () => void }) {
