@@ -16,23 +16,39 @@ import {
   serverTimestamp,
   setDoc
 } from './adapters/legacyPrivateAi';
-import { getChatInboxPreview, loadChatInbox } from './chatService';
+import {
+  getChatInboxPreview,
+  loadChatConversations,
+  loadChatInbox,
+  sendTeamChatMessage
+} from './chatService';
 import { searchHelpKnowledge } from './helpKnowledgeService';
 import { loadParentHome } from './homeService';
 import { createLogger } from './logger';
 import {
   createParentFamilyShare,
   createParentHouseholdMemberInvite,
+  discoverParentAccessTeams,
   loadFamilyShareModel,
+  loadParentAccessModel,
+  loadParentAccessPlayers,
   loadParentCertificates,
   loadParentFeesForApp,
   loadParentHouseholdInviteModel,
-  loadParentRegistrations
+  loadParentRegistrations,
+  revokeParentFamilyShare,
+  submitParentAccessRequest,
+  updateParentFamilyShareCalendars
 } from './parentToolsService';
 import {
   loadParentPlayerDetailWithAthleteProfile,
   loadParentPlayerStatTotals,
   loadParentPlayerVideoClips,
+  markParentPlayerIncentivePaid,
+  retireParentPlayerIncentiveRule,
+  saveParentPlayerIncentiveCap,
+  saveParentPlayerIncentiveRule,
+  toggleParentPlayerIncentiveRule,
   updateParentPlayerEditableProfile
 } from './playerService';
 import {
@@ -46,11 +62,16 @@ import {
 } from './scheduleLogic';
 import {
   cancelParentScheduleRideRequest,
+  claimParentScheduleAssignmentSlot,
   createParentScheduleRideOffer,
+  loadParentPracticePacket,
   loadParentSchedule,
+  loadParentScheduleAssignments,
   loadParentScheduleEventDetail,
   loadParentScheduleRideOffers,
+  markParentPracticePacketComplete,
   requestParentScheduleRideSpot,
+  releaseParentScheduleAssignmentClaim,
   setParentScheduleRideOfferStatus,
   submitParentScheduleRsvp,
   submitParentScheduleRsvpForChildren,
@@ -334,6 +355,12 @@ export async function generatePrivateAiAnswer(
       }
     }, toolContext));
   }
+  if (looksLikeLastGameQuestion(question)) {
+    toolResults.push(await runPrivateAiTool(user, {
+      name: 'get_last_game',
+      args: {}
+    }, toolContext));
+  }
   let plannerInput = buildPlannerPrompt({ user, question, history, toolResults });
 
   for (let round = 0; round < maxToolRounds; round += 1) {
@@ -456,6 +483,15 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
     }
   },
   {
+    name: 'get_last_game',
+    mode: 'read',
+    description: 'Most recent past game for the parent account, including RSVP status. Args: teamId, teamName, playerId, childId, playerName, childName.',
+    aliases: ['last_game', 'get_previous_game'],
+    resolve: async (user, args) => summarizeLastGame(await loadParentSchedule(user, {
+      includePastGames: true
+    }), args)
+  },
+  {
     name: 'get_schedule_event',
     mode: 'read',
     description: 'One schedule event with detail context. Args: eventId, teamId, playerName, teamName.',
@@ -513,10 +549,52 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
     }
   },
   {
+    name: 'list_assignments',
+    mode: 'read',
+    description: 'Volunteer/task assignments for one schedule event. Args: eventId, teamId, playerName, teamName.',
+    aliases: ['get_assignments', 'list_tasks_for_event'],
+    resolve: async (user, args) => {
+      const event = await resolveAccessibleScheduleEvent(user, args);
+      if (!event) throw new Error('No matching event was found for this account.');
+      const assignments = await loadParentScheduleAssignments(event);
+      return {
+        event: summarizeScheduleEvent(event),
+        assignments: assignments.map(summarizeAssignment)
+      };
+    }
+  },
+  {
+    name: 'get_practice_packet',
+    mode: 'read',
+    description: 'Parent practice/home packet details and completion status for a practice. Args: eventId, teamId, playerName, teamName.',
+    resolve: async (user, args) => {
+      const event = await resolveAccessibleScheduleEvent(user, { ...args, type: 'practice' });
+      if (!event) throw new Error('No matching practice was found for this account.');
+      const packet = await loadPracticePacketForAi(user, event);
+      if (!packet) throw new Error('No practice packet was found for this practice.');
+      return summarizePracticePacket(packet);
+    }
+  },
+  {
     name: 'get_messages',
     mode: 'read',
     description: 'Team chat inbox, unread counts, and latest previews.',
     resolve: async (user) => summarizeMessages(await loadChatInbox(user))
+  },
+  {
+    name: 'list_message_threads',
+    mode: 'read',
+    description: 'Message conversations/threads for an accessible team. Args: teamId or teamName.',
+    aliases: ['get_message_threads'],
+    resolve: async (user, args) => {
+      const teamId = await resolveAccessibleTeamId(user, args);
+      if (!teamId) throw new Error('No matching team was found for this account.');
+      const detail = await loadParentTeamDetail(teamId, user);
+      const conversations = await loadChatConversations(teamId, user, detail.team || { id: teamId }, false, {
+        activeConversationId: compactText(args.conversationId) || null
+      });
+      return summarizeMessageThreads(teamId, detail.team, conversations);
+    }
   },
   {
     name: 'get_team_detail',
@@ -577,6 +655,27 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
     resolve: async (user) => summarizeFamilyShare(await loadFamilyShareModel(user))
   },
   {
+    name: 'get_access_requests',
+    mode: 'read',
+    description: 'Parent access request status and searchable team/player options. Args: query, teamId.',
+    aliases: ['list_access_requests', 'find_access_teams'],
+    resolve: async (user, args) => {
+      const teamId = compactText(args.teamId);
+      const [model, teams, players] = await Promise.all([
+        loadParentAccessModel(user),
+        compactText(args.query || args.teamName)
+          ? discoverParentAccessTeams({ searchText: compactText(args.query || args.teamName), pageSize: 10 }).catch(() => ({ teams: [], nextCursor: null }))
+          : Promise.resolve({ teams: [], nextCursor: null }),
+        teamId ? loadParentAccessPlayers(teamId).catch(() => []) : Promise.resolve([])
+      ]);
+      return {
+        requests: (model.requests || []).slice(0, 15),
+        teams: (teams.teams || []).slice(0, 10),
+        players: players.slice(0, 20)
+      };
+    }
+  },
+  {
     name: 'get_help',
     mode: 'read',
     description: 'ALL PLAYS help/workflow documentation.',
@@ -612,6 +711,47 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
       const response = normalizeAiRsvp(args.response);
       const summary = await submitParentScheduleRsvpForChildren(events, user, response, compactText(args.note));
       return { updatedChildren: events.map((candidate) => candidate.childName), response, summary };
+    }
+  },
+  {
+    name: 'claim_assignment',
+    mode: 'write',
+    description: 'Claim a volunteer/task assignment slot. Args: eventId, teamId, role.',
+    aliases: ['claim_task'],
+    resolve: async (user, args) => {
+      const event = await resolveAccessibleScheduleEvent(user, args);
+      if (!event) throw new Error('No matching event was found for this account.');
+      const role = compactText(args.role || args.assignment || args.task);
+      await claimParentScheduleAssignmentSlot(event, user, role);
+      return { event: summarizeScheduleEvent(event), role, claimed: true };
+    }
+  },
+  {
+    name: 'release_assignment',
+    mode: 'write',
+    description: 'Release a volunteer/task assignment claim. Args: eventId, teamId, role.',
+    aliases: ['release_task'],
+    resolve: async (user, args) => {
+      const event = await resolveAccessibleScheduleEvent(user, args);
+      if (!event) throw new Error('No matching event was found for this account.');
+      const role = compactText(args.role || args.assignment || args.task);
+      await releaseParentScheduleAssignmentClaim(event, role);
+      return { event: summarizeScheduleEvent(event), role, released: true };
+    }
+  },
+  {
+    name: 'mark_practice_packet_complete',
+    mode: 'write',
+    description: 'Mark a practice/home packet complete for a linked child. Args: eventId, teamId, childId/playerId optional, playerName optional.',
+    aliases: ['complete_practice_packet'],
+    resolve: async (user, args) => {
+      const event = await resolveAccessibleScheduleEvent(user, { ...args, type: 'practice' });
+      if (!event) throw new Error('No matching practice was found for this account.');
+      const packet = await loadPracticePacketForAi(user, event);
+      if (!packet) throw new Error('No practice packet was found for this practice.');
+      const child = resolvePracticePacketChild(packet, args);
+      const completion = await markParentPracticePacketComplete(packet, user, child);
+      return { packet: summarizePracticePacket(packet), child, completion };
     }
   },
   {
@@ -667,6 +807,31 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
     }
   },
   {
+    name: 'send_team_message',
+    mode: 'write',
+    description: 'Send a team chat message. Args: teamId or teamName, text/message, target full_team|staff.',
+    aliases: ['send_message'],
+    resolve: async (user, args) => {
+      const teamId = await resolveAccessibleTeamId(user, args);
+      if (!teamId) throw new Error('No matching team was found for this account.');
+      const text = compactText(args.text || args.message);
+      if (!text) throw new Error('Message text is required.');
+      const profile = await getUserProfile(user.uid).catch(() => ({}));
+      const target = compactText(args.target).toLowerCase() === 'staff' ? 'staff' : 'full_team';
+      const result = await sendTeamChatMessage({
+        teamId,
+        user,
+        profile: profile || {},
+        text,
+        selectedConversationId: compactText(args.conversationId),
+        selectedRecipientTarget: target,
+        selectedRecipientIds: [],
+        skipInteractionTiming: true
+      });
+      return { teamId, text, target, result };
+    }
+  },
+  {
     name: 'create_household_invite',
     mode: 'write',
     description: 'Invite a household contact for a linked player. Args: playerKey or teamId+playerId, email, displayName, relation.',
@@ -691,12 +856,125 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
     )
   },
   {
+    name: 'revoke_family_share_link',
+    mode: 'write',
+    description: 'Revoke a family share link. Args: tokenId.',
+    aliases: ['revoke_family_share'],
+    resolve: async (user, args) => {
+      const token = await resolveFamilyShareToken(user, args);
+      await revokeParentFamilyShare(token.id);
+      return { tokenId: token.id, revoked: true };
+    }
+  },
+  {
+    name: 'update_family_share_calendars',
+    mode: 'write',
+    description: 'Update extra calendar URLs attached to a family share link. Args: tokenId, extraCalendarUrls.',
+    resolve: async (user, args) => {
+      const token = await resolveFamilyShareToken(user, args);
+      const urls = Array.isArray(args.extraCalendarUrls) ? args.extraCalendarUrls.map(compactText).filter(Boolean) : [];
+      await updateParentFamilyShareCalendars(token.id, urls);
+      return { tokenId: token.id, extraCalendarUrls: urls };
+    }
+  },
+  {
+    name: 'submit_access_request',
+    mode: 'write',
+    description: 'Request parent access to a team/player. Args: teamId, playerId, relation.',
+    aliases: ['request_parent_access'],
+    resolve: async (user, args) => {
+      const teamId = compactText(args.teamId);
+      const playerId = compactText(args.playerId || args.childId);
+      if (!teamId || !playerId) throw new Error('teamId and playerId are required.');
+      const relation = compactText(args.relation) || 'Parent';
+      const result = await submitParentAccessRequest(teamId, playerId, relation);
+      return { teamId, playerId, relation, result };
+    }
+  },
+  {
     name: 'update_player_profile',
     mode: 'write',
     description: 'Update parent-editable private player profile fields. Args: teamId, playerId, emergencyContactName, emergencyContactPhone, medicalInfo.',
     resolve: async (user, args) => {
       const mergedArgs = await buildMergedPlayerEditableProfileArgs(user, args);
       return updateParentPlayerEditableProfile(mergedArgs);
+    }
+  },
+  {
+    name: 'save_player_incentive_rule',
+    mode: 'write',
+    description: 'Create or update a parent player incentive rule. Args: teamId, playerId/playerName, statKey, amountCents or amount, type per_unit|threshold, threshold, thresholdOp.',
+    aliases: ['set_player_incentive_rule'],
+    resolve: async (user, args) => {
+      const player = await resolveAccessiblePlayer(user, args);
+      if (!player) throw new Error('No matching player was found for this account.');
+      const rule = {
+        id: compactText(args.ruleId || args.id) || undefined,
+        statKey: compactText(args.statKey || args.stat),
+        type: compactText(args.type).toLowerCase() === 'threshold' ? 'threshold' : 'per_unit',
+        amountCents: resolveAiAmountCents(args),
+        threshold: Number(args.threshold || 0),
+        thresholdOp: compactText(args.thresholdOp).toLowerCase() === 'gte' ? 'gte' : 'gt',
+        active: args.active !== false
+      };
+      if (!rule.statKey) throw new Error('statKey is required.');
+      if (!Number.isFinite(rule.amountCents) || rule.amountCents <= 0) throw new Error('amountCents must be greater than 0.');
+      return saveParentPlayerIncentiveRule({
+        user,
+        teamId: player.teamId,
+        playerId: player.playerId,
+        playerName: player.name || 'Player',
+        rule
+      });
+    }
+  },
+  {
+    name: 'toggle_player_incentive_rule',
+    mode: 'write',
+    description: 'Activate or deactivate a player incentive rule. Args: teamId, playerId/playerName, ruleId, active true|false.',
+    resolve: async (user, args) => {
+      const { player, rule } = await resolvePlayerIncentiveRule(user, args);
+      return toggleParentPlayerIncentiveRule(user, player.teamId, player.playerId, {
+        ...rule,
+        active: args.active !== false
+      } as any);
+    }
+  },
+  {
+    name: 'retire_player_incentive_rule',
+    mode: 'write',
+    description: 'Retire/remove a player incentive rule. Args: teamId, playerId/playerName, ruleId.',
+    resolve: async (user, args) => {
+      const player = await resolveAccessiblePlayer(user, args);
+      if (!player) throw new Error('No matching player was found for this account.');
+      const ruleId = compactText(args.ruleId || args.id);
+      if (!ruleId) throw new Error('ruleId is required.');
+      return retireParentPlayerIncentiveRule(user, player.teamId, player.playerId, ruleId);
+    }
+  },
+  {
+    name: 'set_player_incentive_cap',
+    mode: 'write',
+    description: 'Set or clear a per-game incentive cap. Args: teamId, playerId/playerName, maxPerGameCents or maxPerGameAmount.',
+    resolve: async (user, args) => {
+      const player = await resolveAccessiblePlayer(user, args);
+      if (!player) throw new Error('No matching player was found for this account.');
+      const cap = hasOwn(args, 'maxPerGameCents') || hasOwn(args, 'maxPerGameAmount') || hasOwn(args, 'amount')
+        ? resolveAiAmountCents({ amountCents: args.maxPerGameCents, amount: args.maxPerGameAmount ?? args.amount })
+        : null;
+      return saveParentPlayerIncentiveCap(user, player.teamId, player.playerId, cap);
+    }
+  },
+  {
+    name: 'mark_player_incentive_paid',
+    mode: 'write',
+    description: 'Mark player incentive earnings paid for a game. Args: teamId, playerId/playerName, gameId, amountCents or amount.',
+    resolve: async (user, args) => {
+      const player = await resolveAccessiblePlayer(user, args);
+      if (!player) throw new Error('No matching player was found for this account.');
+      const gameId = compactText(args.gameId || args.eventId);
+      if (!gameId) throw new Error('gameId is required.');
+      return markParentPlayerIncentivePaid(user, player.teamId, player.playerId, gameId, resolveAiAmountCents(args));
     }
   }
 ];
@@ -757,6 +1035,7 @@ async function resolveAccessibleScheduleEvent(user: AuthUser, args: Record<strin
   const requestedEventId = compactText(args.eventId || args.gameId || args.id);
   const requestedTeamId = compactText(args.teamId);
   const requestedChildId = compactText(args.childId || args.playerId);
+  const requestedEventType = compactText(args.type || args.eventType).toLowerCase();
   const requestedTeamName = compactText(args.teamName).toLowerCase();
   const requestedPlayerName = compactText(args.playerName || args.childName).toLowerCase();
   const requestedTitle = compactText(args.title || args.opponent).toLowerCase();
@@ -767,6 +1046,7 @@ async function resolveAccessibleScheduleEvent(user: AuthUser, args: Record<strin
     if (requestedEventId && event.id !== requestedEventId) return false;
     if (requestedTeamId && event.teamId !== requestedTeamId) return false;
     if (requestedChildId && event.childId !== requestedChildId) return false;
+    if ((requestedEventType === 'game' || requestedEventType === 'practice') && event.type !== requestedEventType) return false;
     if (requestedTeamName && !event.teamName.toLowerCase().includes(requestedTeamName)) return false;
     if (requestedPlayerName && !event.childName.toLowerCase().includes(requestedPlayerName)) return false;
     if (requestedTitle) {
@@ -775,6 +1055,16 @@ async function resolveAccessibleScheduleEvent(user: AuthUser, args: Record<strin
     }
     return true;
   }) || null;
+}
+
+async function loadPracticePacketForAi(user: AuthUser, event: ParentScheduleEvent) {
+  const detail = await loadParentScheduleEventDetail(user, {
+    teamId: event.teamId,
+    eventId: event.id,
+    childId: event.childId,
+    eventType: event.type
+  } as any).catch(() => null);
+  return loadParentPracticePacket(event, detail?.events || []);
 }
 
 async function resolveAccessibleRideOffer(user: AuthUser, args: Record<string, unknown>) {
@@ -1002,13 +1292,25 @@ function buildPendingActionSummary(definition: PrivateAiToolDefinition, args: Re
 function summarizeExecutedAction(result: PrivateAiToolResult) {
   if (result.name === 'update_rsvp') return 'RSVP updated.';
   if (result.name === 'update_rsvps_for_children') return 'Family RSVPs updated.';
+  if (result.name === 'claim_assignment') return 'Assignment claimed.';
+  if (result.name === 'release_assignment') return 'Assignment released.';
+  if (result.name === 'mark_practice_packet_complete') return 'Practice packet marked complete.';
   if (result.name === 'create_ride_offer') return 'Ride offer created.';
   if (result.name === 'request_ride_spot') return 'Ride request submitted.';
   if (result.name === 'cancel_ride_request') return 'Ride request cancelled.';
   if (result.name === 'set_ride_offer_status') return 'Ride offer updated.';
+  if (result.name === 'send_team_message') return 'Team message sent.';
   if (result.name === 'create_household_invite') return 'Household invite created.';
   if (result.name === 'create_family_share_link') return 'Family share link created.';
+  if (result.name === 'revoke_family_share_link') return 'Family share link revoked.';
+  if (result.name === 'update_family_share_calendars') return 'Family share calendars updated.';
+  if (result.name === 'submit_access_request') return 'Access request submitted.';
   if (result.name === 'update_player_profile') return 'Player profile updated.';
+  if (result.name === 'save_player_incentive_rule') return 'Player incentive rule saved.';
+  if (result.name === 'toggle_player_incentive_rule') return 'Player incentive rule updated.';
+  if (result.name === 'retire_player_incentive_rule') return 'Player incentive rule retired.';
+  if (result.name === 'set_player_incentive_cap') return 'Player incentive cap updated.';
+  if (result.name === 'mark_player_incentive_paid') return 'Player incentive marked paid.';
   return `${result.name} completed.`;
 }
 
@@ -1018,7 +1320,7 @@ function summarizeExecutedActions(results: PrivateAiToolResult[]) {
 
 function summarizeAuditResult(result: unknown) {
   if (!isPlainObject(result)) return result;
-  return pickFields(result, ['event', 'offerId', 'requestId', 'status', 'response', 'updatedChildren', 'tokenId', 'url', 'email']);
+  return pickFields(result, ['event', 'offerId', 'requestId', 'status', 'response', 'updatedChildren', 'tokenId', 'url', 'email', 'role', 'teamId', 'playerId', 'child', 'text', 'target']);
 }
 
 async function savePrivateAiMessage(user: AuthUser, input: {
@@ -1137,6 +1439,7 @@ function buildPlannerPrompt({
     `Use only the available tools; never ask for or invent Firestore paths.\n` +
     `Return strict JSON only, with no markdown.\n` +
     `If you need data, return {"toolCalls":[{"name":"list_schedule","args":{"range":"upcoming","limit":8}}]}.\n` +
+    `For last/previous game questions, call get_last_game. For game-specific questions, do not answer with practices as substitutes.\n` +
     `For writes, call the write tool with normalized args. The app will stage it and require user confirmation before execution.\n` +
     `If you have enough information, return {"answer":"..."}.\n\n` +
     `AVAILABLE TOOLS:\n` +
@@ -1164,6 +1467,7 @@ function buildFinalAnswerPrompt({
     `Use ONLY this account-scoped data. If the data is missing, say what is missing.\n` +
     `For product/how-to questions, use help documentation results and include the relevant help page when useful.\n` +
     `If a tool result requires confirmation, state the proposed change clearly and tell the user they can reply "yes" to confirm. Do not mention internal confirmation IDs or codes.\n` +
+    `When the user asks for a game, answer from game records only; if only practices are available, say no matching game was found.\n` +
     `Answer concisely. Include dates, times, team names, and player names when relevant.\n` +
     `Return strict JSON only: {"answer":"..."}.\n\n` +
     `USER:\n${JSON.stringify(summarizeSignedInUser(user))}\n\n` +
@@ -1286,6 +1590,36 @@ function summarizeSchedule(schedule: any, args: Record<string, unknown>) {
   };
 }
 
+function summarizeLastGame(schedule: any, args: Record<string, unknown>) {
+  const now = new Date();
+  const requestedTeamId = compactText(args.teamId);
+  const requestedChildId = compactText(args.childId || args.playerId);
+  const requestedTeamName = compactText(args.teamName).toLowerCase();
+  const requestedPlayerName = compactText(args.playerName || args.childName).toLowerCase();
+  const allEvents = Array.isArray(schedule.events) ? schedule.events : [];
+  const matchingGames = allEvents
+    .filter((event: ParentScheduleEvent) => event.type === 'game')
+    .filter((event: ParentScheduleEvent) => !requestedTeamId || event.teamId === requestedTeamId)
+    .filter((event: ParentScheduleEvent) => !requestedChildId || event.childId === requestedChildId)
+    .filter((event: ParentScheduleEvent) => !requestedTeamName || event.teamName.toLowerCase().includes(requestedTeamName))
+    .filter((event: ParentScheduleEvent) => !requestedPlayerName || event.childName.toLowerCase().includes(requestedPlayerName));
+  const pastGames = matchingGames
+    .filter((event: ParentScheduleEvent) => event.date.getTime() < now.getTime())
+    .sort((a: ParentScheduleEvent, b: ParentScheduleEvent) => b.date.getTime() - a.date.getTime());
+  const upcomingGames = matchingGames
+    .filter((event: ParentScheduleEvent) => event.date.getTime() >= now.getTime())
+    .sort((a: ParentScheduleEvent, b: ParentScheduleEvent) => a.date.getTime() - b.date.getTime());
+
+  return {
+    lastGame: pastGames[0] ? summarizeScheduleEvent(pastGames[0]) : null,
+    recentGames: pastGames.slice(0, 5).map(summarizeScheduleEvent),
+    upcomingGames: upcomingGames.slice(0, 3).map(summarizeScheduleEvent),
+    message: pastGames.length
+      ? ''
+      : 'No past games were found for the requested player or team.'
+  };
+}
+
 function summarizeMessages(inbox: any) {
   return {
     teams: (inbox.teams || []).slice(0, 20).map((team: any) => ({
@@ -1297,6 +1631,58 @@ function summarizeMessages(inbox: any) {
       preview: getChatInboxPreview(team.lastMessage),
       lastMessageAt: normalizeScheduleDate(team.lastMessage?.createdAt)?.toISOString() || null
     }))
+  };
+}
+
+function summarizeMessageThreads(teamId: string, team: any, conversations: any[]) {
+  return {
+    teamId,
+    teamName: team?.name || team?.teamName || '',
+    threads: (conversations || []).slice(0, 20).map((conversation: any) => pickFields(conversation, [
+      'id',
+      'name',
+      'type',
+      'participantIds',
+      'participantRoles',
+      'lastMessageAt',
+      'lastMessagePreview',
+      'unreadCount',
+      'muted'
+    ]))
+  };
+}
+
+function summarizeAssignment(assignment: any) {
+  return pickFields(assignment || {}, [
+    'role',
+    'value',
+    'claimable',
+    'claimed',
+    'claimedBy',
+    'claimedByName',
+    'claimantName',
+    'note'
+  ]);
+}
+
+function summarizePracticePacket(packet: any) {
+  return {
+    sessionId: packet.sessionId,
+    teamId: packet.teamId,
+    eventId: packet.eventId,
+    title: packet.title,
+    date: normalizeScheduleDate(packet.date)?.toISOString() || null,
+    location: packet.location,
+    homePacket: packet.homePacket,
+    children: (packet.children || []).map((child: any) => pickFields(child, ['id', 'name'])),
+    completions: (packet.completions || []).map((completion: any) => pickFields(completion, [
+      'id',
+      'childId',
+      'childName',
+      'status',
+      'completedAt',
+      'updatedAt'
+    ]))
   };
 }
 
@@ -1523,6 +1909,46 @@ async function resolveAccessiblePlayer(user: AuthUser, args: Record<string, unkn
   return players[0] || null;
 }
 
+function resolvePracticePacketChild(packet: any, args: Record<string, unknown>) {
+  const requestedChildId = compactText(args.childId || args.playerId);
+  const requestedPlayerName = compactText(args.playerName || args.childName).toLowerCase();
+  const children = Array.isArray(packet.children) ? packet.children : [];
+  const child = children.find((candidate: any) => (
+    (!requestedChildId || candidate.id === requestedChildId)
+    && (!requestedPlayerName || compactText(candidate.name).toLowerCase().includes(requestedPlayerName))
+  )) || children[0];
+  if (!child) throw new Error('No linked child was found for this practice packet.');
+  return child;
+}
+
+async function resolveFamilyShareToken(user: AuthUser, args: Record<string, unknown>) {
+  const tokenId = compactText(args.tokenId || args.id);
+  const model = await loadFamilyShareModel(user);
+  const token = (model.tokens || []).find((candidate: any) => !tokenId || candidate.id === tokenId);
+  if (!token) throw new Error('No matching family share link was found.');
+  return token;
+}
+
+function resolveAiAmountCents(args: Record<string, unknown>) {
+  const cents = Number(args.amountCents);
+  if (Number.isFinite(cents) && cents >= 0) return Math.round(cents);
+  const amount = Number(args.amount || args.maxPerGameAmount);
+  if (Number.isFinite(amount) && amount >= 0) return Math.round(amount * 100);
+  return 0;
+}
+
+async function resolvePlayerIncentiveRule(user: AuthUser, args: Record<string, unknown>) {
+  const player = await resolveAccessiblePlayer(user, args);
+  if (!player) throw new Error('No matching player was found for this account.');
+  const detail = await loadPlayerDetailForAi(user, { ...args, teamId: player.teamId, playerId: player.playerId });
+  const ruleId = compactText(args.ruleId || args.id);
+  const rule = (detail.incentives?.currentRules || []).find((candidate: any) => (
+    ruleId ? candidate.id === ruleId : compactText(candidate.statKey).toLowerCase() === compactText(args.statKey || args.stat).toLowerCase()
+  ));
+  if (!rule) throw new Error('No matching incentive rule was found for this player.');
+  return { player, rule };
+}
+
 function summarizeScheduleEvent(event: ParentScheduleEvent) {
   const openAssignments = getOpenScheduleAssignments(event.assignments || []);
   return {
@@ -1652,6 +2078,11 @@ function looksLikeFunctionalHelpQuestion(question: string) {
     'replay',
     'match report'
   ].some((term) => text.includes(term));
+}
+
+function looksLikeLastGameQuestion(question: string) {
+  const text = compactText(question).toLowerCase();
+  return /\b(last|previous|most recent|latest|prior)\b/.test(text) && /\bgame|match\b/.test(text);
 }
 
 function clampAnswer(answer: string) {
