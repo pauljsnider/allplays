@@ -239,6 +239,26 @@ describe('AppShell', () => {
     expect(within(primaryNav).getByRole('link', { name: 'My Teams' }).getAttribute('href')).toBe('/teams');
   });
 
+  it('signs out from the desktop account card', async () => {
+    const signOut = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <MemoryRouter initialEntries={['/home']}>
+        <Routes>
+          <Route path="/home" element={<AppShell auth={{ ...signedInAuth, signOut }}><LocationDisplay /></AppShell>} />
+          <Route path="/auth" element={<div>Auth</div>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+
+    await waitFor(() => {
+      expect(signOut).toHaveBeenCalledTimes(1);
+    });
+    expect(await screen.findByText('Auth')).toBeTruthy();
+  });
+
   it('keeps the mobile bottom navigation at six items and routes Family through Profile', () => {
     useShellLayoutMock.mockReturnValue({ isDesktopWeb: false });
     render(
