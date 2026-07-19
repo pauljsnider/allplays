@@ -4934,7 +4934,7 @@ const TELEMETRY_ROUTE_KEYS = new Set([
 ]);
 const TELEMETRY_SENSITIVE_KEY_PATTERN = /(?:address|authorization|body|chat|comment|content|cookie|credential|description|email|first.?name|last.?name|message|note|password|phone|secret|text|token)/i;
 const TELEMETRY_COORDINATE_KEY_PATTERN = /^(?:(?:client|offset|page|screen|target)[xy](?:percent)?|[xy])$/i;
-const TELEMETRY_IDENTIFIER_KEY_PATTERN = /(?:Id|Ids|Key|Keys)$/;
+const TELEMETRY_IDENTIFIER_KEY_PATTERN = /(?:Id|Ids|Key|Keys)$|(?:^|_)(?:id|ids|key|keys)$/i;
 const TELEMETRY_DYNAMIC_ROUTE_PARENTS = new Set([
   'accept-invite', 'athletes', 'calendar', 'capabilities', 'conversations', 'events',
   'families', 'family', 'fees', 'games', 'inquiries', 'invite', 'messages',
