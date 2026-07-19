@@ -12,6 +12,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ClipboardCheck,
+  Copy,
   DollarSign,
   Edit3,
   ExternalLink,
@@ -1544,6 +1545,16 @@ function PlayerProfileSection({
 
 function FamilyContactsCard({ data }: { data: ParentPlayerDetailData }) {
   const contacts = Array.isArray(data.familyContacts) ? data.familyContacts : [];
+  const [copiedEmail, setCopiedEmail] = useState('');
+
+  const copyEmail = async (email: string) => {
+    const normalizedEmail = compactString(email);
+    if (!normalizedEmail) return;
+    await navigator.clipboard?.writeText(normalizedEmail);
+    setCopiedEmail(normalizedEmail);
+    window.setTimeout(() => setCopiedEmail((current) => current === normalizedEmail ? '' : current), 1400);
+  };
+
   return (
     <section className="app-card p-4">
       <div className="flex items-center gap-2 text-sm font-black text-gray-950">
@@ -1552,22 +1563,34 @@ function FamilyContactsCard({ data }: { data: ParentPlayerDetailData }) {
       </div>
       <p className="mt-1 text-xs font-semibold leading-5 text-gray-500">Parent and guardian accounts or contacts already connected to this player.</p>
       {contacts.length ? (
-        <div className="mt-4 divide-y divide-gray-100 rounded-xl border border-gray-200 bg-white">
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
           {contacts.map((contact) => {
             const label = contact.name || contact.email || contact.phone || 'Family contact';
+            const showEmailMeta = Boolean(contact.email && contact.email !== label);
             return (
-              <div key={contact.id} className="flex items-start justify-between gap-3 px-3 py-3">
-                <div className="min-w-0">
-                  <div className="truncate text-sm font-black text-gray-950">{label}</div>
-                  <div className="mt-0.5 flex flex-wrap gap-x-2 gap-y-1 text-xs font-semibold text-gray-500">
-                    {contact.email && contact.email !== label ? <span>{contact.email}</span> : null}
-                    {contact.phone ? <span>{contact.phone}</span> : null}
-                    <span>{contact.relation || 'Parent/guardian'}</span>
+              <div key={contact.id} className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <div className="truncate text-sm font-black leading-5 text-gray-950">{label}</div>
+                      {contact.email ? (
+                        <button type="button" className="ghost-button !h-7 !min-h-7 !w-7 !flex-none !p-0" onClick={() => copyEmail(contact.email)} aria-label={`Copy ${contact.email}`} title={copiedEmail === contact.email ? 'Copied' : 'Copy email'}>
+                          {copiedEmail === contact.email ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" aria-hidden="true" />}
+                        </button>
+                      ) : null}
+                    </div>
+                    <div className="text-xs font-semibold leading-4 text-gray-500">{contact.relation || 'Parent/guardian'}</div>
                   </div>
+                  <span className={`flex-none rounded-full border px-2 py-0.5 text-[11px] font-black uppercase leading-4 ${contact.status === 'linked' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-gray-200 bg-white text-gray-600'}`}>
+                    {contact.status === 'linked' ? 'Linked' : 'Contact'}
+                  </span>
                 </div>
-                <span className={`flex-none rounded-full border px-2 py-1 text-[11px] font-black uppercase ${contact.status === 'linked' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-gray-200 bg-gray-50 text-gray-600'}`}>
-                  {contact.status === 'linked' ? 'Linked' : 'Contact'}
-                </span>
+                {showEmailMeta || contact.phone ? (
+                  <div className="mt-1 flex min-w-0 flex-wrap gap-x-3 gap-y-0.5 text-xs font-semibold leading-4 text-gray-600">
+                    {showEmailMeta ? <span className="truncate">{contact.email}</span> : null}
+                    {contact.phone ? <span className="truncate">{contact.phone}</span> : null}
+                  </div>
+                ) : null}
               </div>
             );
           })}

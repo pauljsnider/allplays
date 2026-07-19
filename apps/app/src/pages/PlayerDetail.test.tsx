@@ -91,6 +91,7 @@ function buildDetailData(overrides: Record<string, any> = {}) {
     team: { id: 'team-current', name: 'Current Team' },
     access: {
       isLinkedParent: true,
+      isTeamParent: true,
       isTeamStaff: false,
       canEditRosterDetails: false,
       canEditCustomRosterFields: false
@@ -253,6 +254,11 @@ describe('PlayerDetail athlete profile season selection', () => {
   });
 
   it('shows already linked family contacts on the Family profile tab', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText }
+    });
     playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData({
       familyContacts: [
         { id: 'mom-1', name: 'Mom Snider', email: 'mom@allplays.ai', phone: '', relation: 'Mom', status: 'linked' },
@@ -270,6 +276,10 @@ describe('PlayerDetail athlete profile season selection', () => {
     expect(screen.getByText('mom@allplays.ai')).toBeTruthy();
     expect(screen.getByText('dad@allplays.ai')).toBeTruthy();
     expect(screen.getAllByText('Linked')).toHaveLength(2);
+    fireEvent.click(screen.getByRole('button', { name: 'Copy mom@allplays.ai' }));
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith('mom@allplays.ai');
+    });
     expect(screen.getByText('Invite Co-Parent')).toBeTruthy();
   });
 

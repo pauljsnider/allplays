@@ -309,6 +309,42 @@ describe('React app parent player detail service', () => {
         expect(clips).toEqual([{ title: 'Fast break', url: 'https://video.example.test/clip', gameLabel: 'vs. Falcons' }]);
     });
 
+    it('allows a same-team parent to open a teammate profile without private household details', async () => {
+        scheduleMocks.loadParentPlayerSchedule.mockResolvedValue({
+            children: [{ teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat' }],
+            events: []
+        });
+        dbMocks.getPlayers.mockResolvedValue([
+            {
+                id: 'player-1',
+                name: 'Pat Star',
+                parents: [{ userId: 'mom-1', name: 'Mom Snider', email: 'mom@allplays.ai', relation: 'Mom' }]
+            },
+            {
+                id: 'player-2',
+                name: 'Taylor Teammate',
+                number: '11',
+                parents: [{ userId: 'team-parent-1', name: 'Taylor Parent', email: 'taylor@example.com', relation: 'Parent' }]
+            }
+        ]);
+        dbMocks.getPlayerPrivateProfile.mockResolvedValue({
+            emergencyContact: { name: 'Private Contact', phone: '555-0199' },
+            medicalInfo: 'Private note',
+            parents: [{ name: 'Private Parent', email: 'private@example.com', relation: 'Guardian' }]
+        });
+
+        const detail = await loadParentPlayerDetail(user(), 'team-1', 'player-2');
+
+        expect(detail.access.isLinkedParent).toBe(false);
+        expect(detail.access.isTeamParent).toBe(true);
+        expect(detail.child).toMatchObject({ teamId: 'team-1', playerId: 'player-2', playerName: 'Taylor Teammate' });
+        expect(detail.privateProfile).toBeNull();
+        expect(detail.familyContacts).toEqual([
+            expect.objectContaining({ name: 'Taylor Parent', email: 'taylor@example.com', relation: 'Parent' })
+        ]);
+        expect(JSON.stringify(detail.familyContacts)).not.toContain('private@example.com');
+    });
+
     it('falls back to the legacy player-only route and blocks unlinked players', async () => {
         const legacyDetail = await loadParentPlayerDetail(user(), '', 'player-2');
         expect(scheduleMocks.loadParentPlayerSchedule).toHaveBeenCalledWith(expect.objectContaining({ uid: 'user-1' }), {
@@ -409,17 +445,21 @@ describe('React app parent player detail service', () => {
         expect(detail.scheduleLoadError).toBe('Schedule is temporarily unavailable. Refresh the player to try again.');
     });
 
-    it('rejects stale parent links when a successful schedule load omits the player', async () => {
+    it('rejects off-team stale parent links when a successful schedule load omits the player', async () => {
         scheduleMocks.loadParentPlayerSchedule.mockResolvedValue({ children: [], events: [] });
-        const keyOnlyParent = {
+        const offTeamParent = {
+            ...user(),
+            parentOf: [{ teamId: 'team-2', playerId: 'player-2', playerName: 'Sam', teamName: 'Thunder' }]
+        };
+        const offTeamKeyOnlyParent = {
             ...user(),
             parentOf: [],
-            parentPlayerKeys: ['team-1::player-1']
+            parentPlayerKeys: ['team-2::player-2']
         };
 
-        await expect(loadParentPlayerDetail(user(), 'team-1', 'player-1'))
+        await expect(loadParentPlayerDetail(offTeamParent, 'team-1', 'player-1'))
             .rejects.toThrow('This player is not linked to your account.');
-        await expect(loadParentPlayerDetail(keyOnlyParent, 'team-1', 'player-1'))
+        await expect(loadParentPlayerDetail(offTeamKeyOnlyParent, 'team-1', 'player-1'))
             .rejects.toThrow('This player is not linked to your account.');
     });
 

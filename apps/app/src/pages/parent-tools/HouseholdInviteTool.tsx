@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
-import { Copy, Loader2, RefreshCw, Users } from 'lucide-react';
+import { CheckCircle2, Copy, Loader2, RefreshCw, Users } from 'lucide-react';
 import { createParentHouseholdMemberInvite, loadParentHouseholdInviteModel, type ParentHouseholdFamilyContact, type ParentHouseholdFamilyMember, type ParentHouseholdLinkedPlayer } from '../../lib/parentHouseholdService';
 import { toAppServiceError } from '../../lib/appErrors';
 import type { AuthState } from '../../lib/types';
@@ -15,6 +15,7 @@ export function HouseholdInviteTool({ auth, refreshVersion }: { auth: AuthState;
     const [relation, setRelation] = useState('');
     const [createdInvite, setCreatedInvite] = useState<{ code: string; inviteUrl: string; email: string; emailSent: boolean } | null>(null);
     const [message, setMessage] = useState('');
+    const [copiedEmail, setCopiedEmail] = useState('');
     const loadOperation = useParentToolAsyncOperation();
     const submitOperation = useParentToolAsyncOperation();
     const runLoad = loadOperation.run;
@@ -91,6 +92,14 @@ export function HouseholdInviteTool({ auth, refreshVersion }: { auth: AuthState;
         );
     };
 
+    const copyEmail = async (nextEmail: string) => {
+        const normalizedEmail = String(nextEmail || '').trim();
+        if (!normalizedEmail) return;
+        await copyText(normalizedEmail, setMessage);
+        setCopiedEmail(normalizedEmail);
+        window.setTimeout(() => setCopiedEmail((current) => current === normalizedEmail ? '' : current), 1400);
+    };
+
     return (
         <div className="space-y-3">
             <section className="app-card p-4">
@@ -129,22 +138,34 @@ export function HouseholdInviteTool({ auth, refreshVersion }: { auth: AuthState;
 
             <section className="app-card p-4">
                 <ToolHeader icon={Users} title="Already linked family" detail="Parent and guardian accounts or contacts already connected to your linked players." />
-                <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                <div className="mt-3 grid gap-2 lg:grid-cols-2">
                     {linkedContacts.length ? linkedContacts.map((contact) => {
                         const label = contact.name || contact.email || contact.phone || 'Family contact';
+                        const showEmailMeta = Boolean(contact.email && contact.email !== label);
                         return (
-                            <div key={`${contact.teamId}-${contact.playerId}-${contact.id}`} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
-                                <div className="flex items-start justify-between gap-3">
-                                    <div className="min-w-0">
-                                        <div className="truncate text-sm font-black text-gray-950">{label}</div>
-                                        {contact.email && contact.email !== label ? <div className="mt-0.5 text-xs font-semibold text-gray-500">{contact.email}</div> : null}
-                                        {contact.phone ? <div className="mt-0.5 text-xs font-semibold text-gray-500">{contact.phone}</div> : null}
+                            <div key={`${contact.teamId}-${contact.playerId}-${contact.id}`} className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+                                <div className="flex items-center justify-between gap-2">
+                                    <div className="min-w-0 flex-1">
+                                        <div className="flex min-w-0 items-center gap-2">
+                                            <div className="truncate text-sm font-black leading-5 text-gray-950">{label}</div>
+                                            {contact.email ? (
+                                                <button type="button" className="ghost-button !h-7 !min-h-7 !w-7 !flex-none !p-0" onClick={() => copyEmail(contact.email)} aria-label={`Copy ${contact.email}`} title={copiedEmail === contact.email ? 'Copied' : 'Copy email'}>
+                                                    {copiedEmail === contact.email ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" aria-hidden="true" />}
+                                                </button>
+                                            ) : null}
+                                        </div>
+                                        <div className="text-xs font-semibold leading-4 text-gray-600">{contact.relation || 'Parent/guardian'} for {contact.playerName || 'Player'}{contact.playerNumber ? ` #${contact.playerNumber}` : ''}{contact.teamName ? ` - ${contact.teamName}` : ''}</div>
                                     </div>
-                                    <span className={`flex-none rounded-full border px-2 py-1 text-[11px] font-black uppercase ${contact.status === 'linked' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-gray-200 bg-gray-50 text-gray-600'}`}>
+                                    <span className={`flex-none rounded-full border px-2 py-0.5 text-[11px] font-black uppercase leading-4 ${contact.status === 'linked' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-gray-200 bg-white text-gray-600'}`}>
                                         {contact.status === 'linked' ? 'Linked' : 'Contact'}
                                     </span>
                                 </div>
-                                <div className="mt-1 text-xs font-semibold text-gray-600">{contact.relation || 'Parent/guardian'} for {contact.playerName || 'Player'}{contact.playerNumber ? ` #${contact.playerNumber}` : ''}{contact.teamName ? ` - ${contact.teamName}` : ''}</div>
+                                {showEmailMeta || contact.phone ? (
+                                    <div className="mt-1 flex min-w-0 flex-wrap gap-x-3 gap-y-0.5 text-xs font-semibold leading-4 text-gray-600">
+                                        {showEmailMeta ? <span className="truncate">{contact.email}</span> : null}
+                                        {contact.phone ? <span className="truncate">{contact.phone}</span> : null}
+                                    </div>
+                                ) : null}
                             </div>
                         );
                     }) : <EmptyState icon={Users} title="No linked family contacts" detail="Linked parent and guardian contacts will appear here after they are saved on the player." />}
