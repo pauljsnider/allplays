@@ -238,10 +238,14 @@ jobs:
 
           deploy_preview_channel() {
             : > "$log_file"
+            set +e
             (
               cd "$bundle"
               node "$firebase_cli" hosting:channel:deploy "$CURRENT_CHANNEL" --project game-flow-c6311 --config "$firebase_config" --expires 7d --non-interactive
             ) 2>&1 | tee "$log_file"
+            local deploy_status="${PIPESTATUS[0]}"
+            set -e
+            return "$deploy_status"
           }
 
           skip_preview() {
@@ -276,6 +280,10 @@ jobs:
             grep -Eiq 'Failed to authenticate|Command requires authentication|Unable to read the credential file' "$log_file"
           }
 
+          preview_deploy_hit_auth_domain_sync_error() {
+            grep -Eiq 'Unable to add channel domain to Firebase Auth|Unable to sync Firebase Auth state' "$log_file"
+          }
+
           preview_deploy_hit_release_target_error() {
             grep -Eiq "HTTP Error: 400, Can't release to .*resource doesn't exist or isn't a valid release target" "$log_file"
           }
@@ -293,6 +301,10 @@ jobs:
             if preview_deploy_hit_quota; then
               skip_preview_for_quota
             fi
+            exit 1
+          fi
+          if preview_deploy_hit_auth_domain_sync_error; then
+            echo "Firebase Hosting deployed, but its Auth authorized-domain sync failed; refusing to report a partially functional preview." >&2
             exit 1
           fi
 

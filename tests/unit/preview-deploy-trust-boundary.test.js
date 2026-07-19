@@ -211,6 +211,9 @@ describe('preview deployment workflow trust boundary', () => {
         expect(trustedWorkflow).toContain('node scripts/write-firebase-hosting-config.mjs "$FIREBASE_PREVIEW_STAGE/site"');
         expect(trustedWorkflow).toContain('CURRENT_CHANNEL: pr-${{ needs.prepare-preview.outputs.pr_number }}');
         expect(trustedWorkflow).toContain('node "$firebase_cli" hosting:channel:deploy "$CURRENT_CHANNEL" --project game-flow-c6311');
+        expect(trustedWorkflow).not.toContain('--no-authorized-domains');
+        expect(trustedWorkflow).toContain('preview_deploy_hit_auth_domain_sync_error()');
+        expect(trustedWorkflow).toContain('refusing to report a partially functional preview');
         expect(trustedWorkflow).toContain('find "$bundle/site" -type l');
         expect(trustedWorkflow).not.toContain('find "$bundle" -type l');
     });
@@ -322,6 +325,9 @@ describe('preview deployment workflow trust boundary', () => {
         expect(trustBoundaryRunbook).toContain('FIREBASE_DEPLOY_WORKLOAD_IDENTITY_PROVIDER');
         expect(trustBoundaryRunbook).toContain('FIREBASE_DEPLOY_SERVICE_ACCOUNT');
         expect(trustBoundaryRunbook).toContain('exact workflow_ref');
+        expect(trustBoundaryRunbook).toContain('allplaysPreviewAuthDomainUpdater');
+        expect(trustBoundaryRunbook).toContain('`firebaseauth.configs.get` and `firebaseauth.configs.update`');
+        expect(trustBoundaryRunbook).toContain('Do not replace it with Identity Platform Admin');
     });
 });
 

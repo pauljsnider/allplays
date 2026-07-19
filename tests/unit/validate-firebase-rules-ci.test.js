@@ -47,6 +47,8 @@ service firebase.storage {
         const validPreviewDeployStep = `
       - name: Deploy preview channel
         run: node "$firebase_cli" hosting:channel:deploy "$CURRENT_CHANNEL" --project game-flow-c6311 --config "$firebase_config"
+        preview_deploy_hit_auth_domain_sync_error() { return 1; }
+        echo "refusing to report a partially functional preview"
 `;
 
         expect(() => validatePreviewDeployCommand(validPreviewDeployStep)).not.toThrow();
@@ -55,6 +57,11 @@ service firebase.storage {
       - name: Deploy preview channel
         run: node "$firebase_cli" hosting:channel:deploy "$CURRENT_CHANNEL" --site allplays-preview --project game-flow-c6311 --config "$firebase_config"
 `)).toThrow('Preview deploy must not pass --site');
+
+        expect(() => validatePreviewDeployCommand(
+            validPreviewDeployStep.replace('$firebase_config"', '$firebase_config" --no-authorized-domains')
+        ))
+            .toThrow('Preview deploy must preserve Firebase Auth authorized-domain synchronization');
 
         expect(() => validatePreviewDeployCommand(`
       - name: Deploy preview channel

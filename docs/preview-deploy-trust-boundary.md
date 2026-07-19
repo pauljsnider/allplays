@@ -34,8 +34,14 @@ the immutable repository and owner IDs, `refs/heads/master`, and the exact
 workflows. Each service account's `roles/iam.workloadIdentityUser` binding must
 be narrower still: only its exact workflow_ref may impersonate it.
 
-The preview deploy uses a dedicated service account with only Firebase Hosting
-Admin and Service Usage API Keys Viewer. It must never share the production
+The preview deploy uses a dedicated service account with Firebase Hosting
+Admin, Service Usage API Keys Viewer, and the project custom role
+`allplaysPreviewAuthDomainUpdater`. That custom role contains only
+`firebaseauth.configs.get` and `firebaseauth.configs.update`, which the pinned
+Firebase CLI needs to add and prune preview channel domains in Firebase Auth.
+Do not replace it with Identity Platform Admin or another broad Auth role. The
+workflow treats the CLI's otherwise non-fatal Auth-domain warnings as a failed,
+partially functional preview. The preview identity must never share the production
 deployer. Generated `gha-creds-*.json` ADC files are ignored by Git, removed
 explicitly before the PR comment write, and also registered for authentication
 action cleanup. `FIREBASE_SERVICE_ACCOUNT_GAME_FLOW_C6311` must remain absent
@@ -99,8 +105,11 @@ Use the following sequence without printing JSON key material:
    before broadening the provider condition.
 3. Bind the production deploy workflow only to the production service account.
    Bind the trusted-preview workflow only to its dedicated preview service
-   account, with `roles/firebasehosting.admin` and
-   `roles/serviceusage.apiKeysViewer`. Do not grant preview project Editor,
+   account, with `roles/firebasehosting.admin`,
+   `roles/serviceusage.apiKeysViewer`, and the project custom role
+   `allplaysPreviewAuthDomainUpdater` containing only
+   `firebaseauth.configs.get` and `firebaseauth.configs.update`. Do not grant
+   preview project Editor, Identity Platform Admin,
    Functions, Firestore, Storage, or production-service-account impersonation.
 4. Validate the next exact-default-branch production deploy. A rules-changing
    release must still deploy Firestore rules/indexes before application code;

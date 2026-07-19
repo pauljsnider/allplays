@@ -73,7 +73,9 @@ describe('Firebase deploy Workload Identity boundary', () => {
     it('keeps production build and dependency work outside the minimal OIDC deploy job', () => {
         const firestoreDetection = production.indexOf('name: Detect Firestore configuration changes');
         const cliInstall = production.indexOf('name: Install isolated Firebase deploy CLI without OIDC');
+        const functionsArchive = production.indexOf('name: Archive installed Functions runtime into trusted handoff');
         const handoff = production.indexOf('name: Upload trusted production deploy handoff');
+        const functionsExtract = production.indexOf('python3 "$bundle/context/extract-production-functions-handoff.py"');
         const storageAuth = production.indexOf('name: Authenticate Storage deploy through exact-workflow OIDC');
         const storageDeploy = production.indexOf('name: Deploy Firebase Storage rules when available');
         const storageCleanup = production.indexOf('name: Remove Storage deploy credential');
@@ -81,7 +83,10 @@ describe('Firebase deploy Workload Identity boundary', () => {
         const productionDeploy = production.indexOf('name: Deploy Firebase production');
 
         expect(cliInstall).toBeGreaterThan(firestoreDetection);
+        expect(functionsArchive).toBeGreaterThan(firestoreDetection);
         expect(handoff).toBeGreaterThan(cliInstall);
+        expect(functionsExtract).toBeGreaterThan(handoff);
+        expect(storageAuth).toBeGreaterThan(functionsExtract);
         expect(storageAuth).toBeGreaterThan(handoff);
         expect(storageDeploy).toBeGreaterThan(storageAuth);
         expect(storageCleanup).toBeGreaterThan(storageDeploy);
@@ -96,6 +101,9 @@ describe('Firebase deploy Workload Identity boundary', () => {
         expect(JSON.stringify(oidcJobs[0])).not.toMatch(/npm (?:ci|install)|stage-pages-bundle|write-firebase-hosting-config/);
         expect(JSON.stringify(oidcJobs[0])).toMatch(/actions\/download-artifact@[0-9a-f]{40}/);
         expect(production).toMatch(/name: Upload trusted production deploy handoff[\s\S]*retention-days: 30/);
+        expect(production).toContain('functions-runtime.tar');
+        expect(production).toContain('cp scripts/extract-production-functions-handoff.py "$FIREBASE_PRODUCTION_BUNDLE/context/"');
+        expect(production).not.toContain('cp -R functions "$FIREBASE_PRODUCTION_BUNDLE/functions"');
     });
 
     it('keeps rule-changing releases rules-first and skips unchanged rule writes', () => {

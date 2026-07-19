@@ -186,10 +186,17 @@ jobs:
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Copy installed Functions runtime into trusted handoff
+      - name: Archive installed Functions runtime into trusted handoff
         run: |
           set -euo pipefail
-          cp -R functions "$FIREBASE_PRODUCTION_BUNDLE/functions"
+          # actions/upload-artifact intentionally normalizes file modes and
+          # does not preserve symlinks. Keep the installed Functions runtime
+          # inside tar so npm executable bits and .bin links survive handoff.
+          tar --format=posix \
+            -cf "$FIREBASE_PRODUCTION_BUNDLE/functions-runtime.tar" \
+            functions
+          mkdir -p "$FIREBASE_PRODUCTION_BUNDLE/context"
+          cp scripts/extract-production-functions-handoff.py "$FIREBASE_PRODUCTION_BUNDLE/context/"
 
       - name: Install isolated Firebase deploy CLI without OIDC or lifecycle scripts
         run: |
@@ -243,7 +250,7 @@ jobs:
           name: firebase-production-trusted-ready
           path: ${{ runner.temp }}/firebase-production-ready
 
-      - name: Validate trusted production handoff without executing its code
+      - name: Validate and extract trusted production handoff before OIDC
         env:
           FIRESTORE_CONFIG_CHANGED: ${{ needs.prepare-deploy.outputs.firestore_changed }}
           PREPARED_HEAD_SHA: ${{ needs.prepare-deploy.outputs.head_sha }}
@@ -265,13 +272,17 @@ jobs:
           fi
           grep -Fxq "$GITHUB_SHA" "$bundle/head-sha"
           test -d "$bundle/site"
-          test -d "$bundle/functions"
+          test -f "$bundle/functions-runtime.tar"
+          test -f "$bundle/context/extract-production-functions-handoff.py"
           test -f "$bundle/firestore.rules"
           test -f "$bundle/firestore.indexes.json"
           test -f "$bundle/storage.rules"
           test -f "$bundle/firebase-prod.generated.json"
           test -f "$bundle/firebase-cli/node_modules/firebase-tools/lib/bin/firebase.js"
           jq -e '.hosting.public == "site" and .hosting.site == "game-flow-c6311" and .functions.source == "functions"' "$bundle/firebase-prod.generated.json" >/dev/null
+          python3 "$bundle/context/extract-production-functions-handoff.py" \
+            "$bundle/functions-runtime.tar" \
+            "$bundle"
           echo "FIREBASE_PRODUCTION_BUNDLE=$bundle" >> "$GITHUB_ENV"
 
       - name: Authenticate Storage deploy through exact-workflow OIDC

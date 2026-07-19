@@ -53,7 +53,12 @@ export function validatePreviewDeployCommand(deployPreview) {
     if (/hosting:channel:deploy[^\n]*--site/.test(deployPreview)) {
         throw new Error('Preview deploy must not pass --site to hosting:channel:deploy; firebase-tools 15 rejects that option.');
     }
+    if (/hosting:channel:deploy[^\n]*--no-authorized-domains/.test(deployPreview)) {
+        throw new Error('Preview deploy must preserve Firebase Auth authorized-domain synchronization.');
+    }
     assertMatches(deployPreview, /node "\$firebase_cli" hosting:channel:deploy "\$CURRENT_CHANNEL" --project game-flow-c6311 --config "\$firebase_config"/, 'Preview deploy installed Firebase CLI project/config arguments');
+    assertIncludes(deployPreview, 'preview_deploy_hit_auth_domain_sync_error()', 'Preview deploy Auth-domain sync failure guard');
+    assertIncludes(deployPreview, 'refusing to report a partially functional preview', 'Preview deploy Auth-domain fail-closed message');
 }
 
 export function validateFirebaseDeployWorkloadIdentity(workflow, label) {
