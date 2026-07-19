@@ -7,6 +7,7 @@ const MAX_PUBLIC_REGISTRATION_FIELD_KEY_LENGTH = 128;
 const MAX_PUBLIC_REGISTRATION_FIELD_VALUE_LENGTH = 10_000;
 const MAX_PUBLIC_REGISTRATION_FIELD_GROUP_BYTES = 64 * 1024;
 const MAX_PUBLIC_REGISTRATION_QUANTITY = 20;
+const MAX_PUBLIC_REGISTRATION_REQUEST_BYTES = 1024 * 1024;
 const RESERVED_OBJECT_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
 
 function normalizePublicRegistrationSecurityMode(value, fallback = 'observe') {
@@ -139,17 +140,41 @@ function assertPublicRegistrationInputLimits(input = {}) {
   }
 }
 
+function getPublicRegistrationRequestBodyBytes(data = {}, rawRequest = {}) {
+  const rawBody = rawRequest?.rawBody;
+  if (Buffer.isBuffer(rawBody) || rawBody instanceof Uint8Array) {
+    return rawBody.byteLength;
+  }
+  if (typeof rawBody === 'string') {
+    return Buffer.byteLength(rawBody, 'utf8');
+  }
+  try {
+    return Buffer.byteLength(JSON.stringify(data ?? {}), 'utf8');
+  } catch {
+    throw new Error('Registration request body is invalid.');
+  }
+}
+
+function assertPublicRegistrationRequestBodyLimit(data = {}, rawRequest = {}) {
+  if (getPublicRegistrationRequestBodyBytes(data, rawRequest) > MAX_PUBLIC_REGISTRATION_REQUEST_BYTES) {
+    throw new Error('Registration request body is too large.');
+  }
+}
+
 module.exports = {
   MAX_PUBLIC_REGISTRATION_FIELDS,
   MAX_PUBLIC_REGISTRATION_FIELD_GROUP_BYTES,
   MAX_PUBLIC_REGISTRATION_FIELD_KEY_LENGTH,
   MAX_PUBLIC_REGISTRATION_FIELD_VALUE_LENGTH,
   MAX_PUBLIC_REGISTRATION_QUANTITY,
+  MAX_PUBLIC_REGISTRATION_REQUEST_BYTES,
   assertPublicRegistrationInputLimits,
+  assertPublicRegistrationRequestBodyLimit,
   buildPublicRegistrationDocumentId,
   buildPublicRegistrationRateLimitBoundaries,
   buildPublicRegistrationSubmissionFingerprint,
   evaluatePublicRegistrationAppCheck,
+  getPublicRegistrationRequestBodyBytes,
   getVerifiedAppCheckAppId,
   normalizePublicRegistrationIdempotencyKey,
   normalizePublicRegistrationSecurityMode

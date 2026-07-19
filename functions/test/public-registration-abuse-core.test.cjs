@@ -3,11 +3,14 @@ const test = require('node:test');
 
 const {
   MAX_PUBLIC_REGISTRATION_FIELD_VALUE_LENGTH,
+  MAX_PUBLIC_REGISTRATION_REQUEST_BYTES,
   assertPublicRegistrationInputLimits,
+  assertPublicRegistrationRequestBodyLimit,
   buildPublicRegistrationDocumentId,
   buildPublicRegistrationRateLimitBoundaries,
   buildPublicRegistrationSubmissionFingerprint,
   evaluatePublicRegistrationAppCheck,
+  getPublicRegistrationRequestBodyBytes,
   normalizePublicRegistrationIdempotencyKey,
   normalizePublicRegistrationSecurityMode
 } = require('../public-registration-abuse-core.cjs');
@@ -111,4 +114,23 @@ test('rejects weak idempotency keys and oversized or dangerous public fields', (
   const dangerous = Object.create(null);
   dangerous.__proto__ = 'pollution';
   assert.throws(() => assertPublicRegistrationInputLimits(validInput({ guardian: dangerous })), /invalid field/);
+});
+
+test('bounds the actual callable body even when oversized fields would otherwise be ignored', () => {
+  const oversized = { ignoredPadding: 'x'.repeat(MAX_PUBLIC_REGISTRATION_REQUEST_BYTES + 1) };
+  assert.throws(
+    () => assertPublicRegistrationRequestBodyLimit(oversized),
+    /body is too large/
+  );
+  assert.equal(
+    getPublicRegistrationRequestBodyBytes({}, { rawBody: Buffer.alloc(MAX_PUBLIC_REGISTRATION_REQUEST_BYTES + 1) }),
+    MAX_PUBLIC_REGISTRATION_REQUEST_BYTES + 1
+  );
+  assert.throws(
+    () => assertPublicRegistrationRequestBodyLimit({}, {
+      rawBody: Buffer.alloc(MAX_PUBLIC_REGISTRATION_REQUEST_BYTES + 1)
+    }),
+    /body is too large/
+  );
+  assert.doesNotThrow(() => assertPublicRegistrationRequestBodyLimit(validInput()));
 });

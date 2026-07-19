@@ -6,9 +6,9 @@ This change keeps all new enforcement in observation mode by default. The existi
 
 | Entry point | Authentication | Protection after this change |
 | --- | --- | --- |
-| `submitPublicRegistration` | Public; optional Firebase Auth | Verified App Check observation/enforcement; durable subject limit; staged durable network and form limits; size limits; server-owned pricing/capacity; replay-safe submission keys; authenticated UID attribution |
-| `createStripeRegistrationCheckout` | Public capability or legacy checkout-attempt token | Existing server-owned registration/payment/capacity validation plus staged App Check and durable subject/network/form limits |
-| `cancelStripeRegistrationCheckout` | Public capability or legacy checkout-attempt token | Existing capability and capacity-release transaction plus staged App Check and durable subject/network/form limits |
+| `submitPublicRegistration` | Public; optional Firebase Auth | Verified App Check observation/enforcement; durable subject limit; staged durable network and form limits; 1 MiB serialized-request and field limits; server-owned pricing/capacity; replay-safe submission keys; authenticated UID attribution |
+| `createStripeRegistrationCheckout` | Public capability or legacy checkout-attempt token | Existing server-owned registration/payment/capacity validation plus a 1 MiB serialized-request limit and staged App Check and durable subject/network/form limits |
+| `cancelStripeRegistrationCheckout` | Public capability or legacy checkout-attempt token | Existing capability and capacity-release transaction plus a 1 MiB serialized-request limit and staged App Check and durable subject/network/form limits |
 | `stripeTeamPassWebhook` registration events | Stripe-signed HTTP request | Exempt from App Check because Stripe cannot provide it; signature verification, event ledger/idempotency, and its existing IP limit remain mandatory |
 | Published registration-form reads | Anonymous Firestore read | Only published forms are readable; registrations remain server-write-only |
 | Registration readback | Signed-in Firestore read | Authoritative submitter UID is accepted. Email-based ownership remains backward compatible until the verified-email policy is explicitly enforced. |
@@ -54,6 +54,7 @@ firebase functions:config:set \
 - A request with no verified App Check succeeds in `observe` and produces an observation event.
 - The same request fails with `reason=app-check-required` in `enforce`; a verified request succeeds.
 - Changing a raw App Check header never changes a subject/network boundary.
+- Oversized or semantically invalid submissions fail before any attacker-keyed limiter document is written.
 - Retrying the same `submissionIdempotencyKey` and payload returns the same registration ID with `idempotentReplay=true`; capacity and durable-rate counters do not increment again.
 - Reusing the key with changed participant, guardian, option, plan, quantity, or checkout token fails with `reason=idempotency-conflict`.
 - Anonymous clients can read a published form but cannot write a registration document directly.

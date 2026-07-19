@@ -70,6 +70,7 @@ const {
 } = require('./telemetry-ingress-core.cjs');
 const {
   assertPublicRegistrationInputLimits,
+  assertPublicRegistrationRequestBodyLimit,
   buildPublicRegistrationDocumentId,
   buildPublicRegistrationRateLimitBoundaries,
   buildPublicRegistrationSubmissionFingerprint,
@@ -1135,6 +1136,7 @@ exports.submitPublicRegistration = functions.https.onCall(async (data, context =
   assertPublicRegistrationAppCheck(context, 'submit');
   let input;
   try {
+    assertPublicRegistrationRequestBodyLimit(data || {}, context.rawRequest || {});
     input = normalizePublicRegistrationInput(data || {});
     assertPublicRegistrationInputLimits(input);
   } catch (error) {
@@ -1162,10 +1164,17 @@ exports.submitPublicRegistration = functions.https.onCall(async (data, context =
   }
 
   const initialFormSnap = await formRef.get();
-  if (!initialFormSnap.exists
-      || !normalizePublicRegistrationForm(initialFormSnap.data() || {}, input).published) {
+  const initialForm = initialFormSnap.exists
+    ? normalizePublicRegistrationForm(initialFormSnap.data() || {}, input)
+    : null;
+  if (!initialForm?.published) {
     throwPublicRegistrationError('not-found', 'Registration form not found.');
   }
+  const initialFeeSnapshot = calculatePublicRegistrationFeeSnapshot(initialForm, {
+    quantity: input.quantity,
+    now: new Date()
+  });
+  validatePublicRegistrationSubmission(initialForm, input, initialFeeSnapshot);
 
   await assertPublicRegistrationRateLimit(input, context);
   await applyStagedPublicRegistrationRateLimits(input, context, 'submit');
@@ -4482,6 +4491,7 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data, c
   assertPublicRegistrationAppCheck(context, 'create-checkout');
   let input;
   try {
+    assertPublicRegistrationRequestBodyLimit(data || {}, context.rawRequest || {});
     input = normalizeRegistrationCheckoutInput(data || {});
   } catch (error) {
     throw new functions.https.HttpsError('invalid-argument', error.message || 'Invalid registration checkout request.');
@@ -4687,6 +4697,7 @@ exports.cancelStripeRegistrationCheckout = functions.https.onCall(async (data, c
   assertPublicRegistrationAppCheck(context, 'cancel-checkout');
   let input;
   try {
+    assertPublicRegistrationRequestBodyLimit(data || {}, context.rawRequest || {});
     input = normalizeRegistrationCheckoutCancelInput(data || {});
   } catch (error) {
     throw new functions.https.HttpsError('invalid-argument', error.message || 'Invalid registration checkout cancellation request.');

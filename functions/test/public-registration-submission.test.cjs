@@ -652,6 +652,24 @@ test('observes missing App Check by default and enforces only after the rollout 
     }));
 });
 
+test('does not trust a spoofed raw App Check header in enforce mode', async () => {
+    process.env.PUBLIC_REGISTRATION_APP_CHECK_MODE = 'enforce';
+    const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration(buildSeedState());
+
+    await assert.rejects(
+        submitPublicRegistration(buildSubmission(), {
+            rawRequest: {
+                ...context.rawRequest,
+                headers: { 'x-firebase-appcheck': 'attacker-controlled' }
+            }
+        }),
+        (error) => error.code === 'failed-precondition'
+            && error.details.reason === 'app-check-required'
+    );
+    assert.equal(firestore.registrationDocs().length, 0);
+    assert.equal(firestore.rateLimitDocs().length, 0);
+});
+
 test('applies the staged App Check gate to public registration checkout and cancellation', async () => {
     process.env.PUBLIC_REGISTRATION_APP_CHECK_MODE = 'enforce';
     const { mod } = loadFunctionsModule(buildSeedState({
@@ -734,6 +752,25 @@ test('uses bounded network-only lookup limits before validating checkout and can
     assert.deepEqual(limiterDocs.map(({ data }) => data.count).sort((a, b) => a - b), [2, 2]);
 });
 
+test('keeps checkout available when an observe-only limiter reservation fails', async () => {
+    const { firestore, stripeState, mod } = loadFunctionsModule(buildSeedState({
+        paymentSettings: { offlinePaymentEnabled: true, onlineCheckoutEnabled: true }
+    }));
+    const checkoutAttemptToken = 'checkouttoken123456';
+    const submission = await mod.submitPublicRegistration(buildSubmission({ checkoutAttemptToken }), context);
+    firestore.failNextTransaction(new Error('observe-only limiter unavailable'));
+
+    const checkout = await mod.createStripeRegistrationCheckout({
+        teamId: 'team-1',
+        formId: 'form-1',
+        registrationId: submission.registrationId,
+        checkoutAttemptToken
+    }, context);
+
+    assert.equal(checkout.checkoutUrl, 'https://stripe.test/checkout/1');
+    assert.equal(stripeState.checkoutSessions.length, 1);
+});
+
 test('enforces the bounded checkout lookup limit before attacker-controlled target reads', async () => {
     process.env.PUBLIC_REGISTRATION_CHECKOUT_RATE_LIMIT_MODE = 'enforce';
     const { firestore, mod } = loadFunctionsModule(buildSeedState({
@@ -811,6 +848,57 @@ test('rejects oversized public field maps and unsafe quantities before any datab
         (error) => error.code === 'invalid-argument'
     );
     assert.equal(firestore.registrationDocs().length, 0);
+    assert.equal(firestore.rateLimitDocs().length, 0);
+});
+
+test('rejects oversized ignored request data before reads or limiter writes', async () => {
+    const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration(buildSeedState());
+
+    await assert.rejects(
+        submitPublicRegistration(buildSubmission({ ignoredPadding: 'x'.repeat((1024 * 1024) + 1) }), context),
+        (error) => error.code === 'invalid-argument' && /body is too large/.test(error.message)
+    );
+
+    assert.equal(firestore.registrationDocs().length, 0);
+    assert.equal(firestore.rateLimitDocs().length, 0);
+});
+
+test('validates required submission semantics before attacker-keyed limiter writes', async () => {
+    const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration(buildSeedState());
+
+    await assert.rejects(
+        submitPublicRegistration(buildSubmission({ waiverAccepted: false }), context),
+        (error) => error.code === 'invalid-argument' && /Waiver acceptance/.test(error.message)
+    );
+    await assert.rejects(
+        submitPublicRegistration(buildSubmission({ guardian: { email: '' } }), context),
+        (error) => error.code === 'invalid-argument' && /Guardian Email/.test(error.message)
+    );
+
+    assert.equal(firestore.registrationDocs().length, 0);
+    assert.equal(firestore.rateLimitDocs().length, 0);
+});
+
+test('rejects oversized checkout and cancellation bodies before lookup limiter writes', async () => {
+    const { firestore, mod } = loadFunctionsModule(buildSeedState({
+        paymentSettings: { offlinePaymentEnabled: true, onlineCheckoutEnabled: true }
+    }));
+    const oversizedInput = {
+        teamId: 'team-1',
+        formId: 'form-1',
+        registrationId: 'missing-registration',
+        checkoutAttemptToken: 'missingcheckouttoken123456',
+        ignoredPadding: 'x'.repeat((1024 * 1024) + 1)
+    };
+
+    await assert.rejects(
+        mod.createStripeRegistrationCheckout(oversizedInput, context),
+        (error) => error.code === 'invalid-argument' && /body is too large/.test(error.message)
+    );
+    await assert.rejects(
+        mod.cancelStripeRegistrationCheckout(oversizedInput, context),
+        (error) => error.code === 'invalid-argument' && /body is too large/.test(error.message)
+    );
     assert.equal(firestore.rateLimitDocs().length, 0);
 });
 
