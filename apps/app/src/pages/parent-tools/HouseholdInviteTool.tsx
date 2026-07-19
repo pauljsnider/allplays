@@ -3,7 +3,7 @@ import { CheckCircle2, Copy, Loader2, RefreshCw, Users } from 'lucide-react';
 import { createParentHouseholdMemberInvite, loadParentHouseholdInviteModel, type ParentHouseholdFamilyContact, type ParentHouseholdFamilyMember, type ParentHouseholdLinkedPlayer } from '../../lib/parentHouseholdService';
 import { toAppServiceError } from '../../lib/appErrors';
 import type { AuthState } from '../../lib/types';
-import { EmptyState, LoadingBlock, RetryableStatus, Status, ToolHeader, copyText, useParentToolAsyncOperation } from './shared';
+import { copyText, EmptyState, InviteResultCard, LoadingBlock, RetryableStatus, Status, ToolHeader, useParentToolAsyncOperation } from './shared';
 
 export function HouseholdInviteTool({ auth, refreshVersion }: { auth: AuthState; refreshVersion: number }) {
     const [linkedPlayers, setLinkedPlayers] = useState<ParentHouseholdLinkedPlayer[]>([]);
@@ -80,9 +80,7 @@ export function HouseholdInviteTool({ auth, refreshVersion }: { auth: AuthState;
             {
                 onSuccess: async (result) => {
                     setCreatedInvite(result);
-                    setMessage(result.emailSent
-                        ? `Invite emailed to ${result.email} with the code and signup link.`
-                        : 'Parent invite created. Copy the link below to share it.');
+                    setMessage('Invite created.');
                     setDisplayName('');
                     setEmail('');
                     setRelation('');
@@ -103,15 +101,20 @@ export function HouseholdInviteTool({ auth, refreshVersion }: { auth: AuthState;
     return (
         <div className="space-y-3">
             <section className="app-card p-4">
-                <ToolHeader icon={Users} title="Invite another parent or caregiver" detail="Email an invite that connects their account to one of your linked players." action={<button type="button" className="ghost-button !min-h-9 text-xs" onClick={refresh} disabled={loading}><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />Refresh</button>} />
+                <ToolHeader icon={Users} title="Create invite" detail="Invite another parent or caregiver to connect their account to one of your linked players." action={<button type="button" className="ghost-button !min-h-9 text-xs" onClick={refresh} disabled={loading}><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />Refresh</button>} />
                 {error ? <RetryableStatus error={error} fallbackMessage="Unable to load household invites." onRetry={loading ? undefined : refresh} retrying={loading} /> : null}
                 {message ? <Status tone="success" message={message} /> : null}
                 {createdInvite ? (
-                    <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
-                        <div className="font-black">Invite code: <span className="font-mono">{createdInvite.code}</span></div>
-                        <div className="mt-1 break-all text-xs font-semibold">{createdInvite.inviteUrl}</div>
-                        <button type="button" className="ghost-button mt-2 !min-h-8 text-xs" onClick={() => copyText(createdInvite.inviteUrl, setMessage)}><Copy className="h-4 w-4" aria-hidden="true" />Copy invite link</button>
-                    </div>
+                    <InviteResultCard
+                        code={createdInvite.code}
+                        inviteUrl={createdInvite.inviteUrl}
+                        recipientEmail={createdInvite.email}
+                        emailSent={createdInvite.emailSent}
+                        title="Invite code"
+                        shareTitle="ALL PLAYS parent invite"
+                        shareText={`Join ALL PLAYS to follow this player with invite code ${createdInvite.code}.`}
+                        onStatus={setMessage}
+                    />
                 ) : null}
                 {loading ? <LoadingBlock label="Loading household invites" /> : (
                     <form className="mt-3 grid gap-3" onSubmit={submit}>
@@ -125,12 +128,12 @@ export function HouseholdInviteTool({ auth, refreshVersion }: { auth: AuthState;
                         </label>
                         <div className="grid gap-3 sm:grid-cols-2">
                             <input className="auth-input" value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Name (optional)" autoComplete="name" enterKeyHint="next" disabled={saving || !linkedPlayers.length} />
-                            <input className="auth-input" type="email" inputMode="email" autoComplete="email" enterKeyHint="send" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Household contact email" disabled={saving || !linkedPlayers.length} />
+                            <input className="auth-input" type="email" inputMode="email" autoComplete="email" enterKeyHint="send" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Recipient email" disabled={saving || !linkedPlayers.length} />
                         </div>
                         <input className="auth-input" value={relation} onChange={(event) => setRelation(event.target.value)} placeholder="Relation, like grandparent or guardian" autoComplete="off" enterKeyHint="next" disabled={saving || !linkedPlayers.length} />
                         <button type="submit" className="primary-button" disabled={saving || loading || !linkedPlayers.length}>
                             {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Users className="h-4 w-4" aria-hidden="true" />}
-                            Email parent invite
+                            {saving ? 'Creating invite...' : 'Create invite'}
                         </button>
                     </form>
                 )}

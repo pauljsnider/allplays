@@ -210,11 +210,11 @@ describe('Profile invites', () => {
     renderProfile();
 
     fireEvent.click(await screen.findByRole('button', { name: 'Invites' }));
-    fireEvent.change(screen.getByLabelText('Invite email label'), { target: { value: 'coach@example.com' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Generate invite link' }));
+    fireEvent.change(screen.getByLabelText('Recipient email'), { target: { value: 'coach@example.com' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create invite' }));
 
-    await screen.findByText('Generated invite link');
-    fireEvent.click(screen.getByRole('button', { name: 'Share invite link' }));
+    await screen.findByText('Invite code');
+    fireEvent.click(screen.getByRole('button', { name: 'Share invite' }));
 
     await waitFor(() => expect(publicActionsMocks.sharePublicUrl).toHaveBeenCalledWith(expect.objectContaining({
       title: 'ALL PLAYS invite for coach@example.com',
@@ -223,14 +223,14 @@ describe('Profile invites', () => {
       clipboardText: expect.stringContaining('/app#/accept-invite?code=NEWMVP42&type=friend')
     })));
     expect(screen.getByText(/\/app#\/accept-invite\?code=NEWMVP42&type=friend/)).toBeTruthy();
-    expect(await screen.findByText('Share sheet opened.')).toBeTruthy();
+    expect(await screen.findByText('Invite shared.')).toBeTruthy();
   });
 
   it('requires an email or phone before generating a friend invite', async () => {
     renderProfile();
 
     fireEvent.click(await screen.findByRole('button', { name: 'Invites' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Generate invite link' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create invite' }));
 
     expect(await screen.findByText('Enter an email or phone number for the invite.')).toBeTruthy();
     expect(profileServiceMocks.createProfileAccessCode).not.toHaveBeenCalled();
