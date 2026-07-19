@@ -60,6 +60,9 @@ service cloud.firestore {
       return isSignedIn() &&
              (get(/databases/$(database)/documents/teams/$(teamId)).data.ownerId == request.auth.uid ||
               (request.auth.token.email != null &&
+               get(/databases/$(database)/documents/teams/$(teamId)).data.get('ownerEmail', '') is string &&
+               get(/databases/$(database)/documents/teams/$(teamId)).data.get('ownerEmail', '').lower() == request.auth.token.email.lower()) ||
+              (request.auth.token.email != null &&
                request.auth.token.email.lower() in get(/databases/$(database)/documents/teams/$(teamId)).data.get('adminEmails', [])) ||
               isGlobalAdmin());
     }
@@ -415,6 +418,9 @@ service cloud.firestore {
       return isSignedIn() &&
              (data.ownerId == request.auth.uid ||
               (request.auth.token.email != null &&
+               data.get('ownerEmail', '') is string &&
+               data.get('ownerEmail', '').lower() == request.auth.token.email.lower()) ||
+              (request.auth.token.email != null &&
                request.auth.token.email.lower() in data.get('adminEmails', [])) ||
               isGlobalAdmin());
     }
@@ -433,6 +439,9 @@ service cloud.firestore {
     function canListManagedTeamDocument(data) {
       return isSignedIn() &&
              (data.ownerId == request.auth.uid ||
+              (request.auth.token.email != null &&
+               data.get('ownerEmail', '') is string &&
+               data.get('ownerEmail', '').lower() == request.auth.token.email.lower()) ||
               (request.auth.token.email != null &&
                request.auth.token.email.lower() in data.get('adminEmails', [])));
     }
@@ -1333,6 +1342,9 @@ service cloud.firestore {
 
       // Check owner, admin email, or global admin first (no user doc needed)
       let isOwnerOrAdmin = team.ownerId == request.auth.uid ||
+        (request.auth.token.email != null &&
+         team.get('ownerEmail', '') is string &&
+         team.get('ownerEmail', '').lower() == request.auth.token.email.lower()) ||
         (request.auth.token.email != null &&
          request.auth.token.email.lower() in team.get('adminEmails', [])) ||
         isGlobalAdmin();

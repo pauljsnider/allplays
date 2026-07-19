@@ -27,7 +27,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
             await testEnv.clearStorage();
             await testEnv.withSecurityRulesDisabled(async (context) => {
                 const firestore = context.firestore();
-                await firestore.doc('teams/team-a').set({ ownerId: 'owner-a', adminEmails: [] });
+                await firestore.doc('teams/team-a').set({ ownerId: 'owner-a', ownerEmail: 'legacy-owner@example.com', adminEmails: [] });
                 await firestore.doc('teams/team-b').set({ ownerId: 'owner-b', adminEmails: [] });
                 await firestore.doc('teams/team-a/mediaFolders/folder-a').set({ visibility: 'team' });
                 await firestore.doc('teams/team-b/mediaFolders/folder-b').set({ visibility: 'team' });
@@ -81,6 +81,24 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
             );
             await assertFails(
                 memberStorage.ref('team-media/team-b/folder-b/member-a/new.jpg').put(
+                    new Uint8Array([1]),
+                    { contentType: 'image/jpeg' }
+                )
+            );
+        });
+
+        it('allows legacy owner-email team chat uploads when the owner uid no longer matches', async () => {
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                await context.firestore().doc('securityPolicies/verifiedEmail').set({ mode: 'enforce' });
+            });
+
+            const legacyOwnerStorage = testEnv.authenticatedContext('legacy-owner-uid', {
+                email: 'legacy-owner@example.com',
+                email_verified: false
+            }).storage();
+
+            await assertSucceeds(
+                legacyOwnerStorage.ref('stat-sheets/team-chat/team-a/team/legacy-owner-uid/legacy-owner-photo.jpg').put(
                     new Uint8Array([1]),
                     { contentType: 'image/jpeg' }
                 )
