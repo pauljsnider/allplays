@@ -1261,7 +1261,7 @@ test('home dashboard drills into player detail with section submenus', async ({ 
     const homeSectionNavigation = page.getByRole('navigation', { name: 'Home sections' });
 
     await homeSectionNavigation.getByRole('link', { name: 'Teams', exact: true }).click();
-    await expect(page.locator('a[href="#/teams?selectedTeamId=team-1&from=home"]')).toBeVisible();
+    await expect(page.locator('a[href="#/teams/team-1"]')).toBeVisible();
 
     await homeSectionNavigation.getByRole('link', { name: 'Feed', exact: true }).click();
     await expect(page.getByText('Quick shares')).toBeVisible();
@@ -1431,10 +1431,10 @@ test('parent core workflows emit baseline timers from Home drill-ins', async ({ 
             expectedTargetRoute: '/teams',
             readyHome: (testPage) => testPage.getByRole('heading', { name: 'Teams' }),
             action: async (testPage) => {
-                await testPage.locator('a[href="#/teams?selectedTeamId=team-1&from=home"]').click();
+                await testPage.locator('a[href="#/teams/team-1"]').click();
             },
             readyTarget: async (testPage) => {
-                await waitForTeamsRoute(testPage, testPage.getByRole('heading', { name: '1 team ready' }));
+                await waitForTeamsRoute(testPage, testPage.getByRole('heading', { name: 'Bears' }));
             }
         },
         {
@@ -1861,19 +1861,13 @@ test('social photo quick share requires media and posts uploaded media payload',
     }));
 });
 
-test('my teams opens from Home data with selected team, player, and chat routes', async ({ page, baseURL }) => {
+test('team page opens from Home data with team tools, player, and chat routes', async ({ page, baseURL }) => {
     await mockHomePlayerModules(page);
-    await page.goto(appUrl(baseURL, '/teams?selectedTeamId=team-1&from=home'), { waitUntil: 'domcontentloaded' });
+    await page.goto(appUrl(baseURL, '/teams/team-1'), { waitUntil: 'domcontentloaded' });
 
-    await waitForTeamsRoute(page, page.getByRole('heading', { name: '1 team ready' }));
-    await expect(page.getByText('Choose a team')).toBeVisible();
+    await waitForTeamsRoute(page, page.getByRole('heading', { name: 'Bears' }));
+    await expect(page.getByText('Team tools')).toBeVisible();
     await expect(page.getByRole('link', { name: /Chat/ })).toHaveAttribute('href', '#/messages/team-1');
-    await expect(page.getByText('Team navigation')).toBeVisible();
-    await expect.poll(async () => {
-        const launcherTop = await page.getByText('Choose a team').boundingBox();
-        const navTop = await page.getByText('Team navigation').boundingBox();
-        return Math.round((launcherTop?.y || 0) - (navTop?.y || 0));
-    }).toBeLessThan(0);
     await expect(page.locator('a[href="#/schedule?teamId=team-1"]').first()).toBeVisible();
     await expect(page.locator('a[href="#/schedule?teamId=team-1&view=packets"]')).toBeVisible();
     await expect(page.locator('a[href="#/teams/team-1"]').first()).toBeVisible();

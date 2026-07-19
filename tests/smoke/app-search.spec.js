@@ -221,7 +221,7 @@ async function mockSearchModules(page) {
                     const actions = [
                         { id: 'browse-teams', kind: 'action', title: 'Browse Teams', subtitle: 'Explore public teams on ALL PLAYS', route: '/teams/browse' },
                         { id: 'dashboard', kind: 'action', title: 'Dashboard', subtitle: 'Go to your ALL PLAYS home', route: '/home' },
-                        { id: 'my-teams', kind: 'action', title: 'My Teams', subtitle: 'Open your team hubs', route: '/teams' },
+                        { id: 'my-teams', kind: 'action', title: 'My Teams', subtitle: 'Choose or switch teams', route: '/teams' },
                         { id: 'schedule', kind: 'action', title: 'Schedule', subtitle: 'Games, practices, availability, rides, and packets', route: '/schedule' },
                         { id: 'messages', kind: 'action', title: 'Messages', subtitle: 'Team chat and staff threads', route: '/messages' },
                         { id: 'profile', kind: 'action', title: 'Profile', subtitle: 'Account settings and notifications', route: '/profile/settings' }

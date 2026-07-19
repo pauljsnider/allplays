@@ -217,35 +217,24 @@ describe('React app Teams page', () => {
         expect(container.textContent).toContain('Staff Wolves');
         expect(container.textContent).toContain('Bears');
         expect(container.querySelector('img[src="https://img.example.test/wolves.png"]')).toBeTruthy();
-        expect(container.textContent).toContain('No player is linked to this account for the team, but team chat is available.');
-        expect(container.textContent).toContain('Team navigation');
-        expect(container.textContent.indexOf('Choose a team')).toBeLessThan(container.textContent.indexOf('Team navigation'));
-        expect(container.textContent).toContain('Website tools available');
+        expect(container.textContent).toContain('Choose a team to open its page and tools.');
+        expect(container.textContent).not.toContain('Team navigation');
+        expect(container.textContent).not.toContain('Website tools available');
         expect(container.textContent).toContain('Discover public teams');
         expect(getHrefs(container)).toContain('/teams/browse');
-        let hrefs = getHrefs(container);
-        expect(hrefs).toContain('/messages/team-staff');
+        const hrefs = getHrefs(container);
         expect(hrefs).toContain('/teams/team-staff');
+        expect(hrefs).toContain('/teams/team-1');
+        expect(hrefs).not.toContain('/messages/team-staff');
         expect(hrefs).not.toContain('/schedule?teamId=team-staff');
-        expect(hrefs).toContain('https://allplays.ai/team.html#teamId=team-staff');
-        expect(hrefs).toContain('https://allplays.ai/edit-roster.html#teamId=team-staff');
-        expect(hrefs).toContain('https://allplays.ai/edit-schedule.html#teamId=team-staff');
-        expect(hrefs).toContain('/teams/team-staff/fees');
+        expect(hrefs).not.toContain('https://allplays.ai/team.html#teamId=team-staff');
+        expect(hrefs).not.toContain('https://allplays.ai/edit-roster.html#teamId=team-staff');
+        expect(hrefs).not.toContain('https://allplays.ai/edit-schedule.html#teamId=team-staff');
+        expect(hrefs).not.toContain('/teams/team-staff/fees');
         expect(hrefs).not.toContain('https://allplays.ai/team-fees.html#teamId=team-staff');
         expect(container.textContent).not.toContain('Team drills');
         expect(linkByAriaLabel(container, 'Open Staff Wolves').getAttribute('aria-describedby')).toBe('selected-team-team-staff');
         expect(container.textContent).toContain('Currently selected team');
-
-        await clickLink(container, 'Website team page');
-        expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://allplays.ai/team.html#teamId=team-staff');
-
-        await clickButton(container, '6 more');
-        expect(container.textContent).toContain('Team drills');
-        hrefs = getHrefs(container);
-        expect(hrefs).toContain('/teams/team-staff/drills');
-        expect(hrefs).toContain('https://allplays.ai/game-day.html?teamId=team-staff');
-        expect(linkByAriaLabel(container, 'Open Bears').getAttribute('href')).toBe('/teams/team-1');
-        expect(linkByAriaLabel(container, 'Open Staff Wolves').getAttribute('href')).toBe('/teams/team-staff');
     });
 
     it('filters the mobile launcher by team and player text before opening a result', async () => {
@@ -269,7 +258,7 @@ describe('React app Teams page', () => {
         await typeIntoInput(container, 'Search teams or players', 'Bears');
 
         expect(linkByAriaLabel(container, 'Open Bears').getAttribute('href')).toBe('/teams/team-1');
-        expect(container.textContent.indexOf('Choose a team')).toBeLessThan(container.textContent.indexOf('Team navigation'));
+        expect(container.textContent).not.toContain('Team navigation');
         const hrefs = getHrefs(container);
         expect(hrefs.filter((href) => href === '/teams/team-1')).toHaveLength(1);
         expect(hrefs).not.toContain('/messages/team-1');
@@ -338,7 +327,7 @@ describe('React app Teams page', () => {
             metrics: { players: 0, teams: 0, rsvpNeeded: 0, unreadMessages: 0, packetsReady: 0 }
         });
 
-        const { container } = await renderTeams('/teams');
+        const { container } = await renderTeams('/teams?selectedTeamId=team-1');
         await waitForText(container, '1 team ready');
 
         await act(async () => {
@@ -377,16 +366,17 @@ describe('React app Teams page', () => {
         homeMocks.loadParentTeamsSummaryBootstrap.mockResolvedValueOnce(makeTeamSummaryBootstrap(multiTeamModel));
         homeMocks.loadParentHomeSummary.mockResolvedValueOnce(multiTeamModel);
 
-        const { container } = await renderTeams('/teams');
+        const { container } = await renderTeams('/teams?selectedTeamId=team-multi');
         await waitForText(container, 'Multi Bears');
 
         const hrefs = getHrefs(container);
-        expect(container.textContent).toContain('Linked players');
+        expect(container.textContent).toContain('Choose a team to open its page and tools.');
         expect(container.textContent).toContain('Pat Star');
         expect(container.textContent).toContain('Sam Wing');
         expect(container.textContent).not.toContain('Team hub stub');
-        expect(hrefs).toContain('/players/team-multi/player-1');
-        expect(hrefs).toContain('/players/team-multi/player-2');
+        expect(hrefs).toContain('/teams/team-multi');
+        expect(hrefs).not.toContain('/players/team-multi/player-1');
+        expect(hrefs).not.toContain('/players/team-multi/player-2');
     });
 
     it('shows clear retryable error UI instead of a spinner when the initial load fails', async () => {
@@ -430,7 +420,7 @@ describe('React app Teams page', () => {
         expect(container.textContent).not.toContain('Website tools available');
     });
 
-    it('auto-navigates to the team hub when the user has exactly one team', async () => {
+    it('opens the team page directly when the user has exactly one team', async () => {
         const singleTeamModel = {
             players: [],
             upcomingEvents: [],
@@ -479,6 +469,7 @@ describe('React app Teams page', () => {
 
         await waitForText(container, 'Team hub stub');
         expect(container.textContent).not.toContain('Choose a team');
+        expect(container.querySelector('[data-testid="team-hub"]')).toBeTruthy();
         expect(container.textContent).not.toContain('Loading teams');
     });
 

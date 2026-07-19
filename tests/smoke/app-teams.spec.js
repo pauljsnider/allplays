@@ -586,7 +586,7 @@ async function mockTeamCreationModule(page) {
 test.describe('mobile My Teams', () => {
     test.use({ viewport: { width: 390, height: 844 }, hasTouch: true });
 
-    test('@visual opens parent and staff teams, keeps tools compact, and opens website resources through the adapter', async ({ page, baseURL }) => {
+    test('@visual opens parent and staff teams with a compact team switcher', async ({ page, baseURL }) => {
         const url = appUrl(baseURL, '/teams?selectedTeamId=team-staff&from=home');
         await installVisualNetworkGuard(page, url);
         await mockTeamsModules(page);
@@ -609,18 +609,10 @@ test.describe('mobile My Teams', () => {
         const staffLauncherRow = page.locator('article.team-launcher-row');
         await expect(staffLauncherRow.locator('a')).toHaveCount(1);
         await expect(staffLauncherRow.locator('a[href*="/messages/"], a[href*="/schedule"]')).toHaveCount(0);
-        await expect(page.getByRole('link', { name: 'Chat', exact: true })).toHaveAttribute('href', /\/messages\/team-staff$/);
-        await expect(page.getByText('No player is linked to this account for the team, but team chat is available.')).toBeVisible();
-        await expect(page.getByText('Coach/admin tools')).toBeVisible();
+        await expect(page.getByRole('link', { name: 'Chat', exact: true })).toHaveCount(0);
+        await expect(page.getByText('No player is linked to this account for the team, but team chat is available.')).toHaveCount(0);
+        await expect(page.getByText('Coach/admin tools')).toHaveCount(0);
         await expect(page.getByText('Team drills')).toHaveCount(0);
-
-        await page.getByRole('button', { name: '6 more' }).click();
-        await expect(page.getByText('Team drills')).toBeVisible();
-        await expect(page.getByRole('link', { name: /Game day/ })).toHaveAttribute('href', 'https://allplays.ai/game-day.html?teamId=team-staff');
-
-        await page.getByRole('link', { name: /Website team page/ }).click();
-        await expect.poll(() => page.evaluate(() => window.__openedPublicUrls.at(-1))).toBe('https://allplays.ai/team.html#teamId=team-staff');
-        await expect(page).toHaveURL(/#\/teams/);
 
         await page.goto(appUrl(baseURL, '/teams?selectedTeamId=team-1&from=home'), { waitUntil: 'domcontentloaded' });
         await waitForTeamsRoute(page, teamsReadyHeading);
@@ -632,14 +624,13 @@ test.describe('mobile My Teams', () => {
         const bearsLauncherRow = page.locator('article.team-launcher-row').filter({ has: page.getByRole('link', { name: 'Open Bears' }) });
         await expect(bearsLauncherRow.locator('a')).toHaveCount(1);
         await expect(bearsLauncherRow.locator('a[href*="/messages/"], a[href*="/schedule"]')).toHaveCount(0);
-        await expect(page.getByRole('link', { name: 'Chat', exact: true })).toHaveAttribute('href', /\/messages\/team-1$/);
+        await expect(page.getByRole('link', { name: 'Chat', exact: true })).toHaveCount(0);
         await expect(page.getByText('12 unread').first()).toBeVisible();
-        await expect(page.locator('a[href="#/schedule?teamId=team-1&view=packets"]')).toBeVisible();
-        await expect(page.getByRole('link', { name: /Players/ })).toHaveAttribute('href', 'https://allplays.ai/team.html#teamId=team-1');
-        await expect(page.locator('a[href="#/players/team-1/player-1"]')).toBeVisible();
-        await expect(page.locator('a[href="#/players/team-1/player-2"]')).toBeVisible();
         await page.getByRole('link', { name: 'Open Bears' }).first().click();
         await waitForTeamDetailRoute(page, 'Bears');
+        await expect(page.getByText('Team tools')).toBeVisible();
+        await expect(page.locator('a[href="#/schedule?teamId=team-1&view=packets"]')).toBeVisible();
+        await expect(page.getByRole('link', { name: /Players/ })).toHaveAttribute('href', 'https://allplays.ai/team.html#teamId=team-1');
         await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
     });
 
@@ -848,7 +839,7 @@ test.describe('mobile My Teams', () => {
         await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
     });
 
-    test('team detail tab routes preserve back navigation inside the team hub', async ({ page, baseURL }) => {
+    test('team detail tab routes preserve back navigation inside the team page', async ({ page, baseURL }) => {
         await mockTeamsModules(page);
         await page.goto(appUrl(baseURL, '/teams'), { waitUntil: 'domcontentloaded' });
 
@@ -896,15 +887,15 @@ test.describe('mobile My Teams', () => {
 test.describe('desktop My Teams', () => {
     test.use({ viewport: { width: 1440, height: 900 }, hasTouch: false });
 
-    test('keeps the browser My Teams workspace dense while preserving launcher and hub navigation', async ({ page, baseURL }) => {
+    test('keeps the browser My Teams workspace dense as a team switcher', async ({ page, baseURL }) => {
         await mockTeamsModules(page);
         await page.goto(appUrl(baseURL, '/teams?selectedTeamId=team-1'), { waitUntil: 'domcontentloaded' });
 
         const readyHeading = page.getByRole('heading', { name: /\d+ teams? ready|\d+ Teams?/i });
         await waitForTeamsRoute(page, readyHeading);
-        await expect(page.getByText('Open a team hub to use its tools.')).toBeVisible();
+        await expect(page.getByText('Choose a team to open its page and tools.')).toBeVisible();
         await expect(page.getByPlaceholder('Search teams or players')).toBeVisible();
-        await expect(page.getByText('Team navigation')).toBeVisible();
+        await expect(page.getByText('Team navigation')).toHaveCount(0);
         const launcherRows = page.locator('.teams-team-rail article.team-launcher-row');
         await expect(launcherRows).toHaveCount(3);
         await expect(launcherRows.locator('a')).toHaveCount(3);
@@ -914,11 +905,6 @@ test.describe('desktop My Teams', () => {
             const box = await page.locator('.teams-header').boundingBox();
             return Math.round(box?.height || 0);
         }).toBeLessThan(155);
-        await expect.poll(async () => {
-            const rail = await page.locator('.teams-team-rail').boundingBox();
-            const panel = await page.locator('.teams-selected-panel').boundingBox();
-            return Math.round((panel?.x || 0) - (rail?.x || 0));
-        }).toBeGreaterThan(360);
         await page.getByPlaceholder('Search teams or players').fill('Rockets');
         await expect(page.getByRole('link', { name: 'Open Rockets' })).toBeVisible();
         await expect(page.getByRole('link', { name: 'Open Bears' })).toHaveCount(0);

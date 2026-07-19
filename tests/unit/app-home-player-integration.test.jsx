@@ -111,6 +111,7 @@ async function renderApp(initialEntry = '/home') {
                 Routes,
                 null,
                 React.createElement(Route, { path: '/home', element: React.createElement(Home, { auth }) }),
+                React.createElement(Route, { path: '/teams/:teamId', element: React.createElement('div', null, 'Team route') }),
                 React.createElement(Route, { path: '/players/:teamId/:playerId', element: React.createElement(PlayerDetail, { auth }) }),
                 React.createElement(Route, { path: '/players/:playerId', element: React.createElement(PlayerDetail, { auth }) })
             )
@@ -586,11 +587,8 @@ describe('React app Home and player drill-in integration', () => {
             teams: expect.any(Array)
         }));
 
-        await clickLink(container, 'Teams');
-        await waitForText(container, 'Teams');
-        const teamLink = Array.from(container.querySelectorAll('a')).find((link) => link.getAttribute('href') === '/teams?selectedTeamId=team-1&from=home');
-        expect(teamLink?.getAttribute('href')).toBe('/teams?selectedTeamId=team-1&from=home');
-        expect(teamLink?.getAttribute('aria-label')).toBe('Open Bears in My Teams');
+        const teamsSectionLink = Array.from(container.querySelectorAll('a')).find((link) => link.textContent.trim() === 'Teams');
+        expect(teamsSectionLink?.getAttribute('href')).toBe('/teams/team-1');
 
         await clickLink(container, 'Feed');
         await waitForText(container, 'Quick shares');
@@ -972,14 +970,13 @@ describe('React app Home and player drill-in integration', () => {
         expect(container.textContent).toContain('All caught up');
         expect(container.textContent).toContain('No upcoming events');
 
-        await clickLink(container, 'Teams');
-        await waitForText(container, 'Coach · Soccer');
-        const teamLink = Array.from(container.querySelectorAll('a')).find((link) => link.getAttribute('href') === '/teams?selectedTeamId=team-staff&from=home');
-        expect(teamLink).toBeTruthy();
-        expect(teamLink?.getAttribute('aria-label')).toBe('Open Staff Wolves in My Teams');
-
         await clickLink(container, 'Players');
         await waitForText(container, 'No players linked yet');
+
+        const teamsSectionLink = Array.from(container.querySelectorAll('a')).find((link) => link.textContent.trim() === 'Teams');
+        expect(teamsSectionLink?.getAttribute('href')).toBe('/teams/team-staff');
+        await clickLink(container, 'Teams');
+        await waitForText(container, 'Team route');
     });
 
     it('shows a retryable Home error state and recovers on retry after an initial failure', async () => {

@@ -76,6 +76,9 @@ vi.mock('lucide-react', () => {
     BarChart3: Icon,
     CalendarDays: Icon,
     CheckCircle2: Icon,
+    ClipboardCheck: Icon,
+    ClipboardList: Icon,
+    ChevronDown: Icon,
     ChevronRight: Icon,
     Code2: Icon,
     Copy: Icon,
@@ -90,7 +93,9 @@ vi.mock('lucide-react', () => {
     Radio: Icon,
     RefreshCw: Icon,
     Save: Icon,
+    Settings: Icon,
     Shield: Icon,
+    SlidersHorizontal: Icon,
     Ticket: Icon,
     Trophy: Icon,
     UserPlus: Icon,
@@ -617,9 +622,9 @@ describe('TeamDetail', () => {
     await waitFor(() => expect(window.scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'auto' }));
     vi.mocked(window.scrollTo).mockClear();
 
-    fireEvent.click(tabControls.getByRole('button', { name: /more/i }));
+    fireEvent.click(tabControls.getByRole('button', { name: 'More' }));
     await waitFor(() => expect(router.state.location.search).toBe('?tab=more'));
-    expect(tabControls.getByRole('button', { name: /more/i }).getAttribute('aria-pressed')).toBe('true');
+    expect(tabControls.getByRole('button', { name: 'More' }).getAttribute('aria-pressed')).toBe('true');
     expect(await screen.findByText('Stat tracker configs')).toBeTruthy();
     await waitFor(() => expect(window.scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'auto' }));
     vi.mocked(window.scrollTo).mockClear();
@@ -1322,7 +1327,7 @@ describe('TeamDetail', () => {
     );
 
     expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: /more/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
 
     expect((await screen.findByRole('link', { name: /edit team/i })).getAttribute('href')).toBe('/teams/team-1/edit');
     expect((await screen.findByRole('link', { name: /awards studio/i })).getAttribute('href')).toBe('/teams/team-1/certificates');
@@ -1343,7 +1348,7 @@ describe('TeamDetail', () => {
     );
 
     expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: /more/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
 
     expect((await screen.findByText('Drill library')).closest('a')?.getAttribute('href')).toBe('/teams/team-1/drills');
   });
@@ -1634,7 +1639,7 @@ describe('TeamDetail', () => {
     );
 
     expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: /more/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
 
     expect(screen.queryByRole('button', { name: 'Manage staff' })).toBeNull();
     fireEvent.change(screen.getByLabelText('Admin email'), { target: { value: ' NewCoach@Example.com ' } });
@@ -1689,7 +1694,7 @@ describe('TeamDetail', () => {
     );
 
     expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: /more/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
 
     expect(await screen.findByText('Only the team owner or a platform admin can add or remove team admins.')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Send invite' })).toBeNull();

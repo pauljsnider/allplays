@@ -71,7 +71,7 @@ import {
 } from '../lib/scheduleLogic';
 import { sharePublicUrl } from '../lib/publicActions';
 import { completeParentCoreWorkflowTimer } from '../lib/parentWorkflowTiming';
-import type { AuthState } from '../lib/types';
+import type { AuthState, AuthUser } from '../lib/types';
 import type { ProfilePhotoSource } from '../lib/profilePhotoService';
 
 type PlayerSectionId = 'overview' | 'schedule' | 'performance' | 'profile';
@@ -260,6 +260,31 @@ function hasResolvedAthleteProfile(data: ParentAthleteProfileData | null | undef
   return !!(data?.profile || String(data?.shareUrl || '').trim());
 }
 
+function mergePlayerAuthUser(user: AuthUser | null, profile: Record<string, unknown> | null): AuthUser | null {
+  if (!user || !profile) return user;
+  return {
+    ...user,
+    parentOf: mergeProfileArray(user.parentOf, profile.parentOf),
+    parentTeamIds: mergeProfileArray(user.parentTeamIds, profile.parentTeamIds),
+    parentPlayerKeys: mergeProfileArray(user.parentPlayerKeys, profile.parentPlayerKeys),
+    coachOf: mergeProfileArray(user.coachOf, profile.coachOf),
+    teamMediaUploadTeamIds: mergeProfileArray(user.teamMediaUploadTeamIds, profile.teamMediaUploadTeamIds),
+    mediaUploadTeamIds: mergeProfileArray(user.mediaUploadTeamIds, profile.mediaUploadTeamIds)
+  };
+}
+
+function mergeProfileArray<T>(userValues: T[] | undefined, profileValues: unknown): T[] {
+  const merged = [...(Array.isArray(userValues) ? userValues : [])];
+  if (Array.isArray(profileValues)) {
+    profileValues.forEach((value) => {
+      if (!merged.some((current) => JSON.stringify(current) === JSON.stringify(value))) {
+        merged.push(value as T);
+      }
+    });
+  }
+  return merged;
+}
+
 function buildAthleteProfileClipSaveState(clips: AthleteProfileClipDraftState[]) {
   const draftClips: AthleteProfileHighlightClipDraft[] = [];
   const highlightClipUploads: AthleteProfileHighlightClipUpload[] = [];
@@ -310,6 +335,7 @@ function buildAthleteProfileClipSaveState(clips: AthleteProfileClipDraftState[])
 
 export function PlayerDetail({ auth }: { auth: AuthState }) {
   const { teamId = '', playerId = '' } = useParams();
+  const playerAuthUser = useMemo(() => mergePlayerAuthUser(auth.user, auth.profile), [auth.profile, auth.user]);
   const [data, setData] = useState<ParentPlayerDetailData | null>(null);
   const [activeSection, setActiveSection] = useState<PlayerSectionId>('overview');
   const [loading, setLoading] = useState(true);
@@ -337,7 +363,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
     nextPlayerId: string;
     force?: boolean;
   }): Promise<ParentPlayerStatsDetailData | null> => {
-    if (!auth.user?.uid) {
+    if (!playerAuthUser?.uid) {
       return null;
     }
     if ((statsDetailState === 'loading' || statsDetailState === 'loaded' || statsDetailState === 'error') && !force) {
@@ -349,7 +375,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
     setStatsDetailState('loading');
     setStatsDetailError(null);
     try {
-      const statsDetail = await loadParentPlayerStatsDetail(auth.user, nextTeamId, nextPlayerId);
+      const statsDetail = await loadParentPlayerStatsDetail(playerAuthUser, nextTeamId, nextPlayerId);
       if (statsDetailRequestKeyRef.current !== requestKey) {
         return null;
       }
@@ -372,7 +398,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
       }
       return null;
     }
-  }, [auth.user, statsDetailState]);
+  }, [playerAuthUser, statsDetailState]);
 
   const loadVideoClips = async ({
     nextTeamId,
@@ -383,7 +409,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
     nextPlayerId: string;
     force?: boolean;
   }): Promise<PlayerVideoClip[] | null> => {
-    if (!auth.user?.uid) {
+    if (!playerAuthUser?.uid) {
       return null;
     }
     if ((videoClipsLoaded || videoClipsLoading || videoClipsError) && !force) {
@@ -395,7 +421,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
     setVideoClipsLoading(true);
     setVideoClipsError(null);
     try {
-      const clips = await loadParentPlayerVideoClips(auth.user, nextTeamId, nextPlayerId);
+      const clips = await loadParentPlayerVideoClips(playerAuthUser, nextTeamId, nextPlayerId);
       if (videoClipsRequestKeyRef.current !== requestKey) {
         return null;
       }
@@ -431,7 +457,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
     nextPlayerId: string;
     force?: boolean;
   }): Promise<ParentAthleteProfileData | null> => {
-    if (!auth.user?.uid) {
+    if (!playerAuthUser?.uid) {
       return null;
     }
     if (athleteProfileLoading && !force) {
@@ -443,7 +469,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
     setAthleteProfileLoading(true);
     setAthleteProfileError(null);
     try {
-      const athleteProfile = await loadParentPlayerAthleteProfile(auth.user, nextTeamId, nextPlayerId);
+      const athleteProfile = await loadParentPlayerAthleteProfile(playerAuthUser, nextTeamId, nextPlayerId);
       if (athleteProfileRequestKeyRef.current !== requestKey) {
         return null;
       }
@@ -468,7 +494,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
         setAthleteProfileLoading(false);
       }
     }
-  }, [athleteProfileLoading, auth.user]);
+  }, [athleteProfileLoading, playerAuthUser]);
 
   const refreshPlayer = async ({
     showLoading = data === null,
@@ -486,7 +512,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
     }
     setError(null);
     try {
-      const nextData = await loadParentPlayerDetail(auth.user, teamId, playerId);
+      const nextData = await loadParentPlayerDetail(playerAuthUser, teamId, playerId);
       if (playerDetailRequestIdRef.current !== requestId) {
         return;
       }
@@ -568,7 +594,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
   }, [auth.user?.uid, teamId, playerId]);
 
   useEffect(() => {
-    if (activeSection !== 'profile' || !data || athleteProfileLoaded || athleteProfileLoading || hasResolvedAthleteProfile(data.athleteProfile)) return;
+    if (activeSection !== 'profile' || !data || !data.access.isLinkedParent || athleteProfileLoaded || athleteProfileLoading || hasResolvedAthleteProfile(data.athleteProfile)) return;
     void loadAthleteProfile({
       nextTeamId: data.child.teamId,
       nextPlayerId: data.child.playerId
@@ -582,6 +608,11 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
       nextPlayerId: data.child.playerId
     });
   }, [activeSection, data, loadStatsDetail, statsDetailState]);
+
+  useEffect(() => {
+    if (!data || data.access.isLinkedParent || data.access.isTeamStaff || activeSection !== 'performance') return;
+    setActiveSection('overview');
+  }, [activeSection, data]);
 
   useEffect(() => {
     if (loading || !data) return;
@@ -629,6 +660,10 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
   const playerName = data.player.name || data.child.playerName || 'Player';
   const jersey = data.player.number ? `#${data.player.number}` : '';
   const teamName = data.team?.name || data.child.teamName || data.child.teamId;
+  const isLinkedParent = data.access.isLinkedParent;
+  const visiblePlayerSections = isLinkedParent
+    ? playerSections
+    : playerSections.filter((section) => section.id !== 'performance' || data.access.isTeamStaff);
 
   return (
     <div className="player-detail-page space-y-3">
@@ -650,16 +685,18 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
             <span className="hidden sm:inline">Refresh</span>
           </button>
         </div>
-        <div className="flex gap-1.5 overflow-x-auto border-t border-gray-100 px-3 py-1.5 sm:px-4">
-          <SignalChip icon={ClipboardCheck} label="RSVP" value={String(data.actionCounts.rsvpNeeded)} urgent={data.actionCounts.rsvpNeeded > 0} />
-          <SignalChip icon={ClipboardCheck} label="Packets" value={String(data.actionCounts.packetsReady)} urgent={data.actionCounts.packetsReady > 0} />
-          <SignalChip icon={CheckCircle2} label="Tasks" value={String(data.actionCounts.openAssignments)} urgent={data.actionCounts.openAssignments > 0} />
-        </div>
+        {isLinkedParent ? (
+          <div className="flex gap-1.5 overflow-x-auto border-t border-gray-100 px-3 py-1.5 sm:px-4">
+            <SignalChip icon={ClipboardCheck} label="RSVP" value={String(data.actionCounts.rsvpNeeded)} urgent={data.actionCounts.rsvpNeeded > 0} />
+            <SignalChip icon={ClipboardCheck} label="Packets" value={String(data.actionCounts.packetsReady)} urgent={data.actionCounts.packetsReady > 0} />
+            <SignalChip icon={CheckCircle2} label="Tasks" value={String(data.actionCounts.openAssignments)} urgent={data.actionCounts.openAssignments > 0} />
+          </div>
+        ) : null}
       </section>
 
       <div className="player-section-nav sticky top-24 z-30 -mx-1 overflow-x-auto bg-gray-50/95 py-2 backdrop-blur">
         <div className="grid min-w-max grid-cols-4 gap-1 rounded-2xl border border-gray-200 bg-white p-1 shadow-sm">
-          {playerSections.map((section) => {
+          {visiblePlayerSections.map((section) => {
             const active = activeSection === section.id;
             return (
               <button
@@ -678,7 +715,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
 
       {error ? <Status tone="error" message={error.message} /> : null}
       {data.scheduleLoadError ? <ScheduleLoadNotice message={data.scheduleLoadError} /> : null}
-      {activeSection === 'overview' ? <OverviewSection data={data} /> : null}
+      {activeSection === 'overview' ? <OverviewSection data={data} showParentActions={isLinkedParent} /> : null}
       {activeSection === 'schedule' ? <PlayerScheduleSection events={data.events} /> : null}
       {activeSection === 'performance' ? (
         <ReportsSection
@@ -717,8 +754,8 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
   );
 }
 
-function OverviewSection({ data }: { data: ParentPlayerDetailData }) {
-  const nextAction = getPlayerAction(data);
+function OverviewSection({ data, showParentActions = true }: { data: ParentPlayerDetailData; showParentActions?: boolean }) {
+  const nextAction = showParentActions ? getPlayerAction(data) : null;
   return (
     <div className="player-section-content space-y-3">
       {nextAction ? (
@@ -733,8 +770,8 @@ function OverviewSection({ data }: { data: ParentPlayerDetailData }) {
         <div className="flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3">
           <CheckCircle2 className="mt-0.5 h-5 w-5 flex-none text-emerald-700" aria-hidden="true" />
           <div>
-            <div className="text-sm font-black text-emerald-900">Caught up</div>
-            <div className="mt-0.5 text-xs font-semibold text-emerald-700">No open parent actions for this player.</div>
+            <div className="text-sm font-black text-emerald-900">{showParentActions ? 'Caught up' : 'Player profile'}</div>
+            <div className="mt-0.5 text-xs font-semibold text-emerald-700">{showParentActions ? 'No open parent actions for this player.' : 'Team-visible player details are ready.'}</div>
           </div>
         </div>
       )}
@@ -1427,9 +1464,24 @@ function PlayerProfileSection({
   const [activePanel, setActivePanel] = useState<ProfilePanelId>('edit');
   const [athleteProfileShareState, setAthleteProfileShareState] = useState({ hasUnsavedPublishChanges: false, saving: false });
   const customRosterFields = Array.isArray(data.customRosterFields) ? data.customRosterFields : [];
+  const isLinkedParent = data.access.isLinkedParent;
+  const visibleProfilePanels = useMemo(() => {
+    if (isLinkedParent) return profilePanels;
+    const panels: Array<{ id: ProfilePanelId; label: string }> = [];
+    if (data.access.canEditRosterDetails || customRosterFields.length) {
+      panels.push({ id: 'edit', label: data.access.canEditRosterDetails ? 'Roster' : 'Info' });
+    }
+    panels.push({ id: 'family', label: 'Family' });
+    return panels;
+  }, [customRosterFields.length, data.access.canEditRosterDetails, isLinkedParent]);
   const persistedPublicProfileUrl = getPersistedPublicProfileUrl(data.athleteProfile.profile, data.athleteProfile.shareUrl);
   const persistedPublicProfileAvailable = isPersistedPublicProfileReady(data.athleteProfile.profile, data.athleteProfile.shareUrl, athleteProfileShareState);
   const fullBuilderAvailable = athleteProfileLoaded && !!String(data.athleteProfile.builderUrl || '').trim();
+
+  useEffect(() => {
+    if (visibleProfilePanels.some((panel) => panel.id === activePanel)) return;
+    setActivePanel(visibleProfilePanels[0]?.id || 'family');
+  }, [activePanel, visibleProfilePanels]);
 
   useEffect(() => {
     setAthleteProfileShareState((current) => {
@@ -1451,7 +1503,7 @@ function PlayerProfileSection({
           <Shield className="h-5 w-5 text-primary-600" aria-hidden="true" />
         </div>
         <div className="mt-3 flex gap-1.5 overflow-x-auto rounded-2xl border border-gray-200 bg-gray-50 p-1">
-          {profilePanels.map((panel) => {
+          {visibleProfilePanels.map((panel) => {
             const active = activePanel === panel.id;
             return (
               <button
@@ -1471,11 +1523,11 @@ function PlayerProfileSection({
       {activePanel === 'edit' ? (
         <>
           <StaffRosterDetailsCard data={data} auth={auth} onChanged={onChanged} />
-          <EditablePlayerProfileCard data={data} auth={auth} onChanged={onChanged} />
+          {isLinkedParent ? <EditablePlayerProfileCard data={data} auth={auth} onChanged={onChanged} /> : null}
           {customRosterFields.length ? <CustomRosterFieldsCard data={data} auth={auth} onChanged={onChanged} /> : null}
         </>
       ) : null}
-      {athleteProfileLoading ? (
+      {isLinkedParent && athleteProfileLoading ? (
         <div className="rounded-xl border border-primary-100 bg-primary-50/60 p-3 text-sm font-semibold text-primary-800">
           <div className="flex items-center gap-2">
             <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
@@ -1483,8 +1535,8 @@ function PlayerProfileSection({
           </div>
         </div>
       ) : null}
-      {athleteProfileError ? <Status tone="error" message={athleteProfileError.message} /> : null}
-      {activePanel === 'athlete' ? (
+      {isLinkedParent && athleteProfileError ? <Status tone="error" message={athleteProfileError.message} /> : null}
+      {isLinkedParent && activePanel === 'athlete' ? (
         athleteProfileLoaded ? (
           <AthleteProfileBuilderCard
             key={`${data.child.teamId}:${data.child.playerId}`}
@@ -1497,10 +1549,12 @@ function PlayerProfileSection({
           <div className="app-card p-4 text-sm font-semibold text-gray-500">Athlete profile tools will appear here after the profile data finishes loading.</div>
         )
       ) : null}
-      {activePanel === 'family' ? <CoParentInviteCard data={data} auth={auth} /> : null}
-      {activePanel === 'incentives' ? <IncentivesCard data={data} auth={auth} onChanged={onChanged} /> : null}
+      {activePanel === 'family' ? (
+        isLinkedParent ? <CoParentInviteCard data={data} auth={auth} /> : <FamilyContactsCard contacts={data.parentContacts} />
+      ) : null}
+      {isLinkedParent && activePanel === 'incentives' ? <IncentivesCard data={data} auth={auth} onChanged={onChanged} /> : null}
 
-      <section className="grid gap-3 sm:grid-cols-3">
+      {isLinkedParent ? <section className="grid gap-3 sm:grid-cols-3">
         <a
           href={fullBuilderAvailable ? data.athleteProfile.builderUrl : '#'}
           target={fullBuilderAvailable ? '_blank' : undefined}
@@ -1532,8 +1586,44 @@ function PlayerProfileSection({
           <CardText title="Certificates" detail={`${data.certificates.length} published award${data.certificates.length === 1 ? '' : 's'}.`} />
           <ChevronRight className="h-4 w-4 flex-none text-gray-400" aria-hidden="true" />
         </Link>
-      </section>
+      </section> : null}
     </div>
+  );
+}
+
+function FamilyContactsCard({ contacts }: { contacts: ParentPlayerDetailData['parentContacts'] }) {
+  const visibleContacts = Array.isArray(contacts) ? contacts : [];
+  return (
+    <section className="app-card p-4">
+      <div className="flex items-start gap-3">
+        <IconBox icon={Users} />
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-black text-gray-950">Linked family</div>
+          <p className="mt-1 text-xs font-semibold leading-5 text-gray-500">Family members linked to this roster player.</p>
+        </div>
+      </div>
+      <div className="mt-4 space-y-2">
+        {visibleContacts.length ? visibleContacts.map((contact, index) => {
+          const label = contact.name || contact.email || contact.phone || 'Family contact';
+          const key = contact.userId || contact.email || contact.phone || `${label}-${index}`;
+          return (
+            <div key={key} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-black text-gray-950">{label}</span>
+                <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.04em] text-gray-600">{contact.relation || 'Parent'}</span>
+              </div>
+              <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs font-semibold text-gray-600">
+                {contact.email ? <a className="text-primary-700" href={`mailto:${contact.email}`}>{contact.email}</a> : null}
+                {contact.phone ? <a className="text-primary-700" href={`tel:${contact.phone}`}>{contact.phone}</a> : null}
+                {contact.status ? <span>{contact.status}</span> : null}
+              </div>
+            </div>
+          );
+        }) : (
+          <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-4 text-center text-sm font-semibold text-gray-500">No linked family members yet.</div>
+        )}
+      </div>
+    </section>
   );
 }
 

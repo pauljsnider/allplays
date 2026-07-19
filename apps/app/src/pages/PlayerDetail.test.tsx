@@ -144,11 +144,11 @@ function buildDetailData(overrides: Record<string, any> = {}) {
   };
 }
 
-function renderPlayerDetail() {
+function renderPlayerDetail(nextAuth = auth) {
   return render(
     <MemoryRouter initialEntries={['/players/team-current/player-current']}>
       <Routes>
-        <Route path="/players/:teamId/:playerId" element={<PlayerDetail auth={auth} />} />
+        <Route path="/players/:teamId/:playerId" element={<PlayerDetail auth={nextAuth} />} />
         <Route path="/home" element={<div>Home</div>} />
       </Routes>
     </MemoryRouter>
@@ -210,6 +210,40 @@ describe('PlayerDetail athlete profile season selection', () => {
 
   afterEach(() => {
     cleanup();
+  });
+
+  it('passes parent links from the hydrated profile into player detail loading', async () => {
+    const profileOnlyAuth: AuthState = {
+      ...auth,
+      user: auth.user ? {
+        ...auth.user,
+        parentOf: [],
+        parentPlayerKeys: []
+      } as any : null,
+      profile: {
+        parentOf: [
+          { teamId: 'team-current', teamName: 'Current Team', playerId: 'player-current', playerName: 'Sam Player' }
+        ],
+        parentPlayerKeys: ['team-current::player-current']
+      }
+    };
+
+    renderPlayerDetail(profileOnlyAuth);
+
+    await screen.findByText('Sam Player');
+    await waitFor(() => {
+      expect(playerServiceMocks.loadParentPlayerDetail).toHaveBeenCalledWith(
+        expect.objectContaining({
+          uid: 'parent-1',
+          parentOf: expect.arrayContaining([
+            expect.objectContaining({ teamId: 'team-current', playerId: 'player-current' })
+          ]),
+          parentPlayerKeys: expect.arrayContaining(['team-current::player-current'])
+        }),
+        'team-current',
+        'player-current'
+      );
+    });
   });
 
   it('defers athlete profile loading until the Profile section opens', async () => {

@@ -2,6 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const legacyPlayerDbMocks = vi.hoisted(() => ({
+  collectRosterParentContacts: vi.fn((): any[] => []),
   deleteAthleteProfileMediaByPath: vi.fn(),
   getAggregatedStatsForGames: vi.fn(),
   getAggregatedStatsDocumentForPlayer: vi.fn(),
@@ -105,6 +106,11 @@ const scheduleServiceMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('./scheduleService', () => scheduleServiceMocks);
+const profileServiceMocks = vi.hoisted(() => ({
+  loadProfileDocument: vi.fn()
+}));
+
+vi.mock('./profileService', () => profileServiceMocks);
 const appDataCacheMocks = vi.hoisted(() => ({
   clearAppDataCache: vi.fn(),
   loadCachedAppData: vi.fn((_key, loader) => loader())
@@ -794,6 +800,7 @@ describe('savePlayerCustomRosterFieldValues', () => {
 describe('loadParentPlayerDetail custom roster fields', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    legacyPlayerDbMocks.collectRosterParentContacts.mockReturnValue([]);
     scheduleServiceMocks.loadParentPlayerSchedule.mockResolvedValue({
       children: [{ teamId: 'team-1', teamName: 'Comets', playerId: 'player-1', playerName: 'Sam Player' }],
       events: []
@@ -807,6 +814,9 @@ describe('loadParentPlayerDetail custom roster fields', () => {
       {
         id: 'player-1',
         name: 'Sam Player',
+        parents: [
+          { name: 'Jordan Parent', email: 'jordan@example.com', relation: 'Parent', source: 'household' }
+        ],
         profile: {
           customFields: {
             nickname: 'Rocket'
@@ -832,6 +842,7 @@ describe('loadParentPlayerDetail custom roster fields', () => {
     legacyPlayerDbMocks.getPublicTrackingItems.mockResolvedValue([]);
     legacyPlayerDbMocks.getPlayerTrackingStatuses.mockResolvedValue([]);
     legacyPlayerDbMocks.listAthleteProfilesForParent.mockResolvedValue([]);
+    profileServiceMocks.loadProfileDocument.mockResolvedValue(null);
   });
 
   it('applies roster field privacy so parents do not receive admin-only custom values', async () => {
@@ -908,6 +919,44 @@ describe('loadParentPlayerDetail custom roster fields', () => {
     expect(detail.access.canEditCustomRosterFields).toBe(true);
   });
 
+  it('shows linked family contacts to non-parent team viewers without loading private profile data', async () => {
+    scheduleServiceMocks.loadParentPlayerSchedule.mockResolvedValue({
+      children: [{ teamId: 'team-1', teamName: 'Comets', playerId: 'linked-player', playerName: 'Linked Player' }],
+      events: []
+    });
+    legacyPlayerDbMocks.getPlayers.mockResolvedValue([
+      {
+        id: 'player-1',
+        name: 'Sam Player',
+        parents: [
+          { name: 'Jordan Parent', email: 'jordan@example.com', relation: 'Parent', source: 'household' }
+        ]
+      },
+      { id: 'linked-player', name: 'Linked Player' }
+    ]);
+    legacyPlayerDbMocks.collectRosterParentContacts.mockReturnValue([
+      { name: 'Jordan Parent', email: 'jordan@example.com', relation: 'Parent', source: 'household' }
+    ]);
+
+    const detail = await loadParentPlayerDetail({
+      uid: 'parent-2',
+      email: 'teammate@example.com',
+      parentOf: [{ teamId: 'team-1', playerId: 'linked-player' }]
+    } as any, 'team-1', 'player-1');
+
+    expect(detail.access.isLinkedParent).toBe(false);
+    expect(legacyPlayerDbMocks.getPlayerPrivateProfile).not.toHaveBeenCalled();
+    expect(legacyPlayerDbMocks.collectRosterParentContacts).toHaveBeenCalledWith(expect.objectContaining({ id: 'player-1' }), {
+      includeImported: false,
+      includeFamilyContacts: true,
+      includeHousehold: true
+    });
+    expect(detail.parentContacts).toEqual([
+      expect.objectContaining({ name: 'Jordan Parent', email: 'jordan@example.com', relation: 'Parent' })
+    ]);
+    expect(detail.privateProfile).toBeNull();
+  });
+
   it('allows staff to load a player detail route without a linked parent relationship', async () => {
     scheduleServiceMocks.loadParentPlayerSchedule.mockResolvedValue({
       children: [],
@@ -927,6 +976,43 @@ describe('loadParentPlayerDetail custom roster fields', () => {
       playerName: 'Sam Player'
     }));
     expect(detail.access.isTeamStaff).toBe(true);
+  });
+
+  it('refreshes the profile access fields before rejecting a linked parent route', async () => {
+    scheduleServiceMocks.loadParentPlayerSchedule.mockResolvedValue({
+      children: [],
+      events: []
+    });
+    profileServiceMocks.loadProfileDocument.mockResolvedValue({
+      parentOf: [
+        { teamId: 'team-1', teamName: 'Comets', playerId: 'player-1', playerName: 'Sam Player' }
+      ],
+      parentPlayerKeys: ['team-1::player-1']
+    });
+
+    const detail = await loadParentPlayerDetail({
+      uid: 'parent-1',
+      email: 'parent@example.com',
+      parentOf: [],
+      parentPlayerKeys: []
+    } as any, 'team-1', 'player-1');
+
+    expect(profileServiceMocks.loadProfileDocument).toHaveBeenCalledWith('parent-1');
+    expect(scheduleServiceMocks.loadParentPlayerSchedule).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        parentOf: expect.arrayContaining([
+          expect.objectContaining({ teamId: 'team-1', playerId: 'player-1' })
+        ]),
+        parentPlayerKeys: expect.arrayContaining(['team-1::player-1'])
+      }),
+      { teamId: 'team-1', playerId: 'player-1' }
+    );
+    expect(detail.child).toEqual(expect.objectContaining({
+      teamId: 'team-1',
+      playerId: 'player-1',
+      playerName: 'Sam Player'
+    }));
+    expect(detail.access.isLinkedParent).toBe(true);
   });
 
   it('keeps coachOf-only users read-only for custom roster fields', async () => {

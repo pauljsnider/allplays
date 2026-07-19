@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const dbMocks = vi.hoisted(() => ({
+    collectRosterParentContacts: vi.fn(() => []),
     deleteAthleteProfileMediaByPath: vi.fn(),
     getAggregatedStatsForPlayer: vi.fn(),
     getGames: vi.fn(),
@@ -26,6 +27,10 @@ const dbMocks = vi.hoisted(() => ({
 
 const scheduleMocks = vi.hoisted(() => ({
     loadParentPlayerSchedule: vi.fn()
+}));
+
+const profileMocks = vi.hoisted(() => ({
+    loadProfileDocument: vi.fn()
 }));
 
 const playerProfileMocks = vi.hoisted(() => ({
@@ -62,6 +67,7 @@ vi.mock('../../apps/app/src/lib/adapters/legacyPlayerDb', () => dbMocks);
 vi.mock('../../apps/app/src/lib/adapters/legacyPlayerProfile', () => playerProfileMocks);
 vi.mock('../../apps/app/src/lib/adapters/legacyRosterPrivacy', () => rosterPrivacyMocks);
 vi.mock('../../apps/app/src/lib/scheduleService.ts', () => scheduleMocks);
+vi.mock('../../apps/app/src/lib/profileService.ts', () => profileMocks);
 
 import {
     loadParentPlayerDetail,
@@ -113,6 +119,7 @@ function user() {
 
 beforeEach(() => {
     vi.clearAllMocks();
+    dbMocks.collectRosterParentContacts.mockReturnValue([]);
     scheduleMocks.loadParentPlayerSchedule.mockResolvedValue({
         children: [
             { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat' },
@@ -151,6 +158,7 @@ beforeEach(() => {
             })
         ]
     });
+    profileMocks.loadProfileDocument.mockResolvedValue(null);
     dbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', sport: 'basketball' });
     dbMocks.getPlayers.mockResolvedValue([
         { id: 'player-1', name: 'Pat Star', number: '9', photoUrl: 'https://example.test/pat.jpg' }
@@ -396,7 +404,7 @@ describe('React app parent player detail service', () => {
         expect(detail.scheduleLoadError).toBe('Schedule is temporarily unavailable. Refresh the player to try again.');
     });
 
-    it('rejects stale parent links when a successful schedule load omits the player', async () => {
+    it('uses parent profile links when a successful schedule load omits the player', async () => {
         scheduleMocks.loadParentPlayerSchedule.mockResolvedValue({ children: [], events: [] });
         const keyOnlyParent = {
             ...user(),
@@ -405,9 +413,37 @@ describe('React app parent player detail service', () => {
         };
 
         await expect(loadParentPlayerDetail(user(), 'team-1', 'player-1'))
-            .rejects.toThrow('This player is not linked to your account.');
+            .resolves.toMatchObject({
+                child: { teamId: 'team-1', playerId: 'player-1' },
+                access: { isLinkedParent: true }
+            });
         await expect(loadParentPlayerDetail(keyOnlyParent, 'team-1', 'player-1'))
+            .resolves.toMatchObject({
+                child: { teamId: 'team-1', playerId: 'player-1' },
+                access: { isLinkedParent: true }
+            });
+        await expect(loadParentPlayerDetail(user(), 'team-9', 'player-9'))
             .rejects.toThrow('This player is not linked to your account.');
+    });
+
+    it('allows team parents to open non-linked roster player details without private profile data', async () => {
+        scheduleMocks.loadParentPlayerSchedule.mockResolvedValue({
+            children: [{ teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat' }],
+            events: []
+        });
+        dbMocks.getPlayers.mockResolvedValue([
+            { id: 'player-1', name: 'Pat Star', number: '9' },
+            { id: 'player-2', name: 'Sam Wing', number: '12' }
+        ]);
+
+        const detail = await loadParentPlayerDetail(user(), 'team-1', 'player-2');
+
+        expect(detail.child).toMatchObject({ teamId: 'team-1', playerId: 'player-2', playerName: 'Sam Wing' });
+        expect(detail.player).toMatchObject({ id: 'player-2', name: 'Sam Wing', number: '12' });
+        expect(detail.access.isLinkedParent).toBe(false);
+        expect(detail.privateProfile).toBeNull();
+        expect(dbMocks.getPlayerPrivateProfile).not.toHaveBeenCalled();
+        expect(incentiveMocks.getIncentiveRules).not.toHaveBeenCalledWith('user-1', 'player-2');
     });
 
     it('saves parent-editable player fields through the restricted profile helper', async () => {

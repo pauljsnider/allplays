@@ -199,6 +199,40 @@ export function buildTeamNavigation(team: ParentHomeTeam): TeamNavigationSection
   return sections.filter((section) => section.items.length > 0);
 }
 
+export type TeamDetailNavigationInput = {
+  team: {
+    id: string;
+    name: string;
+    sport: string;
+  };
+  players: Array<{ id: string; name: string }>;
+  linkedPlayers: Array<{ id: string; name: string }>;
+  upcomingEvents: unknown[];
+  recentResults: unknown[];
+  canManageTeam: boolean;
+};
+
+export function buildTeamDetailNavigation(model: TeamDetailNavigationInput): TeamNavigationSection[] {
+  const linkedPlayers = model.linkedPlayers.length ? model.linkedPlayers : model.players.filter((player) => player.id);
+  return buildTeamNavigation({
+    teamId: model.team.id,
+    teamName: model.team.name,
+    role: model.canManageTeam ? 'Coach/Admin' : 'Parent',
+    sport: model.team.sport,
+    photoUrl: null,
+    players: linkedPlayers.map((player) => ({
+      teamId: model.team.id,
+      teamName: model.team.name,
+      playerId: player.id,
+      playerName: player.name
+    })),
+    nextEvent: null,
+    eventCount: model.upcomingEvents.length + model.recentResults.length,
+    unreadCount: 0,
+    openActions: 0
+  });
+}
+
 export function getTeamSchedulePath(teamId: string, options: { view?: string; filter?: string } = {}) {
   const params = new URLSearchParams();
   if (teamId) params.set('teamId', teamId);
