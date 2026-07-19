@@ -4034,7 +4034,8 @@ service cloud.firestore {
                              get(/databases/$(database)/documents/teams/$(teamId)/chatConversations/$(conversationId)).data,
                              request.resource.data
                            );
-          allow update: if canAccessChatConversation(teamId, conversationId, get(/databases/$(database)/documents/teams/$(teamId)/chatConversations/$(conversationId)).data) &&
+          allow update: if isVerifiedForSensitiveWrite() &&
+                           canAccessChatConversation(teamId, conversationId, get(/databases/$(database)/documents/teams/$(teamId)/chatConversations/$(conversationId)).data) &&
                            resource.data.senderId == request.auth.uid &&
                            request.resource.data.diff(resource.data).affectedKeys()
                                .hasAll(['text', 'editedAt']) &&
@@ -4047,13 +4048,15 @@ service cloud.firestore {
                              request.resource.data
                            ) &&
                            isNestedChatMessageEditValid(request.resource.data);
-          allow update: if canAccessChatConversation(teamId, conversationId, get(/databases/$(database)/documents/teams/$(teamId)/chatConversations/$(conversationId)).data) &&
+          allow update: if isVerifiedForSensitiveWrite() &&
+                           canAccessChatConversation(teamId, conversationId, get(/databases/$(database)/documents/teams/$(teamId)/chatConversations/$(conversationId)).data) &&
                            request.resource.data.diff(resource.data).affectedKeys()
                                .hasOnly(['deleted']) &&
                            request.resource.data.deleted == true &&
                            (resource.data.senderId == request.auth.uid ||
                             isTeamOwnerOrAdmin(teamId));
-          allow update: if canAccessChatConversation(teamId, conversationId, get(/databases/$(database)/documents/teams/$(teamId)/chatConversations/$(conversationId)).data) &&
+          allow update: if isVerifiedForSensitiveWrite() &&
+                           canAccessChatConversation(teamId, conversationId, get(/databases/$(database)/documents/teams/$(teamId)/chatConversations/$(conversationId)).data) &&
                            isSelfChatReactionUpdate();
         }
       }

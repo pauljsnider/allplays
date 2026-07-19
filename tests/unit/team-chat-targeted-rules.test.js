@@ -194,6 +194,12 @@ describe('targeted team chat Firestore rules', () => {
         expect(rules).toContain('match /chatConversations/{conversationId} {');
         expect(rules).toContain('match /chatMessages/{messageId} {');
         expect(rules).toContain('allow create: if isVerifiedForSensitiveWrite() &&\n                           canAccessChatConversation(teamId, conversationId, get(/databases/$(database)/documents/teams/$(teamId)/chatConversations/$(conversationId)).data) &&');
+        const conversationBlock = rules.slice(
+            rules.indexOf('match /chatConversations/{conversationId} {'),
+            rules.indexOf('// Server-only dedup log')
+        );
+        expect(conversationBlock.match(/allow update: if isVerifiedForSensitiveWrite\(\) &&/g)).toHaveLength(3);
+        expect(conversationBlock.match(/allow delete:/g)).toHaveLength(1);
         expect(rules).toContain('isNestedChatMessageCreateValid(');
     });
 
