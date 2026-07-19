@@ -310,13 +310,16 @@
                     // Fetch profile to determine redirect
                     const profile = await getUserProfile(userCredential.user.uid);
                     const userWithRoles = { ...userCredential.user, ...profile };
-                    const shouldRedeemInvite = shouldRedeemInviteFromLogin || Boolean(pendingLoginInviteCode);
+                    const sessionPendingLoginInviteCode = window.sessionStorage.getItem(pendingLoginInviteCodeStorageKey);
+                    const loginInviteCode = pendingLoginInviteCode || sessionPendingLoginInviteCode;
+                    const shouldRedeemInvite = shouldRedeemInviteFromLogin || Boolean(loginInviteCode);
                     const redirectUrl = redirectCoordinator.getPostAuthRedirect(
                         userWithRoles,
                         shouldRedeemInvite,
-                        pendingLoginInviteCode
+                        loginInviteCode
                     );
                     pendingLoginInviteCode = null;
+                    window.sessionStorage.removeItem(pendingLoginInviteCodeStorageKey);
                     window.location.href = redirectUrl;
                 } else {
                     // Signup mode - validate password confirmation

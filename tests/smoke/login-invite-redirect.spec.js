@@ -338,6 +338,24 @@ test('manual invite code existing-account recovery redeems the typed code after 
     await expect(page).toHaveURL(/\/accept-invite\.html\?code=AB12CD34$/);
 });
 
+test('manual invite code recovery survives reload before password login', async ({ page, baseURL }) => {
+    await mockInviteLoginModules(page);
+    await page.addInitScript(() => {
+        window.sessionStorage.setItem('pendingLoginInviteCode', 'AB12CD34');
+    });
+
+    await page.goto(buildUrl(baseURL, '/login.html'), {
+        waitUntil: 'domcontentloaded'
+    });
+
+    await expect(page.locator('#form-title')).toHaveText('Login');
+    await page.locator('#email').fill('mom@example.com');
+    await page.locator('#password').fill('secret123');
+    await page.locator('#submit-btn').click();
+
+    await expect(page).toHaveURL(/\/accept-invite\.html\?code=AB12CD34$/);
+});
+
 test('manual invite code existing-account recovery redeems the typed code after Google login', async ({ page, baseURL }) => {
     await mockInviteLoginModules(page, {
         googleLoginResult: {
