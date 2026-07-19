@@ -322,6 +322,7 @@ describe('PlayerDetail athlete profile season selection', () => {
       expect(writeText).toHaveBeenCalledWith('mom@allplays.ai');
     });
     expect(screen.queryByText('Invite Co-Parent')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Create invite' })).toBeNull();
   });
 
   it('lazy-loads video clips once when the Video Clips report opens', async () => {

@@ -1731,7 +1731,7 @@ test('requested app workflows emit DB-ready view load baseline timers', async ({
             ready: async (testPage) => {
                 await expect(async () => {
                     await expect(testPage.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 3000 });
-                    await expect(testPage.getByText('Invite codes')).toBeVisible({ timeout: 3000 });
+                    await expect(testPage.getByRole('button', { name: 'Create invite' })).toBeVisible({ timeout: 3000 });
                     await expect(testPage.getByText('ABC12345')).toBeVisible({ timeout: 3000 });
                 }).toPass({ timeout: 45000 });
             }

@@ -654,7 +654,7 @@ describe('React app Home and player drill-in integration', () => {
         expect(container.textContent).toContain('Incentives');
         expect(container.textContent).toContain('Certificates');
         await clickButton(container, 'Family');
-        expect(container.textContent).toContain('Invite Co-Parent');
+        expect(container.textContent).toContain('Create invite');
         await clickButton(container, 'Incentives');
         await waitForText(container, 'Incentive wallet');
         expect(container.textContent).toContain('Payouts need attention');
