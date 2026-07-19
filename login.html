@@ -101,13 +101,14 @@
         import { getUserProfile } from './js/db.js?v=113';
         import { renderHeader, renderFooter } from './js/utils.js?v=18';
         import { getPostAuthRedirectUrl } from './js/invite-redirect.js?v=3';
-        import * as loginPageModule from './js/login-page.js?v=8';
+        import * as loginPageModule from './js/login-page.js?v=9';
 
         renderFooter(document.getElementById('footer-container'));
 
         let isLogin = true;
         let isActivationCodeInitiallyHidden = false; // Tracks if the activation code field was hidden due to a URL parameter
         let isSubmittingAuthForm = false;
+        let pendingLoginInviteCode = null;
 
         const createLoginAuthStateManager = loginPageModule.createLoginAuthStateManager || function createFallbackLoginAuthStateManager() {
             return {
@@ -308,7 +309,14 @@
                     // Fetch profile to determine redirect
                     const profile = await getUserProfile(userCredential.user.uid);
                     const userWithRoles = { ...userCredential.user, ...profile };
-                    window.location.href = redirectCoordinator.getPostAuthRedirect(userWithRoles, shouldRedeemInviteFromLogin);
+                    const shouldRedeemInvite = shouldRedeemInviteFromLogin || Boolean(pendingLoginInviteCode);
+                    const redirectUrl = redirectCoordinator.getPostAuthRedirect(
+                        userWithRoles,
+                        shouldRedeemInvite,
+                        pendingLoginInviteCode
+                    );
+                    pendingLoginInviteCode = null;
+                    window.location.href = redirectUrl;
                 } else {
                     // Signup mode - validate password confirmation
                     const confirmPassword = document.getElementById('confirm-password').value;
@@ -328,6 +336,7 @@
             } catch (error) {
                 authState.finishProcessing(); // Reset flag on error
                 if (!isLogin && isEmailAlreadyInUseError(error)) {
+                    pendingLoginInviteCode = document.getElementById('activation-code').value.trim().toUpperCase();
                     setAuthFormMode(true);
                     errorDiv.textContent = 'That account already exists. Enter the password for this email to accept your invite.';
                 } else {

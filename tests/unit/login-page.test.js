@@ -76,7 +76,7 @@ describe('login page redirect coordination', () => {
     it('loads the cache-busted login page module that knows friend invite redirects', () => {
         const html = readFileSync(new URL('../../login.html', import.meta.url), 'utf8');
 
-        expect(html).toContain("import * as loginPageModule from './js/login-page.js?v=8';");
+        expect(html).toContain("import * as loginPageModule from './js/login-page.js?v=9';");
         expect(html).not.toContain("import * as loginPageModule from './js/login-page.js?v=7';");
     });
 
@@ -133,6 +133,17 @@ describe('login page redirect coordination', () => {
         expect(coordinator.shouldRedeemInviteFromLogin).toBe(true);
         expect(coordinator.getPostAuthRedirect({ uid: 'user-1' }, coordinator.shouldRedeemInviteFromLogin))
             .toBe('accept-invite.html?code=AB12CD34');
+    });
+
+    it('redeems a manually entered invite code after existing-account signup recovery', () => {
+        const { coordinator } = createCoordinator({
+            search: '',
+            defaultRedirect: 'dashboard.html'
+        });
+
+        expect(coordinator.shouldRedeemInviteFromLogin).toBe(false);
+        expect(coordinator.getPostAuthRedirect({ uid: 'user-1' }, true, 'manual12'))
+            .toBe('accept-invite.html?code=MANUAL12');
     });
 
     it('does not redeem invite redirects when the invite code is missing', () => {

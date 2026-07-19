@@ -311,3 +311,29 @@ test('invite signup with an existing email switches to clear login recovery', as
     await expect(page.locator('#activation-code-field')).toBeHidden();
     await expect(page.locator('#email')).toHaveValue('mom@example.com');
 });
+
+test('manual invite code existing-account recovery redeems the typed code after login', async ({ page, baseURL }) => {
+    await mockInviteLoginModules(page, {
+        signupError: {
+            code: 'auth/email-already-in-use',
+            message: 'Firebase: Error (auth/email-already-in-use).'
+        }
+    });
+
+    await page.goto(buildUrl(baseURL, '/login.html#signup'), {
+        waitUntil: 'domcontentloaded'
+    });
+
+    await expect(page.locator('#form-title')).toHaveText('Sign Up');
+    await page.locator('#email').fill('mom@example.com');
+    await page.locator('#password').fill('secret123');
+    await page.locator('#confirm-password').fill('secret123');
+    await page.locator('#activation-code').fill('ab12cd34');
+    await page.locator('#submit-btn').click();
+
+    await expect(page.locator('#form-title')).toHaveText('Login');
+    await expect(page.locator('#activation-code-field')).toBeHidden();
+    await page.locator('#submit-btn').click();
+
+    await expect(page).toHaveURL(/\/accept-invite\.html\?code=AB12CD34$/);
+});

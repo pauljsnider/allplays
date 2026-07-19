@@ -101,9 +101,14 @@ export function createLoginRedirectCoordinator({
     const shouldRedeemInviteFromLogin = Boolean(urlCodeParam) && REDEEMABLE_INVITE_TYPES.has(urlInviteType);
     let inviteRedemptionOverride = null;
 
-    function getPostAuthRedirect(userWithRoles, shouldRedeemInvite = false) {
+    function getPostAuthRedirect(userWithRoles, shouldRedeemInvite = false, inviteCodeOverride = null, inviteTypeOverride = null) {
         const defaultRedirect = getRedirectUrl(userWithRoles);
-        return getPostAuthRedirectUrl(defaultRedirect, urlCodeParam, shouldRedeemInvite, urlInviteType);
+        return getPostAuthRedirectUrl(
+            defaultRedirect,
+            inviteCodeOverride || urlCodeParam,
+            shouldRedeemInvite,
+            inviteTypeOverride || urlInviteType
+        );
     }
 
     function getGoogleRedirectUrl(userWithRoles) {
