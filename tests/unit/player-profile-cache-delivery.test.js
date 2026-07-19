@@ -9,14 +9,14 @@ function read(relativePath) {
 describe('player profile cache delivery', () => {
     it('bumps externally loaded entry modules whose Firebase imports changed', () => {
         const entryModules = {
-            'admin.html': 'js/admin.js?v=13',
-            'certificates.html': 'js/certificates/studio.js?v=18',
-            'live-game.html': 'js/live-game.js?v=23',
-            'live-tracker.html': 'js/live-tracker.js?v=6',
-            'team-fees.html': 'js/team-fees-admin.js?v=17',
-            'team-media.html': 'js/team-media.js?v=18',
-            'track-basketball.html': 'js/track-basketball.js?v=5',
-            'tracking-items.html': 'js/tracking-items-admin.js?v=5'
+            'admin.html': 'js/admin.js?v=18',
+            'certificates.html': 'js/certificates/studio.js?v=19',
+            'live-game.html': 'js/live-game.js?v=24',
+            'live-tracker.html': 'js/live-tracker.js?v=7',
+            'team-fees.html': 'js/team-fees-admin.js?v=19',
+            'team-media.html': 'js/team-media.js?v=19',
+            'track-basketball.html': 'js/track-basketball.js?v=6',
+            'tracking-items.html': 'js/tracking-items-admin.js?v=19'
         };
 
         for (const [pagePath, expectedEntryModule] of Object.entries(entryModules)) {
@@ -25,7 +25,7 @@ describe('player profile cache delivery', () => {
     });
 
     it('delivers updated shared utility and nested entry-module imports', () => {
-        expect(read('js/utils.js')).toContain("import('./global-search.js?v=12')");
+        expect(read('js/utils.js')).toContain("import('./global-search.js?v=13')");
         expect(read('drills.html')).toContain('js/team-admin-banner.js?v=8');
         expect(read('game-day.html')).toContain('js/team-admin-banner.js?v=8');
         expect(read('js/certificates/studio.js')).toContain('team-admin-banner.js?v=6');
