@@ -38,9 +38,13 @@ Firestore TTL is declared in `firestore.indexes.json`:
 
 TTL deletion is asynchronous after `expiresAt`. Existing documents created before this rollout have no `expiresAt`; they must not be treated as covered. After the production canary, inspect the telemetry collections, export anything genuinely needed, then delete the legacy test telemetry or backfill an approved expiration. Do not disable the TTL policies during an application rollback.
 
+The TTL rollout is declarative and idempotent. Run the repository's installed Firebase CLI through the protected production path with `firebase deploy --only firestore:indexes --project game-flow-c6311`; rerunning the same commit reapplies the same six `expiresAt` field overrides and does not delete legacy documents. Confirm the six telemetry policies in the deployment output and Firebase console before continuing. Do not combine this step with a data-cleanup command.
+
+Legacy-data removal is a separate, explicitly approved change window after the 24-hour canary. Before deleting anything, create and verify a recoverable Firestore export in the approved backup location, record its object/prefix and source time, and scope the cleanup only to the telemetry collections and pre-rollout documents being retired. Keep the verified export through post-cleanup validation. Never run legacy cleanup from the index, Functions, Hosting, or monitor deployment.
+
 ## Rollout and canary
 
-1. Deploy Firestore indexes first and confirm all six telemetry TTL field policies are enabled.
+1. Deploy Firestore indexes first using the idempotent command above and confirm all six telemetry TTL field policies are enabled. Stop here if any policy is missing or still changing state.
 2. Deploy Functions before or together with Hosting/app assets. The v2 client remains accepted by the old endpoint, and the v2 endpoint accepts cached v1 clients while ignoring their auth and persistent visitor identity.
 3. Confirm `collectTelemetry` is healthy in Cloud Logging and no deployment error contains a request body, token, or user content.
 4. From `https://allplays.ai`, generate one page view and one deliberate handled test error with a non-sensitive categorical label. In the admin telemetry view, confirm:

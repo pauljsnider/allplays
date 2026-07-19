@@ -21,6 +21,7 @@ const ROUTE_PROPERTY_KEYS = new Set([
     'sourceRoute', 'targetRoute', 'expectedTargetRoute'
 ]);
 const SENSITIVE_KEY_PATTERN = /(?:address|authorization|body|chat|comment|content|cookie|credential|description|email|first.?name|last.?name|message|note|password|phone|secret|text|token)/i;
+const COORDINATE_KEY_PATTERN = /^(?:(?:client|offset|page|screen|target)[xy](?:percent)?|[xy])$/i;
 const IDENTIFIER_KEY_PATTERN = /(?:^|_)(?:account|athlete|child|conversation|document|event|family|game|guardian|household|invite|organization|parent|player|registration|session|team|user|visitor)(?:_?id|_?ids|_?key|_?keys)?$/i;
 const DYNAMIC_ROUTE_PARENT_SEGMENTS = new Set([
     'accept-invite', 'athletes', 'calendar', 'capabilities', 'conversations', 'events',
@@ -83,7 +84,7 @@ function sanitizePropertyValue(key, value, depth) {
     if (value === null || value === undefined) return null;
     if (typeof value === 'boolean') return value;
 
-    if (SENSITIVE_KEY_PATTERN.test(key)) return REDACTED_TEXT;
+    if (SENSITIVE_KEY_PATTERN.test(key) || COORDINATE_KEY_PATTERN.test(key)) return REDACTED_TEXT;
     if (IDENTIFIER_KEY_PATTERN.test(key) || /(?:Id|Ids|Key|Keys)$/.test(key)) return REDACTED_IDENTIFIER;
     if (ROUTE_PROPERTY_KEYS.has(key)) return sanitizeTelemetryRoute(value);
 

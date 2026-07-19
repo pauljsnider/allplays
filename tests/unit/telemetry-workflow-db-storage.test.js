@@ -60,6 +60,8 @@ function rawEvent(overrides = {}) {
             targetRoute: '/players/team-1/player-1',
             teamId: 'team-1',
             playerId: 'player-1',
+            targetXPercent: 61,
+            screenY: 744,
             message: 'Taylor private note',
             arbitrary: 'unclassified user content'
         },
@@ -97,6 +99,8 @@ describe('telemetry workflow DB storage', () => {
                 targetRoute: '/players/:id/:id',
                 teamId: '[id]',
                 playerId: '[id]',
+                targetXPercent: '[redacted-text]',
+                screenY: '[redacted-text]',
                 message: '[redacted-text]',
                 arbitrary: '[redacted-text]'
             })
@@ -141,8 +145,8 @@ describe('telemetry workflow DB storage', () => {
         expect(session.data).toMatchObject({
             visitorId: null,
             userId: null,
-            eventCount: { increment: 4 },
-            pageViews: { increment: 4 },
+            eventCount: { increment: 1 },
+            pageViews: { increment: 1 },
             expiresAt: { timestamp: '2030-06-02T12:00:00.000Z' }
         });
     });

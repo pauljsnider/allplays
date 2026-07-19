@@ -41,6 +41,7 @@ describe('critical workflow health evaluation', () => {
     it('requires current-master deploy and smoke plus a fresh scheduled recovery success', () => {
         expect(evaluateCriticalWorkflowHealth(healthyInput())).toEqual({
             healthy: true,
+            masterSha: sha,
             signals: [
                 { name: 'production-deploy', healthy: true, state: 'success', runId: 1 },
                 { name: 'production-smoke', healthy: true, state: 'success', runId: 2 },
@@ -84,6 +85,9 @@ describe('critical workflow API boundary', () => {
         const calls = [];
         const executeGh = vi.fn((args) => {
             calls.push(args);
+            if (String(args.at(-1)).includes('/git/ref/heads/master')) {
+                return JSON.stringify({ ref: OBSERVABILITY_REF, object: { type: 'commit', sha } });
+            }
             const file = args.find((arg) => String(arg).includes('/actions/workflows/'));
             return JSON.stringify(file.includes('firestore-recovery-health.yml')
                 ? response([run({ id: 3, head_sha: 'b'.repeat(40) })])
@@ -92,13 +96,28 @@ describe('critical workflow API boundary', () => {
         const result = verifyCriticalWorkflowHealthFromEnvironment({
             GITHUB_REPOSITORY: OBSERVABILITY_REPOSITORY,
             GITHUB_REF: OBSERVABILITY_REF,
-            GITHUB_SHA: sha,
+            GITHUB_SHA: 'b'.repeat(40),
             GH_TOKEN: 'test-token'
         }, { executeGh, now });
         expect(result.healthy).toBe(true);
-        expect(calls).toHaveLength(3);
-        expect(calls.map((args) => args.find((arg) => String(arg).startsWith('event='))))
+        expect(result.masterSha).toBe(sha);
+        expect(calls[0]).toEqual(['api', '--method', 'GET', `repos/${OBSERVABILITY_REPOSITORY}/git/ref/heads/master`]);
+        expect(calls).toHaveLength(4);
+        expect(calls.slice(1).map((args) => args.find((arg) => String(arg).startsWith('event='))))
             .toEqual(['event=push', 'event=workflow_run', 'event=schedule']);
+    });
+
+    it('fails closed when the live master ref is not immutable commit evidence', () => {
+        const executeGh = vi.fn(() => JSON.stringify({
+            ref: OBSERVABILITY_REF,
+            object: { type: 'tag', sha }
+        }));
+        expect(() => verifyCriticalWorkflowHealthFromEnvironment({
+            GITHUB_REPOSITORY: OBSERVABILITY_REPOSITORY,
+            GITHUB_REF: OBSERVABILITY_REF,
+            GH_TOKEN: 'test-token'
+        }, { executeGh, now })).toThrow(/master ref response is invalid/);
+        expect(executeGh).toHaveBeenCalledTimes(1);
     });
 
     it('refuses forks before making API calls', () => {

@@ -41,6 +41,8 @@ describe('privacy-preserving observability contract', () => {
         expect(client).toContain('event.sampleWeight');
         expect(client).toContain('sanitizeTelemetryRoute');
         expect(collector).toContain("? ':id'");
+        expect(client).not.toContain('targetXPercent');
+        expect(client).not.toContain('targetYPercent');
     });
 
     it('declares TTL for every telemetry collection', () => {

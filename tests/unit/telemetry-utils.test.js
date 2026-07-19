@@ -35,11 +35,15 @@ describe('telemetry privacy utilities', () => {
         const properties = sanitizeTelemetryProperties({
             phone: 5551234567,
             playerId: 123456789,
+            targetXPercent: 47,
+            clientY: 810,
             loadMs: 240
         });
 
         expect(properties.phone).toBe(REDACTED_TEXT);
         expect(properties.playerId).toBe(REDACTED_IDENTIFIER);
+        expect(properties.targetXPercent).toBe(REDACTED_TEXT);
+        expect(properties.clientY).toBe(REDACTED_TEXT);
         expect(properties.loadMs).toBe(240);
     });
 

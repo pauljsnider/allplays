@@ -4933,6 +4933,7 @@ const TELEMETRY_ROUTE_KEYS = new Set([
   'sourceRoute', 'targetRoute', 'expectedTargetRoute'
 ]);
 const TELEMETRY_SENSITIVE_KEY_PATTERN = /(?:address|authorization|body|chat|comment|content|cookie|credential|description|email|first.?name|last.?name|message|note|password|phone|secret|text|token)/i;
+const TELEMETRY_COORDINATE_KEY_PATTERN = /^(?:(?:client|offset|page|screen|target)[xy](?:percent)?|[xy])$/i;
 const TELEMETRY_IDENTIFIER_KEY_PATTERN = /(?:Id|Ids|Key|Keys)$/;
 const TELEMETRY_DYNAMIC_ROUTE_PARENTS = new Set([
   'accept-invite', 'athletes', 'calendar', 'capabilities', 'conversations', 'events',
@@ -4981,7 +4982,7 @@ function normalizeTelemetryObject(value, depth = 0) {
       normalized[cleanKey] = null;
     } else if (typeof rawValue === 'boolean') {
       normalized[cleanKey] = rawValue;
-    } else if (TELEMETRY_SENSITIVE_KEY_PATTERN.test(cleanKey)) {
+    } else if (TELEMETRY_SENSITIVE_KEY_PATTERN.test(cleanKey) || TELEMETRY_COORDINATE_KEY_PATTERN.test(cleanKey)) {
       normalized[cleanKey] = TELEMETRY_REDACTED_TEXT;
     } else if (TELEMETRY_IDENTIFIER_KEY_PATTERN.test(cleanKey)) {
       normalized[cleanKey] = TELEMETRY_REDACTED_IDENTIFIER;
@@ -5213,10 +5214,13 @@ function applyTelemetryAggregateWrites(batch, event, dateKey, options = {}) {
     lastPage: event.pagePath,
     lastRoute: event.appRoute || event.pagePath,
     lastEventName: event.name,
-    eventCount: increment(weight),
-    pageViews: increment(isPageView ? weight : 0),
-    interactions: increment(isInteraction ? weight : 0),
-    errors: increment(isError ? weight : 0),
+    // A session is a literal record of captured events. Sampling weights are
+    // estimates for population aggregates and would make this view claim one
+    // browser produced events that never happened.
+    eventCount: increment(1),
+    pageViews: increment(isPageView ? 1 : 0),
+    interactions: increment(isInteraction ? 1 : 0),
+    errors: increment(isError ? 1 : 0),
     expiresAt: sessionExpiresAt,
     updatedAt: serverTimestamp()
   };

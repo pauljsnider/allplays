@@ -248,4 +248,23 @@ describe('telemetry.js payload handling', () => {
         const events = mockFetch.mock.calls.flatMap(([, options]) => JSON.parse(options.body).events);
         expect(events.filter((event) => event.name === 'app_workflow_timing')).toHaveLength(2);
     });
+
+    it('keeps distinct low-value signals when no privacy-safe control identity exists', async () => {
+        window.__ALLPLAYS_CONFIG__.telemetrySampleRate = 1;
+        telemetryModule.captureTelemetryEvent('interaction_click', { tagName: 'button' });
+        telemetryModule.captureTelemetryEvent('interaction_click', { tagName: 'button' });
+        telemetryModule.captureTelemetryEvent('scroll_depth', { depthPercent: 25 });
+        telemetryModule.captureTelemetryEvent('scroll_depth', { depthPercent: 50 });
+        telemetryModule.captureTelemetryEvent('interaction_click', { telemetryName: 'save' });
+        telemetryModule.captureTelemetryEvent('interaction_click', { telemetryName: 'save' });
+        telemetryModule.captureTelemetryEvent('interaction_change', { telemetryName: 'notifications', hasValue: true });
+        telemetryModule.captureTelemetryEvent('interaction_change', { telemetryName: 'notifications', hasValue: false });
+        await telemetryModule.flush();
+
+        const events = mockFetch.mock.calls.flatMap(([, options]) => JSON.parse(options.body).events);
+        expect(events.filter((event) => event.name === 'interaction_click' && !event.properties.telemetryName)).toHaveLength(2);
+        expect(events.filter((event) => event.name === 'scroll_depth').map((event) => event.properties.depthPercent)).toEqual([25, 50]);
+        expect(events.filter((event) => event.name === 'interaction_click' && event.properties.telemetryName === 'save')).toHaveLength(1);
+        expect(events.filter((event) => event.name === 'interaction_change').map((event) => event.properties.hasValue)).toEqual([true, false]);
+    });
 });

@@ -100,7 +100,7 @@ export function evaluateCriticalWorkflowHealth({ now = new Date(), masterSha, de
         : evaluateExactRun('production-smoke', normalizeRuns(smoke), masterSha, nowMs);
     const recoverySignal = evaluateRecovery(normalizeRuns(recovery), nowMs);
     const signals = [deploySignal, smokeSignal, recoverySignal];
-    return { healthy: signals.every((signal) => signal.healthy), signals };
+    return { healthy: signals.every((signal) => signal.healthy), masterSha, signals };
 }
 
 function required(environment, name) {
@@ -131,10 +131,25 @@ function loadWorkflowRuns(repository, workflowFile, event, executeGh) {
     return parsed;
 }
 
+function loadCurrentMasterSha(repository, executeGh) {
+    let parsed;
+    try {
+        parsed = JSON.parse(executeGh([
+            'api', '--method', 'GET', `repos/${repository}/git/ref/heads/master`
+        ]));
+    } catch (error) {
+        throw new Error('Unable to resolve the current master ref.', { cause: error });
+    }
+    const sha = String(parsed?.object?.sha || '');
+    if (parsed?.ref !== OBSERVABILITY_REF || parsed?.object?.type !== 'commit' || !/^[0-9a-f]{40}$/.test(sha)) {
+        throw new Error('Current master ref response is invalid.');
+    }
+    return sha;
+}
+
 export function verifyCriticalWorkflowHealthFromEnvironment(environment = process.env, dependencies = {}) {
     const repository = required(environment, 'GITHUB_REPOSITORY');
     const ref = required(environment, 'GITHUB_REF');
-    const masterSha = required(environment, 'GITHUB_SHA');
     required(environment, 'GH_TOKEN');
     if (repository !== OBSERVABILITY_REPOSITORY) {
         throw new Error(`Critical workflow verification may run only in ${OBSERVABILITY_REPOSITORY}.`);
@@ -143,6 +158,7 @@ export function verifyCriticalWorkflowHealthFromEnvironment(environment = proces
         throw new Error(`Critical workflow verification may run only from ${OBSERVABILITY_REF}.`);
     }
     const executeGh = dependencies.executeGh || runGh;
+    const masterSha = loadCurrentMasterSha(repository, executeGh);
     const result = evaluateCriticalWorkflowHealth({
         now: dependencies.now || new Date(),
         masterSha,
@@ -157,6 +173,7 @@ export function verifyCriticalWorkflowHealthFromEnvironment(environment = proces
         appendFileSync(summaryPath, [
             '## Critical workflow health',
             '',
+            `- evaluated master: \`${result.masterSha}\``,
             ...result.signals.map((signal) => `- ${signal.name}: **${signal.state}**${signal.runId ? ` (run ${signal.runId})` : ''}`),
             ''
         ].join('\n'), { encoding: 'utf8' });

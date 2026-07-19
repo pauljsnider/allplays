@@ -306,26 +306,47 @@ function stableSampleValue(value) {
 
 function eventFingerprint(event) {
     const properties = event.properties || {};
+    const eventSpecific = [
+        'action', 'button', 'clickCount', 'column', 'depthPercent', 'errorName',
+        'errorType', 'fileCount', 'formType', 'hasValue', 'label', 'line', 'loadName',
+        'method', 'modifierKey', 'name', 'navigationType', 'operation', 'source',
+        'stage', 'telemetryName', 'viewName', 'visibilityState', 'workflowName'
+    ].map((key) => `${key}:${String(properties[key] ?? '')}`);
     return [
         event.name,
         event.pagePath,
         event.appRoute,
-        properties.errorName,
-        properties.errorType,
-        properties.source,
-        properties.line,
-        properties.label,
-        properties.telemetryName
+        ...eventSpecific
     ].join('|');
 }
 
+function getEventDedupeWindow(event) {
+    if (/^(?:js_|security_|operational_|app_load_error)/.test(event.name)) {
+        return ERROR_DEDUPE_WINDOW_MS;
+    }
+    if (!/^(?:interaction_|page_|scroll_depth|visibility_change|app_web_vital)/.test(event.name)) {
+        return 0;
+    }
+
+    // An unlabeled control has no privacy-safe stable identity. Treating its
+    // tag or form as identity would collapse different controls on the same
+    // screen. Keep those sampled events; only dedupe an interaction when the
+    // application supplied an explicit code-defined identity.
+    if (event.name.startsWith('interaction_')) {
+        const properties = event.properties || {};
+        return properties.telemetryName
+            || (event.name === 'interaction_submit' && properties.formType)
+            ? LOW_VALUE_DEDUPE_WINDOW_MS
+            : 0;
+    }
+    return LOW_VALUE_DEDUPE_WINDOW_MS;
+}
+
 function shouldKeepEvent(event) {
-    const critical = /^(?:js_|security_|operational_|app_load_error)/.test(event.name);
-    const lowValue = /^(?:interaction_|page_|scroll_depth|visibility_change|app_web_vital)/.test(event.name);
     const now = Date.now();
     const fingerprint = eventFingerprint(event);
     const previous = recentEventFingerprints.get(fingerprint);
-    const dedupeWindow = critical ? ERROR_DEDUPE_WINDOW_MS : lowValue ? LOW_VALUE_DEDUPE_WINDOW_MS : 0;
+    const dedupeWindow = getEventDedupeWindow(event);
     if (dedupeWindow && previous !== undefined && now - previous < dedupeWindow) return false;
 
     const sampleRate = getEventSampleRate(event.name);
@@ -468,13 +489,10 @@ function handleClick(event) {
     const element = closestTrackableElement(event.target);
     if (!element || shouldIgnoreElement(element)) return;
 
-    const rect = element.getBoundingClientRect();
     captureTelemetryEvent('interaction_click', {
         ...describeElement(element),
         button: event.button,
-        modifierKey: event.metaKey || event.ctrlKey || event.shiftKey || event.altKey,
-        targetXPercent: rect.width ? Math.round(((event.clientX - rect.left) / rect.width) * 100) : null,
-        targetYPercent: rect.height ? Math.round(((event.clientY - rect.top) / rect.height) * 100) : null
+        modifierKey: event.metaKey || event.ctrlKey || event.shiftKey || event.altKey
     });
 
     trackRageClick(event, element);
