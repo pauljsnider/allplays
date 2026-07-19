@@ -173,9 +173,9 @@
   <div id="footer-container"></div>
 
   <script type="module">
-    import { getFamilyShareToken, getFamilyShareView, resolveFamilyShareTokenChildren, getTeam, getGames, getTrackedCalendarEventUids } from './js/db.js?v=110';
+    import { getFamilyShareToken, getFamilyShareView, resolveFamilyShareTokenChildren, getTeam, getGames, getTrackedCalendarEventUids } from './js/db.js?v=111';
     import { resolveScheduleWatchCta } from './js/schedule-watch-cta.js?v=1';
-    import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } from './js/utils.js?v=17';
+    import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } from './js/utils.js?v=18';
 
     renderFooter(document.getElementById('footer-container'));
 
@@ -245,6 +245,11 @@
       }
     }
 
+    function getAuthoritativeFamilyShareProjectionErrorReason(error) {
+      const reason = String(error?.details?.reason || '').trim();
+      return ['invalid', 'revoked', 'expired'].includes(reason) ? reason : '';
+    }
+
     async function init() {
       if (!tokenId) {
         showError();
@@ -265,6 +270,16 @@
           token = await getFamilyShareToken(tokenId);
         }
       } catch (err) {
+        const authoritativeReason = getAuthoritativeFamilyShareProjectionErrorReason(err);
+        if (authoritativeReason) {
+          const messages = {
+            invalid: ['This link is no longer valid', 'Ask the parent to create a new family share link.'],
+            revoked: ['This link has been revoked', 'Ask the parent to create a new family share link.'],
+            expired: ['This link has expired', 'Ask the parent to create a new family share link. Expired links never load player, team, or schedule details.']
+          };
+          showError(...messages[authoritativeReason]);
+          return;
+        }
         // Passive rollout fallback for an older functions deployment. Once
         // parity is verified, Firestore rules deny anonymous token documents.
         try {

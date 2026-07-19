@@ -67,3 +67,57 @@ test('legacy family page boots from the server projection without requesting raw
   expect(evidence.payloads.join('')).not.toContain('extraCalendarUrls');
   expect(evidence.payloads.join('')).not.toContain('SENTINEL');
 });
+
+test('legacy family page does not reopen raw token reads after an authoritative projection rejection', async ({ page, baseURL }) => {
+  await page.addInitScript(() => {
+    window.__familyShareProjectionSmoke = { projectionCalls: 0, rawTokenCalls: 0 };
+  });
+  await page.route(/https:\/\/www\.googletagmanager\.com\/.*/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: '' }));
+  await page.route(/https:\/\/cdn\.tailwindcss\.com\/.*/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: '' }));
+  await page.route(/\/js\/telemetry\.js(\?.*)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: '' }));
+  await page.route(/\/js\/schedule-watch-cta\.js(\?.*)?$/, (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/javascript',
+    body: 'export function resolveScheduleWatchCta() { return null; }'
+  }));
+  await page.route(/\/js\/utils\.js(\?.*)?$/, (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/javascript',
+    body: `
+      export function renderHeader() {}
+      export function renderFooter() {}
+      export function escapeHtml(value) { return String(value || ''); }
+      export async function fetchAndParseCalendar() { return []; }
+      export function extractOpponent(value) { return String(value || ''); }
+      export function isPracticeEvent() { return false; }
+      export function expandRecurrence() { return []; }
+      export function getCalendarEventTrackingId() { return ''; }
+      export function isTrackedCalendarEvent() { return false; }
+    `
+  }));
+  await page.route(/\/js\/db\.js(\?.*)?$/, (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/javascript',
+    body: `
+      export async function getFamilyShareView() {
+        window.__familyShareProjectionSmoke.projectionCalls += 1;
+        throw { code: 'functions/permission-denied', details: { reason: 'revoked' } };
+      }
+      export async function getFamilyShareToken() {
+        window.__familyShareProjectionSmoke.rawTokenCalls += 1;
+        return { active: true, label: 'Must not render', children: [] };
+      }
+      export async function resolveFamilyShareTokenChildren() { return []; }
+      export async function getTeam() { return null; }
+      export async function getGames() { return []; }
+      export async function getTrackedCalendarEventUids() { return []; }
+    `
+  }));
+
+  await page.goto(`${baseURL}/family.html?token=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`, { waitUntil: 'domcontentloaded' });
+
+  await expect(page.getByRole('heading', { name: 'This link has been revoked' })).toBeVisible();
+  const evidence = await page.evaluate(() => window.__familyShareProjectionSmoke);
+  expect(evidence.projectionCalls).toBe(1);
+  expect(evidence.rawTokenCalls).toBe(0);
+});

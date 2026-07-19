@@ -53,6 +53,12 @@ describe('family page normalizeFamilyPageChildren edge cases', () => {
 
         expect(familyPage.indexOf('viewProjection = await getFamilyShareView(tokenId)'))
             .toBeLessThan(familyPage.indexOf('token = await getFamilyShareToken(tokenId)'));
+        expect(familyPage).toContain("const authoritativeReason = getAuthoritativeFamilyShareProjectionErrorReason(err)");
+        expect(familyPage).toContain("return ['invalid', 'revoked', 'expired'].includes(reason) ? reason : '';");
+        const projectionLoadIndex = familyPage.indexOf('viewProjection = await getFamilyShareView(tokenId)');
+        const projectionCatchIndex = familyPage.indexOf('} catch (err)', projectionLoadIndex);
+        expect(familyPage.indexOf('if (authoritativeReason)', projectionCatchIndex))
+            .toBeLessThan(familyPage.indexOf('token = await getFamilyShareToken(tokenId)', projectionCatchIndex));
         expect(familyPage).toContain("if (!token || token.active === false)");
         expect(familyPage).toContain("if (isFamilyShareTokenExpired(token))");
     });

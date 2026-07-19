@@ -58,7 +58,7 @@ import {
     collectOfficialLookupTargets
 } from './admin-user-official-links.js?v=2';
 import { resolveAvailabilityCutoffEventDate } from './availability-cutoff-date.js?v=1';
-import { normalizeFamilyShareCalendarUrls, normalizeFamilyShareChildren } from './family-share-utils.js?v=1';
+import { normalizeFamilyShareCalendarUrls, normalizeFamilyShareChildren } from './family-share-utils.js?v=2';
 import { normalizeChatAttachments } from './team-chat-media.js';
 import {
     DEFAULT_TEAM_CONVERSATION_ID,
@@ -631,7 +631,7 @@ export async function uploadStatSheetPhoto(teamId, file) {
     }
 }
 
-import { resolveZip } from './utils.js?v=17'; // Import resolveZip
+import { resolveZip } from './utils.js?v=18'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();

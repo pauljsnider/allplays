@@ -412,7 +412,7 @@ describe('family plan helpers', () => {
 
     it('guards family share token creation and normalizes share payloads', () => {
         const source = readFileSync(new URL('../../js/db.js', import.meta.url), 'utf8');
-        expect(source).toContain("from './family-share-utils.js?v=1'");
+        expect(source).toContain("from './family-share-utils.js?v=2'");
         expect(source).toContain("throw new Error('No linked players are available to share yet.')");
         expect(source).toContain('globalThis.crypto.getRandomValues(bytes)');
         expect(source).toContain('const FAMILY_SHARE_TOKEN_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000;');
