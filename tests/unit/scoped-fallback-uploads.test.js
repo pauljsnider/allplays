@@ -120,6 +120,24 @@ describe('scoped fallback uploads', () => {
         await rejection;
     });
 
+    it('deletes an uploaded chat attachment when its download URL cannot be resolved', async () => {
+        firebaseMocks.getDownloadURL.mockRejectedValueOnce(new Error('url lookup failed'));
+        const { uploadChatImage } = await import('../../js/db.js?v=116-scoped-fallback-uploads');
+
+        await expect(uploadChatImage('team-1', {
+            name: 'photo.jpg',
+            size: 789,
+            type: 'image/jpeg'
+        })).rejects.toThrow('url lookup failed');
+
+        expect(uploadState.deletions).toEqual([
+            expect.objectContaining({
+                targetStorage: 'main-storage',
+                fullPath: 'stat-sheets/team-chat/team-1/team/user-42/1700000000000_photo.jpg'
+            })
+        ]);
+    });
+
     it('deletes new scoped chat media from primary storage and legacy chat media from image storage', async () => {
         const { deleteUploadedChatAttachments } = await import('../../js/db.js?v=116-scoped-fallback-uploads');
 

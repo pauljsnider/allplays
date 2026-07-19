@@ -567,7 +567,17 @@ export async function uploadChatImage(teamId, file, { conversationId = DEFAULT_T
     const snapshot = await withChatMediaTimeout(uploadBytes(storageRef, file, {
         contentType: file.type || 'application/octet-stream'
     }));
-    const url = await withChatMediaTimeout(getDownloadURL(snapshot.ref));
+    let url;
+    try {
+        url = await withChatMediaTimeout(getDownloadURL(snapshot.ref));
+    } catch (error) {
+        try {
+            await withChatMediaTimeout(deleteObject(snapshot.ref));
+        } catch (cleanupError) {
+            console.warn('Failed to clean up chat media after URL lookup failure:', cleanupError);
+        }
+        throw error;
+    }
     return {
         url,
         path,
