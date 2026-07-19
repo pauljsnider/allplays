@@ -221,12 +221,23 @@ jobs:
             exit 1
           fi
           log_file="$RUNNER_TEMP/firebase-preview-deploy.log"
+          verifier="$bundle/context/verify-preview-deploy-trigger.mjs"
+          if [[ ! -f "$verifier" ]]; then
+            echo "Trusted preview verifier is missing." >&2
+            exit 1
+          fi
+          test ! -L "$verifier" || {
+            echo "Trusted preview verifier must not be a symbolic link." >&2
+            exit 1
+          }
+          expected_verifier_sha256='bbf7426f259fb7cd400980249d55a92c46c2804e343d11d763f1e9e448c6e82b'
+          printf '%s  %s\n' "$expected_verifier_sha256" "$verifier" | sha256sum --check --strict
 
           recheck_current_head() {
             local current_pr_json="$RUNNER_TEMP/firebase-preview-pre-deploy-pr.json"
             local recheck_output="$RUNNER_TEMP/firebase-preview-pre-deploy.outputs"
             gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$current_pr_json"
-            node "$bundle/context/verify-preview-deploy-trigger.mjs" \
+            node "$verifier" \
               --event "$bundle/context/event.json" \
               --run "$bundle/context/run.json" \
               --pull-request "$current_pr_json" \

@@ -13,6 +13,9 @@ const preview = read('.github/workflows/deploy-preview-trusted.yml');
 const productionExtractorSha256 = createHash('sha256')
     .update(read('scripts/extract-production-functions-handoff.py'))
     .digest('hex');
+const previewVerifierSha256 = createHash('sha256')
+    .update(read('scripts/verify-preview-deploy-trigger.mjs'))
+    .digest('hex');
 
 function workflowJobs(source) {
     return Object.values(parseYaml(source).jobs);
@@ -53,6 +56,8 @@ describe('Firebase deploy Workload Identity boundary', () => {
         const handoff = preview.indexOf('name: Upload sanitized trusted deploy handoff');
         const authentication = preview.indexOf('uses: google-github-actions/auth@');
         const deployStep = preview.indexOf('name: Deploy fixed Firebase Hosting preview channel');
+        const verifierHashCheck = preview.indexOf(`expected_verifier_sha256='${previewVerifierSha256}'`);
+        const verifierExecution = preview.indexOf('node "$verifier"');
         const deploy = preview.indexOf('hosting:channel:deploy "$CURRENT_CHANNEL"');
         const cleanup = preview.indexOf('name: Remove ephemeral Google credential file');
         const comment = preview.indexOf('name: Report preview URL on the still-current pull request');
@@ -63,6 +68,10 @@ describe('Firebase deploy Workload Identity boundary', () => {
         expect(exactHeadCheck).toBeGreaterThan(install);
         expect(handoff).toBeGreaterThan(exactHeadCheck);
         expect(authentication).toBeGreaterThan(handoff);
+        expect(verifierHashCheck).toBeGreaterThan(authentication);
+        expect(verifierExecution).toBeGreaterThan(verifierHashCheck);
+        expect(preview.slice(deployStep, verifierHashCheck)).toContain('test ! -L');
+        expect(preview.slice(verifierHashCheck, verifierExecution)).toContain('sha256sum --check --strict');
         expect(deploy).toBeGreaterThan(authentication);
         expect(cleanup).toBeGreaterThan(deploy);
         expect(comment).toBeGreaterThan(cleanup);
