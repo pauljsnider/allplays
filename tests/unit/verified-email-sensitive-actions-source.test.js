@@ -11,6 +11,7 @@ describe('verified-email sensitive action coverage', () => {
       'claim-open-officiating-slot',
       'publish-organization-schedule',
       'queue-invite-email',
+      'sync-public-user-profile-projection',
       'confirm-parent-account-merge',
       'revoke-household-member-access',
       'preview-account-merge',

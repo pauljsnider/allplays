@@ -98,6 +98,27 @@ describe('public user profile sync', () => {
         expect(functionsSource).toContain('emailHash: hashPublicProfileEmail(trustedEmail)');
     });
 
+    it('enforces verified-email policy before the callable reads or projects private profile data', () => {
+        const callableStart = functionsSource.indexOf('exports.syncPublicUserProfileProjection = functions.https.onCall');
+        const callableEnd = functionsSource.indexOf('exports.confirmParentAccountMerge', callableStart);
+        const callableSource = functionsSource.slice(callableStart, callableEnd);
+        const authCheck = callableSource.indexOf('if (!context.auth?.uid)');
+        const ownershipCheck = callableSource.indexOf('if (userId !== context.auth.uid)');
+        const verificationGuard = callableSource.indexOf(
+            "await assertSensitiveEmailVerified(context, 'sync-public-user-profile-projection');"
+        );
+        const privateProfileRead = callableSource.indexOf('const userSnap = await firestore.doc(`users/${userId}`).get();');
+        const publicProfileWrite = callableSource.indexOf('await firestore.doc(`publicUserProfiles/${userId}`).set(');
+
+        expect(callableStart).toBeGreaterThanOrEqual(0);
+        expect(callableEnd).toBeGreaterThan(callableStart);
+        expect(authCheck).toBeGreaterThanOrEqual(0);
+        expect(ownershipCheck).toBeGreaterThan(authCheck);
+        expect(verificationGuard).toBeGreaterThan(ownershipCheck);
+        expect(privateProfileRead).toBeGreaterThan(verificationGuard);
+        expect(publicProfileWrite).toBeGreaterThan(privateProfileRead);
+    });
+
     it('refreshes server-owned public projection when a parent membership request is approved', () => {
         expect(functionsSource).toContain('const publicProfileRef = firestore.doc(`publicUserProfiles/${requesterUserId}`);');
         expect(functionsSource).toContain('const requesterAuthRecord = await admin.auth().getUser(requesterUserId);');

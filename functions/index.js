@@ -6,6 +6,7 @@ const crypto = require('node:crypto');
 const { isPrivateIpAddress, isBlockedHostname, assertPublicHost, normalizeTargetUrl, fetchWithTimeout } = require('./utils/security-utils');
 const { createCalendarIcsCache, createCalendarIcsFetchHandler } = require('./calendar-ics-fetch-core.cjs');
 const { createVerifiedEmailSensitiveActionGuard } = require('./verified-email-policy.cjs');
+const { isAllPlaysFirebaseHostingOrigin } = require('./hosting-origin-policy.cjs');
 const {
   normalizeTeamPassCheckoutInput,
   isEligibleTeamPassPurchaser,
@@ -2717,6 +2718,7 @@ exports.syncPublicUserProfileProjection = functions.https.onCall(async (data, co
   if (userId !== context.auth.uid) {
     throw new functions.https.HttpsError('permission-denied', 'You can only sync your own public profile.');
   }
+  await assertSensitiveEmailVerified(context, 'sync-public-user-profile-projection');
 
   const userSnap = await firestore.doc(`users/${userId}`).get();
   if (!userSnap.exists) {
@@ -4798,38 +4800,49 @@ function normalizeIcsText(text) {
 
 
 
-function getAllowedOrigins() {
+function getAllowedOriginPolicy() {
   const configuredOrigins = functions.config()?.calendar?.allowed_origins;
   if (Array.isArray(configuredOrigins)) {
-    return configuredOrigins.map((origin) => String(origin).trim()).filter(Boolean);
+    return {
+      origins: configuredOrigins.map((origin) => String(origin).trim()).filter(Boolean),
+      allowFirebaseHosting: false
+    };
   }
   if (typeof configuredOrigins === 'string') {
-    return configuredOrigins.split(',').map((origin) => origin.trim()).filter(Boolean);
+    return {
+      origins: configuredOrigins.split(',').map((origin) => origin.trim()).filter(Boolean),
+      allowFirebaseHosting: false
+    };
   }
-  return [
-    'https://allplays.ai',
-    'https://www.allplays.ai',
-    'http://localhost:8000',
-    'http://127.0.0.1:8000'
-  ];
+  return {
+    origins: [
+      'https://allplays.ai',
+      'https://www.allplays.ai',
+      'http://localhost:8000',
+      'http://127.0.0.1:8000'
+    ],
+    allowFirebaseHosting: true
+  };
 }
 
-const allowedOriginSet = new Set(getAllowedOrigins());
+const allowedOriginPolicy = getAllowedOriginPolicy();
+const allowedOriginSet = new Set(allowedOriginPolicy.origins);
 
 function isAllowedOrigin(origin) {
   if (!origin) {
     return true;
   }
-  return allowedOriginSet.has(origin);
+  return allowedOriginSet.has(origin) ||
+    (allowedOriginPolicy.allowFirebaseHosting && isAllPlaysFirebaseHostingOrigin(origin));
 }
 
 function isAllowedTelemetryOrigin(origin) {
-  return !!origin && allowedOriginSet.has(origin);
+  return !!origin && isAllowedOrigin(origin);
 }
 
 function writeCorsHeaders(req, res, methods = 'GET,OPTIONS') {
   const origin = req.headers.origin;
-  if (origin && allowedOriginSet.has(origin)) {
+  if (origin && isAllowedOrigin(origin)) {
     res.set('Access-Control-Allow-Origin', origin);
     res.set('Vary', 'Origin');
   }
