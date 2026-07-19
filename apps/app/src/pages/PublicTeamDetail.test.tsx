@@ -37,7 +37,7 @@ describe('PublicTeamDetail', () => {
     expect(screen.getByText('Community baseball team.')).toBeTruthy();
     expect(screen.getByRole('link', { name: 'Find teams' }).getAttribute('href')).toBe('/teams/browse');
     expect(screen.getByRole('link', { name: 'Enter a join code' })).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Sign in' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Sign in' }).getAttribute('href')).toBe('/auth?next=%2Fteams%2Fteam-1%2Fpublic');
     expect(publicTeamMocks.getPublicTeamDetail).toHaveBeenCalledWith('team-1');
   });
 

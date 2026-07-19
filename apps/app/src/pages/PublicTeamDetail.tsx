@@ -6,6 +6,7 @@ import { getPublicTeamDetail, type PublicTeamProfile } from '../lib/publicTeamsS
 
 export function PublicTeamDetail() {
   const { teamId = '' } = useParams();
+  const publicTeamPath = `/teams/${teamId}/public`;
   const [team, setTeam] = useState<PublicTeamProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -72,7 +73,7 @@ export function PublicTeamDetail() {
         <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">Use a join code from the team organizer, or sign in if you already have ALL PLAYS access.</p>
         <div className="mt-4 flex flex-col gap-2 sm:flex-row">
           <Link to="/accept-invite" className="primary-button !min-h-11 justify-center">Enter a join code</Link>
-          <Link to="/auth" className="secondary-button !min-h-11 justify-center">Sign in</Link>
+          <Link to={`/auth?next=${encodeURIComponent(publicTeamPath)}`} className="secondary-button !min-h-11 justify-center">Sign in</Link>
         </div>
       </section>
     </div>
