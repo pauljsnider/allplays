@@ -695,7 +695,7 @@ test('applies the staged App Check gate to public registration checkout and canc
     await assert.doesNotReject(mod.cancelStripeRegistrationCheckout(cancelInput, verifiedContext));
 });
 
-test('validates checkout and cancellation targets before creating limiter documents', async () => {
+test('uses bounded network-only lookup limits before validating checkout and cancellation targets', async () => {
     const { firestore, mod } = loadFunctionsModule(buildSeedState({
         paymentSettings: { offlinePaymentEnabled: true, onlineCheckoutEnabled: true }
     }));
@@ -715,7 +715,54 @@ test('validates checkout and cancellation targets before creating limiter docume
         (error) => error.code === 'not-found'
     );
 
-    assert.equal(firestore.rateLimitDocs().length, 0);
+    const rotatedInput = {
+        ...missingInput,
+        registrationId: 'another-missing-registration',
+        checkoutAttemptToken: 'anothermissingtoken123456'
+    };
+    await assert.rejects(
+        mod.createStripeRegistrationCheckout(rotatedInput, context),
+        (error) => error.code === 'not-found'
+    );
+    await assert.rejects(
+        mod.cancelStripeRegistrationCheckout(rotatedInput, context),
+        (error) => error.code === 'not-found'
+    );
+
+    const limiterDocs = firestore.rateLimitDocs();
+    assert.equal(limiterDocs.length, 2);
+    assert.deepEqual(limiterDocs.map(({ data }) => data.count).sort((a, b) => a - b), [2, 2]);
+});
+
+test('enforces the bounded checkout lookup limit before attacker-controlled target reads', async () => {
+    process.env.PUBLIC_REGISTRATION_CHECKOUT_RATE_LIMIT_MODE = 'enforce';
+    const { firestore, mod } = loadFunctionsModule(buildSeedState({
+        paymentSettings: { offlinePaymentEnabled: true, onlineCheckoutEnabled: true }
+    }));
+
+    for (let index = 0; index < 120; index += 1) {
+        await assert.rejects(
+            mod.cancelStripeRegistrationCheckout({
+                teamId: 'team-1',
+                formId: 'form-1',
+                registrationId: `missing-registration-${index}`,
+                checkoutAttemptToken: `missingcheckouttoken${String(index).padStart(6, '0')}`
+            }, context),
+            (error) => error.code === 'not-found'
+        );
+    }
+
+    await assert.rejects(
+        mod.cancelStripeRegistrationCheckout({
+            teamId: 'team-1',
+            formId: 'form-1',
+            registrationId: 'missing-registration-over-limit',
+            checkoutAttemptToken: 'missingcheckouttokenoverlimit'
+        }, context),
+        (error) => error.code === 'resource-exhausted'
+            && error.details.scope === 'lookup-network'
+    );
+    assert.equal(firestore.rateLimitDocs().length, 1);
 });
 
 test('stages network throttling in observe mode before explicit enforcement', async () => {

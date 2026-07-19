@@ -24,7 +24,7 @@ Each staged setting accepts `disabled`, `observe`, or `enforce`. Missing and inv
 | `public_registration.app_check_mode` | `observe` | Missing verified App Check is logged; enforcement rejects before reads/writes |
 | `public_registration.network_rate_limit_mode` | `observe` | Submit: 30 per form/IP/10 min; checkout/cancel: 60 per form/IP/10 min |
 | `public_registration.form_rate_limit_mode` | `observe` | Submit: 250 per form/app-verification-state/10 min; checkout/cancel: 500 |
-| `public_registration.checkout_rate_limit_mode` | `observe` | 12 per checkout capability or attempt token/10 min |
+| `public_registration.checkout_rate_limit_mode` | `observe` | 120 target lookups per client network/operation/10 min before resolution, then 12 per proven checkout capability or attempt token/10 min |
 
 The equivalent process-environment names are `PUBLIC_REGISTRATION_APP_CHECK_MODE`, `PUBLIC_REGISTRATION_NETWORK_RATE_LIMIT_MODE`, `PUBLIC_REGISTRATION_FORM_RATE_LIMIT_MODE`, and `PUBLIC_REGISTRATION_CHECKOUT_RATE_LIMIT_MODE`. Process environment takes precedence over Functions runtime configuration.
 

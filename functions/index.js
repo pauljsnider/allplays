@@ -289,7 +289,7 @@ function getPublicRegistrationStagedRateLimiter(operation, scope) {
   if (!publicRegistrationStagedRateLimiters.has(key)) {
     const maxRequests = operation === 'submit'
       ? (scope === 'network' ? 30 : 250)
-      : (scope === 'subject' ? 12 : scope === 'network' ? 60 : 500);
+      : (scope === 'subject' ? 12 : scope === 'lookup-network' ? 120 : scope === 'network' ? 60 : 500);
     publicRegistrationStagedRateLimiters.set(key, createFirestoreFixedWindowRateLimiter({
       firestore,
       collectionName: 'publicRegistrationRateLimits',
@@ -1098,6 +1098,16 @@ async function applyStagedPublicRegistrationRateLimits(input, context = {}, oper
       mode: check.mode
     })
   )));
+}
+
+async function applyStagedPublicRegistrationLookupRateLimit(context = {}, operation) {
+  const requestIp = getRequestIp(context.rawRequest || {});
+  await reserveStagedPublicRegistrationRateLimit({
+    operation,
+    scope: 'lookup-network',
+    boundary: ['public-registration', operation, 'lookup-network', requestIp].join('|'),
+    mode: getPublicRegistrationSecurityMode('PUBLIC_REGISTRATION_CHECKOUT_RATE_LIMIT_MODE')
+  });
 }
 
 function throwPublicRegistrationError(code, message, details = {}) {
@@ -4477,6 +4487,7 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data, c
     throw new functions.https.HttpsError('invalid-argument', error.message || 'Invalid registration checkout request.');
   }
 
+  await applyStagedPublicRegistrationLookupRateLimit(context, 'create-checkout');
   const resolvedInput = await resolveRegistrationCheckoutInput(input);
 
   const [formSnap, registrationSnap] = await Promise.all([
@@ -4681,6 +4692,7 @@ exports.cancelStripeRegistrationCheckout = functions.https.onCall(async (data, c
     throw new functions.https.HttpsError('invalid-argument', error.message || 'Invalid registration checkout cancellation request.');
   }
 
+  await applyStagedPublicRegistrationLookupRateLimit(context, 'cancel-checkout');
   const resolvedInput = await resolveRegistrationCheckoutInput(input);
   const registrationSnap = await resolvedInput.registrationRef.get();
   if (!registrationSnap.exists) {
