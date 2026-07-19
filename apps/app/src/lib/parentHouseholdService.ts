@@ -1,3 +1,4 @@
+import { getPlayerPrivateProfile } from './adapters/legacyPlayerDb';
 import { addPendingFamilyMember, getPlayers, readFamilyMembers } from './adapters/legacyParentTools';
 import type { AuthUser } from './types';
 
@@ -127,15 +128,20 @@ async function loadLinkedPlayerFamilyContacts(linkedPlayers: ParentHouseholdLink
     });
     const contactGroups = await Promise.all([...byTeam.entries()].map(async ([teamId, players]) => {
         const roster = await Promise.resolve(getPlayers(teamId, { includeInactive: true })).catch(() => []);
+        const privateProfiles = await Promise.all(players.map(async (linkedPlayer) => ({
+            playerId: linkedPlayer.playerId,
+            profile: await getPlayerPrivateProfile(teamId, linkedPlayer.playerId).catch(() => null)
+        })));
+        const privateProfileByPlayerId = new Map(privateProfiles.map((entry) => [entry.playerId, entry.profile]));
         return players.flatMap((linkedPlayer) => {
             const player = (Array.isArray(roster) ? roster : []).find((candidate: any) => compactString(candidate?.id) === linkedPlayer.playerId) || {};
-            return normalizePlayerFamilyContacts(player, linkedPlayer);
+            return normalizePlayerFamilyContacts(player, linkedPlayer, privateProfileByPlayerId.get(linkedPlayer.playerId));
         });
     }));
     return dedupeFamilyContacts(contactGroups.flat());
 }
 
-function normalizePlayerFamilyContacts(player: Record<string, any>, linkedPlayer: ParentHouseholdLinkedPlayer): ParentHouseholdFamilyContact[] {
+function normalizePlayerFamilyContacts(player: Record<string, any>, linkedPlayer: ParentHouseholdLinkedPlayer, privateProfile?: Record<string, any> | null): ParentHouseholdFamilyContact[] {
     const contacts: ParentHouseholdFamilyContact[] = [];
     const addContact = (source: Record<string, any> | null | undefined, fallback: Record<string, any> = {}) => {
         if (!source || typeof source !== 'object') return;
@@ -162,7 +168,10 @@ function normalizePlayerFamilyContacts(player: Record<string, any>, linkedPlayer
 
     [
         ...(Array.isArray(player?.parents) ? player.parents : []),
-        ...(Array.isArray(player?.privateProfileParents) ? player.privateProfileParents : [])
+        ...(Array.isArray(player?.privateProfileParents) ? player.privateProfileParents : []),
+        ...(Array.isArray(privateProfile?.parents) ? privateProfile.parents : []),
+        ...(Array.isArray(privateProfile?.privateProfileParents) ? privateProfile.privateProfileParents : []),
+        ...(Array.isArray(privateProfile?.familyContacts) ? privateProfile.familyContacts : [])
     ].forEach((contact) => addContact(contact));
     addContact({
         userId: player?.parentUserId,

@@ -333,7 +333,10 @@ describe('React app parent player detail service', () => {
             parents: [{ name: 'Private Parent', email: 'private@example.com', relation: 'Guardian' }]
         });
 
-        const detail = await loadParentPlayerDetail(user(), 'team-1', 'player-2');
+        const detail = await loadParentPlayerDetail({
+            ...user(),
+            parentTeamIds: ['team-1']
+        }, 'team-1', 'player-2');
 
         expect(detail.access.isLinkedParent).toBe(false);
         expect(detail.access.isTeamParent).toBe(true);
@@ -343,6 +346,16 @@ describe('React app parent player detail service', () => {
             expect.objectContaining({ name: 'Taylor Parent', email: 'taylor@example.com', relation: 'Parent' })
         ]);
         expect(JSON.stringify(detail.familyContacts)).not.toContain('private@example.com');
+    });
+
+    it('does not treat raw parentOf rows as team-parent access for teammates', async () => {
+        scheduleMocks.loadParentPlayerSchedule.mockResolvedValue({
+            children: [{ teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat' }],
+            events: []
+        });
+
+        await expect(loadParentPlayerDetail(user(), 'team-1', 'player-2'))
+            .rejects.toThrow('This player is not linked to your account.');
     });
 
     it('falls back to the legacy player-only route and blocks unlinked players', async () => {

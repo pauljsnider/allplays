@@ -1385,10 +1385,6 @@ function isParentOnTeam(user: AuthUser | null, teamId: string) {
     return true;
   }
 
-  if (Array.isArray(user?.parentOf) && user.parentOf.some((entry: any) => String(entry?.teamId || '').trim() === normalizedTeamId)) {
-    return true;
-  }
-
   return !!(user?.parentPlayerKeys || []).some((key) => {
     const raw = String(key || '').trim();
     const separatorIndex = raw.indexOf('::');
