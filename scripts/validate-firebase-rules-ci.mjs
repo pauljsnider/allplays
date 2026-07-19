@@ -160,8 +160,14 @@ export function validateFirebaseDeployWorkloadIdentity(workflow, label) {
                 continue;
             }
             deployStepCount += 1;
-            if (!Number.isInteger(step['timeout-minutes']) || step['timeout-minutes'] > 4) {
-                throw new Error(`${label} credentialed deploy steps must have a four-minute timeout.`);
+            const maxTimeoutMinutes = label === 'Production deploy' &&
+                step.name === 'Deploy Firebase production'
+                ? 20
+                : 4;
+            if (!Number.isInteger(step['timeout-minutes']) ||
+                step['timeout-minutes'] < 1 ||
+                step['timeout-minutes'] > maxTimeoutMinutes) {
+                throw new Error(`${label} credentialed deploy step ${step.name || '(unnamed)'} must have a timeout from one to ${maxTimeoutMinutes} minutes.`);
             }
             const authStep = object.steps[index - 1];
             if (!authStep || typeof authStep.uses !== 'string' ||
