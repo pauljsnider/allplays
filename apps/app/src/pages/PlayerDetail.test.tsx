@@ -91,6 +91,7 @@ function buildDetailData(overrides: Record<string, any> = {}) {
     team: { id: 'team-current', name: 'Current Team' },
     access: {
       isLinkedParent: true,
+      isTeamParent: true,
       isTeamStaff: false,
       canEditRosterDetails: false,
       canEditCustomRosterFields: false
@@ -109,6 +110,7 @@ function buildDetailData(overrides: Record<string, any> = {}) {
     certificates: [],
     trackingSummary: [],
     privateProfile: null,
+    familyContacts: [],
     incentives: {
       rules: [],
       currentRules: [],
@@ -285,6 +287,43 @@ describe('PlayerDetail athlete profile season selection', () => {
     });
   });
 
+  it('shows already linked family contacts to non-linked team viewers on the Family profile tab', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText }
+    });
+    playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData({
+      access: {
+        isLinkedParent: false,
+        isTeamParent: true,
+        isTeamStaff: false,
+        canEditRosterDetails: false,
+        canEditCustomRosterFields: false
+      },
+      familyContacts: [
+        { id: 'mom-1', name: 'Mom Snider', email: 'mom@allplays.ai', phone: '', relation: 'Mom', status: 'linked' },
+        { id: 'dad-1', name: 'Dad Snider', email: 'dad@allplays.ai', phone: '', relation: 'Dad', status: 'linked' }
+      ]
+    }));
+
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Family' }));
+
+    expect(await screen.findByText('Linked Family')).toBeTruthy();
+    expect(screen.getByText('mom@allplays.ai')).toBeTruthy();
+    expect(screen.getByText('dad@allplays.ai')).toBeTruthy();
+    expect(screen.getAllByText('Linked')).toHaveLength(2);
+    fireEvent.click(screen.getByRole('button', { name: 'Copy mom@allplays.ai' }));
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith('mom@allplays.ai');
+    });
+    expect(screen.queryByText('Invite Co-Parent')).toBeNull();
+  });
+
   it('lazy-loads video clips once when the Video Clips report opens', async () => {
     playerServiceMocks.loadParentPlayerVideoClips.mockResolvedValue([
       {
@@ -326,6 +365,42 @@ describe('PlayerDetail athlete profile season selection', () => {
     await waitFor(() => {
       expect(playerServiceMocks.loadParentPlayerVideoClips).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it('navigates from overview stat cards to the matching player sections', async () => {
+    playerServiceMocks.loadParentPlayerVideoClips.mockResolvedValue([
+      {
+        id: 'clip-1',
+        title: 'Fast break finish',
+        gameDate: '2026-01-15',
+        playLabel: 'Score',
+        url: 'https://video.example/clip-1.mp4',
+        thumbnailUrl: '',
+        gameLabel: 'Comets vs Storm'
+      }
+    ]);
+
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+
+    fireEvent.click(screen.getByRole('link', { name: /Events/i }));
+    expect(await screen.findByRole('heading', { name: 'Upcoming' })).toBeTruthy();
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Overview' })[0]);
+    fireEvent.click(screen.getByRole('link', { name: /Reports/i }));
+    expect(await screen.findByRole('heading', { name: 'Game history and performance' })).toBeTruthy();
+    const overviewButtons = screen.getAllByRole('button', { name: 'Overview' });
+    expect(overviewButtons[overviewButtons.length - 1].getAttribute('aria-pressed')).toBe('true');
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Overview' })[0]);
+    fireEvent.click(screen.getByRole('link', { name: /Clips/i }));
+
+    expect((await screen.findByRole('button', { name: 'Video Clips' })).getAttribute('aria-pressed')).toBe('true');
+    await waitFor(() => {
+      expect(playerServiceMocks.loadParentPlayerVideoClips).toHaveBeenCalledWith(auth.user, 'team-current', 'player-current');
+    });
+    expect(await screen.findByText('Fast break finish')).toBeTruthy();
   });
 
   it('renders lazy-loaded season summary ranks totals and player event rows', async () => {
@@ -542,6 +617,7 @@ describe('PlayerDetail athlete profile season selection', () => {
     expect(playerServiceMocks.loadParentPlayerDetail).toHaveBeenLastCalledWith(auth.user, 'team-next', 'player-next');
     expect(playerServiceMocks.loadParentPlayerVideoClips).toHaveBeenCalledTimes(1);
 
+    fireEvent.click(screen.getByRole('button', { name: 'Reports' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Video Clips' }));
 
     await waitFor(() => {

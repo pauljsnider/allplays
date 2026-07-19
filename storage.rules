@@ -26,6 +26,12 @@ service firebase.storage {
       return isSignedIn() &&
         (team.ownerId == request.auth.uid ||
          (request.auth.token.email != null &&
+          team.get('ownerEmail', '') is string &&
+          team.get('ownerEmail', '').lower() == request.auth.token.email.lower()) ||
+         (request.auth.token.email != null &&
+          team.get('ownerEmailLower', '') is string &&
+          team.get('ownerEmailLower', '') == request.auth.token.email.lower()) ||
+         (request.auth.token.email != null &&
           request.auth.token.email.lower() in team.get('adminEmails', [])) ||
          isGlobalAdmin());
     }
@@ -196,12 +202,13 @@ service firebase.storage {
     match /stat-sheets/team-chat/{teamId}/{conversationId}/{userId}/{fileName} {
       allow get: if canAccessChatAttachment(teamId, conversationId);
       allow list: if false;
-      allow create: if isVerifiedForSensitiveWrite() &&
+      allow create: if (isVerifiedForSensitiveWrite() ||
+        (isSignedIn() && conversationId == 'team')) &&
         canAccessChatAttachment(teamId, conversationId) &&
         request.auth.uid == userId &&
         isAllowedChatAttachmentUpload(request.resource.contentType, request.resource.size);
-      allow delete: if isVerifiedForSensitiveWrite() &&
-        (isTeamOwnerOrAdmin(teamId) || canDeleteOwnChatAttachment(teamId, conversationId, userId));
+      allow delete: if (isVerifiedForSensitiveWrite() && isTeamOwnerOrAdmin(teamId)) ||
+        canDeleteOwnChatAttachment(teamId, conversationId, userId);
       allow update: if false;
     }
 

@@ -14,6 +14,8 @@ describe('team update Firestore rules', () => {
 
     it('allows ordinary team admins to save normalized legacy adminEmails without expanding the list', () => {
         expect(rules).toContain('function keepsCurrentAdminInNormalizedAdminEmailList()');
+        expect(rules).toContain("request.resource.data.get('ownerEmail', '') == resource.data.get('ownerEmail', '')");
+        expect(rules).toContain("request.resource.data.get('ownerEmailLower', '') == resource.data.get('ownerEmailLower', '')");
         expect(rules).toContain("request.resource.data.get('adminEmails', []) == resource.data.get('adminEmails', [])");
         expect(rules).toContain('request.auth.token.email.lower() in existingAdminEmails');
         expect(rules).toContain('request.auth.token.email.lower() in nextAdminEmails');

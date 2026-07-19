@@ -27,7 +27,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
             await testEnv.clearStorage();
             await testEnv.withSecurityRulesDisabled(async (context) => {
                 const firestore = context.firestore();
-                await firestore.doc('teams/team-a').set({ ownerId: 'owner-a', adminEmails: [] });
+                await firestore.doc('teams/team-a').set({ ownerId: 'owner-a', ownerEmail: 'legacy-owner@example.com', adminEmails: [] });
                 await firestore.doc('teams/team-b').set({ ownerId: 'owner-b', adminEmails: [] });
                 await firestore.doc('teams/team-a/mediaFolders/folder-a').set({ visibility: 'team' });
                 await firestore.doc('teams/team-b/mediaFolders/folder-b').set({ visibility: 'team' });
@@ -87,6 +87,24 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
             );
         });
 
+        it('allows legacy owner-email team chat uploads when the owner uid no longer matches', async () => {
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                await context.firestore().doc('securityPolicies/verifiedEmail').set({ mode: 'enforce' });
+            });
+
+            const legacyOwnerStorage = testEnv.authenticatedContext('legacy-owner-uid', {
+                email: 'legacy-owner@example.com',
+                email_verified: false
+            }).storage();
+
+            await assertSucceeds(
+                legacyOwnerStorage.ref('stat-sheets/team-chat/team-a/team/legacy-owner-uid/legacy-owner-photo.jpg').put(
+                    new Uint8Array([1]),
+                    { contentType: 'image/jpeg' }
+                )
+            );
+        });
+
         it('enforces team, conversation, uploader, MIME, and 5 MB boundaries for chat uploads', async () => {
             const memberStorage = testEnv.authenticatedContext('member-a', {
                 email: 'member-a@example.com'
@@ -135,6 +153,33 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
             await assertFails(
                 memberStorage.ref('stat-sheets/team-chat/team-a/team/member-a/too-large.jpg').put(
                     new Uint8Array((5 * 1024 * 1024) + 1),
+                    { contentType: 'image/jpeg' }
+                )
+            );
+        });
+
+        it('allows team chat image upload and own delete when verified-email policy is enforced for an unverified signed-in parent', async () => {
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                await context.firestore().doc('securityPolicies/verifiedEmail').set({ mode: 'enforce' });
+            });
+
+            const parentStorage = testEnv.authenticatedContext('member-a', {
+                email: 'member-a@example.com',
+                email_verified: false
+            }).storage();
+
+            await assertSucceeds(
+                parentStorage.ref('stat-sheets/team-chat/team-a/team/member-a/unverified-chat-photo.jpg').put(
+                    new Uint8Array([1]),
+                    { contentType: 'image/jpeg' }
+                )
+            );
+            await assertSucceeds(
+                parentStorage.ref('stat-sheets/team-chat/team-a/team/member-a/unverified-chat-photo.jpg').delete()
+            );
+            await assertFails(
+                parentStorage.ref('stat-sheets/team-chat/team-a/targeted-a/member-a/unverified-targeted-photo.jpg').put(
+                    new Uint8Array([1]),
                     { contentType: 'image/jpeg' }
                 )
             );

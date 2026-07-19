@@ -441,6 +441,74 @@ describe('TeamDetail', () => {
     expect(teamDetailServiceMocks.loadParentTeamDetail).toHaveBeenCalledTimes(1);
   });
 
+  it('links team overview summary stats and cards to their matching workflows', async () => {
+    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue({
+      ...model,
+      upcomingEvents: [{
+        id: 'game-next',
+        title: 'Bears vs Tigers',
+        type: 'game',
+        date: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        location: 'Main Gym',
+        opponent: 'Tigers',
+        status: 'scheduled',
+        liveStatus: '',
+        visibility: 'public',
+        isPrivate: false,
+        isPublic: true,
+        shareable: true,
+        publicCalendar: true,
+        homeScore: null,
+        awayScore: null,
+        isCancelled: false,
+        statTrackerConfigId: '',
+        statTrackerConfigLabel: 'No config assigned',
+        statTrackerConfigBaseType: '',
+        statTrackerConfigExists: false,
+        statTrackerConfigIsBasketball: false
+      }],
+      nextEvent: {
+        id: 'game-next',
+        title: 'Bears vs Tigers',
+        type: 'game',
+        date: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        location: 'Main Gym',
+        opponent: 'Tigers',
+        status: 'scheduled',
+        liveStatus: '',
+        visibility: 'public',
+        isPrivate: false,
+        isPublic: true,
+        shareable: true,
+        publicCalendar: true,
+        homeScore: null,
+        awayScore: null,
+        isCancelled: false,
+        statTrackerConfigId: '',
+        statTrackerConfigLabel: 'No config assigned',
+        statTrackerConfigBaseType: '',
+        statTrackerConfigExists: false,
+        statTrackerConfigIsBasketball: false
+      }
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: /4-2\s+Record/ }).getAttribute('href')).toBe('/schedule?teamId=team-1&filter=recent-results');
+    expect(screen.getByRole('link', { name: /1\s+Roster/ }).getAttribute('href')).toBe('/teams/team-1?tab=roster');
+    expect(screen.getByRole('link', { name: /1\s+Upcoming/ }).getAttribute('href')).toBe('/teams/team-1?tab=schedule');
+    expect(screen.getByRole('link', { name: /Season record \(2100\)/ }).getAttribute('href')).toBe('/schedule?teamId=team-1&filter=recent-results');
+    expect(screen.getByRole('link', { name: /Next event/ }).getAttribute('href')).toBe('/schedule?teamId=team-1');
+    expect(screen.getByRole('link', { name: /Roster size/ }).getAttribute('href')).toBe('/teams/team-1?tab=roster');
+  });
+
   it('uses singular wording when the team has one completed game', async () => {
     teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue({
       ...model,

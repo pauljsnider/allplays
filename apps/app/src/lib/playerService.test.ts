@@ -951,7 +951,7 @@ describe('loadParentPlayerDetail custom roster fields', () => {
       includeFamilyContacts: true,
       includeHousehold: true
     });
-    expect(detail.parentContacts).toEqual([
+    expect(detail.familyContacts).toEqual([
       expect.objectContaining({ name: 'Jordan Parent', email: 'jordan@example.com', relation: 'Parent' })
     ]);
     expect(detail.privateProfile).toBeNull();

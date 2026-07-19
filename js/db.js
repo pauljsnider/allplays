@@ -1772,14 +1772,32 @@ export async function getUserTeams(userId, options = {}) {
 
 export async function getUserTeamsWithAccess(userId, email, options = {}) {
     const includeInactive = !!options.includeInactive;
-    const [ownedSnap, adminSnap] = await Promise.all([
+    const profileSnap = userId ? getDoc(doc(db, "users", userId)).catch(() => null) : Promise.resolve(null);
+    const profile = await profileSnap;
+    const ownerEmailCandidates = [
+        email,
+        profile?.exists?.() ? profile.data()?.email : null,
+        ...(Array.isArray(options.ownerEmailCandidates) ? options.ownerEmailCandidates : [])
+    ].map((value) => String(value || '').trim()).filter(Boolean);
+    const normalizedEmail = ownerEmailCandidates[0] ? ownerEmailCandidates[0].toLowerCase() : '';
+    const ownerEmailQueries = ownerEmailCandidates.length
+        ? [...new Set([...ownerEmailCandidates, ...ownerEmailCandidates.map((value) => value.toLowerCase())])]
+            .map((ownerEmail) => getDocs(query(collection(db, "teams"), where("ownerEmail", "==", ownerEmail))))
+        : [];
+    const ownerEmailLowerQuery = normalizedEmail
+        ? getDocs(query(collection(db, "teams"), where("ownerEmailLower", "==", normalizedEmail)))
+        : Promise.resolve({ docs: [] });
+    const [ownedSnap, adminSnap, ...ownerEmailSnaps] = await Promise.all([
         getDocs(query(collection(db, "teams"), where("ownerId", "==", userId))),
-        email ? getDocs(query(collection(db, "teams"), where("adminEmails", "array-contains", email.toLowerCase()))) : Promise.resolve({ docs: [] })
+        normalizedEmail ? getDocs(query(collection(db, "teams"), where("adminEmails", "array-contains", normalizedEmail))) : Promise.resolve({ docs: [] }),
+        ownerEmailLowerQuery,
+        ...ownerEmailQueries
     ]);
 
     const map = new Map();
     ownedSnap.docs.forEach(d => map.set(d.id, { id: d.id, ...d.data() }));
     adminSnap.docs.forEach(d => map.set(d.id, { id: d.id, ...d.data() }));
+    ownerEmailSnaps.forEach((snap) => snap.docs.forEach(d => map.set(d.id, { id: d.id, ...d.data() })));
 
     const teams = Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
     return filterTeamsByActive(teams, includeInactive);
@@ -2144,6 +2162,9 @@ export async function getUsersByParentTeamId(teamId) {
 }
 
 export async function createTeam(teamData) {
+    if (teamData.ownerEmail) {
+        teamData.ownerEmailLower = String(teamData.ownerEmail).trim().toLowerCase();
+    }
     teamData.createdAt = Timestamp.now();
     teamData.updatedAt = Timestamp.now();
     Object.assign(teamData, buildPublicTeamSearchFields(teamData));
@@ -2202,6 +2223,9 @@ async function assertTeamMediaManagerPermissionUpdateCleared(teamId, teamData = 
 
 export async function updateTeam(teamId, teamData) {
     await assertTeamMediaManagerPermissionUpdateCleared(teamId, teamData);
+    if (Object.prototype.hasOwnProperty.call(teamData, 'ownerEmail')) {
+        teamData.ownerEmailLower = teamData.ownerEmail ? String(teamData.ownerEmail).trim().toLowerCase() : '';
+    }
     teamData.updatedAt = Timestamp.now();
     const docRef = doc(db, "teams", teamId);
     if (teamData.registrationSource === null) {
@@ -6301,6 +6325,10 @@ export function canAccessTeamChat(user, team) {
     // Team owner
     if (team.ownerId === user.uid) return true;
 
+    if (user.email && team.ownerEmail && team.ownerEmail.toLowerCase() === user.email.toLowerCase()) {
+        return true;
+    }
+
     // Team admin (email in adminEmails)
     if (user.email && team.adminEmails?.map(e => e.toLowerCase()).includes(user.email.toLowerCase())) {
         return true;
@@ -6331,6 +6359,10 @@ export function canModerateChat(user, team) {
 
     // Team owner
     if (team.ownerId === user.uid) return true;
+
+    if (user.email && team.ownerEmail && team.ownerEmail.toLowerCase() === user.email.toLowerCase()) {
+        return true;
+    }
 
     // Team admin (email in adminEmails)
     if (user.email && team.adminEmails?.map(e => e.toLowerCase()).includes(user.email.toLowerCase())) {

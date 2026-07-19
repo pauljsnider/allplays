@@ -379,6 +379,20 @@ describe('Teams launcher navigation', () => {
 
     expect((await screen.findByTestId('team-hub')).textContent).toBe('Team hub: team-fast');
   });
+
+  it('keeps team stats informational on launcher rows', async () => {
+    renderTeamsWithNav();
+
+    await screen.findByRole('heading', { name: '2 teams ready' });
+    const fastFalcons = screen.getByRole('link', { name: 'Open Fast Falcons' });
+    const selectedRow = fastFalcons.closest('article');
+    expect(selectedRow).not.toBeNull();
+
+    expect(within(selectedRow!).getByText('1 player')).toBeTruthy();
+    expect(within(selectedRow!).getByText('2 events')).toBeTruthy();
+    expect(within(selectedRow!).getByText('1 unread')).toBeTruthy();
+    expect(within(selectedRow!).getAllByRole('link')).toEqual([fastFalcons]);
+  });
 });
 
 describe('Teams single-team auto-navigate', () => {
