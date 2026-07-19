@@ -259,7 +259,7 @@ describe('AppShell', () => {
     expect(await screen.findByText('Auth')).toBeTruthy();
   });
 
-  it('keeps Family directly reachable in the signed-in mobile bottom navigation', () => {
+  it('keeps signed-in mobile navigation to five items and exposes lower-frequency destinations in More', () => {
     useShellLayoutMock.mockReturnValue({ isDesktopWeb: false });
     render(
       <MemoryRouter initialEntries={['/parent-tools/fees']}>
@@ -270,12 +270,19 @@ describe('AppShell', () => {
     );
 
     const primaryNav = screen.getByRole('navigation', { name: 'Primary navigation' });
-    expect(primaryNav.querySelector('.grid')?.getAttribute('style')).toContain('minmax(44px, 1fr)');
-    expect(within(primaryNav).getAllByRole('link')).toHaveLength(7);
-    const familyLink = within(primaryNav).getByRole('link', { name: 'Family' });
-    expect(familyLink.getAttribute('href')).toBe('/parent-tools');
-    expect(familyLink.className).toContain('bg-primary-50');
-    expect(within(primaryNav).getByRole('link', { name: 'Discover' }).getAttribute('href')).toBe('/discover');
+    expect(within(primaryNav).getAllByRole('link')).toHaveLength(4);
+    expect(within(primaryNav).getAllByRole('link').map((link) => link.textContent)).toEqual(['Home', 'Schedule', 'Messages', 'My Teams']);
+    expect(within(primaryNav).queryByRole('link', { name: 'Family' })).toBeNull();
+    const moreButton = within(primaryNav).getByRole('button', { name: 'More' });
+    expect(moreButton).toHaveAttribute('aria-expanded', 'false');
+
+    fireEvent.click(moreButton);
+
+    const moreDialog = screen.getByRole('dialog', { name: 'More from ALL PLAYS' });
+    const moreNav = within(moreDialog).getByRole('navigation', { name: 'More navigation' });
+    expect(within(moreNav).getByRole('link', { name: /Profile/ })).toHaveAttribute('href', '/profile');
+    expect(within(moreNav).getByRole('link', { name: /Family/ })).toHaveAttribute('href', '/parent-tools');
+    expect(within(moreNav).getByRole('link', { name: /Discover/ })).toHaveAttribute('href', '/discover');
   });
 
   it('routes the mobile My Teams nav directly to the team page when the user has one team', () => {
@@ -298,6 +305,26 @@ describe('AppShell', () => {
 
     const primaryNav = screen.getByRole('navigation', { name: 'Primary navigation' });
     expect(within(primaryNav).getByRole('link', { name: 'My Teams' }).getAttribute('href')).toBe('/teams/team-1');
+  });
+
+  it('marks More current for a nested destination and dismisses it with native back', () => {
+    useShellLayoutMock.mockReturnValue({ isDesktopWeb: false });
+    render(
+      <MemoryRouter initialEntries={['/parent-tools/fees']}>
+        <Routes>
+          <Route path="/parent-tools/fees" element={<AppShell auth={signedInAuth}><div>Family fees</div></AppShell>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    const primaryNav = screen.getByRole('navigation', { name: 'Primary navigation' });
+    const moreButton = within(primaryNav).getByRole('button', { name: 'More' });
+    expect(moreButton).toHaveAttribute('aria-current', 'page');
+
+    fireEvent.click(moreButton);
+    expect(screen.getByRole('dialog', { name: 'More from ALL PLAYS' })).toBeTruthy();
+    fireEvent(window, new CustomEvent(APP_BACK_DISMISS_EVENT));
+    expect(screen.queryByRole('dialog', { name: 'More from ALL PLAYS' })).toBeNull();
   });
 
   it('does not add Family to signed-out navigation', () => {

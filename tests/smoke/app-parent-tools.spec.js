@@ -556,7 +556,7 @@ test('parent tools hub completes access, fees, calendars, share, registration, a
     await page.getByRole('button', { name: /Send request/ }).click();
     await expect.poll(() => page.evaluate(() => window.__accessRequests.at(-1))).toEqual({ teamId: 'team-2', playerId: 'player-2', relation: 'Parent' });
 
-    await page.getByRole('button', { name: 'Fees' }).click();
+    await page.getByRole('navigation', { name: 'Family tools' }).getByRole('link', { name: 'Fees' }).click();
     await expect(page.getByText('Team dues')).toBeVisible();
     await expect(page.getByText('Line items')).toHaveCount(0);
     await expect(page.getByRole('button', { name: /Pay fee/ })).toBeVisible();
@@ -565,7 +565,7 @@ test('parent tools hub completes access, fees, calendars, share, registration, a
     await page.getByRole('button', { name: /Pay fee/ }).click();
     await expect.poll(() => page.evaluate(() => window.__openedPublicUrls.at(-1))).toBe('https://pay.example.test/fee');
 
-    await page.getByRole('button', { name: 'Calendar' }).click();
+    await page.getByRole('navigation', { name: 'Family tools' }).getByRole('link', { name: 'Calendar' }).click();
     await expect(page.getByText('Calendar tools')).toBeVisible();
     await page.getByRole('button', { name: /Download/ }).click();
     await expect.poll(() => page.evaluate(() => window.__downloads.at(-1)?.filename)).toBe('all-plays-family-schedule.ics');
@@ -574,7 +574,7 @@ test('parent tools hub completes access, fees, calendars, share, registration, a
     await page.getByRole('button', { name: 'Apple' }).click();
     await expect.poll(() => page.evaluate(() => window.__openedPublicUrls.at(-1))).toBe('webcal://feed.example.test/team-1.ics');
 
-    await page.getByRole('button', { name: 'Share' }).first().click();
+    await page.getByRole('navigation', { name: 'Family tools' }).getByRole('link', { name: 'Share' }).click();
     await expect(page.getByText('Family share')).toBeVisible();
     await page.getByPlaceholder(/Label/).fill('Grandpa');
     await page.evaluate(() => {
@@ -587,7 +587,7 @@ test('parent tools hub completes access, fees, calendars, share, registration, a
     await expect.poll(() => page.evaluate(() => window.__sharedUrls.at(-1)?.url)).toBe('https://allplays.ai/app/#/family/token-2');
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
 
-    await page.getByRole('button', { name: 'Register' }).click();
+    await page.getByRole('navigation', { name: 'Family tools' }).getByRole('link', { name: 'Register' }).click();
     await expect(page.getByText('Summer Camp')).toBeVisible();
     await expect(page.getByRole('link', { name: /Review/ })).toBeVisible();
     await page.getByRole('button', { name: /Legacy form/ }).click();
@@ -629,6 +629,31 @@ test.describe('desktop Family navigation', () => {
         await primaryNav.getByRole('link', { name: 'Family' }).click();
         await expect(page.getByRole('heading', { name: 'Family workflows' })).toBeVisible();
     });
+});
+
+test('mobile navigation keeps frequent destinations visible and exposes Family through More', async ({ page, baseURL }) => {
+    await mockParentToolsModules(page);
+    await page.goto(appUrl(baseURL, '/parent-tools/fees'), { waitUntil: 'domcontentloaded' });
+
+    const primaryNav = page.getByRole('navigation', { name: 'Primary navigation' });
+    await expect(primaryNav.getByRole('link')).toHaveCount(4);
+    expect(await primaryNav.getByRole('link').allTextContents()).toEqual(['Home', 'Schedule', 'Messages', 'My Teams']);
+    expect(await primaryNav.locator('a, button').evaluateAll((targets) => targets.every((target) => target.getBoundingClientRect().height >= 44))).toBe(true);
+    const moreButton = primaryNav.getByRole('button', { name: 'More' });
+    await expect(moreButton).toHaveAttribute('aria-current', 'page');
+
+    await moreButton.click();
+    const moreDialog = page.getByRole('dialog', { name: 'More from ALL PLAYS' });
+    await expect(moreDialog).toBeVisible();
+    await expect(moreDialog.getByRole('link', { name: /Profile/ })).toHaveAttribute('href', /#\/profile$/);
+    await expect(moreDialog.getByRole('link', { name: /Family/ })).toHaveAttribute('aria-current', 'page');
+    await expect(moreDialog.getByRole('link', { name: /Discover/ })).toHaveAttribute('href', /#\/discover$/);
+    expect(await moreDialog.locator('a, button').evaluateAll((targets) => targets.every((target) => target.getBoundingClientRect().height >= 44))).toBe(true);
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+
+    await page.keyboard.press('Escape');
+    await expect(moreDialog).toBeHidden();
+    await expect(page.getByRole('navigation', { name: 'Family tools' }).getByRole('link', { name: 'Fees' })).toHaveAttribute('aria-current', 'page');
 });
 
 test('parent fees workflow renders payment states and blocks overlapping checkout', async ({ page, baseURL }) => {
@@ -792,9 +817,9 @@ test('same-user parent auth rehydrate does not reload visited hidden panels', as
     await page.goto(appUrl(baseURL, '/parent-tools/access'), { waitUntil: 'domcontentloaded' });
 
     await expect(page.getByText('Request player access')).toBeVisible({ timeout: 15000 });
-    await page.getByRole('button', { name: 'Fees' }).click();
+    await page.getByRole('navigation', { name: 'Family tools' }).getByRole('link', { name: 'Fees' }).click();
     await expect(page.getByText('Team dues')).toBeVisible();
-    await page.getByRole('button', { name: 'Calendar' }).click();
+    await page.getByRole('navigation', { name: 'Family tools' }).getByRole('link', { name: 'Calendar' }).click();
     await expect(page.getByText('Calendar tools')).toBeVisible();
 
     const countsBeforeRehydrate = await page.evaluate(() => ({ ...window.__parentToolLoadCounts }));
@@ -843,8 +868,8 @@ test('awards deep links surface the requested certificate first on mobile', asyn
     await expect(page.getByText('Opened from a notification')).toBeVisible({ timeout: 15000 });
     await expect(page.getByText('Hustle Award', { exact: true })).toBeVisible();
     await expect(page.getByText('Leadership Award', { exact: true })).toHaveCount(0);
-    const activeAwardsTab = page.getByRole('button', { name: 'Awards', exact: true });
-    await expect(activeAwardsTab).toHaveAttribute('aria-pressed', 'true');
+    const activeAwardsTab = page.getByRole('link', { name: 'Awards', exact: true });
+    await expect(activeAwardsTab).toHaveAttribute('aria-current', 'page');
     await expect.poll(async () => {
         const tabBox = await activeAwardsTab.boundingBox();
         return Boolean(tabBox && tabBox.x >= 0 && tabBox.x + tabBox.width <= 390);

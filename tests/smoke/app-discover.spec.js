@@ -12,7 +12,7 @@ function appUrl(baseURL, hashPath) {
   return url.toString();
 }
 
-async function mockDiscoverModules(page, { signedIn = false } = {}) {
+async function mockDiscoverModules(page, { signedIn = false, empty = false } = {}) {
   await page.addInitScript(() => { window.__opportunityCreates = []; window.__opportunityInquiries = []; });
   await page.route(/\/src\/lib\/useAuth\.ts(\?.*)?$/, (route) => route.fulfill({
     status: 200,
@@ -29,7 +29,7 @@ async function mockDiscoverModules(page, { signedIn = false } = {}) {
     contentType: 'application/javascript',
     body: `
       const listing = { id: 'listing-1', kind: 'coach_or_staff', title: 'Assistant coach wanted', description: 'Help with practices and weekend games.', sport: 'Basketball', role: 'Assistant coach', ageGroup: '12U', competitiveLevel: 'Travel', division: '', city: 'Austin', state: 'TX', zip: '78701', availability: 'Weeknights', startDate: '2026-08-01', compensationType: 'paid', compensationSummary: 'Stipend', teamId: 'team-1', teamName: 'Bears', teamPhotoUrl: null, status: 'active', createdAt: '2026-07-01T00:00:00.000Z', updatedAt: '2026-07-01T00:00:00.000Z', expiresAt: '2026-07-31T00:00:00.000Z' };
-      export async function listPublicOpportunities() { return { items: [listing], nextCursor: null }; }
+      export async function listPublicOpportunities() { return { items: ${empty ? '[]' : '[listing]'}, nextCursor: null }; }
       export async function getPublicOpportunity() { return listing; }
       export async function listManagedPublicOpportunityTeams() { return [{ id: 'team-1', name: 'Bears', sport: 'Basketball', city: 'Austin', state: 'TX', zip: '78701', ageGroup: '12U', competitiveLevel: 'Travel', division: 'Gold', availability: 'Weekends' }]; }
       export async function createPublicOpportunity(input) { window.__opportunityCreates.push(input); return { ...listing, ...input }; }
@@ -56,6 +56,9 @@ test.describe('public sports Discover', () => {
     await page.goto(url, { waitUntil: 'domcontentloaded' });
     await expect(page.getByRole('heading', { name: 'Find a team or your next sports opportunity' })).toBeVisible();
     await expect(page.getByText('Assistant coach wanted')).toBeVisible();
+    const discoverTabs = page.getByRole('tablist', { name: 'Discover views' });
+    await expect(discoverTabs.getByRole('tab', { name: 'Opportunities' })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', 'discover-opportunities-tab');
     await expectVisualSnapshot(page, 'discover-opportunities.png');
     await page.getByRole('link', { name: 'View opportunity' }).click();
     await expect(page.getByRole('button', { name: 'Sign in to contact' })).toBeVisible();
@@ -75,6 +78,15 @@ test.describe('public sports Discover', () => {
     await page.getByRole('button', { name: 'Publish for 30 days' }).click();
     await expect.poll(() => page.evaluate(() => window.__opportunityCreates.length)).toBe(1);
     await expect(page).toHaveURL(/#\/discover\/opportunities\/listing-1$/);
+  });
+
+  test('makes empty opportunity results recoverable', async ({ page, baseURL }) => {
+    await mockDiscoverModules(page, { signedIn: true, empty: true });
+    await page.goto(appUrl(baseURL, '/discover'), { waitUntil: 'domcontentloaded' });
+
+    await expect(page.getByText('No active opportunities found')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Clear filters' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Post the first opportunity' })).toHaveAttribute('href', /#\/discover\/new$/);
   });
 
   test('lets signed-in users send a starter message from opportunity detail', async ({ page, baseURL }) => {

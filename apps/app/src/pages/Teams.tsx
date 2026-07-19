@@ -218,7 +218,7 @@ export function Teams({ auth }: { auth: AuthState }) {
             <div className="text-sm font-black text-gray-950">Discover public teams</div>
             <div className="mt-1 text-xs font-semibold leading-5 text-gray-500">Browse and search public teams in the app, then open their team page in read-only mode.</div>
           </div>
-          <Link to="/teams/browse" className="primary-button !min-h-10 !px-3 text-sm">
+          <Link to="/teams/browse" className="primary-button !min-h-11 !px-3 text-sm">
             Browse teams
           </Link>
         </div>
@@ -281,7 +281,7 @@ function TeamsHeader({ loading, refreshing, teams, teamRoles, onRefresh }: {
           <h1 className="mt-1 truncate text-xl font-black text-gray-950 sm:text-2xl">{title}</h1>
           <p className="mt-1 line-clamp-1 text-xs font-semibold text-gray-600 sm:text-sm">{detail}</p>
         </div>
-        <button type="button" className="ghost-button !h-10 !min-h-10 !w-10 !flex-none !p-0 sm:!w-auto sm:!px-3" onClick={onRefresh} disabled={refreshing} aria-label="Refresh teams" title="Refresh teams">
+        <button type="button" className="ghost-button !h-11 !min-h-11 !w-11 !flex-none !p-0 sm:!w-auto sm:!px-3" onClick={onRefresh} disabled={refreshing} aria-label="Refresh teams" title="Refresh teams">
           <RefreshCw className={`h-4 w-4 ${refreshing || loading ? 'animate-spin' : ''}`} aria-hidden="true" />
           <span className="hidden sm:inline">Refresh</span>
         </button>
@@ -325,7 +325,7 @@ function TeamLauncher({ teams, selectedTeamId, variant = 'grid' }: {
       <label className="mt-3 block px-1">
         <span className="sr-only">Filter teams</span>
         <input
-          className="auth-input !min-h-10 !px-3 !py-2 text-sm"
+          className="auth-input !min-h-11 !px-3 !py-2 text-sm"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder="Search teams or players"
@@ -382,6 +382,225 @@ function TeamLauncherRow({ team, selected, compact = false }: { team: ParentHome
   );
 }
 
+function SelectedTeamPanel({ team, variant = 'mobile' }: { team: ParentHomeTeam; variant?: 'mobile' | 'web' }) {
+  const [showAllTools, setShowAllTools] = useState(false);
+  const navigationSections = useMemo(() => buildTeamNavigation(team), [team]);
+  const isWeb = variant === 'web';
+
+  useEffect(() => {
+    setShowAllTools(false);
+  }, [team.teamId]);
+
+  return (
+    <section className={`app-card overflow-hidden ${isWeb ? 'teams-selected-panel' : ''}`}>
+      <div className="p-3 sm:p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex min-w-0 flex-1 items-center gap-3">
+            <TeamAvatar name={team.teamName} photoUrl={team.photoUrl} large />
+            <div className="min-w-0">
+              <div className="text-xs font-black uppercase tracking-[0.06em] text-primary-700">Team hub</div>
+              <h2 className="mt-1 truncate text-xl font-black leading-tight text-gray-950">{team.teamName}</h2>
+              <div className="mt-1 flex min-w-0 flex-wrap gap-2">
+                <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-black text-gray-700">{team.role}</span>
+                {team.sport ? <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-black text-gray-700">{team.sport}</span> : null}
+                {team.unreadCount > 0 ? <span className="rounded-full bg-primary-600 px-2.5 py-1 text-xs font-black text-white">{team.unreadCount} unread</span> : null}
+              </div>
+            </div>
+          </div>
+          <Link to={`/messages/${encodeURIComponent(team.teamId)}`} className="secondary-button !min-h-11 flex-none text-sm">
+            <MessageCircle className="h-4 w-4" aria-hidden="true" />
+            Chat
+          </Link>
+        </div>
+
+        <div className={`mt-3 grid grid-cols-3 gap-2 ${isWeb ? 'teams-selected-stats' : ''}`}>
+          <MiniStat icon={Users} label="Players" value={String(team.players.length)} to={`/teams/${encodeURIComponent(team.teamId)}?tab=roster`} />
+          <MiniStat icon={CalendarDays} label="Events" value={String(team.eventCount)} to={`/teams/${encodeURIComponent(team.teamId)}?tab=schedule`} />
+          <MiniStat icon={MessageCircle} label="Unread" value={String(team.unreadCount)} to={`/messages/${encodeURIComponent(team.teamId)}`} />
+        </div>
+      </div>
+
+      <TeamNavigationPanel sections={navigationSections} showAllTools={showAllTools} onToggleTools={() => setShowAllTools((value) => !value)} />
+
+      <div className="border-t border-gray-100 p-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="text-sm font-black text-gray-950">Linked players</div>
+            <div className="mt-0.5 text-xs font-semibold text-gray-500">
+              {team.players.length ? 'Tap a player to open the player view.' : 'This team is available through coach/admin access.'}
+            </div>
+          </div>
+          {team.nextEvent ? (
+            <Link to={getEventDetailPath(team.nextEvent)} className="secondary-button !min-h-11 text-xs">
+              Next event
+              <ChevronRight className="h-4 w-4" aria-hidden="true" />
+            </Link>
+          ) : null}
+        </div>
+        {team.players.length ? (
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            {team.players.map((player) => (
+              <Link key={`${player.teamId}-${player.playerId}`} to={getPlayerDetailPath(player.teamId, player.playerId)} className="flex items-center gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3 transition hover:border-primary-200 hover:bg-primary-50/40">
+                <div className="flex h-10 w-10 flex-none items-center justify-center rounded-full bg-gray-900 text-xs font-black text-white">{getInitials(player.playerName)}</div>
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-black text-gray-950">{player.playerName}</span>
+                  <span className="block truncate text-xs font-semibold text-gray-500">{player.teamName || team.teamName}</span>
+                </span>
+              </Link>
+            ))}
+          </div>
+        ) : (
+          <div className="mt-3 flex items-start gap-3 rounded-xl border border-blue-200 bg-blue-50 p-3">
+            <CheckCircle2 className="mt-0.5 h-5 w-5 flex-none text-blue-700" aria-hidden="true" />
+            <div>
+              <div className="text-sm font-black text-blue-950">Team chat access</div>
+              <div className="mt-0.5 text-xs font-semibold text-blue-700">No player is linked to this account for the team, but team chat is available.</div>
+            </div>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function WebsiteToolsNotice({ compact = false }: { compact?: boolean }) {
+  return (
+    <section className={`app-card ${compact ? 'p-3' : 'p-4'}`}>
+      <div className="flex items-center gap-2 text-sm font-black text-primary-800">
+        <Shield className="h-4 w-4" aria-hidden="true" />
+        Website tools available
+      </div>
+      <p className={`mt-2 font-semibold text-gray-600 ${compact ? 'text-xs leading-5' : 'text-sm leading-6'}`}>
+        Coach and admin teams include links to the current website for roster, schedule, fees, drills, and game-day operations.
+      </p>
+    </section>
+  );
+}
+
+function TeamNavigationPanel({ sections, showAllTools, onToggleTools }: {
+  sections: TeamNavigationSection[];
+  showAllTools: boolean;
+  onToggleTools: () => void;
+}) {
+  return (
+    <div className="border-t border-gray-100 px-4 py-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-sm font-black text-gray-950">Team navigation</div>
+          <div className="mt-0.5 text-xs font-semibold leading-5 text-gray-500">App routes first, current website tools where the full feature already exists.</div>
+        </div>
+      </div>
+
+      <div className="mt-3 space-y-3">
+        {sections.map((section) => {
+          const isManagement = section.id === 'management';
+          const visibleItems = isManagement && !showAllTools ? section.items.slice(0, 4) : section.items;
+
+          return (
+            <div key={section.id}>
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">{section.title}</div>
+                  <div className="mt-0.5 truncate text-xs font-semibold text-gray-500">{section.detail}</div>
+                </div>
+                {isManagement && section.items.length > 4 ? (
+                  <button type="button" className="ghost-button !min-h-11 !px-2 !text-xs" onClick={onToggleTools} aria-expanded={showAllTools}>
+                    {showAllTools ? 'Show less' : `${section.items.length - 4} more`}
+                    <ChevronDown className={`h-4 w-4 transition ${showAllTools ? 'rotate-180' : ''}`} aria-hidden="true" />
+                  </button>
+                ) : null}
+              </div>
+              <div className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                {visibleItems.map((item) => <TeamNavigationTile key={item.id} item={item} />)}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function TeamNavigationTile({ item }: { item: TeamNavigationItem }) {
+  const Icon = teamNavigationIcons[item.id] || ClipboardList;
+  const content = (
+    <>
+      <span className={`flex h-9 w-9 flex-none items-center justify-center rounded-xl ${item.kind === 'native' ? 'bg-primary-50 text-primary-700' : 'bg-gray-100 text-gray-700'}`}>
+        <Icon className="h-4 w-4" aria-hidden="true" />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="truncate text-sm font-black text-gray-950">{item.label}</span>
+          {item.badge ? <span className="inline-flex min-h-5 flex-none items-center rounded-full bg-primary-600 px-2 text-[10px] font-black text-white">{item.badge}</span> : null}
+        </span>
+        <span className="mt-0.5 line-clamp-1 text-xs font-semibold leading-5 text-gray-500">{item.detail}</span>
+        <span className="mt-1 hidden items-center gap-1 text-[10px] font-extrabold uppercase tracking-[0.04em] text-gray-400 sm:inline-flex">
+          {item.kind === 'native' ? 'App' : 'Website'}
+          {item.kind === 'website' ? <ExternalLink className="h-3 w-3" aria-hidden="true" /> : null}
+        </span>
+      </span>
+      <ChevronRight className="mt-1 h-4 w-4 flex-none text-gray-300" aria-hidden="true" />
+    </>
+  );
+  const className = 'group flex min-h-[74px] items-start gap-3 rounded-xl border border-gray-200 bg-white p-2.5 text-left transition hover:border-primary-200 hover:bg-primary-50/30';
+
+  if (item.kind === 'native') {
+    return <Link to={item.href} className={className}>{content}</Link>;
+  }
+
+  return (
+    <a
+      href={item.href}
+      className={className}
+      target="_blank"
+      rel="noreferrer"
+      onClick={(event) => {
+        event.preventDefault();
+        void openPublicUrl(item.href);
+      }}
+    >
+      {content}
+    </a>
+  );
+}
+
+const teamNavigationIcons: Record<string, typeof Users> = {
+  schedule: CalendarDays,
+  messages: MessageCircle,
+  'practice-packets': ClipboardCheck,
+  'team-page': Ticket,
+  'website-team-page': ExternalLink,
+  'player-profile': UserRound,
+  players: Users,
+  media: Images,
+  'parent-fees': WalletCards,
+  registrations: Ticket,
+  awards: FileText,
+  'team-settings': Settings,
+  'manage-roster': Users,
+  'manage-schedule': CalendarDays,
+  fees: WalletCards,
+  'practice-command': Dumbbell,
+  'game-plan': ClipboardList,
+  'game-day': Radio,
+  tracking: ClipboardCheck,
+  'stats-config': SlidersHorizontal,
+  certificates: FileText,
+  analytics: BarChart3
+};
+
+function MiniStat({ icon: Icon, label, value, to }: { icon: typeof Users; label: string; value: string; to?: string }) {
+  const body = (
+    <>
+      <Icon className="h-4 w-4 text-primary-600" aria-hidden="true" />
+      <div className="mt-1 truncate text-sm font-black text-gray-950">{value}</div>
+      <div className="truncate text-[10px] font-extrabold uppercase tracking-[0.04em] text-gray-500">{label}</div>
+    </>
+  );
+  const className = 'block rounded-xl border border-gray-200 bg-gray-50 p-2 text-left transition hover:border-primary-200 hover:bg-primary-50/40';
+  return to ? <Link to={to} className={className}>{body}</Link> : <div className="rounded-xl border border-gray-200 bg-gray-50 p-2">{body}</div>;
+}
+
 function MetricPill({ label, value }: { label: string; value: string }) {
   return (
     <span className="inline-flex min-h-6 items-center gap-1.5 rounded-full border border-gray-200 bg-gray-50 px-2.5 text-[11px] font-extrabold uppercase tracking-[0.04em] text-gray-600">
@@ -402,10 +621,10 @@ function EmptyTeams() {
           <div className="text-sm font-black text-gray-900">No teams available</div>
           <div className="mt-1 text-xs font-semibold leading-5 text-gray-500">Team access appears after an invite is accepted, a parent link is approved, or staff access is granted.</div>
           <div className="mt-3 grid gap-2 sm:grid-cols-4">
-            <Link to="/teams/new" className="primary-button justify-center !min-h-9 text-xs">Create team</Link>
-            <Link to="/accept-invite" className="secondary-button justify-center !min-h-9 text-xs">Accept invite</Link>
-            <Link to="/home" className="ghost-button justify-center !min-h-9 text-xs">Back to Home</Link>
-            <Link to="/teams/browse" className="ghost-button justify-center !min-h-9 text-xs">
+            <Link to="/teams/new" className="primary-button justify-center !min-h-11 text-xs">Create team</Link>
+            <Link to="/accept-invite" className="secondary-button justify-center !min-h-11 text-xs">Accept invite</Link>
+            <Link to="/home" className="ghost-button justify-center !min-h-11 text-xs">Back to Home</Link>
+            <Link to="/teams/browse" className="ghost-button justify-center !min-h-11 text-xs">
               Browse teams
             </Link>
           </div>
@@ -422,7 +641,7 @@ function TeamsLoadErrorState({ error, onRetry, retrying }: { error: AppServiceEr
       <Shield className="mx-auto h-8 w-8 text-rose-400" aria-hidden="true" />
       <div className="mt-3 text-sm font-black text-gray-900">{copy.title}</div>
       <div className="mt-1 text-xs font-semibold text-gray-500">{copy.detail}</div>
-      <button type="button" className="primary-button mx-auto mt-4 !min-h-10 !px-4 text-sm" onClick={onRetry} disabled={retrying} aria-label="Retry team load">
+      <button type="button" className="primary-button mx-auto mt-4 !min-h-11 !px-4 text-sm" onClick={onRetry} disabled={retrying} aria-label="Retry team load">
         <RefreshCw className={`h-4 w-4 ${retrying ? 'animate-spin' : ''}`} aria-hidden="true" />
         Retry
       </button>

@@ -63,6 +63,7 @@ describe('FriendProfile', () => {
     expect(screen.getByRole('link', { name: /Bears/ })).toHaveAttribute('href', '/teams/team-1/public');
     expect(screen.getByRole('link', { name: /Pat Star/ })).toHaveAttribute('href', profile.publicChildren[0].shareUrl);
     expect(screen.getAllByRole('link', { name: /settings/i }).length).toBeGreaterThan(0);
+    expect(document.querySelector('main')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Copy profile link' }));
     await waitFor(() => expect(publicActionMocks.copyPublicText).toHaveBeenCalledWith(`${window.location.origin}/app/#/people/user-1`));
