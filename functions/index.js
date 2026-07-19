@@ -358,9 +358,22 @@ function normalizeStripePaymentAuthorityRolloutFreezeId(value) {
   return freezeId;
 }
 
-async function assertStripePaymentAuthorityRolloutIsFrozen(freezeId) {
+function getFirestoreSnapshotVersion(snapshot) {
+  const updateTime = snapshot?.updateTime;
+  const seconds = Number(updateTime?.seconds ?? updateTime?._seconds);
+  const nanoseconds = Number(updateTime?.nanoseconds ?? updateTime?._nanoseconds);
+  if (Number.isSafeInteger(seconds) && Number.isSafeInteger(nanoseconds)) {
+    return `${seconds}:${nanoseconds}`;
+  }
+  if (typeof updateTime?.toMillis === 'function') {
+    const milliseconds = Number(updateTime.toMillis());
+    if (Number.isSafeInteger(milliseconds)) return `ms:${milliseconds}`;
+  }
+  return '';
+}
+
+function assertStripePaymentAuthorityRolloutControlSnapshot(controlSnap, freezeId, expectedControlVersion = '') {
   const expectedFreezeId = normalizeStripePaymentAuthorityRolloutFreezeId(freezeId);
-  const controlSnap = await buildStripePaymentAuthorityRolloutControlRef().get();
   const control = controlSnap.exists ? (controlSnap.data() || {}) : {};
   if (control.frozen !== true || String(control.freezeId || '').trim() !== expectedFreezeId) {
     throw new functions.https.HttpsError(
@@ -368,7 +381,41 @@ async function assertStripePaymentAuthorityRolloutIsFrozen(freezeId) {
       'The exact payment-authority maintenance freeze is not active.'
     );
   }
-  return expectedFreezeId;
+  const controlVersion = getFirestoreSnapshotVersion(controlSnap);
+  if (!controlVersion) {
+    throw new functions.https.HttpsError(
+      'failed-precondition',
+      'The payment-authority maintenance freeze version could not be verified.'
+    );
+  }
+  if (expectedControlVersion && controlVersion !== expectedControlVersion) {
+    throw new functions.https.HttpsError(
+      'failed-precondition',
+      'The payment-authority maintenance freeze changed while the operation was running.'
+    );
+  }
+  return { freezeId: expectedFreezeId, controlVersion };
+}
+
+async function assertStripePaymentAuthorityRolloutIsFrozen(freezeId, expectedControlVersion = '') {
+  const controlSnap = await buildStripePaymentAuthorityRolloutControlRef().get();
+  return assertStripePaymentAuthorityRolloutControlSnapshot(controlSnap, freezeId, expectedControlVersion);
+}
+
+async function writeStripePaymentAuthorityRolloutLog(logRef, logData, freezeGuard = null) {
+  if (!freezeGuard) {
+    await logRef.set(logData);
+    return;
+  }
+  await firestore.runTransaction(async (transaction) => {
+    const controlSnap = await transaction.get(buildStripePaymentAuthorityRolloutControlRef());
+    assertStripePaymentAuthorityRolloutControlSnapshot(
+      controlSnap,
+      freezeGuard.freezeId,
+      freezeGuard.controlVersion
+    );
+    transaction.set(logRef, logData);
+  });
 }
 
 async function assertStripePaymentAuthorityMutationIsNotFrozen() {
@@ -4886,7 +4933,12 @@ exports.backfillTeamPassEntitlementProjections = functions.https.onCall(async (d
   };
 });
 
-async function scanPaymentAuthorityRolloutCollection({ collectionGroupName, isCandidate, inspectAuthority }) {
+async function scanPaymentAuthorityRolloutCollection({
+  collectionGroupName,
+  isCandidate,
+  inspectAuthority,
+  assertFreeze = null
+}) {
   const pageSize = 250;
   const maximumDocuments = 10_000;
   let lastSnapshot = null;
@@ -4894,11 +4946,13 @@ async function scanPaymentAuthorityRolloutCollection({ collectionGroupName, isCa
   let authorityComplete = true;
   const blockers = [];
   while (scanned < maximumDocuments) {
+    if (assertFreeze) await assertFreeze();
     let query = firestore.collectionGroup(collectionGroupName)
       .orderBy(admin.firestore.FieldPath.documentId())
       .limit(pageSize);
     if (lastSnapshot) query = query.startAfter(lastSnapshot);
     const snapshot = await query.get();
+    if (assertFreeze) await assertFreeze();
     if (snapshot.empty) return { scanned, blockers, complete: authorityComplete };
     scanned += snapshot.size;
     const candidateDocs = snapshot.docs.filter((docSnap) => isCandidate(docSnap.data() || {}, docSnap.ref.path));
@@ -4916,6 +4970,7 @@ async function scanPaymentAuthorityRolloutCollection({ collectionGroupName, isCa
         if (inspection.complete === false) authorityComplete = false;
         if (inspection.blocker) blockers.push(inspection.blocker);
       });
+      if (assertFreeze) await assertFreeze();
     }
     lastSnapshot = snapshot.docs[snapshot.docs.length - 1];
     if (snapshot.size < pageSize) return { scanned, blockers, complete: authorityComplete };
@@ -4923,15 +4978,17 @@ async function scanPaymentAuthorityRolloutCollection({ collectionGroupName, isCa
   return { scanned, blockers, complete: false };
 }
 
-async function readPaymentAuthoritySubcollection(collectionRef) {
+async function readPaymentAuthoritySubcollection(collectionRef, { assertFreeze = null } = {}) {
   const pageSize = 250;
   const maximumDocuments = 10_000;
   const docs = [];
   let lastSnapshot = null;
   while (docs.length < maximumDocuments) {
+    if (assertFreeze) await assertFreeze();
     let query = collectionRef.orderBy(admin.firestore.FieldPath.documentId()).limit(pageSize);
     if (lastSnapshot) query = query.startAfter(lastSnapshot);
     const snapshot = await query.get();
+    if (assertFreeze) await assertFreeze();
     docs.push(...(snapshot.docs || []));
     if (snapshot.size < pageSize) return { docs, complete: true };
     lastSnapshot = snapshot.docs[snapshot.docs.length - 1];
@@ -4983,17 +5040,19 @@ function getStripePaymentAuthoritySessionBindingFailure(session = {}, expectedLi
   }
 }
 
-async function readStripeCheckoutSessionsByStatus(stripe, status) {
+async function readStripeCheckoutSessionsByStatus(stripe, status, { assertFreeze = null } = {}) {
   const pageSize = 100;
   const maximumDocuments = 10_000;
   const sessions = [];
   let startingAfter = '';
   while (sessions.length < maximumDocuments) {
+    if (assertFreeze) await assertFreeze();
     const response = await stripe.checkout.sessions.list({
       status,
       limit: pageSize,
       ...(startingAfter ? { starting_after: startingAfter } : {})
     });
+    if (assertFreeze) await assertFreeze();
     const page = Array.isArray(response?.data) ? response.data : [];
     sessions.push(...page);
     if (response?.has_more !== true) {
@@ -5006,7 +5065,7 @@ async function readStripeCheckoutSessionsByStatus(stripe, status) {
   return { sessions, complete: false };
 }
 
-async function inspectSettledStripeCheckoutSessionAuthority(session, expectedLivemode) {
+async function inspectSettledStripeCheckoutSessionAuthority(session, expectedLivemode, { assertFreeze = null } = {}) {
   const product = getStripePaymentAuthoritySessionProduct(session);
   const sessionPath = `stripeCheckoutSessions/${String(session.id || 'missing')}`;
   if (!product) return null;
@@ -5024,7 +5083,7 @@ async function inspectSettledStripeCheckoutSessionAuthority(session, expectedLiv
       );
       const [parentSnap, chargeScan] = await Promise.all([
         parentRef.get(),
-        readPaymentAuthoritySubcollection(parentRef.collection('stripeCharges'))
+        readPaymentAuthoritySubcollection(parentRef.collection('stripeCharges'), { assertFreeze })
       ]);
       const hasSessionLedger = chargeScan.docs.some((ledgerSnap) => (
         String(ledgerSnap.data()?.stripeCheckoutSessionId || '').trim() === String(session.id || '').trim()
@@ -5040,7 +5099,7 @@ async function inspectSettledStripeCheckoutSessionAuthority(session, expectedLiv
       const parentRef = buildTeamFeeRecipientRef(input);
       const [parentSnap, chargeScan] = await Promise.all([
         parentRef.get(),
-        readPaymentAuthoritySubcollection(parentRef.collection('stripeCharges'))
+        readPaymentAuthoritySubcollection(parentRef.collection('stripeCharges'), { assertFreeze })
       ]);
       const hasSessionLedger = chargeScan.docs.some((ledgerSnap) => (
         String(ledgerSnap.data()?.stripeCheckoutSessionId || '').trim() === String(session.id || '').trim()
@@ -5053,7 +5112,8 @@ async function inspectSettledStripeCheckoutSessionAuthority(session, expectedLiv
     }
     const input = normalizeTeamPassCheckoutInput(session.metadata || {});
     const attemptScan = await readPaymentAuthoritySubcollection(
-      firestore.collection(`teams/${input.teamId}/teamPassCheckoutAttempts`)
+      firestore.collection(`teams/${input.teamId}/teamPassCheckoutAttempts`),
+      { assertFreeze }
     );
     if (!attemptScan.complete) return { product, path: sessionPath, reason: 'team_pass_checkout_attempt_scan_incomplete' };
     const matchingAttempt = attemptScan.docs.find((attemptDoc) => (
@@ -5069,12 +5129,12 @@ async function inspectSettledStripeCheckoutSessionAuthority(session, expectedLiv
   }
 }
 
-async function scanStripePaymentAuthoritySessions(stripe) {
+async function scanStripePaymentAuthoritySessions(stripe, { assertFreeze = null } = {}) {
   const { secretKey } = getStripeConfig();
   const expectedLivemode = getExpectedStripeLivemode(secretKey);
   const [openScan, completeScan] = await Promise.all([
-    readStripeCheckoutSessionsByStatus(stripe, 'open'),
-    readStripeCheckoutSessionsByStatus(stripe, 'complete')
+    readStripeCheckoutSessionsByStatus(stripe, 'open', { assertFreeze }),
+    readStripeCheckoutSessionsByStatus(stripe, 'complete', { assertFreeze })
   ]);
   const advertisedOpenSessions = openScan.sessions.filter((session) => getStripePaymentAuthoritySessionProduct(session));
   const relevantOpenSessions = advertisedOpenSessions.filter((session) => (
@@ -5091,9 +5151,10 @@ async function scanStripePaymentAuthoritySessions(stripe) {
   for (let offset = 0; offset < relevantCompleteSessions.length; offset += 25) {
     const inspections = await Promise.all(
       relevantCompleteSessions.slice(offset, offset + 25)
-        .map((session) => inspectSettledStripeCheckoutSessionAuthority(session, expectedLivemode))
+        .map((session) => inspectSettledStripeCheckoutSessionAuthority(session, expectedLivemode, { assertFreeze }))
     );
     blockers.push(...inspections.filter(Boolean));
+    if (assertFreeze) await assertFreeze();
   }
   return {
     scanned: openScan.sessions.length + completeScan.sessions.length,
@@ -5195,9 +5256,12 @@ exports.auditStripePaymentAuthorityRollout = functions.runWith({ timeoutSeconds:
   if (assertEmpty && data?.confirmation !== 'assert_no_legacy_stripe_payment_authority_v1') {
     throw new functions.https.HttpsError('failed-precondition', 'Explicit empty-authority assertion confirmation is required.');
   }
-  const freezeId = assertEmpty
+  const freezeGuard = assertEmpty
     ? await assertStripePaymentAuthorityRolloutIsFrozen(data?.freezeId)
-    : '';
+    : null;
+  const assertFreeze = freezeGuard
+    ? () => assertStripePaymentAuthorityRolloutIsFrozen(freezeGuard.freezeId, freezeGuard.controlVersion)
+    : null;
   const stripe = createStripeClient();
 
   const [registrations, teamFees, teamPasses, stripeChargeLedgers, teamPassAttempts, stripeSessions] = await Promise.all([
@@ -5213,20 +5277,21 @@ exports.auditStripePaymentAuthorityRollout = functions.runWith({ timeoutSeconds:
             reason: 'registration_checkout_creation_in_flight'
           });
         }
-        const chargeScan = await readPaymentAuthoritySubcollection(docSnap.ref.collection('stripeCharges'));
+        const chargeScan = await readPaymentAuthoritySubcollection(docSnap.ref.collection('stripeCharges'), { assertFreeze });
         const reason = chargeScan.complete
           ? inspectStripeChargeLedgerCoverage({
             product: 'registration', record, ledgers: chargeScan.docs.map((ledgerSnap) => ledgerSnap.data() || {})
           })
           : 'stripe_charge_ledger_scan_incomplete';
         return buildRolloutInspection({ product: 'registration', path: docSnap.ref.path, reason, complete: chargeScan.complete });
-      }
+      },
+      assertFreeze
     }),
     scanPaymentAuthorityRolloutCollection({
       collectionGroupName: 'feeRecipients',
       isCandidate: isLegacyStripeTeamFeeCandidate,
       inspectAuthority: async (docSnap) => {
-        const chargeScan = await readPaymentAuthoritySubcollection(docSnap.ref.collection('stripeCharges'));
+        const chargeScan = await readPaymentAuthoritySubcollection(docSnap.ref.collection('stripeCharges'), { assertFreeze });
         const record = { id: docSnap.id, ...(docSnap.data() || {}) };
         const reason = chargeScan.complete
           ? inspectStripeChargeLedgerCoverage({
@@ -5234,7 +5299,8 @@ exports.auditStripePaymentAuthorityRollout = functions.runWith({ timeoutSeconds:
           })
           : 'stripe_charge_ledger_scan_incomplete';
         return buildRolloutInspection({ product: 'team_fee', path: docSnap.ref.path, reason, complete: chargeScan.complete });
-      }
+      },
+      assertFreeze
     }),
     scanPaymentAuthorityRolloutCollection({
       collectionGroupName: 'entitlements',
@@ -5245,7 +5311,8 @@ exports.auditStripePaymentAuthorityRollout = functions.runWith({ timeoutSeconds:
         const teamId = parts[0] === 'teams' && parts[2] === 'entitlements' ? parts[1] : '';
         const seasonId = String(entitlement.seasonId || docSnap.id.replace(/_team-pass$/, '')).trim();
         const attemptScan = await readPaymentAuthoritySubcollection(
-          firestore.collection(`teams/${teamId}/teamPassCheckoutAttempts`)
+          firestore.collection(`teams/${teamId}/teamPassCheckoutAttempts`),
+          { assertFreeze }
         );
         const matchingAttempts = attemptScan.docs.filter((attemptDoc) => (
           String(attemptDoc.data()?.seasonId || '').trim() === seasonId
@@ -5263,19 +5330,22 @@ exports.auditStripePaymentAuthorityRollout = functions.runWith({ timeoutSeconds:
             ? 'active_entitlement_invalid_checkout_attempt'
             : 'active_entitlement_missing_checkout_attempt';
         return buildRolloutInspection({ product: 'team_pass', path: docSnap.ref.path, reason, complete: attemptScan.complete });
-      }
+      },
+      assertFreeze
     }),
     scanPaymentAuthorityRolloutCollection({
       collectionGroupName: 'stripeCharges',
       isCandidate: () => true,
-      inspectAuthority: inspectStripeChargeLedgerParent
+      inspectAuthority: inspectStripeChargeLedgerParent,
+      assertFreeze
     }),
     scanPaymentAuthorityRolloutCollection({
       collectionGroupName: 'teamPassCheckoutAttempts',
       isCandidate: () => true,
-      inspectAuthority: inspectTeamPassAttemptRollout
+      inspectAuthority: inspectTeamPassAttemptRollout,
+      assertFreeze
     }),
-    scanStripePaymentAuthoritySessions(stripe)
+    scanStripePaymentAuthoritySessions(stripe, { assertFreeze })
   ]);
   const complete = registrations.complete
     && teamFees.complete
@@ -5286,7 +5356,7 @@ exports.auditStripePaymentAuthorityRollout = functions.runWith({ timeoutSeconds:
   if (assertEmpty) {
     // Re-read after every Firestore and Stripe page so a cleared or replaced
     // maintenance window cannot produce valid final assertion evidence.
-    await assertStripePaymentAuthorityRolloutIsFrozen(freezeId);
+    await assertFreeze();
   }
   const blockers = [
     ...registrations.blockers,
@@ -5315,13 +5385,14 @@ exports.auditStripePaymentAuthorityRollout = functions.runWith({ timeoutSeconds:
     blockerCount: blockers.length,
     blockers: blockers.slice(0, 100)
   };
-  await firestore.collection('paymentAuthorityRolloutAudits').doc().set({
+  await writeStripePaymentAuthorityRolloutLog(firestore.collection('paymentAuthorityRolloutAudits').doc(), {
     ...result,
     actorId: context.auth.uid,
     confirmation: assertEmpty ? 'assert_no_legacy_stripe_payment_authority_v1' : null,
-    freezeId: assertEmpty ? freezeId : null,
+    freezeId: assertEmpty ? freezeGuard.freezeId : null,
+    freezeControlVersion: assertEmpty ? freezeGuard.controlVersion : null,
     createdAt: admin.firestore.FieldValue.serverTimestamp()
-  });
+  }, freezeGuard);
   if (!complete) {
     throw new functions.https.HttpsError('resource-exhausted', 'Payment authority audit exceeded its 10,000-document safety cap.', result);
   }
@@ -5343,13 +5414,16 @@ exports.expireOpenStripePaymentAuthoritySessionsForRollout = functions.runWith({
   if (!dryRun && data?.confirmation !== 'expire_open_legacy_stripe_checkout_sessions_v1') {
     throw new functions.https.HttpsError('failed-precondition', 'Explicit rollout Session expiration confirmation is required.');
   }
-  const freezeId = dryRun
-    ? ''
+  const freezeGuard = dryRun
+    ? null
     : await assertStripePaymentAuthorityRolloutIsFrozen(data?.freezeId);
+  const assertFreeze = dryRun
+    ? null
+    : () => assertStripePaymentAuthorityRolloutIsFrozen(freezeGuard.freezeId, freezeGuard.controlVersion);
   const stripe = createStripeClient();
   const { secretKey } = getStripeConfig();
   const expectedLivemode = getExpectedStripeLivemode(secretKey);
-  const openScan = await readStripeCheckoutSessionsByStatus(stripe, 'open');
+  const openScan = await readStripeCheckoutSessionsByStatus(stripe, 'open', { assertFreeze });
   if (!openScan.complete) {
     throw new functions.https.HttpsError('resource-exhausted', 'Open Stripe Checkout Session scan exceeded its safety cap.');
   }
@@ -5363,11 +5437,12 @@ exports.expireOpenStripePaymentAuthoritySessionsForRollout = functions.runWith({
   const liveModeMatched = relevantSessions.filter((session) => session.livemode === true).length;
   const testModeMatched = relevantSessions.filter((session) => session.livemode === false).length;
   if (!dryRun) {
-    await assertStripePaymentAuthorityRolloutIsFrozen(freezeId);
+    await assertFreeze();
   }
   let expired = 0;
   let failureCount = 0;
   for (const session of (dryRun || bindingFailureCount > 0) ? [] : relevantSessions) {
+    await assertFreeze();
     try {
       await stripe.checkout.sessions.expire(session.id);
       expired += 1;
@@ -5379,6 +5454,7 @@ exports.expireOpenStripePaymentAuthoritySessionsForRollout = functions.runWith({
         error: error?.message || error
       });
     }
+    await assertFreeze();
   }
   const result = {
     dryRun,
@@ -5391,13 +5467,19 @@ exports.expireOpenStripePaymentAuthoritySessionsForRollout = functions.runWith({
     liveModeMatched,
     testModeMatched
   };
-  await firestore.collection('paymentAuthorityRolloutSessionExpirations').doc().set({
-    ...result,
-    actorId: context.auth.uid,
-    confirmation: dryRun ? null : 'expire_open_legacy_stripe_checkout_sessions_v1',
-    freezeId: dryRun ? null : freezeId,
-    createdAt: admin.firestore.FieldValue.serverTimestamp()
-  });
+  if (!dryRun) await assertFreeze();
+  await writeStripePaymentAuthorityRolloutLog(
+    firestore.collection('paymentAuthorityRolloutSessionExpirations').doc(),
+    {
+      ...result,
+      actorId: context.auth.uid,
+      confirmation: dryRun ? null : 'expire_open_legacy_stripe_checkout_sessions_v1',
+      freezeId: dryRun ? null : freezeGuard.freezeId,
+      freezeControlVersion: dryRun ? null : freezeGuard.controlVersion,
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    },
+    dryRun ? null : freezeGuard
+  );
   if (bindingFailureCount > 0) {
     throw new functions.https.HttpsError(
       'failed-precondition',
@@ -8083,6 +8165,14 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
 
       const attemptSnap = await transaction.get(attemptRef);
       const attempt = attemptSnap.exists ? (attemptSnap.data() || {}) : {};
+      if (paidEvent && ['creating', 'creation_failed', 'recovering'].includes(
+        String(attempt.checkoutStatus || '').trim().toLowerCase()
+      )) {
+        // A durable Stripe request can settle before its Session projection is
+        // restored. Do not consume the event: Stripe must retry it after the
+        // attempt leaves its transient creation/recovery state.
+        throw new Error('Team Pass checkout authority is still being recovered; retry the paid event.');
+      }
       const checkoutGuardFailure = getTeamPassCheckoutGuardFailure({ attempt, session, paidEvent });
       const paymentIntentGuardFailure = paidEvent && !checkoutGuardFailure
         ? getTeamPassPaymentIntentGuardFailure({ attempt, session, paymentIntent, charge })

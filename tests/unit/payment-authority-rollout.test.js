@@ -197,9 +197,10 @@ describe('Stripe payment-authority rollout gate', () => {
         expect(source).toContain('exports.auditStripePaymentAuthorityRollout');
         expect(source).toContain("data?.confirmation !== 'assert_no_legacy_stripe_payment_authority_v1'");
         expect(source).toContain('await assertStripePaymentAuthorityRolloutIsFrozen(data?.freezeId)');
-        expect(source).toContain('await assertStripePaymentAuthorityRolloutIsFrozen(freezeId)');
+        expect(source).toContain('assertStripePaymentAuthorityRolloutIsFrozen(freezeGuard.freezeId, freezeGuard.controlVersion)');
+        expect(source).toContain('if (assertFreeze) await assertFreeze();');
         expect(source).toContain("throw new functions.https.HttpsError('failed-precondition', 'Payment authority rollout is blocked");
-        expect(source).toContain("firestore.collection('paymentAuthorityRolloutAudits').doc().set");
+        expect(source).toContain("writeStripePaymentAuthorityRolloutLog(firestore.collection('paymentAuthorityRolloutAudits').doc()");
         expect(source).not.toContain('purgeStripePaymentAuthority');
     });
 
@@ -234,6 +235,8 @@ describe('Stripe payment-authority rollout gate', () => {
         expect(source).toContain('bindingFailureCount');
         expect(source).toContain('liveModeMatched');
         expect(source).toContain('testModeMatched');
+        expect(source).toContain('await stripe.checkout.sessions.expire(session.id);');
+        expect(source).toContain('if (!dryRun) await assertFreeze();');
     });
 
     it('documents a fail-closed frozen cutover and reopens only after the post-deploy assertion', () => {
@@ -263,7 +266,9 @@ describe('Stripe payment-authority rollout gate', () => {
         expect(transportIndex).toBeGreaterThan(inventoryIndex);
         expect(controlIndex).toBeGreaterThan(transportIndex);
         expect(bootstrapIndex).toBeGreaterThan(controlIndex);
-        expect(runbook).toContain('reads the exact `freezeId` before and after every Stripe/Firestore scan');
+        expect(runbook).toContain("control document's immutable Firestore update version");
+        expect(runbook).toContain('before and after every Stripe/Firestore page');
+        expect(runbook).toContain('even if an operator restores the same ID');
         expect(runbook).toContain('Do not infer quiescence from an IAM command succeeding or treat a nonexistent function as an IAM success');
         expect(runbook).toContain('returns HTTP 403 before callable code runs');
         expect(runbook).toContain('webhook remains invokable and confirm any already-deployed audit or cleanup endpoint');

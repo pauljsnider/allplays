@@ -42,6 +42,8 @@ function setNested(target, path, value) {
 
 function makeFirestore(seed = {}, firestoreOptions = {}) {
     const state = new Map(Object.entries(clone(seed)));
+    const updateVersions = new Map([...state.keys()].map((path, index) => [path, index + 1]));
+    let nextUpdateVersion = state.size + 1;
     let nextAutoId = 1;
     let nextTransactionError = null;
     let shouldRetryNextTransaction = false;
@@ -89,6 +91,7 @@ function makeFirestore(seed = {}, firestoreOptions = {}) {
         }
         const current = state.get(path);
         state.set(path, applyPatch(current, value, writeOptions.merge === true));
+        updateVersions.set(path, nextUpdateVersion++);
     }
 
     function doc(path) {
@@ -97,6 +100,7 @@ function makeFirestore(seed = {}, firestoreOptions = {}) {
             id: String(path).split('/').pop(),
             async get() {
                 const data = state.get(path);
+                const updateVersion = updateVersions.get(path);
                 const afterGet = afterGetHooks.get(path);
                 if (afterGet) {
                     afterGetHooks.delete(path);
@@ -106,6 +110,11 @@ function makeFirestore(seed = {}, firestoreOptions = {}) {
                     exists: data !== undefined,
                     id: String(path).split('/').pop(),
                     ref: this,
+                    updateTime: data === undefined ? undefined : {
+                        seconds: updateVersion,
+                        nanoseconds: 0,
+                        toMillis: () => updateVersion * 1000
+                    },
                     data: () => clone(data)
                 };
             },
@@ -1159,8 +1168,16 @@ test('Team Pass admin recovery preserves a terminal Session for webhook reconcil
         'users/admin-2': { email: 'admin@example.com' }
     });
     const request = { teamId: 'team-pass', seasonId: '2026', tier: 'team-pass' };
+    let signalRecoveryStarted;
+    let releaseRecovery;
+    const recoveryStarted = new Promise((resolve) => { signalRecoveryStarted = resolve; });
+    const recoveryGate = new Promise((resolve) => { releaseRecovery = resolve; });
     stripeState.checkoutCreateHook = async ({ payload, options }) => {
-        if (stripeState.checkoutResponsesByIdempotencyKey.has(options.idempotencyKey)) return;
+        if (stripeState.checkoutResponsesByIdempotencyKey.has(options.idempotencyKey)) {
+            signalRecoveryStarted();
+            await recoveryGate;
+            return;
+        }
         const terminalSession = {
             id: 'cs_team_pass_admin_recovery_terminal',
             url: 'https://stripe.test/checkout/team-pass-admin-recovery-terminal',
@@ -1177,15 +1194,35 @@ test('Team Pass admin recovery preserves a terminal Session for webhook reconcil
     }), /Injected post-Stripe Team Pass failure/);
     await firestore.doc('teams/team-pass').set({ ownerId: 'departed-owner' }, { merge: true });
 
-    await assert.rejects(mod.expireStripeTeamPassCheckout(request, {
+    const recoveryPromise = mod.expireStripeTeamPassCheckout(request, {
         auth: { uid: 'admin-2', token: { email: 'admin@example.com' } }
-    }), /payment is completing/i);
+    });
+    await recoveryStarted;
+    assert.equal(firestore.snapshot(attemptPath).checkoutStatus, 'recovering');
+
+    const terminalSession = stripeState.checkoutResponses.get('cs_team_pass_admin_recovery_terminal');
+    stripeState.webhookEvent = {
+        id: 'evt_team_pass_admin_recovery_terminal_paid',
+        type: 'checkout.session.completed',
+        created: 100,
+        data: { object: clone(terminalSession) }
+    };
+    assert.equal((await deliverStripeWebhook(mod)).statusCode, 500);
+    assert.equal(firestore.snapshot('stripeEvents/evt_team_pass_admin_recovery_terminal_paid'), undefined);
+
+    releaseRecovery();
+    await assert.rejects(recoveryPromise, /payment is completing/i);
 
     const preservedAttempt = firestore.snapshot(attemptPath);
     assert.equal(preservedAttempt.checkoutStatus, 'open');
     assert.equal(preservedAttempt.stripeCheckoutSessionId, 'cs_team_pass_admin_recovery_terminal');
     assert.equal(preservedAttempt.stripePaymentStatus, 'paid');
     assert.deepEqual(stripeState.expiredSessionIds, []);
+
+    assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
+    assert.equal(firestore.snapshot(attemptPath).checkoutStatus, 'paid');
+    assert.equal(firestore.snapshot('teams/team-pass/entitlements/2026_team-pass').status, 'active');
+    assert.equal(firestore.snapshot('stripeEvents/evt_team_pass_admin_recovery_terminal_paid').ignored, false);
 });
 
 test('Team Pass admin recovery rechecks authorization before releasing expired authority', async () => {
@@ -1343,6 +1380,19 @@ test('payment authority rollout gate audits blockers and requires an explicit em
         }, adminContext),
         /exact payment-authority maintenance freeze is not active/i
     );
+    firestore.afterNextGet('paymentAuthorityRollout/control', async () => {
+        await firestore.doc('paymentAuthorityRollout/control').set({ frozen: false, freezeId });
+        await firestore.doc('paymentAuthorityRollout/control').set({ frozen: true, freezeId });
+    });
+    await assert.rejects(
+        mod.auditStripePaymentAuthorityRollout({
+            assertEmpty: true,
+            confirmation: 'assert_no_legacy_stripe_payment_authority_v1',
+            freezeId
+        }, adminContext),
+        /maintenance freeze changed while the operation was running/i
+    );
+    await firestore.doc('paymentAuthorityRollout/control').set({ frozen: true, freezeId });
     await assert.rejects(
         mod.auditStripePaymentAuthorityRollout({
             assertEmpty: true,
@@ -1598,6 +1648,47 @@ test('rollout cleanup dry-runs and expires only exactly bound AllPlays open Sess
     assert.equal(stripeState.checkoutResponses.get('cs_unrelated_000').status, 'open');
     const auditAfter = await mod.auditStripePaymentAuthorityRollout({ assertEmpty: false }, adminContext);
     assert.equal(auditAfter.ready, true);
+});
+
+test('rollout cleanup stops between Session expirations when the exact freeze epoch changes', async () => {
+    const { firestore, stripeState, mod } = loadFunctionsModule({
+        'users/platform-admin': { email: 'admin@example.com', isAdmin: true }
+    });
+    const freezeId = 'freeze_payment_authority_cleanup_epoch';
+    for (const suffix of ['a', 'b']) {
+        stripeState.checkoutResponses.set(`cs_rollout_${suffix}`, {
+            id: `cs_rollout_${suffix}`, mode: 'payment', status: 'open', payment_status: 'unpaid', livemode: false,
+            client_reference_id: `team-${suffix}:2026:owner-1`,
+            metadata: {
+                product: 'team_pass', teamId: `team-${suffix}`, seasonId: '2026', tier: 'team-pass',
+                purchaserUid: 'owner-1', priceId: 'price_team_pass',
+                checkoutAttemptToken: `attempt_${suffix}_1234567890abcdef`
+            }
+        });
+    }
+    await firestore.doc('paymentAuthorityRollout/control').set({ frozen: true, freezeId });
+    let freezeReplaced = false;
+    stripeState.checkoutExpireHook = async () => {
+        if (freezeReplaced) return;
+        freezeReplaced = true;
+        await firestore.doc('paymentAuthorityRollout/control').set({ frozen: false, freezeId });
+        await firestore.doc('paymentAuthorityRollout/control').set({ frozen: true, freezeId });
+    };
+
+    await assert.rejects(
+        mod.expireOpenStripePaymentAuthoritySessionsForRollout({
+            dryRun: false,
+            confirmation: 'expire_open_legacy_stripe_checkout_sessions_v1',
+            freezeId
+        }, { auth: { uid: 'platform-admin', token: { email: 'admin@example.com' } } }),
+        /maintenance freeze changed while the operation was running/i
+    );
+    assert.deepEqual(stripeState.expiredSessionIds, ['cs_rollout_a']);
+    assert.equal(stripeState.checkoutResponses.get('cs_rollout_b').status, 'open');
+    assert.equal(
+        [...firestore._state.keys()].filter((path) => path.startsWith('paymentAuthorityRolloutSessionExpirations/')).length,
+        0
+    );
 });
 
 test('Team Pass reversal state remains authoritative when refund arrives before paid', async () => {
