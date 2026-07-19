@@ -47,6 +47,16 @@ collections, both of which Phase B closes.
 6. Monitor permission-denied and callable error rates. Roll back the rules alone
    if projection availability regresses; do not roll back the PII-free writes.
 
+## Phase B activation record
+
+Leave every item unchecked while this PR is held:
+
+- [ ] Phase A Functions and clients are live with preview and production parity.
+- [ ] Supported iOS and Android populations use projection-first family sharing.
+- [ ] Supported iOS and Android populations use exact-document parent RSVP reads.
+- [ ] Callable/fallback and permission-denied telemetry is within approved bounds.
+- [ ] Phase B is rebased on current master with only the documented closure delta.
+
 The projection reuses the hardened calendar SSRF fetch path and its shared
 cache/in-flight coalescing, making repeated bearer requests side-effect-free and
 idempotent at the outbound-fetch boundary. Each response is bounded to 8 source

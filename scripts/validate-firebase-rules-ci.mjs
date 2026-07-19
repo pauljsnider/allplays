@@ -381,9 +381,14 @@ export function validateFirebaseRulesCi() {
     assertIncludes(firestoreRules, 'allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);', 'Firestore team fee admin billing admin-only rules');
     assertIncludes(firestoreRules, 'match /rsvpNotes/{rsvpId}', 'Firestore restricted RSVP note rules');
     assertIncludes(firestoreRules, 'function isRsvpStatusPayloadSafe(data)', 'Firestore RSVP status note exclusion helper');
+    assertIncludes(firestoreRules, "'parentEmail',", 'Firestore RSVP status direct-email exclusion');
+    assertIncludes(firestoreRules, "'guardianEmail',", 'Firestore RSVP status guardian-email exclusion');
+    assertIncludes(firestoreRules, 'allow list: if isTeamOwnerOrAdmin(teamId);', 'Firestore staff-only RSVP collection reads');
     assertIncludes(firestoreRules, 'allow get: if (resource == null && isOwnRsvpNoteId() && isParentForTeam(teamId)) ||', 'Firestore missing own RSVP note read rules');
-    assertIncludes(firestoreRules, 'canReadRsvpNote(teamId, resource.data);', 'Firestore existing RSVP note read rules');
-    assertIncludes(firestoreRules, 'allow list: if canReadRsvpNote(teamId, resource.data);', 'Firestore restricted RSVP note list rules');
+    assertIncludes(firestoreRules, '(resource != null && canReadRsvpNote(teamId, resource.data));', 'Firestore existing RSVP note read rules');
+    assertIncludes(firestoreRules, 'allow list: if isTeamOwnerOrAdmin(teamId);', 'Firestore staff-only RSVP note list rules');
+    assertIncludes(firestoreRules, 'match /familyShareTokens/{tokenId}', 'Firestore family share source document rules');
+    assertIncludes(firestoreRules, 'allow get: if (isSignedIn() && resource.data.ownerUserId == request.auth.uid) ||', 'Firestore family share owner/admin source reads');
     assertIncludes(firestoreRules, 'function isNestedChatMessageCreateValid(teamId, conversationId, conversationData, data)', 'Nested chat message payload validator');
     assertIncludes(firestoreRules, 'function isNestedChatMessageTargetValid(teamId, conversationId, conversationData, data)', 'Nested chat message target validator');
     assertIncludes(firestoreRules, 'function hasValidNestedChatAttachments(teamId, conversationId, data)', 'Nested chat attachment validator');
