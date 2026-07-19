@@ -30,6 +30,7 @@ const serviceMocks = vi.hoisted(() => ({
 }));
 
 const publicActionMocks = vi.hoisted(() => ({
+    copyPublicText: vi.fn(),
     exportCalendarIcsFile: vi.fn().mockResolvedValue('downloaded'),
     openPublicUrl: vi.fn(),
     sharePublicUrl: vi.fn().mockResolvedValue('shared')
@@ -215,6 +216,7 @@ beforeEach(() => {
             writeText: vi.fn().mockResolvedValue()
         }
     });
+    publicActionMocks.copyPublicText.mockResolvedValue('copied');
     URL.createObjectURL = vi.fn(() => 'blob:test');
     URL.revokeObjectURL = vi.fn();
 
@@ -356,7 +358,7 @@ describe('React app parent tools integration', () => {
         expect(publicActionMocks.exportCalendarIcsFile).toHaveBeenCalledWith('all-plays-family-schedule.ics', 'BEGIN:VCALENDAR\r\nEND:VCALENDAR');
         expect(container.textContent).toContain('Calendar file ready to share.');
         await clickButton(container, 'Copy agenda');
-        expect(navigator.clipboard.writeText).toHaveBeenCalledWith('Bears Practice');
+        expect(publicActionMocks.copyPublicText).toHaveBeenCalledWith('Bears Practice');
         await clickButton(container, 'Apple');
         expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('webcal://feed.example.test/team-1.ics');
 

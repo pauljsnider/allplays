@@ -271,8 +271,8 @@ describe('React app TeamDetail staff permissions overview', () => {
         expect(container.textContent).toContain('Copy and share this invite with newcoach@example.com.');
         await clickButton(container, 'Copy code');
         await clickButton(container, 'Copy link');
-        expect(navigator.clipboard.writeText).toHaveBeenCalledWith('CODE123');
-        expect(navigator.clipboard.writeText).toHaveBeenCalledWith('https://allplays.ai/accept-invite?code=CODE123&type=admin');
+        expect(publicActionMocks.copyPublicText).toHaveBeenCalledWith('CODE123');
+        expect(publicActionMocks.copyPublicText).toHaveBeenCalledWith('https://allplays.ai/accept-invite?code=CODE123&type=admin');
     });
 
     it('keeps the screening block message visible when a helper grant is rejected', async () => {
