@@ -5088,6 +5088,14 @@ function getSettledStripeSessionPaymentAuthorityFailure({ session = {}, paymentI
   return '';
 }
 
+function getStripeChargeDisputeSignalFailure(charge = {}, disputeStatus = 'none') {
+  const normalizedStatus = String(disputeStatus || 'none').trim().toLowerCase();
+  const hasRecordedDispute = ['open', 'won', 'lost'].includes(normalizedStatus);
+  if (charge.disputed === true && !hasRecordedDispute) return 'charge_dispute_evidence_missing';
+  if (charge.disputed !== true && normalizedStatus === 'open') return 'charge_dispute_status_stale';
+  return '';
+}
+
 function getSettledStripeChargeLedgerFailure({
   product,
   input,
@@ -5125,10 +5133,8 @@ function getSettledStripeChargeLedgerFailure({
       || chargeRefundedAmountCents !== Math.round(Number(ledger.refundedAmountCents || 0))) {
     return 'charge_refund_amount_mismatch';
   }
-  if (charge.disputed === true
-      && String(ledger.disputeStatus || 'none').trim().toLowerCase() !== 'open') {
-    return 'charge_dispute_status_mismatch';
-  }
+  const disputeFailure = getStripeChargeDisputeSignalFailure(charge, ledger.disputeStatus);
+  if (disputeFailure) return disputeFailure;
   return '';
 }
 
@@ -5231,6 +5237,9 @@ async function inspectSettledStripeCheckoutSessionAuthority(
       return { product, path: sessionPath, reason: 'settled_stripe_session_missing_checkout_attempt' };
     }
     const attempt = matchingAttempts[0].data() || {};
+    const attemptDisputeStatuses = [attempt.reversalState?.disputeStatus, attempt.disputeStatus]
+      .map((value) => String(value || '').trim().toLowerCase());
+    const attemptDisputeStatus = attemptDisputeStatuses.includes('won') ? 'won' : 'none';
     const hasV2Authority = Number(attempt.stripePaymentAuthorityVersion) === 2;
     const paymentAuthorityFailure = hasV2Authority
       ? getTeamPassPaymentIntentGuardFailure({ attempt, session, paymentIntent, charge })
@@ -5241,7 +5250,7 @@ async function inspectSettledStripeCheckoutSessionAuthority(
         || attempt.stripeChargeId !== charge.id
         || Math.round(Number(charge.amount_refunded || 0))
           !== Math.round(Number(attempt.reversalState?.refundedAmountCents ?? attempt.refundedAmountCents ?? 0))
-        || charge.disputed === true
+        || getStripeChargeDisputeSignalFailure(charge, attemptDisputeStatus)
         || paymentAuthorityFailure) {
       return { product, path: sessionPath, reason: 'settled_stripe_session_checkout_attempt_invalid' };
     }

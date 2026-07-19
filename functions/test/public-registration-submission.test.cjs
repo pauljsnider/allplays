@@ -1566,7 +1566,7 @@ test('payment authority rollout binds settled Stripe Session economics to the ex
         product: 'registration', teamId: 'team-a', formId: 'form-a', registrationId: 'reg-settled',
         checkoutAttemptToken: 'attempt_registration_settled_1234'
     };
-    const { stripeState, mod } = loadFunctionsModule({
+    const { firestore, stripeState, mod } = loadFunctionsModule({
         'users/platform-admin': { email: 'admin@example.com', isAdmin: true },
         [registrationPath]: {
             id: 'reg-settled', teamId: 'team-a', formId: 'form-a', paymentProvider: 'stripe',
@@ -1612,6 +1612,22 @@ test('payment authority rollout binds settled Stripe Session economics to the ex
     const valid = await mod.auditStripePaymentAuthorityRollout({ assertEmpty: false }, adminContext);
     assert.equal(valid.ready, true, JSON.stringify(valid.blockers));
     assert.equal(valid.blockerCount, 0);
+
+    stripeState.charges.get(chargeId).disputed = true;
+    const missingDisputeEvidence = await mod.auditStripePaymentAuthorityRollout({ assertEmpty: false }, adminContext);
+    assert.equal(missingDisputeEvidence.ready, false);
+    assert.equal(missingDisputeEvidence.blockers[0]?.reason, 'settled_stripe_session_charge_ledger_invalid');
+
+    await firestore.doc(ledgerPath).update({ disputeStatus: 'won' });
+    const resolvedDispute = await mod.auditStripePaymentAuthorityRollout({ assertEmpty: false }, adminContext);
+    assert.equal(resolvedDispute.ready, true, JSON.stringify(resolvedDispute.blockers));
+    assert.equal(resolvedDispute.blockerCount, 0);
+
+    stripeState.charges.get(chargeId).disputed = false;
+    await firestore.doc(ledgerPath).update({ disputeStatus: 'open' });
+    const staleOpenDispute = await mod.auditStripePaymentAuthorityRollout({ assertEmpty: false }, adminContext);
+    assert.equal(staleOpenDispute.ready, false);
+    assert.equal(staleOpenDispute.blockers[0]?.reason, 'settled_stripe_session_charge_ledger_invalid');
 });
 
 test('payment authority rollout gate detects pointers, orphan ledgers, and paid attempts without entitlements', async () => {

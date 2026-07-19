@@ -201,6 +201,7 @@ describe('Stripe payment-authority rollout gate', () => {
         expect(source).toContain('if (assertFreeze) await assertFreeze();');
         expect(source).toContain('getSettledStripeSessionPaymentAuthorityFailure');
         expect(source).toContain('getSettledStripeChargeLedgerFailure');
+        expect(source).toContain('getStripeChargeDisputeSignalFailure');
         expect(source).toContain("reason: 'settled_stripe_session_charge_ledger_invalid'");
         expect(source).toContain("throw new functions.https.HttpsError('failed-precondition', 'Payment authority rollout is blocked");
         expect(source).toContain("writeStripePaymentAuthorityRolloutLog(firestore.collection('paymentAuthorityRolloutAudits').doc()");
