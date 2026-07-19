@@ -196,7 +196,7 @@ service firebase.storage {
     match /stat-sheets/team-chat/{teamId}/{conversationId}/{userId}/{fileName} {
       allow get: if canAccessChatAttachment(teamId, conversationId);
       allow list: if false;
-      allow create: if isVerifiedForSensitiveWrite() &&
+      allow create: if isSignedIn() &&
         canAccessChatAttachment(teamId, conversationId) &&
         request.auth.uid == userId &&
         isAllowedChatAttachmentUpload(request.resource.contentType, request.resource.size);
