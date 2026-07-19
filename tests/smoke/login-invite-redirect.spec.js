@@ -176,6 +176,7 @@ test('email/password invite login prefers current link over stale recovery code'
         waitUntil: 'domcontentloaded'
     });
 
+    await expect.poll(() => page.evaluate(() => window.sessionStorage.getItem('pendingLoginInviteCode'))).toBe(null);
     await expect(page.locator('#form-title')).toHaveText('Sign Up');
     await page.locator('#toggle-btn').click();
     await expect(page.locator('#form-title')).toHaveText('Login');
@@ -463,6 +464,7 @@ test('Google invite login prefers current link over stale recovery code', async 
         waitUntil: 'domcontentloaded'
     });
 
+    await expect.poll(() => page.evaluate(() => window.sessionStorage.getItem('pendingLoginInviteCode'))).toBe(null);
     await expect(page.locator('#form-title')).toHaveText('Sign Up');
     await page.locator('#toggle-btn').click();
     await expect(page.locator('#form-title')).toHaveText('Login');

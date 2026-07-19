@@ -129,6 +129,9 @@
         const authState = createLoginAuthStateManager();
         const { urlCodeParam, shouldRedeemInviteFromLogin } = redirectCoordinator;
         const pendingLoginInviteCodeStorageKey = loginPageModule.PENDING_LOGIN_INVITE_CODE_STORAGE_KEY || 'pendingLoginInviteCode';
+        if (urlCodeParam) {
+            window.sessionStorage.removeItem(pendingLoginInviteCodeStorageKey);
+        }
 
         function redirectAuthenticatedUser(user) {
             window.location.href = redirectCoordinator.getAutoRedirectUrl(user);
