@@ -11,6 +11,7 @@ import {
   Compass,
   CreditCard,
   Dumbbell,
+  Ellipsis,
   FilePlus2,
   Home,
   ImagePlus,
@@ -60,6 +61,14 @@ const desktopNavItems: NavItem[] = [
   navItems[navItems.length - 1]
 ];
 
+const mobilePrimaryNavItems: NavItem[] = [navItems[0]!, navItems[1]!, navItems[2]!, navItems[3]!];
+const mobileMoreNavItems: NavItem[] = [navItems[4]!, familyNavItem, navItems[5]!];
+const mobileMoreNavDetails: Record<string, string> = {
+  '/profile': 'Your profile, posts, and account settings',
+  '/parent-tools': 'Access, household, fees, calendar, sharing, and awards',
+  '/discover': 'Public teams, openings, jobs, officials, and volunteers'
+};
+
 const publicNavItems: NavItem[] = [
   { label: 'Discover', path: '/discover', icon: Compass },
   { label: 'Find Teams', path: '/teams/browse', icon: Users },
@@ -89,6 +98,7 @@ export function AppShell({ auth, children }: AppShellProps) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [addTeamOpen, setAddTeamOpen] = useState(false);
   const [moreAddWorkflowsOpen, setMoreAddWorkflowsOpen] = useState(false);
+  const [moreNavOpen, setMoreNavOpen] = useState(false);
   const [inboxOpen, setInboxOpen] = useState(false);
   const [inboxItems, setInboxItems] = useState<NotificationInboxItem[]>([]);
   const [inboxState, setInboxState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
@@ -160,11 +170,19 @@ export function AppShell({ auth, children }: AppShellProps) {
         setInboxOpen(false);
         event.preventDefault();
       }
+      if (moreNavOpen) {
+        setMoreNavOpen(false);
+        event.preventDefault();
+      }
     };
 
     window.addEventListener(APP_BACK_DISMISS_EVENT, onNativeBackDismiss);
     return () => window.removeEventListener(APP_BACK_DISMISS_EVENT, onNativeBackDismiss);
-  }, [addTeamOpen, inboxOpen, searchOpen]);
+  }, [addTeamOpen, inboxOpen, moreNavOpen, searchOpen]);
+
+  useEffect(() => {
+    setMoreNavOpen(false);
+  }, [location.pathname, location.search]);
 
   useEffect(() => {
     const uid = auth.user?.uid;
@@ -275,14 +293,16 @@ export function AppShell({ auth, children }: AppShellProps) {
     : hasSignedInSession
       ? 'Signed in'
       : 'Explore ALL PLAYS';
-  const activeNavItems = hasSignedInSession ? navItems : publicNavItems;
+  const activeNavItems = hasSignedInSession ? mobilePrimaryNavItems : publicNavItems;
   const activeDesktopNavItems = hasSignedInSession ? desktopNavItems : publicNavItems;
+  const moreNavActive = hasSignedInSession && mobileMoreNavItems.some((item) => isRouteActive(location.pathname, item.path));
   const commonAddWorkflows = commonAddWorkflowIds
     .map((id) => addWorkflows.find((workflow) => workflow.id === id))
     .filter((workflow): workflow is AddWorkflow => workflow !== undefined);
   const advancedAddWorkflows = addWorkflows.filter((workflow) => !commonAddWorkflowIds.includes(workflow.id));
 
   const openAddWorkflowModal = () => {
+    setMoreNavOpen(false);
     setMoreAddWorkflowsOpen(false);
     setAddTeamOpen(true);
   };
@@ -533,10 +553,10 @@ export function AppShell({ auth, children }: AppShellProps) {
             className={`safe-bottom fixed inset-x-0 bottom-0 z-40 border-t border-gray-200 bg-white/95 px-2 pt-2 backdrop-blur ${isMobileChatDetail ? 'app-bottom-nav-chat-detail' : ''}`}
             aria-label="Primary navigation"
           >
-            <div className="mx-auto grid max-w-5xl gap-1" style={{ gridTemplateColumns: `repeat(${activeNavItems.length}, minmax(0, 1fr))` }}>
+            <div className="mx-auto grid max-w-5xl gap-1" style={{ gridTemplateColumns: `repeat(${activeNavItems.length + (hasSignedInSession ? 1 : 0)}, minmax(0, 1fr))` }}>
               {activeNavItems.map((item) => {
                 const Icon = item.icon;
-                const isActive = location.pathname === item.path || (item.path !== '/home' && location.pathname.startsWith(item.path + '/'));
+                const isActive = isRouteActive(location.pathname, item.path);
 
                 return (
                   <NavLink
@@ -551,10 +571,72 @@ export function AppShell({ auth, children }: AppShellProps) {
                   </NavLink>
                 );
               })}
+              {hasSignedInSession ? (
+                <button
+                  type="button"
+                  className={`flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl px-1 text-[11px] font-extrabold transition ${
+                    moreNavActive || moreNavOpen ? 'bg-primary-50 text-primary-700' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-800'
+                  }`}
+                  onClick={() => setMoreNavOpen(true)}
+                  aria-label="More"
+                  aria-haspopup="dialog"
+                  aria-expanded={moreNavOpen}
+                  aria-current={moreNavActive ? 'page' : undefined}
+                >
+                  <Ellipsis className="h-5 w-5" aria-hidden="true" />
+                  <span>More</span>
+                </button>
+              ) : null}
             </div>
           </nav>
         </>
       )}
+
+      {moreNavOpen && hasSignedInSession && !isDesktopWeb ? (
+        <Modal
+          overlayClassName="z-50 flex items-end bg-gray-950/40 p-3 backdrop-blur-sm"
+          ariaLabelledBy="mobile-more-navigation-title"
+          onClose={() => setMoreNavOpen(false)}
+        >
+          <div className="safe-bottom w-full rounded-3xl bg-white p-4 shadow-app-lg">
+            <div className="flex items-start justify-between gap-3 border-b border-gray-100 pb-3">
+              <div>
+                <div className="app-label">Navigation</div>
+                <h2 id="mobile-more-navigation-title" className="mt-1 text-lg font-black text-gray-950">More from ALL PLAYS</h2>
+              </div>
+              <button type="button" className="ghost-button !h-11 !min-h-11 !w-11 !p-0" onClick={() => setMoreNavOpen(false)} aria-label="Close more navigation">
+                <X className="h-5 w-5" aria-hidden="true" />
+              </button>
+            </div>
+            <nav className="mt-3 grid gap-2" aria-label="More navigation">
+              {mobileMoreNavItems.map((item) => {
+                const Icon = item.icon;
+                const isActive = isRouteActive(location.pathname, item.path);
+                return (
+                  <NavLink
+                    key={item.path}
+                    to={item.path}
+                    onClick={() => setMoreNavOpen(false)}
+                    aria-current={isActive ? 'page' : undefined}
+                    className={`flex min-h-16 items-center gap-3 rounded-2xl border p-3 text-left transition ${
+                      isActive ? 'border-primary-200 bg-primary-50 text-primary-800' : 'border-gray-200 bg-white text-gray-700 hover:border-primary-200 hover:bg-primary-50/40'
+                    }`}
+                  >
+                    <span className={`flex h-11 w-11 flex-none items-center justify-center rounded-xl ${isActive ? 'bg-primary-600 text-white' : 'bg-gray-100 text-gray-700'}`}>
+                      <Icon className="h-5 w-5" aria-hidden="true" />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-black text-gray-950">{item.label}</span>
+                      <span className="mt-0.5 block text-xs font-semibold leading-5 text-gray-500">{mobileMoreNavDetails[item.path]}</span>
+                    </span>
+                    {isActive ? <span className="rounded-full bg-primary-600 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-white">Current</span> : null}
+                  </NavLink>
+                );
+              })}
+            </nav>
+          </div>
+        </Modal>
+      ) : null}
 
       {inboxOpen ? (
         <Suspense fallback={null}>
@@ -823,4 +905,8 @@ function isTypingTarget(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) return false;
   const tagName = target.tagName.toLowerCase();
   return tagName === 'input' || tagName === 'textarea' || tagName === 'select' || target.isContentEditable;
+}
+
+function isRouteActive(pathname: string, itemPath: string) {
+  return pathname === itemPath || (itemPath !== '/home' && pathname.startsWith(itemPath + '/'));
 }

@@ -1252,11 +1252,11 @@ export function Profile({ auth }: { auth: AuthState }) {
             <p className="truncate text-sm font-semibold text-gray-600">{user.email || 'No email loaded'}</p>
             <p className="mt-1 text-xs font-bold text-gray-400">Last updated: {updatedAt}</p>
           </div>
-          <button type="button" className="ghost-button flex-none !px-3" onClick={handleSignOut} disabled={busy === 'logout'} aria-label="Sign out">
+          <button type="button" className="ghost-button flex-none !min-h-11 !px-3" onClick={handleSignOut} disabled={busy === 'logout'} aria-label="Sign out">
             {busy === 'logout' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <LogOut className="h-4 w-4" aria-hidden="true" />}
           </button>
         </div>
-        <Link to="/profile" className="secondary-button mt-3 !min-h-9 text-xs">
+        <Link to="/profile" className="secondary-button mt-3 !min-h-11 text-xs">
           <UserCircle className="h-4 w-4" aria-hidden="true" />
           View public profile
         </Link>
@@ -1270,7 +1270,7 @@ export function Profile({ auth }: { auth: AuthState }) {
               <button
                 key={section.id}
                 type="button"
-                className={`min-h-10 rounded-xl px-3 text-sm font-black transition ${active ? 'bg-primary-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-950'}`}
+                className={`min-h-11 rounded-xl px-3 text-sm font-black transition ${active ? 'bg-primary-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-950'}`}
                 onClick={() => selectProfileSection(section.id)}
                 aria-pressed={active}
               >

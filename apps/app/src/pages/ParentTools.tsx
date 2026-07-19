@@ -1,6 +1,6 @@
 import { lazy, memo, Suspense, useCallback, useEffect, useRef, useState, type ComponentType, type LazyExoticComponent, type ReactNode } from 'react';
 import { Award, CalendarDays, ChevronLeft, DollarSign, Loader2, Share2, Shield, Ticket, Users, type LucideIcon } from 'lucide-react';
-import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { Link, Navigate, NavLink, useLocation, useParams } from 'react-router-dom';
 import type { AuthState } from '../lib/types';
 import { loadParentToolPanel } from './parent-tools/loadParentToolPanel';
 import { completeParentCoreWorkflowTimer } from '../lib/parentWorkflowTiming';
@@ -101,7 +101,6 @@ const ParentToolPanel = memo(function ParentToolPanel({ toolId, auth, refreshVer
 
 export function ParentTools({ auth }: { auth: AuthState }) {
     const { toolId = 'access' } = useParams();
-    const navigate = useNavigate();
     const location = useLocation();
     const activeTool = validToolIds.has(toolId as ParentToolId) ? toolId as ParentToolId : null;
     const hasLinkedPlayers = hasParentToolLinks(auth);
@@ -117,8 +116,8 @@ export function ParentTools({ auth }: { auth: AuthState }) {
     const [visitedTools, setVisitedTools] = useState<ParentToolId[]>(() => activeTool ? [activeTool] : ['access']);
     const [toolRefreshVersions, setToolRefreshVersions] = useState<Record<ParentToolId, number>>(initialToolRefreshVersions);
     const [staleTools, setStaleTools] = useState<Set<ParentToolId>>(() => new Set());
-    const navRef = useRef<HTMLDivElement | null>(null);
-    const tabRefs = useRef<Partial<Record<ParentToolId, HTMLButtonElement | null>>>({});
+    const navRef = useRef<HTMLElement | null>(null);
+    const tabRefs = useRef<Partial<Record<ParentToolId, HTMLAnchorElement | null>>>({});
     const activeToolRef = useRef<ParentToolId | null>(activeTool);
     const visitedToolsRef = useRef<ParentToolId[]>(visitedTools);
     const staleToolsRef = useRef(staleTools);
@@ -177,10 +176,6 @@ export function ParentTools({ auth }: { auth: AuthState }) {
         }));
     }, [activeTool]);
 
-    const setTool = useCallback((nextTool: ParentToolId) => {
-        navigate(`/parent-tools/${nextTool}`);
-    }, [navigate]);
-
     const handleAccessChanged = useCallback(() => {
         const currentActiveTool = activeToolRef.current;
         const currentVisitedTools = visitedToolsRef.current;
@@ -201,7 +196,7 @@ export function ParentTools({ auth }: { auth: AuthState }) {
         <div className="parent-tools-page space-y-3">
             <section className="app-card overflow-hidden">
                 <div className="flex items-center gap-3 px-3 py-3 sm:px-4">
-                    <Link to="/home" className="ghost-button !h-9 !min-h-9 !w-9 !flex-none !p-0" aria-label="Back to Home" title="Back to Home">
+                    <Link to="/home" className="ghost-button !h-11 !min-h-11 !w-11 !flex-none !p-0" aria-label="Back to Home" title="Back to Home">
                         <ChevronLeft className="h-4 w-4" aria-hidden="true" />
                     </Link>
                     <div className="min-w-0 flex-1">
@@ -213,32 +208,31 @@ export function ParentTools({ auth }: { auth: AuthState }) {
             </section>
 
             {accessLockedMessage ? (
-                <section className="app-card border border-amber-200 bg-amber-50/80 p-4 text-sm font-semibold text-amber-900">
+                <section className="app-card border border-amber-200 bg-amber-50/80 p-4 text-sm font-semibold text-amber-900" role="status">
                     {accessLockedMessage}
                 </section>
             ) : null}
 
-            <div ref={navRef} className="parent-tools-nav sticky top-24 z-30 -mx-1 overflow-x-auto bg-gray-50/95 py-2 backdrop-blur">
+            <nav ref={navRef} className="parent-tools-nav sticky top-24 z-30 -mx-1 overflow-x-auto bg-gray-50/95 py-2 backdrop-blur" aria-label="Family tools">
                 <div className="grid min-w-max gap-1 rounded-2xl border border-gray-200 bg-white p-1 shadow-sm" style={{ gridTemplateColumns: `repeat(${visibleTools.length}, minmax(0, 1fr))` }}>
                     {visibleTools.map((tool) => {
                         const Icon = tool.icon;
                         const active = tool.id === activeTool;
                         return (
-                            <button
+                            <NavLink
                                 key={tool.id}
-                                ref={(button) => { tabRefs.current[tool.id] = button; }}
-                                type="button"
-                                className={`flex min-h-10 items-center justify-center gap-1.5 rounded-xl px-3 text-xs font-black transition sm:text-sm ${active ? 'bg-primary-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-950'}`}
-                                onClick={() => setTool(tool.id)}
-                                aria-pressed={active}
+                                ref={(link) => { tabRefs.current[tool.id] = link; }}
+                                to={`/parent-tools/${tool.id}`}
+                                className={`flex min-h-11 items-center justify-center gap-1.5 rounded-xl px-3 text-xs font-black transition sm:text-sm ${active ? 'bg-primary-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-950'}`}
+                                aria-current={active ? 'page' : undefined}
                             >
                                 <Icon className="h-4 w-4 flex-none" aria-hidden="true" />
                                 <span>{tool.label}</span>
-                            </button>
+                            </NavLink>
                         );
                     })}
                 </div>
-            </div>
+            </nav>
 
             {visibleTools.map((tool) => (
                 <KeepAliveTool key={tool.id} active={activeTool === tool.id} mounted={visitedTools.includes(tool.id)}>
