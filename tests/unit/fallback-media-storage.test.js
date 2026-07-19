@@ -84,8 +84,7 @@ describe('fallback media paths and Storage rules', () => {
         expect(chatFallbackRules).toContain('allow get: if canAccessChatAttachment(teamId, conversationId);');
         expect(rules).toContain("('user:' + request.auth.uid) in participantIds");
         expect(rules).toContain("('email:' + request.auth.token.email.lower()) in participantIds");
-        expect(chatFallbackRules).toContain('allow create: if isSignedIn() &&\n        canAccessChatAttachment(teamId, conversationId) &&');
-        expect(chatFallbackRules).not.toContain('allow create: if isVerifiedForSensitiveWrite() &&');
+        expect(chatFallbackRules).toContain("allow create: if (isVerifiedForSensitiveWrite() ||\n        (isSignedIn() && conversationId == 'team')) &&");
         expect(chatFallbackRules).toContain('request.auth.uid == userId');
         expect(chatFallbackRules).toContain('isAllowedChatAttachmentUpload(request.resource.contentType, request.resource.size);');
         expect(rules).toContain('function canDeleteOwnChatAttachment(teamId, conversationId, userId)');

@@ -159,6 +159,12 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
             await assertSucceeds(
                 parentStorage.ref('stat-sheets/team-chat/team-a/team/member-a/unverified-chat-photo.jpg').delete()
             );
+            await assertFails(
+                parentStorage.ref('stat-sheets/team-chat/team-a/targeted-a/member-a/unverified-targeted-photo.jpg').put(
+                    new Uint8Array([1]),
+                    { contentType: 'image/jpeg' }
+                )
+            );
         });
     }
 );
