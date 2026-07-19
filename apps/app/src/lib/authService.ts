@@ -473,6 +473,10 @@ export async function getNativeAuthIdToken(forceRefresh = false): Promise<string
   return fallbackUser.getIdToken(forceRefresh);
 }
 
+export function getNativeAuthUserId(): string | null {
+  return auth.currentUser?.uid || getNativeAuthFallbackUser()?.uid || null;
+}
+
 async function getNativeAccessCodeValidationOptions(result: UserCredential) {
   if (!result.nativeRest || auth.currentUser) {
     return undefined;

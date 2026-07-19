@@ -538,13 +538,36 @@ function getRequiredSignedInUserId() {
     return userId;
 }
 
+const CHAT_MEDIA_UPLOAD_TIMEOUT_MS = 25000;
+
+async function withChatMediaTimeout(operation) {
+    let timeoutId;
+    const timeoutPromise = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => {
+            reject(new Error('Chat media upload timed out. Check your connection and try again.'));
+        }, CHAT_MEDIA_UPLOAD_TIMEOUT_MS);
+    });
+
+    try {
+        return await Promise.race([operation, timeoutPromise]);
+    } finally {
+        clearTimeout(timeoutId);
+    }
+}
+
 export async function uploadChatImage(teamId, file, { conversationId = DEFAULT_TEAM_CONVERSATION_ID } = {}) {
     const ts = Date.now();
     const userId = getRequiredSignedInUserId();
     const path = buildChatAttachmentFallbackPath(teamId, conversationId, userId, file.name, ts);
     const storageRef = ref(storage, path);
-    const snapshot = await uploadBytes(storageRef, file);
-    const url = await getDownloadURL(snapshot.ref);
+    if (storage && typeof storage === 'object') {
+        storage.maxUploadRetryTime = CHAT_MEDIA_UPLOAD_TIMEOUT_MS;
+        storage.maxOperationRetryTime = CHAT_MEDIA_UPLOAD_TIMEOUT_MS;
+    }
+    const snapshot = await withChatMediaTimeout(uploadBytes(storageRef, file, {
+        contentType: file.type || 'application/octet-stream'
+    }));
+    const url = await withChatMediaTimeout(getDownloadURL(snapshot.ref));
     return {
         url,
         path,
