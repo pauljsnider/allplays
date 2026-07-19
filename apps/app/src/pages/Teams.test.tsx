@@ -379,6 +379,18 @@ describe('Teams launcher navigation', () => {
 
     expect(await screen.findByTestId('team-hub')).toHaveTextContent('Team hub: team-fast');
   });
+
+  it('links selected-team stats to roster, schedule, and messages', async () => {
+    renderTeamsWithNav();
+
+    await screen.findByRole('heading', { name: '2 teams ready' });
+    const selectedPanel = screen.getByRole('heading', { name: 'Fast Falcons' }).closest('section');
+    expect(selectedPanel).not.toBeNull();
+
+    expect(within(selectedPanel!).getByRole('link', { name: /1\s+Players/ })).toHaveAttribute('href', '/teams/team-fast?tab=roster');
+    expect(within(selectedPanel!).getByRole('link', { name: /2\s+Events/ })).toHaveAttribute('href', '/teams/team-fast?tab=schedule');
+    expect(within(selectedPanel!).getByRole('link', { name: /1\s+Unread/ })).toHaveAttribute('href', '/messages/team-fast');
+  });
 });
 
 describe('Teams single-team auto-navigate', () => {

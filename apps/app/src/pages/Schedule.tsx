@@ -852,11 +852,11 @@ export function Schedule({ auth }: { auth: AuthState }) {
             </p>
 
             <div className="mt-3 grid grid-cols-5 gap-1.5 sm:mt-4 sm:gap-2">
-              <Metric label="Events" value={String(counts.total)} />
-              <Metric label="Games" value={String(counts.games)} />
-              <Metric label="Practices" value={String(counts.practices)} />
-              <Metric label="RSVP Needed" mobileLabel="RSVP" value={String(counts.rsvpNeeded)} />
-              <Metric label="Packets" value={String(counts.packetsReady)} />
+              <Metric label="Events" value={String(counts.total)} onClick={() => { setFilter('upcoming-all'); setView('list'); }} active={filter === 'upcoming-all' && view !== 'packets'} />
+              <Metric label="Games" value={String(counts.games)} onClick={() => { setFilter('upcoming-games'); setView('list'); }} active={filter === 'upcoming-games' && view !== 'packets'} />
+              <Metric label="Practices" value={String(counts.practices)} onClick={() => { setFilter('upcoming-practices'); setView('list'); }} active={filter === 'upcoming-practices' && view !== 'packets'} />
+              <Metric label="RSVP Needed" mobileLabel="RSVP" value={String(counts.rsvpNeeded)} onClick={() => { setFilter('availability'); setView('list'); }} active={filter === 'availability' && view !== 'packets'} />
+              <Metric label="Packets" value={String(counts.packetsReady)} onClick={() => setView('packets')} active={view === 'packets'} />
             </div>
 
             <div className="mt-3 flex flex-wrap gap-2">
@@ -1330,9 +1330,9 @@ function BulkRsvpModal({ events, onClose, onSubmit }: {
   );
 }
 
-function Metric({ label, mobileLabel, value }: { label: string; mobileLabel?: string; value: string }) {
-  return (
-    <div className="schedule-metric rounded-lg border border-gray-200 bg-gray-50 px-2 py-2 text-center sm:rounded-xl sm:p-3 sm:text-left">
+function Metric({ label, mobileLabel, value, onClick, active = false }: { label: string; mobileLabel?: string; value: string; onClick?: () => void; active?: boolean }) {
+  const body = (
+    <>
       <div className="text-base font-black leading-none text-gray-950 sm:text-xl sm:leading-normal">{value}</div>
       <div className="mt-1 text-[10px] font-extrabold uppercase leading-tight text-gray-500 sm:text-xs sm:tracking-[0.04em]">
         {mobileLabel ? (
@@ -1342,7 +1342,17 @@ function Metric({ label, mobileLabel, value }: { label: string; mobileLabel?: st
           </>
         ) : label}
       </div>
-    </div>
+    </>
+  );
+  const className = `schedule-metric rounded-lg border px-2 py-2 text-center transition sm:rounded-xl sm:p-3 sm:text-left ${
+    active ? 'border-primary-200 bg-primary-50' : 'border-gray-200 bg-gray-50 hover:border-primary-200 hover:bg-primary-50/40'
+  }`;
+  return onClick ? (
+    <button type="button" className={className} onClick={onClick} aria-pressed={active} aria-label={`Show ${label.toLowerCase()}`}>
+      {body}
+    </button>
+  ) : (
+    <div className={className}>{body}</div>
   );
 }
 

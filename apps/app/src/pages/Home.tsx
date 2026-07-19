@@ -495,13 +495,13 @@ export function Home({ auth }: { auth: AuthState }) {
               Checking actions
             </div>
           ) : null}
-          <PulseChip icon={UserRound} label="Players" value={String(home.metrics.players)} />
-          <PulseChip icon={Users} label="Teams" value={String(home.metrics.teams)} />
-          <PulseChip icon={ClipboardCheck} label="RSVP" value={String(home.metrics.rsvpNeeded)} urgent={home.metrics.rsvpNeeded > 0} />
-          <PulseChip icon={ClipboardCheck} label="Packets" value={String(home.metrics.packetsReady)} urgent={home.metrics.packetsReady > 0} />
-          <PulseChip icon={MessageCircle} label="Unread" value={String(home.metrics.unreadMessages)} urgent={home.metrics.unreadMessages > 0} />
-          <PulseChip icon={Newspaper} label="Feed" value={String(social.metrics.feedItems)} />
-          <PulseChip icon={UserPlus} label="Requests" value={String(social.metrics.incomingRequests)} urgent={social.metrics.incomingRequests > 0} />
+          <PulseChip icon={UserRound} label="Players" value={String(home.metrics.players)} to="/home?section=players" />
+          <PulseChip icon={Users} label="Teams" value={String(home.metrics.teams)} to="/home?section=teams" />
+          <PulseChip icon={ClipboardCheck} label="RSVP" value={String(home.metrics.rsvpNeeded)} to={home.metrics.rsvpNeeded > 1 ? '/schedule?bulkRsvp=1' : '/schedule'} urgent={home.metrics.rsvpNeeded > 0} />
+          <PulseChip icon={ClipboardCheck} label="Packets" value={String(home.metrics.packetsReady)} to="/schedule?view=packets" urgent={home.metrics.packetsReady > 0} />
+          <PulseChip icon={MessageCircle} label="Unread" value={String(home.metrics.unreadMessages)} to="/messages" urgent={home.metrics.unreadMessages > 0} />
+          <PulseChip icon={Newspaper} label="Feed" value={String(social.metrics.feedItems)} to="/home?section=feed" />
+          <PulseChip icon={UserPlus} label="Requests" value={String(social.metrics.incomingRequests)} to="/home?section=friends" urgent={social.metrics.incomingRequests > 0} />
         </div>
       </section>
 
@@ -2262,12 +2262,31 @@ function formatSocialDate(date: Date) {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-function PulseChip({ icon: Icon, label, value, urgent = false }: { icon: LucideIcon; label: string; value: string; urgent?: boolean }) {
-  return (
-    <div className={`flex min-h-8 flex-none items-center gap-1.5 rounded-full border px-2.5 text-xs font-black ${urgent ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-gray-200 bg-gray-50 text-gray-700'}`}>
+function PulseChip({ icon: Icon, label, value, to, urgent = false }: { icon: LucideIcon; label: string; value: string; to?: string; urgent?: boolean }) {
+  const className = `flex min-h-8 flex-none items-center gap-1.5 rounded-full border px-2.5 text-xs font-black transition ${urgent ? 'border-amber-200 bg-amber-50 text-amber-800 hover:border-amber-300' : 'border-gray-200 bg-gray-50 text-gray-700 hover:border-primary-200 hover:text-gray-950'}`;
+  const body = (
+    <>
       <Icon className={`h-3.5 w-3.5 ${urgent ? 'text-amber-700' : 'text-primary-600'}`} aria-hidden="true" />
       <span>{label}</span>
       <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${urgent ? 'bg-amber-200/70 text-amber-950' : 'bg-white text-gray-950'}`}>{value}</span>
+    </>
+  );
+
+  if (to) {
+    return (
+      <Link
+        to={to}
+        className={className}
+        onClick={(event) => handleParentCoreDrillInClick(event, to, { trigger: 'hero_metric_chip', actionKind: label.toLowerCase() })}
+      >
+        {body}
+      </Link>
+    );
+  }
+
+  return (
+    <div className={className}>
+      {body}
     </div>
   );
 }
