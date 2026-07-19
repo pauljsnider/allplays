@@ -830,7 +830,7 @@ test.describe('mobile My Teams', () => {
         await expect(page.getByText('Points')).toBeVisible();
         await expect(page.getByText('88')).toBeVisible();
 
-        await page.getByRole('button', { name: /More/ }).click();
+        await page.getByTestId('team-detail-tab-nav').getByRole('button', { name: /More/ }).click();
         await expect(page.getByText('Website team page')).toBeVisible();
         await expect(page.getByText('Media albums')).toBeVisible();
         await expect(page.getByText('Watch stream')).toBeVisible();
@@ -886,7 +886,7 @@ test.describe('mobile My Teams', () => {
         await page.getByRole('button', { name: /Insights/ }).click();
         await expect(page.getByText('No parent-visible tracking items for your players yet.')).toBeVisible();
         await expect(page.getByText('Leaderboards appear after public stat configs and completed tracked games exist.')).toBeVisible();
-        await page.getByRole('button', { name: /More/ }).click();
+        await page.getByTestId('team-detail-tab-nav').getByRole('button', { name: /More/ }).click();
         await expect(page.getByText('Team links')).toBeVisible();
         await expect(page.getByText('Tournament bracket')).toHaveCount(0);
         await expect(page.getByText('Loading team')).toHaveCount(0);

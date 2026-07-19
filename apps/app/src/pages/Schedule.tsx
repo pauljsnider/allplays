@@ -776,10 +776,10 @@ export function Schedule({ auth }: { auth: AuthState }) {
             </div>
           </div>
           <div className="flex flex-none gap-1.5">
-            <button type="button" className="ghost-button !h-9 !min-h-9 !w-9 !p-0" onClick={() => refreshSchedule(true)} disabled={scheduleReadLoading} aria-label="Refresh schedule">
+            <button type="button" className="ghost-button !h-11 !min-h-11 !w-11 !p-0" onClick={() => refreshSchedule(true)} disabled={scheduleReadLoading} aria-label="Refresh schedule">
               <RefreshCw className={`h-4 w-4 ${scheduleReadLoading ? 'animate-spin' : ''}`} aria-hidden="true" />
             </button>
-            <button type="button" className="secondary-button !h-9 !min-h-9 !w-9 !p-0" onClick={handleExport} aria-label="Export calendar">
+            <button type="button" className="secondary-button !h-11 !min-h-11 !w-11 !p-0" onClick={handleExport} aria-label="Export calendar">
               <Download className="h-4 w-4" aria-hidden="true" />
             </button>
           </div>
@@ -796,7 +796,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
             <span className="sr-only">Schedule filter</span>
             <select
               aria-label="Schedule filter"
-              className="auth-input min-h-9 truncate !px-3 !py-2 text-xs font-black"
+              className="auth-input min-h-11 truncate !px-3 !py-2 text-xs font-black"
               value={filter}
               onChange={(event) => setFilter(event.target.value as ParentScheduleFilter)}
             >
@@ -809,7 +809,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
             <span className="sr-only">Schedule range</span>
             <select
               aria-label="Schedule range"
-              className="auth-input min-h-9 truncate !px-3 !py-2 text-xs font-black"
+              className="auth-input min-h-11 truncate !px-3 !py-2 text-xs font-black"
               value={timeRange}
               onChange={(event) => setTimeRange(event.target.value as ScheduleTimeRange)}
             >
@@ -823,7 +823,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
         <div className="mt-2 grid grid-cols-2 gap-2">
           <label>
             <span className="sr-only">Team filter</span>
-            <select aria-label="Team filter" className="auth-input min-h-9 truncate !px-3 !py-2 text-xs font-black" value={selectedTeamId} onChange={(event) => setSelectedTeamId(event.target.value)}>
+            <select aria-label="Team filter" className="auth-input min-h-11 truncate !px-3 !py-2 text-xs font-black" value={selectedTeamId} onChange={(event) => setSelectedTeamId(event.target.value)}>
               <option value="">All Teams</option>
               {teamOptions.map((team) => (
                 <option key={team.teamId} value={team.teamId}>{team.teamName}</option>
@@ -832,7 +832,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
           </label>
           <label>
             <span className="sr-only">Player filter</span>
-            <select aria-label="Player filter" className="auth-input min-h-9 truncate !px-3 !py-2 text-xs font-black" value={selectedPlayerId} onChange={(event) => setSelectedPlayerId(event.target.value)}>
+            <select aria-label="Player filter" className="auth-input min-h-11 truncate !px-3 !py-2 text-xs font-black" value={selectedPlayerId} onChange={(event) => setSelectedPlayerId(event.target.value)}>
               <option value="">All Players</option>
               {children.map((child) => (
                 <option key={`${child.teamId}-${child.playerId}`} value={child.playerId}>{child.playerName}</option>
@@ -860,17 +860,17 @@ export function Schedule({ auth }: { auth: AuthState }) {
             </div>
 
             <div className="mt-3 flex flex-wrap gap-2">
-              <button type="button" className="ghost-button !min-h-9 !px-3 !py-2 !text-xs sm:!min-h-10 sm:!text-sm" onClick={() => refreshSchedule(true)} disabled={scheduleReadLoading}>
+              <button type="button" className="ghost-button !min-h-11 !px-3 !py-2 !text-xs sm:!text-sm" onClick={() => refreshSchedule(true)} disabled={scheduleReadLoading}>
                 <RefreshCw className={`h-4 w-4 ${scheduleReadLoading ? 'animate-spin' : ''}`} aria-hidden="true" />
                 Refresh
               </button>
               {!isDesktopWeb ? (
                 <>
-                  <button type="button" className="secondary-button !min-h-9 !px-3 !py-2 !text-xs sm:!min-h-10 sm:!text-sm" onClick={handleExport}>
+                  <button type="button" className="secondary-button !min-h-11 !px-3 !py-2 !text-xs sm:!text-sm" onClick={handleExport}>
                     <Download className="h-4 w-4" aria-hidden="true" />
                     .ics
                   </button>
-                  <button type="button" className="secondary-button !min-h-9 !px-3 !py-2 !text-xs sm:!min-h-10 sm:!text-sm" onClick={handleCopyAgenda}>
+                  <button type="button" className="secondary-button !min-h-11 !px-3 !py-2 !text-xs sm:!text-sm" onClick={handleCopyAgenda}>
                     <Copy className="h-4 w-4" aria-hidden="true" />
                     Copy agenda
                   </button>
@@ -891,7 +891,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
               <span className="sr-only">Schedule filter</span>
               <select
                 aria-label="Schedule filter"
-                className="auth-input min-h-9 truncate !px-3 !py-2 text-xs font-black"
+                className="auth-input min-h-11 truncate !px-3 !py-2 text-xs font-black"
                 value={filter}
                 onChange={(event) => setFilter(event.target.value as ParentScheduleFilter)}
               >
@@ -902,7 +902,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
             </label>
             <label className="min-w-0 flex-1 sm:min-w-32 sm:max-w-40">
               <span className="sr-only">Range</span>
-              <select aria-label="Range" className="auth-input min-h-9 truncate !px-3 !py-2 text-xs font-black sm:min-h-10 sm:text-sm" value={timeRange} onChange={(event) => setTimeRange(event.target.value as ScheduleTimeRange)}>
+              <select aria-label="Range" className="auth-input min-h-11 truncate !px-3 !py-2 text-xs font-black sm:text-sm" value={timeRange} onChange={(event) => setTimeRange(event.target.value as ScheduleTimeRange)}>
                 {timeRangeOptions.map((option) => (
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
@@ -910,7 +910,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
             </label>
             <label className="min-w-0 flex-1 sm:min-w-48 sm:max-w-64">
               <span className="sr-only">Team</span>
-              <select aria-label="Team" className="auth-input min-h-9 truncate !px-3 !py-2 text-xs font-black sm:min-h-10 sm:text-sm" value={selectedTeamId} onChange={(event) => setSelectedTeamId(event.target.value)}>
+              <select aria-label="Team" className="auth-input min-h-11 truncate !px-3 !py-2 text-xs font-black sm:text-sm" value={selectedTeamId} onChange={(event) => setSelectedTeamId(event.target.value)}>
                 <option value="">All Teams</option>
                 {teamOptions.map((team) => (
                   <option key={team.teamId} value={team.teamId}>{team.teamName}</option>
@@ -919,7 +919,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
             </label>
             <label className="min-w-0 flex-1 sm:min-w-48 sm:max-w-64">
               <span className="sr-only">Player</span>
-              <select aria-label="Player" className="auth-input min-h-9 truncate !px-3 !py-2 text-xs font-black sm:min-h-10 sm:text-sm" value={selectedPlayerId} onChange={(event) => setSelectedPlayerId(event.target.value)}>
+              <select aria-label="Player" className="auth-input min-h-11 truncate !px-3 !py-2 text-xs font-black sm:text-sm" value={selectedPlayerId} onChange={(event) => setSelectedPlayerId(event.target.value)}>
                 <option value="">All Players</option>
                 {children.map((child) => (
                   <option key={`${child.teamId}-${child.playerId}`} value={child.playerId}>{child.playerName}</option>
@@ -1178,7 +1178,7 @@ function Segment({ active, onClick, icon: Icon, label }: { active: boolean; onCl
   return (
     <button
       type="button"
-      className={`inline-flex min-h-9 items-center justify-center gap-2 rounded-lg border px-3 py-2 text-xs font-black transition sm:min-h-10 sm:rounded-xl sm:px-4 sm:text-sm ${
+      className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border px-3 py-2 text-xs font-black transition sm:rounded-xl sm:px-4 sm:text-sm ${
         active ? 'border-primary-200 bg-primary-50 text-primary-700' : 'border-gray-200 bg-white text-gray-600'
       }`}
       onClick={onClick}
@@ -1452,7 +1452,7 @@ function ScheduleWebControls({ filter, view, selectedPlayerId, selectedTeamId, t
           <div className="app-label">Plan view</div>
           <h2 className="mt-1 text-base font-black text-gray-950">Family agenda</h2>
         </div>
-        <button type="button" className="ghost-button !h-9 !min-h-9 !w-9 !p-0" onClick={onRefresh} disabled={loading} aria-label="Refresh schedule">
+        <button type="button" className="ghost-button !h-11 !min-h-11 !w-11 !p-0" onClick={onRefresh} disabled={loading} aria-label="Refresh schedule">
           <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />
         </button>
       </div>
@@ -1599,7 +1599,7 @@ function ScheduleFilterButton({ option, active, onClick, fullWidth = false }: {
   return (
     <button
       type="button"
-      className={`inline-flex min-h-10 flex-none items-center gap-2 rounded-full border px-3 text-sm font-black transition ${
+      className={`inline-flex min-h-11 flex-none items-center gap-2 rounded-full border px-3 text-sm font-black transition ${
         active ? 'border-primary-200 bg-primary-50 text-primary-700' : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:bg-gray-50'
       } ${fullWidth ? 'w-full justify-start rounded-xl' : ''}`}
       onClick={onClick}
