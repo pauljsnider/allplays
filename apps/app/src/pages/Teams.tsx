@@ -451,9 +451,9 @@ function SelectedTeamPanel({ team, variant = 'mobile' }: { team: ParentHomeTeam;
         </div>
 
         <div className={`mt-3 grid grid-cols-3 gap-2 ${isWeb ? 'teams-selected-stats' : ''}`}>
-          <MiniStat icon={Users} label="Players" value={String(team.players.length)} />
-          <MiniStat icon={CalendarDays} label="Events" value={String(team.eventCount)} />
-          <MiniStat icon={MessageCircle} label="Unread" value={String(team.unreadCount)} />
+          <MiniStat icon={Users} label="Players" value={String(team.players.length)} to={`/teams/${encodeURIComponent(team.teamId)}?tab=roster`} />
+          <MiniStat icon={CalendarDays} label="Events" value={String(team.eventCount)} to={`/schedule?teamId=${encodeURIComponent(team.teamId)}`} />
+          <MiniStat icon={MessageCircle} label="Unread" value={String(team.unreadCount)} to={`/messages/${encodeURIComponent(team.teamId)}`} />
         </div>
       </div>
 
@@ -626,14 +626,16 @@ const teamNavigationIcons: Record<string, typeof Users> = {
   analytics: BarChart3
 };
 
-function MiniStat({ icon: Icon, label, value }: { icon: typeof Users; label: string; value: string }) {
-  return (
-    <div className="rounded-xl border border-gray-200 bg-gray-50 p-2">
+function MiniStat({ icon: Icon, label, value, to }: { icon: typeof Users; label: string; value: string; to?: string }) {
+  const body = (
+    <>
       <Icon className="h-4 w-4 text-primary-600" aria-hidden="true" />
       <div className="mt-1 truncate text-sm font-black text-gray-950">{value}</div>
       <div className="truncate text-[10px] font-extrabold uppercase tracking-[0.04em] text-gray-500">{label}</div>
-    </div>
+    </>
   );
+  const className = 'block rounded-xl border border-gray-200 bg-gray-50 p-2 text-left transition hover:border-primary-200 hover:bg-primary-50/40';
+  return to ? <Link to={to} className={className}>{body}</Link> : <div className="rounded-xl border border-gray-200 bg-gray-50 p-2">{body}</div>;
 }
 
 function MetricPill({ label, value }: { label: string; value: string }) {
