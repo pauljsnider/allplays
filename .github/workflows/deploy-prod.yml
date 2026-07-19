@@ -274,12 +274,18 @@ jobs:
           test -d "$bundle/site"
           test -f "$bundle/functions-runtime.tar"
           test -f "$bundle/context/extract-production-functions-handoff.py"
+          test ! -L "$bundle/context/extract-production-functions-handoff.py"
           test -f "$bundle/firestore.rules"
           test -f "$bundle/firestore.indexes.json"
           test -f "$bundle/storage.rules"
           test -f "$bundle/firebase-prod.generated.json"
           test -f "$bundle/firebase-cli/node_modules/firebase-tools/lib/bin/firebase.js"
           jq -e '.hosting.public == "site" and .hosting.site == "game-flow-c6311" and .functions.source == "functions"' "$bundle/firebase-prod.generated.json" >/dev/null
+          expected_extractor_sha256='0acd0a7041df6ffc53befb388c6591efd149d4f82d4cfed2ea37d7349394165f'
+          printf '%s  %s\n' \
+            "$expected_extractor_sha256" \
+            "$bundle/context/extract-production-functions-handoff.py" \
+            | sha256sum --check --strict -
           python3 "$bundle/context/extract-production-functions-handoff.py" \
             "$bundle/functions-runtime.tar" \
             "$bundle"

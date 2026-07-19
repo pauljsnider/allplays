@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -9,6 +10,9 @@ function read(path) {
 
 const production = read('.github/workflows/deploy-prod.yml');
 const preview = read('.github/workflows/deploy-preview-trusted.yml');
+const productionExtractorSha256 = createHash('sha256')
+    .update(read('scripts/extract-production-functions-handoff.py'))
+    .digest('hex');
 
 function workflowJobs(source) {
     return Object.values(parseYaml(source).jobs);
@@ -75,6 +79,7 @@ describe('Firebase deploy Workload Identity boundary', () => {
         const cliInstall = production.indexOf('name: Install isolated Firebase deploy CLI without OIDC');
         const functionsArchive = production.indexOf('name: Archive installed Functions runtime into trusted handoff');
         const handoff = production.indexOf('name: Upload trusted production deploy handoff');
+        const extractorHashCheck = production.indexOf(`expected_extractor_sha256='${productionExtractorSha256}'`);
         const functionsExtract = production.indexOf('python3 "$bundle/context/extract-production-functions-handoff.py"');
         const storageAuth = production.indexOf('name: Authenticate Storage deploy through exact-workflow OIDC');
         const storageDeploy = production.indexOf('name: Deploy Firebase Storage rules when available');
@@ -85,7 +90,10 @@ describe('Firebase deploy Workload Identity boundary', () => {
         expect(cliInstall).toBeGreaterThan(firestoreDetection);
         expect(functionsArchive).toBeGreaterThan(firestoreDetection);
         expect(handoff).toBeGreaterThan(cliInstall);
-        expect(functionsExtract).toBeGreaterThan(handoff);
+        expect(extractorHashCheck).toBeGreaterThan(handoff);
+        expect(functionsExtract).toBeGreaterThan(extractorHashCheck);
+        expect(production.slice(extractorHashCheck, functionsExtract)).toContain('sha256sum --check --strict');
+        expect(production.slice(handoff, extractorHashCheck)).toContain('test ! -L');
         expect(storageAuth).toBeGreaterThan(functionsExtract);
         expect(storageAuth).toBeGreaterThan(handoff);
         expect(storageDeploy).toBeGreaterThan(storageAuth);
