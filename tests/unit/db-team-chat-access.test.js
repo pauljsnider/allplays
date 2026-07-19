@@ -34,6 +34,19 @@ describe('team chat access compatibility', () => {
         })).toBe(true);
     });
 
+    it('uses legacy ownerEmail for stale-owner moderation', () => {
+        const canModerateChat = Function(`${getFunctionSource('canModerateChat')
+            .replace('export function canModerateChat', 'return function canModerateChat')}`)();
+
+        expect(canModerateChat({
+            uid: 'new-owner-uid',
+            email: 'OWNER@example.com'
+        }, {
+            ...team,
+            ownerEmail: 'owner@example.com'
+        })).toBe(true);
+    });
+
     it('treats normalized parentTeamIds as authoritative once present', () => {
         expect(canAccessTeamChat({
             uid: 'parent-1',

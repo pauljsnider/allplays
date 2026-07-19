@@ -29,6 +29,9 @@ service firebase.storage {
           team.get('ownerEmail', '') is string &&
           team.get('ownerEmail', '').lower() == request.auth.token.email.lower()) ||
          (request.auth.token.email != null &&
+          team.get('ownerEmailLower', '') is string &&
+          team.get('ownerEmailLower', '') == request.auth.token.email.lower()) ||
+         (request.auth.token.email != null &&
           request.auth.token.email.lower() in team.get('adminEmails', [])) ||
          isGlobalAdmin());
     }

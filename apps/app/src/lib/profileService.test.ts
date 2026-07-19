@@ -160,6 +160,18 @@ it('routes handled profile-service failures through the shared logger helper', (
     expect(profileServiceSource).not.toContain('console.');
 });
 
+it('keeps native notification team loading compatible with legacy owner emails', () => {
+    const profileServiceSource = readFileSync('src/lib/profileService.ts', 'utf8');
+    const nativeNotificationSource = profileServiceSource.slice(
+        profileServiceSource.indexOf('async function nativeLoadNotificationTeams'),
+        profileServiceSource.indexOf('async function nativeLoadParentTeams')
+    );
+
+    expect(nativeNotificationSource).toContain("nativeRunQuery('teams', 'ownerEmailLower', 'EQUAL', normalizedEmail)");
+    expect(nativeNotificationSource).toContain("nativeRunQuery('teams', 'ownerEmail', 'EQUAL', ownerEmail)");
+    expect(nativeNotificationSource).toContain('ownerEmailTeams.flat()');
+});
+
 describe('loadProfileDocument telemetry', () => {
     beforeEach(() => {
         vi.clearAllMocks();

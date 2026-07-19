@@ -84,6 +84,7 @@ describe('fallback media paths and Storage rules', () => {
         expect(chatFallbackRules).toContain('allow get: if canAccessChatAttachment(teamId, conversationId);');
         expect(rules).toContain("team.get('ownerEmail', '').lower() == request.auth.token.email.lower()");
         expect(dbSource).toContain('where("ownerEmail", "==", ownerEmail)');
+        expect(dbSource).toContain('where("ownerEmailLower", "==", normalizedEmail)');
         expect(rules).toContain("('user:' + request.auth.uid) in participantIds");
         expect(rules).toContain("('email:' + request.auth.token.email.lower()) in participantIds");
         expect(chatFallbackRules).toContain("allow create: if (isVerifiedForSensitiveWrite() ||\n        (isSignedIn() && conversationId == 'team')) &&");

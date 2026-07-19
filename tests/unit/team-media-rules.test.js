@@ -112,7 +112,9 @@ describe('team media Firestore rules', () => {
         expect(readRule).toContain('canReadTeamMediaManagerTeamDocument(data)');
         expect(listRule).not.toContain('canReadTeamMediaManagerTeamDocument(data)');
         expect(managedReadRule).toContain("data.get('ownerEmail', '').lower() == request.auth.token.email.lower()");
+        expect(managedReadRule).toContain("data.get('ownerEmailLower', '') == request.auth.token.email.lower()");
         expect(listRule).toContain("data.get('ownerEmail', '').lower() == request.auth.token.email.lower()");
+        expect(listRule).toContain("data.get('ownerEmailLower', '') == request.auth.token.email.lower()");
         expect(rules).toContain('allow get: if canReadTeamDocument(resource.data);');
         expect(rules).toContain('canListManagedTeamDocument(resource.data);');
 

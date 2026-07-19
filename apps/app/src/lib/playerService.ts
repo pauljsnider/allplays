@@ -149,6 +149,15 @@ export type ParentPlayerPrivateProfile = {
   medicalInfo?: string | null;
 };
 
+export type ParentPlayerFamilyContact = {
+  id: string;
+  name: string;
+  email: string;
+  phone: string;
+  relation: string;
+  status: 'linked' | 'contact';
+};
+
 export type ParentPlayerIncentiveData = {
   rules: PlayerIncentiveRule[];
   currentRules: PlayerIncentiveRule[];
@@ -198,6 +207,7 @@ export type ParentPlayerDetailData = {
   scheduleLoadError: string | null;
   access: {
     isLinkedParent: boolean;
+    isTeamParent: boolean;
     isTeamStaff: boolean;
     canEditRosterDetails: boolean;
     canEditCustomRosterFields: boolean;
@@ -226,6 +236,7 @@ export type ParentPlayerDetailData = {
   certificates: Array<Record<string, any>>;
   trackingSummary: PlayerTrackingSummary[];
   privateProfile: ParentPlayerPrivateProfile | null;
+  familyContacts: ParentPlayerFamilyContact[];
   incentives: ParentPlayerIncentiveData;
   athleteProfile: ParentAthleteProfileData;
 };
@@ -273,7 +284,7 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
   const initialTeam = await getTeam(requestedTeamId, { includeInactive: true });
   const routeAccess = buildPlayerAccess(user, requestedTeamId, requestedPlayerId, initialTeam);
   const canUseScheduleFailureFallback = !!scheduleLoadError && routeAccess.isLinkedParent;
-  if (!linkedChild && !canUseScheduleFailureFallback && !routeAccess.isTeamStaff) {
+  if (!linkedChild && !canUseScheduleFailureFallback && !routeAccess.isTeamParent && !routeAccess.isTeamStaff) {
     throw new Error('This player is not linked to your account.');
   }
 
@@ -314,6 +325,7 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
 
   const playerDoc = (Array.isArray(players) ? players : []).find((candidate: LegacyPlayerRecord) => candidate?.id === resolvedPlayerId) || {};
   const access = buildPlayerAccess(user, resolvedTeamId, resolvedPlayerId, team);
+  const visiblePrivateProfile = access.isLinkedParent || access.isTeamStaff ? privateProfile : null;
   const child = linkedChild || {
     teamId: resolvedTeamId,
     teamName: String(team?.name || '').trim() || String(playerDoc?.teamName || '').trim() || resolvedTeamId,
@@ -323,7 +335,7 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
   const customRosterFields = buildVisibleCustomRosterFields({
     definitions: rosterFieldDefinitions,
     player: playerDoc,
-    privateProfile,
+    privateProfile: visiblePrivateProfile,
     access
   });
   const completedGameEvents = events
@@ -371,7 +383,8 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
     clips: [],
     certificates: Array.isArray(certificates) ? certificates : [],
     trackingSummary,
-    privateProfile: normalizePrivateProfile(privateProfile),
+    privateProfile: normalizePrivateProfile(visiblePrivateProfile),
+    familyContacts: normalizePlayerFamilyContacts(playerDoc, visiblePrivateProfile),
     incentives: buildPlayerIncentiveData({
       rules: incentiveRules,
       paidGames,
@@ -412,7 +425,7 @@ async function loadParentPlayerStatsDetailUncached(user: AuthUser, teamId: strin
     getConfigs(teamId).catch(() => [])
   ]);
   const access = buildPlayerAccess(user, teamId, playerId, team);
-  if (!access.isLinkedParent && !access.isTeamStaff) {
+  if (!access.isLinkedParent && !access.isTeamParent && !access.isTeamStaff) {
     throw new Error('This player is not linked to your account.');
   }
 
@@ -477,7 +490,7 @@ export async function loadParentPlayerVideoClips(user: AuthUser | null, teamId: 
   const resolvedPlayerId = linkedChild?.playerId || requestedPlayerId;
   const team = await getTeam(resolvedTeamId, { includeInactive: true });
   const access = buildPlayerAccess(user, resolvedTeamId, resolvedPlayerId, team);
-  if (!linkedChild && !access.isLinkedParent && !access.isTeamStaff) {
+  if (!linkedChild && !access.isLinkedParent && !access.isTeamParent && !access.isTeamStaff) {
     throw new Error('This player is not linked to your account.');
   }
 
@@ -524,7 +537,7 @@ export async function loadParentPlayerStatTotals(user: AuthUser | null, teamId: 
   const requestedPlayerId = decodeURIComponent(playerId || '');
   const team = await getTeam(requestedTeamId, { includeInactive: true });
   const access = buildPlayerAccess(user, requestedTeamId, requestedPlayerId, team);
-  if (!access.isLinkedParent && !access.isTeamStaff) {
+  if (!access.isLinkedParent && !access.isTeamParent && !access.isTeamStaff) {
     throw new Error('This player is not linked to your account.');
   }
 
@@ -1364,6 +1377,73 @@ function isLinkedParent(user: AuthUser | null, teamId: string, playerId: string)
   return !!(user?.parentPlayerKeys || []).some((key) => String(key || '').trim() === playerKey);
 }
 
+function isParentOnTeam(user: AuthUser | null, teamId: string) {
+  const normalizedTeamId = String(teamId || '').trim();
+  if (!normalizedTeamId) return false;
+
+  if (Array.isArray(user?.parentTeamIds) && user.parentTeamIds.some((value) => String(value || '').trim() === normalizedTeamId)) {
+    return true;
+  }
+
+  return !!(user?.parentPlayerKeys || []).some((key) => {
+    const raw = String(key || '').trim();
+    const separatorIndex = raw.indexOf('::');
+    return separatorIndex > 0 && raw.slice(0, separatorIndex) === normalizedTeamId;
+  });
+}
+
+function normalizePlayerFamilyContacts(player: Record<string, any>, privateProfile: Record<string, any> | null | undefined): ParentPlayerFamilyContact[] {
+  const contacts: ParentPlayerFamilyContact[] = [];
+  const seen = new Set<string>();
+  const clean = (value: unknown) => String(value || '').trim();
+  const addContact = (source: Record<string, any> | null | undefined, fallback: Record<string, any> = {}) => {
+    if (!source || typeof source !== 'object') return;
+    const email = normalizeEmail(source.email || source.parentEmail || source.guardianEmail || fallback.email);
+    const userId = clean(source.userId || source.uid || source.accountUserId || source.parentUserId || source.guardianUserId || fallback.userId);
+    const name = clean(source.name || source.displayName || source.fullName || source.parentName || source.guardianName || fallback.name);
+    const phone = clean(source.phone || source.parentPhone || source.guardianPhone || fallback.phone);
+    const relation = clean(source.relation || source.relationship || source.parentRelation || source.guardianRelation || fallback.relation) || 'Parent/guardian';
+    if (!email && !userId && !name && !phone) return;
+    const key = email || userId || `${name}:${phone}:${relation}`.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    contacts.push({
+      id: userId || email || key || `family-contact-${contacts.length + 1}`,
+      name,
+      email,
+      phone,
+      relation,
+      status: userId ? 'linked' : 'contact'
+    });
+  };
+
+  [
+    ...(Array.isArray(player?.parents) ? player.parents : []),
+    ...(Array.isArray(player?.privateProfileParents) ? player.privateProfileParents : []),
+    ...(Array.isArray(privateProfile?.parents) ? privateProfile.parents : [])
+  ].forEach((contact) => addContact(contact));
+
+  addContact({
+    userId: player?.parentUserId,
+    email: player?.parentEmail,
+    name: player?.parentName,
+    phone: player?.parentPhone,
+    relation: player?.parentRelation || 'Parent'
+  });
+  addContact({
+    userId: player?.guardianUserId,
+    email: player?.guardianEmail,
+    name: player?.guardianName,
+    phone: player?.guardianPhone,
+    relation: player?.guardianRelation || 'Guardian'
+  });
+
+  return contacts.sort((a, b) => {
+    if (a.status !== b.status) return a.status === 'linked' ? -1 : 1;
+    return (a.name || a.email || a.phone).localeCompare(b.name || b.email || b.phone);
+  });
+}
+
 function isElevatedAppAdmin(user: AuthUser | null) {
   return !!(user?.isAdmin || user?.isPlatformAdmin || user?.roles?.includes('admin') || user?.roles?.includes('platformAdmin'));
 }
@@ -1388,12 +1468,14 @@ function isTeamStaffUser(user: AuthUser | null, team: LegacyTeamRecord | null) {
 
 function buildPlayerAccess(user: AuthUser | null, teamId: string, playerId: string, team: LegacyTeamRecord | null) {
   const linkedParent = isLinkedParent(user, teamId, playerId);
+  const teamParent = linkedParent || isParentOnTeam(user, teamId);
   const resolvedTeam = team ? { ...team, id: team.id || teamId } : { id: teamId };
   const isTeamStaff = isTeamStaffUser(user, resolvedTeam);
   const canEditRosterDetails = isTeamOwnerOrAdminUser(user, resolvedTeam);
   const canEditCustomRosterFields = canEditRosterDetails;
   return {
     isLinkedParent: linkedParent,
+    isTeamParent: teamParent,
     isTeamStaff,
     canEditRosterDetails,
     canEditCustomRosterFields
@@ -1409,7 +1491,7 @@ function buildVisibleCustomRosterFields({
   definitions: unknown;
   player: LegacyPlayerRecord;
   privateProfile: LegacyPlayerPrivateProfileRecord | null;
-  access: { isLinkedParent: boolean; isTeamStaff: boolean; canEditRosterDetails: boolean; canEditCustomRosterFields: boolean };
+  access: { isLinkedParent: boolean; isTeamParent?: boolean; isTeamStaff: boolean; canEditRosterDetails: boolean; canEditCustomRosterFields: boolean };
 }) {
   const normalizedFields = normalizeRosterFieldDefinitions(definitions);
   if (!normalizedFields.length) return [];
@@ -1420,11 +1502,16 @@ function buildVisibleCustomRosterFields({
   };
 
   return normalizedFields
-    .filter((field) => canViewRosterField({ id: field.key, visibility: field.visibility }, {
-      isAdmin: access.canEditCustomRosterFields,
-      isTeamMember: access.isTeamStaff || access.isLinkedParent,
-      isLinkedParent: access.isLinkedParent
-    }))
+    .filter((field) => {
+      if (field.visibility === 'parents' && !access.canEditCustomRosterFields && !access.isTeamStaff && !access.isLinkedParent) {
+        return false;
+      }
+      return canViewRosterField({ id: field.key, visibility: field.visibility }, {
+        isAdmin: access.canEditCustomRosterFields,
+        isTeamMember: access.isTeamStaff || access.isLinkedParent || !!access.isTeamParent,
+        isLinkedParent: access.isLinkedParent
+      });
+    })
     .map((field) => ({
       key: field.key,
       label: field.label,
