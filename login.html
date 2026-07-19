@@ -365,8 +365,6 @@
                     if (!activationCode) {
                         throw new Error('Activation code is required for new accounts');
                     }
-                } else if (pendingLoginInviteCode) {
-                    activationCode = pendingLoginInviteCode;
                 }
                 if (pendingLoginInviteCode) {
                     window.sessionStorage.setItem(pendingLoginInviteCodeStorageKey, pendingLoginInviteCode);

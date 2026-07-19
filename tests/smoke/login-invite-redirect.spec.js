@@ -367,5 +367,5 @@ test('manual invite code existing-account recovery redeems the typed code after 
     await page.locator('#google-btn').click();
 
     await expect(page).toHaveURL(/\/accept-invite\.html\?code=AB12CD34$/);
-    await expect.poll(() => page.evaluate(() => window.sessionStorage.getItem('__googleActivationCode'))).toBe('AB12CD34');
+    await expect.poll(() => page.evaluate(() => window.sessionStorage.getItem('__googleActivationCode'))).toBe('');
 });
