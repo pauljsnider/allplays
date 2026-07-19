@@ -65,6 +65,9 @@ describe('Stripe payment-authority rollout gate', () => {
             product: 'registration', record, ledgers: [{ ...ledger, registrationId: 'victim' }]
         })).toBe('stripe_charge_ledger_invalid');
         expect(inspectStripeChargeLedgerCoverage({
+            product: 'registration', record, ledgers: [{ ...ledger, settlementProjected: false }]
+        })).toBe('stripe_charge_ledger_invalid');
+        expect(inspectStripeChargeLedgerCoverage({
             product: 'registration', record: { ...record, stripeGrossPaidAmountCents: 10000 }, ledgers: [ledger]
         })).toBe('stripe_charge_ledger_gross_mismatch');
         expect(inspectStripeChargeLedgerCoverage({

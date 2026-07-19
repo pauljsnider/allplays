@@ -604,11 +604,14 @@ function buildTeamFeePaidUpdate({
     const balanceDueCents = Math.max(0, getTeamFeeTotalCents(recipient) - paidAmountCents);
 
     return {
-        status: balanceDueCents > 0 ? 'partial' : 'paid',
+        status: paidAmountCents <= 0 ? 'unpaid' : balanceDueCents > 0 ? 'partial' : 'paid',
         paidAmountCents,
         amountPaidCents: paidAmountCents,
         balanceDueCents,
-        checkoutStatus: 'paid',
+        checkoutStatus: aggregateFinancialState
+            && aggregateFinancialState.financialStatus !== 'paid'
+            ? 'stale'
+            : 'paid',
         checkoutAttemptToken: null,
         checkoutPayerUid: null,
         checkoutUrl: null,

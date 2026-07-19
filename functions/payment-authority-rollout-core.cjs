@@ -85,6 +85,7 @@ function inspectStripeChargeLedgerCoverage({ product = '', record = {}, ledgers 
     if (ledger.type !== 'stripe_charge'
         || ledger.provider !== 'stripe'
         || ledger.product !== normalizedProduct
+        || ledger.settlementProjected === false
         || !ledgerScopeMatches({ product: normalizedProduct, record, ledger })
         || !normalizeString(ledger.stripeCheckoutSessionId)
         || !normalizeString(ledger.stripePaymentIntentId)

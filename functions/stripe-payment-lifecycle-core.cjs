@@ -62,12 +62,10 @@ function reconcileStripeChargeReversal({ current = {}, event = {}, charge = {} }
   if (authoritativeRefunded > next.refundedAmountCents) {
     next.refundedAmountCents = authoritativeRefunded;
     next.refundEventCreated = Math.max(next.refundEventCreated, eventCreated);
-    next.lastStripeEventId = normalizeString(event.id) || next.lastStripeEventId;
   }
 
   if (event.type === 'charge.refunded') {
     next.refundEventCreated = Math.max(next.refundEventCreated, eventCreated);
-    next.lastStripeEventId = normalizeString(event.id) || next.lastStripeEventId;
   }
 
   let incomingDisputeStatus = '';

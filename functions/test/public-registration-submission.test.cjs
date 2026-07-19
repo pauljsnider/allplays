@@ -3023,6 +3023,10 @@ test('legacy team fee checkout with empty PaymentIntent metadata is still credit
         id: 'pi_team_fee_legacy', latest_charge: 'ch_team_fee_legacy', amount_received: 7500,
         currency: 'usd', livemode: false, metadata: {}
     });
+    stripeState.charges.set('ch_team_fee_legacy', {
+        id: 'ch_team_fee_legacy', object: 'charge', metadata: {}, payment_intent: 'pi_team_fee_legacy',
+        amount: 7500, amount_refunded: 0, currency: 'usd', livemode: false
+    });
     stripeState.webhookEvent = {
         id: 'evt_team_fee_legacy_paid', type: 'checkout.session.completed', created: 100,
         data: { object: { ...clone(session), payment_status: 'paid', payment_intent: 'pi_team_fee_legacy' } }
@@ -3048,7 +3052,7 @@ test('legacy team fee checkout with empty PaymentIntent metadata is still credit
     assert.equal(firestore.snapshot(`${recipientPath}/stripeCharges/ch_team_fee_legacy`).refundedAmountCents, 2500);
 });
 
-test('empty-metadata team fee refund retries after paid webhook creates the exact charge ledger', async () => {
+test('team fee settlement stages exact Charge authority until an earlier dispute can bind', async () => {
     const recipientPath = 'teams/team-fee/feeBatches/batch-1/feeRecipients/recipient-1';
     const { firestore, stripeState, mod } = loadFunctionsModule({
         'teams/team-fee': { ownerId: 'owner-1', adminEmails: [] },
@@ -3075,7 +3079,7 @@ test('empty-metadata team fee refund retries after paid webhook creates the exac
     const charge = {
         object: 'charge', id: 'ch_team_fee_empty_metadata', metadata: {},
         payment_intent: 'pi_team_fee_empty_metadata', amount: 7500, amount_refunded: 0,
-        currency: 'usd', livemode: false
+        currency: 'usd', livemode: false, disputed: true
     };
     stripeState.charges.set(charge.id, charge);
     const reversalEvent = {
@@ -3091,11 +3095,25 @@ test('empty-metadata team fee refund retries after paid webhook creates the exac
         id: 'evt_team_fee_paid_before_empty_metadata_retry', type: 'checkout.session.completed', created: 100,
         data: { object: { ...clone(session), status: 'complete', payment_status: 'paid' } }
     };
-    assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
+    stripeState.charges.set(charge.id, { ...charge, payment_intent: 'pi_wrong_team_fee' });
+    assert.equal((await deliverStripeWebhook(mod)).statusCode, 500);
+    assert.equal(firestore.snapshot(`${recipientPath}/stripeCharges/${charge.id}`), undefined);
+    stripeState.charges.set(charge.id, charge);
+    assert.equal((await deliverStripeWebhook(mod)).statusCode, 500);
+    assert.equal(firestore.snapshot(recipientPath).status, 'unpaid');
+    assert.equal(firestore.snapshot(`stripeEvents/evt_team_fee_paid_before_empty_metadata_retry`), undefined);
+    assert.equal(firestore.snapshot(`${recipientPath}/stripeCharges/${charge.id}`).settlementProjected, false);
     stripeState.webhookEvent = reversalEvent;
     assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
+    stripeState.webhookEvent = {
+        id: 'evt_team_fee_paid_before_empty_metadata_retry', type: 'checkout.session.completed', created: 100,
+        data: { object: { ...clone(session), status: 'complete', payment_status: 'paid' } }
+    };
+    assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
     assert.equal(firestore.snapshot(recipientPath).stripeFinancialStatus, 'disputed');
+    assert.equal(firestore.snapshot(`${recipientPath}/stripeCharges/${charge.id}`).settlementProjected, true);
 
+    stripeState.charges.set(charge.id, { ...charge, disputed: false });
     stripeState.webhookEvent = {
         id: 'evt_team_fee_empty_metadata_dispute_won', type: 'charge.dispute.closed', created: 300,
         data: { object: { object: 'dispute', id: 'dp_team_fee_empty_metadata', charge: charge.id, status: 'won' } }
@@ -3103,7 +3121,7 @@ test('empty-metadata team fee refund retries after paid webhook creates the exac
     assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
     assert.equal(firestore.snapshot(recipientPath).stripeFinancialStatus, 'paid');
 
-    const refundedCharge = { ...charge, amount_refunded: 7500 };
+    const refundedCharge = { ...charge, amount_refunded: 7500, disputed: false };
     stripeState.charges.set(charge.id, refundedCharge);
     stripeState.webhookEvent = {
         id: 'evt_team_fee_empty_metadata_refund', type: 'charge.refunded', created: 400,
@@ -3113,6 +3131,48 @@ test('empty-metadata team fee refund retries after paid webhook creates the exac
     assert.equal(firestore.snapshot(recipientPath).stripeFinancialStatus, 'refunded');
     assert.equal(firestore.snapshot(recipientPath).paidAmountCents, 0);
     assert.equal(firestore.snapshot(`${recipientPath}/stripeCharges/${charge.id}`).refundedAmountCents, 7500);
+});
+
+test('team fee settlement projects the latest cumulative Charge refund without temporary paid state', async () => {
+    const recipientPath = 'teams/team-fee/feeBatches/batch-1/feeRecipients/recipient-1';
+    const { firestore, stripeState, mod } = loadFunctionsModule({
+        'teams/team-fee': { ownerId: 'owner-1', adminEmails: [] },
+        'users/owner-1': { email: 'owner@example.com' },
+        [recipientPath]: {
+            teamId: 'team-fee', batchId: 'batch-1', collectionMode: 'online_stripe',
+            amountCents: 7500, paidAmountCents: 0, balanceDueCents: 7500,
+            status: 'unpaid', feeTitle: 'Tournament fee', playerName: 'Sam'
+        }
+    });
+    const checkout = await mod.createStripeTeamFeeCheckout({
+        teamId: 'team-fee', batchId: 'batch-1', recipientId: 'recipient-1'
+    }, { auth: { uid: 'owner-1', token: { email: 'owner@example.com' } } });
+    const session = stripeState.checkoutResponses.get(checkout.sessionId);
+    const paymentIntentId = 'pi_team_fee_already_refunded';
+    const chargeId = 'ch_team_fee_already_refunded';
+    session.payment_intent = paymentIntentId;
+    stripeState.paymentIntents.set(paymentIntentId, {
+        id: paymentIntentId, latest_charge: chargeId, amount_received: 7500,
+        currency: 'usd', livemode: false, metadata: clone(session.metadata)
+    });
+    stripeState.charges.set(chargeId, {
+        id: chargeId, object: 'charge', payment_intent: paymentIntentId,
+        amount: 7500, amount_refunded: 7500, currency: 'usd', livemode: false,
+        disputed: false, metadata: clone(session.metadata)
+    });
+    stripeState.webhookEvent = {
+        id: 'evt_team_fee_already_refunded_paid', type: 'checkout.session.completed', created: 200,
+        data: { object: { ...clone(session), status: 'complete', payment_status: 'paid' } }
+    };
+
+    assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
+    const recipient = firestore.snapshot(recipientPath);
+    assert.equal(recipient.status, 'unpaid');
+    assert.equal(recipient.checkoutStatus, 'stale');
+    assert.equal(recipient.paidAmountCents, 0);
+    assert.equal(recipient.balanceDueCents, 7500);
+    assert.equal(recipient.stripeFinancialStatus, 'refunded');
+    assert.equal(firestore.snapshot(`${recipientPath}/stripeCharges/${chargeId}`).refundedAmountCents, 7500);
 });
 
 test('team fee refund callable records only the ledger delta when its webhook wins the race', async () => {
@@ -4318,6 +4378,10 @@ test('legacy registration checkout with empty PaymentIntent metadata is still cr
         id: 'pi_registration_legacy', latest_charge: 'ch_registration_legacy', amount_received: 4166,
         currency: 'usd', livemode: false, metadata: {}
     });
+    stripeState.charges.set('ch_registration_legacy', {
+        id: 'ch_registration_legacy', object: 'charge', metadata: {}, payment_intent: 'pi_registration_legacy',
+        amount: 4166, amount_refunded: 0, currency: 'usd', livemode: false
+    });
     stripeState.webhookEvent = {
         id: 'evt_registration_legacy_paid', type: 'checkout.session.completed', created: 100,
         data: { object: {
@@ -4380,12 +4444,75 @@ test('empty-metadata registration refund retries after paid webhook creates the 
     };
     assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
     assert.equal(firestore.snapshot(registrationPath).paymentPlan.paidInstallmentCount, 1);
+    assert.equal(firestore.snapshot(registrationPath).paymentStatus, 'refunded');
+    assert.equal(firestore.snapshot(registrationPath).stripeReversalBalanceCents, 4166);
+    assert.equal(firestore.snapshot(`${registrationPath}/stripeCharges/${charge.id}`).refundedAmountCents, 4166);
     stripeState.webhookEvent = reversalEvent;
     assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
     assert.equal(firestore.snapshot(registrationPath).paymentStatus, 'refunded');
     assert.equal(firestore.snapshot(registrationPath).stripeReversalBalanceCents, 4166);
     assert.equal(firestore.snapshot(`${registrationPath}/stripeCharges/${charge.id}`).refundedAmountCents, 4166);
     assert.equal(firestore.snapshot(`stripeEvents/${reversalEvent.id}`).ignored, false);
+});
+
+test('registration settlement stages exact Charge authority until an earlier dispute can bind', async () => {
+    const { firestore, stripeState, mod, submission, registrationPath } = await createInstallmentCheckoutFixture();
+    const paidEvent = buildPaidInstallmentWebhookEvent({
+        eventId: 'evt_registration_disputed_before_paid',
+        registrationId: submission.registrationId
+    });
+    const session = paidEvent.data.object;
+    const paymentIntentId = session.payment_intent;
+    const chargeId = `ch_${paymentIntentId}`;
+    stripeState.paymentIntents.set(paymentIntentId, {
+        id: paymentIntentId,
+        latest_charge: chargeId,
+        amount_received: 4166,
+        currency: 'usd',
+        livemode: false,
+        metadata: clone(session.metadata)
+    });
+    const charge = {
+        id: chargeId,
+        object: 'charge',
+        payment_intent: paymentIntentId,
+        amount: 4166,
+        amount_refunded: 0,
+        currency: 'usd',
+        livemode: false,
+        disputed: true,
+        metadata: clone(session.metadata)
+    };
+    stripeState.charges.set(chargeId, charge);
+    const disputeEvent = {
+        id: 'evt_registration_dispute_created_first',
+        type: 'charge.dispute.created',
+        created: 200,
+        data: { object: { object: 'dispute', id: 'dp_registration_first', charge: chargeId, status: 'needs_response' } }
+    };
+
+    stripeState.webhookEvent = disputeEvent;
+    assert.equal((await deliverStripeWebhook(mod)).statusCode, 500);
+    stripeState.charges.set(chargeId, { ...charge, amount: 4165 });
+    stripeState.webhookEvent = paidEvent;
+    assert.equal((await deliverStripeWebhook(mod)).statusCode, 500);
+    assert.equal(firestore.snapshot(`${registrationPath}/stripeCharges/${chargeId}`), undefined);
+
+    stripeState.charges.set(chargeId, charge);
+    assert.equal((await deliverStripeWebhook(mod)).statusCode, 500);
+    assert.equal(Number(firestore.snapshot(registrationPath).paymentPlan.paidInstallmentCount || 0), 0);
+    assert.equal(firestore.snapshot(`stripeEvents/${paidEvent.id}`), undefined);
+    assert.equal(firestore.snapshot(`${registrationPath}/stripeCharges/${chargeId}`).settlementProjected, false);
+
+    stripeState.webhookEvent = disputeEvent;
+    assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
+    assert.equal(firestore.snapshot(registrationPath).paymentStatus, 'disputed');
+    stripeState.webhookEvent = paidEvent;
+    assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
+    assert.equal(firestore.snapshot(registrationPath).paymentStatus, 'disputed');
+    assert.equal(firestore.snapshot(registrationPath).paymentPlan.paidInstallmentCount, 1);
+    assert.equal(firestore.snapshot(`${registrationPath}/stripeCharges/${chargeId}`).settlementProjected, true);
+    assert.equal(firestore.snapshot(`stripeEvents/${paidEvent.id}`).type, 'checkout.session.completed');
 });
 
 test('registration paid webhook recovers an exact durable reservation when the Stripe response was not projected', async () => {

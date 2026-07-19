@@ -5104,6 +5104,41 @@ function getStripeChargeDisputeSignalFailure(charge = {}, disputeStatus = 'none'
   return '';
 }
 
+function withStripeChargeLedgerReversalAuthority(ledger = {}, event = {}, charge = {}, { teamFee = false } = {}) {
+  const amountPaidCents = Math.max(0, Math.round(Number(ledger.amountPaidCents || charge.amount || 0)));
+  const currentReversal = ledger.reversalState && typeof ledger.reversalState === 'object'
+    ? ledger.reversalState
+    : {
+      stripeChargeId: ledger.stripeChargeId,
+      stripePaymentIntentId: ledger.stripePaymentIntentId,
+      chargeAmountCents: amountPaidCents,
+      refundedAmountCents: Math.max(0, Math.round(Number(ledger.refundedAmountCents || 0))),
+      refundEventCreated: Math.max(0, Math.round(Number(ledger.refundEventCreated || 0))),
+      disputeStatus: ledger.disputeStatus || 'none',
+      disputeEventCreated: Math.max(0, Math.round(Number(ledger.disputeEventCreated || 0))),
+      lastStripeEventId: ledger.lastStripeEventId || ''
+    };
+  const reversalState = reconcileStripeChargeReversal({ current: currentReversal, event, charge });
+  const refundedAmountCents = Math.min(
+    amountPaidCents,
+    Math.max(0, Math.round(Number(reversalState.refundedAmountCents || 0)))
+  );
+  const disputeLostAmountCents = getStripeChargeLostAmountCents(reversalState, amountPaidCents);
+  return {
+    ...ledger,
+    refundedAmountCents,
+    disputeLostAmountCents,
+    disputeStatus: reversalState.disputeStatus || 'none',
+    disputeEventCreated: Math.max(0, Math.round(Number(reversalState.disputeEventCreated || 0))),
+    refundEventCreated: Math.max(0, Math.round(Number(reversalState.refundEventCreated || 0))),
+    lastStripeEventId: reversalState.lastStripeEventId || null,
+    ...(teamFee ? {
+      refundableAmountCents: Math.max(0, amountPaidCents - refundedAmountCents - disputeLostAmountCents)
+    } : {}),
+    reversalState
+  };
+}
+
 function withTeamPassDisputeLostAuthority(reversal = {}) {
   const chargeAmountCents = Math.max(0, Math.round(Number(reversal.chargeAmountCents || 0)));
   return {
@@ -7229,10 +7264,14 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
     try {
       const session = event.data.object;
       let paymentIntent = null;
+      let charge = null;
       if (shouldMarkRegistrationPaidFromEvent(event)) {
         const paymentIntentId = getStripeObjectId(session.payment_intent);
         if (!paymentIntentId) throw new Error('Registration Checkout Session is missing its PaymentIntent.');
         paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+        const chargeId = getStripeObjectId(paymentIntent.latest_charge);
+        if (!chargeId) throw new Error('Registration PaymentIntent is missing its latest Charge.');
+        charge = await stripe.charges.retrieve(chargeId);
       }
       const receivedAt = admin.firestore.FieldValue.serverTimestamp();
       const queuedAtIso = new Date().toISOString();
@@ -7242,7 +7281,7 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
       const registrationInput = normalizeRegistrationCheckoutCancelInput(session.metadata || {});
       const formRef = buildRegistrationFormRef(registrationInput);
 
-      await firestore.runTransaction(async (transaction) => {
+      const transactionResult = await firestore.runTransaction(async (transaction) => {
         const eventSnap = await transaction.get(eventRef);
         if (eventSnap.exists) return;
 
@@ -7321,7 +7360,48 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
           const chargeId = getStripeObjectId(paymentIntent.latest_charge);
           const chargeRef = buildRegistrationStripeChargeRef(registrationRef, chargeId);
           const chargeSnap = await transaction.get(chargeRef);
-          if (chargeSnap.exists) {
+          const storedChargeLedger = chargeSnap.exists ? (chargeSnap.data() || {}) : null;
+          const buildAuthoritativeChargeLedger = (paymentStatusAfterCharge, settlementProjected) => {
+            const baseLedger = buildRegistrationStripeChargeLedger({
+              registration,
+              session,
+              paymentIntent,
+              eventId: event.id,
+              receivedAt,
+              paymentStatusAfterCharge
+            });
+            const candidateLedger = storedChargeLedger
+              ? { ...baseLedger, ...storedChargeLedger, paymentStatusAfterCharge }
+              : baseLedger;
+            const chargeGuardFailure = getRegistrationChargeGuardFailure({
+              input: registrationInput,
+              ledger: candidateLedger,
+              charge
+            });
+            if (chargeGuardFailure) {
+              throw new Error(`Registration Charge authority is invalid: ${chargeGuardFailure}`);
+            }
+            return {
+              ...withStripeChargeLedgerReversalAuthority(candidateLedger, event, charge),
+              settlementProjected
+            };
+          };
+          const provisionalChargeLedger = buildAuthoritativeChargeLedger('paid', false);
+          const disputeSignalFailure = getStripeChargeDisputeSignalFailure(
+            charge,
+            provisionalChargeLedger.disputeStatus
+          );
+          if (disputeSignalFailure) {
+            // A dispute delivery can beat checkout settlement. Persist only
+            // exact non-projecting Charge authority so that Stripe's retried
+            // dispute event can bind; do not project payment or consume the
+            // checkout event until real dispute evidence exists.
+            if (!storedChargeLedger || storedChargeLedger.settlementProjected === false) {
+              transaction.set(chargeRef, provisionalChargeLedger);
+            }
+            return { retryableChargeAuthorityFailure: disputeSignalFailure };
+          }
+          if (storedChargeLedger && storedChargeLedger.settlementProjected !== false) {
             transaction.set(eventRef, {
               provider: 'stripe',
               product: 'registration',
@@ -7336,16 +7416,11 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
           }
 
           const chargeLedgerQuerySnap = await transaction.get(registrationRef.collection('stripeCharges'));
-          const existingChargeLedgers = (chargeLedgerQuerySnap.docs || []).map((docSnap) => docSnap.data() || {});
+          const existingChargeLedgers = (chargeLedgerQuerySnap.docs || [])
+            .filter((docSnap) => docSnap.id !== chargeRef.id)
+            .map((docSnap) => docSnap.data() || {});
           const buildPaidChargeAggregate = (paymentStatusAfterCharge) => {
-            const chargeLedger = buildRegistrationStripeChargeLedger({
-              registration,
-              session,
-              paymentIntent,
-              eventId: event.id,
-              receivedAt,
-              paymentStatusAfterCharge
-            });
+            const chargeLedger = buildAuthoritativeChargeLedger(paymentStatusAfterCharge, true);
             const aggregateFinancialState = getRegistrationAggregateFinancialState({
               registration,
               ledgers: [...existingChargeLedgers, chargeLedger]
@@ -7356,9 +7431,14 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
             return {
               chargeLedger,
               aggregateFinancialState,
-              effectivePaymentStatus: aggregateFinancialState.financialStatus === 'disputed'
-                ? 'disputed'
-                : paymentStatusAfterCharge
+              chargeReversalAmountCents: storedChargeLedger
+                ? 0
+                : chargeLedger.refundedAmountCents + chargeLedger.disputeLostAmountCents,
+              effectivePaymentStatus: ['disputed', 'dispute_lost'].includes(aggregateFinancialState.financialStatus)
+                ? aggregateFinancialState.financialStatus
+                : chargeLedger.refundedAmountCents > 0
+                  ? aggregateFinancialState.financialStatus
+                  : paymentStatusAfterCharge
             };
           };
 
@@ -7378,14 +7458,15 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
             const {
               chargeLedger,
               aggregateFinancialState,
+              chargeReversalAmountCents,
               effectivePaymentStatus
             } = buildPaidChargeAggregate(paymentStatusAfterCharge);
             transaction.set(registrationRef, {
               checkoutStatus: 'complete',
               paymentStatus: effectivePaymentStatus,
               paidAt: receivedAt,
-              balanceDueCents: nextBalanceDueCents,
-              stripeReversalBalanceCents: nextReversalBalanceCents,
+              balanceDueCents: nextBalanceDueCents + chargeReversalAmountCents,
+              stripeReversalBalanceCents: nextReversalBalanceCents + chargeReversalAmountCents,
               stripeCheckoutSessionId: session.id || null,
               stripePaymentIntentId: session.payment_intent || null,
               stripePaymentStatus: session.payment_status || 'paid',
@@ -7415,13 +7496,18 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
             const {
               chargeLedger,
               aggregateFinancialState,
+              chargeReversalAmountCents,
               effectivePaymentStatus
             } = buildPaidChargeAggregate(paymentStatusAfterCharge);
             transaction.set(registrationRef, {
               checkoutStatus: 'complete',
               paymentStatus: effectivePaymentStatus,
               paidAt: receivedAt,
-              balanceDueCents: installmentState.remainingBalanceCents,
+              balanceDueCents: installmentState.remainingBalanceCents
+                + Math.max(0, Number(registration.stripeReversalBalanceCents || 0) + chargeReversalAmountCents),
+              stripeReversalBalanceCents: Math.max(0,
+                Number(registration.stripeReversalBalanceCents || 0) + chargeReversalAmountCents
+              ),
               nextPaymentDueDate: installmentState.nextDueDate || null,
               stripeCheckoutSessionId: session.id || null,
               stripePaymentIntentId: session.payment_intent || null,
@@ -7459,13 +7545,19 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
             const {
               chargeLedger,
               aggregateFinancialState,
+              chargeReversalAmountCents,
               effectivePaymentStatus
             } = buildPaidChargeAggregate(paymentStatusAfterCharge);
             transaction.set(registrationRef, {
               checkoutStatus: 'complete',
               paymentStatus: effectivePaymentStatus,
               paidAt: receivedAt,
-              balanceDueCents: 0,
+              balanceDueCents: Math.max(0,
+                Number(registration.stripeReversalBalanceCents || 0) + chargeReversalAmountCents
+              ),
+              stripeReversalBalanceCents: Math.max(0,
+                Number(registration.stripeReversalBalanceCents || 0) + chargeReversalAmountCents
+              ),
               nextPaymentDueDate: null,
               stripeCheckoutSessionId: session.id || null,
               stripePaymentIntentId: session.payment_intent || null,
@@ -7622,6 +7714,10 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
         });
       });
 
+      if (transactionResult?.retryableChargeAuthorityFailure) {
+        throw new Error(`Registration Charge authority is not ready: ${transactionResult.retryableChargeAuthorityFailure}`);
+      }
+
       res.status(200).json({ received: true, registrationUpdated: shouldMarkRegistrationPaidFromEvent(event) });
       return;
     } catch (error) {
@@ -7636,16 +7732,20 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
       const session = event.data.object;
       const { teamId, batchId, recipientId } = session.metadata || {};
       let paymentIntent = null;
+      let charge = null;
       if (shouldMarkTeamFeePaidFromEvent(event)) {
         const paymentIntentId = getStripeObjectId(session.payment_intent);
         if (!paymentIntentId) throw new Error('Team fee Checkout Session is missing its PaymentIntent.');
         paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+        const chargeId = getStripeObjectId(paymentIntent.latest_charge);
+        if (!chargeId) throw new Error('Team fee PaymentIntent is missing its latest Charge.');
+        charge = await stripe.charges.retrieve(chargeId);
       }
       const receivedAt = admin.firestore.FieldValue.serverTimestamp();
       const eventRef = firestore.doc(`stripeEvents/${event.id}`);
       const recipientRef = buildTeamFeeRecipientRef({ teamId, batchId, recipientId });
 
-      await firestore.runTransaction(async (transaction) => {
+      const transactionResult = await firestore.runTransaction(async (transaction) => {
         const eventSnap = await transaction.get(eventRef);
         if (eventSnap.exists) return;
 
@@ -7707,16 +7807,50 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
         const shouldApplyCheckoutEvent = !ignoredReason;
 
         if (shouldMarkTeamFeePaidFromEvent(event) && shouldApplyCheckoutEvent) {
-          const chargeLedger = buildTeamFeeStripeChargeLedger({
+          const baseChargeLedger = buildTeamFeeStripeChargeLedger({
             recipient,
             session,
             paymentIntent,
             eventId: event.id,
             receivedAt
           });
-          const chargeRef = buildTeamFeeStripeChargeRef(recipientRef, chargeLedger.stripeChargeId);
+          const chargeRef = buildTeamFeeStripeChargeRef(recipientRef, baseChargeLedger.stripeChargeId);
           const chargeSnap = await transaction.get(chargeRef);
-          if (chargeSnap.exists) {
+          const storedChargeLedger = chargeSnap.exists ? (chargeSnap.data() || {}) : null;
+          const candidateChargeLedger = storedChargeLedger
+            ? { ...baseChargeLedger, ...storedChargeLedger }
+            : baseChargeLedger;
+          const chargeGuardFailure = getTeamFeeChargeGuardFailure({
+            input: { teamId, batchId, recipientId },
+            ledger: candidateChargeLedger,
+            charge
+          });
+          if (chargeGuardFailure) {
+            throw new Error(`Team fee Charge authority is invalid: ${chargeGuardFailure}`);
+          }
+          const authoritativeChargeLedger = {
+            ...withStripeChargeLedgerReversalAuthority(
+              candidateChargeLedger,
+              event,
+              charge,
+              { teamFee: true }
+            ),
+            settlementProjected: true
+          };
+          const disputeSignalFailure = getStripeChargeDisputeSignalFailure(
+            charge,
+            authoritativeChargeLedger.disputeStatus
+          );
+          if (disputeSignalFailure) {
+            if (!storedChargeLedger || storedChargeLedger.settlementProjected === false) {
+              transaction.set(chargeRef, {
+                ...authoritativeChargeLedger,
+                settlementProjected: false
+              });
+            }
+            return { retryableChargeAuthorityFailure: disputeSignalFailure };
+          }
+          if (storedChargeLedger && storedChargeLedger.settlementProjected !== false) {
             transaction.set(eventRef, {
               provider: 'stripe',
               product: 'team_fee',
@@ -7730,7 +7864,9 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
             return;
           }
           const chargeLedgerQuerySnap = await transaction.get(recipientRef.collection('stripeCharges'));
-          const existingChargeLedgers = (chargeLedgerQuerySnap.docs || []).map((docSnap) => docSnap.data() || {});
+          const existingChargeLedgers = (chargeLedgerQuerySnap.docs || [])
+            .filter((docSnap) => docSnap.id !== chargeRef.id)
+            .map((docSnap) => docSnap.data() || {});
           const previousAggregateFinancialState = existingChargeLedgers.length > 0
             ? getTeamFeeAggregateFinancialState(existingChargeLedgers)
             : {
@@ -7745,7 +7881,7 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
           }
           const aggregateFinancialState = getTeamFeeAggregateFinancialState([
             ...existingChargeLedgers,
-            chargeLedger
+            authoritativeChargeLedger
           ]);
           if (!aggregateFinancialState.valid) {
             throw new Error('Team fee charge ledger aggregate is invalid.');
@@ -7763,7 +7899,7 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
             )
           });
           transaction.set(recipientRef, withTeamFeeParentBillingClears(recipientUpdate), { merge: true });
-          transaction.set(chargeRef, chargeLedger);
+          transaction.set(chargeRef, authoritativeChargeLedger);
           if (recoveredReservationRef) {
             transaction.set(recoveredReservationRef, {
               status: 'paid',
@@ -7775,7 +7911,7 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
           if (adminBilling) {
             const chargeAwareAdminBilling = {
               ...adminBilling,
-              stripeChargeId: chargeLedger.stripeChargeId
+              stripeChargeId: authoritativeChargeLedger.stripeChargeId
             };
             transaction.set(buildTeamFeeAdminBillingRef(recipientRef, event.id), chargeAwareAdminBilling, { merge: true });
             transaction.set(buildTeamFeeAdminBillingRef(recipientRef, 'latest'), chargeAwareAdminBilling, { merge: true });
@@ -7816,6 +7952,10 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
           receivedAt
         });
       });
+
+      if (transactionResult?.retryableChargeAuthorityFailure) {
+        throw new Error(`Team fee Charge authority is not ready: ${transactionResult.retryableChargeAuthorityFailure}`);
+      }
 
       res.status(200).json({ received: true, teamFeeUpdated: shouldMarkTeamFeePaidFromEvent(event) });
       return;

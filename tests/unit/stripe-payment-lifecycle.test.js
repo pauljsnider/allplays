@@ -106,4 +106,22 @@ describe('shared Stripe payment lifecycle helpers', () => {
         expect(staleRefund.refundedAmountCents).toBe(4900);
         expect(getStripeChargeFinancialStatus(wonAfterRefund)).toBe('refunded');
     });
+
+    it('never lets a refund-only delivery replace durable dispute event evidence', () => {
+        const lost = reconcileStripeChargeReversal({ current: {}, event: {
+            id: 'evt_dispute_lost', type: 'charge.dispute.closed', created: 200,
+            data: { object: { status: 'lost' } }
+        }, charge: { amount: 4900, amount_refunded: 0 } });
+        const refunded = reconcileStripeChargeReversal({ current: lost, event: {
+            id: 'evt_refund_after_loss', type: 'charge.refunded', created: 300
+        }, charge: { amount: 4900, amount_refunded: 1000 } });
+        const refundOnly = reconcileStripeChargeReversal({ current: {}, event: {
+            id: 'evt_refund_only', type: 'charge.refunded', created: 300
+        }, charge: { amount: 4900, amount_refunded: 1000 } });
+
+        expect(refunded.lastStripeEventId).toBe('evt_dispute_lost');
+        expect(refunded.disputeEventCreated).toBe(200);
+        expect(refunded.refundEventCreated).toBe(300);
+        expect(refundOnly.lastStripeEventId).toBe('');
+    });
 });
