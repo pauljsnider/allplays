@@ -452,7 +452,10 @@ describe('React app schedule service contract integration', () => {
         expect(staffTeamSource).toContain('getStaffTeams({');
         expect(staffTeamSource).not.toContain('getTeams(');
         expect(staffTeamSource).toContain("nativeRunQuery('teams', 'ownerId', 'EQUAL', user.uid)");
-        expect(staffTeamSource).toContain("nativeRunQuery('teams', 'adminEmails', 'ARRAY_CONTAINS', normalizeEmail(user.email))");
+        expect(staffTeamSource).toContain("nativeRunQuery('teams', 'adminEmails', 'ARRAY_CONTAINS', normalizedEmail)");
+        expect(staffTeamSource).toContain("nativeRunQuery('teams', 'ownerEmailLower', 'EQUAL', normalizedEmail)");
+        expect(staffTeamSource).toContain("nativeRunQuery('teams', 'ownerEmail', 'EQUAL', ownerEmail)");
+        expect(scheduleServiceSource).toContain('normalizeEmail(team.ownerEmailLower) === email || normalizeEmail(team.ownerEmail) === email');
     });
 
     it('routes parent schedule event detail reads through typed schedule mappers', () => {
