@@ -180,7 +180,7 @@ export function renderHeader(container, user) {
 
     // Keep shared-header logout on the same auth bundle as page consumers.
     navLogout.addEventListener('click', async () => {
-      const { logout } = await import('./auth.js?v=126');
+      const { logout } = await import('./auth.js?v=127');
       await logout();
       window.location.href = 'index.html';
     });

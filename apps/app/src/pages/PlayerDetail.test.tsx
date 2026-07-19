@@ -326,6 +326,42 @@ describe('PlayerDetail athlete profile season selection', () => {
     });
   });
 
+  it('navigates from overview stat cards to the matching player sections', async () => {
+    playerServiceMocks.loadParentPlayerVideoClips.mockResolvedValue([
+      {
+        id: 'clip-1',
+        title: 'Fast break finish',
+        gameDate: '2026-01-15',
+        playLabel: 'Score',
+        url: 'https://video.example/clip-1.mp4',
+        thumbnailUrl: '',
+        gameLabel: 'Comets vs Storm'
+      }
+    ]);
+
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+
+    fireEvent.click(screen.getByRole('link', { name: /Events/i }));
+    expect(await screen.findByRole('heading', { name: 'Upcoming' })).toBeTruthy();
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Overview' })[0]);
+    fireEvent.click(screen.getByRole('link', { name: /Reports/i }));
+    expect(await screen.findByRole('heading', { name: 'Game history and performance' })).toBeTruthy();
+    const overviewButtons = screen.getAllByRole('button', { name: 'Overview' });
+    expect(overviewButtons[overviewButtons.length - 1].getAttribute('aria-pressed')).toBe('true');
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Overview' })[0]);
+    fireEvent.click(screen.getByRole('link', { name: /Clips/i }));
+
+    expect((await screen.findByRole('button', { name: 'Video Clips' })).getAttribute('aria-pressed')).toBe('true');
+    await waitFor(() => {
+      expect(playerServiceMocks.loadParentPlayerVideoClips).toHaveBeenCalledWith(auth.user, 'team-current', 'player-current');
+    });
+    expect(await screen.findByText('Fast break finish')).toBeTruthy();
+  });
+
   it('renders lazy-loaded season summary ranks totals and player event rows', async () => {
     const gameEvent = {
       eventKey: 'team-current-game-1-player-current',
@@ -540,6 +576,7 @@ describe('PlayerDetail athlete profile season selection', () => {
     expect(playerServiceMocks.loadParentPlayerDetail).toHaveBeenLastCalledWith(auth.user, 'team-next', 'player-next');
     expect(playerServiceMocks.loadParentPlayerVideoClips).toHaveBeenCalledTimes(1);
 
+    fireEvent.click(screen.getByRole('button', { name: 'Reports' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Video Clips' }));
 
     await waitFor(() => {

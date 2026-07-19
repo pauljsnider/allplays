@@ -449,6 +449,84 @@ describe('React app chat recipient service', () => {
         }));
     });
 
+    it('keeps parent messages open when member team compatibility queries are permission-denied', async () => {
+        dbMocks.getUserProfile.mockResolvedValue({
+            email: 'parent@example.com',
+            parentOf: [{ teamId: 'team-parent', playerId: 'player-1' }]
+        });
+        dbMocks.getUserTeamsWithAccess.mockRejectedValue(Object.assign(new Error('Missing or insufficient permissions.'), {
+            code: 'permission-denied'
+        }));
+        dbMocks.getParentTeams.mockResolvedValue([
+            { id: 'team-parent', name: 'Zebras', sport: 'Soccer' }
+        ]);
+        dbMocks.getUnreadChatCounts.mockResolvedValue({ 'team-parent': 0 });
+        dbMocks.getChatMessages.mockResolvedValue([]);
+
+        const { loadChatInbox } = await import('../../apps/app/src/lib/chatService.ts');
+        const inbox = await loadChatInbox({
+            uid: 'user-1',
+            email: 'parent@example.com',
+            displayName: 'Pat Parent',
+            roles: ['parent']
+        }, { includeLastMessages: false });
+
+        expect(dbMocks.getUserTeamsWithAccess).toHaveBeenCalledWith('user-1', 'parent@example.com');
+        expect(dbMocks.getParentTeams).toHaveBeenCalledWith('user-1');
+        expect(inbox.teams).toEqual([
+            expect.objectContaining({
+                id: 'team-parent',
+                name: 'Zebras',
+                role: 'Parent'
+            })
+        ]);
+    });
+
+    it('keeps coach messages open when parent team loading is permission-denied', async () => {
+        dbMocks.getUserProfile.mockResolvedValue({ email: 'coach@example.com' });
+        dbMocks.getUserTeamsWithAccess.mockResolvedValue([
+            { id: 'team-coach', name: 'Bears', sport: 'Basketball', adminEmails: ['coach@example.com'] }
+        ]);
+        dbMocks.getParentTeams.mockRejectedValue(Object.assign(new Error('Missing or insufficient permissions.'), {
+            code: 'permission-denied'
+        }));
+        dbMocks.getUnreadChatCounts.mockResolvedValue({ 'team-coach': 1 });
+        dbMocks.getChatMessages.mockResolvedValue([]);
+
+        const { loadChatInbox } = await import('../../apps/app/src/lib/chatService.ts');
+        const inbox = await loadChatInbox({
+            uid: 'coach-1',
+            email: 'coach@example.com',
+            displayName: 'Coach Pat',
+            roles: ['coach']
+        }, { includeLastMessages: false });
+
+        expect(inbox.teams).toEqual([
+            expect.objectContaining({
+                id: 'team-coach',
+                name: 'Bears',
+                role: 'Coach',
+                unreadCount: 1
+            })
+        ]);
+    });
+
+    it('surfaces transient member team load failures instead of showing an empty partial inbox', async () => {
+        dbMocks.getUserProfile.mockResolvedValue({ email: 'coach@example.com' });
+        dbMocks.getUserTeamsWithAccess.mockRejectedValue(Object.assign(new Error('Firestore unavailable'), {
+            code: 'unavailable'
+        }));
+        dbMocks.getParentTeams.mockResolvedValue([]);
+
+        const { loadChatInbox } = await import('../../apps/app/src/lib/chatService.ts');
+        await expect(loadChatInbox({
+            uid: 'coach-1',
+            email: 'coach@example.com',
+            displayName: 'Coach Pat',
+            roles: ['coach']
+        }, { includeLastMessages: false })).rejects.toThrow('Firestore unavailable');
+    });
+
     it('requests exact unread counts when sibling conversation metadata is newer than the default last read', async () => {
         dbMocks.getUserProfile.mockResolvedValue({
             email: 'parent@example.com',
