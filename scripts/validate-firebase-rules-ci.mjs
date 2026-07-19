@@ -415,7 +415,7 @@ export function validateFirebaseRulesCi() {
     assertIncludes(storageRules, "teamPermission(teamId, 'teamMediaManagement').get('mode', '') == 'selected'", 'Storage team media manager selected permission');
     assertIncludes(storageRules, "request.auth.uid in teamPermission(teamId, 'teamMediaManagement').get('memberIds', [])", 'Storage team media manager member ID check');
     assertIncludes(teamMediaRules, 'allow delete: if isVerifiedForSensitiveWrite() &&\n        (canManageTeamMedia(teamId) || canDeleteOwnTeamMediaObject(teamId, folderId, userId));', 'Team media scoped Storage delete rules');
-    assertIncludes(chatFallbackRules, 'allow delete: if isVerifiedForSensitiveWrite() &&\n        (isTeamOwnerOrAdmin(teamId) || canDeleteOwnChatAttachment(teamId, conversationId, userId));', 'Chat fallback scoped Storage delete rules');
+    assertIncludes(chatFallbackRules, 'allow delete: if (isVerifiedForSensitiveWrite() && isTeamOwnerOrAdmin(teamId)) ||\n        canDeleteOwnChatAttachment(teamId, conversationId, userId);', 'Chat fallback scoped Storage delete rules');
     for (const [label, block] of [
         ['Legacy chat fallback scoped Storage delete rules', legacyChatFallbackRules],
         ['Stat sheet scoped Storage delete rules', statSheetFallbackRules],
