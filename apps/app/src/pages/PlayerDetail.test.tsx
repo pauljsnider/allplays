@@ -73,7 +73,7 @@ const auth: AuthState = {
 };
 
 function buildDetailData(overrides: Record<string, any> = {}) {
-  return {
+  const base = {
     child: {
       teamId: 'team-current',
       teamName: 'Current Team',
@@ -91,6 +91,7 @@ function buildDetailData(overrides: Record<string, any> = {}) {
     team: { id: 'team-current', name: 'Current Team' },
     access: {
       isLinkedParent: true,
+      isTeamParent: true,
       isTeamStaff: false,
       canEditRosterDetails: false,
       canEditCustomRosterFields: false
@@ -109,6 +110,7 @@ function buildDetailData(overrides: Record<string, any> = {}) {
     certificates: [],
     trackingSummary: [],
     privateProfile: null,
+    familyContacts: [],
     incentives: {
       rules: [],
       currentRules: [],
@@ -140,7 +142,35 @@ function buildDetailData(overrides: Record<string, any> = {}) {
         }
       ]
     },
-    ...overrides
+  };
+  return {
+    ...base,
+    ...overrides,
+    child: {
+      ...base.child,
+      ...(overrides.child || {})
+    },
+    player: {
+      ...base.player,
+      ...(overrides.player || {})
+    },
+    team: {
+      ...base.team,
+      ...(overrides.team || {})
+    },
+    access: {
+      ...base.access,
+      ...(overrides.access || {})
+    },
+    actionCounts: {
+      ...base.actionCounts,
+      ...(overrides.actionCounts || {})
+    },
+    incentives: {
+      ...base.incentives,
+      ...(overrides.incentives || {})
+    },
+    athleteProfile: Object.prototype.hasOwnProperty.call(overrides, 'athleteProfile') ? overrides.athleteProfile : base.athleteProfile
   };
 }
 
@@ -1924,6 +1954,54 @@ describe('PlayerDetail staff roster editing', () => {
     expect(await screen.findByLabelText('Player photo')).toBeTruthy();
     expect(screen.queryByLabelText('Roster photo')).toBeNull();
     expect(view.container.querySelectorAll('input[type="file"]')).toHaveLength(1);
+  });
+
+  it('shows linked parents in the family tab above the co-parent invite', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText }
+    });
+    playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData({
+      familyContacts: [
+        {
+          userId: 'parent-1',
+          email: 'mom@example.com',
+          phone: '555-0101',
+          name: 'Morgan Parent',
+          relation: 'Mother',
+          status: 'accepted',
+          source: 'parent_invite',
+          storage: 'player'
+        },
+        {
+          userId: '',
+          email: 'dad@example.com',
+          phone: '',
+          name: '',
+          relation: 'Father',
+          status: '',
+          source: 'registration',
+          storage: 'private'
+        }
+      ]
+    }));
+
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Family' }));
+
+    expect(await screen.findByText('Linked Parents')).toBeTruthy();
+    expect(screen.getByText('Morgan Parent')).toBeTruthy();
+    expect(screen.getByText('mom@example.com')).toBeTruthy();
+    expect(screen.getByText('dad@example.com')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Copy mom@example.com' }));
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith('mom@example.com');
+    });
+    expect(screen.getByText('Invite Co-Parent')).toBeTruthy();
   });
 });
 

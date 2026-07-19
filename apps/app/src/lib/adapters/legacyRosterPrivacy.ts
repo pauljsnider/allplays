@@ -1,4 +1,5 @@
 import {
+    collectRosterParentContacts as legacyCollectRosterParentContacts,
     getRosterProfileValues as legacyGetRosterProfileValues,
     normalizeRosterFieldDefinitions as legacyNormalizeRosterFieldDefinitions,
     splitRosterProfileValuesByVisibility as legacySplitRosterProfileValuesByVisibility,
@@ -38,6 +39,16 @@ export type RosterFieldAccess = {
 
 export type RosterProfileValue = string | boolean;
 export type RosterProfileValues = Record<string, RosterProfileValue>;
+export type RosterParentContact = {
+    userId: string;
+    email: string;
+    phone: string;
+    name: string;
+    relation: string;
+    status: string;
+    source: string;
+    storage: string;
+};
 
 export type RosterFieldVisibilityInput = {
     id?: string;
@@ -194,4 +205,20 @@ export function canViewRosterField(field: RosterFieldVisibilityInput, access: Ro
         id: cleanString(field.id || field.key),
         visibility: normalizeVisibility(field.visibility || field.privacy || field.access)
     }, access) === true;
+}
+
+export function collectRosterParentContacts(player: Record<string, unknown>, options: Record<string, unknown> = {}): RosterParentContact[] {
+    return asArray(legacyCollectRosterParentContacts(player, options))
+        .filter(isRecord)
+        .map((contact) => ({
+            userId: cleanString(contact.userId),
+            email: cleanString(contact.email),
+            phone: cleanString(contact.phone),
+            name: cleanString(contact.name),
+            relation: cleanString(contact.relation || 'Parent') || 'Parent',
+            status: cleanString(contact.status),
+            source: cleanString(contact.source),
+            storage: cleanString(contact.storage)
+        }))
+        .filter((contact) => Boolean(contact.userId || contact.email || contact.phone || contact.name));
 }

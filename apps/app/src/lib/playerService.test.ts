@@ -51,6 +51,27 @@ const legacyPlayerProfileMocks = vi.hoisted(() => ({
   toggleIncentiveRule: vi.fn()
 }));
 const legacyRosterPrivacyMocks = vi.hoisted(() => ({
+  collectRosterParentContacts: vi.fn((player) => {
+    const contacts = [
+      ...(Array.isArray(player?.parents) ? player.parents : []),
+      ...(Array.isArray(player?.guardians) ? player.guardians : []),
+      ...(Array.isArray(player?.privateProfileParents) ? player.privateProfileParents : []),
+      ...(Array.isArray(player?.contacts) ? player.contacts : []),
+      ...(Array.isArray(player?.privateProfileContacts) ? player.privateProfileContacts : [])
+    ];
+    return contacts
+      .map((contact) => ({
+        userId: String(contact?.userId || contact?.uid || '').trim(),
+        email: String(contact?.email || '').trim().toLowerCase(),
+        phone: String(contact?.phone || '').trim(),
+        name: String(contact?.name || contact?.displayName || '').trim(),
+        relation: String(contact?.relation || contact?.relationship || 'Parent').trim() || 'Parent',
+        status: String(contact?.status || '').trim(),
+        source: String(contact?.source || '').trim(),
+        storage: String(contact?.storage || '').trim()
+      }))
+      .filter((contact) => contact.userId || contact.email || contact.phone || contact.name);
+  }),
   canViewRosterField: vi.fn((field, access) => {
     if (field?.visibility === 'admins') return Boolean(access?.isAdmin);
     if (field?.visibility === 'team' || field?.visibility === 'parents') {
@@ -807,6 +828,9 @@ describe('loadParentPlayerDetail custom roster fields', () => {
       {
         id: 'player-1',
         name: 'Sam Player',
+        parents: [
+          { userId: 'parent-1', name: 'Pat Parent', email: 'parent@example.com', relation: 'Mother', status: 'accepted' }
+        ],
         profile: {
           customFields: {
             nickname: 'Rocket'
@@ -859,6 +883,15 @@ describe('loadParentPlayerDetail custom roster fields', () => {
         value: 'Rocket'
       })
     ]);
+    expect(detail.familyContacts).toEqual([
+      expect.objectContaining({
+        userId: 'parent-1',
+        name: 'Pat Parent',
+        email: 'parent@example.com',
+        relation: 'Mother',
+        status: 'accepted'
+      })
+    ]);
     expect(detail.customRosterFields.some((field) => field.key === 'jerseySize')).toBe(false);
     expect(JSON.stringify(detail.customRosterFields)).not.toContain('YM');
   });
@@ -880,6 +913,12 @@ describe('loadParentPlayerDetail custom roster fields', () => {
       { key: 'nickname', label: 'Nickname', type: 'text', visibility: 'team', sortOrder: 1 },
       { key: 'jerseySize', label: 'Jersey Size', type: 'menu', visibility: 'parents', options: ['YS', 'YM'], sortOrder: 2 }
     ]);
+    legacyPlayerDbMocks.getPlayerPrivateProfile.mockResolvedValue({
+      parents: [{ name: 'Private Parent', email: 'private@example.com', relation: 'Guardian' }],
+      rosterFields: {
+        jerseySize: 'YM'
+      }
+    });
 
     const detail = await loadParentPlayerDetail({
       uid: 'parent-1',
@@ -891,6 +930,90 @@ describe('loadParentPlayerDetail custom roster fields', () => {
       expect.objectContaining({ key: 'nickname', value: 'Rocket' }),
       expect.objectContaining({ key: 'jerseySize', value: 'YM' })
     ]);
+  });
+
+  it('allows parents linked to the same team to load teammate profile drill-in', async () => {
+    scheduleServiceMocks.loadParentPlayerSchedule.mockResolvedValue({
+      children: [{ teamId: 'team-1', teamName: 'Comets', playerId: 'player-1', playerName: 'Sam Player' }],
+      events: []
+    });
+    legacyPlayerDbMocks.getPlayers.mockResolvedValue([
+      {
+        id: 'player-1',
+        name: 'Sam Player',
+        profile: {
+          customFields: {
+            nickname: 'Rocket'
+          }
+        }
+      },
+      {
+        id: 'player-2',
+        name: 'Taylor Teammate',
+        number: '9',
+        parents: [
+          { userId: 'parent-2', name: 'Taylor Parent', email: 'taylor@example.com', relation: 'Parent', status: 'accepted' }
+        ],
+        profile: {
+          customFields: {
+            nickname: 'Flash'
+          }
+        }
+      }
+    ]);
+    legacyPlayerDbMocks.getRosterFieldDefinitions.mockResolvedValue([
+      { key: 'nickname', label: 'Nickname', type: 'text', visibility: 'team', sortOrder: 1 },
+      { key: 'jerseySize', label: 'Jersey Size', type: 'menu', visibility: 'parents', options: ['YS', 'YM'], sortOrder: 2 }
+    ]);
+
+    const detail = await loadParentPlayerDetail({
+      uid: 'parent-1',
+      email: 'parent@example.com',
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
+    } as any, 'team-1', 'player-2');
+
+    expect(detail.child).toEqual(expect.objectContaining({
+      teamId: 'team-1',
+      playerId: 'player-2',
+      playerName: 'Taylor Teammate'
+    }));
+    expect(detail.access.isLinkedParent).toBe(false);
+    expect(detail.access.isTeamParent).toBe(true);
+    expect(detail.privateProfile).toBeNull();
+    expect(detail.familyContacts).toEqual([
+      expect.objectContaining({
+        userId: 'parent-2',
+        name: 'Taylor Parent',
+        email: 'taylor@example.com',
+        relation: 'Parent'
+      })
+    ]);
+    expect(JSON.stringify(detail.familyContacts)).not.toContain('private@example.com');
+    expect(detail.customRosterFields).toEqual([
+      expect.objectContaining({ key: 'nickname', value: 'Flash' })
+    ]);
+    expect(detail.customRosterFields.some((field) => field.key === 'jerseySize')).toBe(false);
+  });
+
+  it('allows parentTeamIds-only team parents to load teammate profile drill-in', async () => {
+    scheduleServiceMocks.loadParentPlayerSchedule.mockResolvedValue({
+      children: [],
+      events: []
+    });
+
+    const detail = await loadParentPlayerDetail({
+      uid: 'parent-1',
+      email: 'parent@example.com',
+      parentOf: [],
+      parentTeamIds: ['team-1']
+    } as any, 'team-1', 'player-1');
+
+    expect(detail.access.isLinkedParent).toBe(false);
+    expect(detail.access.isTeamParent).toBe(true);
+    expect(detail.player).toEqual(expect.objectContaining({
+      id: 'player-1',
+      name: 'Sam Player'
+    }));
   });
 
   it('includes admin-only custom roster fields for team staff', async () => {
