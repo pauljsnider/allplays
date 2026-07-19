@@ -42,6 +42,8 @@ describe('app observability initiative source contract', () => {
         expect(functionsSource).toContain("hashTelemetryIdentifier('session'");
         expect(functionsSource).toContain('visitorId: null');
         expect(functionsSource).toContain('userId: null');
+        expect(functionsSource).toContain("admin.appCheck().verifyToken(token)");
+        expect(functionsSource).toContain("policy.verified ? 'verified' : 'unattested'");
         expect(functionsSource).not.toContain('verifyTelemetryAuth(req, payload)');
     });
 });

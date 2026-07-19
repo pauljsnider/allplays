@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import crypto from 'node:crypto';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
+const {
+    canonicalizeTelemetryAppRoute,
+    canonicalizeTelemetryEventName,
+    canonicalizeTelemetryPagePath,
+    TELEMETRY_WRITES_PER_EVENT
+} = require('../../functions/telemetry-ingress-core.cjs');
 
 function loadTelemetryCollectorHelpers() {
     const source = readFileSync('functions/index.js', 'utf8');
@@ -8,9 +17,27 @@ function loadTelemetryCollectorHelpers() {
     const end = source.indexOf('const calendarServiceAccount');
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
-    return new Function('admin', 'crypto', `${source.slice(start, end)}
+    return new Function(
+        'admin',
+        'crypto',
+        'canonicalizeTelemetryAppRoute',
+        'canonicalizeTelemetryEventName',
+        'canonicalizeTelemetryPagePath',
+        'TELEMETRY_WRITES_PER_EVENT',
+        `${source.slice(start, end)}
         return { normalizeTelemetryEvent, commitTelemetryEvents };
     `);
+}
+
+function loadHelpers(harness) {
+    return loadTelemetryCollectorHelpers()(
+        harness.admin,
+        crypto,
+        canonicalizeTelemetryAppRoute,
+        canonicalizeTelemetryEventName,
+        canonicalizeTelemetryPagePath,
+        TELEMETRY_WRITES_PER_EVENT
+    );
 }
 
 function createFirestoreHarness() {
@@ -74,7 +101,7 @@ function rawEvent(overrides = {}) {
 describe('telemetry workflow DB storage', () => {
     it('stores only hashed, route-templated, privacy-reduced events with expiry', async () => {
         const harness = createFirestoreHarness();
-        const { normalizeTelemetryEvent, commitTelemetryEvents } = loadTelemetryCollectorHelpers()(harness.admin, crypto);
+        const { normalizeTelemetryEvent, commitTelemetryEvents } = loadHelpers(harness);
         const receivedAt = new Date('2030-06-01T12:00:00.000Z');
         const event = normalizeTelemetryEvent(rawEvent(), receivedAt);
 
@@ -132,7 +159,7 @@ describe('telemetry workflow DB storage', () => {
 
     it('writes weighted aggregates and short-lived anonymous sessions', async () => {
         const harness = createFirestoreHarness();
-        const { normalizeTelemetryEvent, commitTelemetryEvents } = loadTelemetryCollectorHelpers()(harness.admin, crypto);
+        const { normalizeTelemetryEvent, commitTelemetryEvents } = loadHelpers(harness);
         const event = normalizeTelemetryEvent(rawEvent({
             name: 'page_view', sampleRate: 0.01, sampleWeight: 99
         }), new Date('2030-06-01T12:00:00.000Z'));
@@ -158,7 +185,7 @@ describe('telemetry workflow DB storage', () => {
 
     it('forces critical telemetry to full sampling and ignores client multipliers', () => {
         const harness = createFirestoreHarness();
-        const { normalizeTelemetryEvent } = loadTelemetryCollectorHelpers()(harness.admin, crypto);
+        const { normalizeTelemetryEvent } = loadHelpers(harness);
         const event = normalizeTelemetryEvent(rawEvent({
             name: 'app_load_error', sampleRate: 0.01, sampleWeight: 100, signedIn: true
         }), new Date('2030-06-01T12:00:00.000Z'));
@@ -168,7 +195,7 @@ describe('telemetry workflow DB storage', () => {
 
     it('keeps explicit workflow telemetry unsampled regardless of client input', () => {
         const harness = createFirestoreHarness();
-        const { normalizeTelemetryEvent } = loadTelemetryCollectorHelpers()(harness.admin, crypto);
+        const { normalizeTelemetryEvent } = loadHelpers(harness);
         const event = normalizeTelemetryEvent(rawEvent({
             name: 'app_workflow_timing', sampleRate: 0.01, sampleWeight: 100
         }), new Date('2030-06-01T12:00:00.000Z'));
@@ -178,11 +205,27 @@ describe('telemetry workflow DB storage', () => {
 
     it('derives a deterministic daily deduplication hash without storing the client id', () => {
         const harness = createFirestoreHarness();
-        const { normalizeTelemetryEvent } = loadTelemetryCollectorHelpers()(harness.admin, crypto);
+        const { normalizeTelemetryEvent } = loadHelpers(harness);
         const receivedAt = new Date('2030-06-01T12:00:00.000Z');
         const first = normalizeTelemetryEvent(rawEvent(), receivedAt);
         const duplicate = normalizeTelemetryEvent(rawEvent(), receivedAt);
         expect(first.id).toBe(duplicate.id);
         expect(first.id).not.toContain('parent-core-workflow-1');
+    });
+
+    it('maps attacker-selected event and route dimensions into fixed aggregate buckets', () => {
+        const harness = createFirestoreHarness();
+        const { normalizeTelemetryEvent } = loadHelpers(harness);
+        const event = normalizeTelemetryEvent(rawEvent({
+            name: 'attacker_created_metric_123',
+            pagePath: '/attacker-created-page',
+            appRoute: '/attacker-created-route'
+        }), new Date('2030-06-01T12:00:00.000Z'));
+
+        expect(event).toMatchObject({
+            name: 'other_event',
+            pagePath: '/other',
+            appRoute: '/other'
+        });
     });
 });

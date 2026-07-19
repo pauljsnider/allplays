@@ -4,6 +4,7 @@ import fs from 'node:fs';
 describe('privacy-preserving observability contract', () => {
     const client = fs.readFileSync('js/telemetry.js', 'utf8');
     const collector = fs.readFileSync('functions/index.js', 'utf8');
+    const rules = fs.readFileSync('firestore.rules', 'utf8');
     const indexes = JSON.parse(fs.readFileSync('firestore.indexes.json', 'utf8'));
     const workflow = fs.readFileSync('.github/workflows/critical-workflow-health.yml', 'utf8');
 
@@ -50,9 +51,11 @@ describe('privacy-preserving observability contract', () => {
             .filter((entry) => entry.fieldPath === 'expiresAt' && entry.ttl === true)
             .map((entry) => entry.collectionGroup);
         expect(ttlGroups).toEqual(expect.arrayContaining([
-            'telemetryEvents', 'telemetrySessions', 'telemetryDaily',
+            'telemetryEvents', 'telemetrySessions', 'telemetryRateLimits', 'telemetryDaily',
             'telemetryPagesDaily', 'telemetryRoutesDaily', 'telemetryEventsDaily'
         ]));
+        expect(rules).toContain('match /telemetryRateLimits/{limitId}');
+        expect(rules).toMatch(/match \/telemetryRateLimits\/\{limitId\} \{\s*allow read, write: if false;/);
     });
 
     it('keeps the watchdog read-only except for tightly scoped incident reconciliation', () => {

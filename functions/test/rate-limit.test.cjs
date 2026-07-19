@@ -9,6 +9,7 @@ const {
 
 function makeAtomicFirestore() {
     const state = new Map();
+    const setCalls = [];
     let transactionQueue = Promise.resolve();
 
     function collection(name) {
@@ -29,6 +30,7 @@ function makeAtomicFirestore() {
                 };
             },
             set(ref, value) {
+                setCalls.push({ ref, value: { ...value } });
                 state.set(ref.path, { ...value });
             }
         });
@@ -37,7 +39,7 @@ function makeAtomicFirestore() {
         return result;
     }
 
-    return { collection, runTransaction, state };
+    return { collection, runTransaction, setCalls, state };
 }
 
 test('uses the public address immediately before the trusted proxy hop', () => {
@@ -195,4 +197,44 @@ test('recovers an active window with a corrupted count', async () => {
         resetAt: 60_000,
         expiresAt: new Date(60_000)
     });
+});
+
+test('does not amplify writes after a durable boundary is exhausted', async () => {
+    const firestore = makeAtomicFirestore();
+    const limiter = createFirestoreFixedWindowRateLimiter({
+        firestore,
+        collectionName: 'telemetryRateLimits',
+        windowMs: 10_000,
+        maxRequests: 2
+    });
+
+    assert.equal((await limiter('unattested|203.0.113.10', 1_000)).allowed, true);
+    assert.equal((await limiter('unattested|203.0.113.10', 1_100)).allowed, true);
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+        assert.equal((await limiter('unattested|203.0.113.10', 1_200 + attempt)).allowed, false);
+    }
+
+    assert.equal(firestore.setCalls.length, 2);
+    assert.equal([...firestore.state.values()][0].count, 2);
+});
+
+test('fails closed without rewriting a corrupted oversized active count', async () => {
+    const firestore = makeAtomicFirestore();
+    const limiter = createFirestoreFixedWindowRateLimiter({
+        firestore,
+        collectionName: 'telemetryRateLimits',
+        windowMs: 10_000,
+        maxRequests: 2
+    });
+
+    await limiter('verified|203.0.113.12', 1_000);
+    const [path] = firestore.state.keys();
+    firestore.state.set(path, { count: Number.MAX_SAFE_INTEGER, resetAt: 9_000 });
+    const writesBefore = firestore.setCalls.length;
+
+    const result = await limiter('verified|203.0.113.12', 2_000);
+
+    assert.equal(result.allowed, false);
+    assert.equal(result.remaining, 0);
+    assert.equal(firestore.setCalls.length, writesBefore);
 });

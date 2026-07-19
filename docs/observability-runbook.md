@@ -22,6 +22,8 @@ The browser collector has no authenticated identity. It never sends an ID token,
 - Unknown string properties become `[redacted-text]`; identifier properties become `[id]`. Only code-defined categorical keys retain bounded text.
 - Viewport and device data are coarse buckets.
 - Error and security events are retained at 100% after a one-minute duplicate window. Automatic page/performance signals are sampled at 25%; automatic interaction signals at 10%. Stored `sampleWeight` keeps aggregate counts interpretable. Explicit code-defined workflow events remain unsampled.
+- The server verifies App Check tokens but keeps enforcement in observe/passive mode. Verified requests may contribute at most 15 events and 30 requests per source IP per minute. Missing or invalid attestation is preserved as a coarse status for rollout measurement and limited to two events and six requests per source IP per minute. Excess telemetry is acknowledged and dropped so product flows never retry or fail on collection controls.
+- Event names, page paths, and app routes are mapped to a finite source-controlled aggregate vocabulary. Unknown values use `other_event` or `/other` rather than creating attacker-selected aggregate documents.
 - Optional Sentry capture uses a 20% default sample, no PII, no breadcrumbs, no user/request/extra payload, a one-minute duplicate window, and redacted exception details. Set no DSN to keep it off.
 
 Do not add a telemetry field that contains names, addresses, roster data, chat, notes, descriptions, payment details, credentials, tokens, arbitrary error messages, Firebase document IDs, or raw URLs. Add a categorical outcome/code instead and extend the privacy tests.
@@ -33,18 +35,19 @@ Firestore TTL is declared in `firestore.indexes.json`:
 | Collection | Retention |
 | --- | ---: |
 | `telemetrySessions` | 1 day |
+| `telemetryRateLimits` | 1 minute plus asynchronous TTL cleanup |
 | `telemetryEvents` | 30 days |
 | `telemetryDaily`, `telemetryPagesDaily`, `telemetryRoutesDaily`, `telemetryEventsDaily` | 180 days |
 
 TTL deletion is asynchronous after `expiresAt`. Existing documents created before this rollout have no `expiresAt`; they must not be treated as covered. After the production canary, inspect the telemetry collections, export anything genuinely needed, then delete the legacy test telemetry or backfill an approved expiration. Do not disable the TTL policies during an application rollback.
 
-The TTL rollout is declarative and idempotent. Run the repository's installed Firebase CLI through the protected production path with `firebase deploy --only firestore:indexes --project game-flow-c6311`; rerunning the same commit reapplies the same six `expiresAt` field overrides and does not delete legacy documents. Confirm the six telemetry policies in the deployment output and Firebase console before continuing. Do not combine this step with a data-cleanup command.
+The TTL rollout is declarative and idempotent. Run the repository's installed Firebase CLI through the protected production path with `firebase deploy --only firestore:indexes --project game-flow-c6311`; rerunning the same commit reapplies the seven telemetry `expiresAt` field overrides and does not delete legacy documents. Confirm the seven telemetry policies in the deployment output and Firebase console before continuing. Do not combine this step with a data-cleanup command.
 
 Legacy-data removal is a separate, explicitly approved change window after the 24-hour canary. Before deleting anything, create and verify a recoverable Firestore export in the approved backup location, record its object/prefix and source time, and scope the cleanup only to the telemetry collections and pre-rollout documents being retired. Keep the verified export through post-cleanup validation. Never run legacy cleanup from the index, Functions, Hosting, or monitor deployment.
 
 ## Rollout and canary
 
-1. Deploy Firestore indexes first using the idempotent command above and confirm all six telemetry TTL field policies are enabled. Stop here if any policy is missing or still changing state.
+1. Deploy Firestore indexes first using the idempotent command above and confirm all seven telemetry TTL field policies are enabled. Stop here if any policy is missing or still changing state.
 2. Deploy Functions before or together with Hosting/app assets. The v2 client remains accepted by the old endpoint, and the v2 endpoint accepts cached v1 clients while ignoring their auth and persistent visitor identity.
 3. Confirm `collectTelemetry` is healthy in Cloud Logging and no deployment error contains a request body, token, or user content.
 4. From `https://allplays.ai`, generate one page view and one deliberate handled test error with a non-sensitive categorical label. In the admin telemetry view, confirm:
@@ -53,6 +56,7 @@ Legacy-data removal is a separate, explicitly approved change window after the 2
    - the session and event document IDs are 40-character hashes;
    - dynamic routes contain `:id`;
    - `expiresAt` is present;
+   - `appCheckStatus` is one of `verified`, `missing`, or `invalid`, and the verified share is measured before any future enforcement decision;
    - no page title, query metadata, user agent, exact screen data, message, or content is stored.
 5. Manually run `critical-workflow-health`. A healthy run must make no issue mutation. Use the script unit fixtures to test failure reconciliation; do not deliberately break production deployment or recovery controls.
 6. Observe collector failures, write volume, aggregate continuity, and product smoke tests for 24 hours before removing any superseded observability code.

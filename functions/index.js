@@ -53,6 +53,18 @@ const {
   normalizeRegistrationCheckoutCurrency
 } = require('./registration-payment-webhook-core.cjs');
 const { createFirestoreFixedWindowRateLimiter, createInMemoryRateLimiter, getRequestIp } = require('./rate-limit.cjs');
+const {
+  MAX_TELEMETRY_BODY_BYTES,
+  TELEMETRY_RATE_LIMIT_WINDOW_MS,
+  TELEMETRY_WRITES_PER_EVENT,
+  canonicalizeTelemetryAppRoute,
+  canonicalizeTelemetryEventName,
+  canonicalizeTelemetryPagePath,
+  deduplicateTelemetryEvents,
+  getTelemetryBodyByteLength,
+  getTelemetryIngressPolicy,
+  verifyTelemetryAppCheck
+} = require('./telemetry-ingress-core.cjs');
 const { buildPublicGamesIcs, canExposeEmptyPublicFeed, isPublicFanGame } = require('./public-calendar-core.cjs');
 const { buildCalendarFeedGamesQuery } = require('./calendar-feed-window-core.cjs');
 const {
@@ -306,6 +318,25 @@ const checkFamilyShareCalendarTargetRateLimit = createInMemoryRateLimiter({
   maxRequests: 20,
   maxKeys: 10_000
 });
+const checkTelemetryIngressRateLimit = createInMemoryRateLimiter({
+  windowMs: TELEMETRY_RATE_LIMIT_WINDOW_MS,
+  maxRequests: 120,
+  maxKeys: 10_000
+});
+const telemetryRateLimiters = new Map();
+
+function getTelemetryRateLimiter(policy) {
+  const tier = policy.verified ? 'verified' : 'unattested';
+  if (!telemetryRateLimiters.has(tier)) {
+    telemetryRateLimiters.set(tier, createFirestoreFixedWindowRateLimiter({
+      firestore,
+      collectionName: 'telemetryRateLimits',
+      windowMs: TELEMETRY_RATE_LIMIT_WINDOW_MS,
+      maxRequests: policy.maxRequests
+    }));
+  }
+  return telemetryRateLimiters.get(tier);
+}
 
 function getStripeConfig() {
   const stripeConfig = functions.config()?.stripe || {};
@@ -4882,7 +4913,7 @@ function isAllowedOrigin(origin) {
 }
 
 function isAllowedTelemetryOrigin(origin) {
-  return !!origin && telemetryAllowedOriginSet.has(origin);
+  return !origin || telemetryAllowedOriginSet.has(origin);
 }
 
 function writeCorsHeaders(req, res, methods = 'GET,OPTIONS', endpointAllowedOriginSet = null) {
@@ -5091,11 +5122,12 @@ function normalizeTelemetryEvent(rawEvent, receivedAt) {
     return null;
   }
 
-  const name = normalizeTelemetryKey(rawEvent.name, 80);
+  const suppliedName = normalizeTelemetryKey(rawEvent.name, 80);
+  const name = canonicalizeTelemetryEventName(suppliedName);
   const rawSessionId = normalizeTelemetryIdentifier(rawEvent.sessionId, 120);
   const rawEventId = normalizeTelemetryIdentifier(rawEvent.id, 120);
 
-  if (!name || !rawSessionId) {
+  if (!suppliedName || !rawSessionId) {
     return null;
   }
 
@@ -5103,8 +5135,8 @@ function normalizeTelemetryEvent(rawEvent, receivedAt) {
     ? receivedAt.toISOString()
     : new Date(rawEvent.clientTimestamp).toISOString();
   const properties = normalizeTelemetryObject(rawEvent.properties);
-  const pagePath = normalizeTelemetryPath(rawEvent.pagePath);
-  const appRoute = getTelemetryAppRoute(rawEvent, properties);
+  const pagePath = canonicalizeTelemetryPagePath(normalizeTelemetryPath(rawEvent.pagePath));
+  const appRoute = canonicalizeTelemetryAppRoute(getTelemetryAppRoute(rawEvent, properties));
   const dateKey = getDateKey(receivedAt);
   const sessionId = hashTelemetryIdentifier('session', rawSessionId, dateKey);
   const eventIdSource = rawEventId || `${rawSessionId}|${name}|${clientTimestamp}`;
@@ -5243,8 +5275,6 @@ function applyTelemetryAggregateWrites(batch, event, dateKey, options = {}) {
   batch.set(db.collection('telemetrySessions').doc(event.sessionId), sessionUpdate, { merge: true });
 }
 
-const MAX_TELEMETRY_EVENTS_PER_REQUEST = 25;
-const TELEMETRY_WRITES_PER_EVENT = 6;
 const FIRESTORE_WRITE_SAFETY_LIMIT = 450;
 
 async function commitTelemetryEvent(db, event, dateKey) {
@@ -12784,14 +12814,20 @@ exports.collectTelemetry = functions
       return;
     }
 
-    const rawSize = Number(req.headers['content-length'] || 0);
-    if (rawSize > 64 * 1024) {
+    const claimedSize = Number(req.headers['content-length'] || 0);
+    if (Number.isFinite(claimedSize) && claimedSize > MAX_TELEMETRY_BODY_BYTES) {
       res.status(413).json({ ok: false, error: 'Telemetry payload too large' });
       return;
     }
 
     let payload;
+    let rawSize = 0;
     try {
+      rawSize = getTelemetryBodyByteLength(req);
+      if (rawSize > MAX_TELEMETRY_BODY_BYTES) {
+        res.status(413).json({ ok: false, error: 'Telemetry payload too large' });
+        return;
+      }
       payload = parseTelemetryBody(req);
     } catch (_error) {
       res.status(400).json({ ok: false, error: 'Invalid telemetry payload' });
@@ -12799,8 +12835,40 @@ exports.collectTelemetry = functions
     }
 
     try {
+      const ingressRateLimit = checkTelemetryIngressRateLimit(req);
+      if (!ingressRateLimit.allowed) {
+        res.status(204).send('');
+        return;
+      }
+
+      const appCheck = await verifyTelemetryAppCheck(
+        req,
+        (token) => admin.appCheck().verifyToken(token)
+      );
+      const policy = getTelemetryIngressPolicy(appCheck.status);
+      const requestIp = getRequestIp(req);
+      let rateLimit;
+      try {
+        rateLimit = await getTelemetryRateLimiter(policy)(
+          `${policy.verified ? 'verified' : 'unattested'}|${requestIp}`
+        );
+      } catch (error) {
+        functions.logger.error('Telemetry ingress control failed.', {
+          eventType: 'operational_telemetry_ingress_control_failure',
+          errorCode: normalizeTelemetryKey(error?.code || error?.name || 'unknown', 40) || 'unknown'
+        });
+        res.status(204).send('');
+        return;
+      }
+      if (!rateLimit.allowed) {
+        // Telemetry is best effort. A successful empty response avoids retries
+        // and guarantees collection controls cannot block a product flow.
+        res.status(204).send('');
+        return;
+      }
+
       const rawEvents = Array.isArray(payload?.events)
-        ? payload.events.slice(0, MAX_TELEMETRY_EVENTS_PER_REQUEST)
+        ? payload.events.slice(0, policy.maxEvents)
         : [];
       if (!rawEvents.length) {
         res.status(400).json({ ok: false, error: 'No telemetry events provided' });
@@ -12809,9 +12877,10 @@ exports.collectTelemetry = functions
 
       const receivedAt = new Date();
       const dateKey = getDateKey(receivedAt);
-      const events = rawEvents
+      const events = deduplicateTelemetryEvents(rawEvents
         .map((event) => normalizeTelemetryEvent(event, receivedAt))
-        .filter(Boolean);
+        .filter(Boolean)
+        .map((event) => ({ ...event, appCheckStatus: appCheck.status })));
 
       if (!events.length) {
         res.status(400).json({ ok: false, error: 'No valid telemetry events provided' });

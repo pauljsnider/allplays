@@ -144,18 +144,23 @@ function createFirestoreFixedWindowRateLimiter({
       const windowActive = Number.isFinite(existingResetAt) && existingResetAt > now;
       const resetAt = windowActive ? existingResetAt : now + configuredWindowMs;
       const existingCount = Number(existing.count);
-      const count = windowActive
-        && Number.isSafeInteger(existingCount)
-        && existingCount >= 0
-        && existingCount < Number.MAX_SAFE_INTEGER
-        ? existingCount + 1
+      const validExistingCount = Number.isSafeInteger(existingCount) && existingCount >= 0;
+      const count = windowActive && validExistingCount
+        ? existingCount >= configuredMaxRequests
+          ? configuredMaxRequests + 1
+          : existingCount + 1
         : 1;
 
-      transaction.set(limitRef, {
-        count,
-        resetAt,
-        expiresAt: new Date(resetAt)
-      });
+      // Once a boundary is exhausted, keep rejecting from the stored window
+      // without performing another write. Repeated abusive requests can still
+      // incur a bounded lookup, but cannot amplify into unbounded writes.
+      if (!windowActive || !validExistingCount || existingCount < configuredMaxRequests) {
+        transaction.set(limitRef, {
+          count: Math.min(count, configuredMaxRequests),
+          resetAt,
+          expiresAt: new Date(resetAt)
+        });
+      }
 
       return {
         allowed: count <= configuredMaxRequests,
