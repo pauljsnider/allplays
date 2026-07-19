@@ -1556,6 +1556,64 @@ test('payment authority rollout gate paginates and validates every charge ledger
     assert.equal(audit.blockerCount, 0);
 });
 
+test('payment authority rollout binds settled Stripe Session economics to the exact charge ledger', async () => {
+    const registrationPath = 'teams/team-a/registrationForms/form-a/registrations/reg-settled';
+    const ledgerPath = `${registrationPath}/stripeCharges/ch_settled`;
+    const sessionId = 'cs_registration_settled';
+    const paymentIntentId = 'pi_registration_settled';
+    const chargeId = 'ch_settled';
+    const metadata = {
+        product: 'registration', teamId: 'team-a', formId: 'form-a', registrationId: 'reg-settled',
+        checkoutAttemptToken: 'attempt_registration_settled_1234'
+    };
+    const { stripeState, mod } = loadFunctionsModule({
+        'users/platform-admin': { email: 'admin@example.com', isAdmin: true },
+        [registrationPath]: {
+            id: 'reg-settled', teamId: 'team-a', formId: 'form-a', paymentProvider: 'stripe',
+            stripeGrossPaidAmountCents: 5000, lastPaidStripeChargeId: chargeId,
+            paymentPlan: { id: 'full' }
+        },
+        [ledgerPath]: {
+            type: 'stripe_charge', provider: 'stripe', product: 'registration',
+            teamId: 'team-a', formId: 'form-a', registrationId: 'reg-settled',
+            stripeCheckoutSessionId: sessionId, stripePaymentIntentId: paymentIntentId,
+            stripeChargeId: chargeId, amountPaidCents: 5000,
+            refundedAmountCents: 0, disputeLostAmountCents: 0, disputeStatus: 'none',
+            currency: 'usd', livemode: false
+        }
+    });
+    const adminContext = { auth: { uid: 'platform-admin', token: { email: 'admin@example.com' } } };
+    stripeState.checkoutResponses.set(sessionId, {
+        id: sessionId, mode: 'payment', status: 'complete', payment_status: 'paid', livemode: false,
+        client_reference_id: 'team-a:form-a:reg-settled', metadata: clone(metadata),
+        payment_intent: paymentIntentId, amount_total: 4900, currency: 'usd'
+    });
+    stripeState.paymentIntents.set(paymentIntentId, {
+        id: paymentIntentId, amount: 4900, amount_received: 4900, currency: 'usd', livemode: false,
+        metadata: clone(metadata), latest_charge: chargeId
+    });
+    stripeState.charges.set(chargeId, {
+        id: chargeId, object: 'charge', amount: 4900, amount_refunded: 0,
+        currency: 'usd', livemode: false, metadata: clone(metadata),
+        payment_intent: paymentIntentId, disputed: false
+    });
+
+    const invalid = await mod.auditStripePaymentAuthorityRollout({ assertEmpty: false }, adminContext);
+    assert.equal(invalid.ready, false);
+    assert.deepEqual(invalid.blockers, [{
+        product: 'registration', path: `stripeCheckoutSessions/${sessionId}`,
+        reason: 'settled_stripe_session_charge_ledger_invalid'
+    }]);
+
+    stripeState.checkoutResponses.get(sessionId).amount_total = 5000;
+    stripeState.paymentIntents.get(paymentIntentId).amount = 5000;
+    stripeState.paymentIntents.get(paymentIntentId).amount_received = 5000;
+    stripeState.charges.get(chargeId).amount = 5000;
+    const valid = await mod.auditStripePaymentAuthorityRollout({ assertEmpty: false }, adminContext);
+    assert.equal(valid.ready, true, JSON.stringify(valid.blockers));
+    assert.equal(valid.blockerCount, 0);
+});
+
 test('payment authority rollout gate detects pointers, orphan ledgers, and paid attempts without entitlements', async () => {
     const registrationPath = 'teams/team-a/registrationForms/form-a/registrations/reg-pointer';
     const orphanLedgerPath = 'teams/team-a/feeBatches/batch-a/feeRecipients/missing-parent/stripeCharges/ch_orphan';

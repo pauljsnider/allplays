@@ -5065,7 +5065,79 @@ async function readStripeCheckoutSessionsByStatus(stripe, status, { assertFreeze
   return { sessions, complete: false };
 }
 
-async function inspectSettledStripeCheckoutSessionAuthority(session, expectedLivemode, { assertFreeze = null } = {}) {
+function getSettledStripeSessionPaymentAuthorityFailure({ session = {}, paymentIntent = {}, charge = {} } = {}) {
+  const sessionPaymentIntentId = getStripeObjectId(session.payment_intent);
+  const latestChargeId = getStripeObjectId(paymentIntent.latest_charge);
+  const chargePaymentIntentId = getStripeObjectId(charge.payment_intent);
+  const amountCents = Math.round(Number(session.amount_total || 0));
+  const paymentIntentAmountCents = Math.round(Number(paymentIntent.amount_received || paymentIntent.amount || 0));
+  const chargeAmountCents = Math.round(Number(charge.amount || 0));
+  const currency = String(session.currency || '').trim().toLowerCase();
+  if (!sessionPaymentIntentId || paymentIntent.id !== sessionPaymentIntentId) return 'payment_intent_mismatch';
+  if (!latestChargeId || charge.id !== latestChargeId) return 'charge_mismatch';
+  if (!chargePaymentIntentId || chargePaymentIntentId !== paymentIntent.id) return 'charge_payment_intent_mismatch';
+  if (![amountCents, paymentIntentAmountCents, chargeAmountCents]
+    .every((amount) => Number.isSafeInteger(amount) && amount > 0 && amount === amountCents)) {
+    return 'payment_amount_mismatch';
+  }
+  if (!currency
+      || String(paymentIntent.currency || '').trim().toLowerCase() !== currency
+      || String(charge.currency || '').trim().toLowerCase() !== currency) return 'payment_currency_mismatch';
+  if (Boolean(paymentIntent.livemode) !== Boolean(session.livemode)
+      || Boolean(charge.livemode) !== Boolean(session.livemode)) return 'payment_livemode_mismatch';
+  return '';
+}
+
+function getSettledStripeChargeLedgerFailure({
+  product,
+  input,
+  parent,
+  ledger,
+  session,
+  paymentIntent,
+  charge
+} = {}) {
+  if (!ledger || String(ledger.stripeCheckoutSessionId || '').trim() !== String(session.id || '').trim()) {
+    return 'charge_ledger_missing';
+  }
+  const allowLegacyPaymentIntentMetadata = Number(ledger.legacyPaymentAuthorityVersion) === 1
+    && Object.keys(paymentIntent.metadata || {}).length === 0;
+  const paymentIntentFailure = product === 'registration'
+    ? getRegistrationPaymentIntentGuardFailure({
+      registration: parent,
+      session,
+      paymentIntent,
+      allowLegacyPaymentIntentMetadata
+    })
+    : getTeamFeePaymentIntentGuardFailure({
+      recipient: parent,
+      session,
+      paymentIntent,
+      allowLegacyPaymentIntentMetadata
+    });
+  if (paymentIntentFailure) return paymentIntentFailure;
+  const chargeFailure = product === 'registration'
+    ? getRegistrationChargeGuardFailure({ input, ledger, charge })
+    : getTeamFeeChargeGuardFailure({ input, ledger, charge });
+  if (chargeFailure) return chargeFailure;
+  const chargeRefundedAmountCents = Math.round(Number(charge.amount_refunded || 0));
+  if (!Number.isSafeInteger(chargeRefundedAmountCents)
+      || chargeRefundedAmountCents !== Math.round(Number(ledger.refundedAmountCents || 0))) {
+    return 'charge_refund_amount_mismatch';
+  }
+  if (charge.disputed === true
+      && String(ledger.disputeStatus || 'none').trim().toLowerCase() !== 'open') {
+    return 'charge_dispute_status_mismatch';
+  }
+  return '';
+}
+
+async function inspectSettledStripeCheckoutSessionAuthority(
+  stripe,
+  session,
+  expectedLivemode,
+  { assertFreeze = null } = {}
+) {
   const product = getStripePaymentAuthoritySessionProduct(session);
   const sessionPath = `stripeCheckoutSessions/${String(session.id || 'missing')}`;
   if (!product) return null;
@@ -5076,6 +5148,22 @@ async function inspectSettledStripeCheckoutSessionAuthority(session, expectedLiv
     return { product, path: sessionPath, reason: 'stripe_checkout_session_payment_pending' };
   }
   try {
+    if (assertFreeze) await assertFreeze();
+    const paymentIntentId = getStripeObjectId(session.payment_intent);
+    if (!paymentIntentId) {
+      return { product, path: sessionPath, reason: 'settled_stripe_session_payment_authority_invalid' };
+    }
+    const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+    if (assertFreeze) await assertFreeze();
+    const chargeId = getStripeObjectId(paymentIntent.latest_charge);
+    if (!chargeId) {
+      return { product, path: sessionPath, reason: 'settled_stripe_session_payment_authority_invalid' };
+    }
+    const charge = await stripe.charges.retrieve(chargeId);
+    if (assertFreeze) await assertFreeze();
+    if (getSettledStripeSessionPaymentAuthorityFailure({ session, paymentIntent, charge })) {
+      return { product, path: sessionPath, reason: 'settled_stripe_session_payment_authority_invalid' };
+    }
     if (product === 'registration') {
       const input = normalizeRegistrationCheckoutCancelInput(session.metadata || {});
       const parentRef = firestore.doc(
@@ -5085,12 +5173,21 @@ async function inspectSettledStripeCheckoutSessionAuthority(session, expectedLiv
         parentRef.get(),
         readPaymentAuthoritySubcollection(parentRef.collection('stripeCharges'), { assertFreeze })
       ]);
-      const hasSessionLedger = chargeScan.docs.some((ledgerSnap) => (
+      const sessionLedgers = chargeScan.docs.filter((ledgerSnap) => (
         String(ledgerSnap.data()?.stripeCheckoutSessionId || '').trim() === String(session.id || '').trim()
       ));
       if (!chargeScan.complete) return { product, path: sessionPath, reason: 'stripe_charge_ledger_scan_incomplete' };
-      if (!parentSnap.exists || !hasSessionLedger) {
+      if (!parentSnap.exists || sessionLedgers.length === 0) {
         return { product, path: sessionPath, reason: 'settled_stripe_session_missing_charge_ledger' };
+      }
+      const parent = { id: input.registrationId, ...(parentSnap.data() || {}) };
+      const ledgers = chargeScan.docs.map((ledgerSnap) => ledgerSnap.data() || {});
+      if (sessionLedgers.length !== 1
+          || inspectStripeChargeLedgerCoverage({ product, record: parent, ledgers })
+          || getSettledStripeChargeLedgerFailure({
+            product, input, parent, ledger: sessionLedgers[0].data() || {}, session, paymentIntent, charge
+          })) {
+        return { product, path: sessionPath, reason: 'settled_stripe_session_charge_ledger_invalid' };
       }
       return null;
     }
@@ -5101,12 +5198,21 @@ async function inspectSettledStripeCheckoutSessionAuthority(session, expectedLiv
         parentRef.get(),
         readPaymentAuthoritySubcollection(parentRef.collection('stripeCharges'), { assertFreeze })
       ]);
-      const hasSessionLedger = chargeScan.docs.some((ledgerSnap) => (
+      const sessionLedgers = chargeScan.docs.filter((ledgerSnap) => (
         String(ledgerSnap.data()?.stripeCheckoutSessionId || '').trim() === String(session.id || '').trim()
       ));
       if (!chargeScan.complete) return { product, path: sessionPath, reason: 'stripe_charge_ledger_scan_incomplete' };
-      if (!parentSnap.exists || !hasSessionLedger) {
+      if (!parentSnap.exists || sessionLedgers.length === 0) {
         return { product, path: sessionPath, reason: 'settled_stripe_session_missing_charge_ledger' };
+      }
+      const parent = { id: input.recipientId, ...(parentSnap.data() || {}) };
+      const ledgers = chargeScan.docs.map((ledgerSnap) => ledgerSnap.data() || {});
+      if (sessionLedgers.length !== 1
+          || inspectStripeChargeLedgerCoverage({ product, record: parent, ledgers })
+          || getSettledStripeChargeLedgerFailure({
+            product, input, parent, ledger: sessionLedgers[0].data() || {}, session, paymentIntent, charge
+          })) {
+        return { product, path: sessionPath, reason: 'settled_stripe_session_charge_ledger_invalid' };
       }
       return null;
     }
@@ -5116,12 +5222,28 @@ async function inspectSettledStripeCheckoutSessionAuthority(session, expectedLiv
       { assertFreeze }
     );
     if (!attemptScan.complete) return { product, path: sessionPath, reason: 'team_pass_checkout_attempt_scan_incomplete' };
-    const matchingAttempt = attemptScan.docs.find((attemptDoc) => (
+    const matchingAttempts = attemptScan.docs.filter((attemptDoc) => (
       String(attemptDoc.data()?.stripeCheckoutSessionId || '').trim() === String(session.id || '').trim()
       && isTeamPassAttemptInScope(attemptDoc.data() || {}, input)
     ));
-    if (!matchingAttempt || inspectTeamPassAttemptAuthority({ ...input, attempt: matchingAttempt.data() || {} })) {
+    if (matchingAttempts.length !== 1
+        || inspectTeamPassAttemptAuthority({ ...input, attempt: matchingAttempts[0].data() || {} })) {
       return { product, path: sessionPath, reason: 'settled_stripe_session_missing_checkout_attempt' };
+    }
+    const attempt = matchingAttempts[0].data() || {};
+    const hasV2Authority = Number(attempt.stripePaymentAuthorityVersion) === 2;
+    const paymentAuthorityFailure = hasV2Authority
+      ? getTeamPassPaymentIntentGuardFailure({ attempt, session, paymentIntent, charge })
+      : Object.keys(paymentIntent.metadata || {}).length === 0
+        ? getTeamPassChargeGuardFailure({ attempt, charge })
+        : 'legacy_payment_intent_metadata_mismatch';
+    if (attempt.stripePaymentIntentId !== paymentIntent.id
+        || attempt.stripeChargeId !== charge.id
+        || Math.round(Number(charge.amount_refunded || 0))
+          !== Math.round(Number(attempt.reversalState?.refundedAmountCents ?? attempt.refundedAmountCents ?? 0))
+        || charge.disputed === true
+        || paymentAuthorityFailure) {
+      return { product, path: sessionPath, reason: 'settled_stripe_session_checkout_attempt_invalid' };
     }
     return null;
   } catch (error) {
@@ -5151,7 +5273,12 @@ async function scanStripePaymentAuthoritySessions(stripe, { assertFreeze = null 
   for (let offset = 0; offset < relevantCompleteSessions.length; offset += 25) {
     const inspections = await Promise.all(
       relevantCompleteSessions.slice(offset, offset + 25)
-        .map((session) => inspectSettledStripeCheckoutSessionAuthority(session, expectedLivemode, { assertFreeze }))
+        .map((session) => inspectSettledStripeCheckoutSessionAuthority(
+          stripe,
+          session,
+          expectedLivemode,
+          { assertFreeze }
+        ))
     );
     blockers.push(...inspections.filter(Boolean));
     if (assertFreeze) await assertFreeze();
