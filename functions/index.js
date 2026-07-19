@@ -5228,8 +5228,15 @@ function getSettledStripeChargeLedgerFailure({
   }
   const disputeFailure = getStripeChargeDisputeSignalFailure(charge, ledger.disputeStatus);
   if (disputeFailure) return disputeFailure;
+  const disputeStatus = String(ledger.disputeStatus || 'none').trim().toLowerCase();
+  if (disputeStatus !== 'none'
+      && (!Number.isSafeInteger(Number(ledger.disputeEventCreated))
+        || Number(ledger.disputeEventCreated) <= 0
+        || !String(ledger.lastStripeEventId || '').trim())) {
+    return 'charge_dispute_event_evidence_missing';
+  }
   const chargeAmountCents = Math.round(Number(charge.amount || 0));
-  const expectedDisputeLostAmountCents = String(ledger.disputeStatus || '').trim().toLowerCase() === 'lost'
+  const expectedDisputeLostAmountCents = disputeStatus === 'lost'
     ? chargeAmountCents - chargeRefundedAmountCents
     : 0;
   if (!Number.isSafeInteger(expectedDisputeLostAmountCents)
@@ -6428,6 +6435,7 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
     throw new functions.https.HttpsError('failed-precondition', 'No server-owned Stripe charge allocation can satisfy this refund.');
   }
   const stripe = createStripeClient();
+  const stripeRefundAuthorityByChargeId = new Map();
   for (const allocation of proposedAllocations) {
     const charge = await stripe.charges.retrieve(allocation.stripeChargeId);
     const ledger = chargeDocs.find((entry) => entry.stripeChargeId === allocation.stripeChargeId) || {};
@@ -6436,6 +6444,33 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
       functions.logger.warn('Rejected team fee charge allocation.', { ...input, chargeId: allocation.stripeChargeId, guardFailure });
       throw new functions.https.HttpsError('failed-precondition', 'A Stripe charge ledger entry did not match this fee recipient.');
     }
+    const ledgerRefundedAmountCents = Number(ledger.refundedAmountCents || 0);
+    const chargeRefundedAmountCents = Number(charge.amount_refunded || 0);
+    const durableAllocation = (Array.isArray(initialIntent.allocations) ? initialIntent.allocations : [])
+      .find((entry) => entry?.stripeChargeId === allocation.stripeChargeId);
+    const durableRefundBaseline = Number(durableAllocation?.refundedAmountCentsBefore);
+    const replayedRefundMayAlreadyExist = initialIntent.status === 'processing'
+      && Number.isSafeInteger(durableRefundBaseline)
+      && durableRefundBaseline >= 0
+      && ledgerRefundedAmountCents === durableRefundBaseline
+      && chargeRefundedAmountCents === durableRefundBaseline + Number(allocation.amountCents);
+    if (!Number.isSafeInteger(ledgerRefundedAmountCents)
+        || ledgerRefundedAmountCents < 0
+        || !Number.isSafeInteger(chargeRefundedAmountCents)
+        || chargeRefundedAmountCents < 0
+        || chargeRefundedAmountCents > Number(charge.amount || 0)
+        || (chargeRefundedAmountCents !== ledgerRefundedAmountCents && !replayedRefundMayAlreadyExist)) {
+      throw new functions.https.HttpsError(
+        'failed-precondition',
+        'The Stripe cumulative refund authority does not match the stored charge ledger.'
+      );
+    }
+    stripeRefundAuthorityByChargeId.set(allocation.stripeChargeId, {
+      allocationAmountCents: Number(allocation.amountCents),
+      chargeRefundedAmountCents,
+      ledgerRefundedAmountCents,
+      replayedRefundMayAlreadyExist
+    });
   }
 
   let allocations = [];
@@ -6462,6 +6497,21 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
       throw new functions.https.HttpsError('permission-denied', 'Team admin access changed before the refund could be reserved.');
     }
     const existingIntent = intentSnap.exists ? (intentSnap.data() || {}) : {};
+    const assertStripeRefundBaselineIsCurrent = (allocation, ledger) => {
+      const authority = stripeRefundAuthorityByChargeId.get(allocation.stripeChargeId);
+      const latestLedgerRefundedAmountCents = Number(ledger?.refundedAmountCents || 0);
+      if (!authority
+          || authority.allocationAmountCents !== Number(allocation.amountCents)
+          || !Number.isSafeInteger(latestLedgerRefundedAmountCents)
+          || latestLedgerRefundedAmountCents !== authority.ledgerRefundedAmountCents
+          || (!authority.replayedRefundMayAlreadyExist
+            && authority.chargeRefundedAmountCents !== latestLedgerRefundedAmountCents)) {
+        throw new functions.https.HttpsError(
+          'failed-precondition',
+          'The Stripe cumulative refund authority changed before the refund could be reserved.'
+        );
+      }
+    };
     if (intentSnap.exists && Number(existingIntent.amountCents || 0) !== input.amountCents) {
       throw new functions.https.HttpsError('already-exists', 'Refund request ID already exists for a different amount.');
     }
@@ -6498,8 +6548,13 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
         };
         return;
       }
+      const latestLedgers = ledgerSnaps.filter((snap) => snap.exists)
+        .map((snap) => ({ ref: snap.ref, id: snap.id, ...(snap.data() || {}) }));
+      allocations.forEach((allocation) => {
+        const ledger = latestLedgers.find((entry) => entry.stripeChargeId === allocation.stripeChargeId);
+        assertStripeRefundBaselineIsCurrent(allocation, ledger);
+      });
       if (existingIntent.status !== 'processing') {
-        const latestLedgers = ledgerSnaps.filter((snap) => snap.exists).map((snap) => ({ ref: snap.ref, id: snap.id, ...(snap.data() || {}) }));
         allocations.forEach((allocation) => {
           const ledger = latestLedgers.find((entry) => entry.stripeChargeId === allocation.stripeChargeId);
           const available = Math.max(0, Number(ledger?.refundableAmountCents || 0) - Number(ledger?.pendingRefundAmountCents || 0));
@@ -6533,6 +6588,7 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
     }
     allocations.forEach((allocation) => {
       const ledger = latestLedgers.find((entry) => entry.stripeChargeId === allocation.stripeChargeId);
+      assertStripeRefundBaselineIsCurrent(allocation, ledger);
       transaction.set(ledger.ref, {
         pendingRefundAmountCents: Math.max(0, Number(ledger.pendingRefundAmountCents || 0)) + allocation.amountCents,
         updatedAt: admin.firestore.FieldValue.serverTimestamp()

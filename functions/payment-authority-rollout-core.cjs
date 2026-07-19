@@ -82,6 +82,8 @@ function inspectStripeChargeLedgerCoverage({ product = '', record = {}, ledgers 
     const disputeLostAmountCents = asNonNegativeSafeInteger(ledger.disputeLostAmountCents || 0);
     const refundableAmountCents = asNonNegativeSafeInteger(ledger.refundableAmountCents || 0);
     const disputeStatus = normalizeString(ledger.disputeStatus || 'none').toLowerCase();
+    const hasDisputeEventEvidence = asNonNegativeSafeInteger(ledger.disputeEventCreated) > 0
+      && Boolean(normalizeString(ledger.lastStripeEventId));
     if (ledger.type !== 'stripe_charge'
         || ledger.provider !== 'stripe'
         || ledger.product !== normalizedProduct
@@ -96,6 +98,7 @@ function inspectStripeChargeLedgerCoverage({ product = '', record = {}, ledgers 
         || !normalizeString(ledger.currency).toLowerCase()
         || typeof ledger.livemode !== 'boolean'
         || !['none', 'open', 'won', 'lost'].includes(disputeStatus)
+        || (disputeStatus !== 'none' && !hasDisputeEventEvidence)
         || refundedAmountCents === null
         || disputeLostAmountCents === null
         || refundableAmountCents === null

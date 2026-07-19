@@ -59,8 +59,14 @@ describe('Stripe payment-authority rollout gate', () => {
         expect(inspectStripeChargeLedgerCoverage({
             product: 'registration',
             record: { ...record, stripeDisputeLostAmountCents: undefined },
-            ledgers: [{ ...ledger, disputeStatus: 'lost', disputeLostAmountCents: 5000 }]
+            ledgers: [{
+                ...ledger, disputeStatus: 'lost', disputeLostAmountCents: 5000,
+                disputeEventCreated: 100, lastStripeEventId: 'evt_dispute_lost'
+            }]
         })).toBe('stripe_charge_ledger_aggregate_mismatch');
+        expect(inspectStripeChargeLedgerCoverage({
+            product: 'registration', record, ledgers: [{ ...ledger, disputeStatus: 'won' }]
+        })).toBe('stripe_charge_ledger_invalid');
         expect(inspectStripeChargeLedgerCoverage({
             product: 'registration', record, ledgers: [{ ...ledger, registrationId: 'victim' }]
         })).toBe('stripe_charge_ledger_invalid');

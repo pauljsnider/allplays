@@ -1896,6 +1896,17 @@ test('payment authority rollout binds settled Stripe Session economics to the ex
     assert.equal(missingDisputeEvidence.blockers[0]?.reason, 'settled_stripe_session_charge_ledger_invalid');
 
     await firestore.doc(ledgerPath).update({ disputeStatus: 'won' });
+    const resolvedDisputeWithoutEventEvidence = await mod.auditStripePaymentAuthorityRollout({ assertEmpty: false }, adminContext);
+    assert.equal(resolvedDisputeWithoutEventEvidence.ready, false);
+    assert.deepEqual(resolvedDisputeWithoutEventEvidence.blockers.map((blocker) => blocker.reason).sort(), [
+        'settled_stripe_session_charge_ledger_invalid',
+        'stripe_charge_ledger_invalid'
+    ].sort());
+
+    await firestore.doc(ledgerPath).update({
+        disputeEventCreated: 100,
+        lastStripeEventId: 'evt_dispute_won'
+    });
     const resolvedDispute = await mod.auditStripePaymentAuthorityRollout({ assertEmpty: false }, adminContext);
     assert.equal(resolvedDispute.ready, true, JSON.stringify(resolvedDispute.blockers));
     assert.equal(resolvedDispute.blockerCount, 0);
@@ -3334,9 +3345,9 @@ test('team fee full refund retries after webhook reconciliation and a callable p
     assert.equal(firestore.snapshot(`${recipientPath}/refundIntents/refund_webhook_crash`).status, 'recorded');
 });
 
-test('team fee refund rejects cross-recipient Stripe authority before creating a refund', async () => {
+test('team fee refund rejects cross-recipient and divergent cumulative Stripe authority before creating a refund', async () => {
     const recipientPath = 'teams/team-fee/feeBatches/batch-1/feeRecipients/recipient-1';
-    const { stripeState, mod } = loadFunctionsModule({
+    const { firestore, stripeState, mod } = loadFunctionsModule({
         'teams/team-fee': { ownerId: 'owner-1', adminEmails: [] },
         'users/owner-1': { email: 'owner@example.com' },
         [recipientPath]: {
@@ -3372,6 +3383,29 @@ test('team fee refund rejects cross-recipient Stripe authority before creating a
 
     charge.metadata.teamId = 'team-fee';
     stripeState.charges.set(charge.id, charge);
+    await firestore.doc(`${recipientPath}/stripeCharges/ch_team_fee`).update({
+        refundedAmountCents: 5000,
+        refundableAmountCents: 2500
+    });
+    await firestore.doc(recipientPath).update({
+        paidAmountCents: 2500,
+        balanceDueCents: 5000,
+        stripeRefundedAmountCents: 5000,
+        stripeRefundableAmountCents: 2500
+    });
+    await assert.rejects(mod.refundStripeTeamFeePayment(request, authContext), /cumulative refund authority/);
+    assert.equal(stripeState.refundCalls.length, 0);
+
+    await firestore.doc(`${recipientPath}/stripeCharges/ch_team_fee`).update({
+        refundedAmountCents: 0,
+        refundableAmountCents: 7500
+    });
+    await firestore.doc(recipientPath).update({
+        paidAmountCents: 7500,
+        balanceDueCents: 0,
+        stripeRefundedAmountCents: 0,
+        stripeRefundableAmountCents: 7500
+    });
     const result = await mod.refundStripeTeamFeePayment(request, authContext);
     assert.equal(result.amountCents, 2500);
     assert.equal(stripeState.refundCalls.length, 1);

@@ -548,6 +548,8 @@ describe('team fee checkout function helpers', () => {
         expect(source).toContain('preserveReservation: !definitiveFailure');
         expect(source).toContain('const ledgerRefundedAt = admin.firestore.Timestamp.now();');
         expect(source).toContain('pendingRefundAmountCents');
+        expect(source).toContain('stripeRefundAuthorityByChargeId');
+        expect(source).toContain('The Stripe cumulative refund authority does not match the stored charge ledger.');
     });
 
     it('guards team fee webhook processing behind the current checkout attempt', () => {
