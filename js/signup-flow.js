@@ -19,8 +19,7 @@ export async function executeEmailPasswordSignup({
         getTeam,
         getUserProfile,
         sendVerificationEmail,
-        signOut,
-        verificationEmailTimeoutMs = 3000
+        signOut
     } = dependencies;
 
     if (!activationCode) {
@@ -187,21 +186,8 @@ export async function executeEmailPasswordSignup({
         }
     }
 
-    function timeoutVerificationEmail() {
-        return new Promise((resolve) => {
-            setTimeout(resolve, verificationEmailTimeoutMs);
-        });
-    }
-
-    const verificationEmailPromise = queueVerificationEmail().catch((e) => {
-        console.error('SIGNUP ERROR:', e.code, e.message);
-    });
-
     try {
-        await Promise.race([
-            verificationEmailPromise,
-            timeoutVerificationEmail()
-        ]);
+        await queueVerificationEmail();
     } catch (e) {
         console.error('SIGNUP ERROR:', e.code, e.message);
     }
