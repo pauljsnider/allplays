@@ -10,17 +10,17 @@ describe('RSVP precedence cache delivery', () => {
         const dbSource = readRepoFile('js/db.js');
         const breakdownSource = readRepoFile('js/game-day-rsvp-breakdown.js');
         const runtimeSources = {
-            'accept-invite.html': 'db.js?v=115',
-            'calendar.html': 'db.js?v=115',
-            'edit-schedule.html': 'db.js?v=115',
-            'game-day.html': 'db.js?v=115',
-            'login.html': 'db.js?v=115',
-            'parent-dashboard.html': 'db.js?v=115',
-            'team.html': 'db.js?v=115',
-            'team-chat.html': 'db.js?v=115',
-            'js/auth.js': 'db.js?v=115',
-            'profile.html': 'db.js?v=115',
-            'js/team-media.js': 'db.js?v=115'
+            'accept-invite.html': 'db.js?v=116',
+            'calendar.html': 'db.js?v=116',
+            'edit-schedule.html': 'db.js?v=116',
+            'game-day.html': 'db.js?v=116',
+            'login.html': 'db.js?v=116',
+            'parent-dashboard.html': 'db.js?v=116',
+            'team.html': 'db.js?v=116',
+            'team-chat.html': 'db.js?v=116',
+            'js/auth.js': 'db.js?v=116',
+            'profile.html': 'db.js?v=116',
+            'js/team-media.js': 'db.js?v=116'
         };
 
         for (const [path, expectedVersion] of Object.entries(runtimeSources)) {

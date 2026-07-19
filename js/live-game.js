@@ -16,7 +16,7 @@ import {
   subscribeGame,
   updateGame,
   uploadGameClip
-} from './db.js?v=115';
+} from './db.js?v=116';
 import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=18';
 import { hasFullTeamAccess } from './team-access.js?v=1';
 import { buildScoreLinkedClipRecord, isScoredPlayEvent, validateGameClipFile } from './game-clips.js?v=1';
