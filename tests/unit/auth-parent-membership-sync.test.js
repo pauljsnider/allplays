@@ -38,7 +38,7 @@ const dbMocks = vi.hoisted(() => ({
 
 vi.mock('../../js/firebase.js?v=22', () => firebaseMocks);
 vi.mock('../../js/db.js?v=113', () => dbMocks);
-vi.mock('../../js/signup-flow.js?v=10', () => ({
+vi.mock('../../js/signup-flow.js?v=11', () => ({
     executeEmailPasswordSignup: vi.fn()
 }));
 vi.mock('../../js/admin-invite.js?v=6', () => ({

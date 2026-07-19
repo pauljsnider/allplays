@@ -19,7 +19,8 @@ export async function executeEmailPasswordSignup({
         getTeam,
         getUserProfile,
         sendVerificationEmail,
-        signOut
+        signOut,
+        verificationEmailTimeoutMs = 3000
     } = dependencies;
 
     if (!activationCode) {
@@ -176,7 +177,7 @@ export async function executeEmailPasswordSignup({
         }
     }
 
-    const queueVerificationEmail = async () => {
+    async function queueVerificationEmail() {
         const user = auth.currentUser;
         if (user) {
             await user.reload();
@@ -184,11 +185,26 @@ export async function executeEmailPasswordSignup({
             await sendVerificationEmail();
             console.log('SIGNUP: Verification email queued successfully');
         }
-    };
+    }
 
-    queueVerificationEmail().catch((e) => {
+    function timeoutVerificationEmail() {
+        return new Promise((resolve) => {
+            setTimeout(resolve, verificationEmailTimeoutMs);
+        });
+    }
+
+    const verificationEmailPromise = queueVerificationEmail().catch((e) => {
         console.error('SIGNUP ERROR:', e.code, e.message);
     });
+
+    try {
+        await Promise.race([
+            verificationEmailPromise,
+            timeoutVerificationEmail()
+        ]);
+    } catch (e) {
+        console.error('SIGNUP ERROR:', e.code, e.message);
+    }
 
     return userCredential;
 }

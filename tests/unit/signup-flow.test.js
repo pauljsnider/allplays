@@ -281,7 +281,8 @@ describe('executeEmailPasswordSignup', () => {
     it('does not block successful signup on verification email delivery', async () => {
         const neverResolveVerification = vi.fn(() => new Promise(() => {}));
         const dependencies = createDependencies({
-            sendVerificationEmail: neverResolveVerification
+            sendVerificationEmail: neverResolveVerification,
+            verificationEmailTimeoutMs: 1
         });
         const reload = vi.fn().mockResolvedValue(undefined);
         const auth = {
