@@ -58,6 +58,7 @@ describe('createTeamForApp', () => {
       isPublic: false,
       ownerId: 'coach-1',
       ownerEmail: 'coach@example.com',
+      ownerEmailLower: 'coach@example.com',
       adminEmails: []
     });
     expect(legacyMocks.getDefaultStatConfigForSport).toHaveBeenCalledWith('Soccer');
