@@ -38,7 +38,7 @@
             }
         }
     </script>
-  <script type="module" src="/js/telemetry.js?v=3"></script>
+  <script type="module" src="/js/telemetry.js?v=4"></script>
 </head>
 
 <body class="bg-gradient-to-br from-gray-50 to-gray-100 text-gray-900">
@@ -367,7 +367,7 @@
             getUserProfile,
             submitRsvp,
             submitRsvpForPlayer,
-            getRsvps,
+            getMyRsvps,
             getRsvpSummaries,
             createRideOffer,
             listRideOffersForEvent,
@@ -388,8 +388,8 @@
             listFamilyShareTokens,
             revokeFamilyShareToken,
             updateFamilyShareTokenCalendars
-        } from './js/db.js?v=107';
-        import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } from './js/utils.js?v=15';
+        } from './js/db.js?v=113';
+        import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } from './js/utils.js?v=18';
         import {
             getIncentiveRules,
             saveIncentiveRule as saveIncentiveRuleFn,
@@ -407,7 +407,7 @@
             getCapSetting,
             saveCapSetting as saveCapSettingFn,
         } from './js/parent-incentives.js?v=3';
-        import { requireAuth, checkAuth } from './js/auth.js?v=51';
+        import { requireAuth, checkAuth } from './js/auth.js?v=125';
         import { resolveScheduleWatchCta } from './js/schedule-watch-cta.js?v=1';
         import {
             resolvePracticePacketSessionIdForEvent as resolvePracticePacketSessionIdForEventBase,
@@ -417,7 +417,7 @@
         } from './js/parent-dashboard-packets.js?v=3';
         import { filterVisiblePracticeSessions } from './js/parent-dashboard-practice-sessions.js?v=1';
         import { resolveRsvpPlayerIdsForSubmission, resolveMyRsvpByChildForGame } from './js/parent-dashboard-rsvp.js?v=6';
-        import { createParentDashboardRsvpController } from './js/parent-dashboard-rsvp-controls.js?v=1';
+        import { createParentDashboardRsvpController } from './js/parent-dashboard-rsvp-controls.js?v=2';
         import { getEventRideshareSummary, getOfferSeatInfo } from './js/rideshare-helpers.js?v=2';
         import { mergeAssignmentsWithClaims } from './js/snack-helpers.js?v=1';
         import { resolveSelectedRideChildId, getRideOfferUiState, createRideRequestHandlers } from './js/parent-dashboard-rideshare-controls.js?v=2';
@@ -1719,7 +1719,7 @@
             const unsummarizedByTeam = new Map();
             uniqueGameKeys.forEach((key) => {
                 const [teamId, gameId] = parseTeamGameKey(key);
-                const shouldLoadSummary = allScheduleEvents.some((event) => event.teamId === teamId && event.id === gameId && !event.rsvpSummary);
+                const shouldLoadSummary = allScheduleEvents.some((event) => event.teamId === teamId && event.id === gameId && event.isTeamAdmin && !event.rsvpSummary);
                 if (!shouldLoadSummary) return;
                 if (!unsummarizedByTeam.has(teamId)) unsummarizedByTeam.set(teamId, []);
                 unsummarizedByTeam.get(teamId).push(gameId);
@@ -1738,7 +1738,11 @@
             await Promise.all(uniqueGameKeys.map(async (key) => {
                 const [teamId, gameId] = parseTeamGameKey(key);
                 try {
-                    const rsvps = await getRsvps(teamId, gameId);
+                    const linkedPlayerIds = allScheduleEvents
+                        .filter((event) => event?.teamId === teamId && event?.id === gameId)
+                        .map((event) => event?.childId || event?.playerId || '')
+                        .filter(Boolean);
+                    const rsvps = await getMyRsvps(teamId, gameId, userId, linkedPlayerIds);
                     const eventForPrefs = allScheduleEvents.find((event) => event.teamId === teamId && event.id === gameId);
                     const availabilityNotes = buildAvailabilityNoteRows(rsvps, eventForPrefs?.availabilityPreferences, !!eventForPrefs?.isTeamAdmin);
                     const myRsvpByChild = resolveMyRsvpByChildForGame(allScheduleEvents, teamId, gameId, rsvps, userId);
@@ -1969,7 +1973,7 @@
                             console.log(`[parent-dashboard] Got ${calendarEvents.length} events from calendar`);
                             return { calendarUrl, calendarEvents };
                         } catch (err) {
-                            console.error('Error fetching calendar for parent dashboard:', calendarUrl, err);
+                            console.warn('Calendar import unavailable for parent dashboard:', calendarUrl, err);
                             return { calendarUrl, calendarEvents: [] };
                         }
                     }));

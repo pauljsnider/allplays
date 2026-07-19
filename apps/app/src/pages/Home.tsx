@@ -880,7 +880,7 @@ function TodayPriorityCard({ action, nextEvent, loading }: { action: ParentHomeA
 
 function PriorityFooter({ action, nextEvent, loading }: { action: ParentHomeAction | null; nextEvent: ParentScheduleEvent | null; loading: boolean }) {
   return (
-    <div className="grid gap-2 border-t border-gray-100 bg-gray-50 p-2 sm:grid-cols-2">
+    <div className="grid gap-2 border-t border-gray-100 bg-gray-50 p-2 sm:grid-cols-3">
       {action ? (
         <Link
           to={action.to}
@@ -905,6 +905,18 @@ function PriorityFooter({ action, nextEvent, loading }: { action: ParentHomeActi
           Clear
         </div>
       )}
+
+      <Link
+        to="/ai"
+        className="group flex min-h-10 items-center justify-between gap-2 rounded-lg bg-primary-50 px-3 text-xs font-black uppercase tracking-[0.04em] text-primary-800 ring-1 ring-primary-100 transition hover:ring-primary-300"
+        onClick={(event) => handleParentCoreDrillInClick(event, '/ai', { trigger: 'do_first_ai' })}
+      >
+        <span className="flex min-w-0 items-center gap-2">
+          <Sparkles className="h-4 w-4 flex-none" aria-hidden="true" />
+          <span className="truncate">Ask AI</span>
+        </span>
+        <ChevronRight className="h-4 w-4 flex-none transition group-hover:text-primary-600" aria-hidden="true" />
+      </Link>
 
       {nextEvent ? (
         <Link

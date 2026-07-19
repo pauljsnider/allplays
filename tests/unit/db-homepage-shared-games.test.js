@@ -48,7 +48,7 @@ describe('homepage shared game discovery queries', () => {
         expect(replaySource).toContain('return games.slice(0, limitCount)');
     });
 
-    it('declares homepage collection group indexes for shared and team game date queries', () => {
+    it('declares collection and collection group indexes for shared and team game date queries', () => {
         const indexConfig = readFirestoreIndexes();
         const sharedGameIndexes = indexConfig.indexes
             .filter((index) => index.collectionGroup === 'sharedGames')
@@ -76,7 +76,12 @@ describe('homepage shared game discovery queries', () => {
         expect(sharedGameIndexes).toContain('teamIds:CONTAINS,date:ASCENDING');
         expect(dateFieldOverrides).toContainEqual({
             collectionGroup: 'games',
-            indexes: ['ASCENDING:COLLECTION_GROUP', 'DESCENDING:COLLECTION_GROUP']
+            indexes: [
+                'ASCENDING:COLLECTION',
+                'DESCENDING:COLLECTION',
+                'ASCENDING:COLLECTION_GROUP',
+                'DESCENDING:COLLECTION_GROUP'
+            ]
         });
         expect(dateFieldOverrides).toContainEqual({
             collectionGroup: 'sharedGames',

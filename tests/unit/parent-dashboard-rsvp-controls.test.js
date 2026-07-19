@@ -93,7 +93,7 @@ describe('parent dashboard RSVP controller', () => {
         }, 'not_going');
 
         expect(submitRsvpForPlayer).toHaveBeenCalledWith('team-1', 'game-1', 'parent-1', {
-            displayName: 'parent@example.com',
+            displayName: null,
             playerId: 'child-a',
             response: 'not_going'
         });
@@ -229,7 +229,7 @@ describe('parent dashboard RSVP wiring', () => {
     const html = readRepoFile('parent-dashboard.html');
 
     it('imports the RSVP controller helper and preserves grouped plus per-child button datasets', () => {
-        expect(html).toContain("import { createParentDashboardRsvpController } from './js/parent-dashboard-rsvp-controls.js?v=1';");
+        expect(html).toContain("import { createParentDashboardRsvpController } from './js/parent-dashboard-rsvp-controls.js?v=2';");
         expect(html).toContain('const { submitGameRsvp, submitGameRsvpFromButton } = createParentDashboardRsvpController({');
         expect(html).toContain('data-child-ids="${escapeAttr((event.childIds || []).join(\',\'))}"');
         expect(html).toContain('data-child-id="${escapeAttr(game.childId || game.playerId || \'\')}"');

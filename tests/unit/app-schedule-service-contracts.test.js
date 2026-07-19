@@ -22,6 +22,7 @@ const dbMocks = vi.hoisted(() => ({
     getPracticeSessionByEvent: vi.fn(),
     getPracticeSessions: vi.fn(),
     getRsvps: vi.fn(),
+    getMyRsvps: vi.fn(),
     getRsvpSummaries: vi.fn(),
     getTeam: vi.fn(),
     getTeams: vi.fn(),
@@ -265,6 +266,7 @@ function user() {
 beforeEach(() => {
     clearAppDataCache();
     vi.clearAllMocks();
+    dbMocks.getMyRsvps.mockImplementation((teamId, gameId) => dbMocks.getRsvps(teamId, gameId));
     vi.unstubAllGlobals();
     installWindow();
     profileMocks.loadProfileDocument.mockResolvedValue({

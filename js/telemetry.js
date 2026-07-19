@@ -1,11 +1,11 @@
 import {
     sanitizeTelemetryKey,
     sanitizeTelemetryProperties,
-    sanitizeTelemetryText
-} from './telemetry-utils.js?v=1';
+    sanitizeTelemetryRoute
+} from './telemetry-utils.js?v=2';
 import { getPrimaryAppCheckHeaders } from './firebase-app-check-rest.js?v=1';
 
-const TELEMETRY_VERSION = '1.0.0';
+const TELEMETRY_VERSION = '2.0.0';
 const DEFAULT_ENDPOINT = 'https://us-central1-game-flow-c6311.cloudfunctions.net/collectTelemetry';
 // Sized so a burst (app screen mounts emit ~8+ ux-timing events each, batches
 // flush 15 at a time behind an async POST) doesn't silently drop the oldest
@@ -13,45 +13,38 @@ const DEFAULT_ENDPOINT = 'https://us-central1-game-flow-c6311.cloudfunctions.net
 const MAX_QUEUE_SIZE = 120;
 const MAX_BATCH_SIZE = 15;
 const FLUSH_INTERVAL_MS = 5000;
+const MAX_SEND_ATTEMPTS = 3;
+const RETRY_BASE_DELAY_MS = 1000;
+const RETRY_MAX_DELAY_MS = 10 * 1000;
 const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
 const SESSION_TOUCH_INTERVAL_MS = 60 * 1000;
 const SCROLL_MILESTONES = [25, 50, 75, 90, 100];
 const GLOBAL_KEY = '__allplaysTelemetry';
 const SESSION_KEY = 'allplays.telemetry.session';
-const VISITOR_KEY = 'allplays.telemetry.visitor';
 const OPT_OUT_KEY = 'allplays.telemetry.optOut';
+const ERROR_DEDUPE_WINDOW_MS = 60 * 1000;
+const LOW_VALUE_DEDUPE_WINDOW_MS = 5 * 1000;
 
 let endpoint = null;
 let enabled = false;
 let queue = [];
 let flushTimer = null;
-let userContext = { userId: null, signedIn: false };
+let normalFlushPromise = null;
+let retryNotBefore = 0;
+const userContext = { userId: null, signedIn: false };
 let pageStartedAt = Date.now();
 let lastScrollCheck = 0;
 let capturedScrollMilestones = new Set();
 let recentClicks = [];
 let hasSentPageLeave = false;
-let authContextInitialized = false;
 let historyTrackingInitialized = false;
 let globalListenersInitialized = false;
 let localStorageAvailable = null;
 let sessionStorageAvailable = null;
-let visitorIdCache = null;
 let sessionCache = null;
 let lastSessionStorageWrite = 0;
-let firebaseAuthModulePromise = null;
-
-function loadFirebaseAuthModule() {
-    if (!firebaseAuthModulePromise) {
-        firebaseAuthModulePromise = import('./firebase.js?v=22')
-            .then((module) => ({
-                auth: module.auth,
-                onAuthStateChanged: module.onAuthStateChanged
-            }))
-            .catch(() => null);
-    }
-    return firebaseAuthModulePromise;
-}
+const recentEventFingerprints = new Map();
+const sendAttemptsByEvent = new WeakMap();
 
 function canUseStorage(storage, kind) {
     if (kind === 'local' && localStorageAvailable !== null) return localStorageAvailable;
@@ -100,14 +93,9 @@ function setSessionStorageValue(key, value) {
 }
 
 function getVisitorId() {
-    if (visitorIdCache) return visitorIdCache;
-
-    const existing = getLocalStorageValue(VISITOR_KEY);
-    visitorIdCache = existing || randomId('visitor');
-    if (!existing) {
-        setLocalStorageValue(VISITOR_KEY, visitorIdCache);
-    }
-    return visitorIdCache;
+    // Kept for API compatibility. The identifier rotates with the browser
+    // session and is never written to persistent storage or linked to auth.
+    return getSessionId();
 }
 
 function getSessionId() {
@@ -187,18 +175,7 @@ function getSafePath(url = window.location.href) {
 }
 
 function getSafeRoutePath(value) {
-    const route = sanitizeTelemetryText(String(value || '/').split('?')[0].split('#')[0] || '/', 220);
-    return route.startsWith('/') ? route : '/';
-}
-
-function getQueryKeys(search = window.location.search) {
-    const safeSearch = typeof search === 'string'
-        ? search.replace(/^[?#]/, '')
-        : '';
-    return Array.from(new URLSearchParams(safeSearch).keys())
-        .map((key) => sanitizeTelemetryKey(key))
-        .filter(Boolean)
-        .slice(0, 20);
+    return sanitizeTelemetryRoute(value, 220);
 }
 
 function getSafeAppRouteInfo(url = window.location.href) {
@@ -207,18 +184,14 @@ function getSafeAppRouteInfo(url = window.location.href) {
         const hash = parsed.hash || '';
         const hashRoute = hash.startsWith('#/') ? hash.slice(1) : '';
         const routeSource = hashRoute || parsed.pathname || '/';
-        const querySource = hashRoute.includes('?')
-            ? hashRoute.slice(hashRoute.indexOf('?') + 1)
-            : parsed.search;
-
         return {
             appRoute: getSafeRoutePath(routeSource),
-            appRouteQueryKeys: getQueryKeys(querySource)
+            appRouteQueryKeys: []
         };
     } catch (error) {
         return {
             appRoute: getSafeRoutePath(window.location.pathname || '/'),
-            appRouteQueryKeys: getQueryKeys()
+            appRouteQueryKeys: []
         };
     }
 }
@@ -227,10 +200,7 @@ function getSafeReferrer() {
     if (!document.referrer) return '';
     try {
         const referrer = new URL(document.referrer);
-        if (referrer.origin !== window.location.origin) {
-            return referrer.hostname;
-        }
-        return referrer.pathname || '/';
+        return referrer.origin === window.location.origin ? getSafeRoutePath(referrer.pathname) : 'external';
     } catch (error) {
         return '';
     }
@@ -245,63 +215,48 @@ function shouldIgnoreElement(element) {
     return !!element?.closest?.('[data-telemetry-ignore], [data-no-telemetry]');
 }
 
-function getElementText(element) {
-    const explicitLabel = element.getAttribute('data-telemetry-label');
-    if (explicitLabel) return sanitizeTelemetryText(explicitLabel, 80);
-
-    const ariaLabel = element.getAttribute('aria-label');
-    if (ariaLabel) return sanitizeTelemetryText(ariaLabel, 80);
-
-    let text = '';
-    if (element instanceof HTMLInputElement) {
-        text = element.labels?.[0]?.textContent || element.placeholder || element.name || element.id || element.type;
-    } else if (element instanceof HTMLSelectElement || element instanceof HTMLTextAreaElement) {
-        text = element.labels?.[0]?.textContent || element.placeholder || element.name || element.id || element.tagName.toLowerCase();
-    } else {
-        text = element.textContent || element.getAttribute('title') || element.getAttribute('alt') || '';
-    }
-
-    return sanitizeTelemetryText(text, 80);
-}
-
 function getHrefPath(element) {
     const href = element.getAttribute('href');
     if (!href) return '';
     try {
         const url = new URL(href, window.location.origin);
         if (url.origin !== window.location.origin) {
-            return url.hostname;
+            return 'external';
         }
-        return url.pathname || '/';
+        return getSafeRoutePath(url.pathname || '/');
     } catch (error) {
-        return sanitizeTelemetryText(href, 80);
+        return '';
     }
 }
 
 function describeElement(element) {
     if (!element) return {};
     const tagName = element.tagName.toLowerCase();
-    const classes = Array.from(element.classList || [])
-        .filter((className) => !className.includes(':'))
-        .slice(0, 5)
-        .map((className) => sanitizeTelemetryKey(className));
-
     const dataName = element.getAttribute('data-telemetry-name') || element.getAttribute('data-analytics-name');
     const form = element.closest('form');
 
     return sanitizeTelemetryProperties({
         telemetryName: dataName || '',
         tagName,
-        elementId: element.id || '',
-        elementClasses: classes,
         role: element.getAttribute('role') || '',
         type: element.getAttribute('type') || '',
-        name: element.getAttribute('name') || '',
-        label: getElementText(element),
         href: tagName === 'a' ? getHrefPath(element) : '',
-        formId: form?.id || '',
-        formName: form?.getAttribute('name') || ''
+        formType: form?.getAttribute('data-telemetry-name') || ''
     });
+}
+
+function getViewportBucket(width = 0) {
+    if (width < 480) return 'small';
+    if (width < 900) return 'medium';
+    if (width < 1440) return 'large';
+    return 'xlarge';
+}
+
+function getDeviceClass() {
+    const userAgent = navigator.userAgent || '';
+    if (/tablet|ipad/i.test(userAgent)) return 'tablet';
+    if (/mobile|iphone|android/i.test(userAgent)) return 'mobile';
+    return 'desktop';
 }
 
 function buildBaseEvent(name, properties = {}) {
@@ -313,32 +268,111 @@ function buildBaseEvent(name, properties = {}) {
         version: TELEMETRY_VERSION,
         sessionId: getSessionId(),
         visitorId: getVisitorId(),
-        userId: userContext.userId,
+        userId: null,
         signedIn: userContext.signedIn,
         clientTimestamp: new Date(now).toISOString(),
         pagePath: getSafePath(),
         appRoute: appRouteInfo.appRoute,
-        pageTitle: sanitizeTelemetryText(document.title, 120),
-        queryKeys: getQueryKeys(),
+        pageTitle: '',
+        queryKeys: [],
         appRouteQueryKeys: appRouteInfo.appRouteQueryKeys,
         referrer: getSafeReferrer(),
         viewport: {
-            width: window.innerWidth || 0,
-            height: window.innerHeight || 0
+            bucket: getViewportBucket(window.innerWidth || 0)
         },
-        screen: {
-            width: window.screen?.width || 0,
-            height: window.screen?.height || 0
-        },
-        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || '',
-        language: navigator.language || '',
-        userAgent: sanitizeTelemetryText(navigator.userAgent || '', 240),
-        properties: sanitizeTelemetryProperties(properties)
+        screen: {},
+        timezone: '',
+        language: String(navigator.language || '').split('-')[0].slice(0, 8),
+        userAgent: '',
+        properties: sanitizeTelemetryProperties({
+            ...properties,
+            deviceClass: getDeviceClass()
+        })
     };
 }
 
+function getEventSampleRate(eventName) {
+    if (/^(?:js_|security_|operational_|app_load_error)/.test(eventName)) return 1;
+    // Keep this event-class policy identical to the server. An anonymous
+    // client may decide whether to send an event, but must never choose the
+    // aggregate multiplier, and explicit workflow baselines remain complete.
+    if (/^(?:interaction_|scroll_depth)/.test(eventName)) return 0.1;
+    if (/^(?:page_|visibility_change|app_web_vital)/.test(eventName)) return 0.25;
+    return 1;
+}
+
+function stableSampleValue(value) {
+    let hash = 2166136261;
+    for (let index = 0; index < value.length; index += 1) {
+        hash ^= value.charCodeAt(index);
+        hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0) / 0xffffffff;
+}
+
+function eventFingerprint(event) {
+    const properties = event.properties || {};
+    const eventSpecific = [
+        'action', 'button', 'clickCount', 'column', 'depthPercent', 'errorName',
+        'errorType', 'fileCount', 'formType', 'hasValue', 'label', 'line', 'loadName',
+        'method', 'modifierKey', 'name', 'navigationType', 'operation', 'source',
+        'stage', 'telemetryName', 'viewName', 'visibilityState', 'workflowName'
+    ].map((key) => `${key}:${String(properties[key] ?? '')}`);
+    return [
+        event.name,
+        event.pagePath,
+        event.appRoute,
+        ...eventSpecific
+    ].join('|');
+}
+
+function getEventDedupeWindow(event) {
+    if (/^(?:js_|security_|operational_|app_load_error)/.test(event.name)) {
+        return ERROR_DEDUPE_WINDOW_MS;
+    }
+    if (!/^(?:interaction_|page_|scroll_depth|visibility_change|app_web_vital)/.test(event.name)) {
+        return 0;
+    }
+
+    // An unlabeled control has no privacy-safe stable identity. Treating its
+    // tag or form as identity would collapse different controls on the same
+    // screen. Keep those sampled events; only dedupe an interaction when the
+    // application supplied an explicit code-defined identity.
+    if (event.name.startsWith('interaction_')) {
+        const properties = event.properties || {};
+        return properties.telemetryName
+            || (event.name === 'interaction_submit' && properties.formType)
+            ? LOW_VALUE_DEDUPE_WINDOW_MS
+            : 0;
+    }
+    return LOW_VALUE_DEDUPE_WINDOW_MS;
+}
+
+function shouldKeepEvent(event) {
+    const now = Date.now();
+    const fingerprint = eventFingerprint(event);
+    const previous = recentEventFingerprints.get(fingerprint);
+    const dedupeWindow = getEventDedupeWindow(event);
+    if (dedupeWindow && previous !== undefined && now - previous < dedupeWindow) return false;
+
+    const sampleRate = getEventSampleRate(event.name);
+    if (sampleRate <= 0 || (sampleRate < 1 && stableSampleValue(`${event.sessionId}|${event.name}`) >= sampleRate)) {
+        return false;
+    }
+
+    if (dedupeWindow) recentEventFingerprints.set(fingerprint, now);
+    if (recentEventFingerprints.size > 200) {
+        for (const [key, timestamp] of recentEventFingerprints) {
+            if (now - timestamp > ERROR_DEDUPE_WINDOW_MS) recentEventFingerprints.delete(key);
+        }
+    }
+    event.sampleRate = sampleRate;
+    event.sampleWeight = Math.max(1, Math.round(1 / sampleRate));
+    return true;
+}
+
 function enqueue(event) {
-    if (!enabled || !endpoint || !event) return;
+    if (!enabled || !endpoint || !event || !shouldKeepEvent(event)) return;
     queue.push(event);
     if (queue.length > MAX_QUEUE_SIZE) {
         queue = queue.slice(queue.length - MAX_QUEUE_SIZE);
@@ -351,11 +385,12 @@ function enqueue(event) {
 }
 
 function scheduleFlush(delayMs) {
+    const effectiveDelayMs = Math.max(0, delayMs, retryNotBefore - Date.now());
     if (flushTimer) {
-        if (delayMs !== 0) return;
+        if (effectiveDelayMs !== 0) return;
         window.clearTimeout(flushTimer);
     }
-    flushTimer = window.setTimeout(flush, delayMs);
+    flushTimer = window.setTimeout(flush, effectiveDelayMs);
 }
 
 export function captureTelemetryEvent(name, properties = {}, options = {}) {
@@ -368,17 +403,10 @@ export function captureTelemetryEvent(name, properties = {}, options = {}) {
 }
 
 export async function sendEvents(events, keepalive = false) {
-    // Keepalive sends happen while the page is being torn down (pagehide /
-    // hidden). Auth is intentionally omitted here because a stale cached token
-    // makes collectTelemetry reject otherwise valid visitor/session events.
-    const authToken = keepalive ? null : await getAuthToken();
     const payloadObject = {
         sentAt: new Date().toISOString(),
         events
     };
-    if (authToken) {
-        payloadObject.authToken = authToken;
-    }
     const payload = JSON.stringify(payloadObject);
 
     // Unload delivery has to begin synchronously. Waiting for App Check here
@@ -390,9 +418,6 @@ export async function sendEvents(events, keepalive = false) {
     }
 
     const headers = await getPrimaryAppCheckHeaders({ 'Content-Type': 'application/json' }, endpoint);
-    if (authToken) {
-        headers.Authorization = `Bearer ${authToken}`;
-    }
 
     const response = await fetch(endpoint, {
         method: 'POST',
@@ -407,15 +432,9 @@ export async function sendEvents(events, keepalive = false) {
 }
 
 export async function getAuthToken() {
-    const firebaseAuth = await loadFirebaseAuthModule();
-    const user = firebaseAuth?.auth?.currentUser;
-    if (!user?.getIdToken) return null;
-
-    try {
-        return await user.getIdToken();
-    } catch (error) {
-        return null;
-    }
+    // Deprecated: telemetry deliberately does not identify users or send auth
+    // credentials. Preserve the export while old callers migrate.
+    return null;
 }
 
 export async function flush(keepalive = false) {
@@ -424,6 +443,11 @@ export async function flush(keepalive = false) {
         flushTimer = null;
     }
     if (!enabled || !endpoint || queue.length === 0) return;
+
+    if (!keepalive && retryNotBefore > Date.now()) {
+        scheduleFlush(retryNotBefore - Date.now());
+        return;
+    }
 
     if (keepalive) {
         // The page is going away — drain everything now. Each batch goes out
@@ -440,15 +464,41 @@ export async function flush(keepalive = false) {
         return;
     }
 
+    if (normalFlushPromise) return normalFlushPromise;
+
+    normalFlushPromise = flushNextBatch().finally(() => {
+        normalFlushPromise = null;
+    });
+    return normalFlushPromise;
+}
+
+async function flushNextBatch() {
     const events = queue.splice(0, MAX_BATCH_SIZE);
+    let retryDelayMs = 0;
     try {
-        await sendEvents(events, keepalive);
+        await sendEvents(events, false);
+        retryNotBefore = 0;
+        events.forEach((event) => sendAttemptsByEvent.delete(event));
     } catch (error) {
-        queue = events.concat(queue).slice(0, MAX_QUEUE_SIZE);
+        const retryableEvents = events.filter((event) => {
+            const attempts = (sendAttemptsByEvent.get(event) || 0) + 1;
+            if (attempts >= MAX_SEND_ATTEMPTS) {
+                sendAttemptsByEvent.delete(event);
+                return false;
+            }
+            sendAttemptsByEvent.set(event, attempts);
+            retryDelayMs = Math.max(
+                retryDelayMs,
+                Math.min(RETRY_MAX_DELAY_MS, RETRY_BASE_DELAY_MS * (2 ** (attempts - 1)))
+            );
+            return true;
+        });
+        queue = retryableEvents.concat(queue).slice(0, MAX_QUEUE_SIZE);
+        retryNotBefore = Date.now() + (retryDelayMs || RETRY_BASE_DELAY_MS);
     }
 
     if (queue.length > 0) {
-        scheduleFlush(queue.length >= MAX_BATCH_SIZE ? 0 : FLUSH_INTERVAL_MS);
+        scheduleFlush(retryDelayMs || (queue.length >= MAX_BATCH_SIZE ? 0 : FLUSH_INTERVAL_MS));
     }
 }
 
@@ -477,13 +527,10 @@ function handleClick(event) {
     const element = closestTrackableElement(event.target);
     if (!element || shouldIgnoreElement(element)) return;
 
-    const rect = element.getBoundingClientRect();
     captureTelemetryEvent('interaction_click', {
         ...describeElement(element),
         button: event.button,
-        modifierKey: event.metaKey || event.ctrlKey || event.shiftKey || event.altKey,
-        targetXPercent: rect.width ? Math.round(((event.clientX - rect.left) / rect.width) * 100) : null,
-        targetYPercent: rect.height ? Math.round(((event.clientY - rect.top) / rect.height) * 100) : null
+        modifierKey: event.metaKey || event.ctrlKey || event.shiftKey || event.altKey
     });
 
     trackRageClick(event, element);
@@ -506,9 +553,7 @@ function trackRageClick(event, element) {
     if (clusteredClickCount >= 3) {
         captureTelemetryEvent('interaction_rage_click', {
             ...describeElement(element),
-            clickCount: clusteredClickCount,
-            x: event.clientX,
-            y: event.clientY
+            clickCount: clusteredClickCount
         });
         recentClicks = [];
     }
@@ -523,7 +568,6 @@ function handleChange(event) {
     properties.hasValue = element.type === 'checkbox' || element.type === 'radio'
         ? element.checked
         : !!element.value;
-    properties.valueLengthBucket = element.value ? Math.min(100, Math.ceil(element.value.length / 10) * 10) : 0;
     if (element instanceof HTMLInputElement && element.type === 'file') {
         properties.fileCount = element.files?.length || 0;
     }
@@ -536,8 +580,7 @@ function handleSubmit(event) {
     if (!(form instanceof HTMLFormElement) || shouldIgnoreElement(form)) return;
 
     captureTelemetryEvent('interaction_submit', {
-        formId: form.id || '',
-        formName: form.getAttribute('name') || '',
+        formType: form.getAttribute('data-telemetry-name') || '',
         method: form.getAttribute('method') || 'get',
         action: form.getAttribute('action') ? getSafePath(form.getAttribute('action')) : '',
         fieldCount: form.querySelectorAll('input, select, textarea').length
@@ -567,24 +610,6 @@ function capturePageLeave() {
         engagementMs: Date.now() - pageStartedAt,
         visibilityState: document.visibilityState
     }, { flush: true, keepalive: true });
-}
-
-function setupAuthContext() {
-    if (authContextInitialized) return;
-    authContextInitialized = true;
-
-    loadFirebaseAuthModule().then((firebaseAuth) => {
-        if (!firebaseAuth?.auth || !firebaseAuth?.onAuthStateChanged) return;
-        firebaseAuth.onAuthStateChanged(firebaseAuth.auth, (user) => {
-            userContext = {
-                userId: user?.uid || null,
-                signedIn: !!user
-            };
-            if (user) {
-                captureTelemetryEvent('auth_context', { signedIn: true });
-            }
-        });
-    });
 }
 
 function setupHistoryTracking() {
@@ -628,7 +653,8 @@ function setupGlobalListeners() {
     });
     window.addEventListener('error', (event) => {
         captureTelemetryEvent('js_error', {
-            message: event.message || '',
+            errorName: event.error?.name || 'Error',
+            errorType: event.error?.code || 'runtime',
             source: getSafePath(event.filename || ''),
             line: event.lineno || 0,
             column: event.colno || 0
@@ -636,7 +662,8 @@ function setupGlobalListeners() {
     });
     window.addEventListener('unhandledrejection', (event) => {
         captureTelemetryEvent('js_unhandled_rejection', {
-            reason: event.reason?.message || event.reason || ''
+            errorName: event.reason?.name || 'Error',
+            errorType: event.reason?.code || 'promise_rejection'
         }, { flush: true });
     });
 }
@@ -654,7 +681,6 @@ function exposeApi() {
             setLocalStorageValue(OPT_OUT_KEY, '0');
             enabled = true;
             endpoint = resolveEndpoint();
-            setupAuthContext();
             setupHistoryTracking();
             setupGlobalListeners();
             capturePageView();
@@ -674,7 +700,6 @@ function startTelemetry() {
 
     if (!enabled || !endpoint) return;
 
-    setupAuthContext();
     setupHistoryTracking();
     setupGlobalListeners();
 

@@ -12,6 +12,35 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    // Staged verified-email policy. Missing/observe/disabled policy documents
+    // preserve current behavior. Enforcement can be enabled only after the
+    // observation logs and exemption list have been reviewed. Phone-only and
+    // other identities without an email claim remain valid authentication.
+    function isVerifiedForSensitiveWrite() {
+      let policyPath = /databases/$(database)/documents/securityPolicies/verifiedEmail;
+      return isSignedIn() &&
+             (
+               request.auth.token.get('email', null) == null ||
+               request.auth.token.get('email_verified', false) == true ||
+               request.auth.token.get('email_verification_exempt', false) == true ||
+               !exists(policyPath) ||
+               get(policyPath).data.get('mode', 'observe') != 'enforce' ||
+               request.auth.uid in get(policyPath).data.get('exemptUserIds', [])
+             );
+    }
+
+    function isVerifiedEmailPolicyPayloadValid(data) {
+      return data.keys().hasOnly(['mode', 'exemptUserIds', 'updatedAt', 'updatedBy', 'rolloutNote']) &&
+             data.keys().hasAll(['mode', 'exemptUserIds']) &&
+             data.mode in ['disabled', 'observe', 'enforce'] &&
+             data.exemptUserIds is list &&
+             data.exemptUserIds.size() <= 1000 &&
+             (!data.keys().hasAny(['updatedAt']) || data.updatedAt is timestamp) &&
+             (!data.keys().hasAny(['updatedBy']) || data.updatedBy == request.auth.uid) &&
+             (!data.keys().hasAny(['rolloutNote']) ||
+               (data.rolloutNote is string && data.rolloutNote.size() <= 500));
+    }
+
     function isOwner(userId) {
       return request.auth.uid == userId;
     }
@@ -2628,33 +2657,36 @@ service cloud.firestore {
 
     match /socialPosts/{postId} {
       allow read: if canReadSocialPost(resource.data);
-      allow create: if isSocialPostCreatePayloadValid(request.resource.data);
-      allow update: if isSignedIn() &&
+      allow create: if isVerifiedForSensitiveWrite() &&
+                       isSocialPostCreatePayloadValid(request.resource.data);
+      allow update: if isVerifiedForSensitiveWrite() &&
                     (
                       isSocialPostAuthorContentUpdateValid() ||
                       isSocialPostAuthorHideUpdateValid() ||
                       isSocialPostReactionAggregateUpdateValid(postId) ||
                       isSocialPostModeratorUpdateValid()
                     );
-      allow delete: if isSignedIn() &&
+      allow delete: if isVerifiedForSensitiveWrite() &&
                     (resource.data.get('authorId', '') == request.auth.uid || canModerateSocialPost(resource.data));
 
       match /comments/{commentId} {
         allow read: if canReadSocialPost(get(/databases/$(database)/documents/socialPosts/$(postId)).data);
-        allow create: if canReadSocialPost(get(/databases/$(database)/documents/socialPosts/$(postId)).data) &&
+        allow create: if isVerifiedForSensitiveWrite() &&
+                      canReadSocialPost(get(/databases/$(database)/documents/socialPosts/$(postId)).data) &&
                       request.resource.data.get('authorId', '') == request.auth.uid &&
                       request.resource.data.get('text', '') is string &&
                       request.resource.data.get('text', '').size() > 0 &&
                       request.resource.data.get('hidden', false) == false;
-        allow update, delete: if canReadSocialPost(get(/databases/$(database)/documents/socialPosts/$(postId)).data) &&
+        allow update, delete: if isVerifiedForSensitiveWrite() &&
+                              canReadSocialPost(get(/databases/$(database)/documents/socialPosts/$(postId)).data) &&
                               (resource.data.get('authorId', '') == request.auth.uid || isGlobalAdmin());
       }
 
       match /reactions/{userId} {
         allow read: if canReadSocialPost(get(/databases/$(database)/documents/socialPosts/$(postId)).data);
-        allow create: if isSocialPostReactionCreateValid(postId, userId);
+        allow create: if isVerifiedForSensitiveWrite() && isSocialPostReactionCreateValid(postId, userId);
         allow update: if false;
-        allow delete: if isSocialPostReactionDeleteValid(postId, userId);
+        allow delete: if isVerifiedForSensitiveWrite() && isSocialPostReactionDeleteValid(postId, userId);
       }
     }
 
@@ -2663,18 +2695,21 @@ service cloud.firestore {
                     canAccessFriendship(resource.data) ||
                     isGlobalAdmin();
       allow list: if canListFriendship(resource.data) || isGlobalAdmin();
-      allow create: if isFriendshipCreatePayloadValid(friendshipId, request.resource.data) ||
-                    isFriendInviteAcceptedFriendshipCreateValid(friendshipId, request.resource.data);
-      allow update: if isFriendInviteAcceptedFriendshipUpdateValid(friendshipId) ||
-                    isFriendshipMemberUpdatePayloadValid() ||
-                    (isGlobalAdmin() &&
-                     request.resource.data.get('memberIds', []) == resource.data.get('memberIds', []) &&
-                     request.resource.data.get('status', '') in ['pending', 'accepted', 'declined', 'removed', 'blocked']);
-      allow delete: if canAccessFriendship(resource.data) || isGlobalAdmin();
+      allow create: if (isVerifiedForSensitiveWrite() &&
+                        isFriendshipCreatePayloadValid(friendshipId, request.resource.data)) ||
+                       isFriendInviteAcceptedFriendshipCreateValid(friendshipId, request.resource.data);
+      allow update: if (isVerifiedForSensitiveWrite() &&
+                     (isFriendshipMemberUpdatePayloadValid() ||
+                      (isGlobalAdmin() &&
+                       request.resource.data.get('memberIds', []) == resource.data.get('memberIds', []) &&
+                       request.resource.data.get('status', '') in ['pending', 'accepted', 'declined', 'removed', 'blocked']))) ||
+                    isFriendInviteAcceptedFriendshipUpdateValid(friendshipId);
+      allow delete: if isVerifiedForSensitiveWrite() &&
+                       (canAccessFriendship(resource.data) || isGlobalAdmin());
     }
 
     match /socialReports/{reportId} {
-      allow create: if isSignedIn() &&
+      allow create: if isVerifiedForSensitiveWrite() &&
                     request.resource.data.get('reporterId', '') == request.auth.uid &&
                     request.resource.data.get('postId', '') is string;
       allow read, update, delete: if isGlobalAdmin();
@@ -2705,11 +2740,13 @@ service cloud.firestore {
 
     match /publicUserProfiles/{userId} {
       allow read: if canReadPublicUserProfile(userId, resource.data);
-      allow create: if (isGlobalAdmin() && isPublicUserProfilePayloadValid(userId, request.resource.data)) ||
-                    isOwnerPublicUserProfilePresentationCreateValid(userId);
-      allow update: if (isGlobalAdmin() && isPublicUserProfilePayloadValid(userId, request.resource.data)) ||
-                    isOwnerPublicUserProfilePresentationUpdateValid(userId);
-      allow delete: if isGlobalAdmin() || isOwner(userId);
+      allow create: if isVerifiedForSensitiveWrite() &&
+                       ((isGlobalAdmin() && isPublicUserProfilePayloadValid(userId, request.resource.data)) ||
+                        isOwnerPublicUserProfilePresentationCreateValid(userId));
+      allow update: if isVerifiedForSensitiveWrite() &&
+                       ((isGlobalAdmin() && isPublicUserProfilePayloadValid(userId, request.resource.data)) ||
+                        isOwnerPublicUserProfilePresentationUpdateValid(userId));
+      allow delete: if isVerifiedForSensitiveWrite() && (isGlobalAdmin() || isOwner(userId));
     }
 
     // Users collection - users should only write their own profile.
@@ -2729,37 +2766,39 @@ service cloud.firestore {
       // Incentive rules - private to the parent who created them
       match /incentiveRules/{ruleId} {
         allow read: if isOwner(userId);
-        allow create: if isOwner(userId) &&
+        allow create: if isVerifiedForSensitiveWrite() && isOwner(userId) &&
                         (
                           (ruleId.matches('^_cap_.*') && isIncentiveCapPayloadValid(request.resource.data)) ||
                           (!ruleId.matches('^_cap_.*') && isIncentiveRulePayloadValid(request.resource.data))
                         );
-        allow update: if isOwner(userId) &&
+        allow update: if isVerifiedForSensitiveWrite() && isOwner(userId) &&
                         (
                           (ruleId.matches('^_cap_.*') && isIncentiveCapPayloadValid(request.resource.data)) ||
                           (!ruleId.matches('^_cap_.*') &&
                            hasIncentivePlayerLink(resource.data) &&
                            isIncentiveRulePayloadValid(request.resource.data))
                         );
-        allow delete: if isOwner(userId);
+        allow delete: if isVerifiedForSensitiveWrite() && isOwner(userId);
       }
 
       // Incentive paid game records - private to the parent
       match /incentivePaidGames/{recordId} {
         allow read: if isOwner(userId);
-        allow create: if isOwner(userId) && isIncentivePaidGamePayloadValid(request.resource.data);
-        allow update: if isOwner(userId) &&
+        allow create: if isVerifiedForSensitiveWrite() && isOwner(userId) && isIncentivePaidGamePayloadValid(request.resource.data);
+        allow update: if isVerifiedForSensitiveWrite() && isOwner(userId) &&
                         hasIncentivePlayerLink(resource.data) &&
                         isIncentivePaidGamePayloadValid(request.resource.data);
-        allow delete: if isOwner(userId);
+        allow delete: if isVerifiedForSensitiveWrite() && isOwner(userId);
       }
 
       match /notificationPreferences/{teamId} {
-        allow read, write: if isOwner(userId) || isGlobalAdmin();
+        allow read: if isOwner(userId) || isGlobalAdmin();
+        allow write: if isVerifiedForSensitiveWrite() && (isOwner(userId) || isGlobalAdmin());
       }
 
       match /notificationDevices/{deviceId} {
-        allow read, write: if isOwner(userId) || isGlobalAdmin();
+        allow read: if isOwner(userId) || isGlobalAdmin();
+        allow write: if isVerifiedForSensitiveWrite() && (isOwner(userId) || isGlobalAdmin());
       }
 
       match /notificationInbox/{itemId} {
@@ -2768,19 +2807,32 @@ service cloud.firestore {
       }
 
       match /hiddenSocialPosts/{postId} {
-        allow read, delete: if isOwner(userId);
-        allow create, update: if isOwner(userId) &&
+        allow read: if isOwner(userId);
+        allow delete: if isVerifiedForSensitiveWrite() && isOwner(userId);
+        allow create, update: if isVerifiedForSensitiveWrite() && isOwner(userId) &&
                               request.resource.data.keys().hasOnly(['postId', 'hiddenAt']) &&
                               request.resource.data.get('postId', '') == postId &&
                               request.resource.data.get('hiddenAt', null) is timestamp;
       }
 
       match /privateAiMessages/{messageId} {
-        allow read, create, update, delete: if isOwner(userId);
+        allow read: if isOwner(userId);
+        allow create, update, delete: if isVerifiedForSensitiveWrite() && isOwner(userId);
       }
 
       match /privateAiConversations/{conversationId} {
-        allow read, create, update, delete: if isOwner(userId);
+        allow read: if isOwner(userId);
+        allow create, update, delete: if isVerifiedForSensitiveWrite() && isOwner(userId);
+      }
+
+      match /privateAiPendingActions/{actionId} {
+        allow read: if isOwner(userId);
+        allow create, update, delete: if isVerifiedForSensitiveWrite() && isOwner(userId);
+      }
+
+      match /privateAiActionAudit/{auditId} {
+        allow read: if isOwner(userId);
+        allow create, update, delete: if isVerifiedForSensitiveWrite() && isOwner(userId);
       }
 
       match /entitlements/{entitlementId} {
@@ -2791,7 +2843,7 @@ service cloud.firestore {
       match /familyMemberships/{memberId} {
         allow read: if isOwner(userId) || isGlobalAdmin() ||
                        (isSignedIn() && resource.data.email is string && request.auth.token.email is string && resource.data.email == request.auth.token.email.lower());
-        allow create: if isOwner(userId) && isFamilyMembershipPayloadValid(request.resource.data, userId);
+        allow create: if isVerifiedForSensitiveWrite() && isOwner(userId) && isFamilyMembershipPayloadValid(request.resource.data, userId);
         allow update: if isFamilyMembershipInviteMetadataUpdate(request.resource.data, userId) ||
                       isFamilyMembershipAcceptance(request.resource.data);
         allow delete: if false;
@@ -2799,14 +2851,16 @@ service cloud.firestore {
 
       match /householdInvites/{inviteId} {
         allow read: if isOwner(userId) || isGlobalAdmin();
-        allow create: if isOwner(userId) && isHouseholdInvitePayloadValid(request.resource.data, userId);
-        allow update: if isHouseholdInviteRevocation(request.resource.data, userId);
-        allow delete: if isOwner(userId);
+        allow create: if isVerifiedForSensitiveWrite() && isOwner(userId) && isHouseholdInvitePayloadValid(request.resource.data, userId);
+        allow update: if isVerifiedForSensitiveWrite() && isHouseholdInviteRevocation(request.resource.data, userId);
+        allow delete: if isVerifiedForSensitiveWrite() && isOwner(userId);
       }
 
       match /accountMergeRequests/{requestId} {
         allow read: if isOwner(userId) || isGlobalAdmin();
-        allow create: if isParentAccountOwner(userId) && isAccountMergeRequestPayloadValid(request.resource.data, userId);
+        allow create: if isVerifiedForSensitiveWrite() &&
+                         isParentAccountOwner(userId) &&
+                         isAccountMergeRequestPayloadValid(request.resource.data, userId);
         allow update, delete: if false;
       }
     }
@@ -2827,7 +2881,7 @@ service cloud.firestore {
 	    match /accessCodes/{codeId} {
       allow get: if resource == null || canReadAccessCode(resource.data) || canGetPhoneOnlyFriendInviteAccessCode(resource.data);
       allow list: if canReadAccessCode(resource.data);
-      allow create: if isSignedIn() &&
+      allow create: if isVerifiedForSensitiveWrite() &&
                        request.resource.data.generatedBy == request.auth.uid &&
                        (
                          ((!request.resource.data.keys().hasAny(['type']) ||
@@ -2876,7 +2930,7 @@ service cloud.firestore {
                          resource.data.get('type', null) != 'friend_invite' &&
                          resource.data.generatedBy == request.auth.uid &&
                          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['revoked', 'revokedAt', 'used', 'updatedAt'])));
-	      allow delete: if isSignedIn() && resource.data.generatedBy == request.auth.uid;
+	      allow delete: if isVerifiedForSensitiveWrite() && resource.data.generatedBy == request.auth.uid;
 	    }
 
 	    // Collection-group read for a parent's own membership requests.
@@ -2936,12 +2990,12 @@ service cloud.firestore {
     match /athleteProfiles/{profileId} {
       allow read: if resource.data.privacy == 'public' ||
                      (isSignedIn() && resource.data.parentUserId == request.auth.uid);
-      allow create: if isSignedIn() &&
+      allow create: if isVerifiedForSensitiveWrite() &&
                        request.resource.data.parentUserId == request.auth.uid;
-      allow update: if isSignedIn() &&
+      allow update: if isVerifiedForSensitiveWrite() &&
                        resource.data.parentUserId == request.auth.uid &&
                        request.resource.data.parentUserId == resource.data.parentUserId;
-      allow delete: if isSignedIn() &&
+      allow delete: if isVerifiedForSensitiveWrite() &&
                        resource.data.parentUserId == request.auth.uid;
     }
 
@@ -2953,7 +3007,7 @@ service cloud.firestore {
                      resource.data.publishedToCommunity == true ||
                      isTeamOwnerOrAdmin(resource.data.teamId));
       // Create: global admin for community, team owner/admin for custom
-      allow create: if isSignedIn() &&
+      allow create: if isVerifiedForSensitiveWrite() &&
                       hasValidDrillDiagramUrls(request.resource.data) &&
                       (
                         (request.resource.data.source == 'community' && isGlobalAdmin()) ||
@@ -2969,7 +3023,7 @@ service cloud.firestore {
                         )
                       );
       // Update: global admin for community, team owner/admin for custom
-      allow update: if isSignedIn() &&
+      allow update: if isVerifiedForSensitiveWrite() &&
                       hasSafeDrillDiagramUrlUpdate() &&
                       (
                         (resource.data.source == 'community' && isGlobalAdmin()) ||
@@ -2986,7 +3040,7 @@ service cloud.firestore {
                         )
                       );
       // Delete: global admin for community, team owner/admin for custom
-      allow delete: if isSignedIn() &&
+      allow delete: if isVerifiedForSensitiveWrite() &&
                       (
                         (resource.data.source == 'community' && isGlobalAdmin()) ||
                         (
@@ -3002,6 +3056,10 @@ service cloud.firestore {
     match /telemetryEvents/{eventId} {
       allow read: if isGlobalAdmin();
       allow write: if false;
+    }
+
+    match /telemetryRateLimits/{limitId} {
+      allow read, write: if false;
     }
 
     match /telemetryDaily/{dateId} {
@@ -3027,6 +3085,16 @@ service cloud.firestore {
     match /telemetrySessions/{sessionId} {
       allow read: if isGlobalAdmin();
       allow write: if false;
+    }
+
+    // Server and rules share this staged rollout policy. Keeping emergency
+    // policy control with global admins avoids exposing the exemption list.
+    match /securityPolicies/{policyId} {
+      allow read: if isGlobalAdmin() && policyId == 'verifiedEmail';
+      allow create, update: if isGlobalAdmin() &&
+                               policyId == 'verifiedEmail' &&
+                               isVerifiedEmailPolicyPayloadValid(request.resource.data);
+      allow delete: if isGlobalAdmin() && policyId == 'verifiedEmail';
     }
 
     match /accountMergeRequests/{requestId} {
@@ -3070,10 +3138,11 @@ service cloud.firestore {
       allow list: if isBoundedGlobalAdminListQuery() ||
                      canReadPublicTeamDocument(resource.data) ||
                      canListManagedTeamDocument(resource.data);
-      allow create: if isSignedIn() && request.resource.data.ownerId == request.auth.uid;
-      allow update: if (isTeamOwnerOrGlobalAdmin(teamId) && keepsOwnerControlledTeamPrivilegeFieldsImmutable()) ||
-                       (isTeamOwnerOrAdmin(teamId) && keepsTeamPrivilegeFieldsImmutable());
-      allow delete: if isGlobalAdmin();
+      allow create: if isVerifiedForSensitiveWrite() && request.resource.data.ownerId == request.auth.uid;
+      allow update: if isVerifiedForSensitiveWrite() &&
+                       ((isTeamOwnerOrGlobalAdmin(teamId) && keepsOwnerControlledTeamPrivilegeFieldsImmutable()) ||
+                        (isTeamOwnerOrAdmin(teamId) && keepsTeamPrivilegeFieldsImmutable()));
+      allow delete: if isVerifiedForSensitiveWrite() && isGlobalAdmin();
 
 	      // Players subcollection
 	      match /players/{playerId} {
@@ -3256,14 +3325,14 @@ service cloud.firestore {
         allow read: if isTeamOwnerOrAdmin(teamId) ||
                        (isSignedIn() && resource.data.requesterUserId == request.auth.uid);
 
-        allow create: if isSignedIn() &&
+        allow create: if isVerifiedForSensitiveWrite() &&
                          requestId == request.auth.uid + "__" + request.resource.data.playerId &&
                          request.resource.data.requesterUserId == request.auth.uid &&
                          request.resource.data.teamId == teamId &&
                          request.resource.data.status == 'pending' &&
                          request.resource.data.playerId is string;
 
-        allow update: if isSignedIn() &&
+        allow update: if isVerifiedForSensitiveWrite() &&
                          (
                            (
                              isTeamOwnerOrAdmin(teamId) &&
@@ -3415,7 +3484,7 @@ service cloud.firestore {
 
         match /liveChat/{messageId} {
           allow read: if canReadGameSubcollectionDocument(teamId, gameId);
-          allow create: if isSignedIn()
+          allow create: if isVerifiedForSensitiveWrite()
             && (isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId) ||
                 (exists(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)) &&
                  isShareableGameDocument(
@@ -3429,7 +3498,7 @@ service cloud.firestore {
         // Live Reactions subcollection - ephemeral reactions during live games
         match /liveReactions/{reactionId} {
           allow read: if canReadGameSubcollectionDocument(teamId, gameId);
-          allow create: if isSignedIn()
+          allow create: if isVerifiedForSensitiveWrite()
             && (isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId) ||
                 (exists(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)) &&
                  isShareableGameDocument(
@@ -3642,16 +3711,17 @@ service cloud.firestore {
           allow get: if (resource == null && isOwnRsvpNoteId() && isParentForTeam(teamId)) ||
                         canReadRsvpNote(teamId, resource.data);
           allow list: if canReadRsvpNote(teamId, resource.data);
-          allow create, update: if isSignedIn() && canWriteRsvpNote(teamId, rsvpId, request.resource.data);
-          allow delete: if isTeamOwnerOrAdmin(teamId) ||
-                           (resource == null && isOwnRsvpNoteId() && isParentForTeam(teamId)) ||
-                           canDeleteOwnParentRsvpNote(teamId, rsvpId, resource.data);
+          allow create, update: if isVerifiedForSensitiveWrite() && canWriteRsvpNote(teamId, rsvpId, request.resource.data);
+          allow delete: if (resource == null && isOwnRsvpNoteId() && isParentForTeam(teamId)) ||
+                           (isVerifiedForSensitiveWrite() &&
+                            (isTeamOwnerOrAdmin(teamId) ||
+                             canDeleteOwnParentRsvpNote(teamId, rsvpId, resource.data)));
         }
 
         // Rideshare offers for games/practices.
         match /rideOffers/{offerId} {
           allow read: if isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId);
-          allow create: if isSignedIn() &&
+          allow create: if isVerifiedForSensitiveWrite() &&
                            (isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId)) &&
                            request.resource.data.driverUserId == request.auth.uid &&
                            request.resource.data.seatCapacity is int &&
@@ -3659,7 +3729,7 @@ service cloud.firestore {
                            request.resource.data.seatCountConfirmed == 0 &&
                            request.resource.data.status == 'open' &&
                            request.resource.data.direction in ['to', 'from', 'round-trip'];
-          allow update: if isSignedIn() &&
+          allow update: if isVerifiedForSensitiveWrite() &&
                            (isTeamOwnerOrAdmin(teamId) || resource.data.driverUserId == request.auth.uid) &&
                            request.resource.data.driverUserId == resource.data.driverUserId &&
                            request.resource.data.createdAt == resource.data.createdAt &&
@@ -3668,12 +3738,12 @@ service cloud.firestore {
                            request.resource.data.seatCountConfirmed <= request.resource.data.seatCapacity &&
                            math.abs(request.resource.data.seatCountConfirmed - resource.data.seatCountConfirmed) <= 1 &&
                            request.resource.data.status in ['open', 'closed', 'cancelled'];
-          allow delete: if isSignedIn() && (isTeamOwnerOrAdmin(teamId) || resource.data.driverUserId == request.auth.uid);
+          allow delete: if isVerifiedForSensitiveWrite() && (isTeamOwnerOrAdmin(teamId) || resource.data.driverUserId == request.auth.uid);
 
           match /requests/{requestId} {
             allow read: if isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId);
 
-            allow create: if isSignedIn() &&
+            allow create: if isVerifiedForSensitiveWrite() &&
                              requestId == request.auth.uid + "__" + request.resource.data.childId &&
                              request.resource.data.parentUserId == request.auth.uid &&
                              isParentForPlayer(teamId, request.resource.data.childId) &&
@@ -3682,7 +3752,7 @@ service cloud.firestore {
                               (request.resource.data.status == 'waitlisted' &&
                                isRideshareOfferFull(teamId, gameId, offerId)));
 
-            allow update: if isSignedIn() &&
+            allow update: if isVerifiedForSensitiveWrite() &&
                              (
                                // Driver/coach/admin can decide status.
                                (
@@ -3722,7 +3792,7 @@ service cloud.firestore {
                                  request.resource.data.diff(resource.data).affectedKeys().hasOnly(['childName', 'status', 'requestedAt', 'respondedAt', 'updatedAt'])
                                )
                              );
-            allow delete: if isSignedIn() &&
+            allow delete: if isVerifiedForSensitiveWrite() &&
                              (isTeamOwnerOrAdmin(teamId) ||
                               resource.data.parentUserId == request.auth.uid ||
                               get(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)/rideOffers/$(offerId)).data.driverUserId == request.auth.uid) &&
@@ -3734,14 +3804,14 @@ service cloud.firestore {
         match /assignmentClaims/{role} {
           allow read: if isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId);
           // Parent creates their own claim; document must not already exist (create only, no update).
-          allow create: if isSignedIn() &&
+          allow create: if isVerifiedForSensitiveWrite() &&
                            isParentForTeam(teamId) &&
                            request.resource.data.claimedByUserId == request.auth.uid &&
                            request.resource.data.claimedByName is string &&
                            request.resource.data.claimedByName.size() > 0 &&
                            request.resource.data.claimedByName.size() <= 100;
           // Owner releases their own claim; admins may release any claim.
-          allow delete: if isSignedIn() &&
+          allow delete: if isVerifiedForSensitiveWrite() &&
                            (resource.data.claimedByUserId == request.auth.uid ||
                             isTeamOwnerOrAdmin(teamId));
         }
@@ -3970,14 +4040,16 @@ service cloud.firestore {
 
         match /chatMessages/{messageId} {
           allow read: if canAccessChatConversation(teamId, conversationId, get(/databases/$(database)/documents/teams/$(teamId)/chatConversations/$(conversationId)).data);
-          allow create: if canAccessChatConversation(teamId, conversationId, get(/databases/$(database)/documents/teams/$(teamId)/chatConversations/$(conversationId)).data) &&
+          allow create: if isVerifiedForSensitiveWrite() &&
+                           canAccessChatConversation(teamId, conversationId, get(/databases/$(database)/documents/teams/$(teamId)/chatConversations/$(conversationId)).data) &&
                            isNestedChatMessageCreateValid(
                              teamId,
                              conversationId,
                              get(/databases/$(database)/documents/teams/$(teamId)/chatConversations/$(conversationId)).data,
                              request.resource.data
                            );
-          allow update: if canAccessChatConversation(teamId, conversationId, get(/databases/$(database)/documents/teams/$(teamId)/chatConversations/$(conversationId)).data) &&
+          allow update: if isVerifiedForSensitiveWrite() &&
+                           canAccessChatConversation(teamId, conversationId, get(/databases/$(database)/documents/teams/$(teamId)/chatConversations/$(conversationId)).data) &&
                            resource.data.senderId == request.auth.uid &&
                            request.resource.data.diff(resource.data).affectedKeys()
                                .hasAll(['text', 'editedAt']) &&
@@ -3990,13 +4062,15 @@ service cloud.firestore {
                              request.resource.data
                            ) &&
                            isNestedChatMessageEditValid(request.resource.data);
-          allow update: if canAccessChatConversation(teamId, conversationId, get(/databases/$(database)/documents/teams/$(teamId)/chatConversations/$(conversationId)).data) &&
+          allow update: if isVerifiedForSensitiveWrite() &&
+                           canAccessChatConversation(teamId, conversationId, get(/databases/$(database)/documents/teams/$(teamId)/chatConversations/$(conversationId)).data) &&
                            request.resource.data.diff(resource.data).affectedKeys()
                                .hasOnly(['deleted']) &&
                            request.resource.data.deleted == true &&
                            (resource.data.senderId == request.auth.uid ||
                             isTeamOwnerOrAdmin(teamId));
-          allow update: if canAccessChatConversation(teamId, conversationId, get(/databases/$(database)/documents/teams/$(teamId)/chatConversations/$(conversationId)).data) &&
+          allow update: if isVerifiedForSensitiveWrite() &&
+                           canAccessChatConversation(teamId, conversationId, get(/databases/$(database)/documents/teams/$(teamId)/chatConversations/$(conversationId)).data) &&
                            isSelfChatReactionUpdate();
         }
       }
@@ -4022,19 +4096,19 @@ service cloud.firestore {
       // Only the owner can list their own tokens (rule applied per-document).
       allow list: if isSignedIn() && resource.data.ownerUserId == request.auth.uid;
       // Owner can create tokens on their own behalf.
-      allow create: if isSignedIn() &&
+      allow create: if isVerifiedForSensitiveWrite() &&
                        request.resource.data.ownerUserId == request.auth.uid &&
                        request.resource.data.active == true &&
                        request.resource.data.expiresAt is timestamp &&
                        request.resource.data.expiresAt > request.time &&
                        isSafeDocumentId(tokenId);
       // Owner can update (e.g., revoke) their own tokens.
-      allow update: if isSignedIn() &&
+      allow update: if isVerifiedForSensitiveWrite() &&
                        resource.data.ownerUserId == request.auth.uid &&
                        request.resource.data.ownerUserId == resource.data.ownerUserId &&
                        request.resource.data.expiresAt is timestamp &&
                        request.resource.data.expiresAt > request.time;
-      allow delete: if isSignedIn() &&
+      allow delete: if isVerifiedForSensitiveWrite() &&
                        (resource.data.ownerUserId == request.auth.uid || isGlobalAdmin());
     }
 

@@ -58,7 +58,7 @@ import {
     collectOfficialLookupTargets
 } from './admin-user-official-links.js?v=2';
 import { resolveAvailabilityCutoffEventDate } from './availability-cutoff-date.js?v=1';
-import { normalizeFamilyShareCalendarUrls, normalizeFamilyShareChildren } from './family-share-utils.js?v=1';
+import { normalizeFamilyShareCalendarUrls, normalizeFamilyShareChildren } from './family-share-utils.js?v=2';
 import { normalizeChatAttachments } from './team-chat-media.js';
 import {
     DEFAULT_TEAM_CONVERSATION_ID,
@@ -387,6 +387,10 @@ function mapSnapshot(snapshot) {
     return snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
 }
 
+// Must match the finite server-side aggregate shard count. Query limits scale
+// by this factor so the admin dashboard retains its pre-sharding logical range.
+const TELEMETRY_AGGREGATE_SHARD_COUNT = 16;
+
 export async function getTelemetryEvents({ days = 7, maxEvents = 1500 } = {}) {
     const startDate = Timestamp.fromDate(daysAgoDate(days));
     const safeLimit = Math.min(Math.max(Number(maxEvents) || 1500, 100), 5000);
@@ -405,7 +409,10 @@ export async function getTelemetryDaily({ days = 30 } = {}) {
         collection(db, 'telemetryDaily'),
         where('date', '>=', startKey),
         orderBy('date', 'desc'),
-        limitQuery(Math.min(Math.max(days + 2, 7), 60))
+        limitQuery(Math.min(
+            Math.max((days + 2) * TELEMETRY_AGGREGATE_SHARD_COUNT, 7),
+            60 * TELEMETRY_AGGREGATE_SHARD_COUNT
+        ))
     );
     return mapSnapshot(await getDocs(q));
 }
@@ -416,7 +423,10 @@ export async function getTelemetryPageDaily({ days = 30, maxPages = 500 } = {}) 
         collection(db, 'telemetryPagesDaily'),
         where('date', '>=', startKey),
         orderBy('date', 'desc'),
-        limitQuery(Math.min(Math.max(Number(maxPages) || 500, 50), 1000))
+        limitQuery(Math.min(
+            Math.max((Number(maxPages) || 500) * TELEMETRY_AGGREGATE_SHARD_COUNT, 50),
+            1000 * TELEMETRY_AGGREGATE_SHARD_COUNT
+        ))
     );
     return mapSnapshot(await getDocs(q));
 }
@@ -427,7 +437,10 @@ export async function getTelemetryRouteDaily({ days = 30, maxRoutes = 500 } = {}
         collection(db, 'telemetryRoutesDaily'),
         where('date', '>=', startKey),
         orderBy('date', 'desc'),
-        limitQuery(Math.min(Math.max(Number(maxRoutes) || 500, 50), 1000))
+        limitQuery(Math.min(
+            Math.max((Number(maxRoutes) || 500) * TELEMETRY_AGGREGATE_SHARD_COUNT, 50),
+            1000 * TELEMETRY_AGGREGATE_SHARD_COUNT
+        ))
     );
     return mapSnapshot(await getDocs(q));
 }
@@ -438,7 +451,10 @@ export async function getTelemetryEventDaily({ days = 30, maxEvents = 500 } = {}
         collection(db, 'telemetryEventsDaily'),
         where('date', '>=', startKey),
         orderBy('date', 'desc'),
-        limitQuery(Math.min(Math.max(Number(maxEvents) || 500, 50), 1000))
+        limitQuery(Math.min(
+            Math.max((Number(maxEvents) || 500) * TELEMETRY_AGGREGATE_SHARD_COUNT, 50),
+            1000 * TELEMETRY_AGGREGATE_SHARD_COUNT
+        ))
     );
     return mapSnapshot(await getDocs(q));
 }
@@ -631,7 +647,7 @@ export async function uploadStatSheetPhoto(teamId, file) {
     }
 }
 
-import { resolveZip } from './utils.js?v=15'; // Import resolveZip
+import { resolveZip } from './utils.js?v=18'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -1867,7 +1883,15 @@ async function requestTrustedPublicUserProfileProjectionSync(userId) {
 async function syncPublicUserProfile(userId, userData = null) {
     const nextUserData = userData || await getUserProfile(userId) || {};
     const payload = await buildPublicUserProfilePresentationPayload(nextUserData);
-    await setDoc(doc(db, 'publicUserProfiles', userId), payload, { merge: true });
+    try {
+        await setDoc(doc(db, 'publicUserProfiles', userId), payload, { merge: true });
+    } catch (error) {
+        // Public projections are derived, best-effort data. In particular, an
+        // unverified account must still be able to complete self-profile and
+        // invite bootstrap while enforce mode defers this sensitive write.
+        console.warn('[public-user-profile] Presentation sync deferred:', error);
+        return;
+    }
     try {
         await syncTrustedPublicUserProfileProjection(userId, nextUserData);
     } catch (error) {
@@ -1875,7 +1899,14 @@ async function syncPublicUserProfile(userId, userData = null) {
             console.warn('[public-user-profile] Trusted projection sync skipped for non-owner profile:', error);
             return;
         }
-        await requestTrustedPublicUserProfileProjectionSync(userId);
+        try {
+            await requestTrustedPublicUserProfileProjectionSync(userId);
+        } catch (callableError) {
+            // The callable intentionally shares the verified-email guard. A
+            // blocked or temporarily unavailable projection must not turn an
+            // otherwise successful sign-in or invite redemption into failure.
+            console.warn('[public-user-profile] Trusted projection sync deferred:', callableError);
+        }
     }
 }
 
@@ -3809,10 +3840,7 @@ export async function getTeamStatsForGame(teamId, gameId) {
 
 export async function getAggregatedStatsForPlayer(teamId, gameId, playerId) {
     try {
-        const docRef = doc(db, `${getGameDocRef(teamId, gameId).path}/aggregatedStats`, playerId);
-        const docSnap = await getDoc(docRef);
-        if (!docSnap.exists()) return null;
-        const data = docSnap.data() || {};
+        const data = await getAggregatedStatsDocumentForPlayer(teamId, gameId, playerId);
         return data.stats || {};
     } catch (error) {
         console.error('[getAggregatedStatsForPlayer] failed to load aggregated stats', {
@@ -3823,6 +3851,13 @@ export async function getAggregatedStatsForPlayer(teamId, gameId, playerId) {
         });
         throw new Error(`Unable to load stats for player ${playerId}: ${error.message}`);
     }
+}
+
+export async function getAggregatedStatsDocumentForPlayer(teamId, gameId, playerId) {
+    const docRef = doc(db, `${getGameDocRef(teamId, gameId).path}/aggregatedStats`, playerId);
+    const docSnap = await getDoc(docRef);
+    if (!docSnap.exists()) return {};
+    return docSnap.data() || {};
 }
 
 export async function getGame(teamId, gameId) {
@@ -6003,7 +6038,27 @@ function sanitizeAthleteProfileMediaName(fileName) {
     return String(fileName || 'media').replace(/[^\w.\-]+/g, '_');
 }
 
-export async function reserveAthleteProfileMediaOwnership(userId, profileId) {
+const PRIMARY_ATHLETE_PROFILE_MEDIA_PREFIX = 'primary://';
+
+function buildPrimaryAthleteProfileMediaPath(storagePath) {
+    return `${PRIMARY_ATHLETE_PROFILE_MEDIA_PREFIX}${storagePath}`;
+}
+
+function resolveAthleteProfileMediaStorage(storagePath) {
+    const normalizedPath = String(storagePath || '').trim();
+    if (normalizedPath.startsWith(PRIMARY_ATHLETE_PROFILE_MEDIA_PREFIX)) {
+        return {
+            storageClient: storage,
+            objectPath: normalizedPath.slice(PRIMARY_ATHLETE_PROFILE_MEDIA_PREFIX.length)
+        };
+    }
+    return {
+        storageClient: imageStorage,
+        objectPath: normalizedPath
+    };
+}
+
+export async function reserveAthleteProfileMediaOwnership(userId, profileId, options = {}) {
     const normalizedUserId = String(userId || '').trim();
     const normalizedProfileId = String(profileId || '').trim();
     if (!normalizedUserId) {
@@ -6014,6 +6069,15 @@ export async function reserveAthleteProfileMediaOwnership(userId, profileId) {
     }
 
     const profileRef = doc(db, 'athleteProfiles', normalizedProfileId);
+    if (options.isNewProfile === true) {
+        await setDoc(profileRef, {
+            parentUserId: normalizedUserId,
+            mediaUploadReservation: true,
+            updatedAt: serverTimestamp()
+        }, { merge: true });
+        return { id: normalizedProfileId, created: true };
+    }
+
     return runTransaction(db, async (transaction) => {
         const profileSnap = await transaction.get(profileRef);
         if (profileSnap.exists()) {
@@ -6047,6 +6111,17 @@ export async function releaseAthleteProfileMediaReservation(userId, profileId) {
         if (profile.parentUserId !== normalizedUserId || profile.mediaUploadReservation !== true) {
             return false;
         }
+
+        const hasSavedProfileData = Object.prototype.hasOwnProperty.call(profile, 'athlete') ||
+            Array.isArray(profile.seasons);
+        if (hasSavedProfileData) {
+            transaction.update(profileRef, {
+                mediaUploadReservation: deleteField(),
+                updatedAt: serverTimestamp()
+            });
+            return true;
+        }
+
         transaction.delete(profileRef);
         return true;
     });
@@ -6063,12 +6138,14 @@ export async function uploadAthleteProfileMedia(userId, profileId, file, options
         throw new Error('Select a media file to upload.');
     }
 
-    await requireImageAuth();
+    if (!auth.currentUser || auth.currentUser.uid !== userId) {
+        throw new Error('The signed-in parent account does not match this athlete profile upload.');
+    }
 
     const safeName = sanitizeAthleteProfileMediaName(file.name);
     const kind = options.kind === 'profile-photo' ? 'profile-photo' : 'clip';
     const storagePath = `athlete-profile-media/${userId}/${profileId}/${Date.now()}_${kind}_${safeName}`;
-    const storageRef = ref(imageStorage, storagePath);
+    const storageRef = ref(storage, storagePath);
     const snapshot = await uploadBytes(storageRef, file);
     const url = await getDownloadURL(snapshot.ref);
     const mimeType = String(file.type || '').trim();
@@ -6078,7 +6155,7 @@ export async function uploadAthleteProfileMedia(userId, profileId, file, options
 
     return {
         url,
-        storagePath,
+        storagePath: buildPrimaryAthleteProfileMediaPath(storagePath),
         mimeType,
         sizeBytes: Number.isFinite(file.size) ? file.size : null,
         uploadedAtMs: Date.now(),
@@ -6088,7 +6165,9 @@ export async function uploadAthleteProfileMedia(userId, profileId, file, options
 
 export async function deleteAthleteProfileMediaByPath(storagePath) {
     if (!storagePath) return;
-    const storageRef = ref(imageStorage, storagePath);
+    const resolved = resolveAthleteProfileMediaStorage(storagePath);
+    if (!resolved.objectPath) return;
+    const storageRef = ref(resolved.storageClient, resolved.objectPath);
     await deleteObject(storageRef);
 }
 
@@ -6156,7 +6235,7 @@ export async function saveAthleteProfile(userId, draft, options = {}) {
     const profileRef = options.profileId
         ? doc(db, 'athleteProfiles', options.profileId)
         : doc(collection(db, 'athleteProfiles'));
-    const existingSnap = options.profileId ? await getDoc(profileRef) : null;
+    const existingSnap = options.profileId && options.isNewProfile !== true ? await getDoc(profileRef) : null;
     const existingProfile = existingSnap?.exists() ? { id: existingSnap.id, ...(existingSnap.data() || {}) } : null;
     if (existingProfile && existingProfile.parentUserId !== userId) {
         throw new Error('You do not have permission to edit this athlete profile.');
@@ -8604,6 +8683,11 @@ function normalizeRsvpResponse(response) {
     return 'not_responded';
 }
 
+function normalizeRsvpDisplayName(value) {
+    const normalized = typeof value === 'string' ? value.trim().slice(0, 160) : '';
+    return normalized && !normalized.includes('@') ? normalized : null;
+}
+
 const rsvpSummaryHydrationCacheByTeam = new Map();
 
 function getRsvpSummaryHydrationCache(teamId) {
@@ -8801,7 +8885,10 @@ async function writeRsvpNote(teamId, gameId, rsvpId, { userId, displayName, play
     const primaryPlayerId = normalizedPlayerIds.length === 1 ? normalizedPlayerIds[0] : null;
     await setDoc(noteRef, {
         userId,
-        displayName: displayName || null,
+        parentEmail: deleteField(),
+        email: deleteField(),
+        guardianEmail: deleteField(),
+        displayName: normalizeRsvpDisplayName(displayName),
         playerIds: normalizedPlayerIds,
         playerId: primaryPlayerId,
         childId: primaryPlayerId,
@@ -8928,7 +9015,7 @@ export async function submitRsvp(teamId, gameId, userId, { displayName, playerId
     const primaryPlayerId = normalizedPlayerIds.length === 1 ? normalizedPlayerIds[0] : null;
     const rsvpPayload = {
         userId: effectiveUserId,
-        displayName: displayName || null,
+        displayName: normalizeRsvpDisplayName(displayName),
         playerIds: normalizedPlayerIds,
         playerId: primaryPlayerId,
         childId: primaryPlayerId,
@@ -8999,7 +9086,7 @@ export async function submitRsvpForPlayer(teamId, gameId, userId, { displayName,
     const respondedAt = Timestamp.now();
     await setDoc(rsvpRef, {
         userId: effectiveUserId,
-        displayName: displayName || null,
+        displayName: normalizeRsvpDisplayName(displayName),
         playerIds: [normalizedPlayerId],
         playerId: normalizedPlayerId,
         childId: normalizedPlayerId,
@@ -9040,6 +9127,27 @@ export async function getRsvps(teamId, gameId) {
     const rsvps = snap.docs.map(d => stripRsvpPrivateNoteFields({ id: d.id, ...d.data() }));
     const notes = await loadAccessibleRsvpNotes(teamId, gameId);
     return mergeRsvpNotesIntoRsvps(rsvps, notes);
+}
+
+export async function getMyRsvps(teamId, gameId, userId, playerIds = []) {
+    const normalizedUserId = String(userId || '').trim();
+    if (!normalizedUserId) return [];
+    const linkedPlayerIds = uniqueNonEmptyIds(playerIds);
+    const collectionPath = `teams/${teamId}/games/${gameId}/rsvps`;
+    const requestedIds = uniqueNonEmptyIds([
+        normalizedUserId,
+        ...linkedPlayerIds.map((playerId) => buildCoachOverrideRsvpDocId(normalizedUserId, playerId))
+    ]);
+    const results = await Promise.allSettled(requestedIds.map(async (rsvpId) => {
+        const snap = await getDoc(doc(db, collectionPath, rsvpId));
+        if (!snap.exists()) return null;
+        const data = stripRsvpPrivateNoteFields({ id: snap.id, ...snap.data() });
+        return data.userId === normalizedUserId ? data : null;
+    }));
+    const rsvps = results
+        .filter((result) => result.status === 'fulfilled' && result.value)
+        .map((result) => result.value);
+    return mergeRsvpNotesForExistingRsvps(teamId, gameId, rsvps);
 }
 
 export async function getMyRsvp(teamId, gameId, userId, playerIds = []) {
@@ -9537,6 +9645,14 @@ export async function resolveFamilyShareTokenChildren(tokenId) {
     const callable = httpsCallable(functions, 'resolveFamilyShareTokenChildren');
     const response = await callable({ tokenId: normalizedTokenId });
     return normalizeFamilyShareChildren(response?.data?.children || []);
+}
+
+export async function getFamilyShareView(tokenId) {
+    const normalizedTokenId = String(tokenId || '').trim();
+    if (!normalizedTokenId) return null;
+    const callable = httpsCallable(functions, 'getFamilyShareView');
+    const response = await callable({ tokenId: normalizedTokenId });
+    return response?.data || null;
 }
 
 export async function listFamilyShareTokens(ownerUserId) {

@@ -14,10 +14,10 @@ import {
     getTelemetryRouteDaily,
     getTelemetryEventDaily,
     getTelemetrySessions
-} from './db.js?v=107';
+} from './db.js?v=113';
 import { db, collection, getDocs, doc, setDoc, updateDoc, serverTimestamp, query } from './firebase.js?v=22';
-import { renderHeader, renderFooter, escapeHtml } from './utils.js?v=15';
-import { checkAuth } from './auth.js?v=51';
+import { renderHeader, renderFooter, escapeHtml } from './utils.js?v=18';
+import { checkAuth } from './auth.js?v=125';
 import { DEFAULT_ADMIN_PAGE_SIZE, buildBoundedAdminDashboardScope, loadAdminCollectionPage, loadInitialAdminBootstrap } from './admin-bootstrap.js?v=2';
 import {
     adminRegistrationDefaults,
@@ -732,10 +732,18 @@ function sumBy(items, key) {
 
 function groupTelemetry(items, key, countKey = 'count') {
     const grouped = new Map();
+    const metricKeys = ['totalEvents', 'pageViews', 'interactions', 'errors', 'securityEvents', 'signedInEvents', 'count'];
     items.forEach((item) => {
         const groupKey = item[key] || 'Unknown';
-        const current = grouped.get(groupKey) || { key: groupKey, count: 0, item };
+        const current = grouped.get(groupKey) || {
+            key: groupKey,
+            count: 0,
+            item: { ...item, ...Object.fromEntries(metricKeys.map((metricKey) => [metricKey, 0])) }
+        };
         current.count += Number(item[countKey] || 0);
+        metricKeys.forEach((metricKey) => {
+            current.item[metricKey] += Number(item[metricKey] || 0);
+        });
         grouped.set(groupKey, current);
     });
     return Array.from(grouped.values()).sort((a, b) => b.count - a.count);
@@ -791,7 +799,9 @@ function renderTelemetryList(id, rows, renderer, emptyMessage) {
 }
 
 function renderTelemetryTrend() {
-    const rows = [...telemetryState.daily].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+    const rows = groupTelemetry(telemetryState.daily, 'date', 'totalEvents')
+        .map(({ key, item }) => ({ ...item, date: key }))
+        .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
     const maxEvents = Math.max(...rows.map((row) => Number(row.totalEvents || 0)), 1);
     renderTelemetryList('telemetry-daily-trend', rows, (row) => {
         const total = Number(row.totalEvents || 0);

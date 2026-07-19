@@ -28,13 +28,13 @@ describe('team media page wiring', () => {
         const page = fs.readFileSync(path.join(repoRoot, 'team-media.html'), 'utf8');
         const source = fs.readFileSync(path.join(repoRoot, 'js/team-media.js'), 'utf8');
 
-        expect(page).toContain('src="js/team-media.js?v=15"');
+        expect(page).toContain('src="js/team-media.js?v=19"');
         expect(page).toContain('Add album');
         expect(page).toContain('Upload files');
         expect(page).toContain('Save video link');
-        expect(source).toContain("from './db.js?v=107'");
+        expect(source).toContain("from './db.js?v=113'");
         expect(source).toContain('normalizeTeamMediaVideoDraft');
-        expect(source).toContain("import { checkAuth } from './auth.js?v=51';");
+        expect(source).toContain("import { checkAuth } from './auth.js?v=125';");
         expect(source).toContain('checkAuth(async (user) => {');
         expect(source).toContain('team.html#teamId=${encodeURIComponent(state.teamId)}');
         expect(source).toContain('Team media permissions are not enabled');
@@ -51,7 +51,7 @@ describe('team media page wiring', () => {
         const source = fs.readFileSync(path.join(repoRoot, 'js/team-media.js'), 'utf8');
         const dbImportVersion = source.match(/from '\.\/db\.js\?v=(\d+)'/)?.[1];
 
-        expect(dbImportVersion).toBe('107');
+        expect(dbImportVersion).toBe('113');
 
         for (const testFile of [
             'tests/unit/team-media-item-rename.test.js',
@@ -99,7 +99,7 @@ describe('team media page wiring', () => {
         expect(storageRules).toContain('application/pdf');
         expect(storageRules).toContain('function canDeleteOwnTeamMediaObject(teamId, folderId, userId)');
         expect(storageRules).toContain('(hasTeamMediaUploadGrant(teamId) && canUploadTeamMediaFolder(teamId, folderId))');
-        expect(storageRules).toContain('allow delete: if canManageTeamMedia(teamId) ||\n        canDeleteOwnTeamMediaObject(teamId, folderId, userId);');
+        expect(storageRules).toContain('allow delete: if isVerifiedForSensitiveWrite() &&\n        (canManageTeamMedia(teamId) || canDeleteOwnTeamMediaObject(teamId, folderId, userId));');
         expect(storageRules).not.toContain('allow delete: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;');
     });
 

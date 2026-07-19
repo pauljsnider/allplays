@@ -1,6 +1,10 @@
 import {
   deleteAthleteProfileMediaByPath,
+  getAggregatedStatsForGames,
+  getAggregatedStatsDocumentForPlayer,
   getAggregatedStatsForPlayer,
+  getConfigs,
+  getGameEvents,
   getGames,
   getPlayerPrivateProfile,
   getPlayers,
@@ -17,6 +21,7 @@ import {
   setPlayerPrivateRosterProfileFields,
   updatePlayer,
   updatePlayerWithPrivateRosterProfileFields,
+  updatePlayerPrivateProfile,
   updatePlayerProfile,
   uploadAthleteProfileMedia,
   uploadPlayerPhoto,
@@ -27,6 +32,7 @@ import {
 } from './adapters/legacyPlayerDb';
 import {
   buildAthleteProfileShareUrl,
+  buildPlayerLeaderboardSnapshot,
   calculateEarnings,
   collectPlayerVideoClips,
   getApplicableRulesForGame,
@@ -40,6 +46,8 @@ import {
   retireIncentiveRule,
   saveCapSetting,
   saveIncentiveRule,
+  selectAnalyticsConfig,
+  summarizePlayerTopStats,
   toggleIncentiveRule,
   type PlayerEarningsBreakdownItem,
   type PlayerIncentiveRule,
@@ -60,7 +68,7 @@ import {
 } from './adapters/legacyRosterPrivacy';
 import { getOpenScheduleAssignments, normalizeRsvpResponse, type ParentScheduleEvent } from './scheduleLogic';
 import { loadParentPlayerSchedule, type ParentScheduleChild } from './scheduleService';
-import { clearAppDataCache } from './appDataCache';
+import { clearAppDataCache, loadCachedAppData } from './appDataCache';
 import { createLogger } from './logger';
 import type { AuthUser } from './types';
 
@@ -71,6 +79,66 @@ const logger = createLogger('player-service');
 export type ParentPlayerStatRow = {
   event: ParentScheduleEvent;
   stats: Record<string, unknown>;
+  timeMs?: number;
+};
+
+export type ParentPlayerTopStat = {
+  id: string;
+  label: string;
+  rank: number;
+  totalPlayers: number;
+  value: number;
+  formattedValue: string;
+};
+
+export type ParentPlayerTrend = {
+  key: string;
+  label: string;
+  recentAverage: number;
+  earlierAverage: number;
+  direction: 'up' | 'down' | 'neutral';
+  percentChange: number;
+};
+
+export type ParentPlayerGameEventRow = {
+  gameId: string;
+  gameLabel: string;
+  gameDate: string;
+  events: Array<{
+    id: string;
+    statKey: string;
+    value: number | string;
+    period: string;
+    clock: string;
+    description: string;
+    timestampMs: number;
+  }>;
+};
+
+export type ParentPlayerStatsSummary = {
+  gamesPlayed: number;
+  gamesWithTime: number;
+  totalTimeMs: number;
+  totals: Record<string, number>;
+  averages: Record<string, number>;
+  topStats: ParentPlayerTopStat[];
+  trends: ParentPlayerTrend[];
+  gameLimit: number;
+  hasMoreGames: boolean;
+};
+
+export type ParentPlayerStatsDetailData = {
+  summary: ParentPlayerStatsSummary;
+  statRows: ParentPlayerStatRow[];
+  gameEventRows: ParentPlayerGameEventRow[];
+};
+
+export type ParentPlayerStatTotals = {
+  teamId: string;
+  playerId: string;
+  gameCount: number;
+  gameIds: string[];
+  totals: Record<string, number>;
 };
 
 export type ParentPlayerPrivateProfile = {
@@ -153,6 +221,7 @@ export type ParentPlayerDetailData = {
     openAssignments: number;
   };
   statRows: ParentPlayerStatRow[];
+  statsDetail: ParentPlayerStatsDetailData | null;
   clips: PlayerVideoClip[];
   certificates: Array<Record<string, any>>;
   trackingSummary: PlayerTrackingSummary[];
@@ -298,6 +367,7 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
       openAssignments: upcoming.reduce((total, event) => total + getOpenScheduleAssignments(event.assignments).length, 0)
     },
     statRows,
+    statsDetail: null,
     clips: [],
     certificates: Array.isArray(certificates) ? certificates : [],
     trackingSummary,
@@ -314,6 +384,83 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
       resolvedTeamId,
       resolvedPlayerId
     )
+  };
+}
+
+const playerStatsDetailGameLimit = 20;
+const playerStatsDetailCacheTtlMs = 2 * 60 * 1000;
+
+export async function loadParentPlayerStatsDetail(user: AuthUser | null, teamId: string, playerId: string): Promise<ParentPlayerStatsDetailData> {
+  if (!user?.uid) {
+    throw new Error('Player details require a signed-in user.');
+  }
+
+  const requestedTeamId = decodeURIComponent(teamId || '');
+  const requestedPlayerId = decodeURIComponent(playerId || '');
+  const cacheKey = `player-stats-detail:${user.uid}:${requestedTeamId}:${requestedPlayerId}`;
+  return loadCachedAppData(cacheKey, () => loadParentPlayerStatsDetailUncached(user, requestedTeamId, requestedPlayerId), {
+    ttlMs: playerStatsDetailCacheTtlMs,
+    persist: false
+  });
+}
+
+async function loadParentPlayerStatsDetailUncached(user: AuthUser, teamId: string, playerId: string): Promise<ParentPlayerStatsDetailData> {
+  const [team, players, games, configs] = await Promise.all([
+    getTeam(teamId, { includeInactive: true }),
+    getPlayers(teamId, { includeInactive: true }).catch(() => []),
+    getGames(teamId).catch(() => []),
+    getConfigs(teamId).catch(() => [])
+  ]);
+  const access = buildPlayerAccess(user, teamId, playerId, team);
+  if (!access.isLinkedParent && !access.isTeamStaff) {
+    throw new Error('This player is not linked to your account.');
+  }
+
+  const completedGames = (Array.isArray(games) ? games : [])
+    .filter(isCompletedGame)
+    .sort((a, b) => getGameDate(b).getTime() - getGameDate(a).getTime());
+  const limitedGames = completedGames.slice(0, playerStatsDetailGameLimit);
+  const statRows = await Promise.all(limitedGames.map(async (game) => {
+    const statDocument = await getAggregatedStatsDocumentForPlayer(teamId, String(game.id || ''), playerId).catch(() => ({})) || {};
+    const stats = getAggregatedStatsDocumentStats(statDocument);
+    return {
+      event: buildStatsEventFromGame(game, teamId, team, playerId),
+      stats,
+      timeMs: getGamePlayerTimeMs(game, playerId, stats, statDocument)
+    };
+  }));
+
+  const participatingRows = statRows.filter((row) => hasStatParticipation(row.stats, row.timeMs));
+  const totals = buildStatTotals(participatingRows);
+  const gamesPlayed = participatingRows.length;
+  const averages = buildStatAverages(totals, gamesPlayed);
+  const totalTimeMs = participatingRows.reduce((total, row) => total + (Number(row.timeMs || 0) || 0), 0);
+  const gamesWithTime = participatingRows.filter((row) => Number(row.timeMs || 0) > 0).length;
+  const trends = buildPlayerTrends(participatingRows);
+  const topStats = await buildConfiguredTopStats({
+    teamId,
+    playerId,
+    players: Array.isArray(players) ? players : [],
+    games: limitedGames,
+    configs,
+    team
+  });
+  const gameEventRows = await loadPlayerGameEventRows({ teamId, playerId, games: limitedGames, team });
+
+  return {
+    summary: {
+      gamesPlayed,
+      gamesWithTime,
+      totalTimeMs,
+      totals,
+      averages,
+      topStats,
+      trends,
+      gameLimit: playerStatsDetailGameLimit,
+      hasMoreGames: completedGames.length > limitedGames.length
+    },
+    statRows: participatingRows,
+    gameEventRows
   };
 }
 
@@ -366,6 +513,257 @@ export async function loadParentPlayerDetailWithAthleteProfile(user: AuthUser | 
     ...detail,
     athleteProfile: athleteProfile || detail.athleteProfile
   };
+}
+
+export async function loadParentPlayerStatTotals(user: AuthUser | null, teamId: string, playerId: string): Promise<ParentPlayerStatTotals> {
+  if (!user?.uid) {
+    throw new Error('Player stats require a signed-in user.');
+  }
+
+  const requestedTeamId = decodeURIComponent(teamId || '');
+  const requestedPlayerId = decodeURIComponent(playerId || '');
+  const team = await getTeam(requestedTeamId, { includeInactive: true });
+  const access = buildPlayerAccess(user, requestedTeamId, requestedPlayerId, team);
+  if (!access.isLinkedParent && !access.isTeamStaff) {
+    throw new Error('This player is not linked to your account.');
+  }
+
+  const games = await getGames(requestedTeamId).catch(() => []);
+  const gameIds = (Array.isArray(games) ? games : [])
+    .map((game: any) => String(game?.id || game?.gameId || '').trim())
+    .filter(Boolean);
+  const totalsByPlayer: Record<string, Record<string, unknown>> = gameIds.length
+    ? await getAggregatedStatsForGames(requestedTeamId, gameIds).catch(() => ({}))
+    : {};
+  const rawTotals = totalsByPlayer?.[requestedPlayerId] || {};
+  const totals = Object.entries(rawTotals).reduce<Record<string, number>>((acc, [key, value]) => {
+    const numeric = Number(value);
+    if (key && Number.isFinite(numeric)) {
+      acc[key] = numeric;
+    }
+    return acc;
+  }, {});
+
+  return {
+    teamId: requestedTeamId,
+    playerId: requestedPlayerId,
+    gameCount: gameIds.length,
+    gameIds,
+    totals
+  };
+}
+
+function isCompletedGame(game: Record<string, any>) {
+  const status = String(game?.status || '').toLowerCase();
+  const liveStatus = String(game?.liveStatus || '').toLowerCase();
+  return status === 'completed' || status === 'final' || liveStatus === 'completed' || liveStatus === 'final' || getGameDate(game).getTime() < Date.now();
+}
+
+function getGameDate(game: Record<string, any>) {
+  const value = game?.date || game?.gameDate || game?.startTime || game?.createdAt;
+  if (value instanceof Date) return value;
+  if (typeof value?.toDate === 'function') return value.toDate();
+  if (typeof value?.seconds === 'number') return new Date(value.seconds * 1000);
+  const date = new Date(value || Date.now());
+  return Number.isNaN(date.getTime()) ? new Date() : date;
+}
+
+function buildStatsEventFromGame(game: Record<string, any>, teamId: string, team: LegacyTeamRecord | null, playerId: string): ParentScheduleEvent {
+  const date = getGameDate(game);
+  const gameId = String(game?.id || '');
+  return {
+    eventKey: `${teamId}-${gameId}-${playerId}-${date.getTime()}`,
+    id: gameId,
+    teamId,
+    teamName: String(team?.name || game?.teamName || '').trim() || teamId,
+    type: 'game',
+    date,
+    endDate: null,
+    location: String(game?.location || ''),
+    opponent: String(game?.opponent || game?.opponentName || '').trim() || 'Opponent',
+    opponentTeamId: game?.opponentTeamId || null,
+    opponentTeamName: game?.opponentTeamName || null,
+    childId: playerId,
+    childName: '',
+    isDbGame: true,
+    isCancelled: game?.isCancelled === true || game?.cancelled === true,
+    status: game?.status || null,
+    liveStatus: game?.liveStatus || null,
+    homeScore: typeof game?.homeScore === 'number' ? game.homeScore : null,
+    awayScore: typeof game?.awayScore === 'number' ? game.awayScore : null,
+    statTrackerConfigId: game?.statTrackerConfigId || null,
+    assignments: [],
+    openAssignmentCount: 0
+  } as ParentScheduleEvent;
+}
+
+function getAggregatedStatsDocumentStats(statDocument: Record<string, any>) {
+  const stats = statDocument?.stats && typeof statDocument.stats === 'object' ? statDocument.stats : {};
+  return stats as Record<string, unknown>;
+}
+
+function getGamePlayerTimeMs(game: Record<string, any>, playerId: string, stats: Record<string, unknown>, statDocument: Record<string, any> = {}) {
+  const directTime = Number(statDocument?.timeMs ?? statDocument?.minutesMs ?? statDocument?.playingTimeMs ?? (stats as any)?.timeMs ?? (stats as any)?.minutesMs ?? (stats as any)?.playingTimeMs);
+  if (Number.isFinite(directTime) && directTime > 0) return directTime;
+  const byPlayer = (game?.playerTimes || game?.playingTimeByPlayerId || game?.playerTimeMsById || {}) as Record<string, unknown>;
+  const gameTime = Number(byPlayer?.[playerId]);
+  return Number.isFinite(gameTime) && gameTime > 0 ? gameTime : 0;
+}
+
+function hasStatParticipation(stats: Record<string, unknown>, timeMs = 0) {
+  if (Number(timeMs || 0) > 0) return true;
+  return Object.values(stats || {}).some((value) => Number.isFinite(Number(value)) && Number(value) !== 0);
+}
+
+function buildStatTotals(rows: ParentPlayerStatRow[]) {
+  const totals: Record<string, number> = {};
+  rows.forEach((row) => {
+    Object.entries(row.stats || {}).forEach(([key, value]) => {
+      const normalizedKey = String(key || '').trim().toLowerCase();
+      const numeric = Number(value);
+      if (!normalizedKey || !Number.isFinite(numeric)) return;
+      totals[normalizedKey] = (totals[normalizedKey] || 0) + numeric;
+    });
+  });
+  return totals;
+}
+
+function buildStatAverages(totals: Record<string, number>, gamesPlayed: number) {
+  if (gamesPlayed <= 0) return {};
+  return Object.fromEntries(Object.entries(totals).map(([key, total]) => [key, total / gamesPlayed]));
+}
+
+function buildPlayerTrends(rows: ParentPlayerStatRow[]): ParentPlayerTrend[] {
+  const chronological = [...rows].sort((a, b) => a.event.date.getTime() - b.event.date.getTime());
+  if (chronological.length < 2) return [];
+  const earlier = chronological.slice(0, Math.min(3, chronological.length));
+  const recent = chronological.slice(-Math.min(3, chronological.length));
+  const keys = Object.keys(buildStatTotals(rows)).slice(0, 5);
+
+  return keys.map((key) => {
+    const earlierAverage = averageStat(earlier, key);
+    const recentAverage = averageStat(recent, key);
+    const change = recentAverage - earlierAverage;
+    const percentChange = earlierAverage > 0 ? Math.round((change / earlierAverage) * 100) : (change > 0 ? 100 : 0);
+    return {
+      key,
+      label: key.toUpperCase(),
+      recentAverage,
+      earlierAverage,
+      direction: change > 0 ? 'up' : change < 0 ? 'down' : 'neutral',
+      percentChange
+    };
+  });
+}
+
+function averageStat(rows: ParentPlayerStatRow[], key: string) {
+  if (!rows.length) return 0;
+  return rows.reduce((total, row) => total + (Number((row.stats || {})[key]) || 0), 0) / rows.length;
+}
+
+async function buildConfiguredTopStats({
+  teamId,
+  playerId,
+  players,
+  games,
+  configs,
+  team
+}: {
+  teamId: string;
+  playerId: string;
+  players: LegacyPlayerRecord[];
+  games: Record<string, any>[];
+  configs: Record<string, any>[];
+  team: LegacyTeamRecord | null;
+}): Promise<ParentPlayerTopStat[]> {
+  const analyticsConfig = selectAnalyticsConfig(configs, String(team?.sport || team?.baseType || ''));
+  const topDefinitions = Array.isArray(analyticsConfig?.statDefinitions)
+    ? analyticsConfig.statDefinitions.filter((definition: any) => definition?.topStat && definition?.scope !== 'team' && definition?.visibility !== 'private')
+    : [];
+  if (!analyticsConfig || !topDefinitions.length || !games.length) return [];
+
+  const seasonStatsByPlayerId = await getAggregatedStatsForGames(teamId, games.map((game) => String(game.id || '')).filter(Boolean)).catch(() => ({}));
+  const snapshot = buildPlayerLeaderboardSnapshot({
+    config: analyticsConfig,
+    players,
+    seasonStatsByPlayerId
+  });
+  return summarizePlayerTopStats(snapshot, playerId).map((stat: any) => ({
+    id: String(stat.id || ''),
+    label: String(stat.label || stat.id || 'Stat'),
+    rank: Number(stat.rank || 0),
+    totalPlayers: Number(stat.totalPlayers || 0),
+    value: Number(stat.value || 0),
+    formattedValue: String(stat.formattedValue || stat.value || '0')
+  })).filter((stat) => stat.id && stat.rank > 0);
+}
+
+async function loadPlayerGameEventRows({
+  teamId,
+  playerId,
+  games,
+  team
+}: {
+  teamId: string;
+  playerId: string;
+  games: Record<string, any>[];
+  team: LegacyTeamRecord | null;
+}): Promise<ParentPlayerGameEventRow[]> {
+  const eventGroups = await Promise.all(games.slice(0, 10).map(async (game) => {
+    const gameId = String(game.id || '');
+    if (!gameId) return null;
+    const events = await getGameEvents(teamId, gameId, { limit: 100 }).catch(() => []);
+    const playerEvents = (Array.isArray(events) ? events : [])
+      .filter((event) => isEventForPlayer(event, playerId))
+      .map(normalizePlayerGameEvent)
+      .filter((event): event is ParentPlayerGameEventRow['events'][number] => !!event)
+      .sort((a, b) => b.timestampMs - a.timestampMs)
+      .slice(0, 12);
+    if (!playerEvents.length) return null;
+    const event = buildStatsEventFromGame(game, teamId, team, playerId);
+    return {
+      gameId,
+      gameLabel: getGameLabel(game),
+      gameDate: event.date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+      events: playerEvents
+    };
+  }));
+  return eventGroups.filter((group): group is ParentPlayerGameEventRow => !!group);
+}
+
+function isEventForPlayer(event: Record<string, any>, playerId: string) {
+  if (String(event?.playerId || event?.playerID || '') === playerId) return true;
+  if (Array.isArray(event?.playerIds) && event.playerIds.map(String).includes(playerId)) return true;
+  if (Array.isArray(event?.players) && event.players.some((player: any) => String(player?.id || player?.playerId || player) === playerId)) return true;
+  return false;
+}
+
+function normalizePlayerGameEvent(event: Record<string, any>): ParentPlayerGameEventRow['events'][number] | null {
+  const id = String(event?.id || event?.eventId || event?.timestamp?.seconds || Math.random()).trim();
+  const timestampMs = getTimestampMs(event?.timestamp || event?.createdAt || event?.time);
+  return {
+    id,
+    statKey: String(event?.statKey || event?.stat || event?.type || '').trim(),
+    value: typeof event?.value === 'undefined' ? '' : event.value,
+    period: String(event?.period || event?.quarter || event?.segment || '').trim(),
+    clock: String(event?.clock || event?.gameTime || '').trim(),
+    description: String(event?.description || event?.text || event?.label || event?.type || 'Tracked event').trim(),
+    timestampMs
+  };
+}
+
+function getTimestampMs(value: any) {
+  if (typeof value === 'number') return value;
+  if (value instanceof Date) return value.getTime();
+  if (typeof value?.toDate === 'function') return value.toDate().getTime();
+  if (typeof value?.seconds === 'number') return value.seconds * 1000;
+  const parsed = new Date(value || 0).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function getGameLabel(game: Record<string, any>) {
+  const opponent = String(game?.opponent || game?.opponentName || '').trim();
+  return opponent ? `vs. ${opponent}` : String(game?.title || game?.name || 'Game');
 }
 
 export async function savePlayerCustomRosterFieldValues({
@@ -453,19 +851,23 @@ export async function updateParentPlayerEditableProfile({
     photoUrl = await uploadPlayerPhoto(photoFile);
   }
 
-  const payload: Record<string, any> = {
+  const privatePayload: Record<string, any> = {
     emergencyContact: {
       name: String(emergencyContactName || '').trim(),
       phone: String(emergencyContactPhone || '').trim()
     },
     medicalInfo: String(medicalInfo || '').trim()
   };
+
+  await updatePlayerPrivateProfile(teamId, playerId, privatePayload);
   if (typeof photoUrl !== 'undefined') {
-    payload.photoUrl = photoUrl;
+    await updatePlayerProfile(teamId, playerId, { photoUrl });
   }
 
-  await updatePlayerProfile(teamId, playerId, payload);
-  return payload;
+  return {
+    ...privatePayload,
+    ...(typeof photoUrl !== 'undefined' ? { photoUrl } : {})
+  };
 }
 
 export async function saveStaffPlayerRosterDetails({
@@ -627,6 +1029,7 @@ export async function saveParentAthleteProfileDraft({
   const selectedSeasonKeys = Array.isArray(draft.selectedSeasonKeys) && draft.selectedSeasonKeys.length
     ? draft.selectedSeasonKeys
     : [seasonKey];
+  const isNewProfile = !profileId;
   const workingProfileId = profileId || createLocalId('profile');
   let uploadedProfilePhoto: Record<string, any> | null = null;
   const uploadedHighlightClips: Array<Record<string, any>> = [];
@@ -636,7 +1039,9 @@ export async function saveParentAthleteProfileDraft({
   const hasPendingMedia = !!profilePhotoFile || uploadRequests.length > 0;
   let createdMediaReservation = false;
   if (hasPendingMedia) {
-    const reservation = await reserveAthleteProfileMediaOwnership(user!.uid, workingProfileId);
+    const reservation = isNewProfile
+      ? await reserveAthleteProfileMediaOwnership(user!.uid, workingProfileId, { isNewProfile: true })
+      : await reserveAthleteProfileMediaOwnership(user!.uid, workingProfileId);
     createdMediaReservation = reservation.created === true;
   }
   try {
@@ -662,12 +1067,15 @@ export async function saveParentAthleteProfileDraft({
   let saved;
   try {
     const clips = buildAthleteProfileHighlightClips(draft.clips, uploadedHighlightClips);
+    const saveOptions = isNewProfile
+      ? { profileId: workingProfileId, isNewProfile: true }
+      : { profileId: workingProfileId };
     saved = await saveAthleteProfile(user!.uid, {
       ...draft,
       profilePhoto,
       clips,
       selectedSeasonKeys
-    }, { profileId: workingProfileId });
+    }, saveOptions);
   } catch (error) {
     await cleanupUploadedAthleteProfileMedia([
       uploadedProfilePhoto?.storagePath,

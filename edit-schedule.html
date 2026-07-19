@@ -38,7 +38,7 @@
             }
         }
     </script>
-  <script type="module" src="/js/telemetry.js?v=3"></script>
+  <script type="module" src="/js/telemetry.js?v=4"></script>
 </head>
 
 <body class="bg-gray-50 text-gray-900">
@@ -948,10 +948,10 @@
     </div>
 
     <script type="module">
-        import { getTeam, getTeams, getGames, getEvents, addGame, updateGame, updateTeam, deleteGame, addPractice, updateEvent, deleteEvent, getConfigs, addCalendarToTeam, removeCalendarFromTeam, getTrackedCalendarEventUids, cancelOccurrence, updateOccurrence, restoreOccurrence, clearOccurrenceOverride, updateSeries, deleteSeries, getUnreadChatCount, getPracticeSessions, cancelGame, getLatestGameAssignments, postChatMessage, getRsvpBreakdownByPlayer, getPlayers, getRsvps, applyTournamentAdvancementPatches, saveTournamentPoolOverride, clearTournamentPoolOverride, getOfficials, addOfficial, updateOfficial, deleteOfficial, createOfficiatingAssignmentNotificationRecords } from './js/db.js?v=107';
-        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, formatTimeRange, getDefaultEndTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, getCalendarEventStatus, getCalendarEventTrackingId, isTrackedCalendarEvent, generateSeriesId, expandRecurrence, formatRecurrence, shareOrCopy, escapeHtml } from './js/utils.js?v=15';
+        import { getTeam, getTeams, getGames, getEvents, addGame, updateGame, updateTeam, deleteGame, addPractice, updateEvent, deleteEvent, getConfigs, addCalendarToTeam, removeCalendarFromTeam, getTrackedCalendarEventUids, cancelOccurrence, updateOccurrence, restoreOccurrence, clearOccurrenceOverride, updateSeries, deleteSeries, getUnreadChatCount, getPracticeSessions, cancelGame, getLatestGameAssignments, postChatMessage, getRsvpBreakdownByPlayer, getPlayers, getRsvps, applyTournamentAdvancementPatches, saveTournamentPoolOverride, clearTournamentPoolOverride, getOfficials, addOfficial, updateOfficial, deleteOfficial, createOfficiatingAssignmentNotificationRecords } from './js/db.js?v=113';
+        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, formatTimeRange, getDefaultEndTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, getCalendarEventStatus, getCalendarEventTrackingId, isTrackedCalendarEvent, generateSeriesId, expandRecurrence, formatRecurrence, shareOrCopy, escapeHtml } from './js/utils.js?v=18';
         import { mergeCalendarImportEvents, validateCalendarImportUrl } from './js/edit-schedule-calendar-import.js?v=2';
-        import { checkAuth } from './js/auth.js?v=51';
+        import { checkAuth } from './js/auth.js?v=125';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
         import { computeOfficiatingCoverageStatus, flagRescheduledOfficiatingSlots, getOfficiatingAssignmentConflictWarnings, normalizeOfficiatingSlots as normalizeAssignmentOfficiatingSlots } from './js/officiating-utils.js?v=3';
         import { buildOfficiatingAssignmentNotificationRecords } from './js/officiating-notifications.js?v=2';
@@ -2134,7 +2134,7 @@
                             extractOpponent
                         }));
                     } catch (error) {
-                        console.error('Error fetching calendar:', calendarUrl, error);
+                        console.warn('Calendar import unavailable:', calendarUrl, error);
                     }
                 }
             }
@@ -2275,7 +2275,7 @@
             container.innerHTML = practiceNotice + filteredEvents.map((event, index) => {
                 const cardHtml = (() => {
                 if (event.source === 'calendar') {
-                    return renderCalendarEvent(event);
+                    return renderCalendarEvent(event, index);
                 } else if (event.eventType === 'practice') {
                     return renderPractice(event);
                 } else {
@@ -2333,6 +2333,18 @@
                 btn.addEventListener('click', (e) => {
                     const gameId = e.target.dataset.gameId;
                     handleTrackClick(gameId);
+                });
+            });
+
+            container.querySelectorAll('.track-calendar-event-btn').forEach((btn) => {
+                btn.addEventListener('click', (event) => {
+                    const eventIndex = Number.parseInt(event.currentTarget.dataset.calendarEventIndex || '', 10);
+                    const calendarEvent = Number.isInteger(eventIndex)
+                        ? filteredEvents[eventIndex]?.calendarEvent
+                        : null;
+                    if (calendarEvent) {
+                        window.trackCalendarEvent(calendarEvent);
+                    }
                 });
             });
 
@@ -2565,12 +2577,15 @@
             `;
         }
 
-        function renderCalendarEvent(event) {
+        function renderCalendarEvent(event, eventIndex) {
             const isPractice = event.isPractice;
             const isCancelled = event.isCancelled;
             const borderColor = isCancelled ? 'border-gray-400' : (isPractice ? 'border-yellow-500' : 'border-blue-500');
             const calendarPracticeEventId = event.calendarEvent?.id || event.calendarEvent?.uid || `calendar_${event.date?.toISOString?.() || Date.now()}`;
             const practiceTitle = event.title || event.opponent || 'Practice';
+            const eventTitle = isPractice ? practiceTitle : `vs. ${event.opponent || 'Opponent'}`;
+            const locationLabel = event.location || 'TBD';
+            const locationHref = mapLink(event.location);
             const planSummary = isPractice ? renderPracticePlanSummary(calendarPracticeEventId) : '';
             const calendarPlanHref = buildPracticePlanHref({
                 eventId: calendarPracticeEventId,
@@ -2588,21 +2603,21 @@
                             ${isPractice ? '<span class="text-xs bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded font-semibold">Practice</span>' : ''}
                         </div>
                         <div class="text-sm text-gray-500 font-semibold uppercase tracking-wide mb-1 ${isCancelled ? 'line-through' : ''}">${formatDate(event.date)} • ${formatTime(event.date)}</div>
-                        <div class="text-lg font-bold text-gray-900 ${isCancelled ? 'line-through' : ''}">${isPractice ? practiceTitle : `vs. ${event.opponent}`}</div>
+                        <div class="text-lg font-bold text-gray-900 ${isCancelled ? 'line-through' : ''}">${escapeHtml(eventTitle)}</div>
                         <div class="text-sm text-gray-600">
-                            ${mapLink(event.location) ? `<a class="text-indigo-600 hover:underline" target="_blank" rel="noopener noreferrer" href="${mapLink(event.location)}">${event.location || 'TBD'}</a>` : (event.location || 'TBD')}
+                            ${locationHref ? `<a class="text-indigo-600 hover:underline" target="_blank" rel="noopener noreferrer" href="${escapeHtml(locationHref)}">${escapeHtml(locationLabel)}</a>` : escapeHtml(locationLabel)}
                         </div>
                         ${planSummary}
                     </div>
                     ${!isCancelled ? `
                         <div class="flex space-x-2">
                             ${isPractice ? `
-                                <a href="${calendarPlanHref}"
+                                <a href="${escapeHtml(calendarPlanHref)}"
                                    class="px-3 py-1 bg-indigo-100 text-indigo-700 rounded text-sm hover:bg-indigo-200">
                                    Plan Practice
                                 </a>
                             ` : `
-                                <button onclick="window.trackCalendarEvent(${JSON.stringify(event.calendarEvent).replace(/"/g, '&quot;')})" class="px-3 py-1 bg-indigo-100 text-indigo-700 rounded text-sm hover:bg-indigo-200">
+                                <button type="button" data-calendar-event-index="${eventIndex}" class="track-calendar-event-btn px-3 py-1 bg-indigo-100 text-indigo-700 rounded text-sm hover:bg-indigo-200">
                                     Track
                                 </button>
                             `}

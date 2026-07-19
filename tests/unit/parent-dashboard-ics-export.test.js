@@ -20,14 +20,14 @@ const location = deps.location;
 const URL = deps.URL;
 const Blob = deps.Blob;
 ` + match[1]
-        .replace(/import\s*\{[\s\S]*?\}\s*from '\.\/js\/db\.js\?v=\d+';/, 'const { getParentDashboardData, redeemParentInvite, getTeam, getTeams, getPlayers, getGames, getTrackedCalendarEventUids, getUnreadChatCounts, getPracticeSessions, getPracticePacketCompletions, upsertPracticePacketCompletion, updateUserProfile, getUserProfile, submitRsvp, submitRsvpForPlayer, getRsvps, getRsvpSummaries, createRideOffer, listRideOffersForEvent, requestRideSpot, updateRideRequestStatus, closeRideOffer, cancelRideRequest, getAggregatedStatsForPlayer, createParentMembershipRequest, listMyParentMembershipRequests, listParentTeamFeeRecipients, listCertificatesForPlayer, claimAssignmentSlot, releaseAssignmentClaim, getAssignmentClaims, inviteCoParentToAthlete, createFamilyShareToken, listFamilyShareTokens, revokeFamilyShareToken, updateFamilyShareTokenCalendars } = deps.db;')
+        .replace(/import\s*\{[\s\S]*?\}\s*from '\.\/js\/db\.js\?v=\d+';/, 'const { getParentDashboardData, redeemParentInvite, getTeam, getTeams, getPlayers, getGames, getTrackedCalendarEventUids, getUnreadChatCounts, getPracticeSessions, getPracticePacketCompletions, upsertPracticePacketCompletion, updateUserProfile, getUserProfile, submitRsvp, submitRsvpForPlayer, getMyRsvps, getRsvpSummaries, createRideOffer, listRideOffersForEvent, requestRideSpot, updateRideRequestStatus, closeRideOffer, cancelRideRequest, getAggregatedStatsForPlayer, createParentMembershipRequest, listMyParentMembershipRequests, listParentTeamFeeRecipients, listCertificatesForPlayer, claimAssignmentSlot, releaseAssignmentClaim, getAssignmentClaims, inviteCoParentToAthlete, createFamilyShareToken, listFamilyShareTokens, revokeFamilyShareToken, updateFamilyShareTokenCalendars } = deps.db;')
         .replace(/import\s*\{[\s\S]*?\}\s*from '\.\/js\/utils\.js\?v=\d+';/, 'const { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } = deps.utils;')
         .replace(/import\s*\{[\s\S]*?\}\s*from '\.\/js\/parent-incentives\.js\?v=3';/, 'const { getIncentiveRules, saveIncentiveRule: saveIncentiveRuleFn, toggleIncentiveRule: toggleIncentiveRuleFn, retireIncentiveRule: retireIncentiveRuleFn, markGamePaid: markGamePaidFn, unmarkGamePaid: unmarkGamePaidFn, getPaidGames, calculateEarnings, formatCents, getApplicableRulesForGame, getStatOptionsForTeam, renderIncentivesPanel, renderRuleBuilder, getCapSetting, saveCapSetting: saveCapSettingFn } = deps.parentIncentives;')
         .replace(/import \{ requireAuth, checkAuth \} from '\.\/js\/auth\.js\?v=\d+';/, 'const { requireAuth, checkAuth } = deps.auth;')
         .replace(/import\s*\{[\s\S]*?\}\s*from '\.\/js\/parent-dashboard-packets\.js\?v=3';/, 'const { resolvePracticePacketSessionIdForEvent: resolvePracticePacketSessionIdForEventBase, resolvePracticePacketContextForEvent: resolvePracticePacketContextForEventBase, getScopedPracticePacketRow: getScopedPracticePacketRowBase, buildPracticePacketCompletionPayload: buildPracticePacketCompletionPayloadBase } = deps.parentDashboardPackets;')
         .replace("import { filterVisiblePracticeSessions } from './js/parent-dashboard-practice-sessions.js?v=1';", 'const { filterVisiblePracticeSessions } = deps.parentDashboardPracticeSessions;')
         .replace("import { resolveRsvpPlayerIdsForSubmission, resolveMyRsvpByChildForGame } from './js/parent-dashboard-rsvp.js?v=6';", 'const { resolveRsvpPlayerIdsForSubmission, resolveMyRsvpByChildForGame } = deps.parentDashboardRsvp;')
-        .replace("import { createParentDashboardRsvpController } from './js/parent-dashboard-rsvp-controls.js?v=1';", 'const { createParentDashboardRsvpController } = deps.parentDashboardRsvpControls;')
+        .replace("import { createParentDashboardRsvpController } from './js/parent-dashboard-rsvp-controls.js?v=2';", 'const { createParentDashboardRsvpController } = deps.parentDashboardRsvpControls;')
         .replace("import { getEventRideshareSummary, getOfferSeatInfo } from './js/rideshare-helpers.js?v=2';", 'const { getEventRideshareSummary, getOfferSeatInfo } = deps.rideshareHelpers;')
         .replace("import { mergeAssignmentsWithClaims } from './js/snack-helpers.js?v=1';", 'const { mergeAssignmentsWithClaims } = deps.snackHelpers;')
         .replace("import { resolveSelectedRideChildId, getRideOfferUiState, createRideRequestHandlers } from './js/parent-dashboard-rideshare-controls.js?v=2';", 'const { resolveSelectedRideChildId, getRideOfferUiState, createRideRequestHandlers } = deps.parentDashboardRideshareControls;')
@@ -162,7 +162,7 @@ function createDeps() {
             async getUserProfile() { return {}; },
             async submitRsvp() { return null; },
             async submitRsvpForPlayer() { return null; },
-            async getRsvps() { return []; },
+            async getMyRsvps() { return []; },
             async getRsvpSummaries() { return new Map(); },
             async createRideOffer() {},
             async listRideOffersForEvent() { return []; },

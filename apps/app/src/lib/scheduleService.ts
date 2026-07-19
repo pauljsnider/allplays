@@ -9,6 +9,7 @@ import {
   getPracticeSessionByEvent,
   getPracticeSessions,
   getPlayers,
+  getMyRsvps,
   getRsvps,
   getRsvpBreakdownByPlayer,
   getTeam,
@@ -1587,6 +1588,11 @@ function compactString(value: unknown) {
   return String(value || '').trim();
 }
 
+function normalizeRsvpDisplayName(value: unknown) {
+  const displayName = compactString(value).slice(0, 160);
+  return displayName && !displayName.includes('@') ? displayName : null;
+}
+
 export function parseRecurringPracticeOccurrenceId(eventId: string) {
   const normalizedEventId = compactString(eventId);
   if (!normalizedEventId || !normalizedEventId.includes('__')) return null;
@@ -2976,6 +2982,14 @@ async function loadRsvps(teamId: string, gameId: string) {
   );
 }
 
+async function loadOwnRsvps(teamId: string, gameId: string, userId: string, playerIds: string[]) {
+  return readWithNativeFallback(
+    `own rsvps ${teamId}/${gameId}`,
+    () => Promise.resolve(getMyRsvps(teamId, gameId, userId, playerIds)),
+    async () => (await loadOwnRsvpDocuments(playerIds.map((childId) => ({ teamId, id: gameId, childId } as ParentScheduleEvent)), userId)).rsvps
+  );
+}
+
 const rsvpPrivateNoteFields = [
   'note',
   'notes',
@@ -3860,7 +3874,10 @@ async function hydrateEventDetails(events: ParentScheduleEvent[], user: AuthUser
     const firstEvent = matchingEvents[0];
     if (!firstEvent) return;
 
-    const { rsvps: loadedRsvps, rsvpsLoaded, offers, claims, claimsLoaded } = await loadCachedEventHydrationDetails(teamId, gameId);
+    const isTeamStaff = matchingEvents.some((event) => event.isTeamStaff === true || event.isTeamAdmin === true);
+    const { rsvps: loadedRsvps, rsvpsLoaded, offers, claims, claimsLoaded } = isTeamStaff
+      ? await loadCachedEventHydrationDetails(teamId, gameId)
+      : await loadCachedOwnEventHydrationDetails(matchingEvents, user.uid);
     const ownRsvpNotes = rsvpsLoaded
       ? await mergeOwnRsvpNotes(teamId, gameId, loadedRsvps, user.uid)
       : { rsvps: loadedRsvps, noteReadsComplete: false };
@@ -3935,6 +3952,34 @@ function loadCachedEventHydrationDetails(teamId: string, gameId: string) {
       ttlMs: scheduleHydrationCacheTtlMs,
       persist: false
     }
+  );
+}
+
+function loadCachedOwnEventHydrationDetails(events: ParentScheduleEvent[], userId: string) {
+  const firstEvent = events[0];
+  const teamId = firstEvent?.teamId || '';
+  const gameId = firstEvent?.id || '';
+  const normalizedPlayerIds = uniqueNonEmptyStrings(events.map((event) => event.childId)).sort();
+  return loadCachedAppData(
+    `${getScheduleEventHydrationCacheKey(teamId, gameId)}:own:${userId}:${normalizedPlayerIds.join(',')}`,
+    async () => {
+      const results = await Promise.allSettled([
+        loadOwnRsvps(teamId, gameId, userId, normalizedPlayerIds),
+        loadRideOffers(teamId, gameId),
+        loadAssignmentClaims(teamId, gameId)
+      ]);
+      const firstRejected = results.find((result) => result.status === 'rejected');
+      if (firstRejected && results.every((result) => result.status === 'rejected')) throw firstRejected.reason;
+      const [rsvpsResult, offersResult, claimsResult] = results;
+      return {
+        rsvps: rsvpsResult.status === 'fulfilled' ? rsvpsResult.value : [],
+        rsvpsLoaded: rsvpsResult.status === 'fulfilled',
+        offers: offersResult.status === 'fulfilled' ? offersResult.value : [],
+        claims: claimsResult.status === 'fulfilled' ? claimsResult.value : {},
+        claimsLoaded: claimsResult.status === 'fulfilled'
+      };
+    },
+    { ttlMs: scheduleHydrationCacheTtlMs, persist: false }
   );
 }
 
@@ -4431,7 +4476,10 @@ async function nativeSubmitRsvpForPlayer(teamId: string, gameId: string, user: A
   const respondedAt = new Date();
   await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/rsvps/${encodeURIComponent(docId)}`, {
     userId: user.uid,
-    displayName: user.displayName || user.email || null,
+    parentEmail: nativeDeleteFieldSentinel,
+    email: nativeDeleteFieldSentinel,
+    guardianEmail: nativeDeleteFieldSentinel,
+    displayName: normalizeRsvpDisplayName(user.displayName),
     playerIds: [childId],
     playerId: childId,
     childId,
@@ -4440,7 +4488,10 @@ async function nativeSubmitRsvpForPlayer(teamId: string, gameId: string, user: A
   });
   await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/rsvpNotes/${encodeURIComponent(docId)}`, {
     userId: user.uid,
-    displayName: user.displayName || user.email || null,
+    parentEmail: nativeDeleteFieldSentinel,
+    email: nativeDeleteFieldSentinel,
+    guardianEmail: nativeDeleteFieldSentinel,
+    displayName: normalizeRsvpDisplayName(user.displayName),
     playerIds: [childId],
     playerId: childId,
     childId,
@@ -4458,7 +4509,7 @@ async function nativeSubmitRsvpForChildren(teamId: string, gameId: string, user:
   const gamePath = `teams/${teamId}/games/${gameId}`;
   const rsvpPayload = {
     userId: user.uid,
-    displayName: user.displayName || user.email || null,
+    displayName: normalizeRsvpDisplayName(user.displayName),
     playerIds: childIds,
     playerId: null,
     childId: null,
@@ -4611,7 +4662,7 @@ export async function submitStaffScheduleRsvpOverride(event: ParentScheduleEvent
 
   try {
     await withTimeout(Promise.resolve(submitRsvpForPlayer(event.teamId, event.id, user!.uid, {
-      displayName: user!.displayName || user!.email,
+      displayName: user!.displayName || null,
       playerId: normalizedPlayerId,
       response,
       note: null
@@ -4642,7 +4693,7 @@ export async function submitParentScheduleRsvp(event: ParentScheduleEvent, user:
 
   try {
     const result = await withTimeout(Promise.resolve(submitRsvpForPlayer(event.teamId, event.id, user.uid, {
-      displayName: user.displayName || user.email,
+      displayName: user.displayName || null,
       playerId: event.childId,
       response,
       note: compactString(note) || null
@@ -4692,7 +4743,7 @@ export async function submitParentScheduleRsvpForChildren(events: ParentSchedule
 
   try {
     const result = await withTimeout(Promise.resolve(submitRsvp(firstEvent.teamId, firstEvent.id, user.uid, {
-      displayName: user.displayName || user.email,
+      displayName: user.displayName || null,
       playerIds: childIds,
       response,
       note: compactString(note) || null

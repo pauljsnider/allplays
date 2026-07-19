@@ -379,7 +379,7 @@ describe('family plan helpers', () => {
         const rules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
         expect(rules).toContain('match /familyMemberships/{memberId}');
         expect(rules).toContain('allow read: if isOwner(userId) || isGlobalAdmin();');
-        expect(rules).toContain('allow create: if isOwner(userId) && isFamilyMembershipPayloadValid');
+        expect(rules).toContain('allow create: if isVerifiedForSensitiveWrite() && isOwner(userId) && isFamilyMembershipPayloadValid');
         expect(rules).toContain('isFamilyMembershipInviteMetadataUpdate');
         expect(rules).toContain('isFamilyMembershipAcceptance');
         expect(rules).not.toContain('function isFamilyMembershipRemoval');
@@ -391,13 +391,13 @@ describe('family plan helpers', () => {
         const rules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
         expect(rules).toContain('match /householdInvites/{inviteId}');
         expect(rules).toContain('allow read: if isOwner(userId) || isGlobalAdmin();');
-        expect(rules).toContain('allow create: if isOwner(userId) && isHouseholdInvitePayloadValid');
+        expect(rules).toContain('allow create: if isVerifiedForSensitiveWrite() && isOwner(userId) && isHouseholdInvitePayloadValid');
         expect(rules).toContain('data.status == \'pending\'');
         expect(rules).toContain('data.playerKey == data.teamId + "::" + data.playerId');
         expect(rules).toContain('isParentForPlayer(data.teamId, data.playerId)');
-        expect(rules).toContain('allow update: if isHouseholdInviteRevocation');
+        expect(rules).toContain('allow update: if isVerifiedForSensitiveWrite() && isHouseholdInviteRevocation');
         expect(rules).toContain("affectedKeys().hasOnly(['status', 'accessStatus', 'updatedAt', 'removedAt', 'revokedAt'])");
-        expect(rules).toContain('allow delete: if isOwner(userId);');
+        expect(rules).toContain('allow delete: if isVerifiedForSensitiveWrite() && isOwner(userId);');
     });
 
     it('keeps family share link listing on an owner-only query without composite index requirements', () => {
@@ -412,7 +412,7 @@ describe('family plan helpers', () => {
 
     it('guards family share token creation and normalizes share payloads', () => {
         const source = readFileSync(new URL('../../js/db.js', import.meta.url), 'utf8');
-        expect(source).toContain("from './family-share-utils.js?v=1'");
+        expect(source).toContain("from './family-share-utils.js?v=2'");
         expect(source).toContain("throw new Error('No linked players are available to share yet.')");
         expect(source).toContain('globalThis.crypto.getRandomValues(bytes)');
         expect(source).toContain('const FAMILY_SHARE_TOKEN_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000;');
@@ -431,6 +431,12 @@ describe('family plan helpers', () => {
             'https://league.example/schedule.ics',
             'http://travel.example/team.ics'
         ]);
+    });
+
+    it('bounds family share calendar URL count and individual URL length', () => {
+        const urls = Array.from({ length: 12 }, (_, index) => `https://league.example/${index}.ics`);
+        expect(normalizeFamilyShareCalendarUrls([...urls, `https://league.example/${'x'.repeat(2050)}.ics`]))
+            .toEqual(urls.slice(0, 8));
     });
 
     it('normalizes family share children and drops incomplete player links', () => {

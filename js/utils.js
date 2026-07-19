@@ -1,3 +1,5 @@
+import { getPrimaryAppCheckHeaders } from './firebase-app-check-rest.js?v=1';
+
 export function getUrlParams() {
   // Combine params from both search (?) and hash (#)
   const searchParams = new URLSearchParams(window.location.search);
@@ -178,7 +180,7 @@ export function renderHeader(container, user) {
 
     // Keep shared-header logout on the same auth bundle as page consumers.
     navLogout.addEventListener('click', async () => {
-      const { logout } = await import('./auth.js?v=51');
+      const { logout } = await import('./auth.js?v=125');
       await logout();
       window.location.href = 'index.html';
     });
@@ -190,7 +192,7 @@ export function renderHeader(container, user) {
   // Keep telemetry available on new pages that use the shared header but miss
   // the global module tag.
   try {
-    import('./telemetry.js?v=3').catch((e) => console.warn('[Telemetry] Failed to load:', e));
+    import('./telemetry.js?v=4').catch((e) => console.warn('[Telemetry] Failed to load:', e));
   } catch (e) {
     console.warn('[Telemetry] Failed to initialize:', e);
   }
@@ -198,7 +200,7 @@ export function renderHeader(container, user) {
   // Global search: injected into the shared header in one place.
   // Lazy-import to avoid adding weight to initial render and to avoid circular deps.
   try {
-    import('./global-search.js?v=9')
+    import('./global-search.js?v=13')
       .then(({ setupHeaderSearch }) => {
         if (typeof setupHeaderSearch === 'function') {
           setupHeaderSearch({ user, headerContainer: container });
@@ -280,18 +282,174 @@ export function renderFooter(container) {
 
 // Calendar / ICS Parsing Functions
 
-/**
- * Fetch and parse an ICS calendar file
- * @param {string} url - URL to the .ics file
- * @returns {Promise<Array>} Array of parsed calendar events
- */
-export async function fetchAndParseCalendar(url, options = {}) {
-  const timeoutMs = 5000;
-  const forceRefresh = options?.forceRefresh === true;
-  const cleanedUrl = url.trim();
-  const normalizedUrl = cleanedUrl
+const MAX_REMOTE_CALENDAR_URL_LENGTH = 2048;
+const MAX_REMOTE_ICS_BYTES = 2 * 1024 * 1024;
+const MAX_CALENDAR_FUNCTION_BYTES = MAX_REMOTE_ICS_BYTES + (64 * 1024);
+const CALENDAR_ATTEMPT_TIMEOUT_MS = 5000;
+const CALENDAR_TOTAL_TIMEOUT_MS = 15_000;
+const MAX_CONCURRENT_CALENDAR_IMPORTS = 50;
+export const DEFAULT_CALENDAR_FETCH_FUNCTION_URL = 'https://us-central1-game-flow-c6311.cloudfunctions.net/fetchCalendarIcs';
+export const MAX_ICS_PARSE_BYTES = MAX_REMOTE_ICS_BYTES;
+export const MAX_ICS_RAW_EVENTS = 5_000;
+export const MAX_ICS_TOTAL_RECURRENCE_OCCURRENCES = 10_000;
+export const MAX_ICS_OUTPUT_EVENTS = 12_000;
+export const MAX_ICS_RECURRENCE_OCCURRENCES = 366;
+const calendarFetchInFlight = new Map();
+
+function createCalendarParseLimitError(message) {
+  const error = new Error(message);
+  error.code = 'CALENDAR_PARSE_LIMIT';
+  return error;
+}
+
+function isProtectedCalendarHostname(rawHostname) {
+  const hostname = String(rawHostname || '').toLowerCase().replace(/^\[|\]$/g, '');
+  if (!hostname) return true;
+  if (
+    hostname === 'localhost' ||
+    hostname.endsWith('.localhost') ||
+    hostname === 'metadata' ||
+    hostname === 'metadata.google.internal' ||
+    hostname.endsWith('.local')
+  ) {
+    return true;
+  }
+
+  // Browser URL parsing canonicalizes IPv6 literals, but reproducing the
+  // server's DNS/IP pinning in a browser is not possible. Calendar providers
+  // use hostnames, so literal IPv6 targets fail closed at this boundary.
+  if (hostname.includes(':')) return true;
+
+  const ipv4Parts = hostname.split('.');
+  if (ipv4Parts.length !== 4 || ipv4Parts.some((part) => !/^\d{1,3}$/.test(part))) {
+    return false;
+  }
+  const octets = ipv4Parts.map((part) => Number.parseInt(part, 10));
+  if (octets.some((part) => part < 0 || part > 255)) return true;
+  const [first, second] = octets;
+  return first === 0 || first === 10 || first === 127 ||
+    (first === 100 && second >= 64 && second <= 127) ||
+    (first === 169 && second === 254) ||
+    (first === 172 && second >= 16 && second <= 31) ||
+    (first === 192 && second === 168);
+}
+
+function normalizeIcsText(text) {
+  if (typeof text !== 'string') {
+    const error = new Error('Calendar response was not valid ICS');
+    error.code = 'CALENDAR_ICS_INVALID';
+    throw error;
+  }
+  const sourceText = text.replace(/^\uFEFF/, '');
+  const markerMatch = /(^|\r\n|\n|\r)BEGIN:VCALENDAR(?=\r\n|\n|\r)/.exec(sourceText);
+  if (!markerMatch) {
+    const error = new Error('Calendar response was not valid ICS');
+    error.code = 'CALENDAR_ICS_INVALID';
+    throw error;
+  }
+  const normalized = sourceText.slice(markerMatch.index + markerMatch[1].length);
+  if (!/(?:^|\r\n|\n|\r)END:VCALENDAR(?:\r\n|\n|\r|$)/.test(normalized)) {
+    const error = new Error('Calendar response was not valid ICS');
+    error.code = 'CALENDAR_ICS_INVALID';
+    throw error;
+  }
+  return normalized;
+}
+
+function normalizeRemoteCalendarUrl(url) {
+  if (typeof url !== 'string') {
+    throw new TypeError('Calendar URL must be a string');
+  }
+  const cleanedUrl = url.trim()
     .replace(/^webcals?:\/\//i, 'https://')
     .replace(/^http:\/\//i, 'https://');
+  if (!cleanedUrl || cleanedUrl.length > MAX_REMOTE_CALENDAR_URL_LENGTH) {
+    throw new Error('Calendar URL is missing or too long');
+  }
+  const parsed = new URL(cleanedUrl);
+  if (parsed.protocol !== 'https:') {
+    throw new Error('Only HTTPS calendar URLs are supported');
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error('Calendar URL credentials are not supported');
+  }
+  if (isProtectedCalendarHostname(parsed.hostname)) {
+    const error = new Error('Protected calendar hosts are not supported');
+    error.code = 'CALENDAR_TARGET_BLOCKED';
+    throw error;
+  }
+  parsed.hash = '';
+  return parsed.toString();
+}
+
+function getCalendarResponseHeader(response, name) {
+  if (typeof response?.headers?.get === 'function') {
+    return response.headers.get(name) || '';
+  }
+  const headers = response?.headers || {};
+  const key = Object.keys(headers).find((candidate) => candidate.toLowerCase() === name.toLowerCase());
+  return key ? headers[key] : '';
+}
+
+function assertCalendarResponseContentType(response, allowedTypes) {
+  const rawContentType = String(getCalendarResponseHeader(response, 'content-type') || '');
+  const contentType = rawContentType.split(';', 1)[0].trim().toLowerCase();
+  // A few established calendar hosts omit Content-Type. The VCALENDAR marker
+  // below remains authoritative, but explicit HTML/image/etc. responses fail.
+  if (contentType && !allowedTypes.has(contentType)) {
+    const error = new Error('Calendar response had an unsupported content type');
+    error.code = 'CALENDAR_CONTENT_TYPE';
+    throw error;
+  }
+}
+
+async function readBoundedCalendarResponseText(response, maxBytes) {
+  const rawContentLength = String(getCalendarResponseHeader(response, 'content-length') || '');
+  const contentLength = Number.parseInt(rawContentLength, 10);
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    const error = new Error('Calendar response exceeded the size limit');
+    error.code = 'CALENDAR_RESPONSE_LIMIT';
+    throw error;
+  }
+
+  if (response?.body && typeof response.body.getReader === 'function') {
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let decoded = '';
+    let receivedBytes = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = value instanceof Uint8Array ? value : new Uint8Array(value || []);
+        receivedBytes += chunk.byteLength;
+        if (receivedBytes > maxBytes) {
+          await reader.cancel().catch(() => {});
+          const error = new Error('Calendar response exceeded the size limit');
+          error.code = 'CALENDAR_RESPONSE_LIMIT';
+          throw error;
+        }
+        decoded += decoder.decode(chunk, { stream: true });
+      }
+      decoded += decoder.decode();
+      return decoded;
+    } finally {
+      reader.releaseLock?.();
+    }
+  }
+
+  const text = await response.text();
+  if (new TextEncoder().encode(String(text)).byteLength > maxBytes) {
+    const error = new Error('Calendar response exceeded the size limit');
+    error.code = 'CALENDAR_RESPONSE_LIMIT';
+    throw error;
+  }
+  return String(text);
+}
+
+async function fetchAndParseCalendarOnce(normalizedUrl, options = {}) {
+  const forceRefresh = options?.forceRefresh === true;
+  const startedAt = Date.now();
 
   function resolveCalendarFunctionUrl() {
     const globalConfig = window.__ALLPLAYS_CONFIG__;
@@ -303,104 +461,164 @@ export async function fetchAndParseCalendar(url, options = {}) {
     if (typeof metaTagUrl === 'string' && metaTagUrl.trim()) {
       return metaTagUrl.trim();
     }
-    return null;
-  }
-
-  function normalizeIcsText(text) {
-    const marker = 'BEGIN:VCALENDAR';
-    const markerIndex = text.indexOf(marker);
-    if (markerIndex === -1) {
-      return text;
+    const configuredBaseUrl = globalConfig?.functionsBaseUrl || globalConfig?.functions?.baseUrl;
+    if (typeof configuredBaseUrl === 'string' && configuredBaseUrl.trim()) {
+      return `${configuredBaseUrl.trim().replace(/\/$/, '')}/fetchCalendarIcs`;
     }
-    return text.slice(markerIndex);
+    return DEFAULT_CALENDAR_FETCH_FUNCTION_URL;
   }
 
-  async function fetchWithTimeout(fetchUrl) {
+  async function fetchWithTimeout(fetchUrl, headers = {}) {
+    const remainingMs = CALENDAR_TOTAL_TIMEOUT_MS - (Date.now() - startedAt);
+    if (remainingMs <= 0) {
+      throw new DOMException('Calendar request timed out', 'AbortError');
+    }
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-    const response = await fetch(fetchUrl, { signal: controller.signal });
-    clearTimeout(timeoutId);
-    return response;
+    const timeoutId = setTimeout(() => controller.abort(), Math.min(CALENDAR_ATTEMPT_TIMEOUT_MS, remainingMs));
+    try {
+      return await fetch(fetchUrl, {
+        signal: controller.signal,
+        headers,
+        credentials: 'omit',
+        redirect: 'error',
+        referrerPolicy: 'no-referrer'
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
   }
 
   async function fetchViaFunction(targetUrl) {
     const calendarFetchFunctionUrl = resolveCalendarFunctionUrl();
-    if (!calendarFetchFunctionUrl) {
-      throw new Error('Calendar fetch function URL is not configured');
-    }
     const params = new URLSearchParams({ url: targetUrl });
     if (forceRefresh) {
       params.set('forceRefresh', 'true');
     }
-    const functionUrl = `${calendarFetchFunctionUrl}?${params.toString()}`;
-    const response = await fetchWithTimeout(functionUrl);
-    if (!response.ok) {
-      throw new Error(`Function fetch failed: ${response.status} ${response.statusText}`);
+    const requestUrl = `${calendarFetchFunctionUrl}?${params.toString()}`;
+    const headers = await getPrimaryAppCheckHeaders({}, requestUrl);
+    const response = await fetchWithTimeout(requestUrl, headers);
+    const rejectedByStatus = [400, 401, 403, 413, 422, 429].includes(response.status);
+    if (!response.ok && rejectedByStatus) {
+      const error = new Error(`Function fetch failed: ${response.status} ${response.statusText}`);
+      error.code = 'CALENDAR_FUNCTION_REJECTED';
+      error.calendarFetchNonRetryable = true;
+      throw error;
     }
-    const payload = await response.json();
-    if (!payload?.ok || !payload?.icsText) {
+    assertCalendarResponseContentType(response, new Set(['application/json', 'text/json']));
+    const rawPayload = await readBoundedCalendarResponseText(response, MAX_CALENDAR_FUNCTION_BYTES);
+    let payload;
+    try {
+      payload = JSON.parse(rawPayload);
+    } catch {
+      throw new Error('Calendar fetch function returned invalid JSON');
+    }
+    if (!response.ok) {
+      const error = new Error(payload?.validationRejected === true && payload?.error
+        ? payload.error
+        : `Function fetch failed: ${response.status} ${response.statusText}`);
+      if (payload?.validationRejected === true) {
+        error.code = 'CALENDAR_FUNCTION_REJECTED';
+        error.calendarFetchNonRetryable = true;
+      }
+      throw error;
+    }
+    if (!payload?.ok || typeof payload?.icsText !== 'string') {
       throw new Error(payload?.error || 'Invalid function response');
+    }
+    if (new TextEncoder().encode(payload.icsText).byteLength > MAX_REMOTE_ICS_BYTES) {
+      const error = new Error('Calendar response exceeded the size limit');
+      error.code = 'CALENDAR_RESPONSE_LIMIT';
+      throw error;
     }
     return payload.icsText;
   }
 
-  function buildProxyUrls(targetUrl) {
-    const httpsUrl = targetUrl.trim()
-      .replace(/^webcals?:\/\//i, 'https://')
-      .replace(/^http:\/\//i, 'https://');
-    const cacheBustUrl = httpsUrl.includes('?')
-      ? `${httpsUrl}&cachebust=${Date.now()}`
-      : `${httpsUrl}?cachebust=${Date.now()}`;
-    return [
-      `https://corsproxy.io/?${encodeURIComponent(httpsUrl)}`,
-      `https://r.jina.ai/https://${cacheBustUrl.replace(/^https:\/\//i, '')}`,
-      `https://r.jina.ai/https://${httpsUrl.replace(/^https:\/\//i, '')}`,
-      `https://r.jina.ai/http://${httpsUrl.replace(/^https?:\/\//i, '')}`
-    ];
+  function buildConfiguredProxyUrls(targetUrl) {
+    const templates = window.__ALLPLAYS_CONFIG__?.calendarProxyUrlTemplates;
+    if (!Array.isArray(templates)) return [];
+    return templates
+      .filter((template) => typeof template === 'string' && template.startsWith('https://') && template.includes('{url}'))
+      .slice(0, 2)
+      .map((template) => template.replaceAll('{url}', encodeURIComponent(targetUrl)));
   }
 
-  try {
-    // First try Firebase function to avoid browser CORS/proxy issues
-    try {
-      const functionIcsText = await fetchViaFunction(normalizedUrl);
-      return parseICS(normalizeIcsText(functionIcsText));
-    } catch (functionError) {
-      console.warn('Function calendar fetch failed, falling back to client fetch:', functionError);
-    }
-
-    // Try direct fetch first
-    const response = await fetchWithTimeout(normalizedUrl);
+  async function readIcsResponse(response, sourceLabel) {
     if (!response.ok) {
-      throw new Error(`Failed to fetch calendar: ${response.statusText}`);
+      throw new Error(`${sourceLabel} fetch failed: ${response.status} ${response.statusText}`);
     }
-    const icsText = await response.text();
-    return parseICS(normalizeIcsText(icsText));
-  } catch (error) {
-    // If direct fetch fails, try with proxy fallbacks
-    const shouldTryProxy = error.name === 'TypeError' ||
-                           error.name === 'AbortError' ||
-                           error.message.includes('fetch') ||
-                           error.message.includes('CORS');
-    if (shouldTryProxy) {
-      const proxyUrls = buildProxyUrls(normalizedUrl);
-      for (const proxyUrl of proxyUrls) {
-        try {
-          console.log('Calendar fetch failed, trying proxy:', proxyUrl);
-          const response = await fetchWithTimeout(proxyUrl);
-          if (!response.ok) {
-            throw new Error(`Proxy fetch failed: ${response.status} ${response.statusText}`);
-          }
-          const icsText = await response.text();
-          return parseICS(normalizeIcsText(icsText));
-        } catch (proxyError) {
-          console.warn('Proxy fetch attempt failed:', proxyError);
-        }
-      }
-      throw new Error('Cannot fetch calendar. All proxy attempts failed.');
-    }
-    console.error('Error fetching calendar:', error);
-    throw error;
+    assertCalendarResponseContentType(response, new Set([
+      'text/calendar',
+      'text/x-vcalendar',
+      'text/plain',
+      'text/ics',
+      'application/ics',
+      'application/x-ical',
+      'application/x-ics',
+      'application/calendar',
+      'application/vnd.apple.ical',
+      'application/octet-stream'
+    ]));
+    return normalizeIcsText(await readBoundedCalendarResponseText(response, MAX_REMOTE_ICS_BYTES));
   }
+
+  let functionError;
+  try {
+    const functionIcsText = await fetchViaFunction(normalizedUrl);
+    return parseICS(normalizeIcsText(functionIcsText));
+  } catch (error) {
+    if (error?.calendarFetchNonRetryable) {
+      throw error;
+    }
+    functionError = error;
+    console.warn('Function calendar fetch failed:', error);
+  }
+
+  const proxyUrls = buildConfiguredProxyUrls(normalizedUrl);
+  for (const proxyUrl of proxyUrls) {
+    try {
+      const response = await fetchWithTimeout(proxyUrl);
+      return parseICS(await readIcsResponse(response, 'Proxy'));
+    } catch (proxyError) {
+      if (['CALENDAR_RESPONSE_LIMIT', 'CALENDAR_CONTENT_TYPE', 'CALENDAR_ICS_INVALID', 'CALENDAR_PARSE_LIMIT'].includes(proxyError?.code)) {
+        throw proxyError;
+      }
+      console.warn('Configured calendar proxy attempt failed:', proxyError);
+    }
+  }
+
+  const error = proxyUrls.length
+    ? new Error('Cannot fetch calendar. All configured proxy attempts failed.')
+    : functionError;
+  // Remote calendar availability is optional for page boot. Surface failures
+  // to callers and diagnostics without reporting an expected network/CORS
+  // miss as a fatal browser-console error.
+  console.warn('Calendar import unavailable:', error);
+  throw error;
+}
+
+/**
+ * Fetch and parse an ICS calendar file
+ * @param {string} url - URL to the .ics file
+ * @returns {Promise<Array>} Array of parsed calendar events
+ */
+export async function fetchAndParseCalendar(url, options = {}) {
+  const normalizedUrl = normalizeRemoteCalendarUrl(url);
+  const forceRefresh = options?.forceRefresh === true;
+  const inFlightKey = `${forceRefresh ? 'refresh' : 'normal'}:${normalizedUrl}`;
+  const existing = calendarFetchInFlight.get(inFlightKey);
+  if (existing) return existing;
+  if (calendarFetchInFlight.size >= MAX_CONCURRENT_CALENDAR_IMPORTS) {
+    throw new Error('Too many calendar imports are already in progress');
+  }
+
+  const request = fetchAndParseCalendarOnce(normalizedUrl, { forceRefresh })
+    .finally(() => {
+      if (calendarFetchInFlight.get(inFlightKey) === request) {
+        calendarFetchInFlight.delete(inFlightKey);
+      }
+    });
+  calendarFetchInFlight.set(inFlightKey, request);
+  return request;
 }
 
 /**
@@ -409,8 +627,16 @@ export async function fetchAndParseCalendar(url, options = {}) {
  * @returns {Array} Array of parsed events
  */
 export function parseICS(icsText) {
+  if (typeof icsText !== 'string') {
+    throw new TypeError('ICS content must be a string');
+  }
+  if (new TextEncoder().encode(icsText).byteLength > MAX_ICS_PARSE_BYTES) {
+    throw createCalendarParseLimitError('Calendar content exceeded the parse size limit');
+  }
+
+  const normalizedIcsText = normalizeIcsText(icsText);
   const rawEvents = [];
-  const lines = icsText.split(/\r\n|\n|\r/);
+  const lines = normalizedIcsText.split(/\r\n|\n|\r/);
 
   let currentEvent = null;
   let currentField = null;
@@ -434,6 +660,9 @@ export function parseICS(icsText) {
         currentEvent.recurrenceId instanceof Date &&
         !Number.isNaN(currentEvent.recurrenceId.getTime());
       if (hasStandardEventFields || hasRecurringOverrideFields) {
+        if (rawEvents.length >= MAX_ICS_RAW_EVENTS) {
+          throw createCalendarParseLimitError('Calendar contained too many source events');
+        }
         rawEvents.push(currentEvent);
       }
       currentEvent = null;
@@ -512,8 +741,6 @@ const ICS_DAY_TO_INDEX = {
 };
 const DAY_CODES = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
-const MAX_ICS_RECURRENCE_OCCURRENCES = 366;
-
 function addDaysPreservingLocalTime(date, days) {
   const nextDate = new Date(date);
   nextDate.setDate(nextDate.getDate() + days);
@@ -779,8 +1006,24 @@ function expandRecurringICSEvent(event) {
 
 function buildICSOccurrences(rawEvents) {
   const events = [];
+  let totalRecurrenceOccurrences = 0;
   const overridesByUid = new Map();
   const mastersByUid = new Map();
+
+  const appendOutputEvent = (event) => {
+    if (!event) return;
+    if (events.length >= MAX_ICS_OUTPUT_EVENTS) {
+      throw createCalendarParseLimitError('Calendar expansion exceeded the output event limit');
+    }
+    events.push(event);
+  };
+
+  const appendOutputEvents = (nextEvents) => {
+    if (events.length + nextEvents.length > MAX_ICS_OUTPUT_EVENTS) {
+      throw createCalendarParseLimitError('Calendar expansion exceeded the output event limit');
+    }
+    events.push(...nextEvents);
+  };
 
   rawEvents.forEach((event) => {
     if (event?.uid && event.recurrenceId instanceof Date && !Number.isNaN(event.recurrenceId.getTime())) {
@@ -799,7 +1042,7 @@ function buildICSOccurrences(rawEvents) {
     if (event?.uid && event.recurrenceId instanceof Date && !Number.isNaN(event.recurrenceId.getTime())) {
       if (!hasMasterForRecurringOverride(mastersByUid, event.uid)) {
         const overrideEvent = buildICSOverrideOccurrence(event);
-        if (overrideEvent) events.push(overrideEvent);
+        appendOutputEvent(overrideEvent);
       }
       return;
     }
@@ -813,15 +1056,19 @@ function buildICSOccurrences(rawEvents) {
         ...event,
         exDates: [...(event.exDates || []), ...overrideExDates]
       });
-      events.push(...expandedEvents);
+      if (totalRecurrenceOccurrences + expandedEvents.length > MAX_ICS_TOTAL_RECURRENCE_OCCURRENCES) {
+        throw createCalendarParseLimitError('Calendar recurrence expansion exceeded the global occurrence limit');
+      }
+      totalRecurrenceOccurrences += expandedEvents.length;
+      appendOutputEvents(expandedEvents);
       overrides.forEach((overrideEvent) => {
         const resolvedOverride = buildICSOverrideOccurrence(overrideEvent, event);
-        if (resolvedOverride) events.push(resolvedOverride);
+        appendOutputEvent(resolvedOverride);
       });
       return;
     }
 
-    events.push(event);
+    appendOutputEvent(event);
   });
 
   return events;

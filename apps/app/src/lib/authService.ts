@@ -1272,7 +1272,16 @@ export async function reloadCurrentUser() {
   const user = getCurrentFirebaseUser();
   if (user?.reload) {
     await user.reload();
-    return user.emailVerified === true;
+    const verified = user.emailVerified === true;
+    if (verified) {
+      if (typeof user.getIdToken !== 'function') {
+        throw new Error('Unable to refresh the verified authentication session.');
+      }
+      // reload() refreshes the account profile with the current cached token;
+      // force a new token before the UI exposes verified-only write paths.
+      await user.getIdToken(true);
+    }
+    return verified;
   }
 
   return refreshNativeFallbackVerification();

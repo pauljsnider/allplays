@@ -38,7 +38,7 @@
             }
         }
     </script>
-  <script type="module" src="/js/telemetry.js?v=3"></script>
+  <script type="module" src="/js/telemetry.js?v=4"></script>
 </head>
 
 <body class="bg-gradient-to-br from-gray-50 to-gray-100 text-gray-900">
@@ -324,15 +324,15 @@
     </div>
 
     <script type="module">
-        import { getTeam, getPlayers, getGames, getConfigs, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile, getAllUsers, saveTeamAvailabilityPreferences, grantScorekeeperAccess, revokeScorekeeperAccess, grantStreamScoreAccess, revokeStreamScoreAccess, getRsvps, getRsvpSummaries, submitRsvp, getMyRsvp, getLocalAttractionSponsors, getAdSpaceSponsors, postChatMessage, getPublicTrackingItems, getPlayerTrackingStatuses } from './js/db.js?v=107';
+        import { getTeam, getPlayers, getGames, getConfigs, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile, getAllUsers, saveTeamAvailabilityPreferences, grantScorekeeperAccess, revokeScorekeeperAccess, grantStreamScoreAccess, revokeStreamScoreAccess, getRsvps, getMyRsvps, getRsvpSummaries, submitRsvp, getMyRsvp, getLocalAttractionSponsors, getAdSpaceSponsors, postChatMessage, getPublicTrackingItems, getPlayerTrackingStatuses } from './js/db.js?v=113';
         import { normalizeExternalWebsiteUrl, selectRotatingSponsor } from './js/local-attractions.js?v=2';
-        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, isTrackedCalendarEvent, expandRecurrence, escapeHtml, shareOrCopy } from './js/utils.js?v=15';
+        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, isTrackedCalendarEvent, expandRecurrence, escapeHtml, shareOrCopy } from './js/utils.js?v=18';
         import { fetchLeagueStandings } from './js/league-standings.js?v=1';
         import { computeNativeStandings } from './js/native-standings.js?v=1';
         import { computeTournamentPoolStandings } from './js/tournament-standings.js?v=4';
         import { aggregateSeasonStatsByPlayerId, buildPlayerLeaderboardSnapshot, selectAnalyticsConfig } from './js/stat-leaderboards.js?v=3';
         import { calculateSeasonRecord, listSeasonLabels } from './js/season-record.js';
-        import { checkAuth } from './js/auth.js?v=51';
+        import { checkAuth } from './js/auth.js?v=125';
         import { collection, getDocs, query, where } from "./js/firebase.js?v=22";
         import { db } from './js/firebase.js?v=22';
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js';
@@ -342,7 +342,7 @@
         import { readTeamPremiumEntitlement, renderPremiumGateState } from './js/premium-entitlements.js?v=1';
         import { renderTeamPassCard } from './js/team-pass.js?v=3';
         import { getVisiblePlayerTrackingSummary } from './js/player-tracking-summary.js?v=1';
-        import { renderTeamStaffPermissionsSection } from './js/team-staff-permissions.js?v=3';
+        import { renderTeamStaffPermissionsSection } from './js/team-staff-permissions.js?v=6';
         import { getDefaultSchedulePrintOptions, printSchedule, promptSchedulePrintOptions } from './js/schedule-print.js?v=2';
 
         renderFooter(document.getElementById('footer-container'));
@@ -2325,7 +2325,7 @@
                             });
                         });
                     } catch (error) {
-                        console.error('Error fetching calendar:', calendarUrl, error);
+                        console.warn('Calendar import unavailable:', calendarUrl, error);
                     }
                 }
             }
@@ -2345,7 +2345,7 @@
             const canSeeTeamNotes = canReadRsvps && (isTeamAdmin || (availabilityPreferences.noteVisibility === 'team' && currentTeamAccessInfo?.hasAccess));
             const dbGameIds = scheduleEntries.map((entry) => entry.id).filter(Boolean);
             let rsvpSummaries = new Map();
-            if (canReadRsvps) {
+            if (canReadRsvps && isTeamAdmin) {
                 try {
                     rsvpSummaries = typeof getRsvpSummaries === 'function' ? await getRsvpSummaries(currentTeamId, dbGameIds) : new Map();
                 } catch (_) {
@@ -2361,7 +2361,10 @@
                 let myRsvp = null;
                 if (canSeeTeamNotes) {
                     try {
-                        availabilityNotes = buildAvailabilityNoteRows(await getRsvps(currentTeamId, id), availabilityPreferences, isTeamAdmin);
+                        const readableRsvps = isTeamAdmin
+                            ? await getRsvps(currentTeamId, id)
+                            : await getMyRsvps(currentTeamId, id, currentUser.uid, linkedPlayerIds);
+                        availabilityNotes = buildAvailabilityNoteRows(readableRsvps, availabilityPreferences, isTeamAdmin);
                     } catch (_) {
                         availabilityNotes = [];
                     }

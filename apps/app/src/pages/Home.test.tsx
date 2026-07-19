@@ -327,6 +327,7 @@ function renderHome(auth: AuthState, initialEntry = '/home') {
         <Route path="/messages" element={<div>Messages route</div>} />
         <Route path="/schedule" element={<div>Schedule route</div>} />
         <Route path="/officials" element={<div>Officials route</div>} />
+        <Route path="/ai" element={<div>AI route</div>} />
       </Routes>
     </MemoryRouter>
   );
@@ -1043,6 +1044,7 @@ describe('Home', () => {
     expect(await screen.findByRole('heading', { name: 'Your day' })).toBeTruthy();
     expect(screen.getByText('Upcoming')).toBeTruthy();
     expect(screen.getAllByText('Player 1 needs availability')).toHaveLength(1);
+    expect(screen.getByRole('link', { name: 'Ask AI' }).getAttribute('href')).toBe('/ai');
     expect(screen.getByRole('link', { name: 'Open action' }).getAttribute('href')).toBe('/schedule/team-1/upcoming-1');
     expect(screen.getByRole('link', { name: /Availability.*2.*Needs a response/i }).getAttribute('href')).toBe('/schedule?bulkRsvp=1');
     expect(screen.getByRole('link', { name: 'Multi RSVP' }).getAttribute('href')).toBe('/schedule?bulkRsvp=1');

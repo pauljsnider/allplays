@@ -120,6 +120,10 @@ export async function getMyRsvp() {
     return null;
 }
 
+export async function getMyRsvps() {
+    return [];
+}
+
 export async function getLocalAttractionSponsors() {
     return [];
 }

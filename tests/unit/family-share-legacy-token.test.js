@@ -14,13 +14,14 @@ describe('legacy empty family share tokens', () => {
         expect(dbSource).toContain("httpsCallable(functions, 'resolveFamilyShareTokenChildren')");
         expect(dbSource).toContain('return normalizeFamilyShareChildren(response?.data?.children || []);');
 
-        expect(familyPage).toContain('getFamilyShareToken, resolveFamilyShareTokenChildren, getTeam');
+        expect(familyPage).toContain('getFamilyShareToken, getFamilyShareView, resolveFamilyShareTokenChildren, getTeam');
+        expect(familyPage).toContain('viewProjection = await getFamilyShareView(tokenId)');
         expect(familyPage).toContain('function normalizeFamilyPageChildren(children = [])');
         expect(familyPage).toContain('async function resolveFamilyPageChildren(token)');
         expect(familyPage).toContain('const storedChildren = normalizeFamilyPageChildren(token?.children);');
         expect(familyPage).toContain('if (storedChildren.length > 0) return storedChildren;');
         expect(familyPage).toContain('return normalizeFamilyPageChildren(await resolveFamilyShareTokenChildren(tokenId));');
-        expect(familyPage).toContain('const children = await resolveFamilyPageChildren(token);');
+        expect(familyPage).toContain('? normalizeFamilyPageChildren(viewProjection.children)');
     });
 
     it('registers a backend resolver that validates the bearer token before reading owner scope', () => {
@@ -47,10 +48,17 @@ describe('family page normalizeFamilyPageChildren edge cases', () => {
         expect(familyPage).toContain('if (storedChildren.length > 0) return storedChildren;');
     });
 
-    it('reads token from Firestore via getFamilyShareToken before checking expiry', () => {
+    it('reads the server projection before retaining the staged Firestore compatibility path', () => {
         const familyPage = readRepoFile('family.html');
 
-        expect(familyPage).toContain("token = await getFamilyShareToken(tokenId)");
+        expect(familyPage.indexOf('viewProjection = await getFamilyShareView(tokenId)'))
+            .toBeLessThan(familyPage.indexOf('token = await getFamilyShareToken(tokenId)'));
+        expect(familyPage).toContain("const authoritativeReason = getAuthoritativeFamilyShareProjectionErrorReason(err)");
+        expect(familyPage).toContain("return ['invalid', 'revoked', 'expired'].includes(reason) ? reason : '';");
+        const projectionLoadIndex = familyPage.indexOf('viewProjection = await getFamilyShareView(tokenId)');
+        const projectionCatchIndex = familyPage.indexOf('} catch (err)', projectionLoadIndex);
+        expect(familyPage.indexOf('if (authoritativeReason)', projectionCatchIndex))
+            .toBeLessThan(familyPage.indexOf('token = await getFamilyShareToken(tokenId)', projectionCatchIndex));
         expect(familyPage).toContain("if (!token || token.active === false)");
         expect(familyPage).toContain("if (isFamilyShareTokenExpired(token))");
     });

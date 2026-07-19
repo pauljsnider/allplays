@@ -21,6 +21,7 @@ import {
     getPracticeSessions as legacyGetPracticeSessions,
     getRsvpBreakdownByPlayer as legacyGetRsvpBreakdownByPlayer,
     getRsvpSummaries as legacyGetRsvpSummaries,
+    getMyRsvps as legacyGetMyRsvps,
     getRsvps as legacyGetRsvps,
     getTeam as legacyGetTeam,
     getTeams as legacyGetTeams,
@@ -133,6 +134,11 @@ export async function getPlayers(teamId: string, options?: { includeInactive?: b
 export async function getRsvps(teamId: string, gameId: string) {
     return await Promise.resolve(legacyGetRsvps(teamId, gameId));
 }
+
+export async function getMyRsvps(teamId: string, gameId: string, userId: string, playerIds: string[] = []) {
+    return await Promise.resolve(legacyGetMyRsvps(teamId, gameId, userId, playerIds));
+}
+
 
 export async function getRsvpBreakdownByPlayer(teamId: string, gameId: string) {
     return await Promise.resolve(legacyGetRsvpBreakdownByPlayer(teamId, gameId));

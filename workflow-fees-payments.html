@@ -79,7 +79,7 @@
         .wf-sidebar .wf-panel-section:nth-child(1) { display: none; }
       }
     </style>
-  <script type="module" src="/js/telemetry.js?v=3"></script>
+  <script type="module" src="/js/telemetry.js?v=4"></script>
   <script type="module" src="./js/help-context.js?v=1"></script>
 </head>
 <body class="flex flex-col min-h-screen">
@@ -312,8 +312,8 @@
     </main>
     <div id="footer-container"></div>
     <script type="module">
-      import { checkAuth } from './js/auth.js?v=51';
-      import { renderHeader, renderFooter } from './js/utils.js?v=15';
+      import { checkAuth } from './js/auth.js?v=125';
+      import { renderHeader, renderFooter } from './js/utils.js?v=18';
       renderHeader(document.getElementById('header-container'), null);
       renderFooter(document.getElementById('footer-container'));
       checkAuth((user) => {

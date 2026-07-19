@@ -3,6 +3,15 @@ import fs from 'node:fs';
 import { JSDOM } from 'jsdom';
 
 describe('admin telemetry event store dashboard', () => {
+    function loadGroupTelemetry() {
+        const source = fs.readFileSync('js/admin.js', 'utf8');
+        const start = source.indexOf('function sumBy');
+        const end = source.indexOf('function getTelemetryRoute');
+        expect(start).toBeGreaterThan(-1);
+        expect(end).toBeGreaterThan(start);
+        return new Function(`${source.slice(start, end)}\nreturn groupTelemetry;`)();
+    }
+
     it('shows all-event filters and app route aggregate containers', () => {
         const adminHtml = fs.readFileSync('admin.html', 'utf8');
         const dom = new JSDOM(adminHtml);
@@ -52,9 +61,28 @@ describe('admin telemetry event store dashboard', () => {
         expect(adminJs).toContain('session.lastRoute || session.entryRoute || session.lastPage || session.entryPage');
         expect(adminJs).toContain('const route = getTelemetryRoute(event);');
         expect(functionsJs).toContain("db.collection('telemetryRoutesDaily')");
-        expect(functionsJs).toContain('appRoute: event.appRoute || event.pagePath');
-        expect(functionsJs).toContain('lastRoute: event.appRoute || event.pagePath');
+        expect(functionsJs).toContain('const routes = new Map();');
+        expect(functionsJs).toContain('getOrCreateTelemetryCounter(routes, event.appRoute || event.pagePath)');
+        expect(functionsJs).toContain('lastRoute: lastEvent.appRoute || lastEvent.pagePath');
         expect(rules).toContain('match /telemetryRoutesDaily/{routeId}');
         expect(rules).toContain('allow read: if isGlobalAdmin();');
+    });
+
+    it('recombines sharded aggregate metrics before rendering the dashboard', () => {
+        const groupTelemetry = loadGroupTelemetry();
+        const [daily] = groupTelemetry([
+            { date: '2030-06-01', shard: 's01', totalEvents: 4, pageViews: 2, errors: 1 },
+            { date: '2030-06-01', shard: 's09', totalEvents: 7, pageViews: 3, errors: 2 }
+        ], 'date', 'totalEvents');
+
+        expect(daily).toMatchObject({
+            key: '2030-06-01',
+            count: 11,
+            item: { totalEvents: 11, pageViews: 5, errors: 3 }
+        });
+
+        const dbJs = fs.readFileSync('js/db.js', 'utf8');
+        expect(dbJs).toContain('const TELEMETRY_AGGREGATE_SHARD_COUNT = 16;');
+        expect(dbJs).toContain('(Number(maxPages) || 500) * TELEMETRY_AGGREGATE_SHARD_COUNT');
     });
 });

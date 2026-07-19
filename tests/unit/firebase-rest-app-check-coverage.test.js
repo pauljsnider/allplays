@@ -11,7 +11,8 @@ const primaryRestCallers = [
     '../../apps/app/src/lib/teamDetailService.ts',
     '../../js/schedule-notifications.js',
     '../../js/team-pass.js',
-    '../../js/telemetry.js'
+    '../../js/telemetry.js',
+    '../../js/utils.js'
 ];
 const repoRoot = fileURLToPath(new URL('../../', import.meta.url));
 const functionsSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
@@ -52,7 +53,8 @@ describe('raw Firebase REST App Check coverage', () => {
             'apps/app/src/lib/teamDetailService.ts',
             'js/schedule-notifications.js',
             'js/team-pass.js',
-            'js/telemetry.js'
+            'js/telemetry.js',
+            'js/utils.js'
         ]);
     });
 
@@ -78,6 +80,8 @@ describe('raw Firebase REST App Check coverage', () => {
     it('allows App Check through CORS on raw functions that receive attested browser requests', () => {
         const appCheckCorsHeader = "res.set('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Firebase-AppCheck');";
 
-        expect(functionsSource.split(appCheckCorsHeader)).toHaveLength(3);
+        expect(functionsSource).toContain(appCheckCorsHeader);
+        expect(functionsSource).toContain("allowedHeaders = 'Authorization, Content-Type, X-Firebase-AppCheck'");
+        expect(functionsSource).toContain("'Content-Type, X-Firebase-AppCheck'");
     });
 });

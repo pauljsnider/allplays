@@ -127,6 +127,8 @@ test.describe('help topic and workflow pages', () => {
     }
 
     test('workflow pages expose mobile table-of-contents links', async ({ page, baseURL }) => {
+        // This aggregate check makes 18 sequential production navigations.
+        test.setTimeout(60_000);
         await page.setViewportSize({ width: 390, height: 844 });
 
         for (const file of workflowPages) {

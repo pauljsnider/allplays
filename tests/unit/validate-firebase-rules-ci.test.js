@@ -321,7 +321,7 @@ service firebase.storage {
         expect(() => validateFirebaseDeployWorkloadIdentity(
             validWorkflow.replace('timeout-minutes: 4', 'timeout-minutes: 6'),
             'Test deploy'
-        )).toThrow('Test deploy credentialed deploy steps must have a four-minute timeout');
+        )).toThrow('Test deploy credentialed deploy step Deploy Firebase must have a timeout from one to 4 minutes');
         expect(() => validateFirebaseDeployWorkloadIdentity(
             validWorkflow.replace(
                 '          - name: Deploy Firebase',
