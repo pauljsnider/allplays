@@ -452,7 +452,7 @@ function SelectedTeamPanel({ team, variant = 'mobile' }: { team: ParentHomeTeam;
 
         <div className={`mt-3 grid grid-cols-3 gap-2 ${isWeb ? 'teams-selected-stats' : ''}`}>
           <MiniStat icon={Users} label="Players" value={String(team.players.length)} to={`/teams/${encodeURIComponent(team.teamId)}?tab=roster`} />
-          <MiniStat icon={CalendarDays} label="Events" value={String(team.eventCount)} to={`/schedule?teamId=${encodeURIComponent(team.teamId)}`} />
+          <MiniStat icon={CalendarDays} label="Events" value={String(team.eventCount)} to={`/teams/${encodeURIComponent(team.teamId)}?tab=schedule`} />
           <MiniStat icon={MessageCircle} label="Unread" value={String(team.unreadCount)} to={`/messages/${encodeURIComponent(team.teamId)}`} />
         </div>
       </div>
