@@ -12,14 +12,15 @@ vi.mock('./nativeSecureStorage', () => secureStorageMocks);
 
 import { nativeInstallEpochPhase, seedNativeInstallEpochObserveOnly } from './nativeInstallEpoch';
 
-const webInstallEpochKey = 'allplays-native-install-epoch-v1';
-const secureInstallEpochKey = 'native-install-epoch-v1';
+const webInstallEpochKey = 'allplays-native-install-epoch-v2';
+const secureInstallEpochKey = 'native-install-epoch-v2';
+let localStorageRecords: Map<string, string>;
 
 describe('native install epoch seed/observe phase', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     runtimeState.native = true;
-    installLocalStorage();
+    localStorageRecords = installLocalStorage();
     window.localStorage.clear();
     secureStorageMocks.getNativeSecureItem.mockResolvedValue(null);
     secureStorageMocks.setNativeSecureItem.mockResolvedValue(undefined);
@@ -45,6 +46,9 @@ describe('native install epoch seed/observe phase', () => {
     expect(secureStorageMocks.getNativeSecureItem).toHaveBeenCalledWith(secureInstallEpochKey);
     expect(secureStorageMocks.setNativeSecureItem).toHaveBeenCalledWith(secureInstallEpochKey, nativeInstallEpochPhase);
     expect(window.localStorage.getItem(webInstallEpochKey)).toBe(nativeInstallEpochPhase);
+    expect(vi.mocked(window.localStorage.setItem).mock.invocationCallOrder[0]).toBeLessThan(
+      secureStorageMocks.setNativeSecureItem.mock.invocationCallOrder[0]
+    );
     expect(secureStorageMocks).not.toHaveProperty('removeNativeSecureItem');
   });
 
@@ -87,6 +91,7 @@ describe('native install epoch seed/observe phase', () => {
   it('does not overwrite an unrecognized secure migration marker', async () => {
     secureStorageMocks.getNativeSecureItem.mockResolvedValue('future-phase-v2');
     window.localStorage.setItem(webInstallEpochKey, 'legacy-local-value');
+    vi.mocked(window.localStorage.setItem).mockClear();
 
     await expect(seedNativeInstallEpochObserveOnly()).resolves.toEqual({
       phase: nativeInstallEpochPhase,
@@ -94,10 +99,13 @@ describe('native install epoch seed/observe phase', () => {
     });
 
     expect(secureStorageMocks.setNativeSecureItem).not.toHaveBeenCalled();
+    expect(window.localStorage.setItem).not.toHaveBeenCalled();
     expect(window.localStorage.getItem(webInstallEpochKey)).toBe('legacy-local-value');
   });
 
-  it('never treats secure-storage failure as evidence of reinstall', async () => {
+  it('does zero marker writes when the secure read is unavailable', async () => {
+    window.localStorage.setItem(webInstallEpochKey, 'preexisting-web-marker');
+    vi.mocked(window.localStorage.setItem).mockClear();
     secureStorageMocks.getNativeSecureItem.mockRejectedValue(new Error('keychain locked'));
 
     await expect(seedNativeInstallEpochObserveOnly()).resolves.toEqual({
@@ -105,17 +113,83 @@ describe('native install epoch seed/observe phase', () => {
       status: 'secure-storage-unavailable'
     });
     expect(secureStorageMocks.setNativeSecureItem).not.toHaveBeenCalled();
-    expect(window.localStorage.getItem(webInstallEpochKey)).toBeNull();
+    expect(window.localStorage.setItem).not.toHaveBeenCalled();
+    expect(window.localStorage.getItem(webInstallEpochKey)).toBe('preexisting-web-marker');
   });
 
-  it('does not create a WebView marker when the secure seed write fails', async () => {
+  it('keeps a verified Web-only marker when the secure seed write hard-fails', async () => {
     secureStorageMocks.setNativeSecureItem.mockRejectedValue(new Error('write timed out'));
 
     await expect(seedNativeInstallEpochObserveOnly()).resolves.toEqual({
       phase: nativeInstallEpochPhase,
       status: 'secure-storage-unavailable'
     });
-    expect(window.localStorage.getItem(webInstallEpochKey)).toBeNull();
+    expect(window.localStorage.getItem(webInstallEpochKey)).toBe(nativeInstallEpochPhase);
+  });
+
+  it('keeps the Web marker when a started secure write times out and later completes', async () => {
+    let lateSecureValue: string | null = null;
+    let finishLateWrite = () => undefined;
+    secureStorageMocks.setNativeSecureItem.mockImplementation(async (_key: string, value: string) => {
+      finishLateWrite = () => {
+        lateSecureValue = value;
+      };
+      throw new Error('caller-facing write timed out');
+    });
+
+    await expect(seedNativeInstallEpochObserveOnly()).resolves.toEqual({
+      phase: nativeInstallEpochPhase,
+      status: 'secure-storage-unavailable'
+    });
+    expect(window.localStorage.getItem(webInstallEpochKey)).toBe(nativeInstallEpochPhase);
+    expect(lateSecureValue).toBeNull();
+
+    finishLateWrite();
+    expect(lateSecureValue).toBe(nativeInstallEpochPhase);
+    expect(window.localStorage.getItem(webInstallEpochKey)).toBe(nativeInstallEpochPhase);
+  });
+
+  it('does not start a secure seed when WebView storage cannot be read', async () => {
+    const originalDescriptor = Object.getOwnPropertyDescriptor(window, 'localStorage');
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      get() {
+        throw new Error('storage disabled');
+      }
+    });
+
+    try {
+      await expect(seedNativeInstallEpochObserveOnly()).resolves.toEqual({
+        phase: nativeInstallEpochPhase,
+        status: 'web-storage-unavailable'
+      });
+      expect(secureStorageMocks.setNativeSecureItem).not.toHaveBeenCalled();
+    } finally {
+      if (originalDescriptor) Object.defineProperty(window, 'localStorage', originalDescriptor);
+    }
+  });
+
+  it('does not start a secure seed when the WebView marker write fails', async () => {
+    vi.mocked(window.localStorage.setItem).mockImplementation(() => {
+      throw new Error('quota exceeded');
+    });
+
+    await expect(seedNativeInstallEpochObserveOnly()).resolves.toEqual({
+      phase: nativeInstallEpochPhase,
+      status: 'web-storage-unavailable'
+    });
+    expect(secureStorageMocks.setNativeSecureItem).not.toHaveBeenCalled();
+  });
+
+  it('does not start a secure seed when the WebView marker cannot be verified', async () => {
+    vi.mocked(window.localStorage.getItem).mockReturnValue(null);
+
+    await expect(seedNativeInstallEpochObserveOnly()).resolves.toEqual({
+      phase: nativeInstallEpochPhase,
+      status: 'web-storage-unavailable'
+    });
+    expect(localStorageRecords.get(webInstallEpochKey)).toBe(nativeInstallEpochPhase);
+    expect(secureStorageMocks.setNativeSecureItem).not.toHaveBeenCalled();
   });
 
   it('records WebView storage failure without removing the secure marker', async () => {
@@ -151,4 +225,5 @@ function installLocalStorage() {
       clear: vi.fn(() => records.clear())
     }
   });
+  return records;
 }

@@ -32,6 +32,7 @@ import { clearAppDataCache, flushAppDataCachePersistence } from './appDataCache'
 import {
   clearNativeAuthSession,
   readNativeAuthSession,
+  reconcileNativeAuthSessionWithAuthoritativeUser,
   writeNativeAuthSession
 } from './nativeAuthSessionStore';
 import type { NativeAuthSession } from './nativeAuthSessionStore';
@@ -1108,6 +1109,27 @@ export function observeFirebaseUser(callback: (user: FirebaseUser | null) => voi
   let lastObservedUid: string | null | undefined;
   let disposed = false;
   let webAuthUserObserved = false;
+  let authoritativeSdkUserObserved = false;
+  let fallbackReconciliation: Promise<void> = Promise.resolve();
+
+  const queueFallbackReconciliation = (uid: string) => {
+    fallbackReconciliation = fallbackReconciliation.then(async () => {
+      await reconcileNativeAuthSessionWithAuthoritativeUser(uid);
+    }).catch((error) => {
+      logger.warn('Unable to reconcile the fallback auth session with the authoritative Firebase user.', { error });
+    });
+    return fallbackReconciliation;
+  };
+
+  const emitFallbackAfterReconciliation = () => {
+    void fallbackReconciliation
+      .then(() => readNativeAuthSession())
+      .then((session) => {
+        if (!webAuthUserObserved && !authoritativeSdkUserObserved) {
+          emit(buildNativeAuthFallbackUser(session));
+        }
+      });
+  };
 
   const emit = (user: FirebaseUser | null) => {
     if (disposed) return;
@@ -1123,9 +1145,7 @@ export function observeFirebaseUser(callback: (user: FirebaseUser | null) => voi
 
   if (isNativeRuntime()) {
     timeoutId = window.setTimeout(() => {
-      void readNativeAuthSession().then((session) => {
-        if (!webAuthUserObserved) emit(buildNativeAuthFallbackUser(session));
-      });
+      emitFallbackAfterReconciliation();
     }, nativeAuthObserverTimeoutMs);
   }
 
@@ -1136,6 +1156,8 @@ export function observeFirebaseUser(callback: (user: FirebaseUser | null) => voi
     }
     if (user) {
       webAuthUserObserved = true;
+      authoritativeSdkUserObserved = true;
+      void queueFallbackReconciliation(user.uid);
       emit(user);
       return;
     }
@@ -1144,9 +1166,14 @@ export function observeFirebaseUser(callback: (user: FirebaseUser | null) => voi
       return;
     }
     webAuthUserObserved = false;
-    void readNativeAuthSession().then((session) => {
-      if (!webAuthUserObserved) emit(buildNativeAuthFallbackUser(session));
-    });
+    if (authoritativeSdkUserObserved) {
+      // Once this observer has seen an SDK/IndexedDB user, a later SDK null is
+      // authoritative sign-out. Never allow an older REST fallback (even a
+      // same-UID duplicate) to replace that transition while cleanup settles.
+      emit(null);
+      return;
+    }
+    emitFallbackAfterReconciliation();
   });
 
   return () => {

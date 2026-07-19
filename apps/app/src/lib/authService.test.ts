@@ -79,6 +79,11 @@ const nativeSessionStoreMocks = vi.hoisted(() => ({
   }),
   clearNativeAuthSession: vi.fn(async () => {
     nativeSessionStoreMocks.session = null;
+  }),
+  reconcileNativeAuthSessionWithAuthoritativeUser: vi.fn(async (uid: string) => {
+    if (!nativeSessionStoreMocks.session || nativeSessionStoreMocks.session.uid === uid) return false;
+    nativeSessionStoreMocks.session = null;
+    return true;
   })
 }));
 
@@ -141,7 +146,9 @@ vi.mock('./appDataCache', () => ({
 vi.mock('./nativeAuthSessionStore', () => ({
   readNativeAuthSession: nativeSessionStoreMocks.readNativeAuthSession,
   writeNativeAuthSession: nativeSessionStoreMocks.writeNativeAuthSession,
-  clearNativeAuthSession: nativeSessionStoreMocks.clearNativeAuthSession
+  clearNativeAuthSession: nativeSessionStoreMocks.clearNativeAuthSession,
+  reconcileNativeAuthSessionWithAuthoritativeUser:
+    nativeSessionStoreMocks.reconcileNativeAuthSessionWithAuthoritativeUser
 }));
 
 vi.mock('./nativeFirebaseAuthPersistence', () => nativeFirebasePersistenceMocks);
@@ -1150,6 +1157,8 @@ describe('observeFirebaseUser', () => {
   beforeEach(() => {
     appDataCacheMocks.clearAppDataCache.mockReset();
     authObserverMocks.onAuthStateChanged.mockReset();
+    nativeSessionStoreMocks.session = null;
+    nativeSessionStoreMocks.reconcileNativeAuthSessionWithAuthoritativeUser.mockClear();
   });
 
   function wireObserver() {
@@ -1179,9 +1188,9 @@ describe('observeFirebaseUser', () => {
     const emit = wireObserver();
     emit({ uid: 'user-a' });
     emit(null);
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(appDataCacheMocks.clearAppDataCache).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => {
+      expect(appDataCacheMocks.clearAppDataCache).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('does not clear the cache on repeated snapshots of the same uid', () => {
@@ -1189,6 +1198,67 @@ describe('observeFirebaseUser', () => {
     emit({ uid: 'user-a' });
     emit({ uid: 'user-a' });
     expect(appDataCacheMocks.clearAppDataCache).not.toHaveBeenCalled();
+  });
+
+  it('keeps the SDK user authoritative and removes a stale fallback before a later null snapshot', async () => {
+    nativeSessionStoreMocks.session = {
+      uid: 'fallback-user',
+      email: 'fallback@example.com',
+      idToken: createFirebaseIdToken('fallback-user'),
+      refreshToken: 'fallback-refresh-token',
+      expirationTime: Date.now() + 3600_000,
+      apiKey: 'test-api-key',
+      provider: 'rest'
+    };
+    let handler: (user: any) => void = () => undefined;
+    const observed: Array<string | null> = [];
+    authObserverMocks.onAuthStateChanged.mockImplementation((_auth: unknown, cb: (user: any) => void) => {
+      handler = cb;
+      return () => {};
+    });
+    observeFirebaseUser((user) => observed.push(user?.uid ?? null));
+
+    handler({ uid: 'sdk-user' });
+    await Promise.resolve();
+    await Promise.resolve();
+    handler(null);
+    await vi.waitFor(() => {
+      expect(observed).toEqual(['sdk-user', null]);
+    });
+
+    expect(nativeSessionStoreMocks.reconcileNativeAuthSessionWithAuthoritativeUser)
+      .toHaveBeenCalledWith('sdk-user');
+    expect(nativeSessionStoreMocks.session).toBeNull();
+  });
+
+  it('never lets a fallback read started before SDK restore emit after an authoritative sign-out', async () => {
+    const fallbackRead = createDeferred<any>();
+    nativeSessionStoreMocks.readNativeAuthSession.mockReturnValueOnce(fallbackRead.promise);
+    let handler: (user: any) => void = () => undefined;
+    const observed: Array<string | null> = [];
+    authObserverMocks.onAuthStateChanged.mockImplementation((_auth: unknown, cb: (user: any) => void) => {
+      handler = cb;
+      return () => {};
+    });
+    observeFirebaseUser((user) => observed.push(user?.uid ?? null));
+
+    handler(null);
+    await Promise.resolve();
+    handler({ uid: 'sdk-user' });
+    handler(null);
+    fallbackRead.resolve({
+      uid: 'fallback-user',
+      email: 'fallback@example.com',
+      idToken: createFirebaseIdToken('fallback-user'),
+      refreshToken: 'fallback-refresh-token',
+      expirationTime: Date.now() + 3600_000,
+      apiKey: 'test-api-key',
+      provider: 'rest'
+    });
+    await fallbackRead.promise;
+    await Promise.resolve();
+
+    expect(observed).toEqual(['sdk-user', null]);
   });
 });
 

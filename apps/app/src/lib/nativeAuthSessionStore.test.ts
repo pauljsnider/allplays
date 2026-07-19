@@ -62,11 +62,30 @@ describe('nativeAuthSessionStore', () => {
 
     await expect(store.readNativeAuthSession()).resolves.toEqual(session);
 
-    expect(secureStorageMocks.setNativeSecureItem).toHaveBeenCalledWith(
-      'native-auth-session-v2',
-      JSON.stringify(session)
-    );
+    expect(secureStorageMocks.setNativeSecureItem).toHaveBeenCalledWith('native-auth-session-v2', JSON.stringify(session));
     expect(window.localStorage.getItem('allplays-native-auth-session')).toBeNull();
+  });
+
+  it('removes a migrated fallback for a different authoritative SDK uid without signing out the SDK user', async () => {
+    window.localStorage.setItem('allplays-native-auth-session', JSON.stringify(session));
+    const store = await loadStore();
+
+    await expect(store.reconcileNativeAuthSessionWithAuthoritativeUser('sdk-user')).resolves.toBe(true);
+
+    expect(window.localStorage.getItem('allplays-native-auth-session')).toBeNull();
+    expect(secureStorageMocks.setNativeSecureItem).toHaveBeenCalledWith('native-auth-session-v2', JSON.stringify(session));
+    expect(secureStorageMocks.removeNativeSecureItemEventually).toHaveBeenCalledWith('native-auth-session-v2');
+    await expect(store.readNativeAuthSession()).resolves.toBeNull();
+  });
+
+  it('keeps a same-uid fallback duplicate when the authoritative SDK user matches', async () => {
+    secureStorageMocks.getNativeSecureItem.mockResolvedValue(JSON.stringify(session));
+    const store = await loadStore();
+
+    await expect(store.reconcileNativeAuthSessionWithAuthoritativeUser(session.uid)).resolves.toBe(false);
+
+    expect(secureStorageMocks.removeNativeSecureItemEventually).not.toHaveBeenCalled();
+    await expect(store.readNativeAuthSession()).resolves.toEqual(session);
   });
 
   it('fails restored sessions closed when secure storage is unavailable', async () => {
@@ -113,8 +132,7 @@ describe('nativeAuthSessionStore', () => {
     const cleanup = store.clearNativeAuthSession();
     await Promise.resolve();
 
-    expect(secureStorageMocks.removeNativeSecureItemEventually)
-      .toHaveBeenCalledWith('native-auth-session-v2');
+    expect(secureStorageMocks.removeNativeSecureItemEventually).toHaveBeenCalledWith('native-auth-session-v2');
     expect(secureStorageMocks.removeNativeSecureItem).not.toHaveBeenCalled();
     expect(window.localStorage.getItem('allplays-native-auth-signed-out-v2')).toBe('1');
 

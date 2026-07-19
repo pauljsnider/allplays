@@ -17,6 +17,11 @@ authentication credentials and account boundaries are still security-sensitive.
 - The native REST fallback, image-upload anonymous session, and persisted
   native app-data cache use the same secure-storage boundary. Browser cache
   data is session-scoped.
+- Native boot eagerly consumes the legacy fallback-auth and image-upload
+  localStorage records before the first runtime await. Valid values migrate to
+  secure storage when it is available; unavailable secure storage removes the
+  plaintext and restores nothing. A Firebase SDK/IndexedDB user remains
+  authoritative, and a fallback credential for a different UID is discarded.
 - Logout removes the secure Firebase record, fallback session, image session,
   Firebase IndexedDB record, and user-scoped app-data cache. A non-secret
   signed-out marker prevents restoration if secure deletion temporarily fails.
@@ -33,6 +38,9 @@ authentication credentials and account boundaries are still security-sensitive.
   WebView marker. The seed/observe phase never removes an auth session for a
   missing or mismatched marker, so an unknown legacy upgrade cannot be mistaken
   for an iOS reinstall.
+- Auth profile hydration uses one monotonic generation across observer events,
+  explicit refresh, sign-out, and unmount. A late result can commit only when
+  its generation and UID still match the latest observed Firebase identity.
 
 Client token decoding is a consistency check, not signature verification.
 Firestore rules and server/callable token verification remain the authority for
@@ -69,10 +77,18 @@ claims.
 
 ### Release 1: seed and observe (this change)
 
-- Write `seed-observe-v1` to a device-only, non-iCloud Keychain/Keystore marker
-  and to a matching non-secret WebView marker.
+- Use the protocol-isolated `seed-observe-v2-web-first` value and v2 secure/Web
+  keys. Pre-release v1 markers are never enforcement evidence.
 - Treat no marker as an unknown legacy/fresh install and seed both boundaries
   without signing out.
+- Read secure storage first. A failed read or unknown secure version performs
+  no writes. When the v2 secure marker is absent, require readable WebView
+  storage, write and verify the Web marker synchronously, and only then start
+  the secure write.
+- Never roll back a verified Web marker after a secure hard failure or timeout.
+  Native plugin calls cannot be cancelled and may complete later; rollback
+  could manufacture a secure-only marker. Web-only is always passive and a late
+  secure completion safely produces the full pair.
 - If the secure marker exists while the WebView marker is absent or mismatched,
   record the observe result and realign the WebView marker without deleting the
   Firebase Auth record or fallback session. This preserves a possible legacy
@@ -83,15 +99,30 @@ claims.
   the secure Firebase record, fallback session, IndexedDB state, image session,
   and user caches; the opaque install marker is not an account credential.
 
+#### Release 1 marker failure matrix
+
+| Initial/read state | Operation result | Durable state after the attempt | Release 2 eligibility |
+| --- | --- | --- | --- |
+| Secure read unavailable | No Web or secure write | Existing values unchanged | Never infer reinstall |
+| Unknown secure version | No Web or secure write | Unknown version preserved | Never infer reinstall |
+| v2 secure absent; Web unavailable/write fails/verification fails | No secure write | None or Web-only | Never infer reinstall |
+| v2 secure absent; Web verified; secure write fails before start | Keep Web marker | Web-only | Never infer reinstall |
+| v2 secure absent; Web verified; secure write times out after start | Keep Web marker while native call settles | Web-only, then possibly full pair | Never infer reinstall while Web exists |
+| v2 secure present; Web matches | No write | Full pair | Normal installed state |
+| v2 secure present; Web missing/mismatched | Repair Web only; never touch auth | Full pair if repair succeeds | Release 1 never purges |
+| v2 secure present; Web repair unavailable/fails | No auth or secure mutation | Secure-only preexisting state | Release 1 never purges; Release 2 remains separately gated |
+
 ### Release 2: enforce only after adoption and physical validation
 
 - Ship only after Release 1 has had an explicit adoption window and its upgrade,
   logout, account-deletion, and reinstall matrix passes on physical devices.
 - Before Firebase persistence initialization, classify reinstall only when the
-  secure marker is the exact known seeded version, WebView storage is readable,
-  and the matching WebView marker is absent.
+  secure marker is the exact `seed-observe-v2-web-first` value, WebView storage
+  is readable, the matching v2 WebView marker is absent, and the physical
+  Release 1 adoption evidence has ruled out partial/legacy rollout state.
 - Never purge for a missing/unknown secure marker, an unrecognized version, or
-  an unreadable Keychain/Keystore/WebView boundary.
+  an unreadable Keychain/Keystore/WebView boundary. In particular, a v1 marker
+  is unknown and can never authorize purge.
 - On a positively classified reinstall, remove the secure Firebase and fallback
   auth sessions before Firebase can restore them, then establish the new local
   marker. Add fault-injection coverage for late writes and failed removals before
@@ -110,6 +141,9 @@ CI simulator/emulator builds:
 | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Upgrade while signed in with email/password                | Existing IndexedDB session migrates once; app remains signed in; Firestore-backed screens load; no auth token remains in WebView storage.                                                                |
 | Upgrade while signed in with Google                        | Same as email/password; account picker and existing-account behavior remain unchanged.                                                                                                                   |
+| Boot with SDK user B plus legacy fallback user A plaintext | Plaintext is removed immediately; SDK user B remains displayed/authoritative; fallback A is deleted and cannot appear after a later null observer snapshot.                                               |
+| Boot with legacy image-upload plaintext                    | Plaintext is removed immediately and migrates only to secure storage; unavailable secure storage restores nothing and does not affect primary auth.                                                       |
+| A profile hydration resolves after null/B/sign-out/unmount | The stale A result makes no user/profile/error/bootstrap-hint change. B or signed-out state remains authoritative.                                                                                        |
 | Fresh email/password, Google, signup, and email-link login | Sign-in completes, survives a process kill, and restores the correct Firebase `currentUser`.                                                                                                             |
 | Force-close with Keychain/Keystore unavailable or locked   | No plaintext fallback is created; app fails signed out or uses only the current process's in-memory session.                                                                                             |
 | Logout with secure deletion failure                        | UI and app-data cache clear immediately; the signed-out marker prevents a stale secure token from restoring.                                                                                             |

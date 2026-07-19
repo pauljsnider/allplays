@@ -1,11 +1,6 @@
 import { createLogger } from './logger';
 import { isNativeRuntime } from './nativeRuntime';
-import {
-  getNativeSecureItem,
-  removeNativeSecureItem,
-  removeNativeSecureItemEventually,
-  setNativeSecureItem
-} from './nativeSecureStorage';
+import { getNativeSecureItem, removeNativeSecureItem, removeNativeSecureItemEventually, setNativeSecureItem } from './nativeSecureStorage';
 
 const legacyPlaintextStorageKey = 'allplays-native-auth-session';
 const signedOutMarkerStorageKey = 'allplays-native-auth-signed-out-v2';
@@ -83,14 +78,14 @@ function parseSession(rawSession: string | null): NativeAuthSession | null {
   try {
     const session = JSON.parse(rawSession) as Partial<NativeAuthSession>;
     if (
-      typeof session.uid !== 'string'
-      || !session.uid
-      || typeof session.email !== 'string'
-      || typeof session.idToken !== 'string'
-      || !session.idToken
-      || typeof session.apiKey !== 'string'
-      || !Number.isFinite(session.expirationTime)
-      || (session.provider !== 'native-plugin' && typeof session.refreshToken !== 'string')
+      typeof session.uid !== 'string' ||
+      !session.uid ||
+      typeof session.email !== 'string' ||
+      typeof session.idToken !== 'string' ||
+      !session.idToken ||
+      typeof session.apiKey !== 'string' ||
+      !Number.isFinite(session.expirationTime) ||
+      (session.provider !== 'native-plugin' && typeof session.refreshToken !== 'string')
     ) {
       return null;
     }
@@ -145,6 +140,19 @@ export function readNativeAuthSession(): Promise<NativeAuthSession | null> {
 
 export function getCachedNativeAuthSession() {
   return hydrated ? cachedSession : null;
+}
+
+/**
+ * The Firebase SDK/IndexedDB user is authoritative whenever it restores one.
+ * A legacy REST fallback for another UID must not remain available to a later
+ * null observer snapshot. This only clears the separate fallback credential;
+ * it never signs out or mutates the authoritative Firebase SDK user.
+ */
+export async function reconcileNativeAuthSessionWithAuthoritativeUser(uid: string): Promise<boolean> {
+  const session = await readNativeAuthSession();
+  if (!session || session.uid === uid) return false;
+  await clearNativeAuthSession();
+  return true;
 }
 
 /**

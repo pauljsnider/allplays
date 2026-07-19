@@ -23,25 +23,12 @@ import {
   verifyPasswordResetCode
 } from './adapters/legacyFirebaseAuthSdk';
 import { createLogger } from './logger';
+import { readImageUploadSession } from './imageUploadSessionStore';
+import { readNativeAuthSession } from './nativeAuthSessionStore';
 import { seedNativeInstallEpochObserveOnly } from './nativeInstallEpoch';
 import { NativeSecureFirebaseAuthPersistence, shouldBlockNativeFirebaseAuthMigration } from './nativeFirebaseAuthPersistence';
 
 const logger = createLogger('firebase');
-
-const firebaseConfig = await resolvePrimaryFirebaseConfig();
-// Only reuse the primary '[DEFAULT]' app. Other named apps (e.g. the
-// game-flow-img image-upload project) can register while the config fetch
-// above is awaiting, and getApp() throws app/no-app when only they exist.
-const existingDefaultApp = getApps().find((candidate) => candidate?.name === '[DEFAULT]');
-const app = existingDefaultApp || initializeApp(firebaseConfig);
-await initializePrimaryAppCheck(app);
-
-// Phase one only seeds/observes the install boundary. It deliberately runs
-// alongside auth initialization and never purges a session, so unknown legacy
-// upgrades cannot be signed out. A later enforcement release must await and
-// interpret the marker before Firebase persistence initializes.
-export const nativeInstallEpochSeedPromise = seedNativeInstallEpochObserveOnly();
-void nativeInstallEpochSeedPromise.catch(() => undefined);
 
 function isCapacitorNativeRuntime() {
   const protocol = typeof window !== 'undefined' ? window.location?.protocol : '';
@@ -61,8 +48,34 @@ function isCapacitorNativeRuntime() {
   return capacitor.getPlatform?.() === 'ios' || capacitor.getPlatform?.() === 'android';
 }
 
+const nativeRuntime = isCapacitorNativeRuntime();
+
+// Invoke both readers before the first module-level await. Each reader consumes
+// its legacy localStorage value synchronously before touching secure storage,
+// so plaintext credentials are removed at native boot even when Firebase later
+// restores an authoritative SDK/IndexedDB user or the secure plugin is locked.
+export const nativeAuthPlaintextMigrationPromise = nativeRuntime ? readNativeAuthSession() : Promise.resolve(null);
+export const imageUploadPlaintextMigrationPromise = nativeRuntime ? readImageUploadSession() : Promise.resolve(null);
+void nativeAuthPlaintextMigrationPromise.catch(() => undefined);
+void imageUploadPlaintextMigrationPromise.catch(() => undefined);
+
+const firebaseConfig = await resolvePrimaryFirebaseConfig();
+// Only reuse the primary '[DEFAULT]' app. Other named apps (e.g. the
+// game-flow-img image-upload project) can register while the config fetch
+// above is awaiting, and getApp() throws app/no-app when only they exist.
+const existingDefaultApp = getApps().find((candidate) => candidate?.name === '[DEFAULT]');
+const app = existingDefaultApp || initializeApp(firebaseConfig);
+await initializePrimaryAppCheck(app);
+
+// Phase one only seeds/observes the install boundary. It deliberately runs
+// alongside auth initialization and never purges a session, so unknown legacy
+// upgrades cannot be signed out. A later enforcement release must await and
+// interpret the marker before Firebase persistence initializes.
+export const nativeInstallEpochSeedPromise = seedNativeInstallEpochObserveOnly();
+void nativeInstallEpochSeedPromise.catch(() => undefined);
+
 async function initializeFirebaseAuth(appInstance: typeof app) {
-  if (!isCapacitorNativeRuntime()) {
+  if (!nativeRuntime) {
     return getAuth(appInstance);
   }
 

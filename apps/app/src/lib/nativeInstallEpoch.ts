@@ -7,10 +7,10 @@ import { getNativeSecureItem, setNativeSecureItem } from './nativeSecureStorage'
  * both markers and observes/repairs mismatches; it never interprets a missing
  * marker as permission to remove an existing auth session.
  */
-export const nativeInstallEpochPhase = 'seed-observe-v1' as const;
+export const nativeInstallEpochPhase = 'seed-observe-v2-web-first' as const;
 
-const secureInstallEpochKey = 'native-install-epoch-v1';
-const webInstallEpochKey = 'allplays-native-install-epoch-v1';
+const secureInstallEpochKey = 'native-install-epoch-v2';
+const webInstallEpochKey = 'allplays-native-install-epoch-v2';
 
 export type NativeInstallEpochSeedStatus =
   | 'not-native'
@@ -60,6 +60,9 @@ function result(status: NativeInstallEpochSeedStatus): NativeInstallEpochSeedRes
  *
  * Passivity is deliberate:
  * - Unknown legacy upgrades and fresh installs both seed without signing out.
+ * - New seeds write and verify the WebView marker before starting the secure
+ *   write, so this release can never create an enforcement-eligible secure-only
+ *   partial state. A failed or late secure write leaves the Web marker intact.
  * - A secure marker with a missing/mismatched WebView marker is observed and
  *   realigned without touching Firebase Auth or fallback session keys.
  * - Unknown secure marker versions are preserved for forward compatibility.
@@ -72,7 +75,6 @@ function result(status: NativeInstallEpochSeedStatus): NativeInstallEpochSeedRes
 export async function seedNativeInstallEpochObserveOnly(): Promise<NativeInstallEpochSeedResult> {
   if (!isNativeRuntime()) return result('not-native');
 
-  const webMarker = readWebInstallEpoch();
   let secureMarker: string | null;
   try {
     secureMarker = await getNativeSecureItem(secureInstallEpochKey);
@@ -85,22 +87,31 @@ export async function seedNativeInstallEpochObserveOnly(): Promise<NativeInstall
     return result('secure-marker-unrecognized');
   }
 
-  const hadSecureMarker = secureMarker === nativeInstallEpochPhase;
-  if (!hadSecureMarker) {
-    try {
-      await setNativeSecureItem(secureInstallEpochKey, nativeInstallEpochPhase);
-    } catch {
-      // The keyed secure-storage queue may still complete a timed-out write.
-      // Leave the WebView marker unchanged so the next launch can reconcile.
-      return result('secure-storage-unavailable');
-    }
-  }
-
-  if (!webMarker.available || !writeWebInstallEpoch()) {
+  const webMarker = readWebInstallEpoch();
+  if (!webMarker.available) {
     return result('web-storage-unavailable');
   }
 
-  if (!hadSecureMarker) return result('seeded');
+  const hadSecureMarker = secureMarker === nativeInstallEpochPhase;
+  if (webMarker.value !== nativeInstallEpochPhase && !writeWebInstallEpoch()) {
+    return result('web-storage-unavailable');
+  }
+
+  if (!hadSecureMarker) {
+    try {
+      // The WebView boundary is synchronously written and verified first. A
+      // crash, hard failure, or caller timeout here therefore leaves only a
+      // Web-only marker, which a later enforcement release must treat as
+      // passive. Never roll it back: the uncancellable native write may still
+      // complete after its caller-facing timeout, and rollback could otherwise
+      // manufacture the forbidden secure-only state.
+      await setNativeSecureItem(secureInstallEpochKey, nativeInstallEpochPhase);
+    } catch {
+      return result('secure-storage-unavailable');
+    }
+    return result('seeded');
+  }
+
   if (webMarker.value === nativeInstallEpochPhase) return result('already-seeded');
   return result(webMarker.value === null ? 'observed-missing-web-marker' : 'observed-mismatched-web-marker');
 }

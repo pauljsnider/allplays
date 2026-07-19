@@ -44,15 +44,23 @@ const nativePersistenceMock = vi.hoisted(() => ({
 const nativeInstallEpochMock = vi.hoisted(() => ({
   seedNativeInstallEpochObserveOnly: vi.fn(() =>
     Promise.resolve({
-      phase: 'seed-observe-v1',
+      phase: 'seed-observe-v2-web-first',
       status: 'not-native'
     })
   )
+}));
+const nativeAuthSessionStoreMock = vi.hoisted(() => ({
+  readNativeAuthSession: vi.fn<() => Promise<any>>(() => Promise.resolve(null))
+}));
+const imageUploadSessionStoreMock = vi.hoisted(() => ({
+  readImageUploadSession: vi.fn<() => Promise<any>>(() => Promise.resolve(null))
 }));
 
 vi.mock('./adapters/legacyFirebaseAuthSdk', () => firebaseAuthSdk);
 vi.mock('./nativeFirebaseAuthPersistence', () => nativePersistenceMock);
 vi.mock('./nativeInstallEpoch', () => nativeInstallEpochMock);
+vi.mock('./nativeAuthSessionStore', () => nativeAuthSessionStoreMock);
+vi.mock('./imageUploadSessionStore', () => imageUploadSessionStoreMock);
 
 vi.mock('./logger', () => ({
   createLogger: vi.fn(() => ({
@@ -76,9 +84,11 @@ describe('firebaseAuthRuntime', () => {
     nativePersistenceMock.shouldBlockNativeFirebaseAuthMigration.mockReturnValue(false);
     nativeInstallEpochMock.seedNativeInstallEpochObserveOnly.mockReset();
     nativeInstallEpochMock.seedNativeInstallEpochObserveOnly.mockResolvedValue({
-      phase: 'seed-observe-v1',
+      phase: 'seed-observe-v2-web-first',
       status: 'not-native'
     });
+    nativeAuthSessionStoreMock.readNativeAuthSession.mockReset().mockResolvedValue(null);
+    imageUploadSessionStoreMock.readImageUploadSession.mockReset().mockResolvedValue(null);
     Object.defineProperty(window, 'Capacitor', {
       configurable: true,
       value: undefined
@@ -121,18 +131,53 @@ describe('firebaseAuthRuntime', () => {
     expect(firebaseAuthSdk.initializeAuth).toHaveBeenCalledWith(
       { name: '[DEFAULT]', created: true },
       {
-        persistence: [
-          nativePersistenceMock.NativeSecureFirebaseAuthPersistence,
-          firebaseAuthSdk.indexedDBLocalPersistence
-        ]
+        persistence: [nativePersistenceMock.NativeSecureFirebaseAuthPersistence, firebaseAuthSdk.indexedDBLocalPersistence]
       }
     );
     expect(runtime.auth).toEqual({ app: { name: '[DEFAULT]', created: true }, nativeAuth: true });
     await expect(runtime.nativeInstallEpochSeedPromise).resolves.toEqual({
-      phase: 'seed-observe-v1',
+      phase: 'seed-observe-v2-web-first',
       status: 'not-native'
     });
     expect(nativeInstallEpochMock.seedNativeInstallEpochObserveOnly).toHaveBeenCalledTimes(1);
+    expect(nativeAuthSessionStoreMock.readNativeAuthSession).toHaveBeenCalledTimes(1);
+    expect(imageUploadSessionStoreMock.readImageUploadSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('eagerly consumes both legacy plaintext sessions while preserving an authoritative SDK user', async () => {
+    Object.defineProperty(window, 'Capacitor', {
+      configurable: true,
+      value: { isNativePlatform: () => true }
+    });
+    const authoritativeUser = { uid: 'sdk-user' };
+    nativeAuthSessionStoreMock.readNativeAuthSession.mockResolvedValue({ uid: 'stale-fallback-user' });
+    imageUploadSessionStoreMock.readImageUploadSession.mockResolvedValue({ idToken: 'legacy-image-token' });
+    firebaseAuthSdk.initializeAuth.mockReturnValue({
+      app: { name: '[DEFAULT]', created: true },
+      currentUser: authoritativeUser
+    });
+
+    const runtime = await import('./firebaseAuthRuntime');
+
+    await expect(runtime.nativeAuthPlaintextMigrationPromise).resolves.toEqual({ uid: 'stale-fallback-user' });
+    await expect(runtime.imageUploadPlaintextMigrationPromise).resolves.toEqual({ idToken: 'legacy-image-token' });
+    expect(runtime.auth.currentUser).toBe(authoritativeUser);
+  });
+
+  it('keeps Firebase startup passive when either eager secure-store migration is unavailable', async () => {
+    Object.defineProperty(window, 'Capacitor', {
+      configurable: true,
+      value: { isNativePlatform: () => true }
+    });
+    nativeAuthSessionStoreMock.readNativeAuthSession.mockRejectedValue(new Error('auth keychain locked'));
+    imageUploadSessionStoreMock.readImageUploadSession.mockRejectedValue(new Error('image keychain locked'));
+
+    const runtime = await import('./firebaseAuthRuntime');
+
+    await expect(runtime.nativeAuthPlaintextMigrationPromise).rejects.toThrow('auth keychain locked');
+    await expect(runtime.imageUploadPlaintextMigrationPromise).rejects.toThrow('image keychain locked');
+    expect(runtime.auth).toEqual({ app: { name: '[DEFAULT]', created: true }, nativeAuth: true });
+    expect(firebaseAuthSdk.signOut).not.toHaveBeenCalled();
   });
 
   it('omits IndexedDB from the native hierarchy while a signed-out tombstone is active', async () => {
@@ -144,8 +189,7 @@ describe('firebaseAuthRuntime', () => {
 
     await import('./firebaseAuthRuntime');
 
-    expect(nativePersistenceMock.shouldBlockNativeFirebaseAuthMigration)
-      .toHaveBeenCalledWith('api-key', '[DEFAULT]');
+    expect(nativePersistenceMock.shouldBlockNativeFirebaseAuthMigration).toHaveBeenCalledWith('api-key', '[DEFAULT]');
     expect(firebaseAuthSdk.initializeAuth).toHaveBeenCalledWith(
       { name: '[DEFAULT]', created: true },
       { persistence: [nativePersistenceMock.NativeSecureFirebaseAuthPersistence] }
@@ -165,10 +209,7 @@ describe('firebaseAuthRuntime', () => {
 
     const runtime = await import('./firebaseAuthRuntime');
 
-    expect(firebaseAuthSdk.setPersistence).toHaveBeenCalledWith(
-      existingAuth,
-      nativePersistenceMock.NativeSecureFirebaseAuthPersistence
-    );
+    expect(firebaseAuthSdk.setPersistence).toHaveBeenCalledWith(existingAuth, nativePersistenceMock.NativeSecureFirebaseAuthPersistence);
     expect(runtime.auth).toBe(existingAuth);
   });
 
@@ -187,11 +228,7 @@ describe('firebaseAuthRuntime', () => {
     await import('./firebaseAuthRuntime');
 
     expect(firebaseAuthSdk.signOut).toHaveBeenCalledWith(existingAuth);
-    expect(firebaseAuthSdk.setPersistence).toHaveBeenCalledWith(
-      existingAuth,
-      nativePersistenceMock.NativeSecureFirebaseAuthPersistence
-    );
-    expect(firebaseAuthSdk.signOut.mock.invocationCallOrder[0])
-      .toBeLessThan(firebaseAuthSdk.setPersistence.mock.invocationCallOrder[0]);
+    expect(firebaseAuthSdk.setPersistence).toHaveBeenCalledWith(existingAuth, nativePersistenceMock.NativeSecureFirebaseAuthPersistence);
+    expect(firebaseAuthSdk.signOut.mock.invocationCallOrder[0]).toBeLessThan(firebaseAuthSdk.setPersistence.mock.invocationCallOrder[0]);
   });
 });
