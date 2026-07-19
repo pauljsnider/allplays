@@ -114,6 +114,7 @@ import {
   hydrateFirebaseUser,
   isValidAuthEmail,
   observeFirebaseUser,
+  reloadCurrentUser,
   resendVerificationEmail,
   sendResetEmail,
   signInWithEmail,
@@ -121,6 +122,45 @@ import {
   signOut,
   signUpWithEmail
 } from './authService';
+
+describe('reloadCurrentUser', () => {
+  beforeEach(() => {
+    authState.currentUser = null;
+  });
+
+  afterEach(() => {
+    authState.currentUser = null;
+  });
+
+  it('forces a fresh ID token before returning a newly verified web user', async () => {
+    const getIdToken = vi.fn().mockResolvedValue('fresh-verified-token');
+    const user = {
+      emailVerified: false,
+      getIdToken,
+      reload: vi.fn(async () => {
+        user.emailVerified = true;
+      })
+    };
+    authState.currentUser = user as any;
+
+    await expect(reloadCurrentUser()).resolves.toBe(true);
+
+    expect(user.reload).toHaveBeenCalledTimes(1);
+    expect(getIdToken).toHaveBeenCalledWith(true);
+    expect(user.reload.mock.invocationCallOrder[0]).toBeLessThan(getIdToken.mock.invocationCallOrder[0]);
+  });
+
+  it('does not report verification when the required token refresh fails', async () => {
+    const tokenError = new Error('token refresh failed');
+    authState.currentUser = {
+      emailVerified: true,
+      reload: vi.fn().mockResolvedValue(undefined),
+      getIdToken: vi.fn().mockRejectedValue(tokenError)
+    } as any;
+
+    await expect(reloadCurrentUser()).rejects.toBe(tokenError);
+  });
+});
 
 describe('auth email validation', () => {
   it('rejects Firebase-invalid emails before they reach the auth SDK', () => {

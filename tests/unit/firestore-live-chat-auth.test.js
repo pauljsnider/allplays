@@ -68,8 +68,10 @@ describe('firestore rules — liveChat authentication requirements', () => {
         expect(liveChatBlock).not.toBeNull();
     });
 
-    it('requires isSignedIn() for liveChat creates (no unauthenticated writes)', () => {
-        expect(liveChatBlock).toContain('isSignedIn()');
+    it('requires the verified-email authentication gate for liveChat creates', () => {
+        expect(liveChatBlock).toContain('isVerifiedForSensitiveWrite()');
+        expect(rulesSource).toContain('function isVerifiedForSensitiveWrite()');
+        expect(rulesSource).toContain('return isSignedIn() &&');
         expect(liveChatBlock).not.toMatch(/allow\s+create\s*:\s*if\s+true/);
     });
 
@@ -107,8 +109,10 @@ describe('firestore rules — liveReactions authentication requirements', () => 
         expect(liveReactionsBlock).not.toBeNull();
     });
 
-    it('requires isSignedIn() for liveReactions creates (no unauthenticated writes)', () => {
-        expect(liveReactionsBlock).toContain('isSignedIn()');
+    it('requires the verified-email authentication gate for liveReactions creates', () => {
+        expect(liveReactionsBlock).toContain('isVerifiedForSensitiveWrite()');
+        expect(rulesSource).toContain('function isVerifiedForSensitiveWrite()');
+        expect(rulesSource).toContain('return isSignedIn() &&');
         expect(liveReactionsBlock).not.toMatch(/allow\s+create\s*:\s*if\s+true/);
     });
 

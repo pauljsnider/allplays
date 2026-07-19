@@ -16,7 +16,7 @@ describe('co-parent invite workflow regression', () => {
         const acceptInviteSource = readFileSync(resolve(process.cwd(), 'accept-invite.html'), 'utf8');
 
         expect(acceptInviteSource).toContain('redeemCoParentInvite');
-        expect(acceptInviteSource).toContain("./js/db.js?v=108");
+        expect(acceptInviteSource).toContain("./js/db.js?v=110");
         expect(acceptInviteSource).toContain("./js/accept-invite-flow.js?v=11");
     });
 
@@ -33,7 +33,7 @@ describe('co-parent invite workflow regression', () => {
         expect(handlerSource).not.toContain('parentPlayerKeys: arrayUnion');
     });
 
-    it('privileged callable links the co-parent, private profile, and invite atomically', () => {
+    it('privileged callable links the co-parent, trusted projection, private profile, and invite atomically', () => {
         const functionsSource = readFileSync(resolve(process.cwd(), 'functions/index.js'), 'utf8');
         const handlerIndex = functionsSource.indexOf('exports.redeemCoParentInvite');
         expect(handlerIndex).toBeGreaterThanOrEqual(0);
@@ -46,6 +46,10 @@ describe('co-parent invite workflow regression', () => {
         expect(handlerSource).toContain('parentTeamIds: appendUniqueValue');
         expect(handlerSource).toContain('parentPlayerKeys: appendUniqueValue');
         expect(handlerSource).toContain('admin.firestore.FieldValue.arrayUnion');
+        expect(handlerSource).toContain('const publicProfileRef = firestore.doc(`publicUserProfiles/${userId}`);');
+        expect(handlerSource).toContain('const nextUserData = {');
+        expect(handlerSource).toContain('transaction.set(publicProfileRef, buildTrustedPublicUserProfileProjectionPayload(nextUserData, {');
+        expect(handlerSource).toContain('trustedEmail: context.auth.token?.email || userData.email || null');
         expect(handlerSource).toContain("status: 'accepted'");
     });
 });

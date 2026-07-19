@@ -55,14 +55,14 @@ describe('athlete profile Storage rules', () => {
         expect(rules).toContain('return athleteProfileMatchesPathOwner(userId, profileId) &&');
         expect(mediaRules).toContain('allow get: if canReadAthleteProfileMedia(userId, profileId);');
         expect(mediaRules).toContain('allow list: if false;');
-        expect(mediaRules).toContain('allow create: if isSignedIn() &&');
+        expect(mediaRules).toContain('allow create: if isVerifiedForSensitiveWrite() &&');
         expect(mediaRules).toContain('request.auth.uid == userId');
         expect(rules).toContain('function athleteProfileMatchesPathOwner(userId, profileId)');
         expect(mediaRules).toContain('athleteProfileMatchesPathOwner(userId, profileId)');
         expect(mediaRules).toContain('request.resource.size > 0');
         expect(mediaRules).toContain('request.resource.size <= 100 * 1024 * 1024');
         expect(mediaRules).toContain('isAllowedAthleteProfileMediaUploadType(request.resource.contentType);');
-        expect(mediaRules).toContain('allow delete: if isSignedIn() &&');
+        expect(mediaRules).toContain('allow delete: if isVerifiedForSensitiveWrite() &&');
         expect(mediaRules).toContain('allow update: if false;');
 
         expect(canGetAthleteProfileMedia({

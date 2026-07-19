@@ -379,7 +379,7 @@ describe('family plan helpers', () => {
         const rules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
         expect(rules).toContain('match /familyMemberships/{memberId}');
         expect(rules).toContain('allow read: if isOwner(userId) || isGlobalAdmin();');
-        expect(rules).toContain('allow create: if isOwner(userId) && isFamilyMembershipPayloadValid');
+        expect(rules).toContain('allow create: if isVerifiedForSensitiveWrite() && isOwner(userId) && isFamilyMembershipPayloadValid');
         expect(rules).toContain('isFamilyMembershipInviteMetadataUpdate');
         expect(rules).toContain('isFamilyMembershipAcceptance');
         expect(rules).not.toContain('function isFamilyMembershipRemoval');
@@ -391,13 +391,13 @@ describe('family plan helpers', () => {
         const rules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
         expect(rules).toContain('match /householdInvites/{inviteId}');
         expect(rules).toContain('allow read: if isOwner(userId) || isGlobalAdmin();');
-        expect(rules).toContain('allow create: if isOwner(userId) && isHouseholdInvitePayloadValid');
+        expect(rules).toContain('allow create: if isVerifiedForSensitiveWrite() && isOwner(userId) && isHouseholdInvitePayloadValid');
         expect(rules).toContain('data.status == \'pending\'');
         expect(rules).toContain('data.playerKey == data.teamId + "::" + data.playerId');
         expect(rules).toContain('isParentForPlayer(data.teamId, data.playerId)');
-        expect(rules).toContain('allow update: if isHouseholdInviteRevocation');
+        expect(rules).toContain('allow update: if isVerifiedForSensitiveWrite() && isHouseholdInviteRevocation');
         expect(rules).toContain("affectedKeys().hasOnly(['status', 'accessStatus', 'updatedAt', 'removedAt', 'revokedAt'])");
-        expect(rules).toContain('allow delete: if isOwner(userId);');
+        expect(rules).toContain('allow delete: if isVerifiedForSensitiveWrite() && isOwner(userId);');
     });
 
     it('keeps family share link listing on an owner-only query without composite index requirements', () => {

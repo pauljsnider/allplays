@@ -5,6 +5,8 @@ const { Resend } = require('resend');
 const crypto = require('node:crypto');
 const { isPrivateIpAddress, isBlockedHostname, assertPublicHost, normalizeTargetUrl, fetchWithTimeout } = require('./utils/security-utils');
 const { createCalendarIcsCache, createCalendarIcsFetchHandler } = require('./calendar-ics-fetch-core.cjs');
+const { createVerifiedEmailSensitiveActionGuard } = require('./verified-email-policy.cjs');
+const { isAllPlaysFirebaseHostingOrigin } = require('./hosting-origin-policy.cjs');
 const {
   normalizeTeamPassCheckoutInput,
   isEligibleTeamPassPurchaser,
@@ -206,6 +208,14 @@ if (admin.apps.length === 0) {
 }
 
 const firestore = admin.firestore();
+const assertSensitiveEmailVerified = createVerifiedEmailSensitiveActionGuard({
+  firestore,
+  HttpsError: functions.https.HttpsError,
+  logger: functions.logger,
+  configuredMode: process.env.VERIFIED_EMAIL_SENSITIVE_WRITES_MODE ||
+    functions.config()?.security?.verified_email_mode ||
+    'observe'
+});
 const INVITE_EMAIL_TYPES = new Set(['parent_invite', 'household_invite', 'coparent_invite']);
 const EMAIL_LINK_INVITE_TYPES = new Set(['parent_invite', 'household_invite', 'coparent_invite', 'admin_invite']);
 const AUTH_EMAIL_COOLDOWN_MS = 60 * 1000;
@@ -261,6 +271,14 @@ const checkCalendarForceRefreshRateLimit = createInMemoryRateLimiter({
   windowMs: 60_000,
   maxRequests: 10,
   maxKeys: 5_000
+});
+// Cache hits are cheap and remain governed by the per-client limit above. This
+// second boundary is consumed only when a canonical URL would trigger outbound
+// network work, preventing many clients from collectively hammering one host.
+const checkCalendarTargetFetchRateLimit = createInMemoryRateLimiter({
+  windowMs: 60_000,
+  maxRequests: 30,
+  maxKeys: 10_000
 });
 
 function getStripeConfig() {
@@ -1759,6 +1777,7 @@ exports.syncRegistrationProvider = functions.https.onCall(async (data, context) 
   if (!context.auth) {
     throw new functions.https.HttpsError('unauthenticated', 'Sign in to sync registration data.');
   }
+  await assertSensitiveEmailVerified(context, 'sync-registration-provider');
 
   const teamId = String(data?.teamId || '').trim();
   if (!teamId) {
@@ -1824,6 +1843,7 @@ exports.claimOpenOfficiatingSlot = functions.https.onCall(async (data, context) 
   if (!context.auth) {
     throw new functions.https.HttpsError('unauthenticated', 'Sign in before claiming an officiating slot.');
   }
+  await assertSensitiveEmailVerified(context, 'claim-open-officiating-slot');
 
   let input;
   try {
@@ -1974,6 +1994,7 @@ exports.publishOrganizationScheduleDraft = functions.https.onCall(async (data, c
   if (!context.auth) {
     throw new functions.https.HttpsError('unauthenticated', 'The function must be called while authenticated.');
   }
+  await assertSensitiveEmailVerified(context, 'publish-organization-schedule');
 
   const organizationId = String(data?.organizationId || '').trim();
   const scheduleId = String(data?.scheduleId || '').trim();
@@ -2254,6 +2275,7 @@ exports.queueInviteEmail = functions.https.onCall(async (data, context) => {
   if (!uid) {
     throw new functions.https.HttpsError('unauthenticated', 'Sign in before sending an invite email.');
   }
+  await assertSensitiveEmailVerified(context, 'queue-invite-email');
   const code = String(data?.code || '').trim().toUpperCase();
   if (!/^[A-Z0-9]{8}$/.test(code)) {
     throw new functions.https.HttpsError('invalid-argument', 'A valid eight-character invite code is required.');
@@ -2696,6 +2718,7 @@ exports.syncPublicUserProfileProjection = functions.https.onCall(async (data, co
   if (userId !== context.auth.uid) {
     throw new functions.https.HttpsError('permission-denied', 'You can only sync your own public profile.');
   }
+  await assertSensitiveEmailVerified(context, 'sync-public-user-profile-projection');
 
   const userSnap = await firestore.doc(`users/${userId}`).get();
   if (!userSnap.exists) {
@@ -2716,6 +2739,7 @@ exports.confirmParentAccountMerge = functions.https.onCall(async (data, context)
   if (!context.auth?.uid) {
     throw new functions.https.HttpsError('unauthenticated', 'Sign in before confirming an account merge.');
   }
+  await assertSensitiveEmailVerified(context, 'confirm-parent-account-merge');
 
   let input;
   try {
@@ -3108,6 +3132,7 @@ exports.revokeHouseholdMemberAccess = functions.https.onCall(async (data, contex
   if (!context.auth?.uid) {
     throw new functions.https.HttpsError('unauthenticated', 'Sign in before revoking household access.');
   }
+  await assertSensitiveEmailVerified(context, 'revoke-household-member-access');
 
   let membershipId;
   try {
@@ -3318,6 +3343,7 @@ exports.redeemCoParentInvite = functions.https.onCall(async (data, context) => {
     const team = { id: teamSnap.id, ...(teamSnap.data() || {}) };
     const player = { id: playerSnap.id, ...(playerSnap.data() || {}) };
     const userData = userSnap.exists ? userSnap.data() || {} : {};
+    const publicProfileRef = firestore.doc(`publicUserProfiles/${userId}`);
     const relation = codeData.relation || 'Co-parent';
     const parentLink = {
       teamId,
@@ -3330,13 +3356,24 @@ exports.redeemCoParentInvite = functions.https.onCall(async (data, context) => {
     };
     const playerKey = `${teamId}::${playerId}`;
     const now = admin.firestore.Timestamp.now();
-
-    transaction.set(userRef, {
+    const nextUserData = {
+      ...userData,
       parentOf: appendUniqueParentLink(userData.parentOf, parentLink),
       parentTeamIds: appendUniqueValue(userData.parentTeamIds, teamId),
       parentPlayerKeys: appendUniqueValue(userData.parentPlayerKeys, playerKey),
       roles: appendUniqueValue(userData.roles, 'parent')
+    };
+
+    transaction.set(userRef, {
+      parentOf: nextUserData.parentOf,
+      parentTeamIds: nextUserData.parentTeamIds,
+      parentPlayerKeys: nextUserData.parentPlayerKeys,
+      roles: nextUserData.roles
     }, { merge: true });
+
+    transaction.set(publicProfileRef, buildTrustedPublicUserProfileProjectionPayload(nextUserData, {
+      trustedEmail: context.auth.token?.email || userData.email || null
+    }), { merge: true });
 
     transaction.set(privateProfileRef, {
       parents: admin.firestore.FieldValue.arrayUnion({
@@ -3515,6 +3552,7 @@ exports.previewAccountMerge = functions.https.onCall(async (data, context) => {
   if (!context.auth?.uid) {
     throw new functions.https.HttpsError('unauthenticated', 'Sign in before previewing an account merge.');
   }
+  await assertSensitiveEmailVerified(context, 'preview-account-merge');
 
   const destinationUid = context.auth.uid;
   const destinationEmail = normalizeEmail(context.auth.token?.email);
@@ -3625,6 +3663,7 @@ exports.createScopedRsvpToken = functions.https.onCall(async (data, context) => 
   if (!context.auth?.uid) {
     throw new functions.https.HttpsError('unauthenticated', 'Sign in before creating RSVP tokens.');
   }
+  await assertSensitiveEmailVerified(context, 'create-scoped-rsvp-token');
 
   let input;
   try {
@@ -3810,6 +3849,7 @@ exports.createStripeTeamPassCheckout = functions.https.onCall(async (data, conte
   if (!context.auth?.uid) {
     throw new functions.https.HttpsError('unauthenticated', 'Sign in before purchasing a team pass.');
   }
+  await assertSensitiveEmailVerified(context, 'create-team-pass-checkout');
 
   const { teamId, seasonId, tier } = normalizeTeamPassCheckoutInput(data || {});
   const teamSnap = await firestore.doc(`teams/${teamId}`).get();
@@ -3853,6 +3893,7 @@ exports.createStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
   if (!context.auth?.uid) {
     throw new functions.https.HttpsError('unauthenticated', 'Sign in before paying a team fee.');
   }
+  await assertSensitiveEmailVerified(context, 'create-team-fee-checkout');
 
   let input;
   try {
@@ -3946,6 +3987,7 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
   if (!context.auth?.uid) {
     throw new functions.https.HttpsError('unauthenticated', 'Sign in before refunding a team fee.');
   }
+  await assertSensitiveEmailVerified(context, 'refund-team-fee-payment');
 
   let input;
   try {
@@ -4761,46 +4803,58 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
 });
 
 function normalizeIcsText(text) {
-  const marker = 'BEGIN:VCALENDAR';
-  const markerIndex = text.indexOf(marker);
-  if (markerIndex === -1) return text;
-  return text.slice(markerIndex);
+  if (typeof text !== 'string') return text;
+  const sourceText = text.replace(/^\uFEFF/, '');
+  const markerMatch = /(^|\r\n|\n|\r)BEGIN:VCALENDAR(?=\r\n|\n|\r)/.exec(sourceText);
+  if (!markerMatch) return text;
+  return sourceText.slice(markerMatch.index + markerMatch[1].length);
 }
 
 
 
-function getAllowedOrigins() {
+function getAllowedOriginPolicy() {
   const configuredOrigins = functions.config()?.calendar?.allowed_origins;
   if (Array.isArray(configuredOrigins)) {
-    return configuredOrigins.map((origin) => String(origin).trim()).filter(Boolean);
+    return {
+      origins: configuredOrigins.map((origin) => String(origin).trim()).filter(Boolean),
+      allowFirebaseHosting: false
+    };
   }
   if (typeof configuredOrigins === 'string') {
-    return configuredOrigins.split(',').map((origin) => origin.trim()).filter(Boolean);
+    return {
+      origins: configuredOrigins.split(',').map((origin) => origin.trim()).filter(Boolean),
+      allowFirebaseHosting: false
+    };
   }
-  return [
-    'https://allplays.ai',
-    'https://www.allplays.ai',
-    'http://localhost:8000',
-    'http://127.0.0.1:8000'
-  ];
+  return {
+    origins: [
+      'https://allplays.ai',
+      'https://www.allplays.ai',
+      'http://localhost:8000',
+      'http://127.0.0.1:8000'
+    ],
+    allowFirebaseHosting: true
+  };
 }
 
-const allowedOriginSet = new Set(getAllowedOrigins());
+const allowedOriginPolicy = getAllowedOriginPolicy();
+const allowedOriginSet = new Set(allowedOriginPolicy.origins);
 
 function isAllowedOrigin(origin) {
   if (!origin) {
     return true;
   }
-  return allowedOriginSet.has(origin);
+  return allowedOriginSet.has(origin) ||
+    (allowedOriginPolicy.allowFirebaseHosting && isAllPlaysFirebaseHostingOrigin(origin));
 }
 
 function isAllowedTelemetryOrigin(origin) {
-  return !!origin && allowedOriginSet.has(origin);
+  return !!origin && isAllowedOrigin(origin);
 }
 
 function writeCorsHeaders(req, res, methods = 'GET,OPTIONS') {
   const origin = req.headers.origin;
-  if (origin && allowedOriginSet.has(origin)) {
+  if (origin && isAllowedOrigin(origin)) {
     res.set('Access-Control-Allow-Origin', origin);
     res.set('Vary', 'Origin');
   }
@@ -5587,6 +5641,9 @@ exports.fetchCalendarIcs = functions
     cache: calendarIcsCache,
     checkRateLimit: checkCalendarFetchRateLimit,
     checkForceRefreshRateLimit: checkCalendarForceRefreshRateLimit,
+    checkTargetRateLimit: (target) => checkCalendarTargetFetchRateLimit({
+      ip: `calendar:${crypto.createHash('sha256').update(target.url).digest('hex')}`
+    }),
     isAllowedOrigin,
     writeCorsHeaders,
     normalizeTargetUrl,
@@ -10555,6 +10612,7 @@ exports.postSharedGameCancellationNotification = functions.https.onCall(async (d
   if (!context.auth?.uid) {
     throw new functions.https.HttpsError('unauthenticated', 'Sign in to notify the linked team chat.');
   }
+  await assertSensitiveEmailVerified(context, 'post-shared-game-cancellation');
 
   const teamId = normalizeText(data?.teamId, 160);
   const gameId = normalizeText(data?.gameId, 160);
@@ -10648,6 +10706,7 @@ async function requireTeamEmailSender(teamId, context) {
   if (!context.auth?.uid) {
     throw new functions.https.HttpsError('unauthenticated', 'Sign in to send team email.');
   }
+  await assertSensitiveEmailVerified(context, 'send-team-email');
   const [teamSnap, userSnap] = await Promise.all([
     firestore.doc(`teams/${teamId}`).get(),
     firestore.doc(`users/${context.auth.uid}`).get()
@@ -12608,6 +12667,7 @@ function normalizeAuthorizedDirectAttachment(rawAttachment, { teamId, conversati
 }
 
 exports.sendAuthorizedDirectMessage = functions.https.onCall(async (data, context = {}) => {
+  await assertSensitiveEmailVerified(context, 'send-authorized-direct-message');
   const caller = await getOpportunityCaller(context);
   assertOpportunityRateLimit(checkPublicOpportunityMessageRateLimit, context, `direct-message:${caller.uid}`);
   const teamId = normalizeDirectChatId(data?.teamId, 'team');

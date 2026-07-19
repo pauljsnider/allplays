@@ -105,6 +105,9 @@ describe('nested team chat message payload contracts', () => {
             rules.indexOf('match /chatConversations/{conversationId} {'),
             rules.indexOf('// Server-only dedup log')
         );
+        expect(nestedMessageRules).toContain('allow create: if isVerifiedForSensitiveWrite() &&\n                           canAccessChatConversation');
+        expect(nestedMessageRules.match(/allow update: if isVerifiedForSensitiveWrite\(\) &&/g)).toHaveLength(3);
+        expect(nestedMessageRules.match(/allow delete:/g)).toHaveLength(1);
         expect(nestedMessageRules).toContain('request.resource.data.diff(resource.data).affectedKeys()\n                               .hasOnly([\'text\', \'editedAt\'])');
         expect(nestedMessageRules).toContain('resource.data.senderId == request.auth.uid');
         expect(nestedMessageRules).toContain('isNestedChatMessageEditTargetValid(');
@@ -414,6 +417,82 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
         })));
         await assertSucceeds(setDoc(messageRef(parentDb, directConversationId, 'valid-direct-no-email'), directWithoutStoredEmail));
         await assertSucceeds(setDoc(messageRef(coachDb, staffConversationId, 'valid-staff'), staffPayload()));
+    });
+
+    it('enforces verified email for nested message creates without changing observe-mode access', async () => {
+        await testEnv.withSecurityRulesDisabled(async (context) => {
+            await setDoc(doc(context.firestore(), 'securityPolicies/verifiedEmail'), {
+                mode: 'enforce',
+                exemptUserIds: []
+            });
+        });
+        const unverifiedParentDb = testEnv.authenticatedContext('parent-1', {
+            email: 'parent@example.com',
+            email_verified: false
+        }).firestore();
+        const verifiedParentDb = testEnv.authenticatedContext('parent-1', {
+            email: 'parent@example.com',
+            email_verified: true
+        }).firestore();
+
+        await assertFails(setDoc(
+            messageRef(unverifiedParentDb, directConversationId, 'blocked-unverified'),
+            directPayload()
+        ));
+        await assertSucceeds(setDoc(
+            messageRef(verifiedParentDb, directConversationId, 'allowed-verified'),
+            directPayload()
+        ));
+    });
+
+    it('enforces verified email for nested edits, soft-deletes, and reactions', async () => {
+        await testEnv.withSecurityRulesDisabled(async (context) => {
+            const firestore = context.firestore();
+            await setDoc(doc(firestore, 'securityPolicies/verifiedEmail'), {
+                mode: 'enforce',
+                exemptUserIds: []
+            });
+            for (const messageId of ['guarded-edit', 'guarded-delete', 'guarded-reaction']) {
+                await setDoc(
+                    messageRef(firestore, directConversationId, messageId),
+                    directPayload({ createdAt: Timestamp.now() })
+                );
+            }
+        });
+        const unverifiedParentDb = testEnv.authenticatedContext('parent-1', {
+            email: 'parent@example.com',
+            email_verified: false
+        }).firestore();
+        const verifiedParentDb = testEnv.authenticatedContext('parent-1', {
+            email: 'parent@example.com',
+            email_verified: true
+        }).firestore();
+
+        await assertFails(updateDoc(
+            messageRef(unverifiedParentDb, directConversationId, 'guarded-edit'),
+            { text: 'Blocked edit', editedAt: serverTimestamp() }
+        ));
+        await assertFails(updateDoc(
+            messageRef(unverifiedParentDb, directConversationId, 'guarded-delete'),
+            { deleted: true }
+        ));
+        await assertFails(updateDoc(
+            messageRef(unverifiedParentDb, directConversationId, 'guarded-reaction'),
+            { 'reactions.heart': ['parent-1'] }
+        ));
+
+        await assertSucceeds(updateDoc(
+            messageRef(verifiedParentDb, directConversationId, 'guarded-edit'),
+            { text: 'Allowed edit', editedAt: serverTimestamp() }
+        ));
+        await assertSucceeds(updateDoc(
+            messageRef(verifiedParentDb, directConversationId, 'guarded-delete'),
+            { deleted: true }
+        ));
+        await assertSucceeds(updateDoc(
+            messageRef(verifiedParentDb, directConversationId, 'guarded-reaction'),
+            { 'reactions.heart': ['parent-1'] }
+        ));
     });
 
     it('denies direct-message client writes so the authorization callable owns that path', async () => {

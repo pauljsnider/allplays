@@ -631,7 +631,7 @@ export async function uploadStatSheetPhoto(teamId, file) {
     }
 }
 
-import { resolveZip } from './utils.js?v=16'; // Import resolveZip
+import { resolveZip } from './utils.js?v=17'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -1867,7 +1867,15 @@ async function requestTrustedPublicUserProfileProjectionSync(userId) {
 async function syncPublicUserProfile(userId, userData = null) {
     const nextUserData = userData || await getUserProfile(userId) || {};
     const payload = await buildPublicUserProfilePresentationPayload(nextUserData);
-    await setDoc(doc(db, 'publicUserProfiles', userId), payload, { merge: true });
+    try {
+        await setDoc(doc(db, 'publicUserProfiles', userId), payload, { merge: true });
+    } catch (error) {
+        // Public projections are derived, best-effort data. In particular, an
+        // unverified account must still be able to complete self-profile and
+        // invite bootstrap while enforce mode defers this sensitive write.
+        console.warn('[public-user-profile] Presentation sync deferred:', error);
+        return;
+    }
     try {
         await syncTrustedPublicUserProfileProjection(userId, nextUserData);
     } catch (error) {
@@ -1875,7 +1883,14 @@ async function syncPublicUserProfile(userId, userData = null) {
             console.warn('[public-user-profile] Trusted projection sync skipped for non-owner profile:', error);
             return;
         }
-        await requestTrustedPublicUserProfileProjectionSync(userId);
+        try {
+            await requestTrustedPublicUserProfileProjectionSync(userId);
+        } catch (callableError) {
+            // The callable intentionally shares the verified-email guard. A
+            // blocked or temporarily unavailable projection must not turn an
+            // otherwise successful sign-in or invite redemption into failure.
+            console.warn('[public-user-profile] Trusted projection sync deferred:', callableError);
+        }
     }
 }
 

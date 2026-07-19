@@ -34,7 +34,8 @@ describe('private AI Firestore rules', () => {
         );
 
         for (const ruleBlock of [messageRules, conversationRules]) {
-            expect(ruleBlock).toContain('allow read, create, update, delete: if isOwner(userId);');
+            expect(ruleBlock).toContain('allow read: if isOwner(userId);');
+            expect(ruleBlock).toContain('allow create, update, delete: if isVerifiedForSensitiveWrite() && isOwner(userId);');
             expect(ruleBlock).not.toContain('isGlobalAdmin()');
         }
     });
