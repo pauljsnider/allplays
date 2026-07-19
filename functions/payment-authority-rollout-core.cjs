@@ -189,11 +189,25 @@ function inspectTeamPassAttemptAuthority({ teamId = '', seasonId = '', tier = 't
     .every((value) => value === undefined || asNonNegativeSafeInteger(value) !== null);
   const hasOnlyEffectiveDisputeSignals = disputeStatuses.every((status) => ['none', 'won'].includes(status));
   const hasWonDisputeSignal = disputeStatuses.includes('won');
-  const hasResolvedDisputeId = !normalizeString(attempt.disputeId) || hasWonDisputeSignal;
+  const hasResolvedDisputeId = hasWonDisputeSignal
+    ? Boolean(normalizeString(attempt.disputeId))
+    : !normalizeString(attempt.disputeId);
+  const hasBoundReversalState = reversalState === undefined || (
+    normalizeString(reversalState.stripeChargeId) === normalizeString(attempt.stripeChargeId)
+    && normalizeString(reversalState.stripePaymentIntentId) === normalizeString(attempt.stripePaymentIntentId)
+    && asNonNegativeSafeInteger(reversalState.chargeAmountCents) === amountCents
+  );
+  const hasDurableDisputeEvidence = !hasWonDisputeSignal || (
+    Number.isSafeInteger(Number(reversalState?.disputeEventCreated))
+    && Number(reversalState.disputeEventCreated) > 0
+    && Boolean(normalizeString(reversalState.lastStripeEventId))
+  );
   const hasEffectivePaidAuthority = hasValidReversalState
+    && hasBoundReversalState
     && hasValidRefundAmounts
     && hasOnlyEffectiveDisputeSignals
     && hasResolvedDisputeId
+    && hasDurableDisputeEvidence
     && explicitFinancialStatuses.every((status) => status === 'paid')
     && asNonNegativeSafeInteger(reversalRefundedAmountCents || 0) === 0
     && asNonNegativeSafeInteger(topLevelRefundedAmountCents || 0) === 0
@@ -268,6 +282,12 @@ function inspectSettledTeamPassAttemptAuthority({ teamId = '', seasonId = '', ti
       && reversalDisputeLostAmountCents === expectedDisputeLostAmountCents
     : [topLevelDisputeLostAmountCents, reversalDisputeLostAmountCents]
       .every((amount) => amount === null || amount === expectedDisputeLostAmountCents);
+  const hasDurableDisputeEvidence = reversalDisputeStatus === 'none' || (
+    Boolean(normalizeString(attempt.disputeId))
+    && Number.isSafeInteger(Number(reversalState?.disputeEventCreated))
+    && Number(reversalState.disputeEventCreated) > 0
+    && Boolean(normalizeString(reversalState.lastStripeEventId))
+  );
 
   if (!['refunded', 'dispute_lost'].includes(checkoutStatus)
       || normalizeString(attempt.product) !== 'team_pass'
@@ -295,6 +315,7 @@ function inspectSettledTeamPassAttemptAuthority({ teamId = '', seasonId = '', ti
       || topLevelRefundedAmountCents !== reversalRefundedAmountCents
       || !['none', 'won', 'lost'].includes(reversalDisputeStatus)
       || (topLevelDisputeStatus && topLevelDisputeStatus !== reversalDisputeStatus)
+      || !hasDurableDisputeEvidence
       || normalizeString(reversalState.stripePaymentIntentId) !== normalizeString(attempt.stripePaymentIntentId)
       || normalizeString(reversalState.stripeChargeId) !== normalizeString(attempt.stripeChargeId)
       || effectiveStatus !== checkoutStatus

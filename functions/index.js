@@ -470,6 +470,13 @@ async function expireTeamPassReplacementAuthorityBeforePaidRestoration({
   const targetAttempt = targetAttemptSnap.data() || {};
   const ignoredReason = getTeamPassChargeGuardFailure({ attempt: targetAttempt, charge });
   if (ignoredReason) return [];
+  const reversalBindingFailure = getStoredTeamPassReversalBindingFailure({
+    attempt: targetAttempt,
+    charge
+  });
+  if (reversalBindingFailure) {
+    throw new Error(`Team Pass stored reversal authority is invalid before replacement expiration: ${reversalBindingFailure}`);
+  }
   const nextReversal = reconcileTeamPassReversal({
     current: targetAttempt.reversalState || {},
     event,
@@ -5105,6 +5112,43 @@ function withTeamPassDisputeLostAuthority(reversal = {}) {
   };
 }
 
+function getStoredTeamPassReversalBindingFailure({ attempt = {}, charge = {} } = {}) {
+  if (attempt.reversalState === undefined) return '';
+  const reversal = attempt.reversalState;
+  if (!reversal || typeof reversal !== 'object' || Array.isArray(reversal)) {
+    return 'reversal_state_invalid';
+  }
+  const stripeChargeId = getStripeObjectId(charge);
+  const stripePaymentIntentId = getStripeObjectId(charge.payment_intent);
+  const chargeAmountCents = Math.round(Number(charge.amount || 0));
+  const reversalChargeAmountCents = Math.round(Number(reversal.chargeAmountCents || 0));
+  const reversalRefundedAmountCents = Number(reversal.refundedAmountCents || 0);
+  const disputeStatus = String(reversal.disputeStatus || 'none').trim().toLowerCase();
+  if (!stripeChargeId
+      || !stripePaymentIntentId
+      || !Number.isSafeInteger(chargeAmountCents)
+      || chargeAmountCents <= 0
+      || getStripeObjectId(reversal.stripeChargeId) !== stripeChargeId
+      || getStripeObjectId(reversal.stripePaymentIntentId) !== stripePaymentIntentId
+      || reversalChargeAmountCents !== chargeAmountCents
+      || !Number.isSafeInteger(reversalRefundedAmountCents)
+      || reversalRefundedAmountCents < 0
+      || reversalRefundedAmountCents > chargeAmountCents
+      || !['none', 'open', 'won', 'lost'].includes(disputeStatus)) {
+    return 'reversal_state_authority_mismatch';
+  }
+  const hasDisputeState = ['open', 'won', 'lost'].includes(disputeStatus);
+  if (hasDisputeState !== Boolean(String(attempt.disputeId || '').trim())
+      || (hasDisputeState && (
+        !Number.isSafeInteger(Number(reversal.disputeEventCreated))
+        || Number(reversal.disputeEventCreated) <= 0
+        || !String(reversal.lastStripeEventId || '').trim()
+      ))) {
+    return 'reversal_state_event_evidence_missing';
+  }
+  return '';
+}
+
 function getSettledStripeChargeLedgerFailure({
   product,
   input,
@@ -8087,6 +8131,12 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
         }
         const attempt = attemptSnap.exists ? (attemptSnap.data() || {}) : {};
         const ignoredReason = getTeamPassChargeGuardFailure({ attempt, charge: chargeAuthority });
+        const reversalBindingFailure = ignoredReason
+          ? ''
+          : getStoredTeamPassReversalBindingFailure({ attempt, charge: chargeAuthority });
+        if (reversalBindingFailure) {
+          throw new Error(`Team Pass stored reversal authority is invalid: ${reversalBindingFailure}`);
+        }
         const currentReversal = attempt.reversalState || {};
         const nextReversal = ignoredReason
           ? currentReversal
@@ -8106,7 +8156,9 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
             stripeEventId: event.id,
             stripeChargeId: charge.id || null,
             stripePaymentIntentId: getStripeObjectId(charge.payment_intent),
-            disputeId: eventObject.object === 'dispute' ? eventObject.id || null : null,
+            disputeId: eventObject.object === 'dispute'
+              ? eventObject.id || null
+              : attempt.disputeId || null,
             refundedAmountCents: Math.max(0, Math.round(Number(nextReversal.refundedAmountCents || 0))),
             disputeLostAmountCents: Math.max(0, Math.round(Number(nextReversal.disputeLostAmountCents || 0))),
             reversalState: nextReversal
@@ -8194,10 +8246,14 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
       });
       const lineItems = lineItemSnapshot?.data || [];
       let paymentIntent = {};
+      let charge = {};
       if (paidEvent) {
         const paymentIntentId = getStripeObjectId(teamPassSession.payment_intent);
         if (!paymentIntentId) throw new Error('Legacy Team Pass Checkout Session is missing its PaymentIntent.');
         paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+        const chargeId = getStripeObjectId(paymentIntent.latest_charge);
+        if (!chargeId) throw new Error('Legacy Team Pass PaymentIntent is missing its latest Charge.');
+        charge = await stripe.charges.retrieve(chargeId);
       }
       const legacyGuardFailure = getLegacyTeamPassCheckoutGuardFailure({
         session: teamPassSession,
@@ -8206,6 +8262,13 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
         expectedLivemode: getExpectedStripeLivemode(secretKey),
         paidEvent
       });
+      const legacyChargeFailure = paidEvent && !legacyGuardFailure
+        ? getSettledStripeSessionPaymentAuthorityFailure({
+          session: teamPassSession,
+          paymentIntent,
+          charge
+        })
+        : '';
       const receivedAt = admin.firestore.FieldValue.serverTimestamp();
       const eventRef = firestore.doc(`stripeEvents/${event.id}`);
       const attemptRef = buildLegacyTeamPassAttemptRef(input, teamPassSession.id);
@@ -8218,7 +8281,7 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
       const stripeChargeId = getStripeObjectId(paymentIntent.latest_charge);
       let unlocked = false;
 
-      await firestore.runTransaction(async (transaction) => {
+      const transactionResult = await firestore.runTransaction(async (transaction) => {
         const eventSnap = await transaction.get(eventRef);
         if (eventSnap.exists) return;
         const attemptSnap = await transaction.get(attemptRef);
@@ -8230,7 +8293,9 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
           || existingAttempt.seasonId !== input.seasonId
           || existingAttempt.tier !== input.tier
         );
-        const ignoredReason = legacyGuardFailure || (legacyAttemptConflict ? 'legacy_attempt_conflict' : '');
+        const ignoredReason = legacyGuardFailure
+          || legacyChargeFailure
+          || (legacyAttemptConflict ? 'legacy_attempt_conflict' : '');
         if (!ignoredReason) {
           const authority = {
             product: TEAM_PASS_PRODUCT,
@@ -8248,16 +8313,55 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
             updatedAt: receivedAt
           };
           if (paidEvent) {
-            const reversalState = withTeamPassDisputeLostAuthority(existingAttempt.reversalState || {
-              stripeChargeId,
+            const projectedAttempt = {
+              ...existingAttempt,
+              ...authority,
+              checkoutStatus: String(existingAttempt.checkoutStatus || '').trim() || 'async_pending',
               stripePaymentIntentId,
-              chargeAmountCents: authority.checkoutAmountCents,
-              refundedAmountCents: 0,
-              refundEventCreated: 0,
-              disputeStatus: 'none',
-              disputeEventCreated: 0,
-              lastStripeEventId: event.id || ''
+              stripeChargeId
+            };
+            const runtimeChargeFailure = getTeamPassChargeGuardFailure({
+              attempt: projectedAttempt,
+              charge
             });
+            if (runtimeChargeFailure) {
+              throw new Error(`Legacy Team Pass Charge authority is invalid: ${runtimeChargeFailure}`);
+            }
+            const reversalBindingFailure = getStoredTeamPassReversalBindingFailure({
+              attempt: existingAttempt,
+              charge
+            });
+            if (reversalBindingFailure) {
+              throw new Error(`Legacy Team Pass stored reversal authority is invalid: ${reversalBindingFailure}`);
+            }
+            const reversalState = withTeamPassDisputeLostAuthority(reconcileTeamPassReversal({
+              current: existingAttempt.reversalState || {},
+              event: { id: event.id, created: event.created, type: event.type },
+              charge
+            }));
+            const disputeSignalFailure = getStripeChargeDisputeSignalFailure(
+              charge,
+              reversalState.disputeStatus
+            );
+            if (disputeSignalFailure) {
+              // Pre-authority Team Pass attempts do not exist until this
+              // migration runs. Persist only the exact inactive authority so
+              // a retried dispute event can bind to it; do not consume the
+              // paid event or project entitlement access yet.
+              transaction.set(attemptRef, {
+                ...authority,
+                ...(attemptSnap.exists ? {} : {
+                  checkoutStatus: 'async_pending',
+                  stripePaymentStatus: teamPassSession.payment_status || null
+                }),
+                stripePaymentIntentId,
+                stripeChargeId,
+                refundedAmountCents: Math.max(0, Math.round(Number(reversalState.refundedAmountCents || 0))),
+                disputeLostAmountCents: Math.max(0, Math.round(Number(reversalState.disputeLostAmountCents || 0))),
+                reversalState
+              }, { merge: true });
+              return { retryableDisputeAuthorityFailure: disputeSignalFailure };
+            }
             const paymentStatus = getTeamPassEffectivePaymentStatus(reversalState);
             const entitlementStatus = paymentStatus === 'paid'
               ? 'active'
@@ -8301,9 +8405,18 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
           ignoredReason: ignoredReason || null,
           receivedAt
         });
+        return { retryableDisputeAuthorityFailure: '' };
       });
 
-      res.status(200).json({ received: true, unlocked, legacyReconciled: !legacyGuardFailure });
+      if (transactionResult?.retryableDisputeAuthorityFailure) {
+        throw new Error(`Legacy Team Pass dispute authority is not ready: ${transactionResult.retryableDisputeAuthorityFailure}`);
+      }
+
+      res.status(200).json({
+        received: true,
+        unlocked,
+        legacyReconciled: !(legacyGuardFailure || legacyChargeFailure)
+      });
       return;
     } catch (error) {
       console.error('Failed to process legacy Stripe team pass webhook:', error);
@@ -8354,14 +8467,21 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
       const ignoredReason = checkoutGuardFailure || paymentIntentGuardFailure;
       if (!ignoredReason) {
         if (paidEvent) {
+          const reversalBindingFailure = getStoredTeamPassReversalBindingFailure({ attempt, charge });
+          if (reversalBindingFailure) {
+            throw new Error(`Team Pass stored reversal authority is invalid: ${reversalBindingFailure}`);
+          }
           const settlementReversalState = reconcileTeamPassReversal({
             current: attempt.reversalState || {},
             event: { id: event.id, created: event.created, type: event.type },
             charge
           });
-          if (charge.disputed === true
-              && !['open', 'won', 'lost'].includes(String(settlementReversalState.disputeStatus || '').trim().toLowerCase())) {
-            throw new Error('Team Pass Charge has a historical dispute signal without durable dispute-event authority.');
+          const disputeSignalFailure = getStripeChargeDisputeSignalFailure(
+            charge,
+            settlementReversalState.disputeStatus
+          );
+          if (disputeSignalFailure) {
+            throw new Error(`Team Pass Charge dispute authority is not ready: ${disputeSignalFailure}`);
           }
           const authoritativeReversalState = withTeamPassDisputeLostAuthority(settlementReversalState);
           const effectivePaymentStatus = getTeamPassEffectivePaymentStatus(authoritativeReversalState);

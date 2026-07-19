@@ -70,15 +70,28 @@ function reconcileStripeChargeReversal({ current = {}, event = {}, charge = {} }
     next.lastStripeEventId = normalizeString(event.id) || next.lastStripeEventId;
   }
 
+  let incomingDisputeStatus = '';
+  if (event.type === 'charge.dispute.created') {
+    incomingDisputeStatus = 'open';
+  } else if (event.type === 'charge.dispute.closed') {
+    const closedStatus = normalizeString(event.data?.object?.status).toLowerCase();
+    if (closedStatus === 'lost') {
+      incomingDisputeStatus = 'lost';
+    } else if (['won', 'warning_closed', 'prevented'].includes(closedStatus)) {
+      // warning_closed and prevented retain the payment; neither represents a
+      // financial dispute loss.
+      incomingDisputeStatus = 'won';
+    } else {
+      throw new Error(`Unsupported Stripe closed dispute status: ${closedStatus || 'missing'}`);
+    }
+  }
+
+  const disputePrecedence = { none: 0, open: 1, lost: 2, won: 3 };
   const disputeEventCanAdvance = eventCreated > next.disputeEventCreated
     || (eventCreated === next.disputeEventCreated
-      && !(event.type === 'charge.dispute.created' && ['won', 'lost'].includes(next.disputeStatus)));
-  if (['charge.dispute.created', 'charge.dispute.closed'].includes(event.type)
-      && disputeEventCanAdvance) {
-    const dispute = event.data?.object || {};
-    next.disputeStatus = event.type === 'charge.dispute.created'
-      ? 'open'
-      : normalizeString(dispute.status).toLowerCase() === 'won' ? 'won' : 'lost';
+      && disputePrecedence[incomingDisputeStatus] > disputePrecedence[next.disputeStatus]);
+  if (incomingDisputeStatus && disputeEventCanAdvance) {
+    next.disputeStatus = incomingDisputeStatus;
     next.disputeEventCreated = eventCreated;
     next.lastStripeEventId = normalizeString(event.id) || next.lastStripeEventId;
   }

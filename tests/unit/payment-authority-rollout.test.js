@@ -164,9 +164,24 @@ describe('Stripe payment-authority rollout gate', () => {
             teamId: 'team-a', seasonId: '2026', tier: 'team-pass',
             attempt: {
                 ...attempt, stripeChargeId: 'ch_a', refundedAmountCents: 0, disputeId: 'dp_won',
-                reversalState: { chargeAmountCents: 4900, refundedAmountCents: 0, disputeStatus: 'won' }
+                reversalState: {
+                    stripePaymentIntentId: 'pi_a', stripeChargeId: 'ch_a', chargeAmountCents: 4900,
+                    refundedAmountCents: 0, disputeStatus: 'won', disputeEventCreated: 100,
+                    lastStripeEventId: 'evt_won'
+                }
             }
         })).toBe('');
+        expect(inspectTeamPassAttemptAuthority({
+            teamId: 'team-a', seasonId: '2026', tier: 'team-pass',
+            attempt: {
+                ...attempt, stripeChargeId: 'ch_a', refundedAmountCents: 0, disputeId: 'dp_won',
+                reversalState: {
+                    stripePaymentIntentId: 'pi_other', stripeChargeId: 'ch_other', chargeAmountCents: 9999,
+                    refundedAmountCents: 0, disputeStatus: 'won', disputeEventCreated: 100,
+                    lastStripeEventId: 'evt_won'
+                }
+            }
+        })).toBe('active_entitlement_invalid_checkout_attempt');
     });
 
     it('accepts only economically consistent settled Team Pass attempts', () => {
@@ -207,11 +222,14 @@ describe('Stripe payment-authority rollout gate', () => {
             checkoutStatus: 'dispute_lost',
             refundedAmountCents: 0,
             disputeLostAmountCents: 4900,
+            disputeId: 'dp_lost',
             reversalState: {
                 ...attempt.reversalState,
                 refundedAmountCents: 0,
                 disputeStatus: 'lost',
-                disputeLostAmountCents: 4900
+                disputeLostAmountCents: 4900,
+                disputeEventCreated: 100,
+                lastStripeEventId: 'evt_lost'
             }
         })).toBe('');
         expect(inspect({
@@ -219,11 +237,14 @@ describe('Stripe payment-authority rollout gate', () => {
             checkoutStatus: 'dispute_lost',
             refundedAmountCents: 100,
             disputeLostAmountCents: 4800,
+            disputeId: 'dp_lost',
             reversalState: {
                 ...attempt.reversalState,
                 refundedAmountCents: 100,
                 disputeStatus: 'lost',
-                disputeLostAmountCents: 4800
+                disputeLostAmountCents: 4800,
+                disputeEventCreated: 100,
+                lastStripeEventId: 'evt_lost'
             }
         })).toBe('');
         expect(inspect({
