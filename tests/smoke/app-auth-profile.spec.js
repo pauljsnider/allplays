@@ -699,7 +699,7 @@ test('profile exposes account, notification, invite, verification, password, upl
     await expect(page.getByText('Notification preferences saved.')).toBeVisible();
 
     await page.getByRole('button', { name: 'Invites', exact: true }).click();
-    await expect(page.getByText('Create invite')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Create invite' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Show more codes' })).toBeVisible();
     await page.getByLabel('Recipient email').fill('friend@example.com');
     await page.getByRole('button', { name: 'Create invite' }).click();
