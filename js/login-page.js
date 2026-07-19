@@ -130,8 +130,22 @@ export function createLoginRedirectCoordinator({
     }
 
     function getAutoRedirectUrl(userWithRoles) {
-        const shouldRedeemInvite = inviteRedemptionOverride ?? shouldRedeemInviteFromLogin;
-        return getPostAuthRedirect(userWithRoles, shouldRedeemInvite, inviteCodeOverride, inviteTypeOverride);
+        if (inviteRedemptionOverride !== null) {
+            return getPostAuthRedirect(userWithRoles, inviteRedemptionOverride, inviteCodeOverride, inviteTypeOverride);
+        }
+
+        const pendingInviteCode = urlCodeParam
+            ? null
+            : windowObject.sessionStorage.getItem(PENDING_LOGIN_INVITE_CODE_STORAGE_KEY);
+        if (pendingInviteCode) {
+            windowObject.sessionStorage.removeItem(PENDING_LOGIN_INVITE_CODE_STORAGE_KEY);
+            inviteRedemptionOverride = true;
+            inviteCodeOverride = pendingInviteCode;
+            inviteTypeOverride = '';
+            return getPostAuthRedirect(userWithRoles, true, pendingInviteCode, '');
+        }
+
+        return getPostAuthRedirect(userWithRoles, shouldRedeemInviteFromLogin);
     }
 
     return {
