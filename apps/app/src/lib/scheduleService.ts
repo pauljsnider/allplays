@@ -1652,6 +1652,7 @@ function isPublicRsvpReminderManager(team: any, user: AuthUser | null) {
   if (!team || !user?.uid) return false;
   if (team.ownerId === user.uid || (user as any).isAdmin === true) return true;
   const email = normalizeEmail(user.email);
+  if (email && (normalizeEmail(team.ownerEmailLower) === email || normalizeEmail(team.ownerEmail) === email)) return true;
   const adminEmails = Array.isArray(team.adminEmails) ? team.adminEmails.map(normalizeEmail) : [];
   return Boolean(email && adminEmails.includes(email));
 }
@@ -1682,13 +1683,20 @@ async function loadStaffTeams(user: AuthUser) {
     },
     async () => {
       const coachTeamIds = Array.isArray(user.coachOf) ? user.coachOf.map(compactString).filter(Boolean) : [];
-      const [ownedTeams, adminTeams] = await Promise.all([
+      const normalizedEmail = normalizeEmail(user.email);
+      const ownerEmailCandidates = Array.from(new Set([compactString(user.email), normalizedEmail].filter(Boolean)));
+      const ownerEmailLookups = ownerEmailCandidates.map((ownerEmail) =>
+        nativeRunQuery('teams', 'ownerEmail', 'EQUAL', ownerEmail).catch(() => [])
+      );
+      const [ownedTeams, adminTeams, ownerEmailLowerTeams, ...ownerEmailTeams] = await Promise.all([
         nativeRunQuery('teams', 'ownerId', 'EQUAL', user.uid).catch(() => []),
-        user.email ? nativeRunQuery('teams', 'adminEmails', 'ARRAY_CONTAINS', normalizeEmail(user.email)).catch(() => []) : Promise.resolve([])
+        normalizedEmail ? nativeRunQuery('teams', 'adminEmails', 'ARRAY_CONTAINS', normalizedEmail).catch(() => []) : Promise.resolve([]),
+        normalizedEmail ? nativeRunQuery('teams', 'ownerEmailLower', 'EQUAL', normalizedEmail).catch(() => []) : Promise.resolve([]),
+        ...ownerEmailLookups
       ]);
       const coachTeams = await Promise.all(coachTeamIds.map((teamId) => nativeGetDocument(`teams/${encodeURIComponent(teamId)}`).catch(() => null)));
       const teamsById = new Map<string, any>();
-      [...ownedTeams, ...adminTeams, ...coachTeams].forEach((team) => {
+      [...ownedTeams, ...adminTeams, ...ownerEmailLowerTeams, ...ownerEmailTeams.flat(), ...coachTeams].forEach((team) => {
         if (team?.id && isTeamActive(team) && isTeamStaff(team, user)) teamsById.set(team.id, team);
       });
       return [...teamsById.values()];

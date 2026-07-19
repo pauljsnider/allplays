@@ -48,6 +48,7 @@ export async function createTeamForApp(user: AuthUser | null, input: CreateTeamF
     isPublic: input?.isPublic !== false,
     ownerId: user.uid,
     ownerEmail: cleanString(user.email),
+    ownerEmailLower: cleanString(user.email).toLowerCase(),
     adminEmails: []
   }));
 

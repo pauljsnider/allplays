@@ -24,6 +24,16 @@ function canReadTeamDocumentRule() {
     return rules.slice(start, end);
 }
 
+function canReadManagedTeamDocumentRule() {
+    const start = rules.indexOf('function canReadManagedTeamDocument(data) {');
+    const end = rules.indexOf('function canReadPublicTeamDocument(data) {', start);
+
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+
+    return rules.slice(start, end);
+}
+
 function canListManagedTeamDocumentRule() {
     const start = rules.indexOf('function canListManagedTeamDocument(data) {');
     const end = rules.indexOf('function canReadTeamDocument(data) {', start);
@@ -92,6 +102,7 @@ describe('team media Firestore rules', () => {
 
     it('allows selected team media managers to get private team documents without opening team lists', () => {
         const readRule = canReadTeamDocumentRule();
+        const managedReadRule = canReadManagedTeamDocumentRule();
         const listRule = canListManagedTeamDocumentRule();
 
         expect(rules).toContain('function canReadTeamMediaManagerTeamDocument(data) {');
@@ -100,6 +111,10 @@ describe('team media Firestore rules', () => {
         expect(rules).toContain("request.auth.uid in permission.get('memberIds', [])");
         expect(readRule).toContain('canReadTeamMediaManagerTeamDocument(data)');
         expect(listRule).not.toContain('canReadTeamMediaManagerTeamDocument(data)');
+        expect(managedReadRule).toContain("data.get('ownerEmail', '').lower() == request.auth.token.email.lower()");
+        expect(managedReadRule).toContain("data.get('ownerEmailLower', '') == request.auth.token.email.lower()");
+        expect(listRule).toContain("data.get('ownerEmail', '').lower() == request.auth.token.email.lower()");
+        expect(listRule).toContain("data.get('ownerEmailLower', '') == request.auth.token.email.lower()");
         expect(rules).toContain('allow get: if canReadTeamDocument(resource.data);');
         expect(rules).toContain('canListManagedTeamDocument(resource.data);');
 
