@@ -140,7 +140,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
             );
         });
 
-        it('allows team chat image upload when verified-email policy is enforced for an unverified signed-in parent', async () => {
+        it('allows team chat image upload and own delete when verified-email policy is enforced for an unverified signed-in parent', async () => {
             await testEnv.withSecurityRulesDisabled(async (context) => {
                 await context.firestore().doc('securityPolicies/verifiedEmail').set({ mode: 'enforce' });
             });
@@ -155,6 +155,9 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
                     new Uint8Array([1]),
                     { contentType: 'image/jpeg' }
                 )
+            );
+            await assertSucceeds(
+                parentStorage.ref('stat-sheets/team-chat/team-a/team/member-a/unverified-chat-photo.jpg').delete()
             );
         });
     }

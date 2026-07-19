@@ -200,8 +200,8 @@ service firebase.storage {
         canAccessChatAttachment(teamId, conversationId) &&
         request.auth.uid == userId &&
         isAllowedChatAttachmentUpload(request.resource.contentType, request.resource.size);
-      allow delete: if isVerifiedForSensitiveWrite() &&
-        (isTeamOwnerOrAdmin(teamId) || canDeleteOwnChatAttachment(teamId, conversationId, userId));
+      allow delete: if (isVerifiedForSensitiveWrite() && isTeamOwnerOrAdmin(teamId)) ||
+        canDeleteOwnChatAttachment(teamId, conversationId, userId);
       allow update: if false;
     }
 

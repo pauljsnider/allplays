@@ -89,7 +89,7 @@ describe('fallback media paths and Storage rules', () => {
         expect(chatFallbackRules).toContain('request.auth.uid == userId');
         expect(chatFallbackRules).toContain('isAllowedChatAttachmentUpload(request.resource.contentType, request.resource.size);');
         expect(rules).toContain('function canDeleteOwnChatAttachment(teamId, conversationId, userId)');
-        expect(chatFallbackRules).toContain('allow delete: if isVerifiedForSensitiveWrite() &&\n        (isTeamOwnerOrAdmin(teamId) || canDeleteOwnChatAttachment(teamId, conversationId, userId));');
+        expect(chatFallbackRules).toContain('allow delete: if (isVerifiedForSensitiveWrite() && isTeamOwnerOrAdmin(teamId)) ||\n        canDeleteOwnChatAttachment(teamId, conversationId, userId);');
         expect(chatFallbackRules).not.toContain('allow delete: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;');
         expect(legacyChatFallbackRules).toContain('allow get: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;');
         expect(legacyChatFallbackRules).toContain('allow create: if false;');
