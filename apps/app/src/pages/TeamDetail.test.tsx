@@ -1764,13 +1764,13 @@ describe('TeamDetail', () => {
     );
 
     expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: /more/i }));
+    fireEvent.click(within(screen.getByRole('navigation', { name: 'Team detail sections' })).getByRole('button', { name: 'More' }));
     fireEvent.change(screen.getByLabelText('Admin email'), { target: { value: ' NewCoach@Example.com ' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send invite' }));
 
     expect(await screen.findByText('Unable to create an admin invite code. Try again.')).toBeTruthy();
     expect(screen.queryByText('newcoach@example.com already has an account and was added as an admin.')).toBeNull();
-    expect(screen.getByLabelText('Admin email')).toHaveValue('NewCoach@Example.com');
+    expect((screen.getByLabelText('Admin email') as HTMLInputElement).value).toBe('NewCoach@Example.com');
     expect(teamDetailServiceMocks.loadTeamStaffPermissions).not.toHaveBeenCalled();
   });
 
