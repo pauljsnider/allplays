@@ -276,8 +276,8 @@ describe('Profile', () => {
 
     renderProfile('/profile?section=invites');
 
-    expect(await screen.findByText('Invite codes')).toBeTruthy();
-    expect(await screen.findByText('No codes generated yet.')).toBeTruthy();
+    expect((await screen.findAllByText('Create invite')).length).toBeGreaterThan(0);
+    expect(await screen.findByText('No invites created yet.')).toBeTruthy();
     expect(screen.queryByText('Unable to load invite history.')).toBeNull();
     expect(profileServiceMocks.loadProfileAccessCodesPage).toHaveBeenCalledWith('user-1', { pageSize: 3 });
   });

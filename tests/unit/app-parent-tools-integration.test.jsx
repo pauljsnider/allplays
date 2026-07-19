@@ -30,6 +30,7 @@ const serviceMocks = vi.hoisted(() => ({
 }));
 
 const publicActionMocks = vi.hoisted(() => ({
+    copyPublicText: vi.fn(),
     exportCalendarIcsFile: vi.fn().mockResolvedValue('downloaded'),
     openPublicUrl: vi.fn(),
     sharePublicUrl: vi.fn().mockResolvedValue('shared')
@@ -215,6 +216,7 @@ beforeEach(() => {
             writeText: vi.fn().mockResolvedValue()
         }
     });
+    publicActionMocks.copyPublicText.mockResolvedValue('copied');
     URL.createObjectURL = vi.fn(() => 'blob:test');
     URL.revokeObjectURL = vi.fn();
 
@@ -325,13 +327,13 @@ describe('React app parent tools integration', () => {
         expect(accessServiceMocks.submitParentAccessRequest).toHaveBeenCalledWith('team-1', 'player-1', 'Parent');
 
         await clickButton(container, 'Household');
-        await waitForText(container, 'Invite another parent or caregiver');
+        await waitForText(container, 'Create invite');
         expect(container.textContent).toContain('Grandma');
-        const householdEmail = container.querySelector('input[placeholder="Household contact email"]');
+        const householdEmail = container.querySelector('input[placeholder="Recipient email"]');
         const householdRelation = container.querySelector('input[placeholder^="Relation"]');
         await changeValue(householdEmail, 'aunt@example.com');
         await changeValue(householdRelation, 'Aunt');
-        await submitForm(container, 'Email parent invite');
+        await submitForm(container, 'Create invite');
         expect(serviceMocks.createParentHouseholdMemberInvite).toHaveBeenCalledWith(auth.user, {
             playerKey: 'team-1::player-1',
             displayName: '',
@@ -339,7 +341,7 @@ describe('React app parent tools integration', () => {
             relation: 'Aunt'
         });
         expect(container.textContent).toContain('HOME5678');
-        expect(container.textContent).toContain('Invite emailed to aunt@example.com with the code and signup link.');
+        expect(container.textContent).toContain('Email queued for aunt@example.com.');
 
         await clickButton(container, 'Fees');
         await waitForText(container, 'Team dues');
@@ -356,7 +358,7 @@ describe('React app parent tools integration', () => {
         expect(publicActionMocks.exportCalendarIcsFile).toHaveBeenCalledWith('all-plays-family-schedule.ics', 'BEGIN:VCALENDAR\r\nEND:VCALENDAR');
         expect(container.textContent).toContain('Calendar file ready to share.');
         await clickButton(container, 'Copy agenda');
-        expect(navigator.clipboard.writeText).toHaveBeenCalledWith('Bears Practice');
+        expect(publicActionMocks.copyPublicText).toHaveBeenCalledWith('Bears Practice');
         await clickButton(container, 'Apple');
         expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('webcal://feed.example.test/team-1.ics');
 

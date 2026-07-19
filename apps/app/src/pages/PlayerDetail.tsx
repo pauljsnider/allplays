@@ -70,7 +70,9 @@ import {
   type RsvpResponse
 } from '../lib/scheduleLogic';
 import { sharePublicUrl } from '../lib/publicActions';
+import { buildAppAcceptInviteUrl } from '../lib/inviteUrls';
 import { completeParentCoreWorkflowTimer } from '../lib/parentWorkflowTiming';
+import { InviteResultCard } from './parent-tools/shared';
 import type { AuthState } from '../lib/types';
 import type { ProfilePhotoSource } from '../lib/profilePhotoService';
 
@@ -2697,13 +2699,14 @@ function CoParentInviteCard({ data, auth }: { data: ParentPlayerDetailData; auth
   const [email, setEmail] = useState('');
   const [sending, setSending] = useState(false);
   const [status, setStatus] = useState<{ tone: 'error' | 'success'; message: string } | null>(null);
-  const [code, setCode] = useState('');
+  const [createdInvite, setCreatedInvite] = useState<{ code: string; inviteUrl: string; email: string; emailSent: boolean } | null>(null);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setSending(true);
     setStatus(null);
-    setCode('');
+    setCreatedInvite(null);
+    const normalizedEmail = email.trim().toLowerCase();
     try {
       const result = await sendParentCoParentInvite({
         user: auth.user,
@@ -2712,8 +2715,14 @@ function CoParentInviteCard({ data, auth }: { data: ParentPlayerDetailData; auth
         playerName: data.player.name || data.child.playerName,
         email
       });
-      setCode(result?.code || '');
-      setStatus({ tone: 'success', message: `Invite created for ${email.trim().toLowerCase()}.` });
+      const code = String(result?.code || '').trim().toUpperCase();
+      setCreatedInvite({
+        code,
+        inviteUrl: buildAppAcceptInviteUrl(code, 'coparent'),
+        email: normalizedEmail,
+        emailSent: false
+      });
+      setStatus({ tone: 'success', message: `Invite created for ${normalizedEmail}.` });
       setEmail('');
     } catch (error: any) {
       setStatus({ tone: 'error', message: error?.message || 'Unable to send co-parent invite.' });
@@ -2726,21 +2735,27 @@ function CoParentInviteCard({ data, auth }: { data: ParentPlayerDetailData; auth
     <section className="app-card p-4">
       <div className="flex items-center gap-2 text-sm font-black text-primary-800">
         <Users className="h-4 w-4" aria-hidden="true" />
-        Invite Co-Parent
+        Create invite
       </div>
-      <p className="mt-1 text-xs font-semibold leading-5 text-gray-500">Creates the same co-parent invite code as the parent dashboard.</p>
+      <p className="mt-1 text-xs font-semibold leading-5 text-gray-500">Invite another parent or caregiver to connect their account to this player.</p>
       <form className="mt-4 space-y-3" onSubmit={submit}>
-        <TextField label="Co-parent email" value={email} onChange={setEmail} placeholder="co-parent@example.com" type="email" />
+        <TextField label="Recipient email" value={email} onChange={setEmail} placeholder="parent@example.com" type="email" />
         {status ? <Status tone={status.tone} message={status.message} /> : null}
-        {code ? (
-          <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
-            <div className="text-xs font-black uppercase tracking-[0.04em] text-emerald-700">Invite code</div>
-            <div className="mt-1 font-mono text-lg font-black text-emerald-950">{code}</div>
-          </div>
+        {createdInvite ? (
+          <InviteResultCard
+            code={createdInvite.code}
+            inviteUrl={createdInvite.inviteUrl}
+            recipientEmail={createdInvite.email}
+            emailSent={createdInvite.emailSent}
+            title="Invite code"
+            shareTitle="ALL PLAYS parent invite"
+            shareText={`Join ALL PLAYS to follow this player with invite code ${createdInvite.code}.`}
+            onStatus={(message) => setStatus({ tone: 'success', message })}
+          />
         ) : null}
         <button type="submit" className="primary-button w-full justify-center" disabled={sending}>
           {sending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Mail className="h-4 w-4" aria-hidden="true" />}
-          {sending ? 'Creating Invite' : 'Create Invite'}
+          {sending ? 'Creating invite...' : 'Create invite'}
         </button>
       </form>
     </section>
