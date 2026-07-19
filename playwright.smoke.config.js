@@ -1,6 +1,7 @@
 export default {
     testDir: './tests/smoke',
     testMatch: ['**/*.spec.js'],
+    snapshotPathTemplate: '{testDir}/{testFilePath}-snapshots/{arg}{ext}',
     timeout: 30000,
     retries: process.env.CI ? 1 : 0,
     expect: {

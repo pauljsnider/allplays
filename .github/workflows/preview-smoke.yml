@@ -80,7 +80,7 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Run static-hosting smoke
-        run: npx playwright test --config=playwright.smoke.config.js --reporter=line
+        run: npx playwright test --config=playwright.smoke.config.js --grep-invert @visual --reporter=line
         env:
           SMOKE_BASE_URL: http://127.0.0.1:4173
           SMOKE_APP_BASE_URL: http://127.0.0.1:5174
@@ -93,6 +93,22 @@ jobs:
           SMOKE_TEAM_ID: ${{ vars.SMOKE_TEAM_ID }}
           SMOKE_GAME_ID: ${{ vars.SMOKE_GAME_ID }}
           SMOKE_PLAYER_ID: ${{ vars.SMOKE_PLAYER_ID }}
+
+      - name: Run deterministic visual regression
+        run: npm run test:smoke:visual -- --reporter=line
+        env:
+          SMOKE_BASE_URL: http://127.0.0.1:4173
+          SMOKE_APP_BASE_URL: http://127.0.0.1:5174
+          SMOKE_SUITE: preview
+
+      - name: Upload visual regression diffs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: preview-visual-regression-diffs
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Upload server log on failure
         if: failure()
