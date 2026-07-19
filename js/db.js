@@ -6003,7 +6003,27 @@ function sanitizeAthleteProfileMediaName(fileName) {
     return String(fileName || 'media').replace(/[^\w.\-]+/g, '_');
 }
 
-export async function reserveAthleteProfileMediaOwnership(userId, profileId) {
+const PRIMARY_ATHLETE_PROFILE_MEDIA_PREFIX = 'primary://';
+
+function buildPrimaryAthleteProfileMediaPath(storagePath) {
+    return `${PRIMARY_ATHLETE_PROFILE_MEDIA_PREFIX}${storagePath}`;
+}
+
+function resolveAthleteProfileMediaStorage(storagePath) {
+    const normalizedPath = String(storagePath || '').trim();
+    if (normalizedPath.startsWith(PRIMARY_ATHLETE_PROFILE_MEDIA_PREFIX)) {
+        return {
+            storageClient: storage,
+            objectPath: normalizedPath.slice(PRIMARY_ATHLETE_PROFILE_MEDIA_PREFIX.length)
+        };
+    }
+    return {
+        storageClient: imageStorage,
+        objectPath: normalizedPath
+    };
+}
+
+export async function reserveAthleteProfileMediaOwnership(userId, profileId, options = {}) {
     const normalizedUserId = String(userId || '').trim();
     const normalizedProfileId = String(profileId || '').trim();
     if (!normalizedUserId) {
@@ -6014,6 +6034,17 @@ export async function reserveAthleteProfileMediaOwnership(userId, profileId) {
     }
 
     const profileRef = doc(db, 'athleteProfiles', normalizedProfileId);
+    if (options.isNewProfile === true) {
+        await setDoc(profileRef, {
+            parentUserId: normalizedUserId,
+            privacy: 'private',
+            mediaUploadReservation: true,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+        });
+        return { id: normalizedProfileId, created: true };
+    }
+
     return runTransaction(db, async (transaction) => {
         const profileSnap = await transaction.get(profileRef);
         if (profileSnap.exists()) {
@@ -6063,12 +6094,14 @@ export async function uploadAthleteProfileMedia(userId, profileId, file, options
         throw new Error('Select a media file to upload.');
     }
 
-    await requireImageAuth();
+    if (!auth.currentUser || auth.currentUser.uid !== userId) {
+        throw new Error('The signed-in parent account does not match this athlete profile upload.');
+    }
 
     const safeName = sanitizeAthleteProfileMediaName(file.name);
     const kind = options.kind === 'profile-photo' ? 'profile-photo' : 'clip';
     const storagePath = `athlete-profile-media/${userId}/${profileId}/${Date.now()}_${kind}_${safeName}`;
-    const storageRef = ref(imageStorage, storagePath);
+    const storageRef = ref(storage, storagePath);
     const snapshot = await uploadBytes(storageRef, file);
     const url = await getDownloadURL(snapshot.ref);
     const mimeType = String(file.type || '').trim();
@@ -6078,7 +6111,7 @@ export async function uploadAthleteProfileMedia(userId, profileId, file, options
 
     return {
         url,
-        storagePath,
+        storagePath: buildPrimaryAthleteProfileMediaPath(storagePath),
         mimeType,
         sizeBytes: Number.isFinite(file.size) ? file.size : null,
         uploadedAtMs: Date.now(),
@@ -6088,7 +6121,9 @@ export async function uploadAthleteProfileMedia(userId, profileId, file, options
 
 export async function deleteAthleteProfileMediaByPath(storagePath) {
     if (!storagePath) return;
-    const storageRef = ref(imageStorage, storagePath);
+    const resolved = resolveAthleteProfileMediaStorage(storagePath);
+    if (!resolved.objectPath) return;
+    const storageRef = ref(resolved.storageClient, resolved.objectPath);
     await deleteObject(storageRef);
 }
 
@@ -6156,7 +6191,7 @@ export async function saveAthleteProfile(userId, draft, options = {}) {
     const profileRef = options.profileId
         ? doc(db, 'athleteProfiles', options.profileId)
         : doc(collection(db, 'athleteProfiles'));
-    const existingSnap = options.profileId ? await getDoc(profileRef) : null;
+    const existingSnap = options.profileId && options.isNewProfile !== true ? await getDoc(profileRef) : null;
     const existingProfile = existingSnap?.exists() ? { id: existingSnap.id, ...(existingSnap.data() || {}) } : null;
     if (existingProfile && existingProfile.parentUserId !== userId) {
         throw new Error('You do not have permission to edit this athlete profile.');

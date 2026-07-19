@@ -18,6 +18,7 @@ const dbMocks = vi.hoisted(() => ({
     saveAthleteProfile: vi.fn(),
     setPlayerPrivateRosterProfileFields: vi.fn(),
     updatePlayer: vi.fn(),
+    updatePlayerPrivateProfile: vi.fn(),
     updatePlayerProfile: vi.fn(),
     uploadAthleteProfileMedia: vi.fn(),
     uploadPlayerPhoto: vi.fn()
@@ -174,6 +175,7 @@ beforeEach(() => {
     dbMocks.reserveAthleteProfileMediaOwnership.mockImplementation(async (_userId, profileId) => ({ id: profileId, created: false }));
     dbMocks.releaseAthleteProfileMediaReservation.mockResolvedValue(true);
     dbMocks.deleteAthleteProfileMediaByPath.mockResolvedValue(undefined);
+    dbMocks.updatePlayerPrivateProfile.mockResolvedValue(undefined);
     dbMocks.updatePlayerProfile.mockResolvedValue(undefined);
     dbMocks.uploadAthleteProfileMedia.mockImplementation(async (userId, profileId, file, options = {}) => {
         const kind = options.kind === 'profile-photo' ? 'profile-photo' : 'clip';
@@ -422,11 +424,30 @@ describe('React app parent player detail service', () => {
         });
 
         expect(dbMocks.uploadPlayerPhoto).toHaveBeenCalledWith(file);
-        expect(dbMocks.updatePlayerProfile).toHaveBeenCalledWith('team-1', 'player-1', {
+        expect(dbMocks.updatePlayerPrivateProfile).toHaveBeenCalledWith('team-1', 'player-1', {
             emergencyContact: { name: 'Alex Parent', phone: '555-0199' },
-            medicalInfo: 'Inhaler',
+            medicalInfo: 'Inhaler'
+        });
+        expect(dbMocks.updatePlayerProfile).toHaveBeenCalledWith('team-1', 'player-1', {
             photoUrl: 'https://example.test/new-photo.jpg'
         });
+    });
+
+    it('saves emergency and medical fields without writing to the public player document', async () => {
+        await updateParentPlayerEditableProfile({
+            user: user(),
+            teamId: 'team-1',
+            playerId: 'player-1',
+            emergencyContactName: 'Alex Parent',
+            emergencyContactPhone: '555-0199',
+            medicalInfo: 'Inhaler'
+        });
+
+        expect(dbMocks.updatePlayerPrivateProfile).toHaveBeenCalledWith('team-1', 'player-1', {
+            emergencyContact: { name: 'Alex Parent', phone: '555-0199' },
+            medicalInfo: 'Inhaler'
+        });
+        expect(dbMocks.updatePlayerProfile).not.toHaveBeenCalled();
     });
 
     it('uses the legacy co-parent and athlete profile contracts from the app player page', async () => {
@@ -532,11 +553,16 @@ describe('React app parent player detail service', () => {
 
         const reservedProfileId = dbMocks.reserveAthleteProfileMediaOwnership.mock.calls[0][1];
         expect(reservedProfileId).toMatch(/^profile_/);
+        expect(dbMocks.reserveAthleteProfileMediaOwnership).toHaveBeenCalledWith('user-1', reservedProfileId, { isNewProfile: true });
         expect(dbMocks.uploadAthleteProfileMedia).toHaveBeenCalledWith('user-1', reservedProfileId, file, { kind: 'profile-photo' });
         expect(dbMocks.reserveAthleteProfileMediaOwnership.mock.invocationCallOrder[0])
             .toBeLessThan(dbMocks.uploadAthleteProfileMedia.mock.invocationCallOrder[0]);
         expect(dbMocks.uploadAthleteProfileMedia.mock.invocationCallOrder[0])
             .toBeLessThan(dbMocks.saveAthleteProfile.mock.invocationCallOrder[0]);
+        expect(dbMocks.saveAthleteProfile).toHaveBeenCalledWith('user-1', expect.any(Object), {
+            profileId: reservedProfileId,
+            isNewProfile: true
+        });
         expect(dbMocks.releaseAthleteProfileMediaReservation).not.toHaveBeenCalled();
     });
 

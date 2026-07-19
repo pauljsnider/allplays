@@ -1,4 +1,4 @@
-import { checkAuth } from '../auth.js?v=51';
+import { checkAuth } from '../auth.js?v=52';
 import {
     getTeam,
     getUserProfile,
@@ -22,7 +22,7 @@ import {
     archiveCertificate,
     canAccessCertificates,
     canViewSavedCertificate
-} from '../db.js?v=107';
+} from '../db.js?v=108';
 import { renderHeader, renderFooter, escapeHtml, shareOrCopy } from '../utils.js?v=15';
 import { renderTeamAdminBanner, getTeamAccessInfo } from '../team-admin-banner.js?v=5';
 import { TEMPLATES } from './templates.js?v=2';

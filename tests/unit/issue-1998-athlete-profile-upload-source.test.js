@@ -6,6 +6,8 @@ const playerServiceSource = readFileSync(new URL('../../apps/app/src/lib/playerS
 const playerServiceTestSource = readFileSync(new URL('./app-player-service.test.js', import.meta.url), 'utf8');
 const wiringTestSource = readFileSync(new URL('./athlete-profile-wiring.test.js', import.meta.url), 'utf8');
 const storageRulesTestSource = readFileSync(new URL('./athlete-profile-storage-rules.test.js', import.meta.url), 'utf8');
+const dbSource = readFileSync(new URL('../../js/db.js', import.meta.url), 'utf8');
+const legacyBuilderSource = readFileSync(new URL('../../athlete-profile-builder.html', import.meta.url), 'utf8');
 
 describe('issue 1998 athlete profile upload source contract', () => {
     it('keeps the native athlete profile editor exposing headshot and highlight uploads', () => {
@@ -37,6 +39,11 @@ describe('issue 1998 athlete profile upload source contract', () => {
         expect(playerServiceSource).toContain('uploadedProfilePhoto?.storagePath');
         expect(playerServiceSource).toContain('...uploadedHighlightClips.map((clip) => clip.storagePath)');
         expect(playerServiceSource).toContain('cleanupUploadedAthleteProfileMedia');
+        expect(playerServiceSource).toContain('{ profileId: workingProfileId, isNewProfile: true }');
+        expect(dbSource).toContain('const storageRef = ref(storage, storagePath);');
+        expect(dbSource).toContain('storagePath: buildPrimaryAthleteProfileMediaPath(storagePath)');
+        expect(legacyBuilderSource).toContain('{ isNewProfile: true }');
+        expect(legacyBuilderSource).toContain('isNewProfile');
     });
 
     it('keeps upload regression, legacy wiring, and storage-rule coverage in place', () => {

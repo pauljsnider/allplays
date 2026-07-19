@@ -74,4 +74,16 @@ describe('athlete profile wiring', () => {
         expect(source).toContain('mediaUploadReservation: deleteField()');
         expect(source).toContain('collectAthleteProfileMediaCleanupPaths');
     });
+
+    it('uses primary authenticated storage and a create-safe reservation for new profile media', () => {
+        const source = readFile('js/db.js');
+
+        expect(source).toContain("const PRIMARY_ATHLETE_PROFILE_MEDIA_PREFIX = 'primary://';");
+        expect(source).toContain("if (!auth.currentUser || auth.currentUser.uid !== userId)");
+        expect(source).toContain('const storageRef = ref(storage, storagePath);');
+        expect(source).toContain('storagePath: buildPrimaryAthleteProfileMediaPath(storagePath)');
+        expect(source).toContain('if (options.isNewProfile === true)');
+        expect(source).toContain("options.profileId && options.isNewProfile !== true ? await getDoc(profileRef) : null");
+        expect(source).toContain('const resolved = resolveAthleteProfileMediaStorage(storagePath);');
+    });
 });
