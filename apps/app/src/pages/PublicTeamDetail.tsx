@@ -37,7 +37,9 @@ export function PublicTeamDetail() {
           <div className="app-label">Public team</div>
           <h1 className="mt-1 text-2xl font-black text-gray-950">We couldn’t load this team</h1>
         </div>
-        <Status tone="error" message={error || 'Public team not found.'} />
+        <div role="alert" aria-live="assertive" aria-atomic="true">
+          <Status tone="error" message={error || 'Public team not found.'} />
+        </div>
         <p className="text-sm font-semibold leading-6 text-gray-600">The link may be outdated, or the team may no longer have a public profile.</p>
         <div className="flex flex-col gap-2 sm:flex-row">
           <button type="button" className="primary-button !min-h-11 justify-center sm:w-auto" onClick={() => setLoadAttempt((current) => current + 1)}>Retry</button>

@@ -216,7 +216,9 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
         </div>
       ) : error ? (
         <div className="space-y-3">
-          <Status tone="error" message={error} />
+          <div role="alert" aria-live="assertive" aria-atomic="true">
+            <Status tone="error" message={error} />
+          </div>
           <div className="flex flex-col gap-2 sm:flex-row">
             <button
               type="button"
