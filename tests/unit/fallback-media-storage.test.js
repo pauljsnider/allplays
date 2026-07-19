@@ -13,6 +13,7 @@ function extractRuleBlock(startMarker) {
 }
 
 const chatFallbackRules = extractRuleBlock('match /stat-sheets/team-chat/{teamId}/{conversationId}/{userId}/{fileName}');
+const cachedLegacyChatFallbackRules = extractRuleBlock('match /stat-sheets/team-chat/{userId}/team/{teamId}/{fileName}');
 const legacyChatFallbackRules = extractRuleBlock('match /stat-sheets/team-chat/{teamId}/{userId}/{fileName}');
 const statSheetFallbackRules = extractRuleBlock('match /stat-sheets/team-games/{teamId}/{userId}/{fileName}');
 const drillFallbackRules = extractRuleBlock('match /stat-sheets/drills/{teamId}/{drillId}/{userId}/{fileName}');
@@ -95,6 +96,10 @@ describe('fallback media paths and Storage rules', () => {
         expect(rules).toContain('function canDeleteOwnChatAttachment(teamId, conversationId, userId)');
         expect(chatFallbackRules).toContain('allow delete: if (isVerifiedForSensitiveWrite() && isTeamOwnerOrAdmin(teamId)) ||\n        canDeleteOwnChatAttachment(teamId, conversationId, userId);');
         expect(chatFallbackRules).not.toContain('allow delete: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;');
+        expect(cachedLegacyChatFallbackRules).toContain("allow create: if isSignedIn() &&\n        canAccessChatAttachment(teamId, 'team') &&");
+        expect(cachedLegacyChatFallbackRules).toContain('request.auth.uid == userId');
+        expect(cachedLegacyChatFallbackRules).toContain('isAllowedChatAttachmentUpload(request.resource.contentType, request.resource.size);');
+        expect(cachedLegacyChatFallbackRules).toContain("canDeleteOwnChatAttachment(teamId, 'team', userId);");
         expect(legacyChatFallbackRules).toContain('allow get: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;');
         expect(legacyChatFallbackRules).toContain('allow create: if false;');
         expect(legacyChatFallbackRules).toContain('allow delete: if isVerifiedForSensitiveWrite() &&\n        (isTeamOwnerOrAdmin(teamId) || canDeleteOwnTeamScopedUpload(teamId, userId));');

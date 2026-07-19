@@ -158,6 +158,40 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
             );
         });
 
+        it('allows the cached legacy team chat upload path while preserving team and uploader boundaries', async () => {
+            const memberStorage = testEnv.authenticatedContext('member-a', {
+                email: 'member-a@example.com'
+            }).storage();
+            const otherMemberStorage = testEnv.authenticatedContext('other-member', {
+                email: 'other@example.com'
+            }).storage();
+
+            await assertSucceeds(
+                memberStorage.ref('stat-sheets/team-chat/member-a/team/team-a/cached-photo.jpg').put(
+                    new Uint8Array([1]),
+                    { contentType: 'image/jpeg' }
+                )
+            );
+            await assertFails(
+                memberStorage.ref('stat-sheets/team-chat/member-a/team/team-b/cross-team.jpg').put(
+                    new Uint8Array([1]),
+                    { contentType: 'image/jpeg' }
+                )
+            );
+            await assertFails(
+                otherMemberStorage.ref('stat-sheets/team-chat/member-a/team/team-a/wrong-uploader.jpg').put(
+                    new Uint8Array([1]),
+                    { contentType: 'image/jpeg' }
+                )
+            );
+            await assertFails(
+                memberStorage.ref('stat-sheets/team-chat/member-a/team/team-a/document.txt').put(
+                    new Uint8Array([1]),
+                    { contentType: 'text/plain' }
+                )
+            );
+        });
+
         it('allows team chat image upload and own delete when verified-email policy is enforced for an unverified signed-in parent', async () => {
             await testEnv.withSecurityRulesDisabled(async (context) => {
                 await context.firestore().doc('securityPolicies/verifiedEmail').set({ mode: 'enforce' });
