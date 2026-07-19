@@ -3343,6 +3343,7 @@ exports.redeemCoParentInvite = functions.https.onCall(async (data, context) => {
     const team = { id: teamSnap.id, ...(teamSnap.data() || {}) };
     const player = { id: playerSnap.id, ...(playerSnap.data() || {}) };
     const userData = userSnap.exists ? userSnap.data() || {} : {};
+    const publicProfileRef = firestore.doc(`publicUserProfiles/${userId}`);
     const relation = codeData.relation || 'Co-parent';
     const parentLink = {
       teamId,
@@ -3355,13 +3356,24 @@ exports.redeemCoParentInvite = functions.https.onCall(async (data, context) => {
     };
     const playerKey = `${teamId}::${playerId}`;
     const now = admin.firestore.Timestamp.now();
-
-    transaction.set(userRef, {
+    const nextUserData = {
+      ...userData,
       parentOf: appendUniqueParentLink(userData.parentOf, parentLink),
       parentTeamIds: appendUniqueValue(userData.parentTeamIds, teamId),
       parentPlayerKeys: appendUniqueValue(userData.parentPlayerKeys, playerKey),
       roles: appendUniqueValue(userData.roles, 'parent')
+    };
+
+    transaction.set(userRef, {
+      parentOf: nextUserData.parentOf,
+      parentTeamIds: nextUserData.parentTeamIds,
+      parentPlayerKeys: nextUserData.parentPlayerKeys,
+      roles: nextUserData.roles
     }, { merge: true });
+
+    transaction.set(publicProfileRef, buildTrustedPublicUserProfileProjectionPayload(nextUserData, {
+      trustedEmail: context.auth.token?.email || userData.email || null
+    }), { merge: true });
 
     transaction.set(privateProfileRef, {
       parents: admin.firestore.FieldValue.arrayUnion({

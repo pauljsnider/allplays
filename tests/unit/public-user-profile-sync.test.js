@@ -6,10 +6,14 @@ const functionsSource = readFileSync(new URL('../../functions/index.js', import.
 
 function loadPublicUserProfileSyncHarness(overrides = {}) {
     const start = source.indexOf('function compactPublicProfileString(value)');
-    const end = source.indexOf('export async function updateUserProfile(userId, profile)');
+    const end = source.indexOf('export async function createAccountMergeRequest');
     if (start === -1 || end === -1 || end <= start) {
         throw new Error('Could not locate public profile sync implementation in js/db.js');
     }
+    const implementation = source.slice(start, end).replace(
+        'export async function updateUserProfile(userId, profile)',
+        'async function updateUserProfile(userId, profile)'
+    );
 
     const Timestamp = overrides.Timestamp || { now: vi.fn(() => 'timestamp-now') };
     const setDoc = overrides.setDoc || vi.fn().mockResolvedValue(undefined);
@@ -36,7 +40,7 @@ function loadPublicUserProfileSyncHarness(overrides = {}) {
         'httpsCallable',
         'functions',
         'console',
-        `${source.slice(start, end)}; return { syncPublicUserProfile };`
+        `${implementation}; return { syncPublicUserProfile, updateUserProfile };`
     );
 
     return {
@@ -128,6 +132,19 @@ describe('public user profile sync', () => {
         expect(functionsSource).toContain('trustedEmail: requesterAuthEmail');
     });
 
+    it('projects co-parent membership atomically before deferred client sync', () => {
+        const callableStart = functionsSource.indexOf('exports.redeemCoParentInvite');
+        const callableEnd = functionsSource.indexOf('exports.redeemAdminInvite', callableStart);
+        const callableSource = functionsSource.slice(callableStart, callableEnd);
+
+        expect(callableStart).toBeGreaterThanOrEqual(0);
+        expect(callableEnd).toBeGreaterThan(callableStart);
+        expect(callableSource).toContain('const publicProfileRef = firestore.doc(`publicUserProfiles/${userId}`);');
+        expect(callableSource).toContain('const nextUserData = {');
+        expect(callableSource).toContain('transaction.set(publicProfileRef, buildTrustedPublicUserProfileProjectionPayload(nextUserData, {');
+        expect(callableSource).toContain('trustedEmail: context.auth.token?.email || userData.email || null');
+    });
+
     it('falls back to the callable when an owner presentation sync cannot directly write trusted fields', async () => {
         const directProjectionError = new Error('Missing or insufficient permissions.');
         const setDoc = vi.fn()
@@ -169,6 +186,63 @@ describe('public user profile sync', () => {
             'syncPublicUserProfileProjection'
         );
         expect(harness.callable).toHaveBeenCalledWith({ userId: 'owner-1' });
+    });
+
+    it('keeps awaited self-profile bootstrap successful when enforce mode defers the presentation projection', async () => {
+        const projectionError = new Error('Missing or insufficient permissions.');
+        const setDoc = vi.fn()
+            .mockResolvedValueOnce(undefined)
+            .mockRejectedValueOnce(projectionError);
+        const getUserProfile = vi.fn().mockResolvedValue({
+            displayName: 'Unverified Owner',
+            email: 'owner@example.com'
+        });
+        const harness = loadPublicUserProfileSyncHarness({ setDoc, getUserProfile });
+
+        await expect(harness.updateUserProfile('owner-1', {
+            email: 'owner@example.com',
+            lastLogin: 'now'
+        })).resolves.toBeUndefined();
+
+        expect(setDoc).toHaveBeenNthCalledWith(
+            1,
+            expect.objectContaining({ path: 'users/owner-1' }),
+            expect.objectContaining({ email: 'owner@example.com', lastLogin: 'now' }),
+            { merge: true }
+        );
+        expect(setDoc).toHaveBeenNthCalledWith(
+            2,
+            expect.objectContaining({ path: 'publicUserProfiles/owner-1' }),
+            expect.objectContaining({ displayName: 'Unverified Owner' }),
+            { merge: true }
+        );
+        expect(harness.httpsCallable).not.toHaveBeenCalled();
+        expect(harness.warn).toHaveBeenCalledWith(
+            '[public-user-profile] Presentation sync deferred:',
+            projectionError
+        );
+    });
+
+    it('does not reject a bootstrap caller when the verified-email guard also defers callable projection', async () => {
+        const directProjectionError = new Error('Missing or insufficient permissions.');
+        const callableProjectionError = new Error('Email verification is required.');
+        const setDoc = vi.fn()
+            .mockResolvedValueOnce(undefined)
+            .mockRejectedValueOnce(directProjectionError);
+        const callable = vi.fn().mockRejectedValue(callableProjectionError);
+        const harness = loadPublicUserProfileSyncHarness({ setDoc, callable });
+
+        await expect(harness.syncPublicUserProfile('owner-1', {
+            displayName: 'Owner',
+            parentTeamIds: ['team-1'],
+            email: 'owner@example.com'
+        })).resolves.toBeUndefined();
+
+        expect(harness.callable).toHaveBeenCalledWith({ userId: 'owner-1' });
+        expect(harness.warn).toHaveBeenCalledWith(
+            '[public-user-profile] Trusted projection sync deferred:',
+            callableProjectionError
+        );
     });
 
     it('does not invoke the trusted projection callable for non-owner profile sync failures', async () => {

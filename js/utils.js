@@ -180,7 +180,7 @@ export function renderHeader(container, user) {
 
     // Keep shared-header logout on the same auth bundle as page consumers.
     navLogout.addEventListener('click', async () => {
-      const { logout } = await import('./auth.js?v=52');
+      const { logout } = await import('./auth.js?v=53');
       await logout();
       window.location.href = 'index.html';
     });
@@ -200,7 +200,7 @@ export function renderHeader(container, user) {
   // Global search: injected into the shared header in one place.
   // Lazy-import to avoid adding weight to initial render and to avoid circular deps.
   try {
-    import('./global-search.js?v=10')
+    import('./global-search.js?v=11')
       .then(({ setupHeaderSearch }) => {
         if (typeof setupHeaderSearch === 'function') {
           setupHeaderSearch({ user, headerContainer: container });

@@ -28,13 +28,13 @@ describe('team media page wiring', () => {
         const page = fs.readFileSync(path.join(repoRoot, 'team-media.html'), 'utf8');
         const source = fs.readFileSync(path.join(repoRoot, 'js/team-media.js'), 'utf8');
 
-        expect(page).toContain('src="js/team-media.js?v=16"');
+        expect(page).toContain('src="js/team-media.js?v=17"');
         expect(page).toContain('Add album');
         expect(page).toContain('Upload files');
         expect(page).toContain('Save video link');
-        expect(source).toContain("from './db.js?v=108'");
+        expect(source).toContain("from './db.js?v=110'");
         expect(source).toContain('normalizeTeamMediaVideoDraft');
-        expect(source).toContain("import { checkAuth } from './auth.js?v=52';");
+        expect(source).toContain("import { checkAuth } from './auth.js?v=53';");
         expect(source).toContain('checkAuth(async (user) => {');
         expect(source).toContain('team.html#teamId=${encodeURIComponent(state.teamId)}');
         expect(source).toContain('Team media permissions are not enabled');
@@ -51,7 +51,7 @@ describe('team media page wiring', () => {
         const source = fs.readFileSync(path.join(repoRoot, 'js/team-media.js'), 'utf8');
         const dbImportVersion = source.match(/from '\.\/db\.js\?v=(\d+)'/)?.[1];
 
-        expect(dbImportVersion).toBe('108');
+        expect(dbImportVersion).toBe('110');
 
         for (const testFile of [
             'tests/unit/team-media-item-rename.test.js',

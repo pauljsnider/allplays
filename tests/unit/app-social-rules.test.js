@@ -328,10 +328,16 @@ describe('React app social Firestore rules', () => {
         expect(source).toContain("codeAfter.get('type', null) == 'friend_invite'");
         expect(source).toContain("codeAfter.get('generatedBy', '') == data.get('requesterId', '')");
         expect(source).toContain("codeAfter.get('usedBy', '') == request.auth.uid");
-        expect(source).toContain("allow create: if isVerifiedForSensitiveWrite() &&");
-        expect(source).toContain("(isFriendshipCreatePayloadValid(friendshipId, request.resource.data) ||");
-        expect(source).toContain("isFriendInviteAcceptedFriendshipCreateValid(friendshipId, request.resource.data)");
-        expect(source).toContain("(isFriendInviteAcceptedFriendshipUpdateValid(friendshipId) ||");
+        expect(source).toContain(
+            'allow create: if (isVerifiedForSensitiveWrite() &&\n' +
+            '                        isFriendshipCreatePayloadValid(friendshipId, request.resource.data)) ||\n' +
+            '                       isFriendInviteAcceptedFriendshipCreateValid(friendshipId, request.resource.data);'
+        );
+        expect(source).toContain(
+            'allow update: if (isVerifiedForSensitiveWrite() &&\n' +
+            '                     (isFriendshipMemberUpdatePayloadValid() ||'
+        );
+        expect(source).toContain("request.resource.data.get('status', '') in ['pending', 'accepted', 'declined', 'removed', 'blocked']))) ||\n                    isFriendInviteAcceptedFriendshipUpdateValid(friendshipId);");
         expect(source).toContain("request.resource.data.get('source', '') == 'friend_invite'");
         expect(source).toContain("request.resource.data.get('inviteCodeId', '') == codeId");
         expect(source).toContain("friendshipId == buildFriendshipId(codeAfter.get('generatedBy', ''), request.auth.uid)");
@@ -349,7 +355,11 @@ describe('React app social Firestore rules', () => {
         expect(source).toContain("request.resource.data.get('blockedBy', resource.data.get('blockedBy', [])) == resource.data.get('blockedBy', [])");
         expect(source).toContain("request.resource.data.get('status', '') == 'blocked'");
         expect(source).toContain("request.auth.uid in request.resource.data.get('blockedBy', [])");
-        expect(source).toContain('isFriendInviteAcceptedFriendshipUpdateValid(friendshipId) ||\n                    isFriendshipMemberUpdatePayloadValid() ||');
+        expect(source).toContain(
+            'allow update: if (isVerifiedForSensitiveWrite() &&\n' +
+            '                     (isFriendshipMemberUpdatePayloadValid() ||'
+        );
+        expect(source).toContain('))) ||\n                    isFriendInviteAcceptedFriendshipUpdateValid(friendshipId);');
     });
 
     it('excludes friend invites from the owner update fallback after redemption', () => {
@@ -684,8 +694,10 @@ describe('React app social Firestore rules', () => {
             await testEnv?.cleanup();
         });
 
-        function authenticatedDb(uid) {
-            return testEnv.authenticatedContext(uid, { email: `${uid}@example.com` }).firestore();
+        function authenticatedDb(uid, { verified } = {}) {
+            const claims = { email: `${uid}@example.com` };
+            if (verified !== undefined) claims.email_verified = verified;
+            return testEnv.authenticatedContext(uid, claims).firestore();
         }
 
         function accessCodePayload({ codeId, inviterId, inviteeId, email = `${inviteeId}@example.com`, phone = null }) {
@@ -897,6 +909,74 @@ describe('React app social Firestore rules', () => {
                 inviteCodeId: codeId,
                 createdAt
             });
+        });
+
+        it('preserves unverified friend-invite bootstrap under enforce while gating arbitrary friendship writes', async () => {
+            const createInviterId = 'enforce-create-inviter';
+            const createInviteeId = 'enforce-create-invitee';
+            const createCodeId = 'ENFORCECREATE';
+            const createInviteeDb = authenticatedDb(createInviteeId, { verified: false });
+
+            await seedInvite({
+                codeId: createCodeId,
+                inviterId: createInviterId,
+                inviteeId: createInviteeId
+            });
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                await setDoc(doc(context.firestore(), 'securityPolicies/verifiedEmail'), {
+                    mode: 'enforce',
+                    exemptUserIds: []
+                });
+            });
+
+            await assertSucceeds(redeemInviteTransaction(createInviteeDb, {
+                codeId: createCodeId,
+                inviterId: createInviterId,
+                inviteeId: createInviteeId
+            }));
+
+            const updateInviterId = 'enforce-update-inviter';
+            const updateInviteeId = 'enforce-update-invitee';
+            const updateCodeId = 'ENFORCEUPDATE';
+            const createdAt = Timestamp.fromMillis(Date.now() - 60_000);
+            await seedInvite({
+                codeId: updateCodeId,
+                inviterId: updateInviterId,
+                inviteeId: updateInviteeId,
+                friendship: {
+                    requesterId: updateInviterId,
+                    recipientId: updateInviteeId,
+                    memberIds: [updateInviterId, updateInviteeId].sort(),
+                    status: 'pending',
+                    sharedTeamIds: [],
+                    sharedTeamNames: [],
+                    blockedBy: [],
+                    createdAt,
+                    respondedAt: createdAt,
+                    updatedAt: createdAt
+                }
+            });
+            await assertSucceeds(redeemInviteTransaction(
+                authenticatedDb(updateInviteeId, { verified: false }),
+                {
+                    codeId: updateCodeId,
+                    inviterId: updateInviterId,
+                    inviteeId: updateInviteeId
+                }
+            ));
+
+            const arbitraryRecipientId = 'enforce-arbitrary-recipient';
+            const arbitraryFriendshipId = [createInviteeId, arbitraryRecipientId].sort().join('__');
+            await assertFails(setDoc(doc(createInviteeDb, 'friendships', arbitraryFriendshipId), {
+                requesterId: createInviteeId,
+                recipientId: arbitraryRecipientId,
+                memberIds: [createInviteeId, arbitraryRecipientId].sort(),
+                status: 'pending'
+            }));
+            await assertFails(updateDoc(
+                doc(createInviteeDb, 'friendships', [createInviterId, createInviteeId].sort().join('__')),
+                { status: 'removed' }
+            ));
         });
 
         it('denies blocked friendship redemption and leaves both documents unchanged', async () => {

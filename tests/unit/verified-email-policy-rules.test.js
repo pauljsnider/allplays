@@ -5,10 +5,11 @@ import {
   assertSucceeds,
   initializeTestEnvironment
 } from '@firebase/rules-unit-testing';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, Timestamp } from 'firebase/firestore';
 
 const firestoreRules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
 const storageRules = readFileSync(new URL('../../storage.rules', import.meta.url), 'utf8');
+const dbSource = readFileSync(new URL('../../js/db.js', import.meta.url), 'utf8');
 
 describe('staged verified-email policy rules', () => {
   it('defines a shared observe/enforce policy and retains explicit account-bootstrap exceptions', () => {
@@ -20,6 +21,9 @@ describe('staged verified-email policy rules', () => {
     expect(firestoreRules.match(/allow update: if isVerifiedForSensitiveWrite\(\) &&\n                           canAccessChatConversation/g)).toHaveLength(3);
     expect(firestoreRules).toContain('allow delete: if (resource == null && isOwnRsvpNoteId() && isParentForTeam(teamId)) ||\n                           (isVerifiedForSensitiveWrite() &&');
     expect(firestoreRules).toContain('allow create: if isGlobalAdmin() ||\n                    (isOwner(userId) && isOwnerUserCreatePayloadValid(request.resource.data));');
+    expect(firestoreRules).toContain('allow create: if isVerifiedForSensitiveWrite() &&\n                       ((isGlobalAdmin() && isPublicUserProfilePayloadValid');
+    expect(dbSource).toContain("console.warn('[public-user-profile] Presentation sync deferred:', error);");
+    expect(dbSource).toContain("console.warn('[public-user-profile] Trusted projection sync deferred:', callableError);");
     expect(storageRules).toContain('function isVerifiedForSensitiveWrite()');
   });
 
@@ -121,10 +125,23 @@ describe('staged verified-email policy rules', () => {
       it('keeps the self-profile bootstrap path open so verification and recovery can complete', async () => {
         await setPolicy('enforce');
         const context = user('new-user');
+        const verified = user('verified-user', { verified: true });
 
         await assertSucceeds(setDoc(doc(context.firestore(), 'users/new-user'), {
           email: 'new-user@example.com',
           displayName: 'New User'
+        }));
+        await assertFails(setDoc(doc(context.firestore(), 'publicUserProfiles/new-user'), {
+          displayName: 'New User',
+          fullName: 'New User',
+          photoUrl: null,
+          updatedAt: Timestamp.now()
+        }));
+        await assertSucceeds(setDoc(doc(verified.firestore(), 'publicUserProfiles/verified-user'), {
+          displayName: 'Verified User',
+          fullName: 'Verified User',
+          photoUrl: null,
+          updatedAt: Timestamp.now()
         }));
       });
     }
