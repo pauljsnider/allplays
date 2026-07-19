@@ -286,6 +286,7 @@ const MAX_CALENDAR_FUNCTION_BYTES = MAX_REMOTE_ICS_BYTES + (64 * 1024);
 const CALENDAR_ATTEMPT_TIMEOUT_MS = 5000;
 const CALENDAR_TOTAL_TIMEOUT_MS = 15_000;
 const MAX_CONCURRENT_CALENDAR_IMPORTS = 50;
+export const DEFAULT_CALENDAR_FETCH_FUNCTION_URL = 'https://us-central1-game-flow-c6311.cloudfunctions.net/fetchCalendarIcs';
 export const MAX_ICS_PARSE_BYTES = MAX_REMOTE_ICS_BYTES;
 export const MAX_ICS_RAW_EVENTS = 5_000;
 export const MAX_ICS_TOTAL_RECURRENCE_OCCURRENCES = 10_000;
@@ -458,7 +459,11 @@ async function fetchAndParseCalendarOnce(normalizedUrl, options = {}) {
     if (typeof metaTagUrl === 'string' && metaTagUrl.trim()) {
       return metaTagUrl.trim();
     }
-    return null;
+    const configuredBaseUrl = globalConfig?.functionsBaseUrl || globalConfig?.functions?.baseUrl;
+    if (typeof configuredBaseUrl === 'string' && configuredBaseUrl.trim()) {
+      return `${configuredBaseUrl.trim().replace(/\/$/, '')}/fetchCalendarIcs`;
+    }
+    return DEFAULT_CALENDAR_FETCH_FUNCTION_URL;
   }
 
   async function fetchWithTimeout(fetchUrl) {
@@ -482,9 +487,6 @@ async function fetchAndParseCalendarOnce(normalizedUrl, options = {}) {
 
   async function fetchViaFunction(targetUrl) {
     const calendarFetchFunctionUrl = resolveCalendarFunctionUrl();
-    if (!calendarFetchFunctionUrl) {
-      throw new Error('Calendar fetch function URL is not configured');
-    }
     const params = new URLSearchParams({ url: targetUrl });
     if (forceRefresh) {
       params.set('forceRefresh', 'true');

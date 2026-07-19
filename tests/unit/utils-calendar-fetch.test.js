@@ -69,6 +69,42 @@ describe('fetchAndParseCalendar', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it('uses the repository first-party endpoint when runtime configuration is absent', async () => {
+    window.__ALLPLAYS_CONFIG__ = {};
+    const fetchMock = vi.fn().mockResolvedValueOnce(makeJsonResponse({
+      ok: true,
+      icsText: sampleIcs('default-function')
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const events = await fetchAndParseCalendar('https://calendar.example.test/team.ics');
+
+    expect(events).toHaveLength(1);
+    expect(events[0].uid).toBe('default-function');
+    expect(String(fetchMock.mock.calls[0][0])).toBe(
+      `https://us-central1-game-flow-c6311.cloudfunctions.net/fetchCalendarIcs?url=${encodeURIComponent('https://calendar.example.test/team.ics')}`
+    );
+  });
+
+  it('uses the shared functions base URL for an explicitly configured local endpoint', async () => {
+    window.__ALLPLAYS_CONFIG__ = {
+      functionsBaseUrl: 'http://127.0.0.1:5001/demo-project/us-central1/'
+    };
+    const fetchMock = vi.fn().mockResolvedValueOnce(makeJsonResponse({
+      ok: true,
+      icsText: sampleIcs('local-function')
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const events = await fetchAndParseCalendar('https://calendar.example.test/team.ics');
+
+    expect(events).toHaveLength(1);
+    expect(events[0].uid).toBe('local-function');
+    expect(String(fetchMock.mock.calls[0][0])).toBe(
+      `http://127.0.0.1:5001/demo-project/us-central1/fetchCalendarIcs?url=${encodeURIComponent('https://calendar.example.test/team.ics')}`
+    );
+  });
+
   it('preserves compatibility with a UTF-8 BOM and line-aligned provider preamble', async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(makeJsonResponse({
       ok: true,
