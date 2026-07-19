@@ -5121,6 +5121,7 @@ function getStoredTeamPassReversalBindingFailure({ attempt = {}, charge = {} } =
   const stripeChargeId = getStripeObjectId(charge);
   const stripePaymentIntentId = getStripeObjectId(charge.payment_intent);
   const chargeAmountCents = Math.round(Number(charge.amount || 0));
+  const chargeRefundedAmountCents = Math.round(Number(charge.amount_refunded || 0));
   const reversalChargeAmountCents = Math.round(Number(reversal.chargeAmountCents || 0));
   const reversalRefundedAmountCents = Number(reversal.refundedAmountCents || 0);
   const disputeStatus = String(reversal.disputeStatus || 'none').trim().toLowerCase();
@@ -5128,12 +5129,16 @@ function getStoredTeamPassReversalBindingFailure({ attempt = {}, charge = {} } =
       || !stripePaymentIntentId
       || !Number.isSafeInteger(chargeAmountCents)
       || chargeAmountCents <= 0
+      || !Number.isSafeInteger(chargeRefundedAmountCents)
+      || chargeRefundedAmountCents < 0
+      || chargeRefundedAmountCents > chargeAmountCents
       || getStripeObjectId(reversal.stripeChargeId) !== stripeChargeId
       || getStripeObjectId(reversal.stripePaymentIntentId) !== stripePaymentIntentId
       || reversalChargeAmountCents !== chargeAmountCents
       || !Number.isSafeInteger(reversalRefundedAmountCents)
       || reversalRefundedAmountCents < 0
       || reversalRefundedAmountCents > chargeAmountCents
+      || reversalRefundedAmountCents > chargeRefundedAmountCents
       || !['none', 'open', 'won', 'lost'].includes(disputeStatus)) {
     return 'reversal_state_authority_mismatch';
   }

@@ -922,7 +922,7 @@ test('Team Pass paid webhook rejects a stale open dispute after the Charge signa
     assert.equal(firestore.snapshot(entitlementPath).status, 'active');
 });
 
-test('Team Pass paid webhook rejects reversal evidence bound to another Charge', async () => {
+test('Team Pass paid webhook rejects cross-Charge or impossible stored reversal economics', async () => {
     const attemptPath = 'teams/team-pass/teamPassCheckoutAttempts/2026_team-pass';
     const entitlementPath = 'teams/team-pass/entitlements/2026_team-pass';
     const { firestore, stripeState, mod } = loadFunctionsModule({
@@ -963,6 +963,21 @@ test('Team Pass paid webhook rejects reversal evidence bound to another Charge',
     assert.equal(firestore.snapshot(attemptPath).reversalState.stripeChargeId, 'ch_wrong');
     assert.equal(firestore.snapshot(entitlementPath), undefined);
     assert.equal(firestore.snapshot(`stripeEvents/${paidEvent.id}`), undefined);
+
+    await firestore.doc(attemptPath).set({
+        disputeId: null,
+        reversalState: {
+            stripeChargeId: chargeId, stripePaymentIntentId: paymentIntentId, chargeAmountCents: 4900,
+            refundedAmountCents: 100, refundEventCreated: 200, disputeStatus: 'none',
+            disputeEventCreated: 0, lastStripeEventId: 'evt_wrong_refund', disputeLostAmountCents: 0
+        }
+    }, { merge: true });
+    const impossibleRefundEvent = { ...clone(paidEvent), id: 'evt_team_pass_impossible_refund_paid' };
+    stripeState.webhookEvent = impossibleRefundEvent;
+    assert.equal((await deliverStripeWebhook(mod)).statusCode, 500);
+    assert.equal(firestore.snapshot(attemptPath).reversalState.refundedAmountCents, 100);
+    assert.equal(firestore.snapshot(entitlementPath), undefined);
+    assert.equal(firestore.snapshot(`stripeEvents/${impossibleRefundEvent.id}`), undefined);
 });
 
 test('pre-authority Team Pass paid Session is migrated and credited instead of being acknowledged as unrelated', async () => {
