@@ -338,6 +338,35 @@ test('manual invite code existing-account recovery redeems the typed code after 
     await expect(page).toHaveURL(/\/accept-invite\.html\?code=AB12CD34$/);
 });
 
+test('manual invite code existing-account recovery persists through reload before login', async ({ page, baseURL }) => {
+    await mockInviteLoginModules(page, {
+        signupError: {
+            code: 'auth/email-already-in-use',
+            message: 'Firebase: Error (auth/email-already-in-use).'
+        }
+    });
+
+    await page.goto(buildUrl(baseURL, '/login.html#signup'), {
+        waitUntil: 'domcontentloaded'
+    });
+
+    await page.locator('#email').fill('mom@example.com');
+    await page.locator('#password').fill('secret123');
+    await page.locator('#confirm-password').fill('secret123');
+    await page.locator('#activation-code').fill('ab12cd34');
+    await page.locator('#submit-btn').click();
+
+    await expect(page.locator('#form-title')).toHaveText('Login');
+    await expect.poll(() => page.evaluate(() => window.sessionStorage.getItem('pendingLoginInviteCode'))).toBe('AB12CD34');
+
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.locator('#email').fill('mom@example.com');
+    await page.locator('#password').fill('secret123');
+    await page.locator('#submit-btn').click();
+
+    await expect(page).toHaveURL(/\/accept-invite\.html\?code=AB12CD34$/);
+});
+
 test('manual invite code recovery survives reload before password login', async ({ page, baseURL }) => {
     await mockInviteLoginModules(page);
     await page.addInitScript(() => {
@@ -354,6 +383,39 @@ test('manual invite code recovery survives reload before password login', async 
     await page.locator('#submit-btn').click();
 
     await expect(page).toHaveURL(/\/accept-invite\.html\?code=AB12CD34$/);
+});
+
+test('manual invite recovery clears stale code before new Google signup', async ({ page, baseURL }) => {
+    await mockInviteLoginModules(page, {
+        googleLoginResult: {
+            user: {
+                uid: 'google-user-789',
+                email: 'mom@example.com'
+            }
+        },
+        signupError: {
+            code: 'auth/email-already-in-use',
+            message: 'Firebase: Error (auth/email-already-in-use).'
+        }
+    });
+
+    await page.goto(buildUrl(baseURL, '/login.html#signup'), {
+        waitUntil: 'domcontentloaded'
+    });
+
+    await page.locator('#email').fill('mom@example.com');
+    await page.locator('#password').fill('secret123');
+    await page.locator('#confirm-password').fill('secret123');
+    await page.locator('#activation-code').fill('oldcode1');
+    await page.locator('#submit-btn').click();
+
+    await expect(page.locator('#form-title')).toHaveText('Login');
+    await page.locator('#toggle-btn').click();
+    await page.locator('#activation-code').fill('newcode2');
+    await page.locator('#google-btn').click();
+
+    await expect(page).toHaveURL(/\/dashboard\.html$/);
+    await expect.poll(() => page.evaluate(() => window.sessionStorage.getItem('__googleActivationCode'))).toBe('NEWCODE2');
 });
 
 test('manual invite code existing-account recovery redeems the typed code after Google login', async ({ page, baseURL }) => {

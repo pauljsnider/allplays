@@ -244,6 +244,8 @@
                 activationCodeInput.removeAttribute('required');
                 forgotPasswordLink.classList.remove('hidden');
             } else {
+                pendingLoginInviteCode = null;
+                window.sessionStorage.removeItem(pendingLoginInviteCodeStorageKey);
                 confirmPasswordField.classList.remove('hidden');
                 confirmPasswordInput.setAttribute('required', 'required');
                 if (!isActivationCodeInitiallyHidden) {
@@ -341,7 +343,11 @@
                 authState.finishProcessing(); // Reset flag on error
                 if (!isLogin && isEmailAlreadyInUseError(error)) {
                     pendingLoginInviteCode = document.getElementById('activation-code').value.trim().toUpperCase();
+                    window.sessionStorage.setItem(pendingLoginInviteCodeStorageKey, pendingLoginInviteCode);
                     setAuthFormMode(true);
+                    if (window.location.hash) {
+                        window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
+                    }
                     errorDiv.textContent = 'That account already exists. Enter the password for this email to accept your invite.';
                 } else {
                     errorDiv.textContent = error.message; // Show actual error
@@ -369,7 +375,7 @@
                         throw new Error('Activation code is required for new accounts');
                     }
                 }
-                if (pendingLoginInviteCode) {
+                if (isLogin && pendingLoginInviteCode) {
                     window.sessionStorage.setItem(pendingLoginInviteCodeStorageKey, pendingLoginInviteCode);
                 } else {
                     window.sessionStorage.removeItem(pendingLoginInviteCodeStorageKey);
