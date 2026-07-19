@@ -61,9 +61,12 @@ import {
 import { getOpenScheduleAssignments, normalizeRsvpResponse, type ParentScheduleEvent } from './scheduleLogic';
 import { loadParentPlayerSchedule, type ParentScheduleChild } from './scheduleService';
 import { clearAppDataCache } from './appDataCache';
+import { createLogger } from './logger';
 import type { AuthUser } from './types';
 
 export type { PlayerVideoClip };
+
+const logger = createLogger('player-service');
 
 export type ParentPlayerStatRow = {
   event: ParentScheduleEvent;
@@ -124,6 +127,7 @@ export type ParentPlayerDetailData = {
   child: ParentScheduleChild;
   player: Record<string, any>;
   team: Record<string, any> | null;
+  scheduleLoadError: string | null;
   access: {
     isLinkedParent: boolean;
     isTeamStaff: boolean;
@@ -183,13 +187,24 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
     throw new Error('Player details require a signed-in user.');
   }
 
-  const schedule = await loadParentPlayerSchedule(user, { teamId, playerId });
   const requestedTeamId = decodeURIComponent(teamId || '');
   const requestedPlayerId = decodeURIComponent(playerId || '');
+  let scheduleLoadError: string | null = null;
+  const schedule = await loadParentPlayerSchedule(user, { teamId, playerId }).catch((error) => {
+    scheduleLoadError = 'Schedule is temporarily unavailable. Refresh the player to try again.';
+    logger.warn('Continuing without player schedule data.', {
+      operation: 'player-detail-schedule-load',
+      teamId: requestedTeamId,
+      playerId: requestedPlayerId,
+      error
+    });
+    return { children: [], events: [] };
+  });
   const linkedChild = findLinkedChild(schedule.children, teamId, playerId);
   const initialTeam = await getTeam(requestedTeamId, { includeInactive: true });
   const routeAccess = buildPlayerAccess(user, requestedTeamId, requestedPlayerId, initialTeam);
-  if (!linkedChild && !routeAccess.isTeamStaff) {
+  const canUseScheduleFailureFallback = !!scheduleLoadError && routeAccess.isLinkedParent;
+  if (!linkedChild && !canUseScheduleFailureFallback && !routeAccess.isTeamStaff) {
     throw new Error('This player is not linked to your account.');
   }
 
@@ -272,6 +287,7 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
       number: playerDoc.number || (child as any).playerNumber || null
     },
     team,
+    scheduleLoadError,
     access,
     customRosterFields,
     events,
@@ -924,14 +940,20 @@ function assertLinkedParent(user: AuthUser | null, teamId: string, playerId: str
   if (!user?.uid) {
     throw new Error('A signed-in parent account is required.');
   }
-  const linked = (user.parentOf || []).some((entry: any) => entry?.teamId === teamId && entry?.playerId === playerId);
+  const linked = isLinkedParent(user, teamId, playerId);
   if (!linked && !user.isAdmin && !user.roles?.includes('admin') && !user.roles?.includes('platformAdmin')) {
     throw new Error('This player is not linked to your account.');
   }
 }
 
 function isLinkedParent(user: AuthUser | null, teamId: string, playerId: string) {
-  return !!(user?.parentOf || []).some((entry: any) => entry?.teamId === teamId && entry?.playerId === playerId);
+  const linkedByParentOf = (user?.parentOf || []).some((entry: any) => (
+    entry?.teamId === teamId && (entry?.playerId === playerId || entry?.childId === playerId)
+  ));
+  if (linkedByParentOf) return true;
+
+  const playerKey = `${teamId}::${playerId}`;
+  return !!(user?.parentPlayerKeys || []).some((key) => String(key || '').trim() === playerKey);
 }
 
 function isElevatedAppAdmin(user: AuthUser | null) {

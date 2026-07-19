@@ -668,6 +668,26 @@ describe('React app Home and player drill-in integration', () => {
         expect(window.scrollTo).toHaveBeenCalled();
     });
 
+    it('keeps the player profile visible when schedule data is temporarily unavailable', async () => {
+        const baselineDetail = await playerMocks.loadParentPlayerDetail();
+        playerMocks.loadParentPlayerDetail.mockClear();
+        playerMocks.loadParentPlayerDetail.mockResolvedValueOnce({
+            ...baselineDetail,
+            scheduleLoadError: 'Schedule is temporarily unavailable. Refresh the player to try again.',
+            events: [],
+            nextEvent: null,
+            actionCounts: { rsvpNeeded: 0, packetsReady: 0, openAssignments: 0 },
+            statRows: []
+        });
+
+        const { container } = await renderApp('/players/team-1/player-1');
+        await waitForText(container, 'Pat Star');
+        await waitForText(container, 'Schedule is temporarily unavailable. Refresh the player to try again.');
+
+        expect(container.textContent).not.toContain('Player unavailable');
+        expect(container.textContent).toContain('No upcoming events');
+    });
+
     it('requires media for photo quick shares and submits a compact media post payload', async () => {
         const { container } = await renderApp('/home?section=feed&social=create&type=team_media');
         await waitForText(container, 'What happened?');

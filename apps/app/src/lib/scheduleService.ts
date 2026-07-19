@@ -4114,8 +4114,10 @@ export async function loadParentPlayerSchedule(user: AuthUser | null, options: P
       return { children, events: [] };
     }
 
-    // Single-player view: keep full history so past games still appear.
-    const events = await buildTeamSchedule(child.teamId, [child], user, { includePastGames: true });
+    // The player view only renders upcoming events plus a small recent-history
+    // window. Keep this read bounded so long-lived teams do not scan every game
+    // document before the player profile can open.
+    const events = await buildTeamSchedule(child.teamId, [child], user);
     const authoritativeEvents = hydrateDetails && events.length
       ? await hydrateEventDetails(events, user)
       : [];

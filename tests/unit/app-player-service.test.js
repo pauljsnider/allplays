@@ -364,6 +364,50 @@ describe('React app parent player detail service', () => {
         expect(detail.athleteProfile.profile).toBeNull();
     });
 
+    it('keeps the player profile available when its schedule read times out', async () => {
+        scheduleMocks.loadParentPlayerSchedule.mockRejectedValueOnce(new Error('games team-1 timed out.'));
+
+        const detail = await loadParentPlayerDetail(user(), 'team-1', 'player-1');
+
+        expect(detail.player).toMatchObject({
+            id: 'player-1',
+            name: 'Pat Star',
+            teamName: 'Bears'
+        });
+        expect(detail.events).toEqual([]);
+        expect(detail.nextEvent).toBeNull();
+        expect(detail.scheduleLoadError).toBe('Schedule is temporarily unavailable. Refresh the player to try again.');
+    });
+
+    it('preserves key-only parent access when the player schedule times out', async () => {
+        scheduleMocks.loadParentPlayerSchedule.mockRejectedValueOnce(new Error('games team-1 timed out.'));
+        const keyOnlyParent = {
+            ...user(),
+            parentOf: [],
+            parentPlayerKeys: ['team-1::player-1']
+        };
+
+        const detail = await loadParentPlayerDetail(keyOnlyParent, 'team-1', 'player-1');
+
+        expect(detail.access.isLinkedParent).toBe(true);
+        expect(detail.player).toMatchObject({ id: 'player-1', name: 'Pat Star' });
+        expect(detail.scheduleLoadError).toBe('Schedule is temporarily unavailable. Refresh the player to try again.');
+    });
+
+    it('rejects stale parent links when a successful schedule load omits the player', async () => {
+        scheduleMocks.loadParentPlayerSchedule.mockResolvedValue({ children: [], events: [] });
+        const keyOnlyParent = {
+            ...user(),
+            parentOf: [],
+            parentPlayerKeys: ['team-1::player-1']
+        };
+
+        await expect(loadParentPlayerDetail(user(), 'team-1', 'player-1'))
+            .rejects.toThrow('This player is not linked to your account.');
+        await expect(loadParentPlayerDetail(keyOnlyParent, 'team-1', 'player-1'))
+            .rejects.toThrow('This player is not linked to your account.');
+    });
+
     it('saves parent-editable player fields through the restricted profile helper', async () => {
         const file = new File(['avatar'], 'avatar.png', { type: 'image/png' });
 
