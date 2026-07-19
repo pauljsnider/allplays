@@ -203,7 +203,8 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
   const linkedChild = findLinkedChild(schedule.children, teamId, playerId);
   const initialTeam = await getTeam(requestedTeamId, { includeInactive: true });
   const routeAccess = buildPlayerAccess(user, requestedTeamId, requestedPlayerId, initialTeam);
-  if (!linkedChild && !routeAccess.isLinkedParent && !routeAccess.isTeamStaff) {
+  const canUseScheduleFailureFallback = !!scheduleLoadError && routeAccess.isLinkedParent;
+  if (!linkedChild && !canUseScheduleFailureFallback && !routeAccess.isTeamStaff) {
     throw new Error('This player is not linked to your account.');
   }
 

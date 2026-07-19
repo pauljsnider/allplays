@@ -394,6 +394,20 @@ describe('React app parent player detail service', () => {
         expect(detail.scheduleLoadError).toBe('Schedule is temporarily unavailable. Refresh the player to try again.');
     });
 
+    it('rejects stale parent links when a successful schedule load omits the player', async () => {
+        scheduleMocks.loadParentPlayerSchedule.mockResolvedValue({ children: [], events: [] });
+        const keyOnlyParent = {
+            ...user(),
+            parentOf: [],
+            parentPlayerKeys: ['team-1::player-1']
+        };
+
+        await expect(loadParentPlayerDetail(user(), 'team-1', 'player-1'))
+            .rejects.toThrow('This player is not linked to your account.');
+        await expect(loadParentPlayerDetail(keyOnlyParent, 'team-1', 'player-1'))
+            .rejects.toThrow('This player is not linked to your account.');
+    });
+
     it('saves parent-editable player fields through the restricted profile helper', async () => {
         const file = new File(['avatar'], 'avatar.png', { type: 'image/png' });
 
