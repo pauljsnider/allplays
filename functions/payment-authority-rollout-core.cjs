@@ -121,9 +121,10 @@ function inspectStripeChargeLedgerCoverage({ product = '', record = {}, ledgers 
     ['stripeDisputeLostAmountCents', 'disputeLostAmountCents'],
     ['stripeRefundableAmountCents', 'refundableAmountCents']
   ]) {
-    if (record[recordField] !== undefined || normalizedProduct === 'team_fee') {
+    const ledgerAggregate = sum(ledgerField);
+    if (record[recordField] !== undefined || normalizedProduct === 'team_fee' || ledgerAggregate > 0) {
       const aggregate = asNonNegativeSafeInteger(record[recordField]);
-      if (aggregate === null || aggregate !== sum(ledgerField)) return 'stripe_charge_ledger_aggregate_mismatch';
+      if (aggregate === null || aggregate !== ledgerAggregate) return 'stripe_charge_ledger_aggregate_mismatch';
     }
   }
 
@@ -226,11 +227,82 @@ function inspectTeamPassAttemptAuthority({ teamId = '', seasonId = '', tier = 't
   return '';
 }
 
+function inspectSettledTeamPassAttemptAuthority({ teamId = '', seasonId = '', tier = 'team-pass', attempt = {} } = {}) {
+  const checkoutStatus = normalizeString(attempt.checkoutStatus).toLowerCase();
+  if (checkoutStatus === 'paid') {
+    return inspectTeamPassAttemptAuthority({ teamId, seasonId, tier, attempt });
+  }
+
+  const hasV2Authority = Number(attempt.stripePaymentAuthorityVersion) === 2
+    && attempt.legacyPaymentAuthorityVersion === undefined;
+  const hasV1Authority = Number(attempt.legacyPaymentAuthorityVersion) === 1
+    && attempt.stripePaymentAuthorityVersion === undefined;
+  const amountCents = asNonNegativeSafeInteger(attempt.checkoutAmountCents);
+  const reversalState = attempt.reversalState;
+  const reversalRefundedAmountCents = asNonNegativeSafeInteger(reversalState?.refundedAmountCents);
+  const reversalChargeAmountCents = asNonNegativeSafeInteger(reversalState?.chargeAmountCents);
+  const reversalDisputeStatus = normalizeString(reversalState?.disputeStatus || 'none').toLowerCase();
+  const topLevelRefundedAmountCents = attempt.refundedAmountCents === undefined
+    ? reversalRefundedAmountCents
+    : asNonNegativeSafeInteger(attempt.refundedAmountCents);
+  const topLevelDisputeStatus = normalizeString(attempt.disputeStatus).toLowerCase();
+  const effectiveStatus = getTeamPassEffectivePaymentStatus({
+    chargeAmountCents: reversalChargeAmountCents || 0,
+    refundedAmountCents: reversalRefundedAmountCents ?? 0,
+    disputeStatus: reversalDisputeStatus
+  });
+  const expectedDisputeLostAmountCents = effectiveStatus === 'dispute_lost'
+    ? Math.max(0, Number(reversalChargeAmountCents || 0) - Number(reversalRefundedAmountCents || 0))
+    : 0;
+  const explicitFinancialStatuses = [attempt.reversalStatus, attempt.financialStatus, attempt.stripeFinancialStatus]
+    .map((value) => normalizeString(value).toLowerCase())
+    .filter(Boolean);
+  const storedDisputeLostAmounts = [attempt.disputeLostAmountCents, reversalState?.disputeLostAmountCents]
+    .filter((value) => value !== undefined)
+    .map(asNonNegativeSafeInteger);
+
+  if (!['refunded', 'dispute_lost'].includes(checkoutStatus)
+      || normalizeString(attempt.product) !== 'team_pass'
+      || normalizeString(attempt.teamId) !== normalizeString(teamId)
+      || normalizeString(attempt.seasonId) !== normalizeString(seasonId)
+      || normalizeString(attempt.tier) !== normalizeString(tier)
+      || !normalizeString(attempt.stripeCheckoutSessionId)
+      || !normalizeString(attempt.stripePaymentIntentId)
+      || !normalizeString(attempt.stripeChargeId)
+      || !normalizeString(attempt.purchaserUid)
+      || !/^[A-Za-z0-9_-]{16,128}$/.test(normalizeString(attempt.checkoutAttemptToken))
+      || !normalizeString(attempt.priceId)
+      || amountCents === null
+      || amountCents <= 0
+      || !normalizeString(attempt.checkoutCurrency).toLowerCase()
+      || typeof attempt.livemode !== 'boolean'
+      || (!hasV2Authority && !hasV1Authority)
+      || reversalState === null
+      || typeof reversalState !== 'object'
+      || Array.isArray(reversalState)
+      || reversalChargeAmountCents !== amountCents
+      || reversalRefundedAmountCents === null
+      || reversalRefundedAmountCents > amountCents
+      || topLevelRefundedAmountCents === null
+      || topLevelRefundedAmountCents !== reversalRefundedAmountCents
+      || !['none', 'won', 'lost'].includes(reversalDisputeStatus)
+      || (topLevelDisputeStatus && topLevelDisputeStatus !== reversalDisputeStatus)
+      || normalizeString(reversalState.stripePaymentIntentId) !== normalizeString(attempt.stripePaymentIntentId)
+      || normalizeString(reversalState.stripeChargeId) !== normalizeString(attempt.stripeChargeId)
+      || effectiveStatus !== checkoutStatus
+      || explicitFinancialStatuses.some((status) => status !== checkoutStatus)
+      || storedDisputeLostAmounts.some((amount) => amount === null || amount !== expectedDisputeLostAmountCents)) {
+    return 'team_pass_checkout_attempt_invalid';
+  }
+  return '';
+}
+
 module.exports = {
   isLegacyStripeRegistrationCandidate,
   isLegacyStripeTeamFeeCandidate,
   isTeamPassEntitlementAuthorityCandidate,
   buildPaymentAuthorityRolloutBlocker,
   inspectStripeChargeLedgerCoverage,
-  inspectTeamPassAttemptAuthority
+  inspectTeamPassAttemptAuthority,
+  inspectSettledTeamPassAttemptAuthority
 };

@@ -1476,10 +1476,19 @@ test('payment authority rollout gate requires structurally complete Team Pass at
         ]);
     }
 
-    for (const checkoutStatus of ['stale', 'expired', 'payment_failed', 'refunded', 'dispute_lost']) {
+    for (const checkoutStatus of ['stale', 'expired', 'payment_failed']) {
         await firestore.doc(attemptPath).set({ ...validAttempt, checkoutStatus });
         const terminalStatus = await mod.auditStripePaymentAuthorityRollout({ assertEmpty: false }, adminContext);
         assert.equal(terminalStatus.ready, true, `${checkoutStatus}: ${JSON.stringify(terminalStatus.blockers)}`);
+    }
+
+    for (const checkoutStatus of ['refunded', 'dispute_lost']) {
+        await firestore.doc(attemptPath).set({ ...validAttempt, checkoutStatus });
+        const malformedSettlement = await mod.auditStripePaymentAuthorityRollout({ assertEmpty: false }, adminContext);
+        assert.equal(malformedSettlement.ready, false);
+        assert.deepEqual(malformedSettlement.blockers, [{
+            product: 'team_pass', path: attemptPath, reason: 'team_pass_checkout_attempt_invalid'
+        }]);
     }
 
     await firestore.doc(entitlementPath).set({ status: 'active' }, { merge: true });
@@ -1623,11 +1632,97 @@ test('payment authority rollout binds settled Stripe Session economics to the ex
     assert.equal(resolvedDispute.ready, true, JSON.stringify(resolvedDispute.blockers));
     assert.equal(resolvedDispute.blockerCount, 0);
 
+    await firestore.doc(ledgerPath).update({ disputeStatus: 'lost', disputeLostAmountCents: 0 });
+    await firestore.doc(registrationPath).update({ stripeDisputeLostAmountCents: 0 });
+    const staleLostAmount = await mod.auditStripePaymentAuthorityRollout({ assertEmpty: false }, adminContext);
+    assert.equal(staleLostAmount.ready, false);
+    assert.equal(staleLostAmount.blockers[0]?.reason, 'settled_stripe_session_charge_ledger_invalid');
+
+    await firestore.doc(ledgerPath).update({ disputeLostAmountCents: 5000 });
+    const registrationWithoutLostAggregate = firestore.snapshot(registrationPath);
+    delete registrationWithoutLostAggregate.stripeDisputeLostAmountCents;
+    await firestore.doc(registrationPath).set(registrationWithoutLostAggregate);
+    const missingParentLostAmount = await mod.auditStripePaymentAuthorityRollout({ assertEmpty: false }, adminContext);
+    assert.equal(missingParentLostAmount.ready, false);
+    assert.deepEqual(missingParentLostAmount.blockers.map((blocker) => blocker.reason).sort(), [
+        'settled_stripe_session_charge_ledger_invalid',
+        'stripe_charge_ledger_aggregate_mismatch'
+    ].sort());
+
+    await firestore.doc(registrationPath).update({ stripeDisputeLostAmountCents: 5000 });
+    const reconciledLostAmount = await mod.auditStripePaymentAuthorityRollout({ assertEmpty: false }, adminContext);
+    assert.equal(reconciledLostAmount.ready, true, JSON.stringify(reconciledLostAmount.blockers));
+    assert.equal(reconciledLostAmount.blockerCount, 0);
+
     stripeState.charges.get(chargeId).disputed = false;
-    await firestore.doc(ledgerPath).update({ disputeStatus: 'open' });
+    await firestore.doc(ledgerPath).update({ disputeStatus: 'open', disputeLostAmountCents: 0 });
+    await firestore.doc(registrationPath).update({ stripeDisputeLostAmountCents: 0 });
     const staleOpenDispute = await mod.auditStripePaymentAuthorityRollout({ assertEmpty: false }, adminContext);
     assert.equal(staleOpenDispute.ready, false);
     assert.equal(staleOpenDispute.blockers[0]?.reason, 'settled_stripe_session_charge_ledger_invalid');
+});
+
+test('payment authority rollout accepts exact terminal Team Pass Session authority', async () => {
+    const attemptPath = 'teams/team-pass/teamPassCheckoutAttempts/2026_team-pass';
+    const sessionId = 'cs_team_pass_settled';
+    const paymentIntentId = 'pi_team_pass_settled';
+    const chargeId = 'ch_team_pass_settled';
+    const metadata = {
+        product: 'team_pass', teamId: 'team-pass', seasonId: '2026', tier: 'team-pass',
+        purchaserUid: 'owner-1', checkoutAttemptToken: 'attempt_team_pass_settled_1234',
+        priceId: 'price_team_pass'
+    };
+    const refundedAttempt = {
+        ...clone(metadata), checkoutStatus: 'refunded', stripePaymentAuthorityVersion: 2,
+        stripeCheckoutSessionId: sessionId, stripePaymentIntentId: paymentIntentId, stripeChargeId: chargeId,
+        checkoutAmountCents: 4900, checkoutCurrency: 'usd', livemode: false, refundedAmountCents: 4900,
+        reversalState: {
+            stripePaymentIntentId: paymentIntentId, stripeChargeId: chargeId,
+            chargeAmountCents: 4900, refundedAmountCents: 4900, disputeStatus: 'none'
+        }
+    };
+    const { firestore, stripeState, mod } = loadFunctionsModule({
+        'users/platform-admin': { email: 'admin@example.com', isAdmin: true },
+        [attemptPath]: refundedAttempt
+    });
+    const adminContext = { auth: { uid: 'platform-admin', token: { email: 'admin@example.com' } } };
+    stripeState.checkoutResponses.set(sessionId, {
+        id: sessionId, mode: 'payment', status: 'complete', payment_status: 'paid', livemode: false,
+        client_reference_id: 'team-pass:2026:owner-1', metadata: clone(metadata),
+        payment_intent: paymentIntentId, amount_total: 4900, currency: 'usd'
+    });
+    stripeState.paymentIntents.set(paymentIntentId, {
+        id: paymentIntentId, amount: 4900, amount_received: 4900, currency: 'usd', livemode: false,
+        metadata: clone(metadata), latest_charge: chargeId
+    });
+    stripeState.charges.set(chargeId, {
+        id: chargeId, object: 'charge', amount: 4900, amount_refunded: 4900,
+        currency: 'usd', livemode: false, metadata: clone(metadata),
+        payment_intent: paymentIntentId, disputed: false
+    });
+
+    const refunded = await mod.auditStripePaymentAuthorityRollout({ assertEmpty: false }, adminContext);
+    assert.equal(refunded.ready, true, JSON.stringify(refunded.blockers));
+    assert.equal(refunded.blockerCount, 0);
+
+    await firestore.doc(attemptPath).set({
+        ...refundedAttempt,
+        checkoutStatus: 'dispute_lost',
+        refundedAmountCents: 0,
+        reversalState: { ...refundedAttempt.reversalState, refundedAmountCents: 0, disputeStatus: 'lost' }
+    });
+    stripeState.charges.get(chargeId).amount_refunded = 0;
+    stripeState.charges.get(chargeId).disputed = true;
+    const disputeLost = await mod.auditStripePaymentAuthorityRollout({ assertEmpty: false }, adminContext);
+    assert.equal(disputeLost.ready, true, JSON.stringify(disputeLost.blockers));
+    assert.equal(disputeLost.blockerCount, 0);
+
+    await firestore.doc(attemptPath).update({ refundedAmountCents: 1 });
+    const staleTerminalEconomics = await mod.auditStripePaymentAuthorityRollout({ assertEmpty: false }, adminContext);
+    assert.equal(staleTerminalEconomics.ready, false);
+    assert.equal(staleTerminalEconomics.blockers.some((blocker) => (
+        blocker.path === attemptPath && blocker.reason === 'team_pass_checkout_attempt_invalid'
+    )), true);
 });
 
 test('payment authority rollout gate detects pointers, orphan ledgers, and paid attempts without entitlements', async () => {

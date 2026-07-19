@@ -71,7 +71,8 @@ const {
   isLegacyStripeTeamFeeCandidate,
   isTeamPassEntitlementAuthorityCandidate,
   inspectStripeChargeLedgerCoverage,
-  inspectTeamPassAttemptAuthority
+  inspectTeamPassAttemptAuthority,
+  inspectSettledTeamPassAttemptAuthority
 } = require('./payment-authority-rollout-core.cjs');
 const { createFirestoreFixedWindowRateLimiter, createInMemoryRateLimiter, getRequestIp } = require('./rate-limit.cjs');
 const { buildPublicGamesIcs, canExposeEmptyPublicFeed, isPublicFanGame } = require('./public-calendar-core.cjs');
@@ -5135,6 +5136,15 @@ function getSettledStripeChargeLedgerFailure({
   }
   const disputeFailure = getStripeChargeDisputeSignalFailure(charge, ledger.disputeStatus);
   if (disputeFailure) return disputeFailure;
+  const chargeAmountCents = Math.round(Number(charge.amount || 0));
+  const expectedDisputeLostAmountCents = String(ledger.disputeStatus || '').trim().toLowerCase() === 'lost'
+    ? chargeAmountCents - chargeRefundedAmountCents
+    : 0;
+  if (!Number.isSafeInteger(expectedDisputeLostAmountCents)
+      || expectedDisputeLostAmountCents < 0
+      || expectedDisputeLostAmountCents !== Math.round(Number(ledger.disputeLostAmountCents || 0))) {
+    return 'charge_dispute_lost_amount_mismatch';
+  }
   return '';
 }
 
@@ -5233,13 +5243,22 @@ async function inspectSettledStripeCheckoutSessionAuthority(
       && isTeamPassAttemptInScope(attemptDoc.data() || {}, input)
     ));
     if (matchingAttempts.length !== 1
-        || inspectTeamPassAttemptAuthority({ ...input, attempt: matchingAttempts[0].data() || {} })) {
+        || inspectSettledTeamPassAttemptAuthority({ ...input, attempt: matchingAttempts[0].data() || {} })) {
       return { product, path: sessionPath, reason: 'settled_stripe_session_missing_checkout_attempt' };
     }
     const attempt = matchingAttempts[0].data() || {};
     const attemptDisputeStatuses = [attempt.reversalState?.disputeStatus, attempt.disputeStatus]
       .map((value) => String(value || '').trim().toLowerCase());
-    const attemptDisputeStatus = attemptDisputeStatuses.includes('won') ? 'won' : 'none';
+    const attemptDisputeStatus = attemptDisputeStatuses.includes('lost')
+      ? 'lost'
+      : attemptDisputeStatuses.includes('open')
+        ? 'open'
+        : attemptDisputeStatuses.includes('won') ? 'won' : 'none';
+    const liveFinancialStatus = getStripeChargeFinancialStatus({
+      chargeAmountCents: Math.round(Number(charge.amount || 0)),
+      refundedAmountCents: Math.round(Number(charge.amount_refunded || 0)),
+      disputeStatus: attemptDisputeStatus
+    });
     const hasV2Authority = Number(attempt.stripePaymentAuthorityVersion) === 2;
     const paymentAuthorityFailure = hasV2Authority
       ? getTeamPassPaymentIntentGuardFailure({ attempt, session, paymentIntent, charge })
@@ -5251,6 +5270,7 @@ async function inspectSettledStripeCheckoutSessionAuthority(
         || Math.round(Number(charge.amount_refunded || 0))
           !== Math.round(Number(attempt.reversalState?.refundedAmountCents ?? attempt.refundedAmountCents ?? 0))
         || getStripeChargeDisputeSignalFailure(charge, attemptDisputeStatus)
+        || liveFinancialStatus !== String(attempt.checkoutStatus || '').trim().toLowerCase()
         || paymentAuthorityFailure) {
       return { product, path: sessionPath, reason: 'settled_stripe_session_checkout_attempt_invalid' };
     }
@@ -5360,10 +5380,15 @@ async function inspectTeamPassAttemptRollout(docSnap) {
   if (!['paid', 'stale', 'expired', 'payment_failed', 'refunded', 'dispute_lost'].includes(checkoutStatus)) {
     return buildRolloutInspection({ product: 'team_pass', path: docSnap.ref.path, reason: 'team_pass_checkout_attempt_status_invalid' });
   }
-  if (checkoutStatus !== 'paid') return buildRolloutInspection({ product: 'team_pass', path: docSnap.ref.path });
-  const invalidReason = inspectTeamPassAttemptAuthority({ teamId, seasonId, tier, attempt });
+  if (['stale', 'expired', 'payment_failed'].includes(checkoutStatus)) {
+    return buildRolloutInspection({ product: 'team_pass', path: docSnap.ref.path });
+  }
+  const invalidReason = inspectSettledTeamPassAttemptAuthority({ teamId, seasonId, tier, attempt });
   if (invalidReason) {
     return buildRolloutInspection({ product: 'team_pass', path: docSnap.ref.path, reason: invalidReason });
+  }
+  if (checkoutStatus !== 'paid') {
+    return buildRolloutInspection({ product: 'team_pass', path: docSnap.ref.path });
   }
   const entitlementRef = firestore.doc(`teams/${teamId}/entitlements/${seasonId}_${tier}`);
   const entitlementSnap = await entitlementRef.get();

@@ -9,7 +9,8 @@ const {
     isTeamPassEntitlementAuthorityCandidate,
     buildPaymentAuthorityRolloutBlocker,
     inspectStripeChargeLedgerCoverage,
-    inspectTeamPassAttemptAuthority
+    inspectTeamPassAttemptAuthority,
+    inspectSettledTeamPassAttemptAuthority
 } = require('../../functions/payment-authority-rollout-core.cjs');
 
 describe('Stripe payment-authority rollout gate', () => {
@@ -55,6 +56,11 @@ describe('Stripe payment-authority rollout gate', () => {
             currency: 'usd', livemode: false
         };
         expect(inspectStripeChargeLedgerCoverage({ product: 'registration', record, ledgers: [ledger] })).toBe('');
+        expect(inspectStripeChargeLedgerCoverage({
+            product: 'registration',
+            record: { ...record, stripeDisputeLostAmountCents: undefined },
+            ledgers: [{ ...ledger, disputeStatus: 'lost', disputeLostAmountCents: 5000 }]
+        })).toBe('stripe_charge_ledger_aggregate_mismatch');
         expect(inspectStripeChargeLedgerCoverage({
             product: 'registration', record, ledgers: [{ ...ledger, registrationId: 'victim' }]
         })).toBe('stripe_charge_ledger_invalid');
@@ -161,6 +167,56 @@ describe('Stripe payment-authority rollout gate', () => {
                 reversalState: { chargeAmountCents: 4900, refundedAmountCents: 0, disputeStatus: 'won' }
             }
         })).toBe('');
+    });
+
+    it('accepts only economically consistent settled Team Pass attempts', () => {
+        const attempt = {
+            product: 'team_pass', teamId: 'team-a', seasonId: '2026', tier: 'team-pass',
+            checkoutStatus: 'refunded', stripeCheckoutSessionId: 'cs_a', stripePaymentIntentId: 'pi_a',
+            stripeChargeId: 'ch_a', checkoutAmountCents: 4900, checkoutCurrency: 'usd', livemode: false,
+            purchaserUid: 'owner-a', checkoutAttemptToken: 'attempt_1234567890abcdef', priceId: 'price_a',
+            stripePaymentAuthorityVersion: 2, refundedAmountCents: 4900,
+            reversalState: {
+                stripePaymentIntentId: 'pi_a', stripeChargeId: 'ch_a', chargeAmountCents: 4900,
+                refundedAmountCents: 4900, disputeStatus: 'none'
+            }
+        };
+        const inspect = (value) => inspectSettledTeamPassAttemptAuthority({
+            teamId: 'team-a', seasonId: '2026', tier: 'team-pass', attempt: value
+        });
+        expect(inspect(attempt)).toBe('');
+        expect(inspect({
+            ...attempt,
+            refundedAmountCents: 100,
+            reversalState: { ...attempt.reversalState, refundedAmountCents: 100 }
+        })).toBe('');
+        expect(inspect({
+            ...attempt,
+            stripePaymentAuthorityVersion: undefined,
+            legacyPaymentAuthorityVersion: 1
+        })).toBe('');
+        expect(inspect({ ...attempt, refundedAmountCents: 0 })).toBe('team_pass_checkout_attempt_invalid');
+        expect(inspect({
+            ...attempt,
+            checkoutStatus: 'dispute_lost',
+            refundedAmountCents: 0,
+            reversalState: { ...attempt.reversalState, refundedAmountCents: 0, disputeStatus: 'lost' }
+        })).toBe('');
+        expect(inspect({
+            ...attempt,
+            checkoutStatus: 'dispute_lost',
+            refundedAmountCents: 0,
+            disputeLostAmountCents: 0,
+            reversalState: { ...attempt.reversalState, refundedAmountCents: 0, disputeStatus: 'lost' }
+        })).toBe('team_pass_checkout_attempt_invalid');
+        expect(inspect({
+            ...attempt,
+            disputeStatus: 'open',
+            reversalState: { ...attempt.reversalState, disputeStatus: 'lost' }
+        })).toBe('team_pass_checkout_attempt_invalid');
+        expect(inspect({ ...attempt, reversalState: undefined })).toBe('team_pass_checkout_attempt_invalid');
+        expect(inspect({ ...attempt, reversalState: { ...attempt.reversalState, stripeChargeId: 'ch_other' } }))
+            .toBe('team_pass_checkout_attempt_invalid');
     });
 
     it('rejects Team Fee ledgers that violate runtime conservation, status, or parent aggregates', () => {
