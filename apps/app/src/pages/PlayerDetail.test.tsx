@@ -16,6 +16,7 @@ function createDeferred<T>() {
 const playerServiceMocks = vi.hoisted(() => ({
   loadParentPlayerAthleteProfile: vi.fn(),
   loadParentPlayerDetail: vi.fn(),
+  loadParentPlayerStatsDetail: vi.fn(),
   loadParentPlayerVideoClips: vi.fn(),
   markParentPlayerIncentivePaid: vi.fn(),
   retireParentPlayerIncentiveRule: vi.fn(),
@@ -103,6 +104,7 @@ function buildDetailData(overrides: Record<string, any> = {}) {
       openAssignments: 0
     },
     statRows: [],
+    statsDetail: null,
     clips: [],
     certificates: [],
     trackingSummary: [],
@@ -179,6 +181,21 @@ describe('PlayerDetail athlete profile season selection', () => {
     vi.clearAllMocks();
     playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData());
     playerServiceMocks.loadParentPlayerAthleteProfile.mockResolvedValue(buildDetailData().athleteProfile);
+    playerServiceMocks.loadParentPlayerStatsDetail.mockResolvedValue({
+      summary: {
+        gamesPlayed: 0,
+        gamesWithTime: 0,
+        totalTimeMs: 0,
+        totals: {},
+        averages: {},
+        topStats: [],
+        trends: [],
+        gameLimit: 20,
+        hasMoreGames: false
+      },
+      statRows: [],
+      gameEventRows: []
+    });
     playerServiceMocks.loadParentPlayerVideoClips.mockResolvedValue([]);
     playerServiceMocks.saveParentAthleteProfileDraft.mockResolvedValue({
       shareUrl: 'https://allplays.ai/athlete-profile.html?profileId=profile-1'
@@ -250,9 +267,14 @@ describe('PlayerDetail athlete profile season selection', () => {
     renderPlayerDetail();
 
     await screen.findByText('Sam Player');
+    expect(playerServiceMocks.loadParentPlayerStatsDetail).not.toHaveBeenCalled();
     expect(playerServiceMocks.loadParentPlayerVideoClips).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole('button', { name: 'Reports' }));
+    await waitFor(() => {
+      expect(playerServiceMocks.loadParentPlayerStatsDetail).toHaveBeenCalledTimes(1);
+      expect(playerServiceMocks.loadParentPlayerStatsDetail).toHaveBeenCalledWith(auth.user, 'team-current', 'player-current');
+    });
     expect(playerServiceMocks.loadParentPlayerVideoClips).not.toHaveBeenCalled();
 
     fireEvent.click(await screen.findByRole('button', { name: 'Video Clips' }));
@@ -262,6 +284,7 @@ describe('PlayerDetail athlete profile season selection', () => {
       expect(playerServiceMocks.loadParentPlayerVideoClips).toHaveBeenCalledWith(auth.user, 'team-current', 'player-current');
     });
     expect(await screen.findByText('Fast break finish')).toBeTruthy();
+    expect(await screen.findByText('Clip coverage')).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'Game Stats' }));
     fireEvent.click(screen.getByRole('button', { name: 'Video Clips' }));
@@ -291,12 +314,13 @@ describe('PlayerDetail athlete profile season selection', () => {
     fireEvent.click(screen.getByRole('link', { name: /Events/i }));
     expect(await screen.findByRole('heading', { name: 'Upcoming' })).toBeTruthy();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Overview' })[0]);
     fireEvent.click(screen.getByRole('link', { name: /Reports/i }));
     expect(await screen.findByRole('heading', { name: 'Game history and performance' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Game Stats' }).getAttribute('aria-pressed')).toBe('true');
+    const overviewButtons = screen.getAllByRole('button', { name: 'Overview' });
+    expect(overviewButtons[overviewButtons.length - 1].getAttribute('aria-pressed')).toBe('true');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Overview' })[0]);
     fireEvent.click(screen.getByRole('link', { name: /Clips/i }));
 
     expect((await screen.findByRole('button', { name: 'Video Clips' })).getAttribute('aria-pressed')).toBe('true');
@@ -304,6 +328,171 @@ describe('PlayerDetail athlete profile season selection', () => {
       expect(playerServiceMocks.loadParentPlayerVideoClips).toHaveBeenCalledWith(auth.user, 'team-current', 'player-current');
     });
     expect(await screen.findByText('Fast break finish')).toBeTruthy();
+  });
+
+  it('renders lazy-loaded season summary ranks totals and player event rows', async () => {
+    const gameEvent = {
+      eventKey: 'team-current-game-1-player-current',
+      id: 'game-1',
+      teamId: 'team-current',
+      teamName: 'Current Team',
+      type: 'game',
+      date: new Date('2026-03-01T18:00:00Z'),
+      location: '',
+      opponent: 'Owls',
+      childId: 'player-current',
+      childName: 'Sam Player',
+      isDbGame: true,
+      isCancelled: false,
+      assignments: [],
+      openAssignmentCount: 0
+    };
+    playerServiceMocks.loadParentPlayerStatsDetail.mockResolvedValue({
+      summary: {
+        gamesPlayed: 2,
+        gamesWithTime: 1,
+        totalTimeMs: 900000,
+        totals: { pts: 30, reb: 8 },
+        averages: { pts: 15, reb: 4 },
+        topStats: [{ id: 'pts', label: 'Points', rank: 2, totalPlayers: 10, value: 30, formattedValue: '30' }],
+        trends: [{ key: 'pts', label: 'PTS', recentAverage: 18, earlierAverage: 12, direction: 'up', percentChange: 50 }],
+        gameLimit: 20,
+        hasMoreGames: false
+      },
+      statRows: [{ event: gameEvent, stats: { pts: 18, reb: 5 }, timeMs: 900000 }],
+      gameEventRows: [{
+        gameId: 'game-1',
+        gameLabel: 'vs. Owls',
+        gameDate: 'Mar 1, 2026',
+        events: [{
+          id: 'event-1',
+          statKey: 'pts',
+          value: 2,
+          period: 'Q4',
+          clock: '1:22',
+          description: 'Sam made layup',
+          timestampMs: 1772388000000
+        }]
+      }]
+    });
+
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Reports' }));
+
+    expect(await screen.findByText('Points')).toBeTruthy();
+    expect(await screen.findByText('#2')).toBeTruthy();
+    expect(await screen.findByText('PTS/G')).toBeTruthy();
+    expect(await screen.findByText('Recent PTS')).toBeTruthy();
+    expect(await screen.findByText('Stat mix')).toBeTruthy();
+    expect(await screen.findAllByText('Playing time')).toHaveLength(2);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Game Stats' }));
+    expect(await screen.findByText('Game-by-game trend')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Season Averages' }));
+    expect(await screen.findByText('Season profile')).toBeTruthy();
+    expect(await screen.findByText('Totals')).toBeTruthy();
+    expect(await screen.findByText('REB/G')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Game Events' }));
+    expect(await screen.findByText('Event volume')).toBeTruthy();
+    expect(await screen.findByText('Sam made layup')).toBeTruthy();
+    expect(await screen.findByText('PTS · 2')).toBeTruthy();
+  });
+
+  it('does not auto-retry failed stats loads until the user retries', async () => {
+    playerServiceMocks.loadParentPlayerStatsDetail
+      .mockRejectedValueOnce(new Error('Stats network failed.'))
+      .mockResolvedValueOnce({
+        summary: {
+          gamesPlayed: 1,
+          gamesWithTime: 0,
+          totalTimeMs: 0,
+          totals: { pts: 8 },
+          averages: { pts: 8 },
+          topStats: [],
+          trends: [],
+          gameLimit: 20,
+          hasMoreGames: false
+        },
+        statRows: [],
+        gameEventRows: []
+      });
+
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Reports' }));
+
+    expect(await screen.findByText('Stats network failed.')).toBeTruthy();
+    await waitFor(() => {
+      expect(playerServiceMocks.loadParentPlayerStatsDetail).toHaveBeenCalledTimes(1);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Game Stats' }));
+    const overviewButtons = screen.getAllByRole('button', { name: 'Overview' });
+    fireEvent.click(overviewButtons[overviewButtons.length - 1]);
+
+    await waitFor(() => {
+      expect(playerServiceMocks.loadParentPlayerStatsDetail).toHaveBeenCalledTimes(1);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry stats' }));
+
+    await waitFor(() => {
+      expect(playerServiceMocks.loadParentPlayerStatsDetail).toHaveBeenCalledTimes(2);
+    });
+    expect(await screen.findByText('PTS/G')).toBeTruthy();
+  });
+
+  it('reloads lazy stats after refreshing the player while reports are open', async () => {
+    playerServiceMocks.loadParentPlayerStatsDetail
+      .mockResolvedValueOnce({
+        summary: {
+          gamesPlayed: 1,
+          gamesWithTime: 0,
+          totalTimeMs: 0,
+          totals: { pts: 8 },
+          averages: { pts: 8 },
+          topStats: [],
+          trends: [],
+          gameLimit: 20,
+          hasMoreGames: false
+        },
+        statRows: [],
+        gameEventRows: []
+      })
+      .mockResolvedValueOnce({
+        summary: {
+          gamesPlayed: 1,
+          gamesWithTime: 0,
+          totalTimeMs: 0,
+          totals: { pts: 11 },
+          averages: { pts: 11 },
+          topStats: [],
+          trends: [],
+          gameLimit: 20,
+          hasMoreGames: false
+        },
+        statRows: [],
+        gameEventRows: []
+      });
+
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Reports' }));
+    await waitFor(() => {
+      expect(playerServiceMocks.loadParentPlayerStatsDetail).toHaveBeenCalledTimes(1);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh player' }));
+
+    await waitFor(() => {
+      expect(playerServiceMocks.loadParentPlayerStatsDetail).toHaveBeenCalledTimes(2);
+    });
   });
 
   it('does not preload clips when navigating to another player after clips were opened', async () => {

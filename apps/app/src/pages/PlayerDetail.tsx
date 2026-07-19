@@ -34,6 +34,7 @@ import {
 import {
   loadParentPlayerAthleteProfile,
   loadParentPlayerDetail,
+  loadParentPlayerStatsDetail,
   loadParentPlayerVideoClips,
   markParentPlayerIncentivePaid,
   retireParentPlayerIncentiveRule,
@@ -51,6 +52,7 @@ import {
   type ParentAthleteProfileData,
   type ParentPlayerDetailData,
   type ParentPlayerStatRow,
+  type ParentPlayerStatsDetailData,
   type PlayerVideoClip
 } from '../lib/playerService';
 import { AvatarImage } from '../components/AvatarImage';
@@ -73,6 +75,7 @@ import type { ProfilePhotoSource } from '../lib/profilePhotoService';
 
 type PlayerSectionId = 'overview' | 'schedule' | 'performance' | 'profile';
 type AthleteProfilePrivacy = 'private' | 'public';
+type PlayerStatsDetailLoadState = 'idle' | 'loading' | 'loaded' | 'error';
 type AthleteProfileClipDraftState = {
   id: string;
   source: 'external' | 'upload';
@@ -95,9 +98,10 @@ const playerSections: Array<{ id: PlayerSectionId; label: string }> = [
   { id: 'profile', label: 'Profile' }
 ];
 
-type ReportPanelId = 'games' | 'season' | 'events' | 'clips';
+type ReportPanelId = 'overview' | 'games' | 'season' | 'events' | 'clips';
 
 const reportPanels: Array<{ id: ReportPanelId; label: string }> = [
+  { id: 'overview', label: 'Overview' },
   { id: 'games', label: 'Game Stats' },
   { id: 'season', label: 'Season Averages' },
   { id: 'events', label: 'Game Events' },
@@ -118,13 +122,13 @@ function getPlayerSectionFromSearch(searchParams: URLSearchParams): PlayerSectio
 
 function getReportPanelFromSearch(searchParams: URLSearchParams): ReportPanelId {
   const panel = searchParams.get('panel');
-  return reportPanels.some((item) => item.id === panel) ? panel as ReportPanelId : 'games';
+  return reportPanels.some((item) => item.id === panel) ? panel as ReportPanelId : 'overview';
 }
 
 function getPlayerSectionRoute(sectionId: PlayerSectionId, panelId?: ReportPanelId) {
   const params = new URLSearchParams();
   if (sectionId !== 'overview') params.set('section', sectionId);
-  if (sectionId === 'performance' && panelId && panelId !== 'games') params.set('panel', panelId);
+  if (sectionId === 'performance' && panelId && panelId !== 'overview') params.set('panel', panelId);
   const query = params.toString();
   return query ? `?${query}` : '.';
 }
@@ -345,9 +349,58 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
   const [videoClipsLoaded, setVideoClipsLoaded] = useState(false);
   const [videoClipsLoading, setVideoClipsLoading] = useState(false);
   const [videoClipsError, setVideoClipsError] = useState<AppServiceError | null>(null);
+  const [statsDetailState, setStatsDetailState] = useState<PlayerStatsDetailLoadState>('idle');
+  const [statsDetailError, setStatsDetailError] = useState<AppServiceError | null>(null);
   const playerDetailRequestIdRef = useRef(0);
   const athleteProfileRequestKeyRef = useRef('');
   const videoClipsRequestKeyRef = useRef('');
+  const statsDetailRequestKeyRef = useRef('');
+
+  const loadStatsDetail = useCallback(async ({
+    nextTeamId,
+    nextPlayerId,
+    force = false
+  }: {
+    nextTeamId: string;
+    nextPlayerId: string;
+    force?: boolean;
+  }): Promise<ParentPlayerStatsDetailData | null> => {
+    if (!auth.user?.uid) {
+      return null;
+    }
+    if ((statsDetailState === 'loading' || statsDetailState === 'loaded' || statsDetailState === 'error') && !force) {
+      return null;
+    }
+
+    const requestKey = `${nextTeamId}::${nextPlayerId}`;
+    statsDetailRequestKeyRef.current = requestKey;
+    setStatsDetailState('loading');
+    setStatsDetailError(null);
+    try {
+      const statsDetail = await loadParentPlayerStatsDetail(auth.user, nextTeamId, nextPlayerId);
+      if (statsDetailRequestKeyRef.current !== requestKey) {
+        return null;
+      }
+      setData((current) => {
+        if (!current || current.child.teamId !== nextTeamId || current.child.playerId !== nextPlayerId) {
+          return current;
+        }
+        return {
+          ...current,
+          statsDetail,
+          statRows: statsDetail.statRows.length ? statsDetail.statRows : current.statRows
+        };
+      });
+      setStatsDetailState('loaded');
+      return statsDetail;
+    } catch (loadError: any) {
+      if (statsDetailRequestKeyRef.current === requestKey) {
+        setStatsDetailError(toAppServiceError(loadError, 'Unable to load full player stats.'));
+        setStatsDetailState('error');
+      }
+      return null;
+    }
+  }, [auth.user, statsDetailState]);
 
   const loadVideoClips = async ({
     nextTeamId,
@@ -469,15 +522,25 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
       const preserveAthleteProfile = athleteProfileLoaded && !nextAthleteProfileLoaded && !!data
         && data.child.teamId === nextData.child.teamId
         && data.child.playerId === nextData.child.playerId;
+      const reloadStatsDetail = activeSection === 'performance' && (statsDetailState === 'loaded' || statsDetailState === 'error')
+        && !!data
+        && data.child.teamId === nextData.child.teamId
+        && data.child.playerId === nextData.child.playerId;
       setData((current) => ({
         ...nextData,
         athleteProfile: preserveAthleteProfile && current
           ? current.athleteProfile
-          : nextData.athleteProfile
+          : nextData.athleteProfile,
+        statsDetail: reloadStatsDetail ? null : nextData.statsDetail
       }));
       setAthleteProfileLoaded(nextAthleteProfileLoaded || preserveAthleteProfile);
       setAthleteProfileError(null);
       setVideoClipsError(null);
+      if (reloadStatsDetail) {
+        statsDetailRequestKeyRef.current = '';
+        setStatsDetailState('idle');
+        setStatsDetailError(null);
+      }
       if (reloadVideoClips) {
         await loadVideoClips({
           nextTeamId: nextData.child.teamId,
@@ -518,6 +581,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
   useEffect(() => {
     athleteProfileRequestKeyRef.current = '';
     videoClipsRequestKeyRef.current = '';
+    statsDetailRequestKeyRef.current = '';
     setRefreshing(false);
     setAthleteProfileLoaded(false);
     setAthleteProfileLoading(false);
@@ -525,6 +589,8 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
     setVideoClipsLoaded(false);
     setVideoClipsLoading(false);
     setVideoClipsError(null);
+    setStatsDetailState('idle');
+    setStatsDetailError(null);
     refreshPlayer({ showLoading: true, reloadVideoClips: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid, teamId, playerId]);
@@ -540,6 +606,14 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
       nextPlayerId: data.child.playerId
     });
   }, [activeSection, athleteProfileLoaded, athleteProfileLoading, data, loadAthleteProfile]);
+
+  useEffect(() => {
+    if (activeSection !== 'performance' || !data || statsDetailState !== 'idle') return;
+    void loadStatsDetail({
+      nextTeamId: data.child.teamId,
+      nextPlayerId: data.child.playerId
+    });
+  }, [activeSection, data, loadStatsDetail, statsDetailState]);
 
   useEffect(() => {
     if (loading || !data) return;
@@ -650,6 +724,13 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
       {activeSection === 'performance' ? (
         <ReportsSection
           data={data}
+          statsDetailState={statsDetailState}
+          statsDetailError={statsDetailError}
+          onRetryStatsDetail={() => loadStatsDetail({
+            nextTeamId: data.child.teamId,
+            nextPlayerId: data.child.playerId,
+            force: true
+          })}
           videoClipsLoading={videoClipsLoading}
           videoClipsError={videoClipsError}
           onVideoClipsOpen={() => loadVideoClips({
@@ -739,6 +820,9 @@ function PlayerScheduleSection({ events }: { events: ParentScheduleEvent[] }) {
 
 function ReportsSection({
   data,
+  statsDetailState,
+  statsDetailError,
+  onRetryStatsDetail,
   videoClipsLoading,
   videoClipsError,
   onVideoClipsOpen,
@@ -746,6 +830,9 @@ function ReportsSection({
   initialPanel
 }: {
   data: ParentPlayerDetailData;
+  statsDetailState: PlayerStatsDetailLoadState;
+  statsDetailError: AppServiceError | null;
+  onRetryStatsDetail: () => void;
   videoClipsLoading: boolean;
   videoClipsError: AppServiceError | null;
   onVideoClipsOpen: () => void;
@@ -755,6 +842,8 @@ function ReportsSection({
   const [searchParams, setSearchParams] = useSearchParams();
   const [activePanel, setActivePanel] = useState<ReportPanelId>(initialPanel);
   const trackingRows = Array.isArray(data.trackingSummary) ? data.trackingSummary[0]?.items || [] : [];
+  const statsDetail = data.statsDetail;
+  const reportRows = statsDetail?.statRows?.length ? statsDetail.statRows : data.statRows;
 
   useEffect(() => {
     setActivePanel(initialPanel);
@@ -770,7 +859,7 @@ function ReportsSection({
     setActivePanel(panelId);
     const nextParams = new URLSearchParams(searchParams);
     nextParams.set('section', 'performance');
-    if (panelId === 'games') {
+    if (panelId === 'overview') {
       nextParams.delete('panel');
     } else {
       nextParams.set('panel', panelId);
@@ -806,9 +895,12 @@ function ReportsSection({
         </div>
 
         <div className="mt-3">
-          {activePanel === 'games' ? <GameStatsPanel rows={data.statRows} /> : null}
-          {activePanel === 'season' ? <SeasonAveragesPanel rows={data.statRows} /> : null}
-          {activePanel === 'events' ? <GameEventsPanel events={data.events} /> : null}
+          {statsDetailState === 'loading' && !statsDetail ? <StatsDetailLoadingNotice /> : null}
+          {statsDetailError && !statsDetail ? <StatsDetailErrorNotice error={statsDetailError} onRetry={onRetryStatsDetail} /> : null}
+          {activePanel === 'overview' ? <StatsOverviewPanel statsDetail={statsDetail} rows={reportRows} loading={statsDetailState === 'loading'} /> : null}
+          {activePanel === 'games' ? <GameStatsPanel rows={reportRows} hasMore={statsDetail?.summary.hasMoreGames} gameLimit={statsDetail?.summary.gameLimit} /> : null}
+          {activePanel === 'season' ? <SeasonAveragesPanel rows={reportRows} statsDetail={statsDetail} /> : null}
+          {activePanel === 'events' ? <GameEventsPanel statsDetail={statsDetail} fallbackEvents={data.events} loading={statsDetailState === 'loading'} /> : null}
           {activePanel === 'clips' ? (
             <ClipsPanel
               clips={data.clips}
@@ -840,9 +932,103 @@ function ReportsSection({
   );
 }
 
-function GameStatsPanel({ rows }: { rows: ParentPlayerStatRow[] }) {
+function StatsDetailLoadingNotice() {
   return (
-    <div className="space-y-2">
+    <div className="mb-3 rounded-xl border border-primary-100 bg-primary-50 p-3 text-sm font-semibold text-primary-800">
+      <Loader2 className="mr-2 inline h-4 w-4 animate-spin" aria-hidden="true" />
+      Loading full-season player stats...
+    </div>
+  );
+}
+
+function StatsDetailErrorNotice({ error, onRetry }: { error: AppServiceError; onRetry: () => void }) {
+  return (
+    <div className="mb-3 rounded-xl border border-rose-200 bg-rose-50 p-3">
+      <div className="text-sm font-black text-rose-900">{error.message}</div>
+      <button type="button" className="mt-2 text-xs font-black text-rose-700" onClick={onRetry}>Retry stats</button>
+    </div>
+  );
+}
+
+function StatsOverviewPanel({
+  statsDetail,
+  rows,
+  loading
+}: {
+  statsDetail: ParentPlayerStatsDetailData | null;
+  rows: ParentPlayerStatRow[];
+  loading: boolean;
+}) {
+  const summary = statsDetail?.summary;
+  const averages = summary?.averages || Object.fromEntries(getSeasonAverages(rows).map(([key, value]) => [key.toLowerCase(), Number(value) || 0]));
+  const totals = summary?.totals || buildDisplayTotals(rows);
+  const primaryAverage = Object.entries(averages)[0];
+  const primaryTotal = Object.entries(totals)[0];
+  const primaryStatKey = primaryAverage?.[0] || primaryTotal?.[0] || Object.keys(rows[0]?.stats || {})[0] || '';
+  const avgMinutes = summary && summary.gamesWithTime > 0 ? summary.totalTimeMs / 60000 / summary.gamesWithTime : null;
+  const cards = [
+    { label: 'Games', value: String(summary?.gamesPlayed ?? rows.length), sub: summary?.hasMoreGames ? `Last ${summary.gameLimit}` : 'Tracked' },
+    primaryAverage ? { label: `${primaryAverage[0].toUpperCase()}/G`, value: formatAverage(Number(primaryAverage[1])), sub: 'Average' } : null,
+    primaryTotal ? { label: primaryTotal[0].toUpperCase(), value: formatAverage(Number(primaryTotal[1])), sub: 'Total' } : null,
+    avgMinutes !== null ? { label: 'MIN/G', value: formatAverage(avgMinutes), sub: 'Playing time' } : null
+  ].filter(Boolean) as Array<{ label: string; value: string; sub: string }>;
+
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {cards.length ? cards.slice(0, 4).map((card) => (
+          <div key={card.label} className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-center">
+            <div className="text-xl font-black text-gray-950">{card.value}</div>
+            <div className="mt-1 truncate text-[10px] font-black uppercase tracking-[0.04em] text-gray-500">{card.label}</div>
+            <div className="mt-0.5 text-[10px] font-bold text-gray-400">{card.sub}</div>
+          </div>
+        )) : <div className="col-span-full rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">No season stats yet.</div>}
+      </div>
+
+      {summary?.topStats.length ? (
+        <div className="grid gap-2 sm:grid-cols-2">
+          {summary.topStats.map((stat) => (
+            <div key={stat.id} className="rounded-xl border border-primary-100 bg-primary-50 p-3">
+              <div className="text-xs font-black uppercase tracking-[0.04em] text-primary-700">{stat.label}</div>
+              <div className="mt-1 flex items-end justify-between gap-3">
+                <div className="text-2xl font-black text-primary-900">#{stat.rank}</div>
+                <div className="text-right">
+                  <div className="text-lg font-black text-gray-950">{stat.formattedValue}</div>
+                  <div className="text-[10px] font-bold uppercase tracking-[0.04em] text-gray-500">of {stat.totalPlayers}</div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      <PlayerChartsPanel rows={rows} totals={totals} primaryStatKey={primaryStatKey} />
+
+      {summary?.trends.length ? (
+        <div className="space-y-2">
+          {summary.trends.map((trend) => (
+            <div key={trend.key} className="flex items-center justify-between gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3">
+              <div>
+                <div className="text-sm font-black text-gray-950">{trend.label}</div>
+                <div className="text-xs font-semibold text-gray-500">Recent {formatAverage(trend.recentAverage)} vs earlier {formatAverage(trend.earlierAverage)}</div>
+              </div>
+              <div className={`flex items-center gap-1 text-sm font-black ${trend.direction === 'up' ? 'text-emerald-700' : trend.direction === 'down' ? 'text-rose-700' : 'text-gray-500'}`}>
+                {trend.direction === 'up' && ArrowUp ? <ArrowUp className="h-4 w-4" aria-hidden="true" /> : trend.direction === 'down' && ArrowDown ? <ArrowDown className="h-4 w-4" aria-hidden="true" /> : null}
+                {trend.direction === 'neutral' ? 'Even' : `${trend.percentChange}%`}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : loading ? null : <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">Track more games to see trends.</div>}
+    </div>
+  );
+}
+
+function GameStatsPanel({ rows, hasMore = false, gameLimit = 0 }: { rows: ParentPlayerStatRow[]; hasMore?: boolean; gameLimit?: number }) {
+  return (
+    <div className="space-y-3">
+      {hasMore ? <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-bold text-amber-900">Showing the latest {gameLimit} tracked games for speed.</div> : null}
+      <GameStatsTrendPanel rows={rows} />
       {rows.length ? rows.map((row) => (
         <StatRow key={row.event.eventKey} row={row} />
       )) : <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">No tracked game stats yet.</div>}
@@ -850,27 +1036,333 @@ function GameStatsPanel({ rows }: { rows: ParentPlayerStatRow[] }) {
   );
 }
 
-function SeasonAveragesPanel({ rows }: { rows: ParentPlayerStatRow[] }) {
-  const averages = getSeasonAverages(rows);
+function PlayerChartsPanel({
+  rows,
+  totals,
+  primaryStatKey
+}: {
+  rows: ParentPlayerStatRow[];
+  totals: Record<string, number>;
+  primaryStatKey: string;
+}) {
+  const statBars = Object.entries(totals)
+    .filter(([, value]) => Number.isFinite(Number(value)) && Number(value) > 0)
+    .sort((a, b) => Number(b[1]) - Number(a[1]))
+    .slice(0, 5);
+  const primarySeries = rows
+    .slice(0, 6)
+    .reverse()
+    .map((row) => ({
+      label: row.event.date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+      value: Number((row.stats || {})[primaryStatKey]) || 0,
+      opponent: String(row.event.opponent || row.event.title || 'Game').replace(/^vs\.?\s*/i, '')
+    }));
+  const minuteSeries = rows
+    .filter((row) => Number(row.timeMs || 0) > 0)
+    .slice(0, 6)
+    .reverse()
+    .map((row) => ({
+      label: row.event.date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+      value: Number(row.timeMs || 0) / 60000
+    }));
+
+  if (!statBars.length && !primarySeries.some((point) => point.value > 0) && !minuteSeries.length) {
+    return null;
+  }
+
   return (
-    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-      {averages.length ? averages.map(([key, value]) => (
-        <div key={key} className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-center">
-          <div className="text-xl font-black text-gray-950">{value}</div>
-          <div className="mt-1 truncate text-[10px] font-black uppercase tracking-[0.04em] text-gray-500">{key}</div>
-        </div>
-      )) : <div className="col-span-full rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">No season averages yet.</div>}
+    <div className="grid gap-3 lg:grid-cols-2">
+      {primaryStatKey && primarySeries.some((point) => point.value > 0) ? (
+        <RecentStatBarChart title={`Recent ${primaryStatKey.toUpperCase()}`} series={primarySeries} />
+      ) : null}
+      {statBars.length ? <StatMixChart stats={statBars} /> : null}
+      {minuteSeries.length ? <RecentMinutesChart series={minuteSeries} /> : null}
     </div>
   );
 }
 
-function GameEventsPanel({ events }: { events: ParentScheduleEvent[] }) {
-  const gameEvents = events.filter((event) => event.type === 'game').slice().sort((a, b) => b.date.getTime() - a.date.getTime());
+function RecentStatBarChart({ title, series }: { title: string; series: Array<{ label: string; value: number; opponent: string }> }) {
+  const maxValue = Math.max(...series.map((point) => point.value), 1);
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white p-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-sm font-black text-gray-950">{title}</div>
+        <div className="text-[10px] font-black uppercase tracking-[0.04em] text-gray-500">Last {series.length}</div>
+      </div>
+      <div className="mt-3 flex h-40 items-end gap-2 rounded-lg bg-gray-50 px-2 pb-2 pt-4">
+        {series.map((point) => {
+          const height = Math.max(10, Math.round((point.value / maxValue) * 100));
+          return (
+            <div key={`${point.label}-${point.opponent}`} className="flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-1">
+              <div className="text-xs font-black text-primary-800">{formatAverage(point.value)}</div>
+              <div
+                className="w-full rounded-t-md bg-primary-600"
+                style={{ height: `${height}%` }}
+                aria-label={`${point.value} ${title} on ${point.label}`}
+              />
+              <div className="w-full truncate text-center text-[10px] font-bold text-gray-500">{point.label}</div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function StatMixChart({ stats }: { stats: Array<[string, number]> }) {
+  const maxValue = Math.max(...stats.map(([, value]) => Number(value)), 1);
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white p-3">
+      <div className="text-sm font-black text-gray-950">Stat mix</div>
+      <div className="mt-3 space-y-2">
+        {stats.map(([key, value]) => {
+          const width = Math.max(6, Math.round((Number(value) / maxValue) * 100));
+          return (
+            <div key={key}>
+              <div className="mb-1 flex items-center justify-between gap-3">
+                <div className="text-[10px] font-black uppercase tracking-[0.04em] text-gray-500">{key}</div>
+                <div className="text-xs font-black text-gray-950">{formatAverage(Number(value))}</div>
+              </div>
+              <div className="h-3 overflow-hidden rounded-full bg-gray-100">
+                <div className="h-full rounded-full bg-emerald-600" style={{ width: `${width}%` }} aria-label={`${key} total ${value}`} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function RecentMinutesChart({ series }: { series: Array<{ label: string; value: number }> }) {
+  const maxValue = Math.max(...series.map((point) => point.value), 1);
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white p-3 lg:col-span-2">
+      <div className="text-sm font-black text-gray-950">Playing time</div>
+      <div className="mt-3 grid grid-cols-6 gap-1 rounded-lg bg-gray-50 p-2">
+        {series.map((point) => {
+          const intensity = Math.max(18, Math.round((point.value / maxValue) * 100));
+          return (
+            <div key={point.label} className="min-w-0 rounded-lg border border-gray-200 bg-white p-2 text-center">
+              <div className="mx-auto flex h-14 w-full items-end overflow-hidden rounded-md bg-gray-100">
+                <div className="w-full bg-amber-500" style={{ height: `${intensity}%` }} aria-label={`${formatAverage(point.value)} minutes on ${point.label}`} />
+              </div>
+              <div className="mt-1 text-xs font-black text-gray-950">{formatAverage(point.value)}</div>
+              <div className="truncate text-[10px] font-bold text-gray-500">{point.label}</div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function GameStatsTrendPanel({ rows }: { rows: ParentPlayerStatRow[] }) {
+  const statKeys = Object.keys(buildDisplayTotals(rows)).slice(0, 3);
+  const recentRows = rows.slice(0, 6).reverse();
+  if (!statKeys.length || !recentRows.length) {
+    return null;
+  }
+  const maxValue = Math.max(...recentRows.flatMap((row) => statKeys.map((key) => Number((row.stats || {})[key]) || Number((row.stats || {})[key.toLowerCase()]) || 0)), 1);
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white p-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-sm font-black text-gray-950">Game-by-game trend</div>
+        <div className="text-[10px] font-black uppercase tracking-[0.04em] text-gray-500">Last {recentRows.length}</div>
+      </div>
+      <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+        {statKeys.map((key, keyIndex) => (
+          <div key={key} className="rounded-lg bg-gray-50 p-2">
+            <div className="mb-2 flex items-center justify-between">
+              <div className="text-[10px] font-black uppercase tracking-[0.04em] text-gray-500">{key}</div>
+              <div className="text-xs font-black text-gray-950">{formatAverage(Number(recentRows[recentRows.length - 1]?.stats?.[key] || recentRows[recentRows.length - 1]?.stats?.[key.toLowerCase()] || 0))}</div>
+            </div>
+            <div className="flex h-24 items-end gap-1">
+              {recentRows.map((row) => {
+                const value = Number((row.stats || {})[key]) || Number((row.stats || {})[key.toLowerCase()]) || 0;
+                const height = Math.max(8, Math.round((value / maxValue) * 100));
+                return (
+                  <div key={`${row.event.eventKey}-${key}`} className="flex min-w-0 flex-1 flex-col items-center justify-end gap-1">
+                    <div
+                      className={`w-full rounded-t ${keyIndex === 0 ? 'bg-primary-600' : keyIndex === 1 ? 'bg-emerald-600' : 'bg-amber-500'}`}
+                      style={{ height: `${height}%` }}
+                      aria-label={`${key} ${formatAverage(value)} on ${row.event.date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`}
+                    />
+                    <div className="w-full truncate text-center text-[9px] font-bold text-gray-500">{row.event.date.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SeasonAveragesPanel({ rows, statsDetail }: { rows: ParentPlayerStatRow[]; statsDetail: ParentPlayerStatsDetailData | null }) {
+  const averages = statsDetail
+    ? Object.entries(statsDetail.summary.averages).map(([key, value]) => [key.toUpperCase(), formatAverage(value)] as [string, string])
+    : getSeasonAverages(rows);
+  const totals = statsDetail ? Object.entries(statsDetail.summary.totals) : Object.entries(buildDisplayTotals(rows));
+  return (
+    <div className="space-y-4">
+      <SeasonComparisonChart averages={averages} totals={totals} />
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {averages.length ? averages.slice(0, 12).map(([key, value]) => (
+          <div key={key} className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-center">
+            <div className="text-xl font-black text-gray-950">{value}</div>
+            <div className="mt-1 truncate text-[10px] font-black uppercase tracking-[0.04em] text-gray-500">{key}/G</div>
+          </div>
+        )) : <div className="col-span-full rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">No season averages yet.</div>}
+      </div>
+      {totals.length ? (
+        <div>
+          <div className="mb-2 text-xs font-black uppercase tracking-[0.04em] text-gray-500">Totals</div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {totals.slice(0, 12).map(([key, value]) => (
+              <div key={key} className="rounded-xl border border-gray-200 bg-white p-3 text-center">
+                <div className="text-lg font-black text-gray-950">{formatAverage(Number(value))}</div>
+                <div className="mt-1 truncate text-[10px] font-black uppercase tracking-[0.04em] text-gray-500">{key}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function SeasonComparisonChart({
+  averages,
+  totals
+}: {
+  averages: Array<[string, string]>;
+  totals: Array<[string, unknown]>;
+}) {
+  const averageMap = new Map(averages.map(([key, value]) => [key.replace(/\/G$/i, '').toUpperCase(), Number(value)]));
+  const rows = totals
+    .map(([key, value]) => ({
+      key: String(key).toUpperCase(),
+      total: Number(value) || 0,
+      average: averageMap.get(String(key).toUpperCase()) || 0
+    }))
+    .filter((row) => row.total > 0 || row.average > 0)
+    .slice(0, 6);
+  const maxTotal = Math.max(...rows.map((row) => row.total), 1);
+  const maxAverage = Math.max(...rows.map((row) => row.average), 1);
+  if (!rows.length) {
+    return null;
+  }
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white p-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-sm font-black text-gray-950">Season profile</div>
+        <div className="flex items-center gap-3 text-[10px] font-black uppercase tracking-[0.04em] text-gray-500">
+          <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-primary-600" />Total</span>
+          <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-emerald-600" />Avg</span>
+        </div>
+      </div>
+      <div className="mt-3 space-y-2">
+        {rows.map((row) => {
+          const totalWidth = Math.max(5, Math.round((row.total / maxTotal) * 100));
+          const averageWidth = Math.max(5, Math.round((row.average / maxAverage) * 100));
+          return (
+            <div key={row.key} className="grid grid-cols-[3rem_1fr_3.5rem] items-center gap-2">
+              <div className="truncate text-[10px] font-black uppercase tracking-[0.04em] text-gray-500">{row.key}</div>
+              <div className="space-y-1">
+                <div className="h-2 overflow-hidden rounded-full bg-gray-100">
+                  <div className="h-full rounded-full bg-primary-600" style={{ width: `${totalWidth}%` }} aria-label={`${row.key} total ${formatAverage(row.total)}`} />
+                </div>
+                <div className="h-2 overflow-hidden rounded-full bg-gray-100">
+                  <div className="h-full rounded-full bg-emerald-600" style={{ width: `${averageWidth}%` }} aria-label={`${row.key} average ${formatAverage(row.average)}`} />
+                </div>
+              </div>
+              <div className="text-right text-xs font-black text-gray-950">{formatAverage(row.total)}</div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function GameEventsPanel({ statsDetail, fallbackEvents, loading }: { statsDetail: ParentPlayerStatsDetailData | null; fallbackEvents: ParentScheduleEvent[]; loading: boolean }) {
+  const gameEventRows = statsDetail?.gameEventRows || [];
+  if (gameEventRows.length) {
+    return (
+      <div className="space-y-3">
+        <GameEventTimelineChart rows={gameEventRows} />
+        {gameEventRows.map((row) => (
+          <div key={row.gameId} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-sm font-black text-gray-950">{row.gameLabel}</div>
+              <div className="text-xs font-semibold text-gray-500">{row.gameDate}</div>
+            </div>
+            <div className="mt-2 space-y-2">
+              {row.events.map((event) => (
+                <div key={event.id} className="rounded-lg border border-gray-200 bg-white px-3 py-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0 truncate text-sm font-black text-gray-950">{event.description}</div>
+                    <div className="flex-none text-xs font-black text-primary-700">{[event.period, event.clock].filter(Boolean).join(' ')}</div>
+                  </div>
+                  <div className="mt-0.5 text-xs font-semibold text-gray-500">{[event.statKey.toUpperCase(), event.value].filter((value) => String(value || '').trim()).join(' · ')}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+  if (loading) {
+    return <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">Loading player events...</div>;
+  }
+  const gameEvents = fallbackEvents.filter((event) => event.type === 'game').slice().sort((a, b) => b.date.getTime() - a.date.getTime());
   return (
     <div className="space-y-2">
       {gameEvents.length ? gameEvents.map((event) => (
         <PlayerEventCard key={event.eventKey} event={event} />
       )) : <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">No game events recorded yet.</div>}
+    </div>
+  );
+}
+
+function GameEventTimelineChart({ rows }: { rows: ParentPlayerStatsDetailData['gameEventRows'] }) {
+  const series = rows
+    .slice(0, 8)
+    .reverse()
+    .map((row) => ({
+      label: row.gameDate,
+      game: row.gameLabel,
+      value: row.events.length
+    }));
+  const maxValue = Math.max(...series.map((point) => point.value), 1);
+  if (!series.some((point) => point.value > 0)) {
+    return null;
+  }
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white p-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-sm font-black text-gray-950">Event volume</div>
+        <div className="text-[10px] font-black uppercase tracking-[0.04em] text-gray-500">Recorded plays</div>
+      </div>
+      <div className="mt-3 flex h-32 items-end gap-2 rounded-lg bg-gray-50 px-2 pb-2 pt-4">
+        {series.map((point) => {
+          const height = Math.max(12, Math.round((point.value / maxValue) * 100));
+          return (
+            <div key={`${point.game}-${point.label}`} className="flex min-w-0 flex-1 flex-col items-center justify-end gap-1">
+              <div className="text-xs font-black text-primary-800">{point.value}</div>
+              <div
+                className="w-full rounded-t-md bg-indigo-600"
+                style={{ height: `${height}%` }}
+                aria-label={`${point.value} player events in ${point.game}`}
+              />
+              <div className="w-full truncate text-center text-[10px] font-bold text-gray-500">{point.label}</div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -905,16 +1397,56 @@ function ClipsPanel({
   }
 
   return (
-    <div className="grid gap-2 sm:grid-cols-2">
-      {clips.length ? clips.map((clip) => (
-        <a key={`${clip.url}-${clip.title}`} href={clip.url} target="_blank" rel="noreferrer" className="rounded-xl border border-gray-200 bg-gray-50 p-3 transition hover:border-primary-200 hover:bg-primary-50/40">
-          <div className="flex items-center gap-2 text-sm font-black text-gray-950">
-            <ImagePlus className="h-4 w-4 flex-none text-primary-600" aria-hidden="true" />
-            <span className="truncate">{clip.title || 'Game clip'}</span>
-          </div>
-          <div className="mt-0.5 truncate text-xs font-semibold text-gray-500">{clip.gameLabel || clip.game || 'Game'}{clip.gameDate ? ` · ${clip.gameDate}` : ''}</div>
-        </a>
-      )) : <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">No clips yet.</div>}
+    <div className="space-y-3">
+      <ClipCoverageChart clips={clips} />
+      <div className="grid gap-2 sm:grid-cols-2">
+        {clips.length ? clips.map((clip) => (
+          <a key={`${clip.url}-${clip.title}`} href={clip.url} target="_blank" rel="noreferrer" className="rounded-xl border border-gray-200 bg-gray-50 p-3 transition hover:border-primary-200 hover:bg-primary-50/40">
+            <div className="flex items-center gap-2 text-sm font-black text-gray-950">
+              <ImagePlus className="h-4 w-4 flex-none text-primary-600" aria-hidden="true" />
+              <span className="truncate">{clip.title || 'Game clip'}</span>
+            </div>
+            <div className="mt-0.5 truncate text-xs font-semibold text-gray-500">{clip.gameLabel || clip.game || 'Game'}{clip.gameDate ? ` · ${clip.gameDate}` : ''}</div>
+          </a>
+        )) : <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">No clips yet.</div>}
+      </div>
+    </div>
+  );
+}
+
+function ClipCoverageChart({ clips }: { clips: Array<Record<string, any>> }) {
+  if (!clips.length) {
+    return null;
+  }
+  const counts = new Map<string, number>();
+  clips.forEach((clip) => {
+    const label = String(clip.gameLabel || clip.game || 'Unassigned').trim() || 'Unassigned';
+    counts.set(label, (counts.get(label) || 0) + 1);
+  });
+  const rows = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const maxValue = Math.max(...rows.map(([, value]) => value), 1);
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white p-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-sm font-black text-gray-950">Clip coverage</div>
+        <div className="text-[10px] font-black uppercase tracking-[0.04em] text-gray-500">{clips.length} total</div>
+      </div>
+      <div className="mt-3 space-y-2">
+        {rows.map(([label, count]) => {
+          const width = Math.max(8, Math.round((count / maxValue) * 100));
+          return (
+            <div key={label}>
+              <div className="mb-1 flex items-center justify-between gap-3">
+                <div className="min-w-0 truncate text-xs font-bold text-gray-600">{label}</div>
+                <div className="text-xs font-black text-gray-950">{count}</div>
+              </div>
+              <div className="h-3 overflow-hidden rounded-full bg-gray-100">
+                <div className="h-full rounded-full bg-sky-600" style={{ width: `${width}%` }} aria-label={`${count} clips for ${label}`} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -2610,6 +3142,7 @@ function StatRow({ row }: { row: ParentPlayerStatRow }) {
   const statEntries = Object.entries(row.stats || {})
     .filter(([, value]) => Number.isFinite(Number(value)))
     .slice(0, 5);
+  const timeMs = Number(row.timeMs || 0);
   return (
     <Link to={getEventDetailPath(row.event, 'game')} className="block rounded-xl border border-gray-200 bg-gray-50 p-3 transition hover:border-primary-200 hover:bg-primary-50/40">
       <div className="flex items-center justify-between gap-3">
@@ -2619,8 +3152,14 @@ function StatRow({ row }: { row: ParentPlayerStatRow }) {
         </div>
         <ChevronRight className="h-4 w-4 flex-none text-gray-400" aria-hidden="true" />
       </div>
-      {statEntries.length ? (
+      {statEntries.length || timeMs > 0 ? (
         <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-5">
+          {timeMs > 0 ? (
+            <div className="rounded-lg border border-gray-200 bg-white p-2 text-center">
+              <div className="text-base font-black text-gray-950">{formatAverage(timeMs / 60000)}</div>
+              <div className="mt-0.5 truncate text-[10px] font-black uppercase tracking-[0.04em] text-gray-500">MIN</div>
+            </div>
+          ) : null}
           {statEntries.map(([key, value]) => (
             <div key={key} className="rounded-lg border border-gray-200 bg-white p-2 text-center">
               <div className="text-base font-black text-gray-950">{String(value)}</div>
@@ -2636,7 +3175,7 @@ function StatRow({ row }: { row: ParentPlayerStatRow }) {
 function SignalChip({ icon: Icon, label, value, urgent = false }: { icon: LucideIcon; label: string; value: string; urgent?: boolean }) {
   return (
     <div className={`flex min-h-7 flex-none items-center gap-1.5 rounded-full border px-2.5 text-xs font-black ${urgent ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-gray-200 bg-gray-50 text-gray-700'}`}>
-      <Icon className={`h-3.5 w-3.5 ${urgent ? 'text-amber-700' : 'text-primary-600'}`} aria-hidden="true" />
+      {Icon ? <Icon className={`h-3.5 w-3.5 ${urgent ? 'text-amber-700' : 'text-primary-600'}`} aria-hidden="true" /> : null}
       <span>{label}</span>
       <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${urgent ? 'bg-amber-200/70 text-amber-950' : 'bg-white text-gray-950'}`}>{value}</span>
     </div>
@@ -2647,7 +3186,7 @@ function InfoCard({ icon: Icon, title, detail, to }: { icon: LucideIcon; title: 
   const body = (
     <>
       <div className="flex items-start justify-between gap-3">
-        <Icon className="h-5 w-5 text-primary-600" aria-hidden="true" />
+        {Icon ? <Icon className="h-5 w-5 text-primary-600" aria-hidden="true" /> : null}
         {to ? <ChevronRight className="h-4 w-4 flex-none text-gray-400 transition group-hover:text-primary-600" aria-hidden="true" /> : null}
       </div>
       <div className="mt-3 text-sm font-black text-gray-950">{title}</div>
@@ -2669,7 +3208,7 @@ function InfoCard({ icon: Icon, title, detail, to }: { icon: LucideIcon; title: 
 function EmptyCard({ icon: Icon, title, detail }: { icon: LucideIcon; title: string; detail: string }) {
   return (
     <section className="app-card p-5 text-center">
-      <Icon className="mx-auto h-8 w-8 text-gray-300" aria-hidden="true" />
+      {Icon ? <Icon className="mx-auto h-8 w-8 text-gray-300" aria-hidden="true" /> : null}
       <div className="mt-3 text-sm font-black text-gray-900">{title}</div>
       <div className="mt-1 text-xs font-semibold text-gray-500">{detail}</div>
     </section>
@@ -2761,6 +3300,18 @@ function getSeasonAverages(rows: ParentPlayerStatRow[]) {
   return [...totals.entries()]
     .map(([key, total]) => [key.toUpperCase(), formatAverage(total / games)] as [string, string])
     .slice(0, 8);
+}
+
+function buildDisplayTotals(rows: ParentPlayerStatRow[]) {
+  const totals = new Map<string, number>();
+  rows.forEach((row) => {
+    Object.entries(row.stats || {}).forEach(([key, value]) => {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric)) return;
+      totals.set(key.toUpperCase(), (totals.get(key.toUpperCase()) || 0) + numeric);
+    });
+  });
+  return Object.fromEntries([...totals.entries()].slice(0, 12));
 }
 
 function formatAverage(value: number) {

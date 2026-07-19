@@ -2825,6 +2825,16 @@ service cloud.firestore {
         allow create, update, delete: if isVerifiedForSensitiveWrite() && isOwner(userId);
       }
 
+      match /privateAiPendingActions/{actionId} {
+        allow read: if isOwner(userId);
+        allow create, update, delete: if isVerifiedForSensitiveWrite() && isOwner(userId);
+      }
+
+      match /privateAiActionAudit/{auditId} {
+        allow read: if isOwner(userId);
+        allow create, update, delete: if isVerifiedForSensitiveWrite() && isOwner(userId);
+      }
+
       match /entitlements/{entitlementId} {
         allow read: if isOwner(userId) || isGlobalAdmin();
         allow write: if isGlobalAdmin();

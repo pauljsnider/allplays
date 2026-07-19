@@ -15,6 +15,11 @@ import {
 import { buildAthleteProfileShareUrl as legacyBuildAthleteProfileShareUrl } from '@legacy/athlete-profile-utils.js';
 import { collectPlayerVideoClips as legacyCollectPlayerVideoClips } from '@legacy/player-profile-stats.js';
 import { getVisiblePlayerTrackingSummary as legacyGetVisiblePlayerTrackingSummary } from '@legacy/player-tracking-summary.js';
+import {
+    buildPlayerLeaderboardSnapshot as legacyBuildPlayerLeaderboardSnapshot,
+    selectAnalyticsConfig as legacySelectAnalyticsConfig,
+    summarizePlayerTopStats as legacySummarizePlayerTopStats
+} from '@legacy/stat-leaderboards.js';
 
 type LegacyRecord = Record<string, unknown>;
 
@@ -331,4 +336,16 @@ export function getVisiblePlayerTrackingSummary(input: {
     }))
         .map(normalizeTrackingSummary)
         .filter((summary): summary is PlayerTrackingSummary => !!summary);
+}
+
+export function selectAnalyticsConfig(configs: unknown[], preferredSport = '') {
+    return legacySelectAnalyticsConfig(configs, preferredSport);
+}
+
+export function buildPlayerLeaderboardSnapshot(options: Record<string, unknown>) {
+    return legacyBuildPlayerLeaderboardSnapshot(options);
+}
+
+export function summarizePlayerTopStats(snapshot: unknown, playerId: string): LegacyRecord[] {
+    return asArray(legacySummarizePlayerTopStats(snapshot, playerId)).filter(isRecord);
 }

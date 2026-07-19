@@ -1,5 +1,9 @@
 import {
+    getAggregatedStatsForGames as legacyGetAggregatedStatsForGames,
+    getAggregatedStatsDocumentForPlayer as legacyGetAggregatedStatsDocumentForPlayer,
     getAggregatedStatsForPlayer as legacyGetAggregatedStatsForPlayer,
+    getConfigs as legacyGetConfigs,
+    getGameEvents as legacyGetGameEvents,
     getGames as legacyGetGames,
     getPlayerPrivateProfile as legacyGetPlayerPrivateProfile,
     getPlayerTrackingStatuses as legacyGetPlayerTrackingStatuses,
@@ -79,6 +83,10 @@ export async function getGames(teamId: string): Promise<LegacyGameRecord[]> {
     return await Promise.resolve(legacyGetGames(teamId));
 }
 
+export async function getConfigs(teamId: string): Promise<Record<string, any>[]> {
+    return await Promise.resolve(legacyGetConfigs(teamId));
+}
+
 export async function listCertificatesForPlayer(teamId: string, playerId: string, options?: { status?: string; limit?: number }): Promise<LegacyCertificateRecord[]> {
     return await Promise.resolve(legacyListCertificatesForPlayer(teamId, playerId, options));
 }
@@ -101,6 +109,18 @@ export async function getRosterFieldDefinitions(teamId: string, team: LegacyTeam
 
 export async function getAggregatedStatsForPlayer(teamId: string, gameId: string, playerId: string): Promise<Record<string, unknown>> {
     return await Promise.resolve(legacyGetAggregatedStatsForPlayer(teamId, gameId, playerId));
+}
+
+export async function getAggregatedStatsDocumentForPlayer(teamId: string, gameId: string, playerId: string): Promise<Record<string, any>> {
+    return await Promise.resolve(legacyGetAggregatedStatsDocumentForPlayer(teamId, gameId, playerId));
+}
+
+export async function getAggregatedStatsForGames(teamId: string, gameIds: string[]): Promise<Record<string, Record<string, unknown>>> {
+    return await Promise.resolve(legacyGetAggregatedStatsForGames(teamId, gameIds));
+}
+
+export async function getGameEvents(teamId: string, gameId: string, options?: { limit?: number }): Promise<Record<string, any>[]> {
+    return await Promise.resolve(legacyGetGameEvents(teamId, gameId, options));
 }
 
 export async function listAthleteProfilesForParent(userId: string): Promise<LegacyAthleteProfileRecord[]> {

@@ -4,6 +4,7 @@ import {
   addDoc as legacyAddDoc,
   collection as legacyCollection,
   doc as legacyDoc,
+  getDoc as legacyGetDoc,
   getDocs as legacyGetDocs,
   limit as legacyLimit,
   orderBy as legacyOrderBy,
@@ -24,6 +25,7 @@ export const db: unknown = legacyDb;
 export const addDoc = legacyAddDoc as (...args: any[]) => Promise<any>;
 export const collection = legacyCollection as (...args: any[]) => any;
 export const doc = legacyDoc as (...args: any[]) => any;
+export const getDoc = legacyGetDoc as (...args: any[]) => Promise<any>;
 export const getDocs = legacyGetDocs as (...args: any[]) => Promise<any>;
 export const limit = legacyLimit as (...args: any[]) => any;
 export const orderBy = legacyOrderBy as (...args: any[]) => any;
