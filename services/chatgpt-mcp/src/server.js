@@ -26,10 +26,12 @@ import { createUserDb } from './firestoreRest.js';
 import { createOAuthBroker, metadataFor, OAuthError } from './oauth.js';
 
 const PORT = Number(process.env.PORT) || 8787;
-const PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'game-flow-c6311';
-// Public web API key (client-side key; security is enforced by Firestore
-// rules — see js/firebase-runtime-config.js and CLAUDE.md).
-const WEB_API_KEY = process.env.FIREBASE_WEB_API_KEY || 'AIzaSyDoixIoKJuUVWdmImwjYRTthjKOv2mU0Jc';
+const PROJECT_ID = process.env.FIREBASE_PROJECT_ID;
+const WEB_API_KEY = process.env.FIREBASE_WEB_API_KEY;
+
+if (!PROJECT_ID || !WEB_API_KEY) {
+    throw new Error('FIREBASE_PROJECT_ID and FIREBASE_WEB_API_KEY must be set.');
+}
 
 const resolveIdentity = createIdentityResolver({ apiKey: WEB_API_KEY });
 

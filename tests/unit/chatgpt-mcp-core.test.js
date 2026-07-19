@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
     DomainError,
     resolveUserContext,
@@ -114,22 +115,39 @@ describe('chatgpt-mcp core: resolveUserContext', () => {
         expect([...context.teams.get('team-adm').roles]).toEqual(['admin']);
     });
 
-    it('skips parent teams whose docs Firestore rules deny (stale link)', async () => {
+    it('keeps private parent teams when direct team reads are denied by rules', async () => {
         const db = parentDb({
             docs: {
                 'users/parent-1': {
                     email: 'parent@example.com',
-                    parentOf: [
-                        { teamId: 'team-a', playerId: 'player-1' },
-                        { teamId: 'team-revoked', playerId: 'player-x' }
-                    ]
+                    parentOf: [{ teamId: 'team-private', playerId: 'player-x' }],
+                    parentTeamIds: ['team-private'],
+                    parentPlayerKeys: ['team-private::player-x']
                 },
-                'teams/team-revoked': DENIED
+                'teams/team-private': DENIED
             }
         });
         const context = await resolveUserContext(db, parentIdentity);
-        expect(context.teams.has('team-a')).toBe(true);
-        expect(context.teams.has('team-revoked')).toBe(false);
+        const entry = context.teams.get('team-private');
+        expect([...entry.roles]).toEqual(['parent']);
+        expect([...entry.linkedPlayerIds]).toEqual(['player-x']);
+        expect(entry.team).toEqual({});
+    });
+
+    it('derives parent scope from normalized access keys when parentOf is empty', async () => {
+        const db = parentDb({
+            docs: {
+                'users/parent-1': {
+                    email: 'parent@example.com',
+                    parentOf: [],
+                    parentTeamIds: ['team-a'],
+                    parentPlayerKeys: ['team-a::player-1', 'invalid-key']
+                }
+            }
+        });
+        const context = await resolveUserContext(db, parentIdentity);
+        expect([...context.teams.get('team-a').roles]).toEqual(['parent']);
+        expect([...context.teams.get('team-a').linkedPlayerIds]).toEqual(['player-1']);
     });
 
     it('rejects a missing uid as unauthenticated', async () => {
@@ -267,6 +285,24 @@ describe('chatgpt-mcp core: getGameSummary', () => {
         await expect(getGameSummary(db, context, { teamId: 'team-a', gameId: 'nope' }))
             .rejects.toMatchObject({ code: 'not_found' });
     });
+
+    it('returns a summary with an empty team name for global-admin-only access', async () => {
+        const db = summaryDb({
+            docs: {
+                'users/admin-1': { email: 'admin@example.com', isAdmin: true },
+                'teams/team-other/games/game-1': {
+                    type: 'game',
+                    date: new Date('2026-07-12T17:00:00Z')
+                }
+            },
+            queries: {
+                'teams/team-other/games/game-1/aggregatedStats': () => []
+            }
+        });
+        const context = await resolveUserContext(db, { uid: 'admin-1', email: 'admin@example.com' });
+        const result = await getGameSummary(db, context, { teamId: 'team-other', gameId: 'game-1' });
+        expect(result.game.teamName).toBe('');
+    });
 });
 
 function makeJwt(payload) {
@@ -306,7 +342,8 @@ describe('chatgpt-mcp identity', () => {
         const idToken = makeJwt({ user_id: 'u1', email: 'a@b.c' });
         const fetchImpl = async (url, options) => {
             calls += 1;
-            expect(url).toContain('securetoken.googleapis.com/v1/token?key=test-key');
+            expect(url).toBe('https://securetoken.googleapis.com/v1/token');
+            expect(options.headers['X-goog-api-key']).toBe('test-key');
             // The public API key is referrer-restricted to the AllPlays site.
             expect(options.headers.Referer).toBe('https://allplays.ai/');
             expect(options.body).toContain('grant_type=refresh_token');
@@ -330,6 +367,27 @@ describe('chatgpt-mcp identity', () => {
         const resolve = createIdentityResolver({ apiKey: 'k', fetchImpl: async () => ({ ok: false, json: async () => ({}) }) });
         await expect(resolve(undefined)).rejects.toMatchObject({ code: 'unauthenticated' });
         await expect(resolve('Bearer revoked-token')).rejects.toBeInstanceOf(DomainError);
+    });
+
+    it('rejects malformed successful token exchange responses as unauthenticated', async () => {
+        const resolve = createIdentityResolver({
+            apiKey: 'k',
+            fetchImpl: async () => ({ ok: true, json: async () => { throw new SyntaxError('not json'); } })
+        });
+        await expect(resolve('Bearer refresh-token')).rejects.toMatchObject({
+            code: 'unauthenticated',
+            message: 'Invalid token exchange response.'
+        });
+    });
+});
+
+describe('chatgpt-mcp server configuration', () => {
+    it('requires Firebase configuration without committed fallback values', () => {
+        const source = readFileSync(new URL('../../services/chatgpt-mcp/src/server.js', import.meta.url), 'utf8');
+        expect(source).toContain('const PROJECT_ID = process.env.FIREBASE_PROJECT_ID;');
+        expect(source).toContain('const WEB_API_KEY = process.env.FIREBASE_WEB_API_KEY;');
+        expect(source).toContain('if (!PROJECT_ID || !WEB_API_KEY)');
+        expect(source).not.toMatch(/AIza[0-9A-Za-z_-]+/);
     });
 });
 

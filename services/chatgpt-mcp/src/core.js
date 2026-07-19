@@ -39,9 +39,18 @@ function cleanString(value) {
     return typeof value === 'string' ? value : '';
 }
 
-// With user-credentialed Firestore access, rules can deny individual reads
-// (e.g. a stale parentOf link). Treat those as absent rather than failing the
-// whole tool call; the denial itself never leaks data.
+function parseParentPlayerKey(value) {
+    if (typeof value !== 'string') return null;
+    const separatorIndex = value.indexOf('::');
+    if (separatorIndex <= 0 || separatorIndex >= value.length - 2) return null;
+    const teamId = value.slice(0, separatorIndex).trim();
+    const playerId = value.slice(separatorIndex + 2).trim();
+    return teamId && playerId ? { teamId, playerId } : null;
+}
+
+// With user-credentialed Firestore access, rules can deny individual reads.
+// Treat those documents as absent rather than failing the whole tool call;
+// the caller's rules-authorized downstream reads remain the enforcement point.
 async function safeGetDoc(db, path) {
     try {
         return await db.doc(path).get();
@@ -63,8 +72,27 @@ export async function resolveUserContext(db, { uid, email }) {
     const userSnap = await safeGetDoc(db, `users/${uid}`);
     const profile = userSnap.exists ? userSnap.data() || {} : {};
     const normalizedEmail = normalizeEmail(email || profile.email);
-    const parentLinks = (Array.isArray(profile.parentOf) ? profile.parentOf : [])
+    const legacyParentLinks = (Array.isArray(profile.parentOf) ? profile.parentOf : [])
         .filter((link) => link && typeof link.teamId === 'string' && link.teamId);
+    const parentTeamIds = new Set([
+        ...legacyParentLinks.map((link) => link.teamId),
+        ...(Array.isArray(profile.parentTeamIds) ? profile.parentTeamIds : [])
+            .filter((teamId) => typeof teamId === 'string' && teamId)
+    ]);
+    const linkedPlayerIdsByTeam = new Map();
+    const addLinkedPlayer = (teamId, playerId) => {
+        if (!teamId || !playerId) return;
+        parentTeamIds.add(teamId);
+        if (!linkedPlayerIdsByTeam.has(teamId)) linkedPlayerIdsByTeam.set(teamId, new Set());
+        linkedPlayerIdsByTeam.get(teamId).add(playerId);
+    };
+    for (const link of legacyParentLinks) {
+        if (typeof link.playerId === 'string') addLinkedPlayer(link.teamId, link.playerId);
+    }
+    for (const value of Array.isArray(profile.parentPlayerKeys) ? profile.parentPlayerKeys : []) {
+        const link = parseParentPlayerKey(value);
+        if (link) addLinkedPlayer(link.teamId, link.playerId);
+    }
 
     const [ownedSnap, adminSnap] = await Promise.all([
         db.collection('teams').where('ownerId', '==', uid).get(),
@@ -84,16 +112,15 @@ export async function resolveUserContext(db, { uid, email }) {
     for (const doc of ownedSnap.docs) addTeam(doc.id, doc.data(), 'owner');
     for (const doc of adminSnap.docs) addTeam(doc.id, doc.data(), 'admin');
 
-    const parentTeamIds = [...new Set(parentLinks.map((link) => link.teamId))];
-    const parentTeamSnaps = await Promise.all(parentTeamIds.map((teamId) => safeGetDoc(db, `teams/${teamId}`)));
+    const parentTeamSnaps = await Promise.all([...parentTeamIds].map((teamId) => safeGetDoc(db, `teams/${teamId}`)));
     for (const snap of parentTeamSnaps) {
-        if (snap.exists) addTeam(snap.id, snap.data(), 'parent');
+        // Private team documents are not parent-readable, even though their
+        // games are. Keep the rules-derived parent scope with empty metadata.
+        addTeam(snap.id, snap.exists ? snap.data() : {}, 'parent');
     }
-    for (const link of parentLinks) {
-        const entry = teams.get(link.teamId);
-        if (entry && typeof link.playerId === 'string' && link.playerId) {
-            entry.linkedPlayerIds.add(link.playerId);
-        }
+    for (const [teamId, playerIds] of linkedPlayerIdsByTeam) {
+        const entry = teams.get(teamId);
+        for (const playerId of playerIds) entry?.linkedPlayerIds.add(playerId);
     }
 
     return {

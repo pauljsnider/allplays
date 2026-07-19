@@ -58,15 +58,24 @@ export function createIdentityResolver({ apiKey, referer = DEFAULT_REFERER, fetc
         const cached = cache.get(token);
         if (cached && cached.expiresAt - EXPIRY_MARGIN_MS > now()) return cached;
 
-        const response = await fetchImpl(`${TOKEN_ENDPOINT}?key=${apiKey}`, {
+        const response = await fetchImpl(TOKEN_ENDPOINT, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded', Referer: referer },
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'X-goog-api-key': apiKey,
+                Referer: referer
+            },
             body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: token }).toString()
         });
         if (!response.ok) {
             throw new DomainError('unauthenticated', 'Invalid or revoked token.');
         }
-        const body = await response.json();
+        let body;
+        try {
+            body = await response.json();
+        } catch {
+            throw new DomainError('unauthenticated', 'Invalid token exchange response.');
+        }
         const idPayload = decodeJwtPayload(body.id_token) || {};
         const identity = {
             uid: body.user_id || idPayload.user_id || '',

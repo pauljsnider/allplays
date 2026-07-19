@@ -21,12 +21,13 @@ code (which also checks, as defense-in-depth).
 ```bash
 cd services/chatgpt-mcp
 npm install
+FIREBASE_PROJECT_ID=your-project-id \
+FIREBASE_WEB_API_KEY=your-web-api-key \
 npm start           # listens on :8787, endpoint POST /mcp
 ```
 
-No environment variables required — the public web API key and project id
-default to the main project (`game-flow-c6311`). Override with
-`FIREBASE_PROJECT_ID` / `FIREBASE_WEB_API_KEY` if needed.
+`FIREBASE_PROJECT_ID` and `FIREBASE_WEB_API_KEY` are required; the service
+exits at startup when either is missing.
 
 Get a bearer token (prints your refresh token):
 
