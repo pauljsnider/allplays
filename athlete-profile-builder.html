@@ -146,8 +146,8 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { renderHeader, renderFooter, getUrlParams, escapeHtml, shareOrCopy } from './js/utils.js?v=15';
-        import { requireAuth, checkAuth } from './js/auth.js?v=51';
+        import { renderHeader, renderFooter, getUrlParams, escapeHtml, shareOrCopy } from './js/utils.js?v=16';
+        import { requireAuth, checkAuth } from './js/auth.js?v=52';
         import {
             getUserProfile,
             getAthleteProfile,
@@ -157,7 +157,7 @@
             deleteAthleteProfileMediaByPath,
             releaseAthleteProfileMediaReservation,
             reserveAthleteProfileMediaOwnership
-        } from './js/db.js?v=107';
+        } from './js/db.js?v=108';
         import { buildAthleteProfileShareUrl } from './js/athlete-profile-utils.js?v=2';
 
         const params = getUrlParams();
@@ -718,13 +718,17 @@
             let newlyUploadedPaths = [];
             let createdMediaReservation = false;
             try {
+                const isNewProfile = !currentProfile?.id && !params.profileId;
                 if (pendingProfilePhotoFile || pendingClipFiles.size > 0) {
-                    const reservation = await reserveAthleteProfileMediaOwnership(currentUser.uid, workingProfileId);
+                    const reservation = isNewProfile
+                        ? await reserveAthleteProfileMediaOwnership(currentUser.uid, workingProfileId, { isNewProfile: true })
+                        : await reserveAthleteProfileMediaOwnership(currentUser.uid, workingProfileId);
                     createdMediaReservation = reservation.created === true;
                 }
                 const prepared = await uploadPendingMedia((path) => newlyUploadedPaths.push(path));
                 currentProfile = await saveAthleteProfile(currentUser.uid, prepared.draft, {
-                    profileId: currentProfile?.id || params.profileId || workingProfileId
+                    profileId: currentProfile?.id || params.profileId || workingProfileId,
+                    isNewProfile
                 });
 
                 workingProfileId = currentProfile.id;

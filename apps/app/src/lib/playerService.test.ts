@@ -20,6 +20,7 @@ const legacyPlayerDbMocks = vi.hoisted(() => ({
   setPlayerPrivateRosterProfileFields: vi.fn(),
   updatePlayer: vi.fn(),
   updatePlayerWithPrivateRosterProfileFields: vi.fn(),
+  updatePlayerPrivateProfile: vi.fn(),
   updatePlayerProfile: vi.fn(),
   uploadAthleteProfileMedia: vi.fn(),
   uploadPlayerPhoto: vi.fn()
@@ -147,7 +148,7 @@ describe('saveParentAthleteProfileDraft', () => {
       expect.objectContaining({
         selectedSeasonKeys: ['team-current::player-current', 'team-prior::player-prior']
       }),
-      { profileId: expect.any(String) }
+      { profileId: expect.any(String), isNewProfile: true }
     );
   });
 

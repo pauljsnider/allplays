@@ -1,4 +1,4 @@
-import { escapeHtml, getUrlParams, renderFooter, renderHeader } from './utils.js?v=15';
+import { escapeHtml, getUrlParams, renderFooter, renderHeader } from './utils.js?v=16';
 
 export const OFFLINE_TEAM_FEE_LABEL = 'Offline/manual collection only';
 export const OFFLINE_TEAM_FEE_INSTRUCTIONS = 'Collect payment outside ALL PLAYS. No online payment is processed.';
@@ -1253,8 +1253,8 @@ async function initTeamFeesAdminPage() {
     renderFooter(document.getElementById('footer-container'));
 
     const [{ getTeam, getPlayers, getUserProfile, createTeamFeeBatch, getTeamFeeBatch, listTeamFeeBatches, listTeamFeeRecipients, updateTeamFeeRecipient, canModerateChat }, { requireAuth }] = await Promise.all([
-        import('./db.js?v=107'),
-        import('./auth.js?v=51')
+        import('./db.js?v=108'),
+        import('./auth.js?v=52')
     ]);
 
     try {

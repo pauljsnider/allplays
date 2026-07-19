@@ -17,6 +17,7 @@ import {
     setPlayerPrivateRosterProfileFields as legacySetPlayerPrivateRosterProfileFields,
     updatePlayer as legacyUpdatePlayer,
     updatePlayerWithPrivateRosterProfileFields as legacyUpdatePlayerWithPrivateRosterProfileFields,
+    updatePlayerPrivateProfile as legacyUpdatePlayerPrivateProfile,
     updatePlayerProfile as legacyUpdatePlayerProfile,
     uploadAthleteProfileMedia as legacyUploadAthleteProfileMedia,
     uploadPlayerPhoto as legacyUploadPlayerPhoto
@@ -122,6 +123,10 @@ export async function updatePlayerProfile(teamId: string, playerId: string, payl
     return await Promise.resolve(legacyUpdatePlayerProfile(teamId, playerId, payload));
 }
 
+export async function updatePlayerPrivateProfile(teamId: string, playerId: string, payload: Record<string, unknown>) {
+    return await Promise.resolve(legacyUpdatePlayerPrivateProfile(teamId, playerId, payload));
+}
+
 export async function uploadPlayerPhoto(file: File): Promise<string> {
     return await Promise.resolve(legacyUploadPlayerPhoto(file));
 }
@@ -130,12 +135,12 @@ export async function inviteCoParentToAthlete(userId: string, teamId: string, pl
     return await Promise.resolve(legacyInviteCoParentToAthlete(userId, teamId, playerId, email, playerName));
 }
 
-export async function saveAthleteProfile(userId: string, draft: Record<string, unknown>, options: { profileId: string }) {
+export async function saveAthleteProfile(userId: string, draft: Record<string, unknown>, options: { profileId: string; isNewProfile?: boolean }) {
     return await Promise.resolve(legacySaveAthleteProfile(userId, draft, options));
 }
 
-export async function reserveAthleteProfileMediaOwnership(userId: string, profileId: string) {
-    return await Promise.resolve(legacyReserveAthleteProfileMediaOwnership(userId, profileId));
+export async function reserveAthleteProfileMediaOwnership(userId: string, profileId: string, options: { isNewProfile?: boolean } = {}) {
+    return await Promise.resolve(legacyReserveAthleteProfileMediaOwnership(userId, profileId, options));
 }
 
 export async function releaseAthleteProfileMediaReservation(userId: string, profileId: string) {

@@ -17,6 +17,7 @@ import {
   setPlayerPrivateRosterProfileFields,
   updatePlayer,
   updatePlayerWithPrivateRosterProfileFields,
+  updatePlayerPrivateProfile,
   updatePlayerProfile,
   uploadAthleteProfileMedia,
   uploadPlayerPhoto,
@@ -453,19 +454,23 @@ export async function updateParentPlayerEditableProfile({
     photoUrl = await uploadPlayerPhoto(photoFile);
   }
 
-  const payload: Record<string, any> = {
+  const privatePayload: Record<string, any> = {
     emergencyContact: {
       name: String(emergencyContactName || '').trim(),
       phone: String(emergencyContactPhone || '').trim()
     },
     medicalInfo: String(medicalInfo || '').trim()
   };
+
+  await updatePlayerPrivateProfile(teamId, playerId, privatePayload);
   if (typeof photoUrl !== 'undefined') {
-    payload.photoUrl = photoUrl;
+    await updatePlayerProfile(teamId, playerId, { photoUrl });
   }
 
-  await updatePlayerProfile(teamId, playerId, payload);
-  return payload;
+  return {
+    ...privatePayload,
+    ...(typeof photoUrl !== 'undefined' ? { photoUrl } : {})
+  };
 }
 
 export async function saveStaffPlayerRosterDetails({
@@ -627,6 +632,7 @@ export async function saveParentAthleteProfileDraft({
   const selectedSeasonKeys = Array.isArray(draft.selectedSeasonKeys) && draft.selectedSeasonKeys.length
     ? draft.selectedSeasonKeys
     : [seasonKey];
+  const isNewProfile = !profileId;
   const workingProfileId = profileId || createLocalId('profile');
   let uploadedProfilePhoto: Record<string, any> | null = null;
   const uploadedHighlightClips: Array<Record<string, any>> = [];
@@ -636,7 +642,9 @@ export async function saveParentAthleteProfileDraft({
   const hasPendingMedia = !!profilePhotoFile || uploadRequests.length > 0;
   let createdMediaReservation = false;
   if (hasPendingMedia) {
-    const reservation = await reserveAthleteProfileMediaOwnership(user!.uid, workingProfileId);
+    const reservation = isNewProfile
+      ? await reserveAthleteProfileMediaOwnership(user!.uid, workingProfileId, { isNewProfile: true })
+      : await reserveAthleteProfileMediaOwnership(user!.uid, workingProfileId);
     createdMediaReservation = reservation.created === true;
   }
   try {
@@ -662,12 +670,15 @@ export async function saveParentAthleteProfileDraft({
   let saved;
   try {
     const clips = buildAthleteProfileHighlightClips(draft.clips, uploadedHighlightClips);
+    const saveOptions = isNewProfile
+      ? { profileId: workingProfileId, isNewProfile: true }
+      : { profileId: workingProfileId };
     saved = await saveAthleteProfile(user!.uid, {
       ...draft,
       profilePhoto,
       clips,
       selectedSeasonKeys
-    }, { profileId: workingProfileId });
+    }, saveOptions);
   } catch (error) {
     await cleanupUploadedAthleteProfileMedia([
       uploadedProfilePhoto?.storagePath,
