@@ -259,7 +259,8 @@ describe('PublicTeamSearch', () => {
 
         fireEvent.click(screen.getByRole('button', { name: /Browse all public teams/i }));
 
-        await waitFor(() => expect(screen.getByText('Network error')).toBeTruthy());
+        await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Network error'));
+        expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
         expect(screen.queryByText('Atlanta United')).toBeNull();
     });
 
@@ -361,7 +362,7 @@ describe('PublicTeamSearch', () => {
         const atlantaCard = screen.getByText('Atlanta United').closest('article');
         expect(atlantaCard).toBeTruthy();
 
-        fireEvent.click(within(atlantaCard as HTMLElement).getByRole('button', { name: 'View public team' }));
+        fireEvent.click(within(atlantaCard as HTMLElement).getByRole('link', { name: 'View Atlanta United public team' }));
 
         expect(screen.getByTestId('location-probe').textContent).toBe('/teams/team-atl-1/public');
     });
@@ -375,7 +376,7 @@ describe('PublicTeamSearch', () => {
         const newYorkCard = screen.getByText('New York Knicks').closest('article');
         expect(newYorkCard).toBeTruthy();
 
-        fireEvent.click(within(newYorkCard as HTMLElement).getByRole('button', { name: 'View public team' }));
+        fireEvent.click(within(newYorkCard as HTMLElement).getByRole('link', { name: 'View New York Knicks public team' }));
 
         expect(screen.getByTestId('location-probe').textContent).toBe('/teams/team-nyc-1/public');
     });
@@ -400,7 +401,7 @@ describe('PublicTeamSearch', () => {
         await waitFor(() => expect(screen.getByText('Hidden Club')).toBeTruthy());
         const hiddenCard = screen.getByText('Hidden Club').closest('article');
         expect(hiddenCard).toBeTruthy();
-        fireEvent.click(within(hiddenCard as HTMLElement).getByRole('button', { name: 'View public team' }));
+        fireEvent.click(within(hiddenCard as HTMLElement).getByRole('link', { name: 'View Hidden Club public team' }));
         expect(screen.getByTestId('location-probe').textContent).toBe('/teams/team-private-1/public');
     });
 

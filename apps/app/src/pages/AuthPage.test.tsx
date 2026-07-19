@@ -92,7 +92,7 @@ describe('AuthPage native post-login routing', () => {
 
     fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'coach@example.com' } });
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'password123' } });
-    fireEvent.click(screen.getAllByRole('button', { name: 'Sign in' })[1]);
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
 
     await waitFor(() => expect(authServiceMocks.signInWithEmail).toHaveBeenCalledWith('coach@example.com', 'password123'));
     await waitFor(() => expect(window.location.hash).toBe('#/home'));
@@ -209,6 +209,61 @@ describe('AuthPage signup validation', () => {
   });
 });
 
+describe('AuthPage account-entry accessibility', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    auth.refresh = vi.fn();
+    auth.signOut = vi.fn();
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('exposes keyboard-operable tabs associated with the active form panel', () => {
+    renderAuthPage();
+
+    const tablist = screen.getByRole('tablist', { name: 'Account access' });
+    const signInTab = screen.getByRole('tab', { name: 'Sign in' });
+    const signUpTab = screen.getByRole('tab', { name: 'Sign up' });
+    const panel = screen.getByRole('tabpanel');
+
+    expect(tablist).toBeTruthy();
+    expect(signInTab.getAttribute('aria-selected')).toBe('true');
+    expect(signUpTab.getAttribute('aria-selected')).toBe('false');
+    expect(panel.getAttribute('aria-labelledby')).toBe('auth-login-tab');
+
+    fireEvent.keyDown(signInTab, { key: 'ArrowRight' });
+
+    expect(signUpTab.getAttribute('aria-selected')).toBe('true');
+    expect(panel.getAttribute('aria-labelledby')).toBe('auth-signup-tab');
+    expect(document.activeElement).toBe(signUpTab);
+    expect(screen.getByRole('heading', { name: 'Create your account' })).toBeTruthy();
+
+    fireEvent.keyDown(signUpTab, { key: 'Home' });
+    expect(signInTab.getAttribute('aria-selected')).toBe('true');
+    expect(document.activeElement).toBe(signInTab);
+  });
+
+  it('reveals password values without clearing them', () => {
+    renderAuthPage('/auth?mode=signup');
+
+    const passwordInput = screen.getByLabelText('Password') as HTMLInputElement;
+    const confirmInput = screen.getByLabelText('Confirm password') as HTMLInputElement;
+    fireEvent.change(passwordInput, { target: { value: 'secret123' } });
+    fireEvent.change(confirmInput, { target: { value: 'secret123' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show password' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Show confirmation password' }));
+
+    expect(passwordInput.type).toBe('text');
+    expect(passwordInput.value).toBe('secret123');
+    expect(confirmInput.type).toBe('text');
+    expect(confirmInput.value).toBe('secret123');
+    expect(screen.getByRole('button', { name: 'Hide password' }).getAttribute('aria-pressed')).toBe('true');
+  });
+});
+
 describe('AuthPage sign-in error state', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -227,13 +282,13 @@ describe('AuthPage sign-in error state', () => {
 
     const emailInput = screen.getByLabelText('Email');
     const passwordInput = screen.getByLabelText('Password');
-    const submitButton = screen.getAllByRole('button', { name: 'Sign in' })[1];
+    const submitButton = screen.getByRole('button', { name: 'Sign in' });
 
     fireEvent.change(emailInput, { target: { value: 'coach@example.com' } });
     fireEvent.change(passwordInput, { target: { value: 'wrong-password' } });
     fireEvent.click(submitButton);
 
-    expect(await screen.findByText('Email or password is incorrect.')).toBeTruthy();
+    expect(await screen.findByRole('alert')).toHaveTextContent('Email or password is incorrect.');
 
     fireEvent.change(passwordInput, { target: { value: 'correct-password' } });
     expect(screen.queryByText('Email or password is incorrect.')).toBeNull();
@@ -269,7 +324,22 @@ describe('AuthPage password reset', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send reset email' }));
 
     await waitFor(() => expect(authServiceMocks.sendResetEmail).toHaveBeenCalledWith('missing@example.com'));
-    expect(await screen.findByText("If an account exists for that email, a reset email has been queued.")).toBeTruthy();
+    expect(await screen.findByRole('status')).toHaveTextContent("If an account exists for that email, a reset email has been queued.");
     expect(screen.queryByText(/no all plays account/i)).toBeNull();
+  });
+
+  it('exposes disclosure state and reuses the email already entered', () => {
+    renderAuthPage();
+
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'parent@example.com' } });
+    const trigger = screen.getByRole('button', { name: 'Forgot password?' });
+    expect(trigger.getAttribute('aria-expanded')).toBe('false');
+
+    fireEvent.click(trigger);
+
+    expect(trigger.getAttribute('aria-expanded')).toBe('true');
+    expect(trigger.getAttribute('aria-controls')).toBe('password-reset-panel');
+    expect((screen.getByLabelText('Password reset email') as HTMLInputElement).value).toBe('parent@example.com');
+    expect(screen.getByRole('region', { name: 'Forgot password?' })).toBeTruthy();
   });
 });

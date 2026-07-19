@@ -585,22 +585,35 @@ test('@visual app auth screen exposes sign in, sign up, Google, activation code,
     await page.goto(url, { waitUntil: 'domcontentloaded' });
 
     await expect(page.getByRole('heading', { name: 'Create your account' })).toBeVisible();
+    await expect(page.getByRole('tablist', { name: 'Account access' })).toBeVisible();
+    await expect(page.getByRole('tab', { name: 'Sign up' })).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByText('Join code entered: AB12CD34')).toBeVisible();
     await expect(page.getByText('We’ll verify it after you sign in or create your account.')).toBeVisible();
+    await expect(page.getByText('Get this code from your coach, organizer, or family admin.')).toBeVisible();
     await expect(page.getByLabel('Join code')).toHaveValue('AB12CD34');
     await expect(page.getByRole('button', { name: 'Continue with Google' })).toBeVisible();
-    await expect(page.getByRole('link', { name: 'Enter join code' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Enter join code' })).toHaveCount(0);
     await expect(page.getByRole('link', { name: 'Account action' })).toHaveCount(0);
+
+    await page.getByLabel('Password', { exact: true }).fill('secret123');
+    await page.getByRole('button', { name: 'Show password' }).click();
+    await expect(page.getByLabel('Password', { exact: true })).toHaveAttribute('type', 'text');
+    await expect(page.getByRole('button', { name: 'Hide password' })).toHaveAttribute('aria-pressed', 'true');
+    await page.getByRole('button', { name: 'Hide password' }).click();
+    await expect(page.getByLabel('Password', { exact: true })).toHaveAttribute('type', 'password');
     await expectVisualSnapshot(page, 'auth-join-code-signup.png');
 
-    await page.getByRole('button', { name: 'Sign in' }).first().click();
+    await page.getByRole('tab', { name: 'Sign in' }).click();
+    await page.getByLabel('Email').fill('parent@example.com');
     await page.getByRole('button', { name: 'Forgot password?' }).click();
-    await page.locator('form').filter({ hasText: 'Password reset email' }).locator('input[type="email"]').fill('parent@example.com');
+    await expect(page.getByRole('button', { name: 'Forgot password?' })).toHaveAttribute('aria-expanded', 'true');
+    await expect(page.getByRole('region', { name: 'Forgot password?' })).toBeVisible();
+    await expect(page.getByLabel('Password reset email')).toHaveValue('parent@example.com');
     await page.getByRole('button', { name: 'Send reset email' }).click();
     await expect(page.getByText("If an account exists for that email, we've sent a reset link.")).toBeVisible();
     expect(await page.evaluate(() => window.__appAuthCalls.sendResetEmail)).toEqual(['parent@example.com']);
 
-    await page.getByRole('button', { name: 'Sign up' }).first().click();
+    await page.getByRole('tab', { name: 'Sign up' }).click();
     await page.getByRole('button', { name: 'Continue with Google' }).click();
     expect(await page.evaluate(() => window.__appAuthCalls.signInWithGoogleAccount)).toEqual([{ activationCode: 'AB12CD34' }]);
 });

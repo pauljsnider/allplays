@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
-import type { FormEvent, ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { FormEvent, KeyboardEvent, ReactNode } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { Eye, KeyRound, LogIn, Mail, ShieldCheck } from 'lucide-react';
+import { Eye, EyeOff, KeyRound, LogIn, Mail, ShieldCheck } from 'lucide-react';
 import { AuthFrame } from '../components/AuthFrame';
 import {
   completeGoogleRedirect,
@@ -41,13 +41,18 @@ export function AuthPage({ auth }: { auth: AuthState }) {
   const [activationCode, setActivationCode] = useState(inviteCode);
   const [resetEmail, setResetEmail] = useState('');
   const [showReset, setShowReset] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [resetError, setResetError] = useState('');
+  const loginTabRef = useRef<HTMLButtonElement>(null);
+  const signupTabRef = useRef<HTMLButtonElement>(null);
 
   const title = mode === 'signup' ? 'Create your account' : 'Sign in';
   const subtitle = mode === 'signup'
-    ? 'Use any 8-character ALL PLAYS join code, then verify your email.'
+    ? 'Account creation requires an 8-character team or family join code. You’ll verify your email next.'
     : 'Use email/password or Google to continue.';
 
   const postAuthRoute = useMemo(() => {
@@ -94,7 +99,33 @@ export function AuthPage({ auth }: { auth: AuthState }) {
 
   const clearStatus = () => {
     setError('');
+    setResetError('');
     setMessage('');
+  };
+
+  const selectMode = (nextMode: AuthMode, moveFocus = false) => {
+    clearStatus();
+    setMode(nextMode);
+    if (nextMode === 'signup') {
+      setShowReset(false);
+    }
+    if (moveFocus) {
+      (nextMode === 'login' ? loginTabRef : signupTabRef).current?.focus();
+    }
+  };
+
+  const handleModeKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+    let nextMode: AuthMode | null = null;
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      nextMode = mode === 'login' ? 'signup' : 'login';
+    } else if (event.key === 'Home') {
+      nextMode = 'login';
+    } else if (event.key === 'End') {
+      nextMode = 'signup';
+    }
+    if (!nextMode) return;
+    event.preventDefault();
+    selectMode(nextMode, true);
   };
 
   const handleEmailSubmit = async (event: FormEvent) => {
@@ -194,11 +225,22 @@ export function AuthPage({ auth }: { auth: AuthState }) {
       await sendResetEmail(normalizedEmail);
       setMessage(passwordResetConfirmationMessage);
       setShowReset(false);
-    } catch (resetError: any) {
-      setError(describeAuthError(resetError));
+    } catch (resetFailure: any) {
+      setResetError(describeAuthError(resetFailure));
     } finally {
       setBusy(false);
     }
+  };
+
+  const toggleReset = () => {
+    clearStatus();
+    setShowReset((current) => {
+      const next = !current;
+      if (next && !resetEmail.trim() && email.trim()) {
+        setResetEmail(email);
+      }
+      return next;
+    });
   };
 
   return (
@@ -220,18 +262,42 @@ export function AuthPage({ auth }: { auth: AuthState }) {
         </div>
       ) : null}
 
-      <div className="mt-4 grid grid-cols-2 gap-2 rounded-xl bg-gray-100 p-1">
-        <button type="button" className={`min-h-10 rounded-lg text-sm font-black ${mode === 'login' ? 'bg-white text-primary-700 shadow-sm' : 'text-gray-600'}`} onClick={() => setMode('login')}>
+      <div className="mt-4 grid grid-cols-2 gap-2 rounded-xl bg-gray-100 p-1" role="tablist" aria-label="Account access">
+        <button
+          ref={loginTabRef}
+          id="auth-login-tab"
+          type="button"
+          role="tab"
+          aria-selected={mode === 'login'}
+          aria-controls="auth-mode-panel"
+          tabIndex={mode === 'login' ? 0 : -1}
+          className={`min-h-11 rounded-lg text-sm font-black ${mode === 'login' ? 'bg-white text-primary-700 shadow-sm' : 'text-gray-600'}`}
+          onClick={() => selectMode('login')}
+          onKeyDown={handleModeKeyDown}
+        >
           Sign in
         </button>
-        <button type="button" className={`min-h-10 rounded-lg text-sm font-black ${mode === 'signup' ? 'bg-white text-primary-700 shadow-sm' : 'text-gray-600'}`} onClick={() => setMode('signup')}>
+        <button
+          ref={signupTabRef}
+          id="auth-signup-tab"
+          type="button"
+          role="tab"
+          aria-selected={mode === 'signup'}
+          aria-controls="auth-mode-panel"
+          tabIndex={mode === 'signup' ? 0 : -1}
+          className={`min-h-11 rounded-lg text-sm font-black ${mode === 'signup' ? 'bg-white text-primary-700 shadow-sm' : 'text-gray-600'}`}
+          onClick={() => selectMode('signup')}
+          onKeyDown={handleModeKeyDown}
+        >
           Sign up
         </button>
       </div>
 
+      <div id="auth-mode-panel" role="tabpanel" aria-labelledby={mode === 'login' ? 'auth-login-tab' : 'auth-signup-tab'}>
       <form className="mt-4 space-y-3" onSubmit={handleEmailSubmit}>
-        <Field icon={Mail} label="Email">
+        <Field icon={Mail} label="Email" htmlFor="auth-email">
           <input
+            id="auth-email"
             className="auth-input"
             type="email"
             value={email}
@@ -243,38 +309,47 @@ export function AuthPage({ auth }: { auth: AuthState }) {
             autoComplete="email"
           />
         </Field>
-        <Field icon={KeyRound} label="Password">
-          <input
-            className="auth-input"
-            type="password"
-            value={password}
-            onChange={(event) => {
-              setPassword(event.target.value);
-              clearStatus();
-            }}
-            required
-            minLength={6}
-            autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
-          />
+        <Field icon={KeyRound} label="Password" htmlFor="auth-password">
+          <div className="relative">
+            <input
+              id="auth-password"
+              className="auth-input !pr-14"
+              type={showPassword ? 'text' : 'password'}
+              value={password}
+              onChange={(event) => {
+                setPassword(event.target.value);
+                clearStatus();
+              }}
+              required
+              minLength={6}
+              autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+            />
+            <PasswordVisibilityButton visible={showPassword} label="password" onToggle={() => setShowPassword((current) => !current)} />
+          </div>
         </Field>
         {mode === 'signup' ? (
           <>
-            <Field icon={KeyRound} label="Confirm password">
-              <input
-                className="auth-input"
-                type="password"
-                value={confirmPassword}
-                onChange={(event) => {
-                  setConfirmPassword(event.target.value);
-                  clearStatus();
-                }}
-                required
-                minLength={6}
-                autoComplete="new-password"
-              />
+            <Field icon={KeyRound} label="Confirm password" htmlFor="auth-confirm-password">
+              <div className="relative">
+                <input
+                  id="auth-confirm-password"
+                  className="auth-input !pr-14"
+                  type={showConfirmPassword ? 'text' : 'password'}
+                  value={confirmPassword}
+                  onChange={(event) => {
+                    setConfirmPassword(event.target.value);
+                    clearStatus();
+                  }}
+                  required
+                  minLength={6}
+                  autoComplete="new-password"
+                />
+                <PasswordVisibilityButton visible={showConfirmPassword} label="confirmation password" onToggle={() => setShowConfirmPassword((current) => !current)} />
+              </div>
             </Field>
-            <Field icon={Eye} label="Join code">
+            <Field icon={Eye} label="Join code" htmlFor="auth-join-code">
               <input
+                id="auth-join-code"
                 className="auth-input font-mono uppercase tracking-widest"
                 value={activationCode}
                 onChange={(event) => {
@@ -283,54 +358,80 @@ export function AuthPage({ auth }: { auth: AuthState }) {
                 }}
                 required
                 maxLength={12}
+                autoComplete="one-time-code"
+                aria-describedby="auth-join-code-help"
               />
+              <p id="auth-join-code-help" className="mt-1.5 text-xs font-semibold leading-5 text-gray-500">Get this code from your coach, organizer, or family admin.</p>
             </Field>
           </>
         ) : null}
 
-        {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm font-bold text-rose-700">{error}</div> : null}
-        {message ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-bold text-emerald-700">{message}</div> : null}
+        {error ? <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm font-bold text-rose-700">{error}</div> : null}
+        {message ? <div role="status" aria-live="polite" className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-bold text-emerald-700">{message}</div> : null}
 
-        <button type="submit" className="primary-button w-full" disabled={busy}>
+        <button type="submit" className="primary-button !min-h-11 w-full" disabled={busy}>
           {busy ? 'Working...' : mode === 'signup' ? 'Create account' : 'Sign in'}
         </button>
       </form>
 
-      <button type="button" className="secondary-button mt-3 w-full" onClick={handleGoogle} disabled={busy}>
+      <button type="button" className="secondary-button mt-3 !min-h-11 w-full" onClick={handleGoogle} disabled={busy}>
         Continue with Google
       </button>
 
       {mode === 'login' ? (
-        <button type="button" className="mt-3 w-full text-center text-sm font-black text-primary-700" onClick={() => setShowReset((current) => !current)}>
+        <button
+          id="password-reset-trigger"
+          type="button"
+          className="mt-3 min-h-11 w-full text-center text-sm font-black text-primary-700"
+          onClick={toggleReset}
+          aria-expanded={showReset}
+          aria-controls="password-reset-panel"
+        >
           Forgot password?
         </button>
       ) : null}
 
       {showReset ? (
-        <form className="mt-3 rounded-xl border border-gray-200 bg-gray-50 p-3" onSubmit={handleReset}>
+        <form id="password-reset-panel" role="region" aria-labelledby="password-reset-trigger" className="mt-3 rounded-xl border border-gray-200 bg-gray-50 p-3" onSubmit={handleReset}>
           <label htmlFor="password-reset-email" className="text-xs font-extrabold uppercase tracking-[0.04em] text-gray-500">Password reset email</label>
-          <input id="password-reset-email" className="auth-input mt-2" type="email" value={resetEmail} onChange={(event) => setResetEmail(event.target.value)} placeholder={email || 'you@example.com'} />
-          <button type="submit" className="secondary-button mt-3 w-full" disabled={busy}>
+          <input id="password-reset-email" className="auth-input mt-2" type="email" value={resetEmail} onChange={(event) => { setResetEmail(event.target.value); setResetError(''); }} placeholder="you@example.com" autoComplete="email" required />
+          {resetError ? <div role="alert" className="mt-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm font-bold text-rose-700">{resetError}</div> : null}
+          <button type="submit" className="secondary-button mt-3 !min-h-11 w-full" disabled={busy}>
             Send reset email
           </button>
         </form>
       ) : null}
 
-      <div className="mt-4 flex flex-wrap justify-center gap-3 text-xs font-bold text-gray-500">
-        <Link to="/accept-invite" className="text-primary-700">Enter join code</Link>
+      {mode === 'login' ? <div className="mt-4 flex flex-wrap justify-center gap-3 text-xs font-bold text-gray-500">
+        <Link to="/accept-invite" className="inline-flex min-h-11 items-center text-primary-700">Enter join code</Link>
+      </div> : null}
       </div>
     </AuthFrame>
   );
 }
 
-function Field({ icon: Icon, label, children }: { icon: typeof Mail; label: string; children: ReactNode }) {
+function Field({ icon: Icon, label, htmlFor, children }: { icon: typeof Mail; label: string; htmlFor: string; children: ReactNode }) {
   return (
-    <label className="block">
-      <span className="mb-1.5 flex items-center gap-1.5 text-xs font-extrabold uppercase tracking-[0.04em] text-gray-500">
+    <div className="block">
+      <label htmlFor={htmlFor} className="mb-1.5 flex items-center gap-1.5 text-xs font-extrabold uppercase tracking-[0.04em] text-gray-500">
         <Icon className="h-3.5 w-3.5" aria-hidden="true" />
         {label}
-      </span>
+      </label>
       {children}
-    </label>
+    </div>
+  );
+}
+
+function PasswordVisibilityButton({ visible, label, onToggle }: { visible: boolean; label: string; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      className="absolute inset-y-0 right-0 flex min-h-11 min-w-11 items-center justify-center rounded-r-xl text-gray-500 hover:text-primary-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary-600"
+      onClick={onToggle}
+      aria-label={`${visible ? 'Hide' : 'Show'} ${label}`}
+      aria-pressed={visible}
+    >
+      {visible ? <EyeOff className="h-5 w-5" aria-hidden="true" /> : <Eye className="h-5 w-5" aria-hidden="true" />}
+    </button>
   );
 }

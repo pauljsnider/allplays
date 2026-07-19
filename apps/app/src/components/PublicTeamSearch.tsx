@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { Search, XCircle, Loader2, Users } from 'lucide-react';
 import { type ParentHomeTeam } from '../lib/homeLogic';
 import { TeamAvatar, TeamLauncherChip, Status } from './TeamSummaryPrimitives';
@@ -14,7 +14,6 @@ function publicTeamRequestKey(searchText?: string | null) {
 }
 
 export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = false }: { autoBrowseOnMount?: boolean; showBackLink?: boolean }) {
-  const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [publicTeams, setPublicTeams] = useState<ParentHomeTeam[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
@@ -112,10 +111,6 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
     setNextCursor(null);
   };
 
-  const handleOpenTeam = useCallback((team: ParentHomeTeam) => {
-    navigate(`/teams/${encodeURIComponent(team.teamId)}/public`);
-  }, [navigate]);
-
   useEffect(() => {
     if (!autoBrowseOnMount || autoBrowseTriggeredRef.current) {
       return;
@@ -151,7 +146,7 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
           <p className="mt-1 text-xs font-semibold text-gray-500 sm:text-sm">Browse public teams and open their public-safe profile.</p>
         </div>
         {showBackLink ? (
-          <Link to="/teams" className="ghost-button !min-h-10 !px-3 text-sm">
+          <Link to="/teams" className="ghost-button !min-h-11 !px-3 text-sm">
             Back to Teams
           </Link>
         ) : null}
@@ -162,7 +157,7 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
         <input
           id="public-team-location-search"
           type="text"
-          className="auth-input flex-1 !min-h-10 !px-3 !py-2 text-sm"
+          className="auth-input flex-1 !min-h-11 !px-3 !py-2 text-sm"
           placeholder="Search by team, city, state, or zip"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
@@ -174,7 +169,7 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
         />
         <button
           type="button"
-          className="primary-button !min-h-10 !px-3 text-sm"
+          className="primary-button !min-h-11 !px-3 text-sm"
           onClick={handleSearch}
           disabled={loading && (!trimmedSearchQuery || isDuplicatePendingSearch)}
           aria-label="Search public teams"
@@ -189,7 +184,7 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
         {searchQuery || activeSearchQuery || pendingSearchQuery ? (
           <button
             type="button"
-            className="ghost-button !min-h-10 !px-3 text-sm"
+            className="ghost-button !min-h-11 !px-3 text-sm"
             onClick={handleClear}
             aria-label="Clear public team search"
           >
@@ -206,7 +201,7 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
           <div className="mt-1 text-xs font-semibold text-gray-500">Search by team name, city, state, or zip code, or browse all public teams.</div>
           <button
             type="button"
-            className="ghost-button mt-4 !min-h-10 !px-3 text-sm"
+            className="ghost-button mt-4 !min-h-11 !px-3 text-sm"
             onClick={handleBrowseAll}
             disabled={loading}
           >
@@ -214,13 +209,27 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
           </button>
         </div>
       ) : loading && !publicTeams.length ? (
-        <div className="app-card p-6 text-center">
+        <div className="app-card p-6 text-center" role="status" aria-live="polite" aria-atomic="true">
           <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary-600" aria-hidden="true" />
           <div className="mt-3 text-sm font-black text-gray-900">Loading public teams</div>
           <div className="mt-1 text-xs font-semibold text-gray-500">{loadingStatusCopy}</div>
         </div>
       ) : error ? (
-        <Status tone="error" message={error} />
+        <div className="space-y-3">
+          <Status tone="error" message={error} />
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <button
+              type="button"
+              className="primary-button !min-h-11 flex-1 justify-center text-sm"
+              onClick={() => void fetchPublicTeams({ searchText: searchQuery.trim() || activeSearchQuery || undefined })}
+            >
+              Retry
+            </button>
+            <button type="button" className="ghost-button !min-h-11 flex-1 justify-center text-sm" onClick={handleClear}>
+              Clear search
+            </button>
+          </div>
+        </div>
       ) : Object.keys(groupedTeams).length ? (
         <div className="space-y-4">
           {Object.entries(groupedTeams).map(([location, teams]) => (
@@ -228,7 +237,7 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
               <h3 className="text-lg font-black text-gray-950">{location}</h3>
               <div className="grid gap-2 sm:grid-cols-2">
                 {teams.map(team => (
-                  <PublicTeamCard key={team.teamId} team={team} onOpenTeam={handleOpenTeam} />
+                  <PublicTeamCard key={team.teamId} team={team} />
                 ))}
               </div>
             </div>
@@ -237,7 +246,7 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
             <div className="flex justify-center">
               <button
                 type="button"
-                className="ghost-button !min-h-10 !px-4 text-sm"
+                className="ghost-button !min-h-11 !px-4 text-sm"
                 onClick={handleLoadMore}
                 disabled={loading}
               >
@@ -257,7 +266,7 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
           <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:justify-center">
             <button
               type="button"
-              className="primary-button w-full justify-center !min-h-10 !px-4 text-sm sm:w-auto"
+              className="primary-button w-full justify-center !min-h-11 !px-4 text-sm sm:w-auto"
               onClick={handleBrowseAll}
               disabled={loading && pendingRequestKey === publicTeamRequestKey(undefined)}
             >
@@ -265,7 +274,7 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
             </button>
             <button
               type="button"
-              className="ghost-button w-full justify-center !min-h-10 !px-4 text-sm sm:w-auto"
+              className="ghost-button w-full justify-center !min-h-11 !px-4 text-sm sm:w-auto"
               onClick={handleClear}
             >
               Clear search
@@ -277,7 +286,8 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
   );
 }
 
-function PublicTeamCard({ team, onOpenTeam }: { team: ParentHomeTeam; onOpenTeam: (team: ParentHomeTeam) => void | Promise<void> }) {
+function PublicTeamCard({ team }: { team: ParentHomeTeam }) {
+  const teamName = team.teamName.trim() || 'Team';
   const hasRosterCount = typeof team.publicRosterCount === 'number';
   const rosterCountLabel = hasRosterCount
     ? `${team.publicRosterCount}${team.publicRosterCountCapped ? '+' : ''} player${team.publicRosterCount === 1 && !team.publicRosterCountCapped ? '' : 's'}`
@@ -286,9 +296,9 @@ function PublicTeamCard({ team, onOpenTeam }: { team: ParentHomeTeam; onOpenTeam
   return (
     <article className="min-w-0 rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
       <div className="flex min-w-0 items-center gap-3">
-        <TeamAvatar name={team.teamName} photoUrl={team.photoUrl} />
+        <TeamAvatar name={teamName} photoUrl={team.photoUrl} />
         <span className="min-w-0 flex-1">
-          <span className="truncate text-sm font-black text-gray-950">{team.teamName}</span>
+          <span className="truncate text-sm font-black text-gray-950">{teamName}</span>
           <span className="mt-0.5 block truncate text-xs font-semibold text-gray-500">{team.location || 'Location Unknown'}</span>
           <span className="mt-1 flex min-w-0 flex-wrap gap-1.5">
             <TeamLauncherChip label={rosterCountLabel} />
@@ -296,15 +306,13 @@ function PublicTeamCard({ team, onOpenTeam }: { team: ParentHomeTeam; onOpenTeam
         </span>
       </div>
 
-      <button
-        type="button"
-        className="primary-button mt-3 w-full justify-center !min-h-10 text-sm"
-        onClick={() => {
-          void onOpenTeam(team);
-        }}
+      <Link
+        to={`/teams/${encodeURIComponent(team.teamId)}/public`}
+        className="primary-button mt-3 !min-h-11 w-full justify-center text-sm"
+        aria-label={`View ${teamName} public team`}
       >
-        View public team
-      </button>
+        View profile
+      </Link>
     </article>
   );
 }

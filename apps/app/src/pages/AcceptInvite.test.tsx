@@ -88,6 +88,7 @@ describe('AcceptInvite', () => {
         renderAcceptInvite();
 
         expect(await screen.findByText('Invite accepted.')).toBeTruthy();
+        expect(screen.getByRole('status')).toHaveTextContent('Invite accepted.');
         expect(screen.queryByText('Home route')).toBeNull();
 
         await new Promise((resolve) => setTimeout(resolve, 750));
@@ -116,5 +117,13 @@ describe('AcceptInvite', () => {
 
         expect(screen.getByText('Reset route')).toBeTruthy();
         expect(screen.queryByText('Home route')).toBeNull();
+    });
+
+    it('announces invite redemption failures as alerts', async () => {
+        inviteRedemptionMocks.redeemSignedInInvite.mockRejectedValueOnce(new Error('This join code has expired.'));
+
+        renderAcceptInvite();
+
+        expect(await screen.findByRole('alert')).toHaveTextContent('This join code has expired.');
     });
 });

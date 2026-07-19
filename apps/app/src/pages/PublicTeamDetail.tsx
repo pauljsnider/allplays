@@ -9,6 +9,7 @@ export function PublicTeamDetail() {
   const [team, setTeam] = useState<PublicTeamProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [loadAttempt, setLoadAttempt] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -20,14 +21,35 @@ export function PublicTeamDetail() {
       .catch((loadError: any) => { if (active) { setTeam(null); setError(loadError?.message || 'Unable to load this public team.'); } })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [teamId]);
+  }, [teamId, loadAttempt]);
 
-  if (loading) return <div className="app-card p-10 text-center"><Loader2 className="mx-auto h-7 w-7 animate-spin text-primary-600" /></div>;
-  if (!team) return <Status tone="error" message={error || 'Public team not found.'} />;
+  if (loading) return (
+    <div className="app-card p-10 text-center" role="status" aria-live="polite" aria-atomic="true">
+      <Loader2 className="mx-auto h-7 w-7 animate-spin text-primary-600" aria-hidden="true" />
+      <div className="mt-3 text-sm font-black text-gray-900">Loading public team</div>
+      <div className="mt-1 text-xs font-semibold text-gray-500">Getting the public-safe team profile.</div>
+    </div>
+  );
+  if (!team) return (
+    <div className="mx-auto max-w-3xl space-y-4">
+      <section className="app-card space-y-4 p-5">
+        <div>
+          <div className="app-label">Public team</div>
+          <h1 className="mt-1 text-2xl font-black text-gray-950">We couldn’t load this team</h1>
+        </div>
+        <Status tone="error" message={error || 'Public team not found.'} />
+        <p className="text-sm font-semibold leading-6 text-gray-600">The link may be outdated, or the team may no longer have a public profile.</p>
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <button type="button" className="primary-button !min-h-11 justify-center sm:w-auto" onClick={() => setLoadAttempt((current) => current + 1)}>Retry</button>
+          <Link to="/teams/browse" className="secondary-button !min-h-11 justify-center sm:w-auto">Back to team search</Link>
+        </div>
+      </section>
+    </div>
+  );
 
   return (
     <div className="mx-auto max-w-3xl space-y-4">
-      <div className="flex flex-wrap gap-3 text-sm font-black"><Link to="/discover?tab=teams" className="text-primary-700">← Find teams</Link><Link to="/discover" className="text-primary-700">Browse opportunities</Link></div>
+      <div className="flex flex-wrap gap-3 text-sm font-black"><Link to="/teams/browse" className="text-primary-700" aria-label="Find teams">← Find teams</Link><Link to="/discover" className="text-primary-700">Browse opportunities</Link></div>
       <section className="app-card overflow-hidden">
         <div className="bg-gradient-to-br from-primary-700 to-primary-950 p-6 text-white sm:p-8">
           <div className="flex items-start gap-4">
@@ -40,6 +62,15 @@ export function PublicTeamDetail() {
         <div className="space-y-5 p-5 sm:p-6">
           <div><div className="app-label">About</div><p className="mt-2 whitespace-pre-wrap text-sm font-semibold leading-6 text-gray-700">{team.description || 'This team has not added a public description yet.'}</p></div>
           <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-4 text-sm font-semibold leading-6 text-emerald-900"><div className="flex items-center gap-2 font-black"><ShieldCheck className="h-5 w-5" />Public-safe profile</div><p className="mt-1">This page shows team identity and general location only. Rosters, private schedules, contacts, and member data are not loaded.</p></div>
+        </div>
+      </section>
+      <section className="app-card p-5 sm:p-6">
+        <div className="app-label">Team access</div>
+        <h2 className="mt-1 text-xl font-black text-gray-950">Want to join or open this team?</h2>
+        <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">Use a join code from the team organizer, or sign in if you already have ALL PLAYS access.</p>
+        <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+          <Link to="/accept-invite" className="primary-button !min-h-11 justify-center">Enter a join code</Link>
+          <Link to="/auth" className="secondary-button !min-h-11 justify-center">Sign in</Link>
         </div>
       </section>
     </div>

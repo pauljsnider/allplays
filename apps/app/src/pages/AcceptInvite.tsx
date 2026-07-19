@@ -172,11 +172,11 @@ export function AcceptInvite({ auth }: { auth: AuthState }) {
           <div className="mt-1 font-mono text-lg font-black tracking-widest text-primary-900">{code}</div>
           <p className="mt-1 text-sm font-semibold text-primary-800">We’ll verify this code after you sign in or create your account.</p>
           <div className="mt-3 grid gap-2">
-            <Link to={`${authUrl}&mode=login`} className="primary-button justify-center">
+            <Link to={`${authUrl}&mode=login`} className="primary-button !min-h-11 justify-center">
               <LogIn className="h-4 w-4" aria-hidden="true" />
               Sign in to accept
             </Link>
-            <Link to={`${authUrl}&mode=signup`} className="secondary-button justify-center">
+            <Link to={`${authUrl}&mode=signup`} className="secondary-button !min-h-11 justify-center">
               <ShieldCheck className="h-4 w-4" aria-hidden="true" />
               Create account with code
             </Link>
@@ -188,7 +188,7 @@ export function AcceptInvite({ auth }: { auth: AuthState }) {
         <form className="mt-4 space-y-3" onSubmit={handleEmailLink}>
           <p className="text-sm font-semibold leading-6 text-gray-600">Enter the email address that received this invite link.</p>
           <input className="auth-input" type="email" inputMode="email" autoComplete="email" enterKeyHint="next" value={email} onChange={(event) => setEmail(event.target.value)} required placeholder="you@example.com" />
-          <button type="submit" className="primary-button w-full justify-center">Continue</button>
+          <button type="submit" className="primary-button !min-h-11 w-full justify-center">Continue</button>
         </form>
       ) : null}
 
@@ -200,7 +200,7 @@ export function AcceptInvite({ auth }: { auth: AuthState }) {
           </span>
           <input className="auth-input text-center font-mono uppercase tracking-widest" value={manualCode} onChange={(event) => setManualCode(event.target.value.toUpperCase())} maxLength={8} placeholder="XXXXXXXX" inputMode="text" autoCapitalize="characters" autoComplete="one-time-code" enterKeyHint="go" />
         </label>
-        <button type="submit" className="secondary-button w-full justify-center" disabled={state === 'processing'}>
+        <button type="submit" className="secondary-button !min-h-11 w-full justify-center" disabled={state === 'processing'}>
           {auth.user ? 'Apply code' : 'Continue with code'}
         </button>
       </form>
@@ -241,7 +241,7 @@ function Status({ icon: Icon, message, tone }: { icon: typeof KeyRound; message:
   };
 
   return (
-    <div className={`mt-4 flex items-center gap-2 rounded-xl border p-3 text-sm font-bold ${classes[tone]}`}>
+    <div role={tone === 'error' ? 'alert' : 'status'} aria-live={tone === 'error' ? 'assertive' : 'polite'} aria-atomic="true" className={`mt-4 flex items-center gap-2 rounded-xl border p-3 text-sm font-bold ${classes[tone]}`}>
       <Icon className="h-4 w-4 flex-none" aria-hidden="true" />
       {message}
     </div>

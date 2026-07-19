@@ -24,7 +24,7 @@ export function AuthFrame({
           </span>
         </Link>
         {backTo ? (
-          <Link to={backTo} className="ghost-button mb-3 w-fit !min-h-9 !px-3 !py-1.5 text-sm">
+          <Link to={backTo} className="ghost-button mb-3 w-fit !min-h-11 !px-3 !py-1.5 text-sm">
             <ChevronLeft className="h-4 w-4" aria-hidden="true" />
             {backLabel}
           </Link>

@@ -547,6 +547,23 @@ async function mockPublicTeamsBrowseModule(page, { slowSearch = false } = {}) {
                     }
                     return { teams: [], nextCursor: null };
                 }
+
+                export async function getPublicTeamDetail(teamId) {
+                    if (teamId !== 'search-atl-1') {
+                        throw new Error('Public team not found.');
+                    }
+                    return {
+                        id: 'search-atl-1',
+                        name: 'Atlanta Fire',
+                        sport: 'Soccer',
+                        description: 'Community soccer team.',
+                        photoUrl: null,
+                        city: 'Atlanta',
+                        state: 'GA',
+                        zip: '30301',
+                        location: 'Atlanta, GA'
+                    };
+                }
             `
         });
     });
@@ -702,6 +719,9 @@ test.describe('mobile My Teams', () => {
         await expect(page.getByText('Browsing teams across all regions.')).toHaveCount(0);
         await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
         await expect(page.getByText('Atlanta Fire')).toBeVisible();
+        const publicTeamLink = page.getByRole('link', { name: 'View Atlanta Fire public team' });
+        await expect(publicTeamLink).toBeVisible();
+        await expect.poll(async () => Math.round((await publicTeamLink.boundingBox())?.height || 0)).toBeGreaterThanOrEqual(44);
         await expect(page.getByRole('button', { name: 'Load more teams' })).toBeVisible();
         await expect.poll(() => page.evaluate(() => window.__publicTeamSearchCalls.at(-1))).toEqual({ searchText: 'atlanta', cursor: null });
 
@@ -715,6 +735,12 @@ test.describe('mobile My Teams', () => {
         await expect.poll(() => page.evaluate(() => window.__publicTeamSearchCalls.at(-1))).toEqual({ searchText: 'atlanta', cursor: 'search-page-2' });
         await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
         await expect(page).toHaveURL(/#\/teams\/browse$/);
+
+        await publicTeamLink.click();
+        await expect(page.getByRole('heading', { name: 'Atlanta Fire' })).toBeVisible();
+        await expect(page.getByRole('link', { name: 'Find teams' })).toHaveAttribute('href', '#/teams/browse');
+        await expect(page.getByRole('link', { name: 'Enter a join code' })).toBeVisible();
+        await expect(page.getByRole('main').getByRole('link', { name: 'Sign in' })).toBeVisible();
     });
 
     test('shows load failures without trapping the user in loading state', async ({ page, baseURL }) => {
