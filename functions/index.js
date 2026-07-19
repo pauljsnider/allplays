@@ -1151,6 +1151,12 @@ exports.submitPublicRegistration = functions.https.onCall(async (data, context =
     }
   }
 
+  const initialFormSnap = await formRef.get();
+  if (!initialFormSnap.exists
+      || !normalizePublicRegistrationForm(initialFormSnap.data() || {}, input).published) {
+    throwPublicRegistrationError('not-found', 'Registration form not found.');
+  }
+
   await assertPublicRegistrationRateLimit(input, context);
   await applyStagedPublicRegistrationRateLimits(input, context, 'submit');
 
@@ -4471,8 +4477,6 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data, c
     throw new functions.https.HttpsError('invalid-argument', error.message || 'Invalid registration checkout request.');
   }
 
-  await applyStagedPublicRegistrationRateLimits(input, context, 'create-checkout');
-
   const resolvedInput = await resolveRegistrationCheckoutInput(input);
 
   const [formSnap, registrationSnap] = await Promise.all([
@@ -4485,6 +4489,8 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data, c
   if (!registrationSnap.exists) {
     throw new functions.https.HttpsError('not-found', 'Registration not found.');
   }
+
+  await applyStagedPublicRegistrationRateLimits(resolvedInput, context, 'create-checkout');
 
   const form = formSnap.data() || {};
   const registration = registrationSnap.data() || {};
@@ -4675,9 +4681,13 @@ exports.cancelStripeRegistrationCheckout = functions.https.onCall(async (data, c
     throw new functions.https.HttpsError('invalid-argument', error.message || 'Invalid registration checkout cancellation request.');
   }
 
-  await applyStagedPublicRegistrationRateLimits(input, context, 'cancel-checkout');
-
   const resolvedInput = await resolveRegistrationCheckoutInput(input);
+  const registrationSnap = await resolvedInput.registrationRef.get();
+  if (!registrationSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Registration not found.');
+  }
+
+  await applyStagedPublicRegistrationRateLimits(resolvedInput, context, 'cancel-checkout');
 
   return releaseRegistrationCheckoutCapacity(resolvedInput, {
     checkoutStatus: 'cancelled',

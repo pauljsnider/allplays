@@ -367,7 +367,7 @@ test('loads unrelated callables without Firestore transaction support', () => {
     assert.equal(typeof mod.listPublicOpportunities, 'function');
 });
 
-test('rate limits nonexistent form probes before returning a non-enumerating error', async () => {
+test('rejects nonexistent form probes without creating attacker-keyed limiter documents', async () => {
     const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration({});
 
     await assert.rejects(
@@ -378,7 +378,22 @@ test('rate limits nonexistent form probes before returning a non-enumerating err
         }
     );
 
-    assert.equal(firestore.rateLimitDocs().length, 3);
+    assert.equal(firestore.rateLimitDocs().length, 0);
+    assert.equal(firestore.registrationDocs().length, 0);
+});
+
+test('rejects unpublished forms without creating attacker-keyed limiter documents', async () => {
+    const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration(buildSeedState({
+        published: false,
+        status: 'draft'
+    }));
+
+    await assert.rejects(
+        submitPublicRegistration(buildSubmission(), context),
+        (error) => error.code === 'not-found'
+    );
+
+    assert.equal(firestore.rateLimitDocs().length, 0);
     assert.equal(firestore.registrationDocs().length, 0);
 });
 
@@ -678,6 +693,29 @@ test('applies the staged App Check gate to public registration checkout and canc
         (error) => error.code === 'failed-precondition' && error.details.reason === 'app-check-required'
     );
     await assert.doesNotReject(mod.cancelStripeRegistrationCheckout(cancelInput, verifiedContext));
+});
+
+test('validates checkout and cancellation targets before creating limiter documents', async () => {
+    const { firestore, mod } = loadFunctionsModule(buildSeedState({
+        paymentSettings: { offlinePaymentEnabled: true, onlineCheckoutEnabled: true }
+    }));
+    const missingInput = {
+        teamId: 'team-1',
+        formId: 'form-1',
+        registrationId: 'missing-registration',
+        checkoutAttemptToken: 'missingcheckouttoken123456'
+    };
+
+    await assert.rejects(
+        mod.createStripeRegistrationCheckout(missingInput, context),
+        (error) => error.code === 'not-found'
+    );
+    await assert.rejects(
+        mod.cancelStripeRegistrationCheckout(missingInput, context),
+        (error) => error.code === 'not-found'
+    );
+
+    assert.equal(firestore.rateLimitDocs().length, 0);
 });
 
 test('stages network throttling in observe mode before explicit enforcement', async () => {
