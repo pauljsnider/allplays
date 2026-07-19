@@ -20,6 +20,7 @@ async function mockInviteLoginModules(page, options = {}) {
             }
         },
         googleLoginResult = null,
+        googleLoginError = null,
         googleRedirectResult = null,
         signupResult = { user: { uid: 'new-user-123', email: 'new@example.com' } },
         signupError = null,
@@ -28,6 +29,7 @@ async function mockInviteLoginModules(page, options = {}) {
     } = options;
     const encodedLoginResult = encodeModuleValue(loginResult);
     const encodedGoogleLoginResult = encodeModuleValue(googleLoginResult);
+    const encodedGoogleLoginError = encodeModuleValue(googleLoginError);
     const encodedGoogleRedirectResult = encodeModuleValue(googleRedirectResult);
     const encodedSignupResult = encodeModuleValue(signupResult);
     const encodedSignupError = encodeModuleValue(signupError);
@@ -38,6 +40,7 @@ async function mockInviteLoginModules(page, options = {}) {
         const moduleSource = `
             const loginResult = JSON.parse(atob('${encodedLoginResult}'));
             const googleLoginResult = JSON.parse(atob('${encodedGoogleLoginResult}'));
+            const googleLoginError = JSON.parse(atob('${encodedGoogleLoginError}'));
             const googleRedirectResult = JSON.parse(atob('${encodedGoogleRedirectResult}'));
             const signupResult = JSON.parse(atob('${encodedSignupResult}'));
             const signupError = JSON.parse(atob('${encodedSignupError}'));
@@ -72,6 +75,13 @@ async function mockInviteLoginModules(page, options = {}) {
             export async function loginWithGoogle(activationCode) {
                 window.__googleActivationCode = activationCode;
                 window.sessionStorage.setItem('__googleActivationCode', activationCode || '');
+                if (googleLoginError) {
+                    const error = new Error(googleLoginError.message || 'Google login failed');
+                    if (googleLoginError.code) {
+                        error.code = googleLoginError.code;
+                    }
+                    throw error;
+                }
                 return googleLoginResult;
             }
 
@@ -460,6 +470,33 @@ test('Google invite login prefers current link over stale recovery code', async 
 
     await expect(page).toHaveURL(/\/accept-invite\.html\?code=CD34EF56&type=parent$/);
     await expect.poll(() => page.evaluate(() => window.sessionStorage.getItem('__googleActivationCode'))).toBe('');
+});
+
+test('failed Google recovery keeps manual invite for password login retry', async ({ page, baseURL }) => {
+    await mockInviteLoginModules(page, {
+        googleLoginError: {
+            code: 'auth/popup-closed-by-user',
+            message: 'Google popup was closed.'
+        }
+    });
+    await page.addInitScript(() => {
+        window.sessionStorage.setItem('pendingLoginInviteCode', 'AB12CD34');
+    });
+
+    await page.goto(buildUrl(baseURL, '/login.html'), {
+        waitUntil: 'domcontentloaded'
+    });
+
+    await expect(page.locator('#form-title')).toHaveText('Login');
+    await page.locator('#google-btn').click();
+    await expect(page.locator('#error-message')).toHaveText('Google popup was closed.');
+    await expect.poll(() => page.evaluate(() => window.sessionStorage.getItem('pendingLoginInviteCode'))).toBe('AB12CD34');
+
+    await page.locator('#email').fill('mom@example.com');
+    await page.locator('#password').fill('secret123');
+    await page.locator('#submit-btn').click();
+
+    await expect(page).toHaveURL(/\/accept-invite\.html\?code=AB12CD34$/);
 });
 
 test('manual invite recovery clears stale code before new Google signup', async ({ page, baseURL }) => {

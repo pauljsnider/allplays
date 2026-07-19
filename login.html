@@ -410,8 +410,13 @@
                 }
                 // If result is null, redirect flow was triggered - page will reload
             } catch (error) {
+                const shouldKeepPendingLoginInviteCode = isLogin &&
+                    !urlCodeParam &&
+                    Boolean(pendingLoginInviteCode || window.sessionStorage.getItem(pendingLoginInviteCodeStorageKey));
                 window.sessionStorage.removeItem('postGoogleAuthMode');
-                window.sessionStorage.removeItem(pendingLoginInviteCodeStorageKey);
+                if (!shouldKeepPendingLoginInviteCode) {
+                    window.sessionStorage.removeItem(pendingLoginInviteCodeStorageKey);
+                }
                 errorDiv.textContent = error.message;
                 errorDiv.classList.remove('hidden');
                 console.error(error);
