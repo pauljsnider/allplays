@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const legacyPlayerDbMocks = vi.hoisted(() => ({
   deleteAthleteProfileMediaByPath: vi.fn(),
+  getAggregatedStatsForGames: vi.fn(),
   getAggregatedStatsForPlayer: vi.fn(),
   getGames: vi.fn(),
   getPlayerPrivateProfile: vi.fn(),
@@ -108,6 +109,7 @@ import {
   loadParentPlayerAthleteProfile,
   loadParentPlayerDetail,
   loadParentPlayerDetailWithAthleteProfile,
+  loadParentPlayerStatTotals,
   loadParentPlayerVideoClips,
   normalizeAthleteProfileHighlightClipUrl,
   saveParentAthleteProfileDraft,
@@ -814,6 +816,7 @@ describe('loadParentPlayerDetail custom roster fields', () => {
       { key: 'jerseySize', label: 'Jersey Size', type: 'menu', visibility: 'admins', options: ['YS', 'YM'], sortOrder: 2 }
     ]);
     legacyPlayerDbMocks.getGames.mockResolvedValue([]);
+    legacyPlayerDbMocks.getAggregatedStatsForGames.mockResolvedValue({});
     legacyPlayerDbMocks.listCertificatesForPlayer.mockResolvedValue([]);
     legacyPlayerDbMocks.getPublicTrackingItems.mockResolvedValue([]);
     legacyPlayerDbMocks.getPlayerTrackingStatuses.mockResolvedValue([]);
@@ -1006,6 +1009,46 @@ describe('loadParentPlayerDetail custom roster fields', () => {
     } as any, 'team-1', 'player-1')).rejects.toThrow('Game fetch failed.');
 
     expect(legacyPlayerProfileMocks.collectPlayerVideoClips).not.toHaveBeenCalled();
+  });
+
+  it('loads all-game stat totals for a linked parent player', async () => {
+    legacyPlayerDbMocks.getGames.mockResolvedValue([
+      { id: 'game-1' },
+      { id: 'game-2' },
+      { id: '' },
+      { gameId: 'game-3' }
+    ]);
+    legacyPlayerDbMocks.getAggregatedStatsForGames.mockResolvedValue({
+      'player-1': {
+        goals: 7,
+        assists: '2',
+        empty: '',
+        bad: 'not-a-number'
+      },
+      'player-2': {
+        goals: 99
+      }
+    });
+
+    const totals = await loadParentPlayerStatTotals({
+      uid: 'parent-1',
+      email: 'parent@example.com',
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
+    } as any, 'team-1', 'player-1');
+
+    expect(legacyPlayerDbMocks.getGames).toHaveBeenCalledWith('team-1');
+    expect(legacyPlayerDbMocks.getAggregatedStatsForGames).toHaveBeenCalledWith('team-1', ['game-1', 'game-2', 'game-3']);
+    expect(totals).toEqual({
+      teamId: 'team-1',
+      playerId: 'player-1',
+      gameCount: 3,
+      gameIds: ['game-1', 'game-2', 'game-3'],
+      totals: {
+        goals: 7,
+        assists: 2,
+        empty: 0
+      }
+    });
   });
 });
 

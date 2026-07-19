@@ -1,4 +1,5 @@
 import {
+    getAggregatedStatsForGames as legacyGetAggregatedStatsForGames,
     getAggregatedStatsForPlayer as legacyGetAggregatedStatsForPlayer,
     getGames as legacyGetGames,
     getPlayerPrivateProfile as legacyGetPlayerPrivateProfile,
@@ -101,6 +102,10 @@ export async function getRosterFieldDefinitions(teamId: string, team: LegacyTeam
 
 export async function getAggregatedStatsForPlayer(teamId: string, gameId: string, playerId: string): Promise<Record<string, unknown>> {
     return await Promise.resolve(legacyGetAggregatedStatsForPlayer(teamId, gameId, playerId));
+}
+
+export async function getAggregatedStatsForGames(teamId: string, gameIds: string[]): Promise<Record<string, Record<string, unknown>>> {
+    return await Promise.resolve(legacyGetAggregatedStatsForGames(teamId, gameIds));
 }
 
 export async function listAthleteProfilesForParent(userId: string): Promise<LegacyAthleteProfileRecord[]> {

@@ -16,7 +16,12 @@ import {
 } from 'firebase/firestore';
 
 const rules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
-const privateAiCollections = ['privateAiMessages', 'privateAiConversations'];
+const privateAiCollections = [
+    'privateAiMessages',
+    'privateAiConversations',
+    'privateAiPendingActions',
+    'privateAiActionAudit'
+];
 
 function extractRuleBlock(marker, nextMarker) {
     return rules.slice(rules.indexOf(marker), rules.indexOf(nextMarker));
@@ -24,16 +29,23 @@ function extractRuleBlock(marker, nextMarker) {
 
 describe('private AI Firestore rules', () => {
     it('requires ownership and has no platform-admin bypass in either collection', () => {
-        const messageRules = extractRuleBlock(
+        const userPrivateAiRules = extractRuleBlock(
             'match /privateAiMessages/{messageId}',
-            'match /privateAiConversations/{conversationId}'
-        );
-        const conversationRules = extractRuleBlock(
-            'match /privateAiConversations/{conversationId}',
             'match /entitlements/{entitlementId}'
         );
 
-        for (const ruleBlock of [messageRules, conversationRules]) {
+        expect(userPrivateAiRules).toContain('match /privateAiMessages/{messageId}');
+        expect(userPrivateAiRules).toContain('match /privateAiConversations/{conversationId}');
+        expect(userPrivateAiRules).toContain('match /privateAiPendingActions/{actionId}');
+        expect(userPrivateAiRules).toContain('match /privateAiActionAudit/{auditId}');
+
+        for (const collectionName of privateAiCollections) {
+            const ruleBlock = extractRuleBlock(
+                `match /${collectionName}/`,
+                collectionName === 'privateAiActionAudit'
+                    ? 'match /entitlements/{entitlementId}'
+                    : `match /${privateAiCollections[privateAiCollections.indexOf(collectionName) + 1]}/`
+            );
             expect(ruleBlock).toContain('allow read: if isOwner(userId);');
             expect(ruleBlock).toContain('allow create, update, delete: if isVerifiedForSensitiveWrite() && isOwner(userId);');
             expect(ruleBlock).not.toContain('isGlobalAdmin()');

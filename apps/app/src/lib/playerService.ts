@@ -1,5 +1,6 @@
 import {
   deleteAthleteProfileMediaByPath,
+  getAggregatedStatsForGames,
   getAggregatedStatsForPlayer,
   getGames,
   getPlayerPrivateProfile,
@@ -72,6 +73,14 @@ const logger = createLogger('player-service');
 export type ParentPlayerStatRow = {
   event: ParentScheduleEvent;
   stats: Record<string, unknown>;
+};
+
+export type ParentPlayerStatTotals = {
+  teamId: string;
+  playerId: string;
+  gameCount: number;
+  gameIds: string[];
+  totals: Record<string, number>;
 };
 
 export type ParentPlayerPrivateProfile = {
@@ -366,6 +375,44 @@ export async function loadParentPlayerDetailWithAthleteProfile(user: AuthUser | 
   return {
     ...detail,
     athleteProfile: athleteProfile || detail.athleteProfile
+  };
+}
+
+export async function loadParentPlayerStatTotals(user: AuthUser | null, teamId: string, playerId: string): Promise<ParentPlayerStatTotals> {
+  if (!user?.uid) {
+    throw new Error('Player stats require a signed-in user.');
+  }
+
+  const requestedTeamId = decodeURIComponent(teamId || '');
+  const requestedPlayerId = decodeURIComponent(playerId || '');
+  const team = await getTeam(requestedTeamId, { includeInactive: true });
+  const access = buildPlayerAccess(user, requestedTeamId, requestedPlayerId, team);
+  if (!access.isLinkedParent && !access.isTeamStaff) {
+    throw new Error('This player is not linked to your account.');
+  }
+
+  const games = await getGames(requestedTeamId).catch(() => []);
+  const gameIds = (Array.isArray(games) ? games : [])
+    .map((game: any) => String(game?.id || game?.gameId || '').trim())
+    .filter(Boolean);
+  const totalsByPlayer: Record<string, Record<string, unknown>> = gameIds.length
+    ? await getAggregatedStatsForGames(requestedTeamId, gameIds).catch(() => ({}))
+    : {};
+  const rawTotals = totalsByPlayer?.[requestedPlayerId] || {};
+  const totals = Object.entries(rawTotals).reduce<Record<string, number>>((acc, [key, value]) => {
+    const numeric = Number(value);
+    if (key && Number.isFinite(numeric)) {
+      acc[key] = numeric;
+    }
+    return acc;
+  }, {});
+
+  return {
+    teamId: requestedTeamId,
+    playerId: requestedPlayerId,
+    gameCount: gameIds.length,
+    gameIds,
+    totals
   };
 }
 
