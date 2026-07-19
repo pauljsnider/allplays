@@ -5,7 +5,8 @@ const {
   DEFAULT_MAX_ENTRIES,
   createCalendarIcsCache,
   fetchCalendarIcsWithCache,
-  createCalendarIcsFetchHandler
+  createCalendarIcsFetchHandler,
+  hasExactVCalendarBoundaries
 } = require('../calendar-ics-fetch-core.cjs');
 const { createInMemoryRateLimiter } = require('../rate-limit.cjs');
 
@@ -460,6 +461,31 @@ test('calendar handler rejects oversized response text even if the fetch adapter
   assert.strictEqual(response.statusCode, 413);
   assert.strictEqual(response.body.ok, false);
   assert.match(response.body.error, /size limit/);
+});
+
+test('calendar boundary validation rejects marker prefixes and missing end boundaries', async () => {
+  assert.strictEqual(hasExactVCalendarBoundaries('BEGIN:VCALENDAR\nEND:VCALENDAR'), true);
+  assert.strictEqual(hasExactVCalendarBoundaries('BEGIN:VCALENDARX\nEND:VCALENDAR'), false);
+  assert.strictEqual(hasExactVCalendarBoundaries('BEGIN:VCALENDAR\nBEGIN:VEVENT\nEND:VEVENT'), false);
+
+  const prefixedMarker = createHandlerHarness({
+    maxRequests: 10,
+    responseBody: 'BEGIN:VCALENDARX\nBEGIN:VEVENT\nEND:VEVENT\nEND:VCALENDAR'
+  });
+  const missingEnd = createHandlerHarness({
+    maxRequests: 10,
+    responseBody: 'BEGIN:VCALENDAR\nBEGIN:VEVENT\nEND:VEVENT'
+  });
+
+  const [prefixedResponse, missingEndResponse] = await Promise.all([
+    prefixedMarker.request(),
+    missingEnd.request()
+  ]);
+  for (const response of [prefixedResponse, missingEndResponse]) {
+    assert.strictEqual(response.statusCode, 502);
+    assert.strictEqual(response.body.ok, false);
+    assert.match(response.body.error, /not valid ICS/);
+  }
 });
 
 test('calendar handler safely rejects requests with missing headers and query objects', async () => {

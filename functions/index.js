@@ -4789,10 +4789,11 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
 });
 
 function normalizeIcsText(text) {
-  const marker = 'BEGIN:VCALENDAR';
-  const markerIndex = text.indexOf(marker);
-  if (markerIndex === -1) return text;
-  return text.slice(markerIndex);
+  if (typeof text !== 'string') return text;
+  const sourceText = text.replace(/^\uFEFF/, '');
+  const markerMatch = /(^|\r\n|\n|\r)BEGIN:VCALENDAR(?=\r\n|\n|\r)/.exec(sourceText);
+  if (!markerMatch) return text;
+  return sourceText.slice(markerMatch.index + markerMatch[1].length);
 }
 
 

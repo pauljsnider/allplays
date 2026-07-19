@@ -13,7 +13,7 @@ function makeTextResponse(body, { ok = true, status = 200, statusText = 'OK', he
   };
 }
 
-function makeJsonResponse(body, { ok = true, status = 200, statusText = 'OK' } = {}) {
+function makeJsonResponse(body, { status = 200, statusText = 'OK', ok = status >= 200 && status < 300 } = {}) {
   return makeTextResponse(JSON.stringify(body), {
     ok,
     status,
@@ -69,6 +69,19 @@ describe('fetchAndParseCalendar', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it('preserves compatibility with a UTF-8 BOM and line-aligned provider preamble', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(makeJsonResponse({
+      ok: true,
+      icsText: `\uFEFFprovider preamble\n${sampleIcs('bom-preamble')}`
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const events = await fetchAndParseCalendar('https://example.com/bom.ics');
+
+    expect(events).toHaveLength(1);
+    expect(events[0].uid).toBe('bom-preamble');
+  });
+
   it('includes forceRefresh only when explicitly requested', async () => {
     const fetchMock = vi.fn(async (url) => {
       expect(String(url)).toContain('forceRefresh=true');
@@ -87,27 +100,24 @@ describe('fetchAndParseCalendar', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('falls back to direct fetch with normalized https URL when function fails', async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(makeJsonResponse({ ok: false, error: 'fail' }, { status: 500, statusText: 'Server Error' }))
-      .mockResolvedValueOnce(makeTextResponse(sampleIcs('from-direct')));
+  it('never sends the calendar target directly from the browser when the function fails', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(makeJsonResponse({ ok: false, error: 'fail' }, { status: 500, statusText: 'Server Error' }));
 
     vi.stubGlobal('fetch', fetchMock);
 
-    const events = await fetchAndParseCalendar('http://ical-cdn.teamsnap.com/team_schedule/test.ics');
+    await expect(fetchAndParseCalendar('http://ical-cdn.teamsnap.com/team_schedule/test.ics'))
+      .rejects.toThrow('Function fetch failed');
 
-    expect(events).toHaveLength(1);
-    expect(events[0].uid).toBe('from-direct');
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(fetchMock.mock.calls[1][0]).toBe('https://ical-cdn.teamsnap.com/team_schedule/test.ics');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls.some(([url]) => String(url) === 'https://ical-cdn.teamsnap.com/team_schedule/test.ics')).toBe(false);
   });
 
-  it('normalizes webcal subscription URLs before function and direct fetch attempts', async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(makeJsonResponse({ ok: false, error: 'fail' }, { status: 500, statusText: 'Server Error' }))
-      .mockResolvedValueOnce(makeTextResponse(sampleIcs('from-webcal')));
+  it('normalizes webcal subscription URLs before the protected function request', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(makeJsonResponse({
+      ok: true,
+      icsText: sampleIcs('from-webcal')
+    }));
 
     vi.stubGlobal('fetch', fetchMock);
 
@@ -115,21 +125,17 @@ describe('fetchAndParseCalendar', () => {
 
     expect(events).toHaveLength(1);
     expect(events[0].uid).toBe('from-webcal');
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(String(fetchMock.mock.calls[0][0])).toContain(encodeURIComponent('https://example.com/team-calendar'));
-    expect(fetchMock.mock.calls[1][0]).toBe('https://example.com/team-calendar');
   });
 
-  it('uses only explicitly configured proxy templates when function and direct fetch fail', async () => {
+  it('uses only explicitly configured proxy templates when the function is unavailable', async () => {
     window.__ALLPLAYS_CONFIG__.calendarProxyUrlTemplates = [
       'https://calendar-proxy.example.test/?url={url}'
     ];
     const fetchMock = vi.fn(async (url) => {
       if (String(url).includes('example.com/fetchCalendarIcs')) {
         throw new TypeError('function failed');
-      }
-      if (String(url) === 'https://ical-cdn.teamsnap.com/team_schedule/test.ics') {
-        throw new TypeError('direct failed');
       }
       if (String(url) === `https://calendar-proxy.example.test/?url=${encodeURIComponent('https://ical-cdn.teamsnap.com/team_schedule/test.ics')}`) {
         return makeTextResponse(sampleIcs('from-proxy'));
@@ -155,9 +161,6 @@ describe('fetchAndParseCalendar', () => {
       if (String(url).includes('example.com/fetchCalendarIcs')) {
         throw new TypeError('function failed');
       }
-      if (String(url) === 'https://example.com/team-calendar') {
-        throw new TypeError('direct failed');
-      }
       if (String(url) === `https://calendar-proxy.example.test/?url=${encodeURIComponent('https://example.com/team-calendar')}`) {
         return makeTextResponse(sampleIcs('from-webcal-proxy'));
       }
@@ -176,20 +179,34 @@ describe('fetchAndParseCalendar', () => {
   });
 
   it('does not disclose a subscription URL to third-party proxies by default', async () => {
-    const fetchMock = vi.fn()
-      .mockRejectedValueOnce(new TypeError('function failed'))
-      .mockRejectedValueOnce(new TypeError('direct failed'));
+    const fetchMock = vi.fn().mockRejectedValueOnce(new TypeError('function failed'));
     vi.stubGlobal('fetch', fetchMock);
 
     await expect(fetchAndParseCalendar('https://calendar.example.test/private.ics?token=secret'))
-      .rejects.toThrow('direct failed');
+      .rejects.toThrow('function failed');
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('corsproxy.io'))).toBe(false);
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('r.jina.ai'))).toBe(false);
   });
 
-  it('rejects non-network calendar schemes and embedded URL credentials before fetching', async () => {
+  it('does not bypass a target rejection through a configured proxy', async () => {
+    window.__ALLPLAYS_CONFIG__.calendarProxyUrlTemplates = [
+      'https://calendar-proxy.example.test/?url={url}'
+    ];
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      makeJsonResponse({ ok: false, error: 'Blocked host' }, { status: 400, statusText: 'Bad Request' })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(fetchAndParseCalendar('https://calendar.example.test/team.ics'))
+      .rejects.toMatchObject({ code: 'CALENDAR_FUNCTION_REJECTED' });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith('https://calendar-proxy.example.test/'))).toBe(false);
+  });
+
+  it('rejects non-network, credentialed, and protected calendar targets before fetching', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
 
@@ -197,11 +214,23 @@ describe('fetchAndParseCalendar', () => {
       .rejects.toThrow('Only HTTPS calendar URLs are supported');
     await expect(fetchAndParseCalendar('https://user:password@example.com/private.ics'))
       .rejects.toThrow('credentials are not supported');
+    for (const target of [
+      'https://localhost/private.ics',
+      'https://127.0.0.1/private.ics',
+      'https://192.168.1.20/private.ics',
+      'https://[::1]/private.ics',
+      'https://metadata.google.internal/computeMetadata/v1/'
+    ]) {
+      await expect(fetchAndParseCalendar(target)).rejects.toThrow('Protected calendar hosts');
+    }
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('rejects declared oversized and explicitly incompatible direct responses', async () => {
+  it('rejects declared oversized and explicitly incompatible configured-proxy responses', async () => {
     const fatalLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+    window.__ALLPLAYS_CONFIG__.calendarProxyUrlTemplates = [
+      'https://calendar-proxy.example.test/?url={url}'
+    ];
     const oversizedFetch = vi.fn()
       .mockResolvedValueOnce(makeJsonResponse({ ok: false }, { status: 500 }))
       .mockResolvedValueOnce(makeTextResponse(sampleIcs(), {
@@ -223,6 +252,9 @@ describe('fetchAndParseCalendar', () => {
   });
 
   it('retains compatibility with legacy calendar MIME types', async () => {
+    window.__ALLPLAYS_CONFIG__.calendarProxyUrlTemplates = [
+      'https://calendar-proxy.example.test/?url={url}'
+    ];
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(makeJsonResponse({ ok: false }, { status: 500 }))
       .mockResolvedValueOnce(makeTextResponse(sampleIcs('legacy-mime'), {
@@ -232,6 +264,24 @@ describe('fetchAndParseCalendar', () => {
 
     const events = await fetchAndParseCalendar('https://example.com/legacy.ics');
     expect(events[0].uid).toBe('legacy-mime');
+  });
+
+  it('rejects non-exact or unterminated VCALENDAR boundaries from the function', async () => {
+    const markerPrefixFetch = vi.fn().mockResolvedValueOnce(makeJsonResponse({
+      ok: true,
+      icsText: 'BEGIN:VCALENDARX\nBEGIN:VEVENT\nEND:VEVENT\nEND:VCALENDAR'
+    }));
+    vi.stubGlobal('fetch', markerPrefixFetch);
+    await expect(fetchAndParseCalendar('https://example.com/prefix.ics'))
+      .rejects.toMatchObject({ code: 'CALENDAR_ICS_INVALID' });
+
+    const missingEndFetch = vi.fn().mockResolvedValueOnce(makeJsonResponse({
+      ok: true,
+      icsText: 'BEGIN:VCALENDAR\nBEGIN:VEVENT\nEND:VEVENT'
+    }));
+    vi.stubGlobal('fetch', missingEndFetch);
+    await expect(fetchAndParseCalendar('https://example.com/missing-end.ics'))
+      .rejects.toMatchObject({ code: 'CALENDAR_ICS_INVALID' });
   });
 
   it('coalesces concurrent identical calendar imports and omits credentials/referrers', async () => {

@@ -2,6 +2,12 @@ const DEFAULT_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_MAX_ENTRIES = 100;
 const DEFAULT_MAX_ICS_BYTES = 2 * 1024 * 1024;
 
+function hasExactVCalendarBoundaries(value) {
+  if (typeof value !== 'string') return false;
+  return /^BEGIN:VCALENDAR(?:\r\n|\n|\r)/.test(value) &&
+    /(?:^|\r\n|\n|\r)END:VCALENDAR(?:\r\n|\n|\r|$)/.test(value);
+}
+
 function normalizeTtlMs(ttlMs) {
   const parsed = Number(ttlMs);
   if (Number.isFinite(parsed) && parsed > 0) {
@@ -215,7 +221,7 @@ function createCalendarIcsFetchHandler({
           }
           const icsText = normalizeIcsText(rawText);
 
-          if (!icsText.includes('BEGIN:VCALENDAR')) {
+          if (!hasExactVCalendarBoundaries(icsText)) {
             const invalidIcsError = new Error('Response was not valid ICS');
             invalidIcsError.statusCode = 502;
             throw invalidIcsError;
@@ -250,6 +256,7 @@ module.exports = {
   DEFAULT_TTL_MS,
   DEFAULT_MAX_ENTRIES,
   DEFAULT_MAX_ICS_BYTES,
+  hasExactVCalendarBoundaries,
   createCalendarIcsCache,
   fetchCalendarIcsWithCache,
   createCalendarIcsFetchHandler

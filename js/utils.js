@@ -286,7 +286,72 @@ const MAX_CALENDAR_FUNCTION_BYTES = MAX_REMOTE_ICS_BYTES + (64 * 1024);
 const CALENDAR_ATTEMPT_TIMEOUT_MS = 5000;
 const CALENDAR_TOTAL_TIMEOUT_MS = 15_000;
 const MAX_CONCURRENT_CALENDAR_IMPORTS = 50;
+export const MAX_ICS_PARSE_BYTES = MAX_REMOTE_ICS_BYTES;
+export const MAX_ICS_RAW_EVENTS = 5_000;
+export const MAX_ICS_TOTAL_RECURRENCE_OCCURRENCES = 10_000;
+export const MAX_ICS_OUTPUT_EVENTS = 12_000;
+export const MAX_ICS_RECURRENCE_OCCURRENCES = 366;
 const calendarFetchInFlight = new Map();
+
+function createCalendarParseLimitError(message) {
+  const error = new Error(message);
+  error.code = 'CALENDAR_PARSE_LIMIT';
+  return error;
+}
+
+function isProtectedCalendarHostname(rawHostname) {
+  const hostname = String(rawHostname || '').toLowerCase().replace(/^\[|\]$/g, '');
+  if (!hostname) return true;
+  if (
+    hostname === 'localhost' ||
+    hostname.endsWith('.localhost') ||
+    hostname === 'metadata' ||
+    hostname === 'metadata.google.internal' ||
+    hostname.endsWith('.local')
+  ) {
+    return true;
+  }
+
+  // Browser URL parsing canonicalizes IPv6 literals, but reproducing the
+  // server's DNS/IP pinning in a browser is not possible. Calendar providers
+  // use hostnames, so literal IPv6 targets fail closed at this boundary.
+  if (hostname.includes(':')) return true;
+
+  const ipv4Parts = hostname.split('.');
+  if (ipv4Parts.length !== 4 || ipv4Parts.some((part) => !/^\d{1,3}$/.test(part))) {
+    return false;
+  }
+  const octets = ipv4Parts.map((part) => Number.parseInt(part, 10));
+  if (octets.some((part) => part < 0 || part > 255)) return true;
+  const [first, second] = octets;
+  return first === 0 || first === 10 || first === 127 ||
+    (first === 100 && second >= 64 && second <= 127) ||
+    (first === 169 && second === 254) ||
+    (first === 172 && second >= 16 && second <= 31) ||
+    (first === 192 && second === 168);
+}
+
+function normalizeIcsText(text) {
+  if (typeof text !== 'string') {
+    const error = new Error('Calendar response was not valid ICS');
+    error.code = 'CALENDAR_ICS_INVALID';
+    throw error;
+  }
+  const sourceText = text.replace(/^\uFEFF/, '');
+  const markerMatch = /(^|\r\n|\n|\r)BEGIN:VCALENDAR(?=\r\n|\n|\r)/.exec(sourceText);
+  if (!markerMatch) {
+    const error = new Error('Calendar response was not valid ICS');
+    error.code = 'CALENDAR_ICS_INVALID';
+    throw error;
+  }
+  const normalized = sourceText.slice(markerMatch.index + markerMatch[1].length);
+  if (!/(?:^|\r\n|\n|\r)END:VCALENDAR(?:\r\n|\n|\r|$)/.test(normalized)) {
+    const error = new Error('Calendar response was not valid ICS');
+    error.code = 'CALENDAR_ICS_INVALID';
+    throw error;
+  }
+  return normalized;
+}
 
 function normalizeRemoteCalendarUrl(url) {
   if (typeof url !== 'string') {
@@ -304,6 +369,11 @@ function normalizeRemoteCalendarUrl(url) {
   }
   if (parsed.username || parsed.password) {
     throw new Error('Calendar URL credentials are not supported');
+  }
+  if (isProtectedCalendarHostname(parsed.hostname)) {
+    const error = new Error('Protected calendar hosts are not supported');
+    error.code = 'CALENDAR_TARGET_BLOCKED';
+    throw error;
   }
   parsed.hash = '';
   return parsed.toString();
@@ -391,15 +461,6 @@ async function fetchAndParseCalendarOnce(normalizedUrl, options = {}) {
     return null;
   }
 
-  function normalizeIcsText(text) {
-    const marker = 'BEGIN:VCALENDAR';
-    const markerIndex = text.indexOf(marker);
-    if (markerIndex === -1) {
-      throw new Error('Calendar response was not valid ICS');
-    }
-    return text.slice(markerIndex);
-  }
-
   async function fetchWithTimeout(fetchUrl) {
     const remainingMs = CALENDAR_TOTAL_TIMEOUT_MS - (Date.now() - startedAt);
     if (remainingMs <= 0) {
@@ -431,7 +492,12 @@ async function fetchAndParseCalendarOnce(normalizedUrl, options = {}) {
     const functionUrl = `${calendarFetchFunctionUrl}?${params.toString()}`;
     const response = await fetchWithTimeout(functionUrl);
     if (!response.ok) {
-      throw new Error(`Function fetch failed: ${response.status} ${response.statusText}`);
+      const error = new Error(`Function fetch failed: ${response.status} ${response.statusText}`);
+      if ([400, 401, 403, 413, 422, 429].includes(response.status)) {
+        error.code = 'CALENDAR_FUNCTION_REJECTED';
+        error.calendarFetchNonRetryable = true;
+      }
+      throw error;
     }
     assertCalendarResponseContentType(response, new Set(['application/json', 'text/json']));
     const rawPayload = await readBoundedCalendarResponseText(response, MAX_CALENDAR_FUNCTION_BYTES);
@@ -480,44 +546,39 @@ async function fetchAndParseCalendarOnce(normalizedUrl, options = {}) {
     return normalizeIcsText(await readBoundedCalendarResponseText(response, MAX_REMOTE_ICS_BYTES));
   }
 
+  let functionError;
   try {
-    try {
-      const functionIcsText = await fetchViaFunction(normalizedUrl);
-      return parseICS(normalizeIcsText(functionIcsText));
-    } catch (functionError) {
-      console.warn('Function calendar fetch failed, falling back to direct fetch:', functionError);
-    }
-
-    const response = await fetchWithTimeout(normalizedUrl);
-    return parseICS(await readIcsResponse(response, 'Calendar'));
+    const functionIcsText = await fetchViaFunction(normalizedUrl);
+    return parseICS(normalizeIcsText(functionIcsText));
   } catch (error) {
-    const shouldTryProxy = error.name === 'TypeError' ||
-                           error.name === 'AbortError' ||
-                           error.message.includes('fetch') ||
-                           error.message.includes('CORS');
-    if (shouldTryProxy) {
-      const proxyUrls = buildConfiguredProxyUrls(normalizedUrl);
-      for (const proxyUrl of proxyUrls) {
-        try {
-          const response = await fetchWithTimeout(proxyUrl);
-          return parseICS(await readIcsResponse(response, 'Proxy'));
-        } catch (proxyError) {
-          if (['CALENDAR_RESPONSE_LIMIT', 'CALENDAR_CONTENT_TYPE'].includes(proxyError?.code)) {
-            throw proxyError;
-          }
-          console.warn('Configured calendar proxy attempt failed:', proxyError);
-        }
-      }
-      if (proxyUrls.length) {
-        throw new Error('Cannot fetch calendar. All configured proxy attempts failed.');
-      }
+    if (error?.calendarFetchNonRetryable) {
+      throw error;
     }
-    // Remote calendar availability is optional for page boot. Surface failures
-    // to callers and diagnostics without reporting an expected network/CORS
-    // miss as a fatal browser-console error.
-    console.warn('Calendar import unavailable:', error);
-    throw error;
+    functionError = error;
+    console.warn('Function calendar fetch failed:', error);
   }
+
+  const proxyUrls = buildConfiguredProxyUrls(normalizedUrl);
+  for (const proxyUrl of proxyUrls) {
+    try {
+      const response = await fetchWithTimeout(proxyUrl);
+      return parseICS(await readIcsResponse(response, 'Proxy'));
+    } catch (proxyError) {
+      if (['CALENDAR_RESPONSE_LIMIT', 'CALENDAR_CONTENT_TYPE', 'CALENDAR_ICS_INVALID', 'CALENDAR_PARSE_LIMIT'].includes(proxyError?.code)) {
+        throw proxyError;
+      }
+      console.warn('Configured calendar proxy attempt failed:', proxyError);
+    }
+  }
+
+  const error = proxyUrls.length
+    ? new Error('Cannot fetch calendar. All configured proxy attempts failed.')
+    : functionError;
+  // Remote calendar availability is optional for page boot. Surface failures
+  // to callers and diagnostics without reporting an expected network/CORS
+  // miss as a fatal browser-console error.
+  console.warn('Calendar import unavailable:', error);
+  throw error;
 }
 
 /**
@@ -551,8 +612,16 @@ export async function fetchAndParseCalendar(url, options = {}) {
  * @returns {Array} Array of parsed events
  */
 export function parseICS(icsText) {
+  if (typeof icsText !== 'string') {
+    throw new TypeError('ICS content must be a string');
+  }
+  if (new TextEncoder().encode(icsText).byteLength > MAX_ICS_PARSE_BYTES) {
+    throw createCalendarParseLimitError('Calendar content exceeded the parse size limit');
+  }
+
+  const normalizedIcsText = normalizeIcsText(icsText);
   const rawEvents = [];
-  const lines = icsText.split(/\r\n|\n|\r/);
+  const lines = normalizedIcsText.split(/\r\n|\n|\r/);
 
   let currentEvent = null;
   let currentField = null;
@@ -576,6 +645,9 @@ export function parseICS(icsText) {
         currentEvent.recurrenceId instanceof Date &&
         !Number.isNaN(currentEvent.recurrenceId.getTime());
       if (hasStandardEventFields || hasRecurringOverrideFields) {
+        if (rawEvents.length >= MAX_ICS_RAW_EVENTS) {
+          throw createCalendarParseLimitError('Calendar contained too many source events');
+        }
         rawEvents.push(currentEvent);
       }
       currentEvent = null;
@@ -654,8 +726,6 @@ const ICS_DAY_TO_INDEX = {
 };
 const DAY_CODES = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
-const MAX_ICS_RECURRENCE_OCCURRENCES = 366;
-
 function addDaysPreservingLocalTime(date, days) {
   const nextDate = new Date(date);
   nextDate.setDate(nextDate.getDate() + days);
@@ -921,8 +991,24 @@ function expandRecurringICSEvent(event) {
 
 function buildICSOccurrences(rawEvents) {
   const events = [];
+  let totalRecurrenceOccurrences = 0;
   const overridesByUid = new Map();
   const mastersByUid = new Map();
+
+  const appendOutputEvent = (event) => {
+    if (!event) return;
+    if (events.length >= MAX_ICS_OUTPUT_EVENTS) {
+      throw createCalendarParseLimitError('Calendar expansion exceeded the output event limit');
+    }
+    events.push(event);
+  };
+
+  const appendOutputEvents = (nextEvents) => {
+    if (events.length + nextEvents.length > MAX_ICS_OUTPUT_EVENTS) {
+      throw createCalendarParseLimitError('Calendar expansion exceeded the output event limit');
+    }
+    events.push(...nextEvents);
+  };
 
   rawEvents.forEach((event) => {
     if (event?.uid && event.recurrenceId instanceof Date && !Number.isNaN(event.recurrenceId.getTime())) {
@@ -941,7 +1027,7 @@ function buildICSOccurrences(rawEvents) {
     if (event?.uid && event.recurrenceId instanceof Date && !Number.isNaN(event.recurrenceId.getTime())) {
       if (!hasMasterForRecurringOverride(mastersByUid, event.uid)) {
         const overrideEvent = buildICSOverrideOccurrence(event);
-        if (overrideEvent) events.push(overrideEvent);
+        appendOutputEvent(overrideEvent);
       }
       return;
     }
@@ -955,15 +1041,19 @@ function buildICSOccurrences(rawEvents) {
         ...event,
         exDates: [...(event.exDates || []), ...overrideExDates]
       });
-      events.push(...expandedEvents);
+      if (totalRecurrenceOccurrences + expandedEvents.length > MAX_ICS_TOTAL_RECURRENCE_OCCURRENCES) {
+        throw createCalendarParseLimitError('Calendar recurrence expansion exceeded the global occurrence limit');
+      }
+      totalRecurrenceOccurrences += expandedEvents.length;
+      appendOutputEvents(expandedEvents);
       overrides.forEach((overrideEvent) => {
         const resolvedOverride = buildICSOverrideOccurrence(overrideEvent, event);
-        if (resolvedOverride) events.push(resolvedOverride);
+        appendOutputEvent(resolvedOverride);
       });
       return;
     }
 
-    events.push(event);
+    appendOutputEvent(event);
   });
 
   return events;
