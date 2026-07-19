@@ -34,11 +34,16 @@ describe('app observability initiative source contract', () => {
         expect(telemetrySource).toContain("window.addEventListener('unhandledrejection'");
     });
 
-    it('keeps the server telemetry collector available for app field metrics', () => {
+    it('keeps the anonymous server telemetry collector available for app field metrics', () => {
         expect(functionsSource).toContain('exports.collectTelemetry = functions');
         expect(functionsSource).toContain('commitTelemetryEvents(db, events, dateKey)');
-        expect(functionsSource).toContain("db.collection('telemetryDaily').doc(dateKey)");
+        expect(functionsSource).toContain("db.collection('telemetryDaily').doc(`${dateKey}_${shard}`)");
         expect(functionsSource).toContain("db.collection('telemetryEvents').doc(event.id)");
-        expect(functionsSource).toContain('verifyTelemetryAuth(req, payload)');
+        expect(functionsSource).toContain("hashTelemetryIdentifier('session'");
+        expect(functionsSource).toContain('visitorId: null');
+        expect(functionsSource).toContain('userId: null');
+        expect(functionsSource).toContain("admin.appCheck().verifyToken(token)");
+        expect(functionsSource).toContain('getTelemetryRateLimitBoundary(appCheck)');
+        expect(functionsSource).not.toContain('verifyTelemetryAuth(req, payload)');
     });
 });

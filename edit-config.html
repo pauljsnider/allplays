@@ -38,7 +38,7 @@
             }
         }
     </script>
-  <script type="module" src="/js/telemetry.js?v=3"></script>
+  <script type="module" src="/js/telemetry.js?v=4"></script>
 </head>
 
 <body class="bg-gray-50 text-gray-900">
@@ -201,11 +201,11 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getUserTeams, getConfigs, createConfig, updateConfig, deleteConfig, resetTeamStatConfigs, getUnreadChatCount } from './js/db.js?v=111';
+        import { getTeam, getUserTeams, getConfigs, createConfig, updateConfig, deleteConfig, resetTeamStatConfigs, getUnreadChatCount } from './js/db.js?v=112';
         import { parseAdvancedStatDefinitions, validateStatDefinitionsForPublicLeaderboards } from './js/stat-leaderboards.js?v=2';
         import { getStatConfigPresetOptions, getStatConfigPresetById, serializeAdvancedStatDefinitions } from './js/stat-config-presets.js?v=2';
         import { renderHeader, renderFooter, getUrlParams } from './js/utils.js?v=18';
-        import { checkAuth } from './js/auth.js?v=54';
+        import { checkAuth } from './js/auth.js?v=124';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
         import { getEditConfigAccessDecision } from './js/edit-config-access.js?v=2';
 

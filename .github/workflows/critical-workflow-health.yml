@@ -1,0 +1,60 @@
+name: critical-workflow-health
+
+on:
+  schedule:
+    - cron: '43 */6 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: critical-workflow-health
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  verify-critical-signals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout exact master
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+
+      - name: Verify deploy, smoke, and recovery signals
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/verify-critical-workflow-health.mjs
+
+  reconcile-observability-status:
+    needs: verify-critical-signals
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+
+      - name: Reconcile managed observability incident
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERIFY_RESULT: ${{ needs.verify-critical-signals.result }}
+        run: node scripts/reconcile-observability-issue.mjs

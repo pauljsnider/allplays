@@ -80,6 +80,8 @@ describe('raw Firebase REST App Check coverage', () => {
     it('allows App Check through CORS on raw functions that receive attested browser requests', () => {
         const appCheckCorsHeader = "res.set('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Firebase-AppCheck');";
 
-        expect(functionsSource.split(appCheckCorsHeader)).toHaveLength(3);
+        expect(functionsSource).toContain(appCheckCorsHeader);
+        expect(functionsSource).toContain("allowedHeaders = 'Authorization, Content-Type, X-Firebase-AppCheck'");
+        expect(functionsSource).toContain("'Content-Type, X-Firebase-AppCheck'");
     });
 });

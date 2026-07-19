@@ -45,7 +45,7 @@
         .cal-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin: 1px; cursor: pointer; }
         .cal-cell:hover { background: #f3f4f6; cursor: pointer; }
     </style>
-  <script type="module" src="/js/telemetry.js?v=3"></script>
+  <script type="module" src="/js/telemetry.js?v=4"></script>
 </head>
 
 <body class="bg-gradient-to-br from-gray-50 to-gray-100 text-gray-900">
@@ -184,10 +184,10 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getUserTeamsWithAccess, getParentTeams, getGames, getTeam, getTrackedCalendarEventUids, getUserProfile, submitRsvp, submitRsvpForPlayer, getMyRsvp, getMyRsvps, getRsvpSummaries, getRsvps } from './js/db.js?v=111';
+        import { getUserTeamsWithAccess, getParentTeams, getGames, getTeam, getTrackedCalendarEventUids, getUserProfile, submitRsvp, submitRsvpForPlayer, getMyRsvp, getMyRsvps, getRsvpSummaries, getRsvps } from './js/db.js?v=112';
         import { renderHeader, renderFooter, escapeHtml, formatDate, formatTime, fetchAndParseCalendar, expandRecurrence, buildGlobalCalendarIcsEvent, isTrackedCalendarEvent } from './js/utils.js?v=18';
         import { mergeGlobalCalendarIcsEvents } from './js/calendar-ics-sync.js?v=1';
-        import { requireAuth, checkAuth } from './js/auth.js?v=54';
+        import { requireAuth, checkAuth } from './js/auth.js?v=124';
         import { buildLinkedPlayersByTeam, resolveCalendarRsvpSubmission } from './js/calendar-rsvp.js?v=1';
         import { applyRsvpHydration } from './js/rsvp-hydration.js?v=1';
         import { buildAvailabilityNoteRows, canViewAvailabilityNotes, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from './js/availability-preferences.js?v=1';
