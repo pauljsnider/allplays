@@ -1,4 +1,3 @@
-import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -21,7 +20,8 @@ describe('visual regression CI wiring', () => {
         const helper = readRepoFile('tests/smoke/helpers/visual-regression.js');
 
         expect(config).toContain("snapshotPathTemplate: '{testDir}/{testFilePath}-snapshots/{arg}{ext}'");
-        expect(config).toContain('maxDiffPixelRatio: 0.001');
+        expect(config).toContain('maxDiffPixels: 0');
+        expect(config).not.toContain('maxDiffPixelRatio');
         expect(config).toContain("timezoneId: 'UTC'");
         expect(config).toContain('deviceScaleFactor: 1');
         expect(helper).toContain("visualFixtureTime = '2026-07-18T12:00:00.000Z'");
@@ -29,10 +29,25 @@ describe('visual regression CI wiring', () => {
         expect(helper).toContain("await route.abort('blockedbyclient')");
     });
 
-    it('keeps the committed legacy Tailwind fixture synchronized with login.html', () => {
-        execFileSync(process.execPath, ['scripts/build-legacy-visual-css.mjs', '--check'], {
-            cwd: repoRoot,
-            stdio: 'pipe'
-        });
+    it('checks the legacy Tailwind fixture only in the dependency-bearing visual command', () => {
+        const packageJson = JSON.parse(readRepoFile('package.json'));
+        const generator = readRepoFile('scripts/build-legacy-visual-css.mjs');
+        const fixture = readRepoFile('tests/fixtures/legacy-login-tailwind.css');
+
+        expect(packageJson.scripts['test:smoke:visual']).toContain('npm run test:smoke:visual:assets');
+        expect(packageJson.scripts['test:smoke:visual:assets']).toBe(
+            'node scripts/build-legacy-visual-css.mjs --check'
+        );
+        expect(generator).toContain("'tests', 'fixtures', 'legacy-login-tailwind.css'");
+        expect(generator).toContain("process.argv.includes('--check')");
+        expect(fixture).toMatch(/^\/\*! tailwindcss v\d/);
+        expect(fixture).toContain('.bg-indigo-600');
+    });
+
+    it('uploads the generated legacy fixture with Linux baseline PNGs', () => {
+        const workflow = readRepoFile('.github/workflows/update-visual-baselines.yml');
+
+        expect(workflow).toContain('tests/smoke/**/*.spec.js-snapshots/*.png');
+        expect(workflow).toContain('tests/fixtures/legacy-login-tailwind.css');
     });
 });

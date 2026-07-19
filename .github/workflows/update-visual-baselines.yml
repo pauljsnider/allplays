@@ -62,5 +62,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: visual-baselines-linux
-          path: tests/smoke/**/*.spec.js-snapshots/*.png
+          path: |
+            tests/smoke/**/*.spec.js-snapshots/*.png
+            tests/fixtures/legacy-login-tailwind.css
           if-no-files-found: error
