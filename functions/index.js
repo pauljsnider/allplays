@@ -4990,8 +4990,8 @@ const TELEMETRY_SAFE_TEXT_VALUES = new Set([
   'Error', 'TypeError', 'RangeError', 'ReferenceError', 'SyntaxError',
   'a', 'abandoned', 'access_card', 'action_row', 'ai', 'app startup', 'assignment', 'awards',
   'back-forward', 'back-forward-cache', 'button', 'calendar_tools', 'change', 'checkbox', 'click', 'core_page', 'csv',
-  'android', 'desktop', 'error', 'external', 'failure', 'false', 'file', 'get', 'good', 'hidden',
-  'fee', 'fee_row', 'family_share', 'hero_top_action', 'home', 'initial_load', 'input', 'interaction',
+  'android', 'availability', 'desktop', 'error', 'event', 'external', 'failure', 'false', 'file', 'get', 'good', 'hidden',
+  'fee', 'fee_row', 'fees', 'family_share', 'hero_top_action', 'home', 'initial_load', 'input', 'interaction',
   'large', 'medium', 'message', 'messages', 'mobile', 'native_app_state', 'next_event',
   'ios', 'navigate', 'needs-improvement', 'notifications', 'officials', 'officials_card', 'packet',
   'page teardown', 'parent core workflow drill in', 'parent-schedule-load', 'parent_tools', 'player', 'player_card',
@@ -4999,7 +4999,8 @@ const TELEMETRY_SAFE_TEXT_VALUES = new Set([
   'post', 'prerender', 'priority_action', 'profile', 'profile document service load', 'profile-load', 'promise_rejection',
   'radio', 'registrations', 'reload', 'request_player_access', 'restore', 'resume', 'rideshare', 'route paint',
   'rsvp', 'runtime', 'save', 'schedule', 'schedule_event', 'screen_mount', 'select', 'service_load',
-  'signal_card', 'small', 'standard-tracker', 'startup', 'submit', 'success', 'tablet', 'team', 'team-media',
+  'practice_packets', 'signal_card', 'small', 'standard-tracker', 'startup', 'submit', 'success', 'tablet', 'team', 'team-media',
+  'team_chats',
   'team_card', 'teams', 'textarea', 'unknown', 'upcoming_event_card', 'upcoming_view_all',
   'view_load', 'visibilitychange', 'visible', 'web', 'workflow', 'xlarge',
   'accept_invite',
@@ -5096,6 +5097,7 @@ function normalizeTelemetryIdentifier(value, maxLength = 120) {
 
 function normalizeTelemetryCanonicalText(value, maxLength = 120) {
   const clean = normalizeTelemetryString(value, maxLength);
+  if (!clean) return '';
   return TELEMETRY_SAFE_TEXT_VALUES.has(clean) ? clean : TELEMETRY_REDACTED_TEXT;
 }
 

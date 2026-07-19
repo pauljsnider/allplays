@@ -97,6 +97,13 @@ describe('telemetry privacy utilities', () => {
     it('redacts unknown strings while retaining code-defined categories', () => {
         expect(sanitizeTelemetryProperties({
             outcome: 'success',
+            actionKind: 'event',
+            category: 'availability',
+            kind: 'practice_packets',
+            type: 'team_chats',
+            stage: '',
+            targetPage: 'fees',
+            completedPage: 'fees',
             label: 'Paul Snider',
             workflowName: 'Ava practice',
             source: 'coach-name',
@@ -105,6 +112,13 @@ describe('telemetry privacy utilities', () => {
             sourceRoute: '/private/paul'
         })).toEqual({
             outcome: 'success',
+            actionKind: 'event',
+            category: 'availability',
+            kind: 'practice_packets',
+            type: 'team_chats',
+            stage: '',
+            targetPage: 'fees',
+            completedPage: 'fees',
             label: REDACTED_TEXT,
             workflowName: REDACTED_TEXT,
             source: REDACTED_TEXT,
