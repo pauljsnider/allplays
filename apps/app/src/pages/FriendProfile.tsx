@@ -98,19 +98,19 @@ export function FriendProfile({ auth, profileUserId }: { auth: AuthState; profil
 
   if (loading) {
     return (
-      <main className="mx-auto flex min-h-[45vh] max-w-3xl items-center justify-center px-4" aria-busy="true">
+      <div className="mx-auto flex min-h-[45vh] max-w-3xl items-center justify-center px-4" aria-busy="true">
         <div className="flex items-center gap-2 text-sm font-black text-gray-600">
           <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" />
           Loading profile…
         </div>
-      </main>
+      </div>
     );
   }
 
   if (error || !profile) {
     return (
-      <main className="mx-auto max-w-2xl px-4 py-8">
-        <Link to="/home?section=friends" className="ghost-button !inline-flex !min-h-10 !px-3 text-sm">
+      <div className="mx-auto max-w-2xl px-4 py-8">
+        <Link to="/home?section=friends" className="ghost-button !inline-flex !min-h-11 !px-3 text-sm">
           <ArrowLeft className="h-4 w-4" aria-hidden="true" />
           Back to friends
         </Link>
@@ -119,7 +119,7 @@ export function FriendProfile({ auth, profileUserId }: { auth: AuthState; profil
           <h1 className="mt-3 text-xl font-black text-gray-950">Profile unavailable</h1>
           <p className="mx-auto mt-2 max-w-md text-sm font-semibold leading-6 text-gray-600">{error || 'This profile is unavailable.'}</p>
         </section>
-      </main>
+      </div>
     );
   }
 
@@ -127,14 +127,14 @@ export function FriendProfile({ auth, profileUserId }: { auth: AuthState; profil
   const publicTeams = profile.publicTeams || [];
   const publicChildren = profile.publicChildren || [];
   return (
-    <main className="mx-auto max-w-3xl px-4 py-5 sm:py-7">
+    <div className="mx-auto max-w-3xl px-4 py-5 sm:py-7">
       {profile.isSelf ? (
-        <Link to="/profile/settings" className="ghost-button !inline-flex !min-h-10 !px-3 text-sm">
+        <Link to="/profile/settings" className="ghost-button !inline-flex !min-h-11 !px-3 text-sm">
           <Settings className="h-4 w-4" aria-hidden="true" />
           Profile settings
         </Link>
       ) : (
-        <Link to="/home?section=friends" className="ghost-button !inline-flex !min-h-10 !px-3 text-sm">
+        <Link to="/home?section=friends" className="ghost-button !inline-flex !min-h-11 !px-3 text-sm">
           <ArrowLeft className="h-4 w-4" aria-hidden="true" />
           Back to friends
         </Link>
@@ -167,17 +167,17 @@ export function FriendProfile({ auth, profileUserId }: { auth: AuthState; profil
           ) : null}
           <div className="mt-4 flex flex-wrap gap-2">
             {profile.messageRoute ? (
-              <Link to={profile.messageRoute} className="primary-button !min-h-10 text-sm">
+              <Link to={profile.messageRoute} className="primary-button !min-h-11 text-sm">
                 <MessageCircle className="h-4 w-4" aria-hidden="true" />
                 Message
               </Link>
             ) : null}
-            <button type="button" className="secondary-button !min-h-10 text-sm" onClick={copyProfileLink}>
+            <button type="button" className="secondary-button !min-h-11 text-sm" onClick={copyProfileLink}>
               <Copy className="h-4 w-4" aria-hidden="true" />
               Copy profile link
             </button>
             {profile.isSelf ? (
-              <Link to="/profile/settings" className="secondary-button !min-h-10 text-sm">
+              <Link to="/profile/settings" className="secondary-button !min-h-11 text-sm">
                 <Settings className="h-4 w-4" aria-hidden="true" />
                 Settings
               </Link>
@@ -243,7 +243,7 @@ export function FriendProfile({ auth, profileUserId }: { auth: AuthState; profil
               <div className="mt-4 flex items-center gap-3 border-t border-gray-100 pt-3">
                 <button
                   type="button"
-                  className={`ghost-button !min-h-9 !px-3 text-xs ${post.viewerHasLiked ? '!border-rose-200 !bg-rose-50 !text-rose-700' : ''}`}
+                  className={`ghost-button !min-h-11 !px-3 text-xs ${post.viewerHasLiked ? '!border-rose-200 !bg-rose-50 !text-rose-700' : ''}`}
                   disabled={Boolean(busyPostId)}
                   onClick={() => toggleLike(post)}
                   aria-label={`${post.viewerHasLiked ? 'Unlike' : 'Like'} post, ${Number(post.reactionCounts.like || 0)} likes`}
@@ -262,7 +262,7 @@ export function FriendProfile({ auth, profileUserId }: { auth: AuthState; profil
           )}
         </div>
       </section>
-    </main>
+    </div>
   );
 }
 

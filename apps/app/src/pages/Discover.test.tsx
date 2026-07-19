@@ -77,8 +77,49 @@ describe('public Discover experience', () => {
     render(<MemoryRouter initialEntries={['/discover']}><Discover auth={signedOutAuth} /></MemoryRouter>);
     expect(await screen.findByText('Assistant coach wanted')).toBeTruthy();
     expect(screen.getByRole('link', { name: 'Sign in to post' }).getAttribute('href')).toBe('/auth?next=%2Fdiscover%2Fnew');
-    fireEvent.click(screen.getByRole('button', { name: /Teams/ }));
+    const opportunitiesTab = screen.getByRole('tab', { name: /Opportunities/ });
+    const teamsTab = screen.getByRole('tab', { name: /Teams/ });
+    expect(opportunitiesTab).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', 'discover-opportunities-tab');
+
+    opportunitiesTab.focus();
+    fireEvent.keyDown(opportunitiesTab, { key: 'ArrowRight' });
+
     expect(await screen.findByText('Public team finder')).toBeTruthy();
+    expect(screen.getByRole('tab', { name: /Teams/ })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: /Teams/ })).toHaveFocus();
+    expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', 'discover-teams-tab');
+  });
+
+  it('gives an empty opportunity search direct recovery and posting actions', async () => {
+    opportunityMocks.listPublicOpportunities.mockResolvedValue({ items: [], nextCursor: null });
+    render(<MemoryRouter initialEntries={['/discover']}><Discover auth={signedInAuth} /></MemoryRouter>);
+
+    expect(await screen.findByText('No active opportunities found')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Clear filters' })).toBeEnabled();
+    expect(screen.getByRole('link', { name: 'Post the first opportunity' })).toHaveAttribute('href', '/discover/new');
+
+    fireEvent.change(screen.getByLabelText('Sport'), { target: { value: 'Soccer' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    await waitFor(() => expect(opportunityMocks.listPublicOpportunities).toHaveBeenLastCalledWith({ sport: 'Soccer' }, null));
+    fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
+    await waitFor(() => expect(opportunityMocks.listPublicOpportunities).toHaveBeenLastCalledWith({}, null));
+    expect((screen.getByLabelText('Sport') as HTMLInputElement).value).toBe('');
+  });
+
+  it('announces opportunity load errors and retries without showing a false empty state', async () => {
+    opportunityMocks.listPublicOpportunities
+      .mockRejectedValueOnce(new Error('Discover is temporarily unavailable.'))
+      .mockResolvedValueOnce({ items: [listing], nextCursor: null });
+    render(<MemoryRouter initialEntries={['/discover']}><Discover auth={signedOutAuth} /></MemoryRouter>);
+
+    const errorState = await screen.findByRole('alert');
+    expect(errorState).toHaveTextContent('Discover is temporarily unavailable.');
+    expect(screen.queryByText('No active opportunities found')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    expect(await screen.findByText('Assistant coach wanted')).toBeTruthy();
+    expect(opportunityMocks.listPublicOpportunities).toHaveBeenCalledTimes(2);
   });
 
   it('keeps public contact details private and routes anonymous contact through sign-in', async () => {

@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useEffect, useState, type KeyboardEvent } from 'react';
 import { BriefcaseBusiness, Loader2, Plus, Search, ShieldCheck, Users } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { OpportunityCard } from '../components/OpportunityCard';
@@ -53,9 +53,26 @@ export function Discover({ auth, initialTab }: { auth: AuthState; initialTab?: '
     setSearchParams(next);
   };
 
+  const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, currentTab: 'opportunities' | 'teams') => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const nextTab = event.key === 'Home'
+      ? 'opportunities'
+      : event.key === 'End'
+        ? 'teams'
+        : currentTab === 'opportunities' ? 'teams' : 'opportunities';
+    selectTab(nextTab);
+    document.getElementById(`discover-${nextTab}-tab`)?.focus();
+  };
+
   const submitFilters = (event: FormEvent) => {
     event.preventDefault();
     setSubmittedFilters({ ...filters });
+  };
+
+  const clearFilters = () => {
+    setFilters({});
+    setSubmittedFilters({});
   };
 
   return (
@@ -66,18 +83,18 @@ export function Discover({ auth, initialTab }: { auth: AuthState; initialTab?: '
           <h1 className="mt-2 text-2xl font-black sm:text-4xl">Find a team or your next sports opportunity</h1>
           <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-primary-50">Browse public team openings, coaching and staff jobs, officials and volunteer roles, and guardian-safe player listings.</p>
           <div className="mt-4 flex flex-wrap gap-2">
-            {auth.user ? <Link to="/discover/new" className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-white px-4 text-sm font-black text-primary-700"><Plus className="h-4 w-4" aria-hidden="true" />Post an opportunity</Link> : <Link to="/auth?next=%2Fdiscover%2Fnew" className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-white px-4 text-sm font-black text-primary-700">Sign in to post</Link>}
-            {auth.user ? <Link to="/discover/manage" className="inline-flex min-h-10 items-center rounded-xl bg-primary-950/25 px-4 text-sm font-black text-white ring-1 ring-white/25">Manage listings &amp; inquiries</Link> : null}
+            {auth.user ? <Link to="/discover/new" className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-white px-4 text-sm font-black text-primary-700"><Plus className="h-4 w-4" aria-hidden="true" />Post an opportunity</Link> : <Link to="/auth?next=%2Fdiscover%2Fnew" className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-white px-4 text-sm font-black text-primary-700">Sign in to post</Link>}
+            {auth.user ? <Link to="/discover/manage" className="inline-flex min-h-11 items-center rounded-xl bg-primary-950/25 px-4 text-sm font-black text-white ring-1 ring-white/25">Manage listings &amp; inquiries</Link> : null}
           </div>
         </div>
-        {!initialTab ? <div className="grid grid-cols-2 border-t border-gray-100 p-1.5">
-          <button type="button" className={`min-h-11 rounded-xl text-sm font-black ${tab === 'opportunities' ? 'bg-primary-50 text-primary-700' : 'text-gray-600'}`} onClick={() => selectTab('opportunities')}><BriefcaseBusiness className="mr-2 inline h-4 w-4" aria-hidden="true" />Opportunities</button>
-          <button type="button" className={`min-h-11 rounded-xl text-sm font-black ${tab === 'teams' ? 'bg-primary-50 text-primary-700' : 'text-gray-600'}`} onClick={() => selectTab('teams')}><Users className="mr-2 inline h-4 w-4" aria-hidden="true" />Teams</button>
+        {!initialTab ? <div className="grid grid-cols-2 border-t border-gray-100 p-1.5" role="tablist" aria-label="Discover views">
+          <button id="discover-opportunities-tab" type="button" role="tab" tabIndex={tab === 'opportunities' ? 0 : -1} aria-selected={tab === 'opportunities'} aria-controls="discover-opportunities-panel" className={`min-h-11 rounded-xl text-sm font-black ${tab === 'opportunities' ? 'bg-primary-50 text-primary-700' : 'text-gray-600'}`} onClick={() => selectTab('opportunities')} onKeyDown={(event) => handleTabKeyDown(event, 'opportunities')}><BriefcaseBusiness className="mr-2 inline h-4 w-4" aria-hidden="true" />Opportunities</button>
+          <button id="discover-teams-tab" type="button" role="tab" tabIndex={tab === 'teams' ? 0 : -1} aria-selected={tab === 'teams'} aria-controls="discover-teams-panel" className={`min-h-11 rounded-xl text-sm font-black ${tab === 'teams' ? 'bg-primary-50 text-primary-700' : 'text-gray-600'}`} onClick={() => selectTab('teams')} onKeyDown={(event) => handleTabKeyDown(event, 'teams')}><Users className="mr-2 inline h-4 w-4" aria-hidden="true" />Teams</button>
         </div> : null}
       </section>
 
-      {tab === 'teams' ? <PublicTeamSearch autoBrowseOnMount /> : (
-        <>
+      {tab === 'teams' ? <section id={initialTab ? undefined : 'discover-teams-panel'} role={initialTab ? undefined : 'tabpanel'} aria-labelledby={initialTab ? undefined : 'discover-teams-tab'}><PublicTeamSearch autoBrowseOnMount /></section> : (
+        <section id={initialTab ? undefined : 'discover-opportunities-panel'} role={initialTab ? undefined : 'tabpanel'} aria-labelledby={initialTab ? undefined : 'discover-opportunities-tab'} className="space-y-4">
           <form className="app-card grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-6" onSubmit={submitFilters}>
             <FilterSelect label="Category" value={filters.kind || ''} onChange={(value) => setFilters((current) => ({ ...current, kind: value as OpportunityKind | '' }))} options={[{ id: '', label: 'All categories' }, ...opportunityKinds]} />
             <FilterInput label="Sport" value={filters.sport || ''} onChange={(value) => setFilters((current) => ({ ...current, sport: value }))} placeholder="Basketball" />
@@ -88,12 +105,12 @@ export function Discover({ auth, initialTab }: { auth: AuthState; initialTab?: '
           </form>
 
           <div className="rounded-xl border border-blue-100 bg-blue-50 p-3 text-xs font-semibold leading-5 text-blue-900"><ShieldCheck className="mr-1 inline h-4 w-4" aria-hidden="true" />Listings are community posts, not ALL PLAYS employment verification, background-check approval, or endorsement. Keep communication in the private inquiry thread.</div>
-          {error ? <Status tone="error" message={error} /> : null}
-          {loading ? <div className="app-card p-8 text-center"><Loader2 className="mx-auto h-7 w-7 animate-spin text-primary-600" /><div className="mt-2 text-sm font-black text-gray-700">Loading opportunities</div></div> : items.length ? (
+          {error ? <div role="alert" className="space-y-2"><Status tone="error" message={error} /><button type="button" className="secondary-button !min-h-11 text-sm" onClick={() => void load(submittedFilters)}>Retry</button></div> : null}
+          {loading ? <div className="app-card p-8 text-center" role="status" aria-live="polite"><Loader2 className="mx-auto h-7 w-7 animate-spin text-primary-600" aria-hidden="true" /><div className="mt-2 text-sm font-black text-gray-700">Loading opportunities</div></div> : items.length ? (
             <div className="grid gap-3 lg:grid-cols-2">{items.map((item) => <OpportunityCard key={item.id} item={item} />)}</div>
-          ) : <div className="app-card p-8 text-center"><BriefcaseBusiness className="mx-auto h-8 w-8 text-gray-300" /><div className="mt-3 text-sm font-black text-gray-900">No active opportunities found</div><div className="mt-1 text-xs font-semibold text-gray-500">Try broader filters or post a new opportunity.</div></div>}
-          {nextCursor ? <button type="button" className="ghost-button mx-auto !min-h-10 !px-4" onClick={() => void load(submittedFilters, nextCursor, true)} disabled={loadingMore}>{loadingMore ? <Loader2 className="h-4 w-4 animate-spin" /> : null}Load more</button> : null}
-        </>
+          ) : error ? null : <div className="app-card p-8 text-center"><BriefcaseBusiness className="mx-auto h-8 w-8 text-gray-300" aria-hidden="true" /><div className="mt-3 text-sm font-black text-gray-900">No active opportunities found</div><div className="mt-1 text-xs font-semibold text-gray-500">Try broader filters or post a new opportunity.</div><div className="mt-4 flex flex-wrap justify-center gap-2"><button type="button" className="secondary-button !min-h-11 text-sm" onClick={clearFilters}>Clear filters</button><Link to={auth.user ? '/discover/new' : '/auth?next=%2Fdiscover%2Fnew'} className="primary-button !min-h-11 text-sm">{auth.user ? 'Post the first opportunity' : 'Sign in to post'}</Link></div></div>}
+          {nextCursor ? <button type="button" className="ghost-button mx-auto !min-h-11 !px-4" onClick={() => void load(submittedFilters, nextCursor, true)} disabled={loadingMore}>{loadingMore ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}Load more</button> : null}
+        </section>
       )}
     </div>
   );
