@@ -32,7 +32,8 @@ flowchart LR
 | `src/identity.js` | Bearer token → `{uid, email, idToken}`: Firebase refresh-token exchange via `securetoken.googleapis.com` (public web API key), cached until expiry; raw ID tokens also accepted |
 | `src/firestoreRest.js` | Firestore REST adapter scoped to the user's ID token — rules-enforced reads; maps 403 → `permission_denied`, 404 → not-found |
 | `src/core.js` | Pure domain logic with injected Firestore handle: role resolution, schedule assembly, game summary, field whitelists, deep links |
-| `scripts/get-token.mjs` | Sign-in helper that prints the refresh token to use as the connector bearer |
+| `src/oauth.js` | OAuth 2.1 broker: dynamic client registration, authorization code + PKCE (S256), refresh grant; opaque broker tokens map to the user's Firebase refresh token. In-memory storage (single-instance dev); Firestore-backed storage before multi-instance Cloud Run |
+| `scripts/get-token.mjs` | Sign-in helper that prints the refresh token (manual curl testing) |
 
 ## Identity and authorization
 

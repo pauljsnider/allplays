@@ -22,7 +22,8 @@
 ## Phase 2+ (per plan §10, not started)
 
 - [ ] 14. Extract the in-app private AI registry's `summarize*`/`loadParent*` layer (`apps/app/src/lib/privateAiService.ts`, `parentToolsService.ts`) into a shared package so MCP tools and the app assistant run one implementation (covers practice sessions, assignments, rideshare, RSVP fallback resolution the spike omits).
-- [ ] 15. OAuth broker: authorization code + PKCE + refresh tokens mapped to Firebase UID (replaces raw refresh-token bearer). _Req 2.4_
+- [x] 15. OAuth broker: dynamic client registration, authorization code + PKCE (S256), refresh grant, AllPlays sign-in page; broker tokens map to the user's Firebase refresh token. _Req 2.4_
+- [ ] 15b. Harden the broker for production: Firestore-backed token/code storage (in-memory today), Google sign-in on the authorize page, token revocation/disconnect endpoint, rate limiting.
 - [ ] 16. `get_event_details`, `get_coach_attention_items`, `get_practice_context` read tools (mirror app registry names where they exist).
 - [ ] 17. Embedded UI cards (family schedule, game summary).
 - [ ] 18. Write tools with confirmation, idempotency, audit — reuse the app registry's pending-confirmation staging (`update_rsvp`, practice-plan save). _Req 6.1_
