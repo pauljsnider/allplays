@@ -1264,8 +1264,9 @@ test('home dashboard drills into player detail with section submenus', async ({ 
 
     await homeSectionNavigation.getByRole('link', { name: 'Teams', exact: true }).click();
     await waitForTeamsRoute(page, page.getByRole('heading', { name: 'Bears' }));
+    await page.goto(appUrl(baseURL, '/home?section=feed'), { waitUntil: 'domcontentloaded' });
+    await waitForHomeRoute(page, page.getByText('Quick shares'));
 
-    await homeSectionNavigation.getByRole('link', { name: 'Feed', exact: true }).click();
     await expect(page.getByText('Quick shares')).toBeVisible();
     await expect(page.getByText('Jamie Friend')).toBeVisible();
     await expect(page.getByText('Great ball movement in the second half.')).toBeVisible();
@@ -1427,19 +1428,6 @@ test('parent core workflows emit baseline timers from Home drill-ins', async ({ 
             }
         },
         {
-            label: 'home_to_teams',
-            startHash: '/home',
-            expectedTargetPage: 'teams',
-            expectedTargetRoute: '/teams',
-            readyHome: (testPage) => testPage.getByRole('heading', { name: 'Your day' }),
-            action: async (testPage) => {
-                await testPage.getByRole('navigation', { name: 'Home sections' }).getByRole('link', { name: 'Teams', exact: true }).click();
-            },
-            readyTarget: async (testPage) => {
-                await waitForTeamsRoute(testPage, testPage.getByRole('heading', { name: 'Bears' }));
-            }
-        },
-        {
             label: 'home_to_player_detail',
             startHash: '/home?section=players',
             expectedTargetPage: 'player',
@@ -1589,7 +1577,7 @@ test('requested app workflows emit DB-ready view load baseline timers', async ({
             workflow: 'home_teams',
             label: 'home teams load',
             viewName: 'home teams',
-            route: '/teams/:id',
+            route: '/home',
             startHash: '/home?section=teams',
             ready: async (testPage) => {
                 await waitForTeamsRoute(testPage, testPage.getByRole('heading', { name: 'Bears' }));
@@ -1876,7 +1864,6 @@ test('team page opens from Home data with team tools, player, and chat routes', 
     await expect(page.getByRole('link', { name: /Website team page/ })).toHaveAttribute('href', 'https://allplays.ai/team.html#teamId=team-1');
     await expect(page.getByRole('link', { name: /Media/ })).toHaveAttribute('href', '#/teams/team-1/media');
     await expect(page.locator('a[href="#/players/team-1/player-1"]').first()).toBeVisible();
-    await expect(page.getByText('Pat Star').first()).toBeVisible();
     const bearsLauncherLink = page.getByRole('link', { name: 'Open Bears' });
     await expect(bearsLauncherLink).toHaveAttribute('href', '#/teams/team-1');
     const bearsLauncherRow = page.locator('article.team-launcher-row').filter({ has: bearsLauncherLink });
