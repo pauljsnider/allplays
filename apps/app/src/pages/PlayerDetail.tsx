@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type InputHTMLAttributes } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import {
   AlertCircle,
   ArrowDown,
@@ -16,7 +16,6 @@ import {
   DollarSign,
   Edit3,
   ExternalLink,
-  FileVideo,
   ImagePlus,
   Link2,
   Mail,
@@ -71,7 +70,9 @@ import {
   type RsvpResponse
 } from '../lib/scheduleLogic';
 import { sharePublicUrl } from '../lib/publicActions';
+import { buildAppAcceptInviteUrl } from '../lib/inviteUrls';
 import { completeParentCoreWorkflowTimer } from '../lib/parentWorkflowTiming';
+import { InviteResultCard } from './parent-tools/shared';
 import type { AuthState } from '../lib/types';
 import type { ProfilePhotoSource } from '../lib/profilePhotoService';
 
@@ -100,12 +101,40 @@ const playerSections: Array<{ id: PlayerSectionId; label: string }> = [
   { id: 'profile', label: 'Profile' }
 ];
 
+type ReportPanelId = 'overview' | 'games' | 'season' | 'events' | 'clips';
+
+const reportPanels: Array<{ id: ReportPanelId; label: string }> = [
+  { id: 'overview', label: 'Overview' },
+  { id: 'games', label: 'Game Stats' },
+  { id: 'season', label: 'Season Averages' },
+  { id: 'events', label: 'Game Events' },
+  { id: 'clips', label: 'Video Clips' }
+];
+
 const rsvpBadgeClasses: Record<RsvpResponse, string> = {
   going: 'border-emerald-200 bg-emerald-50 text-emerald-700',
   maybe: 'border-amber-200 bg-amber-50 text-amber-700',
   not_going: 'border-rose-200 bg-rose-50 text-rose-700',
   not_responded: 'border-primary-200 bg-primary-50 text-primary-700'
 };
+
+function getPlayerSectionFromSearch(searchParams: URLSearchParams): PlayerSectionId {
+  const section = searchParams.get('section');
+  return playerSections.some((item) => item.id === section) ? section as PlayerSectionId : 'overview';
+}
+
+function getReportPanelFromSearch(searchParams: URLSearchParams): ReportPanelId {
+  const panel = searchParams.get('panel');
+  return reportPanels.some((item) => item.id === panel) ? panel as ReportPanelId : 'overview';
+}
+
+function getPlayerSectionRoute(sectionId: PlayerSectionId, panelId?: ReportPanelId) {
+  const params = new URLSearchParams();
+  if (sectionId !== 'overview') params.set('section', sectionId);
+  if (sectionId === 'performance' && panelId && panelId !== 'overview') params.set('panel', panelId);
+  const query = params.toString();
+  return query ? `?${query}` : '.';
+}
 
 function getPersistedPublicProfileUrl(profile: Record<string, any> | null | undefined, shareUrl: string | null | undefined) {
   const normalizedShareUrl = String(shareUrl || '').trim();
@@ -311,8 +340,9 @@ function buildAthleteProfileClipSaveState(clips: AthleteProfileClipDraftState[])
 
 export function PlayerDetail({ auth }: { auth: AuthState }) {
   const { teamId = '', playerId = '' } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [data, setData] = useState<ParentPlayerDetailData | null>(null);
-  const [activeSection, setActiveSection] = useState<PlayerSectionId>('overview');
+  const [activeSection, setActiveSection] = useState<PlayerSectionId>(() => getPlayerSectionFromSearch(searchParams));
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<AppServiceError | null>(null);
@@ -569,6 +599,10 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
   }, [auth.user?.uid, teamId, playerId]);
 
   useEffect(() => {
+    setActiveSection(getPlayerSectionFromSearch(searchParams));
+  }, [searchParams]);
+
+  useEffect(() => {
     if (activeSection !== 'profile' || !data || athleteProfileLoaded || athleteProfileLoading || hasResolvedAthleteProfile(data.athleteProfile)) return;
     void loadAthleteProfile({
       nextTeamId: data.child.teamId,
@@ -597,6 +631,15 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
 
   const selectSection = (sectionId: PlayerSectionId) => {
     setActiveSection(sectionId);
+    const nextParams = new URLSearchParams(searchParams);
+    if (sectionId === 'overview') {
+      nextParams.delete('section');
+      nextParams.delete('panel');
+    } else {
+      nextParams.set('section', sectionId);
+      if (sectionId !== 'performance') nextParams.delete('panel');
+    }
+    setSearchParams(nextParams, { replace: false });
     window.requestAnimationFrame(() => {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     });
@@ -702,6 +745,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
             nextPlayerId: data.child.playerId,
             force: true
           })}
+          initialPanel={getReportPanelFromSearch(searchParams)}
         />
       ) : null}
       {activeSection === 'profile' ? (
@@ -743,9 +787,9 @@ function OverviewSection({ data }: { data: ParentPlayerDetailData }) {
       {data.nextEvent ? <PlayerEventCard event={data.nextEvent} featured /> : <EmptyCard icon={CalendarDays} title="No upcoming events" detail="This player's schedule is clear." />}
 
       <section className="grid gap-3 sm:grid-cols-3">
-        <InfoCard icon={CalendarDays} title="Events" detail={`${data.events.length} total`} />
-        <InfoCard icon={BarChart3} title="Reports" detail={`${data.statRows.length} recent games`} />
-        <InfoCard icon={FileVideo} title="Clips" detail={`${data.clips.length} clips`} />
+        <InfoCard icon={CalendarDays} title="Events" detail={`${data.events.length} total`} to={getPlayerSectionRoute('schedule')} />
+        <InfoCard icon={BarChart3} title="Reports" detail={`${data.statRows.length} recent games`} to={getPlayerSectionRoute('performance')} />
+        <InfoCard icon={ImagePlus} title="Clips" detail={`${data.clips.length} clips`} to={getPlayerSectionRoute('performance', 'clips')} />
       </section>
     </div>
   );
@@ -777,16 +821,6 @@ function PlayerScheduleSection({ events }: { events: ParentScheduleEvent[] }) {
   );
 }
 
-type ReportPanelId = 'overview' | 'games' | 'season' | 'events' | 'clips';
-
-const reportPanels: Array<{ id: ReportPanelId; label: string }> = [
-  { id: 'overview', label: 'Overview' },
-  { id: 'games', label: 'Game Stats' },
-  { id: 'season', label: 'Season Averages' },
-  { id: 'events', label: 'Game Events' },
-  { id: 'clips', label: 'Video Clips' }
-];
-
 function ReportsSection({
   data,
   statsDetailState,
@@ -795,7 +829,8 @@ function ReportsSection({
   videoClipsLoading,
   videoClipsError,
   onVideoClipsOpen,
-  onRetryVideoClips
+  onRetryVideoClips,
+  initialPanel
 }: {
   data: ParentPlayerDetailData;
   statsDetailState: PlayerStatsDetailLoadState;
@@ -805,17 +840,35 @@ function ReportsSection({
   videoClipsError: AppServiceError | null;
   onVideoClipsOpen: () => void;
   onRetryVideoClips: () => void;
+  initialPanel: ReportPanelId;
 }) {
-  const [activePanel, setActivePanel] = useState<ReportPanelId>('overview');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [activePanel, setActivePanel] = useState<ReportPanelId>(initialPanel);
   const trackingRows = Array.isArray(data.trackingSummary) ? data.trackingSummary[0]?.items || [] : [];
   const statsDetail = data.statsDetail;
   const reportRows = statsDetail?.statRows?.length ? statsDetail.statRows : data.statRows;
+
+  useEffect(() => {
+    setActivePanel(initialPanel);
+  }, [initialPanel]);
 
   useEffect(() => {
     if (activePanel === 'clips') {
       onVideoClipsOpen();
     }
   }, [activePanel, onVideoClipsOpen]);
+
+  const selectPanel = (panelId: ReportPanelId) => {
+    setActivePanel(panelId);
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.set('section', 'performance');
+    if (panelId === 'overview') {
+      nextParams.delete('panel');
+    } else {
+      nextParams.set('panel', panelId);
+    }
+    setSearchParams(nextParams, { replace: false });
+  };
 
   return (
     <div className="player-section-content space-y-4">
@@ -835,7 +888,7 @@ function ReportsSection({
                 key={panel.id}
                 type="button"
                 className={`min-h-9 flex-none rounded-xl px-3 text-xs font-black transition ${active ? 'bg-white text-primary-700 shadow-sm' : 'text-gray-600 hover:text-gray-950'}`}
-                onClick={() => setActivePanel(panel.id)}
+                onClick={() => selectPanel(panel.id)}
                 aria-pressed={active}
               >
                 {panel.label}
@@ -1353,7 +1406,7 @@ function ClipsPanel({
         {clips.length ? clips.map((clip) => (
           <a key={`${clip.url}-${clip.title}`} href={clip.url} target="_blank" rel="noreferrer" className="rounded-xl border border-gray-200 bg-gray-50 p-3 transition hover:border-primary-200 hover:bg-primary-50/40">
             <div className="flex items-center gap-2 text-sm font-black text-gray-950">
-              {FileVideo ? <FileVideo className="h-4 w-4 flex-none text-primary-600" aria-hidden="true" /> : null}
+              <ImagePlus className="h-4 w-4 flex-none text-primary-600" aria-hidden="true" />
               <span className="truncate">{clip.title || 'Game clip'}</span>
             </div>
             <div className="mt-0.5 truncate text-xs font-semibold text-gray-500">{clip.gameLabel || clip.game || 'Game'}{clip.gameDate ? ` · ${clip.gameDate}` : ''}</div>
@@ -2422,7 +2475,7 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
         <div className="rounded-2xl border border-gray-200 bg-white p-3">
           <div className="flex items-start gap-3">
             <div className="flex h-11 w-11 flex-none items-center justify-center rounded-2xl bg-primary-50 text-primary-700">
-              {FileVideo ? <FileVideo className="h-5 w-5" aria-hidden="true" /> : null}
+              <ImagePlus className="h-5 w-5" aria-hidden="true" />
             </div>
             <div className="min-w-0 flex-1">
               <div className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Highlight clips</div>
@@ -2435,7 +2488,7 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
               Add link
             </button>
             <label className="secondary-button justify-center">
-              {FileVideo ? <FileVideo className="h-4 w-4" aria-hidden="true" /> : null}
+              <ImagePlus className="h-4 w-4" aria-hidden="true" />
               <span>Upload clips</span>
               <input
                 type="file"
@@ -2472,7 +2525,7 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
                       disabled={index === 0}
                       onClick={() => moveClipDraft(clip.id, -1)}
                     >
-                      {ArrowUp ? <ArrowUp className="h-4 w-4" aria-hidden="true" /> : null}
+                      <InlineIcon icon={ArrowUp} fallback={ChevronRight} className="h-4 w-4" />
                     </button>
                     <button
                       type="button"
@@ -2481,7 +2534,7 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
                       disabled={index === clipDrafts.length - 1}
                       onClick={() => moveClipDraft(clip.id, 1)}
                     >
-                      {ArrowDown ? <ArrowDown className="h-4 w-4" aria-hidden="true" /> : null}
+                      <InlineIcon icon={ArrowDown} fallback={ChevronRight} className="h-4 w-4" />
                     </button>
                     <button
                       type="button"
@@ -2489,7 +2542,7 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
                       aria-label="Remove clip"
                       onClick={() => removeClipDraft(clip.id)}
                     >
-                      <Trash2 className="h-4 w-4" aria-hidden="true" />
+                      <InlineIcon icon={Trash2} fallback={AlertCircle} className="h-4 w-4" />
                     </button>
                   </div>
                 </div>
@@ -2646,13 +2699,14 @@ function CoParentInviteCard({ data, auth }: { data: ParentPlayerDetailData; auth
   const [email, setEmail] = useState('');
   const [sending, setSending] = useState(false);
   const [status, setStatus] = useState<{ tone: 'error' | 'success'; message: string } | null>(null);
-  const [code, setCode] = useState('');
+  const [createdInvite, setCreatedInvite] = useState<{ code: string; inviteUrl: string; email: string; emailSent: boolean } | null>(null);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setSending(true);
     setStatus(null);
-    setCode('');
+    setCreatedInvite(null);
+    const normalizedEmail = email.trim().toLowerCase();
     try {
       const result = await sendParentCoParentInvite({
         user: auth.user,
@@ -2661,8 +2715,14 @@ function CoParentInviteCard({ data, auth }: { data: ParentPlayerDetailData; auth
         playerName: data.player.name || data.child.playerName,
         email
       });
-      setCode(result?.code || '');
-      setStatus({ tone: 'success', message: `Invite created for ${email.trim().toLowerCase()}.` });
+      const code = String(result?.code || '').trim().toUpperCase();
+      setCreatedInvite({
+        code,
+        inviteUrl: buildAppAcceptInviteUrl(code, 'coparent'),
+        email: normalizedEmail,
+        emailSent: false
+      });
+      setStatus({ tone: 'success', message: `Invite created for ${normalizedEmail}.` });
       setEmail('');
     } catch (error: any) {
       setStatus({ tone: 'error', message: error?.message || 'Unable to send co-parent invite.' });
@@ -2675,21 +2735,27 @@ function CoParentInviteCard({ data, auth }: { data: ParentPlayerDetailData; auth
     <section className="app-card p-4">
       <div className="flex items-center gap-2 text-sm font-black text-primary-800">
         <Users className="h-4 w-4" aria-hidden="true" />
-        Invite Co-Parent
+        Create invite
       </div>
-      <p className="mt-1 text-xs font-semibold leading-5 text-gray-500">Creates the same co-parent invite code as the parent dashboard.</p>
+      <p className="mt-1 text-xs font-semibold leading-5 text-gray-500">Invite another parent or caregiver to connect their account to this player.</p>
       <form className="mt-4 space-y-3" onSubmit={submit}>
-        <TextField label="Co-parent email" value={email} onChange={setEmail} placeholder="co-parent@example.com" type="email" />
+        <TextField label="Recipient email" value={email} onChange={setEmail} placeholder="parent@example.com" type="email" />
         {status ? <Status tone={status.tone} message={status.message} /> : null}
-        {code ? (
-          <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
-            <div className="text-xs font-black uppercase tracking-[0.04em] text-emerald-700">Invite code</div>
-            <div className="mt-1 font-mono text-lg font-black text-emerald-950">{code}</div>
-          </div>
+        {createdInvite ? (
+          <InviteResultCard
+            code={createdInvite.code}
+            inviteUrl={createdInvite.inviteUrl}
+            recipientEmail={createdInvite.email}
+            emailSent={createdInvite.emailSent}
+            title="Invite code"
+            shareTitle="ALL PLAYS parent invite"
+            shareText={`Join ALL PLAYS to follow this player with invite code ${createdInvite.code}.`}
+            onStatus={(message) => setStatus({ tone: 'success', message })}
+          />
         ) : null}
         <button type="submit" className="primary-button w-full justify-center" disabled={sending}>
           {sending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Mail className="h-4 w-4" aria-hidden="true" />}
-          {sending ? 'Creating Invite' : 'Create Invite'}
+          {sending ? 'Creating invite...' : 'Create invite'}
         </button>
       </form>
     </section>
@@ -3198,14 +3264,27 @@ function SignalChip({ icon: Icon, label, value, urgent = false }: { icon: Lucide
   );
 }
 
-function InfoCard({ icon: Icon, title, detail }: { icon: LucideIcon; title: string; detail: string }) {
-  return (
-    <div className="app-card p-4">
-      {Icon ? <Icon className="h-5 w-5 text-primary-600" aria-hidden="true" /> : null}
+function InfoCard({ icon: Icon, title, detail, to }: { icon: LucideIcon; title: string; detail: string; to?: string }) {
+  const body = (
+    <>
+      <div className="flex items-start justify-between gap-3">
+        {Icon ? <Icon className="h-5 w-5 text-primary-600" aria-hidden="true" /> : null}
+        {to ? <ChevronRight className="h-4 w-4 flex-none text-gray-400 transition group-hover:text-primary-600" aria-hidden="true" /> : null}
+      </div>
       <div className="mt-3 text-sm font-black text-gray-950">{title}</div>
       <div className="mt-1 text-xs font-semibold leading-5 text-gray-600">{detail}</div>
-    </div>
+    </>
   );
+
+  if (to) {
+    return (
+      <Link to={to} className="app-card group block p-4 transition hover:border-primary-200 hover:shadow-app-lg">
+        {body}
+      </Link>
+    );
+  }
+
+  return <div className="app-card p-4">{body}</div>;
 }
 
 function EmptyCard({ icon: Icon, title, detail }: { icon: LucideIcon; title: string; detail: string }) {
@@ -3229,11 +3308,17 @@ function DateTile({ date }: { date: Date }) {
 }
 
 function IconBox({ icon: Icon }: { icon: LucideIcon }) {
+  const ResolvedIcon = Icon || UserRound;
   return (
     <div className="flex h-11 w-11 flex-none items-center justify-center rounded-xl bg-primary-50 text-primary-700">
-      {Icon ? <Icon className="h-5 w-5" aria-hidden="true" /> : null}
+      <ResolvedIcon className="h-5 w-5" aria-hidden="true" />
     </div>
   );
+}
+
+function InlineIcon({ icon: Icon, fallback: Fallback = UserRound, className }: { icon: LucideIcon; fallback?: LucideIcon; className: string }) {
+  const ResolvedIcon = Icon || Fallback || UserRound;
+  return <ResolvedIcon className={className} aria-hidden="true" />;
 }
 
 function CardText({ title, detail }: { title: string; detail: string }) {

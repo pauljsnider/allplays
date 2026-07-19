@@ -635,7 +635,7 @@ test.describe('mobile My Teams', () => {
         await expect(page.getByRole('link', { name: 'Chat', exact: true })).toHaveAttribute('href', /\/messages\/team-1$/);
         await expect(page.getByText('12 unread').first()).toBeVisible();
         await expect(page.locator('a[href="#/schedule?teamId=team-1&view=packets"]')).toBeVisible();
-        await expect(page.getByRole('link', { name: /Players/ })).toHaveAttribute('href', 'https://allplays.ai/team.html#teamId=team-1');
+        await expect(page.getByRole('link', { name: 'Website team page Full' })).toHaveAttribute('href', 'https://allplays.ai/team.html#teamId=team-1');
         await expect(page.locator('a[href="#/players/team-1/player-1"]')).toBeVisible();
         await expect(page.locator('a[href="#/players/team-1/player-2"]')).toBeVisible();
         await page.getByRole('link', { name: 'Open Bears' }).first().click();

@@ -1,7 +1,8 @@
 import { useCallback, useState, type ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
-import { AlertCircle, CheckCircle2, Loader2, RefreshCw } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Copy, Link2, Loader2, RefreshCw, Share2 } from 'lucide-react';
 import { toAppServiceError, type AppServiceError } from '../../lib/appErrors';
+import { copyPublicText, sharePublicUrl } from '../../lib/publicActions';
 import { useAsyncOperation } from '../../lib/useAsyncOperation';
 
 type ParentToolAsyncOptions<T> = {
@@ -161,12 +162,106 @@ export function EmptyState({ icon: Icon, title, detail }: { icon: LucideIcon; ti
 }
 
 export async function copyText(value: string, setMessage: (message: string) => void) {
-    try {
-        await navigator.clipboard.writeText(value);
-        setMessage('Copied.');
-    } catch {
-        setMessage('Copy is not available in this browser.');
-    }
+    const result = await copyPublicText(value);
+    setMessage(result === 'copied' ? 'Copied.' : 'Copy is not available in this browser.');
+}
+
+export type InviteResultCardProps = {
+    code?: string | null;
+    inviteUrl?: string | null;
+    recipientEmail?: string | null;
+    recipientLabel?: string | null;
+    emailSent?: boolean;
+    title?: string;
+    shareTitle?: string;
+    shareText?: string;
+    onStatus: (message: string) => void;
+};
+
+export function InviteResultCard({
+    code,
+    inviteUrl,
+    recipientEmail,
+    recipientLabel,
+    emailSent,
+    title = 'Invite created',
+    shareTitle = 'ALL PLAYS invite',
+    shareText,
+    onStatus
+}: InviteResultCardProps) {
+    const normalizedCode = String(code || '').trim().toUpperCase();
+    const normalizedInviteUrl = String(inviteUrl || '').trim();
+    const cleanRecipient = String(recipientLabel || recipientEmail || '').trim();
+    const deliveryMessage = cleanRecipient
+        ? emailSent
+            ? `Email queued for ${cleanRecipient}.`
+            : `Copy and share this invite with ${cleanRecipient}.`
+        : 'Copy and share this invite.';
+    const defaultShareText = normalizedCode
+        ? `Join ALL PLAYS with invite code ${normalizedCode}.`
+        : 'Join ALL PLAYS with this invite.';
+
+    const copyInviteCode = () => {
+        if (!normalizedCode) return;
+        void copyText(normalizedCode, (message) => {
+            onStatus(message === 'Copied.' ? 'Invite code copied.' : 'Unable to copy invite code.');
+        });
+    };
+    const copyInviteLink = () => {
+        if (!normalizedInviteUrl) return;
+        void copyText(normalizedInviteUrl, (message) => {
+            onStatus(message === 'Copied.' ? 'Invite link copied.' : 'Unable to copy invite link.');
+        });
+    };
+    const shareInvite = async () => {
+        if (!normalizedInviteUrl && !normalizedCode) return;
+        const result = await sharePublicUrl({
+            title: shareTitle,
+            text: shareText || defaultShareText,
+            url: normalizedInviteUrl || undefined,
+            clipboardText: normalizedInviteUrl || normalizedCode
+        });
+        if (result === 'shared') {
+            onStatus('Invite shared.');
+        } else if (result === 'copied') {
+            onStatus(normalizedInviteUrl ? 'Invite link copied.' : 'Invite code copied.');
+        } else if (result === 'cancelled') {
+            onStatus('Share cancelled.');
+        } else {
+            onStatus('Unable to share invite.');
+        }
+    };
+
+    return (
+        <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-950">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0">
+                    <div className="text-xs font-black uppercase tracking-[0.04em] text-emerald-700">{title}</div>
+                    {normalizedCode ? <div className="mt-1 font-mono text-2xl font-black tracking-[0.16em] text-gray-950">{normalizedCode}</div> : null}
+                    {normalizedInviteUrl ? <div className="mt-1 break-all text-xs font-semibold text-emerald-900">{normalizedInviteUrl}</div> : null}
+                    <div className="mt-2 text-xs font-semibold text-emerald-800">{deliveryMessage}</div>
+                </div>
+                <div className="grid flex-none grid-cols-1 gap-2 sm:min-w-[9rem]">
+                    <button type="button" className="primary-button !min-h-9 text-xs" onClick={shareInvite} disabled={!normalizedInviteUrl && !normalizedCode}>
+                        <Share2 className="h-4 w-4" aria-hidden="true" />
+                        Share invite
+                    </button>
+                    {normalizedInviteUrl ? (
+                        <button type="button" className="secondary-button !min-h-9 text-xs" onClick={copyInviteLink}>
+                            <Link2 className="h-4 w-4" aria-hidden="true" />
+                            Copy link
+                        </button>
+                    ) : null}
+                    {normalizedCode ? (
+                        <button type="button" className="ghost-button !min-h-8 text-xs" onClick={copyInviteCode}>
+                            <Copy className="h-4 w-4" aria-hidden="true" />
+                            Copy code
+                        </button>
+                    ) : null}
+                </div>
+            </div>
+        </div>
+    );
 }
 
 export function splitLines(value: string) {

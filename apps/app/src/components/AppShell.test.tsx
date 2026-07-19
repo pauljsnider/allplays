@@ -195,6 +195,26 @@ describe('AppShell', () => {
     expect(familyLink.className).toContain('bg-primary-50');
   });
 
+  it('signs out from the desktop account card', async () => {
+    const signOut = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <MemoryRouter initialEntries={['/home']}>
+        <Routes>
+          <Route path="/home" element={<AppShell auth={{ ...signedInAuth, signOut }}><LocationDisplay /></AppShell>} />
+          <Route path="/auth" element={<div>Auth</div>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+
+    await waitFor(() => {
+      expect(signOut).toHaveBeenCalledTimes(1);
+    });
+    expect(await screen.findByText('Auth')).toBeTruthy();
+  });
+
   it('keeps Family directly reachable in the signed-in mobile bottom navigation', () => {
     useShellLayoutMock.mockReturnValue({ isDesktopWeb: false });
     render(

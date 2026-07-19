@@ -462,6 +462,34 @@ describe('Home', () => {
     expect(within(navigation).getByRole('link', { name: 'Friends' }).getAttribute('href')).toBe('/home?section=friends');
   });
 
+  it('links Home pulse chips to their matching app destinations', async () => {
+    const largeHome = buildLargeHomeModel();
+    const socialHome = {
+      ...baseSocial,
+      feedItems: [baseFeedItem],
+      incomingRequests: [{ id: 'friendship-1' }],
+      metrics: {
+        ...baseSocial.metrics,
+        feedItems: 1,
+        incomingRequests: 1
+      }
+    };
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValueOnce({ home: largeHome, schedule: [] });
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValueOnce(largeHome);
+    socialServiceMocks.loadSocialHome.mockResolvedValueOnce(socialHome);
+
+    renderHome(signedInAuth);
+
+    expect(await screen.findByRole('heading', { name: 'Your day' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: /Players4/ }).getAttribute('href')).toBe('/home?section=players');
+    expect(screen.getByRole('link', { name: /Teams3/ }).getAttribute('href')).toBe('/home?section=teams');
+    expect(screen.getByRole('link', { name: /RSVP2/ }).getAttribute('href')).toBe('/schedule?bulkRsvp=1');
+    expect(screen.getByRole('link', { name: /Packets1/ }).getAttribute('href')).toBe('/schedule?view=packets');
+    expect(screen.getByRole('link', { name: /Unread4/ }).getAttribute('href')).toBe('/messages');
+    expect(screen.getByRole('link', { name: /Feed1/ }).getAttribute('href')).toBe('/home?section=feed');
+    expect(screen.getByRole('link', { name: /Requests1/ }).getAttribute('href')).toBe('/home?section=friends');
+  });
+
   it.each([
     [{ ...signedInAuth, isParent: true, isCoach: false, isAdmin: false, isPlatformAdmin: false }, 'Family home'],
     [{ ...signedInAuth, roles: ['coach'], isParent: false, isCoach: true, isAdmin: false, isPlatformAdmin: false }, 'Coach home'],

@@ -15,6 +15,7 @@ import {
   Home,
   ImagePlus,
   KeyRound,
+  LogOut,
   LogIn,
   MessageCircle,
   Newspaper,
@@ -100,6 +101,7 @@ export function AppShell({ auth, children }: AppShellProps) {
   const [inboxRetryKey, setInboxRetryKey] = useState(0);
   const [unreadCount, setUnreadCount] = useState(0);
   const [unreadState, setUnreadState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [signingOut, setSigningOut] = useState(false);
   const { isDesktopWeb } = useShellLayout();
   const navigate = useNavigate();
   const location = useLocation();
@@ -126,6 +128,15 @@ export function AppShell({ auth, children }: AppShellProps) {
           ? `${unreadCount} unread notification${unreadCount === 1 ? '' : 's'}`
           : 'No unread notifications'
     : 'No unread notifications';
+  const handleSignOut = async () => {
+    setSigningOut(true);
+    try {
+      await auth.signOut();
+      navigate('/auth', { replace: true });
+    } finally {
+      setSigningOut(false);
+    }
+  };
 
   useEffect(() => {
     const startedAt = routeStartedAtRef.current;
@@ -447,6 +458,17 @@ export function AppShell({ auth, children }: AppShellProps) {
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {auth.roles.map((role) => <RoleBadge key={role} role={role} />)}
                 </div>
+                {auth.user ? (
+                  <button
+                    type="button"
+                    className="ghost-button mt-3 w-full justify-center !min-h-9 text-xs"
+                    onClick={handleSignOut}
+                    disabled={signingOut}
+                  >
+                    <LogOut className="h-4 w-4" aria-hidden="true" />
+                    Sign out
+                  </button>
+                ) : null}
               </div>
             </aside>
             <main className={`min-w-0 ${isDesktopMessages ? 'desktop-main-messages' : 'pb-8'}`}>{children}</main>

@@ -84,6 +84,7 @@ vi.mock('lucide-react', () => {
     ExternalLink: Icon,
     ImageIcon: Icon,
     LinkIcon: Icon,
+    Link2: Icon,
     Loader2: Icon,
     MapPin: Icon,
     MessageCircle: Icon,
@@ -93,6 +94,7 @@ vi.mock('lucide-react', () => {
     Shield: Icon,
     Ticket: Icon,
     Trophy: Icon,
+    Share2: Icon,
     UserPlus: Icon,
     UserRound: Icon,
     Users: Icon,
@@ -434,6 +436,74 @@ describe('TeamDetail', () => {
     expect(screen.getByText(/Bears vs Tigers/i)).toBeTruthy();
     expect(teamDetailServiceMocks.loadParentTeamDetailBootstrap).not.toHaveBeenCalled();
     expect(teamDetailServiceMocks.loadParentTeamDetail).toHaveBeenCalledTimes(1);
+  });
+
+  it('links team overview summary stats and cards to their matching workflows', async () => {
+    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue({
+      ...model,
+      upcomingEvents: [{
+        id: 'game-next',
+        title: 'Bears vs Tigers',
+        type: 'game',
+        date: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        location: 'Main Gym',
+        opponent: 'Tigers',
+        status: 'scheduled',
+        liveStatus: '',
+        visibility: 'public',
+        isPrivate: false,
+        isPublic: true,
+        shareable: true,
+        publicCalendar: true,
+        homeScore: null,
+        awayScore: null,
+        isCancelled: false,
+        statTrackerConfigId: '',
+        statTrackerConfigLabel: 'No config assigned',
+        statTrackerConfigBaseType: '',
+        statTrackerConfigExists: false,
+        statTrackerConfigIsBasketball: false
+      }],
+      nextEvent: {
+        id: 'game-next',
+        title: 'Bears vs Tigers',
+        type: 'game',
+        date: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        location: 'Main Gym',
+        opponent: 'Tigers',
+        status: 'scheduled',
+        liveStatus: '',
+        visibility: 'public',
+        isPrivate: false,
+        isPublic: true,
+        shareable: true,
+        publicCalendar: true,
+        homeScore: null,
+        awayScore: null,
+        isCancelled: false,
+        statTrackerConfigId: '',
+        statTrackerConfigLabel: 'No config assigned',
+        statTrackerConfigBaseType: '',
+        statTrackerConfigExists: false,
+        statTrackerConfigIsBasketball: false
+      }
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: /4-2\s+Record/ }).getAttribute('href')).toBe('/schedule?teamId=team-1&filter=recent-results');
+    expect(screen.getByRole('link', { name: /1\s+Roster/ }).getAttribute('href')).toBe('/teams/team-1?tab=roster');
+    expect(screen.getByRole('link', { name: /1\s+Upcoming/ }).getAttribute('href')).toBe('/teams/team-1?tab=schedule');
+    expect(screen.getByRole('link', { name: /Season record \(2100\)/ }).getAttribute('href')).toBe('/schedule?teamId=team-1&filter=recent-results');
+    expect(screen.getByRole('link', { name: /Next event/ }).getAttribute('href')).toBe('/schedule?teamId=team-1');
+    expect(screen.getByRole('link', { name: /Roster size/ }).getAttribute('href')).toBe('/teams/team-1?tab=roster');
   });
 
   it('uses singular wording when the team has one completed game', async () => {
@@ -1476,7 +1546,7 @@ describe('TeamDetail', () => {
     fireEvent.click(screen.getByRole('button', { name: /roster/i }));
 
     await waitFor(() => expect(teamDetailServiceMocks.loadTeamRosterParentInvites).toHaveBeenCalledTimes(1));
-    expect(await screen.findByRole('button', { name: 'Invite parent' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'Create invite' })).toBeTruthy();
     await waitFor(() => expect(teamDetailServiceMocks.loadTeamRosterParentInvites).toHaveBeenCalledTimes(1));
   });
 
@@ -1541,11 +1611,11 @@ describe('TeamDetail', () => {
 
     expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /roster/i }));
-    expect(await screen.findByRole('button', { name: 'Invite parent' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'Create invite' })).toBeTruthy();
 
-    fireEvent.change(screen.getByLabelText('Parent email for Pat Star'), { target: { value: 'parent@example.com' } });
+    fireEvent.change(screen.getByLabelText('Recipient email for Pat Star'), { target: { value: 'parent@example.com' } });
     fireEvent.change(screen.getByLabelText('Parent relation for Pat Star'), { target: { value: 'Guardian' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Invite parent' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create invite' }));
 
     await waitFor(() => expect(teamDetailServiceMocks.createRosterParentInviteForApp).toHaveBeenCalledWith(
       'team-1',
@@ -1554,7 +1624,7 @@ describe('TeamDetail', () => {
       { email: 'parent@example.com', relation: 'Guardian' }
     ));
     await waitFor(() => expect(teamDetailServiceMocks.loadTeamRosterParentInvites).toHaveBeenCalledTimes(2));
-    expect(await screen.findByText('Invite emailed to parent@example.com with the code and signup link.')).toBeTruthy();
+    expect(await screen.findByText('Email queued for parent@example.com.')).toBeTruthy();
   });
 
   it('keeps a created parent invite visible when its email cannot be sent', async () => {
@@ -1588,13 +1658,13 @@ describe('TeamDetail', () => {
 
     expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /roster/i }));
-    expect(await screen.findByRole('button', { name: 'Invite parent' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'Create invite' })).toBeTruthy();
 
-    fireEvent.change(screen.getByLabelText('Parent email for Pat Star'), { target: { value: 'parent@example.com' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Invite parent' }));
+    fireEvent.change(screen.getByLabelText('Recipient email for Pat Star'), { target: { value: 'parent@example.com' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create invite' }));
 
     await waitFor(() => expect(teamDetailServiceMocks.loadTeamRosterParentInvites).toHaveBeenCalledTimes(2));
-    expect(await screen.findByText('Invite created, but the email to parent@example.com could not be sent. Copy or share the code or link.')).toBeTruthy();
+    expect(await screen.findByText('Copy and share this invite with parent@example.com.')).toBeTruthy();
     expect(screen.getByText('ABCD1234')).toBeTruthy();
   });
 
@@ -1645,13 +1715,58 @@ describe('TeamDetail', () => {
     const { sharePublicUrl } = await import('../lib/publicActions');
     expect(sharePublicUrl).toHaveBeenCalledWith({
       title: 'Bears staff invite',
-      text: 'Join Bears staff on ALL PLAYS',
+      text: 'Join Bears staff on ALL PLAYS.',
       url: 'https://allplays.ai/app#/accept-invite?code=CODE123&type=admin',
       clipboardText: 'https://allplays.ai/app#/accept-invite?code=CODE123&type=admin'
     });
 
     fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
     await waitFor(() => expect(teamDetailServiceMocks.revokeTeamAdminAccessForApp).toHaveBeenCalledWith('team-1', 'coach@example.com', auth.user));
+  });
+
+  it('shows an error when an admin fallback invite has no code or link to share', async () => {
+    const managedModel = {
+      ...model,
+      canManageTeam: true,
+      canManageAdmins: true,
+      staffPermissions: {
+        staff: [{ label: 'owner@example.com', role: 'Owner' }],
+        pendingInvites: [],
+        helperPermissions: [],
+        scorekeepingMode: 'selected',
+        scorekeeperGrantTargets: [],
+        teamMediaManagerGrantTargets: [],
+        videographerGrantTargets: [],
+        hasAnyStaff: true
+      }
+    };
+    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue(managedModel);
+    teamDetailServiceMocks.loadTeamStaffPermissions.mockResolvedValue(managedModel.staffPermissions);
+    teamDetailServiceMocks.inviteTeamAdminForApp.mockResolvedValue({
+      email: 'newcoach@example.com',
+      status: 'fallback_code',
+      code: null,
+      teamName: 'Bears',
+      acceptInviteUrl: null
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /more/i }));
+    fireEvent.change(screen.getByLabelText('Admin email'), { target: { value: ' NewCoach@Example.com ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send invite' }));
+
+    expect(await screen.findByText('Unable to create an admin invite code. Try again.')).toBeTruthy();
+    expect(screen.queryByText('newcoach@example.com already has an account and was added as an admin.')).toBeNull();
+    expect(screen.getByLabelText('Admin email')).toHaveValue('NewCoach@Example.com');
+    expect(teamDetailServiceMocks.loadTeamStaffPermissions).not.toHaveBeenCalled();
   });
 
   it('shows staff permissions read-only for team managers who cannot manage admins', async () => {

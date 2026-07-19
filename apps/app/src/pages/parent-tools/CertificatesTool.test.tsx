@@ -25,7 +25,9 @@ vi.mock('lucide-react', () => {
         AlertCircle: Icon,
         Award: Icon,
         CheckCircle2: Icon,
+        Copy: Icon,
         ExternalLink: Icon,
+        Link2: Icon,
         Loader2: Icon,
         RefreshCw: Icon,
         Share2: Icon
