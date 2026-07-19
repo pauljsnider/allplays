@@ -21,11 +21,16 @@ async function mockInviteLoginModules(page, options = {}) {
         },
         googleLoginResult = null,
         googleRedirectResult = null,
+        signupResult = { user: { uid: 'new-user-123', email: 'new@example.com' } },
+        signupError = null,
+        signupDelayMs = 0,
         defaultRedirect = 'dashboard.html'
     } = options;
     const encodedLoginResult = encodeModuleValue(loginResult);
     const encodedGoogleLoginResult = encodeModuleValue(googleLoginResult);
     const encodedGoogleRedirectResult = encodeModuleValue(googleRedirectResult);
+    const encodedSignupResult = encodeModuleValue(signupResult);
+    const encodedSignupError = encodeModuleValue(signupError);
     const encodedDefaultRedirect = encodeModuleValue(defaultRedirect);
     const encodedProfile = encodeModuleValue(profile);
 
@@ -34,15 +39,30 @@ async function mockInviteLoginModules(page, options = {}) {
             const loginResult = JSON.parse(atob('${encodedLoginResult}'));
             const googleLoginResult = JSON.parse(atob('${encodedGoogleLoginResult}'));
             const googleRedirectResult = JSON.parse(atob('${encodedGoogleRedirectResult}'));
+            const signupResult = JSON.parse(atob('${encodedSignupResult}'));
+            const signupError = JSON.parse(atob('${encodedSignupError}'));
             const defaultRedirect = JSON.parse(atob('${encodedDefaultRedirect}'));
+            const signupDelayMs = ${Number(signupDelayMs) || 0};
 
             export async function login(email, password) {
                 window.__authMock = { email, password };
                 return loginResult;
             }
 
-            export async function signup() {
-                throw new Error('signup not mocked');
+            export async function signup(email, password, activationCode) {
+                window.__signupCalls = (window.__signupCalls || 0) + 1;
+                window.__signupArgs = { email, password, activationCode };
+                if (signupDelayMs > 0) {
+                    await new Promise((resolve) => setTimeout(resolve, signupDelayMs));
+                }
+                if (signupError) {
+                    const error = new Error(signupError.message || 'signup failed');
+                    if (signupError.code) {
+                        error.code = signupError.code;
+                    }
+                    throw error;
+                }
+                return signupResult;
             }
 
             export function checkAuth(callback) {
@@ -242,4 +262,52 @@ test('google popup signup without invite uses normal post-auth redirect', async 
 
     await expect(page).toHaveURL(/\/dashboard\.html$/);
     await expect.poll(() => page.evaluate(() => window.sessionStorage.getItem('__googleActivationCode'))).toBe('AB12CD34');
+});
+
+test('invite signup disables create account while the request is in flight', async ({ page, baseURL }) => {
+    await mockInviteLoginModules(page, {
+        signupDelayMs: 60_000
+    });
+
+    await page.goto(buildUrl(baseURL, '/login.html?code=ab12cd34&type=parent'), {
+        waitUntil: 'domcontentloaded'
+    });
+
+    await expect(page.locator('#form-title')).toHaveText('Sign Up');
+    await page.locator('#email').fill('mom@example.com');
+    await page.locator('#password').fill('secret123');
+    await page.locator('#confirm-password').fill('secret123');
+    await page.locator('#submit-btn').click();
+    await page.locator('#submit-btn').click({ force: true });
+
+    await expect(page.locator('#submit-btn')).toBeDisabled();
+    await expect(page.locator('#submit-btn')).toHaveText('Creating account...');
+    await expect.poll(() => page.evaluate(() => window.__signupCalls || 0)).toBe(1);
+    await expect.poll(() => page.evaluate(() => window.__signupArgs?.activationCode)).toBe('AB12CD34');
+});
+
+test('invite signup with an existing email switches to clear login recovery', async ({ page, baseURL }) => {
+    await mockInviteLoginModules(page, {
+        signupError: {
+            code: 'auth/email-already-in-use',
+            message: 'Firebase: Error (auth/email-already-in-use).'
+        }
+    });
+
+    await page.goto(buildUrl(baseURL, '/login.html?code=ab12cd34&type=parent'), {
+        waitUntil: 'domcontentloaded'
+    });
+
+    await expect(page.locator('#form-title')).toHaveText('Sign Up');
+    await page.locator('#email').fill('mom@example.com');
+    await page.locator('#password').fill('secret123');
+    await page.locator('#confirm-password').fill('secret123');
+    await page.locator('#submit-btn').click();
+
+    await expect(page.locator('#form-title')).toHaveText('Login');
+    await expect(page.locator('#submit-btn')).toBeEnabled();
+    await expect(page.locator('#submit-btn')).toHaveText('Sign In');
+    await expect(page.locator('#error-message')).toHaveText('That account already exists. Enter the password for this email to accept your invite.');
+    await expect(page.locator('#activation-code-field')).toBeHidden();
+    await expect(page.locator('#email')).toHaveValue('mom@example.com');
 });

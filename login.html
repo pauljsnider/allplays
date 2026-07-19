@@ -97,7 +97,7 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { login, signup, checkAuth, loginWithGoogle, handleGoogleRedirectResult, resetPassword, getRedirectUrl } from './js/auth.js?v=125';
+        import { login, signup, checkAuth, loginWithGoogle, handleGoogleRedirectResult, resetPassword, getRedirectUrl } from './js/auth.js?v=126';
         import { getUserProfile } from './js/db.js?v=113';
         import { renderHeader, renderFooter } from './js/utils.js?v=18';
         import { getPostAuthRedirectUrl } from './js/invite-redirect.js?v=3';
@@ -107,6 +107,7 @@
 
         let isLogin = true;
         let isActivationCodeInitiallyHidden = false; // Tracks if the activation code field was hidden due to a URL parameter
+        let isSubmittingAuthForm = false;
 
         const createLoginAuthStateManager = loginPageModule.createLoginAuthStateManager || function createFallbackLoginAuthStateManager() {
             return {
@@ -220,6 +221,46 @@
             }
         }
 
+        function setAuthFormMode(nextIsLogin) {
+            isLogin = nextIsLogin;
+            document.getElementById('form-title').textContent = isLogin ? 'Login' : 'Sign Up';
+            document.getElementById('submit-btn').textContent = isLogin ? 'Sign In' : 'Create Account';
+            document.getElementById('toggle-text').textContent = isLogin ? "Don't have an account?" : "Already have an account?";
+            document.getElementById('toggle-btn').textContent = isLogin ? 'Sign Up' : 'Login';
+            document.getElementById('error-message').classList.add('hidden');
+
+            const confirmPasswordField = document.getElementById('confirm-password-field');
+            const confirmPasswordInput = document.getElementById('confirm-password');
+            const activationCodeField = document.getElementById('activation-code-field');
+            const activationCodeInput = document.getElementById('activation-code');
+            const forgotPasswordLink = document.getElementById('forgot-password-link');
+
+            if (isLogin) {
+                confirmPasswordField.classList.add('hidden');
+                confirmPasswordInput.removeAttribute('required');
+                activationCodeField.classList.add('hidden');
+                activationCodeInput.removeAttribute('required');
+                forgotPasswordLink.classList.remove('hidden');
+            } else {
+                confirmPasswordField.classList.remove('hidden');
+                confirmPasswordInput.setAttribute('required', 'required');
+                if (!isActivationCodeInitiallyHidden) {
+                    activationCodeField.classList.remove('hidden');
+                    activationCodeInput.setAttribute('required', 'required');
+                } else {
+                    activationCodeField.classList.add('hidden');
+                    activationCodeInput.removeAttribute('required');
+                }
+                forgotPasswordLink.classList.add('hidden');
+            }
+        }
+
+        function isEmailAlreadyInUseError(error) {
+            const code = String(error?.code || '').toLowerCase();
+            const message = String(error?.message || '').toLowerCase();
+            return code === 'auth/email-already-in-use' || message.includes('auth/email-already-in-use');
+        }
+
         // Auto-fill activation code from URL parameter or honor public signup hash links.
         if (loginPageModule.shouldInitializeSignupMode({ windowObject: window, urlCodeParam })) {
             if (urlCodeParam && urlCodeParam.length === 8) {
@@ -242,52 +283,24 @@
         });
 
         document.getElementById('toggle-btn').addEventListener('click', () => {
-            isLogin = !isLogin;
-            document.getElementById('form-title').textContent = isLogin ? 'Login' : 'Sign Up';
-            document.getElementById('submit-btn').textContent = isLogin ? 'Sign In' : 'Create Account';
-            document.getElementById('toggle-text').textContent = isLogin ? "Don't have an account?" : "Already have an account?";
-            document.getElementById('toggle-btn').textContent = isLogin ? 'Sign Up' : 'Login';
-            document.getElementById('error-message').classList.add('hidden');
-
-            // Show/hide confirm password field
-            const confirmPasswordField = document.getElementById('confirm-password-field');
-            const confirmPasswordInput = document.getElementById('confirm-password');
-
-            // Show/hide activation code field
-            const activationCodeField = document.getElementById('activation-code-field');
-            const activationCodeInput = document.getElementById('activation-code');
-
-            // Show/hide forgot password link
-            const forgotPasswordLink = document.getElementById('forgot-password-link');
-
-            if (isLogin) {
-                confirmPasswordField.classList.add('hidden');
-                confirmPasswordInput.removeAttribute('required');
-                activationCodeField.classList.add('hidden');
-                activationCodeInput.removeAttribute('required');
-                forgotPasswordLink.classList.remove('hidden');
-            } else {
-                confirmPasswordField.classList.remove('hidden');
-                confirmPasswordInput.setAttribute('required', 'required');
-                // Only show activation code field if it wasn't initially hidden due to a URL param
-                // Only show activation code field if it wasn't initially hidden due to a URL param
-                if (!isActivationCodeInitiallyHidden) {
-                    activationCodeField.classList.remove('hidden');
-                    activationCodeInput.setAttribute('required', 'required');
-                } else {
-                    activationCodeInput.removeAttribute('required');
-                }
-                forgotPasswordLink.classList.add('hidden');
-            }
+            setAuthFormMode(!isLogin);
         });
 
         document.getElementById('login-form').addEventListener('submit', async (e) => {
             e.preventDefault();
+            if (isSubmittingAuthForm) {
+                return;
+            }
             const email = document.getElementById('email').value;
             const password = document.getElementById('password').value;
             const errorDiv = document.getElementById('error-message');
+            const submitBtn = document.getElementById('submit-btn');
 
             authState.beginProcessing(); // Prevent auto-redirect during process
+            isSubmittingAuthForm = true;
+            errorDiv.classList.add('hidden');
+            submitBtn.disabled = true;
+            submitBtn.textContent = isLogin ? 'Signing in...' : 'Creating account...';
 
             try {
                 if (isLogin) {
@@ -314,9 +327,17 @@
                 }
             } catch (error) {
                 authState.finishProcessing(); // Reset flag on error
-                errorDiv.textContent = error.message; // Show actual error
+                if (!isLogin && isEmailAlreadyInUseError(error)) {
+                    setAuthFormMode(true);
+                    errorDiv.textContent = 'That account already exists. Enter the password for this email to accept your invite.';
+                } else {
+                    errorDiv.textContent = error.message; // Show actual error
+                }
                 errorDiv.classList.remove('hidden');
                 console.error(error);
+                isSubmittingAuthForm = false;
+                submitBtn.disabled = false;
+                submitBtn.textContent = isLogin ? 'Sign In' : 'Create Account';
             }
         });
 

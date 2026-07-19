@@ -278,6 +278,35 @@ describe('executeEmailPasswordSignup', () => {
         expect(dependencies.sendVerificationEmail).toHaveBeenCalledTimes(1);
     });
 
+    it('does not block successful signup on verification email delivery', async () => {
+        const neverResolveVerification = vi.fn(() => new Promise(() => {}));
+        const dependencies = createDependencies({
+            sendVerificationEmail: neverResolveVerification
+        });
+        const reload = vi.fn().mockResolvedValue(undefined);
+        const auth = {
+            currentUser: {
+                email: 'parent@example.com',
+                reload
+            }
+        };
+
+        const result = await executeEmailPasswordSignup({
+            email: 'parent@example.com',
+            password: 'password123',
+            activationCode: 'PARENTCODE',
+            auth,
+            dependencies
+        });
+
+        await Promise.resolve();
+
+        expect(result.user.uid).toBe('user-123');
+        expect(dependencies.redeemParentInvite).toHaveBeenCalledWith('user-123', 'PARENTCODE', 'parent@example.com');
+        expect(reload).toHaveBeenCalledTimes(1);
+        expect(neverResolveVerification).toHaveBeenCalledTimes(1);
+    });
+
     it('revalidates after account creation when pre-auth validation is generic', async () => {
         const dependencies = createDependencies({
             validateAccessCode: vi.fn()
