@@ -1,3 +1,5 @@
+const crypto = require('node:crypto');
+
 const MAX_TELEMETRY_BODY_BYTES = 64 * 1024;
 const MAX_ATTESTED_EVENTS_PER_REQUEST = 15;
 const MAX_UNATTESTED_EVENTS_PER_REQUEST = 2;
@@ -200,10 +202,20 @@ async function verifyTelemetryAppCheck(req = {}, verifyToken) {
 
   try {
     await verifyToken(token);
-    return { status: 'verified' };
+    return {
+      status: 'verified',
+      rateLimitKey: crypto.createHash('sha256').update(token, 'utf8').digest('hex')
+    };
   } catch (_error) {
     return { status: 'invalid' };
   }
+}
+
+function getTelemetryRateLimitBoundary(appCheck) {
+  if (appCheck?.status === 'verified' && /^[a-f0-9]{64}$/.test(appCheck.rateLimitKey || '')) {
+    return `verified|${appCheck.rateLimitKey}`;
+  }
+  return 'unattested-global';
 }
 
 function getTelemetryIngressPolicy(appCheckStatus) {
@@ -241,5 +253,6 @@ module.exports = {
   deduplicateTelemetryEvents,
   getTelemetryBodyByteLength,
   getTelemetryIngressPolicy,
+  getTelemetryRateLimitBoundary,
   verifyTelemetryAppCheck
 };

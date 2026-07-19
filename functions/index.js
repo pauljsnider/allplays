@@ -63,6 +63,7 @@ const {
   deduplicateTelemetryEvents,
   getTelemetryBodyByteLength,
   getTelemetryIngressPolicy,
+  getTelemetryRateLimitBoundary,
   verifyTelemetryAppCheck
 } = require('./telemetry-ingress-core.cjs');
 const { buildPublicGamesIcs, canExposeEmptyPublicFeed, isPublicFanGame } = require('./public-calendar-core.cjs');
@@ -322,6 +323,11 @@ const checkTelemetryIngressRateLimit = createInMemoryRateLimiter({
   windowMs: TELEMETRY_RATE_LIMIT_WINDOW_MS,
   maxRequests: 120,
   maxKeys: 10_000
+});
+const checkTelemetryUnattestedBurstRateLimit = createInMemoryRateLimiter({
+  windowMs: TELEMETRY_RATE_LIMIT_WINDOW_MS,
+  maxRequests: 60,
+  maxKeys: 1
 });
 const telemetryRateLimiters = new Map();
 
@@ -12794,7 +12800,7 @@ exports.submitPublicRsvp = functions.https.onRequest(async (req, res) => {
 });
 
 exports.collectTelemetry = functions
-  .runWith({ timeoutSeconds: 15, memory: '256MB' })
+  .runWith({ timeoutSeconds: 15, memory: '256MB', maxInstances: 10 })
   .https
   .onRequest(async (req, res) => {
     writeCorsHeaders(req, res, 'POST,OPTIONS', telemetryAllowedOriginSet);
@@ -12835,6 +12841,11 @@ exports.collectTelemetry = functions
     }
 
     try {
+      if (!Array.isArray(payload?.events) || !payload.events.length) {
+        res.status(400).json({ ok: false, error: 'No telemetry events provided' });
+        return;
+      }
+
       const ingressRateLimit = checkTelemetryIngressRateLimit(req);
       if (!ingressRateLimit.allowed) {
         res.status(204).send('');
@@ -12846,12 +12857,13 @@ exports.collectTelemetry = functions
         (token) => admin.appCheck().verifyToken(token)
       );
       const policy = getTelemetryIngressPolicy(appCheck.status);
-      const requestIp = getRequestIp(req);
+      if (!policy.verified && !checkTelemetryUnattestedBurstRateLimit({ ip: '203.0.113.254' }).allowed) {
+        res.status(204).send('');
+        return;
+      }
       let rateLimit;
       try {
-        rateLimit = await getTelemetryRateLimiter(policy)(
-          `${policy.verified ? 'verified' : 'unattested'}|${requestIp}`
-        );
+        rateLimit = await getTelemetryRateLimiter(policy)(getTelemetryRateLimitBoundary(appCheck));
       } catch (error) {
         functions.logger.error('Telemetry ingress control failed.', {
           eventType: 'operational_telemetry_ingress_control_failure',
@@ -12867,13 +12879,7 @@ exports.collectTelemetry = functions
         return;
       }
 
-      const rawEvents = Array.isArray(payload?.events)
-        ? payload.events.slice(0, policy.maxEvents)
-        : [];
-      if (!rawEvents.length) {
-        res.status(400).json({ ok: false, error: 'No telemetry events provided' });
-        return;
-      }
+      const rawEvents = payload.events.slice(0, policy.maxEvents);
 
       const receivedAt = new Date();
       const dateKey = getDateKey(receivedAt);

@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
 
 const {
   ATTESTED_REQUESTS_PER_WINDOW,
@@ -17,6 +18,7 @@ const {
   deduplicateTelemetryEvents,
   getTelemetryBodyByteLength,
   getTelemetryIngressPolicy,
+  getTelemetryRateLimitBoundary,
   verifyTelemetryAppCheck
 } = require('../telemetry-ingress-core.cjs');
 
@@ -48,7 +50,10 @@ test('server-verifies supplied App Check and does not treat missing or invalid t
     return { appId: 'firebase-app-id' };
   });
   assert.equal(verifiedToken, 'valid-web-or-native-token');
-  assert.deepEqual(verified, { status: 'verified' });
+  assert.deepEqual(verified, {
+    status: 'verified',
+    rateLimitKey: crypto.createHash('sha256').update('valid-web-or-native-token').digest('hex')
+  });
 
   assert.deepEqual(await verifyTelemetryAppCheck({ headers: {} }, async () => {
     throw new Error('must not run');
@@ -66,6 +71,19 @@ test('server-verifies supplied App Check and does not treat missing or invalid t
     oversizedVerifyCalled = true;
   }), { status: 'invalid' });
   assert.equal(oversizedVerifyCalled, false);
+});
+
+test('uses a high-entropy token fingerprint for verified limits and one global unattested budget', async () => {
+  const verified = await verifyTelemetryAppCheck({
+    headers: { 'x-firebase-appcheck': 'high-entropy-app-check-token' }
+  }, async () => ({ appId: 'firebase-app-id' }));
+  const verifiedBoundary = getTelemetryRateLimitBoundary(verified);
+
+  assert.match(verifiedBoundary, /^verified\|[a-f0-9]{64}$/);
+  assert.equal(verifiedBoundary.includes('high-entropy-app-check-token'), false);
+  assert.equal(getTelemetryRateLimitBoundary({ status: 'missing' }), 'unattested-global');
+  assert.equal(getTelemetryRateLimitBoundary({ status: 'invalid' }), 'unattested-global');
+  assert.equal(getTelemetryRateLimitBoundary({ status: 'verified', rateLimitKey: 'forged' }), 'unattested-global');
 });
 
 test('keeps verified clients useful while tightly bounding observe-mode unattested traffic', () => {
