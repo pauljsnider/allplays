@@ -1,6 +1,8 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const Module = require('node:module');
+const { DEFAULT_MAX_ICS_BYTES } = require('../calendar-ics-fetch-core.cjs');
+const { hashFamilyShareCalendarEventUid } = require('../family-share-view-core.cjs');
 
 const repoIndexPath = require.resolve('../index.js');
 const originalModuleLoad = Module._load;
@@ -8,11 +10,13 @@ const originalModuleLoad = Module._load;
 let adminStub = null;
 let functionsStub = null;
 let StripeStub = null;
+let securityUtilsStub = null;
 
 function patchedModuleLoad(request, parent, isMain) {
   if (request === 'firebase-admin' && adminStub) return adminStub;
   if (request === 'firebase-functions' && functionsStub) return functionsStub;
   if (request === 'stripe' && StripeStub) return StripeStub;
+  if (request === './utils/security-utils' && securityUtilsStub) return securityUtilsStub;
   return originalModuleLoad(request, parent, isMain);
 }
 
@@ -41,8 +45,12 @@ function clone(value) {
   return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, clone(entry)]));
 }
 
-function makeFirestore(seed = {}) {
+function makeFirestore(seed = {}, metrics = {}) {
   const state = new Map(Object.entries(seed).map(([path, value]) => [path, clone(value)]));
+  metrics.queryReadCount = 0;
+  metrics.queries = [];
+  metrics.activeQueryCount = 0;
+  metrics.maxConcurrentQueries = 0;
 
   function doc(path) {
     return {
@@ -61,9 +69,15 @@ function makeFirestore(seed = {}) {
     };
   }
 
-  function collection(path) {
-    return {
+  function collection(path, limitCount = Number.POSITIVE_INFINITY) {
+    const group = {
+      limit(count) {
+        return collection(path, Math.max(0, Math.floor(Number(count) || 0)));
+      },
       async get() {
+        metrics.activeQueryCount += 1;
+        metrics.maxConcurrentQueries = Math.max(metrics.maxConcurrentQueries, metrics.activeQueryCount);
+        await Promise.resolve();
         const depth = path.split('/').length + 1;
         const docs = [...state.keys()]
           .filter((entryPath) => entryPath.startsWith(`${path}/`) && entryPath.split('/').length === depth)
@@ -75,18 +89,29 @@ function makeFirestore(seed = {}) {
               ref: { path: entryPath },
               data: () => clone(value)
             };
-          });
+          })
+          .slice(0, limitCount);
+        metrics.queryReadCount += docs.length;
+        metrics.queries.push({ kind: 'collection', path, limit: limitCount, returned: docs.length });
+        metrics.activeQueryCount -= 1;
         return { docs, size: docs.length, empty: docs.length === 0 };
       }
     };
+    return group;
   }
 
-  function collectionGroup(name, conditions = []) {
+  function collectionGroup(name, conditions = [], limitCount = Number.POSITIVE_INFINITY) {
     const group = {
       where(field, operator, expected) {
-        return collectionGroup(name, [...conditions, { field, operator, expected }]);
+        return collectionGroup(name, [...conditions, { field, operator, expected }], limitCount);
+      },
+      limit(count) {
+        return collectionGroup(name, conditions, Math.max(0, Math.floor(Number(count) || 0)));
       },
       async get() {
+        metrics.activeQueryCount += 1;
+        metrics.maxConcurrentQueries = Math.max(metrics.maxConcurrentQueries, metrics.activeQueryCount);
+        await Promise.resolve();
         const docs = [...state.entries()]
           .filter(([entryPath]) => entryPath.split('/').at(-2) === name)
           .filter(([, value]) => conditions.every(({ field, operator, expected }) => {
@@ -100,7 +125,17 @@ function makeFirestore(seed = {}) {
             exists: true,
             ref: { path: entryPath },
             data: () => clone(value)
-          }));
+          }))
+          .slice(0, limitCount);
+        metrics.queryReadCount += docs.length;
+        metrics.queries.push({
+          kind: 'collectionGroup',
+          path: name,
+          conditions: clone(conditions),
+          limit: limitCount,
+          returned: docs.length
+        });
+        metrics.activeQueryCount -= 1;
         return { docs, size: docs.length, empty: docs.length === 0 };
       }
     };
@@ -146,9 +181,9 @@ function makeFunctionsStub() {
   };
 }
 
-function loadCallables(seed = {}) {
+function loadCallables(seed = {}, { metrics = {}, securityUtils = null } = {}) {
   delete require.cache[repoIndexPath];
-  const firestore = makeFirestore(seed);
+  const firestore = makeFirestore(seed, metrics);
   adminStub = {
     apps: [true],
     initializeApp() {},
@@ -174,7 +209,68 @@ function loadCallables(seed = {}) {
       };
     }
   };
+  securityUtilsStub = securityUtils;
   return require('../index.js');
+}
+
+function makeCalendarSecurityUtilsStub(icsText, counters = {}) {
+  counters.fetchCount = 0;
+  return {
+    isPrivateIpAddress: () => false,
+    isBlockedHostname: () => false,
+    assertPublicHost: async () => ['203.0.113.10'],
+    normalizeTargetUrl: async (rawUrl) => {
+      const url = new URL(rawUrl);
+      return { url: url.toString(), hostname: url.hostname, publicIps: ['203.0.113.10'] };
+    },
+    fetchWithTimeout: async () => {
+      counters.fetchCount += 1;
+      return {
+        ok: true,
+        status: 200,
+        text: async () => icsText
+      };
+    }
+  };
+}
+
+function makeDenseFamilyShareSeed(tokenId) {
+  const seed = {
+    [`familyShareTokens/${tokenId}`]: {
+      active: true,
+      ownerUserId: 'budget-parent',
+      children: [
+        { teamId: 'team-a', playerId: 'player-a' },
+        { teamId: 'team-b', playerId: 'player-b' }
+      ]
+    },
+    'users/budget-parent': {
+      parentPlayerKeys: ['team-a::player-a', 'team-b::player-b']
+    },
+    'teams/team-a': { name: 'Team A', isPublic: false },
+    'teams/team-b': { name: 'Team B', isPublic: false },
+    'teams/team-a/players/player-a': { name: 'Player A' },
+    'teams/team-b/players/player-b': { name: 'Player B' }
+  };
+  ['team-a', 'team-b'].forEach((teamId) => {
+    for (let index = 0; index < 300; index += 1) {
+      seed[`teams/${teamId}/games/direct-${String(index).padStart(3, '0')}`] = {
+        type: 'game',
+        date: new FakeTimestamp(Date.parse('2026-07-20T18:00:00Z') + index * 60_000),
+        opponent: `Direct ${index}`
+      };
+      seed[`organizations/budget/sharedGames/${teamId}-shared-${String(index).padStart(3, '0')}`] = {
+        type: 'game',
+        date: new FakeTimestamp(Date.parse('2026-08-20T18:00:00Z') + index * 60_000),
+        homeTeamId: teamId,
+        homeTeamName: teamId === 'team-a' ? 'Team A' : 'Team B',
+        awayTeamId: `${teamId}-opponent`,
+        awayTeamName: `Shared ${index}`,
+        teamIds: [teamId, `${teamId}-opponent`]
+      };
+    }
+  });
+  return seed;
 }
 
 test.beforeEach(() => {
@@ -183,6 +279,7 @@ test.beforeEach(() => {
   adminStub = null;
   functionsStub = null;
   StripeStub = null;
+  securityUtilsStub = null;
 });
 
 test.afterEach(() => {
@@ -191,6 +288,7 @@ test.afterEach(() => {
   adminStub = null;
   functionsStub = null;
   StripeStub = null;
+  securityUtilsStub = null;
 });
 
 test('family share schedule callable validates bearer token and projects private team games', async () => {
@@ -360,6 +458,155 @@ test('family share schedule callable includes organization shared games for scop
     competitionType: 'tournament',
     countsTowardSeasonRecord: true
   });
+});
+
+for (const callableName of ['getFamilyShareSchedule', 'getFamilyShareView']) {
+  test(`${callableName} shares one bounded read budget fairly across teams and game sources`, async () => {
+    const tokenId = callableName === 'getFamilyShareView'
+      ? 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
+      : 'ffffffffffffffffffffffffffffffffffffffff';
+    const metrics = {};
+    const callables = loadCallables(makeDenseFamilyShareSeed(tokenId), { metrics });
+
+    const result = await callables[callableName](
+      { tokenId },
+      { rawRequest: { ip: '203.0.113.31' } }
+    );
+    const teamsById = new Map(result.teams.map((team) => [team.teamId, team]));
+
+    assert.equal(metrics.queryReadCount, 500);
+    assert.ok(teamsById.get('team-a').games.some((game) => game.id.startsWith('direct-')));
+    assert.ok(teamsById.get('team-a').games.some((game) => game.id.startsWith('shared_')));
+    assert.ok(teamsById.get('team-b').games.some((game) => game.id.startsWith('direct-')));
+    assert.ok(teamsById.get('team-b').games.some((game) => game.id.startsWith('shared_')));
+    assert.ok(result.teams.flatMap((team) => team.games).length <= 500);
+    assert.equal(metrics.queries.filter((query) => query.kind === 'collectionGroup').length, 6);
+    assert.ok(metrics.queries.every((query) => Number.isFinite(query.limit) && query.limit <= 500));
+    assert.ok(metrics.maxConcurrentQueries >= 2);
+  });
+}
+
+test('family share calendar target quota is charged only for cache-miss outbound work', async () => {
+  const tokenId = '1111111111111111111111111111111111111111';
+  const calendarUrl = 'https://203.0.113.10/cache-quota.ics';
+  const counters = {};
+  const callables = loadCallables({
+    [`familyShareTokens/${tokenId}`]: {
+      active: true,
+      ownerUserId: 'parent-cache',
+      children: [{ teamId: 'team-cache', playerId: 'player-cache' }]
+    },
+    'users/parent-cache': { parentPlayerKeys: ['team-cache::player-cache'] },
+    'teams/team-cache': { name: 'Cache Team', isPublic: false, calendarUrls: [calendarUrl] },
+    'teams/team-cache/players/player-cache': { name: 'Cache Player' }
+  }, {
+    securityUtils: makeCalendarSecurityUtilsStub([
+      'BEGIN:VCALENDAR',
+      'BEGIN:VEVENT',
+      'UID:cache-quota-event',
+      'DTSTART:20260720T180000Z',
+      'SUMMARY:Practice',
+      'END:VEVENT',
+      'END:VCALENDAR'
+    ].join('\r\n'), counters)
+  });
+
+  const request = () => callables.getFamilyShareView(
+    { tokenId },
+    { rawRequest: { ip: '203.0.113.32' } }
+  );
+  const coalescedResults = await Promise.all(Array.from({ length: 21 }, request));
+  const cachedResult = await request();
+
+  assert.equal(counters.fetchCount, 1);
+  [...coalescedResults, cachedResult].forEach((result) => {
+    assert.equal(result.externalEvents.length, 1);
+    assert.deepEqual(result.calendarWarnings, []);
+  });
+});
+
+for (const [label, tokenId, icsText] of [
+  [
+    'oversized',
+    '3333333333333333333333333333333333333333',
+    `BEGIN:VCALENDAR\r\n${'X'.repeat(DEFAULT_MAX_ICS_BYTES + 1)}\r\nEND:VCALENDAR`
+  ],
+  [
+    'malformed',
+    '4444444444444444444444444444444444444444',
+    'BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:missing-calendar-end\r\nEND:VEVENT'
+  ]
+]) {
+  test(`family share calendar projection rejects ${label} ICS before caching`, async () => {
+    const calendarUrl = `https://203.0.113.10/${label}.ics`;
+    const counters = {};
+    const callables = loadCallables({
+      [`familyShareTokens/${tokenId}`]: {
+        active: true,
+        ownerUserId: `parent-${label}`,
+        children: [{ teamId: `team-${label}`, playerId: `player-${label}` }]
+      },
+      [`users/parent-${label}`]: { parentPlayerKeys: [`team-${label}::player-${label}`] },
+      [`teams/team-${label}`]: { name: `${label} Team`, isPublic: false, calendarUrls: [calendarUrl] },
+      [`teams/team-${label}/players/player-${label}`]: { name: `${label} Player` }
+    }, {
+      securityUtils: makeCalendarSecurityUtilsStub(icsText, counters)
+    });
+
+    const result = await callables.getFamilyShareView(
+      { tokenId },
+      { rawRequest: { ip: label === 'oversized' ? '203.0.113.34' : '203.0.113.35' } }
+    );
+
+    assert.equal(counters.fetchCount, 1);
+    assert.deepEqual(result.externalEvents, []);
+    assert.equal(result.calendarWarnings.length, 1);
+  });
+}
+
+test('family share callables omit database calendar UIDs and de-duplicate ICS privately', async () => {
+  const tokenId = '2222222222222222222222222222222222222222';
+  const rawUid = 'SENTINEL_PARENT_EMAIL@example.test';
+  const calendarUrl = 'https://203.0.113.10/private-dedup.ics';
+  const callables = loadCallables({
+    [`familyShareTokens/${tokenId}`]: {
+      active: true,
+      ownerUserId: 'parent-dedup',
+      children: [{ teamId: 'team-dedup', playerId: 'player-dedup' }]
+    },
+    'users/parent-dedup': { parentPlayerKeys: ['team-dedup::player-dedup'] },
+    'teams/team-dedup': { name: 'Dedup Team', isPublic: false, calendarUrls: [calendarUrl] },
+    'teams/team-dedup/players/player-dedup': { name: 'Dedup Player' },
+    'teams/team-dedup/games/tracked-game': {
+      type: 'game',
+      date: new FakeTimestamp(Date.parse('2026-07-20T18:00:00Z')),
+      opponent: 'Tracked Opponent',
+      calendarEventUid: rawUid
+    }
+  }, {
+    securityUtils: makeCalendarSecurityUtilsStub([
+      'BEGIN:VCALENDAR',
+      'BEGIN:VEVENT',
+      `UID:${rawUid}`,
+      'DTSTART:20260820T180000Z',
+      'SUMMARY:Different timestamp proves UID dedup',
+      'END:VEVENT',
+      'END:VCALENDAR'
+    ].join('\r\n'))
+  });
+
+  const legacyResult = await callables.getFamilyShareSchedule({ tokenId }, {});
+  const viewResult = await callables.getFamilyShareView(
+    { tokenId },
+    { rawRequest: { ip: '203.0.113.33' } }
+  );
+  const payload = JSON.stringify({ legacyResult, viewResult });
+
+  assert.equal(viewResult.externalEvents.length, 0);
+  assert.equal(payload.includes(rawUid), false);
+  assert.equal(payload.includes(hashFamilyShareCalendarEventUid(rawUid)), false);
+  assert.equal(payload.includes('calendarEventUid'), false);
+  assert.equal(payload.includes('calendarUidHash'), false);
 });
 
 test('family share schedule callable rejects client-stored teams outside the token owner parent scope', async () => {

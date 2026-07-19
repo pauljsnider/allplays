@@ -15,6 +15,18 @@ function compactText(value, maxLength = 240) {
     .slice(0, maxLength);
 }
 
+function hashFamilyShareOpaqueValue(namespace, value, length = 32) {
+  return crypto.createHash('sha256')
+    .update(`family-share:${namespace}:v1:${String(value == null ? '' : value)}`)
+    .digest('hex')
+    .slice(0, length);
+}
+
+function hashFamilyShareCalendarEventUid(value) {
+  const uid = compactText(value, 256);
+  return uid ? hashFamilyShareOpaqueValue('calendar-event-uid', uid) : '';
+}
+
 function toIso(value) {
   if (!value) return null;
   const candidate = typeof value.toDate === 'function' ? value.toDate() : value;
@@ -199,7 +211,12 @@ function addRecurrenceDays(event, dayOffset) {
   }, event.recurrenceTimeZone);
 }
 
-function expandIcsEvent(event) {
+function expandIcsEvent(event, maxResults = MAX_FAMILY_SHARE_ICS_EVENTS) {
+  const outputLimit = Math.max(0, Math.min(
+    Number.isFinite(maxResults) ? Math.floor(maxResults) : 0,
+    MAX_FAMILY_SHARE_ICS_EVENTS
+  ));
+  if (outputLimit === 0) return [];
   if (!event.rrule) return [event];
   const result = [];
   const interval = event.rrule.interval || 1;
@@ -210,7 +227,12 @@ function expandIcsEvent(event) {
   const durationMs = event.dtend ? Math.max(0, event.dtend.getTime() - start.getTime()) : null;
   let generatedCount = 0;
   const append = (date) => {
-    if (date.getTime() > untilMs || generatedCount >= limit || generatedCount >= MAX_FAMILY_SHARE_RECURRENCES) return false;
+    if (
+      result.length >= outputLimit
+      || date.getTime() > untilMs
+      || generatedCount >= limit
+      || generatedCount >= MAX_FAMILY_SHARE_RECURRENCES
+    ) return false;
     generatedCount += 1;
     if (!excluded.has(date.toISOString().slice(0, 10))) {
       result.push({ ...event, dtstart: date, dtend: durationMs == null ? null : new Date(date.getTime() + durationMs), rrule: null });
@@ -256,37 +278,43 @@ function extractOpponent(summary, teamName = '') {
 }
 
 function buildExternalCalendarEvents(icsText, { sourceId, sourceLabel = 'Shared calendar', children = [], teamId = '', teamName = '' } = {}) {
-  const childIds = [...new Set(children.map((child) => compactText(child.playerId, 128)).filter(Boolean))];
-  const childNames = [...new Set(children.map((child) => compactText(child.playerName, 160)).filter(Boolean))];
-  return parseBoundedIcsEvents(icsText)
-    .flatMap(expandIcsEvent)
-    .slice(0, MAX_FAMILY_SHARE_ICS_EVENTS)
-    .map((event) => {
-      const summary = compactText(event.summary).replace(/\[CANCELED\]\s*/ig, '');
-      const type = isPracticeSummary(summary) ? 'practice' : 'game';
-      const date = toIso(event.dtstart);
-      const idSeed = `${sourceId || ''}:${event.uid || ''}:${date || ''}:${summary}`;
-      return {
-        eventKey: crypto.createHash('sha256').update(idSeed).digest('hex').slice(0, 32),
-        id: compactText(event.uid, 256) || crypto.createHash('sha256').update(idSeed).digest('hex').slice(0, 24),
-        teamId: compactText(teamId, 128),
-        teamName: compactText(teamName, 160) || compactText(sourceLabel, 160),
-        type,
-        date,
-        endDate: toIso(event.dtend),
-        title: type === 'practice' ? (summary || 'Practice') : '',
-        opponent: type === 'game' ? extractOpponent(summary, teamName) : '',
-        location: compactText(event.location, 300) || 'TBD',
-        status: compactText(event.status, 32).toLowerCase() || 'scheduled',
-        isCancelled: event.status === 'CANCELLED' || /\[CANCELED\]/i.test(event.summary || ''),
-        isDbGame: false,
-        childIds,
-        childNames,
-        homeScore: null,
-        awayScore: null,
-        sourceLabel: compactText(sourceLabel, 160) || 'Shared calendar'
-      };
-    })
+  const childIds = [...new Set(children.map((child) => compactText(child.playerId, 128)).filter(Boolean))]
+    .slice(0, MAX_FAMILY_SHARE_CHILDREN);
+  const childNames = [...new Set(children.map((child) => compactText(child.playerName, 160)).filter(Boolean))]
+    .slice(0, MAX_FAMILY_SHARE_CHILDREN);
+  const expandedEvents = [];
+  for (const event of parseBoundedIcsEvents(icsText)) {
+    const remainingOutput = MAX_FAMILY_SHARE_ICS_EVENTS - expandedEvents.length;
+    if (remainingOutput <= 0) break;
+    expandedEvents.push(...expandIcsEvent(event, remainingOutput));
+  }
+  return expandedEvents.map((event) => {
+    const summary = compactText(event.summary).replace(/\[CANCELED\]\s*/ig, '');
+    const type = isPracticeSummary(summary) ? 'practice' : 'game';
+    const date = toIso(event.dtstart);
+    const idSeed = `${sourceId || ''}:${event.uid || ''}:${date || ''}:${summary}`;
+    return {
+      eventKey: hashFamilyShareOpaqueValue('calendar-event-instance', idSeed),
+      id: hashFamilyShareOpaqueValue('calendar-event-public-id', idSeed),
+      calendarUidHash: hashFamilyShareCalendarEventUid(event.uid),
+      teamId: compactText(teamId, 128),
+      teamName: compactText(teamName, 160) || compactText(sourceLabel, 160),
+      type,
+      date,
+      endDate: toIso(event.dtend),
+      title: type === 'practice' ? (summary || 'Practice') : '',
+      opponent: type === 'game' ? extractOpponent(summary, teamName) : '',
+      location: compactText(event.location, 300) || 'TBD',
+      status: compactText(event.status, 32).toLowerCase() || 'scheduled',
+      isCancelled: event.status === 'CANCELLED' || /\[CANCELED\]/i.test(event.summary || ''),
+      isDbGame: false,
+      childIds,
+      childNames,
+      homeScore: null,
+      awayScore: null,
+      sourceLabel: compactText(sourceLabel, 160) || 'Shared calendar'
+    };
+  })
     .filter((event) => event.date);
 }
 
@@ -329,7 +357,6 @@ function sanitizeFamilyShareGame(game = {}) {
   });
   if (game.location != null) safe.location = compactText(game.location, 300);
   if (game.status != null) safe.status = compactText(game.status, 32);
-  if (game.calendarEventUid != null) safe.calendarEventUid = compactText(game.calendarEventUid, 256);
   if (game.opponentTeamPhoto != null) safe.opponentTeamPhoto = compactText(game.opponentTeamPhoto, 2048);
   if (game.competitionType != null) safe.competitionType = compactText(game.competitionType, 64);
   ['isSeriesMaster', 'isHome', 'isSharedGame', 'countsTowardSeasonRecord'].forEach((field) => {
@@ -373,7 +400,31 @@ function sanitizeFamilyShareGame(game = {}) {
 }
 
 function sanitizeFamilyShareViewResponse({ token, children = [], teams = [], externalEvents = [], calendarWarnings = [] } = {}) {
-  const boundedEvents = externalEvents.slice(0, MAX_FAMILY_SHARE_EVENTS);
+  const externalEventFields = [
+    'eventKey',
+    'id',
+    'teamId',
+    'teamName',
+    'type',
+    'date',
+    'endDate',
+    'title',
+    'opponent',
+    'location',
+    'status',
+    'isCancelled',
+    'isDbGame',
+    'childIds',
+    'childNames',
+    'homeScore',
+    'awayScore',
+    'sourceLabel'
+  ];
+  const boundedEvents = externalEvents.slice(0, MAX_FAMILY_SHARE_EVENTS).map((event = {}) => (
+    Object.fromEntries(externalEventFields
+      .filter((field) => Object.hasOwn(event, field))
+      .map((field) => [field, event[field]]))
+  ));
   let remainingGames = MAX_FAMILY_SHARE_DB_EVENTS;
   const boundedTeams = teams.slice(0, MAX_FAMILY_SHARE_TEAMS).map((team = {}) => {
     const games = (Array.isArray(team.games) ? team.games : [])
@@ -417,6 +468,7 @@ module.exports = {
   buildExternalCalendarEvents,
   buildFamilySharePresentation,
   getFamilyShareCalendarDedupTimestamps,
+  hashFamilyShareCalendarEventUid,
   parseBoundedIcsEvents,
   sanitizeFamilyShareViewResponse
 };

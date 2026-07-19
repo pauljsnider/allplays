@@ -1588,6 +1588,11 @@ function compactString(value: unknown) {
   return String(value || '').trim();
 }
 
+function normalizeRsvpDisplayName(value: unknown) {
+  const displayName = compactString(value).slice(0, 160);
+  return displayName && !displayName.includes('@') ? displayName : null;
+}
+
 export function parseRecurringPracticeOccurrenceId(eventId: string) {
   const normalizedEventId = compactString(eventId);
   if (!normalizedEventId || !normalizedEventId.includes('__')) return null;
@@ -4474,7 +4479,7 @@ async function nativeSubmitRsvpForPlayer(teamId: string, gameId: string, user: A
     parentEmail: nativeDeleteFieldSentinel,
     email: nativeDeleteFieldSentinel,
     guardianEmail: nativeDeleteFieldSentinel,
-    displayName: user.displayName || null,
+    displayName: normalizeRsvpDisplayName(user.displayName),
     playerIds: [childId],
     playerId: childId,
     childId,
@@ -4486,7 +4491,7 @@ async function nativeSubmitRsvpForPlayer(teamId: string, gameId: string, user: A
     parentEmail: nativeDeleteFieldSentinel,
     email: nativeDeleteFieldSentinel,
     guardianEmail: nativeDeleteFieldSentinel,
-    displayName: user.displayName || null,
+    displayName: normalizeRsvpDisplayName(user.displayName),
     playerIds: [childId],
     playerId: childId,
     childId,
@@ -4504,7 +4509,7 @@ async function nativeSubmitRsvpForChildren(teamId: string, gameId: string, user:
   const gamePath = `teams/${teamId}/games/${gameId}`;
   const rsvpPayload = {
     userId: user.uid,
-    displayName: user.displayName || null,
+    displayName: normalizeRsvpDisplayName(user.displayName),
     playerIds: childIds,
     playerId: null,
     childId: null,

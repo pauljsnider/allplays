@@ -4,13 +4,21 @@ const Stripe = require('stripe');
 const { Resend } = require('resend');
 const crypto = require('node:crypto');
 const { isPrivateIpAddress, isBlockedHostname, assertPublicHost, normalizeTargetUrl, fetchWithTimeout } = require('./utils/security-utils');
-const { createCalendarIcsCache, createCalendarIcsFetchHandler, fetchCalendarIcsWithCache } = require('./calendar-ics-fetch-core.cjs');
+const {
+  DEFAULT_MAX_ICS_BYTES,
+  createCalendarIcsCache,
+  createCalendarIcsFetchHandler,
+  fetchCalendarIcsWithCache,
+  hasExactVCalendarBoundaries
+} = require('./calendar-ics-fetch-core.cjs');
 const {
   MAX_FAMILY_SHARE_CALENDAR_URLS,
+  MAX_FAMILY_SHARE_CHILDREN,
   MAX_FAMILY_SHARE_DB_EVENTS,
   MAX_FAMILY_SHARE_TEAMS,
   buildExternalCalendarEvents,
   getFamilyShareCalendarDedupTimestamps,
+  hashFamilyShareCalendarEventUid,
   sanitizeFamilyShareViewResponse
 } = require('./family-share-view-core.cjs');
 const { createVerifiedEmailSensitiveActionGuard } = require('./verified-email-policy.cjs');
@@ -5352,7 +5360,6 @@ const FAMILY_SHARE_GAME_PROJECTION_FIELDS = [
   'opponent',
   'location',
   'status',
-  'calendarEventUid',
   'homeScore',
   'awayScore',
   'sharedGameId',
@@ -5421,14 +5428,18 @@ async function loadReadableFamilyShareToken(tokenId) {
 }
 
 async function resolveReadableFamilyShareChildren(token) {
-  const storedChildren = normalizeFamilyShareCallableChildren(token.children);
+  const storedChildren = normalizeFamilyShareCallableChildren(token.children)
+    .slice(0, MAX_FAMILY_SHARE_CHILDREN);
   const ownerUserId = normalizeFamilyShareText(token.ownerUserId);
   if (!ownerUserId) return [];
 
   const ownerSnap = await firestore.doc(`users/${ownerUserId}`).get();
   if (!ownerSnap.exists) return [];
 
+  const storedKeys = new Set(storedChildren.map((child) => `${child.teamId}::${child.playerId}`));
   const ownerChildren = normalizeFamilyShareCallableChildren(await resolveFamilyShareChildrenFromOwnerProfile(ownerSnap.data() || {}, {
+    allowedKeys: storedKeys.size ? storedKeys : null,
+    maxChildren: MAX_FAMILY_SHARE_CHILDREN,
     loadTeam: async (teamId) => {
       const teamSnap = await firestore.doc(`teams/${teamId}`).get();
       return teamSnap.exists ? { id: teamSnap.id, ...(teamSnap.data() || {}) } : null;
@@ -5442,9 +5453,8 @@ async function resolveReadableFamilyShareChildren(token) {
   // Token documents are written by clients, so their child/team IDs are only a
   // requested subset. Never use them as proof that the token owner can read a
   // private schedule; intersect them with the owner's live parent scope.
-  if (!storedChildren.length) return ownerChildren;
-  const storedKeys = new Set(storedChildren.map((child) => `${child.teamId}::${child.playerId}`));
-  return ownerChildren.filter((child) => storedKeys.has(`${child.teamId}::${child.playerId}`));
+  if (!storedChildren.length) return ownerChildren.slice(0, MAX_FAMILY_SHARE_CHILDREN);
+  return ownerChildren;
 }
 
 function isFamilyShareTeamActive(team = {}) {
@@ -5505,12 +5515,16 @@ function serializeFamilyShareOverrides(value) {
     }));
 }
 
-function serializeFamilyShareGame(docSnap) {
+function serializeFamilyShareGame(docSnap, { includeInternalCalendarUidHash = false } = {}) {
   const data = docSnap.data() || {};
   const game = {
     id: docSnap.id,
     gameId: docSnap.id
   };
+  if (includeInternalCalendarUidHash) {
+    const calendarUidHash = hashFamilyShareCalendarEventUid(data.calendarEventUid);
+    if (calendarUidHash) game.calendarUidHash = calendarUidHash;
+  }
   FAMILY_SHARE_GAME_PROJECTION_FIELDS.forEach((field) => {
     if (Object.hasOwn(data, field)) {
       if (field === 'recurrence') {
@@ -5576,32 +5590,50 @@ function projectFamilyShareSharedGameForTeam(docSnap, teamId) {
   };
 }
 
-async function loadFamilyShareSharedGamesForTeam(teamId, maxGames = 0) {
-  if (typeof firestore.collectionGroup !== 'function') return [];
+function getFamilyShareQueryReadLimit(teamBudget, remainingSources) {
+  if (teamBudget.remaining <= 0 || remainingSources <= 0) return 0;
+  return Math.ceil(teamBudget.remaining / remainingSources);
+}
+
+function chargeFamilyShareReadBudget(teamBudget, count) {
+  const charged = Math.max(0, Math.min(
+    Number.isFinite(count) ? Math.floor(count) : 0,
+    teamBudget.remaining
+  ));
+  teamBudget.remaining -= charged;
+}
+
+async function loadFamilyShareSharedGamesForTeam(teamId, teamBudget, includeInternalCalendarUidHash) {
+  if (
+    typeof firestore.collectionGroup !== 'function'
+    || teamBudget.remaining <= 0
+  ) return [];
   const sharedGamesRef = firestore.collectionGroup('sharedGames');
-  const boundQuery = (query) => maxGames > 0 && typeof query.limit === 'function' ? query.limit(maxGames) : query;
   const queries = [
-    boundQuery(sharedGamesRef.where('homeTeamId', '==', teamId)),
-    boundQuery(sharedGamesRef.where('awayTeamId', '==', teamId)),
-    boundQuery(sharedGamesRef.where('teamIds', 'array-contains', teamId))
+    sharedGamesRef.where('homeTeamId', '==', teamId),
+    sharedGamesRef.where('awayTeamId', '==', teamId),
+    sharedGamesRef.where('teamIds', 'array-contains', teamId)
   ];
-  const snapshots = await Promise.allSettled(queries.map((query) => query.get()));
-  snapshots
-    .filter((result) => result.status === 'rejected')
-    .forEach((result) => {
-      functions.logger.warn('Failed to load shared family share games for team', {
-        teamId,
-        error: result.reason?.message || String(result.reason)
-      });
-    });
 
   const docsByPath = new Map();
-  snapshots.forEach((result) => {
-    if (result.status !== 'fulfilled') return;
-    result.value.docs.forEach((docSnap) => {
-      docsByPath.set(getFamilyShareSharedGamePath(docSnap), docSnap);
-    });
-  });
+  for (let index = 0; index < queries.length; index += 1) {
+    if (teamBudget.remaining <= 0) break;
+    const query = queries[index];
+    const queryLimit = getFamilyShareQueryReadLimit(teamBudget, queries.length - index);
+    try {
+      const snapshot = await query.limit(queryLimit).get();
+      const boundedDocs = snapshot.docs.slice(0, queryLimit);
+      chargeFamilyShareReadBudget(teamBudget, boundedDocs.length);
+      boundedDocs.forEach((docSnap) => {
+        docsByPath.set(getFamilyShareSharedGamePath(docSnap), docSnap);
+      });
+    } catch (error) {
+      functions.logger.warn('Failed to load shared family share games for team', {
+        teamId,
+        error: error?.message || String(error)
+      });
+    }
+  }
 
   return [...docsByPath.values()]
     .map((docSnap) => {
@@ -5611,32 +5643,57 @@ async function loadFamilyShareSharedGamesForTeam(teamId, maxGames = 0) {
       return serializeFamilyShareGame({
         id: buildFamilyShareSharedGameSyntheticId(sharedGamePath),
         data: () => projected
-      });
+      }, { includeInternalCalendarUidHash });
     })
     .filter(Boolean);
 }
 
 async function loadFamilyShareScheduleTeams(children, {
   includePrivateCalendarUrls = false,
-  maxGamesPerTeam = 0,
-  maxTeams = 0
+  includeInternalCalendarUidHash = false,
+  maxGameReads = MAX_FAMILY_SHARE_DB_EVENTS,
+  maxTeams = MAX_FAMILY_SHARE_TEAMS
 } = {}) {
   let teamIds = [...new Set(children.map((child) => child.teamId).filter(Boolean))];
-  if (maxTeams > 0) teamIds = teamIds.slice(0, maxTeams);
-  const teams = await Promise.all(teamIds.map(async (teamId) => {
+  const normalizedMaxTeams = Math.max(0, Math.min(
+    Number.isFinite(maxTeams) ? Math.floor(maxTeams) : MAX_FAMILY_SHARE_TEAMS,
+    MAX_FAMILY_SHARE_TEAMS
+  ));
+  teamIds = teamIds.slice(0, normalizedMaxTeams);
+  const totalReadBudget = Math.max(0, Math.min(
+    Number.isFinite(maxGameReads) ? Math.floor(maxGameReads) : MAX_FAMILY_SHARE_DB_EVENTS,
+    MAX_FAMILY_SHARE_DB_EVENTS
+  ));
+  const activeTeams = (await Promise.all(teamIds.map(async (teamId) => {
     const teamSnap = await firestore.doc(`teams/${teamId}`).get();
     if (!teamSnap.exists) return null;
     const team = teamSnap.data() || {};
-    if (!isFamilyShareTeamActive(team)) return null;
+    return isFamilyShareTeamActive(team) ? { teamId, team } : null;
+  }))).filter(Boolean);
 
-    const gamesQuery = firestore.collection(`teams/${teamId}/games`);
-    const boundedGamesQuery = maxGamesPerTeam > 0 && typeof gamesQuery.limit === 'function'
-      ? gamesQuery.limit(maxGamesPerTeam)
-      : gamesQuery;
-    const [gamesSnap, sharedGames] = await Promise.all([
-      boundedGamesQuery.get(),
-      loadFamilyShareSharedGamesForTeam(teamId, maxGamesPerTeam)
-    ]);
+  const baseTeamBudget = activeTeams.length ? Math.floor(totalReadBudget / activeTeams.length) : 0;
+  const extraTeamBudgetCount = activeTeams.length ? totalReadBudget % activeTeams.length : 0;
+  return Promise.all(activeTeams.map(async ({ teamId, team }, teamIndex) => {
+    const teamBudget = {
+      remaining: baseTeamBudget + (teamIndex < extraTeamBudgetCount ? 1 : 0)
+    };
+    let directGames = [];
+    if (teamBudget.remaining > 0) {
+      const directQueryLimit = getFamilyShareQueryReadLimit(teamBudget, 4);
+      const gamesSnap = await firestore.collection(`teams/${teamId}/games`)
+        .limit(directQueryLimit)
+        .get();
+      const boundedDocs = gamesSnap.docs.slice(0, directQueryLimit);
+      chargeFamilyShareReadBudget(teamBudget, boundedDocs.length);
+      directGames = boundedDocs.map((docSnap) => serializeFamilyShareGame(docSnap, {
+        includeInternalCalendarUidHash
+      }));
+    }
+    const sharedGames = await loadFamilyShareSharedGamesForTeam(
+      teamId,
+      teamBudget,
+      includeInternalCalendarUidHash
+    );
     return {
       teamId,
       teamName: normalizeFamilyShareText(team.name) || children.find((child) => child.teamId === teamId)?.teamName || 'Team',
@@ -5646,12 +5703,11 @@ async function loadFamilyShareScheduleTeams(children, {
           .filter(Boolean)
         : [],
       games: [
-        ...gamesSnap.docs.map(serializeFamilyShareGame),
+        ...directGames,
         ...sharedGames
       ]
     };
   }));
-  return teams.filter(Boolean);
 }
 
 exports.resolveFamilyShareTokenChildren = functions.https.onCall(async (data) => {
@@ -5681,29 +5737,37 @@ function getFamilyShareCalendarSourceLabel(index, teamName = '') {
 
 async function fetchFamilyShareCalendarEvents({ url, index, children, teamId = '', teamName = '' }) {
   const normalized = await normalizeTargetUrl(url);
-  const targetLimit = checkFamilyShareCalendarTargetRateLimit({
-    ip: `family-calendar:${crypto.createHash('sha256').update(normalized.url).digest('hex')}`
-  });
-  if (!targetLimit.allowed) {
-    const error = new Error('Shared calendar is temporarily busy');
-    error.statusCode = 429;
-    throw error;
-  }
-
   const result = await fetchCalendarIcsWithCache({
     cache: calendarIcsCache,
     cacheKey: normalized.url,
     fetchIcs: async () => {
+      const targetLimit = checkFamilyShareCalendarTargetRateLimit({
+        ip: `family-calendar:${crypto.createHash('sha256').update(normalized.url).digest('hex')}`
+      });
+      if (!targetLimit.allowed) {
+        const error = new Error('Shared calendar is temporarily busy');
+        error.statusCode = 429;
+        throw error;
+      }
+
       const response = await fetchWithTimeout(normalized.url, normalized.hostname, normalized.publicIps);
       if (!response.ok) {
         const error = new Error(`Calendar fetch failed: ${response.status}`);
         error.statusCode = 502;
         throw error;
       }
-      const icsText = normalizeIcsText(await response.text());
-      if (!icsText.includes('BEGIN:VCALENDAR')) {
+      const rawText = await response.text();
+      if (typeof rawText !== 'string' || Buffer.byteLength(rawText, 'utf8') > DEFAULT_MAX_ICS_BYTES) {
+        const error = new Error('Calendar response exceeded the size limit');
+        error.statusCode = 413;
+        error.calendarValidationRejected = true;
+        throw error;
+      }
+      const icsText = normalizeIcsText(rawText);
+      if (!hasExactVCalendarBoundaries(icsText)) {
         const error = new Error('Response was not valid ICS');
         error.statusCode = 502;
+        error.calendarValidationRejected = true;
         throw error;
       }
       return { fetchedAt: new Date().toISOString(), icsText };
@@ -5751,7 +5815,7 @@ async function loadFamilyShareExternalEventProjection(token, children, teams) {
   const trackedUidsByTeam = new Map(teams.map((team) => [
     team.teamId,
     new Set((Array.isArray(team.games) ? team.games : [])
-      .map((game) => normalizeFamilyShareText(game?.calendarEventUid))
+      .map((game) => normalizeFamilyShareText(game?.calendarUidHash))
       .filter(Boolean))
   ]));
   settled.forEach((result, index) => {
@@ -5760,7 +5824,7 @@ async function loadFamilyShareExternalEventProjection(token, children, teams) {
       const trackedUids = trackedUidsByTeam.get(input.teamId) || new Set();
       const dbTimestamps = getFamilyShareCalendarDedupTimestamps(teams, input.teamId);
       externalEvents.push(...result.value.filter((event) => {
-        if (trackedUids.has(normalizeFamilyShareText(event.id))) return false;
+        if (trackedUids.has(normalizeFamilyShareText(event.calendarUidHash))) return false;
         const eventTime = new Date(event.date).getTime();
         return !Number.isFinite(eventTime) || !dbTimestamps.some((timestamp) => Math.abs(timestamp - eventTime) < 60_000);
       }));
@@ -5784,7 +5848,8 @@ exports.getFamilyShareView = functions
     const children = await resolveReadableFamilyShareChildren(token);
     const teams = await loadFamilyShareScheduleTeams(children, {
       includePrivateCalendarUrls: true,
-      maxGamesPerTeam: MAX_FAMILY_SHARE_DB_EVENTS,
+      includeInternalCalendarUidHash: true,
+      maxGameReads: MAX_FAMILY_SHARE_DB_EVENTS,
       maxTeams: MAX_FAMILY_SHARE_TEAMS
     });
     const { externalEvents, calendarWarnings } = await loadFamilyShareExternalEventProjection(token, children, teams);
