@@ -151,6 +151,32 @@ test('email/password login from a type-less invite link redirects existing users
     await expect(page).toHaveURL(/\/accept-invite\.html\?code=AB12CD34$/);
 });
 
+test('email/password invite login prefers current link over stale recovery code', async ({ page, baseURL }) => {
+    await mockInviteLoginModules(page, {
+        profile: {
+            parentOf: [{ teamId: 'team-1' }]
+        },
+        defaultRedirect: 'parent-dashboard.html'
+    });
+    await page.addInitScript(() => {
+        window.sessionStorage.setItem('pendingLoginInviteCode', 'STALE999');
+    });
+
+    await page.goto(buildUrl(baseURL, '/login.html?code=cd34ef56&type=parent'), {
+        waitUntil: 'domcontentloaded'
+    });
+
+    await expect(page.locator('#form-title')).toHaveText('Sign Up');
+    await page.locator('#toggle-btn').click();
+    await expect(page.locator('#form-title')).toHaveText('Login');
+
+    await page.locator('#email').fill('parent@example.com');
+    await page.locator('#password').fill('secret123');
+    await page.locator('#login-form').dispatchEvent('submit');
+
+    await expect(page).toHaveURL(/\/accept-invite\.html\?code=CD34EF56&type=parent$/);
+});
+
 test('email/password login from a household invite link redirects existing users to accept-invite', async ({ page, baseURL }) => {
     await mockInviteLoginModules(page, {
         profile: {
@@ -406,6 +432,33 @@ test('manual invite code recovery survives reload before Google login', async ({
     await page.locator('#google-btn').click();
 
     await expect(page).toHaveURL(/\/accept-invite\.html\?code=AB12CD34$/);
+    await expect.poll(() => page.evaluate(() => window.sessionStorage.getItem('__googleActivationCode'))).toBe('');
+});
+
+test('Google invite login prefers current link over stale recovery code', async ({ page, baseURL }) => {
+    await mockInviteLoginModules(page, {
+        googleLoginResult: {
+            user: {
+                uid: 'google-user-654',
+                email: 'mom@example.com'
+            }
+        },
+        defaultRedirect: 'parent-dashboard.html'
+    });
+    await page.addInitScript(() => {
+        window.sessionStorage.setItem('pendingLoginInviteCode', 'STALE999');
+    });
+
+    await page.goto(buildUrl(baseURL, '/login.html?code=cd34ef56&type=parent'), {
+        waitUntil: 'domcontentloaded'
+    });
+
+    await expect(page.locator('#form-title')).toHaveText('Sign Up');
+    await page.locator('#toggle-btn').click();
+    await expect(page.locator('#form-title')).toHaveText('Login');
+    await page.locator('#google-btn').click();
+
+    await expect(page).toHaveURL(/\/accept-invite\.html\?code=CD34EF56&type=parent$/);
     await expect.poll(() => page.evaluate(() => window.sessionStorage.getItem('__googleActivationCode'))).toBe('');
 });
 

@@ -101,7 +101,7 @@
         import { getUserProfile } from './js/db.js?v=115';
         import { renderHeader, renderFooter } from './js/utils.js?v=18';
         import { getPostAuthRedirectUrl } from './js/invite-redirect.js?v=3';
-        import * as loginPageModule from './js/login-page.js?v=10';
+        import * as loginPageModule from './js/login-page.js?v=11';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -313,7 +313,9 @@
                     const profile = await getUserProfile(userCredential.user.uid);
                     const userWithRoles = { ...userCredential.user, ...profile };
                     const sessionPendingLoginInviteCode = window.sessionStorage.getItem(pendingLoginInviteCodeStorageKey);
-                    const loginInviteCode = pendingLoginInviteCode || sessionPendingLoginInviteCode;
+                    const loginInviteCode = urlCodeParam
+                        ? null
+                        : pendingLoginInviteCode || sessionPendingLoginInviteCode;
                     const shouldRedeemInvite = shouldRedeemInviteFromLogin || Boolean(loginInviteCode);
                     const redirectUrl = redirectCoordinator.getPostAuthRedirect(
                         userWithRoles,
@@ -376,7 +378,9 @@
                     }
                 }
                 const storedPendingLoginInviteCode = window.sessionStorage.getItem(pendingLoginInviteCodeStorageKey);
-                const googlePendingLoginInviteCode = pendingLoginInviteCode || storedPendingLoginInviteCode;
+                const googlePendingLoginInviteCode = urlCodeParam
+                    ? null
+                    : pendingLoginInviteCode || storedPendingLoginInviteCode;
                 if (isLogin && googlePendingLoginInviteCode) {
                     pendingLoginInviteCode = googlePendingLoginInviteCode;
                     window.sessionStorage.setItem(pendingLoginInviteCodeStorageKey, googlePendingLoginInviteCode);

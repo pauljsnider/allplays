@@ -117,15 +117,16 @@ export function createLoginRedirectCoordinator({
     function getGoogleRedirectUrl(userWithRoles) {
         const googleAuthMode = windowObject.sessionStorage.getItem('postGoogleAuthMode');
         const pendingInviteCode = windowObject.sessionStorage.getItem(PENDING_LOGIN_INVITE_CODE_STORAGE_KEY);
+        const effectivePendingInviteCode = urlCodeParam ? null : pendingInviteCode;
         windowObject.sessionStorage.removeItem('postGoogleAuthMode');
         windowObject.sessionStorage.removeItem(PENDING_LOGIN_INVITE_CODE_STORAGE_KEY);
         const shouldRedeemInvite = (shouldRedeemInviteFromLogin &&
             (googleAuthMode === 'login' || googleAuthMode === 'invite')) ||
-            Boolean(pendingInviteCode);
+            Boolean(effectivePendingInviteCode);
         inviteRedemptionOverride = shouldRedeemInvite;
-        inviteCodeOverride = pendingInviteCode || null;
-        inviteTypeOverride = pendingInviteCode ? '' : null;
-        return getPostAuthRedirect(userWithRoles, shouldRedeemInvite, pendingInviteCode);
+        inviteCodeOverride = effectivePendingInviteCode || null;
+        inviteTypeOverride = effectivePendingInviteCode ? '' : null;
+        return getPostAuthRedirect(userWithRoles, shouldRedeemInvite, effectivePendingInviteCode);
     }
 
     function getAutoRedirectUrl(userWithRoles) {

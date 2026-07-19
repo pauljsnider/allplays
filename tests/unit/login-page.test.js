@@ -83,7 +83,7 @@ describe('login page redirect coordination', () => {
     it('loads the cache-busted login page module that knows friend invite redirects', () => {
         const html = readFileSync(new URL('../../login.html', import.meta.url), 'utf8');
 
-        expect(html).toContain("import * as loginPageModule from './js/login-page.js?v=10';");
+        expect(html).toContain("import * as loginPageModule from './js/login-page.js?v=11';");
         expect(html).not.toContain("import * as loginPageModule from './js/login-page.js?v=7';");
     });
 
@@ -203,6 +203,21 @@ describe('login page redirect coordination', () => {
             .toBe('accept-invite.html?code=MANUAL12');
         expect(windowObject.sessionStorage.removeItem)
             .toHaveBeenCalledWith(PENDING_LOGIN_INVITE_CODE_STORAGE_KEY);
+    });
+
+    it('prefers the current invite link over a stale pending Google recovery code', () => {
+        const { coordinator } = createCoordinator({
+            search: '?code=current1&type=parent',
+            postGoogleAuthMode: 'login',
+            pendingLoginInviteCode: 'stale999',
+            defaultRedirect: 'dashboard.html'
+        });
+        const user = { uid: 'user-1' };
+
+        expect(coordinator.getGoogleRedirectUrl(user))
+            .toBe('accept-invite.html?code=CURRENT1&type=parent');
+        expect(coordinator.getAutoRedirectUrl(user))
+            .toBe('accept-invite.html?code=CURRENT1&type=parent');
     });
 
     it('still redeems the invite for authenticated users who directly open an invite link', () => {
