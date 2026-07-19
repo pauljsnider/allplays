@@ -375,8 +375,11 @@
                         throw new Error('Activation code is required for new accounts');
                     }
                 }
-                if (isLogin && pendingLoginInviteCode) {
-                    window.sessionStorage.setItem(pendingLoginInviteCodeStorageKey, pendingLoginInviteCode);
+                const storedPendingLoginInviteCode = window.sessionStorage.getItem(pendingLoginInviteCodeStorageKey);
+                const googlePendingLoginInviteCode = pendingLoginInviteCode || storedPendingLoginInviteCode;
+                if (isLogin && googlePendingLoginInviteCode) {
+                    pendingLoginInviteCode = googlePendingLoginInviteCode;
+                    window.sessionStorage.setItem(pendingLoginInviteCodeStorageKey, googlePendingLoginInviteCode);
                 } else {
                     window.sessionStorage.removeItem(pendingLoginInviteCodeStorageKey);
                 }
