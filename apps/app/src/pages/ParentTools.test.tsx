@@ -88,6 +88,7 @@ vi.mock('lucide-react', () => {
         Download: Icon,
         ExternalLink: Icon,
         KeyRound: Icon,
+        Link2: Icon,
         Loader2: Icon,
         RefreshCw: Icon,
         Search: Icon,
@@ -808,7 +809,7 @@ describe('ParentTools access', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Household' }));
         await screen.findByText('No pending household invites');
         expect(parentToolsServiceMocks.loadParentHouseholdInviteModel).toHaveBeenCalledTimes(1);
-        fireEvent.change(screen.getByPlaceholderText('Household contact email'), { target: { value: 'guardian@example.com' } });
+        fireEvent.change(screen.getByPlaceholderText('Recipient email'), { target: { value: 'guardian@example.com' } });
         expect(parentToolsServiceMocks.loadParentHouseholdInviteModel).toHaveBeenCalledTimes(1);
     });
 

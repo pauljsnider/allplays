@@ -325,13 +325,13 @@ describe('React app parent tools integration', () => {
         expect(accessServiceMocks.submitParentAccessRequest).toHaveBeenCalledWith('team-1', 'player-1', 'Parent');
 
         await clickButton(container, 'Household');
-        await waitForText(container, 'Invite another parent or caregiver');
+        await waitForText(container, 'Create invite');
         expect(container.textContent).toContain('Grandma');
-        const householdEmail = container.querySelector('input[placeholder="Household contact email"]');
+        const householdEmail = container.querySelector('input[placeholder="Recipient email"]');
         const householdRelation = container.querySelector('input[placeholder^="Relation"]');
         await changeValue(householdEmail, 'aunt@example.com');
         await changeValue(householdRelation, 'Aunt');
-        await submitForm(container, 'Email parent invite');
+        await submitForm(container, 'Create invite');
         expect(serviceMocks.createParentHouseholdMemberInvite).toHaveBeenCalledWith(auth.user, {
             playerKey: 'team-1::player-1',
             displayName: '',
@@ -339,7 +339,7 @@ describe('React app parent tools integration', () => {
             relation: 'Aunt'
         });
         expect(container.textContent).toContain('HOME5678');
-        expect(container.textContent).toContain('Invite emailed to aunt@example.com with the code and signup link.');
+        expect(container.textContent).toContain('Email queued for aunt@example.com.');
 
         await clickButton(container, 'Fees');
         await waitForText(container, 'Team dues');
