@@ -595,7 +595,7 @@ test.describe('mobile My Teams', () => {
         const teamsReadyHeading = page.getByRole('heading', { name: '3 teams ready' });
         await waitForTeamsRoute(page, teamsReadyHeading);
         await expect(teamsReadyHeading).toBeVisible();
-        await expect(page.getByText('Choose a team')).toBeVisible();
+        await expect(page.getByText('Choose a team', { exact: true })).toBeVisible();
         await expect(page.getByPlaceholder('Search teams or players')).toBeVisible();
         await expectVisualSnapshot(page, 'my-teams-mobile.png', { fullPage: false });
         await page.getByPlaceholder('Search teams or players').fill('Riley');
