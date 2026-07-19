@@ -364,7 +364,10 @@ jobs:
           cleanup_credentials: true
 
       - name: Deploy Firebase production
-        timeout-minutes: 4
+        # Updating the full first-generation Functions fleet routinely takes
+        # longer than four minutes. Leave enough room for one deployment plus
+        # the bounded transient retries above without allowing an unbounded job.
+        timeout-minutes: 20
         shell: bash
         env:
           FIRESTORE_CONFIG_CHANGED: ${{ needs.prepare-deploy.outputs.firestore_changed }}
