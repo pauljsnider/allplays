@@ -61,8 +61,11 @@ function getForwardedIp(req = {}) {
 
 function getRequestIp(req = {}) {
   const candidates = [
-    typeof req.ip === 'string' ? req.ip.trim() : '',
+    // A validated X-Forwarded-For predecessor is the actual client. Prefer it
+    // even when Express exposes a public edge proxy as req.ip; otherwise every
+    // user behind that proxy shares one limiter bucket.
     getForwardedIp(req),
+    typeof req.ip === 'string' ? req.ip.trim() : '',
     req.socket?.remoteAddress,
     req.connection?.remoteAddress
   ].filter((value) => typeof value === 'string' && value.trim()).map((value) => value.trim());

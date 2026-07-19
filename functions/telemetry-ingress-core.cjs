@@ -2,12 +2,17 @@ const crypto = require('node:crypto');
 
 const MAX_TELEMETRY_BODY_BYTES = 64 * 1024;
 const MAX_ATTESTED_EVENTS_PER_REQUEST = 15;
-const MAX_UNATTESTED_EVENTS_PER_REQUEST = 2;
-const TELEMETRY_WRITES_PER_EVENT = 6;
+// Observe mode must not make an ordinary client batch lossy just because App
+// Check is unavailable. Abuse is bounded by the per-client request budget,
+// max instances, body size, finite dimensions, and grouped persistence below.
+const MAX_UNATTESTED_EVENTS_PER_REQUEST = MAX_ATTESTED_EVENTS_PER_REQUEST;
 const ATTESTED_REQUESTS_PER_WINDOW = 30;
 const UNATTESTED_REQUESTS_PER_WINDOW = 6;
 const TELEMETRY_RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const MAX_APP_CHECK_TOKEN_BYTES = 8 * 1024;
+const TELEMETRY_AGGREGATE_SHARD_COUNT = 16;
+const MAX_TELEMETRY_WRITES_PER_REQUEST = (MAX_ATTESTED_EVENTS_PER_REQUEST * 5) + 1;
+const ORDINARY_TELEMETRY_WRITES_PER_REQUEST = MAX_ATTESTED_EVENTS_PER_REQUEST + 5;
 
 const KNOWN_TELEMETRY_EVENT_NAMES = new Set([
   'app_initial_load',
@@ -215,7 +220,9 @@ function getTelemetryRateLimitBoundary(appCheck) {
   if (appCheck?.status === 'verified' && /^[a-f0-9]{64}$/.test(appCheck.rateLimitKey || '')) {
     return `verified|${appCheck.rateLimitKey}`;
   }
-  return 'unattested-global';
+  // Missing/invalid App Check is limited ephemerally by validated client IP.
+  // Never create a durable raw-IP key or a shared global Firestore boundary.
+  return null;
 }
 
 function getTelemetryIngressPolicy(appCheckStatus) {
@@ -236,21 +243,33 @@ function deduplicateTelemetryEvents(events = []) {
   });
 }
 
+function getTelemetryAggregateShard(events = []) {
+  const boundary = events
+    .map((event) => String(event?.id || event?.sessionId || '').trim())
+    .find(Boolean) || 'empty';
+  const value = crypto.createHash('sha256').update(boundary, 'utf8').digest().readUInt32BE(0);
+  return `s${String(value % TELEMETRY_AGGREGATE_SHARD_COUNT).padStart(2, '0')}`;
+}
+
 module.exports = {
   ATTESTED_REQUESTS_PER_WINDOW,
+  KNOWN_TELEMETRY_APP_ROUTES,
   KNOWN_TELEMETRY_EVENT_NAMES,
   KNOWN_TELEMETRY_PAGE_PATHS,
   MAX_APP_CHECK_TOKEN_BYTES,
   MAX_ATTESTED_EVENTS_PER_REQUEST,
+  MAX_TELEMETRY_WRITES_PER_REQUEST,
   MAX_TELEMETRY_BODY_BYTES,
   MAX_UNATTESTED_EVENTS_PER_REQUEST,
+  ORDINARY_TELEMETRY_WRITES_PER_REQUEST,
+  TELEMETRY_AGGREGATE_SHARD_COUNT,
   TELEMETRY_RATE_LIMIT_WINDOW_MS,
-  TELEMETRY_WRITES_PER_EVENT,
   UNATTESTED_REQUESTS_PER_WINDOW,
   canonicalizeTelemetryAppRoute,
   canonicalizeTelemetryEventName,
   canonicalizeTelemetryPagePath,
   deduplicateTelemetryEvents,
+  getTelemetryAggregateShard,
   getTelemetryBodyByteLength,
   getTelemetryIngressPolicy,
   getTelemetryRateLimitBoundary,

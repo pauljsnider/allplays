@@ -8,7 +8,10 @@ const {
     canonicalizeTelemetryAppRoute,
     canonicalizeTelemetryEventName,
     canonicalizeTelemetryPagePath,
-    TELEMETRY_WRITES_PER_EVENT
+    getTelemetryAggregateShard,
+    MAX_ATTESTED_EVENTS_PER_REQUEST,
+    MAX_TELEMETRY_WRITES_PER_REQUEST,
+    ORDINARY_TELEMETRY_WRITES_PER_REQUEST
 } = require('../../functions/telemetry-ingress-core.cjs');
 
 function loadTelemetryCollectorHelpers() {
@@ -23,7 +26,8 @@ function loadTelemetryCollectorHelpers() {
         'canonicalizeTelemetryAppRoute',
         'canonicalizeTelemetryEventName',
         'canonicalizeTelemetryPagePath',
-        'TELEMETRY_WRITES_PER_EVENT',
+        'getTelemetryAggregateShard',
+        'MAX_ATTESTED_EVENTS_PER_REQUEST',
         `${source.slice(start, end)}
         return { normalizeTelemetryEvent, commitTelemetryEvents };
     `);
@@ -36,20 +40,26 @@ function loadHelpers(harness) {
         canonicalizeTelemetryAppRoute,
         canonicalizeTelemetryEventName,
         canonicalizeTelemetryPagePath,
-        TELEMETRY_WRITES_PER_EVENT
+        getTelemetryAggregateShard,
+        MAX_ATTESTED_EVENTS_PER_REQUEST
     );
 }
 
-function createFirestoreHarness() {
+function createFirestoreHarness(existingDocumentPaths = new Set()) {
     const created = [];
     const sets = [];
+    let transactionCount = 0;
     const db = {
         collection(collectionName) {
             return { doc(id) { return { collectionName, id }; } };
         },
         async runTransaction(handler) {
+            transactionCount += 1;
             return handler({
-                get: async () => ({ exists: false }),
+                get: async (ref) => ({
+                    exists: existingDocumentPaths.has(`${ref.collectionName}/${ref.id}`),
+                    data: () => undefined
+                }),
                 create: (ref, data) => created.push({ ref, data }),
                 set: (ref, data, options) => sets.push({ ref, data, options })
             });
@@ -61,7 +71,13 @@ function createFirestoreHarness() {
         increment: (value) => ({ increment: value })
     };
     firestore.Timestamp = { fromDate: (value) => ({ timestamp: value.toISOString() }) };
-    return { admin: { firestore }, db, created, sets };
+    return {
+        admin: { firestore },
+        db,
+        created,
+        sets,
+        get transactionCount() { return transactionCount; }
+    };
 }
 
 function rawEvent(overrides = {}) {
@@ -81,10 +97,12 @@ function rawEvent(overrides = {}) {
         userAgent: 'exact fingerprint',
         properties: {
             workflowName: 'parent core workflow drill in',
+            label: 'Paul Snider',
             durationMs: 1234,
             outcome: 'success',
             source: 'parent_core',
             targetRoute: '/players/team-1/player-1',
+            sourceRoute: '/private/paul',
             teamId: 'team-1',
             playerId: 'player-1',
             team_id: 1234,
@@ -124,8 +142,10 @@ describe('telemetry workflow DB storage', () => {
             expiresAt: { timestamp: '2030-07-01T12:00:00.000Z' },
             properties: expect.objectContaining({
                 workflowName: 'parent core workflow drill in',
+                label: '[redacted-text]',
                 durationMs: 1234,
                 targetRoute: '/players/:id/:id',
+                sourceRoute: '/:redacted/:redacted',
                 teamId: '[id]',
                 playerId: '[id]',
                 team_id: '[id]',
@@ -140,18 +160,20 @@ describe('telemetry workflow DB storage', () => {
             'telemetryDaily', 'telemetryPagesDaily', 'telemetryRoutesDaily',
             'telemetryEventsDaily', 'telemetrySessions'
         ]));
+        const shard = getTelemetryAggregateShard([event]);
         expect(harness.sets).toEqual(expect.arrayContaining([
             expect.objectContaining({
-                ref: { collectionName: 'telemetryEventsDaily', id: '2030-06-01_app_workflow_timing' },
+                ref: { collectionName: 'telemetryEventsDaily', id: `2030-06-01_app_workflow_timing_${shard}` },
                 data: expect.objectContaining({
+                    shard,
                     name: 'app_workflow_timing',
                     expiresAt: { timestamp: '2030-11-28T12:00:00.000Z' }
                 }),
                 options: { merge: true }
             }),
             expect.objectContaining({
-                ref: { collectionName: 'telemetryRoutesDaily', id: '2030-06-01_players_:id_:id' },
-                data: expect.objectContaining({ appRoute: '/players/:id/:id' }),
+                ref: { collectionName: 'telemetryRoutesDaily', id: `2030-06-01_players_:id_:id_${shard}` },
+                data: expect.objectContaining({ shard, appRoute: '/players/:id/:id' }),
                 options: { merge: true }
             })
         ]));
@@ -211,6 +233,80 @@ describe('telemetry workflow DB storage', () => {
         const duplicate = normalizeTelemetryEvent(rawEvent(), receivedAt);
         expect(first.id).toBe(duplicate.id);
         expect(first.id).not.toContain('parent-core-workflow-1');
+    });
+
+    it('serializes an ordinary 15-event batch into one bounded grouped transaction', async () => {
+        const harness = createFirestoreHarness();
+        const { normalizeTelemetryEvent, commitTelemetryEvents } = loadHelpers(harness);
+        const receivedAt = new Date('2030-06-01T12:00:00.000Z');
+        const events = Array.from({ length: 15 }, (_, index) => normalizeTelemetryEvent(rawEvent({
+            id: `ordinary-event-${index}`,
+            name: 'page_view',
+            clientTimestamp: new Date(receivedAt.getTime() + index).toISOString()
+        }), receivedAt));
+
+        await expect(commitTelemetryEvents(harness.db, events, '2030-06-01'))
+            .resolves.toEqual({ stored: 15, duplicates: 0 });
+        expect(harness.transactionCount).toBe(1);
+        expect(harness.created).toHaveLength(15);
+        expect(harness.sets).toHaveLength(5);
+        expect(harness.created.length + harness.sets.length).toBe(ORDINARY_TELEMETRY_WRITES_PER_REQUEST);
+
+        const session = harness.sets.find((write) => write.ref.collectionName === 'telemetrySessions');
+        expect(session.data.eventCount).toEqual({ increment: 15 });
+        expect(session.data.pageViews).toEqual({ increment: 15 });
+    });
+
+    it('keeps a maximum-dimension batch within the declared Firestore write budget', async () => {
+        const harness = createFirestoreHarness();
+        const { normalizeTelemetryEvent, commitTelemetryEvents } = loadHelpers(harness);
+        const receivedAt = new Date('2030-06-01T12:00:00.000Z');
+        const eventNames = [
+            'app_initial_load', 'app_load_error', 'app_ux_timing', 'app_web_vital',
+            'app_workflow_timing', 'interaction_change', 'interaction_click',
+            'interaction_rage_click', 'interaction_submit', 'js_error',
+            'js_unhandled_rejection', 'page_leave', 'page_performance', 'page_view',
+            'scroll_depth'
+        ];
+        const pagePaths = [
+            '/', '/app', '/admin.html', '/calendar.html', '/dashboard.html',
+            '/drills.html', '/family.html', '/game.html', '/help.html', '/index.html',
+            '/login.html', '/officials.html', '/profile.html', '/schedule.html', '/teams.html'
+        ];
+        const appRoutes = [
+            '/', '/ai', '/auth', '/discover', '/discover/manage', '/discover/new',
+            '/help', '/home', '/messages', '/officials', '/parent-tools', '/profile',
+            '/registration', '/schedule', '/teams'
+        ];
+        const events = Array.from({ length: MAX_ATTESTED_EVENTS_PER_REQUEST }, (_, index) => (
+            normalizeTelemetryEvent(rawEvent({
+                id: `maximum-event-${index}`,
+                name: eventNames[index],
+                sessionId: `maximum-session-${index}`,
+                pagePath: pagePaths[index],
+                appRoute: appRoutes[index],
+                clientTimestamp: new Date(receivedAt.getTime() + index).toISOString()
+            }), receivedAt)
+        ));
+
+        await commitTelemetryEvents(harness.db, events, '2030-06-01');
+
+        expect(harness.transactionCount).toBe(1);
+        expect(harness.created.length + harness.sets.length).toBe(MAX_TELEMETRY_WRITES_PER_REQUEST);
+        expect(harness.created.length + harness.sets.length).toBeLessThan(450);
+    });
+
+    it('does not increment aggregates or sessions for a persisted duplicate', async () => {
+        const existingDocumentPaths = new Set();
+        const harness = createFirestoreHarness(existingDocumentPaths);
+        const { normalizeTelemetryEvent, commitTelemetryEvents } = loadHelpers(harness);
+        const event = normalizeTelemetryEvent(rawEvent(), new Date('2030-06-01T12:00:00.000Z'));
+        existingDocumentPaths.add(`telemetryEvents/${event.id}`);
+
+        await expect(commitTelemetryEvents(harness.db, [event], '2030-06-01'))
+            .resolves.toEqual({ stored: 0, duplicates: 1 });
+        expect(harness.created).toHaveLength(0);
+        expect(harness.sets).toHaveLength(0);
     });
 
     it('maps attacker-selected event and route dimensions into fixed aggregate buckets', () => {

@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { createRequire } from 'node:module';
+import { readFileSync } from 'node:fs';
 import {
     REDACTED_IDENTIFIER,
     REDACTED_TEXT,
@@ -7,6 +9,20 @@ import {
     sanitizeTelemetryRoute,
     sanitizeTelemetryText
 } from '../../js/telemetry-utils.js';
+
+const require = createRequire(import.meta.url);
+const {
+    KNOWN_TELEMETRY_APP_ROUTES,
+    KNOWN_TELEMETRY_PAGE_PATHS
+} = require('../../functions/telemetry-ingress-core.cjs');
+
+function readSetValues(path, setName) {
+    const source = readFileSync(path, 'utf8');
+    const match = source.match(new RegExp(`const ${setName} = new Set\\((\\[[\\s\\S]*?\\])\\);`));
+    expect(match, `${setName} must remain a literal finite set`).toBeTruthy();
+    const literal = match[1].replace(/\b(?:TELEMETRY_)?REDACTED_TEXT\b/g, JSON.stringify(REDACTED_TEXT));
+    return Function(`return ${literal}`)();
+}
 
 describe('telemetry privacy utilities', () => {
     it('masks common personal data patterns before telemetry is sent', () => {
@@ -55,17 +71,46 @@ describe('telemetry privacy utilities', () => {
         expect(sanitizeTelemetryRoute('/messages/conversation-secret')).toBe('/messages/:id');
         expect(sanitizeTelemetryRoute('/family/public-share-token')).toBe('/family/:id');
         expect(sanitizeTelemetryRoute('/app/profile')).toBe('/app/profile');
+        expect(sanitizeTelemetryRoute('/private/paul')).toBe('/:redacted/:redacted');
+    });
+
+    it('preserves every source-controlled legacy page path', () => {
+        for (const pagePath of KNOWN_TELEMETRY_PAGE_PATHS) {
+            expect(sanitizeTelemetryRoute(pagePath), pagePath).toBe(pagePath);
+        }
+    });
+
+    it('preserves every source-controlled static app route', () => {
+        for (const appRoute of KNOWN_TELEMETRY_APP_ROUTES) {
+            expect(sanitizeTelemetryRoute(appRoute), appRoute).toBe(appRoute);
+        }
+    });
+
+    it('keeps client and server canonical value vocabularies in sync', () => {
+        expect(readSetValues('js/telemetry-utils.js', 'SAFE_ROUTE_SEGMENTS'))
+            .toEqual(readSetValues('functions/index.js', 'TELEMETRY_SAFE_ROUTE_SEGMENTS'));
+        const clientTextValues = readSetValues('js/telemetry-utils.js', 'SAFE_CANONICAL_TEXT_VALUES');
+        const serverTextValues = readSetValues('functions/index.js', 'TELEMETRY_SAFE_TEXT_VALUES');
+        expect(clientTextValues).toEqual(serverTextValues);
     });
 
     it('redacts unknown strings while retaining code-defined categories', () => {
         expect(sanitizeTelemetryProperties({
             outcome: 'success',
+            label: 'Paul Snider',
+            workflowName: 'Ava practice',
+            source: 'coach-name',
             arbitrary: 'Taylor wrote a private note',
-            targetRoute: '/teams/team-1/games/game-2'
+            targetRoute: '/teams/team-1/games/game-2',
+            sourceRoute: '/private/paul'
         })).toEqual({
             outcome: 'success',
+            label: REDACTED_TEXT,
+            workflowName: REDACTED_TEXT,
+            source: REDACTED_TEXT,
             arbitrary: REDACTED_TEXT,
-            targetRoute: '/teams/:id/games/:id'
+            targetRoute: '/teams/:id/games/:id',
+            sourceRoute: '/:redacted/:redacted'
         });
     });
 

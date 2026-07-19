@@ -13,6 +13,9 @@ const DEFAULT_ENDPOINT = 'https://us-central1-game-flow-c6311.cloudfunctions.net
 const MAX_QUEUE_SIZE = 120;
 const MAX_BATCH_SIZE = 15;
 const FLUSH_INTERVAL_MS = 5000;
+const MAX_SEND_ATTEMPTS = 3;
+const RETRY_BASE_DELAY_MS = 1000;
+const RETRY_MAX_DELAY_MS = 10 * 1000;
 const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
 const SESSION_TOUCH_INTERVAL_MS = 60 * 1000;
 const SCROLL_MILESTONES = [25, 50, 75, 90, 100];
@@ -26,6 +29,8 @@ let endpoint = null;
 let enabled = false;
 let queue = [];
 let flushTimer = null;
+let normalFlushPromise = null;
+let retryNotBefore = 0;
 const userContext = { userId: null, signedIn: false };
 let pageStartedAt = Date.now();
 let lastScrollCheck = 0;
@@ -39,6 +44,7 @@ let sessionStorageAvailable = null;
 let sessionCache = null;
 let lastSessionStorageWrite = 0;
 const recentEventFingerprints = new Map();
+const sendAttemptsByEvent = new WeakMap();
 
 function canUseStorage(storage, kind) {
     if (kind === 'local' && localStorageAvailable !== null) return localStorageAvailable;
@@ -379,11 +385,12 @@ function enqueue(event) {
 }
 
 function scheduleFlush(delayMs) {
+    const effectiveDelayMs = Math.max(0, delayMs, retryNotBefore - Date.now());
     if (flushTimer) {
-        if (delayMs !== 0) return;
+        if (effectiveDelayMs !== 0) return;
         window.clearTimeout(flushTimer);
     }
-    flushTimer = window.setTimeout(flush, delayMs);
+    flushTimer = window.setTimeout(flush, effectiveDelayMs);
 }
 
 export function captureTelemetryEvent(name, properties = {}, options = {}) {
@@ -437,6 +444,11 @@ export async function flush(keepalive = false) {
     }
     if (!enabled || !endpoint || queue.length === 0) return;
 
+    if (!keepalive && retryNotBefore > Date.now()) {
+        scheduleFlush(retryNotBefore - Date.now());
+        return;
+    }
+
     if (keepalive) {
         // The page is going away — drain everything now. Each batch goes out
         // as a synchronous beacon (no token fetch on this path), so events
@@ -452,15 +464,41 @@ export async function flush(keepalive = false) {
         return;
     }
 
+    if (normalFlushPromise) return normalFlushPromise;
+
+    normalFlushPromise = flushNextBatch().finally(() => {
+        normalFlushPromise = null;
+    });
+    return normalFlushPromise;
+}
+
+async function flushNextBatch() {
     const events = queue.splice(0, MAX_BATCH_SIZE);
+    let retryDelayMs = 0;
     try {
-        await sendEvents(events, keepalive);
+        await sendEvents(events, false);
+        retryNotBefore = 0;
+        events.forEach((event) => sendAttemptsByEvent.delete(event));
     } catch (error) {
-        queue = events.concat(queue).slice(0, MAX_QUEUE_SIZE);
+        const retryableEvents = events.filter((event) => {
+            const attempts = (sendAttemptsByEvent.get(event) || 0) + 1;
+            if (attempts >= MAX_SEND_ATTEMPTS) {
+                sendAttemptsByEvent.delete(event);
+                return false;
+            }
+            sendAttemptsByEvent.set(event, attempts);
+            retryDelayMs = Math.max(
+                retryDelayMs,
+                Math.min(RETRY_MAX_DELAY_MS, RETRY_BASE_DELAY_MS * (2 ** (attempts - 1)))
+            );
+            return true;
+        });
+        queue = retryableEvents.concat(queue).slice(0, MAX_QUEUE_SIZE);
+        retryNotBefore = Date.now() + (retryDelayMs || RETRY_BASE_DELAY_MS);
     }
 
     if (queue.length > 0) {
-        scheduleFlush(queue.length >= MAX_BATCH_SIZE ? 0 : FLUSH_INTERVAL_MS);
+        scheduleFlush(retryDelayMs || (queue.length >= MAX_BATCH_SIZE ? 0 : FLUSH_INTERVAL_MS));
     }
 }
 

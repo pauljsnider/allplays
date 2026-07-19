@@ -16,6 +16,49 @@ const SAFE_CANONICAL_TEXT_KEYS = new Set([
     'trigger', 'type', 'version', 'viewName', 'visibilityState', 'workflowName',
     'expectedTargetPage'
 ]);
+// Anonymous callers cannot declare arbitrary strings "canonical" merely by
+// placing them under a familiar key such as label or workflowName. Preserve a
+// finite product vocabulary and redact everything else.
+const SAFE_CANONICAL_TEXT_VALUES = new Set([
+    REDACTED_TEXT,
+    'CLS', 'FCP', 'INP', 'LCP', 'TTFB',
+    'Error', 'TypeError', 'RangeError', 'ReferenceError', 'SyntaxError',
+    'a', 'abandoned', 'access_card', 'action_row', 'ai', 'app startup', 'assignment', 'awards',
+    'back-forward', 'back-forward-cache', 'button', 'calendar_tools', 'change', 'checkbox', 'click', 'core_page', 'csv',
+    'android', 'desktop', 'error', 'external', 'failure', 'false', 'file', 'get', 'good', 'hidden',
+    'fee', 'fee_row', 'family_share', 'hero_top_action', 'home', 'initial_load', 'input', 'interaction',
+    'large', 'medium', 'message', 'messages', 'mobile', 'native_app_state', 'next_event',
+    'ios', 'navigate', 'needs-improvement', 'notifications', 'officials', 'officials_card', 'packet',
+    'page teardown', 'parent core workflow drill in', 'parent-schedule-load', 'parent_tools', 'player', 'player_card',
+    'parent_core', 'poor', 'profile-document',
+    'post', 'prerender', 'priority_action', 'profile', 'profile document service load', 'profile-load', 'promise_rejection',
+    'radio', 'registrations', 'reload', 'request_player_access', 'restore', 'resume', 'rideshare', 'route paint',
+    'rsvp', 'runtime', 'save', 'schedule', 'schedule_event', 'screen_mount', 'select', 'service_load',
+    'signal_card', 'small', 'standard-tracker', 'startup', 'submit', 'success', 'tablet', 'team', 'team-media',
+    'team_card', 'teams', 'textarea', 'unknown', 'upcoming_event_card', 'upcoming_view_all',
+    'view_load', 'visibilitychange', 'visible', 'web', 'workflow', 'xlarge',
+    'accept_invite',
+    'app start to home first meaningful render', 'first meaningful render',
+    'warm resume to interactive', 'home mount load', 'schedule mount load',
+    'messages mount load', 'rsvp tap latency', 'chat send latency',
+    'teams summary load', 'parent schedule event detail load',
+    'parent player schedule load', 'parent game route resolve',
+    'parent schedule service load', 'schedule create game',
+    'schedule create practice', 'schedule create tournament', 'schedule import',
+    'schedule ai preview', 'team media photo upload', 'team media file upload',
+    'team media album create', 'team media link add', 'standard tracker load',
+    'standard tracker record stat', 'standard tracker undo stat',
+    'home today load', 'home feed load', 'home players load', 'home teams load',
+    'home friends load', 'schedule load', 'messages choose team load',
+    'my teams team schedule load', 'my teams team roster load',
+    'my teams team insights load', 'my teams team more load',
+    'profile account load', 'profile alerts load', 'profile invites load',
+    'profile security load',
+    'home today', 'home feed', 'home players', 'home teams', 'home friends',
+    'messages choose team', 'my teams team schedule', 'my teams team roster',
+    'my teams team insights', 'my teams team more', 'profile account',
+    'profile alerts', 'profile invites', 'profile security'
+]);
 const ROUTE_PROPERTY_KEYS = new Set([
     'action', 'appRoute', 'completedRoute', 'href', 'location', 'pagePath', 'route',
     'sourceRoute', 'targetRoute', 'expectedTargetRoute'
@@ -28,6 +71,36 @@ const DYNAMIC_ROUTE_PARENT_SEGMENTS = new Set([
     'families', 'family', 'fees', 'games', 'inquiries', 'invite', 'messages',
     'opportunities', 'organizations', 'people', 'players', 'registrations', 'rsvp',
     'schedules', 'share', 'team', 'teams', 'users'
+]);
+const SAFE_ROUTE_SEGMENTS = new Set([
+    'accept-invite', 'accept-invite.html', 'admin.html', 'ai', 'app', 'auth',
+    'athlete-profile-builder.html', 'athlete-profile.html', 'beta', 'browse',
+    'calendar.html', 'capabilities', 'certificates', 'certificates.html',
+    'cheer', 'dashboard.html', 'discover', 'drills', 'drills.html', 'edit',
+    'edit-config.html', 'edit-roster.html', 'edit-schedule.html', 'edit-team.html',
+    'family', 'family.html', 'fees', 'game-day-command-center.html', 'game-day.html', 'game-plan.html', 'game.html',
+    'games', 'help', 'help-account.html', 'help-game-operations.html',
+    'help-page-reference.html', 'help-team-operations.html', 'help-watch-chat.html',
+    'help.html', 'home', 'index.html', 'inquiries', 'live-game.html',
+    'live-tracker.html', 'login.html', 'manage', 'media', 'messages', 'mockups', 'new',
+    'officials', 'officials.html', 'opportunities', 'organization-schedule.html',
+    'parent-dashboard.html', 'parent-tools', 'people', 'player.html', 'players',
+    'practice-command-center.html', 'profile', 'profile.html', 'public',
+    'registration', 'registration-forms', 'registration.html', 'registrations',
+    'reset-password', 'reset-password.html', 'schedule', 'settings', 'sub-tracker-prototype.html', 'team-chat.html',
+    'team-fees.html', 'team-media.html', 'team.html', 'teams', 'teams.html',
+    'track', 'track-basketball.html', 'track-basketball-mobile-mock.html',
+    'track-basketball-mock.html', 'track-cheer-mobile.html', 'track-live.html',
+    'track-statsheet.html', 'track.html', 'tracking-items.html',
+    'verify-pending', 'verify-pending.html', 'widget-scoreboard.html',
+    'workflow-admin-ops.html', 'workflow-awards-certificates.html',
+    'workflow-choose-home-dashboard.html', 'workflow-communication.html',
+    'workflow-family-sharing.html', 'workflow-fees-payments.html',
+    'workflow-game-day.html', 'workflow-getting-started.html', 'workflow-join-team.html',
+    'workflow-live-tracker.html', 'workflow-live-watch-replay.html',
+    'workflow-postgame.html', 'workflow-registration.html', 'workflow-roster.html',
+    'workflow-schedule.html', 'workflow-team-media.html', 'workflow-team-setup.html',
+    'workflow-track-game.html'
 ]);
 
 export function sanitizeTelemetryText(value, maxLength = DEFAULT_TEXT_LIMIT) {
@@ -65,6 +138,8 @@ export function sanitizeTelemetryRoute(value, maxLength = 220) {
             // A malformed path is still handled as opaque input below.
         }
 
+        const clean = decoded.trim().toLowerCase();
+        if (SAFE_ROUTE_SEGMENTS.has(clean)) return clean;
         const previous = sanitizeTelemetryKey(segments[index - 1] || '', 48).toLowerCase();
         const looksDynamic = DYNAMIC_ROUTE_PARENT_SEGMENTS.has(previous)
             || /^\d+$/.test(decoded)
@@ -73,9 +148,7 @@ export function sanitizeTelemetryRoute(value, maxLength = 220) {
             || /^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(decoded)
             || /^[A-Za-z0-9_-]{16,}$/.test(decoded);
         if (looksDynamic) return ':id';
-
-        const clean = sanitizeTelemetryKey(decoded, 48).toLowerCase();
-        return clean || ':redacted';
+        return ':redacted';
     });
     return (`/${safeSegments.join('/')}` || '/').slice(0, maxLength);
 }
@@ -96,7 +169,7 @@ function sanitizePropertyValue(key, value, depth) {
         return value.slice(0, 10).map((item) => {
             if (typeof item === 'boolean' || typeof item === 'number') return item;
             return SAFE_CANONICAL_TEXT_KEYS.has(key)
-                ? sanitizeTelemetryText(item, 60)
+                ? sanitizeCanonicalTelemetryText(item, 60)
                 : REDACTED_TEXT;
         });
     }
@@ -106,7 +179,12 @@ function sanitizePropertyValue(key, value, depth) {
     }
 
     if (!SAFE_CANONICAL_TEXT_KEYS.has(key)) return REDACTED_TEXT;
-    return sanitizeTelemetryText(value, 120);
+    return sanitizeCanonicalTelemetryText(value, 120);
+}
+
+function sanitizeCanonicalTelemetryText(value, maxLength) {
+    const clean = sanitizeTelemetryText(value, maxLength);
+    return SAFE_CANONICAL_TEXT_VALUES.has(clean) ? clean : REDACTED_TEXT;
 }
 
 export function sanitizeTelemetryProperties(properties = {}, depth = 0) {

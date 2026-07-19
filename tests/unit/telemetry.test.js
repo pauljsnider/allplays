@@ -49,6 +49,11 @@ describe('telemetry.js payload handling', () => {
         vi.clearAllMocks();
         vi.useFakeTimers();
 
+        mockFetch.mockReset();
+        mockFetch.mockResolvedValue({ ok: true });
+        mockSendBeacon.mockReset();
+        mockSendBeacon.mockReturnValue(true);
+
         delete window.__allplaysTelemetry;
         appCheckMocks.getPrimaryAppCheckHeaders.mockReset();
         appCheckMocks.getPrimaryAppCheckHeaders.mockImplementation(async (headers) => ({ ...headers }));
@@ -206,6 +211,31 @@ describe('telemetry.js payload handling', () => {
         expect(names).toHaveLength(60);
         expect(names).toContain('queued_event_0');
         expect(names).toContain('queued_event_59');
+    });
+
+    it('backs off and stops after three failed delivery attempts', async () => {
+        mockFetch.mockRejectedValue(new Error('telemetry endpoint unavailable'));
+        telemetryModule.captureTelemetryEvent('bounded_retry_test');
+
+        await telemetryModule.flush();
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+
+        await telemetryModule.flush();
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+
+        await vi.advanceTimersByTimeAsync(999);
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(mockFetch).toHaveBeenCalledTimes(2);
+
+        await vi.advanceTimersByTimeAsync(1_999);
+        expect(mockFetch).toHaveBeenCalledTimes(2);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(mockFetch).toHaveBeenCalledTimes(3);
+
+        await vi.advanceTimersByTimeAsync(10_000);
+        await telemetryModule.flush();
+        expect(mockFetch).toHaveBeenCalledTimes(3);
     });
 
     it('adds app route context to stored events for hash-routed app screens', async () => {

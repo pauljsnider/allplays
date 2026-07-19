@@ -8,14 +8,17 @@ const {
   ATTESTED_REQUESTS_PER_WINDOW,
   MAX_APP_CHECK_TOKEN_BYTES,
   MAX_ATTESTED_EVENTS_PER_REQUEST,
+  MAX_TELEMETRY_WRITES_PER_REQUEST,
   MAX_TELEMETRY_BODY_BYTES,
   MAX_UNATTESTED_EVENTS_PER_REQUEST,
-  TELEMETRY_WRITES_PER_EVENT,
+  ORDINARY_TELEMETRY_WRITES_PER_REQUEST,
+  TELEMETRY_AGGREGATE_SHARD_COUNT,
   UNATTESTED_REQUESTS_PER_WINDOW,
   canonicalizeTelemetryAppRoute,
   canonicalizeTelemetryEventName,
   canonicalizeTelemetryPagePath,
   deduplicateTelemetryEvents,
+  getTelemetryAggregateShard,
   getTelemetryBodyByteLength,
   getTelemetryIngressPolicy,
   getTelemetryRateLimitBoundary,
@@ -73,7 +76,7 @@ test('server-verifies supplied App Check and does not treat missing or invalid t
   assert.equal(oversizedVerifyCalled, false);
 });
 
-test('uses a high-entropy token fingerprint for verified limits and one global unattested budget', async () => {
+test('uses a high-entropy token fingerprint only for verified durable limits', async () => {
   const verified = await verifyTelemetryAppCheck({
     headers: { 'x-firebase-appcheck': 'high-entropy-app-check-token' }
   }, async () => ({ appId: 'firebase-app-id' }));
@@ -81,12 +84,12 @@ test('uses a high-entropy token fingerprint for verified limits and one global u
 
   assert.match(verifiedBoundary, /^verified\|[a-f0-9]{64}$/);
   assert.equal(verifiedBoundary.includes('high-entropy-app-check-token'), false);
-  assert.equal(getTelemetryRateLimitBoundary({ status: 'missing' }), 'unattested-global');
-  assert.equal(getTelemetryRateLimitBoundary({ status: 'invalid' }), 'unattested-global');
-  assert.equal(getTelemetryRateLimitBoundary({ status: 'verified', rateLimitKey: 'forged' }), 'unattested-global');
+  assert.equal(getTelemetryRateLimitBoundary({ status: 'missing' }), null);
+  assert.equal(getTelemetryRateLimitBoundary({ status: 'invalid' }), null);
+  assert.equal(getTelemetryRateLimitBoundary({ status: 'verified', rateLimitKey: 'forged' }), null);
 });
 
-test('keeps verified clients useful while tightly bounding observe-mode unattested traffic', () => {
+test('preserves ordinary batches while bounding observe-mode request and write budgets', () => {
   assert.deepEqual(getTelemetryIngressPolicy('verified'), {
     verified: true,
     maxEvents: MAX_ATTESTED_EVENTS_PER_REQUEST,
@@ -99,9 +102,18 @@ test('keeps verified clients useful while tightly bounding observe-mode unattest
   });
   assert.deepEqual(getTelemetryIngressPolicy('missing'), getTelemetryIngressPolicy('invalid'));
   assert.equal(MAX_ATTESTED_EVENTS_PER_REQUEST, 15);
-  assert.equal(MAX_UNATTESTED_EVENTS_PER_REQUEST, 2);
-  assert.equal(MAX_ATTESTED_EVENTS_PER_REQUEST * TELEMETRY_WRITES_PER_EVENT, 90);
-  assert.equal(MAX_UNATTESTED_EVENTS_PER_REQUEST * TELEMETRY_WRITES_PER_EVENT, 12);
+  assert.equal(MAX_UNATTESTED_EVENTS_PER_REQUEST, 15);
+  assert.equal(TELEMETRY_AGGREGATE_SHARD_COUNT, 16);
+  assert.equal(ORDINARY_TELEMETRY_WRITES_PER_REQUEST, 20);
+  assert.equal(MAX_TELEMETRY_WRITES_PER_REQUEST, 76);
+  assert.ok(MAX_TELEMETRY_WRITES_PER_REQUEST < 450);
+});
+
+test('selects one deterministic finite aggregate shard per request', () => {
+  const events = [{ id: 'event-one' }, { id: 'event-two' }];
+  assert.match(getTelemetryAggregateShard(events), /^s(?:0\d|1[0-5])$/);
+  assert.equal(getTelemetryAggregateShard(events), getTelemetryAggregateShard(events));
+  assert.match(getTelemetryAggregateShard([]), /^s(?:0\d|1[0-5])$/);
 });
 
 test('maps attacker-controlled aggregate dimensions into finite buckets', () => {

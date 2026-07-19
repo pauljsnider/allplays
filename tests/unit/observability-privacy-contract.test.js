@@ -41,7 +41,8 @@ describe('privacy-preserving observability contract', () => {
         expect(client).toContain('ERROR_DEDUPE_WINDOW_MS');
         expect(client).toContain('event.sampleWeight');
         expect(client).toContain('sanitizeTelemetryRoute');
-        expect(collector).toContain("? ':id'");
+        expect(collector).toContain("if (looksDynamic) return ':id';");
+        expect(collector).toContain("return ':redacted';");
         expect(client).not.toContain('targetXPercent');
         expect(client).not.toContain('targetYPercent');
     });

@@ -10,7 +10,7 @@ const NATIVE_ORIGINS = [
   'http://localhost'
 ];
 const APP_CHECK_HEADER = 'X-Firebase-AppCheck';
-const ALLOWED_HEADERS = `Authorization, Content-Type, ${APP_CHECK_HEADER}`;
+const ALLOWED_HEADERS = `Content-Type, ${APP_CHECK_HEADER}`;
 
 function createResponse() {
   return {
@@ -81,7 +81,7 @@ for (const origin of NATIVE_ORIGINS) {
   });
 }
 
-test('collectTelemetry rejects lookalike native origins without reflecting them', async () => {
+test('collectTelemetry handles lookalike native origins passively without reflecting them', async () => {
   const response = createResponse();
 
   await collectTelemetry({
@@ -93,14 +93,54 @@ test('collectTelemetry rejects lookalike native origins without reflecting them'
     }
   }, response);
 
-  assert.equal(response.statusCode, 403);
-  assert.deepEqual(response.body, { ok: false, error: 'Origin not allowed' });
+  assert.equal(response.statusCode, 204);
+  assert.equal(response.body, '');
   assert.equal(response.headers.get('access-control-allow-origin'), undefined);
   assert.equal(response.headers.get('vary'), undefined);
   assert.equal(response.headers.get('cache-control'), 'no-store');
 });
 
-test('collectTelemetry fails passive when ingress controls fail without exposing App Check', async (t) => {
+test('collectTelemetry treats Origin as CORS-only and accepts POST requests without one', async (t) => {
+  const persistence = mockSuccessfulTelemetryPersistence(t);
+  const response = createResponse();
+
+  await collectTelemetry({
+    method: 'POST',
+    ip: '203.0.113.39',
+    headers: { 'content-type': 'application/json' },
+    body: { events: buildEvents(1) }
+  }, response);
+
+  assert.equal(response.statusCode, 204);
+  assert.equal(response.body, '');
+  assert.equal(response.headers.get('access-control-allow-origin'), undefined);
+  assert.equal(persistence.transactionCount, 1);
+  assert.equal(persistence.created.length, 1);
+});
+
+test('collectTelemetry treats an unlisted POST Origin as CORS-only without reflecting it', async (t) => {
+  const persistence = mockSuccessfulTelemetryPersistence(t);
+  const response = createResponse();
+
+  await collectTelemetry({
+    method: 'POST',
+    ip: '203.0.113.38',
+    headers: {
+      origin: 'https://allplays.ai.evil.example',
+      'content-type': 'application/json'
+    },
+    body: { events: buildEvents(1) }
+  }, response);
+
+  assert.equal(response.statusCode, 204);
+  assert.equal(response.body, '');
+  assert.equal(response.headers.get('access-control-allow-origin'), undefined);
+  assert.equal(response.headers.get('vary'), undefined);
+  assert.equal(persistence.transactionCount, 1);
+  assert.equal(persistence.created.length, 1);
+});
+
+test('collectTelemetry terminates passively when persistence fails without exposing App Check', async (t) => {
   const appCheckToken = 'opaque-app-check-value-never-log';
   const loggedErrors = [];
   let transactionStarted = false;
@@ -145,10 +185,11 @@ test('collectTelemetry fails passive when ingress controls fail without exposing
     }
   }
   assert.deepEqual(loggedErrors[0], [
-    'Telemetry ingress control failed.',
+    'Telemetry collection failed.',
     {
-      eventType: 'operational_telemetry_ingress_control_failure',
-      errorCode: 'Error'
+      eventType: 'operational_telemetry_collection_failure',
+      errorCode: 'Error',
+      contentLengthBucket: 'small'
     }
   ]);
   for (const [name, value] of response.headers) {
@@ -225,7 +266,7 @@ test('collectTelemetry rejects an oversized serialized body when raw bytes and l
   assert.equal(persistence.transactionCount, 0);
 });
 
-test('an allowed spoofed Origin remains unattested and receives the small observe-mode budget', async (t) => {
+test('an allowed spoofed Origin remains unattested and preserves one ordinary observe-mode batch', async (t) => {
   const persistence = mockSuccessfulTelemetryPersistence(t);
   const presentedTokens = [];
   t.mock.method(admin.appCheck(), 'verifyToken', async (token) => {
@@ -247,12 +288,12 @@ test('an allowed spoofed Origin remains unattested and receives the small observ
   assert.equal(response.statusCode, 204);
   assert.equal(response.body, '');
   assert.deepEqual(presentedTokens, ['spoofed-token']);
-  assert.equal(persistence.created.length, 2);
-  assert.equal(persistence.transactionCount, 3); // one rate reservation + two event transactions
+  assert.equal(persistence.created.length, 15);
+  assert.equal(persistence.transactionCount, 1); // no durable raw-IP/global limiter; one grouped event transaction
   assert.equal(persistence.created.every(({ data }) => data.appCheckStatus === 'invalid'), true);
 });
 
-test('missing App Check remains passive but cannot exceed the unattested event budget', async (t) => {
+test('missing App Check remains passive and preserves one ordinary observe-mode batch', async (t) => {
   const persistence = mockSuccessfulTelemetryPersistence(t);
   const verifyCalls = [];
   t.mock.method(admin.appCheck(), 'verifyToken', async (token) => verifyCalls.push(token));
@@ -261,14 +302,39 @@ test('missing App Check remains passive but cannot exceed the unattested event b
   await collectTelemetry({
     method: 'POST',
     ip: '203.0.113.42',
-    headers: {},
+    headers: { origin: ALLOWED_ORIGIN },
     body: { events: buildEvents(20) }
   }, response);
 
   assert.equal(response.statusCode, 204);
   assert.deepEqual(verifyCalls, []);
-  assert.equal(persistence.created.length, 2);
+  assert.equal(persistence.created.length, 15);
+  assert.equal(persistence.transactionCount, 1);
   assert.equal(persistence.created.every(({ data }) => data.appCheckStatus === 'missing'), true);
+});
+
+test('missing App Check has a finite per-client observe-mode request budget', async (t) => {
+  const persistence = mockSuccessfulTelemetryPersistence(t);
+  t.mock.method(admin.appCheck(), 'verifyToken', async () => {
+    throw new Error('must not verify a missing token');
+  });
+
+  for (let requestIndex = 0; requestIndex < 7; requestIndex += 1) {
+    const response = createResponse();
+    await collectTelemetry({
+      method: 'POST',
+      ip: '203.0.113.44',
+      headers: { origin: ALLOWED_ORIGIN },
+      body: { events: buildEvents(15).map((event) => ({
+        ...event,
+        id: `budget-${requestIndex}-${event.id}`
+      })) }
+    }, response);
+    assert.equal(response.statusCode, 204);
+  }
+
+  assert.equal(persistence.transactionCount, 6);
+  assert.equal(persistence.created.length, 90);
 });
 
 for (const origin of [ALLOWED_ORIGIN, ...NATIVE_ORIGINS]) {
@@ -295,7 +361,7 @@ for (const origin of [ALLOWED_ORIGIN, ...NATIVE_ORIGINS]) {
     assert.equal(response.body, '');
     assert.deepEqual(presentedTokens, ['valid-app-check-token']);
     assert.equal(persistence.created.length, 15);
-    assert.equal(persistence.transactionCount, 16); // one rate reservation + fifteen events
+    assert.equal(persistence.transactionCount, 2); // one durable token reservation + one grouped event transaction
     assert.equal(persistence.created.every(({ data }) => data.appCheckStatus === 'verified'), true);
   });
 }

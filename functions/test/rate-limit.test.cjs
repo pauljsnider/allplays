@@ -56,6 +56,18 @@ test('uses the public address immediately before the trusted proxy hop', () => {
     assert.equal(getRequestIp(request), '203.0.113.10');
 });
 
+test('prefers a verified forwarded client over a public req.ip edge proxy', () => {
+    const request = {
+        ip: '203.0.113.250',
+        headers: {
+            'x-forwarded-for': '198.51.100.77, 203.0.113.250'
+        },
+        socket: { remoteAddress: '203.0.113.250' }
+    };
+
+    assert.equal(getRequestIp(request), '198.51.100.77');
+});
+
 test('ignores forwarded values when the chain has no trusted proxy hop', () => {
     const request = {
         ip: '10.0.0.5',

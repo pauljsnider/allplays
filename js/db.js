@@ -387,6 +387,10 @@ function mapSnapshot(snapshot) {
     return snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
 }
 
+// Must match the finite server-side aggregate shard count. Query limits scale
+// by this factor so the admin dashboard retains its pre-sharding logical range.
+const TELEMETRY_AGGREGATE_SHARD_COUNT = 16;
+
 export async function getTelemetryEvents({ days = 7, maxEvents = 1500 } = {}) {
     const startDate = Timestamp.fromDate(daysAgoDate(days));
     const safeLimit = Math.min(Math.max(Number(maxEvents) || 1500, 100), 5000);
@@ -405,7 +409,10 @@ export async function getTelemetryDaily({ days = 30 } = {}) {
         collection(db, 'telemetryDaily'),
         where('date', '>=', startKey),
         orderBy('date', 'desc'),
-        limitQuery(Math.min(Math.max(days + 2, 7), 60))
+        limitQuery(Math.min(
+            Math.max((days + 2) * TELEMETRY_AGGREGATE_SHARD_COUNT, 7),
+            60 * TELEMETRY_AGGREGATE_SHARD_COUNT
+        ))
     );
     return mapSnapshot(await getDocs(q));
 }
@@ -416,7 +423,10 @@ export async function getTelemetryPageDaily({ days = 30, maxPages = 500 } = {}) 
         collection(db, 'telemetryPagesDaily'),
         where('date', '>=', startKey),
         orderBy('date', 'desc'),
-        limitQuery(Math.min(Math.max(Number(maxPages) || 500, 50), 1000))
+        limitQuery(Math.min(
+            Math.max((Number(maxPages) || 500) * TELEMETRY_AGGREGATE_SHARD_COUNT, 50),
+            1000 * TELEMETRY_AGGREGATE_SHARD_COUNT
+        ))
     );
     return mapSnapshot(await getDocs(q));
 }
@@ -427,7 +437,10 @@ export async function getTelemetryRouteDaily({ days = 30, maxRoutes = 500 } = {}
         collection(db, 'telemetryRoutesDaily'),
         where('date', '>=', startKey),
         orderBy('date', 'desc'),
-        limitQuery(Math.min(Math.max(Number(maxRoutes) || 500, 50), 1000))
+        limitQuery(Math.min(
+            Math.max((Number(maxRoutes) || 500) * TELEMETRY_AGGREGATE_SHARD_COUNT, 50),
+            1000 * TELEMETRY_AGGREGATE_SHARD_COUNT
+        ))
     );
     return mapSnapshot(await getDocs(q));
 }
@@ -438,7 +451,10 @@ export async function getTelemetryEventDaily({ days = 30, maxEvents = 500 } = {}
         collection(db, 'telemetryEventsDaily'),
         where('date', '>=', startKey),
         orderBy('date', 'desc'),
-        limitQuery(Math.min(Math.max(Number(maxEvents) || 500, 50), 1000))
+        limitQuery(Math.min(
+            Math.max((Number(maxEvents) || 500) * TELEMETRY_AGGREGATE_SHARD_COUNT, 50),
+            1000 * TELEMETRY_AGGREGATE_SHARD_COUNT
+        ))
     );
     return mapSnapshot(await getDocs(q));
 }

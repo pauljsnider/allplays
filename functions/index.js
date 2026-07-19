@@ -54,13 +54,15 @@ const {
 } = require('./registration-payment-webhook-core.cjs');
 const { createFirestoreFixedWindowRateLimiter, createInMemoryRateLimiter, getRequestIp } = require('./rate-limit.cjs');
 const {
+  MAX_ATTESTED_EVENTS_PER_REQUEST,
   MAX_TELEMETRY_BODY_BYTES,
   TELEMETRY_RATE_LIMIT_WINDOW_MS,
-  TELEMETRY_WRITES_PER_EVENT,
+  UNATTESTED_REQUESTS_PER_WINDOW,
   canonicalizeTelemetryAppRoute,
   canonicalizeTelemetryEventName,
   canonicalizeTelemetryPagePath,
   deduplicateTelemetryEvents,
+  getTelemetryAggregateShard,
   getTelemetryBodyByteLength,
   getTelemetryIngressPolicy,
   getTelemetryRateLimitBoundary,
@@ -324,24 +326,23 @@ const checkTelemetryIngressRateLimit = createInMemoryRateLimiter({
   maxRequests: 120,
   maxKeys: 10_000
 });
-const checkTelemetryUnattestedBurstRateLimit = createInMemoryRateLimiter({
+const checkTelemetryUnattestedRateLimit = createInMemoryRateLimiter({
   windowMs: TELEMETRY_RATE_LIMIT_WINDOW_MS,
-  maxRequests: 60,
-  maxKeys: 1
+  maxRequests: UNATTESTED_REQUESTS_PER_WINDOW,
+  maxKeys: 10_000
 });
-const telemetryRateLimiters = new Map();
+let verifiedTelemetryRateLimiter;
 
-function getTelemetryRateLimiter(policy) {
-  const tier = policy.verified ? 'verified' : 'unattested';
-  if (!telemetryRateLimiters.has(tier)) {
-    telemetryRateLimiters.set(tier, createFirestoreFixedWindowRateLimiter({
+function getVerifiedTelemetryRateLimiter(policy) {
+  if (!verifiedTelemetryRateLimiter) {
+    verifiedTelemetryRateLimiter = createFirestoreFixedWindowRateLimiter({
       firestore,
       collectionName: 'telemetryRateLimits',
       windowMs: TELEMETRY_RATE_LIMIT_WINDOW_MS,
       maxRequests: policy.maxRequests
-    }));
+    });
   }
-  return telemetryRateLimiters.get(tier);
+  return verifiedTelemetryRateLimiter;
 }
 
 function getStripeConfig() {
@@ -4918,20 +4919,29 @@ function isAllowedOrigin(origin) {
     (allowedOriginPolicy.allowFirebaseHosting && isAllPlaysFirebaseHostingOrigin(origin));
 }
 
-function isAllowedTelemetryOrigin(origin) {
-  return !origin || telemetryAllowedOriginSet.has(origin);
-}
-
-function writeCorsHeaders(req, res, methods = 'GET,OPTIONS', endpointAllowedOriginSet = null) {
+function writeCorsHeaders(req, res, methods = 'GET,OPTIONS') {
   const origin = req.headers.origin;
-  if (origin && (endpointAllowedOriginSet
-    ? endpointAllowedOriginSet.has(origin)
-    : isAllowedOrigin(origin))) {
+  if (origin && isAllowedOrigin(origin)) {
     res.set('Access-Control-Allow-Origin', origin);
     res.set('Vary', 'Origin');
   }
   res.set('Access-Control-Allow-Methods', methods);
   res.set('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Firebase-AppCheck');
+  res.set('Cache-Control', 'no-store');
+}
+
+function writeTelemetryCorsHeaders(
+  req,
+  res,
+  allowedHeaders = 'Authorization, Content-Type, X-Firebase-AppCheck'
+) {
+  const origin = req.headers.origin;
+  if (origin && telemetryAllowedOriginSet.has(origin)) {
+    res.set('Access-Control-Allow-Origin', origin);
+    res.set('Vary', 'Origin');
+  }
+  res.set('Access-Control-Allow-Methods', 'POST,OPTIONS');
+  res.set('Access-Control-Allow-Headers', allowedHeaders);
   res.set('Cache-Control', 'no-store');
 }
 
@@ -4974,6 +4984,46 @@ const TELEMETRY_SAFE_TEXT_KEYS = new Set([
   'stage', 'status', 'tagName', 'targetPage', 'telemetryName', 'trigger', 'type',
   'version', 'viewName', 'visibilityState', 'workflowName', 'expectedTargetPage'
 ]);
+const TELEMETRY_SAFE_TEXT_VALUES = new Set([
+  TELEMETRY_REDACTED_TEXT,
+  'CLS', 'FCP', 'INP', 'LCP', 'TTFB',
+  'Error', 'TypeError', 'RangeError', 'ReferenceError', 'SyntaxError',
+  'a', 'abandoned', 'access_card', 'action_row', 'ai', 'app startup', 'assignment', 'awards',
+  'back-forward', 'back-forward-cache', 'button', 'calendar_tools', 'change', 'checkbox', 'click', 'core_page', 'csv',
+  'android', 'desktop', 'error', 'external', 'failure', 'false', 'file', 'get', 'good', 'hidden',
+  'fee', 'fee_row', 'family_share', 'hero_top_action', 'home', 'initial_load', 'input', 'interaction',
+  'large', 'medium', 'message', 'messages', 'mobile', 'native_app_state', 'next_event',
+  'ios', 'navigate', 'needs-improvement', 'notifications', 'officials', 'officials_card', 'packet',
+  'page teardown', 'parent core workflow drill in', 'parent-schedule-load', 'parent_tools', 'player', 'player_card',
+  'parent_core', 'poor', 'profile-document',
+  'post', 'prerender', 'priority_action', 'profile', 'profile document service load', 'profile-load', 'promise_rejection',
+  'radio', 'registrations', 'reload', 'request_player_access', 'restore', 'resume', 'rideshare', 'route paint',
+  'rsvp', 'runtime', 'save', 'schedule', 'schedule_event', 'screen_mount', 'select', 'service_load',
+  'signal_card', 'small', 'standard-tracker', 'startup', 'submit', 'success', 'tablet', 'team', 'team-media',
+  'team_card', 'teams', 'textarea', 'unknown', 'upcoming_event_card', 'upcoming_view_all',
+  'view_load', 'visibilitychange', 'visible', 'web', 'workflow', 'xlarge',
+  'accept_invite',
+  'app start to home first meaningful render', 'first meaningful render',
+  'warm resume to interactive', 'home mount load', 'schedule mount load',
+  'messages mount load', 'rsvp tap latency', 'chat send latency',
+  'teams summary load', 'parent schedule event detail load',
+  'parent player schedule load', 'parent game route resolve',
+  'parent schedule service load', 'schedule create game',
+  'schedule create practice', 'schedule create tournament', 'schedule import',
+  'schedule ai preview', 'team media photo upload', 'team media file upload',
+  'team media album create', 'team media link add', 'standard tracker load',
+  'standard tracker record stat', 'standard tracker undo stat',
+  'home today load', 'home feed load', 'home players load', 'home teams load',
+  'home friends load', 'schedule load', 'messages choose team load',
+  'my teams team schedule load', 'my teams team roster load',
+  'my teams team insights load', 'my teams team more load',
+  'profile account load', 'profile alerts load', 'profile invites load',
+  'profile security load',
+  'home today', 'home feed', 'home players', 'home teams', 'home friends',
+  'messages choose team', 'my teams team schedule', 'my teams team roster',
+  'my teams team insights', 'my teams team more', 'profile account',
+  'profile alerts', 'profile invites', 'profile security'
+]);
 const TELEMETRY_ROUTE_KEYS = new Set([
   'action', 'appRoute', 'completedRoute', 'href', 'location', 'pagePath', 'route',
   'sourceRoute', 'targetRoute', 'expectedTargetRoute'
@@ -4986,6 +5036,36 @@ const TELEMETRY_DYNAMIC_ROUTE_PARENTS = new Set([
   'families', 'family', 'fees', 'games', 'inquiries', 'invite', 'messages',
   'opportunities', 'organizations', 'people', 'players', 'registrations', 'rsvp',
   'schedules', 'share', 'team', 'teams', 'users'
+]);
+const TELEMETRY_SAFE_ROUTE_SEGMENTS = new Set([
+  'accept-invite', 'accept-invite.html', 'admin.html', 'ai', 'app', 'auth',
+  'athlete-profile-builder.html', 'athlete-profile.html', 'beta', 'browse',
+  'calendar.html', 'capabilities', 'certificates', 'certificates.html',
+  'cheer', 'dashboard.html', 'discover', 'drills', 'drills.html', 'edit',
+  'edit-config.html', 'edit-roster.html', 'edit-schedule.html', 'edit-team.html',
+  'family', 'family.html', 'fees', 'game-day-command-center.html', 'game-day.html', 'game-plan.html', 'game.html',
+  'games', 'help', 'help-account.html', 'help-game-operations.html',
+  'help-page-reference.html', 'help-team-operations.html', 'help-watch-chat.html',
+  'help.html', 'home', 'index.html', 'inquiries', 'live-game.html',
+  'live-tracker.html', 'login.html', 'manage', 'media', 'messages', 'mockups', 'new',
+  'officials', 'officials.html', 'opportunities', 'organization-schedule.html',
+  'parent-dashboard.html', 'parent-tools', 'people', 'player.html', 'players',
+  'practice-command-center.html', 'profile', 'profile.html', 'public',
+  'registration', 'registration-forms', 'registration.html', 'registrations',
+  'reset-password', 'reset-password.html', 'schedule', 'settings', 'sub-tracker-prototype.html', 'team-chat.html',
+  'team-fees.html', 'team-media.html', 'team.html', 'teams', 'teams.html',
+  'track', 'track-basketball.html', 'track-basketball-mobile-mock.html',
+  'track-basketball-mock.html', 'track-cheer-mobile.html', 'track-live.html',
+  'track-statsheet.html', 'track.html', 'tracking-items.html',
+  'verify-pending', 'verify-pending.html', 'widget-scoreboard.html',
+  'workflow-admin-ops.html', 'workflow-awards-certificates.html',
+  'workflow-choose-home-dashboard.html', 'workflow-communication.html',
+  'workflow-family-sharing.html', 'workflow-fees-payments.html',
+  'workflow-game-day.html', 'workflow-getting-started.html', 'workflow-join-team.html',
+  'workflow-live-tracker.html', 'workflow-live-watch-replay.html',
+  'workflow-postgame.html', 'workflow-registration.html', 'workflow-roster.html',
+  'workflow-schedule.html', 'workflow-team-media.html', 'workflow-team-setup.html',
+  'workflow-track-game.html'
 ]);
 
 function telemetryExpiry(receivedAt, retentionDays) {
@@ -5012,6 +5092,11 @@ function normalizeTelemetryIdentifier(value, maxLength = 120) {
     .replace(/_+/g, '_')
     .replace(/^_+|_+$/g, '')
     .slice(0, maxLength);
+}
+
+function normalizeTelemetryCanonicalText(value, maxLength = 120) {
+  const clean = normalizeTelemetryString(value, maxLength);
+  return TELEMETRY_SAFE_TEXT_VALUES.has(clean) ? clean : TELEMETRY_REDACTED_TEXT;
 }
 
 function normalizeTelemetryObject(value, depth = 0) {
@@ -5041,13 +5126,13 @@ function normalizeTelemetryObject(value, depth = 0) {
         typeof item === 'boolean' || typeof item === 'number'
           ? item
           : TELEMETRY_SAFE_TEXT_KEYS.has(cleanKey)
-            ? normalizeTelemetryString(item, 80)
+            ? normalizeTelemetryCanonicalText(item, 80)
             : TELEMETRY_REDACTED_TEXT
       ));
     } else if (typeof rawValue === 'object') {
       normalized[cleanKey] = normalizeTelemetryObject(rawValue, depth + 1);
     } else if (TELEMETRY_SAFE_TEXT_KEYS.has(cleanKey)) {
-      normalized[cleanKey] = normalizeTelemetryString(rawValue, 120);
+      normalized[cleanKey] = normalizeTelemetryCanonicalText(rawValue, 120);
     } else {
       normalized[cleanKey] = TELEMETRY_REDACTED_TEXT;
     }
@@ -5064,6 +5149,8 @@ function normalizeTelemetryOptionalPath(value) {
   if (!path || path[0] !== '/') return '';
   const segments = path.split('?')[0].split('#')[0].split('/').filter(Boolean);
   const safeSegments = segments.map((segment, index) => {
+    const clean = segment.trim().toLowerCase();
+    if (TELEMETRY_SAFE_ROUTE_SEGMENTS.has(clean)) return clean;
     const previous = normalizeTelemetryKey(segments[index - 1] || '', 48).toLowerCase();
     const looksDynamic = TELEMETRY_DYNAMIC_ROUTE_PARENTS.has(previous)
       || /^\d+$/.test(segment)
@@ -5071,9 +5158,8 @@ function normalizeTelemetryOptionalPath(value) {
       || /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9_-]{6,}$/.test(segment)
       || /^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(segment)
       || /^[A-Za-z0-9_-]{16,}$/.test(segment);
-    return looksDynamic
-      ? ':id'
-      : normalizeTelemetryKey(segment, 48).toLowerCase() || ':redacted';
+    if (looksDynamic) return ':id';
+    return ':redacted';
   });
   return `/${safeSegments.join('/')}` || '/';
 }
@@ -5196,124 +5282,178 @@ function getDateKey(date) {
   return date.toISOString().slice(0, 10);
 }
 
-function applyTelemetryAggregateWrites(batch, event, dateKey, options = {}) {
+function createTelemetryCounter() {
+  return {
+    totalEvents: 0,
+    pageViews: 0,
+    interactions: 0,
+    errors: 0,
+    securityEvents: 0,
+    signedInEvents: 0,
+    count: 0
+  };
+}
+
+function addTelemetryCounter(counter, event) {
+  const weight = Math.min(100, Math.max(1, Number(event.sampleWeight) || 1));
+  counter.totalEvents += weight;
+  counter.pageViews += event.name === 'page_view' ? weight : 0;
+  counter.interactions += event.name.startsWith('interaction_') ? weight : 0;
+  counter.errors += event.name.startsWith('js_') || event.name === 'app_load_error' ? weight : 0;
+  counter.securityEvents += event.name.startsWith('security_') ? weight : 0;
+  counter.signedInEvents += event.signedIn ? weight : 0;
+  counter.count += weight;
+  return counter;
+}
+
+function getOrCreateTelemetryCounter(map, key) {
+  if (!map.has(key)) map.set(key, createTelemetryCounter());
+  return map.get(key);
+}
+
+function applyTelemetryAggregateWrites(batch, events, dateKey, options = {}) {
+  if (!events.length) return;
   const db = admin.firestore();
   const increment = admin.firestore.FieldValue.increment;
   const serverTimestamp = admin.firestore.FieldValue.serverTimestamp;
-  const receivedAt = new Date(event.receivedAt);
+  const receivedAt = new Date(events[0].receivedAt);
   const aggregateExpiresAt = telemetryExpiry(receivedAt, TELEMETRY_AGGREGATE_RETENTION_DAYS);
   const sessionExpiresAt = telemetryExpiry(receivedAt, TELEMETRY_SESSION_RETENTION_DAYS);
-  const weight = Math.min(100, Math.max(1, Number(event.sampleWeight) || 1));
-  const isPageView = event.name === 'page_view';
-  const isInteraction = event.name.startsWith('interaction_');
-  const isError = event.name.startsWith('js_') || event.name === 'app_load_error';
-  const isSecurity = event.name.startsWith('security_');
+  const shard = getTelemetryAggregateShard(events);
+  const daily = createTelemetryCounter();
+  const pages = new Map();
+  const routes = new Map();
+  const names = new Map();
+  const sessions = new Map();
 
-  batch.set(db.collection('telemetryDaily').doc(dateKey), {
-    date: dateKey,
-    totalEvents: increment(weight),
-    pageViews: increment(isPageView ? weight : 0),
-    interactions: increment(isInteraction ? weight : 0),
-    errors: increment(isError ? weight : 0),
-    securityEvents: increment(isSecurity ? weight : 0),
-    signedInEvents: increment(event.signedIn ? weight : 0),
-    expiresAt: aggregateExpiresAt,
-    updatedAt: serverTimestamp()
-  }, { merge: true });
-
-  const pageDocId = `${dateKey}_${telemetryDocId(event.pagePath)}`;
-  batch.set(db.collection('telemetryPagesDaily').doc(pageDocId), {
-    date: dateKey,
-    pagePath: event.pagePath,
-    totalEvents: increment(weight),
-    pageViews: increment(isPageView ? weight : 0),
-    interactions: increment(isInteraction ? weight : 0),
-    errors: increment(isError ? weight : 0),
-    expiresAt: aggregateExpiresAt,
-    updatedAt: serverTimestamp()
-  }, { merge: true });
-
-  const routeDocId = `${dateKey}_${telemetryDocId(event.appRoute || event.pagePath)}`;
-  batch.set(db.collection('telemetryRoutesDaily').doc(routeDocId), {
-    date: dateKey,
-    appRoute: event.appRoute || event.pagePath,
-    totalEvents: increment(weight),
-    pageViews: increment(isPageView ? weight : 0),
-    interactions: increment(isInteraction ? weight : 0),
-    errors: increment(isError ? weight : 0),
-    expiresAt: aggregateExpiresAt,
-    updatedAt: serverTimestamp()
-  }, { merge: true });
-
-  const eventDocId = `${dateKey}_${telemetryDocId(event.name)}`;
-  batch.set(db.collection('telemetryEventsDaily').doc(eventDocId), {
-    date: dateKey,
-    name: event.name,
-    count: increment(weight),
-    expiresAt: aggregateExpiresAt,
-    updatedAt: serverTimestamp()
-  }, { merge: true });
-
-  const sessionUpdate = {
-    sessionId: event.sessionId,
-    visitorId: null,
-    userId: null,
-    signedIn: event.signedIn,
-    lastPage: event.pagePath,
-    lastRoute: event.appRoute || event.pagePath,
-    lastEventName: event.name,
-    // A session is a literal record of captured events. Sampling weights are
-    // estimates for population aggregates and would make this view claim one
-    // browser produced events that never happened.
-    eventCount: increment(1),
-    pageViews: increment(isPageView ? 1 : 0),
-    interactions: increment(isInteraction ? 1 : 0),
-    errors: increment(isError ? 1 : 0),
-    expiresAt: sessionExpiresAt,
-    updatedAt: serverTimestamp()
-  };
-
-  if (isPageView && !options.sessionExists) {
-    sessionUpdate.entryPage = event.pagePath;
-    sessionUpdate.entryRoute = event.appRoute || event.pagePath;
+  for (const event of events) {
+    addTelemetryCounter(daily, event);
+    addTelemetryCounter(getOrCreateTelemetryCounter(pages, event.pagePath), event);
+    addTelemetryCounter(getOrCreateTelemetryCounter(routes, event.appRoute || event.pagePath), event);
+    addTelemetryCounter(getOrCreateTelemetryCounter(names, event.name), event);
+    if (!sessions.has(event.sessionId)) sessions.set(event.sessionId, []);
+    sessions.get(event.sessionId).push(event);
   }
 
-  batch.set(db.collection('telemetrySessions').doc(event.sessionId), sessionUpdate, { merge: true });
-}
+  batch.set(db.collection('telemetryDaily').doc(`${dateKey}_${shard}`), {
+    date: dateKey,
+    shard,
+    totalEvents: increment(daily.totalEvents),
+    pageViews: increment(daily.pageViews),
+    interactions: increment(daily.interactions),
+    errors: increment(daily.errors),
+    securityEvents: increment(daily.securityEvents),
+    signedInEvents: increment(daily.signedInEvents),
+    expiresAt: aggregateExpiresAt,
+    updatedAt: serverTimestamp()
+  }, { merge: true });
 
-const FIRESTORE_WRITE_SAFETY_LIMIT = 450;
+  for (const [pagePath, counter] of pages) {
+    const pageDocId = `${dateKey}_${telemetryDocId(pagePath)}_${shard}`;
+    batch.set(db.collection('telemetryPagesDaily').doc(pageDocId), {
+      date: dateKey,
+      shard,
+      pagePath,
+      totalEvents: increment(counter.totalEvents),
+      pageViews: increment(counter.pageViews),
+      interactions: increment(counter.interactions),
+      errors: increment(counter.errors),
+      expiresAt: aggregateExpiresAt,
+      updatedAt: serverTimestamp()
+    }, { merge: true });
+  }
 
-async function commitTelemetryEvent(db, event, dateKey) {
-  const eventRef = db.collection('telemetryEvents').doc(event.id);
-  const sessionRef = db.collection('telemetrySessions').doc(event.sessionId);
-  return db.runTransaction(async (transaction) => {
-    const [existing, sessionSnap] = await Promise.all([
-      transaction.get(eventRef),
-      transaction.get(sessionRef)
-    ]);
-    if (existing.exists) {
-      return false;
+  for (const [appRoute, counter] of routes) {
+    const routeDocId = `${dateKey}_${telemetryDocId(appRoute)}_${shard}`;
+    batch.set(db.collection('telemetryRoutesDaily').doc(routeDocId), {
+      date: dateKey,
+      shard,
+      appRoute,
+      totalEvents: increment(counter.totalEvents),
+      pageViews: increment(counter.pageViews),
+      interactions: increment(counter.interactions),
+      errors: increment(counter.errors),
+      expiresAt: aggregateExpiresAt,
+      updatedAt: serverTimestamp()
+    }, { merge: true });
+  }
+
+  for (const [name, counter] of names) {
+    const eventDocId = `${dateKey}_${telemetryDocId(name)}_${shard}`;
+    batch.set(db.collection('telemetryEventsDaily').doc(eventDocId), {
+      date: dateKey,
+      shard,
+      name,
+      count: increment(counter.count),
+      expiresAt: aggregateExpiresAt,
+      updatedAt: serverTimestamp()
+    }, { merge: true });
+  }
+
+  for (const [sessionId, sessionEvents] of sessions) {
+    const lastEvent = sessionEvents[sessionEvents.length - 1];
+    const firstPageView = sessionEvents.find((event) => event.name === 'page_view');
+    const sessionUpdate = {
+      sessionId,
+      visitorId: null,
+      userId: null,
+      signedIn: lastEvent.signedIn,
+      lastPage: lastEvent.pagePath,
+      lastRoute: lastEvent.appRoute || lastEvent.pagePath,
+      lastEventName: lastEvent.name,
+      // Session counts describe captured events, not weighted estimates.
+      eventCount: increment(sessionEvents.length),
+      pageViews: increment(sessionEvents.filter((event) => event.name === 'page_view').length),
+      interactions: increment(sessionEvents.filter((event) => event.name.startsWith('interaction_')).length),
+      errors: increment(sessionEvents.filter((event) => event.name.startsWith('js_') || event.name === 'app_load_error').length),
+      expiresAt: sessionExpiresAt,
+      updatedAt: serverTimestamp()
+    };
+
+    if (firstPageView && !options.sessionExistsById?.get(sessionId)) {
+      sessionUpdate.entryPage = firstPageView.pagePath;
+      sessionUpdate.entryRoute = firstPageView.appRoute || firstPageView.pagePath;
     }
 
-    transaction.create(eventRef, event);
-    applyTelemetryAggregateWrites(transaction, event, dateKey, { sessionExists: sessionSnap.exists });
-    return true;
-  });
+    batch.set(db.collection('telemetrySessions').doc(sessionId), sessionUpdate, { merge: true });
+  }
 }
 
 async function commitTelemetryEvents(db, events, dateKey) {
-  const maxEventsPerChunk = Math.max(1, Math.floor(FIRESTORE_WRITE_SAFETY_LIMIT / TELEMETRY_WRITES_PER_EVENT));
-  let stored = 0;
-  let duplicates = 0;
-
-  for (let i = 0; i < events.length; i += maxEventsPerChunk) {
-    const chunk = events.slice(i, i + maxEventsPerChunk);
-    const results = await Promise.all(chunk.map((event) => commitTelemetryEvent(db, event, dateKey)));
-    stored += results.filter(Boolean).length;
-    duplicates += results.filter((result) => !result).length;
+  if (!Array.isArray(events) || events.length === 0) return { stored: 0, duplicates: 0 };
+  if (events.length > MAX_ATTESTED_EVENTS_PER_REQUEST) {
+    throw new RangeError('Telemetry persistence batch exceeds the request event budget.');
   }
 
-  return { stored, duplicates };
+  const eventRefs = events.map((event) => db.collection('telemetryEvents').doc(event.id));
+  const sessionRefsById = new Map(events.map((event) => [
+    event.sessionId,
+    db.collection('telemetrySessions').doc(event.sessionId)
+  ]));
+
+  return db.runTransaction(async (transaction) => {
+    // Read every deduplication/session prerequisite before the first write.
+    // One serialized transaction replaces up to fifteen parallel transactions
+    // contending on the same daily and session documents.
+    const eventSnapshots = await Promise.all(eventRefs.map((ref) => transaction.get(ref)));
+    const sessionEntries = [...sessionRefsById.entries()];
+    const sessionSnapshots = await Promise.all(sessionEntries.map(([, ref]) => transaction.get(ref)));
+    const sessionExistsById = new Map(sessionEntries.map(([sessionId], index) => [
+      sessionId,
+      sessionSnapshots[index].exists
+    ]));
+    const storedEvents = events.filter((_event, index) => !eventSnapshots[index].exists);
+
+    storedEvents.forEach((event) => {
+      transaction.create(db.collection('telemetryEvents').doc(event.id), event);
+    });
+    applyTelemetryAggregateWrites(transaction, storedEvents, dateKey, { sessionExistsById });
+
+    return {
+      stored: storedEvents.length,
+      duplicates: events.length - storedEvents.length
+    };
+  });
 }
 
 const calendarServiceAccount =
@@ -12803,12 +12943,7 @@ exports.collectTelemetry = functions
   .runWith({ timeoutSeconds: 15, memory: '256MB', maxInstances: 10 })
   .https
   .onRequest(async (req, res) => {
-    writeCorsHeaders(req, res, 'POST,OPTIONS', telemetryAllowedOriginSet);
-
-    if (!isAllowedTelemetryOrigin(req.headers.origin)) {
-      res.status(403).json({ ok: false, error: 'Origin not allowed' });
-      return;
-    }
+    writeTelemetryCorsHeaders(req, res, 'Content-Type, X-Firebase-AppCheck');
 
     if (req.method === 'OPTIONS') {
       res.status(204).send('');
@@ -12857,13 +12992,19 @@ exports.collectTelemetry = functions
         (token) => admin.appCheck().verifyToken(token)
       );
       const policy = getTelemetryIngressPolicy(appCheck.status);
-      if (!policy.verified && !checkTelemetryUnattestedBurstRateLimit({ ip: '203.0.113.254' }).allowed) {
-        res.status(204).send('');
-        return;
-      }
       let rateLimit;
       try {
-        rateLimit = await getTelemetryRateLimiter(policy)(getTelemetryRateLimitBoundary(appCheck));
+        if (policy.verified) {
+          const boundary = getTelemetryRateLimitBoundary(appCheck);
+          rateLimit = boundary
+            ? await getVerifiedTelemetryRateLimiter(policy)(boundary)
+            : { allowed: false };
+        } else {
+          // Observe-mode clients get a complete ordinary batch, while this
+          // process-local client budget and maxInstances bound unauthenticated
+          // cost without persisting any raw network identifier.
+          rateLimit = checkTelemetryUnattestedRateLimit(req);
+        }
       } catch (error) {
         functions.logger.error('Telemetry ingress control failed.', {
           eventType: 'operational_telemetry_ingress_control_failure',
@@ -12906,10 +13047,10 @@ exports.collectTelemetry = functions
         errorCode,
         contentLengthBucket: rawSize > 16 * 1024 ? 'large' : rawSize > 4 * 1024 ? 'medium' : 'small'
       });
-      res.status(500).json({
-        ok: false,
-        error: 'Telemetry collection failed'
-      });
+      // Collection is passive. Once a valid request reaches persistence, the
+      // response is terminal even when storage is unavailable; product flows
+      // must not wait on or amplify an observability outage.
+      res.status(204).send('');
     }
   });
 

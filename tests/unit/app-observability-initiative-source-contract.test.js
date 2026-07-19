@@ -37,7 +37,7 @@ describe('app observability initiative source contract', () => {
     it('keeps the anonymous server telemetry collector available for app field metrics', () => {
         expect(functionsSource).toContain('exports.collectTelemetry = functions');
         expect(functionsSource).toContain('commitTelemetryEvents(db, events, dateKey)');
-        expect(functionsSource).toContain("db.collection('telemetryDaily').doc(dateKey)");
+        expect(functionsSource).toContain("db.collection('telemetryDaily').doc(`${dateKey}_${shard}`)");
         expect(functionsSource).toContain("db.collection('telemetryEvents').doc(event.id)");
         expect(functionsSource).toContain("hashTelemetryIdentifier('session'");
         expect(functionsSource).toContain('visitorId: null');
