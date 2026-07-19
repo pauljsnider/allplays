@@ -54,6 +54,11 @@ const navItems: NavItem[] = [
 ];
 
 const familyNavItem: NavItem = { label: 'Family', path: '/parent-tools', icon: UsersRound };
+const mobileSignedInNavItems: NavItem[] = [
+  ...navItems.slice(0, 4),
+  familyNavItem,
+  navItems[4]
+];
 const desktopNavItems: NavItem[] = [
   ...navItems.slice(0, -1),
   familyNavItem,
@@ -275,7 +280,7 @@ export function AppShell({ auth, children }: AppShellProps) {
     : hasSignedInSession
       ? 'Signed in'
       : 'Explore ALL PLAYS';
-  const activeNavItems = hasSignedInSession ? navItems : publicNavItems;
+  const activeNavItems = hasSignedInSession ? mobileSignedInNavItems : publicNavItems;
   const activeDesktopNavItems = hasSignedInSession ? desktopNavItems : publicNavItems;
   const commonAddWorkflows = commonAddWorkflowIds
     .map((id) => addWorkflows.find((workflow) => workflow.id === id))
