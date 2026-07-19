@@ -8,6 +8,7 @@ Issue: #4061
 - Full React app unit suite: 138 files and 1,407 tests passed.
 - Focused navigation/page suite: 5 files and 96 tests passed after the final Discover interaction changes.
 - Relevant Playwright smoke suite: Schedule, Messages, My Teams, Profile, Discover, and Family coverage passed. Two My Teams locators were scoped to the team-detail tab bar after the new shell-level More control made their old global selectors ambiguous; both regressions passed after the update.
+- Linux visual baselines: the repository's pinned Playwright workflow regenerated all five deterministic screenshots successfully. Only the three intentionally changed Discover, Messages, and My Teams baselines differed; each was inspected at native resolution before commit.
 - ESLint: 0 errors. The command reports 2,547 existing repository warnings.
 - `git diff --check`: passed.
 
