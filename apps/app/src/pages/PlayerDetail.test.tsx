@@ -91,6 +91,7 @@ function buildDetailData(overrides: Record<string, any> = {}) {
     team: { id: 'team-current', name: 'Current Team' },
     access: {
       isLinkedParent: true,
+      isTeamParent: true,
       isTeamStaff: false,
       canEditRosterDetails: false,
       canEditCustomRosterFields: false
@@ -109,6 +110,7 @@ function buildDetailData(overrides: Record<string, any> = {}) {
     certificates: [],
     trackingSummary: [],
     privateProfile: null,
+    familyContacts: [],
     incentives: {
       rules: [],
       currentRules: [],
@@ -249,6 +251,36 @@ describe('PlayerDetail athlete profile season selection', () => {
     await waitFor(() => {
       expect(playerServiceMocks.loadParentPlayerAthleteProfile).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it('shows already linked family contacts on the Family profile tab', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText }
+    });
+    playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData({
+      familyContacts: [
+        { id: 'mom-1', name: 'Mom Snider', email: 'mom@allplays.ai', phone: '', relation: 'Mom', status: 'linked' },
+        { id: 'dad-1', name: 'Dad Snider', email: 'dad@allplays.ai', phone: '', relation: 'Dad', status: 'linked' }
+      ]
+    }));
+
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Family' }));
+
+    expect(await screen.findByText('Linked Family')).toBeTruthy();
+    expect(screen.getByText('mom@allplays.ai')).toBeTruthy();
+    expect(screen.getByText('dad@allplays.ai')).toBeTruthy();
+    expect(screen.getAllByText('Linked')).toHaveLength(2);
+    fireEvent.click(screen.getByRole('button', { name: 'Copy mom@allplays.ai' }));
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith('mom@allplays.ai');
+    });
+    expect(screen.getByText('Invite Co-Parent')).toBeTruthy();
   });
 
   it('lazy-loads video clips once when the Video Clips report opens', async () => {
