@@ -159,10 +159,8 @@ describe('HelpArticle', () => {
     it('is registered as protected help portal routes', () => {
         const appSource = readFileSync('apps/app/src/App.tsx', 'utf8');
 
-        expect(appSource).toContain("const HelpPortal = lazy(() => import('./pages/HelpPortal').then((module) => ({ default: module.HelpPortal })));"
-        );
-        expect(appSource).toContain("const HelpArticle = lazy(() => import('./pages/HelpArticle').then((module) => ({ default: module.HelpArticle })));"
-        );
+        expect(appSource).toContain("const HelpPortal = lazyNamedPage(() => import('./pages/HelpPortal'), 'HelpPortal');");
+        expect(appSource).toContain("const HelpArticle = lazyNamedPage(() => import('./pages/HelpArticle'), 'HelpArticle');");
         // HelpPortal takes auth as a prop (like every other page) instead of calling
         // useAuth() itself, so navigating here doesn't mount a second, redundant
         // auth listener alongside the one App.tsx already set up.
