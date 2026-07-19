@@ -902,6 +902,13 @@ async function runDeferredInboxPreviewQueue<T>(items: T[], worker: (item: T) => 
   }));
 }
 
+function isPermissionDeniedError(error: unknown): boolean {
+  const code = typeof error === 'object' && error !== null && 'code' in error
+    ? String((error as { code?: unknown }).code || '')
+    : '';
+  return code === 'permission-denied' || code === 'unauthenticated' || code.endsWith('/permission-denied');
+}
+
 export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoadOptions = {}): Promise<ChatInboxLoadResult> {
   if (!user?.uid) return { teams: [] };
   const includeLastMessages = options.includeLastMessages !== false;
@@ -914,10 +921,31 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
 
   let teams: Record<string, any>[] = [];
   try {
-    const [memberTeams, parentTeams] = await withTimeout(Promise.all([
+    const [memberTeamsResult, parentTeamsResult] = await withTimeout(Promise.allSettled([
       getUserTeamsWithAccess(user.uid, user.email || profile.email || ''),
       getParentTeams(user.uid)
     ]), 'Chat teams load');
+    if (memberTeamsResult.status === 'rejected' && parentTeamsResult.status === 'rejected') {
+      throw memberTeamsResult.reason || parentTeamsResult.reason;
+    }
+    if (memberTeamsResult.status === 'rejected') {
+      if (!isPermissionDeniedError(memberTeamsResult.reason)) {
+        throw memberTeamsResult.reason;
+      }
+      logger.warn('Chat member team load failed; using parent teams only.', { error: memberTeamsResult.reason });
+    }
+    if (parentTeamsResult.status === 'rejected') {
+      if (!isPermissionDeniedError(parentTeamsResult.reason)) {
+        throw parentTeamsResult.reason;
+      }
+      logger.warn('Chat parent team load failed; using member teams only.', { error: parentTeamsResult.reason });
+    }
+    const memberTeams = memberTeamsResult.status === 'fulfilled' && Array.isArray(memberTeamsResult.value)
+      ? memberTeamsResult.value
+      : [];
+    const parentTeams = parentTeamsResult.status === 'fulfilled' && Array.isArray(parentTeamsResult.value)
+      ? parentTeamsResult.value
+      : [];
     const map = new Map<string, Record<string, any>>();
     [...memberTeams, ...parentTeams].forEach((team: any) => {
       if (team?.id) map.set(team.id, team);

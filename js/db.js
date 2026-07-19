@@ -1780,12 +1780,22 @@ export async function getUserTeamsWithAccess(userId, email, options = {}) {
         ...(Array.isArray(options.ownerEmailCandidates) ? options.ownerEmailCandidates : [])
     ].map((value) => String(value || '').trim()).filter(Boolean);
     const normalizedEmail = ownerEmailCandidates[0] ? ownerEmailCandidates[0].toLowerCase() : '';
+    const optionalTeamQuery = (queryPromise, label) => queryPromise.catch((error) => {
+        console.warn(`Optional team access query failed (${label}).`, error);
+        return { docs: [] };
+    });
     const ownerEmailQueries = ownerEmailCandidates.length
         ? [...new Set([...ownerEmailCandidates, ...ownerEmailCandidates.map((value) => value.toLowerCase())])]
-            .map((ownerEmail) => getDocs(query(collection(db, "teams"), where("ownerEmail", "==", ownerEmail))))
+            .map((ownerEmail) => optionalTeamQuery(
+                getDocs(query(collection(db, "teams"), where("ownerEmail", "==", ownerEmail))),
+                `ownerEmail:${ownerEmail}`
+            ))
         : [];
     const ownerEmailLowerQuery = normalizedEmail
-        ? getDocs(query(collection(db, "teams"), where("ownerEmailLower", "==", normalizedEmail)))
+        ? optionalTeamQuery(
+            getDocs(query(collection(db, "teams"), where("ownerEmailLower", "==", normalizedEmail))),
+            `ownerEmailLower:${normalizedEmail}`
+        )
         : Promise.resolve({ docs: [] });
     const [ownedSnap, adminSnap, ...ownerEmailSnaps] = await Promise.all([
         getDocs(query(collection(db, "teams"), where("ownerId", "==", userId))),

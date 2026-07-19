@@ -10,17 +10,17 @@ describe('RSVP precedence cache delivery', () => {
         const dbSource = readRepoFile('js/db.js');
         const breakdownSource = readRepoFile('js/game-day-rsvp-breakdown.js');
         const runtimeSources = {
-            'accept-invite.html': 'db.js?v=114',
-            'calendar.html': 'db.js?v=114',
-            'edit-schedule.html': 'db.js?v=114',
-            'game-day.html': 'db.js?v=114',
-            'login.html': 'db.js?v=114',
-            'parent-dashboard.html': 'db.js?v=114',
-            'team.html': 'db.js?v=114',
-            'team-chat.html': 'db.js?v=114',
-            'js/auth.js': 'db.js?v=114',
-            'profile.html': 'db.js?v=114',
-            'js/team-media.js': 'db.js?v=114'
+            'accept-invite.html': 'db.js?v=115',
+            'calendar.html': 'db.js?v=115',
+            'edit-schedule.html': 'db.js?v=115',
+            'game-day.html': 'db.js?v=115',
+            'login.html': 'db.js?v=115',
+            'parent-dashboard.html': 'db.js?v=115',
+            'team.html': 'db.js?v=115',
+            'team-chat.html': 'db.js?v=115',
+            'js/auth.js': 'db.js?v=115',
+            'profile.html': 'db.js?v=115',
+            'js/team-media.js': 'db.js?v=115'
         };
 
         for (const [path, expectedVersion] of Object.entries(runtimeSources)) {
@@ -33,17 +33,17 @@ describe('RSVP precedence cache delivery', () => {
 
     it('versions every deployed auth consumer after auth adopts the fresh db key', () => {
         const authConsumers = {
-            'accept-invite.html': 'auth.js?v=126',
-            'dashboard.html': 'auth.js?v=126',
-            'edit-team.html': 'auth.js?v=126',
-            'login.html': 'auth.js?v=126',
-            'profile.html': 'auth.js?v=126',
-            'parent-dashboard.html': 'auth.js?v=126',
-            'js/admin.js': 'auth.js?v=126',
-            'js/live-game.js': 'auth.js?v=126',
-            'js/live-tracker.js': 'auth.js?v=126',
-            'js/team-media.js': 'auth.js?v=126',
-            'js/utils.js': 'auth.js?v=126'
+            'accept-invite.html': 'auth.js?v=127',
+            'dashboard.html': 'auth.js?v=127',
+            'edit-team.html': 'auth.js?v=127',
+            'login.html': 'auth.js?v=127',
+            'profile.html': 'auth.js?v=127',
+            'parent-dashboard.html': 'auth.js?v=127',
+            'js/admin.js': 'auth.js?v=127',
+            'js/live-game.js': 'auth.js?v=127',
+            'js/live-tracker.js': 'auth.js?v=127',
+            'js/team-media.js': 'auth.js?v=127',
+            'js/utils.js': 'auth.js?v=127'
         };
 
         for (const [path, expectedVersion] of Object.entries(authConsumers)) {
