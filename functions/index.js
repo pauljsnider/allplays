@@ -8179,6 +8179,7 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
               disputeStatus: reversal.disputeStatus || 'none',
               disputeEventCreated: Number(reversal.disputeEventCreated || 0),
               refundEventCreated: Number(reversal.refundEventCreated || 0),
+              lastStripeEventId: reversal.lastStripeEventId || null,
               reversalState: reversal
             };
             const aggregateFinancialState = getTeamFeeAggregateFinancialState((chargeLedgerQuerySnap.docs || []).map((docSnap) => (

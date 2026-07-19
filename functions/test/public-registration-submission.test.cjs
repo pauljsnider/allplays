@@ -3116,6 +3116,10 @@ test('team fee settlement stages exact Charge authority until an earlier dispute
     assert.equal(firestore.snapshot(`${recipientPath}/stripeCharges/${charge.id}`).settlementProjected, false);
     stripeState.webhookEvent = reversalEvent;
     assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
+    assert.equal(
+        firestore.snapshot(`${recipientPath}/stripeCharges/${charge.id}`).lastStripeEventId,
+        reversalEvent.id
+    );
     stripeState.webhookEvent = {
         id: 'evt_team_fee_paid_before_empty_metadata_retry', type: 'checkout.session.completed', created: 100,
         data: { object: { ...clone(session), status: 'complete', payment_status: 'paid' } }
@@ -3131,6 +3135,10 @@ test('team fee settlement stages exact Charge authority until an earlier dispute
     };
     assert.equal((await deliverStripeWebhook(mod)).statusCode, 200);
     assert.equal(firestore.snapshot(recipientPath).stripeFinancialStatus, 'paid');
+    assert.equal(
+        firestore.snapshot(`${recipientPath}/stripeCharges/${charge.id}`).lastStripeEventId,
+        'evt_team_fee_empty_metadata_dispute_won'
+    );
 
     const refundedCharge = { ...charge, amount_refunded: 7500, disputed: false };
     stripeState.charges.set(charge.id, refundedCharge);
@@ -3142,6 +3150,10 @@ test('team fee settlement stages exact Charge authority until an earlier dispute
     assert.equal(firestore.snapshot(recipientPath).stripeFinancialStatus, 'refunded');
     assert.equal(firestore.snapshot(recipientPath).paidAmountCents, 0);
     assert.equal(firestore.snapshot(`${recipientPath}/stripeCharges/${charge.id}`).refundedAmountCents, 7500);
+    assert.equal(
+        firestore.snapshot(`${recipientPath}/stripeCharges/${charge.id}`).lastStripeEventId,
+        'evt_team_fee_empty_metadata_dispute_won'
+    );
 });
 
 test('team fee settlement projects the latest cumulative Charge refund without temporary paid state', async () => {
