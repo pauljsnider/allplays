@@ -42,6 +42,7 @@ vi.mock('./adapters/legacyScheduleDb', () => ({
   getPracticeSessionByEvent: vi.fn(),
   getPracticeSessions: vi.fn(),
   getPlayers: vi.fn(),
+  getMyRsvps: vi.fn(),
   getRsvpBreakdownByPlayer: vi.fn(),
   getRsvps: vi.fn(),
   getRsvpSummaries: vi.fn(),
@@ -214,7 +215,7 @@ vi.mock('./appDataCache', () => ({
   getParentScheduleSummaryCacheKey: (userId: string) => `app-schedule-summary:${userId}`
 }));
 
-import { addGame, addPractice, broadcastLiveEvent, buildSingleLegacyTournamentGameDocument, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, claimOpenOfficiatingSlot, clearOccurrenceOverride, releaseAssignmentClaim, respondToOfficiatingAssignment, updateEvent, updateGame, updateOccurrence, getAssignmentClaims, getGame, getGames, getPlayers, getPracticeSession, getPracticeSessions, getRsvpBreakdownByPlayer, getRsvpSummaries, getRsvps, getStaffTeams, getTeam, getTeams, listRideOffersForEvent, submitRsvp, submitRsvpForPlayer, updatePracticeAttendance, getDoc, getDocs } from './adapters/legacyScheduleDb';
+import { addGame, addPractice, broadcastLiveEvent, buildSingleLegacyTournamentGameDocument, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, claimOpenOfficiatingSlot, clearOccurrenceOverride, releaseAssignmentClaim, respondToOfficiatingAssignment, updateEvent, updateGame, updateOccurrence, getAssignmentClaims, getGame, getGames, getMyRsvps, getPlayers, getPracticeSession, getPracticeSessions, getRsvpBreakdownByPlayer, getRsvpSummaries, getRsvps, getStaffTeams, getTeam, getTeams, listRideOffersForEvent, submitRsvp, submitRsvpForPlayer, updatePracticeAttendance, getDoc, getDocs } from './adapters/legacyScheduleDb';
 import { getNativeAuthIdToken } from './authService';
 import { expandRecurrence, fetchAndParseCalendar, isTeamActive, mergeAssignmentsWithClaims } from './adapters/legacyScheduleHelpers';
 import { getCachedAppData, invalidateCachedAppData, loadCachedAppData } from './appDataCache';
@@ -1224,7 +1225,7 @@ describe('parent schedule detail hydration', () => {
     vi.clearAllMocks();
     vi.mocked(loadCachedAppData).mockImplementation((_key: string, loader: () => Promise<unknown>) => loader());
     vi.mocked(getRsvpSummaries).mockResolvedValue(new Map() as any);
-    vi.mocked(getRsvps).mockResolvedValue([
+    vi.mocked(getMyRsvps).mockResolvedValue([
       { id: 'parent-1__player-1', userId: 'parent-1', playerId: 'player-1', response: 'going' }
     ] as any);
     vi.mocked(getDoc).mockImplementation(async (ref: any) => {
@@ -1249,8 +1250,9 @@ describe('parent schedule detail hydration', () => {
     await hydrateParentScheduleDetails({ children: [], events: [nearEvent, futureEvent] }, user);
 
     expect(getRsvpSummaries).not.toHaveBeenCalled();
-    expect(getRsvps).toHaveBeenCalledWith('team-1', 'near-game');
-    expect(getRsvps).not.toHaveBeenCalledWith('team-1', 'future-game');
+    expect(getMyRsvps).toHaveBeenCalledWith('team-1', 'near-game', 'parent-1', ['player-1']);
+    expect(getMyRsvps).not.toHaveBeenCalledWith('team-1', 'future-game', 'parent-1', ['player-1']);
+    expect(getRsvps).not.toHaveBeenCalled();
     expect(nearEvent.myRsvp).toBe('going');
     expect(nearEvent.myRsvpNote).toBe('Will be there.');
     expect(nearEvent.myRsvpNoteHydrated).toBe(true);
@@ -1265,7 +1267,7 @@ describe('parent schedule detail hydration', () => {
   });
 
   it('hydrates a surviving child RSVP and note ahead of a newer-clock family document', async () => {
-    vi.mocked(getRsvps).mockResolvedValue([
+    vi.mocked(getMyRsvps).mockResolvedValue([
       {
         id: 'parent-1',
         userId: 'parent-1',
@@ -1376,7 +1378,8 @@ describe('parent schedule detail hydration', () => {
     await hydrateParentScheduleDetails({ children: [], events: [nearEvent] }, user);
 
     expect(getRsvpSummaries).not.toHaveBeenCalled();
-    expect(getRsvps).toHaveBeenCalledWith('team-1', 'near-game');
+    expect(getMyRsvps).toHaveBeenCalledWith('team-1', 'near-game', 'parent-1', ['player-1']);
+    expect(getRsvps).not.toHaveBeenCalled();
     expect(nearEvent.rsvpSummary).toEqual({
       going: 8,
       maybe: 1,
@@ -1405,11 +1408,12 @@ describe('parent schedule detail hydration', () => {
     }, user);
 
     expect(loadCachedAppData).toHaveBeenCalledWith(
-      'event-details:team-1:game-1',
+      'event-details:team-1:game-1:own:parent-1:player-1',
       expect.any(Function),
       expect.objectContaining({ persist: false, ttlMs: 30000 })
     );
-    expect(getRsvps).toHaveBeenCalledTimes(1);
+    expect(getMyRsvps).toHaveBeenCalledTimes(1);
+    expect(getRsvps).not.toHaveBeenCalled();
     expect(listRideOffersForEvent).toHaveBeenCalledTimes(1);
     expect(getAssignmentClaims).toHaveBeenCalledTimes(1);
   });
@@ -2407,6 +2411,62 @@ describe('parent family RSVP submission', () => {
     expect(invalidateCachedAppData).not.toHaveBeenCalled();
   });
 
+  it('strips email identity fields from native single-child RSVP and note writes', async () => {
+    (globalThis as any).window = {
+      location: { protocol: 'capacitor:' },
+      setTimeout,
+      clearTimeout
+    } as any;
+    (globalThis as any).fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) } as any);
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token' as any);
+    vi.mocked(submitRsvpForPlayer).mockRejectedValueOnce(new Error('native fallback'));
+    const emailDisplayUser = { ...user, displayName: user.email };
+
+    await expect(submitParentScheduleRsvp(
+      baseEvent,
+      emailDisplayUser as any,
+      'going',
+      'On time'
+    )).resolves.toBeNull();
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+    vi.mocked(globalThis.fetch).mock.calls.forEach(([requestUrl, requestInit]) => {
+      const payload = JSON.parse(String((requestInit as RequestInit).body || '{}'));
+      expect(String(requestUrl)).toContain('updateMask.fieldPaths=parentEmail');
+      expect(String(requestUrl)).toContain('updateMask.fieldPaths=email');
+      expect(String(requestUrl)).toContain('updateMask.fieldPaths=guardianEmail');
+      expect(payload.fields.displayName).toEqual({ nullValue: 'NULL_VALUE' });
+      expect(payload.fields).not.toHaveProperty('parentEmail');
+      expect(payload.fields).not.toHaveProperty('email');
+      expect(payload.fields).not.toHaveProperty('guardianEmail');
+    });
+  });
+
+  it('bounds native single-child RSVP and note display names', async () => {
+    (globalThis as any).window = {
+      location: { protocol: 'capacitor:' },
+      setTimeout,
+      clearTimeout
+    } as any;
+    (globalThis as any).fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) } as any);
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token' as any);
+    vi.mocked(submitRsvpForPlayer).mockRejectedValueOnce(new Error('native fallback'));
+    const longDisplayUser = { ...user, displayName: 'P'.repeat(240) };
+
+    await expect(submitParentScheduleRsvp(
+      baseEvent,
+      longDisplayUser as any,
+      'going'
+    )).resolves.toBeNull();
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+    vi.mocked(globalThis.fetch).mock.calls.forEach(([, requestInit]) => {
+      const payload = JSON.parse(String((requestInit as RequestInit).body || '{}'));
+      expect(payload.fields.displayName.stringValue).toHaveLength(160);
+      expect(payload.fields.displayName.stringValue).not.toContain('@');
+    });
+  });
+
   it('retains a successful RSVP when a fast schedule reload has not hydrated server details yet', async () => {
     const sessionEvent = {
       ...baseEvent,
@@ -2718,11 +2778,12 @@ describe('parent family RSVP submission', () => {
     (globalThis as any).fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) } as any);
     vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token' as any);
     vi.mocked(submitRsvp).mockRejectedValueOnce(new Error('native fallback'));
+    const emailDisplayUser = { ...user, displayName: user.email };
 
     await expect(submitParentScheduleRsvpForChildren([
       baseEvent,
       { ...baseEvent, childId: 'player-2' }
-    ], user as any, 'going', 'Both need a ride')).resolves.toBeNull();
+    ], emailDisplayUser as any, 'going', 'Both need a ride')).resolves.toBeNull();
 
     expect(globalThis.fetch).toHaveBeenCalledTimes(1);
     const [requestUrl, requestInit] = vi.mocked(globalThis.fetch).mock.calls[0] as [string, RequestInit];
@@ -2732,6 +2793,13 @@ describe('parent family RSVP submission', () => {
     expect(payload.writes).toHaveLength(6);
     expect(payload.writes[0].update.name).toBe('projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1/rsvps/parent-1');
     expect(payload.writes[1].update.name).toBe('projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1/rsvpNotes/parent-1');
+    payload.writes.slice(0, 2).forEach((write: any) => {
+      expect(write.update).not.toHaveProperty('updateMask');
+      expect(write.update.fields.displayName).toEqual({ nullValue: 'NULL_VALUE' });
+      expect(write.update.fields).not.toHaveProperty('parentEmail');
+      expect(write.update.fields).not.toHaveProperty('email');
+      expect(write.update.fields).not.toHaveProperty('guardianEmail');
+    });
     expect(payload.writes.slice(2)).toEqual([
       { delete: 'projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1/rsvps/parent-1__player-1' },
       { delete: 'projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1/rsvpNotes/parent-1__player-1' },

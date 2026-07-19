@@ -74,6 +74,12 @@ type FamilyShareScheduleProjection = {
   teams: FamilyShareScheduleTeamProjection[];
 };
 
+type FamilyShareViewProjection = FamilyShareScheduleProjection & {
+  presentation: { label: string; expiresAt: string | null };
+  externalEvents: FamilyShareEvent[];
+  calendarWarnings: string[];
+};
+
 type FamilyShareScheduleTeamProjection = {
   teamId: string;
   teamName: string;
@@ -89,6 +95,30 @@ export async function loadFamilyShareView(tokenId: string): Promise<FamilyShareV
   const normalizedTokenId = compactString(tokenId);
   if (!normalizedTokenId) {
     throw new FamilyShareTokenError('missing', 'Family share link is missing a token.');
+  }
+
+  const serverProjection = await loadFamilyShareViewProjection(normalizedTokenId);
+  if (serverProjection) {
+    const calendarWarnings = [...serverProjection.calendarWarnings];
+    const projectedEvents = await buildCombinedFamilySchedule(
+      serverProjection.children,
+      [],
+      calendarWarnings,
+      serverProjection.teams
+    );
+    const events = mergeFamilyEvents([...projectedEvents, ...serverProjection.externalEvents])
+      .sort((a, b) => a.date.getTime() - b.date.getTime());
+    return {
+      tokenId: normalizedTokenId,
+      label: serverProjection.presentation.label || 'Family Page',
+      expiresAt: toDate(serverProjection.presentation.expiresAt),
+      children: serverProjection.children,
+      teams: buildFamilyTeams(serverProjection.children),
+      events,
+      upcomingEvents: getUpcomingEvents(events),
+      recentResults: getRecentResults(events),
+      calendarWarnings
+    };
   }
 
   let token: Record<string, any>;
@@ -136,6 +166,68 @@ export async function loadFamilyShareView(tokenId: string): Promise<FamilyShareV
     recentResults,
     calendarWarnings
   };
+}
+
+async function loadFamilyShareViewProjection(tokenId: string): Promise<FamilyShareViewProjection | null> {
+  try {
+    const callable = httpsCallable(functions, 'getFamilyShareView');
+    const response = await callable({ tokenId });
+    const data = asRecord(response?.data);
+    if (Number(data.projectionVersion) !== 2) return null;
+    const presentation = asRecord(data.presentation);
+    return {
+      presentation: {
+        label: compactString(presentation.label) || 'Family Page',
+        expiresAt: compactString(presentation.expiresAt) || null
+      },
+      children: normalizeFamilyShareChildren(data.children),
+      teams: normalizeScheduleProjectionTeams(data.teams),
+      externalEvents: normalizeProjectedFamilyEvents(data.externalEvents),
+      calendarWarnings: uniqueStrings(Array.isArray(data.calendarWarnings) ? data.calendarWarnings : [])
+    };
+  } catch (error: any) {
+    const reason = compactString(error?.details?.reason);
+    if (['invalid', 'revoked', 'expired'].includes(reason)) {
+      const messages = {
+        invalid: 'This family share link is no longer valid.',
+        revoked: 'This family share link has been revoked.',
+        expired: 'This family share link has expired.'
+      } as const;
+      throw new FamilyShareTokenError(reason as 'invalid' | 'revoked' | 'expired', messages[reason as keyof typeof messages]);
+    }
+    // During the staged rollout, older backends do not yet expose the view
+    // projection. The legacy path remains passive until server/client parity is
+    // verified; the Firestore rule closure then makes that fallback unreadable.
+    return null;
+  }
+}
+
+function normalizeProjectedFamilyEvents(value: unknown): FamilyShareEvent[] {
+  return (Array.isArray(value) ? value : []).flatMap((entry) => {
+    const event = asRecord(entry);
+    const date = toDate(event.date);
+    const type = event.type === 'practice' ? 'practice' : 'game';
+    if (!date) return [];
+    return [{
+      eventKey: compactString(event.eventKey) || `${compactString(event.teamId)}:${compactString(event.id)}:${date.toISOString()}:${type}`,
+      id: compactString(event.id),
+      teamId: compactString(event.teamId),
+      teamName: compactString(event.teamName) || 'Shared calendar',
+      type,
+      date,
+      title: compactString(event.title),
+      opponent: compactString(event.opponent),
+      location: compactString(event.location) || 'TBD',
+      status: compactString(event.status) || 'scheduled',
+      isCancelled: event.isCancelled === true,
+      isDbGame: false,
+      childIds: uniqueStrings(Array.isArray(event.childIds) ? event.childIds : []),
+      childNames: uniqueStrings(Array.isArray(event.childNames) ? event.childNames : []),
+      homeScore: null,
+      awayScore: null,
+      sourceLabel: compactString(event.sourceLabel) || 'Shared calendar'
+    }];
+  });
 }
 
 export function normalizeFamilyShareChildren(children: unknown): FamilyShareChild[] {

@@ -18,7 +18,7 @@ export function createParentDashboardRsvpController({
             const isSinglePlayerSelection = playerIds.length === 1;
             const currentUser = typeof getCurrentUser === 'function' ? getCurrentUser() : null;
             const currentUserId = typeof getCurrentUserId === 'function' ? getCurrentUserId() : '';
-            const displayName = currentUser?.displayName || currentUser?.email;
+            const displayName = currentUser?.displayName || null;
             const summary = isSinglePlayerSelection
                 ? await submitRsvpForPlayer(teamId, gameId, currentUserId, {
                     displayName,

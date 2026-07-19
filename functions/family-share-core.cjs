@@ -67,10 +67,21 @@ async function resolveFamilyShareChildrenFromOwnerProfile(profile = {}, loaders 
   }
 
   const children = [];
-  const links = collectOwnerParentLinks(profile);
+  const allowedKeys = loaders.allowedKeys instanceof Set
+    ? loaders.allowedKeys
+    : Array.isArray(loaders.allowedKeys)
+      ? new Set(loaders.allowedKeys.map(compactString).filter(Boolean))
+      : null;
+  const maxChildren = Number.isFinite(loaders.maxChildren) && loaders.maxChildren >= 0
+    ? Math.floor(loaders.maxChildren)
+    : Number.POSITIVE_INFINITY;
+  const links = collectOwnerParentLinks(profile).filter((link) => (
+    !allowedKeys || allowedKeys.has(`${link.teamId}::${link.playerId}`)
+  ));
   const teamCache = new Map();
 
   for (const link of links) {
+    if (children.length >= maxChildren) break;
     if (!teamCache.has(link.teamId)) {
       teamCache.set(link.teamId, await loadTeam(link.teamId));
     }

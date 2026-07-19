@@ -86,7 +86,7 @@ export function createGameDayRsvpController({
         try {
             if (statusEl) statusEl.textContent = 'Saving availability...';
             await submitRsvpForPlayer(state.teamId, state.gameId, state.user?.uid, {
-                displayName: state.user?.displayName || state.user?.email || null,
+                displayName: state.user?.displayName || null,
                 playerId,
                 response
             });

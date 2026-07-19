@@ -29,7 +29,7 @@ export async function updateUserProfile() {}
 export async function getUserProfile() { return { parentOf: clone(children) }; }
 export async function submitRsvp() {}
 export async function submitRsvpForPlayer() {}
-export async function getRsvps() { return []; }
+export async function getMyRsvps() { return []; }
 export async function getRsvpSummaries() { return new Map(); }
 export async function createRideOffer() {}
 export async function listRideOffersForEvent() { return []; }

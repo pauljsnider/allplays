@@ -86,12 +86,12 @@ describe('ICS recurring tracking ids', () => {
     });
 
     it('bumps utils cache tokens anywhere the new tracking exports are imported', () => {
-        expect(readEditSchedule()).toContain("./js/utils.js?v=17");
-        expect(readParentDashboard()).toContain("./js/utils.js?v=17");
-        expect(readFamilyPage()).toContain("./js/utils.js?v=17");
-        expect(readTeamPage()).toContain("./js/utils.js?v=17");
-        expect(readGamePlan()).toContain("./js/utils.js?v=17");
-        expect(readCalendarPage()).toContain("./js/utils.js?v=17");
+        expect(readEditSchedule()).toContain("./js/utils.js?v=18");
+        expect(readParentDashboard()).toContain("./js/utils.js?v=18");
+        expect(readFamilyPage()).toContain("./js/utils.js?v=18");
+        expect(readTeamPage()).toContain("./js/utils.js?v=18");
+        expect(readGamePlan()).toContain("./js/utils.js?v=18");
+        expect(readCalendarPage()).toContain("./js/utils.js?v=18");
     });
 
     it('declares each calendar tracking helper only once in utils before the ICS event mapper', () => {

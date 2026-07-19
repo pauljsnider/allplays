@@ -37,6 +37,7 @@ function createHarness({ token, url = 'https://example.test/family.html?token=sh
     });
 
     const mocks = {
+        getFamilyShareView: vi.fn().mockRejectedValue(new Error('projection unavailable')),
         getFamilyShareToken: vi.fn().mockResolvedValue(token),
         resolveFamilyShareTokenChildren: vi.fn().mockResolvedValue([]),
         getTeam: vi.fn().mockResolvedValue({ name: 'Team Rocket', calendarUrls: [] }),

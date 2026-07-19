@@ -88,3 +88,29 @@ test('family share child resolver rebuilds public child rows from owner parent s
     }
   ]);
 });
+
+test('family share child resolver filters requested keys before bounded profile reads', async () => {
+  const profile = {
+    parentPlayerKeys: Array.from({ length: 100 }, (_, index) => `team-${index}::player-${index}`)
+  };
+  const teamLoads = [];
+  const playerLoads = [];
+  const children = await resolveFamilyShareChildrenFromOwnerProfile(profile, {
+    allowedKeys: new Set(['team-99::player-99']),
+    maxChildren: 50,
+    loadTeam: async (teamId) => {
+      teamLoads.push(teamId);
+      return { name: 'Selected Team' };
+    },
+    loadPlayer: async (teamId, playerId) => {
+      playerLoads.push(`${teamId}::${playerId}`);
+      return { name: 'Selected Player' };
+    }
+  });
+
+  assert.deepEqual(teamLoads, ['team-99']);
+  assert.deepEqual(playerLoads, ['team-99::player-99']);
+  assert.deepEqual(children.map((child) => `${child.teamId}::${child.playerId}`), [
+    'team-99::player-99'
+  ]);
+});
