@@ -1497,7 +1497,12 @@ function PlayerProfileSection({
           <div className="app-card p-4 text-sm font-semibold text-gray-500">Athlete profile tools will appear here after the profile data finishes loading.</div>
         )
       ) : null}
-      {activePanel === 'family' ? <CoParentInviteCard data={data} auth={auth} /> : null}
+      {activePanel === 'family' ? (
+        <>
+          <FamilyContactsCard data={data} />
+          <CoParentInviteCard data={data} auth={auth} />
+        </>
+      ) : null}
       {activePanel === 'incentives' ? <IncentivesCard data={data} auth={auth} onChanged={onChanged} /> : null}
 
       <section className="grid gap-3 sm:grid-cols-3">
@@ -1534,6 +1539,45 @@ function PlayerProfileSection({
         </Link>
       </section>
     </div>
+  );
+}
+
+function FamilyContactsCard({ data }: { data: ParentPlayerDetailData }) {
+  const contacts = Array.isArray(data.familyContacts) ? data.familyContacts : [];
+  return (
+    <section className="app-card p-4">
+      <div className="flex items-center gap-2 text-sm font-black text-gray-950">
+        <Users className="h-4 w-4 text-primary-600" aria-hidden="true" />
+        Linked Family
+      </div>
+      <p className="mt-1 text-xs font-semibold leading-5 text-gray-500">Parent and guardian accounts or contacts already connected to this player.</p>
+      {contacts.length ? (
+        <div className="mt-4 divide-y divide-gray-100 rounded-xl border border-gray-200 bg-white">
+          {contacts.map((contact) => {
+            const label = contact.name || contact.email || contact.phone || 'Family contact';
+            return (
+              <div key={contact.id} className="flex items-start justify-between gap-3 px-3 py-3">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-black text-gray-950">{label}</div>
+                  <div className="mt-0.5 flex flex-wrap gap-x-2 gap-y-1 text-xs font-semibold text-gray-500">
+                    {contact.email && contact.email !== label ? <span>{contact.email}</span> : null}
+                    {contact.phone ? <span>{contact.phone}</span> : null}
+                    <span>{contact.relation || 'Parent/guardian'}</span>
+                  </div>
+                </div>
+                <span className={`flex-none rounded-full border px-2 py-1 text-[11px] font-black uppercase ${contact.status === 'linked' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-gray-200 bg-gray-50 text-gray-600'}`}>
+                  {contact.status === 'linked' ? 'Linked' : 'Contact'}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="mt-4 rounded-xl border border-dashed border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">
+          No linked family contacts are saved for this player yet.
+        </div>
+      )}
+    </section>
   );
 }
 

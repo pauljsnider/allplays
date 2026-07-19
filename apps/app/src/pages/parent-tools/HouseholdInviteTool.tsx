@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Copy, Loader2, RefreshCw, Users } from 'lucide-react';
-import { createParentHouseholdMemberInvite, loadParentHouseholdInviteModel, type ParentHouseholdFamilyMember, type ParentHouseholdLinkedPlayer } from '../../lib/parentHouseholdService';
+import { createParentHouseholdMemberInvite, loadParentHouseholdInviteModel, type ParentHouseholdFamilyContact, type ParentHouseholdFamilyMember, type ParentHouseholdLinkedPlayer } from '../../lib/parentHouseholdService';
 import { toAppServiceError } from '../../lib/appErrors';
 import type { AuthState } from '../../lib/types';
 import { EmptyState, LoadingBlock, RetryableStatus, Status, ToolHeader, copyText, useParentToolAsyncOperation } from './shared';
@@ -8,6 +8,7 @@ import { EmptyState, LoadingBlock, RetryableStatus, Status, ToolHeader, copyText
 export function HouseholdInviteTool({ auth, refreshVersion }: { auth: AuthState; refreshVersion: number }) {
     const [linkedPlayers, setLinkedPlayers] = useState<ParentHouseholdLinkedPlayer[]>([]);
     const [members, setMembers] = useState<ParentHouseholdFamilyMember[]>([]);
+    const [linkedContacts, setLinkedContacts] = useState<ParentHouseholdFamilyContact[]>([]);
     const [playerKey, setPlayerKey] = useState('');
     const [displayName, setDisplayName] = useState('');
     const [email, setEmail] = useState('');
@@ -37,6 +38,7 @@ export function HouseholdInviteTool({ auth, refreshVersion }: { auth: AuthState;
                 onSuccess: (model) => {
                     setLinkedPlayers(model.linkedPlayers);
                     setMembers(model.members);
+                    setLinkedContacts(model.linkedContacts || []);
                     setPlayerKey((current) => current || (model.linkedPlayers[0] ? `${model.linkedPlayers[0].teamId}::${model.linkedPlayers[0].playerId}` : ''));
                 }
             }
@@ -123,6 +125,30 @@ export function HouseholdInviteTool({ auth, refreshVersion }: { auth: AuthState;
                         </button>
                     </form>
                 )}
+            </section>
+
+            <section className="app-card p-4">
+                <ToolHeader icon={Users} title="Already linked family" detail="Parent and guardian accounts or contacts already connected to your linked players." />
+                <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                    {linkedContacts.length ? linkedContacts.map((contact) => {
+                        const label = contact.name || contact.email || contact.phone || 'Family contact';
+                        return (
+                            <div key={`${contact.teamId}-${contact.playerId}-${contact.id}`} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+                                <div className="flex items-start justify-between gap-3">
+                                    <div className="min-w-0">
+                                        <div className="truncate text-sm font-black text-gray-950">{label}</div>
+                                        {contact.email && contact.email !== label ? <div className="mt-0.5 text-xs font-semibold text-gray-500">{contact.email}</div> : null}
+                                        {contact.phone ? <div className="mt-0.5 text-xs font-semibold text-gray-500">{contact.phone}</div> : null}
+                                    </div>
+                                    <span className={`flex-none rounded-full border px-2 py-1 text-[11px] font-black uppercase ${contact.status === 'linked' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-gray-200 bg-gray-50 text-gray-600'}`}>
+                                        {contact.status === 'linked' ? 'Linked' : 'Contact'}
+                                    </span>
+                                </div>
+                                <div className="mt-1 text-xs font-semibold text-gray-600">{contact.relation || 'Parent/guardian'} for {contact.playerName || 'Player'}{contact.playerNumber ? ` #${contact.playerNumber}` : ''}{contact.teamName ? ` - ${contact.teamName}` : ''}</div>
+                            </div>
+                        );
+                    }) : <EmptyState icon={Users} title="No linked family contacts" detail="Linked parent and guardian contacts will appear here after they are saved on the player." />}
+                </div>
             </section>
 
             <section className="app-card p-4">

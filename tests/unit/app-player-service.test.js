@@ -153,7 +153,16 @@ beforeEach(() => {
     });
     dbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', sport: 'basketball' });
     dbMocks.getPlayers.mockResolvedValue([
-        { id: 'player-1', name: 'Pat Star', number: '9', photoUrl: 'https://example.test/pat.jpg' }
+        {
+            id: 'player-1',
+            name: 'Pat Star',
+            number: '9',
+            photoUrl: 'https://example.test/pat.jpg',
+            parents: [
+                { userId: 'mom-1', name: 'Mom Snider', email: 'mom@allplays.ai', relation: 'Mom' },
+                { userId: 'dad-1', name: 'Dad Snider', email: 'dad@allplays.ai', relation: 'Dad' }
+            ]
+        }
     ]);
     dbMocks.getGames.mockResolvedValue([{ id: 'game-final', clips: [] }]);
     dbMocks.getAggregatedStatsForPlayer.mockResolvedValue({ pts: 12, reb: 4 });
@@ -265,6 +274,10 @@ describe('React app parent player detail service', () => {
             emergencyContact: { name: 'Jamie Parent', phone: '555-0100' },
             medicalInfo: 'Peanut allergy'
         });
+        expect(detail.familyContacts).toEqual([
+            expect.objectContaining({ name: 'Dad Snider', email: 'dad@allplays.ai', relation: 'Dad', status: 'linked' }),
+            expect.objectContaining({ name: 'Mom Snider', email: 'mom@allplays.ai', relation: 'Mom', status: 'linked' })
+        ]);
         expect(detail.incentives).toMatchObject({
             totalEarnedCents: 1200,
             totalPaidCents: 1200,

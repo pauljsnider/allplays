@@ -149,6 +149,15 @@ export type ParentPlayerPrivateProfile = {
   medicalInfo?: string | null;
 };
 
+export type ParentPlayerFamilyContact = {
+  id: string;
+  name: string;
+  email: string;
+  phone: string;
+  relation: string;
+  status: 'linked' | 'contact';
+};
+
 export type ParentPlayerIncentiveData = {
   rules: PlayerIncentiveRule[];
   currentRules: PlayerIncentiveRule[];
@@ -226,6 +235,7 @@ export type ParentPlayerDetailData = {
   certificates: Array<Record<string, any>>;
   trackingSummary: PlayerTrackingSummary[];
   privateProfile: ParentPlayerPrivateProfile | null;
+  familyContacts: ParentPlayerFamilyContact[];
   incentives: ParentPlayerIncentiveData;
   athleteProfile: ParentAthleteProfileData;
 };
@@ -372,6 +382,7 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
     certificates: Array.isArray(certificates) ? certificates : [],
     trackingSummary,
     privateProfile: normalizePrivateProfile(privateProfile),
+    familyContacts: normalizePlayerFamilyContacts(playerDoc, privateProfile),
     incentives: buildPlayerIncentiveData({
       rules: incentiveRules,
       paidGames,
@@ -1362,6 +1373,58 @@ function isLinkedParent(user: AuthUser | null, teamId: string, playerId: string)
 
   const playerKey = `${teamId}::${playerId}`;
   return !!(user?.parentPlayerKeys || []).some((key) => String(key || '').trim() === playerKey);
+}
+
+function normalizePlayerFamilyContacts(player: Record<string, any>, privateProfile: Record<string, any> | null | undefined): ParentPlayerFamilyContact[] {
+  const contacts: ParentPlayerFamilyContact[] = [];
+  const seen = new Set<string>();
+  const clean = (value: unknown) => String(value || '').trim();
+  const addContact = (source: Record<string, any> | null | undefined, fallback: Record<string, any> = {}) => {
+    if (!source || typeof source !== 'object') return;
+    const email = normalizeEmail(source.email || source.parentEmail || source.guardianEmail || fallback.email);
+    const userId = clean(source.userId || source.uid || source.accountUserId || source.parentUserId || source.guardianUserId || fallback.userId);
+    const name = clean(source.name || source.displayName || source.fullName || source.parentName || source.guardianName || fallback.name);
+    const phone = clean(source.phone || source.parentPhone || source.guardianPhone || fallback.phone);
+    const relation = clean(source.relation || source.relationship || source.parentRelation || source.guardianRelation || fallback.relation) || 'Parent/guardian';
+    if (!email && !userId && !name && !phone) return;
+    const key = email || userId || `${name}:${phone}:${relation}`.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    contacts.push({
+      id: userId || email || key || `family-contact-${contacts.length + 1}`,
+      name,
+      email,
+      phone,
+      relation,
+      status: userId ? 'linked' : 'contact'
+    });
+  };
+
+  [
+    ...(Array.isArray(player?.parents) ? player.parents : []),
+    ...(Array.isArray(player?.privateProfileParents) ? player.privateProfileParents : []),
+    ...(Array.isArray(privateProfile?.parents) ? privateProfile.parents : [])
+  ].forEach((contact) => addContact(contact));
+
+  addContact({
+    userId: player?.parentUserId,
+    email: player?.parentEmail,
+    name: player?.parentName,
+    phone: player?.parentPhone,
+    relation: player?.parentRelation || 'Parent'
+  });
+  addContact({
+    userId: player?.guardianUserId,
+    email: player?.guardianEmail,
+    name: player?.guardianName,
+    phone: player?.guardianPhone,
+    relation: player?.guardianRelation || 'Guardian'
+  });
+
+  return contacts.sort((a, b) => {
+    if (a.status !== b.status) return a.status === 'linked' ? -1 : 1;
+    return (a.name || a.email || a.phone).localeCompare(b.name || b.email || b.phone);
+  });
 }
 
 function isElevatedAppAdmin(user: AuthUser | null) {
