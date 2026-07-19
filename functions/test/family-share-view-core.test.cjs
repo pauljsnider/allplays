@@ -4,9 +4,24 @@ const {
   MAX_FAMILY_SHARE_CALENDAR_URLS,
   MAX_FAMILY_SHARE_DB_EVENTS,
   buildExternalCalendarEvents,
+  getFamilyShareCalendarDedupTimestamps,
   parseBoundedIcsEvents,
   sanitizeFamilyShareViewResponse
 } = require('../family-share-view-core.cjs');
+
+test('scopes team calendar timestamp de-duplication without weakening token-level de-duplication', () => {
+  const teams = [
+    { teamId: 'team-a', games: [{ date: '2026-07-20T18:00:00.000Z' }] },
+    { teamId: 'team-b', games: [{ date: '2026-07-20T19:00:00.000Z' }] }
+  ];
+
+  assert.deepEqual(getFamilyShareCalendarDedupTimestamps(teams, 'team-a'), [Date.parse('2026-07-20T18:00:00.000Z')]);
+  assert.deepEqual(getFamilyShareCalendarDedupTimestamps(teams, 'team-b'), [Date.parse('2026-07-20T19:00:00.000Z')]);
+  assert.deepEqual(getFamilyShareCalendarDedupTimestamps(teams), [
+    Date.parse('2026-07-20T18:00:00.000Z'),
+    Date.parse('2026-07-20T19:00:00.000Z')
+  ]);
+});
 
 test('projects bounded recurring ICS events without returning source URLs or sentinels', () => {
   const sentinelUrl = 'https://calendar.example.test/private.ics?secret=SENTINEL_CALENDAR_SECRET';

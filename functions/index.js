@@ -10,6 +10,7 @@ const {
   MAX_FAMILY_SHARE_DB_EVENTS,
   MAX_FAMILY_SHARE_TEAMS,
   buildExternalCalendarEvents,
+  getFamilyShareCalendarDedupTimestamps,
   sanitizeFamilyShareViewResponse
 } = require('./family-share-view-core.cjs');
 const { createVerifiedEmailSensitiveActionGuard } = require('./verified-email-policy.cjs');
@@ -5747,9 +5748,6 @@ async function loadFamilyShareExternalEventProjection(token, children, teams) {
   )));
   const externalEvents = [];
   const calendarWarnings = [];
-  const dbTimestamps = teams.flatMap((team) => (Array.isArray(team.games) ? team.games : []))
-    .map((game) => new Date(game?.date).getTime())
-    .filter(Number.isFinite);
   const trackedUidsByTeam = new Map(teams.map((team) => [
     team.teamId,
     new Set((Array.isArray(team.games) ? team.games : [])
@@ -5760,6 +5758,7 @@ async function loadFamilyShareExternalEventProjection(token, children, teams) {
     if (result.status === 'fulfilled') {
       const input = inputs[index] || {};
       const trackedUids = trackedUidsByTeam.get(input.teamId) || new Set();
+      const dbTimestamps = getFamilyShareCalendarDedupTimestamps(teams, input.teamId);
       externalEvents.push(...result.value.filter((event) => {
         if (trackedUids.has(normalizeFamilyShareText(event.id))) return false;
         const eventTime = new Date(event.date).getTime();

@@ -396,6 +396,17 @@ function sanitizeFamilyShareViewResponse({ token, children = [], teams = [], ext
   };
 }
 
+function getFamilyShareCalendarDedupTimestamps(teams = [], teamId = '') {
+  const normalizedTeamId = compactText(teamId, 128);
+  const scopedTeams = normalizedTeamId
+    ? teams.filter((team) => compactText(team?.teamId, 128) === normalizedTeamId)
+    : teams;
+  return scopedTeams
+    .flatMap((team) => (Array.isArray(team?.games) ? team.games : []))
+    .map((game) => new Date(game?.date).getTime())
+    .filter(Number.isFinite);
+}
+
 module.exports = {
   MAX_FAMILY_SHARE_CALENDAR_URLS,
   MAX_FAMILY_SHARE_CHILDREN,
@@ -405,6 +416,7 @@ module.exports = {
   MAX_FAMILY_SHARE_TEAMS,
   buildExternalCalendarEvents,
   buildFamilySharePresentation,
+  getFamilyShareCalendarDedupTimestamps,
   parseBoundedIcsEvents,
   sanitizeFamilyShareViewResponse
 };
