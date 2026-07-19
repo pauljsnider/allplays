@@ -386,6 +386,14 @@ describe('app telemetry bridge', () => {
       location: '/home',
       componentStackPresent: true
     }));
+
+    telemetry.captureHandledAppError('dynamic route failure', new Error('private detail'), {
+      location: '/app/?debug=secret#/players/team-1/player-1?childId=player-1'
+    });
+    expect(sentryMocks.scope.setContext).toHaveBeenLastCalledWith('allplays', expect.objectContaining({
+      label: 'dynamic route failure',
+      location: '/players/:id/:id'
+    }));
   });
 
   it('normalizes non-Error handled failures before sending them to the tracker', async () => {

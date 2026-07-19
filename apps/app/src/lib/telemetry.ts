@@ -70,6 +70,7 @@ const safeTrackingTextKeys = new Set([
   'location', 'operation', 'outcome', 'release', 'route', 'source', 'stage', 'status',
   'type', 'viewName', 'workflowName'
 ]);
+const trackingRouteTextKeys = new Set(['location', 'route', 'source']);
 const trackingDynamicRouteParents = new Set([
   'accept-invite', 'athletes', 'calendar', 'capabilities', 'conversations', 'events',
   'families', 'family', 'fees', 'games', 'inquiries', 'invite', 'messages',
@@ -488,7 +489,8 @@ function sanitizeTrackingUrl(value: string) {
   try {
     const url = new URL(value, window.location.origin);
     if (url.origin !== window.location.origin) return 'external';
-    const path = url.pathname
+    const hashRoute = url.hash.startsWith('#/') ? url.hash.slice(1).split('?')[0] : '';
+    const path = (hashRoute || url.pathname)
       .split('/')
       .map((segment, index, segments) => {
         const previous = String(segments[index - 1] || '').toLowerCase();
@@ -539,6 +541,9 @@ function sanitizeForTracking(value: unknown, keyHint = '', seen = new WeakSet<ob
 
   if (typeof value === 'string') {
     if (shouldRedactKey(keyHint)) return redactedValue;
+    if (trackingRouteTextKeys.has(keyHint) && /^(?:https?:\/\/|\/|#\/)/i.test(value)) {
+      return sanitizeTrackingUrl(value);
+    }
     return !keyHint || safeTrackingTextKeys.has(keyHint)
       ? redactSensitiveText(value)
       : redactedValue;
