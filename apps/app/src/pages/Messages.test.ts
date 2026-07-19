@@ -135,6 +135,7 @@ describe('conversation id normalization', () => {
     expect(normalizeConversationId(undefined)).toBe('team');
     expect(normalizeConversationId('')).toBe('team');
     expect(normalizeConversationId(' staff-room ')).toBe('staff-room');
+    expect(normalizeConversationId('group_role%253Astaff')).toBe('group_role%3Astaff');
   });
 
   it('marks only the selected conversation as active', () => {

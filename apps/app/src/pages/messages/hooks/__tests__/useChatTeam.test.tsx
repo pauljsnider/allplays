@@ -65,6 +65,26 @@ describe('useChatTeam', () => {
         });
     });
 
+    it('canonicalizes double-encoded staff conversation ids before hydrating conversations', async () => {
+        vi.mocked(loadChatTeamContext).mockResolvedValue({
+            team: { id: 'team-1', name: 'Bears' },
+            profile: {},
+            canModerate: true
+        });
+        vi.mocked(loadChatConversations).mockResolvedValue([
+            { id: DEFAULT_TEAM_CONVERSATION_ID, type: 'team', isDefault: true },
+            { id: 'group_role%3Astaff', type: 'group', name: 'Staff only', participantIds: [], participantRoles: ['staff'] }
+        ]);
+
+        render(<TeamProbe teamId="team-1" preferredConversationId="group_role%253Astaff" />);
+
+        await waitFor(() => expect(screen.getByTestId('loading').textContent).toBe('false'));
+        expect(loadChatConversations).toHaveBeenCalledWith('team-1', user, { id: 'team-1', name: 'Bears' }, true, {
+            activeConversationId: 'group_role%3Astaff'
+        });
+        expect(screen.getByTestId('selected-conversation').textContent).toBe('group_role%3Astaff');
+    });
+
     it('reloads context when switching teams and falls back to the default conversation', async () => {
         vi.mocked(loadChatTeamContext)
             .mockResolvedValueOnce({ team: { id: 'team-1', name: 'Bears' }, profile: {}, canModerate: true })
