@@ -6037,11 +6037,9 @@ export async function reserveAthleteProfileMediaOwnership(userId, profileId, opt
     if (options.isNewProfile === true) {
         await setDoc(profileRef, {
             parentUserId: normalizedUserId,
-            privacy: 'private',
             mediaUploadReservation: true,
-            createdAt: serverTimestamp(),
             updatedAt: serverTimestamp()
-        });
+        }, { merge: true });
         return { id: normalizedProfileId, created: true };
     }
 
@@ -6078,6 +6076,17 @@ export async function releaseAthleteProfileMediaReservation(userId, profileId) {
         if (profile.parentUserId !== normalizedUserId || profile.mediaUploadReservation !== true) {
             return false;
         }
+
+        const hasSavedProfileData = Object.prototype.hasOwnProperty.call(profile, 'athlete') ||
+            Array.isArray(profile.seasons);
+        if (hasSavedProfileData) {
+            transaction.update(profileRef, {
+                mediaUploadReservation: deleteField(),
+                updatedAt: serverTimestamp()
+            });
+            return true;
+        }
+
         transaction.delete(profileRef);
         return true;
     });
