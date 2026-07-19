@@ -986,6 +986,7 @@ async function mockHomePlayerModules(page) {
                             openAssignments: 0
                         },
                         statRows: [{ event: statEvent, stats: { pts: 12, reb: 4 } }],
+                        statsDetail: null,
                         clips: [{ title: 'Fast break', url: 'https://video.example.test/clip', gameLabel: 'vs. Falcons' }],
                         certificates: [{ id: 'cert-1', title: 'Hustle Award' }],
                         trackingSummary: [{ playerId: 'player-1', items: [{ id: 'item-1', title: 'Bring ball', isComplete: true }] }],
@@ -1017,6 +1018,36 @@ async function mockHomePlayerModules(page) {
                             shareUrl: 'https://allplays.ai/athlete-profile.html?profileId=profile-1',
                             builderUrl: 'https://allplays.ai/athlete-profile-builder.html?teamId=team-1&playerId=player-1&profileId=profile-1'
                         }
+                    };
+                }
+
+                export async function loadParentPlayerStatsDetail() {
+                    const statEvent = event({
+                        eventKey: 'team-1::game-final::player-1',
+                        id: 'game-final',
+                        date: new Date('2000-06-01T18:00:00Z'),
+                        status: 'completed',
+                        myRsvp: 'going'
+                    });
+                    return {
+                        summary: {
+                            gamesPlayed: 1,
+                            gamesWithTime: 1,
+                            totalTimeMs: 720000,
+                            totals: { pts: 12, reb: 4 },
+                            averages: { pts: 12, reb: 4 },
+                            topStats: [{ id: 'pts', label: 'Points', rank: 1, totalPlayers: 4, value: 12, formattedValue: '12' }],
+                            trends: [],
+                            gameLimit: 20,
+                            hasMoreGames: false
+                        },
+                        statRows: [{ event: statEvent, stats: { pts: 12, reb: 4 }, timeMs: 720000 }],
+                        gameEventRows: [{
+                            gameId: 'game-final',
+                            gameLabel: 'vs. Falcons',
+                            gameDate: 'Jun 1, 2000',
+                            events: [{ id: 'evt-1', statKey: 'pts', value: 2, period: 'Q4', clock: '1:22', description: 'Pat Star layup', timestampMs: 960000000000 }]
+                        }]
                     };
                 }
 

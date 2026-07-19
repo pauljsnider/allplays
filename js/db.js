@@ -3840,10 +3840,7 @@ export async function getTeamStatsForGame(teamId, gameId) {
 
 export async function getAggregatedStatsForPlayer(teamId, gameId, playerId) {
     try {
-        const docRef = doc(db, `${getGameDocRef(teamId, gameId).path}/aggregatedStats`, playerId);
-        const docSnap = await getDoc(docRef);
-        if (!docSnap.exists()) return null;
-        const data = docSnap.data() || {};
+        const data = await getAggregatedStatsDocumentForPlayer(teamId, gameId, playerId);
         return data.stats || {};
     } catch (error) {
         console.error('[getAggregatedStatsForPlayer] failed to load aggregated stats', {
@@ -3854,6 +3851,13 @@ export async function getAggregatedStatsForPlayer(teamId, gameId, playerId) {
         });
         throw new Error(`Unable to load stats for player ${playerId}: ${error.message}`);
     }
+}
+
+export async function getAggregatedStatsDocumentForPlayer(teamId, gameId, playerId) {
+    const docRef = doc(db, `${getGameDocRef(teamId, gameId).path}/aggregatedStats`, playerId);
+    const docSnap = await getDoc(docRef);
+    if (!docSnap.exists()) return {};
+    return docSnap.data() || {};
 }
 
 export async function getGame(teamId, gameId) {
