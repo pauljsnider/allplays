@@ -99,7 +99,7 @@ test('production React app boots from deployed /app bundle', async ({ page }) =>
         borderColor: 'rgb(199, 210, 254)',
         borderStyle: 'solid',
         borderWidth: '1px',
-        minHeight: '40px'
+        minHeight: '44px'
     });
     expect(tailwindIconStyles).toMatchObject({
         backgroundColor: 'rgb(238, 242, 255)',
