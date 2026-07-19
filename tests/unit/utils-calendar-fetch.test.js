@@ -242,6 +242,26 @@ describe('fetchAndParseCalendar', () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith('https://calendar-proxy.example.test/'))).toBe(false);
   });
 
+  it('does not bypass first-party calendar validation through a configured proxy', async () => {
+    window.__ALLPLAYS_CONFIG__.calendarProxyUrlTemplates = [
+      'https://calendar-proxy.example.test/?url={url}'
+    ];
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      makeJsonResponse({
+        ok: false,
+        error: 'Response was not valid ICS',
+        validationRejected: true
+      }, { status: 502, statusText: 'Bad Gateway' })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(fetchAndParseCalendar('https://calendar.example.test/invalid.ics'))
+      .rejects.toMatchObject({ code: 'CALENDAR_FUNCTION_REJECTED' });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith('https://calendar-proxy.example.test/'))).toBe(false);
+  });
+
   it('rejects non-network, credentialed, and protected calendar targets before fetching', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);

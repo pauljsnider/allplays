@@ -319,7 +319,8 @@ test('fetchWithTimeout rejects incompatible and oversized responses before buffe
     });
     await assert.rejects(
       fetchWithTimeout('https://calendar.example.test/team.ics', 'calendar.example.test', [publicIp]),
-      { message: 'Calendar response had an unsupported content type' }
+      (error) => error?.message === 'Calendar response had an unsupported content type'
+        && error?.calendarValidationRejected === true
     );
 
     _setClientModulesForTesting(null, {

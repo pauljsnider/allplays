@@ -497,12 +497,11 @@ async function fetchAndParseCalendarOnce(normalizedUrl, options = {}) {
     const requestUrl = `${calendarFetchFunctionUrl}?${params.toString()}`;
     const headers = await getPrimaryAppCheckHeaders({}, requestUrl);
     const response = await fetchWithTimeout(requestUrl, headers);
-    if (!response.ok) {
+    const rejectedByStatus = [400, 401, 403, 413, 422, 429].includes(response.status);
+    if (!response.ok && rejectedByStatus) {
       const error = new Error(`Function fetch failed: ${response.status} ${response.statusText}`);
-      if ([400, 401, 403, 413, 422, 429].includes(response.status)) {
-        error.code = 'CALENDAR_FUNCTION_REJECTED';
-        error.calendarFetchNonRetryable = true;
-      }
+      error.code = 'CALENDAR_FUNCTION_REJECTED';
+      error.calendarFetchNonRetryable = true;
       throw error;
     }
     assertCalendarResponseContentType(response, new Set(['application/json', 'text/json']));
@@ -512,6 +511,16 @@ async function fetchAndParseCalendarOnce(normalizedUrl, options = {}) {
       payload = JSON.parse(rawPayload);
     } catch {
       throw new Error('Calendar fetch function returned invalid JSON');
+    }
+    if (!response.ok) {
+      const error = new Error(payload?.validationRejected === true && payload?.error
+        ? payload.error
+        : `Function fetch failed: ${response.status} ${response.statusText}`);
+      if (payload?.validationRejected === true) {
+        error.code = 'CALENDAR_FUNCTION_REJECTED';
+        error.calendarFetchNonRetryable = true;
+      }
+      throw error;
     }
     if (!payload?.ok || typeof payload?.icsText !== 'string') {
       throw new Error(payload?.error || 'Invalid function response');

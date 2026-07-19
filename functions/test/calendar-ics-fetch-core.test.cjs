@@ -484,6 +484,7 @@ test('calendar boundary validation rejects marker prefixes and missing end bound
   for (const response of [prefixedResponse, missingEndResponse]) {
     assert.strictEqual(response.statusCode, 502);
     assert.strictEqual(response.body.ok, false);
+    assert.strictEqual(response.body.validationRejected, true);
     assert.match(response.body.error, /not valid ICS/);
   }
 });

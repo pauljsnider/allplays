@@ -224,6 +224,7 @@ function createCalendarIcsFetchHandler({
           if (!hasExactVCalendarBoundaries(icsText)) {
             const invalidIcsError = new Error('Response was not valid ICS');
             invalidIcsError.statusCode = 502;
+            invalidIcsError.calendarValidationRejected = true;
             throw invalidIcsError;
           }
 
@@ -244,10 +245,14 @@ function createCalendarIcsFetchHandler({
       if (error?.retryAfterSeconds) {
         res.set('Retry-After', String(error.retryAfterSeconds));
       }
-      res.status(error?.statusCode || 400).json({
+      const errorPayload = {
         ok: false,
         error: error?.message || 'Unknown error'
-      });
+      };
+      if (error?.calendarValidationRejected === true) {
+        errorPayload.validationRejected = true;
+      }
+      res.status(error?.statusCode || 400).json(errorPayload);
     }
   };
 }

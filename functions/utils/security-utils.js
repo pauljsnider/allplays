@@ -209,6 +209,12 @@ function createCalendarFetchError(message, statusCode = 502) {
   return error;
 }
 
+function createCalendarValidationError(message, statusCode = 502) {
+  const error = createCalendarFetchError(message, statusCode);
+  error.calendarValidationRejected = true;
+  return error;
+}
+
 async function fetchWithTimeout(
   url,
   originalHostname,
@@ -274,13 +280,13 @@ async function fetchWithTimeout(
       }
       if (!isAllowedCalendarContentType(res.headers)) {
         res.destroy?.();
-        reject(createCalendarFetchError('Calendar response had an unsupported content type'));
+        reject(createCalendarValidationError('Calendar response had an unsupported content type'));
         return;
       }
       const contentEncoding = String(res.headers?.['content-encoding'] || '').trim().toLowerCase();
       if (contentEncoding && contentEncoding !== 'identity') {
         res.destroy?.();
-        reject(createCalendarFetchError('Compressed calendar responses are not supported'));
+        reject(createCalendarValidationError('Compressed calendar responses are not supported'));
         return;
       }
 
