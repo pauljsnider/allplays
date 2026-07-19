@@ -4,7 +4,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const legacyPlayerDbMocks = vi.hoisted(() => ({
   deleteAthleteProfileMediaByPath: vi.fn(),
   getAggregatedStatsForGames: vi.fn(),
+  getAggregatedStatsDocumentForPlayer: vi.fn(),
   getAggregatedStatsForPlayer: vi.fn(),
+  getConfigs: vi.fn(),
+  getGameEvents: vi.fn(),
   getGames: vi.fn(),
   getPlayerPrivateProfile: vi.fn(),
   getPlayerTrackingStatuses: vi.fn(),
@@ -29,6 +32,7 @@ const legacyPlayerDbMocks = vi.hoisted(() => ({
 
 const legacyPlayerProfileMocks = vi.hoisted(() => ({
   calculateEarnings: vi.fn(() => ({ totalCents: 0, uncappedTotalCents: 0, wasCapped: false, breakdown: [] })),
+  buildPlayerLeaderboardSnapshot: vi.fn(() => ({ topStats: [] })),
   buildAthleteProfileShareUrl: vi.fn(() => 'https://allplays.ai/athlete-profile.html?profileId=profile-1'),
   collectPlayerVideoClips: vi.fn(() => []),
   getApplicableRulesForGame: vi.fn((rules) => rules),
@@ -42,6 +46,8 @@ const legacyPlayerProfileMocks = vi.hoisted(() => ({
   retireIncentiveRule: vi.fn(),
   saveCapSetting: vi.fn(),
   saveIncentiveRule: vi.fn(),
+  selectAnalyticsConfig: vi.fn(() => null),
+  summarizePlayerTopStats: vi.fn(() => []),
   toggleIncentiveRule: vi.fn()
 }));
 const legacyRosterPrivacyMocks = vi.hoisted(() => ({
@@ -100,7 +106,8 @@ const scheduleServiceMocks = vi.hoisted(() => ({
 
 vi.mock('./scheduleService', () => scheduleServiceMocks);
 const appDataCacheMocks = vi.hoisted(() => ({
-  clearAppDataCache: vi.fn()
+  clearAppDataCache: vi.fn(),
+  loadCachedAppData: vi.fn((_key, loader) => loader())
 }));
 
 vi.mock('./appDataCache', () => appDataCacheMocks);
@@ -110,6 +117,7 @@ import {
   loadParentPlayerDetail,
   loadParentPlayerDetailWithAthleteProfile,
   loadParentPlayerStatTotals,
+  loadParentPlayerStatsDetail,
   loadParentPlayerVideoClips,
   normalizeAthleteProfileHighlightClipUrl,
   saveParentAthleteProfileDraft,
@@ -817,6 +825,9 @@ describe('loadParentPlayerDetail custom roster fields', () => {
     ]);
     legacyPlayerDbMocks.getGames.mockResolvedValue([]);
     legacyPlayerDbMocks.getAggregatedStatsForGames.mockResolvedValue({});
+    legacyPlayerDbMocks.getAggregatedStatsDocumentForPlayer.mockResolvedValue({});
+    legacyPlayerDbMocks.getConfigs.mockResolvedValue([]);
+    legacyPlayerDbMocks.getGameEvents.mockResolvedValue([]);
     legacyPlayerDbMocks.listCertificatesForPlayer.mockResolvedValue([]);
     legacyPlayerDbMocks.getPublicTrackingItems.mockResolvedValue([]);
     legacyPlayerDbMocks.getPlayerTrackingStatuses.mockResolvedValue([]);
@@ -1049,6 +1060,34 @@ describe('loadParentPlayerDetail custom roster fields', () => {
         empty: 0
       }
     });
+  });
+
+  it('loads player stats detail playing time from aggregated stat document metadata', async () => {
+    legacyPlayerDbMocks.getGames.mockResolvedValue([
+      { id: 'game-1', status: 'completed', date: '2026-03-01T18:00:00Z', opponent: 'Owls' }
+    ]);
+    legacyPlayerDbMocks.getAggregatedStatsDocumentForPlayer.mockResolvedValue({
+      stats: {
+        pts: 14,
+        reb: 6
+      },
+      timeMs: 960000
+    });
+
+    const detail = await loadParentPlayerStatsDetail({
+      uid: 'parent-1',
+      email: 'parent@example.com',
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
+    } as any, 'team-1', 'player-1');
+
+    expect(legacyPlayerDbMocks.getAggregatedStatsDocumentForPlayer).toHaveBeenCalledWith('team-1', 'game-1', 'player-1');
+    expect(detail.statRows[0]).toEqual(expect.objectContaining({
+      stats: { pts: 14, reb: 6 },
+      timeMs: 960000
+    }));
+    expect(detail.summary.gamesWithTime).toBe(1);
+    expect(detail.summary.totalTimeMs).toBe(960000);
+    expect(detail.summary.totals).toEqual({ pts: 14, reb: 6 });
   });
 });
 

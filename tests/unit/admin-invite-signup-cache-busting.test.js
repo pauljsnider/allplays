@@ -49,7 +49,7 @@ describe('admin invite signup cache busting', () => {
         expect(authSource).toContain("import { executeEmailPasswordSignup } from './signup-flow.js?v=9';");
         expect(authSource).not.toContain("./signup-flow.js?v=7");
         expect(authSource).toContain("import { redeemAdminInviteAcceptance, redeemAdminInviteAtomically } from './admin-invite.js?v=6';");
-        expect(authSource).toContain("from './db.js?v=112';");
+        expect(authSource).toContain("from './db.js?v=113';");
         expect(authSource).not.toContain("from './db.js?v=111';");
         expect(authSource).toContain("from './accept-invite-flow.js?v=11';");
     });
@@ -58,7 +58,7 @@ describe('admin invite signup cache busting', () => {
         const acceptInviteSource = readFileSync(resolve(process.cwd(), 'accept-invite.html'), 'utf8');
 
         expect(acceptInviteSource).toContain(
-            "import { validateAccessCode, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, redeemFriendInvite, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } from './js/db.js?v=112';"
+            "import { validateAccessCode, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, redeemFriendInvite, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } from './js/db.js?v=113';"
         );
         expect(acceptInviteSource).toContain(
             "import { redeemAdminInviteAtomically } from './js/admin-invite.js?v=6';"
@@ -70,13 +70,13 @@ describe('admin invite signup cache busting', () => {
 
     it('bumps auth module consumers after signup flow changes', () => {
         const authConsumers = {
-            'login.html': 'auth.js?v=124',
-            'accept-invite.html': 'auth.js?v=124',
-            'edit-team.html': 'auth.js?v=124',
-            'js/admin.js': 'auth.js?v=124',
-            'js/live-game.js': 'auth.js?v=124',
-            'js/live-tracker.js': 'auth.js?v=124',
-            'js/track-basketball.js': 'auth.js?v=124'
+            'login.html': 'auth.js?v=125',
+            'accept-invite.html': 'auth.js?v=125',
+            'edit-team.html': 'auth.js?v=125',
+            'js/admin.js': 'auth.js?v=125',
+            'js/live-game.js': 'auth.js?v=125',
+            'js/live-tracker.js': 'auth.js?v=125',
+            'js/track-basketball.js': 'auth.js?v=125'
         };
 
         for (const [relativePath, expectedVersion] of Object.entries(authConsumers)) {
@@ -85,13 +85,13 @@ describe('admin invite signup cache busting', () => {
         }
 
         const editTeamSource = readFileSync(resolve(process.cwd(), 'edit-team.html'), 'utf8');
-        expect(editTeamSource).toContain("import { checkAuth, sendInviteEmail } from './js/auth.js?v=124';");
+        expect(editTeamSource).toContain("import { checkAuth, sendInviteEmail } from './js/auth.js?v=125';");
         expect(editTeamSource).not.toContain("import { checkAuth, sendInviteEmail } from './js/auth.js?v=54';");
     });
 
     it('bumps the shared header logout import with auth.js consumers', () => {
         const utilsSource = readFileSync(resolve(process.cwd(), 'js/utils.js'), 'utf8');
-        const logoutImportMatches = utilsSource.match(/const \{ logout \} = await import\('\.\/auth\.js\?v=124'\);/g) || [];
+        const logoutImportMatches = utilsSource.match(/const \{ logout \} = await import\('\.\/auth\.js\?v=125'\);/g) || [];
 
         expect(logoutImportMatches).toHaveLength(1);
         expect(utilsSource).not.toContain("const { logout } = await import('./auth.js?v=54');");
@@ -107,7 +107,7 @@ describe('admin invite signup cache busting', () => {
         });
         const staleConsumers = deployedSources.flatMap((relativePath) => {
             const source = readFileSync(resolve(process.cwd(), relativePath), 'utf8');
-            const staleImports = source.match(/(?:(?<![\w-])auth\.js\?v=(?!124\b)\d+|(?<![\w-])db\.js\?v=(?!112\b)\d+|(?<![\w-])utils\.js\?v=(?!18\b)\d+)\b/g) || [];
+            const staleImports = source.match(/(?:(?<![\w-])auth\.js\?v=(?!125\b)\d+|(?<![\w-])db\.js\?v=(?!113\b)\d+|(?<![\w-])utils\.js\?v=(?!18\b)\d+)\b/g) || [];
             return staleImports.map((importPath) => `${relativePath}: ${importPath}`);
         });
 
