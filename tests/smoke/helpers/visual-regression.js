@@ -1,4 +1,11 @@
 import { expect } from '@playwright/test';
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
+const deterministicInterFont = readFileSync(
+    require.resolve('@fontsource-variable/inter/files/inter-latin-wght-normal.woff2')
+).toString('base64');
 
 export const visualFixtureTime = '2026-07-18T12:00:00.000Z';
 
@@ -38,11 +45,14 @@ export async function expectVisualSnapshot(page, snapshotName, options = {}) {
     // active elsewhere without comparing a different font rasterizer.
     if (process.platform !== 'linux') return;
 
-    await page.evaluate(async () => {
-        if (document.fonts?.ready) await document.fonts.ready;
-    });
     await page.addStyleTag({
         content: `
+            @font-face {
+                font-family: AllPlaysVisualInter;
+                font-style: normal;
+                font-weight: 100 900;
+                src: url(data:font/woff2;base64,${deterministicInterFont}) format('woff2-variations');
+            }
             *, *::before, *::after {
                 animation-delay: 0s !important;
                 animation-duration: 0s !important;
@@ -53,7 +63,17 @@ export async function expectVisualSnapshot(page, snapshotName, options = {}) {
             html {
                 scrollbar-gutter: stable !important;
             }
+            #root, #root button, #root input, #root select, #root textarea {
+                font-family: AllPlaysVisualInter, sans-serif !important;
+            }
         `
+    });
+    await page.evaluate(async () => {
+        if (!document.fonts) return;
+        await Promise.all([400, 500, 600, 700, 800].map(
+            (weight) => document.fonts.load(`${weight} 16px AllPlaysVisualInter`)
+        ));
+        await document.fonts.ready;
     });
     await expect(page).toHaveScreenshot(snapshotName, {
         fullPage: true,
