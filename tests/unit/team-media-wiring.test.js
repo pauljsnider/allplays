@@ -51,7 +51,7 @@ describe('team media page wiring', () => {
         const source = fs.readFileSync(path.join(repoRoot, 'js/team-media.js'), 'utf8');
         const dbImportVersion = source.match(/from '\.\/db\.js\?v=(\d+)'/)?.[1];
 
-        expect(dbImportVersion).toBe('116');
+        expect(dbImportVersion).toBe('117');
 
         for (const testFile of [
             'tests/unit/team-media-item-rename.test.js',

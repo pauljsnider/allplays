@@ -91,7 +91,7 @@ describe('admin invite signup cache busting', () => {
 
     it('bumps the shared header logout import with auth.js consumers', () => {
         const utilsSource = readFileSync(resolve(process.cwd(), 'js/utils.js'), 'utf8');
-        const logoutImportMatches = utilsSource.match(/const \{ logout \} = await import\('\.\/auth\.js\?v=128'\);/g) || [];
+        const logoutImportMatches = utilsSource.match(/const \{ logout \} = await import\('\.\/auth\.js\?v=129'\);/g) || [];
 
         expect(logoutImportMatches).toHaveLength(1);
         expect(utilsSource).not.toContain("const { logout } = await import('./auth.js?v=55');");
@@ -107,7 +107,7 @@ describe('admin invite signup cache busting', () => {
         });
         const staleConsumers = deployedSources.flatMap((relativePath) => {
             const source = readFileSync(resolve(process.cwd(), relativePath), 'utf8');
-            const staleImports = source.match(/(?:(?<![\w-])auth\.js\?v=(?!128\b)\d+|(?<![\w-])db\.js\?v=(?!116\b)\d+|(?<![\w-])utils\.js\?v=(?!18\b)\d+)\b/g) || [];
+            const staleImports = source.match(/(?:(?<![\w-])auth\.js\?v=(?!129\b)\d+|(?<![\w-])db\.js\?v=(?!11[78]\b)\d+|(?<![\w-])utils\.js\?v=(?!18\b)\d+)\b/g) || [];
             return staleImports.map((importPath) => `${relativePath}: ${importPath}`);
         });
 
