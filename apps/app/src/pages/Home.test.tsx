@@ -462,6 +462,21 @@ describe('Home', () => {
     expect(within(navigation).getByRole('link', { name: 'Friends' }).getAttribute('href')).toBe('/home?section=friends');
   });
 
+  it('routes the Home Teams tab directly to the team page when the user has one team', async () => {
+    renderHome(signedInAuth);
+
+    expect(await screen.findByRole('heading', { name: 'Your day' })).toBeTruthy();
+    const navigation = screen.getByRole('navigation', { name: 'Home sections' });
+    expect(within(navigation).getByRole('link', { name: 'Teams' }).getAttribute('href')).toBe('/teams/team-1');
+  });
+
+  it('opens the team page directly when Home is loaded on the Teams section with one team', async () => {
+    renderHome(signedInAuth, '/home?section=teams');
+
+    expect(await screen.findByText('Team route')).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Teams' })).toBeNull();
+  });
+
   it('links Home pulse chips to their matching app destinations', async () => {
     const largeHome = buildLargeHomeModel();
     const socialHome = {

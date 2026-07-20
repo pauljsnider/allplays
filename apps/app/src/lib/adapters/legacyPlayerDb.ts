@@ -26,6 +26,7 @@ import {
     uploadAthleteProfileMedia as legacyUploadAthleteProfileMedia,
     uploadPlayerPhoto as legacyUploadPlayerPhoto
 } from '@legacy/db.js';
+import { collectRosterParentContacts as legacyCollectRosterParentContacts } from '@legacy/roster-profile-fields.js';
 
 export type LegacyTeamRecord = {
     id?: string;
@@ -70,6 +71,8 @@ export type LegacyAthleteProfileRecord = {
     seasons?: Array<{ teamId?: string; playerId?: string; [key: string]: any }>;
     [key: string]: any;
 };
+
+export const collectRosterParentContacts = legacyCollectRosterParentContacts as (...args: any[]) => any;
 
 export async function getTeam(teamId: string, options?: { includeInactive?: boolean }): Promise<LegacyTeamRecord | null> {
     return await Promise.resolve(legacyGetTeam(teamId, options)).catch(() => null);

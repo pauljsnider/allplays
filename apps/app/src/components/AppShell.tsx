@@ -38,7 +38,7 @@ import { APP_BACK_DISMISS_EVENT } from '../lib/nativeBackButton';
 import { updateAppIconBadge } from '../lib/badgeService';
 import type { NotificationInboxItem } from '../lib/notificationInboxService';
 import { loadNotificationInboxService } from '../lib/notificationInboxServiceLoader';
-import type { AuthState, NavItem } from '../lib/types';
+import type { AuthState, AuthUser, NavItem } from '../lib/types';
 import { RoleBadge } from './Badges';
 import { Modal } from './Modal';
 
@@ -286,8 +286,9 @@ export function AppShell({ auth, children }: AppShellProps) {
     : hasSignedInSession
       ? 'Signed in'
       : 'Explore ALL PLAYS';
-  const activeNavItems = hasSignedInSession ? navItems : publicNavItems;
-  const activeDesktopNavItems = hasSignedInSession ? desktopNavItems : publicNavItems;
+  const teamNavPath = getSingleTeamNavPath(auth.user);
+  const activeNavItems = hasSignedInSession ? withTeamNavPath(navItems, teamNavPath) : publicNavItems;
+  const activeDesktopNavItems = hasSignedInSession ? withTeamNavPath(desktopNavItems, teamNavPath) : publicNavItems;
   const commonAddWorkflows = commonAddWorkflowIds
     .map((id) => addWorkflows.find((workflow) => workflow.id === id))
     .filter((workflow): workflow is AddWorkflow => workflow !== undefined);
@@ -839,6 +840,42 @@ function buildAddWorkflows(): AddWorkflow[] {
 
 function legacyUrl(path: string) {
   return new URL(path, 'https://allplays.ai').toString();
+}
+
+function withTeamNavPath(items: NavItem[], teamNavPath: string): NavItem[] {
+  if (!teamNavPath) return items;
+  return items.map((item) => item.path === '/teams' ? { ...item, path: teamNavPath } : item);
+}
+
+function getSingleTeamNavPath(user: AuthUser | null) {
+  const teamId = getSingleAccessibleTeamId(user);
+  return teamId ? `/teams/${encodeURIComponent(teamId)}` : '';
+}
+
+function getSingleAccessibleTeamId(user: AuthUser | null) {
+  if (!user) return '';
+  const teamIds = new Set<string>();
+  addTeamIds(teamIds, user.parentTeamIds);
+  addTeamIds(teamIds, user.coachOf);
+  if (Array.isArray(user.parentOf)) {
+    user.parentOf.forEach((entry) => {
+      addTeamIds(teamIds, [
+        entry?.teamId,
+        entry?.teamID,
+        entry?.team_id,
+        entry?.team
+      ]);
+    });
+  }
+  return teamIds.size === 1 ? [...teamIds][0] : '';
+}
+
+function addTeamIds(teamIds: Set<string>, values: unknown) {
+  if (!Array.isArray(values)) return;
+  values.forEach((value) => {
+    const teamId = String(value || '').trim();
+    if (teamId) teamIds.add(teamId);
+  });
 }
 
 function isTypingTarget(target: EventTarget | null) {

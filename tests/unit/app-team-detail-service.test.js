@@ -85,14 +85,18 @@ vi.mock('../../apps/app/src/lib/authService.ts', () => ({
     firebaseAuth: { app: { options: { projectId: 'demo-allplays' } } },
     getNativeAuthIdToken: vi.fn()
 }));
+vi.mock('../../apps/app/src/lib/profileService.ts', () => ({
+    loadProfileDocument: vi.fn(async () => ({}))
+}));
 
-import { __resetTeamDetailBaseSnapshotCacheForTests, addRosterPlayerForApp, buildAdminAcceptInviteUrl, buildPublicTeamGamesIcsUrl, buildRosterParentInviteSummaries, buildTeamDetailModel, canExposePublicFanFeed, createRosterParentInviteForApp, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantTeamMediaManagerAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadRosterFieldDefinitionsForApp, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamRosterParentInvites, loadTeamStaffPermissions, reactivateRosterPlayerForApp, revokeScorekeeperAccessForApp, revokeTeamAdminAccessForApp, revokeTeamMediaManagerAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp, updateTeamSettingsForApp } from '../../apps/app/src/lib/teamDetailService.ts';
+import { __resetTeamDetailBaseSnapshotCacheForTests, addRosterPlayerForApp, buildAdminAcceptInviteUrl, buildPublicTeamGamesIcsUrl, buildRosterParentInviteSummaries, buildTeamDetailModel, canExposePublicFanFeed, createRosterParentInviteForApp, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantTeamMediaManagerAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadParentTeamDetailBootstrap, loadRosterFieldDefinitionsForApp, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamRosterParentInvites, loadTeamStaffPermissions, reactivateRosterPlayerForApp, revokeScorekeeperAccessForApp, revokeTeamAdminAccessForApp, revokeTeamMediaManagerAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp, updateTeamSettingsForApp } from '../../apps/app/src/lib/teamDetailService.ts';
 import { collection, doc, getDoc, getDocs, query, where } from '../../js/firebase.js';
 import { addPlayer, getAggregatedStatsForGames, getAdSpaceSponsors, getAllUsers, getConfigs, getEvents, getGames, getLocalAttractionSponsors, getPlayerTrackingStatuses, getPlayers, getPlayersWithPrivateRosterContacts, getPublicTrackingItems, getRosterFieldDefinitions, getTeam, grantScorekeeperAccess, grantTeamMediaManagerAccess, grantVideographerAccess, inviteAdmin, inviteParent, addTeamAdminEmail, revokeScorekeeperAccess, revokeTeamMediaManagerAccess, revokeVideographerAccess, deactivatePlayer, reactivatePlayer, setPlayerPrivateRosterProfileFields, updateEvent, updateGame, updateTeam, uploadPlayerPhoto, uploadTeamPhoto } from '../../js/db.js';
 import { sendInviteEmail } from '../../js/auth.js';
 import { queueInviteEmail } from '../../js/invite-email.js';
 import { buildPlayerLeaderboardSnapshot } from '../../js/stat-leaderboards.js';
 import { getVisiblePlayerTrackingSummary } from '../../js/player-tracking-summary.js';
+import { loadProfileDocument } from '../../apps/app/src/lib/profileService.ts';
 
 beforeEach(() => {
     __resetTeamDetailBaseSnapshotCacheForTests();
@@ -867,6 +871,67 @@ describe('React app team detail model', () => {
             })
         ]);
         expect(model.canManageTeam).toBe(false);
+    });
+
+    it('marks linked players from childId and parentPlayerKeys parent scopes', () => {
+        const childIdModel = buildTeamDetailModel({
+            teamId: 'team-1',
+            team: { name: 'Bears', sport: 'Basketball' },
+            players: [
+                { id: 'player-1', name: 'Pat Star' },
+                { id: 'player-2', name: 'Sam Wing' }
+            ],
+            user: {
+                uid: 'parent-1',
+                email: 'parent@example.com',
+                roles: ['parent'],
+                parentOf: [{ teamId: 'team-1', childId: 'player-2' }]
+            }
+        });
+        const keyOnlyModel = buildTeamDetailModel({
+            teamId: 'team-1',
+            team: { name: 'Bears', sport: 'Basketball' },
+            players: [
+                { id: 'player-1', name: 'Pat Star' },
+                { id: 'player-2', name: 'Sam Wing' }
+            ],
+            user: {
+                uid: 'parent-1',
+                email: 'parent@example.com',
+                roles: ['parent'],
+                parentOf: [],
+                parentPlayerKeys: ['team-1::player-1']
+            }
+        });
+
+        expect(childIdModel.linkedPlayers.map((player) => player.id)).toEqual(['player-2']);
+        expect(keyOnlyModel.linkedPlayers.map((player) => player.id)).toEqual(['player-1']);
+    });
+
+    it('hydrates stale parent access from the profile before building the team detail model', async () => {
+        getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', sport: 'Basketball' });
+        getPlayers.mockResolvedValue([
+            { id: 'player-1', name: 'Pat Star' },
+            { id: 'player-2', name: 'Sam Wing' }
+        ]);
+        getPlayersWithPrivateRosterContacts.mockImplementation((_teamId, options = {}) => options.players);
+        getGames.mockResolvedValue([]);
+        getConfigs.mockResolvedValue([]);
+        loadProfileDocument.mockResolvedValue({
+            parentOf: [{ teamId: 'team-1', childId: 'player-2' }],
+            parentPlayerKeys: ['team-1::player-2']
+        });
+
+        const model = await loadParentTeamDetailBootstrap('team-1', {
+            uid: 'parent-1',
+            email: 'parent@example.com',
+            roles: ['parent'],
+            parentOf: [],
+            parentPlayerKeys: []
+        });
+
+        expect(loadProfileDocument).toHaveBeenCalledWith('parent-1');
+        expect(model.linkedPlayers.map((player) => player.id)).toEqual(['player-2']);
     });
 
     it('normalizes edge cases for linked players, events, streams, registration, and sponsors', () => {
