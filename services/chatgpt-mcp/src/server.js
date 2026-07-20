@@ -11,6 +11,7 @@
 // catalog as the shared service layer is extracted.
 
 import express from 'express';
+import { pathToFileURL } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
@@ -174,7 +175,7 @@ function buildServer(identity) {
     return server;
 }
 
-const app = express();
+export const app = express();
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: false }));
 
@@ -322,6 +323,8 @@ app.delete('/mcp', (req, res) => res.status(405).json({
     id: null
 }));
 
-app.listen(PORT, () => {
-    console.log(`[chatgpt-mcp] listening on :${PORT} (POST /mcp) — project ${PROJECT_ID}, user-credentialed Firestore access`);
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+    app.listen(PORT, () => {
+        console.log(`[chatgpt-mcp] listening on :${PORT} (POST /mcp) — project ${PROJECT_ID}, user-credentialed Firestore access`);
+    });
+}

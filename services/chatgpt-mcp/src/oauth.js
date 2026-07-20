@@ -14,6 +14,9 @@ import { createHash, randomBytes } from 'node:crypto';
 
 const CODE_TTL_MS = 10 * 60 * 1000;
 const ACCESS_TOKEN_TTL_MS = 60 * 60 * 1000;
+const TRUSTED_REDIRECT_URIS = new Set([
+    'https://chatgpt.com/connector_platform_oauth_redirect'
+]);
 
 export class OAuthError extends Error {
     constructor(code, message) {
@@ -28,14 +31,7 @@ export function s256Challenge(verifier) {
 }
 
 function isAllowedRedirectUri(uri) {
-    try {
-        const parsed = new URL(uri);
-        if (parsed.protocol === 'https:') return true;
-        // Loopback redirects are permitted for local tooling (OAuth 2.1).
-        return parsed.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(parsed.hostname);
-    } catch {
-        return false;
-    }
+    return typeof uri === 'string' && TRUSTED_REDIRECT_URIS.has(uri);
 }
 
 export function createOAuthBroker({ now = () => Date.now(), randomId = (bytes = 32) => randomBytes(bytes).toString('base64url') } = {}) {
@@ -49,7 +45,7 @@ export function createOAuthBroker({ now = () => Date.now(), randomId = (bytes = 
             throw new OAuthError('invalid_request', 'redirect_uris is required.');
         }
         if (!redirectUris.every(isAllowedRedirectUri)) {
-            throw new OAuthError('invalid_request', 'redirect_uris must be https (or localhost) URLs.');
+            throw new OAuthError('invalid_request', 'redirect_uris must use an approved ChatGPT callback.');
         }
         const clientId = randomId(16);
         clients.set(clientId, { redirectUris, clientName: typeof clientName === 'string' ? clientName : '' });

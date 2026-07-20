@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { createServer } from 'node:http';
 import {
     createOAuthBroker,
     metadataFor,
@@ -25,18 +26,49 @@ function authorize(broker, clientId, firebaseRefreshToken = 'firebase-rt-1') {
 }
 
 describe('chatgpt-mcp oauth: registration', () => {
-    it('registers clients with https redirect uris', () => {
+    it('registers clients with the approved ChatGPT redirect uri', () => {
         const broker = createOAuthBroker();
         const client = broker.registerClient({ redirect_uris: [REDIRECT] });
         expect(client.client_id).toBeTruthy();
         expect(client.token_endpoint_auth_method).toBe('none');
     });
 
-    it('allows localhost and rejects other http redirect uris', () => {
+    it('rejects untrusted redirect uris regardless of scheme', () => {
         const broker = createOAuthBroker();
-        expect(broker.registerClient({ redirect_uris: ['http://localhost:3000/cb'] }).client_id).toBeTruthy();
+        expect(() => broker.registerClient({ redirect_uris: ['https://evil.example/cb'] })).toThrow(OAuthError);
+        expect(() => broker.registerClient({ redirect_uris: ['http://localhost:3000/cb'] })).toThrow(OAuthError);
         expect(() => broker.registerClient({ redirect_uris: ['http://evil.example/cb'] })).toThrow(OAuthError);
         expect(() => broker.registerClient({})).toThrow(OAuthError);
+    });
+
+    it('rejects an untrusted redirect at the dynamic registration endpoint', async () => {
+        const previousProjectId = process.env.FIREBASE_PROJECT_ID;
+        const previousApiKey = process.env.FIREBASE_WEB_API_KEY;
+        process.env.FIREBASE_PROJECT_ID = 'test-project';
+        process.env.FIREBASE_WEB_API_KEY = 'test-api-key';
+        const { app } = await import('../../services/chatgpt-mcp/src/server.js');
+        const server = createServer(app);
+        await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+
+        try {
+            const { port } = server.address();
+            const response = await fetch(`http://127.0.0.1:${port}/oauth/register`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    client_name: 'Fake ChatGPT',
+                    redirect_uris: ['https://attacker.example/oauth/callback']
+                })
+            });
+            expect(response.status).toBe(400);
+            await expect(response.json()).resolves.toMatchObject({ error: 'invalid_request' });
+        } finally {
+            await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+            if (previousProjectId === undefined) delete process.env.FIREBASE_PROJECT_ID;
+            else process.env.FIREBASE_PROJECT_ID = previousProjectId;
+            if (previousApiKey === undefined) delete process.env.FIREBASE_WEB_API_KEY;
+            else process.env.FIREBASE_WEB_API_KEY = previousApiKey;
+        }
     });
 });
 
