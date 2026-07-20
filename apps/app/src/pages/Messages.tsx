@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
 import { Link, useLocation, useParams } from 'react-router-dom';
 import {
+  AlertCircle,
   BellOff,
   ChevronDown,
   MessageCircle,
@@ -273,6 +274,7 @@ export function Messages({ auth }: { auth: AuthState }) {
                 searchQuery={query}
                 totalTeamsCount={teams.length}
                 onClearSearch={() => setQuery('')}
+                onRetry={refreshInbox}
                 onSelect={setSelectedDesktopTeamId}
                 compact
               />
@@ -340,6 +342,7 @@ export function Messages({ auth }: { auth: AuthState }) {
         searchQuery={query}
         totalTeamsCount={teams.length}
         onClearSearch={() => setQuery('')}
+        onRetry={refreshInbox}
       />
     </div>
     </PullToRefresh>
@@ -360,7 +363,7 @@ function MessagesHeader({ teams, inquiries, loading, onRefresh }: { teams: ChatT
             {teams.length} team chat{teams.length === 1 ? '' : 's'} · {inquiries.length} opportunit{inquiries.length === 1 ? 'y' : 'ies'} · {unread} unread · {staffTeams} staff
           </div>
         </div>
-        <button type="button" className="ghost-button !h-10 !min-h-10 !w-10 !p-0" onClick={onRefresh} aria-label="Refresh messages">
+        <button type="button" className="ghost-button !h-11 !min-h-11 !w-11 !p-0" onClick={onRefresh} aria-label="Refresh messages">
           <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />
         </button>
       </div>
@@ -392,7 +395,7 @@ function OpportunityInboxList({ inquiries, activeInquiryId, error }: { inquiries
         <h2 id="opportunity-conversations-title" className="app-label">Opportunity conversations</h2>
         {inquiries.length ? <span className="rounded-full bg-primary-50 px-2 py-0.5 text-[10px] font-black text-primary-700">{inquiries.length}</span> : null}
       </div>
-      {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-bold text-rose-700">{error}</div> : null}
+      {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-bold text-rose-700" role="alert">{error}</div> : null}
       {inquiries.map((inquiry) => (
         <Link
           key={inquiry.id}
@@ -435,6 +438,7 @@ function InboxList({
   searchQuery,
   totalTeamsCount,
   onClearSearch,
+  onRetry,
   onSelect,
   compact = false
 }: {
@@ -445,6 +449,7 @@ function InboxList({
   searchQuery: string;
   totalTeamsCount: number;
   onClearSearch: () => void;
+  onRetry: () => void;
   onSelect?: (teamId: string) => void;
   compact?: boolean;
 }) {
@@ -591,8 +596,14 @@ function InboxList({
 
   if (error) {
     return (
-      <section className="app-card p-5 text-sm font-bold text-rose-700">
-        {error}
+      <section className="app-card p-6 text-center" role="alert">
+        <AlertCircle className="mx-auto h-10 w-10 text-rose-500" aria-hidden="true" />
+        <h2 className="mt-3 text-base font-black text-gray-950">Messages couldn’t load</h2>
+        <p className="mt-1 text-sm font-semibold leading-6 text-rose-700">{error}</p>
+        <button type="button" className="primary-button mx-auto mt-4 !min-h-11 !px-4 text-sm" onClick={onRetry}>
+          <RefreshCw className="h-4 w-4" aria-hidden="true" />
+          Retry
+        </button>
       </section>
     );
   }
@@ -604,7 +615,7 @@ function InboxList({
           <Search className="mx-auto h-10 w-10 text-gray-300" aria-hidden="true" />
           <div className="mt-3 text-base font-black text-gray-950">No team chats match “{trimmedQuery}”</div>
           <div className="mt-1 text-sm font-semibold leading-6 text-gray-500">Try a different search or clear it to see all team chats.</div>
-          <button type="button" className="secondary-button mx-auto mt-4" onClick={onClearSearch}>
+          <button type="button" className="secondary-button mx-auto mt-4 !min-h-11" onClick={onClearSearch}>
             Clear search
           </button>
         </section>
@@ -616,6 +627,10 @@ function InboxList({
         <MessageCircle className="mx-auto h-10 w-10 text-gray-300" aria-hidden="true" />
         <div className="mt-3 text-base font-black text-gray-950">No team chats yet</div>
         <div className="mt-1 text-sm font-semibold leading-6 text-gray-500">Join or create a team to start messaging.</div>
+        <div className="mt-4 flex flex-wrap justify-center gap-2">
+          <Link to="/teams/new" className="primary-button !min-h-11 text-sm">Create a team</Link>
+          <Link to="/teams/browse" className="secondary-button !min-h-11 text-sm">Browse teams</Link>
+        </div>
       </section>
     );
   }

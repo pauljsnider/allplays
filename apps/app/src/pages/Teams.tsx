@@ -218,7 +218,7 @@ export function Teams({ auth }: { auth: AuthState }) {
             <div className="text-sm font-black text-gray-950">Discover public teams</div>
             <div className="mt-1 text-xs font-semibold leading-5 text-gray-500">Browse and search public teams in the app, then open their team page in read-only mode.</div>
           </div>
-          <Link to="/teams/browse" className="primary-button !min-h-10 !px-3 text-sm">
+          <Link to="/teams/browse" className="primary-button !min-h-11 !px-3 text-sm">
             Browse teams
           </Link>
         </div>
@@ -281,7 +281,7 @@ function TeamsHeader({ loading, refreshing, teams, teamRoles, onRefresh }: {
           <h1 className="mt-1 truncate text-xl font-black text-gray-950 sm:text-2xl">{title}</h1>
           <p className="mt-1 line-clamp-1 text-xs font-semibold text-gray-600 sm:text-sm">{detail}</p>
         </div>
-        <button type="button" className="ghost-button !h-10 !min-h-10 !w-10 !flex-none !p-0 sm:!w-auto sm:!px-3" onClick={onRefresh} disabled={refreshing} aria-label="Refresh teams" title="Refresh teams">
+        <button type="button" className="ghost-button !h-11 !min-h-11 !w-11 !flex-none !p-0 sm:!w-auto sm:!px-3" onClick={onRefresh} disabled={refreshing} aria-label="Refresh teams" title="Refresh teams">
           <RefreshCw className={`h-4 w-4 ${refreshing || loading ? 'animate-spin' : ''}`} aria-hidden="true" />
           <span className="hidden sm:inline">Refresh</span>
         </button>
@@ -325,7 +325,7 @@ function TeamLauncher({ teams, selectedTeamId, variant = 'grid' }: {
       <label className="mt-3 block px-1">
         <span className="sr-only">Filter teams</span>
         <input
-          className="auth-input !min-h-10 !px-3 !py-2 text-sm"
+          className="auth-input !min-h-11 !px-3 !py-2 text-sm"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder="Search teams or players"
@@ -402,10 +402,10 @@ function EmptyTeams() {
           <div className="text-sm font-black text-gray-900">No teams available</div>
           <div className="mt-1 text-xs font-semibold leading-5 text-gray-500">Team access appears after an invite is accepted, a parent link is approved, or staff access is granted.</div>
           <div className="mt-3 grid gap-2 sm:grid-cols-4">
-            <Link to="/teams/new" className="primary-button justify-center !min-h-9 text-xs">Create team</Link>
-            <Link to="/accept-invite" className="secondary-button justify-center !min-h-9 text-xs">Accept invite</Link>
-            <Link to="/home" className="ghost-button justify-center !min-h-9 text-xs">Back to Home</Link>
-            <Link to="/teams/browse" className="ghost-button justify-center !min-h-9 text-xs">
+            <Link to="/teams/new" className="primary-button justify-center !min-h-11 text-xs">Create team</Link>
+            <Link to="/accept-invite" className="secondary-button justify-center !min-h-11 text-xs">Accept invite</Link>
+            <Link to="/home" className="ghost-button justify-center !min-h-11 text-xs">Back to Home</Link>
+            <Link to="/teams/browse" className="ghost-button justify-center !min-h-11 text-xs">
               Browse teams
             </Link>
           </div>
@@ -422,7 +422,7 @@ function TeamsLoadErrorState({ error, onRetry, retrying }: { error: AppServiceEr
       <Shield className="mx-auto h-8 w-8 text-rose-400" aria-hidden="true" />
       <div className="mt-3 text-sm font-black text-gray-900">{copy.title}</div>
       <div className="mt-1 text-xs font-semibold text-gray-500">{copy.detail}</div>
-      <button type="button" className="primary-button mx-auto mt-4 !min-h-10 !px-4 text-sm" onClick={onRetry} disabled={retrying} aria-label="Retry team load">
+      <button type="button" className="primary-button mx-auto mt-4 !min-h-11 !px-4 text-sm" onClick={onRetry} disabled={retrying} aria-label="Retry team load">
         <RefreshCw className={`h-4 w-4 ${retrying ? 'animate-spin' : ''}`} aria-hidden="true" />
         Retry
       </button>

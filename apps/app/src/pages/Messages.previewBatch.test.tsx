@@ -188,6 +188,32 @@ describe('Messages deferred inbox preview batching', () => {
     expect(screen.getByText(/1 team chat · 1 opportunity/)).toBeInTheDocument();
   });
 
+  it('announces inbox failures and retries them in place', async () => {
+    chatServiceMocks.loadChatInbox
+      .mockRejectedValueOnce(new Error('Network unavailable.'))
+      .mockResolvedValueOnce({ teams: [team()] });
+
+    renderMessages();
+
+    const errorState = await screen.findByRole('alert');
+    expect(errorState).toHaveTextContent('Messages couldn’t load');
+    expect(errorState).toHaveTextContent('Network unavailable.');
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    expect(await screen.findByRole('link', { name: /Bears/ })).toBeInTheDocument();
+    expect(chatServiceMocks.loadChatInbox).toHaveBeenCalledTimes(2);
+  });
+
+  it('offers direct team actions when the inbox is empty', async () => {
+    chatServiceMocks.loadChatInbox.mockResolvedValue({ teams: [] });
+
+    renderMessages();
+
+    expect(await screen.findByText('No team chats yet')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Create a team' })).toHaveAttribute('href', '/teams/new');
+    expect(screen.getByRole('link', { name: 'Browse teams' })).toHaveAttribute('href', '/teams/browse');
+  });
+
   it('does not apply stale buffered previews after a newer inbox refresh supersedes the request', async () => {
     chatServiceMocks.loadChatInbox
       .mockImplementationOnce(async (_user, options) => {

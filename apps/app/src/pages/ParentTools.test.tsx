@@ -466,13 +466,13 @@ describe('ParentTools access', () => {
         renderParentTools();
 
         expect(await screen.findByText('Request player access')).toBeTruthy();
-        expect(screen.getByRole('button', { name: 'Access' })).toBeTruthy();
-        expect(screen.queryByRole('button', { name: 'Household' })).toBeNull();
-        expect(screen.queryByRole('button', { name: 'Fees' })).toBeNull();
-        expect(screen.queryByRole('button', { name: 'Calendar' })).toBeNull();
-        expect(screen.queryByRole('button', { name: 'Share' })).toBeNull();
-        expect(screen.queryByRole('button', { name: 'Register' })).toBeNull();
-        expect(screen.queryByRole('button', { name: 'Awards' })).toBeNull();
+        expect(screen.getByRole('link', { name: 'Access' })).toBeTruthy();
+        expect(screen.queryByRole('link', { name: 'Household' })).toBeNull();
+        expect(screen.queryByRole('link', { name: 'Fees' })).toBeNull();
+        expect(screen.queryByRole('link', { name: 'Calendar' })).toBeNull();
+        expect(screen.queryByRole('link', { name: 'Share' })).toBeNull();
+        expect(screen.queryByRole('link', { name: 'Register' })).toBeNull();
+        expect(screen.queryByRole('link', { name: 'Awards' })).toBeNull();
     });
 
     it('redirects hidden tool routes back to Access with an explanation', async () => {
@@ -480,20 +480,20 @@ describe('ParentTools access', () => {
 
         expect(await screen.findByText('Request player access')).toBeTruthy();
         expect(screen.getByText('Link a player in Access to unlock the rest of Parent Tools.')).toBeTruthy();
-        expect(screen.queryByRole('button', { name: 'Calendar' })).toBeNull();
+        expect(screen.queryByRole('link', { name: 'Calendar' })).toBeNull();
     });
 
     it('shows the full tab set when a parent already has linked players', async () => {
         renderParentTools(['/parent-tools/access'], false, linkedAuth);
 
         expect(await screen.findByText('Request player access')).toBeTruthy();
-        expect(screen.getByRole('button', { name: 'Access' })).toBeTruthy();
-        expect(screen.getByRole('button', { name: 'Household' })).toBeTruthy();
-        expect(screen.getByRole('button', { name: 'Fees' })).toBeTruthy();
-        expect(screen.getByRole('button', { name: 'Calendar' })).toBeTruthy();
-        expect(screen.getByRole('button', { name: 'Share' })).toBeTruthy();
-        expect(screen.getByRole('button', { name: 'Register' })).toBeTruthy();
-        expect(screen.getByRole('button', { name: 'Awards' })).toBeTruthy();
+        expect(screen.getByRole('link', { name: 'Access' })).toBeTruthy();
+        expect(screen.getByRole('link', { name: 'Household' })).toBeTruthy();
+        expect(screen.getByRole('link', { name: 'Fees' })).toBeTruthy();
+        expect(screen.getByRole('link', { name: 'Calendar' })).toBeTruthy();
+        expect(screen.getByRole('link', { name: 'Share' })).toBeTruthy();
+        expect(screen.getByRole('link', { name: 'Register' })).toBeTruthy();
+        expect(screen.getByRole('link', { name: 'Awards' })).toBeTruthy();
     });
 
     it('reveals the active tab on deep links without moving an already visible Access tab', async () => {
@@ -510,7 +510,7 @@ describe('ParentTools access', () => {
         const awardsView = renderParentTools(['/parent-tools/certificates'], false, linkedAuth);
         const awardsNav = document.querySelector('.parent-tools-nav') as HTMLDivElement;
         await waitFor(() => expect(awardsNav.scrollLeft).toBe(230));
-        expect(screen.getByRole('button', { name: 'Awards' })).toHaveAttribute('aria-pressed', 'true');
+        expect(screen.getByRole('link', { name: 'Awards' })).toHaveAttribute('aria-current', 'page');
         awardsView.unmount();
 
         renderParentTools(['/parent-tools/access'], false, linkedAuth);
@@ -533,9 +533,9 @@ describe('ParentTools access', () => {
 
         renderParentTools(['/parent-tools/access'], false, linkedAuth);
         await screen.findByText('Request player access');
-        fireEvent.click(screen.getByRole('button', { name: 'Awards' }));
+        fireEvent.click(screen.getByRole('link', { name: 'Awards' }));
 
-        await waitFor(() => expect(screen.getByRole('button', { name: 'Awards' })).toHaveAttribute('aria-pressed', 'true'));
+        await waitFor(() => expect(screen.getByRole('link', { name: 'Awards' })).toHaveAttribute('aria-current', 'page'));
         expect((document.querySelector('.parent-tools-nav') as HTMLDivElement).scrollLeft).toBe(230);
         expect(windowScrollTo).not.toHaveBeenCalled();
     });
@@ -544,9 +544,9 @@ describe('ParentTools access', () => {
         renderParentTools(['/parent-tools/calendar'], false, indexedLinkedAuth);
 
         expect(await screen.findByText('No team schedules')).toBeTruthy();
-        expect(screen.getByRole('button', { name: 'Access' })).toBeTruthy();
-        expect(screen.getByRole('button', { name: 'Calendar' })).toBeTruthy();
-        expect(screen.getByRole('button', { name: 'Register' })).toBeTruthy();
+        expect(screen.getByRole('link', { name: 'Access' })).toBeTruthy();
+        expect(screen.getByRole('link', { name: 'Calendar' })).toBeTruthy();
+        expect(screen.getByRole('link', { name: 'Register' })).toBeTruthy();
         expect(screen.queryByText('Link a player in Access to unlock the rest of Parent Tools.')).toBeNull();
     });
 
@@ -562,11 +562,11 @@ describe('ParentTools access', () => {
         await screen.findByText('Request player access');
         expect(panelLoads).not.toContain('fees');
 
-        fireEvent.click(screen.getByRole('button', { name: 'Fees' }));
+        fireEvent.click(screen.getByRole('link', { name: 'Fees' }));
         await screen.findByText('No fees in this view');
         expect(panelLoads.filter((toolId) => toolId === 'fees')).toEqual(['fees']);
 
-        fireEvent.click(screen.getByRole('button', { name: 'Access' }));
+        fireEvent.click(screen.getByRole('link', { name: 'Access' }));
         await screen.findByText('Request player access');
         expect(panelLoads.filter((toolId) => toolId === 'fees')).toEqual(['fees']);
     });
@@ -621,28 +621,28 @@ describe('ParentTools access', () => {
         renderParentTools(['/parent-tools/access'], false, linkedAuth);
 
         await screen.findByText('Request player access');
-        fireEvent.click(screen.getByRole('button', { name: 'Fees' }));
+        fireEvent.click(screen.getByRole('link', { name: 'Fees' }));
         await screen.findByText('Team dues');
         expect(parentToolsAccessServiceMocks.loadParentAccessModel).toHaveBeenCalledTimes(1);
         expect(parentToolsAccessServiceMocks.discoverParentAccessTeams).not.toHaveBeenCalled();
         expect(parentToolsAccessServiceMocks.loadParentAccessPlayers).not.toHaveBeenCalled();
         expect(parentToolsServiceMocks.loadParentFeesForApp).toHaveBeenCalledTimes(1);
 
-        fireEvent.click(screen.getByRole('button', { name: 'Access' }));
+        fireEvent.click(screen.getByRole('link', { name: 'Access' }));
         await screen.findByText('Request player access');
         expect(parentToolsAccessServiceMocks.loadParentAccessModel).toHaveBeenCalledTimes(1);
         expect(parentToolsAccessServiceMocks.discoverParentAccessTeams).not.toHaveBeenCalled();
         expect(parentToolsAccessServiceMocks.loadParentAccessPlayers).not.toHaveBeenCalled();
 
-        fireEvent.click(screen.getByRole('button', { name: 'Register' }));
+        fireEvent.click(screen.getByRole('link', { name: 'Register' }));
         await screen.findByText('Summer Camp');
         expect(parentToolsServiceMocks.loadParentRegistrations).toHaveBeenCalledTimes(1);
 
-        fireEvent.click(screen.getByRole('button', { name: 'Awards' }));
+        fireEvent.click(screen.getByRole('link', { name: 'Awards' }));
         await screen.findByText('Hustle Award');
         expect(parentToolsServiceMocks.loadParentCertificates).toHaveBeenCalledTimes(1);
 
-        fireEvent.click(screen.getByRole('button', { name: 'Register' }));
+        fireEvent.click(screen.getByRole('link', { name: 'Register' }));
         await screen.findByText('Summer Camp');
         expect(parentToolsServiceMocks.loadParentRegistrations).toHaveBeenCalledTimes(1);
 
@@ -671,15 +671,15 @@ describe('ParentTools access', () => {
         );
 
         expect(await screen.findByText('Request player access')).toBeTruthy();
-        expect(screen.queryByRole('button', { name: 'Register' })).toBeNull();
+        expect(screen.queryByRole('link', { name: 'Register' })).toBeNull();
 
         fireEvent.change(screen.getByPlaceholderText('XXXXXXXX'), { target: { value: 'ab12cd34' } });
         fireEvent.click(screen.getByRole('button', { name: 'Redeem code' }));
 
         expect(await screen.findByText('Invite accepted.')).toBeTruthy();
-        expect(await screen.findByRole('button', { name: 'Register' })).toBeTruthy();
-        expect(screen.getByRole('button', { name: 'Calendar' })).toBeTruthy();
-        expect(screen.getByRole('button', { name: 'Household' })).toBeTruthy();
+        expect(await screen.findByRole('link', { name: 'Register' })).toBeTruthy();
+        expect(screen.getByRole('link', { name: 'Calendar' })).toBeTruthy();
+        expect(screen.getByRole('link', { name: 'Household' })).toBeTruthy();
     });
 
     it('loads calendar tools with cached defaults across remounts and forces refresh on demand', async () => {
@@ -796,20 +796,20 @@ describe('ParentTools access', () => {
         fireEvent.change(screen.getByPlaceholderText('XXXXXXXX'), { target: { value: 'stays-local' } });
         expect(parentToolsAccessServiceMocks.loadParentAccessModel).toHaveBeenCalledTimes(1);
 
-        fireEvent.click(screen.getByRole('button', { name: 'Calendar' }));
+        fireEvent.click(screen.getByRole('link', { name: 'Calendar' }));
         await screen.findByText('No team schedules');
         expect(parentToolsServiceMocks.loadParentCalendarTools).toHaveBeenCalledTimes(1);
         fireEvent.click(screen.getByRole('button', { name: 'Copy agenda' }));
         expect(await screen.findByText('No events to copy yet.')).toBeTruthy();
         expect(parentToolsServiceMocks.loadParentCalendarTools).toHaveBeenCalledTimes(1);
 
-        fireEvent.click(screen.getByRole('button', { name: 'Share' }));
+        fireEvent.click(screen.getByRole('link', { name: 'Share' }));
         await screen.findByText('No family links');
         expect(parentToolsServiceMocks.loadFamilyShareModel).toHaveBeenCalledTimes(1);
         fireEvent.change(screen.getByPlaceholderText('Label, like Grandma or babysitter'), { target: { value: 'Grandma' } });
         expect(parentToolsServiceMocks.loadFamilyShareModel).toHaveBeenCalledTimes(1);
 
-        fireEvent.click(screen.getByRole('button', { name: 'Household' }));
+        fireEvent.click(screen.getByRole('link', { name: 'Household' }));
         await screen.findByText('No pending household invites');
         expect(parentToolsServiceMocks.loadParentHouseholdInviteModel).toHaveBeenCalledTimes(1);
         fireEvent.change(screen.getByPlaceholderText('Recipient email'), { target: { value: 'guardian@example.com' } });
@@ -1364,18 +1364,18 @@ describe('ParentTools access', () => {
         await screen.findByText('Request player access');
         expect(renderCounts.access).toBe(1);
 
-        fireEvent.click(screen.getByRole('button', { name: 'Fees' }));
+        fireEvent.click(screen.getByRole('link', { name: 'Fees' }));
         await screen.findByText('Team dues');
         expect(renderCounts.fees).toBe(1);
         expect(renderCounts.access).toBe(1);
 
-        fireEvent.click(screen.getByRole('button', { name: 'Calendar' }));
+        fireEvent.click(screen.getByRole('link', { name: 'Calendar' }));
         await screen.findByText('No team schedules');
         expect(renderCounts.calendar).toBe(1);
         expect(renderCounts.fees).toBe(1);
         expect(renderCounts.access).toBe(1);
 
-        fireEvent.click(screen.getByRole('button', { name: 'Fees' }));
+        fireEvent.click(screen.getByRole('link', { name: 'Fees' }));
         await screen.findByText('Team dues');
         expect(renderCounts.fees).toBe(1);
         expect(renderCounts.calendar).toBe(1);
@@ -1394,17 +1394,17 @@ describe('ParentTools access', () => {
         const view = renderParentTools(['/parent-tools/access'], false, linkedAuth);
 
         await screen.findByText('Request player access');
-        fireEvent.click(screen.getByRole('button', { name: 'Fees' }));
+        fireEvent.click(screen.getByRole('link', { name: 'Fees' }));
         await screen.findByText('No fees in this view');
-        fireEvent.click(screen.getByRole('button', { name: 'Calendar' }));
+        fireEvent.click(screen.getByRole('link', { name: 'Calendar' }));
         await screen.findByText('No team schedules');
-        fireEvent.click(screen.getByRole('button', { name: 'Household' }));
+        fireEvent.click(screen.getByRole('link', { name: 'Household' }));
         await screen.findByText('No pending household invites');
-        fireEvent.click(screen.getByRole('button', { name: 'Share' }));
+        fireEvent.click(screen.getByRole('link', { name: 'Share' }));
         await screen.findByText('No family links');
-        fireEvent.click(screen.getByRole('button', { name: 'Register' }));
+        fireEvent.click(screen.getByRole('link', { name: 'Register' }));
         await screen.findByText('No open registrations');
-        fireEvent.click(screen.getByRole('button', { name: 'Awards' }));
+        fireEvent.click(screen.getByRole('link', { name: 'Awards' }));
         await screen.findByText('No published awards');
 
         const serviceCountsBeforeRehydrate = {
@@ -1540,11 +1540,11 @@ describe('ParentTools access', () => {
         renderParentTools(['/parent-tools/access'], false, linkedAuth);
 
         await screen.findByText('Request player access');
-        fireEvent.click(screen.getByRole('button', { name: 'Fees' }));
+        fireEvent.click(screen.getByRole('link', { name: 'Fees' }));
         await screen.findByText('No fees in this view');
         expect(parentToolsServiceMocks.loadParentFeesForApp).toHaveBeenCalledTimes(1);
 
-        fireEvent.click(screen.getByRole('button', { name: 'Access' }));
+        fireEvent.click(screen.getByRole('link', { name: 'Access' }));
         await screen.findByText('Request player access');
         fireEvent.change(screen.getByPlaceholderText('XXXXXXXX'), { target: { value: 'ab12cd34' } });
         fireEvent.click(screen.getByRole('button', { name: 'Redeem code' }));
@@ -1552,7 +1552,7 @@ describe('ParentTools access', () => {
         await waitFor(() => expect(parentToolsAccessServiceMocks.loadParentAccessModel).toHaveBeenCalledTimes(2));
         expect(parentToolsServiceMocks.loadParentFeesForApp).toHaveBeenCalledTimes(1);
 
-        fireEvent.click(screen.getByRole('button', { name: 'Fees' }));
+        fireEvent.click(screen.getByRole('link', { name: 'Fees' }));
         expect(await screen.findByText('Team dues')).toBeTruthy();
         expect(parentToolsServiceMocks.loadParentFeesForApp).toHaveBeenCalledTimes(2);
     });
@@ -1579,18 +1579,18 @@ describe('ParentTools access', () => {
         renderParentTools(['/parent-tools/access'], false, linkedAuth);
 
         await screen.findByText('Request player access');
-        fireEvent.click(screen.getByRole('button', { name: 'Calendar' }));
+        fireEvent.click(screen.getByRole('link', { name: 'Calendar' }));
         await screen.findByText('No team schedules');
         expect(parentToolsServiceMocks.loadParentCalendarTools).toHaveBeenNthCalledWith(1, linkedAuth.user, {});
 
-        fireEvent.click(screen.getByRole('button', { name: 'Access' }));
+        fireEvent.click(screen.getByRole('link', { name: 'Access' }));
         await screen.findByText('Request player access');
         fireEvent.change(screen.getByPlaceholderText('XXXXXXXX'), { target: { value: 'ab12cd34' } });
         fireEvent.click(screen.getByRole('button', { name: 'Redeem code' }));
         expect(await screen.findByText('Invite accepted.')).toBeTruthy();
         await waitFor(() => expect(parentToolsAccessServiceMocks.loadParentAccessModel).toHaveBeenCalledTimes(2));
 
-        fireEvent.click(screen.getByRole('button', { name: 'Calendar' }));
+        fireEvent.click(screen.getByRole('link', { name: 'Calendar' }));
         expect(await screen.findByText('Bears')).toBeTruthy();
         expect(parentToolsServiceMocks.loadParentCalendarTools).toHaveBeenNthCalledWith(2, linkedAuth.user, { force: true });
     });
@@ -1621,16 +1621,16 @@ describe('ParentTools access', () => {
         renderParentTools(['/parent-tools/access'], false, linkedAuth);
 
         await screen.findByText('Request player access');
-        fireEvent.click(screen.getByRole('button', { name: 'Register' }));
+        fireEvent.click(screen.getByRole('link', { name: 'Register' }));
         await screen.findByText('No open registrations');
         expect(parentToolsServiceMocks.loadParentRegistrations).toHaveBeenCalledTimes(1);
 
-        fireEvent.click(screen.getByRole('button', { name: 'Access' }));
+        fireEvent.click(screen.getByRole('link', { name: 'Access' }));
         await screen.findByText('Request player access');
         fireEvent.change(screen.getByPlaceholderText('XXXXXXXX'), { target: { value: 'ab12cd34' } });
         fireEvent.click(screen.getByRole('button', { name: 'Redeem code' }));
 
-        fireEvent.click(screen.getByRole('button', { name: 'Register' }));
+        fireEvent.click(screen.getByRole('link', { name: 'Register' }));
         await screen.findByText('No open registrations');
         expect(parentToolsServiceMocks.loadParentRegistrations).toHaveBeenCalledTimes(1);
 
@@ -1694,8 +1694,9 @@ describe('ParentTools access', () => {
         renderParentTools([nativeBackTarget!], false, linkedAuth);
 
         expect(await screen.findByText('Summer Camp')).toBeTruthy();
-        expect(screen.getByRole('button', { name: 'Register' })).toHaveAttribute('aria-pressed', 'true');
-        expect(screen.getByRole('button', { name: 'Access' })).toHaveAttribute('aria-pressed', 'false');
+        expect(screen.getByRole('link', { name: 'Register' })).toHaveAttribute('aria-current', 'page');
+        expect(screen.getByRole('link', { name: 'Register' })).toHaveAttribute('href', '/parent-tools/registrations');
+        expect(screen.getByRole('link', { name: 'Access' })).not.toHaveAttribute('aria-current');
         expect(parentToolsServiceMocks.loadParentRegistrations).toHaveBeenCalledWith(linkedAuth.user);
     });
 

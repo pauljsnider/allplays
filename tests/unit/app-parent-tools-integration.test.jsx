@@ -153,6 +153,17 @@ async function clickButton(container, text) {
     await flush();
 }
 
+async function clickLink(container, text) {
+    const link = Array.from(container.querySelectorAll('a[href]')).find((candidate) => (
+        candidate.textContent.trim().includes(text) && !candidate.closest('[hidden]')
+    ));
+    if (!link) throw new Error(`Link not found: ${text}`);
+    await act(async () => {
+        link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    });
+    await flush();
+}
+
 async function clickButtonWithin(container, text) {
     const button = Array.from(container.querySelectorAll('button')).find((candidate) => candidate.textContent.trim().includes(text));
     if (!button) throw new Error(`Button not found: ${text}`);
@@ -326,7 +337,7 @@ describe('React app parent tools integration', () => {
         await submitForm(container, 'Send request');
         expect(accessServiceMocks.submitParentAccessRequest).toHaveBeenCalledWith('team-1', 'player-1', 'Parent');
 
-        await clickButton(container, 'Household');
+        await clickLink(container, 'Household');
         await waitForText(container, 'Create invite');
         expect(container.textContent).toContain('Grandma');
         const householdEmail = container.querySelector('input[placeholder="Recipient email"]');
@@ -343,7 +354,7 @@ describe('React app parent tools integration', () => {
         expect(container.textContent).toContain('HOME5678');
         expect(container.textContent).toContain('Email queued for aunt@example.com.');
 
-        await clickButton(container, 'Fees');
+        await clickLink(container, 'Fees');
         await waitForText(container, 'Team dues');
         expect(container.textContent).not.toContain('Line items');
         await clickButton(container, 'View details');
@@ -352,7 +363,7 @@ describe('React app parent tools integration', () => {
         expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://pay.example.test/fee');
         expect(serviceMocks.initiateParentTeamFeeCheckout).not.toHaveBeenCalled();
 
-        await clickButton(container, 'Calendar');
+        await clickLink(container, 'Calendar');
         await waitForText(container, 'Calendar tools');
         await clickButton(container, 'Download .ics');
         expect(publicActionMocks.exportCalendarIcsFile).toHaveBeenCalledWith('all-plays-family-schedule.ics', 'BEGIN:VCALENDAR\r\nEND:VCALENDAR');
@@ -362,7 +373,7 @@ describe('React app parent tools integration', () => {
         await clickButton(container, 'Apple');
         expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('webcal://feed.example.test/team-1.ics');
 
-        await clickButton(container, 'Share');
+        await clickLink(container, 'Share');
         await waitForText(container, 'Family share');
         const labelInput = container.querySelector('input[placeholder^="Label"]');
         await changeValue(labelInput, 'Grandpa');
@@ -375,14 +386,14 @@ describe('React app parent tools integration', () => {
         await clickButtonWithin(confirmDialog, 'Revoke link');
         expect(serviceMocks.revokeParentFamilyShare).toHaveBeenCalledWith('token-1');
 
-        await clickButton(container, 'Register');
+        await clickLink(container, 'Register');
         await waitForText(container, 'Summer Camp');
         const reviewLink = Array.from(container.querySelectorAll('a')).find((link) => link.textContent.trim() === 'Review');
         expect(reviewLink?.getAttribute('href')).toBe('/parent-tools/registrations/team-1/form-1');
         await clickButton(container, 'Legacy form');
         expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://allplays.ai/registration.html?teamId=team-1&formId=form-1');
 
-        await clickButton(container, 'Awards');
+        await clickLink(container, 'Awards');
         await waitForText(container, 'Hustle Award');
         const awardShareButton = Array.from(container.querySelectorAll('button')).filter((button) => button.textContent.trim() === 'Share').at(-1);
         await act(async () => {
@@ -402,25 +413,25 @@ describe('React app parent tools integration', () => {
         expect(accessServiceMocks.discoverParentAccessTeams).toHaveBeenCalledTimes(0);
         expect(accessServiceMocks.loadParentAccessPlayers).toHaveBeenCalledTimes(0);
 
-        await clickButton(container, 'Fees');
+        await clickLink(container, 'Fees');
         await waitForText(container, 'Team dues');
         expect(serviceMocks.loadParentFeesForApp).toHaveBeenCalledTimes(1);
 
-        await clickButton(container, 'Access');
+        await clickLink(container, 'Access');
         await waitForText(container, 'Request player access');
         expect(accessServiceMocks.loadParentAccessModel).toHaveBeenCalledTimes(1);
         expect(accessServiceMocks.discoverParentAccessTeams).toHaveBeenCalledTimes(0);
         expect(accessServiceMocks.loadParentAccessPlayers).toHaveBeenCalledTimes(0);
 
-        await clickButton(container, 'Register');
+        await clickLink(container, 'Register');
         await waitForText(container, 'Summer Camp');
         expect(serviceMocks.loadParentRegistrations).toHaveBeenCalledTimes(1);
 
-        await clickButton(container, 'Awards');
+        await clickLink(container, 'Awards');
         await waitForText(container, 'Hustle Award');
         expect(serviceMocks.loadParentCertificates).toHaveBeenCalledTimes(1);
 
-        await clickButton(container, 'Register');
+        await clickLink(container, 'Register');
         await waitForText(container, 'Summer Camp');
         expect(serviceMocks.loadParentRegistrations).toHaveBeenCalledTimes(1);
         expect(container.textContent).not.toContain('Loading registrations');
@@ -440,14 +451,14 @@ describe('React app parent tools integration', () => {
         const { container } = await renderParentTools('/parent-tools/access');
         await waitForText(container, 'Request player access');
 
-        await clickButton(container, 'Fees');
+        await clickLink(container, 'Fees');
         await waitForText(container, 'Team dues');
-        await clickButton(container, 'Register');
+        await clickLink(container, 'Register');
         await waitForText(container, 'Summer Camp');
         expect(serviceMocks.loadParentFeesForApp).toHaveBeenCalledTimes(1);
         expect(serviceMocks.loadParentRegistrations).toHaveBeenCalledTimes(1);
 
-        await clickButton(container, 'Access');
+        await clickLink(container, 'Access');
         await waitForText(container, 'Request player access');
         await openManualAccessRequest(container);
         await submitForm(container, 'Send request');
@@ -456,12 +467,12 @@ describe('React app parent tools integration', () => {
         expect(serviceMocks.loadParentFeesForApp).toHaveBeenCalledTimes(1);
         expect(serviceMocks.loadParentRegistrations).toHaveBeenCalledTimes(1);
 
-        await clickButton(container, 'Register');
+        await clickLink(container, 'Register');
         await waitForText(container, 'Summer Camp');
         expect(serviceMocks.loadParentRegistrations).toHaveBeenCalledTimes(2);
         expect(serviceMocks.loadParentFeesForApp).toHaveBeenCalledTimes(1);
 
-        await clickButton(container, 'Fees');
+        await clickLink(container, 'Fees');
         await waitForText(container, 'Team dues');
         expect(serviceMocks.loadParentFeesForApp).toHaveBeenCalledTimes(2);
     });
@@ -491,16 +502,16 @@ describe('React app parent tools integration', () => {
         const { container } = await renderParentTools('/parent-tools/access');
         await waitForText(container, 'Request player access');
 
-        await clickButton(container, 'Register');
+        await clickLink(container, 'Register');
         await waitForText(container, 'No open registrations');
         expect(serviceMocks.loadParentRegistrations).toHaveBeenCalledTimes(1);
 
-        await clickButton(container, 'Access');
+        await clickLink(container, 'Access');
         await waitForText(container, 'Request player access');
         await openManualAccessRequest(container);
         await submitForm(container, 'Send request');
 
-        await clickButton(container, 'Register');
+        await clickLink(container, 'Register');
         await waitForText(container, 'No open registrations');
         expect(serviceMocks.loadParentRegistrations).toHaveBeenCalledTimes(1);
 
