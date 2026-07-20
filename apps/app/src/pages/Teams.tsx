@@ -1,17 +1,36 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
+  BarChart3,
+  CalendarDays,
+  CheckCircle2,
+  ChevronDown,
   ChevronRight,
+  ClipboardCheck,
+  ClipboardList,
+  Dumbbell,
+  ExternalLink,
+  FileText,
+  Images,
   Loader2,
+  MessageCircle,
+  Radio,
   RefreshCw,
+  Settings,
   Shield,
+  SlidersHorizontal,
+  Ticket,
+  UserRound,
+  WalletCards,
   Users
 } from 'lucide-react';
 import { RoleBadge } from '../components/Badges';
-import { TeamAvatar, TeamLauncherChip, Status } from '../components/TeamSummaryPrimitives';
+import { getInitials, TeamAvatar, TeamLauncherChip, Status } from '../components/TeamSummaryPrimitives';
 import { toAppServiceError, type AppServiceError } from '../lib/appErrors';
-import { type ParentHomeModel, type ParentHomeTeam } from '../lib/homeLogic';
+import { getEventDetailPath, getPlayerDetailPath, type ParentHomeModel, type ParentHomeTeam } from '../lib/homeLogic';
 import { loadParentHomeSummary, loadParentTeamsSummaryBootstrap } from '../lib/homeService';
+import { openPublicUrl } from '../lib/publicActions';
+import { buildTeamNavigation, type TeamNavigationItem, type TeamNavigationSection } from '../lib/teamNavigation';
 import { PullToRefresh } from '../components/PullToRefresh';
 import { useAsyncOperation } from '../lib/useAsyncOperation';
 import { useRefreshOnResume } from '../lib/useRefreshOnResume';
