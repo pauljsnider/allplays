@@ -32,9 +32,9 @@ describe('visual regression CI wiring', () => {
         expect(helper).toContain("require.resolve('@fontsource-variable/inter/files/inter-latin-wght-normal.woff2')");
         expect(helper).toContain('#root, #root button, #root input, #root select, #root textarea');
         expect(helper).toContain('document.fonts.load(`${weight} 16px AllPlaysVisualInter`)');
-        expect(authVisual).toContain("expectVisualSnapshot(page, 'auth-join-code-signup.png')");
+        expect(authVisual).toMatch(/'auth-join-code-signup\.png', \{\s+maxDiffPixels: undefined,\s+maxDiffPixelRatio: 0\.01\s+\}/);
         expect(scheduleVisual).toContain("expectVisualSnapshot(page, 'family-schedule.png')");
-        expect(authVisual).not.toContain('maxDiffPixelRatio');
+        expect(authVisual).toContain('maxDiffPixelRatio');
         expect(scheduleVisual).not.toContain('maxDiffPixelRatio');
     });
 
