@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   loadChatConversations,
   loadChatTeamContext,
@@ -26,6 +26,8 @@ export function useChatTeam({ teamId, user, inboxTeam, preferredConversationId =
   const [selectedConversationId, setSelectedConversationId] = useState<string>(DEFAULT_TEAM_CONVERSATION_ID);
   const [loadingContext, setLoadingContext] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const userRef = useRef(user);
+  userRef.current = user;
 
   const normalizedPreferredConversationId = normalizePreferredConversationId(preferredConversationId);
 
@@ -33,7 +35,8 @@ export function useChatTeam({ teamId, user, inboxTeam, preferredConversationId =
     let cancelled = false;
 
     async function loadContext() {
-      if (!user) return;
+      const activeUser = userRef.current;
+      if (!activeUser) return;
       const nextConversationId = normalizedPreferredConversationId || DEFAULT_TEAM_CONVERSATION_ID;
       const shouldBlockOnConversationHydration = !isDefaultTeamConversation(nextConversationId);
       setLoadingContext(true);
@@ -43,7 +46,7 @@ export function useChatTeam({ teamId, user, inboxTeam, preferredConversationId =
       onTeamReset?.();
 
       try {
-        const context = await loadChatTeamContext(teamId, user);
+        const context = await loadChatTeamContext(teamId, activeUser);
         if (cancelled) return;
         setTeam(context.team);
         setProfile(context.profile);
@@ -53,7 +56,7 @@ export function useChatTeam({ teamId, user, inboxTeam, preferredConversationId =
         }
 
         try {
-          const loadedConversations = await loadChatConversations(teamId, user, context.team, context.canModerate, {
+          const loadedConversations = await loadChatConversations(teamId, activeUser, context.team, context.canModerate, {
             activeConversationId: nextConversationId
           });
           if (cancelled) return;

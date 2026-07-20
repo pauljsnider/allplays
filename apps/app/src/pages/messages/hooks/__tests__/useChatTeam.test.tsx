@@ -104,7 +104,7 @@ describe('useChatTeam', () => {
         expect(screen.getByTestId('selected-conversation').textContent).toBe(DEFAULT_TEAM_CONVERSATION_ID);
     });
 
-    it('does not reload context when the user object changes identity but keeps the same uid', async () => {
+    it('uses the uid as the reload boundary while retaining the latest user object', async () => {
         vi.mocked(loadChatTeamContext).mockResolvedValue({
             team: { id: 'team-1', name: 'Bears' },
             profile: {},
@@ -114,20 +114,25 @@ describe('useChatTeam', () => {
             { id: DEFAULT_TEAM_CONVERSATION_ID, type: 'team', isDefault: true }
         ]);
 
-        function TeamProbeWithUser({ authUser }: { authUser: NonNullable<AuthState['user']> }) {
-            useChatTeam({ teamId: 'team-1', user: authUser });
+        function TeamProbeWithUser({ authUser, teamId }: { authUser: NonNullable<AuthState['user']>; teamId: string }) {
+            useChatTeam({ teamId, user: authUser });
             return null;
         }
 
         const firstUser = { ...user };
         const secondUser = { ...user };
 
-        const { rerender } = render(<TeamProbeWithUser authUser={firstUser} />);
+        const { rerender } = render(<TeamProbeWithUser authUser={firstUser} teamId="team-1" />);
         await waitFor(() => expect(loadChatTeamContext).toHaveBeenCalledTimes(1));
 
-        rerender(<TeamProbeWithUser authUser={secondUser} />);
+        rerender(<TeamProbeWithUser authUser={secondUser} teamId="team-1" />);
 
         await waitFor(() => expect(loadChatTeamContext).toHaveBeenCalledTimes(1));
+
+        rerender(<TeamProbeWithUser authUser={secondUser} teamId="team-2" />);
+
+        await waitFor(() => expect(loadChatTeamContext).toHaveBeenCalledTimes(2));
+        expect(loadChatTeamContext).toHaveBeenLastCalledWith('team-2', secondUser);
     });
 
     it('ends blocking load after team context while the default conversation hydrates in the background', async () => {
