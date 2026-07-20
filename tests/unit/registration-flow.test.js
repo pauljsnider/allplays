@@ -425,27 +425,10 @@ describe('public registration flow', () => {
         expect(rules).toContain('match /registrationForms/{formId}');
         expect(rules).toContain('allow update: if isTeamOwnerOrAdmin(teamId);');
         expect(rules).toContain("allow create: if isTeamOwnerOrAdmin(teamId) && request.resource.data.status == 'pending';");
-        expect(rules).toContain('function registrationFormPath(teamId, formId)');
-        expect(rules).toContain("data.status in ['pending', 'waitlisted']");
-        expect(rules).toContain("'paymentSettings'");
-        expect(rules).toContain("'selectedOption'");
-        expect(rules).toContain('isRegistrationPaymentSettingsPayloadValid');
-        expect(rules).toContain("'paymentPlan'");
-        expect(rules).toContain('isRegistrationPaymentPlanValid');
-        expect(rules).toContain("'feeSnapshot'");
-        expect(rules).toContain("'checkoutAttemptToken'");
-        expect(rules).toContain("'screeningRequired'");
-        expect(rules).toContain("'screeningStatus'");
-        expect(rules).toContain("!data.keys().hasAny(['screeningRequired', 'screeningStatus', 'screeningProvider', 'screeningProviderReference'])");
-        expect(rules).toContain("data.screeningStatus == get(registrationFormPath(teamId, formId)).data.get('backgroundCheck', {}).get('initialScreeningStatus', 'pending')");
-        expect(rules).toContain('isRegistrationFeeSnapshotValid');
+        expect(rules).not.toContain('function isPendingRegistrationPayloadValid');
         expect(rules).not.toContain('isPublicRegistrationCapacityCounterUpdate');
         expect(rules).not.toContain('isPublicPendingRegistrationCreate');
         expect(rules).not.toContain('existsAfter(registrationPath)');
-        expect(rules).toContain('data.waiverAccepted == true');
-        expect(rules).toContain('hasOnlyFlatStringValues(data.participant)');
-        expect(rules).toContain('hasOnlyFlatStringValues(data.guardian)');
-        expect(rules).toContain('data.keys().size() <= 20');
     });
 
     it('releases and prepares a fresh pending registration when online checkout retry follows a Stripe failure', async () => {
@@ -818,13 +801,14 @@ describe('public registration flow', () => {
         expect(selectedOptionIndex).toBeGreaterThan(relaxedOpenCheckoutGuardIndex);
     });
 
-    it('derives checkout attempt requirements from the stored form in rules', () => {
+    it('keeps checkout attempt validation in the server-owned submission path', () => {
         const rules = fs.readFileSync('firestore.rules', 'utf8');
+        const functionsSource = fs.readFileSync('functions/index.js', 'utf8');
 
-        expect(rules).toContain("data.paymentSettings.onlineCheckoutEnabled == get(registrationFormPath(teamId, formId)).data.get('paymentSettings', {}).get('onlineCheckoutEnabled', false)");
-        expect(rules).toContain("get(registrationFormPath(teamId, formId)).data.get('paymentSettings', {}).get('onlineCheckoutEnabled', false) == true");
-        expect(rules).toContain("get(registrationFormPath(teamId, formId)).data.get('paymentSettings', {}).get('onlineCheckoutEnabled', false) != true");
-        expect(rules).toContain("data.checkoutAttemptToken is string");
+        expect(rules).not.toContain('isPendingRegistrationPayloadValid');
+        expect(rules).toContain("allow create: if isTeamOwnerOrAdmin(teamId) && request.resource.data.status == 'pending';");
+        expect(functionsSource).toContain('checkoutAttemptToken: normalizeCheckoutAttemptToken(data.checkoutAttemptToken)');
+        expect(functionsSource).toContain('registrationPublicCheckoutCapabilityMatches(registration, input)');
     });
 
     it('does not write cancellation state before returning for paid registrations', () => {
