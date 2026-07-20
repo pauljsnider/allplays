@@ -19,6 +19,7 @@ type UseChatTeamParams = {
 };
 
 export function useChatTeam({ teamId, user, inboxTeam, preferredConversationId = '', onTeamReset }: UseChatTeamParams) {
+  const userRef = useRef(user);
   const [team, setTeam] = useState<Record<string, any> | null>(inboxTeam || null);
   const [profile, setProfile] = useState<Record<string, any>>({});
   const [canModerate, setCanModerate] = useState(inboxTeam?.canModerate || false);
@@ -26,7 +27,6 @@ export function useChatTeam({ teamId, user, inboxTeam, preferredConversationId =
   const [selectedConversationId, setSelectedConversationId] = useState<string>(DEFAULT_TEAM_CONVERSATION_ID);
   const [loadingContext, setLoadingContext] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const userRef = useRef(user);
   userRef.current = user;
 
   const normalizedPreferredConversationId = normalizePreferredConversationId(preferredConversationId);
