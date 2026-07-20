@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+    FIRESTORE_RULES_DEPLOY_BUDGET_BYTES,
     assertPreviewDeploySkipHandling,
     extractMatchBlock,
+    validateFirestoreRulesDeployBudget,
     validateFirebaseDeployWorkloadIdentity,
     validatePreviewDeployCommand,
     validateProductionDeployCommand,
@@ -9,6 +11,15 @@ import {
 } from '../../scripts/validate-firebase-rules-ci.mjs';
 
 describe('validate Firebase rules CI helpers', () => {
+    it('keeps Firestore rules below the reliable production deploy budget', () => {
+        expect(() => validateFirestoreRulesDeployBudget(
+            'x'.repeat(FIRESTORE_RULES_DEPLOY_BUDGET_BYTES)
+        )).not.toThrow();
+        expect(() => validateFirestoreRulesDeployBudget(
+            'x'.repeat(FIRESTORE_RULES_DEPLOY_BUDGET_BYTES + 1)
+        )).toThrow(/avoid Firebase Rules backend failures/);
+    });
+
     it('accepts the deployed RSVP note get/list privacy contract', () => {
         expect(() => validateFirebaseRulesCi()).not.toThrow();
     });

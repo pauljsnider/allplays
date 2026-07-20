@@ -226,7 +226,9 @@ describe('targeted team chat Firestore rules', () => {
         expect(rules).toContain('data.recipientIds.size() > 0');
         expect(rules).toContain('data.recipientIds.size() <= 50');
         expect(rules).toContain('data.recipientIds.hasOnly(teamChatRecipientIds(teamId))');
-        expect(rules).toContain('isValidChatMessageTarget(teamId, data)');
+        expect(rules).toContain("data.get('targetType', 'full_team') == 'full_team'");
+        expect(rules).toContain("data.get('targetType', 'full_team') == 'staff'");
+        expect(rules).toContain("data.get('targetType', 'full_team') == 'individuals'");
     });
 
     it('rejects unauthorized senders by requiring senderId to match auth uid', () => {

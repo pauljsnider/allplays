@@ -58,15 +58,26 @@ service cloud.firestore {
 
     function isTeamOwnerOrAdmin(teamId) {
       return isSignedIn() &&
-             (get(/databases/$(database)/documents/teams/$(teamId)).data.ownerId == request.auth.uid ||
-              (request.auth.token.email != null &&
-               get(/databases/$(database)/documents/teams/$(teamId)).data.get('ownerEmail', '') is string &&
-               get(/databases/$(database)/documents/teams/$(teamId)).data.get('ownerEmail', '').lower() == request.auth.token.email.lower()) ||
-              (request.auth.token.email != null &&
-               get(/databases/$(database)/documents/teams/$(teamId)).data.get('ownerEmailLower', '') is string &&
-               get(/databases/$(database)/documents/teams/$(teamId)).data.get('ownerEmailLower', '') == request.auth.token.email.lower()) ||
-              currentAuthEmailMatchesAdminList(get(/databases/$(database)/documents/teams/$(teamId)).data.get('adminEmails', [])) ||
-              isGlobalAdmin());
+             hasTeamOwnerOrAdminAccess(
+               get(/databases/$(database)/documents/teams/$(teamId)).data
+             );
+    }
+
+    function hasTeamOwnerOrAdminAccess(team) {
+      return team.ownerId == request.auth.uid ||
+             currentAuthEmailMatchesTeamOwner(team) ||
+             currentAuthEmailMatchesAdminList(team.get('adminEmails', [])) ||
+             isGlobalAdmin();
+    }
+
+    function currentAuthEmailMatchesTeamOwner(team) {
+      return request.auth.token.email != null &&
+             (
+               (team.get('ownerEmail', '') is string &&
+                team.get('ownerEmail', '').lower() == request.auth.token.email.lower()) ||
+               (team.get('ownerEmailLower', '') is string &&
+                team.get('ownerEmailLower', '') == request.auth.token.email.lower())
+             );
     }
 
     function currentAuthEmailMatchesAdminList(adminEmails) {
@@ -441,15 +452,7 @@ service cloud.firestore {
 
     function canReadManagedTeamDocument(data) {
       return isSignedIn() &&
-             (data.ownerId == request.auth.uid ||
-              (request.auth.token.email != null &&
-               data.get('ownerEmail', '') is string &&
-               data.get('ownerEmail', '').lower() == request.auth.token.email.lower()) ||
-              (request.auth.token.email != null &&
-               data.get('ownerEmailLower', '') is string &&
-               data.get('ownerEmailLower', '') == request.auth.token.email.lower()) ||
-              currentAuthEmailMatchesAdminList(data.get('adminEmails', [])) ||
-              isGlobalAdmin());
+             hasTeamOwnerOrAdminAccess(data);
     }
 
     function canReadPublicTeamDocument(data) {
@@ -466,12 +469,7 @@ service cloud.firestore {
     function canListManagedTeamDocument(data) {
       return isSignedIn() &&
              (data.ownerId == request.auth.uid ||
-              (request.auth.token.email != null &&
-               data.get('ownerEmail', '') is string &&
-               data.get('ownerEmail', '').lower() == request.auth.token.email.lower()) ||
-              (request.auth.token.email != null &&
-               data.get('ownerEmailLower', '') is string &&
-               data.get('ownerEmailLower', '') == request.auth.token.email.lower()) ||
+              currentAuthEmailMatchesTeamOwner(data) ||
               currentAuthEmailMatchesAdminList(data.get('adminEmails', [])));
     }
 
@@ -1128,220 +1126,11 @@ service cloud.firestore {
       return data.updatedBy == request.auth.uid;
     }
 
-    function registrationFormPath(teamId, formId) {
-      return /databases/$(database)/documents/teams/$(teamId)/registrationForms/$(formId);
-    }
-
-    function registrationDocPath(teamId, formId, registrationId) {
-      return /databases/$(database)/documents/teams/$(teamId)/registrationForms/$(formId)/registrations/$(registrationId);
-    }
-
-    function hasOnlyFlatStringValues(data) {
-      return data is map &&
-             data.keys().size() <= 20 &&
-             (data.keys().size() < 1 || data[data.keys()[0]] is string) &&
-             (data.keys().size() < 2 || data[data.keys()[1]] is string) &&
-             (data.keys().size() < 3 || data[data.keys()[2]] is string) &&
-             (data.keys().size() < 4 || data[data.keys()[3]] is string) &&
-             (data.keys().size() < 5 || data[data.keys()[4]] is string) &&
-             (data.keys().size() < 6 || data[data.keys()[5]] is string) &&
-             (data.keys().size() < 7 || data[data.keys()[6]] is string) &&
-             (data.keys().size() < 8 || data[data.keys()[7]] is string) &&
-             (data.keys().size() < 9 || data[data.keys()[8]] is string) &&
-             (data.keys().size() < 10 || data[data.keys()[9]] is string) &&
-             (data.keys().size() < 11 || data[data.keys()[10]] is string) &&
-             (data.keys().size() < 12 || data[data.keys()[11]] is string) &&
-             (data.keys().size() < 13 || data[data.keys()[12]] is string) &&
-             (data.keys().size() < 14 || data[data.keys()[13]] is string) &&
-             (data.keys().size() < 15 || data[data.keys()[14]] is string) &&
-             (data.keys().size() < 16 || data[data.keys()[15]] is string) &&
-             (data.keys().size() < 17 || data[data.keys()[16]] is string) &&
-             (data.keys().size() < 18 || data[data.keys()[17]] is string) &&
-             (data.keys().size() < 19 || data[data.keys()[18]] is string) &&
-             (data.keys().size() < 20 || data[data.keys()[19]] is string);
-    }
-
-    function hasConfiguredRegistrationOptions(data) {
-      return (data.get('registrationOptions', []) is list && data.get('registrationOptions', []).size() > 0) ||
-             (data.get('options', []) is list && data.get('options', []).size() > 0);
-    }
-
     function isCurrentUserRegistrationGuardian(data) {
       return isSignedIn() &&
              request.auth.token.email is string &&
              request.auth.token.email != '' &&
              data.get('guardian', {}).get('email', '') == request.auth.token.email.lower();
-    }
-
-    function isRegistrationPaymentSettingsPayloadValid(settings) {
-      return settings is map &&
-             settings.keys().hasOnly(['offlinePaymentEnabled', 'onlineCheckoutEnabled']) &&
-             settings.offlinePaymentEnabled is bool &&
-             settings.onlineCheckoutEnabled is bool;
-    }
-
-    function isRegistrationSelectedOptionPayloadValid(option) {
-      return option is map &&
-             option.keys().hasOnly(['id', 'countKey', 'title', 'feeAmountCents', 'capacityLimit', 'waitlistEnabled']) &&
-             option.id is string &&
-             option.countKey is string &&
-             option.title is string &&
-             option.feeAmountCents is int &&
-             (option.capacityLimit == null || option.capacityLimit is int) &&
-             option.waitlistEnabled is bool;
-    }
-
-    function isRegistrationInstallmentValid(installment) {
-      return installment is map &&
-             installment.keys().hasOnly(['label', 'dueDate', 'amountCents']) &&
-             installment.label is string &&
-             installment.dueDate is string &&
-             installment.amountCents is int &&
-             installment.amountCents >= 0;
-    }
-
-    function isRegistrationScheduleValid(schedule) {
-      return schedule is list &&
-             schedule.size() >= 1 &&
-             schedule.size() <= 12 &&
-             isRegistrationInstallmentValid(schedule[0]) &&
-             (schedule.size() < 2 || isRegistrationInstallmentValid(schedule[1])) &&
-             (schedule.size() < 3 || isRegistrationInstallmentValid(schedule[2])) &&
-             (schedule.size() < 4 || isRegistrationInstallmentValid(schedule[3])) &&
-             (schedule.size() < 5 || isRegistrationInstallmentValid(schedule[4])) &&
-             (schedule.size() < 6 || isRegistrationInstallmentValid(schedule[5])) &&
-             (schedule.size() < 7 || isRegistrationInstallmentValid(schedule[6])) &&
-             (schedule.size() < 8 || isRegistrationInstallmentValid(schedule[7])) &&
-             (schedule.size() < 9 || isRegistrationInstallmentValid(schedule[8])) &&
-             (schedule.size() < 10 || isRegistrationInstallmentValid(schedule[9])) &&
-             (schedule.size() < 11 || isRegistrationInstallmentValid(schedule[10])) &&
-             (schedule.size() < 12 || isRegistrationInstallmentValid(schedule[11]));
-    }
-
-    function isRegistrationPaymentPlanValid(plan) {
-      return plan is map &&
-             plan.keys().hasOnly(['id', 'type', 'title', 'installmentCount', 'totalBalanceDueCents', 'schedule']) &&
-             plan.id in ['pay_full', 'installments'] &&
-             plan.type in ['pay_full', 'installments'] &&
-             plan.id == plan.type &&
-             plan.title is string &&
-             plan.installmentCount is int &&
-             plan.totalBalanceDueCents is int &&
-             plan.totalBalanceDueCents >= 0 &&
-             isRegistrationScheduleValid(plan.schedule) &&
-             plan.installmentCount == plan.schedule.size();
-    }
-
-    function isRegistrationDiscountApplicationValid(discount) {
-      return discount is map &&
-             discount.keys().hasOnly(['id', 'type', 'label', 'amountType', 'amountValue', 'amountCents']) &&
-             discount.id is string &&
-             discount.type in ['early_bird', 'quantity'] &&
-             discount.label is string &&
-             discount.amountType in ['fixed', 'percent'] &&
-             (discount.amountValue is int || discount.amountValue is float) &&
-             discount.amountCents is int &&
-             discount.amountCents >= 0;
-    }
-
-    function areRegistrationDiscountApplicationsValid(discounts) {
-      return discounts is list &&
-             discounts.size() <= 10 &&
-             (discounts.size() < 1 || isRegistrationDiscountApplicationValid(discounts[0])) &&
-             (discounts.size() < 2 || isRegistrationDiscountApplicationValid(discounts[1])) &&
-             (discounts.size() < 3 || isRegistrationDiscountApplicationValid(discounts[2])) &&
-             (discounts.size() < 4 || isRegistrationDiscountApplicationValid(discounts[3])) &&
-             (discounts.size() < 5 || isRegistrationDiscountApplicationValid(discounts[4])) &&
-             (discounts.size() < 6 || isRegistrationDiscountApplicationValid(discounts[5])) &&
-             (discounts.size() < 7 || isRegistrationDiscountApplicationValid(discounts[6])) &&
-             (discounts.size() < 8 || isRegistrationDiscountApplicationValid(discounts[7])) &&
-             (discounts.size() < 9 || isRegistrationDiscountApplicationValid(discounts[8])) &&
-             (discounts.size() < 10 || isRegistrationDiscountApplicationValid(discounts[9]));
-    }
-
-    // Validates the shape of a client-submitted feeSnapshot.
-    // NOTE: The feeSnapshot.finalAmountDueCents value is NOT trusted for billing.
-    // The createStripeRegistrationCheckoutSession Cloud Function recomputes the charge
-    // amount from the authoritative registrationForm document (feeAmountCents + discountRules)
-    // and ignores whatever the client stored here. This rule only enforces structural validity.
-    function isRegistrationFeeSnapshotValid(snapshot) {
-      return snapshot is map &&
-             snapshot.keys().hasOnly([
-               'currency',
-               'quantity',
-               'originalFeeAmountCents',
-               'subtotalAmountCents',
-               'appliedDiscounts',
-               'finalAmountDueCents'
-             ]) &&
-             snapshot.currency is string &&
-             snapshot.quantity is int &&
-             snapshot.quantity >= 1 &&
-             snapshot.originalFeeAmountCents is int &&
-             snapshot.subtotalAmountCents is int &&
-             snapshot.finalAmountDueCents is int &&
-             snapshot.originalFeeAmountCents >= 0 &&
-             snapshot.subtotalAmountCents >= 0 &&
-             snapshot.finalAmountDueCents >= 0 &&
-             areRegistrationDiscountApplicationsValid(snapshot.appliedDiscounts);
-    }
-
-    function isPendingRegistrationPayloadValid(teamId, formId, data) {
-      return data.keys().hasOnly([
-               'teamId',
-               'formId',
-               'programName',
-               'feeAmountCents',
-               'currency',
-               'paymentSettings',
-               'participant',
-               'guardian',
-               'waiverAccepted',
-               'waiverText',
-               'paymentPlan',
-               'status',
-               'submittedAt',
-               'waitlistedAt',
-               'selectedOption',
-               'feeSnapshot',
-               'checkoutAttemptToken',
-               'screeningRequired',
-               'screeningStatus',
-               'screeningProvider',
-               'screeningProviderReference',
-               'source'
-             ]) &&
-             data.teamId == teamId &&
-             data.formId == formId &&
-             data.status in ['pending', 'waitlisted'] &&
-             data.waiverAccepted == true &&
-             hasOnlyFlatStringValues(data.participant) &&
-             hasOnlyFlatStringValues(data.guardian) &&
-             data.keys().hasAny(['paymentSettings']) &&
-             isRegistrationPaymentSettingsPayloadValid(data.paymentSettings) &&
-             isRegistrationPaymentPlanValid(data.paymentPlan) &&
-             data.keys().hasAny(['feeSnapshot']) &&
-             isRegistrationFeeSnapshotValid(data.feeSnapshot) &&
-             data.paymentSettings.onlineCheckoutEnabled == get(registrationFormPath(teamId, formId)).data.get('paymentSettings', {}).get('onlineCheckoutEnabled', false) &&
-             (
-               (get(registrationFormPath(teamId, formId)).data.get('paymentSettings', {}).get('onlineCheckoutEnabled', false) == true &&
-                data.checkoutAttemptToken is string &&
-                data.checkoutAttemptToken.matches('^[A-Za-z0-9_-]{16,128}$')) ||
-               (get(registrationFormPath(teamId, formId)).data.get('paymentSettings', {}).get('onlineCheckoutEnabled', false) != true &&
-                (!data.keys().hasAny(['checkoutAttemptToken']) || (data.checkoutAttemptToken is string && data.checkoutAttemptToken.matches('^[A-Za-z0-9_-]{16,128}$'))))
-             ) &&
-             (!data.keys().hasAny(['selectedOption']) || isRegistrationSelectedOptionPayloadValid(data.selectedOption)) &&
-             (!data.keys().hasAny(['screeningRequired', 'screeningStatus', 'screeningProvider', 'screeningProviderReference']) || (
-               get(registrationFormPath(teamId, formId)).data.get('backgroundCheck', {}).get('enabled', false) == true &&
-               data.screeningRequired == true &&
-               data.screeningStatus == get(registrationFormPath(teamId, formId)).data.get('backgroundCheck', {}).get('initialScreeningStatus', 'pending') &&
-               data.screeningProvider == get(registrationFormPath(teamId, formId)).data.get('backgroundCheck', {}).get('providerName', '') &&
-               data.screeningProviderReference == ''
-             )) &&
-             (data.status == 'waitlisted' || !data.keys().hasAny(['waitlistedAt'])) &&
-             (data.status != 'waitlisted' || data.keys().hasAny(['waitlistedAt'])) &&
-             data.source == 'public-registration';
-
     }
 
     // Chat access: team owner, team admins, global admins, or any parent linked to the team
@@ -1372,15 +1161,7 @@ service cloud.firestore {
       let team = get(/databases/$(database)/documents/teams/$(teamId)).data;
 
       // Check owner, admin email, or global admin first (no user doc needed)
-      let isOwnerOrAdmin = team.ownerId == request.auth.uid ||
-        (request.auth.token.email != null &&
-         team.get('ownerEmail', '') is string &&
-         team.get('ownerEmail', '').lower() == request.auth.token.email.lower()) ||
-        (request.auth.token.email != null &&
-         team.get('ownerEmailLower', '') is string &&
-         team.get('ownerEmailLower', '') == request.auth.token.email.lower()) ||
-        currentAuthEmailMatchesAdminList(team.get('adminEmails', [])) ||
-        isGlobalAdmin();
+      let isOwnerOrAdmin = hasTeamOwnerOrAdminAccess(team);
 
       return isSignedIn() && (isOwnerOrAdmin || isParentForTeam(teamId));
     }
@@ -2009,12 +1790,6 @@ service cloud.firestore {
                 data.senderId in conversationData.get('directUserIds', []))
              ) &&
              !(data.senderId in data.recipientIds);
-    }
-
-    function isValidChatMessageTarget(teamId, data) {
-      return isFullTeamChatMessage(data) ||
-             isStaffChatMessage(data) ||
-             isIndividualChatMessage(teamId, data);
     }
 
     function isCurrentChatRecipient(data) {
@@ -2675,11 +2450,6 @@ service cloud.firestore {
 
     function rideshareOfferPath(teamId, gameId, offerId) {
       return /databases/$(database)/documents/teams/$(teamId)/games/$(gameId)/rideOffers/$(offerId);
-    }
-
-    function isRideshareOfferOpen(teamId, gameId, offerId) {
-      let offerPath = rideshareOfferPath(teamId, gameId, offerId);
-      return exists(offerPath) && get(offerPath).data.status == 'open';
     }
 
     function isRideshareOfferAcceptingRequests(teamId, gameId, offerId) {

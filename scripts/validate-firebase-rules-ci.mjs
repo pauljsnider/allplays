@@ -24,6 +24,18 @@ function assertEquals(actual, expected, label) {
     }
 }
 
+export const FIRESTORE_RULES_DEPLOY_BUDGET_BYTES = 208 * 1024;
+
+export function validateFirestoreRulesDeployBudget(rulesSource) {
+    const sourceBytes = Buffer.byteLength(rulesSource, 'utf8');
+    if (sourceBytes > FIRESTORE_RULES_DEPLOY_BUDGET_BYTES) {
+        throw new Error(
+            `firestore.rules is ${sourceBytes} bytes; keep it at or below ` +
+            `${FIRESTORE_RULES_DEPLOY_BUDGET_BYTES} bytes to avoid Firebase Rules backend failures.`
+        );
+    }
+}
+
 function canDeleteOwnScopedStorageUpload({ authUid, pathUserId, isTeamAdmin = false, hasCurrentScopeAccess = false }) {
     return authUid !== null &&
         (isTeamAdmin ||
@@ -321,6 +333,8 @@ export function validateFirebaseRulesCi() {
     const deployPreviewBuild = readText('.github/workflows/deploy-preview.yml');
     const deployPreviewTrusted = readText('.github/workflows/deploy-preview-trusted.yml');
     const regressionGuards = readText('.github/workflows/regression-guards.yml');
+
+    validateFirestoreRulesDeployBudget(firestoreRules);
 
     if (firebaseJson.firestore?.rules !== 'firestore.rules') {
         throw new Error('firebase.json must deploy firestore.rules.');
