@@ -270,6 +270,7 @@ describe('AppShell', () => {
     );
 
     const primaryNav = screen.getByRole('navigation', { name: 'Primary navigation' });
+    expect(primaryNav.querySelector('.grid')?.getAttribute('style')).toContain('minmax(44px, 1fr)');
     expect(within(primaryNav).getAllByRole('link')).toHaveLength(7);
     const familyLink = within(primaryNav).getByRole('link', { name: 'Family' });
     expect(familyLink.getAttribute('href')).toBe('/parent-tools');
