@@ -594,13 +594,14 @@ test('@visual app auth screen exposes sign in, sign up, Google, activation code,
     await expect(page.getByRole('button', { name: 'Continue with Google' })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Enter join code' })).toHaveCount(0);
     await expect(page.getByRole('link', { name: 'Account action' })).toHaveCount(0);
+    await expectVisualSnapshot(page, 'auth-join-code-signup.png', { maxDiffPixels: 1500 });
+
     await page.getByLabel('Password', { exact: true }).fill('secret123');
     await page.getByRole('button', { name: 'Show password' }).click();
     await expect(page.getByLabel('Password', { exact: true })).toHaveAttribute('type', 'text');
     await expect(page.getByRole('button', { name: 'Hide password' })).toHaveAttribute('aria-pressed', 'true');
     await page.getByRole('button', { name: 'Hide password' }).click();
     await expect(page.getByLabel('Password', { exact: true })).toHaveAttribute('type', 'password');
-    await expectVisualSnapshot(page, 'auth-join-code-signup.png', { maxDiffPixels: 1500 });
 
     await page.getByRole('tab', { name: 'Sign in' }).click();
     await page.getByLabel('Email').fill('parent@example.com');
