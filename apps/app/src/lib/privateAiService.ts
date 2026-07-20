@@ -171,22 +171,25 @@ export function resetPrivateAiModel() {
 export async function loadPrivateAiConversations(user: AuthUser | null, conversationLimit = 30): Promise<PrivateAiConversation[]> {
   if (!user?.uid) return [];
 
-  const snapshot = await getDocs(query(
-    collection(db, 'users', user.uid, privateAiConversationCollectionName),
-    orderBy('updatedAt', 'desc'),
-    limit(conversationLimit)
-  ));
+  const [conversationSnapshot, messages] = await Promise.all([
+    getDocs(query(
+      collection(db, 'users', user.uid, privateAiConversationCollectionName),
+      orderBy('updatedAt', 'desc'),
+      limit(conversationLimit)
+    )),
+    loadPrivateAiMessageRecords(user, maxLoadedMessages).catch(() => [])
+  ]);
 
-  const conversations = (snapshot.docs || [])
+  const storedConversations = (conversationSnapshot.docs || [])
     .map((document: any) => normalizePrivateAiConversation(document.id, document.data?.() || {}))
     .filter((conversation: PrivateAiConversation | null): conversation is PrivateAiConversation => Boolean(conversation));
+  const conversationsById = new Map(
+    recoverPrivateAiConversations(messages).map((conversation) => [conversation.id, conversation])
+  );
 
-  if (conversations.length) {
-    return conversations;
-  }
-
-  const legacyMessages = await loadPrivateAiMessages(user, maxHistoryMessages, DEFAULT_PRIVATE_AI_CONVERSATION_ID).catch(() => []);
-  return legacyMessages.length ? [buildDefaultConversation(legacyMessages)] : [];
+  storedConversations.forEach((conversation: PrivateAiConversation) => conversationsById.set(conversation.id, conversation));
+  return Array.from(conversationsById.values())
+    .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime());
 }
 
 export async function createPrivateAiConversation(user: AuthUser | null, title = 'New chat'): Promise<PrivateAiConversation> {
@@ -222,17 +225,23 @@ export async function loadPrivateAiMessages(
   if (!user?.uid) return [];
 
   const activeConversationId = normalizeConversationId(conversationId);
+  const messages = await loadPrivateAiMessageRecords(user, Math.max(messageLimit, maxLoadedMessages));
+
+  return messages
+    .filter((message: PrivateAiMessage) => messageBelongsToConversation(message, activeConversationId))
+    .reverse();
+}
+
+async function loadPrivateAiMessageRecords(user: AuthUser, messageLimit: number): Promise<PrivateAiMessage[]> {
   const snapshot = await getDocs(query(
     collection(db, 'users', user.uid, privateAiCollectionName),
     orderBy('createdAt', 'desc'),
-    limit(Math.max(messageLimit, maxLoadedMessages))
+    limit(messageLimit)
   ));
 
   return (snapshot.docs || [])
     .map((document: any) => normalizePrivateAiMessage(document.id, document.data?.() || {}))
-    .filter((message: PrivateAiMessage | null): message is PrivateAiMessage => Boolean(message))
-    .filter((message: PrivateAiMessage) => messageBelongsToConversation(message, activeConversationId))
-    .reverse();
+    .filter((message: PrivateAiMessage | null): message is PrivateAiMessage => Boolean(message));
 }
 
 export async function sendPrivateAiMessage(
@@ -1409,16 +1418,30 @@ function normalizePrivateAiMessage(id: string, data: Record<string, any>): Priva
   };
 }
 
-function buildDefaultConversation(messages: PrivateAiMessage[]): PrivateAiConversation {
-  const latest = messages[messages.length - 1];
-  const now = latest?.createdAt || new Date(0);
-  return {
-    id: DEFAULT_PRIVATE_AI_CONVERSATION_ID,
-    title: 'Recent chat',
-    createdAt: messages[0]?.createdAt || now,
-    updatedAt: now,
-    lastMessagePreview: latest?.text || ''
-  };
+function recoverPrivateAiConversations(messages: PrivateAiMessage[]): PrivateAiConversation[] {
+  const messagesByConversationId = new Map<string, PrivateAiMessage[]>();
+  messages.forEach((message) => {
+    const conversationId = normalizeConversationId(message.conversationId);
+    const conversationMessages = messagesByConversationId.get(conversationId) || [];
+    conversationMessages.push(message);
+    messagesByConversationId.set(conversationId, conversationMessages);
+  });
+
+  return Array.from(messagesByConversationId, ([id, conversationMessages]) => {
+    const orderedMessages = [...conversationMessages]
+      .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime());
+    const first = orderedMessages[0];
+    const latest = orderedMessages[orderedMessages.length - 1] || first;
+    const firstUserMessage = orderedMessages.find((message) => message.role === 'user');
+    const timestamp = latest?.createdAt || new Date(0);
+    return {
+      id,
+      title: firstUserMessage ? buildConversationTitle(firstUserMessage.text) : 'Recent chat',
+      createdAt: first?.createdAt || timestamp,
+      updatedAt: timestamp,
+      lastMessagePreview: latest?.text || ''
+    };
+  });
 }
 
 async function getPrivateAiModel() {

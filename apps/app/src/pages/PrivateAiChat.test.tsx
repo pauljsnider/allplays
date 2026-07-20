@@ -215,4 +215,31 @@ describe('PrivateAiChat', () => {
         expect(screen.getByText('Here is your summary.')).toBeTruthy();
         expect(privateAiServiceMocks.loadPrivateAiMessages).not.toHaveBeenCalledWith(auth.user, undefined, 'conversation-1');
     });
+
+    it('shows persisted conversation history as saved chats after reload', async () => {
+        privateAiServiceMocks.loadPrivateAiConversations.mockResolvedValue([
+            {
+                id: 'conversation-2',
+                title: 'Practice plan',
+                createdAt: new Date('2026-06-28T13:18:00Z'),
+                updatedAt: new Date('2026-06-28T13:19:00Z'),
+                lastMessagePreview: 'Here is the practice plan.'
+            },
+            {
+                id: 'conversation-1',
+                title: 'RSVP help',
+                createdAt: new Date('2026-06-27T13:18:00Z'),
+                updatedAt: new Date('2026-06-27T13:19:00Z'),
+                lastMessagePreview: 'Your RSVP was updated.'
+            }
+        ]);
+
+        renderChat();
+
+        const conversationList = await screen.findByLabelText('AI conversations');
+        expect(within(conversationList).getByRole('button', { name: /Practice plan/ })).toBeTruthy();
+        expect(within(conversationList).getByRole('button', { name: /RSVP help/ })).toBeTruthy();
+        expect(screen.getByText('Saved chats')).toBeTruthy();
+        expect(screen.queryByText('Chats')).toBeNull();
+    });
 });

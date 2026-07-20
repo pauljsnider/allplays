@@ -391,7 +391,7 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
                   </div>
                 </div>
                 <div className="mt-3 grid grid-cols-3 gap-2">
-                  <StatPill label="Chats" value={String(stats.conversations)} />
+                  <StatPill label="Saved chats" value={String(stats.conversations)} />
                   <StatPill label="Messages" value={String(stats.messages)} />
                   <StatPill label="Lookups" value={String(stats.lookups)} />
                 </div>

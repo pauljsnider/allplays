@@ -349,6 +349,92 @@ describe('private AI service', () => {
         );
     });
 
+    it('recovers message-backed conversations missing metadata and keeps them ordered without duplicates', async () => {
+        firebaseMocks.getDocs
+            .mockResolvedValueOnce({
+                docs: [
+                    {
+                        id: 'conversation-1',
+                        data: () => ({
+                            title: 'Saved player plan',
+                            lastMessagePreview: 'Metadata wins for this thread.',
+                            clientCreatedAt: '2026-05-20T12:00:00Z',
+                            clientUpdatedAt: '2026-05-21T12:05:00Z'
+                        })
+                    }
+                ]
+            })
+            .mockResolvedValueOnce({
+                docs: [
+                    {
+                        id: 'legacy-answer',
+                        data: () => ({
+                            role: 'assistant',
+                            text: 'Legacy answer',
+                            clientCreatedAt: '2026-05-23T12:01:00Z'
+                        })
+                    },
+                    {
+                        id: 'legacy-question',
+                        data: () => ({
+                            role: 'user',
+                            text: 'What did I miss?',
+                            clientCreatedAt: '2026-05-23T12:00:00Z'
+                        })
+                    },
+                    {
+                        id: 'orphan-answer',
+                        data: () => ({
+                            role: 'assistant',
+                            text: 'Here is the practice plan.',
+                            conversationId: 'conversation-2',
+                            clientCreatedAt: '2026-05-22T12:01:00Z'
+                        })
+                    },
+                    {
+                        id: 'orphan-question',
+                        data: () => ({
+                            role: 'user',
+                            text: 'Build a practice plan',
+                            conversationId: 'conversation-2',
+                            clientCreatedAt: '2026-05-22T12:00:00Z'
+                        })
+                    },
+                    {
+                        id: 'stored-message',
+                        data: () => ({
+                            role: 'user',
+                            text: 'This must not duplicate conversation-1',
+                            conversationId: 'conversation-1',
+                            clientCreatedAt: '2026-05-21T12:00:00Z'
+                        })
+                    }
+                ]
+            });
+
+        const { loadPrivateAiConversations } = await import('../../apps/app/src/lib/privateAiService.ts');
+        const conversations = await loadPrivateAiConversations(authUser);
+
+        expect(conversations).toEqual([
+            expect.objectContaining({
+                id: 'default',
+                title: 'What did I miss?',
+                lastMessagePreview: 'Legacy answer'
+            }),
+            expect.objectContaining({
+                id: 'conversation-2',
+                title: 'Build a practice plan',
+                lastMessagePreview: 'Here is the practice plan.'
+            }),
+            expect.objectContaining({
+                id: 'conversation-1',
+                title: 'Saved player plan',
+                lastMessagePreview: 'Metadata wins for this thread.'
+            })
+        ]);
+        expect(conversations.filter((conversation) => conversation.id === 'conversation-1')).toHaveLength(1);
+    });
+
     it('saves the prompt, lets AI request schedule data, and saves the answer privately', async () => {
         aiMocks.model.generateContent
             .mockResolvedValueOnce(modelText(JSON.stringify({
