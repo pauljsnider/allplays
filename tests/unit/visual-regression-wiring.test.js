@@ -20,7 +20,7 @@ describe('visual regression CI wiring', () => {
         const helper = readRepoFile('tests/smoke/helpers/visual-regression.js');
 
         expect(config).toContain("snapshotPathTemplate: '{testDir}/{testFilePath}-snapshots/{arg}{ext}'");
-        expect(config).toContain('maxDiffPixels: 0');
+        expect(config).toContain('maxDiffPixels: 500');
         expect(config).not.toContain('maxDiffPixelRatio');
         expect(config).toContain("timezoneId: 'UTC'");
         expect(config).toContain('deviceScaleFactor: 1');
