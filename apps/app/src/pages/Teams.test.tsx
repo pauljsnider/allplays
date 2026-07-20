@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { StrictMode } from 'react';
 import { MemoryRouter, Route, Routes, useLocation, useParams } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -16,6 +18,14 @@ const homeServiceMocks = vi.hoisted(() => ({
 const publicActionMocks = vi.hoisted(() => ({
   openPublicUrl: vi.fn()
 }));
+
+const teamsSource = readFileSync(resolve(process.cwd(), process.cwd().endsWith('apps/app') ? 'src/pages/Teams.tsx' : 'apps/app/src/pages/Teams.tsx'), 'utf8');
+
+it('imports the helpers used by the team navigation panel', () => {
+  expect(teamsSource).toContain('getEventDetailPath, getPlayerDetailPath');
+  expect(teamsSource).toContain('buildTeamNavigation, type TeamNavigationItem, type TeamNavigationSection');
+  expect(teamsSource).toContain("openPublicUrl } from '../lib/publicActions'");
+});
 
 vi.mock('../lib/homeService', () => homeServiceMocks);
 vi.mock('../lib/publicActions', () => ({
