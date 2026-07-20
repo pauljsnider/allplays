@@ -630,7 +630,7 @@ test.describe('mobile My Teams', () => {
         await waitForTeamDetailRoute(page, 'Bears');
         await expect(page.getByText('Team tools')).toBeVisible();
         await expect(page.locator('a[href="#/schedule?teamId=team-1&view=packets"]')).toBeVisible();
-        await expect(page.getByRole('link', { name: /Players/ })).toHaveAttribute('href', 'https://allplays.ai/team.html#teamId=team-1');
+        await expect(page.getByRole('link', { name: /Website team page/ })).toHaveAttribute('href', 'https://allplays.ai/team.html#teamId=team-1');
         await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
     });
 
