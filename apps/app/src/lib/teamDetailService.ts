@@ -67,6 +67,7 @@ import { getPrimaryAppCheckHeaders } from './adapters/legacyFirebaseAppCheck';
 import { buildAppAcceptInviteUrl } from './inviteUrls';
 import { createLogger } from './logger';
 import { getNativeRestDedupKey, loadDedupedNativeRestRequest, shouldDedupNativeRestRequest } from './nativeRestDedup';
+import { loadProfileDocument } from './profileService';
 import { normalizeOptionalHttpUrl, parseTeamLivestreamInput } from './teamLinks';
 import type { AuthUser } from './types';
 
@@ -1429,7 +1430,8 @@ export async function loadParentTeamDetail(
 
   const players = await loadPrivilegedTeamPlayers(teamId, user, team, publicPlayers);
 
-  const linkedPlayerIds = getLinkedPlayerIds(user, teamId, players);
+  const accessUser = await hydrateTeamDetailAccessUser(user, teamId, players);
+  const linkedPlayerIds = getLinkedPlayerIds(accessUser, teamId, players);
   const completedGameIds = (Array.isArray(games) ? games : [])
     .filter(isCompletedGame)
     .map((game: any) => cleanString(game.id || game.gameId))
@@ -1457,7 +1459,7 @@ export async function loadParentTeamDetail(
     players,
     games,
     configs,
-    user,
+    user: accessUser,
     linkedPlayerIds,
     seasonStatsByPlayerId,
     trackingItems,
@@ -1475,7 +1477,8 @@ export async function loadParentTeamDetailBootstrap(teamId: string, user: AuthUs
 
   const players = await loadPrivilegedTeamPlayers(teamId, user, team, publicPlayers);
 
-  const linkedPlayerIds = getLinkedPlayerIds(user, teamId, players);
+  const accessUser = await hydrateTeamDetailAccessUser(user, teamId, players);
+  const linkedPlayerIds = getLinkedPlayerIds(accessUser, teamId, players);
 
   return buildTeamDetailModel({
     teamId,
@@ -1483,7 +1486,7 @@ export async function loadParentTeamDetailBootstrap(teamId: string, user: AuthUs
     players,
     games: [],
     configs: [],
-    user,
+    user: accessUser,
     linkedPlayerIds,
     seasonStatsByPlayerId: {},
     trackingItems: [],
@@ -2298,21 +2301,54 @@ function buildTrackingSummaries(players: TeamDetailPlayer[], linkedPlayerIds: st
 
 function getLinkedPlayerIds(user: AuthUser | null, teamId: string, players: any[]) {
   const ids = new Set<string>();
+  const normalizedTeamId = cleanString(teamId);
   const addLink = (link: any) => {
-    if (cleanString(link?.teamId) === teamId && cleanString(link?.playerId)) {
-      ids.add(cleanString(link.playerId));
+    const linkedTeamId = cleanString(link?.teamId || link?.teamID || link?.team_id || link?.team);
+    const playerId = cleanString(link?.playerId || link?.playerID || link?.player_id || link?.childId || link?.childID || link?.child_id);
+    if (linkedTeamId === normalizedTeamId && playerId) {
+      ids.add(playerId);
     }
   };
   (Array.isArray(user?.parentOf) ? user?.parentOf : []).forEach(addLink);
   (Array.isArray((user as any)?.playerOf) ? (user as any).playerOf : []).forEach(addLink);
+  (Array.isArray(user?.parentPlayerKeys) ? user.parentPlayerKeys : [])
+    .map((key: string) => String(key || '').split('::'))
+    .filter(([linkedTeamId, playerId]: string[]) => linkedTeamId === normalizedTeamId && playerId)
+    .forEach(([, playerId]: string[]) => ids.add(playerId));
   (Array.isArray((user as any)?.playerKeys) ? (user as any).playerKeys : [])
     .map((key: string) => String(key || '').split('::'))
-    .filter(([linkedTeamId, playerId]: string[]) => linkedTeamId === teamId && playerId)
+    .filter(([linkedTeamId, playerId]: string[]) => linkedTeamId === normalizedTeamId && playerId)
     .forEach(([, playerId]: string[]) => ids.add(playerId));
   (Array.isArray(players) ? players : [])
     .filter((player) => cleanString(player?.userId || player?.authUid || player?.accountUserId) === user?.uid)
     .forEach((player) => ids.add(cleanString(player.id || player.playerId)));
   return Array.from(ids);
+}
+
+async function hydrateTeamDetailAccessUser(user: AuthUser | null, teamId: string, players: any[]): Promise<AuthUser | null> {
+  if (!user?.uid) return user;
+  if (getLinkedPlayerIds(user, teamId, players).length > 0) return user;
+  const profile = await loadProfileDocument(user.uid).catch(() => null);
+  if (!profile) return user;
+  return {
+    ...user,
+    parentOf: mergeAccessArray(user.parentOf, (profile as any).parentOf),
+    parentTeamIds: mergeAccessArray(user.parentTeamIds, (profile as any).parentTeamIds),
+    parentPlayerKeys: mergeAccessArray(user.parentPlayerKeys, (profile as any).parentPlayerKeys),
+    coachOf: mergeAccessArray(user.coachOf, (profile as any).coachOf)
+  };
+}
+
+function mergeAccessArray<T>(userValues: T[] | undefined, profileValues: unknown): T[] {
+  const merged = [...(Array.isArray(userValues) ? userValues : [])];
+  if (Array.isArray(profileValues)) {
+    profileValues.forEach((value) => {
+      if (!merged.some((current) => JSON.stringify(current) === JSON.stringify(value))) {
+        merged.push(value as T);
+      }
+    });
+  }
+  return merged;
 }
 
 function normalizeSponsorList(sponsors: any[]): TeamDetailSponsor[] {

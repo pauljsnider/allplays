@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { StrictMode } from 'react';
 import { MemoryRouter, Route, Routes, useLocation, useParams } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -16,6 +18,14 @@ const homeServiceMocks = vi.hoisted(() => ({
 const publicActionMocks = vi.hoisted(() => ({
   openPublicUrl: vi.fn()
 }));
+
+const teamsSource = readFileSync(resolve(process.cwd(), process.cwd().endsWith('apps/app') ? 'src/pages/Teams.tsx' : 'apps/app/src/pages/Teams.tsx'), 'utf8');
+
+it('imports the helpers used by the team navigation panel', () => {
+  expect(teamsSource).toContain('getEventDetailPath, getPlayerDetailPath');
+  expect(teamsSource).toContain('buildTeamNavigation, type TeamNavigationItem, type TeamNavigationSection');
+  expect(teamsSource).toContain("openPublicUrl } from '../lib/publicActions'");
+});
 
 vi.mock('../lib/homeService', () => homeServiceMocks);
 vi.mock('../lib/publicActions', () => ({
@@ -164,7 +174,7 @@ describe('Teams empty state', () => {
 
     await screen.findByRole('heading', { name: 'No teams linked yet' });
     const browseLink = screen.getAllByRole('link', { name: 'Browse teams' })[0];
-    expect(browseLink).toHaveAttribute('href', '/teams/browse');
+    expect(browseLink.getAttribute('href')).toBe('/teams/browse');
     fireEvent.click(browseLink);
 
     expect(await screen.findByText('Browse public teams route')).toBeTruthy();
@@ -218,10 +228,10 @@ describe('Teams empty state', () => {
 
     renderTeams({ initialEntry: '/teams?selectedTeamId=team-fast&from=home' });
 
-    expect(await screen.findByRole('heading', { name: '1 team ready' })).toBeInTheDocument();
-    expect(screen.getByText('Choose a team')).toBeInTheDocument();
-    expect(screen.getByText('Unable to refresh teams. Showing the last loaded teams. Try again.')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Open Fast Falcons' })).toHaveAttribute('href', '/teams/team-fast');
+    expect(await screen.findByRole('heading', { name: '1 team ready' })).toBeTruthy();
+    expect(screen.getByText('Choose a team')).toBeTruthy();
+    expect(screen.getByText('Unable to refresh teams. Showing the last loaded teams. Try again.')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Open Fast Falcons' }).getAttribute('href')).toBe('/teams/team-fast');
     expect(screen.queryByText('Teams could not load')).toBeNull();
     expect(screen.queryByText('No teams available')).toBeNull();
   });
@@ -264,7 +274,7 @@ describe('Teams empty state', () => {
 
     renderTeams({ initialEntry: '/teams?selectedTeamId=team-fast' });
 
-    expect(await screen.findByRole('heading', { name: '1 team ready' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '1 team ready' })).toBeTruthy();
     await waitFor(() => {
       expect(homeServiceMocks.loadParentHomeSummary).toHaveBeenCalledWith(auth.user, {
         force: false,
@@ -344,18 +354,18 @@ describe('Teams launcher navigation', () => {
     cleanup();
   });
 
-  it('keeps one team-hub action per launcher row while selected-team tools remain available', async () => {
+  it('keeps one team-page action per launcher row', async () => {
     renderTeamsWithNav();
 
     const fastFalcons = await screen.findByRole('link', { name: 'Open Fast Falcons' });
     const slowSharks = screen.getByRole('link', { name: 'Open Slow Sharks' });
-    expect(fastFalcons).toHaveAttribute('href', '/teams/team-fast');
-    expect(slowSharks).toHaveAttribute('href', '/teams/team-slow');
-    expect(fastFalcons).toHaveAttribute('title', 'Open Fast Falcons');
-    expect(slowSharks).toHaveAttribute('title', 'Open Slow Sharks');
-    expect(fastFalcons).toHaveAttribute('aria-describedby', 'selected-team-team-fast');
-    expect(slowSharks).not.toHaveAttribute('aria-describedby');
-    expect(screen.getByText('Open a team hub to use its tools.')).toBeInTheDocument();
+    expect(fastFalcons.getAttribute('href')).toBe('/teams/team-fast');
+    expect(slowSharks.getAttribute('href')).toBe('/teams/team-slow');
+    expect(fastFalcons.getAttribute('title')).toBe('Open Fast Falcons');
+    expect(slowSharks.getAttribute('title')).toBe('Open Slow Sharks');
+    expect(fastFalcons.hasAttribute('aria-describedby')).toBe(false);
+    expect(slowSharks.hasAttribute('aria-describedby')).toBe(false);
+    expect(screen.getByText('Choose a team to open its page and tools.')).toBeTruthy();
 
     const fastFalconsRow = fastFalcons.closest<HTMLElement>('.team-launcher-row');
     const slowSharksRow = slowSharks.closest<HTMLElement>('.team-launcher-row');
@@ -370,14 +380,28 @@ describe('Teams launcher navigation', () => {
     expect(screen.queryByRole('link', { name: 'Slow Sharks schedule' })).toBeNull();
     expect(screen.queryByRole('link', { name: 'Slow Sharks team hub' })).toBeNull();
 
-    expect(screen.getByRole('link', { name: 'Chat' })).toHaveAttribute('href', '/messages/team-fast');
-    expect(screen.getByRole('link', { name: /^Schedule/ })).toHaveAttribute('href', '/schedule?teamId=team-fast');
-    expect(screen.getByRole('link', { name: /^Messages/ })).toHaveAttribute('href', '/messages/team-fast');
-    expect(screen.getByRole('link', { name: /^Practice packets/ })).toHaveAttribute('href', '/schedule?teamId=team-fast&view=packets');
+    expect(screen.queryByRole('link', { name: 'Chat' })).toBeNull();
+    expect(screen.queryByRole('link', { name: /^Schedule/ })).toBeNull();
+    expect(screen.queryByRole('link', { name: /^Messages/ })).toBeNull();
+    expect(screen.queryByRole('link', { name: /^Practice packets/ })).toBeNull();
 
     fireEvent.click(fastFalcons);
 
-    expect(await screen.findByTestId('team-hub')).toHaveTextContent('Team hub: team-fast');
+    expect((await screen.findByTestId('team-hub')).textContent).toBe('Team hub: team-fast');
+  });
+
+  it('keeps team stats informational on launcher rows', async () => {
+    renderTeamsWithNav();
+
+    await screen.findByRole('heading', { name: '2 teams ready' });
+    const fastFalcons = screen.getByRole('link', { name: 'Open Fast Falcons' });
+    const selectedRow = fastFalcons.closest('article');
+    expect(selectedRow).not.toBeNull();
+
+    expect(within(selectedRow!).getByText('1 player')).toBeTruthy();
+    expect(within(selectedRow!).getByText('2 events')).toBeTruthy();
+    expect(within(selectedRow!).getByText('1 unread')).toBeTruthy();
+    expect(within(selectedRow!).getAllByRole('link')).toEqual([fastFalcons]);
   });
 });
 
@@ -415,11 +439,11 @@ describe('Teams single-team auto-navigate', () => {
     cleanup();
   });
 
-  it('navigates directly to the team hub without showing the chooser when the user has exactly one linked player on one team', async () => {
+  it('opens the team page directly when the user has exactly one linked team', async () => {
     renderTeamsWithNav();
 
     await waitFor(() => {
-      expect(screen.getByTestId('team-hub')).toBeInTheDocument();
+      expect(screen.getByTestId('team-hub')).toBeTruthy();
     });
 
     expect(screen.getByTestId('team-hub').textContent).toBe('Team hub: team-solo');
@@ -431,14 +455,14 @@ describe('Teams single-team auto-navigate', () => {
     renderTeamsWithNav('/teams?workflow=fees');
 
     await waitFor(() => {
-      expect(screen.getByTestId('team-fees-route')).toBeInTheDocument();
+      expect(screen.getByTestId('team-fees-route')).toBeTruthy();
     });
 
     expect(screen.queryByTestId('team-hub')).toBeNull();
     expect(screen.queryByText('Choose a team')).toBeNull();
   });
 
-  it('keeps the chooser visible when the only team has no linked players yet', async () => {
+  it('opens the team page directly when the only team has no linked players yet', async () => {
     homeServiceMocks.loadParentTeamsSummaryBootstrap.mockResolvedValue(makeTeamSummaryBootstrap({
       ...singleTeamHome,
       teams: [{
@@ -458,8 +482,7 @@ describe('Teams single-team auto-navigate', () => {
 
     renderTeamsWithNav();
 
-    expect(await screen.findByRole('heading', { name: '1 team ready' })).toBeInTheDocument();
-    expect(screen.getByText('Choose a team')).toBeInTheDocument();
-    expect(screen.queryByTestId('team-hub')).toBeNull();
+    expect(await screen.findByTestId('team-hub')).toBeTruthy();
+    expect(screen.queryByText('Choose a team')).toBeNull();
   });
 });

@@ -31,14 +31,21 @@ describe('nested team chat message payload contracts', () => {
         expect(rules).toContain('function hasValidNestedChatAttachments(teamId, conversationId, data)');
         expect(rules).toContain('function isSafeNestedChatRegexSegment(value)');
         expect(rules).toContain('function isScopedNestedChatFallbackMediaPath(teamId, conversationId, value)');
+        expect(rules).toContain('function isCachedLegacyNestedChatFallbackMediaPath(teamId, conversationId, value)');
         expect(rules).toContain("let pathSegments = value.split('/');");
         expect(rules).toContain('pathSegments[3] == conversationId');
+        expect(rules).toContain("conversationId == 'team'");
+        expect(rules).toContain('pathSegments[2] == teamId');
+        expect(rules).toContain("pathSegments[4] == request.auth.uid");
         expect(rules).toContain("value.matches('[A-Za-z0-9_%:-]+')");
         const scopedMediaPathValidator = rules.slice(
             rules.indexOf('function isScopedNestedChatMediaPath'),
             rules.indexOf('function isValidNestedChatAttachment')
         );
         expect(scopedMediaPathValidator.indexOf('isScopedNestedChatFallbackMediaPath')).toBeLessThan(
+            scopedMediaPathValidator.indexOf('isCachedLegacyNestedChatFallbackMediaPath')
+        );
+        expect(scopedMediaPathValidator.indexOf('isCachedLegacyNestedChatFallbackMediaPath')).toBeLessThan(
             scopedMediaPathValidator.indexOf("value.matches('team-(photos|videos)")
         );
         const attachmentValidator = rules.slice(
@@ -350,6 +357,15 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
 
     function fallbackAttachment(conversationId = staffConversationId, overrides = {}) {
         const path = overrides.path || `stat-sheets/team-chat/team-1/${conversationId}/coach-1/photo.jpg`;
+        return legacyAttachment({
+            path,
+            url: firebaseMediaUrl(path, 'game-flow-c6311.firebasestorage.app'),
+            ...overrides
+        });
+    }
+
+    function cachedLegacyFallbackAttachment(overrides = {}) {
+        const path = overrides.path || 'stat-sheets/team-chat/team-1/team/parent-1/photo.jpg';
         return legacyAttachment({
             path,
             url: firebaseMediaUrl(path, 'game-flow-c6311.firebasestorage.app'),
@@ -771,6 +787,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
     it('allows legacy full-team text and exact scoped Firebase Storage uploads', async () => {
         const parentDb = authedFirestore('parent-1', 'parent@example.com');
         const attachment = legacyAttachment();
+        const cachedAttachment = cachedLegacyFallbackAttachment();
 
         await assertSucceeds(setDoc(legacyMessageRef(parentDb, 'valid-text'), legacyPayload()));
         await assertSucceeds(setDoc(legacyMessageRef(parentDb, 'valid-canonical-photo'), legacyPayload({
@@ -783,6 +800,10 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
         await assertSucceeds(setDoc(legacyMessageRef(parentDb, 'valid-media'), legacyPayload({
             text: '',
             attachments: [attachment]
+        })));
+        await assertSucceeds(setDoc(legacyMessageRef(parentDb, 'valid-cached-fallback-media'), legacyPayload({
+            text: '',
+            attachments: [cachedAttachment]
         })));
     });
 
@@ -811,6 +832,8 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
                 imageSize: validAttachment.size
             }),
             legacyPayload({ attachments: [legacyAttachment({ path: 'team-photos/unscoped-photo.jpg' })] }),
+            legacyPayload({ attachments: [cachedLegacyFallbackAttachment({ path: 'stat-sheets/team-chat/team-1/team/user-2/photo.jpg' })] }),
+            legacyPayload({ attachments: [cachedLegacyFallbackAttachment({ path: 'stat-sheets/team-chat/team-2/team/parent-1/photo.jpg' })] }),
             legacyPayload({ attachments: [legacyAttachment({ size: 5 * 1024 * 1024 + 1 })] }),
             legacyPayload({ unexpectedField: true }),
             legacyPayload({ senderId: 'user-2' }),

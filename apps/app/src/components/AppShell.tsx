@@ -16,6 +16,7 @@ import {
   Home,
   ImagePlus,
   KeyRound,
+  LogOut,
   LogIn,
   MessageCircle,
   Newspaper,
@@ -38,7 +39,7 @@ import { APP_BACK_DISMISS_EVENT } from '../lib/nativeBackButton';
 import { updateAppIconBadge } from '../lib/badgeService';
 import type { NotificationInboxItem } from '../lib/notificationInboxService';
 import { loadNotificationInboxService } from '../lib/notificationInboxServiceLoader';
-import type { AuthState, NavItem } from '../lib/types';
+import type { AuthState, AuthUser, NavItem } from '../lib/types';
 import { RoleBadge } from './Badges';
 import { Modal } from './Modal';
 
@@ -55,6 +56,10 @@ const navItems: NavItem[] = [
 ];
 
 const familyNavItem: NavItem = { label: 'Family', path: '/parent-tools', icon: UsersRound };
+const mobileSignedInNavItems: NavItem[] = [
+  ...navItems,
+  familyNavItem,
+];
 const desktopNavItems: NavItem[] = [
   ...navItems.slice(0, -1),
   familyNavItem,
@@ -105,6 +110,7 @@ export function AppShell({ auth, children }: AppShellProps) {
   const [inboxRetryKey, setInboxRetryKey] = useState(0);
   const [unreadCount, setUnreadCount] = useState(0);
   const [unreadState, setUnreadState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [signingOut, setSigningOut] = useState(false);
   const { isDesktopWeb } = useShellLayout();
   const navigate = useNavigate();
   const location = useLocation();
@@ -131,6 +137,15 @@ export function AppShell({ auth, children }: AppShellProps) {
           ? `${unreadCount} unread notification${unreadCount === 1 ? '' : 's'}`
           : 'No unread notifications'
     : 'No unread notifications';
+  const handleSignOut = async () => {
+    setSigningOut(true);
+    try {
+      await auth.signOut();
+      navigate('/auth', { replace: true });
+    } finally {
+      setSigningOut(false);
+    }
+  };
 
   useEffect(() => {
     const startedAt = routeStartedAtRef.current;
@@ -293,8 +308,9 @@ export function AppShell({ auth, children }: AppShellProps) {
     : hasSignedInSession
       ? 'Signed in'
       : 'Explore ALL PLAYS';
-  const activeNavItems = hasSignedInSession ? mobilePrimaryNavItems : publicNavItems;
-  const activeDesktopNavItems = hasSignedInSession ? desktopNavItems : publicNavItems;
+  const teamNavPath = getSingleTeamNavPath(auth.user);
+  const activeNavItems = hasSignedInSession ? withTeamNavPath(mobilePrimaryNavItems, teamNavPath) : publicNavItems;
+  const activeDesktopNavItems = hasSignedInSession ? withTeamNavPath(desktopNavItems, teamNavPath) : publicNavItems;
   const moreNavActive = hasSignedInSession && mobileMoreNavItems.some((item) => isRouteActive(location.pathname, item.path));
   const commonAddWorkflows = commonAddWorkflowIds
     .map((id) => addWorkflows.find((workflow) => workflow.id === id))
@@ -462,6 +478,17 @@ export function AppShell({ auth, children }: AppShellProps) {
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {auth.roles.map((role) => <RoleBadge key={role} role={role} />)}
                 </div>
+                {auth.user ? (
+                  <button
+                    type="button"
+                    className="ghost-button mt-3 w-full justify-center !min-h-9 text-xs"
+                    onClick={handleSignOut}
+                    disabled={signingOut}
+                  >
+                    <LogOut className="h-4 w-4" aria-hidden="true" />
+                    Sign out
+                  </button>
+                ) : null}
               </div>
             </aside>
             <main className={`min-w-0 ${isDesktopMessages ? 'desktop-main-messages' : 'pb-8'}`}>{children}</main>
@@ -550,7 +577,7 @@ export function AppShell({ auth, children }: AppShellProps) {
           }>{children}</main>
 
           <nav
-            className={`safe-bottom fixed inset-x-0 bottom-0 z-40 border-t border-gray-200 bg-white/95 px-2 pt-2 backdrop-blur ${isMobileChatDetail ? 'app-bottom-nav-chat-detail' : ''}`}
+            className={`safe-bottom fixed inset-x-0 bottom-0 z-40 border-t border-gray-200 bg-white/95 pt-2 backdrop-blur ${isMobileChatDetail ? 'app-bottom-nav-chat-detail' : ''}`}
             aria-label="Primary navigation"
           >
             <div className="mx-auto grid max-w-5xl gap-1" style={{ gridTemplateColumns: `repeat(${activeNavItems.length + (hasSignedInSession ? 1 : 0)}, minmax(0, 1fr))` }}>
@@ -899,6 +926,42 @@ function buildAddWorkflows(): AddWorkflow[] {
 
 function legacyUrl(path: string) {
   return new URL(path, 'https://allplays.ai').toString();
+}
+
+function withTeamNavPath(items: NavItem[], teamNavPath: string): NavItem[] {
+  if (!teamNavPath) return items;
+  return items.map((item) => item.path === '/teams' ? { ...item, path: teamNavPath } : item);
+}
+
+function getSingleTeamNavPath(user: AuthUser | null) {
+  const teamId = getSingleAccessibleTeamId(user);
+  return teamId ? `/teams/${encodeURIComponent(teamId)}` : '';
+}
+
+function getSingleAccessibleTeamId(user: AuthUser | null) {
+  if (!user) return '';
+  const teamIds = new Set<string>();
+  addTeamIds(teamIds, user.parentTeamIds);
+  addTeamIds(teamIds, user.coachOf);
+  if (Array.isArray(user.parentOf)) {
+    user.parentOf.forEach((entry) => {
+      addTeamIds(teamIds, [
+        entry?.teamId,
+        entry?.teamID,
+        entry?.team_id,
+        entry?.team
+      ]);
+    });
+  }
+  return teamIds.size === 1 ? [...teamIds][0] : '';
+}
+
+function addTeamIds(teamIds: Set<string>, values: unknown) {
+  if (!Array.isArray(values)) return;
+  values.forEach((value) => {
+    const teamId = String(value || '').trim();
+    if (teamId) teamIds.add(teamId);
+  });
 }
 
 function isTypingTarget(target: EventTarget | null) {

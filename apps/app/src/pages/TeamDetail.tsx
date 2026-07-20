@@ -6,7 +6,10 @@ import {
   BarChart3,
   CalendarDays,
   CheckCircle2,
+  ChevronDown,
   ChevronRight,
+  ClipboardCheck,
+  ClipboardList,
   Code2,
   Copy,
   DollarSign,
@@ -19,7 +22,9 @@ import {
   MessageCircle,
   Radio,
   Save,
+  Settings,
   Shield,
+  SlidersHorizontal,
   Ticket,
   Trophy,
   UserRound,
@@ -40,7 +45,9 @@ import type { ParentScheduleEvent, StaffRsvpReminderPreview } from '../lib/sched
 import { addRosterPlayerForApp, archiveTeamTrackingItemForApp, buildPublicTeamGamesIcsUrl, canExposePublicFanFeed, createRosterParentInviteForApp, createStatTrackerConfigForApp, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantTeamMediaManagerAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadParentTeamDetailBootstrap, loadRosterFieldDefinitionsForApp, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamRosterParentInvites, loadTeamStaffPermissions, loadTeamTrackingAdmin, reactivateRosterPlayerForApp, revokeScorekeeperAccessForApp, revokeTeamAdminAccessForApp, revokeTeamMediaManagerAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp, saveTeamTrackingItemForApp, setPlayerTrackingStatusForApp, updateStatTrackerConfigForApp, type CreateRosterParentInviteForAppResult, type InviteTeamAdminForAppResult, type TeamDetailEvent, type TeamDetailModel, type TeamDetailPlayer, type TeamRosterFieldDefinition, type TeamRosterParentInviteSummary, type TeamScorekeeperGrantTarget, type TeamTrackingAdminItem } from '../lib/teamDetailService';
 import { buildStatTrackerConfigPayload, createBlankStatTrackerConfigColumnDraft, createEmptyStatTrackerConfigDraft, createStatTrackerConfigDraft, createStatTrackerConfigDraftFromPreset, getStatTrackerConfigPresetCatalog, validateStatTrackerConfigDraft, type StatTrackerConfigDraft } from '../lib/statTrackerConfigEditor';
 import { useViewLoadTimer } from '../lib/viewLoadTiming';
+import { buildTeamDetailNavigation, type TeamNavigationItem, type TeamNavigationSection } from '../lib/teamNavigation';
 import type { AuthState } from '../lib/types';
+import { InviteResultCard } from './parent-tools/shared';
 
 type TeamTab = 'overview' | 'schedule' | 'roster' | 'insights' | 'more';
 type RosterAiImportModule = typeof import('../lib/rosterAiImport');
@@ -642,9 +649,9 @@ function TeamHero({ model }: { model: TeamDetailModel }) {
         </div>
       </div>
       <div className="grid grid-cols-3 gap-2 p-3">
-        <SummaryStat icon={Trophy} label="Record" value={formatRecord(model.record)} />
-        <SummaryStat icon={Users} label="Roster" value={String(model.players.length)} />
-        <SummaryStat icon={CalendarDays} label="Upcoming" value={String(model.upcomingEvents.length)} />
+        <SummaryStat icon={Trophy} label="Record" value={formatRecord(model.record)} to={`/schedule?teamId=${encodeURIComponent(model.team.id)}&filter=recent-results`} />
+        <SummaryStat icon={Users} label="Roster" value={String(model.players.length)} to={`/teams/${encodeURIComponent(model.team.id)}?tab=roster`} />
+        <SummaryStat icon={CalendarDays} label="Upcoming" value={String(model.upcomingEvents.length)} to={`/teams/${encodeURIComponent(model.team.id)}?tab=schedule`} />
       </div>
       {team.description ? <p className="border-t border-gray-100 px-4 py-3 text-sm font-semibold leading-6 text-gray-600">{team.description}</p> : null}
     </section>
@@ -655,11 +662,13 @@ function OverviewTab({ model }: { model: TeamDetailModel }) {
   return (
     <div className="space-y-4">
       <section className="grid gap-3 sm:grid-cols-2">
-        <InfoCard icon={Trophy} title={`Season record (${model.record.label})`} value={formatRecord(model.record)} detail={model.record.gamesPlayed ? `${model.record.gamesPlayed} completed ${model.record.gamesPlayed === 1 ? 'game' : 'games'}${model.record.winPercentage !== null ? ` · ${model.record.winPercentage}%` : ''}` : 'No completed games yet'} />
+        <InfoCard icon={Trophy} title={`Season record (${model.record.label})`} value={formatRecord(model.record)} detail={model.record.gamesPlayed ? `${model.record.gamesPlayed} completed ${model.record.gamesPlayed === 1 ? 'game' : 'games'}${model.record.winPercentage !== null ? ` · ${model.record.winPercentage}%` : ''}` : 'No completed games yet'} to={`/schedule?teamId=${encodeURIComponent(model.team.id)}&filter=recent-results`} />
         <InfoCard icon={CalendarDays} title="Next event" value={model.nextEvent ? formatEventDate(model.nextEvent.date) : 'No upcoming'} detail={model.nextEvent ? `${model.nextEvent.title} · ${model.nextEvent.location}` : 'Schedule is clear for now'} to={`/schedule?teamId=${encodeURIComponent(model.team.id)}`} />
-        <InfoCard icon={Users} title="Roster size" value={`${model.players.length}`} detail={`${model.linkedPlayers.length || 0} linked to your account`} />
+        <InfoCard icon={Users} title="Roster size" value={`${model.players.length}`} detail={`${model.linkedPlayers.length || 0} linked to your account`} to={`/teams/${encodeURIComponent(model.team.id)}?tab=roster`} />
         <InfoCard icon={BarChart3} title="Standings" value={getStandingValue(model)} detail={getStandingDetail(model)} href={model.team.leagueUrl || undefined} />
       </section>
+
+      <TeamToolsSection model={model} />
 
       <StandingsSection model={model} />
 
@@ -687,6 +696,126 @@ function OverviewTab({ model }: { model: TeamDetailModel }) {
     </div>
   );
 }
+
+function TeamToolsSection({ model }: { model: TeamDetailModel }) {
+  const [showAllTools, setShowAllTools] = useState(false);
+  const sections = useMemo(() => buildTeamDetailNavigation(model), [model]);
+
+  return (
+    <section className="app-card p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-sm font-black text-gray-950">Team tools</div>
+          <div className="mt-1 text-xs font-semibold leading-5 text-gray-500">Shortcuts for this team. Core app workflows stay first; current website tools remain available where needed.</div>
+        </div>
+      </div>
+
+      <TeamNavigationPanel sections={sections} showAllTools={showAllTools} onToggleTools={() => setShowAllTools((value) => !value)} />
+    </section>
+  );
+}
+
+function TeamNavigationPanel({ sections, showAllTools, onToggleTools }: {
+  sections: TeamNavigationSection[];
+  showAllTools: boolean;
+  onToggleTools: () => void;
+}) {
+  return (
+    <div className="mt-3 space-y-3">
+      {sections.map((section) => {
+        const isManagement = section.id === 'management';
+        const visibleItems = isManagement && !showAllTools ? section.items.slice(0, 4) : section.items;
+
+        return (
+          <div key={section.id}>
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">{section.title}</div>
+                <div className="mt-0.5 truncate text-xs font-semibold text-gray-500">{section.detail}</div>
+              </div>
+              {isManagement && section.items.length > 4 ? (
+                <button type="button" className="ghost-button !h-8 !min-h-8 !px-2 !text-xs" onClick={onToggleTools} aria-expanded={showAllTools}>
+                  {showAllTools ? 'Show less' : `${section.items.length - 4} more`}
+                  <ChevronDown className={`h-4 w-4 transition ${showAllTools ? 'rotate-180' : ''}`} aria-hidden="true" />
+                </button>
+              ) : null}
+            </div>
+            <div className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+              {visibleItems.map((item) => <TeamNavigationTile key={item.id} item={item} />)}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function TeamNavigationTile({ item }: { item: TeamNavigationItem }) {
+  const Icon = teamNavigationIcons[item.id] || ClipboardList;
+  const content = (
+    <>
+      <span className={`flex h-9 w-9 flex-none items-center justify-center rounded-xl ${item.kind === 'native' ? 'bg-primary-50 text-primary-700' : 'bg-gray-100 text-gray-700'}`}>
+        <Icon className="h-4 w-4" aria-hidden="true" />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="truncate text-sm font-black text-gray-950">{item.label}</span>
+          {item.badge ? <span className="inline-flex min-h-5 flex-none items-center rounded-full bg-primary-600 px-2 text-[10px] font-black text-white">{item.badge}</span> : null}
+        </span>
+        <span className="mt-0.5 line-clamp-1 text-xs font-semibold leading-5 text-gray-500">{item.detail}</span>
+        <span className="mt-1 hidden items-center gap-1 text-[10px] font-extrabold uppercase tracking-[0.04em] text-gray-400 sm:inline-flex">
+          {item.kind === 'native' ? 'App' : 'Website'}
+          {item.kind === 'website' ? <ExternalLink className="h-3 w-3" aria-hidden="true" /> : null}
+        </span>
+      </span>
+      <ChevronRight className="mt-1 h-4 w-4 flex-none text-gray-300" aria-hidden="true" />
+    </>
+  );
+  const className = 'group flex min-h-[74px] items-start gap-3 rounded-xl border border-gray-200 bg-white p-2.5 text-left transition hover:border-primary-200 hover:bg-primary-50/30';
+
+  if (item.kind === 'native') {
+    return <Link to={item.href} className={className}>{content}</Link>;
+  }
+
+  return (
+    <a
+      href={item.href}
+      className={className}
+      target="_blank"
+      rel="noreferrer"
+      onClick={(event) => {
+        event.preventDefault();
+        void openPublicUrl(item.href);
+      }}
+    >
+      {content}
+    </a>
+  );
+}
+
+const teamNavigationIcons: Record<string, LucideIcon> = {
+  schedule: CalendarDays,
+  messages: MessageCircle,
+  'practice-packets': ClipboardCheck,
+  'team-page': Ticket,
+  'website-team-page': ExternalLink,
+  'player-profile': UserRound,
+  players: Users,
+  media: ImageIcon,
+  'parent-fees': DollarSign,
+  registrations: Ticket,
+  awards: Award,
+  'team-settings': Settings,
+  'manage-roster': Users,
+  'manage-schedule': CalendarDays,
+  fees: DollarSign,
+  'practice-command': Dumbbell,
+  'game-plan': ClipboardList,
+  'game-day': Radio,
+  tracking: ClipboardCheck,
+  'stats-config': SlidersHorizontal,
+  certificates: Award
+};
 
 function StandingsSection({ model }: { model: TeamDetailModel }) {
   const [expanded, setExpanded] = useState(false);
@@ -2313,7 +2442,6 @@ function StaffPermissionsCard({ model, auth, onInviteSuccess }: { model: TeamDet
   const [grantingUserId, setGrantingUserId] = useState<string | null>(null);
   const [removingAdminEmail, setRemovingAdminEmail] = useState<string | null>(null);
   const [grantStatus, setGrantStatus] = useState<{ success: boolean; message: string } | null>(null);
-  const [copyStatus, setCopyStatus] = useState<{ kind: 'code' | 'link'; success: boolean } | null>(null);
   if (!summary) return null;
   const scorekeeperGrantTargets = summary.scorekeeperGrantTargets || [];
   const teamMediaManagerGrantTargets = summary.teamMediaManagerGrantTargets || [];
@@ -2325,7 +2453,6 @@ function StaffPermissionsCard({ model, auth, onInviteSuccess }: { model: TeamDet
     event.preventDefault();
     const normalizedEmail = email.trim().toLowerCase();
     setResult(null);
-    setCopyStatus(null);
     if (!normalizedEmail) {
       setError('Enter an admin email.');
       return;
@@ -2343,6 +2470,10 @@ function StaffPermissionsCard({ model, auth, onInviteSuccess }: { model: TeamDet
     setError('');
     try {
       const inviteResult = await inviteTeamAdminForApp(model.team.id, normalizedEmail, auth.user || null);
+      if (inviteResult.status === 'fallback_code' && !inviteResult.code && !inviteResult.acceptInviteUrl) {
+        setError('Unable to create an admin invite code. Try again.');
+        return;
+      }
       setResult(inviteResult);
       setEmail('');
       await onInviteSuccess();
@@ -2353,30 +2484,6 @@ function StaffPermissionsCard({ model, auth, onInviteSuccess }: { model: TeamDet
     }
   }
 
-  async function copyInviteValue(kind: 'code' | 'link', value: string | null) {
-    if (!value) return;
-    const copyResult = await copyPublicText(value);
-    setCopyStatus({ kind, success: copyResult === 'copied' });
-  }
-
-  async function shareInviteLink() {
-    if (!result?.acceptInviteUrl) return;
-    const shareResult = await sharePublicUrl({
-      title: `${model.team.name} staff invite`,
-      text: `Join ${model.team.name} staff on ALL PLAYS`,
-      url: result.acceptInviteUrl,
-      clipboardText: result.acceptInviteUrl
-    });
-    setGrantStatus({
-      success: shareResult === 'shared' || shareResult === 'copied',
-      message: shareResult === 'shared'
-        ? 'Share sheet opened.'
-        : shareResult === 'copied'
-          ? 'Invite link copied.'
-          : 'Unable to share the invite from this device.'
-    });
-  }
-
   async function removeAdmin(emailToRemove: string) {
     if (!emailToRemove || removingAdminEmail) return;
     const confirmed = window.confirm(`Remove ${emailToRemove} as a team admin?`);
@@ -2384,7 +2491,6 @@ function StaffPermissionsCard({ model, auth, onInviteSuccess }: { model: TeamDet
     setRemovingAdminEmail(emailToRemove);
     setGrantStatus(null);
     setResult(null);
-    setCopyStatus(null);
     try {
       await revokeTeamAdminAccessForApp(model.team.id, emailToRemove, auth.user || null);
       setGrantStatus({ success: true, message: `${emailToRemove} removed from team admins.` });
@@ -2401,7 +2507,6 @@ function StaffPermissionsCard({ model, auth, onInviteSuccess }: { model: TeamDet
     setGrantingUserId(memberUserId);
     setGrantStatus(null);
     setResult(null);
-    setCopyStatus(null);
     try {
       if (isGranted) {
         await revokeScorekeeperAccessForApp(model.team.id, memberUserId);
@@ -2422,7 +2527,6 @@ function StaffPermissionsCard({ model, auth, onInviteSuccess }: { model: TeamDet
     setGrantingUserId(memberUserId);
     setGrantStatus(null);
     setResult(null);
-    setCopyStatus(null);
     try {
       if (isGranted) {
         await revokeVideographerAccessForApp(model.team.id, memberUserId);
@@ -2443,7 +2547,6 @@ function StaffPermissionsCard({ model, auth, onInviteSuccess }: { model: TeamDet
     setGrantingUserId(memberUserId);
     setGrantStatus(null);
     setResult(null);
-    setCopyStatus(null);
     try {
       if (isGranted) {
         await revokeTeamMediaManagerAccessForApp(model.team.id, memberUserId);
@@ -2496,19 +2599,22 @@ function StaffPermissionsCard({ model, auth, onInviteSuccess }: { model: TeamDet
           </div>
           {error ? <div className="mt-2 text-xs font-black text-rose-700" role="alert">{error}</div> : null}
           {result ? (
-            <div className="mt-3 rounded-lg border border-white/80 bg-white p-3 text-xs font-semibold leading-5 text-gray-700" role="status">
-              <div className="font-black text-gray-950">
-                {result.status === 'sent' ? `Invite sent to ${result.email}.` : result.status === 'existing_user' ? `${result.email} already has an account and was added as an admin.` : `Email delivery needs a fallback for ${result.email}.`}
+            result.code || result.acceptInviteUrl ? (
+              <InviteResultCard
+                code={result.code}
+                inviteUrl={result.acceptInviteUrl}
+                recipientEmail={result.email}
+                emailSent={result.status === 'sent'}
+                title="Invite code"
+                shareTitle={`${model.team.name} staff invite`}
+                shareText={`Join ${model.team.name} staff on ALL PLAYS.`}
+                onStatus={(message) => setGrantStatus({ success: !message.startsWith('Unable'), message })}
+              />
+            ) : (
+              <div className="mt-3 rounded-lg border border-white/80 bg-white p-3 text-xs font-black text-gray-950" role="status">
+                {result.email} already has an account and was added as an admin.
               </div>
-              {result.code || result.acceptInviteUrl ? (
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {result.code ? <button type="button" className="secondary-button !min-h-8 text-xs" onClick={() => copyInviteValue('code', result.code)}>Copy code</button> : null}
-                  {result.acceptInviteUrl ? <button type="button" className="secondary-button !min-h-8 text-xs" onClick={() => copyInviteValue('link', result.acceptInviteUrl)}>Copy link</button> : null}
-                  {result.acceptInviteUrl ? <button type="button" className="secondary-button !min-h-8 text-xs" onClick={shareInviteLink}>Share invite</button> : null}
-                </div>
-              ) : null}
-              {copyStatus ? <div className={`mt-2 font-black ${copyStatus.success ? 'text-emerald-700' : 'text-rose-700'}`}>{copyStatus.success ? `${copyStatus.kind === 'code' ? 'Invite code' : 'Invite link'} copied.` : `Unable to copy ${copyStatus.kind === 'code' ? 'invite code' : 'invite link'}.`}</div> : null}
-            </div>
+            )
           ) : null}
         </form>
       ) : (
@@ -2737,14 +2843,16 @@ function InfoCard({ icon: Icon, title, value, detail, to, href }: { icon: Lucide
   return <div className="app-card p-4">{body}</div>;
 }
 
-function SummaryStat({ icon: Icon, label, value }: { icon: LucideIcon; label: string; value: string }) {
-  return (
-    <div className="rounded-xl border border-gray-200 bg-gray-50 p-2">
+function SummaryStat({ icon: Icon, label, value, to }: { icon: LucideIcon; label: string; value: string; to?: string }) {
+  const body = (
+    <>
       <Icon className="h-4 w-4 text-primary-600" aria-hidden="true" />
       <div className="mt-1 truncate text-sm font-black text-gray-950">{value}</div>
       <div className="truncate text-[10px] font-extrabold uppercase tracking-[0.04em] text-gray-500">{label}</div>
-    </div>
+    </>
   );
+  const className = 'block rounded-xl border border-gray-200 bg-gray-50 p-2 text-left transition hover:border-primary-200 hover:bg-primary-50/40';
+  return to ? <Link to={to} className={className}>{body}</Link> : <div className="rounded-xl border border-gray-200 bg-gray-50 p-2">{body}</div>;
 }
 
 function TeamEventRow({ event, model, auth, reminderPreviewLoader, onOpenStatTrackerConfigs }: { event: TeamDetailEvent; model: TeamDetailModel; auth: AuthState; reminderPreviewLoader: ReturnType<typeof createStaffRsvpReminderPreviewLoader>; onOpenStatTrackerConfigs: () => void }) {
@@ -2989,11 +3097,7 @@ function PlayerRow({
         success: true,
         message: result.autoLinked
           ? `Existing parent linked automatically${result.emailSent && result.email ? ` and notified at ${result.email}` : ''}.`
-          : result.emailSent && result.email
-            ? `Invite emailed to ${result.email} with the code and signup link.`
-            : result.email
-              ? `Invite created, but the email to ${result.email} could not be sent. Copy or share the code or link.`
-              : 'Parent invite is ready to copy or share.'
+          : 'Invite created.'
       });
       await onInviteCreated();
     } catch (error: any) {
@@ -3001,32 +3105,6 @@ function PlayerRow({
     } finally {
       setCreatingInvite(false);
     }
-  }
-
-  async function copyInvite(kind: 'code' | 'link') {
-    const value = kind === 'code' ? inviteResult?.code : inviteResult?.inviteUrl;
-    if (!value) return;
-    const result = await copyPublicText(value);
-    setInviteStatus({ success: result === 'copied', message: result === 'copied' ? `${kind === 'code' ? 'Invite code' : 'Invite link'} copied.` : `Unable to copy the ${kind}.` });
-  }
-
-  async function shareInvite() {
-    if (!inviteResult?.inviteUrl) return;
-    const result = await sharePublicUrl({
-      title: `${player.name} parent invite`,
-      text: `Join ${teamName} on ALL PLAYS for ${player.name}`,
-      url: inviteResult.inviteUrl,
-      clipboardText: inviteResult.inviteUrl
-    });
-    if (result === 'shared') {
-      setInviteStatus({ success: true, message: 'Share sheet opened.' });
-      return;
-    }
-    if (result === 'copied') {
-      setInviteStatus({ success: true, message: 'Invite link copied.' });
-      return;
-    }
-    setInviteStatus({ success: false, message: 'Unable to share the invite from this device.' });
   }
 
   const playerPath = `/players/${encodeURIComponent(teamId)}/${encodeURIComponent(player.id)}`;
@@ -3090,20 +3168,20 @@ function PlayerRow({
             {player.active ? (
               <button type="button" className="secondary-button !min-h-8 text-xs" disabled={creatingInvite} onClick={createInvite}>
                 {creatingInvite ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <LinkIcon className="h-3.5 w-3.5" aria-hidden="true" />}
-                {effectiveStatus === 'pending' || inviteResult ? 'Regenerate invite' : 'Invite parent'}
+                {creatingInvite ? 'Creating invite...' : 'Create invite'}
               </button>
             ) : null}
           </div>
           {player.active ? (
             <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_10rem]">
               <label className="text-xs font-black text-gray-700">
-                Parent email
+                Recipient email
                 <input
                   className="auth-input mt-1"
                   type="email"
                   inputMode="email"
                   autoComplete="email"
-                  aria-label={`Parent email for ${player.name}`}
+                  aria-label={`Recipient email for ${player.name}`}
                   placeholder="parent@example.com"
                   value={parentEmail}
                   onChange={(event) => setParentEmail(event.target.value)}
@@ -3120,22 +3198,23 @@ function PlayerRow({
                   <option value="Other">Other</option>
                 </select>
               </label>
-              <div className="text-[11px] font-semibold text-gray-500 sm:col-span-2">Enter an email to send the code and signup link, or leave it blank for a shareable code.</div>
+              <div className="text-[11px] font-semibold text-gray-500 sm:col-span-2">Enter an email to send the invite, or leave it blank for a shareable link and code.</div>
             </div>
           ) : null}
           {inviteSummary?.status === 'accepted' && inviteSummary.acceptedParentCount > 0 ? <div className="mt-2 text-xs font-semibold text-emerald-700">{inviteSummary.acceptedParentCount} linked parent{inviteSummary.acceptedParentCount === 1 ? '' : 's'}.</div> : null}
           {inviteSummary?.status === 'pending' && inviteSummary.pendingInviteCount > 0 && !inviteResult ? <div className="mt-2 text-xs font-semibold text-amber-700">{inviteSummary.pendingInviteCount} pending invite{inviteSummary.pendingInviteCount === 1 ? '' : 's'}.</div> : null}
           {!player.active ? <div className="mt-2 text-xs font-semibold text-gray-500">Reactivate the player to send a parent invite.</div> : null}
           {inviteResult ? (
-            <div className="mt-3 rounded-lg border border-primary-100 bg-primary-50 p-3">
-              <div className="text-[11px] font-black uppercase tracking-[0.04em] text-primary-700">Invite code</div>
-              <div className="mt-1 font-mono text-sm font-black text-gray-950">{inviteResult.code}</div>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <button type="button" className="secondary-button !min-h-8 text-xs" onClick={() => copyInvite('code')}>Copy code</button>
-                <button type="button" className="secondary-button !min-h-8 text-xs" onClick={() => copyInvite('link')}>Copy link</button>
-                <button type="button" className="secondary-button !min-h-8 text-xs" onClick={shareInvite}>Share</button>
-              </div>
-            </div>
+            <InviteResultCard
+              code={inviteResult.code}
+              inviteUrl={inviteResult.inviteUrl}
+              recipientEmail={inviteResult.email}
+              emailSent={inviteResult.emailSent}
+              title="Invite code"
+              shareTitle={`${player.name} parent invite`}
+              shareText={`Join ${teamName} on ALL PLAYS for ${player.name}.`}
+              onStatus={(message) => setInviteStatus({ success: !message.startsWith('Unable'), message })}
+            />
           ) : null}
           {inviteStatus ? <div className={`mt-2 text-xs font-black ${inviteStatus.success ? 'text-emerald-700' : 'text-rose-700'}`} role="status">{inviteStatus.message}</div> : null}
         </div>

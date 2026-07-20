@@ -21,26 +21,21 @@ import {
   SlidersHorizontal,
   Ticket,
   UserRound,
-  Users,
-  WalletCards
+  WalletCards,
+  Users
 } from 'lucide-react';
 import { RoleBadge } from '../components/Badges';
-import { TeamAvatar, TeamLauncherChip, Status, getInitials } from '../components/TeamSummaryPrimitives';
+import { getInitials, TeamAvatar, TeamLauncherChip, Status } from '../components/TeamSummaryPrimitives';
 import { toAppServiceError, type AppServiceError } from '../lib/appErrors';
 import { getEventDetailPath, getPlayerDetailPath, type ParentHomeModel, type ParentHomeTeam } from '../lib/homeLogic';
 import { loadParentHomeSummary, loadParentTeamsSummaryBootstrap } from '../lib/homeService';
 import { openPublicUrl } from '../lib/publicActions';
+import { buildTeamNavigation, type TeamNavigationItem, type TeamNavigationSection } from '../lib/teamNavigation';
 import { PullToRefresh } from '../components/PullToRefresh';
 import { useAsyncOperation } from '../lib/useAsyncOperation';
 import { useRefreshOnResume } from '../lib/useRefreshOnResume';
 import { useShellLayout } from '../lib/useShellLayout';
 import { completeParentCoreWorkflowTimer } from '../lib/parentWorkflowTiming';
-import {
-  buildTeamNavigation,
-  isTeamManagementRole,
-  type TeamNavigationItem,
-  type TeamNavigationSection
-} from '../lib/teamNavigation';
 import type { AuthState } from '../lib/types';
 
 function emptyHome(): ParentHomeModel {
@@ -182,30 +177,26 @@ export function Teams({ auth }: { auth: AuthState }) {
 
   useRefreshOnResume(() => loadTeams(), { enabled: Boolean(auth.user?.uid) });
 
-  useEffect(() => {
-    if (loading || selectedTeamId) return;
-    if (shouldAutoNavigateToSingleTeam(home.teams)) {
-      navigate(getSingleTeamDestination(home.teams[0].teamId, requestedWorkflow), { replace: true });
-    }
-  }, [loading, home.teams, navigate, requestedWorkflow, selectedTeamId]);
-
   const showBlockingErrorState = !loading && !hasLoadedTeamDetails && Boolean(teamsLoadError);
 
-  const selectedTeam = useMemo(() => (
-    home.teams.find((team) => team.teamId === selectedTeamId) || home.teams[0] || null
-  ), [home.teams, selectedTeamId]);
   const teamRoles = useMemo(() => getLoadedTeamRoles(home.teams), [home.teams]);
-  const hasManagementTeam = useMemo(() => home.teams.some((team) => isTeamManagementRole(team.role)), [home.teams]);
+
+  useEffect(() => {
+    if (loading || selectedTeamId || !hasLoadedTeamSummary) return;
+    if (shouldOpenSingleTeamDirectly(home.teams)) {
+      navigate(getSingleTeamDestination(home.teams[0].teamId, requestedWorkflow), { replace: true });
+    }
+  }, [hasLoadedTeamSummary, home.teams, loading, navigate, requestedWorkflow, selectedTeamId]);
 
   useEffect(() => {
     if (loading || !hasLoadedTeamSummary) return;
     completeParentCoreWorkflowTimer('teams', {
       targetPage: 'teams',
-      teamId: selectedTeam?.teamId || selectedTeamId || '',
+      teamId: selectedTeamId || '',
       teamCount: home.teams.length,
       completedRoute: selectedTeamId ? `/teams?selectedTeamId=${selectedTeamId}` : '/teams'
     });
-  }, [hasLoadedTeamSummary, home.teams.length, loading, selectedTeam?.teamId, selectedTeamId]);
+  }, [hasLoadedTeamSummary, home.teams.length, loading, selectedTeamId]);
 
   return (
     <PullToRefresh onRefresh={() => loadTeams()} disabled={!auth.user?.uid}>
@@ -231,23 +222,14 @@ export function Teams({ auth }: { auth: AuthState }) {
       ) : home.teams.length ? (
         isDesktopWeb ? (
           <div className="teams-web-workbench">
-            <TeamLauncher teams={home.teams} selectedTeamId={selectedTeam?.teamId || ''} variant="rail" />
-            <div className="min-w-0 space-y-4">
-              {selectedTeam ? <SelectedTeamPanel team={selectedTeam} variant="web" /> : null}
-              {hasManagementTeam ? <WebsiteToolsNotice compact /> : null}
-            </div>
+            <TeamLauncher teams={home.teams} selectedTeamId={selectedTeamId} variant="rail" />
           </div>
         ) : (
-          <>
-            <TeamLauncher teams={home.teams} selectedTeamId={selectedTeam?.teamId || ''} />
-            {selectedTeam ? <SelectedTeamPanel team={selectedTeam} /> : null}
-          </>
+          <TeamLauncher teams={home.teams} selectedTeamId={selectedTeamId} />
         )
       ) : (
         <EmptyTeams />
       )}
-
-      {!loading && hasManagementTeam && !isDesktopWeb ? <WebsiteToolsNotice /> : null}
 
       <section className="app-card p-4">
         <div className="flex items-start justify-between gap-3">
@@ -280,8 +262,8 @@ function mergeTeamSummary(current: ParentHomeModel, enriched: ParentHomeModel): 
   };
 }
 
-function shouldAutoNavigateToSingleTeam(teams: ParentHomeTeam[]): boolean {
-  return teams.length === 1 && teams[0]?.players.length === 1;
+function shouldOpenSingleTeamDirectly(teams: ParentHomeTeam[]): boolean {
+  return teams.length === 1;
 }
 
 function getSingleTeamDestination(teamId: string, workflow: string) {
@@ -353,7 +335,7 @@ function TeamLauncher({ teams, selectedTeamId, variant = 'grid' }: {
       <div className="flex items-center justify-between gap-3 px-1">
         <div className="min-w-0">
           <div className="text-sm font-black text-gray-950">{isRail ? 'Teams' : 'Choose a team'}</div>
-          <div className="mt-0.5 text-xs font-semibold text-gray-500">Open a team hub to use its tools.</div>
+          <div className="mt-0.5 text-xs font-semibold text-gray-500">Choose a team to open its page and tools.</div>
         </div>
         <span className="inline-flex h-7 flex-none items-center rounded-full bg-gray-100 px-2.5 text-[11px] font-black text-gray-700">
           {teams.length} team{teams.length === 1 ? '' : 's'}
@@ -451,9 +433,9 @@ function SelectedTeamPanel({ team, variant = 'mobile' }: { team: ParentHomeTeam;
         </div>
 
         <div className={`mt-3 grid grid-cols-3 gap-2 ${isWeb ? 'teams-selected-stats' : ''}`}>
-          <MiniStat icon={Users} label="Players" value={String(team.players.length)} />
-          <MiniStat icon={CalendarDays} label="Events" value={String(team.eventCount)} />
-          <MiniStat icon={MessageCircle} label="Unread" value={String(team.unreadCount)} />
+          <MiniStat icon={Users} label="Players" value={String(team.players.length)} to={`/teams/${encodeURIComponent(team.teamId)}?tab=roster`} />
+          <MiniStat icon={CalendarDays} label="Events" value={String(team.eventCount)} to={`/teams/${encodeURIComponent(team.teamId)}?tab=schedule`} />
+          <MiniStat icon={MessageCircle} label="Unread" value={String(team.unreadCount)} to={`/messages/${encodeURIComponent(team.teamId)}`} />
         </div>
       </div>
 
@@ -626,14 +608,16 @@ const teamNavigationIcons: Record<string, typeof Users> = {
   analytics: BarChart3
 };
 
-function MiniStat({ icon: Icon, label, value }: { icon: typeof Users; label: string; value: string }) {
-  return (
-    <div className="rounded-xl border border-gray-200 bg-gray-50 p-2">
+function MiniStat({ icon: Icon, label, value, to }: { icon: typeof Users; label: string; value: string; to?: string }) {
+  const body = (
+    <>
       <Icon className="h-4 w-4 text-primary-600" aria-hidden="true" />
       <div className="mt-1 truncate text-sm font-black text-gray-950">{value}</div>
       <div className="truncate text-[10px] font-extrabold uppercase tracking-[0.04em] text-gray-500">{label}</div>
-    </div>
+    </>
   );
+  const className = 'block rounded-xl border border-gray-200 bg-gray-50 p-2 text-left transition hover:border-primary-200 hover:bg-primary-50/40';
+  return to ? <Link to={to} className={className}>{body}</Link> : <div className="rounded-xl border border-gray-200 bg-gray-50 p-2">{body}</div>;
 }
 
 function MetricPill({ label, value }: { label: string; value: string }) {

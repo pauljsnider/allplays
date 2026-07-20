@@ -248,7 +248,9 @@ export function mergeVisibleChatMessages(liveMessages: ChatMessage[], optimistic
 }
 
 export function normalizeConversationId(conversationId: string | null | undefined) {
-  return String(conversationId || '').trim() || DEFAULT_TEAM_CONVERSATION_ID;
+  const normalized = String(conversationId || '').trim();
+  if (normalized === 'group_role%253Astaff') return CANONICAL_STAFF_CONVERSATION_ID;
+  return normalized || DEFAULT_TEAM_CONVERSATION_ID;
 }
 
 export function getChatComposerDraftKey(teamId: string, conversationId: string | null | undefined) {

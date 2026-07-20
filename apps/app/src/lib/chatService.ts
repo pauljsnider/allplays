@@ -32,7 +32,7 @@ import {
   uploadChatImage,
   upsertChatConversation
 } from './adapters/legacyChatService';
-import { firebaseAuth, getNativeAuthIdToken } from './authService';
+import { firebaseAuth, getNativeAuthIdToken, getNativeAuthUserId } from './authService';
 import { loadCachedAppData } from './appDataCache';
 import { createLogger } from './logger';
 import { getPrimaryAppCheckHeaders } from './adapters/legacyFirebaseAppCheck';
@@ -902,6 +902,13 @@ async function runDeferredInboxPreviewQueue<T>(items: T[], worker: (item: T) => 
   }));
 }
 
+function isPermissionDeniedError(error: unknown): boolean {
+  const code = typeof error === 'object' && error !== null && 'code' in error
+    ? String((error as { code?: unknown }).code || '')
+    : '';
+  return code === 'permission-denied' || code === 'unauthenticated' || code.endsWith('/permission-denied');
+}
+
 export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoadOptions = {}): Promise<ChatInboxLoadResult> {
   if (!user?.uid) return { teams: [] };
   const includeLastMessages = options.includeLastMessages !== false;
@@ -914,10 +921,31 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
 
   let teams: Record<string, any>[] = [];
   try {
-    const [memberTeams, parentTeams] = await withTimeout(Promise.all([
+    const [memberTeamsResult, parentTeamsResult] = await withTimeout(Promise.allSettled([
       getUserTeamsWithAccess(user.uid, user.email || profile.email || ''),
       getParentTeams(user.uid)
     ]), 'Chat teams load');
+    if (memberTeamsResult.status === 'rejected' && parentTeamsResult.status === 'rejected') {
+      throw memberTeamsResult.reason || parentTeamsResult.reason;
+    }
+    if (memberTeamsResult.status === 'rejected') {
+      if (!isPermissionDeniedError(memberTeamsResult.reason)) {
+        throw memberTeamsResult.reason;
+      }
+      logger.warn('Chat member team load failed; using parent teams only.', { error: memberTeamsResult.reason });
+    }
+    if (parentTeamsResult.status === 'rejected') {
+      if (!isPermissionDeniedError(parentTeamsResult.reason)) {
+        throw parentTeamsResult.reason;
+      }
+      logger.warn('Chat parent team load failed; using member teams only.', { error: parentTeamsResult.reason });
+    }
+    const memberTeams = memberTeamsResult.status === 'fulfilled' && Array.isArray(memberTeamsResult.value)
+      ? memberTeamsResult.value
+      : [];
+    const parentTeams = parentTeamsResult.status === 'fulfilled' && Array.isArray(parentTeamsResult.value)
+      ? parentTeamsResult.value
+      : [];
     const map = new Map<string, Record<string, any>>();
     [...memberTeams, ...parentTeams].forEach((team: any) => {
       if (team?.id) map.set(team.id, team);
@@ -1227,7 +1255,7 @@ async function nativeUploadChatMedia(teamId: string, file: File, conversationId 
   if (!bucket) {
     throw new Error('Primary Firebase Storage configuration is missing.');
   }
-  const userId = firebaseAuth.currentUser?.uid;
+  const userId = getNativeAuthUserId();
   if (!userId) {
     throw new Error('Sign in before uploading team chat media.');
   }
@@ -1242,14 +1270,26 @@ async function nativeUploadChatMedia(teamId: string, file: File, conversationId 
   const isVideo = String(file.type || '').toLowerCase().startsWith('video/');
   const path = `stat-sheets/team-chat/${safeTeamId}/${safeConversationId}/${safeUserId}/${Date.now()}_${safeName}`;
   const requestUrl = `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o?uploadType=media&name=${encodeURIComponent(path)}`;
-  const response = await withTimeout(fetch(requestUrl, {
+  const abortController = new AbortController();
+  let uploadTimeoutId: number | undefined;
+  const uploadTimeout = new Promise<Response>((_, reject) => {
+    uploadTimeoutId = window.setTimeout(() => {
+      abortController.abort();
+      reject(new Error('Chat media upload timed out. Check your connection and try again.'));
+    }, chatUploadTimeoutMs);
+  });
+  const uploadRequest = fetch(requestUrl, {
     method: 'POST',
     headers: await getPrimaryAppCheckHeaders({
       Authorization: `Bearer ${idToken}`,
       'Content-Type': file.type || 'application/octet-stream'
     }, requestUrl),
-    body: file
-  }), 'Chat media upload', chatUploadTimeoutMs);
+    body: file,
+    signal: abortController.signal
+  });
+  const response = await Promise.race([uploadRequest, uploadTimeout]).finally(() => {
+    if (uploadTimeoutId) window.clearTimeout(uploadTimeoutId);
+  });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw new Error(payload?.error?.message || `Chat media upload failed (${response.status}).`);

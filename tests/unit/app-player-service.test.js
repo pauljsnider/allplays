@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const dbMocks = vi.hoisted(() => ({
+    collectRosterParentContacts: vi.fn(() => []),
     deleteAthleteProfileMediaByPath: vi.fn(),
     getAggregatedStatsForPlayer: vi.fn(),
     getGames: vi.fn(),
@@ -26,6 +27,10 @@ const dbMocks = vi.hoisted(() => ({
 
 const scheduleMocks = vi.hoisted(() => ({
     loadParentPlayerSchedule: vi.fn()
+}));
+
+const profileMocks = vi.hoisted(() => ({
+    loadProfileDocument: vi.fn()
 }));
 
 const playerProfileMocks = vi.hoisted(() => ({
@@ -62,6 +67,7 @@ vi.mock('../../apps/app/src/lib/adapters/legacyPlayerDb', () => dbMocks);
 vi.mock('../../apps/app/src/lib/adapters/legacyPlayerProfile', () => playerProfileMocks);
 vi.mock('../../apps/app/src/lib/adapters/legacyRosterPrivacy', () => rosterPrivacyMocks);
 vi.mock('../../apps/app/src/lib/scheduleService.ts', () => scheduleMocks);
+vi.mock('../../apps/app/src/lib/profileService.ts', () => profileMocks);
 
 import {
     loadParentPlayerDetail,
@@ -113,6 +119,7 @@ function user() {
 
 beforeEach(() => {
     vi.clearAllMocks();
+    dbMocks.collectRosterParentContacts.mockReturnValue([]);
     scheduleMocks.loadParentPlayerSchedule.mockResolvedValue({
         children: [
             { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat' },
@@ -151,9 +158,19 @@ beforeEach(() => {
             })
         ]
     });
+    profileMocks.loadProfileDocument.mockResolvedValue(null);
     dbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', sport: 'basketball' });
     dbMocks.getPlayers.mockResolvedValue([
-        { id: 'player-1', name: 'Pat Star', number: '9', photoUrl: 'https://example.test/pat.jpg' }
+        {
+            id: 'player-1',
+            name: 'Pat Star',
+            number: '9',
+            photoUrl: 'https://example.test/pat.jpg',
+            parents: [
+                { userId: 'mom-1', name: 'Mom Snider', email: 'mom@allplays.ai', relation: 'Mom' },
+                { userId: 'dad-1', name: 'Dad Snider', email: 'dad@allplays.ai', relation: 'Dad' }
+            ]
+        }
     ]);
     dbMocks.getGames.mockResolvedValue([{ id: 'game-final', clips: [] }]);
     dbMocks.getAggregatedStatsForPlayer.mockResolvedValue({ pts: 12, reb: 4 });
@@ -265,6 +282,10 @@ describe('React app parent player detail service', () => {
             emergencyContact: { name: 'Jamie Parent', phone: '555-0100' },
             medicalInfo: 'Peanut allergy'
         });
+        expect(detail.familyContacts).toEqual([
+            expect.objectContaining({ name: 'Dad Snider', email: 'dad@allplays.ai', relation: 'Dad', status: 'linked' }),
+            expect.objectContaining({ name: 'Mom Snider', email: 'mom@allplays.ai', relation: 'Mom', status: 'linked' })
+        ]);
         expect(detail.incentives).toMatchObject({
             totalEarnedCents: 1200,
             totalPaidCents: 1200,
@@ -294,6 +315,58 @@ describe('React app parent player detail service', () => {
             playerId: 'player-1'
         });
         expect(clips).toEqual([{ title: 'Fast break', url: 'https://video.example.test/clip', gameLabel: 'vs. Falcons' }]);
+    });
+
+    it('allows a same-team parent to open a teammate profile without private household details', async () => {
+        scheduleMocks.loadParentPlayerSchedule.mockResolvedValue({
+            children: [{ teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat' }],
+            events: []
+        });
+        dbMocks.getPlayers.mockResolvedValue([
+            {
+                id: 'player-1',
+                name: 'Pat Star',
+                parents: [{ userId: 'mom-1', name: 'Mom Snider', email: 'mom@allplays.ai', relation: 'Mom' }]
+            },
+            {
+                id: 'player-2',
+                name: 'Taylor Teammate',
+                number: '11',
+                parents: [{ userId: 'team-parent-1', name: 'Taylor Parent', email: 'taylor@example.com', relation: 'Parent' }]
+            }
+        ]);
+        dbMocks.getPlayerPrivateProfile.mockResolvedValue({
+            emergencyContact: { name: 'Private Contact', phone: '555-0199' },
+            medicalInfo: 'Private note',
+            parents: [{ name: 'Private Parent', email: 'private@example.com', relation: 'Guardian' }]
+        });
+
+        const detail = await loadParentPlayerDetail({
+            ...user(),
+            parentTeamIds: ['team-1']
+        }, 'team-1', 'player-2');
+
+        expect(detail.access.isLinkedParent).toBe(false);
+        expect(detail.access.isTeamParent).toBe(true);
+        expect(detail.child).toMatchObject({ teamId: 'team-1', playerId: 'player-2', playerName: 'Taylor Teammate' });
+        expect(detail.privateProfile).toBeNull();
+        expect(detail.familyContacts).toEqual([
+            expect.objectContaining({ name: 'Taylor Parent', email: 'taylor@example.com', relation: 'Parent' })
+        ]);
+        expect(JSON.stringify(detail.familyContacts)).not.toContain('private@example.com');
+    });
+
+    it('does not treat off-team raw parentOf rows as team-parent access for teammates', async () => {
+        scheduleMocks.loadParentPlayerSchedule.mockResolvedValue({
+            children: [{ teamId: 'team-2', teamName: 'Wolves', playerId: 'player-1', playerName: 'Pat' }],
+            events: []
+        });
+
+        await expect(loadParentPlayerDetail({
+            ...user(),
+            parentOf: [{ teamId: 'team-2', playerId: 'player-1', playerName: 'Pat', teamName: 'Wolves' }]
+        }, 'team-1', 'player-2'))
+            .rejects.toThrow('This player is not linked to your account.');
     });
 
     it('falls back to the legacy player-only route and blocks unlinked players', async () => {
@@ -396,18 +469,57 @@ describe('React app parent player detail service', () => {
         expect(detail.scheduleLoadError).toBe('Schedule is temporarily unavailable. Refresh the player to try again.');
     });
 
-    it('rejects stale parent links when a successful schedule load omits the player', async () => {
+    it('uses in-team parent profile links and rejects off-team stale links when a successful schedule load omits the player', async () => {
         scheduleMocks.loadParentPlayerSchedule.mockResolvedValue({ children: [], events: [] });
         const keyOnlyParent = {
             ...user(),
             parentOf: [],
             parentPlayerKeys: ['team-1::player-1']
         };
+        const offTeamParent = {
+            ...user(),
+            parentOf: [{ teamId: 'team-2', playerId: 'player-2', playerName: 'Sam', teamName: 'Thunder' }]
+        };
+        const offTeamKeyOnlyParent = {
+            ...user(),
+            parentOf: [],
+            parentPlayerKeys: ['team-2::player-2']
+        };
 
         await expect(loadParentPlayerDetail(user(), 'team-1', 'player-1'))
-            .rejects.toThrow('This player is not linked to your account.');
+            .resolves.toMatchObject({
+                child: { teamId: 'team-1', playerId: 'player-1' },
+                access: { isLinkedParent: true }
+            });
         await expect(loadParentPlayerDetail(keyOnlyParent, 'team-1', 'player-1'))
+            .resolves.toMatchObject({
+                child: { teamId: 'team-1', playerId: 'player-1' },
+                access: { isLinkedParent: true }
+            });
+        await expect(loadParentPlayerDetail(offTeamParent, 'team-1', 'player-1'))
             .rejects.toThrow('This player is not linked to your account.');
+        await expect(loadParentPlayerDetail(offTeamKeyOnlyParent, 'team-1', 'player-1'))
+            .rejects.toThrow('This player is not linked to your account.');
+    });
+
+    it('allows team parents to open non-linked roster player details without private profile data', async () => {
+        scheduleMocks.loadParentPlayerSchedule.mockResolvedValue({
+            children: [{ teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat' }],
+            events: []
+        });
+        dbMocks.getPlayers.mockResolvedValue([
+            { id: 'player-1', name: 'Pat Star', number: '9' },
+            { id: 'player-2', name: 'Sam Wing', number: '12' }
+        ]);
+
+        const detail = await loadParentPlayerDetail(user(), 'team-1', 'player-2');
+
+        expect(detail.child).toMatchObject({ teamId: 'team-1', playerId: 'player-2', playerName: 'Sam Wing' });
+        expect(detail.player).toMatchObject({ id: 'player-2', name: 'Sam Wing', number: '12' });
+        expect(detail.access.isLinkedParent).toBe(false);
+        expect(detail.privateProfile).toBeNull();
+        expect(dbMocks.getPlayerPrivateProfile).not.toHaveBeenCalled();
+        expect(incentiveMocks.getIncentiveRules).not.toHaveBeenCalledWith('user-1', 'player-2');
     });
 
     it('saves parent-editable player fields through the restricted profile helper', async () => {

@@ -40,6 +40,7 @@ import {
 import { buildAppAcceptInviteUrl } from '../lib/inviteUrls';
 import { createLogger } from '../lib/logger';
 import { sharePublicUrl } from '../lib/publicActions';
+import { InviteResultCard } from './parent-tools/shared';
 import { startAppInitialLoadTimer } from '../lib/telemetry';
 import { useShellLayout } from '../lib/useShellLayout';
 import { useViewLoadTimer } from '../lib/viewLoadTiming';
@@ -1679,9 +1680,9 @@ export function Profile({ auth }: { auth: AuthState }) {
           <div>
             <div className="flex items-center gap-2 text-sm font-black text-primary-800">
               <Clipboard className="h-4 w-4" aria-hidden="true" />
-              Invite codes
+              Create invite
             </div>
-            <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">Create one-time access codes and keep recent history handy.</p>
+            <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">Create an invite, then share it by link or fallback code.</p>
           </div>
           {accessCodes.length ? (
             <span className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs font-black text-gray-600">{accessCodes.length} total</span>
@@ -1689,58 +1690,48 @@ export function Profile({ auth }: { auth: AuthState }) {
         </div>
 
         <form className="mt-4 space-y-3" onSubmit={createInviteCode}>
-          <details className="rounded-xl border border-gray-200 bg-gray-50 p-3">
-            <summary className="cursor-pointer text-sm font-black text-gray-700">Advanced: add recipient label</summary>
-            <p className="mt-2 text-xs font-semibold leading-5 text-gray-500">Add an email or phone number to label and target the invite; the app does not send it.</p>
-            <div className="mt-3 grid gap-3 sm:grid-cols-2">
-              <input className="auth-input" type="email" value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} placeholder="coach@example.com" aria-label="Invite email label" />
-              <input className="auth-input" type="tel" value={invitePhone} onChange={(event) => setInvitePhone(event.target.value)} placeholder="(555) 123-4567" aria-label="Invite phone label" />
-            </div>
-          </details>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label>
+              <span className="app-label">Recipient email</span>
+              <input className="auth-input mt-1" type="email" value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} placeholder="coach@example.com" aria-label="Recipient email" />
+            </label>
+            <label>
+              <span className="app-label">Recipient phone</span>
+              <input className="auth-input mt-1" type="tel" value={invitePhone} onChange={(event) => setInvitePhone(event.target.value)} placeholder="(555) 123-4567" aria-label="Recipient phone" />
+            </label>
+          </div>
+          <p className="text-xs font-semibold leading-5 text-gray-500">Add an email or phone number to label and target the invite; this invite is shared by link or code.</p>
           <div className="flex flex-wrap items-center gap-2">
             <button type="submit" className="primary-button" disabled={busy === 'invite'}>
               {busy === 'invite' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Link2 className="h-4 w-4" aria-hidden="true" />}
-              Generate invite link
+              {busy === 'invite' ? 'Creating invite...' : 'Create invite'}
             </button>
             <StatusMessage status={inviteStatus} />
           </div>
         </form>
 
         {generatedCode ? (
-          <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3">
-            <div className="text-xs font-extrabold uppercase tracking-[0.04em] text-emerald-700">Generated invite link</div>
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <button type="button" className="primary-button" onClick={() => shareInviteLink(generatedCode, generatedInviteMetadata)}>
-                <Share2 className="h-4 w-4" aria-hidden="true" />
-                Share invite link
-              </button>
-              <button type="button" className="ghost-button" onClick={() => copyText(signupLink, 'Link copied.')}>
-                <Link2 className="h-4 w-4" aria-hidden="true" />
-                Copy invite link
-              </button>
-              <span className="break-all rounded-lg bg-white px-3 py-2 text-sm font-bold text-gray-700">{signupLink}</span>
-            </div>
-            {inviteActionStatus ? <div className="mt-2 text-sm font-black text-emerald-700">{inviteActionStatus}</div> : null}
-            <div className="mt-3 flex flex-wrap items-center gap-2 text-sm font-bold text-gray-600">
-              <span>Fallback code</span>
-              <code className="rounded-lg bg-white px-3 py-1.5 text-lg font-black tracking-widest text-gray-950">{generatedCode}</code>
-              <button type="button" className="ghost-button" onClick={() => copyText(generatedCode, 'Code copied.')}>
-                <Copy className="h-4 w-4" aria-hidden="true" />
-                Copy code
-              </button>
-            </div>
-          </div>
+          <InviteResultCard
+            code={generatedCode}
+            inviteUrl={signupLink}
+            recipientLabel={generatedInviteMetadata.email || generatedInviteMetadata.phone}
+            emailSent={false}
+            title="Invite code"
+            shareTitle={`ALL PLAYS invite${generatedInviteMetadata.email ? ` for ${generatedInviteMetadata.email}` : generatedInviteMetadata.phone ? ` for ${generatedInviteMetadata.phone}` : ''}`}
+            shareText={generatedInviteMetadata.email ? `Use this ALL PLAYS invite link for ${generatedInviteMetadata.email}.` : generatedInviteMetadata.phone ? `Use this ALL PLAYS invite link for ${generatedInviteMetadata.phone}.` : `Use this ALL PLAYS invite link.`}
+            onStatus={setInviteActionStatus}
+          />
         ) : null}
 
         <div className="mt-4 space-y-2">
           {accessCodes.length ? visibleAccessCodes.map((code) => (
             <AccessCodeCard key={code.id} code={code} onCopy={copyText} onShare={shareInviteLink} />
           )) : (
-            <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">No codes generated yet.</div>
+            <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">No invites created yet.</div>
           )}
         </div>
 
-        {!generatedCode && inviteActionStatus ? <div className="mt-3 text-sm font-black text-emerald-700">{inviteActionStatus}</div> : null}
+        {inviteActionStatus ? <div className="mt-3 text-sm font-black text-emerald-700">{inviteActionStatus}</div> : null}
 
         {accessCodesHasMore || accessCodes.length > collapsedInviteCount ? (
           <button type="button" className="ghost-button mt-3 w-full justify-center" onClick={loadMoreInviteHistory} disabled={accessCodesLoadingMore}>

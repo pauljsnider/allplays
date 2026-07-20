@@ -13,6 +13,7 @@ function extractRuleBlock(startMarker) {
 }
 
 const chatFallbackRules = extractRuleBlock('match /stat-sheets/team-chat/{teamId}/{conversationId}/{userId}/{fileName}');
+const cachedLegacyChatFallbackRules = extractRuleBlock('match /stat-sheets/team-chat/{teamId}/team/{userId}/{fileName}');
 const legacyChatFallbackRules = extractRuleBlock('match /stat-sheets/team-chat/{teamId}/{userId}/{fileName}');
 const statSheetFallbackRules = extractRuleBlock('match /stat-sheets/team-games/{teamId}/{userId}/{fileName}');
 const drillFallbackRules = extractRuleBlock('match /stat-sheets/drills/{teamId}/{drillId}/{userId}/{fileName}');
@@ -82,14 +83,26 @@ describe('fallback media paths and Storage rules', () => {
 
     it('limits fallback chat media access to the same team audience and current uploader/admin delete rights', () => {
         expect(chatFallbackRules).toContain('allow get: if canAccessChatAttachment(teamId, conversationId);');
+        expect(rules).toContain("team.get('ownerEmail', '').lower() == request.auth.token.email.lower()");
+        expect(dbSource).toContain('where("ownerEmail", "==", ownerEmail)');
+        expect(dbSource).toContain('where("ownerEmailLower", "==", normalizedEmail)');
+        expect(dbSource).toContain('const optionalTeamQuery = (queryPromise, label) => queryPromise.catch((error) => {');
+        expect(dbSource).toContain('Optional team access query failed');
         expect(rules).toContain("('user:' + request.auth.uid) in participantIds");
         expect(rules).toContain("('email:' + request.auth.token.email.lower()) in participantIds");
-        expect(chatFallbackRules).toContain("allow create: if (isVerifiedForSensitiveWrite() ||\n        (isSignedIn() && conversationId == 'team')) &&");
+        expect(chatFallbackRules).toContain("allow create: if ((isSignedIn() && conversationId == 'team') ||\n        isVerifiedForSensitiveWrite()) &&");
+        expect(chatFallbackRules.indexOf("conversationId == 'team'")).toBeLessThan(
+            chatFallbackRules.indexOf('isVerifiedForSensitiveWrite()')
+        );
         expect(chatFallbackRules).toContain('request.auth.uid == userId');
         expect(chatFallbackRules).toContain('isAllowedChatAttachmentUpload(request.resource.contentType, request.resource.size);');
         expect(rules).toContain('function canDeleteOwnChatAttachment(teamId, conversationId, userId)');
         expect(chatFallbackRules).toContain('allow delete: if (isVerifiedForSensitiveWrite() && isTeamOwnerOrAdmin(teamId)) ||\n        canDeleteOwnChatAttachment(teamId, conversationId, userId);');
         expect(chatFallbackRules).not.toContain('allow delete: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;');
+        expect(cachedLegacyChatFallbackRules).toContain("allow create: if isSignedIn() &&\n        canAccessChatAttachment(teamId, 'team') &&");
+        expect(cachedLegacyChatFallbackRules).toContain('request.auth.uid == userId');
+        expect(cachedLegacyChatFallbackRules).toContain('isAllowedChatAttachmentUpload(request.resource.contentType, request.resource.size);');
+        expect(cachedLegacyChatFallbackRules).toContain("canDeleteOwnChatAttachment(teamId, 'team', userId);");
         expect(legacyChatFallbackRules).toContain('allow get: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;');
         expect(legacyChatFallbackRules).toContain('allow create: if false;');
         expect(legacyChatFallbackRules).toContain('allow delete: if isVerifiedForSensitiveWrite() &&\n        (isTeamOwnerOrAdmin(teamId) || canDeleteOwnTeamScopedUpload(teamId, userId));');

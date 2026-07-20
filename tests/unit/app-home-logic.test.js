@@ -156,7 +156,7 @@ describe('React app Home model helpers', () => {
 
     it('keeps Home drill-in links encoded for team-scoped player and event routes', () => {
         expect(getPlayerDetailPath('team/with slash', 'player 1')).toBe('/players/team%2Fwith%20slash/player%201');
-        expect(getTeamHomePath('team/with slash')).toBe('/teams?selectedTeamId=team%2Fwith+slash&from=home');
+        expect(getTeamHomePath('team/with slash')).toBe('/teams/team%2Fwith%20slash');
         expect(getEventDetailPath({
             teamId: 'team/with slash',
             id: 'game 1',

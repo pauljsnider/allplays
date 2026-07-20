@@ -538,13 +538,46 @@ function getRequiredSignedInUserId() {
     return userId;
 }
 
+const CHAT_MEDIA_UPLOAD_TIMEOUT_MS = 25000;
+
+async function withChatMediaTimeout(operation) {
+    let timeoutId;
+    const timeoutPromise = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => {
+            reject(new Error('Chat media upload timed out. Check your connection and try again.'));
+        }, CHAT_MEDIA_UPLOAD_TIMEOUT_MS);
+    });
+
+    try {
+        return await Promise.race([operation, timeoutPromise]);
+    } finally {
+        clearTimeout(timeoutId);
+    }
+}
+
 export async function uploadChatImage(teamId, file, { conversationId = DEFAULT_TEAM_CONVERSATION_ID } = {}) {
     const ts = Date.now();
     const userId = getRequiredSignedInUserId();
     const path = buildChatAttachmentFallbackPath(teamId, conversationId, userId, file.name, ts);
     const storageRef = ref(storage, path);
-    const snapshot = await uploadBytes(storageRef, file);
-    const url = await getDownloadURL(snapshot.ref);
+    if (storage && typeof storage === 'object') {
+        storage.maxUploadRetryTime = CHAT_MEDIA_UPLOAD_TIMEOUT_MS;
+        storage.maxOperationRetryTime = CHAT_MEDIA_UPLOAD_TIMEOUT_MS;
+    }
+    const snapshot = await withChatMediaTimeout(uploadBytes(storageRef, file, {
+        contentType: file.type || 'application/octet-stream'
+    }));
+    let url;
+    try {
+        url = await withChatMediaTimeout(getDownloadURL(snapshot.ref));
+    } catch (error) {
+        try {
+            await withChatMediaTimeout(deleteObject(snapshot.ref));
+        } catch (cleanupError) {
+            console.warn('Failed to clean up chat media after URL lookup failure:', cleanupError);
+        }
+        throw error;
+    }
     return {
         url,
         path,
@@ -1772,14 +1805,42 @@ export async function getUserTeams(userId, options = {}) {
 
 export async function getUserTeamsWithAccess(userId, email, options = {}) {
     const includeInactive = !!options.includeInactive;
-    const [ownedSnap, adminSnap] = await Promise.all([
+    const profileSnap = userId ? getDoc(doc(db, "users", userId)).catch(() => null) : Promise.resolve(null);
+    const profile = await profileSnap;
+    const ownerEmailCandidates = [
+        email,
+        profile?.exists?.() ? profile.data()?.email : null,
+        ...(Array.isArray(options.ownerEmailCandidates) ? options.ownerEmailCandidates : [])
+    ].map((value) => String(value || '').trim()).filter(Boolean);
+    const normalizedEmail = ownerEmailCandidates[0] ? ownerEmailCandidates[0].toLowerCase() : '';
+    const optionalTeamQuery = (queryPromise, label) => queryPromise.catch((error) => {
+        console.warn(`Optional team access query failed (${label}).`, error);
+        return { docs: [] };
+    });
+    const ownerEmailQueries = ownerEmailCandidates.length
+        ? [...new Set([...ownerEmailCandidates, ...ownerEmailCandidates.map((value) => value.toLowerCase())])]
+            .map((ownerEmail) => optionalTeamQuery(
+                getDocs(query(collection(db, "teams"), where("ownerEmail", "==", ownerEmail))),
+                `ownerEmail:${ownerEmail}`
+            ))
+        : [];
+    const ownerEmailLowerQuery = normalizedEmail
+        ? optionalTeamQuery(
+            getDocs(query(collection(db, "teams"), where("ownerEmailLower", "==", normalizedEmail))),
+            `ownerEmailLower:${normalizedEmail}`
+        )
+        : Promise.resolve({ docs: [] });
+    const [ownedSnap, adminSnap, ...ownerEmailSnaps] = await Promise.all([
         getDocs(query(collection(db, "teams"), where("ownerId", "==", userId))),
-        email ? getDocs(query(collection(db, "teams"), where("adminEmails", "array-contains", email.toLowerCase()))) : Promise.resolve({ docs: [] })
+        normalizedEmail ? getDocs(query(collection(db, "teams"), where("adminEmails", "array-contains", normalizedEmail))) : Promise.resolve({ docs: [] }),
+        ownerEmailLowerQuery,
+        ...ownerEmailQueries
     ]);
 
     const map = new Map();
     ownedSnap.docs.forEach(d => map.set(d.id, { id: d.id, ...d.data() }));
     adminSnap.docs.forEach(d => map.set(d.id, { id: d.id, ...d.data() }));
+    ownerEmailSnaps.forEach((snap) => snap.docs.forEach(d => map.set(d.id, { id: d.id, ...d.data() })));
 
     const teams = Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
     return filterTeamsByActive(teams, includeInactive);
@@ -2144,6 +2205,9 @@ export async function getUsersByParentTeamId(teamId) {
 }
 
 export async function createTeam(teamData) {
+    if (teamData.ownerEmail) {
+        teamData.ownerEmailLower = String(teamData.ownerEmail).trim().toLowerCase();
+    }
     teamData.createdAt = Timestamp.now();
     teamData.updatedAt = Timestamp.now();
     Object.assign(teamData, buildPublicTeamSearchFields(teamData));
@@ -2202,6 +2266,9 @@ async function assertTeamMediaManagerPermissionUpdateCleared(teamId, teamData = 
 
 export async function updateTeam(teamId, teamData) {
     await assertTeamMediaManagerPermissionUpdateCleared(teamId, teamData);
+    if (Object.prototype.hasOwnProperty.call(teamData, 'ownerEmail')) {
+        teamData.ownerEmailLower = teamData.ownerEmail ? String(teamData.ownerEmail).trim().toLowerCase() : '';
+    }
     teamData.updatedAt = Timestamp.now();
     const docRef = doc(db, "teams", teamId);
     if (teamData.registrationSource === null) {
@@ -6301,6 +6368,10 @@ export function canAccessTeamChat(user, team) {
     // Team owner
     if (team.ownerId === user.uid) return true;
 
+    if (user.email && team.ownerEmail && team.ownerEmail.toLowerCase() === user.email.toLowerCase()) {
+        return true;
+    }
+
     // Team admin (email in adminEmails)
     if (user.email && team.adminEmails?.map(e => e.toLowerCase()).includes(user.email.toLowerCase())) {
         return true;
@@ -6331,6 +6402,10 @@ export function canModerateChat(user, team) {
 
     // Team owner
     if (team.ownerId === user.uid) return true;
+
+    if (user.email && team.ownerEmail && team.ownerEmail.toLowerCase() === user.email.toLowerCase()) {
+        return true;
+    }
 
     // Team admin (email in adminEmails)
     if (user.email && team.adminEmails?.map(e => e.toLowerCase()).includes(user.email.toLowerCase())) {

@@ -27,4 +27,10 @@ describe('team chat multi-file send cleanup', () => {
         expect(html).toContain('await deleteUploadedChatAttachments(mediaPayloads);');
         expect(html).toContain('Failed to clean up uploaded chat attachments:');
     });
+
+    it('shows the actionable upload failure instead of hiding it behind a generic send error', () => {
+        const html = readRepoFile('team-chat.html');
+
+        expect(html).toContain("showError(error?.message || 'Failed to send message. Please try again.');");
+    });
 });

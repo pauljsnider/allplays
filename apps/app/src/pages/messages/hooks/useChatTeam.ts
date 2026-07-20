@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   loadChatConversations,
   loadChatTeamContext,
@@ -7,6 +7,8 @@ import {
 } from '../../../lib/chatService';
 import { DEFAULT_TEAM_CONVERSATION_ID, isDefaultTeamConversation } from '../../../lib/chatLogic';
 import type { AuthState } from '../../../lib/types';
+
+const CANONICAL_STAFF_CONVERSATION_ID = 'group_role%3Astaff';
 
 type UseChatTeamParams = {
   teamId: string;
@@ -17,6 +19,7 @@ type UseChatTeamParams = {
 };
 
 export function useChatTeam({ teamId, user, inboxTeam, preferredConversationId = '', onTeamReset }: UseChatTeamParams) {
+  const userRef = useRef(user);
   const [team, setTeam] = useState<Record<string, any> | null>(inboxTeam || null);
   const [profile, setProfile] = useState<Record<string, any>>({});
   const [canModerate, setCanModerate] = useState(inboxTeam?.canModerate || false);
@@ -24,13 +27,17 @@ export function useChatTeam({ teamId, user, inboxTeam, preferredConversationId =
   const [selectedConversationId, setSelectedConversationId] = useState<string>(DEFAULT_TEAM_CONVERSATION_ID);
   const [loadingContext, setLoadingContext] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  userRef.current = user;
+
+  const normalizedPreferredConversationId = normalizePreferredConversationId(preferredConversationId);
 
   useEffect(() => {
     let cancelled = false;
 
     async function loadContext() {
-      if (!user) return;
-      const nextConversationId = preferredConversationId || DEFAULT_TEAM_CONVERSATION_ID;
+      const activeUser = userRef.current;
+      if (!activeUser) return;
+      const nextConversationId = normalizedPreferredConversationId || DEFAULT_TEAM_CONVERSATION_ID;
       const shouldBlockOnConversationHydration = !isDefaultTeamConversation(nextConversationId);
       setLoadingContext(true);
       setError(null);
@@ -39,7 +46,7 @@ export function useChatTeam({ teamId, user, inboxTeam, preferredConversationId =
       onTeamReset?.();
 
       try {
-        const context = await loadChatTeamContext(teamId, user);
+        const context = await loadChatTeamContext(teamId, activeUser);
         if (cancelled) return;
         setTeam(context.team);
         setProfile(context.profile);
@@ -49,7 +56,7 @@ export function useChatTeam({ teamId, user, inboxTeam, preferredConversationId =
         }
 
         try {
-          const loadedConversations = await loadChatConversations(teamId, user, context.team, context.canModerate, {
+          const loadedConversations = await loadChatConversations(teamId, activeUser, context.team, context.canModerate, {
             activeConversationId: nextConversationId
           });
           if (cancelled) return;
@@ -58,8 +65,8 @@ export function useChatTeam({ teamId, user, inboxTeam, preferredConversationId =
             if (loadedConversations.some((conversation) => conversation.id === current)) {
               return current;
             }
-            if (preferredConversationId && loadedConversations.some((conversation) => conversation.id === preferredConversationId)) {
-              return preferredConversationId;
+            if (normalizedPreferredConversationId && loadedConversations.some((conversation) => conversation.id === normalizedPreferredConversationId)) {
+              return normalizedPreferredConversationId;
             }
             return DEFAULT_TEAM_CONVERSATION_ID;
           });
@@ -82,7 +89,7 @@ export function useChatTeam({ teamId, user, inboxTeam, preferredConversationId =
     return () => {
       cancelled = true;
     };
-  }, [onTeamReset, preferredConversationId, teamId, user?.uid]);
+  }, [normalizedPreferredConversationId, onTeamReset, teamId, user?.uid]);
 
   const reloadConversations = useCallback(async () => {
     if (!user || !team) return undefined;
@@ -113,4 +120,9 @@ export function useChatTeam({ teamId, user, inboxTeam, preferredConversationId =
     reloadConversations,
     switchConversation
   };
+}
+
+function normalizePreferredConversationId(conversationId: string) {
+  const normalized = String(conversationId || '').trim();
+  return normalized === 'group_role%253Astaff' ? CANONICAL_STAFF_CONVERSATION_ID : normalized;
 }

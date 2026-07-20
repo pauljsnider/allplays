@@ -182,7 +182,7 @@ export function buildAppSearchActions(auth: Pick<AuthState, 'user' | 'isAdmin' |
       id: 'my-teams',
       kind: 'action',
       title: 'My Teams',
-      subtitle: 'Open your team hubs',
+      subtitle: 'Choose or switch teams',
       route: '/teams'
     },
     {

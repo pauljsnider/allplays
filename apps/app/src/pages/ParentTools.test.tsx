@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getHorizontalScrollTarget, ParentTools, type ParentToolId } from './ParentTools';
 import type { AuthState } from '../lib/types';
 import { APP_BACK_DISMISS_EVENT, getNativeBackTarget } from '../lib/nativeBackButton';
-import { openPublicUrl, sharePublicUrl } from '../lib/publicActions';
+import { copyPublicText, openPublicUrl, sharePublicUrl } from '../lib/publicActions';
 
 const parentToolsServiceMocks = vi.hoisted(() => ({
     buildParentScheduleIcs: vi.fn(),
@@ -72,6 +72,7 @@ vi.mock('../lib/parentCertificatesService', () => ({
 vi.mock('../lib/parentToolsAccessService', () => parentToolsAccessServiceMocks);
 vi.mock('../lib/inviteRedemption', () => inviteRedemptionMocks);
 vi.mock('../lib/publicActions', () => ({
+    copyPublicText: vi.fn(),
     openPublicUrl: vi.fn(),
     sharePublicUrl: vi.fn()
 }));
@@ -88,6 +89,7 @@ vi.mock('lucide-react', () => {
         Download: Icon,
         ExternalLink: Icon,
         KeyRound: Icon,
+        Link2: Icon,
         Loader2: Icon,
         RefreshCw: Icon,
         Search: Icon,
@@ -237,6 +239,7 @@ describe('ParentTools access', () => {
             ],
             members: []
         });
+        vi.mocked(copyPublicText).mockResolvedValue('copied');
         inviteRedemptionMocks.redeemSignedInInvite.mockResolvedValue({
             code: 'AB12CD34',
             redirectPath: '/home',
@@ -747,7 +750,8 @@ describe('ParentTools access', () => {
         expect(parentToolsServiceMocks.getGoogleCalendarFeedUrl).toHaveBeenCalledWith(privateFeedUrl);
 
         fireEvent.click(screen.getByRole('button', { name: 'Copy private link' }));
-        await waitFor(() => expect(writeText).toHaveBeenCalledWith(privateFeedUrl));
+        await waitFor(() => expect(copyPublicText).toHaveBeenCalledWith(privateFeedUrl));
+        expect(writeText).not.toHaveBeenCalled();
         expect(parentToolsServiceMocks.getPrivateTeamCalendarFeedUrl).toHaveBeenCalledTimes(3);
     });
 
@@ -808,7 +812,7 @@ describe('ParentTools access', () => {
         fireEvent.click(screen.getByRole('link', { name: 'Household' }));
         await screen.findByText('No pending household invites');
         expect(parentToolsServiceMocks.loadParentHouseholdInviteModel).toHaveBeenCalledTimes(1);
-        fireEvent.change(screen.getByPlaceholderText('Household contact email'), { target: { value: 'guardian@example.com' } });
+        fireEvent.change(screen.getByPlaceholderText('Recipient email'), { target: { value: 'guardian@example.com' } });
         expect(parentToolsServiceMocks.loadParentHouseholdInviteModel).toHaveBeenCalledTimes(1);
     });
 
@@ -902,12 +906,7 @@ describe('ParentTools access', () => {
     });
 
     it('shows a created family link when clipboard copy and refresh recovery miss it', async () => {
-        Object.defineProperty(navigator, 'clipboard', {
-            configurable: true,
-            value: {
-                writeText: vi.fn().mockRejectedValue(new Error('Clipboard unavailable.'))
-            }
-        });
+        vi.mocked(copyPublicText).mockResolvedValueOnce('failed');
         parentToolsServiceMocks.loadFamilyShareModel.mockResolvedValue({
             children: [
                 {

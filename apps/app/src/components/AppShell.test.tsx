@@ -195,12 +195,76 @@ describe('AppShell', () => {
     expect(familyLink.className).toContain('bg-primary-50');
   });
 
-  it('keeps signed-in mobile navigation to five items and exposes lower-frequency destinations in More', () => {
-    useShellLayoutMock.mockReturnValue({ isDesktopWeb: false });
+  it('routes the desktop My Teams nav directly to the team page when the user has one team', async () => {
+    const oneTeamAuth: AuthState = {
+      ...signedInAuth,
+      user: signedInAuth.user ? { ...signedInAuth.user, parentTeamIds: ['team-1'] } : null,
+    };
+
     render(
       <MemoryRouter initialEntries={['/home']}>
         <Routes>
-          <Route path="/home" element={<AppShell auth={signedInAuth}><div>Home</div></AppShell>} />
+          <Route path="/home" element={<AppShell auth={oneTeamAuth}><div>Home</div></AppShell>} />
+          <Route path="/teams/:teamId" element={<AppShell auth={oneTeamAuth}><div>Team detail</div></AppShell>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    const primaryNav = screen.getByRole('navigation', { name: 'Primary navigation' });
+    const teamsLink = within(primaryNav).getByRole('link', { name: 'My Teams' });
+    expect(teamsLink.getAttribute('href')).toBe('/teams/team-1');
+
+    fireEvent.click(teamsLink);
+
+    await waitFor(() => {
+      expect(screen.getByText('Team detail')).toBeTruthy();
+    });
+  });
+
+  it('keeps the desktop My Teams nav on the team picker when the user has multiple teams', () => {
+    const twoTeamAuth: AuthState = {
+      ...signedInAuth,
+      user: signedInAuth.user ? { ...signedInAuth.user, parentTeamIds: ['team-1', 'team-2'] } : null,
+    };
+
+    render(
+      <MemoryRouter initialEntries={['/home']}>
+        <Routes>
+          <Route path="/home" element={<AppShell auth={twoTeamAuth}><div>Home</div></AppShell>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    const primaryNav = screen.getByRole('navigation', { name: 'Primary navigation' });
+    expect(within(primaryNav).getByRole('link', { name: 'My Teams' }).getAttribute('href')).toBe('/teams');
+  });
+
+  it('signs out from the desktop account card', async () => {
+    const signOut = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <MemoryRouter initialEntries={['/home']}>
+        <Routes>
+          <Route path="/home" element={<AppShell auth={{ ...signedInAuth, signOut }}><LocationDisplay /></AppShell>} />
+          <Route path="/auth" element={<div>Auth</div>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+
+    await waitFor(() => {
+      expect(signOut).toHaveBeenCalledTimes(1);
+    });
+    expect(await screen.findByText('Auth')).toBeTruthy();
+  });
+
+  it('keeps signed-in mobile navigation to five items and exposes lower-frequency destinations in More', () => {
+    useShellLayoutMock.mockReturnValue({ isDesktopWeb: false });
+    render(
+      <MemoryRouter initialEntries={['/parent-tools/fees']}>
+        <Routes>
+          <Route path="/parent-tools/fees" element={<AppShell auth={signedInAuth}><div>Family fees</div></AppShell>} />
         </Routes>
       </MemoryRouter>
     );
@@ -219,6 +283,28 @@ describe('AppShell', () => {
     expect(within(moreNav).getByRole('link', { name: /Profile/ })).toHaveAttribute('href', '/profile');
     expect(within(moreNav).getByRole('link', { name: /Family/ })).toHaveAttribute('href', '/parent-tools');
     expect(within(moreNav).getByRole('link', { name: /Discover/ })).toHaveAttribute('href', '/discover');
+  });
+
+  it('routes the mobile My Teams nav directly to the team page when the user has one team', () => {
+    useShellLayoutMock.mockReturnValue({ isDesktopWeb: false });
+    const oneTeamAuth: AuthState = {
+      ...signedInAuth,
+      user: signedInAuth.user ? {
+        ...signedInAuth.user,
+        parentOf: [{ teamId: 'team-1', playerId: 'player-1' }],
+      } : null,
+    };
+
+    render(
+      <MemoryRouter initialEntries={['/home']}>
+        <Routes>
+          <Route path="/home" element={<AppShell auth={oneTeamAuth}><div>Home</div></AppShell>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    const primaryNav = screen.getByRole('navigation', { name: 'Primary navigation' });
+    expect(within(primaryNav).getByRole('link', { name: 'My Teams' }).getAttribute('href')).toBe('/teams/team-1');
   });
 
   it('marks More current for a nested destination and dismisses it with native back', () => {

@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   AlertCircle,
   BriefcaseBusiness,
@@ -180,6 +180,7 @@ export function Home({ auth }: { auth: AuthState }) {
   const [socialStatus, setSocialStatus] = useState<{ tone: 'error' | 'success'; message: string } | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const [previewHomeUserId, setPreviewHomeUserId] = useState<string | null>(null);
   const [loadedHomeDetailsUserId, setLoadedHomeDetailsUserId] = useState<string | null>(null);
   const [homeLoadError, setHomeLoadError] = useState<AppServiceError | null>(null);
@@ -347,6 +348,11 @@ export function Home({ auth }: { auth: AuthState }) {
   }, [searchParams]);
 
   useEffect(() => {
+    if (activeSection !== 'teams' || !hasHomePreview || home.teams.length !== 1) return;
+    navigate(getTeamHomePath(home.teams[0].teamId), { replace: true });
+  }, [activeSection, hasHomePreview, home.teams, navigate]);
+
+  useEffect(() => {
     const activeLink = homeSectionNavRef.current?.querySelector<HTMLElement>(`[data-home-section="${activeSection}"]`);
     if (activeLink && typeof activeLink.scrollIntoView === 'function') {
       activeLink.scrollIntoView({ block: 'nearest', inline: 'center' });
@@ -409,6 +415,9 @@ export function Home({ auth }: { auth: AuthState }) {
   };
 
   const selectSection = (sectionId: HomeSectionId) => {
+    if (sectionId === 'teams' && home.teams.length === 1) {
+      return;
+    }
     setActiveSection(sectionId);
     setComposerOpen(false);
     window.requestAnimationFrame(() => {
@@ -495,13 +504,13 @@ export function Home({ auth }: { auth: AuthState }) {
               Checking actions
             </div>
           ) : null}
-          <PulseChip icon={UserRound} label="Players" value={String(home.metrics.players)} />
-          <PulseChip icon={Users} label="Teams" value={String(home.metrics.teams)} />
-          <PulseChip icon={ClipboardCheck} label="RSVP" value={String(home.metrics.rsvpNeeded)} urgent={home.metrics.rsvpNeeded > 0} />
-          <PulseChip icon={ClipboardCheck} label="Packets" value={String(home.metrics.packetsReady)} urgent={home.metrics.packetsReady > 0} />
-          <PulseChip icon={MessageCircle} label="Unread" value={String(home.metrics.unreadMessages)} urgent={home.metrics.unreadMessages > 0} />
-          <PulseChip icon={Newspaper} label="Feed" value={String(social.metrics.feedItems)} />
-          <PulseChip icon={UserPlus} label="Requests" value={String(social.metrics.incomingRequests)} urgent={social.metrics.incomingRequests > 0} />
+          <PulseChip icon={UserRound} label="Players" value={String(home.metrics.players)} to="/home?section=players" />
+          <PulseChip icon={Users} label="Teams" value={String(home.metrics.teams)} to="/home?section=teams" />
+          <PulseChip icon={ClipboardCheck} label="RSVP" value={String(home.metrics.rsvpNeeded)} to={home.metrics.rsvpNeeded > 1 ? '/schedule?bulkRsvp=1' : '/schedule'} urgent={home.metrics.rsvpNeeded > 0} />
+          <PulseChip icon={ClipboardCheck} label="Packets" value={String(home.metrics.packetsReady)} to="/schedule?view=packets" urgent={home.metrics.packetsReady > 0} />
+          <PulseChip icon={MessageCircle} label="Unread" value={String(home.metrics.unreadMessages)} to="/messages" urgent={home.metrics.unreadMessages > 0} />
+          <PulseChip icon={Newspaper} label="Feed" value={String(social.metrics.feedItems)} to="/home?section=feed" />
+          <PulseChip icon={UserPlus} label="Requests" value={String(social.metrics.incomingRequests)} to="/home?section=friends" urgent={social.metrics.incomingRequests > 0} />
         </div>
       </section>
 
@@ -510,10 +519,13 @@ export function Home({ auth }: { auth: AuthState }) {
           <div className="grid min-w-max grid-cols-5 gap-1 rounded-2xl border border-gray-200 bg-white p-1 shadow-sm">
             {homeSections.map((section) => {
               const active = activeSection === section.id;
+              const sectionRoute = section.id === 'teams' && home.teams.length === 1
+                ? getTeamHomePath(home.teams[0].teamId)
+                : getHomeSectionRoute(section.id);
               return (
                 <Link
                   key={section.id}
-                  to={getHomeSectionRoute(section.id)}
+                  to={sectionRoute}
                   data-home-section={section.id}
                   className={`flex min-h-11 snap-start items-center justify-center rounded-xl px-3 text-sm font-black transition ${active ? 'bg-primary-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-950'}`}
                   onClick={() => selectSection(section.id)}
@@ -2262,12 +2274,31 @@ function formatSocialDate(date: Date) {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-function PulseChip({ icon: Icon, label, value, urgent = false }: { icon: LucideIcon; label: string; value: string; urgent?: boolean }) {
-  return (
-    <div className={`flex min-h-8 flex-none items-center gap-1.5 rounded-full border px-2.5 text-xs font-black ${urgent ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-gray-200 bg-gray-50 text-gray-700'}`}>
+function PulseChip({ icon: Icon, label, value, to, urgent = false }: { icon: LucideIcon; label: string; value: string; to?: string; urgent?: boolean }) {
+  const className = `flex min-h-8 flex-none items-center gap-1.5 rounded-full border px-2.5 text-xs font-black transition ${urgent ? 'border-amber-200 bg-amber-50 text-amber-800 hover:border-amber-300' : 'border-gray-200 bg-gray-50 text-gray-700 hover:border-primary-200 hover:text-gray-950'}`;
+  const body = (
+    <>
       <Icon className={`h-3.5 w-3.5 ${urgent ? 'text-amber-700' : 'text-primary-600'}`} aria-hidden="true" />
       <span>{label}</span>
       <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${urgent ? 'bg-amber-200/70 text-amber-950' : 'bg-white text-gray-950'}`}>{value}</span>
+    </>
+  );
+
+  if (to) {
+    return (
+      <Link
+        to={to}
+        className={className}
+        onClick={(event) => handleParentCoreDrillInClick(event, to, { trigger: 'hero_metric_chip', actionKind: label.toLowerCase() })}
+      >
+        {body}
+      </Link>
+    );
+  }
+
+  return (
+    <div className={className}>
+      {body}
     </div>
   );
 }
@@ -2350,7 +2381,7 @@ function TeamCard({ team }: { team: ParentHomeTeam }) {
     <Link
       to={teamPath}
       className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white p-3 transition hover:border-primary-200 hover:bg-primary-50/40"
-      aria-label={`Open ${team.teamName} in My Teams`}
+      aria-label={`Open ${team.teamName} team page`}
       onClick={(event) => handleParentCoreDrillInClick(event, teamPath, {
         trigger: 'team_card',
         actionKind: 'team',

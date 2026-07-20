@@ -166,6 +166,12 @@ beforeEach(() => {
         return 0;
     };
     window.scrollTo = vi.fn();
+    Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: {
+            writeText: vi.fn().mockResolvedValue(undefined)
+        }
+    });
     publicActionMocks.copyPublicText.mockResolvedValue('copied');
     teamDetailMocks.loadTeamDetailInsights.mockResolvedValue({ leaderboards: [], trackingSummaries: [] });
     teamDetailMocks.loadTeamDetailSponsors.mockResolvedValue({ sponsors: [] });
@@ -262,7 +268,7 @@ describe('React app TeamDetail staff permissions overview', () => {
 
         expect(teamDetailMocks.inviteTeamAdminForApp).toHaveBeenCalledWith('team-1', 'newcoach@example.com', auth.user);
         expect(teamDetailMocks.loadParentTeamDetail).toHaveBeenCalledTimes(2);
-        expect(container.textContent).toContain('Email delivery needs a fallback for newcoach@example.com.');
+        expect(container.textContent).toContain('Copy and share this invite with newcoach@example.com.');
         await clickButton(container, 'Copy code');
         await clickButton(container, 'Copy link');
         expect(publicActionMocks.copyPublicText).toHaveBeenCalledWith('CODE123');

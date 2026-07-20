@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type InputHTMLAttributes } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import {
   AlertCircle,
   ArrowDown,
@@ -12,10 +12,10 @@ import {
   ChevronLeft,
   ChevronRight,
   ClipboardCheck,
+  Copy,
   DollarSign,
   Edit3,
   ExternalLink,
-  FileVideo,
   ImagePlus,
   Link2,
   Mail,
@@ -70,8 +70,10 @@ import {
   type RsvpResponse
 } from '../lib/scheduleLogic';
 import { sharePublicUrl } from '../lib/publicActions';
+import { buildAppAcceptInviteUrl } from '../lib/inviteUrls';
 import { completeParentCoreWorkflowTimer } from '../lib/parentWorkflowTiming';
-import type { AuthState } from '../lib/types';
+import { InviteResultCard } from './parent-tools/shared';
+import type { AuthState, AuthUser } from '../lib/types';
 import type { ProfilePhotoSource } from '../lib/profilePhotoService';
 
 type PlayerSectionId = 'overview' | 'schedule' | 'performance' | 'profile';
@@ -99,12 +101,55 @@ const playerSections: Array<{ id: PlayerSectionId; label: string }> = [
   { id: 'profile', label: 'Profile' }
 ];
 
+function getVisiblePlayerSections(data: ParentPlayerDetailData): Array<{ id: PlayerSectionId; label: string }> {
+  if (data.access.isLinkedParent) {
+    return playerSections;
+  }
+  return playerSections.filter((section) => {
+    if (section.id === 'performance') {
+      return data.access.isTeamStaff;
+    }
+    if (section.id === 'schedule') {
+      return data.access.isTeamStaff || data.events.length > 0;
+    }
+    return true;
+  });
+}
+
+type ReportPanelId = 'overview' | 'games' | 'season' | 'events' | 'clips';
+
+const reportPanels: Array<{ id: ReportPanelId; label: string }> = [
+  { id: 'overview', label: 'Overview' },
+  { id: 'games', label: 'Game Stats' },
+  { id: 'season', label: 'Season Averages' },
+  { id: 'events', label: 'Game Events' },
+  { id: 'clips', label: 'Video Clips' }
+];
+
 const rsvpBadgeClasses: Record<RsvpResponse, string> = {
   going: 'border-emerald-200 bg-emerald-50 text-emerald-700',
   maybe: 'border-amber-200 bg-amber-50 text-amber-700',
   not_going: 'border-rose-200 bg-rose-50 text-rose-700',
   not_responded: 'border-primary-200 bg-primary-50 text-primary-700'
 };
+
+function getPlayerSectionFromSearch(searchParams: URLSearchParams): PlayerSectionId {
+  const section = searchParams.get('section');
+  return playerSections.some((item) => item.id === section) ? section as PlayerSectionId : 'overview';
+}
+
+function getReportPanelFromSearch(searchParams: URLSearchParams): ReportPanelId {
+  const panel = searchParams.get('panel');
+  return reportPanels.some((item) => item.id === panel) ? panel as ReportPanelId : 'overview';
+}
+
+function getPlayerSectionRoute(sectionId: PlayerSectionId, panelId?: ReportPanelId) {
+  const params = new URLSearchParams();
+  if (sectionId !== 'overview') params.set('section', sectionId);
+  if (sectionId === 'performance' && panelId && panelId !== 'overview') params.set('panel', panelId);
+  const query = params.toString();
+  return query ? `?${query}` : '.';
+}
 
 function getPersistedPublicProfileUrl(profile: Record<string, any> | null | undefined, shareUrl: string | null | undefined) {
   const normalizedShareUrl = String(shareUrl || '').trim();
@@ -260,6 +305,31 @@ function hasResolvedAthleteProfile(data: ParentAthleteProfileData | null | undef
   return !!(data?.profile || String(data?.shareUrl || '').trim());
 }
 
+function mergePlayerAuthUser(user: AuthUser | null, profile: Record<string, unknown> | null): AuthUser | null {
+  if (!user || !profile) return user;
+  return {
+    ...user,
+    parentOf: mergeProfileArray(user.parentOf, profile.parentOf),
+    parentTeamIds: mergeProfileArray(user.parentTeamIds, profile.parentTeamIds),
+    parentPlayerKeys: mergeProfileArray(user.parentPlayerKeys, profile.parentPlayerKeys),
+    coachOf: mergeProfileArray(user.coachOf, profile.coachOf),
+    teamMediaUploadTeamIds: mergeProfileArray(user.teamMediaUploadTeamIds, profile.teamMediaUploadTeamIds),
+    mediaUploadTeamIds: mergeProfileArray(user.mediaUploadTeamIds, profile.mediaUploadTeamIds)
+  };
+}
+
+function mergeProfileArray<T>(userValues: T[] | undefined, profileValues: unknown): T[] {
+  const merged = [...(Array.isArray(userValues) ? userValues : [])];
+  if (Array.isArray(profileValues)) {
+    profileValues.forEach((value) => {
+      if (!merged.some((current) => JSON.stringify(current) === JSON.stringify(value))) {
+        merged.push(value as T);
+      }
+    });
+  }
+  return merged;
+}
+
 function buildAthleteProfileClipSaveState(clips: AthleteProfileClipDraftState[]) {
   const draftClips: AthleteProfileHighlightClipDraft[] = [];
   const highlightClipUploads: AthleteProfileHighlightClipUpload[] = [];
@@ -310,8 +380,10 @@ function buildAthleteProfileClipSaveState(clips: AthleteProfileClipDraftState[])
 
 export function PlayerDetail({ auth }: { auth: AuthState }) {
   const { teamId = '', playerId = '' } = useParams();
+  const playerAuthUser = useMemo(() => mergePlayerAuthUser(auth.user, auth.profile), [auth.profile, auth.user]);
+  const [searchParams, setSearchParams] = useSearchParams();
   const [data, setData] = useState<ParentPlayerDetailData | null>(null);
-  const [activeSection, setActiveSection] = useState<PlayerSectionId>('overview');
+  const [activeSection, setActiveSection] = useState<PlayerSectionId>(() => getPlayerSectionFromSearch(searchParams));
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<AppServiceError | null>(null);
@@ -337,7 +409,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
     nextPlayerId: string;
     force?: boolean;
   }): Promise<ParentPlayerStatsDetailData | null> => {
-    if (!auth.user?.uid) {
+    if (!playerAuthUser?.uid) {
       return null;
     }
     if ((statsDetailState === 'loading' || statsDetailState === 'loaded' || statsDetailState === 'error') && !force) {
@@ -349,7 +421,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
     setStatsDetailState('loading');
     setStatsDetailError(null);
     try {
-      const statsDetail = await loadParentPlayerStatsDetail(auth.user, nextTeamId, nextPlayerId);
+      const statsDetail = await loadParentPlayerStatsDetail(playerAuthUser, nextTeamId, nextPlayerId);
       if (statsDetailRequestKeyRef.current !== requestKey) {
         return null;
       }
@@ -372,7 +444,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
       }
       return null;
     }
-  }, [auth.user, statsDetailState]);
+  }, [playerAuthUser, statsDetailState]);
 
   const loadVideoClips = async ({
     nextTeamId,
@@ -383,7 +455,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
     nextPlayerId: string;
     force?: boolean;
   }): Promise<PlayerVideoClip[] | null> => {
-    if (!auth.user?.uid) {
+    if (!playerAuthUser?.uid) {
       return null;
     }
     if ((videoClipsLoaded || videoClipsLoading || videoClipsError) && !force) {
@@ -395,7 +467,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
     setVideoClipsLoading(true);
     setVideoClipsError(null);
     try {
-      const clips = await loadParentPlayerVideoClips(auth.user, nextTeamId, nextPlayerId);
+      const clips = await loadParentPlayerVideoClips(playerAuthUser, nextTeamId, nextPlayerId);
       if (videoClipsRequestKeyRef.current !== requestKey) {
         return null;
       }
@@ -431,7 +503,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
     nextPlayerId: string;
     force?: boolean;
   }): Promise<ParentAthleteProfileData | null> => {
-    if (!auth.user?.uid) {
+    if (!playerAuthUser?.uid) {
       return null;
     }
     if (athleteProfileLoading && !force) {
@@ -443,7 +515,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
     setAthleteProfileLoading(true);
     setAthleteProfileError(null);
     try {
-      const athleteProfile = await loadParentPlayerAthleteProfile(auth.user, nextTeamId, nextPlayerId);
+      const athleteProfile = await loadParentPlayerAthleteProfile(playerAuthUser, nextTeamId, nextPlayerId);
       if (athleteProfileRequestKeyRef.current !== requestKey) {
         return null;
       }
@@ -468,7 +540,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
         setAthleteProfileLoading(false);
       }
     }
-  }, [athleteProfileLoading, auth.user]);
+  }, [athleteProfileLoading, playerAuthUser]);
 
   const refreshPlayer = async ({
     showLoading = data === null,
@@ -486,7 +558,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
     }
     setError(null);
     try {
-      const nextData = await loadParentPlayerDetail(auth.user, teamId, playerId);
+      const nextData = await loadParentPlayerDetail(playerAuthUser, teamId, playerId);
       if (playerDetailRequestIdRef.current !== requestId) {
         return;
       }
@@ -568,7 +640,11 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
   }, [auth.user?.uid, teamId, playerId]);
 
   useEffect(() => {
-    if (activeSection !== 'profile' || !data || athleteProfileLoaded || athleteProfileLoading || hasResolvedAthleteProfile(data.athleteProfile)) return;
+    setActiveSection(getPlayerSectionFromSearch(searchParams));
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (activeSection !== 'profile' || !data || !data.access.isLinkedParent || athleteProfileLoaded || athleteProfileLoading || hasResolvedAthleteProfile(data.athleteProfile)) return;
     void loadAthleteProfile({
       nextTeamId: data.child.teamId,
       nextPlayerId: data.child.playerId
@@ -584,6 +660,12 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
   }, [activeSection, data, loadStatsDetail, statsDetailState]);
 
   useEffect(() => {
+    if (!data) return;
+    if (getVisiblePlayerSections(data).some((section) => section.id === activeSection)) return;
+    setActiveSection('overview');
+  }, [activeSection, data]);
+
+  useEffect(() => {
     if (loading || !data) return;
     completeParentCoreWorkflowTimer('player', {
       targetPage: 'player',
@@ -596,6 +678,15 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
 
   const selectSection = (sectionId: PlayerSectionId) => {
     setActiveSection(sectionId);
+    const nextParams = new URLSearchParams(searchParams);
+    if (sectionId === 'overview') {
+      nextParams.delete('section');
+      nextParams.delete('panel');
+    } else {
+      nextParams.set('section', sectionId);
+      if (sectionId !== 'performance') nextParams.delete('panel');
+    }
+    setSearchParams(nextParams, { replace: false });
     window.requestAnimationFrame(() => {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     });
@@ -629,6 +720,8 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
   const playerName = data.player.name || data.child.playerName || 'Player';
   const jersey = data.player.number ? `#${data.player.number}` : '';
   const teamName = data.team?.name || data.child.teamName || data.child.teamId;
+  const isLinkedParent = data.access.isLinkedParent;
+  const visiblePlayerSections = getVisiblePlayerSections(data);
 
   return (
     <div className="player-detail-page space-y-3">
@@ -650,16 +743,18 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
             <span className="hidden sm:inline">Refresh</span>
           </button>
         </div>
-        <div className="flex gap-1.5 overflow-x-auto border-t border-gray-100 px-3 py-1.5 sm:px-4">
-          <SignalChip icon={ClipboardCheck} label="RSVP" value={String(data.actionCounts.rsvpNeeded)} urgent={data.actionCounts.rsvpNeeded > 0} />
-          <SignalChip icon={ClipboardCheck} label="Packets" value={String(data.actionCounts.packetsReady)} urgent={data.actionCounts.packetsReady > 0} />
-          <SignalChip icon={CheckCircle2} label="Tasks" value={String(data.actionCounts.openAssignments)} urgent={data.actionCounts.openAssignments > 0} />
-        </div>
+        {isLinkedParent ? (
+          <div className="flex gap-1.5 overflow-x-auto border-t border-gray-100 px-3 py-1.5 sm:px-4">
+            <SignalChip icon={ClipboardCheck} label="RSVP" value={String(data.actionCounts.rsvpNeeded)} urgent={data.actionCounts.rsvpNeeded > 0} />
+            <SignalChip icon={ClipboardCheck} label="Packets" value={String(data.actionCounts.packetsReady)} urgent={data.actionCounts.packetsReady > 0} />
+            <SignalChip icon={CheckCircle2} label="Tasks" value={String(data.actionCounts.openAssignments)} urgent={data.actionCounts.openAssignments > 0} />
+          </div>
+        ) : null}
       </section>
 
       <div className="player-section-nav sticky top-24 z-30 -mx-1 overflow-x-auto bg-gray-50/95 py-2 backdrop-blur">
         <div className="grid min-w-max grid-cols-4 gap-1 rounded-2xl border border-gray-200 bg-white p-1 shadow-sm">
-          {playerSections.map((section) => {
+          {visiblePlayerSections.map((section) => {
             const active = activeSection === section.id;
             return (
               <button
@@ -678,7 +773,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
 
       {error ? <Status tone="error" message={error.message} /> : null}
       {data.scheduleLoadError ? <ScheduleLoadNotice message={data.scheduleLoadError} /> : null}
-      {activeSection === 'overview' ? <OverviewSection data={data} /> : null}
+      {activeSection === 'overview' ? <OverviewSection data={data} showParentActions={isLinkedParent} /> : null}
       {activeSection === 'schedule' ? <PlayerScheduleSection events={data.events} /> : null}
       {activeSection === 'performance' ? (
         <ReportsSection
@@ -701,6 +796,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
             nextPlayerId: data.child.playerId,
             force: true
           })}
+          initialPanel={getReportPanelFromSearch(searchParams)}
         />
       ) : null}
       {activeSection === 'profile' ? (
@@ -717,8 +813,8 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
   );
 }
 
-function OverviewSection({ data }: { data: ParentPlayerDetailData }) {
-  const nextAction = getPlayerAction(data);
+function OverviewSection({ data, showParentActions = true }: { data: ParentPlayerDetailData; showParentActions?: boolean }) {
+  const nextAction = showParentActions ? getPlayerAction(data) : null;
   return (
     <div className="player-section-content space-y-3">
       {nextAction ? (
@@ -733,8 +829,8 @@ function OverviewSection({ data }: { data: ParentPlayerDetailData }) {
         <div className="flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3">
           <CheckCircle2 className="mt-0.5 h-5 w-5 flex-none text-emerald-700" aria-hidden="true" />
           <div>
-            <div className="text-sm font-black text-emerald-900">Caught up</div>
-            <div className="mt-0.5 text-xs font-semibold text-emerald-700">No open parent actions for this player.</div>
+            <div className="text-sm font-black text-emerald-900">{showParentActions ? 'Caught up' : 'Player profile'}</div>
+            <div className="mt-0.5 text-xs font-semibold text-emerald-700">{showParentActions ? 'No open parent actions for this player.' : 'Team-visible player details are ready.'}</div>
           </div>
         </div>
       )}
@@ -742,9 +838,9 @@ function OverviewSection({ data }: { data: ParentPlayerDetailData }) {
       {data.nextEvent ? <PlayerEventCard event={data.nextEvent} featured /> : <EmptyCard icon={CalendarDays} title="No upcoming events" detail="This player's schedule is clear." />}
 
       <section className="grid gap-3 sm:grid-cols-3">
-        <InfoCard icon={CalendarDays} title="Events" detail={`${data.events.length} total`} />
-        <InfoCard icon={BarChart3} title="Reports" detail={`${data.statRows.length} recent games`} />
-        <InfoCard icon={FileVideo} title="Clips" detail={`${data.clips.length} clips`} />
+        <InfoCard icon={CalendarDays} title="Events" detail={`${data.events.length} total`} to={getPlayerSectionRoute('schedule')} />
+        <InfoCard icon={BarChart3} title="Reports" detail={`${data.statRows.length} recent games`} to={getPlayerSectionRoute('performance')} />
+        <InfoCard icon={ImagePlus} title="Clips" detail={`${data.clips.length} clips`} to={getPlayerSectionRoute('performance', 'clips')} />
       </section>
     </div>
   );
@@ -776,16 +872,6 @@ function PlayerScheduleSection({ events }: { events: ParentScheduleEvent[] }) {
   );
 }
 
-type ReportPanelId = 'overview' | 'games' | 'season' | 'events' | 'clips';
-
-const reportPanels: Array<{ id: ReportPanelId; label: string }> = [
-  { id: 'overview', label: 'Overview' },
-  { id: 'games', label: 'Game Stats' },
-  { id: 'season', label: 'Season Averages' },
-  { id: 'events', label: 'Game Events' },
-  { id: 'clips', label: 'Video Clips' }
-];
-
 function ReportsSection({
   data,
   statsDetailState,
@@ -794,7 +880,8 @@ function ReportsSection({
   videoClipsLoading,
   videoClipsError,
   onVideoClipsOpen,
-  onRetryVideoClips
+  onRetryVideoClips,
+  initialPanel
 }: {
   data: ParentPlayerDetailData;
   statsDetailState: PlayerStatsDetailLoadState;
@@ -804,17 +891,35 @@ function ReportsSection({
   videoClipsError: AppServiceError | null;
   onVideoClipsOpen: () => void;
   onRetryVideoClips: () => void;
+  initialPanel: ReportPanelId;
 }) {
-  const [activePanel, setActivePanel] = useState<ReportPanelId>('overview');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [activePanel, setActivePanel] = useState<ReportPanelId>(initialPanel);
   const trackingRows = Array.isArray(data.trackingSummary) ? data.trackingSummary[0]?.items || [] : [];
   const statsDetail = data.statsDetail;
   const reportRows = statsDetail?.statRows?.length ? statsDetail.statRows : data.statRows;
+
+  useEffect(() => {
+    setActivePanel(initialPanel);
+  }, [initialPanel]);
 
   useEffect(() => {
     if (activePanel === 'clips') {
       onVideoClipsOpen();
     }
   }, [activePanel, onVideoClipsOpen]);
+
+  const selectPanel = (panelId: ReportPanelId) => {
+    setActivePanel(panelId);
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.set('section', 'performance');
+    if (panelId === 'overview') {
+      nextParams.delete('panel');
+    } else {
+      nextParams.set('panel', panelId);
+    }
+    setSearchParams(nextParams, { replace: false });
+  };
 
   return (
     <div className="player-section-content space-y-4">
@@ -834,7 +939,7 @@ function ReportsSection({
                 key={panel.id}
                 type="button"
                 className={`min-h-9 flex-none rounded-xl px-3 text-xs font-black transition ${active ? 'bg-white text-primary-700 shadow-sm' : 'text-gray-600 hover:text-gray-950'}`}
-                onClick={() => setActivePanel(panel.id)}
+                onClick={() => selectPanel(panel.id)}
                 aria-pressed={active}
               >
                 {panel.label}
@@ -1352,7 +1457,7 @@ function ClipsPanel({
         {clips.length ? clips.map((clip) => (
           <a key={`${clip.url}-${clip.title}`} href={clip.url} target="_blank" rel="noreferrer" className="rounded-xl border border-gray-200 bg-gray-50 p-3 transition hover:border-primary-200 hover:bg-primary-50/40">
             <div className="flex items-center gap-2 text-sm font-black text-gray-950">
-              {FileVideo ? <FileVideo className="h-4 w-4 flex-none text-primary-600" aria-hidden="true" /> : null}
+              <ImagePlus className="h-4 w-4 flex-none text-primary-600" aria-hidden="true" />
               <span className="truncate">{clip.title || 'Game clip'}</span>
             </div>
             <div className="mt-0.5 truncate text-xs font-semibold text-gray-500">{clip.gameLabel || clip.game || 'Game'}{clip.gameDate ? ` · ${clip.gameDate}` : ''}</div>
@@ -1427,9 +1532,24 @@ function PlayerProfileSection({
   const [activePanel, setActivePanel] = useState<ProfilePanelId>('edit');
   const [athleteProfileShareState, setAthleteProfileShareState] = useState({ hasUnsavedPublishChanges: false, saving: false });
   const customRosterFields = Array.isArray(data.customRosterFields) ? data.customRosterFields : [];
+  const isLinkedParent = data.access.isLinkedParent;
+  const visibleProfilePanels = useMemo(() => {
+    if (isLinkedParent) return profilePanels;
+    const panels: Array<{ id: ProfilePanelId; label: string }> = [];
+    if (data.access.canEditRosterDetails || customRosterFields.length) {
+      panels.push({ id: 'edit', label: data.access.canEditRosterDetails ? 'Roster' : 'Info' });
+    }
+    panels.push({ id: 'family', label: 'Family' });
+    return panels;
+  }, [customRosterFields.length, data.access.canEditRosterDetails, isLinkedParent]);
   const persistedPublicProfileUrl = getPersistedPublicProfileUrl(data.athleteProfile.profile, data.athleteProfile.shareUrl);
   const persistedPublicProfileAvailable = isPersistedPublicProfileReady(data.athleteProfile.profile, data.athleteProfile.shareUrl, athleteProfileShareState);
   const fullBuilderAvailable = athleteProfileLoaded && !!String(data.athleteProfile.builderUrl || '').trim();
+
+  useEffect(() => {
+    if (visibleProfilePanels.some((panel) => panel.id === activePanel)) return;
+    setActivePanel(visibleProfilePanels[0]?.id || 'family');
+  }, [activePanel, visibleProfilePanels]);
 
   useEffect(() => {
     setAthleteProfileShareState((current) => {
@@ -1451,7 +1571,7 @@ function PlayerProfileSection({
           <Shield className="h-5 w-5 text-primary-600" aria-hidden="true" />
         </div>
         <div className="mt-3 flex gap-1.5 overflow-x-auto rounded-2xl border border-gray-200 bg-gray-50 p-1">
-          {profilePanels.map((panel) => {
+          {visibleProfilePanels.map((panel) => {
             const active = activePanel === panel.id;
             return (
               <button
@@ -1471,11 +1591,11 @@ function PlayerProfileSection({
       {activePanel === 'edit' ? (
         <>
           <StaffRosterDetailsCard data={data} auth={auth} onChanged={onChanged} />
-          <EditablePlayerProfileCard data={data} auth={auth} onChanged={onChanged} />
+          {isLinkedParent ? <EditablePlayerProfileCard data={data} auth={auth} onChanged={onChanged} /> : null}
           {customRosterFields.length ? <CustomRosterFieldsCard data={data} auth={auth} onChanged={onChanged} /> : null}
         </>
       ) : null}
-      {athleteProfileLoading ? (
+      {isLinkedParent && athleteProfileLoading ? (
         <div className="rounded-xl border border-primary-100 bg-primary-50/60 p-3 text-sm font-semibold text-primary-800">
           <div className="flex items-center gap-2">
             <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
@@ -1483,8 +1603,8 @@ function PlayerProfileSection({
           </div>
         </div>
       ) : null}
-      {athleteProfileError ? <Status tone="error" message={athleteProfileError.message} /> : null}
-      {activePanel === 'athlete' ? (
+      {isLinkedParent && athleteProfileError ? <Status tone="error" message={athleteProfileError.message} /> : null}
+      {isLinkedParent && activePanel === 'athlete' ? (
         athleteProfileLoaded ? (
           <AthleteProfileBuilderCard
             key={`${data.child.teamId}:${data.child.playerId}`}
@@ -1497,10 +1617,15 @@ function PlayerProfileSection({
           <div className="app-card p-4 text-sm font-semibold text-gray-500">Athlete profile tools will appear here after the profile data finishes loading.</div>
         )
       ) : null}
-      {activePanel === 'family' ? <CoParentInviteCard data={data} auth={auth} /> : null}
-      {activePanel === 'incentives' ? <IncentivesCard data={data} auth={auth} onChanged={onChanged} /> : null}
+      {activePanel === 'family' ? (
+        <div className="space-y-3">
+          <FamilyContactsCard data={data} />
+          {isLinkedParent ? <CoParentInviteCard data={data} auth={auth} /> : null}
+        </div>
+      ) : null}
+      {isLinkedParent && activePanel === 'incentives' ? <IncentivesCard data={data} auth={auth} onChanged={onChanged} /> : null}
 
-      <section className="grid gap-3 sm:grid-cols-3">
+      {isLinkedParent ? <section className="grid gap-3 sm:grid-cols-3">
         <a
           href={fullBuilderAvailable ? data.athleteProfile.builderUrl : '#'}
           target={fullBuilderAvailable ? '_blank' : undefined}
@@ -1532,8 +1657,69 @@ function PlayerProfileSection({
           <CardText title="Certificates" detail={`${data.certificates.length} published award${data.certificates.length === 1 ? '' : 's'}.`} />
           <ChevronRight className="h-4 w-4 flex-none text-gray-400" aria-hidden="true" />
         </Link>
-      </section>
+      </section> : null}
     </div>
+  );
+}
+
+function FamilyContactsCard({ data }: { data: ParentPlayerDetailData }) {
+  const contacts = Array.isArray(data.familyContacts) ? data.familyContacts : [];
+  const [copiedEmail, setCopiedEmail] = useState('');
+
+  const copyEmail = async (email: string) => {
+    const normalizedEmail = compactString(email);
+    if (!normalizedEmail) return;
+    await navigator.clipboard?.writeText(normalizedEmail);
+    setCopiedEmail(normalizedEmail);
+    window.setTimeout(() => setCopiedEmail((current) => current === normalizedEmail ? '' : current), 1400);
+  };
+
+  return (
+    <section className="app-card p-4">
+      <div className="flex items-center gap-2 text-sm font-black text-gray-950">
+        <Users className="h-4 w-4 text-primary-600" aria-hidden="true" />
+        Linked Family
+      </div>
+      <p className="mt-1 text-xs font-semibold leading-5 text-gray-500">Parent and guardian accounts or contacts already connected to this player.</p>
+      {contacts.length ? (
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          {contacts.map((contact) => {
+            const label = contact.name || contact.email || contact.phone || 'Family contact';
+            const showEmailMeta = Boolean(contact.email && contact.email !== label);
+            return (
+              <div key={contact.id} className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <div className="truncate text-sm font-black leading-5 text-gray-950">{label}</div>
+                      {contact.email ? (
+                        <button type="button" className="ghost-button !h-7 !min-h-7 !w-7 !flex-none !p-0" onClick={() => copyEmail(contact.email)} aria-label={`Copy ${contact.email}`} title={copiedEmail === contact.email ? 'Copied' : 'Copy email'}>
+                          {copiedEmail === contact.email ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" aria-hidden="true" />}
+                        </button>
+                      ) : null}
+                    </div>
+                    <div className="text-xs font-semibold leading-4 text-gray-500">{contact.relation || 'Parent/guardian'}</div>
+                  </div>
+                  <span className={`flex-none rounded-full border px-2 py-0.5 text-[11px] font-black uppercase leading-4 ${contact.status === 'linked' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-gray-200 bg-white text-gray-600'}`}>
+                    {contact.status === 'linked' ? 'Linked' : 'Contact'}
+                  </span>
+                </div>
+                {showEmailMeta || contact.phone ? (
+                  <div className="mt-1 flex min-w-0 flex-wrap gap-x-3 gap-y-0.5 text-xs font-semibold leading-4 text-gray-600">
+                    {showEmailMeta ? <span className="truncate">{contact.email}</span> : null}
+                    {contact.phone ? <span className="truncate">{contact.phone}</span> : null}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="mt-4 rounded-xl border border-dashed border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">
+          No linked family contacts are saved for this player yet.
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -2355,7 +2541,7 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
         <div className="rounded-2xl border border-gray-200 bg-white p-3">
           <div className="flex items-start gap-3">
             <div className="flex h-11 w-11 flex-none items-center justify-center rounded-2xl bg-primary-50 text-primary-700">
-              {FileVideo ? <FileVideo className="h-5 w-5" aria-hidden="true" /> : null}
+              <ImagePlus className="h-5 w-5" aria-hidden="true" />
             </div>
             <div className="min-w-0 flex-1">
               <div className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Highlight clips</div>
@@ -2368,7 +2554,7 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
               Add link
             </button>
             <label className="secondary-button justify-center">
-              {FileVideo ? <FileVideo className="h-4 w-4" aria-hidden="true" /> : null}
+              <ImagePlus className="h-4 w-4" aria-hidden="true" />
               <span>Upload clips</span>
               <input
                 type="file"
@@ -2405,7 +2591,7 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
                       disabled={index === 0}
                       onClick={() => moveClipDraft(clip.id, -1)}
                     >
-                      {ArrowUp ? <ArrowUp className="h-4 w-4" aria-hidden="true" /> : null}
+                      <InlineIcon icon={ArrowUp} fallback={ChevronRight} className="h-4 w-4" />
                     </button>
                     <button
                       type="button"
@@ -2414,7 +2600,7 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
                       disabled={index === clipDrafts.length - 1}
                       onClick={() => moveClipDraft(clip.id, 1)}
                     >
-                      {ArrowDown ? <ArrowDown className="h-4 w-4" aria-hidden="true" /> : null}
+                      <InlineIcon icon={ArrowDown} fallback={ChevronRight} className="h-4 w-4" />
                     </button>
                     <button
                       type="button"
@@ -2422,7 +2608,7 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
                       aria-label="Remove clip"
                       onClick={() => removeClipDraft(clip.id)}
                     >
-                      <Trash2 className="h-4 w-4" aria-hidden="true" />
+                      <InlineIcon icon={Trash2} fallback={AlertCircle} className="h-4 w-4" />
                     </button>
                   </div>
                 </div>
@@ -2579,13 +2765,14 @@ function CoParentInviteCard({ data, auth }: { data: ParentPlayerDetailData; auth
   const [email, setEmail] = useState('');
   const [sending, setSending] = useState(false);
   const [status, setStatus] = useState<{ tone: 'error' | 'success'; message: string } | null>(null);
-  const [code, setCode] = useState('');
+  const [createdInvite, setCreatedInvite] = useState<{ code: string; inviteUrl: string; email: string; emailSent: boolean } | null>(null);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setSending(true);
     setStatus(null);
-    setCode('');
+    setCreatedInvite(null);
+    const normalizedEmail = email.trim().toLowerCase();
     try {
       const result = await sendParentCoParentInvite({
         user: auth.user,
@@ -2594,8 +2781,14 @@ function CoParentInviteCard({ data, auth }: { data: ParentPlayerDetailData; auth
         playerName: data.player.name || data.child.playerName,
         email
       });
-      setCode(result?.code || '');
-      setStatus({ tone: 'success', message: `Invite created for ${email.trim().toLowerCase()}.` });
+      const code = String(result?.code || '').trim().toUpperCase();
+      setCreatedInvite({
+        code,
+        inviteUrl: buildAppAcceptInviteUrl(code, 'coparent'),
+        email: normalizedEmail,
+        emailSent: false
+      });
+      setStatus({ tone: 'success', message: `Invite created for ${normalizedEmail}.` });
       setEmail('');
     } catch (error: any) {
       setStatus({ tone: 'error', message: error?.message || 'Unable to send co-parent invite.' });
@@ -2608,21 +2801,27 @@ function CoParentInviteCard({ data, auth }: { data: ParentPlayerDetailData; auth
     <section className="app-card p-4">
       <div className="flex items-center gap-2 text-sm font-black text-primary-800">
         <Users className="h-4 w-4" aria-hidden="true" />
-        Invite Co-Parent
+        Create invite
       </div>
-      <p className="mt-1 text-xs font-semibold leading-5 text-gray-500">Creates the same co-parent invite code as the parent dashboard.</p>
+      <p className="mt-1 text-xs font-semibold leading-5 text-gray-500">Invite another parent or caregiver to connect their account to this player.</p>
       <form className="mt-4 space-y-3" onSubmit={submit}>
-        <TextField label="Co-parent email" value={email} onChange={setEmail} placeholder="co-parent@example.com" type="email" />
+        <TextField label="Recipient email" value={email} onChange={setEmail} placeholder="parent@example.com" type="email" />
         {status ? <Status tone={status.tone} message={status.message} /> : null}
-        {code ? (
-          <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
-            <div className="text-xs font-black uppercase tracking-[0.04em] text-emerald-700">Invite code</div>
-            <div className="mt-1 font-mono text-lg font-black text-emerald-950">{code}</div>
-          </div>
+        {createdInvite ? (
+          <InviteResultCard
+            code={createdInvite.code}
+            inviteUrl={createdInvite.inviteUrl}
+            recipientEmail={createdInvite.email}
+            emailSent={createdInvite.emailSent}
+            title="Invite code"
+            shareTitle="ALL PLAYS parent invite"
+            shareText={`Join ALL PLAYS to follow this player with invite code ${createdInvite.code}.`}
+            onStatus={(message) => setStatus({ tone: 'success', message })}
+          />
         ) : null}
         <button type="submit" className="primary-button w-full justify-center" disabled={sending}>
           {sending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Mail className="h-4 w-4" aria-hidden="true" />}
-          {sending ? 'Creating Invite' : 'Create Invite'}
+          {sending ? 'Creating invite...' : 'Create invite'}
         </button>
       </form>
     </section>
@@ -3131,14 +3330,27 @@ function SignalChip({ icon: Icon, label, value, urgent = false }: { icon: Lucide
   );
 }
 
-function InfoCard({ icon: Icon, title, detail }: { icon: LucideIcon; title: string; detail: string }) {
-  return (
-    <div className="app-card p-4">
-      {Icon ? <Icon className="h-5 w-5 text-primary-600" aria-hidden="true" /> : null}
+function InfoCard({ icon: Icon, title, detail, to }: { icon: LucideIcon; title: string; detail: string; to?: string }) {
+  const body = (
+    <>
+      <div className="flex items-start justify-between gap-3">
+        {Icon ? <Icon className="h-5 w-5 text-primary-600" aria-hidden="true" /> : null}
+        {to ? <ChevronRight className="h-4 w-4 flex-none text-gray-400 transition group-hover:text-primary-600" aria-hidden="true" /> : null}
+      </div>
       <div className="mt-3 text-sm font-black text-gray-950">{title}</div>
       <div className="mt-1 text-xs font-semibold leading-5 text-gray-600">{detail}</div>
-    </div>
+    </>
   );
+
+  if (to) {
+    return (
+      <Link to={to} className="app-card group block p-4 transition hover:border-primary-200 hover:shadow-app-lg">
+        {body}
+      </Link>
+    );
+  }
+
+  return <div className="app-card p-4">{body}</div>;
 }
 
 function EmptyCard({ icon: Icon, title, detail }: { icon: LucideIcon; title: string; detail: string }) {
@@ -3162,11 +3374,17 @@ function DateTile({ date }: { date: Date }) {
 }
 
 function IconBox({ icon: Icon }: { icon: LucideIcon }) {
+  const ResolvedIcon = Icon || UserRound;
   return (
     <div className="flex h-11 w-11 flex-none items-center justify-center rounded-xl bg-primary-50 text-primary-700">
-      {Icon ? <Icon className="h-5 w-5" aria-hidden="true" /> : null}
+      <ResolvedIcon className="h-5 w-5" aria-hidden="true" />
     </div>
   );
+}
+
+function InlineIcon({ icon: Icon, fallback: Fallback = UserRound, className }: { icon: LucideIcon; fallback?: LucideIcon; className: string }) {
+  const ResolvedIcon = Icon || Fallback || UserRound;
+  return <ResolvedIcon className={className} aria-hidden="true" />;
 }
 
 function CardText({ title, detail }: { title: string; detail: string }) {
