@@ -87,6 +87,7 @@ const REDEEMABLE_INVITE_TYPES = new Set([
     'friend',
     'friend_invite'
 ]);
+export const PENDING_LOGIN_INVITE_CODE_STORAGE_KEY = 'pendingLoginInviteCode';
 
 export function createLoginRedirectCoordinator({
     windowObject = window,
@@ -100,24 +101,51 @@ export function createLoginRedirectCoordinator({
         : '';
     const shouldRedeemInviteFromLogin = Boolean(urlCodeParam) && REDEEMABLE_INVITE_TYPES.has(urlInviteType);
     let inviteRedemptionOverride = null;
+    let inviteCodeOverride = null;
+    let inviteTypeOverride = null;
 
-    function getPostAuthRedirect(userWithRoles, shouldRedeemInvite = false) {
+    function getPostAuthRedirect(userWithRoles, shouldRedeemInvite = false, inviteCodeOverride = null, inviteTypeOverride = null) {
         const defaultRedirect = getRedirectUrl(userWithRoles);
-        return getPostAuthRedirectUrl(defaultRedirect, urlCodeParam, shouldRedeemInvite, urlInviteType);
+        return getPostAuthRedirectUrl(
+            defaultRedirect,
+            inviteCodeOverride || urlCodeParam,
+            shouldRedeemInvite,
+            inviteTypeOverride || urlInviteType
+        );
     }
 
     function getGoogleRedirectUrl(userWithRoles) {
         const googleAuthMode = windowObject.sessionStorage.getItem('postGoogleAuthMode');
+        const pendingInviteCode = windowObject.sessionStorage.getItem(PENDING_LOGIN_INVITE_CODE_STORAGE_KEY);
+        const effectivePendingInviteCode = urlCodeParam ? null : pendingInviteCode;
         windowObject.sessionStorage.removeItem('postGoogleAuthMode');
-        const shouldRedeemInvite = shouldRedeemInviteFromLogin &&
-            (googleAuthMode === 'login' || googleAuthMode === 'invite');
+        windowObject.sessionStorage.removeItem(PENDING_LOGIN_INVITE_CODE_STORAGE_KEY);
+        const shouldRedeemInvite = (shouldRedeemInviteFromLogin &&
+            (googleAuthMode === 'login' || googleAuthMode === 'invite')) ||
+            Boolean(effectivePendingInviteCode);
         inviteRedemptionOverride = shouldRedeemInvite;
-        return getPostAuthRedirect(userWithRoles, shouldRedeemInvite);
+        inviteCodeOverride = effectivePendingInviteCode || null;
+        inviteTypeOverride = effectivePendingInviteCode ? '' : null;
+        return getPostAuthRedirect(userWithRoles, shouldRedeemInvite, effectivePendingInviteCode);
     }
 
     function getAutoRedirectUrl(userWithRoles) {
-        const shouldRedeemInvite = inviteRedemptionOverride ?? shouldRedeemInviteFromLogin;
-        return getPostAuthRedirect(userWithRoles, shouldRedeemInvite);
+        if (inviteRedemptionOverride !== null) {
+            return getPostAuthRedirect(userWithRoles, inviteRedemptionOverride, inviteCodeOverride, inviteTypeOverride);
+        }
+
+        const pendingInviteCode = urlCodeParam
+            ? null
+            : windowObject.sessionStorage.getItem(PENDING_LOGIN_INVITE_CODE_STORAGE_KEY);
+        if (pendingInviteCode) {
+            windowObject.sessionStorage.removeItem(PENDING_LOGIN_INVITE_CODE_STORAGE_KEY);
+            inviteRedemptionOverride = true;
+            inviteCodeOverride = pendingInviteCode;
+            inviteTypeOverride = '';
+            return getPostAuthRedirect(userWithRoles, true, pendingInviteCode, '');
+        }
+
+        return getPostAuthRedirect(userWithRoles, shouldRedeemInviteFromLogin);
     }
 
     return {

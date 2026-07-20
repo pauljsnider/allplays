@@ -41,7 +41,7 @@ vi.mock('../../js/db.js?v=115', () => ({
     normalizeParentScopeLinks: vi.fn()
 }));
 
-vi.mock('../../js/signup-flow.js?v=9', () => ({
+vi.mock('../../js/signup-flow.js?v=12', () => ({
     executeEmailPasswordSignup: vi.fn()
 }));
 

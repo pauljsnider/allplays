@@ -37,7 +37,7 @@ vi.mock('../../js/db.js?v=115', () => {
     };
 });
 
-vi.mock('../../js/auth.js?v=127', () => {
+vi.mock('../../js/auth.js?v=128', () => {
     return {
         checkAuth: mocks.checkAuth
     };
