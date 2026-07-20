@@ -97,10 +97,7 @@ export function getPlayerDetailPath(teamId: string, playerId: string) {
 }
 
 export function getTeamHomePath(teamId: string) {
-  const params = new URLSearchParams();
-  if (teamId) params.set('selectedTeamId', teamId);
-  params.set('from', 'home');
-  return `/teams?${params.toString()}`;
+  return `/teams/${encodeURIComponent(teamId)}`;
 }
 
 export function getEventDetailPath(event: Pick<ParentScheduleEvent, 'teamId' | 'id' | 'childId'>, section = '') {

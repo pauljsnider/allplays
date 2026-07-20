@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   AlertCircle,
   BriefcaseBusiness,
@@ -180,6 +180,7 @@ export function Home({ auth }: { auth: AuthState }) {
   const [socialStatus, setSocialStatus] = useState<{ tone: 'error' | 'success'; message: string } | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const [previewHomeUserId, setPreviewHomeUserId] = useState<string | null>(null);
   const [loadedHomeDetailsUserId, setLoadedHomeDetailsUserId] = useState<string | null>(null);
   const [homeLoadError, setHomeLoadError] = useState<AppServiceError | null>(null);
@@ -347,6 +348,11 @@ export function Home({ auth }: { auth: AuthState }) {
   }, [searchParams]);
 
   useEffect(() => {
+    if (activeSection !== 'teams' || !hasHomePreview || home.teams.length !== 1) return;
+    navigate(getTeamHomePath(home.teams[0].teamId), { replace: true });
+  }, [activeSection, hasHomePreview, home.teams, navigate]);
+
+  useEffect(() => {
     const activeLink = homeSectionNavRef.current?.querySelector<HTMLElement>(`[data-home-section="${activeSection}"]`);
     if (activeLink && typeof activeLink.scrollIntoView === 'function') {
       activeLink.scrollIntoView({ block: 'nearest', inline: 'center' });
@@ -409,6 +415,9 @@ export function Home({ auth }: { auth: AuthState }) {
   };
 
   const selectSection = (sectionId: HomeSectionId) => {
+    if (sectionId === 'teams' && home.teams.length === 1) {
+      return;
+    }
     setActiveSection(sectionId);
     setComposerOpen(false);
     window.requestAnimationFrame(() => {
@@ -510,10 +519,13 @@ export function Home({ auth }: { auth: AuthState }) {
           <div className="grid min-w-max grid-cols-5 gap-1 rounded-2xl border border-gray-200 bg-white p-1 shadow-sm">
             {homeSections.map((section) => {
               const active = activeSection === section.id;
+              const sectionRoute = section.id === 'teams' && home.teams.length === 1
+                ? getTeamHomePath(home.teams[0].teamId)
+                : getHomeSectionRoute(section.id);
               return (
                 <Link
                   key={section.id}
-                  to={getHomeSectionRoute(section.id)}
+                  to={sectionRoute}
                   data-home-section={section.id}
                   className={`flex min-h-11 snap-start items-center justify-center rounded-xl px-3 text-sm font-black transition ${active ? 'bg-primary-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-950'}`}
                   onClick={() => selectSection(section.id)}
@@ -2369,7 +2381,7 @@ function TeamCard({ team }: { team: ParentHomeTeam }) {
     <Link
       to={teamPath}
       className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white p-3 transition hover:border-primary-200 hover:bg-primary-50/40"
-      aria-label={`Open ${team.teamName} in My Teams`}
+      aria-label={`Open ${team.teamName} team page`}
       onClick={(event) => handleParentCoreDrillInClick(event, teamPath, {
         trigger: 'team_card',
         actionKind: 'team',

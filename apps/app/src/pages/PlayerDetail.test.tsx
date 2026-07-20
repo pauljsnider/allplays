@@ -146,11 +146,11 @@ function buildDetailData(overrides: Record<string, any> = {}) {
   };
 }
 
-function renderPlayerDetail() {
+function renderPlayerDetail(nextAuth = auth) {
   return render(
     <MemoryRouter initialEntries={['/players/team-current/player-current']}>
       <Routes>
-        <Route path="/players/:teamId/:playerId" element={<PlayerDetail auth={auth} />} />
+        <Route path="/players/:teamId/:playerId" element={<PlayerDetail auth={nextAuth} />} />
         <Route path="/home" element={<div>Home</div>} />
       </Routes>
     </MemoryRouter>
@@ -214,6 +214,40 @@ describe('PlayerDetail athlete profile season selection', () => {
     cleanup();
   });
 
+  it('passes parent links from the hydrated profile into player detail loading', async () => {
+    const profileOnlyAuth: AuthState = {
+      ...auth,
+      user: auth.user ? {
+        ...auth.user,
+        parentOf: [],
+        parentPlayerKeys: []
+      } as any : null,
+      profile: {
+        parentOf: [
+          { teamId: 'team-current', teamName: 'Current Team', playerId: 'player-current', playerName: 'Sam Player' }
+        ],
+        parentPlayerKeys: ['team-current::player-current']
+      }
+    };
+
+    renderPlayerDetail(profileOnlyAuth);
+
+    await screen.findByText('Sam Player');
+    await waitFor(() => {
+      expect(playerServiceMocks.loadParentPlayerDetail).toHaveBeenCalledWith(
+        expect.objectContaining({
+          uid: 'parent-1',
+          parentOf: expect.arrayContaining([
+            expect.objectContaining({ teamId: 'team-current', playerId: 'player-current' })
+          ]),
+          parentPlayerKeys: expect.arrayContaining(['team-current::player-current'])
+        }),
+        'team-current',
+        'player-current'
+      );
+    });
+  });
+
   it('defers athlete profile loading until the Profile section opens', async () => {
     playerServiceMocks.loadParentPlayerAthleteProfile.mockResolvedValue({
       ...buildDetailData().athleteProfile,
@@ -253,13 +287,20 @@ describe('PlayerDetail athlete profile season selection', () => {
     });
   });
 
-  it('shows already linked family contacts on the Family profile tab', async () => {
+  it('shows already linked family contacts to non-linked team viewers on the Family profile tab', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
       value: { writeText }
     });
     playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData({
+      access: {
+        isLinkedParent: false,
+        isTeamParent: true,
+        isTeamStaff: false,
+        canEditRosterDetails: false,
+        canEditCustomRosterFields: false
+      },
       familyContacts: [
         { id: 'mom-1', name: 'Mom Snider', email: 'mom@allplays.ai', phone: '', relation: 'Mom', status: 'linked' },
         { id: 'dad-1', name: 'Dad Snider', email: 'dad@allplays.ai', phone: '', relation: 'Dad', status: 'linked' }
@@ -280,7 +321,50 @@ describe('PlayerDetail athlete profile season selection', () => {
     await waitFor(() => {
       expect(writeText).toHaveBeenCalledWith('mom@allplays.ai');
     });
+    expect(screen.queryByText('Invite Co-Parent')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Create invite' })).toBeNull();
+  });
+
+  it('keeps linked family contacts visible beside invite controls for linked parents', async () => {
+    playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData({
+      familyContacts: [
+        { id: 'guardian-1', name: 'Guardian One', email: 'guardian@example.com', phone: '', relation: 'Guardian', status: 'linked' }
+      ]
+    }));
+
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Family' }));
+
+    expect(await screen.findByText('Linked Family')).toBeTruthy();
+    expect(screen.getByText('guardian@example.com')).toBeTruthy();
+    expect(screen.getByLabelText('Recipient email')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Create invite' })).toBeTruthy();
+  });
+
+  it('hides empty schedule and report tabs for non-linked team parent viewers', async () => {
+    playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData({
+      access: {
+        isLinkedParent: false,
+        isTeamParent: true,
+        isTeamStaff: false,
+        canEditRosterDetails: false,
+        canEditCustomRosterFields: false
+      },
+      events: [],
+      statRows: []
+    }));
+
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+
+    expect(screen.queryByRole('button', { name: 'Schedule' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Reports' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Overview' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Profile' })).toBeTruthy();
   });
 
   it('lazy-loads video clips once when the Video Clips report opens', async () => {

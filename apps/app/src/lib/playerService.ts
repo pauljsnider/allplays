@@ -1,4 +1,5 @@
 import {
+  collectRosterParentContacts,
   deleteAthleteProfileMediaByPath,
   getAggregatedStatsForGames,
   getAggregatedStatsDocumentForPlayer,
@@ -70,6 +71,7 @@ import { getOpenScheduleAssignments, normalizeRsvpResponse, type ParentScheduleE
 import { loadParentPlayerSchedule, type ParentScheduleChild } from './scheduleService';
 import { clearAppDataCache, loadCachedAppData } from './appDataCache';
 import { createLogger } from './logger';
+import { loadProfileDocument } from './profileService';
 import type { AuthUser } from './types';
 
 export type { PlayerVideoClip };
@@ -270,7 +272,8 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
   const requestedTeamId = decodeURIComponent(teamId || '');
   const requestedPlayerId = decodeURIComponent(playerId || '');
   let scheduleLoadError: string | null = null;
-  const schedule = await loadParentPlayerSchedule(user, { teamId, playerId }).catch((error) => {
+  let accessUser = user;
+  let schedule = await loadParentPlayerSchedule(accessUser, { teamId, playerId }).catch((error) => {
     scheduleLoadError = 'Schedule is temporarily unavailable. Refresh the player to try again.';
     logger.warn('Continuing without player schedule data.', {
       operation: 'player-detail-schedule-load',
@@ -280,9 +283,18 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
     });
     return { children: [], events: [] };
   });
-  const linkedChild = findLinkedChild(schedule.children, teamId, playerId);
+  let linkedChild = findLinkedChild(schedule.children, requestedTeamId, requestedPlayerId) || findLinkedParentChild(accessUser, requestedTeamId, requestedPlayerId);
   const initialTeam = await getTeam(requestedTeamId, { includeInactive: true });
-  const routeAccess = buildPlayerAccess(user, requestedTeamId, requestedPlayerId, initialTeam);
+  let routeAccess = buildPlayerAccess(accessUser, requestedTeamId, requestedPlayerId, initialTeam);
+  if (!linkedChild && !routeAccess.isLinkedParent && !routeAccess.isTeamStaff) {
+    const hydratedUser = await loadUserWithPlayerAccessProfile(accessUser);
+    if (hydratedUser !== accessUser) {
+      accessUser = hydratedUser;
+      schedule = await loadParentPlayerSchedule(accessUser, { teamId, playerId }).catch(() => schedule);
+      linkedChild = findLinkedChild(schedule.children, requestedTeamId, requestedPlayerId) || findLinkedParentChild(accessUser, requestedTeamId, requestedPlayerId);
+      routeAccess = buildPlayerAccess(accessUser, requestedTeamId, requestedPlayerId, initialTeam);
+    }
+  }
   const canUseScheduleFailureFallback = !!scheduleLoadError && routeAccess.isLinkedParent;
   if (!linkedChild && !canUseScheduleFailureFallback && !routeAccess.isTeamParent && !routeAccess.isTeamStaff) {
     throw new Error('This player is not linked to your account.');
@@ -315,16 +327,16 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
     listCertificatesForPlayer(resolvedTeamId, resolvedPlayerId, { status: 'published', limit: 5 }).catch(() => []),
     getPublicTrackingItems(resolvedTeamId).catch(() => []),
     getPlayerTrackingStatuses(resolvedTeamId, [resolvedPlayerId]).catch(() => []),
-    getPlayerPrivateProfile(resolvedTeamId, resolvedPlayerId).catch(() => null),
+    (routeAccess.isLinkedParent || routeAccess.isTeamStaff) ? getPlayerPrivateProfile(resolvedTeamId, resolvedPlayerId).catch(() => null) : Promise.resolve(null),
     getRosterFieldDefinitions(resolvedTeamId, team || null).catch(() => []),
-    getIncentiveRules(user.uid, resolvedPlayerId).catch(() => []),
-    getPaidGames(user.uid, resolvedPlayerId).catch(() => new Map()),
-    getCapSetting(user.uid, resolvedPlayerId).catch(() => null),
+    routeAccess.isLinkedParent ? getIncentiveRules(user.uid, resolvedPlayerId).catch(() => []) : Promise.resolve([]),
+    routeAccess.isLinkedParent ? getPaidGames(user.uid, resolvedPlayerId).catch(() => new Map()) : Promise.resolve(new Map()),
+    routeAccess.isLinkedParent ? getCapSetting(user.uid, resolvedPlayerId).catch(() => null) : Promise.resolve(null),
     getStatOptionsForTeam(resolvedTeamId).catch(() => [])
   ]);
 
   const playerDoc = (Array.isArray(players) ? players : []).find((candidate: LegacyPlayerRecord) => candidate?.id === resolvedPlayerId) || {};
-  const access = buildPlayerAccess(user, resolvedTeamId, resolvedPlayerId, team);
+  const access = buildPlayerAccess(accessUser, resolvedTeamId, resolvedPlayerId, team);
   const visiblePrivateProfile = access.isLinkedParent || access.isTeamStaff ? privateProfile : null;
   const child = linkedChild || {
     teamId: resolvedTeamId,
@@ -337,6 +349,11 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
     player: playerDoc,
     privateProfile: visiblePrivateProfile,
     access
+  });
+  const rosterFamilyContacts = collectRosterParentContacts(playerDoc, {
+    includeImported: false,
+    includeFamilyContacts: true,
+    includeHousehold: true
   });
   const completedGameEvents = events
     .filter((event) => event.type === 'game' && event.isDbGame && isPastOrCompleted(event))
@@ -384,7 +401,7 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
     certificates: Array.isArray(certificates) ? certificates : [],
     trackingSummary,
     privateProfile: normalizePrivateProfile(visiblePrivateProfile),
-    familyContacts: normalizePlayerFamilyContacts(playerDoc, visiblePrivateProfile),
+    familyContacts: normalizePlayerFamilyContacts(playerDoc, visiblePrivateProfile, rosterFamilyContacts),
     incentives: buildPlayerIncentiveData({
       rules: incentiveRules,
       paidGames,
@@ -393,7 +410,7 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
       statRows
     }),
     athleteProfile: buildParentAthleteProfileShell(
-      Array.isArray(user.parentOf) ? user.parentOf : [],
+      Array.isArray(accessUser.parentOf) ? accessUser.parentOf : [],
       resolvedTeamId,
       resolvedPlayerId
     )
@@ -1368,31 +1385,57 @@ function assertLinkedParent(user: AuthUser | null, teamId: string, playerId: str
 }
 
 function isLinkedParent(user: AuthUser | null, teamId: string, playerId: string) {
+  const normalizedTeamId = safeDecode(teamId);
+  const normalizedPlayerId = safeDecode(playerId);
   const linkedByParentOf = (user?.parentOf || []).some((entry: any) => (
-    entry?.teamId === teamId && (entry?.playerId === playerId || entry?.childId === playerId)
+    safeDecode(entry?.teamId || entry?.teamID || entry?.team_id || entry?.team) === normalizedTeamId &&
+    [entry?.playerId, entry?.playerID, entry?.player_id, entry?.childId, entry?.childID, entry?.child_id]
+      .some((value) => safeDecode(value) === normalizedPlayerId)
   ));
   if (linkedByParentOf) return true;
 
-  const playerKey = `${teamId}::${playerId}`;
-  return !!(user?.parentPlayerKeys || []).some((key) => String(key || '').trim() === playerKey);
+  const playerKey = `${normalizedTeamId}::${normalizedPlayerId}`;
+  return !!(user?.parentPlayerKeys || []).some((key) => safeDecode(key) === playerKey);
+}
+
+function isParentLinkedToTeam(user: AuthUser | null, teamId: string) {
+  const normalizedTeamId = safeDecode(teamId);
+  if (!normalizedTeamId) return false;
+  const linkedByParentOf = (user?.parentOf || []).some((entry: any) => (
+    safeDecode(entry?.teamId || entry?.teamID || entry?.team_id || entry?.team) === normalizedTeamId
+  ));
+  if (linkedByParentOf) return true;
+
+  const linkedByTeamIds = (user?.parentTeamIds || []).some((value) => safeDecode(value) === normalizedTeamId);
+  if (linkedByTeamIds) return true;
+
+  return !!(user?.parentPlayerKeys || []).some((key) => safeDecode(key).split('::')[0] === normalizedTeamId);
 }
 
 function isParentOnTeam(user: AuthUser | null, teamId: string) {
-  const normalizedTeamId = String(teamId || '').trim();
+  const normalizedTeamId = safeDecode(teamId);
   if (!normalizedTeamId) return false;
 
-  if (Array.isArray(user?.parentTeamIds) && user.parentTeamIds.some((value) => String(value || '').trim() === normalizedTeamId)) {
+  if ((user?.parentOf || []).some((entry: any) => safeDecode(entry?.teamId || entry?.teamID || entry?.team_id || entry?.team) === normalizedTeamId)) {
+    return true;
+  }
+
+  if (Array.isArray(user?.parentTeamIds) && user.parentTeamIds.some((value) => safeDecode(value) === normalizedTeamId)) {
     return true;
   }
 
   return !!(user?.parentPlayerKeys || []).some((key) => {
-    const raw = String(key || '').trim();
+    const raw = safeDecode(key);
     const separatorIndex = raw.indexOf('::');
     return separatorIndex > 0 && raw.slice(0, separatorIndex) === normalizedTeamId;
   });
 }
 
-function normalizePlayerFamilyContacts(player: Record<string, any>, privateProfile: Record<string, any> | null | undefined): ParentPlayerFamilyContact[] {
+function normalizePlayerFamilyContacts(
+  player: Record<string, any>,
+  privateProfile: Record<string, any> | null | undefined,
+  rosterContacts: Array<Record<string, any>> = []
+): ParentPlayerFamilyContact[] {
   const contacts: ParentPlayerFamilyContact[] = [];
   const seen = new Set<string>();
   const clean = (value: unknown) => String(value || '').trim();
@@ -1420,6 +1463,7 @@ function normalizePlayerFamilyContacts(player: Record<string, any>, privateProfi
   [
     ...(Array.isArray(player?.parents) ? player.parents : []),
     ...(Array.isArray(player?.privateProfileParents) ? player.privateProfileParents : []),
+    ...(Array.isArray(rosterContacts) ? rosterContacts : []),
     ...(Array.isArray(privateProfile?.parents) ? privateProfile.parents : [])
   ].forEach((contact) => addContact(contact));
 
@@ -1592,12 +1636,94 @@ function buildLegacyUrl(path: string, params: Record<string, string>) {
 }
 
 function findLinkedChild(children: ParentScheduleChild[], teamId: string, playerId: string) {
-  const decodedTeamId = decodeURIComponent(teamId || '');
-  const decodedPlayerId = decodeURIComponent(playerId || '');
+  const decodedTeamId = safeDecode(teamId);
+  const decodedPlayerId = safeDecode(playerId);
   if (decodedTeamId && decodedPlayerId) {
     return children.find((child) => child.teamId === decodedTeamId && child.playerId === decodedPlayerId) || null;
   }
   return children.find((child) => child.playerId === decodedPlayerId) || null;
+}
+
+function findLinkedParentChild(user: AuthUser | null, teamId: string, playerId: string): ParentScheduleChild | null {
+  const decodedTeamId = safeDecode(teamId);
+  const decodedPlayerId = safeDecode(playerId);
+  const playerKey = `${decodedTeamId}::${decodedPlayerId}`;
+  const parentLink = (user?.parentOf || []).find((entry: any) => (
+    safeDecode(entry?.teamId || entry?.teamID || entry?.team_id || entry?.team) === decodedTeamId &&
+    [entry?.playerId, entry?.playerID, entry?.player_id, entry?.childId, entry?.childID, entry?.child_id]
+      .some((value) => safeDecode(value) === decodedPlayerId)
+  ));
+  if (!parentLink && !(user?.parentPlayerKeys || []).some((key) => safeDecode(key) === playerKey)) return null;
+  return {
+    teamId: decodedTeamId,
+    teamName: String((parentLink as any)?.teamName || (parentLink as any)?.team || '').trim(),
+    playerId: decodedPlayerId,
+    playerName: String((parentLink as any)?.playerName || (parentLink as any)?.childName || (parentLink as any)?.name || '').trim()
+  };
+}
+
+function findOnlyLinkedChildForTeam(children: ParentScheduleChild[], user: AuthUser | null, teamId: string) {
+  const decodedTeamId = safeDecode(teamId);
+  const teamChildren = children.filter((child) => safeDecode(child.teamId) === decodedTeamId);
+  if (teamChildren.length === 1) return teamChildren[0];
+
+  const parentLinks = (user?.parentOf || [])
+    .filter((entry: any) => safeDecode(entry?.teamId || entry?.teamID || entry?.team_id || entry?.team) === decodedTeamId)
+    .map((entry: any) => ({
+      teamId: decodedTeamId,
+      teamName: String(entry?.teamName || entry?.team || '').trim(),
+      playerId: safeDecode(entry?.playerId || entry?.playerID || entry?.player_id || entry?.childId || entry?.childID || entry?.child_id),
+      playerName: String(entry?.playerName || entry?.childName || entry?.name || '').trim()
+    }))
+    .filter((child) => child.playerId);
+  const keyedChildren = (user?.parentPlayerKeys || [])
+    .map((key) => {
+      const [keyTeamId, keyPlayerId] = safeDecode(key).split('::');
+      return keyTeamId === decodedTeamId && keyPlayerId
+        ? { teamId: decodedTeamId, teamName: '', playerId: keyPlayerId, playerName: '' }
+        : null;
+    })
+    .filter((child): child is ParentScheduleChild => !!child);
+  const childrenByKey = new Map<string, ParentScheduleChild>();
+  [...parentLinks, ...keyedChildren].forEach((child) => {
+    childrenByKey.set(`${child.teamId}::${child.playerId}`, child);
+  });
+  const linkedChildren = [...childrenByKey.values()];
+  return linkedChildren.length === 1 ? linkedChildren[0] : null;
+}
+
+async function loadUserWithPlayerAccessProfile(user: AuthUser): Promise<AuthUser> {
+  const profile = await loadProfileDocument(user.uid).catch(() => null);
+  if (!profile) return user;
+  return {
+    ...user,
+    parentOf: mergeProfileArray(user.parentOf, (profile as any).parentOf),
+    parentTeamIds: mergeProfileArray(user.parentTeamIds, (profile as any).parentTeamIds),
+    parentPlayerKeys: mergeProfileArray(user.parentPlayerKeys, (profile as any).parentPlayerKeys),
+    coachOf: mergeProfileArray(user.coachOf, (profile as any).coachOf)
+  };
+}
+
+function mergeProfileArray<T>(userValues: T[] | undefined, profileValues: unknown): T[] {
+  const merged = [...(Array.isArray(userValues) ? userValues : [])];
+  if (Array.isArray(profileValues)) {
+    profileValues.forEach((value) => {
+      if (!merged.some((current) => JSON.stringify(current) === JSON.stringify(value))) {
+        merged.push(value as T);
+      }
+    });
+  }
+  return merged;
+}
+
+function safeDecode(value: unknown) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  try {
+    return decodeURIComponent(text);
+  } catch {
+    return text;
+  }
 }
 
 function startOfDay(date: Date) {

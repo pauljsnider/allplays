@@ -104,6 +104,7 @@ vi.mock('../../../../js/team-staff-permissions.js', () => ({ buildTeamStaffPermi
 vi.mock('./authService', () => authServiceMocks);
 vi.mock('./inviteUrls', () => ({ buildAppAcceptInviteUrl: vi.fn(() => 'https://allplays.ai/app#/accept-invite') }));
 vi.mock('./nativeRestLogging', () => ({ sanitizeErrorForLogging: vi.fn((error) => error) }));
+vi.mock('./profileService', () => ({ loadProfileDocument: vi.fn(async () => ({})) }));
 
 import {
   __resetTeamDetailBaseSnapshotCacheForTests,
