@@ -365,9 +365,9 @@ jobs:
 
       - name: Deploy Firebase production
         # Updating the full first-generation Functions fleet routinely takes
-        # longer than four minutes. Leave enough room for one deployment plus
-        # the bounded transient retries above without allowing an unbounded job.
-        timeout-minutes: 20
+        # longer than four minutes. Leave enough room for Firebase API outages
+        # to recover without allowing an unbounded job.
+        timeout-minutes: 35
         shell: bash
         env:
           FIRESTORE_CONFIG_CHANGED: ${{ needs.prepare-deploy.outputs.firestore_changed }}
@@ -380,7 +380,7 @@ jobs:
           retry_firebase_deploy() {
             local deploy_targets="$1"
             local deploy_label="$2"
-            local max_attempts=3
+            local max_attempts=7
             local attempt deploy_log deploy_status retry_delay_seconds
 
             for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do
@@ -408,6 +408,9 @@ jobs:
               fi
 
               retry_delay_seconds=$((15 * (2 ** (attempt - 1))))
+              if (( retry_delay_seconds > 120 )); then
+                retry_delay_seconds=120
+              fi
               echo "Transient Firebase ${deploy_label} deploy failure; retrying in ${retry_delay_seconds} seconds (attempt $((attempt + 1))/${max_attempts})." >&2
               sleep "$retry_delay_seconds"
             done
