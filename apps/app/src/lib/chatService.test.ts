@@ -50,7 +50,8 @@ const nativeRuntime = vi.hoisted(() => ({
 }));
 
 const authServiceMocks = vi.hoisted(() => ({
-  getNativeAuthIdToken: vi.fn()
+  getNativeAuthIdToken: vi.fn(),
+  getNativeAuthUserId: vi.fn()
 }));
 
 const uxTimingMocks = vi.hoisted(() => ({
@@ -83,7 +84,8 @@ vi.mock('./authService', () => ({
     },
     currentUser: { uid: 'user-1' }
   },
-  getNativeAuthIdToken: authServiceMocks.getNativeAuthIdToken
+  getNativeAuthIdToken: authServiceMocks.getNativeAuthIdToken,
+  getNativeAuthUserId: authServiceMocks.getNativeAuthUserId
 }));
 
 vi.mock('./uxTiming', () => ({
@@ -150,6 +152,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   nativeRuntime.isNativePlatform = false;
   authServiceMocks.getNativeAuthIdToken.mockResolvedValue('main-user-id-token');
+  authServiceMocks.getNativeAuthUserId.mockReturnValue('user-1');
   uxTimingMocks.startInteractionTimer.mockReturnValue({
     end: uxTimingMocks.endInteraction
   });
@@ -598,6 +601,51 @@ describe('sendTeamChatMessage attachment uploads', () => {
     }));
     expect(attachment.path).toBe('stat-sheets/team-chat/team-1/group_user%3Acoach-1/user-1/1700000000000_arrival_photo.jpg');
     expect(fetchMock.mock.calls.flatMap((call) => call.map(String)).join(' ')).not.toContain('identitytoolkit.googleapis.com');
+  });
+
+  it('uses the persisted native session user when Firebase Auth has no current user', async () => {
+    nativeRuntime.isNativePlatform = true;
+    authServiceMocks.getNativeAuthUserId.mockReturnValue('rest-session-user');
+    vi.spyOn(Date, 'now').mockReturnValue(1700000000000);
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({
+        name: 'stat-sheets/team-chat/team-1/team/rest-session-user/1700000000000_photo.jpg',
+        downloadTokens: 'download-token'
+      })
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { uploadTeamChatAttachment } = await import('./chatService');
+    const attachment = await uploadTeamChatAttachment(
+      'team-1',
+      new File(['photo'], 'photo.jpg', { type: 'image/jpeg' })
+    );
+
+    expect(attachment.path).toContain('/rest-session-user/');
+    expect(decodeURIComponent(fetchMock.mock.calls[0][0])).toContain('/rest-session-user/');
+  });
+
+  it('aborts a stalled native upload when the composer deadline expires', async () => {
+    vi.useFakeTimers();
+    nativeRuntime.isNativePlatform = true;
+    let uploadSignal: AbortSignal | undefined;
+    vi.stubGlobal('fetch', vi.fn((_url: string, request: RequestInit) => {
+      uploadSignal = request.signal as AbortSignal;
+      return new Promise(() => {});
+    }));
+
+    const { uploadTeamChatAttachment } = await import('./chatService');
+    const upload = uploadTeamChatAttachment(
+      'team-1',
+      new File(['photo'], 'photo.jpg', { type: 'image/jpeg' })
+    );
+    const rejection = expect(upload).rejects.toThrow('Chat media upload timed out');
+
+    await vi.advanceTimersByTimeAsync(25000);
+    await rejection;
+    expect(uploadSignal?.aborted).toBe(true);
   });
 
   it('starts multiple uploads before the first resolves and posts attachments in the original order', async () => {

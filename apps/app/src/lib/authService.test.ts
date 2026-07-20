@@ -110,6 +110,7 @@ import { signInWithPopup, signInWithRedirect } from './firebaseAuthRuntime';
 import { Capacitor } from '@capacitor/core';
 import {
   describeAuthError,
+  getNativeAuthUserId,
   getRouteForUser,
   hydrateFirebaseUser,
   isValidAuthEmail,
@@ -526,6 +527,20 @@ describe('native REST sign-in', () => {
     expect(result.nativeRest).toBe(true);
     expect(result.user.uid).toBe('new-user');
     expect(appDataCacheMocks.clearAppDataCache).toHaveBeenCalledTimes(1);
+  });
+
+  it('exposes the persisted native uid when the Firebase JS auth user is unavailable', () => {
+    window.localStorage.setItem('allplays-native-auth-session', JSON.stringify({
+      uid: 'persisted-user',
+      email: 'persisted@example.com',
+      idToken: 'persisted-id-token',
+      refreshToken: 'persisted-refresh-token',
+      expirationTime: Date.now() + 3600_000,
+      apiKey: 'test-api-key',
+      provider: 'rest'
+    }));
+
+    expect(getNativeAuthUserId()).toBe('persisted-user');
   });
 });
 

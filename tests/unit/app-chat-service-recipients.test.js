@@ -70,7 +70,8 @@ vi.mock('../../apps/app/src/lib/authService.ts', () => ({
             }
         }
     },
-    getNativeAuthIdToken: vi.fn()
+    getNativeAuthIdToken: vi.fn(),
+    getNativeAuthUserId: vi.fn(() => 'current-1')
 }));
 vi.mock('../../apps/app/src/lib/performanceInstrumentation.ts', () => ({
     now: vi.fn(() => 1000),

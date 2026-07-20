@@ -32,7 +32,7 @@ import {
   uploadChatImage,
   upsertChatConversation
 } from './adapters/legacyChatService';
-import { firebaseAuth, getNativeAuthIdToken } from './authService';
+import { firebaseAuth, getNativeAuthIdToken, getNativeAuthUserId } from './authService';
 import { loadCachedAppData } from './appDataCache';
 import { createLogger } from './logger';
 import { getPrimaryAppCheckHeaders } from './adapters/legacyFirebaseAppCheck';
@@ -1255,7 +1255,7 @@ async function nativeUploadChatMedia(teamId: string, file: File, conversationId 
   if (!bucket) {
     throw new Error('Primary Firebase Storage configuration is missing.');
   }
-  const userId = firebaseAuth.currentUser?.uid;
+  const userId = getNativeAuthUserId();
   if (!userId) {
     throw new Error('Sign in before uploading team chat media.');
   }
@@ -1270,14 +1270,26 @@ async function nativeUploadChatMedia(teamId: string, file: File, conversationId 
   const isVideo = String(file.type || '').toLowerCase().startsWith('video/');
   const path = `stat-sheets/team-chat/${safeTeamId}/${safeConversationId}/${safeUserId}/${Date.now()}_${safeName}`;
   const requestUrl = `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o?uploadType=media&name=${encodeURIComponent(path)}`;
-  const response = await withTimeout(fetch(requestUrl, {
+  const abortController = new AbortController();
+  let uploadTimeoutId: number | undefined;
+  const uploadTimeout = new Promise<Response>((_, reject) => {
+    uploadTimeoutId = window.setTimeout(() => {
+      abortController.abort();
+      reject(new Error('Chat media upload timed out. Check your connection and try again.'));
+    }, chatUploadTimeoutMs);
+  });
+  const uploadRequest = fetch(requestUrl, {
     method: 'POST',
     headers: await getPrimaryAppCheckHeaders({
       Authorization: `Bearer ${idToken}`,
       'Content-Type': file.type || 'application/octet-stream'
     }, requestUrl),
-    body: file
-  }), 'Chat media upload', chatUploadTimeoutMs);
+    body: file,
+    signal: abortController.signal
+  });
+  const response = await Promise.race([uploadRequest, uploadTimeout]).finally(() => {
+    if (uploadTimeoutId) window.clearTimeout(uploadTimeoutId);
+  });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw new Error(payload?.error?.message || `Chat media upload failed (${response.status}).`);

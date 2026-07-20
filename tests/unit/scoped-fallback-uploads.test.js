@@ -1,8 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const uploadState = vi.hoisted(() => ({
     calls: [],
-    deletions: []
+    deletions: [],
+    hangPrimaryUpload: false
 }));
 
 const imageAuthMocks = vi.hoisted(() => ({
@@ -16,6 +17,9 @@ const firebaseMocks = vi.hoisted(() => ({
         uploadState.calls.push({ targetStorage: storageRef.targetStorage, fullPath: storageRef.fullPath, file });
         if (storageRef.targetStorage === 'image-storage') {
             throw Object.assign(new Error('denied'), { code: 'storage/unauthorized' });
+        }
+        if (uploadState.hangPrimaryUpload) {
+            return new Promise(() => {});
         }
         return { ref: storageRef };
     }),
@@ -71,13 +75,18 @@ describe('scoped fallback uploads', () => {
     beforeEach(() => {
         uploadState.calls.length = 0;
         uploadState.deletions.length = 0;
+        uploadState.hangPrimaryUpload = false;
         vi.restoreAllMocks();
         vi.clearAllMocks();
         vi.spyOn(Date, 'now').mockReturnValue(1700000000000);
     });
 
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
     it('uploads chat attachments directly to the primary scoped path without image-project auth', async () => {
-        const { uploadChatImage } = await import('../../js/db.js?v=115-scoped-fallback-uploads');
+        const { uploadChatImage } = await import('../../js/db.js?v=117-scoped-fallback-uploads');
 
         const result = await uploadChatImage('team/alpha', {
             name: 'family photo (1).png',
@@ -95,8 +104,42 @@ describe('scoped fallback uploads', () => {
         }));
     });
 
+    it('rejects stalled primary uploads instead of leaving the legacy composer stuck', async () => {
+        vi.useFakeTimers();
+        uploadState.hangPrimaryUpload = true;
+        const { uploadChatImage } = await import('../../js/db.js?v=117-scoped-fallback-uploads');
+
+        const upload = uploadChatImage('team-1', {
+            name: 'photo.jpg',
+            size: 789,
+            type: 'image/jpeg'
+        });
+        const rejection = expect(upload).rejects.toThrow('Chat media upload timed out');
+
+        await vi.advanceTimersByTimeAsync(25000);
+        await rejection;
+    });
+
+    it('deletes an uploaded chat attachment when its download URL cannot be resolved', async () => {
+        firebaseMocks.getDownloadURL.mockRejectedValueOnce(new Error('url lookup failed'));
+        const { uploadChatImage } = await import('../../js/db.js?v=117-scoped-fallback-uploads');
+
+        await expect(uploadChatImage('team-1', {
+            name: 'photo.jpg',
+            size: 789,
+            type: 'image/jpeg'
+        })).rejects.toThrow('url lookup failed');
+
+        expect(uploadState.deletions).toEqual([
+            expect.objectContaining({
+                targetStorage: 'main-storage',
+                fullPath: 'stat-sheets/team-chat/team-1/team/user-42/1700000000000_photo.jpg'
+            })
+        ]);
+    });
+
     it('deletes new scoped chat media from primary storage and legacy chat media from image storage', async () => {
-        const { deleteUploadedChatAttachments } = await import('../../js/db.js?v=115-scoped-fallback-uploads');
+        const { deleteUploadedChatAttachments } = await import('../../js/db.js?v=117-scoped-fallback-uploads');
 
         await deleteUploadedChatAttachments([
             { path: 'stat-sheets/team-chat/team-a/team/user-42/new.jpg' },
@@ -112,7 +155,7 @@ describe('scoped fallback uploads', () => {
     });
 
     it('falls back to a team-scoped stat sheet path when image storage rejects the upload', async () => {
-        const { uploadStatSheetPhoto } = await import('../../js/db.js?v=115-scoped-fallback-uploads');
+        const { uploadStatSheetPhoto } = await import('../../js/db.js?v=117-scoped-fallback-uploads');
 
         const url = await uploadStatSheetPhoto('team/alpha', {
             name: 'box score (1).png',
@@ -126,7 +169,7 @@ describe('scoped fallback uploads', () => {
     });
 
     it('falls back to a team-scoped drill path when image storage rejects the upload', async () => {
-        const { uploadDrillDiagram } = await import('../../js/db.js?v=115-scoped-fallback-uploads');
+        const { uploadDrillDiagram } = await import('../../js/db.js?v=117-scoped-fallback-uploads');
 
         const url = await uploadDrillDiagram('team/alpha', 'drill 7', {
             name: 'diagram #1.png',
