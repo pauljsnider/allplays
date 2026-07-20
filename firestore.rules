@@ -65,9 +65,31 @@ service cloud.firestore {
               (request.auth.token.email != null &&
                get(/databases/$(database)/documents/teams/$(teamId)).data.get('ownerEmailLower', '') is string &&
                get(/databases/$(database)/documents/teams/$(teamId)).data.get('ownerEmailLower', '') == request.auth.token.email.lower()) ||
-              (request.auth.token.email != null &&
-               request.auth.token.email.lower() in get(/databases/$(database)/documents/teams/$(teamId)).data.get('adminEmails', [])) ||
+              currentAuthEmailMatchesAdminList(get(/databases/$(database)/documents/teams/$(teamId)).data.get('adminEmails', [])) ||
               isGlobalAdmin());
+    }
+
+    function currentAuthEmailMatchesAdminList(adminEmails) {
+      return request.auth.token.email != null &&
+             adminEmails is list &&
+             (
+               request.auth.token.email.lower() in adminEmails ||
+               request.auth.token.email in adminEmails ||
+               (' ' + request.auth.token.email.lower()) in adminEmails ||
+               (request.auth.token.email.lower() + ' ') in adminEmails ||
+               (' ' + request.auth.token.email.lower() + ' ') in adminEmails ||
+               (' ' + request.auth.token.email) in adminEmails ||
+               (request.auth.token.email + ' ') in adminEmails ||
+               (' ' + request.auth.token.email + ' ') in adminEmails
+             );
+    }
+
+    function isTeamChatStaff(teamId) {
+      return isTeamOwnerOrAdmin(teamId);
+    }
+
+    function canUseTeamChat(teamId) {
+      return canAccessTeamChat(teamId) || isTeamChatStaff(teamId);
     }
 
     function canReadOpportunityInquiry(data) {
@@ -119,8 +141,8 @@ service cloud.firestore {
               data.organizationOwnerId == request.auth.uid ||
               (request.auth.token.email != null &&
                (
-                 request.auth.token.email.lower() in data.get('adminEmails', []) ||
-                 request.auth.token.email.lower() in data.get('organizationAdminEmails', [])
+                 currentAuthEmailMatchesAdminList(data.get('adminEmails', [])) ||
+                 currentAuthEmailMatchesAdminList(data.get('organizationAdminEmails', []))
                )) ||
               (data.teamId is string && isTeamOwnerOrAdmin(data.teamId)) ||
               (data.organizationTeamId is string && isTeamOwnerOrAdmin(data.organizationTeamId)));
@@ -426,8 +448,7 @@ service cloud.firestore {
               (request.auth.token.email != null &&
                data.get('ownerEmailLower', '') is string &&
                data.get('ownerEmailLower', '') == request.auth.token.email.lower()) ||
-              (request.auth.token.email != null &&
-               request.auth.token.email.lower() in data.get('adminEmails', [])) ||
+              currentAuthEmailMatchesAdminList(data.get('adminEmails', [])) ||
               isGlobalAdmin());
     }
 
@@ -451,8 +472,7 @@ service cloud.firestore {
               (request.auth.token.email != null &&
                data.get('ownerEmailLower', '') is string &&
                data.get('ownerEmailLower', '') == request.auth.token.email.lower()) ||
-              (request.auth.token.email != null &&
-               request.auth.token.email.lower() in data.get('adminEmails', [])));
+              currentAuthEmailMatchesAdminList(data.get('adminEmails', [])));
     }
 
     function canReadTeamDocument(data) {
@@ -1359,8 +1379,7 @@ service cloud.firestore {
         (request.auth.token.email != null &&
          team.get('ownerEmailLower', '') is string &&
          team.get('ownerEmailLower', '') == request.auth.token.email.lower()) ||
-        (request.auth.token.email != null &&
-         request.auth.token.email.lower() in team.get('adminEmails', [])) ||
+        currentAuthEmailMatchesAdminList(team.get('adminEmails', [])) ||
         isGlobalAdmin();
 
       return isSignedIn() && (isOwnerOrAdmin || isParentForTeam(teamId));
@@ -1641,11 +1660,16 @@ service cloud.firestore {
       return ['teamMediaUploadTeamIds', 'mediaUploadTeamIds'];
     }
 
+    function serverManagedUserRoleGrantFields() {
+      return ['coachOf', 'roles'];
+    }
+
     function isOwnerUserCreatePayloadValid(data) {
       return data.get('isAdmin', false) != true &&
              data.get('isPlatformAdmin', false) != true &&
              !data.keys().hasAny(userMembershipFields()) &&
              !data.keys().hasAny(teamMediaUploadGrantFields()) &&
+             !data.keys().hasAny(serverManagedUserRoleGrantFields()) &&
              isOwnerUserEmailAuthBound(data);
     }
 
@@ -1653,6 +1677,7 @@ service cloud.firestore {
       return !request.resource.data.diff(resource.data).affectedKeys().hasAny(['isAdmin', 'isPlatformAdmin']) &&
              !request.resource.data.diff(resource.data).affectedKeys().hasAny(userMembershipFields()) &&
              !request.resource.data.diff(resource.data).affectedKeys().hasAny(teamMediaUploadGrantFields()) &&
+             !request.resource.data.diff(resource.data).affectedKeys().hasAny(serverManagedUserRoleGrantFields()) &&
              (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['email']) ||
               isOwnerUserEmailAuthBound(request.resource.data));
     }
@@ -2001,9 +2026,10 @@ service cloud.firestore {
     }
 
     function canReadChatMessage(teamId, data) {
-      return canAccessTeamChat(teamId) &&
+      return canUseTeamChat(teamId) &&
              (
                isFullTeamChatMessage(data) ||
+               (isStaffChatMessage(data) && isTeamChatStaff(teamId)) ||
                isTeamOwnerOrAdmin(teamId) ||
                data.senderId == request.auth.uid ||
                (isIndividualChatMessage(teamId, data) && isCurrentChatRecipient(data))
@@ -2026,16 +2052,22 @@ service cloud.firestore {
 
     function canListChatConversation(teamId, conversationId, conversationData) {
       let participantIds = conversationData.get('participantIds', []);
-      return canAccessTeamChat(teamId) &&
+      return canUseTeamChat(teamId) &&
              (!isParticipantOnlyAcceptedFriendConversation(conversationData) ||
               request.auth.uid in conversationData.get('directUserIds', [])) &&
              (
-               isTeamOwnerOrAdmin(teamId) ||
+               isTeamChatStaff(teamId) ||
+               (
+                 isCanonicalStaffChatConversation(conversationId) &&
+                 isTeamChatStaff(teamId)
+               ) ||
                (
                  !isCanonicalStaffChatConversation(conversationId) &&
+                 !isStaffRoleChatConversation(conversationData) &&
                  (
                    conversationId == 'team' ||
                    conversationData.get('type', '') == 'team' ||
+                   isTeamOwnerOrAdmin(teamId) ||
                    request.auth.uid in participantIds ||
                    ('user:' + request.auth.uid) in participantIds ||
                    request.auth.uid in conversationData.get('directUserIds', []) ||
@@ -2057,7 +2089,7 @@ service cloud.firestore {
     // normalize it; nested messages remain inaccessible until the record has the
     // canonical empty participant list.
     function canReadCanonicalStaffChatConversationForRepair(teamId, conversationId, data) {
-      return isTeamOwnerOrAdmin(teamId) &&
+      return isTeamChatStaff(teamId) &&
              isCanonicalStaffChatConversation(conversationId) &&
              data.get('type', '') == 'group' &&
              isStaffRoleChatConversation(data);
@@ -2073,13 +2105,13 @@ service cloud.firestore {
 
     function canAccessChatConversation(teamId, conversationId, conversationData) {
       let participantIds = conversationData.get('participantIds', []);
-      return canAccessTeamChat(teamId) &&
+      return canUseTeamChat(teamId) &&
              (!isParticipantOnlyAcceptedFriendConversation(conversationData) ||
               request.auth.uid in conversationData.get('directUserIds', [])) &&
              (
                (
                  isCanonicalStaffChatConversation(conversationId) &&
-                 isTeamOwnerOrAdmin(teamId) &&
+                 isTeamChatStaff(teamId) &&
                  isCanonicalStaffChatConversationPayload(conversationId, conversationData)
                ) ||
                (
@@ -4020,7 +4052,7 @@ service cloud.firestore {
                       canReadChatMessage(teamId, resource.data);
 
         // Create: any team member, but the legacy path only accepts full-team messages.
-        allow create: if canAccessTeamChat(teamId) &&
+        allow create: if canUseTeamChat(teamId) &&
                          isLegacyFullTeamChatMessageCreateValid(teamId, request.resource.data);
 
         // Update for editing: only message sender, only text and editedAt fields
@@ -4060,7 +4092,7 @@ service cloud.firestore {
         allow get: if canAccessChatConversation(teamId, conversationId, resource.data) ||
                       canReadCanonicalStaffChatConversationForRepair(teamId, conversationId, resource.data);
         allow list: if canListChatConversation(teamId, conversationId, resource.data);
-        allow create: if canAccessTeamChat(teamId) &&
+        allow create: if canUseTeamChat(teamId) &&
                          isChatConversationPayloadValid(request.resource.data) &&
                          isDirectConversationCreateAuthorized(teamId, request.resource.data) &&
                          canAccessChatConversation(teamId, conversationId, request.resource.data);

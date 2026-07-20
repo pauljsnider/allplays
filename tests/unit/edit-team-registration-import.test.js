@@ -93,8 +93,8 @@ describe('edit team registration import', () => {
         expect(rules).toContain('function canReadRegistrationSource(data)');
         expect(rules).toContain('data.ownerId == request.auth.uid');
         expect(rules).toContain('data.organizationOwnerId == request.auth.uid');
-        expect(rules).toContain("request.auth.token.email.lower() in data.get('adminEmails', [])");
-        expect(rules).toContain("request.auth.token.email.lower() in data.get('organizationAdminEmails', [])");
+        expect(rules).toContain("currentAuthEmailMatchesAdminList(data.get('adminEmails', []))");
+        expect(rules).toContain("currentAuthEmailMatchesAdminList(data.get('organizationAdminEmails', []))");
         expect(rules).toContain("data.teamId is string && isTeamOwnerOrAdmin(data.teamId)");
         expect(rules).toContain("data.organizationTeamId is string && isTeamOwnerOrAdmin(data.organizationTeamId)");
         expect(rules).toContain('allow get, list: if canReadRegistrationSource(resource.data);');
