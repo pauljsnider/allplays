@@ -151,7 +151,7 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
   useEffect(() => {
     preserveMessagesForConversationRef.current = null;
     setActiveConversationId(DEFAULT_PRIVATE_AI_CONVERSATION_ID);
-    void refreshConversations();
+    void refreshConversations(true, '');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid]);
 

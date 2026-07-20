@@ -239,6 +239,10 @@ describe('PrivateAiChat', () => {
         const conversationList = await screen.findByLabelText('AI conversations');
         expect(within(conversationList).getByRole('button', { name: /Practice plan/ })).toBeTruthy();
         expect(within(conversationList).getByRole('button', { name: /RSVP help/ })).toBeTruthy();
+        expect(within(conversationList).getByRole('button', { name: /Practice plan/ }).getAttribute('aria-pressed')).toBe('true');
+        await waitFor(() => {
+            expect(privateAiServiceMocks.loadPrivateAiMessages).toHaveBeenCalledWith(auth.user, undefined, 'conversation-2');
+        });
         expect(screen.getByText('Saved chats')).toBeTruthy();
         expect(screen.queryByText('Chats')).toBeNull();
     });

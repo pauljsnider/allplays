@@ -14,6 +14,7 @@ import {
   orderBy,
   query,
   serverTimestamp,
+  startAfter,
   setDoc
 } from './adapters/legacyPrivateAi';
 import {
@@ -127,6 +128,7 @@ const logger = createLogger('private-ai');
 export const DEFAULT_PRIVATE_AI_CONVERSATION_ID = 'default';
 export const DRAFT_PRIVATE_AI_CONVERSATION_ID = '__draft__';
 const maxLoadedMessages = 80;
+const maxConversationRecoveryPages = 30;
 const maxHistoryMessages = 12;
 const maxToolRounds = 2;
 const maxToolCallsPerRound = 3;
@@ -177,7 +179,7 @@ export async function loadPrivateAiConversations(user: AuthUser | null, conversa
       orderBy('updatedAt', 'desc'),
       limit(conversationLimit)
     )),
-    loadPrivateAiMessageRecords(user, maxLoadedMessages).catch(() => [])
+    loadPrivateAiConversationRecoveryMessages(user, conversationLimit).catch(() => [])
   ]);
 
   const storedConversations = (conversationSnapshot.docs || [])
@@ -243,6 +245,36 @@ async function loadPrivateAiMessageRecords(user: AuthUser, messageLimit: number)
   return (snapshot.docs || [])
     .map((document: any) => normalizePrivateAiMessage(document.id, document.data?.() || {}))
     .filter((message: PrivateAiMessage | null): message is PrivateAiMessage => Boolean(message));
+}
+
+async function loadPrivateAiConversationRecoveryMessages(
+  user: AuthUser,
+  conversationLimit: number
+): Promise<PrivateAiMessage[]> {
+  const recoveredMessages: PrivateAiMessage[] = [];
+  const recoveredConversationIds = new Set<string>();
+  let cursor: any = null;
+
+  for (let page = 0; page < maxConversationRecoveryPages; page += 1) {
+    const snapshot = await getDocs(query(
+      collection(db, 'users', user.uid, privateAiCollectionName),
+      orderBy('createdAt', 'desc'),
+      ...(cursor ? [startAfter(cursor)] : []),
+      limit(maxLoadedMessages)
+    ));
+    const documents = snapshot.docs || [];
+    const pageMessages = documents
+      .map((document: any) => normalizePrivateAiMessage(document.id, document.data?.() || {}))
+      .filter((message: PrivateAiMessage | null): message is PrivateAiMessage => Boolean(message));
+
+    recoveredMessages.push(...pageMessages);
+    pageMessages.forEach((message: PrivateAiMessage) => recoveredConversationIds.add(normalizeConversationId(message.conversationId)));
+    if (documents.length < maxLoadedMessages || recoveredConversationIds.size >= conversationLimit) break;
+    cursor = documents[documents.length - 1];
+    if (!cursor) break;
+  }
+
+  return recoveredMessages;
 }
 
 export async function sendPrivateAiMessage(

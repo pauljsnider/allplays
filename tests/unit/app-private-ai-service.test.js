@@ -16,6 +16,7 @@ const firebaseMocks = vi.hoisted(() => ({
     orderBy: vi.fn((field, direction) => ({ type: 'orderBy', field, direction })),
     query: vi.fn((...parts) => ({ parts })),
     serverTimestamp: vi.fn(() => ({ __serverTimestamp: true })),
+    startAfter: vi.fn((cursor) => ({ type: 'startAfter', cursor })),
     setDoc: vi.fn()
 }));
 
@@ -433,6 +434,38 @@ describe('private AI service', () => {
             })
         ]);
         expect(conversations.filter((conversation) => conversation.id === 'conversation-1')).toHaveLength(1);
+    });
+
+    it('paginates recovery when the newest 80 messages all belong to one conversation', async () => {
+        const newestConversationDocuments = Array.from({ length: 80 }, (_, index) => ({
+            id: `newest-${index}`,
+            data: () => ({
+                role: index % 2 ? 'assistant' : 'user',
+                text: `Newest message ${index}`,
+                conversationId: 'conversation-newest',
+                clientCreatedAt: new Date(Date.UTC(2026, 5, 30, 12, 0, 80 - index)).toISOString()
+            })
+        }));
+        const legacyCursorDocument = {
+            id: 'legacy-question',
+            data: () => ({
+                role: 'user',
+                text: 'Older legacy question',
+                clientCreatedAt: '2026-05-20T12:00:00Z'
+            })
+        };
+        firebaseMocks.getDocs
+            .mockResolvedValueOnce({ docs: [] })
+            .mockResolvedValueOnce({ docs: newestConversationDocuments })
+            .mockResolvedValueOnce({ docs: [legacyCursorDocument] });
+
+        const { loadPrivateAiConversations } = await import('../../apps/app/src/lib/privateAiService.ts');
+        const conversations = await loadPrivateAiConversations(authUser, 2);
+
+        expect(conversations.map((conversation) => conversation.id)).toEqual(['conversation-newest', 'default']);
+        expect(conversations[1]).toMatchObject({ title: 'Older legacy question' });
+        expect(firebaseMocks.getDocs).toHaveBeenCalledTimes(3);
+        expect(firebaseMocks.startAfter).toHaveBeenCalledWith(newestConversationDocuments[79]);
     });
 
     it('saves the prompt, lets AI request schedule data, and saves the answer privately', async () => {
