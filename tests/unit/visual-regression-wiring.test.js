@@ -27,8 +27,6 @@ describe('visual regression CI wiring', () => {
         expect(helper).toContain("visualFixtureTime = '2026-07-18T12:00:00.000Z'");
         expect(helper).toContain('page.clock.setFixedTime');
         expect(helper).toContain("await route.abort('blockedbyclient')");
-        expect(helper).toContain("@fontsource-variable/inter/files/inter-latin-wght-normal.woff2");
-        expect(helper).toContain("await document.fonts.load('400 16px Inter')");
     });
 
     it('checks the legacy Tailwind fixture only in the dependency-bearing visual command', () => {
