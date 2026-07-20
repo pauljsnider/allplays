@@ -305,7 +305,7 @@ test('google popup signup without invite uses normal post-auth redirect', async 
     await expect.poll(() => page.evaluate(() => window.sessionStorage.getItem('__googleActivationCode'))).toBe('AB12CD34');
 });
 
-test('invite signup disables create account while the request is in flight', async ({ page, baseURL }) => {
+test('invite signup disables auth controls while the request is in flight', async ({ page, baseURL }) => {
     await mockInviteLoginModules(page, {
         signupDelayMs: 60_000
     });
@@ -322,9 +322,15 @@ test('invite signup disables create account while the request is in flight', asy
     await page.locator('#submit-btn').click({ force: true });
 
     await expect(page.locator('#submit-btn')).toBeDisabled();
+    await expect(page.locator('#google-btn')).toBeDisabled();
+    await expect(page.locator('#toggle-btn')).toBeDisabled();
     await expect(page.locator('#submit-btn')).toHaveText('Creating account...');
+    await page.locator('#toggle-btn').dispatchEvent('click');
+    await page.locator('#google-btn').dispatchEvent('click');
+    await expect(page.locator('#form-title')).toHaveText('Sign Up');
     await expect.poll(() => page.evaluate(() => window.__signupCalls || 0)).toBe(1);
     await expect.poll(() => page.evaluate(() => window.__signupArgs?.activationCode)).toBe('AB12CD34');
+    await expect.poll(() => page.evaluate(() => window.__googleActivationCode || null)).toBe(null);
 });
 
 test('invite signup with an existing email switches to clear login recovery', async ({ page, baseURL }) => {

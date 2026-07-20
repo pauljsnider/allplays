@@ -110,6 +110,13 @@
         let isSubmittingAuthForm = false;
         let pendingLoginInviteCode = null;
 
+        function setAuthControlsDisabled(disabled) {
+            document.getElementById('submit-btn').disabled = disabled;
+            document.getElementById('google-btn').disabled = disabled;
+            document.getElementById('toggle-btn').disabled = disabled;
+            document.getElementById('forgot-password-btn').disabled = disabled;
+        }
+
         const createLoginAuthStateManager = loginPageModule.createLoginAuthStateManager || function createFallbackLoginAuthStateManager() {
             return {
                 beginProcessing() {},
@@ -292,6 +299,9 @@
         });
 
         document.getElementById('toggle-btn').addEventListener('click', () => {
+            if (isSubmittingAuthForm) {
+                return;
+            }
             setAuthFormMode(!isLogin);
         });
 
@@ -308,7 +318,7 @@
             authState.beginProcessing(); // Prevent auto-redirect during process
             isSubmittingAuthForm = true;
             errorDiv.classList.add('hidden');
-            submitBtn.disabled = true;
+            setAuthControlsDisabled(true);
             submitBtn.textContent = isLogin ? 'Signing in...' : 'Creating account...';
 
             try {
@@ -362,14 +372,20 @@
                 errorDiv.classList.remove('hidden');
                 console.error(error);
                 isSubmittingAuthForm = false;
-                submitBtn.disabled = false;
+                setAuthControlsDisabled(false);
                 submitBtn.textContent = isLogin ? 'Sign In' : 'Create Account';
             }
         });
 
         document.getElementById('google-btn').addEventListener('click', async () => {
+            if (isSubmittingAuthForm) {
+                return;
+            }
             const errorDiv = document.getElementById('error-message');
+            const submitBtn = document.getElementById('submit-btn');
             errorDiv.classList.add('hidden');
+            isSubmittingAuthForm = true;
+            setAuthControlsDisabled(true);
 
             try {
                 const googleAuthMode = loginPageModule.getGoogleAuthModeForLoginPage({ isLogin, urlCodeParam });
@@ -425,14 +441,23 @@
                 errorDiv.textContent = error.message;
                 errorDiv.classList.remove('hidden');
                 console.error(error);
+                isSubmittingAuthForm = false;
+                setAuthControlsDisabled(false);
+                submitBtn.textContent = isLogin ? 'Sign In' : 'Create Account';
             }
         });
 
-        document.getElementById('forgot-password-btn').addEventListener('click', loginPageModule.createForgotPasswordHandler({
+        const forgotPasswordHandler = loginPageModule.createForgotPasswordHandler({
             emailInput: document.getElementById('email'),
             errorDiv: document.getElementById('error-message'),
             resetPassword
-        }));
+        });
+        document.getElementById('forgot-password-btn').addEventListener('click', (event) => {
+            if (isSubmittingAuthForm) {
+                return;
+            }
+            forgotPasswordHandler(event);
+        });
     </script>
 </body>
 
