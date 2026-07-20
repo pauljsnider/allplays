@@ -544,13 +544,43 @@ describe('Home', () => {
 
     expect(await screen.findByText('1 open')).toBeTruthy();
     expect(screen.getByRole('heading', { name: title })).toBeTruthy();
-    const toDoSection = screen.getByText('To-do list').closest('section');
-    expect(toDoSection).toBeTruthy();
-    expect(within(toDoSection!).getByRole('heading', { name: 'Priority only' })).toBeTruthy();
-    expect(within(toDoSection!).getByText('0')).toBeTruthy();
-    expect(within(toDoSection!).getByText('Priority shown above')).toBeTruthy();
-    expect(within(toDoSection!).getByText('Your only open action is highlighted above.')).toBeTruthy();
-    expect(within(toDoSection!).queryByText('All caught up')).toBeNull();
+    expect(screen.queryByText('To-do list')).toBeNull();
+    expect(screen.queryByText('Also to do')).toBeNull();
+    expect(screen.queryByText('Priority shown above')).toBeNull();
+    expect(screen.queryByText('All caught up')).toBeNull();
+  });
+
+  it('renders remaining actions inside the priority card with an overflow count', async () => {
+    const makeAction = (index: number) => ({
+      id: `rsvp:${index}`,
+      kind: 'rsvp' as const,
+      tone: 'amber' as const,
+      title: `Respond for game ${index}`,
+      detail: 'Bears · Tomorrow',
+      to: `/schedule/team-1/event-${index}`,
+      priority: 30 + index,
+      date: new Date('2100-06-06T18:00:00Z')
+    });
+    const actionHome = {
+      ...baseHome,
+      metrics: { ...baseHome.metrics, rsvpNeeded: 5 },
+      actionItems: [1, 2, 3, 4, 5].map(makeAction)
+    };
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValueOnce({ home: actionHome, schedule: [] });
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValueOnce(actionHome);
+
+    renderHome(signedInAuth);
+
+    expect(await screen.findByRole('heading', { name: 'Respond for game 1' })).toBeTruthy();
+    const priorityCard = screen.getByText('Do first').closest('section');
+    expect(priorityCard).toBeTruthy();
+    expect(within(priorityCard!).getByText('Also to do')).toBeTruthy();
+    expect(within(priorityCard!).getByText('4')).toBeTruthy();
+    expect(within(priorityCard!).getByText('Respond for game 2')).toBeTruthy();
+    expect(within(priorityCard!).getByText('Respond for game 4')).toBeTruthy();
+    expect(within(priorityCard!).queryByText('Respond for game 5')).toBeNull();
+    expect(within(priorityCard!).getByText('+1 more in Schedule and Messages')).toBeTruthy();
+    expect(screen.queryByText('To-do list')).toBeNull();
   });
 
   it('shows network-specific Home retry copy after an initial load failure', async () => {
@@ -738,7 +768,7 @@ describe('Home', () => {
 
     renderHome(signedInAuth);
 
-    expect(await screen.findByText('Falcons')).toBeTruthy();
+    expect(await screen.findByText('2 open assignments')).toBeTruthy();
     expect(socialServiceMocks.loadSocialHome).toHaveBeenCalledWith(signedInAuth.user, largeHome);
     expect(uxTimingMocks.recordFirstMeaningfulRender).toHaveBeenCalledWith('home');
 
@@ -1091,7 +1121,8 @@ describe('Home', () => {
     expect(screen.getByRole('link', { name: 'Open action' }).getAttribute('href')).toBe('/schedule/team-1/upcoming-1');
     expect(screen.getByRole('link', { name: /Availability.*2.*Needs a response/i }).getAttribute('href')).toBe('/schedule?bulkRsvp=1');
     expect(screen.getByRole('link', { name: 'Multi RSVP' }).getAttribute('href')).toBe('/schedule?bulkRsvp=1');
-    expect(screen.getByText('Falcons')).toBeTruthy();
+    expect(screen.getByText('2 open assignments')).toBeTruthy();
+    expect(screen.getByText('+2 more in Schedule and Messages')).toBeTruthy();
     expect(screen.getAllByText('Tournament fee').length).toBeGreaterThan(0);
 
     fireEvent.click(screen.getByRole('button', { name: 'Refresh Home' }));
@@ -1102,6 +1133,6 @@ describe('Home', () => {
     });
 
     expect(screen.getByRole('heading', { name: 'Your day' })).toBeTruthy();
-    expect(screen.getByText('1 unread message')).toBeTruthy();
+    expect(screen.getByText('Practice packet ready')).toBeTruthy();
   });
 });
