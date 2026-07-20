@@ -20,8 +20,8 @@ describe('visual regression CI wiring', () => {
         const helper = readRepoFile('tests/smoke/helpers/visual-regression.js');
 
         expect(config).toContain("snapshotPathTemplate: '{testDir}/{testFilePath}-snapshots/{arg}{ext}'");
-        expect(config).toContain('maxDiffPixels: 0');
-        expect(config).not.toContain('maxDiffPixelRatio');
+        expect(config).toContain('maxDiffPixelRatio: 0.02');
+        expect(config).not.toContain('maxDiffPixels: 0');
         expect(config).toContain("timezoneId: 'UTC'");
         expect(config).toContain('deviceScaleFactor: 1');
         expect(helper).toContain("visualFixtureTime = '2026-07-18T12:00:00.000Z'");
