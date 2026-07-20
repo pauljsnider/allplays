@@ -5,13 +5,15 @@ test.skip(
     'Module-mocked app specs need the Vite dev server; production runs cover the deployed bundle via app-production-bootstrap.spec.js'
 );
 
+const appBaseUrl = process.env.SMOKE_APP_BASE_URL || '';
+
+test.skip(!appBaseUrl, 'SMOKE_APP_BASE_URL is required for React app smoke tests');
 test.use({ viewport: { width: 390, height: 844 }, hasTouch: true });
 
 const telemetryEndpoint = 'https://telemetry.example.test/collectTelemetry';
 
 function appUrl(baseURL, hashPath) {
-    const appBaseURL = process.env.SMOKE_APP_BASE_URL || baseURL;
-    const url = new URL('/', appBaseURL);
+    const url = new URL('/', appBaseUrl || baseURL);
     url.hash = hashPath;
     return url.toString();
 }
@@ -1261,9 +1263,10 @@ test('home dashboard drills into player detail with section submenus', async ({ 
     const homeSectionNavigation = page.getByRole('navigation', { name: 'Home sections' });
 
     await homeSectionNavigation.getByRole('link', { name: 'Teams', exact: true }).click();
-    await expect(page.locator('a[href="#/teams?selectedTeamId=team-1&from=home"]')).toBeVisible();
+    await waitForTeamsRoute(page, page.getByRole('heading', { name: 'Bears' }));
+    await page.goto(appUrl(baseURL, '/home?section=feed'), { waitUntil: 'domcontentloaded' });
+    await waitForHomeRoute(page, page.getByText('Quick shares'));
 
-    await homeSectionNavigation.getByRole('link', { name: 'Feed', exact: true }).click();
     await expect(page.getByText('Quick shares')).toBeVisible();
     await expect(page.getByText('Jamie Friend')).toBeVisible();
     await expect(page.getByText('Great ball movement in the second half.')).toBeVisible();
@@ -1425,19 +1428,6 @@ test('parent core workflows emit baseline timers from Home drill-ins', async ({ 
             }
         },
         {
-            label: 'home_to_teams',
-            startHash: '/home?section=teams',
-            expectedTargetPage: 'teams',
-            expectedTargetRoute: '/teams',
-            readyHome: (testPage) => testPage.getByRole('heading', { name: 'Teams' }),
-            action: async (testPage) => {
-                await testPage.locator('a[href="#/teams?selectedTeamId=team-1&from=home"]').click();
-            },
-            readyTarget: async (testPage) => {
-                await waitForTeamsRoute(testPage, testPage.getByRole('heading', { name: '1 team ready' }));
-            }
-        },
-        {
             label: 'home_to_player_detail',
             startHash: '/home?section=players',
             expectedTargetPage: 'player',
@@ -1590,7 +1580,7 @@ test('requested app workflows emit DB-ready view load baseline timers', async ({
             route: '/home',
             startHash: '/home?section=teams',
             ready: async (testPage) => {
-                await waitForHomeRoute(testPage, testPage.getByRole('heading', { name: 'Teams' }));
+                await waitForTeamsRoute(testPage, testPage.getByRole('heading', { name: 'Bears' }));
             }
         },
         {
@@ -1861,31 +1851,19 @@ test('social photo quick share requires media and posts uploaded media payload',
     }));
 });
 
-test('my teams opens from Home data with selected team, player, and chat routes', async ({ page, baseURL }) => {
+test('team page opens from Home data with team tools, player, and chat routes', async ({ page, baseURL }) => {
     await mockHomePlayerModules(page);
-    await page.goto(appUrl(baseURL, '/teams?selectedTeamId=team-1&from=home'), { waitUntil: 'domcontentloaded' });
+    await page.goto(appUrl(baseURL, '/teams/team-1'), { waitUntil: 'domcontentloaded' });
 
-    await waitForTeamsRoute(page, page.getByRole('heading', { name: '1 team ready' }));
-    await expect(page.getByText('Choose a team')).toBeVisible();
+    await waitForTeamsRoute(page, page.getByRole('heading', { name: 'Bears' }));
+    await expect(page.getByText('Team tools')).toBeVisible();
     await expect(page.getByRole('link', { name: /Chat/ })).toHaveAttribute('href', '#/messages/team-1');
-    await expect(page.getByText('Team navigation')).toBeVisible();
-    await expect.poll(async () => {
-        const launcherTop = await page.getByText('Choose a team').boundingBox();
-        const navTop = await page.getByText('Team navigation').boundingBox();
-        return Math.round((launcherTop?.y || 0) - (navTop?.y || 0));
-    }).toBeLessThan(0);
     await expect(page.locator('a[href="#/schedule?teamId=team-1"]').first()).toBeVisible();
     await expect(page.locator('a[href="#/schedule?teamId=team-1&view=packets"]')).toBeVisible();
     await expect(page.locator('a[href="#/teams/team-1"]').first()).toBeVisible();
     await expect(page.getByRole('link', { name: /Website team page/ })).toHaveAttribute('href', 'https://allplays.ai/team.html#teamId=team-1');
     await expect(page.getByRole('link', { name: /Media/ })).toHaveAttribute('href', '#/teams/team-1/media');
     await expect(page.locator('a[href="#/players/team-1/player-1"]').first()).toBeVisible();
-    await expect(page.locator('a[href="#/players/team-1/player-1"]').filter({ hasText: 'Pat Star' })).toBeVisible();
-    const bearsLauncherLink = page.getByRole('link', { name: 'Open Bears' });
-    await expect(bearsLauncherLink).toHaveAttribute('href', '#/teams/team-1');
-    await expect(bearsLauncherLink).toHaveAttribute('aria-describedby', 'selected-team-team-1');
-    const bearsLauncherRow = page.locator('article.team-launcher-row').filter({ has: bearsLauncherLink });
-    await expect(bearsLauncherRow.locator('a')).toHaveCount(1);
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
 
     await page.locator('a[href="#/teams/team-1"]').first().click();

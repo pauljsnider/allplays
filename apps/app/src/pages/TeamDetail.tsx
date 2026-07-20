@@ -6,7 +6,10 @@ import {
   BarChart3,
   CalendarDays,
   CheckCircle2,
+  ChevronDown,
   ChevronRight,
+  ClipboardCheck,
+  ClipboardList,
   Code2,
   Copy,
   DollarSign,
@@ -19,7 +22,9 @@ import {
   MessageCircle,
   Radio,
   Save,
+  Settings,
   Shield,
+  SlidersHorizontal,
   Ticket,
   Trophy,
   UserRound,
@@ -40,6 +45,7 @@ import type { ParentScheduleEvent, StaffRsvpReminderPreview } from '../lib/sched
 import { addRosterPlayerForApp, archiveTeamTrackingItemForApp, buildPublicTeamGamesIcsUrl, canExposePublicFanFeed, createRosterParentInviteForApp, createStatTrackerConfigForApp, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantTeamMediaManagerAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadParentTeamDetailBootstrap, loadRosterFieldDefinitionsForApp, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamRosterParentInvites, loadTeamStaffPermissions, loadTeamTrackingAdmin, reactivateRosterPlayerForApp, revokeScorekeeperAccessForApp, revokeTeamAdminAccessForApp, revokeTeamMediaManagerAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp, saveTeamTrackingItemForApp, setPlayerTrackingStatusForApp, updateStatTrackerConfigForApp, type CreateRosterParentInviteForAppResult, type InviteTeamAdminForAppResult, type TeamDetailEvent, type TeamDetailModel, type TeamDetailPlayer, type TeamRosterFieldDefinition, type TeamRosterParentInviteSummary, type TeamScorekeeperGrantTarget, type TeamTrackingAdminItem } from '../lib/teamDetailService';
 import { buildStatTrackerConfigPayload, createBlankStatTrackerConfigColumnDraft, createEmptyStatTrackerConfigDraft, createStatTrackerConfigDraft, createStatTrackerConfigDraftFromPreset, getStatTrackerConfigPresetCatalog, validateStatTrackerConfigDraft, type StatTrackerConfigDraft } from '../lib/statTrackerConfigEditor';
 import { useViewLoadTimer } from '../lib/viewLoadTiming';
+import { buildTeamDetailNavigation, type TeamNavigationItem, type TeamNavigationSection } from '../lib/teamNavigation';
 import type { AuthState } from '../lib/types';
 import { InviteResultCard } from './parent-tools/shared';
 
@@ -662,6 +668,8 @@ function OverviewTab({ model }: { model: TeamDetailModel }) {
         <InfoCard icon={BarChart3} title="Standings" value={getStandingValue(model)} detail={getStandingDetail(model)} href={model.team.leagueUrl || undefined} />
       </section>
 
+      <TeamToolsSection model={model} />
+
       <StandingsSection model={model} />
 
       <section className="app-card p-4">
@@ -688,6 +696,126 @@ function OverviewTab({ model }: { model: TeamDetailModel }) {
     </div>
   );
 }
+
+function TeamToolsSection({ model }: { model: TeamDetailModel }) {
+  const [showAllTools, setShowAllTools] = useState(false);
+  const sections = useMemo(() => buildTeamDetailNavigation(model), [model]);
+
+  return (
+    <section className="app-card p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-sm font-black text-gray-950">Team tools</div>
+          <div className="mt-1 text-xs font-semibold leading-5 text-gray-500">Shortcuts for this team. Core app workflows stay first; current website tools remain available where needed.</div>
+        </div>
+      </div>
+
+      <TeamNavigationPanel sections={sections} showAllTools={showAllTools} onToggleTools={() => setShowAllTools((value) => !value)} />
+    </section>
+  );
+}
+
+function TeamNavigationPanel({ sections, showAllTools, onToggleTools }: {
+  sections: TeamNavigationSection[];
+  showAllTools: boolean;
+  onToggleTools: () => void;
+}) {
+  return (
+    <div className="mt-3 space-y-3">
+      {sections.map((section) => {
+        const isManagement = section.id === 'management';
+        const visibleItems = isManagement && !showAllTools ? section.items.slice(0, 4) : section.items;
+
+        return (
+          <div key={section.id}>
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">{section.title}</div>
+                <div className="mt-0.5 truncate text-xs font-semibold text-gray-500">{section.detail}</div>
+              </div>
+              {isManagement && section.items.length > 4 ? (
+                <button type="button" className="ghost-button !h-8 !min-h-8 !px-2 !text-xs" onClick={onToggleTools} aria-expanded={showAllTools}>
+                  {showAllTools ? 'Show less' : `${section.items.length - 4} more`}
+                  <ChevronDown className={`h-4 w-4 transition ${showAllTools ? 'rotate-180' : ''}`} aria-hidden="true" />
+                </button>
+              ) : null}
+            </div>
+            <div className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+              {visibleItems.map((item) => <TeamNavigationTile key={item.id} item={item} />)}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function TeamNavigationTile({ item }: { item: TeamNavigationItem }) {
+  const Icon = teamNavigationIcons[item.id] || ClipboardList;
+  const content = (
+    <>
+      <span className={`flex h-9 w-9 flex-none items-center justify-center rounded-xl ${item.kind === 'native' ? 'bg-primary-50 text-primary-700' : 'bg-gray-100 text-gray-700'}`}>
+        <Icon className="h-4 w-4" aria-hidden="true" />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="truncate text-sm font-black text-gray-950">{item.label}</span>
+          {item.badge ? <span className="inline-flex min-h-5 flex-none items-center rounded-full bg-primary-600 px-2 text-[10px] font-black text-white">{item.badge}</span> : null}
+        </span>
+        <span className="mt-0.5 line-clamp-1 text-xs font-semibold leading-5 text-gray-500">{item.detail}</span>
+        <span className="mt-1 hidden items-center gap-1 text-[10px] font-extrabold uppercase tracking-[0.04em] text-gray-400 sm:inline-flex">
+          {item.kind === 'native' ? 'App' : 'Website'}
+          {item.kind === 'website' ? <ExternalLink className="h-3 w-3" aria-hidden="true" /> : null}
+        </span>
+      </span>
+      <ChevronRight className="mt-1 h-4 w-4 flex-none text-gray-300" aria-hidden="true" />
+    </>
+  );
+  const className = 'group flex min-h-[74px] items-start gap-3 rounded-xl border border-gray-200 bg-white p-2.5 text-left transition hover:border-primary-200 hover:bg-primary-50/30';
+
+  if (item.kind === 'native') {
+    return <Link to={item.href} className={className}>{content}</Link>;
+  }
+
+  return (
+    <a
+      href={item.href}
+      className={className}
+      target="_blank"
+      rel="noreferrer"
+      onClick={(event) => {
+        event.preventDefault();
+        void openPublicUrl(item.href);
+      }}
+    >
+      {content}
+    </a>
+  );
+}
+
+const teamNavigationIcons: Record<string, LucideIcon> = {
+  schedule: CalendarDays,
+  messages: MessageCircle,
+  'practice-packets': ClipboardCheck,
+  'team-page': Ticket,
+  'website-team-page': ExternalLink,
+  'player-profile': UserRound,
+  players: Users,
+  media: ImageIcon,
+  'parent-fees': DollarSign,
+  registrations: Ticket,
+  awards: Award,
+  'team-settings': Settings,
+  'manage-roster': Users,
+  'manage-schedule': CalendarDays,
+  fees: DollarSign,
+  'practice-command': Dumbbell,
+  'game-plan': ClipboardList,
+  'game-day': Radio,
+  tracking: ClipboardCheck,
+  'stats-config': SlidersHorizontal,
+  certificates: Award
+};
 
 function StandingsSection({ model }: { model: TeamDetailModel }) {
   const [expanded, setExpanded] = useState(false);

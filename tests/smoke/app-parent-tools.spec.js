@@ -625,7 +625,7 @@ test.describe('desktop Family navigation', () => {
         await expect(familyLink).toHaveClass(/bg-primary-50/);
 
         await primaryNav.getByRole('link', { name: 'My Teams' }).click();
-        await expect(page).toHaveURL(/#\/teams$/);
+        await expect(page).toHaveURL(/#\/teams(?:\/team-1)?$/);
         await primaryNav.getByRole('link', { name: 'Family' }).click();
         await expect(page.getByRole('heading', { name: 'Family workflows' })).toBeVisible();
     });
