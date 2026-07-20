@@ -56,9 +56,8 @@ const navItems: NavItem[] = [
 
 const familyNavItem: NavItem = { label: 'Family', path: '/parent-tools', icon: UsersRound };
 const mobileSignedInNavItems: NavItem[] = [
-  ...navItems.slice(0, 4),
+  ...navItems,
   familyNavItem,
-  navItems[4]
 ];
 const desktopNavItems: NavItem[] = [
   ...navItems.slice(0, -1),

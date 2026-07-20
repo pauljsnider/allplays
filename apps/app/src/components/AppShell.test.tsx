@@ -270,11 +270,11 @@ describe('AppShell', () => {
     );
 
     const primaryNav = screen.getByRole('navigation', { name: 'Primary navigation' });
-    expect(within(primaryNav).getAllByRole('link')).toHaveLength(6);
+    expect(within(primaryNav).getAllByRole('link')).toHaveLength(7);
     const familyLink = within(primaryNav).getByRole('link', { name: 'Family' });
     expect(familyLink.getAttribute('href')).toBe('/parent-tools');
     expect(familyLink.className).toContain('bg-primary-50');
-    expect(within(primaryNav).queryByRole('link', { name: 'Discover' })).toBeNull();
+    expect(within(primaryNav).getByRole('link', { name: 'Discover' }).getAttribute('href')).toBe('/discover');
   });
 
   it('routes the mobile My Teams nav directly to the team page when the user has one team', () => {
