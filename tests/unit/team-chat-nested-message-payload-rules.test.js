@@ -35,8 +35,8 @@ describe('nested team chat message payload contracts', () => {
         expect(rules).toContain("let pathSegments = value.split('/');");
         expect(rules).toContain('pathSegments[3] == conversationId');
         expect(rules).toContain("conversationId == 'team'");
-        expect(rules).toContain("pathSegments[2] == request.auth.uid");
-        expect(rules).toContain('pathSegments[4] == teamId');
+        expect(rules).toContain('pathSegments[2] == teamId');
+        expect(rules).toContain("pathSegments[4] == request.auth.uid");
         expect(rules).toContain("value.matches('[A-Za-z0-9_%:-]+')");
         const scopedMediaPathValidator = rules.slice(
             rules.indexOf('function isScopedNestedChatMediaPath'),
@@ -365,7 +365,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
     }
 
     function cachedLegacyFallbackAttachment(overrides = {}) {
-        const path = overrides.path || 'stat-sheets/team-chat/parent-1/team/team-1/photo.jpg';
+        const path = overrides.path || 'stat-sheets/team-chat/team-1/team/parent-1/photo.jpg';
         return legacyAttachment({
             path,
             url: firebaseMediaUrl(path, 'game-flow-c6311.firebasestorage.app'),
@@ -832,8 +832,8 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
                 imageSize: validAttachment.size
             }),
             legacyPayload({ attachments: [legacyAttachment({ path: 'team-photos/unscoped-photo.jpg' })] }),
-            legacyPayload({ attachments: [cachedLegacyFallbackAttachment({ path: 'stat-sheets/team-chat/user-2/team/team-1/photo.jpg' })] }),
-            legacyPayload({ attachments: [cachedLegacyFallbackAttachment({ path: 'stat-sheets/team-chat/parent-1/team/team-2/photo.jpg' })] }),
+            legacyPayload({ attachments: [cachedLegacyFallbackAttachment({ path: 'stat-sheets/team-chat/team-1/team/user-2/photo.jpg' })] }),
+            legacyPayload({ attachments: [cachedLegacyFallbackAttachment({ path: 'stat-sheets/team-chat/team-2/team/parent-1/photo.jpg' })] }),
             legacyPayload({ attachments: [legacyAttachment({ size: 5 * 1024 * 1024 + 1 })] }),
             legacyPayload({ unexpectedField: true }),
             legacyPayload({ senderId: 'user-2' }),

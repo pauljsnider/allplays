@@ -212,7 +212,7 @@ service firebase.storage {
       allow update: if false;
     }
 
-    match /stat-sheets/team-chat/{userId}/team/{teamId}/{fileName} {
+    match /stat-sheets/team-chat/{teamId}/team/{userId}/{fileName} {
       allow get: if canAccessChatAttachment(teamId, 'team') &&
         (isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId);
       allow list: if false;
