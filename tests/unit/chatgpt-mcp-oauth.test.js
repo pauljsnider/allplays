@@ -51,10 +51,34 @@ describe('chatgpt-mcp oauth: authorize validation', () => {
             code_challenge_method: 'S256'
         };
         expect(broker.validateAuthorizeRequest(valid).clientId).toBe(clientId);
-        expect(() => broker.validateAuthorizeRequest({ ...valid, client_id: 'nope' })).toThrow(/client_id/);
         expect(() => broker.validateAuthorizeRequest({ ...valid, redirect_uri: 'https://evil.example/cb' })).toThrow(/redirect_uri/);
         expect(() => broker.validateAuthorizeRequest({ ...valid, code_challenge_method: 'plain' })).toThrow(/S256/);
         expect(() => broker.validateAuthorizeRequest({ ...valid, code_challenge: '' })).toThrow(/code_challenge/);
+    });
+});
+
+describe('chatgpt-mcp oauth: cached client survives store restart', () => {
+    it('re-admits an unknown client_id with a valid redirect_uri (open registration equivalence)', () => {
+        const broker = createOAuthBroker(); // fresh store, no registrations
+        const result = broker.validateAuthorizeRequest({
+            client_id: 'cached-by-chatgpt',
+            redirect_uri: REDIRECT,
+            response_type: 'code',
+            code_challenge: s256Challenge(VERIFIER),
+            code_challenge_method: 'S256'
+        });
+        expect(result.clientId).toBe('cached-by-chatgpt');
+    });
+
+    it('still rejects unknown clients with disallowed redirect uris', () => {
+        const broker = createOAuthBroker();
+        expect(() => broker.validateAuthorizeRequest({
+            client_id: 'cached-by-chatgpt',
+            redirect_uri: 'http://evil.example/cb',
+            response_type: 'code',
+            code_challenge: s256Challenge(VERIFIER),
+            code_challenge_method: 'S256'
+        })).toThrow(/client_id/);
     });
 });
 

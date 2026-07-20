@@ -63,8 +63,19 @@ export function createOAuthBroker({ now = () => Date.now(), randomId = (bytes = 
     }
 
     function validateAuthorizeRequest({ client_id: clientId, redirect_uri: redirectUri, response_type: responseType, code_challenge: codeChallenge, code_challenge_method: method }) {
-        const client = clients.get(clientId);
-        if (!client) throw new OAuthError('invalid_client', 'Unknown client_id.');
+        let client = clients.get(clientId);
+        if (!client) {
+            // Registration is open (RFC 7591 dynamic registration, no secret),
+            // so re-admitting an unknown client_id with a valid redirect_uri
+            // grants nothing extra — codes stay bound to redirect_uri + PKCE.
+            // This keeps cached ChatGPT registrations working across restarts
+            // of the in-memory store.
+            if (typeof clientId !== 'string' || !clientId || !isAllowedRedirectUri(redirectUri)) {
+                throw new OAuthError('invalid_client', 'Unknown client_id.');
+            }
+            client = { redirectUris: [redirectUri], clientName: '' };
+            clients.set(clientId, client);
+        }
         if (!client.redirectUris.includes(redirectUri)) {
             throw new OAuthError('invalid_request', 'redirect_uri is not registered for this client.');
         }
