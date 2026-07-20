@@ -2253,11 +2253,24 @@ service cloud.firestore {
              pathSegments[5].size() > 0;
     }
 
+    function isCachedLegacyNestedChatFallbackMediaPath(teamId, conversationId, value) {
+      let pathSegments = value.split('/');
+      return conversationId == 'team' &&
+             pathSegments.size() == 6 &&
+             pathSegments[0] == 'stat-sheets' &&
+             pathSegments[1] == 'team-chat' &&
+             pathSegments[2] == request.auth.uid &&
+             pathSegments[3] == 'team' &&
+             pathSegments[4] == teamId &&
+             pathSegments[5].size() > 0;
+    }
+
     function isScopedNestedChatMediaPath(teamId, conversationId, value) {
       return value is string &&
              value.size() > 0 &&
              value.size() <= 1024 &&
              (isScopedNestedChatFallbackMediaPath(teamId, conversationId, value) ||
+              isCachedLegacyNestedChatFallbackMediaPath(teamId, conversationId, value) ||
               (isSafeNestedChatRegexSegment(teamId) &&
                isSafeNestedChatRegexSegment(request.auth.uid) &&
                value.matches('team-(photos|videos)/[0-9]+_chat_' + teamId + '_[^/]+_' + request.auth.uid + '_[^/]+')));
