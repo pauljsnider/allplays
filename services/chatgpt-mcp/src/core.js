@@ -173,6 +173,9 @@ function parseScheduleRange({ startDate, endDate } = {}, now = new Date()) {
     if (Number.isNaN(start.getTime())) throw new DomainError('invalid_argument', 'startDate is not a valid date.');
     const end = endDate ? new Date(endDate) : new Date(start.getTime() + DEFAULT_SCHEDULE_DAYS * MS_PER_DAY);
     if (Number.isNaN(end.getTime())) throw new DomainError('invalid_argument', 'endDate is not a valid date.');
+    if (/^\d{4}-\d{2}-\d{2}$/.test(endDate || '')) {
+        end.setUTCHours(23, 59, 59, 999);
+    }
     if (end < start) throw new DomainError('invalid_argument', 'endDate must be after startDate.');
     return { start, end };
 }

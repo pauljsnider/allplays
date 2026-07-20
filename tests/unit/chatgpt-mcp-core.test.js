@@ -186,6 +186,7 @@ describe('chatgpt-mcp core: getFamilySchedule', () => {
                     const all = [
                         { id: 'game-1', data: { type: 'game', date: new Date('2026-07-25T17:00:00Z'), opponent: 'Hawks', location: 'Field 2', privateNotes: 'secret', rsvpSummary: { going: 5, notResponded: 3, coachOnly: 'x' } } },
                         { id: 'practice-1', data: { type: 'practice', date: new Date('2026-07-27T22:30:00Z') } },
+                        { id: 'game-end-date', data: { type: 'game', date: new Date('2026-07-31T17:00:00Z') } },
                         { id: 'game-out-of-range', data: { type: 'game', date: new Date('2026-09-01T17:00:00Z') } }
                     ];
                     return all.filter(({ data }) => data.date >= start && data.date <= end);
@@ -199,7 +200,7 @@ describe('chatgpt-mcp core: getFamilySchedule', () => {
         const context = await resolveUserContext(db, parentIdentity);
         const result = await getFamilySchedule(db, context, { startDate: '2026-07-24', endDate: '2026-07-31' });
 
-        expect(result.events.map((e) => e.gameId)).toEqual(['game-1', 'practice-1']);
+        expect(result.events.map((e) => e.gameId)).toEqual(['game-1', 'practice-1', 'game-end-date']);
         const game = result.events[0];
         expect(game.opponent).toBe('Hawks');
         expect(game.rsvpSummary).toEqual({ going: 5, notResponded: 3 });
