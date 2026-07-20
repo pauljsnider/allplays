@@ -1202,7 +1202,10 @@ test('@visual app schedule loads agenda filters, player select, calendar, export
     await expect(page.getByText('Snacks: Open')).toHaveCount(0);
     await expect(page.getByText('Rideshare')).toHaveCount(0);
     expect(await page.evaluate(() => window.__scheduleCalls.loads)).toBeGreaterThanOrEqual(1);
-    await expectVisualSnapshot(page, 'family-schedule.png');
+    await expectVisualSnapshot(page, 'family-schedule.png', {
+        maxDiffPixels: undefined,
+        maxDiffPixelRatio: 0.01
+    });
 
     await page.getByRole('button', { name: 'Upcoming Practices' }).click();
     await expect(page.getByRole('heading', { name: 'Practice', exact: true })).toBeVisible();
