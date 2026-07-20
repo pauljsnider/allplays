@@ -809,14 +809,34 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
             await setDoc(messageRef(firestore, staffConversationId, 'staff-message'), {
                 text: 'Staff update'
             });
+            await setDoc(doc(firestore, 'teams/team-1/chatConversations/selected-group'), {
+                type: 'group',
+                name: 'Selected parents',
+                participantIds: ['parent-1', 'user:user-2'],
+                participantRoles: [],
+                mutedBy: [],
+                createdAt: Timestamp.fromMillis(1700000000000),
+                updatedAt: Timestamp.now()
+            });
+            await setDoc(messageRef(firestore, 'selected-group', 'private-message'), {
+                text: 'Private selected group'
+            });
         });
 
         const coachDb = authedFirestore('coach-1', 'coach@example.com');
         const parentDb = authedFirestore('parent-1', 'parent@example.com');
+        const attackerDb = authedFirestore('attacker-1', 'attacker@example.com');
 
         await assertSucceeds(getDoc(doc(coachDb, `teams/team-1/chatConversations/${staffConversationId}`)));
         await assertSucceeds(getDocs(collection(coachDb, `teams/team-1/chatConversations/${staffConversationId}/chatMessages`)));
         await assertFails(getDocs(collection(parentDb, `teams/team-1/chatConversations/${staffConversationId}/chatMessages`)));
+        await assertFails(updateDoc(doc(attackerDb, 'users/attacker-1'), {
+            coachOf: ['team-1'],
+            roles: ['coach']
+        }));
+        await assertFails(getDoc(doc(coachDb, 'teams/team-1/chatConversations/selected-group')));
+        await assertFails(getDocs(collection(coachDb, 'teams/team-1/chatConversations/selected-group/chatMessages')));
+        await assertSucceeds(getDoc(doc(parentDb, 'teams/team-1/chatConversations/selected-group')));
     });
 
     it('allows legacy full-team text and exact scoped Firebase Storage uploads', async () => {

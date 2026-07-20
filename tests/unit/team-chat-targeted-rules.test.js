@@ -206,7 +206,7 @@ describe('targeted team chat Firestore rules', () => {
     it('restricts staff/group messages to sender and team staff/admin roles', () => {
         expect(rules).toContain('function isStaffChatMessage(data)');
         expect(rules).toContain("data.get('targetRole', 'staff') == 'staff'");
-        expect(rules).toContain('isTeamChatStaff(teamId) ||');
+        expect(rules).toContain('(isStaffChatMessage(data) && isTeamChatStaff(teamId))');
         expect(rules).toContain('data.senderId == request.auth.uid');
     });
 
@@ -257,6 +257,13 @@ describe('targeted team chat Firestore rules', () => {
         expect(rules).toContain('isCanonicalStaffChatConversationPayload(conversationId, conversationData)');
     });
 
+    it('keeps profile role grants server-managed before chat rules trust coach grants', () => {
+        expect(rules).toContain('function serverManagedUserRoleGrantFields()');
+        expect(rules).toContain("return ['coachOf', 'roles'];");
+        expect(rules).toContain('!data.keys().hasAny(serverManagedUserRoleGrantFields())');
+        expect(rules).toContain('!request.resource.data.diff(resource.data).affectedKeys().hasAny(serverManagedUserRoleGrantFields())');
+    });
+
     it('allows only team staff to repair legacy canonical staff metadata without exposing nested messages', () => {
         expect(rules).toContain('function canReadCanonicalStaffChatConversationForRepair(teamId, conversationId, data)');
         expect(rules).toContain('function isCanonicalStaffChatConversationRepair(teamId, conversationId)');
@@ -295,11 +302,13 @@ describe('targeted team chat Firestore rules', () => {
         const listHelper = rules.slice(listHelperStart, listHelperEnd);
 
         expect(listHelper).toContain('return canUseTeamChat(teamId) &&');
-        expect(listHelper).toContain('isTeamChatStaff(teamId) ||');
+        expect(listHelper).toContain('isCanonicalStaffChatConversation(conversationId) &&');
+        expect(listHelper).toContain('isTeamChatStaff(teamId)');
+        expect(listHelper).toContain('isTeamOwnerOrAdmin(teamId) ||');
         expect(listHelper).toContain('request.auth.uid in participantIds');
         expect(listHelper).toContain("request.auth.uid in conversationData.get('directUserIds', [])");
         expect(listHelper).toContain('!isParticipantOnlyAcceptedFriendConversation(conversationData) ||');
-        expect(listHelper).not.toContain('!isStaffRoleChatConversation(conversationData)');
+        expect(listHelper).toContain('!isStaffRoleChatConversation(conversationData)');
     });
 
     it('locks both legacy and targeted chat reactions to a single self-token toggle', () => {

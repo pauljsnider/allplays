@@ -1653,11 +1653,16 @@ service cloud.firestore {
       return ['teamMediaUploadTeamIds', 'mediaUploadTeamIds'];
     }
 
+    function serverManagedUserRoleGrantFields() {
+      return ['coachOf', 'roles'];
+    }
+
     function isOwnerUserCreatePayloadValid(data) {
       return data.get('isAdmin', false) != true &&
              data.get('isPlatformAdmin', false) != true &&
              !data.keys().hasAny(userMembershipFields()) &&
              !data.keys().hasAny(teamMediaUploadGrantFields()) &&
+             !data.keys().hasAny(serverManagedUserRoleGrantFields()) &&
              isOwnerUserEmailAuthBound(data);
     }
 
@@ -1665,6 +1670,7 @@ service cloud.firestore {
       return !request.resource.data.diff(resource.data).affectedKeys().hasAny(['isAdmin', 'isPlatformAdmin']) &&
              !request.resource.data.diff(resource.data).affectedKeys().hasAny(userMembershipFields()) &&
              !request.resource.data.diff(resource.data).affectedKeys().hasAny(teamMediaUploadGrantFields()) &&
+             !request.resource.data.diff(resource.data).affectedKeys().hasAny(serverManagedUserRoleGrantFields()) &&
              (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['email']) ||
               isOwnerUserEmailAuthBound(request.resource.data));
     }
@@ -2016,6 +2022,7 @@ service cloud.firestore {
       return canUseTeamChat(teamId) &&
              (
                isFullTeamChatMessage(data) ||
+               (isStaffChatMessage(data) && isTeamChatStaff(teamId)) ||
                isTeamOwnerOrAdmin(teamId) ||
                data.senderId == request.auth.uid ||
                (isIndividualChatMessage(teamId, data) && isCurrentChatRecipient(data))
@@ -2042,12 +2049,17 @@ service cloud.firestore {
              (!isParticipantOnlyAcceptedFriendConversation(conversationData) ||
               request.auth.uid in conversationData.get('directUserIds', [])) &&
              (
-               isTeamChatStaff(teamId) ||
+               (
+                 isCanonicalStaffChatConversation(conversationId) &&
+                 isTeamChatStaff(teamId)
+               ) ||
                (
                  !isCanonicalStaffChatConversation(conversationId) &&
+                 !isStaffRoleChatConversation(conversationData) &&
                  (
                    conversationId == 'team' ||
                    conversationData.get('type', '') == 'team' ||
+                   isTeamOwnerOrAdmin(teamId) ||
                    request.auth.uid in participantIds ||
                    ('user:' + request.auth.uid) in participantIds ||
                    request.auth.uid in conversationData.get('directUserIds', []) ||
@@ -2100,7 +2112,7 @@ service cloud.firestore {
                  (
                    conversationId == 'team' ||
                    conversationData.get('type', '') == 'team' ||
-                   isTeamChatStaff(teamId) ||
+                   isTeamOwnerOrAdmin(teamId) ||
                    request.auth.uid in participantIds ||
                    ('user:' + request.auth.uid) in participantIds ||
                    request.auth.uid in conversationData.get('directUserIds', []) ||
