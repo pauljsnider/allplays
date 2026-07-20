@@ -40,8 +40,10 @@ describe('Messages decomposition initiative source contract', () => {
         expect(chatWindowSource).not.toMatch(/const\s+\[conversations\b/);
         expect(chatWindowSource).not.toMatch(/const\s+\[selectedConversationId\b/);
 
-        expect(chatTeamHookSource).toContain('loadChatTeamContext(teamId, user)');
-        expect(chatTeamHookSource).toContain('loadChatConversations(teamId, user, context.team, context.canModerate, {');
+        expect(chatTeamHookSource).toContain('const userRef = useRef(user);');
+        expect(chatTeamHookSource).toContain('const activeUser = userRef.current;');
+        expect(chatTeamHookSource).toContain('loadChatTeamContext(teamId, activeUser)');
+        expect(chatTeamHookSource).toContain('loadChatConversations(teamId, activeUser, context.team, context.canModerate, {');
         expect(chatTeamHookSource).toContain('activeConversationId: nextConversationId');
         expect(chatTeamHookSource).toContain('let cancelled = false;');
         expect(chatTeamHookSource).toContain('return DEFAULT_TEAM_CONVERSATION_ID;');
