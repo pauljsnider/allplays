@@ -78,6 +78,44 @@ follow-up.
 For manual curl testing you can still bypass OAuth: a Firebase refresh token
 or ID token works directly as the MCP bearer.
 
+## Setup walkthrough (how this was stood up)
+
+The first working end-to-end connection was built in this order — repeatable
+from a fresh clone:
+
+1. **Run the service**: `cd services/chatgpt-mcp && npm install && npm start`.
+   No credentials or env vars needed; it listens on `:8787`.
+2. **Expose it over HTTPS**: `ngrok http 8787` (any HTTPS tunnel or a dev
+   Cloud Run revision works). Note the public hostname.
+3. **Create the ChatGPT app**: ChatGPT → Settings → Apps → Advanced settings →
+   enable Developer mode → New App:
+   - Name: All Plays
+   - Connection: Server URL → `https://<public-host>/mcp`
+   - Authentication: **OAuth**
+   - Accept the custom-MCP risk checkbox → Create.
+4. **Sign in**: when you first use the app, ChatGPT runs OAuth discovery,
+   registers itself, and opens the AllPlays sign-in page. Sign in with an
+   AllPlays account (use a test account for development) and approve.
+5. **Test prompts**: "What does my family have this weekend?", "What still
+   needs my RSVP?", "Summarize our last game."
+
+### Gotchas learned along the way
+
+- **API key referer restriction**: the public Firebase web API key only
+  accepts requests with an AllPlays referer. Server-side calls to
+  `identitytoolkit` / `securetoken` must send `Referer: https://allplays.ai/`
+  (the code does; override with `ALLPLAYS_REFERER`).
+- **ChatGPT's connector UI has no static-token option** — it's OAuth, No Auth,
+  or Mixed. That's why the OAuth broker exists. `DEV_FALLBACK_BEARER` (map
+  unauthenticated requests to a test user's refresh token) exists for quick
+  No-Auth experiments only: it exposes that account's data to anyone who can
+  reach the endpoint, and the server refuses to start with it in production.
+- **Server restart logs the connector out** (in-memory OAuth storage):
+  re-running the sign-in flow reconnects. Firestore-backed storage is the
+  planned fix before a multi-instance deploy.
+- **Free ngrok hostnames** are stable per account but the tunnel must stay
+  running; the connector URL must be updated if the hostname changes.
+
 ## Deploy (dev Cloud Run)
 
 ```bash
@@ -101,4 +139,8 @@ production path replaces raw refresh tokens with an OAuth broker
 - A forged JWT yields no data: every Firestore call presents that same token
   and is rejected by the backend.
 
-Unit tests: `npx vitest run tests/unit/chatgpt-mcp-core.test.js` from the repo root.
+Unit tests (from the repo root):
+
+```bash
+npx vitest run tests/unit/chatgpt-mcp-core.test.js tests/unit/chatgpt-mcp-oauth.test.js
+```
