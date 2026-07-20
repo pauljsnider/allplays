@@ -56,9 +56,8 @@ const navItems: NavItem[] = [
 
 const familyNavItem: NavItem = { label: 'Family', path: '/parent-tools', icon: UsersRound };
 const mobileSignedInNavItems: NavItem[] = [
-  ...navItems.slice(0, 4),
+  ...navItems,
   familyNavItem,
-  navItems[4]
 ];
 const desktopNavItems: NavItem[] = [
   ...navItems.slice(0, -1),
@@ -558,10 +557,10 @@ export function AppShell({ auth, children }: AppShellProps) {
           }>{children}</main>
 
           <nav
-            className={`safe-bottom fixed inset-x-0 bottom-0 z-40 border-t border-gray-200 bg-white/95 px-2 pt-2 backdrop-blur ${isMobileChatDetail ? 'app-bottom-nav-chat-detail' : ''}`}
+            className={`safe-bottom fixed inset-x-0 bottom-0 z-40 border-t border-gray-200 bg-white/95 pt-2 backdrop-blur ${isMobileChatDetail ? 'app-bottom-nav-chat-detail' : ''}`}
             aria-label="Primary navigation"
           >
-            <div className="mx-auto grid max-w-5xl gap-1" style={{ gridTemplateColumns: `repeat(${activeNavItems.length}, minmax(0, 1fr))` }}>
+            <div className="mx-auto grid max-w-5xl gap-0.5 overflow-x-auto" style={{ gridTemplateColumns: `repeat(${activeNavItems.length}, minmax(44px, 1fr))` }}>
               {activeNavItems.map((item) => {
                 const Icon = item.icon;
                 const isActive = location.pathname === item.path || (item.path !== '/home' && location.pathname.startsWith(item.path + '/'));
