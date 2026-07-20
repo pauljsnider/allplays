@@ -13,7 +13,7 @@ function extractRuleBlock(startMarker) {
 }
 
 const chatFallbackRules = extractRuleBlock('match /stat-sheets/team-chat/{teamId}/{conversationId}/{userId}/{fileName}');
-const cachedLegacyChatFallbackRules = extractRuleBlock('match /stat-sheets/team-chat/{userId}/team/{teamId}/{fileName}');
+const cachedLegacyChatFallbackRules = extractRuleBlock('match /stat-sheets/team-chat/{teamId}/team/{userId}/{fileName}');
 const legacyChatFallbackRules = extractRuleBlock('match /stat-sheets/team-chat/{teamId}/{userId}/{fileName}');
 const statSheetFallbackRules = extractRuleBlock('match /stat-sheets/team-games/{teamId}/{userId}/{fileName}');
 const drillFallbackRules = extractRuleBlock('match /stat-sheets/drills/{teamId}/{drillId}/{userId}/{fileName}');
