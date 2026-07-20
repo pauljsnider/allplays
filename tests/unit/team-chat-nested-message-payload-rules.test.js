@@ -784,6 +784,41 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
         await assertFails(getDoc(adminConversationRef));
     });
 
+    it('lets coach-granted staff read canonical staff chat when adminEmails casing is stale', async () => {
+        await testEnv.withSecurityRulesDisabled(async (context) => {
+            const firestore = context.firestore();
+            await setDoc(doc(firestore, 'teams/team-1'), {
+                ownerId: 'owner-1',
+                adminEmails: [' Coach@Example.com ']
+            }, { merge: true });
+            await setDoc(doc(firestore, 'users/coach-1'), {
+                email: 'coach@example.com',
+                coachOf: ['team-1'],
+                roles: ['coach'],
+                isAdmin: false
+            }, { merge: true });
+            await setDoc(doc(firestore, `teams/team-1/chatConversations/${staffConversationId}`), {
+                type: 'group',
+                name: 'Staff only',
+                participantIds: [],
+                participantRoles: ['staff'],
+                mutedBy: [],
+                createdAt: Timestamp.fromMillis(1700000000000),
+                updatedAt: Timestamp.now()
+            });
+            await setDoc(messageRef(firestore, staffConversationId, 'staff-message'), {
+                text: 'Staff update'
+            });
+        });
+
+        const coachDb = authedFirestore('coach-1', 'coach@example.com');
+        const parentDb = authedFirestore('parent-1', 'parent@example.com');
+
+        await assertSucceeds(getDoc(doc(coachDb, `teams/team-1/chatConversations/${staffConversationId}`)));
+        await assertSucceeds(getDocs(collection(coachDb, `teams/team-1/chatConversations/${staffConversationId}/chatMessages`)));
+        await assertFails(getDocs(collection(parentDb, `teams/team-1/chatConversations/${staffConversationId}/chatMessages`)));
+    });
+
     it('allows legacy full-team text and exact scoped Firebase Storage uploads', async () => {
         const parentDb = authedFirestore('parent-1', 'parent@example.com');
         const attachment = legacyAttachment();
