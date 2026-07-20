@@ -1,0 +1,176 @@
+<!doctype html>
+<!--
+    Family Schedule Card — rendered by ChatGPT inline in the conversation.
+    Data arrives via window.openai.toolOutput (the list_schedule tool's
+    structuredContent); no network access is available or needed. All dynamic
+    text is inserted with textContent, never innerHTML.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+    :root {
+        --bg: #ffffff; --card: #f8fafc; --border: #e2e8f0; --text: #0f172a;
+        --muted: #64748b; --chip: #e2e8f0; --accent: #0284c7;
+        --going: #16a34a; --maybe: #d97706; --declined: #dc2626; --needs: #64748b;
+    }
+    .dark {
+        --bg: transparent; --card: #1e293b; --border: #334155; --text: #e2e8f0;
+        --muted: #94a3b8; --chip: #334155; --accent: #38bdf8;
+        --going: #4ade80; --maybe: #fbbf24; --declined: #f87171; --needs: #94a3b8;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: -apple-system, system-ui, "Segoe UI", sans-serif; color: var(--text); background: var(--bg); }
+    .wrap { padding: 4px 2px; }
+    .day { margin: 10px 0 4px; font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+    .event { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; margin-bottom: 8px; }
+    .row1 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .time { font-weight: 700; font-variant-numeric: tabular-nums; }
+    .type { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--chip); color: var(--muted); }
+    .badge { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; margin-left: auto; }
+    .badge.going { color: var(--going); border: 1px solid var(--going); }
+    .badge.maybe { color: var(--maybe); border: 1px solid var(--maybe); }
+    .badge.not_going { color: var(--declined); border: 1px solid var(--declined); }
+    .badge.not_responded { color: var(--needs); border: 1px dashed var(--needs); }
+    .title { margin-top: 4px; font-size: 14px; font-weight: 600; }
+    .meta { margin-top: 2px; font-size: 12px; color: var(--muted); }
+    .actions { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+    button { font: inherit; font-size: 12px; font-weight: 600; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer; }
+    button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .dark button.primary { color: #0f172a; }
+    .rsvp-choices { display: none; gap: 6px; }
+    .rsvp-choices.open { display: flex; }
+    .empty { padding: 18px; text-align: center; color: var(--muted); font-size: 13px; }
+    .summary { font-size: 11px; color: var(--muted); margin-left: auto; }
+</style>
+</head>
+<body>
+<div class="wrap" id="root"><div class="empty">Loading your schedule…</div></div>
+<script>
+(function () {
+    'use strict';
+
+    var RSVP_LABELS = { going: 'Going', maybe: 'Maybe', not_going: "Can't go", not_responded: 'Needs RSVP' };
+
+    function applyTheme() {
+        var theme = (window.openai && window.openai.theme) || '';
+        var dark = theme === 'dark' || (!theme && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        document.body.classList.toggle('dark', dark);
+    }
+
+    function el(tag, className, text) {
+        var node = document.createElement(tag);
+        if (className) node.className = className;
+        if (text !== undefined && text !== null) node.textContent = String(text);
+        return node;
+    }
+
+    function openExternal(href) {
+        if (window.openai && typeof window.openai.openExternal === 'function') {
+            window.openai.openExternal({ href: href });
+        }
+    }
+
+    function followUp(prompt) {
+        if (window.openai && typeof window.openai.sendFollowUpMessage === 'function') {
+            window.openai.sendFollowUpMessage({ prompt: prompt });
+        }
+    }
+
+    function dayLabel(iso) {
+        var date = new Date(iso);
+        return date.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
+    }
+
+    function timeLabel(iso) {
+        return new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    }
+
+    function eventTitle(event) {
+        if (event.type === 'game') {
+            return event.opponent ? (event.teamName + ' vs ' + event.opponent) : (event.teamName + ' game');
+        }
+        return event.teamName + ' practice';
+    }
+
+    function describeForPrompt(event) {
+        return 'the ' + event.teamName + ' ' + (event.type || 'event') + ' on ' + dayLabel(event.date);
+    }
+
+    function renderEvent(event) {
+        var card = el('div', 'event');
+        var row = el('div', 'row1');
+        row.appendChild(el('span', 'time', event.date ? timeLabel(event.date) : ''));
+        row.appendChild(el('span', 'type', event.type === 'practice' ? 'Practice' : 'Game'));
+        var response = event.myRsvp && event.myRsvp.response ? event.myRsvp.response : null;
+        if (response && RSVP_LABELS[response]) {
+            row.appendChild(el('span', 'badge ' + response, RSVP_LABELS[response]));
+        } else if (event.rsvpSummary && typeof event.rsvpSummary.notResponded === 'number') {
+            row.appendChild(el('span', 'summary', event.rsvpSummary.notResponded + ' awaiting RSVP'));
+        }
+        card.appendChild(row);
+        card.appendChild(el('div', 'title', eventTitle(event)));
+        if (event.location) card.appendChild(el('div', 'meta', event.location));
+
+        var actions = el('div', 'actions');
+        var choices = el('div', 'rsvp-choices');
+        if (response === 'not_responded') {
+            var respond = el('button', 'primary', 'Respond');
+            respond.addEventListener('click', function () { choices.classList.toggle('open'); });
+            actions.appendChild(respond);
+            ['going', 'maybe', 'not_going'].forEach(function (value) {
+                var btn = el('button', null, RSVP_LABELS[value]);
+                btn.addEventListener('click', function () {
+                    followUp('Set my RSVP for ' + describeForPrompt(event) + ' to "' + RSVP_LABELS[value] + '".');
+                });
+                choices.appendChild(btn);
+            });
+        }
+        if (event.deepLink) {
+            var open = el('button', null, 'Open in AllPlays');
+            open.addEventListener('click', function () { openExternal(event.deepLink); });
+            actions.appendChild(open);
+        }
+        if (event.location) {
+            var directions = el('button', null, 'Directions');
+            directions.addEventListener('click', function () {
+                openExternal('https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(event.location));
+            });
+            actions.appendChild(directions);
+        }
+        card.appendChild(actions);
+        card.appendChild(choices);
+        return card;
+    }
+
+    function render() {
+        applyTheme();
+        var root = document.getElementById('root');
+        var output = (window.openai && window.openai.toolOutput) || null;
+        root.replaceChildren();
+        var events = output && Array.isArray(output.events) ? output.events : [];
+        if (!events.length) {
+            root.appendChild(el('div', 'empty', 'No games or practices in this range. Enjoy the downtime!'));
+            return;
+        }
+        var lastDay = null;
+        events.forEach(function (event) {
+            var label = event.date ? dayLabel(event.date) : 'Scheduled';
+            if (label !== lastDay) {
+                root.appendChild(el('div', 'day', label));
+                lastDay = label;
+            }
+            root.appendChild(renderEvent(event));
+        });
+    }
+
+    window.addEventListener('openai:set_globals', render);
+    window.addEventListener('message', function (event) {
+        var data = event && event.data;
+        if (data && data.method === 'ui/notifications/tool-result') render();
+    });
+    render();
+})();
+</script>
+</body>
+</html>

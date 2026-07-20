@@ -10,6 +10,7 @@
 // privateAiService.ts) so the ChatGPT surface and the app assistant stay one
 // catalog as the shared service layer is extracted.
 
+import { readFileSync } from 'node:fs';
 import express from 'express';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -129,8 +130,22 @@ function toolError(error) {
     return { isError: true, content: [{ type: 'text', text: JSON.stringify({ error: code, message }) }] };
 }
 
+// Embedded UI templates (Apps SDK): served as MCP resources and referenced by
+// tools via _meta["openai/outputTemplate"]. ChatGPT renders them in a
+// sandboxed iframe; data arrives via the tool result's structuredContent.
+const SCHEDULE_CARD_URI = 'ui://widget/allplays-schedule.html';
+const SCHEDULE_CARD_HTML = readFileSync(new URL('./ui/schedule-card.html', import.meta.url), 'utf8');
+
 function buildServer(identity) {
     const server = new McpServer({ name: 'allplays', version: '0.2.0' });
+
+    server.registerResource('allplays-schedule-card', SCHEDULE_CARD_URI, {}, async () => ({
+        contents: [{
+            uri: SCHEDULE_CARD_URI,
+            mimeType: 'text/html+skybridge',
+            text: SCHEDULE_CARD_HTML
+        }]
+    }));
     const db = createUserDb({ projectId: PROJECT_ID, idToken: identity.idToken });
 
     const run = (handler) => async (args) => {
@@ -152,6 +167,11 @@ function buildServer(identity) {
     server.registerTool('list_schedule', {
         title: 'List schedule',
         description: 'Games and practices in a date range (default: next 7 days) across the user\'s teams, with RSVP state for linked players and deep links into AllPlays.',
+        _meta: {
+            'openai/outputTemplate': SCHEDULE_CARD_URI,
+            'openai/toolInvocation/invoking': 'Checking your family schedule',
+            'openai/toolInvocation/invoked': 'Found your family schedule'
+        },
         inputSchema: {
             startDate: z.string().optional().describe('ISO date, inclusive. Defaults to today.'),
             endDate: z.string().optional().describe('ISO date, inclusive. Defaults to startDate + 7 days.')
