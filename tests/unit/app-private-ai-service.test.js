@@ -442,7 +442,7 @@ describe('private AI service', () => {
             data: () => ({
                 role: index % 2 ? 'assistant' : 'user',
                 text: `Newest message ${index}`,
-                conversationId: 'conversation-newest',
+                conversationId: `conversation-${index % 30}`,
                 clientCreatedAt: new Date(Date.UTC(2026, 5, 30, 12, 0, 80 - index)).toISOString()
             })
         }));
@@ -462,9 +462,50 @@ describe('private AI service', () => {
         const { loadPrivateAiConversations } = await import('../../apps/app/src/lib/privateAiService.ts');
         const conversations = await loadPrivateAiConversations(authUser, 2);
 
-        expect(conversations.map((conversation) => conversation.id)).toEqual(['conversation-newest', 'default']);
-        expect(conversations[1]).toMatchObject({ title: 'Older legacy question' });
+        expect(conversations.map((conversation) => conversation.id)).toContain('default');
+        expect(conversations.find((conversation) => conversation.id === 'default')).toMatchObject({ title: 'Older legacy question' });
         expect(firebaseMocks.getDocs).toHaveBeenCalledTimes(3);
+        expect(firebaseMocks.startAfter).toHaveBeenCalledWith(newestConversationDocuments[79]);
+    });
+
+    it('paginates message loading when the selected conversation is older than the newest 80 messages', async () => {
+        const newestConversationDocuments = Array.from({ length: 80 }, (_, index) => ({
+            id: `newest-${index}`,
+            data: () => ({
+                role: index % 2 ? 'assistant' : 'user',
+                text: `Newest message ${index}`,
+                conversationId: 'conversation-newest',
+                clientCreatedAt: new Date(Date.UTC(2026, 5, 30, 12, 0, 80 - index)).toISOString()
+            })
+        }));
+        const olderConversationDocuments = [
+            {
+                id: 'older-answer',
+                data: () => ({
+                    role: 'assistant',
+                    text: 'Older answer',
+                    conversationId: 'conversation-older',
+                    clientCreatedAt: '2026-05-20T12:01:00Z'
+                })
+            },
+            {
+                id: 'older-question',
+                data: () => ({
+                    role: 'user',
+                    text: 'Older question',
+                    conversationId: 'conversation-older',
+                    clientCreatedAt: '2026-05-20T12:00:00Z'
+                })
+            }
+        ];
+        firebaseMocks.getDocs
+            .mockResolvedValueOnce({ docs: newestConversationDocuments })
+            .mockResolvedValueOnce({ docs: olderConversationDocuments });
+
+        const { loadPrivateAiMessages } = await import('../../apps/app/src/lib/privateAiService.ts');
+        const messages = await loadPrivateAiMessages(authUser, undefined, 'conversation-older');
+
+        expect(messages.map((message) => message.id)).toEqual(['older-question', 'older-answer']);
         expect(firebaseMocks.startAfter).toHaveBeenCalledWith(newestConversationDocuments[79]);
     });
 

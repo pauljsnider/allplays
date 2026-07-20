@@ -179,7 +179,7 @@ export async function loadPrivateAiConversations(user: AuthUser | null, conversa
       orderBy('updatedAt', 'desc'),
       limit(conversationLimit)
     )),
-    loadPrivateAiConversationRecoveryMessages(user, conversationLimit).catch(() => [])
+    loadPrivateAiConversationRecoveryMessages(user).catch(() => [])
   ]);
 
   const storedConversations = (conversationSnapshot.docs || [])
@@ -228,31 +228,17 @@ export async function loadPrivateAiMessages(
   if (!user?.uid) return [];
 
   const activeConversationId = normalizeConversationId(conversationId);
-  const messages = await loadPrivateAiMessageRecords(user, Math.max(messageLimit, maxLoadedMessages));
+  const messages = await loadPrivateAiMessagesForConversation(
+    user,
+    activeConversationId,
+    Math.max(messageLimit, maxLoadedMessages)
+  );
 
-  return messages
-    .filter((message: PrivateAiMessage) => messageBelongsToConversation(message, activeConversationId))
-    .reverse();
+  return messages.reverse();
 }
 
-async function loadPrivateAiMessageRecords(user: AuthUser, messageLimit: number): Promise<PrivateAiMessage[]> {
-  const snapshot = await getDocs(query(
-    collection(db, 'users', user.uid, privateAiCollectionName),
-    orderBy('createdAt', 'desc'),
-    limit(messageLimit)
-  ));
-
-  return (snapshot.docs || [])
-    .map((document: any) => normalizePrivateAiMessage(document.id, document.data?.() || {}))
-    .filter((message: PrivateAiMessage | null): message is PrivateAiMessage => Boolean(message));
-}
-
-async function loadPrivateAiConversationRecoveryMessages(
-  user: AuthUser,
-  conversationLimit: number
-): Promise<PrivateAiMessage[]> {
+async function loadPrivateAiConversationRecoveryMessages(user: AuthUser): Promise<PrivateAiMessage[]> {
   const recoveredMessages: PrivateAiMessage[] = [];
-  const recoveredConversationIds = new Set<string>();
   let cursor: any = null;
 
   for (let page = 0; page < maxConversationRecoveryPages; page += 1) {
@@ -268,13 +254,42 @@ async function loadPrivateAiConversationRecoveryMessages(
       .filter((message: PrivateAiMessage | null): message is PrivateAiMessage => Boolean(message));
 
     recoveredMessages.push(...pageMessages);
-    pageMessages.forEach((message: PrivateAiMessage) => recoveredConversationIds.add(normalizeConversationId(message.conversationId)));
-    if (documents.length < maxLoadedMessages || recoveredConversationIds.size >= conversationLimit) break;
+    if (documents.length < maxLoadedMessages) break;
     cursor = documents[documents.length - 1];
     if (!cursor) break;
   }
 
   return recoveredMessages;
+}
+
+async function loadPrivateAiMessagesForConversation(
+  user: AuthUser,
+  conversationId: string,
+  messageLimit: number
+): Promise<PrivateAiMessage[]> {
+  const conversationMessages: PrivateAiMessage[] = [];
+  let cursor: any = null;
+
+  for (let page = 0; page < maxConversationRecoveryPages; page += 1) {
+    const snapshot = await getDocs(query(
+      collection(db, 'users', user.uid, privateAiCollectionName),
+      orderBy('createdAt', 'desc'),
+      ...(cursor ? [startAfter(cursor)] : []),
+      limit(maxLoadedMessages)
+    ));
+    const documents = snapshot.docs || [];
+    const pageMessages: PrivateAiMessage[] = documents
+      .map((document: any) => normalizePrivateAiMessage(document.id, document.data?.() || {}))
+      .filter((message: PrivateAiMessage | null): message is PrivateAiMessage => Boolean(message))
+      .filter((message: PrivateAiMessage) => messageBelongsToConversation(message, conversationId));
+
+    conversationMessages.push(...pageMessages);
+    if (conversationMessages.length >= messageLimit || documents.length < maxLoadedMessages) break;
+    cursor = documents[documents.length - 1];
+    if (!cursor) break;
+  }
+
+  return conversationMessages.slice(0, messageLimit);
 }
 
 export async function sendPrivateAiMessage(
