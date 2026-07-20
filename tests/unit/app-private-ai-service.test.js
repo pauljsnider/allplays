@@ -349,7 +349,7 @@ describe('private AI service', () => {
         );
     });
 
-    it('recovers message-backed conversations missing metadata and keeps them ordered without duplicates', async () => {
+    it('recovers message-backed conversations without letting legacy default replace a stored initial chat', async () => {
         firebaseMocks.getDocs
             .mockResolvedValueOnce({
                 docs: [
@@ -417,11 +417,6 @@ describe('private AI service', () => {
 
         expect(conversations).toEqual([
             expect.objectContaining({
-                id: 'default',
-                title: 'What did I miss?',
-                lastMessagePreview: 'Legacy answer'
-            }),
-            expect.objectContaining({
                 id: 'conversation-2',
                 title: 'Build a practice plan',
                 lastMessagePreview: 'Here is the practice plan.'
@@ -432,6 +427,7 @@ describe('private AI service', () => {
                 lastMessagePreview: 'Metadata wins for this thread.'
             })
         ]);
+        expect(conversations.some((conversation) => conversation.id === 'default')).toBe(false);
         expect(conversations.filter((conversation) => conversation.id === 'conversation-1')).toHaveLength(1);
     });
 

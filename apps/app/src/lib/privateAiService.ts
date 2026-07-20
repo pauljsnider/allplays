@@ -183,8 +183,10 @@ export async function loadPrivateAiConversations(user: AuthUser | null, conversa
   const storedConversations = (conversationSnapshot.docs || [])
     .map((document: any) => normalizePrivateAiConversation(document.id, document.data?.() || {}))
     .filter((conversation: PrivateAiConversation | null): conversation is PrivateAiConversation => Boolean(conversation));
+  const recoveredConversations = recoverPrivateAiConversations(messages)
+    .filter((conversation) => conversation.id !== DEFAULT_PRIVATE_AI_CONVERSATION_ID || storedConversations.length === 0);
   const conversationsById = new Map(
-    recoverPrivateAiConversations(messages).map((conversation) => [conversation.id, conversation])
+    recoveredConversations.map((conversation) => [conversation.id, conversation])
   );
 
   storedConversations.forEach((conversation: PrivateAiConversation) => conversationsById.set(conversation.id, conversation));
