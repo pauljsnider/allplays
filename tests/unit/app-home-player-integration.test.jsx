@@ -577,9 +577,8 @@ describe('React app Home and player drill-in integration', () => {
         expect(container.textContent).toContain('Team feed');
         expect(container.textContent).toContain('Pat Star highlight');
         expect(container.textContent).toContain('Next up');
-        await waitForText(container, 'Priority only');
-        expect(container.textContent).toContain('Priority shown above');
-        expect(container.textContent).toContain('Your only open action is highlighted above.');
+        expect(container.textContent).not.toContain('To-do list');
+        expect(container.textContent).not.toContain('Priority shown above');
         expect(container.textContent).not.toContain('No parent actions need attention right now.');
         expect(homeMocks.loadParentHome).toHaveBeenCalledWith(auth.user);
         expect(socialMocks.loadSocialHome).toHaveBeenCalledWith(auth.user, expect.objectContaining({
