@@ -82,6 +82,57 @@ describe('chatgpt-mcp oauth: registration', () => {
             else process.env.FIREBASE_WEB_API_KEY = previousApiKey;
         }
     });
+
+    it('does not accept an unverified refresh token at the authorization endpoint', async () => {
+        const previousProjectId = process.env.FIREBASE_PROJECT_ID;
+        const previousApiKey = process.env.FIREBASE_WEB_API_KEY;
+        const realFetch = globalThis.fetch;
+        process.env.FIREBASE_PROJECT_ID = 'test-project';
+        process.env.FIREBASE_WEB_API_KEY = 'test-api-key';
+        const { app } = await import('../../services/chatgpt-mcp/src/server.js');
+        const server = createServer(app);
+        await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+
+        try {
+            const { port } = server.address();
+            const registration = await realFetch(`http://127.0.0.1:${port}/oauth/register`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ client_name: 'ChatGPT', redirect_uris: [REDIRECT] })
+            });
+            const client = await registration.json();
+            let signInCalls = 0;
+            globalThis.fetch = async (url, options) => {
+                if (String(url).startsWith('https://identitytoolkit.googleapis.com/')) {
+                    signInCalls += 1;
+                    return { ok: false, json: async () => ({ error: { message: 'INVALID_LOGIN_CREDENTIALS' } }) };
+                }
+                return realFetch(url, options);
+            };
+
+            const response = await realFetch(`http://127.0.0.1:${port}/oauth/authorize`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: new URLSearchParams({
+                    client_id: client.client_id,
+                    redirect_uri: REDIRECT,
+                    code_challenge: s256Challenge(VERIFIER),
+                    refresh_token: 'attacker-controlled-unverified-token'
+                })
+            });
+
+            expect(response.status).toBe(401);
+            expect(signInCalls).toBe(1);
+            expect(response.headers.get('location')).toBeNull();
+        } finally {
+            globalThis.fetch = realFetch;
+            await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+            if (previousProjectId === undefined) delete process.env.FIREBASE_PROJECT_ID;
+            else process.env.FIREBASE_PROJECT_ID = previousProjectId;
+            if (previousApiKey === undefined) delete process.env.FIREBASE_WEB_API_KEY;
+            else process.env.FIREBASE_WEB_API_KEY = previousApiKey;
+        }
+    });
 });
 
 describe('chatgpt-mcp oauth: authorize validation', () => {
@@ -156,6 +207,21 @@ describe('chatgpt-mcp oauth: refresh and access tokens', () => {
         const second = broker.exchange({ grant_type: 'refresh_token', refresh_token: first.refresh_token });
         expect(second.access_token).not.toBe(first.access_token);
         expect(broker.resolveAccessToken(second.access_token)).toEqual({ firebaseRefreshToken: 'firebase-rt-9' });
+        expect(() => broker.exchange({ grant_type: 'refresh_token', refresh_token: first.refresh_token })).toThrow(/Unknown/);
+    });
+
+    it('expires refresh tokens and bounds retained access grants', () => {
+        let time = 0;
+        const { broker, clientId } = registeredBroker({ now: () => time, maxStoredGrants: 2 });
+        const issued = Array.from({ length: 3 }, (_, index) => {
+            const code = authorize(broker, clientId, `firebase-rt-${index}`);
+            return broker.exchange({ grant_type: 'authorization_code', code, code_verifier: VERIFIER });
+        });
+
+        expect(broker.resolveAccessToken(issued[0].access_token)).toBeNull();
+        expect(broker.resolveAccessToken(issued[2].access_token)).toBeTruthy();
+        time = 31 * 24 * 60 * 60 * 1000;
+        expect(() => broker.exchange({ grant_type: 'refresh_token', refresh_token: issued[2].refresh_token })).toThrow(/Unknown/);
     });
 
     it('expires access tokens and returns null for unknown tokens', () => {

@@ -226,14 +226,10 @@ app.post('/oauth/authorize', async (req, res) => {
             code_challenge: params.code_challenge,
             code_challenge_method: 'S256'
         });
-        // Normal path: AllPlays email/password sign-in. A caller may instead
-        // present an existing Firebase refresh token (itself a credential) —
-        // used by automated tests; the token is validated on first use.
-        let firebaseRefreshToken = typeof params.refresh_token === 'string' && params.refresh_token ? params.refresh_token : null;
-        if (!firebaseRefreshToken) {
-            const signedIn = await firebaseSignIn(String(params.email || ''), String(params.password || ''));
-            firebaseRefreshToken = signedIn.refreshToken;
-        }
+        // Only Firebase's sign-in response may create a grant. In particular,
+        // do not persist an unverified refresh_token posted to this public route.
+        const signedIn = await firebaseSignIn(String(params.email || ''), String(params.password || ''));
+        const firebaseRefreshToken = signedIn.refreshToken;
         const code = oauth.approveAuthorization({ clientId, redirectUri, codeChallenge, firebaseRefreshToken });
         const redirect = new URL(redirectUri);
         redirect.searchParams.set('code', code);

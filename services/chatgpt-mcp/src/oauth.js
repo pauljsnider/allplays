@@ -14,6 +14,8 @@ import { createHash, randomBytes } from 'node:crypto';
 
 const CODE_TTL_MS = 10 * 60 * 1000;
 const ACCESS_TOKEN_TTL_MS = 60 * 60 * 1000;
+const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const MAX_STORED_GRANTS = 1000;
 const TRUSTED_REDIRECT_URIS = new Set([
     'https://chatgpt.com/connector_platform_oauth_redirect'
 ]);
@@ -34,11 +36,32 @@ function isAllowedRedirectUri(uri) {
     return typeof uri === 'string' && TRUSTED_REDIRECT_URIS.has(uri);
 }
 
-export function createOAuthBroker({ now = () => Date.now(), randomId = (bytes = 32) => randomBytes(bytes).toString('base64url') } = {}) {
+export function createOAuthBroker({
+    now = () => Date.now(),
+    randomId = (bytes = 32) => randomBytes(bytes).toString('base64url'),
+    maxStoredGrants = MAX_STORED_GRANTS
+} = {}) {
+    if (!Number.isInteger(maxStoredGrants) || maxStoredGrants < 1) {
+        throw new Error('maxStoredGrants must be a positive integer.');
+    }
     let registeredClient = null;
     const codes = new Map();
     const accessTokens = new Map();
     const refreshTokens = new Map();
+
+    function pruneExpired(store) {
+        for (const [key, record] of store) {
+            if (record.expiresAt <= now()) store.delete(key);
+        }
+    }
+
+    function setBounded(store, key, record) {
+        pruneExpired(store);
+        while (store.size >= maxStoredGrants) {
+            store.delete(store.keys().next().value);
+        }
+        store.set(key, record);
+    }
 
     function registerClient({ redirect_uris: redirectUris, client_name: clientName } = {}) {
         if (!Array.isArray(redirectUris) || redirectUris.length === 0) {
@@ -89,15 +112,19 @@ export function createOAuthBroker({ now = () => Date.now(), randomId = (bytes = 
             code_challenge_method: 'S256'
         });
         const code = randomId(32);
-        codes.set(code, { clientId, redirectUri, codeChallenge, firebaseRefreshToken, expiresAt: now() + CODE_TTL_MS });
+        setBounded(codes, code, { clientId, redirectUri, codeChallenge, firebaseRefreshToken, expiresAt: now() + CODE_TTL_MS });
         return code;
     }
 
     function issueTokens(firebaseRefreshToken, clientId) {
         const accessToken = randomId(32);
         const refreshToken = randomId(32);
-        accessTokens.set(accessToken, { firebaseRefreshToken, expiresAt: now() + ACCESS_TOKEN_TTL_MS });
-        refreshTokens.set(refreshToken, { firebaseRefreshToken, clientId });
+        setBounded(accessTokens, accessToken, { firebaseRefreshToken, expiresAt: now() + ACCESS_TOKEN_TTL_MS });
+        setBounded(refreshTokens, refreshToken, {
+            firebaseRefreshToken,
+            clientId,
+            expiresAt: now() + REFRESH_TOKEN_TTL_MS
+        });
         return {
             access_token: accessToken,
             token_type: 'Bearer',
@@ -126,20 +153,19 @@ export function createOAuthBroker({ now = () => Date.now(), randomId = (bytes = 
             return issueTokens(record.firebaseRefreshToken, record.clientId);
         }
         if (grantType === 'refresh_token') {
+            pruneExpired(refreshTokens);
             const record = refreshTokens.get(params.refresh_token);
             if (!record) throw new OAuthError('invalid_grant', 'Unknown refresh token.');
+            refreshTokens.delete(params.refresh_token); // rotate on every use
             return issueTokens(record.firebaseRefreshToken, record.clientId);
         }
         throw new OAuthError('invalid_request', 'Unsupported grant_type.');
     }
 
     function resolveAccessToken(token) {
+        pruneExpired(accessTokens);
         const record = accessTokens.get(token);
         if (!record) return null;
-        if (record.expiresAt <= now()) {
-            accessTokens.delete(token);
-            return null;
-        }
         return { firebaseRefreshToken: record.firebaseRefreshToken };
     }
 

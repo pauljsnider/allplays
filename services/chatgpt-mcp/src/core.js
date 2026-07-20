@@ -94,11 +94,19 @@ export async function resolveUserContext(db, { uid, email }) {
         if (link) addLinkedPlayer(link.teamId, link.playerId);
     }
 
-    const [ownedSnap, adminSnap] = await Promise.all([
+    const ownerEmailCandidates = [...new Set([email, profile.email, normalizedEmail]
+        .filter((value) => typeof value === 'string' && value))];
+    const [ownedSnap, adminSnap, ownerEmailLowerSnap, ...ownerEmailSnaps] = await Promise.all([
         db.collection('teams').where('ownerId', '==', uid).get(),
         normalizedEmail
             ? db.collection('teams').where('adminEmails', 'array-contains', normalizedEmail).get()
-            : Promise.resolve({ docs: [] })
+            : Promise.resolve({ docs: [] }),
+        normalizedEmail
+            ? db.collection('teams').where('ownerEmailLower', '==', normalizedEmail).get()
+            : Promise.resolve({ docs: [] }),
+        ...ownerEmailCandidates.map((ownerEmail) => (
+            db.collection('teams').where('ownerEmail', '==', ownerEmail).get()
+        ))
     ]);
 
     const teams = new Map();
@@ -111,6 +119,10 @@ export async function resolveUserContext(db, { uid, email }) {
 
     for (const doc of ownedSnap.docs) addTeam(doc.id, doc.data(), 'owner');
     for (const doc of adminSnap.docs) addTeam(doc.id, doc.data(), 'admin');
+    for (const doc of ownerEmailLowerSnap.docs) addTeam(doc.id, doc.data(), 'owner');
+    for (const snap of ownerEmailSnaps) {
+        for (const doc of snap.docs) addTeam(doc.id, doc.data(), 'owner');
+    }
 
     const parentTeamSnaps = await Promise.all([...parentTeamIds].map((teamId) => safeGetDoc(db, `teams/${teamId}`)));
     for (const snap of parentTeamSnaps) {

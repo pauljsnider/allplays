@@ -104,8 +104,12 @@ describe('chatgpt-mcp core: resolveUserContext', () => {
                 teams: (filters) => {
                     const byOwner = filters.find((f) => f.field === 'ownerId');
                     if (byOwner) return [{ id: 'team-own', data: { name: 'Owned', ownerId: 'coach-1' } }];
-                    adminEmailQueried = filters.find((f) => f.field === 'adminEmails')?.value;
-                    return [{ id: 'team-adm', data: { name: 'Helped' } }];
+                    const byAdmin = filters.find((f) => f.field === 'adminEmails');
+                    if (byAdmin) {
+                        adminEmailQueried = byAdmin.value;
+                        return [{ id: 'team-adm', data: { name: 'Helped' } }];
+                    }
+                    return [];
                 }
             }
         });
@@ -113,6 +117,34 @@ describe('chatgpt-mcp core: resolveUserContext', () => {
         expect(adminEmailQueried).toBe('coach@example.com');
         expect([...context.teams.get('team-own').roles]).toEqual(['owner']);
         expect([...context.teams.get('team-adm').roles]).toEqual(['admin']);
+    });
+
+    it('derives legacy ownership from ownerEmail and ownerEmailLower', async () => {
+        const queried = [];
+        const db = fakeDb({
+            docs: { 'users/coach-1': { email: 'Coach@Example.com' } },
+            queries: {
+                teams: (filters) => {
+                    const filter = filters[0];
+                    queried.push([filter.field, filter.value]);
+                    if (filter.field === 'ownerEmail' && filter.value === 'Coach@Example.com') {
+                        return [{ id: 'team-legacy-case', data: { name: 'Legacy case' } }];
+                    }
+                    if (filter.field === 'ownerEmailLower') {
+                        return [{ id: 'team-legacy-lower', data: { name: 'Legacy lower' } }];
+                    }
+                    return [];
+                }
+            }
+        });
+
+        const context = await resolveUserContext(db, { uid: 'coach-1', email: 'Coach@Example.com' });
+
+        expect(queried).toContainEqual(['ownerEmail', 'Coach@Example.com']);
+        expect(queried).toContainEqual(['ownerEmail', 'coach@example.com']);
+        expect(queried).toContainEqual(['ownerEmailLower', 'coach@example.com']);
+        expect([...context.teams.get('team-legacy-case').roles]).toEqual(['owner']);
+        expect([...context.teams.get('team-legacy-lower').roles]).toEqual(['owner']);
     });
 
     it('keeps private parent teams when direct team reads are denied by rules', async () => {
