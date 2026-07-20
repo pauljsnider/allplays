@@ -246,6 +246,8 @@ describe('targeted team chat Firestore rules', () => {
     });
 
     it('requires team staff/admin access and server-derived members for the canonical staff conversation', () => {
+        expect(rules).toContain('function currentAuthEmailMatchesAdminList(adminEmails)');
+        expect(rules).toContain("(' ' + request.auth.token.email + ' ') in adminEmails");
         expect(rules).toContain("function isCanonicalStaffChatConversation(conversationId)");
         expect(rules).toContain("return conversationId == 'group_role%3Astaff';");
         expect(rules).toContain("function isCanonicalStaffChatConversationPayload(conversationId, data)");
@@ -258,6 +260,7 @@ describe('targeted team chat Firestore rules', () => {
     });
 
     it('keeps profile role grants server-managed before chat rules trust coach grants', () => {
+        expect(rules).toContain('function isTeamChatStaff(teamId) {\n      return isTeamOwnerOrAdmin(teamId);\n    }');
         expect(rules).toContain('function serverManagedUserRoleGrantFields()');
         expect(rules).toContain("return ['coachOf', 'roles'];");
         expect(rules).toContain('!data.keys().hasAny(serverManagedUserRoleGrantFields())');

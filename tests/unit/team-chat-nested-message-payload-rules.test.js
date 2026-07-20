@@ -784,7 +784,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
         await assertFails(getDoc(adminConversationRef));
     });
 
-    it('lets coach-granted staff read canonical staff chat when adminEmails casing is stale', async () => {
+    it('lets legacy padded admin emails read canonical staff chat without trusting coachOf alone', async () => {
         await testEnv.withSecurityRulesDisabled(async (context) => {
             const firestore = context.firestore();
             await setDoc(doc(firestore, 'teams/team-1'), {
@@ -793,6 +793,12 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
             }, { merge: true });
             await setDoc(doc(firestore, 'users/coach-1'), {
                 email: 'coach@example.com',
+                coachOf: ['team-1'],
+                roles: ['coach'],
+                isAdmin: false
+            }, { merge: true });
+            await setDoc(doc(firestore, 'users/coach-only-1'), {
+                email: 'coach-only@example.com',
                 coachOf: ['team-1'],
                 roles: ['coach'],
                 isAdmin: false
@@ -823,19 +829,22 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
             });
         });
 
-        const coachDb = authedFirestore('coach-1', 'coach@example.com');
+        const coachDb = authedFirestore('coach-1', 'Coach@Example.com');
+        const coachOnlyDb = authedFirestore('coach-only-1', 'coach-only@example.com');
         const parentDb = authedFirestore('parent-1', 'parent@example.com');
         const attackerDb = authedFirestore('attacker-1', 'attacker@example.com');
 
         await assertSucceeds(getDoc(doc(coachDb, `teams/team-1/chatConversations/${staffConversationId}`)));
         await assertSucceeds(getDocs(collection(coachDb, `teams/team-1/chatConversations/${staffConversationId}/chatMessages`)));
         await assertFails(getDocs(collection(parentDb, `teams/team-1/chatConversations/${staffConversationId}/chatMessages`)));
+        await assertFails(getDoc(doc(coachOnlyDb, `teams/team-1/chatConversations/${staffConversationId}`)));
+        await assertFails(getDocs(collection(coachOnlyDb, `teams/team-1/chatConversations/${staffConversationId}/chatMessages`)));
         await assertFails(updateDoc(doc(attackerDb, 'users/attacker-1'), {
             coachOf: ['team-1'],
             roles: ['coach']
         }));
-        await assertFails(getDoc(doc(coachDb, 'teams/team-1/chatConversations/selected-group')));
-        await assertFails(getDocs(collection(coachDb, 'teams/team-1/chatConversations/selected-group/chatMessages')));
+        await assertFails(getDoc(doc(coachOnlyDb, 'teams/team-1/chatConversations/selected-group')));
+        await assertFails(getDocs(collection(coachOnlyDb, 'teams/team-1/chatConversations/selected-group/chatMessages')));
         await assertSucceeds(getDoc(doc(parentDb, 'teams/team-1/chatConversations/selected-group')));
     });
 
