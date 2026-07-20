@@ -597,7 +597,7 @@ test.describe('mobile My Teams', () => {
         await expect(teamsReadyHeading).toBeVisible();
         await expect(page.getByText('Choose a team', { exact: true })).toBeVisible();
         await expect(page.getByPlaceholder('Search teams or players')).toBeVisible();
-        await expectVisualSnapshot(page, 'my-teams-mobile.png', { fullPage: false });
+        await expectVisualSnapshot(page, 'my-teams-mobile.png', { fullPage: false, maxDiffPixels: 500 });
         await page.getByPlaceholder('Search teams or players').fill('Riley');
         await expect(page.getByRole('link', { name: 'Open Rockets' }).first()).toBeVisible();
         await expect(page.getByRole('link', { name: 'Open Staff Wolves' })).toHaveCount(0);

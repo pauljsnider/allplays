@@ -259,20 +259,22 @@ describe('AppShell', () => {
     expect(await screen.findByText('Auth')).toBeTruthy();
   });
 
-  it('keeps the mobile bottom navigation at six items and routes Family through Profile', () => {
+  it('keeps Family directly reachable in the signed-in mobile bottom navigation', () => {
     useShellLayoutMock.mockReturnValue({ isDesktopWeb: false });
     render(
-      <MemoryRouter initialEntries={['/home']}>
+      <MemoryRouter initialEntries={['/parent-tools/fees']}>
         <Routes>
-          <Route path="/home" element={<AppShell auth={signedInAuth}><div>Home</div></AppShell>} />
+          <Route path="/parent-tools/fees" element={<AppShell auth={signedInAuth}><div>Family fees</div></AppShell>} />
         </Routes>
       </MemoryRouter>
     );
 
     const primaryNav = screen.getByRole('navigation', { name: 'Primary navigation' });
     expect(within(primaryNav).getAllByRole('link')).toHaveLength(6);
-    expect(within(primaryNav).queryByRole('link', { name: 'Family' })).toBeNull();
-    expect(within(primaryNav).getByRole('link', { name: 'Profile' })).toBeTruthy();
+    const familyLink = within(primaryNav).getByRole('link', { name: 'Family' });
+    expect(familyLink.getAttribute('href')).toBe('/parent-tools');
+    expect(familyLink.className).toContain('bg-primary-50');
+    expect(within(primaryNav).queryByRole('link', { name: 'Discover' })).toBeNull();
   });
 
   it('routes the mobile My Teams nav directly to the team page when the user has one team', () => {
