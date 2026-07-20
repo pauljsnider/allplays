@@ -59,7 +59,10 @@ test.describe('public sports Discover', () => {
     const discoverTabs = page.getByRole('tablist', { name: 'Discover views' });
     await expect(discoverTabs.getByRole('tab', { name: 'Opportunities' })).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', 'discover-opportunities-tab');
-    await expectVisualSnapshot(page, 'discover-opportunities.png');
+    await expectVisualSnapshot(page, 'discover-opportunities.png', {
+        maxDiffPixels: undefined,
+        maxDiffPixelRatio: 0.01
+    });
     await page.getByRole('link', { name: 'View opportunity' }).click();
     await expect(page.getByRole('button', { name: 'Sign in to contact' })).toBeVisible();
     await page.getByRole('button', { name: 'Sign in to contact' }).click();

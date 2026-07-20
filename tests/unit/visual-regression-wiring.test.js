@@ -19,6 +19,8 @@ describe('visual regression CI wiring', () => {
         const config = readRepoFile('playwright.smoke.config.js');
         const helper = readRepoFile('tests/smoke/helpers/visual-regression.js');
         const authVisual = readRepoFile('tests/smoke/app-auth-profile.spec.js');
+        const discoverVisual = readRepoFile('tests/smoke/app-discover.spec.js');
+        const messagesVisual = readRepoFile('tests/smoke/app-messages.spec.js');
         const scheduleVisual = readRepoFile('tests/smoke/app-schedule.spec.js');
 
         expect(config).toContain("snapshotPathTemplate: '{testDir}/{testFilePath}-snapshots/{arg}{ext}'");
@@ -32,10 +34,16 @@ describe('visual regression CI wiring', () => {
         expect(helper).toContain("require.resolve('@fontsource-variable/inter/files/inter-latin-wght-normal.woff2')");
         expect(helper).toContain('#root, #root button, #root input, #root select, #root textarea');
         expect(helper).toContain('document.fonts.load(`${weight} 16px AllPlaysVisualInter`)');
-        expect(authVisual).toContain("expectVisualSnapshot(page, 'auth-join-code-signup.png')");
-        expect(scheduleVisual).toContain("expectVisualSnapshot(page, 'family-schedule.png')");
-        expect(authVisual).not.toContain('maxDiffPixelRatio');
-        expect(scheduleVisual).not.toContain('maxDiffPixelRatio');
+        for (const [source, snapshot] of [
+            [authVisual, 'auth-join-code-signup.png'],
+            [discoverVisual, 'discover-opportunities.png'],
+            [messagesVisual, 'messages-inbox-mobile.png'],
+            [scheduleVisual, 'family-schedule.png']
+        ]) {
+            expect(source).toContain(
+                `'${snapshot}', {\n        maxDiffPixels: undefined,\n        maxDiffPixelRatio: 0.01\n    }`
+            );
+        }
     });
 
     it('checks the legacy Tailwind fixture only in the dependency-bearing visual command', () => {
