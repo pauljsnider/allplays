@@ -65,6 +65,18 @@ flowchart LR
 
 Deep links use the validated legacy routes, e.g. `https://allplays.ai/live-game.html?teamId=…&gameId=…&replay=true`.
 
+## Embedded UI (Phase 2 — research, July 2026)
+
+How Apps SDK components work (sources: developers.openai.com/apps-sdk — build/custom-ux and reference pages; `openai/openai-apps-sdk-examples` repo, e.g. `pizzaz_server_node`):
+
+- A component is an HTML+JS bundle the MCP server serves as a **resource** (`ui://widget/<name>.html`, mimeType `text/html;profile=mcp-app`), rendered by ChatGPT in a sandboxed iframe inline in the conversation.
+- A tool opts into UI via `_meta["openai/outputTemplate"]` (alias `_meta.ui.resourceUri`) pointing at that resource, plus optional `openai/toolInvocation/invoking|invoked` status strings.
+- Data flow: the tool result's `structuredContent` feeds both the model and the widget (`window.openai.toolOutput`); result `_meta` flows **only** to the widget (never the model/transcript). Our `toolResult()` already returns `structuredContent`, so existing tools are UI-ready without contract changes.
+- Widget runtime (`window.openai`): `toolInput`, `toolOutput`, `widgetState`/`setWidgetState`, `callTool` (requires `_meta["openai/widgetAccessible"]: true` on the target tool), `sendFollowUpMessage`, `openExternal` (vetted external links — our deep-link path), and read-only signals `theme`, `displayMode`, `maxHeight`, `locale`.
+- Constraints: strict CSP — no arbitrary network calls from the iframe (data comes from tool results; extra domains need `_meta.ui.csp` allowlisting and trigger stricter review). React is the norm in official examples; bundle to a single inlined JS via esbuild/vite.
+
+Planned components (plan §3): **Family Schedule Card** on `list_schedule` (event rows, RSVP badges, Open-in-AllPlays via `openExternal`; RSVP buttons come with the write tools via `callTool`) and **Game Summary Card** on `get_game_summary` (score header, player stat table, replay deep link). Build under `services/chatgpt-mcp/ui/` with esbuild, inline the bundle into the resource HTML, support light/dark via `window.openai.theme`.
+
 ## Error handling
 
 `core.js` throws `DomainError(code, message)` with codes `unauthenticated`, `permission_denied`, `not_found`, `invalid_argument`. The server maps these to MCP tool errors (`isError: true` with the code) and never leaks other teams' identifiers or internal stack traces.
