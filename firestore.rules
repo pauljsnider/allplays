@@ -2259,9 +2259,9 @@ service cloud.firestore {
              pathSegments.size() == 6 &&
              pathSegments[0] == 'stat-sheets' &&
              pathSegments[1] == 'team-chat' &&
-             pathSegments[2] == request.auth.uid &&
+             pathSegments[2] == teamId &&
              pathSegments[3] == 'team' &&
-             pathSegments[4] == teamId &&
+             pathSegments[4] == request.auth.uid &&
              pathSegments[5].size() > 0;
     }
 

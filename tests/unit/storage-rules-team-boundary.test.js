@@ -167,25 +167,25 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
             }).storage();
 
             await assertSucceeds(
-                memberStorage.ref('stat-sheets/team-chat/member-a/team/team-a/cached-photo.jpg').put(
+                memberStorage.ref('stat-sheets/team-chat/team-a/team/member-a/cached-photo.jpg').put(
                     new Uint8Array([1]),
                     { contentType: 'image/jpeg' }
                 )
             );
             await assertFails(
-                memberStorage.ref('stat-sheets/team-chat/member-a/team/team-b/cross-team.jpg').put(
+                memberStorage.ref('stat-sheets/team-chat/team-b/team/member-a/cross-team.jpg').put(
                     new Uint8Array([1]),
                     { contentType: 'image/jpeg' }
                 )
             );
             await assertFails(
-                otherMemberStorage.ref('stat-sheets/team-chat/member-a/team/team-a/wrong-uploader.jpg').put(
+                otherMemberStorage.ref('stat-sheets/team-chat/team-a/team/member-a/wrong-uploader.jpg').put(
                     new Uint8Array([1]),
                     { contentType: 'image/jpeg' }
                 )
             );
             await assertFails(
-                memberStorage.ref('stat-sheets/team-chat/member-a/team/team-a/document.txt').put(
+                memberStorage.ref('stat-sheets/team-chat/team-a/team/member-a/document.txt').put(
                     new Uint8Array([1]),
                     { contentType: 'text/plain' }
                 )
