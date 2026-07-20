@@ -101,6 +101,21 @@ const playerSections: Array<{ id: PlayerSectionId; label: string }> = [
   { id: 'profile', label: 'Profile' }
 ];
 
+function getVisiblePlayerSections(data: ParentPlayerDetailData): Array<{ id: PlayerSectionId; label: string }> {
+  if (data.access.isLinkedParent) {
+    return playerSections;
+  }
+  return playerSections.filter((section) => {
+    if (section.id === 'performance') {
+      return data.access.isTeamStaff;
+    }
+    if (section.id === 'schedule') {
+      return data.access.isTeamStaff || data.events.length > 0;
+    }
+    return true;
+  });
+}
+
 type ReportPanelId = 'overview' | 'games' | 'season' | 'events' | 'clips';
 
 const reportPanels: Array<{ id: ReportPanelId; label: string }> = [
@@ -645,7 +660,8 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
   }, [activeSection, data, loadStatsDetail, statsDetailState]);
 
   useEffect(() => {
-    if (!data || data.access.isLinkedParent || data.access.isTeamStaff || activeSection !== 'performance') return;
+    if (!data) return;
+    if (getVisiblePlayerSections(data).some((section) => section.id === activeSection)) return;
     setActiveSection('overview');
   }, [activeSection, data]);
 
@@ -705,9 +721,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
   const jersey = data.player.number ? `#${data.player.number}` : '';
   const teamName = data.team?.name || data.child.teamName || data.child.teamId;
   const isLinkedParent = data.access.isLinkedParent;
-  const visiblePlayerSections = isLinkedParent
-    ? playerSections
-    : playerSections.filter((section) => section.id !== 'performance' || data.access.isTeamStaff);
+  const visiblePlayerSections = getVisiblePlayerSections(data);
 
   return (
     <div className="player-detail-page space-y-3">
@@ -1604,7 +1618,10 @@ function PlayerProfileSection({
         )
       ) : null}
       {activePanel === 'family' ? (
-        isLinkedParent ? <CoParentInviteCard data={data} auth={auth} /> : <FamilyContactsCard data={data} />
+        <div className="space-y-3">
+          <FamilyContactsCard data={data} />
+          {isLinkedParent ? <CoParentInviteCard data={data} auth={auth} /> : null}
+        </div>
       ) : null}
       {isLinkedParent && activePanel === 'incentives' ? <IncentivesCard data={data} auth={auth} onChanged={onChanged} /> : null}
 

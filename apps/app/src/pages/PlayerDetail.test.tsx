@@ -325,6 +325,48 @@ describe('PlayerDetail athlete profile season selection', () => {
     expect(screen.queryByRole('button', { name: 'Create invite' })).toBeNull();
   });
 
+  it('keeps linked family contacts visible beside invite controls for linked parents', async () => {
+    playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData({
+      familyContacts: [
+        { id: 'guardian-1', name: 'Guardian One', email: 'guardian@example.com', phone: '', relation: 'Guardian', status: 'linked' }
+      ]
+    }));
+
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Family' }));
+
+    expect(await screen.findByText('Linked Family')).toBeTruthy();
+    expect(screen.getByText('guardian@example.com')).toBeTruthy();
+    expect(screen.getByLabelText('Recipient email')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Create invite' })).toBeTruthy();
+  });
+
+  it('hides empty schedule and report tabs for non-linked team parent viewers', async () => {
+    playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData({
+      access: {
+        isLinkedParent: false,
+        isTeamParent: true,
+        isTeamStaff: false,
+        canEditRosterDetails: false,
+        canEditCustomRosterFields: false
+      },
+      events: [],
+      statRows: []
+    }));
+
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+
+    expect(screen.queryByRole('button', { name: 'Schedule' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Reports' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Overview' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Profile' })).toBeTruthy();
+  });
+
   it('lazy-loads video clips once when the Video Clips report opens', async () => {
     playerServiceMocks.loadParentPlayerVideoClips.mockResolvedValue([
       {
