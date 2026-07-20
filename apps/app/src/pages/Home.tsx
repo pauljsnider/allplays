@@ -704,7 +704,14 @@ function TodaySection({
 
   return (
     <div className="home-section-content space-y-3">
-      <TodayPriorityCard action={topAction} nextEvent={nextEvent} loading={!hasLoadedHomeDetails} />
+      <TodayPriorityCard
+        action={topAction}
+        nextEvent={nextEvent}
+        loading={!hasLoadedHomeDetails}
+        remainingActions={remainingActions}
+        remainingActionCount={remainingActionCount}
+        multiRsvpTo={home.metrics.rsvpNeeded > 1 ? '/schedule?bulkRsvp=1' : null}
+      />
 
       <section className="home-signal-grid grid gap-2 sm:grid-cols-3">
         <SignalCard
@@ -757,42 +764,6 @@ function TodaySection({
         )}
       </section>
 
-      <section className="home-action-section app-card p-4">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <div className="app-label">To-do list</div>
-            <h2 className="mt-1 app-section-title">{topAction ? (remainingActionCount ? 'More to do' : 'Priority only') : 'Needs Attention'}</h2>
-          </div>
-          <div className="flex items-center gap-2">
-            {home.metrics.rsvpNeeded > 1 ? <MultiRsvpLink to="/schedule?bulkRsvp=1" /> : null}
-            <span className="rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-xs font-black text-gray-600">{remainingActionCount}</span>
-          </div>
-        </div>
-        <div className="mt-3 space-y-2">
-          {remainingActions.length ? remainingActions.map((action) => (
-            <ActionRow key={action.id} action={action} />
-          )) : !hasLoadedHomeDetails ? (
-            <HomeDetailsLoadingState message="Checking for parent actions…" />
-          ) : topAction ? (
-            <div className="flex items-start gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3">
-              <CheckCircle2 className="mt-0.5 h-5 w-5 flex-none text-gray-600" aria-hidden="true" />
-              <div>
-                <div className="text-sm font-black text-gray-900">Priority shown above</div>
-                <div className="mt-0.5 text-xs font-semibold text-gray-600">Your only open action is highlighted above.</div>
-              </div>
-            </div>
-          ) : (
-            <div className="flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3">
-              <CheckCircle2 className="mt-0.5 h-5 w-5 flex-none text-emerald-700" aria-hidden="true" />
-              <div>
-                <div className="text-sm font-black text-emerald-900">All caught up</div>
-                <div className="mt-0.5 text-xs font-semibold text-emerald-700">No parent actions need attention right now.</div>
-              </div>
-            </div>
-          )}
-        </div>
-      </section>
-
       {home.fees.length ? (
         <section className="app-card p-4">
           <div className="flex items-center gap-2 text-sm font-black text-rose-800">
@@ -836,7 +807,14 @@ function HomeDetailsLoadingState({ message }: { message: string }) {
   );
 }
 
-function TodayPriorityCard({ action, nextEvent, loading }: { action: ParentHomeAction | null; nextEvent: ParentScheduleEvent | null; loading: boolean }) {
+function TodayPriorityCard({ action, nextEvent, loading, remainingActions, remainingActionCount, multiRsvpTo }: {
+  action: ParentHomeAction | null;
+  nextEvent: ParentScheduleEvent | null;
+  loading: boolean;
+  remainingActions: ParentHomeAction[];
+  remainingActionCount: number;
+  multiRsvpTo: string | null;
+}) {
   if (!action) {
     if (loading) {
       return (
@@ -885,6 +863,25 @@ function TodayPriorityCard({ action, nextEvent, loading }: { action: ParentHomeA
           <p className="mt-1 line-clamp-2 text-sm font-semibold leading-5 text-gray-600">{action.detail}</p>
         </div>
       </div>
+      {remainingActions.length ? (
+        <div className="border-t border-gray-100 px-4 pb-3 pt-2">
+          <div className="flex items-center justify-between gap-3">
+            <div className="app-label">Also to do</div>
+            <div className="flex items-center gap-2">
+              {multiRsvpTo ? <MultiRsvpLink to={multiRsvpTo} /> : null}
+              <span className="rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-xs font-black text-gray-600">{remainingActionCount}</span>
+            </div>
+          </div>
+          <div className="mt-2 space-y-2">
+            {remainingActions.slice(0, 3).map((item) => (
+              <ActionRow key={item.id} action={item} />
+            ))}
+            {remainingActionCount > 3 ? (
+              <div className="text-xs font-semibold text-gray-500">+{remainingActionCount - 3} more in Schedule and Messages</div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
       <PriorityFooter action={action} nextEvent={nextEvent} loading={loading} />
     </section>
   );

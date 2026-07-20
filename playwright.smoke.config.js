@@ -8,7 +8,7 @@ export default {
         toHaveScreenshot: {
             animations: 'disabled',
             caret: 'hide',
-            maxDiffPixelRatio: 0.02,
+            maxDiffPixels: 500,
             scale: 'css'
         }
     },

@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+    FIRESTORE_RULES_DEPLOY_BUDGET_BYTES,
     assertPreviewDeploySkipHandling,
     extractMatchBlock,
+    validateFirestoreRulesDeployBudget,
     validateFirebaseDeployWorkloadIdentity,
     validatePreviewDeployCommand,
     validateProductionDeployCommand,
@@ -9,6 +11,15 @@ import {
 } from '../../scripts/validate-firebase-rules-ci.mjs';
 
 describe('validate Firebase rules CI helpers', () => {
+    it('keeps Firestore rules below the reliable production deploy budget', () => {
+        expect(() => validateFirestoreRulesDeployBudget(
+            'x'.repeat(FIRESTORE_RULES_DEPLOY_BUDGET_BYTES)
+        )).not.toThrow();
+        expect(() => validateFirestoreRulesDeployBudget(
+            'x'.repeat(FIRESTORE_RULES_DEPLOY_BUDGET_BYTES + 1)
+        )).toThrow(/avoid Firebase Rules backend failures/);
+    });
+
     it('accepts the deployed RSVP note get/list privacy contract', () => {
         expect(() => validateFirebaseRulesCi()).not.toThrow();
     });
@@ -114,8 +125,12 @@ service firebase.storage {
             node "$firebase_cli" deploy --only "$deploy_targets" --project game-flow-c6311 --config "$firebase_config" --non-interactive
           env:
             FIRESTORE_CONFIG_CHANGED: \${{ needs.prepare-deploy.outputs.firestore_changed }}
+          retry_delay_seconds=$((base_delay_seconds * (2 ** (attempt - 1))))
+          if (( retry_delay_seconds > 120 )); then
+            retry_delay_seconds=120
+          fi
           if [[ "$FIRESTORE_CONFIG_CHANGED" == "true" ]]; then
-            retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore"
+            retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 8 30
             retry_firebase_deploy "hosting,functions" "application"
           else
             retry_firebase_deploy "hosting,functions" "application"
@@ -146,16 +161,16 @@ service firebase.storage {
             '(^|[^[:alnum:]])409([^[:alnum:]]|$)'
         ))).toThrow('Production Firestore release-race retry');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
-            `retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore"
+            `retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 8 30
             retry_firebase_deploy "hosting,functions" "application"`,
             `retry_firebase_deploy "hosting,functions" "application"
-            retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore"`
+            retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 8 30`
         ))).toThrow('Production Firestore deploy must run first when its configuration changed');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
             `else
             retry_firebase_deploy "hosting,functions" "application"`,
             `else
-            retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore"
+            retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 8 30
             retry_firebase_deploy "hosting,functions" "application"`
         ))).toThrow('Production must not redeploy unchanged Firestore configuration');
     });

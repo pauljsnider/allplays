@@ -18,10 +18,11 @@ describe('visual regression CI wiring', () => {
     it('pins deterministic rendering and platform-neutral snapshot paths', () => {
         const config = readRepoFile('playwright.smoke.config.js');
         const helper = readRepoFile('tests/smoke/helpers/visual-regression.js');
+        const authVisual = readRepoFile('tests/smoke/app-auth-profile.spec.js');
 
         expect(config).toContain("snapshotPathTemplate: '{testDir}/{testFilePath}-snapshots/{arg}{ext}'");
-        expect(config).toContain('maxDiffPixelRatio: 0.02');
-        expect(config).not.toContain('maxDiffPixels: 0');
+        expect(config).toContain('maxDiffPixels: 500');
+        expect(config).not.toContain('maxDiffPixelRatio');
         expect(config).toContain("timezoneId: 'UTC'");
         expect(config).toContain('deviceScaleFactor: 1');
         expect(helper).toContain("visualFixtureTime = '2026-07-18T12:00:00.000Z'");
@@ -30,6 +31,7 @@ describe('visual regression CI wiring', () => {
         expect(helper).toContain('document.fonts.load(`${weight} 16px AllPlaysVisualInter`)');
         expect(helper).toContain('page.clock.setFixedTime');
         expect(helper).toContain("await route.abort('blockedbyclient')");
+        expect(authVisual).toContain("'auth-join-code-signup.png', { maxDiffPixels: 1500 }");
     });
 
     it('checks the legacy Tailwind fixture only in the dependency-bearing visual command', () => {

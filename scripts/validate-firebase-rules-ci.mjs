@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { parse as parseYaml } from 'yaml';
+import { compactFirestoreRules } from './compact-firestore-rules.mjs';
 
 function readText(path) {
     return readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
@@ -21,6 +22,18 @@ function assertMatches(text, pattern, label) {
 function assertEquals(actual, expected, label) {
     if (actual !== expected) {
         throw new Error(`${label} expected ${expected} but got ${actual}`);
+    }
+}
+
+export const FIRESTORE_RULES_DEPLOY_BUDGET_BYTES = 180 * 1024;
+
+export function validateFirestoreRulesDeployBudget(rulesSource) {
+    const sourceBytes = Buffer.byteLength(rulesSource, 'utf8');
+    if (sourceBytes > FIRESTORE_RULES_DEPLOY_BUDGET_BYTES) {
+        throw new Error(
+            `firestore.rules is ${sourceBytes} bytes; keep it at or below ` +
+            `${FIRESTORE_RULES_DEPLOY_BUDGET_BYTES} bytes to avoid Firebase Rules backend failures.`
+        );
     }
 }
 
@@ -250,7 +263,8 @@ export function validateProductionDeployCommand(deployProd) {
     }
 
     assertIncludes(deployProd, 'retry_firebase_deploy "hosting,functions" "application"', 'Production application deploy targets');
-    assertIncludes(deployProd, 'retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore"', 'Production Firestore deploy targets');
+    assertIncludes(deployProd, 'retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 8 30', 'Production Firestore deploy targets and bounded extended retry');
+    assertIncludes(deployProd, 'if (( retry_delay_seconds > 120 )); then', 'Production Firebase retry delay cap');
     assertIncludes(deployProd, 'HTTP Error:[[:space:]]*409,[[:space:]]*Requested entity already exists', 'Production Firestore release-race retry');
     assertIncludes(deployProd, 'actions: read', 'Production workflow-run read permission');
     assertIncludes(deployProd, 'GH_TOKEN: ${{ github.token }}', 'Production workflow-run authentication');
@@ -321,6 +335,8 @@ export function validateFirebaseRulesCi() {
     const deployPreviewBuild = readText('.github/workflows/deploy-preview.yml');
     const deployPreviewTrusted = readText('.github/workflows/deploy-preview-trusted.yml');
     const regressionGuards = readText('.github/workflows/regression-guards.yml');
+
+    validateFirestoreRulesDeployBudget(compactFirestoreRules(firestoreRules));
 
     if (firebaseJson.firestore?.rules !== 'firestore.rules') {
         throw new Error('firebase.json must deploy firestore.rules.');
@@ -472,6 +488,11 @@ export function validateFirebaseRulesCi() {
 
     assertIncludes(regressionGuards, 'npm run ci:firebase-rules', 'Regression guard workflow');
     assertIncludes(regressionGuards, 'npm run test:smoke:team-fallback', 'Regression guard workflow');
+    assertIncludes(
+        deployProd,
+        'node scripts/compact-firestore-rules.mjs firestore.rules "$bundle_dir/firestore.rules"',
+        'Production Firestore rules compaction'
+    );
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
