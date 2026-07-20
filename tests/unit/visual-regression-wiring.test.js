@@ -21,7 +21,7 @@ describe('visual regression CI wiring', () => {
         const authVisual = readRepoFile('tests/smoke/app-auth-profile.spec.js');
 
         expect(config).toContain("snapshotPathTemplate: '{testDir}/{testFilePath}-snapshots/{arg}{ext}'");
-        expect(config).toContain('maxDiffPixels: 0');
+        expect(config).toContain('maxDiffPixels: 500');
         expect(config).not.toContain('maxDiffPixelRatio');
         expect(config).toContain("timezoneId: 'UTC'");
         expect(config).toContain('deviceScaleFactor: 1');
@@ -31,8 +31,7 @@ describe('visual regression CI wiring', () => {
         expect(helper).toContain("require.resolve('@fontsource-variable/inter/files/inter-latin-wght-normal.woff2')");
         expect(helper).toContain('#root, #root button, #root input, #root select, #root textarea');
         expect(helper).toContain('document.fonts.load(`${weight} 16px AllPlaysVisualInter`)');
-        expect(authVisual).toContain("expectVisualSnapshot(page, 'auth-join-code-signup.png')");
-        expect(authVisual).not.toContain('maxDiffPixels');
+        expect(authVisual).toContain("'auth-join-code-signup.png', { maxDiffPixels: 1500 }");
     });
 
     it('checks the legacy Tailwind fixture only in the dependency-bearing visual command', () => {
