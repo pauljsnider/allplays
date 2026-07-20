@@ -90,7 +90,10 @@ describe('fallback media paths and Storage rules', () => {
         expect(dbSource).toContain('Optional team access query failed');
         expect(rules).toContain("('user:' + request.auth.uid) in participantIds");
         expect(rules).toContain("('email:' + request.auth.token.email.lower()) in participantIds");
-        expect(chatFallbackRules).toContain("allow create: if (isVerifiedForSensitiveWrite() ||\n        (isSignedIn() && conversationId == 'team')) &&");
+        expect(chatFallbackRules).toContain("allow create: if ((isSignedIn() && conversationId == 'team') ||\n        isVerifiedForSensitiveWrite()) &&");
+        expect(chatFallbackRules.indexOf("conversationId == 'team'")).toBeLessThan(
+            chatFallbackRules.indexOf('isVerifiedForSensitiveWrite()')
+        );
         expect(chatFallbackRules).toContain('request.auth.uid == userId');
         expect(chatFallbackRules).toContain('isAllowedChatAttachmentUpload(request.resource.contentType, request.resource.size);');
         expect(rules).toContain('function canDeleteOwnChatAttachment(teamId, conversationId, userId)');
