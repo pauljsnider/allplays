@@ -176,7 +176,7 @@ export async function executeEmailPasswordSignup({
         }
     }
 
-    try {
+    async function queueVerificationEmail() {
         const user = auth.currentUser;
         if (user) {
             await user.reload();
@@ -184,6 +184,10 @@ export async function executeEmailPasswordSignup({
             await sendVerificationEmail();
             console.log('SIGNUP: Verification email queued successfully');
         }
+    }
+
+    try {
+        await queueVerificationEmail();
     } catch (e) {
         console.error('SIGNUP ERROR:', e.code, e.message);
     }
