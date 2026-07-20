@@ -35,7 +35,7 @@ function isAllowedRedirectUri(uri) {
 }
 
 export function createOAuthBroker({ now = () => Date.now(), randomId = (bytes = 32) => randomBytes(bytes).toString('base64url') } = {}) {
-    const clients = new Map();
+    let registeredClient = null;
     const codes = new Map();
     const accessTokens = new Map();
     const refreshTokens = new Map();
@@ -47,11 +47,18 @@ export function createOAuthBroker({ now = () => Date.now(), randomId = (bytes = 
         if (!redirectUris.every(isAllowedRedirectUri)) {
             throw new OAuthError('invalid_request', 'redirect_uris must use an approved ChatGPT callback.');
         }
-        const clientId = randomId(16);
-        clients.set(clientId, { redirectUris, clientName: typeof clientName === 'string' ? clientName : '' });
+        // This broker only serves one trusted public client. Reusing its ID keeps
+        // unauthenticated dynamic registration from growing server memory.
+        if (!registeredClient) {
+            registeredClient = {
+                clientId: randomId(16),
+                redirectUris: [...new Set(redirectUris)],
+                clientName: typeof clientName === 'string' ? clientName : ''
+            };
+        }
         return {
-            client_id: clientId,
-            redirect_uris: redirectUris,
+            client_id: registeredClient.clientId,
+            redirect_uris: registeredClient.redirectUris,
             token_endpoint_auth_method: 'none',
             grant_types: ['authorization_code', 'refresh_token'],
             response_types: ['code']
@@ -59,9 +66,10 @@ export function createOAuthBroker({ now = () => Date.now(), randomId = (bytes = 
     }
 
     function validateAuthorizeRequest({ client_id: clientId, redirect_uri: redirectUri, response_type: responseType, code_challenge: codeChallenge, code_challenge_method: method }) {
-        const client = clients.get(clientId);
-        if (!client) throw new OAuthError('invalid_client', 'Unknown client_id.');
-        if (!client.redirectUris.includes(redirectUri)) {
+        if (!registeredClient || clientId !== registeredClient.clientId) {
+            throw new OAuthError('invalid_client', 'Unknown client_id.');
+        }
+        if (!registeredClient.redirectUris.includes(redirectUri)) {
             throw new OAuthError('invalid_request', 'redirect_uri is not registered for this client.');
         }
         if (responseType !== 'code') throw new OAuthError('invalid_request', 'Only response_type=code is supported.');

@@ -41,7 +41,7 @@ describe('chatgpt-mcp oauth: registration', () => {
         expect(() => broker.registerClient({})).toThrow(OAuthError);
     });
 
-    it('rejects an untrusted redirect at the dynamic registration endpoint', async () => {
+    it('rejects untrusted redirects and reuses one bounded client at the registration endpoint', async () => {
         const previousProjectId = process.env.FIREBASE_PROJECT_ID;
         const previousApiKey = process.env.FIREBASE_WEB_API_KEY;
         process.env.FIREBASE_PROJECT_ID = 'test-project';
@@ -62,6 +62,18 @@ describe('chatgpt-mcp oauth: registration', () => {
             });
             expect(response.status).toBe(400);
             await expect(response.json()).resolves.toMatchObject({ error: 'invalid_request' });
+
+            const registrations = await Promise.all(Array.from({ length: 20 }, () => fetch(
+                `http://127.0.0.1:${port}/oauth/register`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ client_name: 'ChatGPT', redirect_uris: [REDIRECT] })
+                }
+            )));
+            expect(registrations.every((registration) => registration.status === 201)).toBe(true);
+            const clients = await Promise.all(registrations.map((registration) => registration.json()));
+            expect(new Set(clients.map((client) => client.client_id))).toHaveLength(1);
         } finally {
             await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
             if (previousProjectId === undefined) delete process.env.FIREBASE_PROJECT_ID;

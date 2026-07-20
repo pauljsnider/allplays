@@ -245,7 +245,10 @@ describe('chatgpt-mcp core: getGameSummary', () => {
             queries: {
                 teams: () => [],
                 'teams/team-a/games/game-1/aggregatedStats': () => [
-                    { id: 'player-1', data: { playerName: 'Sam', playerNumber: 12, hits: 2, runs: 1 } }
+                    {
+                        id: 'player-1',
+                        data: { playerName: 'Sam', playerNumber: 12, stats: { hits: 2, runs: 1 } }
+                    }
                 ],
                 ...extra.queries
             }

@@ -279,13 +279,16 @@ export async function getGameSummary(db, context, { teamId, gameId } = {}) {
         if (!(error instanceof DomainError && error.code === 'permission_denied')) throw error;
     }
     const playerStats = statsSnap.docs.map((doc) => {
-        const stats = doc.data() || {};
+        const player = doc.data() || {};
+        const stats = player.stats && typeof player.stats === 'object' && !Array.isArray(player.stats)
+            ? player.stats
+            : {};
         return {
             playerId: doc.id,
-            playerName: cleanString(stats.playerName) || null,
-            playerNumber: stats.playerNumber ?? null,
+            playerName: cleanString(player.playerName) || null,
+            playerNumber: player.playerNumber ?? null,
             stats: Object.fromEntries(Object.entries(stats)
-                .filter(([key, value]) => typeof value === 'number' && !['playerNumber'].includes(key)))
+                .filter(([, value]) => typeof value === 'number'))
         };
     });
 
