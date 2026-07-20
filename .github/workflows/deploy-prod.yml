@@ -127,7 +127,8 @@ jobs:
           node scripts/write-firebase-hosting-config.mjs "$site_dir" "$config_file"
           jq '.hosting.public = "site"' "$config_file" > "$config_file.tmp"
           mv "$config_file.tmp" "$config_file"
-          cp firestore.rules firestore.indexes.json storage.rules "$bundle_dir/"
+          node scripts/compact-firestore-rules.mjs firestore.rules "$bundle_dir/firestore.rules"
+          cp firestore.indexes.json storage.rules "$bundle_dir/"
           echo "FIREBASE_PRODUCTION_BUNDLE=$bundle_dir" >> "$GITHUB_ENV"
 
       - name: Install Functions dependencies
@@ -380,7 +381,8 @@ jobs:
           retry_firebase_deploy() {
             local deploy_targets="$1"
             local deploy_label="$2"
-            local max_attempts=3
+            local max_attempts="${3:-3}"
+            local base_delay_seconds="${4:-15}"
             local attempt deploy_log deploy_status retry_delay_seconds
 
             for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do
@@ -407,7 +409,10 @@ jobs:
                 return "$deploy_status"
               fi
 
-              retry_delay_seconds=$((15 * (2 ** (attempt - 1))))
+              retry_delay_seconds=$((base_delay_seconds * (2 ** (attempt - 1))))
+              if (( retry_delay_seconds > 120 )); then
+                retry_delay_seconds=120
+              fi
               echo "Transient Firebase ${deploy_label} deploy failure; retrying in ${retry_delay_seconds} seconds (attempt $((attempt + 1))/${max_attempts})." >&2
               sleep "$retry_delay_seconds"
             done
@@ -416,7 +421,7 @@ jobs:
           if [[ "$FIRESTORE_CONFIG_CHANGED" == "true" ]]; then
             # Keep coupled authorization/index changes fail-closed: application code
             # must not publish until its Firestore configuration is active.
-            retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore"
+            retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 8 30
             retry_firebase_deploy "hosting,functions" "application"
           else
             # No authorization/index drift exists relative to the last successful

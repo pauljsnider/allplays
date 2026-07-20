@@ -111,7 +111,7 @@ describe('authentication email delivery routing', () => {
         }
     });
 
-    it('bounds the normal non-destructive production deploy to three attempts', () => {
+    it('bounds normal deploys to three attempts and gives Firestore an extended retry window', () => {
         const productionSource = read('.github/workflows/deploy-prod.yml');
         const firebaseDeployCommands = productionSource
             .split('\n')
@@ -126,10 +126,14 @@ describe('authentication email delivery routing', () => {
         expect(productionSource).toContain('[[ "$STORAGE_RULES_CHANGED" != "true" ]]');
         expect(productionSource).toContain('exit "$storage_status"');
         expect(productionSource.match(/--force/g) ?? []).toHaveLength(0);
-        expect(productionSource).toContain('max_attempts=3');
+        expect(productionSource).toContain('local max_attempts="${3:-3}"');
+        expect(productionSource).toContain('local base_delay_seconds="${4:-15}"');
         expect(productionSource).toContain('for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do');
         expect(productionSource).toContain('if (( attempt == max_attempts )); then');
-        expect(productionSource).toContain('retry_delay_seconds=$((15 * (2 ** (attempt - 1))))');
+        expect(productionSource).toContain('retry_delay_seconds=$((base_delay_seconds * (2 ** (attempt - 1))))');
+        expect(productionSource).toContain('if (( retry_delay_seconds > 120 )); then');
+        expect(productionSource).toContain('retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 8 30');
+        expect(productionSource).toContain('retry_firebase_deploy "hosting,functions" "application"');
         const changedBranchStart = productionSource.indexOf('if [[ "$FIRESTORE_CONFIG_CHANGED" == "true" ]]; then');
         const unchangedBranchStart = productionSource.indexOf('\n          else', changedBranchStart);
         const conditionalEnd = productionSource.indexOf('\n          fi', unchangedBranchStart);
@@ -146,7 +150,7 @@ describe('authentication email delivery routing', () => {
         const deployStep = productionSource.slice(deployStepStart);
         const transientGuard = 'if ! grep -Eiq "$transient_pattern" "$deploy_log"; then';
         const attemptLimitGuard = 'if (( attempt == max_attempts )); then';
-        const retryDelay = 'retry_delay_seconds=$((15 * (2 ** (attempt - 1))))';
+        const retryDelay = 'retry_delay_seconds=$((base_delay_seconds * (2 ** (attempt - 1))))';
         const nonTransientBranch = deployStep.slice(
             deployStep.indexOf(transientGuard),
             deployStep.indexOf(attemptLimitGuard)
