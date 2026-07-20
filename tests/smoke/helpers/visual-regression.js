@@ -48,7 +48,7 @@ export async function expectVisualSnapshot(page, snapshotName, options = {}) {
     await page.addStyleTag({
         content: `
             @font-face {
-                font-family: Inter;
+                font-family: AllPlaysVisualInter;
                 font-style: normal;
                 font-weight: 100 900;
                 src: url(data:font/woff2;base64,${deterministicInterFont}) format('woff2-variations');
@@ -63,11 +63,16 @@ export async function expectVisualSnapshot(page, snapshotName, options = {}) {
             html {
                 scrollbar-gutter: stable !important;
             }
+            #root, #root button, #root input, #root select, #root textarea {
+                font-family: AllPlaysVisualInter, sans-serif !important;
+            }
         `
     });
     await page.evaluate(async () => {
         if (!document.fonts) return;
-        await document.fonts.load('400 16px Inter');
+        await Promise.all([400, 500, 600, 700, 800].map(
+            (weight) => document.fonts.load(`${weight} 16px AllPlaysVisualInter`)
+        ));
         await document.fonts.ready;
     });
     await expect(page).toHaveScreenshot(snapshotName, {
