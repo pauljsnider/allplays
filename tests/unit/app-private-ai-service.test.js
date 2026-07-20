@@ -16,6 +16,7 @@ const firebaseMocks = vi.hoisted(() => ({
     orderBy: vi.fn((field, direction) => ({ type: 'orderBy', field, direction })),
     query: vi.fn((...parts) => ({ parts })),
     serverTimestamp: vi.fn(() => ({ __serverTimestamp: true })),
+    startAfter: vi.fn((cursor) => ({ type: 'startAfter', cursor })),
     setDoc: vi.fn()
 }));
 
@@ -347,6 +348,165 @@ describe('private AI service', () => {
             expect.objectContaining({ path: ['users', 'user-1', 'privateAiConversations'] }),
             expect.objectContaining({ title: 'New player development chat' })
         );
+    });
+
+    it('recovers legacy default history alongside stored and message-backed conversations', async () => {
+        firebaseMocks.getDocs
+            .mockResolvedValueOnce({
+                docs: [
+                    {
+                        id: 'conversation-1',
+                        data: () => ({
+                            title: 'Saved player plan',
+                            lastMessagePreview: 'Metadata wins for this thread.',
+                            clientCreatedAt: '2026-05-20T12:00:00Z',
+                            clientUpdatedAt: '2026-05-21T12:05:00Z'
+                        })
+                    }
+                ]
+            })
+            .mockResolvedValueOnce({
+                docs: [
+                    {
+                        id: 'legacy-answer',
+                        data: () => ({
+                            role: 'assistant',
+                            text: 'Legacy answer',
+                            clientCreatedAt: '2026-05-23T12:01:00Z'
+                        })
+                    },
+                    {
+                        id: 'legacy-question',
+                        data: () => ({
+                            role: 'user',
+                            text: 'What did I miss?',
+                            clientCreatedAt: '2026-05-23T12:00:00Z'
+                        })
+                    },
+                    {
+                        id: 'orphan-answer',
+                        data: () => ({
+                            role: 'assistant',
+                            text: 'Here is the practice plan.',
+                            conversationId: 'conversation-2',
+                            clientCreatedAt: '2026-05-22T12:01:00Z'
+                        })
+                    },
+                    {
+                        id: 'orphan-question',
+                        data: () => ({
+                            role: 'user',
+                            text: 'Build a practice plan',
+                            conversationId: 'conversation-2',
+                            clientCreatedAt: '2026-05-22T12:00:00Z'
+                        })
+                    },
+                    {
+                        id: 'stored-message',
+                        data: () => ({
+                            role: 'user',
+                            text: 'This must not duplicate conversation-1',
+                            conversationId: 'conversation-1',
+                            clientCreatedAt: '2026-05-21T12:00:00Z'
+                        })
+                    }
+                ]
+            });
+
+        const { loadPrivateAiConversations } = await import('../../apps/app/src/lib/privateAiService.ts');
+        const conversations = await loadPrivateAiConversations(authUser);
+
+        expect(conversations).toEqual([
+            expect.objectContaining({
+                id: 'default',
+                title: 'What did I miss?',
+                lastMessagePreview: 'Legacy answer'
+            }),
+            expect.objectContaining({
+                id: 'conversation-2',
+                title: 'Build a practice plan',
+                lastMessagePreview: 'Here is the practice plan.'
+            }),
+            expect.objectContaining({
+                id: 'conversation-1',
+                title: 'Saved player plan',
+                lastMessagePreview: 'Metadata wins for this thread.'
+            })
+        ]);
+        expect(conversations.filter((conversation) => conversation.id === 'conversation-1')).toHaveLength(1);
+    });
+
+    it('paginates recovery when the newest 80 messages all belong to one conversation', async () => {
+        const newestConversationDocuments = Array.from({ length: 80 }, (_, index) => ({
+            id: `newest-${index}`,
+            data: () => ({
+                role: index % 2 ? 'assistant' : 'user',
+                text: `Newest message ${index}`,
+                conversationId: `conversation-${index % 30}`,
+                clientCreatedAt: new Date(Date.UTC(2026, 5, 30, 12, 0, 80 - index)).toISOString()
+            })
+        }));
+        const legacyCursorDocument = {
+            id: 'legacy-question',
+            data: () => ({
+                role: 'user',
+                text: 'Older legacy question',
+                clientCreatedAt: '2026-05-20T12:00:00Z'
+            })
+        };
+        firebaseMocks.getDocs
+            .mockResolvedValueOnce({ docs: [] })
+            .mockResolvedValueOnce({ docs: newestConversationDocuments })
+            .mockResolvedValueOnce({ docs: [legacyCursorDocument] });
+
+        const { loadPrivateAiConversations } = await import('../../apps/app/src/lib/privateAiService.ts');
+        const conversations = await loadPrivateAiConversations(authUser, 2);
+
+        expect(conversations.map((conversation) => conversation.id)).toContain('default');
+        expect(conversations.find((conversation) => conversation.id === 'default')).toMatchObject({ title: 'Older legacy question' });
+        expect(firebaseMocks.getDocs).toHaveBeenCalledTimes(3);
+        expect(firebaseMocks.startAfter).toHaveBeenCalledWith(newestConversationDocuments[79]);
+    });
+
+    it('paginates message loading when the selected conversation is older than the newest 80 messages', async () => {
+        const newestConversationDocuments = Array.from({ length: 80 }, (_, index) => ({
+            id: `newest-${index}`,
+            data: () => ({
+                role: index % 2 ? 'assistant' : 'user',
+                text: `Newest message ${index}`,
+                conversationId: 'conversation-newest',
+                clientCreatedAt: new Date(Date.UTC(2026, 5, 30, 12, 0, 80 - index)).toISOString()
+            })
+        }));
+        const olderConversationDocuments = [
+            {
+                id: 'older-answer',
+                data: () => ({
+                    role: 'assistant',
+                    text: 'Older answer',
+                    conversationId: 'conversation-older',
+                    clientCreatedAt: '2026-05-20T12:01:00Z'
+                })
+            },
+            {
+                id: 'older-question',
+                data: () => ({
+                    role: 'user',
+                    text: 'Older question',
+                    conversationId: 'conversation-older',
+                    clientCreatedAt: '2026-05-20T12:00:00Z'
+                })
+            }
+        ];
+        firebaseMocks.getDocs
+            .mockResolvedValueOnce({ docs: newestConversationDocuments })
+            .mockResolvedValueOnce({ docs: olderConversationDocuments });
+
+        const { loadPrivateAiMessages } = await import('../../apps/app/src/lib/privateAiService.ts');
+        const messages = await loadPrivateAiMessages(authUser, undefined, 'conversation-older');
+
+        expect(messages.map((message) => message.id)).toEqual(['older-question', 'older-answer']);
+        expect(firebaseMocks.startAfter).toHaveBeenCalledWith(newestConversationDocuments[79]);
     });
 
     it('saves the prompt, lets AI request schedule data, and saves the answer privately', async () => {

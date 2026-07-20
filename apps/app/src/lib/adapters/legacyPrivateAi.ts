@@ -10,6 +10,7 @@ import {
   orderBy as legacyOrderBy,
   query as legacyQuery,
   serverTimestamp as legacyServerTimestamp,
+  startAfter as legacyStartAfter,
   setDoc as legacySetDoc
 } from '@legacy/firebase.js';
 import { getApp as legacyGetApp } from '@legacy/vendor/firebase-app.js';
@@ -31,6 +32,7 @@ export const limit = legacyLimit as (...args: any[]) => any;
 export const orderBy = legacyOrderBy as (...args: any[]) => any;
 export const query = legacyQuery as (...args: any[]) => any;
 export const serverTimestamp = legacyServerTimestamp as (...args: any[]) => any;
+export const startAfter = legacyStartAfter as (...args: any[]) => any;
 export const setDoc = legacySetDoc as (...args: any[]) => Promise<any>;
 export const getApp = legacyGetApp as (name?: string) => unknown;
 export const getAI = legacyGetAI as (app: unknown, options?: Record<string, unknown>) => unknown;
