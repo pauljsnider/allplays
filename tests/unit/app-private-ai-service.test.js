@@ -349,7 +349,7 @@ describe('private AI service', () => {
         );
     });
 
-    it('recovers message-backed conversations without letting legacy default replace a stored initial chat', async () => {
+    it('recovers legacy default history alongside stored and message-backed conversations', async () => {
         firebaseMocks.getDocs
             .mockResolvedValueOnce({
                 docs: [
@@ -417,6 +417,11 @@ describe('private AI service', () => {
 
         expect(conversations).toEqual([
             expect.objectContaining({
+                id: 'default',
+                title: 'What did I miss?',
+                lastMessagePreview: 'Legacy answer'
+            }),
+            expect.objectContaining({
                 id: 'conversation-2',
                 title: 'Build a practice plan',
                 lastMessagePreview: 'Here is the practice plan.'
@@ -427,7 +432,6 @@ describe('private AI service', () => {
                 lastMessagePreview: 'Metadata wins for this thread.'
             })
         ]);
-        expect(conversations.some((conversation) => conversation.id === 'default')).toBe(false);
         expect(conversations.filter((conversation) => conversation.id === 'conversation-1')).toHaveLength(1);
     });
 
