@@ -3904,6 +3904,9 @@ service cloud.firestore {
           match /audit/{auditId} {
             allow read: if isTeamOwnerOrAdmin(teamId);
             allow create: if isTeamOwnerOrAdmin(teamId) &&
+                             existsAfter(/databases/$(database)/documents/teams/$(teamId)/feeBatches/$(batchId)/feeRecipients/$(recipientId)) &&
+                             getAfter(/databases/$(database)/documents/teams/$(teamId)/feeBatches/$(batchId)/feeRecipients/$(recipientId)).data.get('latestAuditId', '') == auditId &&
+                             getAfter(/databases/$(database)/documents/teams/$(teamId)/feeBatches/$(batchId)/feeRecipients/$(recipientId)).data.get('latestAuditAt', null) == request.time &&
                              request.resource.data.teamId == teamId &&
                              request.resource.data.batchId == batchId &&
                              request.resource.data.recipientId == recipientId &&

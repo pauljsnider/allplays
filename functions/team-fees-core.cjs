@@ -292,6 +292,26 @@ function getTeamFeeStripePaymentRefs(...sources) {
     return { paymentIntentId: '', chargeId: '' };
 }
 
+const TEAM_FEE_FINANCIAL_FIELDS = [
+    'status',
+    'amountCents',
+    'amountDueCents',
+    'adjustedAmountCents',
+    'balanceDueCents',
+    'remainingBalanceCents',
+    'amountPaidCents',
+    'paidAmountCents',
+    'amountRefundedCents',
+    'refundedAmountCents'
+];
+
+function getChangedTeamFeeFinancialFields(previous = {}, next = {}) {
+    return TEAM_FEE_FINANCIAL_FIELDS.filter((field) => (
+        Object.prototype.hasOwnProperty.call(next, field)
+        && !Object.is(previous[field], next[field])
+    ));
+}
+
 function buildTeamFeeStripeRefundUpdate({ recipient = {}, refund = {}, amountCents = 0, actorId = '', reason = '', refundedAt, ledgerRefundedAt = refundedAt }) {
     const refundAmountCents = Math.round(Number(amountCents || refund.amount || 0));
     const previousPaidCents = getTeamFeePaidCents(recipient);
@@ -415,6 +435,7 @@ module.exports = {
     getTeamFeeStripePaidAmountCents,
     buildTeamFeeAdminBillingMetadata,
     getTeamFeeStripePaymentRefs,
+    getChangedTeamFeeFinancialFields,
     buildTeamFeePaidUpdate,
     buildTeamFeeStripeRefundUpdate
 };

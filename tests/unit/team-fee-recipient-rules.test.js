@@ -83,8 +83,10 @@ describe('team fee recipient Firestore rules', () => {
         expect(rules).toContain('allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);');
     });
 
-    it('allows append-only fee audit entries from the authenticated team admin', () => {
+    it('allows atomic append-only fee audit entries from the authenticated team admin', () => {
         expect(nestedRecipientBlock).toContain('match /audit/{auditId} {');
+        expect(nestedRecipientBlock).toContain("data.get('latestAuditId', '') == auditId");
+        expect(nestedRecipientBlock).toContain("data.get('latestAuditAt', null) == request.time");
         expect(nestedRecipientBlock).toContain('request.resource.data.actorId == request.auth.uid');
         expect(nestedRecipientBlock).toContain('request.resource.data.changedAt == request.time');
         expect(nestedRecipientBlock).toContain('allow update, delete: if false;');
@@ -280,6 +282,32 @@ describe('team fee recipient Firestore rules', () => {
                 'owner-a',
                 { status: 'paid', amountDueCents: 0 },
                 { mutationType: 'invented_mutation' }
+            ));
+        });
+
+        it('denies phantom audits without an atomic parent recipient update', async () => {
+            const ownerDb = authedFirestore('owner-a', 'owner-a@example.com');
+            await seedRecipient(
+                'teams/team-a/feeBatches/batch-a/feeRecipients/existing-recipient',
+                recipientPayload()
+            );
+            const auditPayload = {
+                teamId: 'team-a',
+                batchId: 'batch-a',
+                recipientId: 'existing-recipient',
+                actorId: 'owner-a',
+                changedFields: ['status'],
+                mutationType: 'fee_update',
+                changedAt: serverTimestamp()
+            };
+
+            await assertFails(setDoc(
+                doc(ownerDb, 'teams/team-a/feeBatches/batch-a/feeRecipients/existing-recipient/audit/phantom'),
+                auditPayload
+            ));
+            await assertFails(setDoc(
+                doc(ownerDb, 'teams/team-a/feeBatches/batch-a/feeRecipients/missing-recipient/audit/phantom'),
+                { ...auditPayload, recipientId: 'missing-recipient' }
             ));
         });
 

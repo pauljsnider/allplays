@@ -45,6 +45,7 @@ const {
   shouldMarkTeamFeePaidFromEvent,
   shouldRecordTeamFeeCheckoutNotPaidFromEvent,
   getTeamFeeStripePaymentRefs,
+  getChangedTeamFeeFinancialFields,
   buildTeamFeePaidUpdate,
   buildTeamFeeStripeRefundUpdate
 } = require('./team-fees-core.cjs');
@@ -4459,8 +4460,12 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
         refundedAt,
         ledgerRefundedAt
       });
+      const recipientUpdate = withTeamFeeParentBillingClears(update);
+      const changedFields = getChangedTeamFeeFinancialFields(latestRecipient, recipientUpdate);
       transaction.set(recipientRef, {
-        ...withTeamFeeParentBillingClears(update),
+        ...recipientUpdate,
+        latestAuditId: refundAuditRef.id,
+        latestAuditAt: refundedAt,
         paymentLedger: admin.firestore.FieldValue.arrayUnion(...ledgerEntries)
       }, { merge: true });
       if (adminBilling) {
@@ -4471,15 +4476,7 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
         batchId: input.batchId,
         recipientId: input.recipientId,
         actorId: context.auth.uid,
-        changedFields: [
-          'status',
-          'paidAmountCents',
-          'amountPaidCents',
-          'balanceDueCents',
-          'remainingBalanceCents',
-          'refundedAmountCents',
-          'amountRefundedCents'
-        ],
+        changedFields,
         mutationType: 'stripe_refund',
         changedAt: refundedAt
       });
@@ -5030,13 +5027,19 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
             eventId: event.id,
             receivedAt
           });
-          transaction.set(recipientRef, withTeamFeeParentBillingClears(recipientUpdate), { merge: true });
-          transaction.set(buildTeamFeeAuditRef(recipientRef, `stripe_payment_${event.id}`), {
+          const paymentAuditRef = buildTeamFeeAuditRef(recipientRef, `stripe_payment_${event.id}`);
+          const changedFields = getChangedTeamFeeFinancialFields(recipient, recipientUpdate);
+          transaction.set(recipientRef, {
+            ...withTeamFeeParentBillingClears(recipientUpdate),
+            latestAuditId: paymentAuditRef.id,
+            latestAuditAt: receivedAt
+          }, { merge: true });
+          transaction.set(paymentAuditRef, {
             teamId,
             batchId,
             recipientId,
             actorId: session.metadata?.payerUid || 'stripe',
-            changedFields: ['status', 'paidAmountCents', 'amountPaidCents', 'balanceDueCents'],
+            changedFields,
             mutationType: 'stripe_checkout_paid',
             changedAt: receivedAt
           });
