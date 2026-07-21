@@ -1,11 +1,31 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import smokeConfig from '../../playwright.smoke.config.js';
 
 const repoRoot = path.resolve(import.meta.dirname, '../..');
 const readRepoFile = (file) => readFileSync(path.join(repoRoot, file), 'utf8');
 
 describe('visual regression CI wiring', () => {
+    it('retries only the tracked auth visual in CI', () => {
+        const quarantine = smokeConfig.projects.find(
+            ({ name }) => name === 'auth-profile-visual-quarantine'
+        );
+        const remainingSmoke = smokeConfig.projects.find(({ name }) => name === 'smoke');
+
+        expect(smokeConfig.retries).toBe(0);
+        expect(quarantine).toMatchObject({
+            testMatch: ['**/app-auth-profile.spec.js'],
+            retries: process.env.CI ? 1 : 0
+        });
+        expect(quarantine.grep.source).toBe(
+            '@visual app auth screen exposes sign in, sign up, Google, activation code, invite, and reset flows'
+        );
+        expect(quarantine.grep).toEqual(remainingSmoke.grepInvert);
+        expect(remainingSmoke.retries).toBe(0);
+        expect(readRepoFile('playwright.smoke.config.js')).toContain('tracked by #4100');
+    });
+
     it('runs visual checks explicitly after non-visual preview smoke and retains failure diffs', () => {
         const workflow = readRepoFile('.github/workflows/preview-smoke.yml');
 
