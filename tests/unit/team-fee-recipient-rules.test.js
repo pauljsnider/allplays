@@ -283,6 +283,28 @@ describe('team fee recipient Firestore rules', () => {
             ));
         });
 
+        it('accepts an audit that omits a supplied financial field whose value did not change', async () => {
+            await seedRecipient(
+                'teams/team-a/feeBatches/batch-a/feeRecipients/second-partial-payment',
+                {
+                    ...recipientPayload(),
+                    status: 'partial',
+                    amountPaidCents: 500,
+                    remainingBalanceCents: 2000
+                }
+            );
+
+            await assertSucceeds(writeAuditedUpdate(
+                authedFirestore('owner-a', 'owner-a@example.com'),
+                'team-a',
+                'batch-a',
+                'second-partial-payment',
+                'owner-a',
+                { status: 'partial', amountPaidCents: 1000, remainingBalanceCents: 1500 },
+                { changedFields: ['remainingBalanceCents', 'amountPaidCents'] }
+            ));
+        });
+
         it('preserves scoped collection-group reads for linked parents and team admins', async () => {
             await seedRecipient(
                 'teams/team-a/feeBatches/batch-a/feeRecipients/assigned-parent',

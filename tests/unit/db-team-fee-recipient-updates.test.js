@@ -165,7 +165,15 @@ describe('updateTeamFeeRecipient manual payment validation', () => {
     });
 
     it('rejects fee amount and status mutations without an audit actor', async () => {
-        const runTransaction = vi.fn();
+        const transactionUpdate = vi.fn();
+        const runTransaction = vi.fn(async (_db, handler) => handler({
+            get: vi.fn(async () => ({
+                exists: () => true,
+                data: () => ({ status: 'unpaid', amountPaidCents: 0 })
+            })),
+            update: transactionUpdate,
+            set: vi.fn()
+        }));
         const updateDoc = vi.fn();
         const updateTeamFeeRecipient = buildUpdateTeamFeeRecipient({
             doc: vi.fn((_db, ...parts) => ({ path: parts.join('/') })),
@@ -181,8 +189,53 @@ describe('updateTeamFeeRecipient manual payment validation', () => {
             status: 'paid',
             amountPaidCents: 5000
         })).rejects.toThrow('Fee amount and status changes require an audit actor.');
-        expect(runTransaction).not.toHaveBeenCalled();
+        expect(runTransaction).toHaveBeenCalledTimes(1);
+        expect(transactionUpdate).not.toHaveBeenCalled();
         expect(updateDoc).not.toHaveBeenCalled();
+    });
+
+    it('audits only stored values changed by a second partial payment', async () => {
+        const transactionSet = vi.fn();
+        const transactionUpdate = vi.fn();
+        const runTransaction = vi.fn(async (_db, handler) => handler({
+            get: vi.fn(async () => ({
+                exists: () => true,
+                data: () => ({
+                    status: 'partial',
+                    amountDueCents: 5000,
+                    amountPaidCents: 1000,
+                    remainingBalanceCents: 4000
+                })
+            })),
+            update: transactionUpdate,
+            set: transactionSet
+        }));
+        const updateTeamFeeRecipient = buildUpdateTeamFeeRecipient({
+            doc: vi.fn((_db, ...parts) => ({ path: parts.join('/') })),
+            updateDoc: vi.fn(),
+            setDoc: vi.fn(),
+            runTransaction,
+            serverTimestamp: vi.fn(() => 'server-ts'),
+            arrayUnion: vi.fn((...entries) => entries),
+            deleteField: vi.fn(() => 'deleted')
+        });
+
+        await updateTeamFeeRecipient('team-1', 'batch-1', 'recipient-1', {
+            status: 'partial',
+            amountPaidCents: 2000,
+            remainingBalanceCents: 3000,
+            manualPayment: { amountPaidCents: 1000 },
+            ledgerEntries: [{ type: 'offline_payment', amountCents: 1000 }],
+            auditActorId: 'coach-1'
+        });
+
+        const auditPayload = transactionSet.mock.calls.find(([ref]) => ref.path.includes('/audit/'))[1];
+        expect(auditPayload.changedFields).toEqual(['remainingBalanceCents', 'amountPaidCents']);
+        expect(auditPayload.changedFields).not.toContain('status');
+        expect(transactionUpdate).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({ status: 'partial', amountPaidCents: 2000, remainingBalanceCents: 3000 })
+        );
     });
 
     it('rejects manual payments that exceed the recipient remaining balance before persisting', async () => {

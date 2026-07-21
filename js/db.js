@@ -5641,42 +5641,20 @@ export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updat
         : null;
     const adminBillingDetails = explicitAdminBilling || deriveTeamFeeAdminBillingPayload(unsafeRecipientUpdates, ledgerEntries);
     const hasAdminBilling = Boolean(adminBillingDetails);
-    const auditedChangedFields = TEAM_FEE_AUDIT_FIELDS.filter((field) => Object.prototype.hasOwnProperty.call(recipientUpdates, field));
+    const requestedAuditFields = TEAM_FEE_AUDIT_FIELDS.filter((field) => Object.prototype.hasOwnProperty.call(recipientUpdates, field));
     if (isManualPaymentUpdate) {
         ['status', 'amountPaidCents', 'remainingBalanceCents'].forEach((field) => {
-            if (!auditedChangedFields.includes(field)) auditedChangedFields.push(field);
+            if (!requestedAuditFields.includes(field)) requestedAuditFields.push(field);
         });
     }
     const mutationActorId = getTeamFeeMutationActorId({ ...unsafeRecipientUpdates, adminBilling, auditActorId });
-    if (auditedChangedFields.length > 0 && !mutationActorId) {
-        throw new Error('Fee amount and status changes require an audit actor.');
-    }
-    const shouldWriteAudit = auditedChangedFields.length > 0;
     const mutationTimestamp = serverTimestamp();
-    const auditId = shouldWriteAudit ? createTeamFeeLedgerEntryId('fee_mutation') : null;
-    const auditRef = shouldWriteAudit
-        ? doc(db, 'teams', teamId, 'feeBatches', batchId, 'feeRecipients', recipientId, 'audit', auditId)
-        : null;
-    const auditPayload = shouldWriteAudit ? {
-        teamId,
-        batchId,
-        recipientId,
-        actorId: mutationActorId,
-        changedFields: auditedChangedFields,
-        mutationType: String(adminBillingDetails?.type || 'fee_update'),
-        changedAt: mutationTimestamp
-    } : null;
 
     const updatePayload = {
         ...recipientUpdates,
         teamId,
         batchId,
         ...(hasAdminBilling ? { hasAdminBilling: true } : {}),
-        ...(shouldWriteAudit ? {
-            latestAuditId: auditId,
-            latestAuditActorId: deleteField(),
-            latestAuditAt: mutationTimestamp
-        } : {}),
         updatedAt: mutationTimestamp
     };
 
@@ -5717,13 +5695,14 @@ export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updat
         updatePayload.paymentLedger = arrayUnion(...safeLedgerEntries);
     }
 
-    if (isManualPaymentUpdate || isCancellationUpdate || shouldWriteAudit) {
+    if (isManualPaymentUpdate || isCancellationUpdate || requestedAuditFields.length > 0) {
         await runTransaction(db, async (transaction) => {
             const recipientSnapshot = await transaction.get(recipientRef);
             if (!recipientSnapshot.exists()) {
                 throw new Error('Fee recipient not found.');
             }
             const recipient = recipientSnapshot.data() || {};
+            const transactionUpdatePayload = { ...updatePayload };
             const amountDueRaw = recipient.amountDueCents ?? recipient.adjustedAmountCents ?? recipient.amountCents ?? 0;
             const amountDueCents = Number.isFinite(Number(amountDueRaw)) ? Math.max(0, Number(amountDueRaw)) : 0;
             const priorPaidRaw = recipient.amountPaidCents ?? recipient.paidAmountCents ?? 0;
@@ -5746,10 +5725,10 @@ export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updat
                 const amountPaidCents = priorPaidCents + manualPaymentAmountCents;
                 const updatedRemainingBalanceCents = Math.max(0, amountDueCents - amountPaidCents);
                 const status = updatedRemainingBalanceCents === 0 ? 'paid' : 'partial';
-                updatePayload.amountPaidCents = amountPaidCents;
-                updatePayload.remainingBalanceCents = updatedRemainingBalanceCents;
-                updatePayload.status = status;
-                updatePayload.paidAt = status === 'paid'
+                transactionUpdatePayload.amountPaidCents = amountPaidCents;
+                transactionUpdatePayload.remainingBalanceCents = updatedRemainingBalanceCents;
+                transactionUpdatePayload.status = status;
+                transactionUpdatePayload.paidAt = status === 'paid'
                     ? (recipientUpdates.manualPayment?.paidAt ?? offlinePaymentEntry?.paymentDate ?? serverTimestamp())
                     : null;
             }
@@ -5758,12 +5737,34 @@ export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updat
                 throw new Error('Paid recipients must be refunded before canceling the balance.');
             }
 
-            transaction.update(recipientRef, updatePayload);
+            const auditedChangedFields = TEAM_FEE_AUDIT_FIELDS.filter((field) => (
+                Object.prototype.hasOwnProperty.call(transactionUpdatePayload, field)
+                && !Object.is(transactionUpdatePayload[field], recipient[field])
+            ));
+            if (auditedChangedFields.length > 0 && !mutationActorId) {
+                throw new Error('Fee amount and status changes require an audit actor.');
+            }
+
+            if (auditedChangedFields.length > 0) {
+                const auditId = createTeamFeeLedgerEntryId('fee_mutation');
+                const auditRef = doc(db, 'teams', teamId, 'feeBatches', batchId, 'feeRecipients', recipientId, 'audit', auditId);
+                transactionUpdatePayload.latestAuditId = auditId;
+                transactionUpdatePayload.latestAuditActorId = deleteField();
+                transactionUpdatePayload.latestAuditAt = mutationTimestamp;
+                transaction.set(auditRef, {
+                    teamId,
+                    batchId,
+                    recipientId,
+                    actorId: mutationActorId,
+                    changedFields: auditedChangedFields,
+                    mutationType: String(adminBillingDetails?.type || 'fee_update'),
+                    changedAt: mutationTimestamp
+                });
+            }
+
+            transaction.update(recipientRef, transactionUpdatePayload);
             if (adminBillingPayload) {
                 transaction.set(adminBillingRef, adminBillingPayload, { merge: true });
-            }
-            if (auditPayload) {
-                transaction.set(auditRef, auditPayload);
             }
         });
         return;
