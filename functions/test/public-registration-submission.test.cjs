@@ -752,6 +752,36 @@ test('uses bounded network-only lookup limits before validating checkout and can
     assert.deepEqual(limiterDocs.map(({ data }) => data.count).sort((a, b) => a - b), [2, 2]);
 });
 
+test('rejects rotated checkout tokens before writing subject limiter documents', async () => {
+    process.env.PUBLIC_REGISTRATION_NETWORK_RATE_LIMIT_MODE = 'disabled';
+    process.env.PUBLIC_REGISTRATION_FORM_RATE_LIMIT_MODE = 'disabled';
+    const { firestore, mod } = loadFunctionsModule(buildSeedState({
+        paymentSettings: { offlinePaymentEnabled: true, onlineCheckoutEnabled: true }
+    }));
+    const checkoutAttemptToken = 'checkouttoken123456';
+    const submission = await mod.submitPublicRegistration(buildSubmission({ checkoutAttemptToken }), context);
+    const limiterCountBeforeCheckout = firestore.rateLimitDocs().length;
+    process.env.PUBLIC_REGISTRATION_CHECKOUT_RATE_LIMIT_MODE = 'observe';
+    const rotatedInput = {
+        teamId: 'team-1',
+        formId: 'form-1',
+        registrationId: submission.registrationId,
+        checkoutAttemptToken: 'rotatedcheckouttoken123456'
+    };
+
+    await assert.rejects(
+        mod.createStripeRegistrationCheckout(rotatedInput, context),
+        (error) => error.code === 'failed-precondition'
+    );
+    assert.equal(firestore.rateLimitDocs().length, limiterCountBeforeCheckout + 1);
+
+    await assert.rejects(
+        mod.cancelStripeRegistrationCheckout(rotatedInput, context),
+        (error) => error.code === 'failed-precondition'
+    );
+    assert.equal(firestore.rateLimitDocs().length, limiterCountBeforeCheckout + 2);
+});
+
 test('keeps checkout available when an observe-only limiter reservation fails', async () => {
     const { firestore, stripeState, mod } = loadFunctionsModule(buildSeedState({
         paymentSettings: { offlinePaymentEnabled: true, onlineCheckoutEnabled: true }

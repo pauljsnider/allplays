@@ -4511,8 +4511,6 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data, c
     throw new functions.https.HttpsError('not-found', 'Registration not found.');
   }
 
-  await applyStagedPublicRegistrationRateLimits(resolvedInput, context, 'create-checkout');
-
   const form = formSnap.data() || {};
   const registration = registrationSnap.data() || {};
   if (registration.publicCheckoutCapabilityHash && !resolvedInput.publicCheckoutCapability) {
@@ -4552,6 +4550,7 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data, c
   if (!registrationCheckoutAuthorityMatches(registration, resolvedInput)) {
     throw new functions.https.HttpsError('failed-precondition', 'Current public checkout capability is required.');
   }
+  await applyStagedPublicRegistrationRateLimits(resolvedInput, context, 'create-checkout');
   const retryCapacityReservationId = resolvedInput.retryPayment ? crypto.randomUUID() : '';
   let retryCapacityReservation = { reserved: false, retryCapacityReservationId: null };
   if (resolvedInput.retryPayment && registration.registrationCapacityReleased === true) {
@@ -4710,8 +4709,12 @@ exports.cancelStripeRegistrationCheckout = functions.https.onCall(async (data, c
     throw new functions.https.HttpsError('not-found', 'Registration not found.');
   }
 
-  await applyStagedPublicRegistrationRateLimits(resolvedInput, context, 'cancel-checkout');
+  const registration = registrationSnap.data() || {};
+  if (!registrationCheckoutAuthorityMatches(registration, resolvedInput)) {
+    throw new functions.https.HttpsError('failed-precondition', 'Current public checkout capability is required.');
+  }
 
+  await applyStagedPublicRegistrationRateLimits(resolvedInput, context, 'cancel-checkout');
   return releaseRegistrationCheckoutCapacity(resolvedInput, {
     checkoutStatus: 'cancelled',
     paymentStatus: 'checkout_cancelled'
