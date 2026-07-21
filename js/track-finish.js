@@ -224,6 +224,7 @@ export async function commitStandardTrackerFinishData({
     gameUpdateBatch.update(gameRef, {
         homeScore: finalHome,
         awayScore: finalAway,
+        scoreOrientation: 'team-opponent',
         summary,
         status: 'completed',
         opponentStats

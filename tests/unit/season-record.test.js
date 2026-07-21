@@ -53,6 +53,32 @@ describe('season record helpers', () => {
     ], { seasonLabel: '2026' })).toEqual({ wins: 2, losses: 0, ties: 0 });
   });
 
+  it('preserves team-oriented scores from legacy trackers and explicit writer metadata', () => {
+    const legacyTrackedAwayGame = {
+      isHome: false,
+      homeScore: 71,
+      awayScore: 68,
+      opponentStats: {}
+    };
+    const explicitTeamOrientedGame = {
+      isHome: false,
+      homeScore: 3,
+      awayScore: 1,
+      scoreOrientation: 'team-opponent'
+    };
+    const explicitVenueGameWithLegacyPayload = {
+      isHome: false,
+      homeScore: 68,
+      awayScore: 71,
+      opponentStats: {},
+      scoreOrientation: 'venue'
+    };
+
+    expect(getTeamScorePair(legacyTrackedAwayGame)).toEqual({ teamScore: 71, opponentScore: 68 });
+    expect(getTeamScorePair(explicitTeamOrientedGame)).toEqual({ teamScore: 3, opponentScore: 1 });
+    expect(getTeamScorePair(explicitVenueGameWithLegacyPayload)).toEqual({ teamScore: 71, opponentScore: 68 });
+  });
+
   it('lists unique season labels in descending order', () => {
     const games = [
       { type: 'game', seasonLabel: '2024' },
