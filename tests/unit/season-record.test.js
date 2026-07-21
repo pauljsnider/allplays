@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   inferSeasonLabelFromGame,
   gameCountsTowardSeasonRecord,
+  getTeamScorePair,
   isCompletedGame,
   calculateSeasonRecord,
   listSeasonLabels
@@ -38,6 +39,54 @@ describe('season record helpers', () => {
 
     expect(calculateSeasonRecord(games, { seasonLabel: '2026' })).toEqual({ wins: 1, losses: 1, ties: 1 });
     expect(calculateSeasonRecord(games, { seasonLabel: '2025' })).toEqual({ wins: 1, losses: 0, ties: 0 });
+  });
+
+  it('normalizes venue-oriented away scores and preserves mirrored score order', () => {
+    const awayGame = { isHome: false, homeScore: 68, awayScore: 71 };
+    const mirroredAwayGame = { ...awayGame, homeScore: 71, awayScore: 68, sharedScheduleSourceTeamId: 'team-alpha' };
+
+    expect(getTeamScorePair(awayGame)).toEqual({ teamScore: 71, opponentScore: 68 });
+    expect(getTeamScorePair(mirroredAwayGame)).toEqual({ teamScore: 71, opponentScore: 68 });
+    expect(calculateSeasonRecord([
+      { ...awayGame, type: 'game', status: 'completed', seasonLabel: '2026' },
+      { ...mirroredAwayGame, type: 'game', status: 'completed', seasonLabel: '2026' }
+    ], { seasonLabel: '2026' })).toEqual({ wins: 2, losses: 0, ties: 0 });
+  });
+
+  it('preserves team-oriented scores from legacy trackers and explicit writer metadata', () => {
+    const legacyTrackedAwayGame = {
+      isHome: false,
+      homeScore: 71,
+      awayScore: 68,
+      opponentStats: {},
+      liveStatus: 'completed'
+    };
+    const explicitTeamOrientedGame = {
+      isHome: false,
+      homeScore: 3,
+      awayScore: 1,
+      scoreOrientation: 'team-opponent'
+    };
+    const explicitVenueGameWithLegacyPayload = {
+      isHome: false,
+      homeScore: 68,
+      awayScore: 71,
+      opponentStats: {},
+      scoreOrientation: 'venue'
+    };
+    const appTrackedAwayGame = {
+      isHome: false,
+      homeScore: 68,
+      awayScore: 71,
+      opponentStats: {},
+      liveStatus: 'completed',
+      liveStartedAt: '2026-03-04T18:00:00Z'
+    };
+
+    expect(getTeamScorePair(legacyTrackedAwayGame)).toEqual({ teamScore: 71, opponentScore: 68 });
+    expect(getTeamScorePair(explicitTeamOrientedGame)).toEqual({ teamScore: 3, opponentScore: 1 });
+    expect(getTeamScorePair(explicitVenueGameWithLegacyPayload)).toEqual({ teamScore: 71, opponentScore: 68 });
+    expect(getTeamScorePair(appTrackedAwayGame)).toEqual({ teamScore: 71, opponentScore: 68 });
   });
 
   it('lists unique season labels in descending order', () => {

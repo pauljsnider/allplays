@@ -167,6 +167,20 @@ const model = {
   standings: { enabled: true, label: 'Standings', rows: [], currentRow: null },
   leaderboards: [],
   trackingSummaries: [],
+  teamAnalytics: {
+    seasonLabel: '2100',
+    completedGameCount: 0,
+    recentWins: 0,
+    recentLosses: 0,
+    recentTies: 0,
+    averagePointsFor: 0,
+    averagePointsAgainst: 0,
+    scoreDifferential: 0,
+    recentForm: [],
+    progression: [],
+    availableSeasons: [],
+    seasons: []
+  },
   sponsors: [],
   statTrackerConfigs: [],
   canManageTeam: false,
@@ -238,7 +252,7 @@ describe('TeamDetail', () => {
     teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue(model);
     teamDetailServiceMocks.loadParentTeamDetailBootstrap.mockImplementation((...args: any[]) => teamDetailServiceMocks.loadParentTeamDetail(...args));
     teamDetailServiceMocks.loadRosterFieldDefinitionsForApp.mockResolvedValue([]);
-    teamDetailServiceMocks.loadTeamDetailInsights.mockResolvedValue({ leaderboards: [], trackingSummaries: [] });
+    teamDetailServiceMocks.loadTeamDetailInsights.mockResolvedValue({ leaderboards: [], trackingSummaries: [], teamAnalytics: model.teamAnalytics });
     teamDetailServiceMocks.loadTeamDetailSponsors.mockResolvedValue({ sponsors: [] });
     teamDetailServiceMocks.loadTeamRosterParentInvites.mockResolvedValue([]);
     teamDetailServiceMocks.loadTeamStaffPermissions.mockResolvedValue(null);
@@ -716,6 +730,73 @@ describe('TeamDetail', () => {
 
     expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
     await waitFor(() => expect(teamDetailServiceMocks.loadTeamDetailInsights).toHaveBeenCalledWith('team-1', auth.user));
+  });
+
+  it('renders team performance metrics and accessible score graphs in Insights', async () => {
+    const teamAnalytics: any = {
+      seasonLabel: '2026',
+      completedGameCount: 3,
+      recentWins: 1,
+      recentLosses: 1,
+      recentTies: 1,
+      averagePointsFor: 2.3,
+      averagePointsAgainst: 2,
+      scoreDifferential: 1,
+      recentForm: [
+        { id: 'game-1', date: new Date('2026-03-01'), dateLabel: 'Mar 1', seasonLabel: '2026', opponent: 'Bears', pointsFor: 4, pointsAgainst: 1, differential: 3, result: 'W' as const },
+        { id: 'game-2', date: new Date('2026-03-02'), dateLabel: 'Mar 2', seasonLabel: '2026', opponent: 'Cats', pointsFor: 1, pointsAgainst: 3, differential: -2, result: 'L' as const },
+        { id: 'game-3', date: new Date('2026-03-03'), dateLabel: 'Mar 3', seasonLabel: '2026', opponent: 'Owls', pointsFor: 2, pointsAgainst: 2, differential: 0, result: 'T' as const }
+      ],
+      progression: [
+        { id: 'game-1', date: new Date('2026-03-01'), dateLabel: 'Mar 1', seasonLabel: '2026', opponent: 'Bears', pointsFor: 4, pointsAgainst: 1, differential: 3, result: 'W' as const },
+        { id: 'game-2', date: new Date('2026-03-02'), dateLabel: 'Mar 2', seasonLabel: '2026', opponent: 'Cats', pointsFor: 1, pointsAgainst: 3, differential: -2, result: 'L' as const },
+        { id: 'game-3', date: new Date('2026-03-03'), dateLabel: 'Mar 3', seasonLabel: '2026', opponent: 'Owls', pointsFor: 2, pointsAgainst: 2, differential: 0, result: 'T' as const }
+      ],
+      availableSeasons: ['2026', '2025'],
+      seasons: [{
+        seasonLabel: '2025',
+        completedGameCount: 1,
+        recentWins: 1,
+        recentLosses: 0,
+        recentTies: 0,
+        averagePointsFor: 5,
+        averagePointsAgainst: 0,
+        scoreDifferential: 5,
+        recentForm: [{ id: 'older-game', date: new Date('2025-10-01'), dateLabel: 'Oct 1', seasonLabel: '2025', opponent: 'Foxes', pointsFor: 5, pointsAgainst: 0, differential: 5, result: 'W' as const }],
+        progression: [{ id: 'older-game', date: new Date('2025-10-01'), dateLabel: 'Oct 1', seasonLabel: '2025', opponent: 'Foxes', pointsFor: 5, pointsAgainst: 0, differential: 5, result: 'W' as const }]
+      }]
+    };
+    teamDetailServiceMocks.loadTeamDetailInsights.mockResolvedValue({ leaderboards: [], trackingSummaries: [], teamAnalytics });
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1?tab=insights']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('Team performance')).toBeTruthy();
+    expect((await screen.findAllByText('2.3')).length).toBeGreaterThan(0);
+    expect(screen.getByText('Game-by-game scoring')).toBeTruthy();
+    expect(screen.getByText('Season pulse')).toBeTruthy();
+    expect(screen.getByLabelText('W against Bears, 4 to 1')).toBeTruthy();
+    expect(screen.getByLabelText('Mar 2 against Cats: 1 point for and 3 points against')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Season'), { target: { value: '2025' } });
+    expect(await screen.findByText('Positive margin: +5 points per game')).toBeTruthy();
+    expect(screen.getByLabelText('W against Foxes, 5 to 0')).toBeTruthy();
+  });
+
+  it('renders an explicit team performance empty state in Insights', async () => {
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1?tab=insights']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('Team performance appears after a completed game has a final score.')).toBeTruthy();
   });
 
   it('opens player detail when the roster row surface is clicked', async () => {

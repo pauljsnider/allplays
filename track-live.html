@@ -3485,6 +3485,7 @@ Write the match report now:`;
                 batch.update(gameRef, {
                     homeScore: finalHome,
                     awayScore: finalAway,
+                    scoreOrientation: 'team-opponent',
                     summary: summary,
                     status: 'completed',
                     opponentStats: gameState.opponentStats,

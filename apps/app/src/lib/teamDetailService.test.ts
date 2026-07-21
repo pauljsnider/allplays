@@ -50,6 +50,18 @@ const authServiceMocks = vi.hoisted(() => ({
   getNativeAuthIdToken: vi.fn()
 }));
 
+const seasonRecordMocks = vi.hoisted(() => ({
+  calculateSeasonRecord: vi.fn(() => ({ wins: 0, losses: 0, ties: 0 })),
+  getTeamScorePair: vi.fn((game: any) => {
+    const useStoredScoreOrder = Boolean(String(game?.sharedScheduleSourceTeamId || '').trim()) || game?.isHome !== false;
+    return {
+      teamScore: useStoredScoreOrder ? game?.homeScore : game?.awayScore,
+      opponentScore: useStoredScoreOrder ? game?.awayScore : game?.homeScore
+    };
+  }),
+  listSeasonLabels: vi.fn((): string[] => [])
+}));
+
 vi.mock('@capacitor/core', () => ({ Capacitor: { isNativePlatform: vi.fn(() => false), getPlatform: vi.fn(() => 'web') } }));
 vi.mock('@capacitor-firebase/authentication', () => ({ FirebaseAuthentication: {} }));
 vi.mock('../../../../js/db.js', () => dbMocks);
@@ -74,10 +86,7 @@ vi.mock('../../../../js/schedule-notifications.js', () => ({
   describeScheduleReminderWindow: vi.fn(() => '24 hours'),
   normalizeScheduleNotificationSettings: vi.fn((value) => ({ enabled: Boolean(value?.enabled), reminderHours: 24, delivery: 'team_chat' }))
 }));
-vi.mock('../../../../js/season-record.js', () => ({
-  calculateSeasonRecord: vi.fn(() => ({ wins: 0, losses: 0, ties: 0 })),
-  listSeasonLabels: vi.fn(() => [])
-}));
+vi.mock('../../../../js/season-record.js', () => seasonRecordMocks);
 vi.mock('../../../../js/native-standings.js', () => ({ computeNativeStandings: vi.fn(() => []) }));
 vi.mock('../../../../js/stat-leaderboards.js', async () => {
   const actual = await vi.importActual<any>('../../../../js/stat-leaderboards.js');
@@ -108,10 +117,12 @@ vi.mock('./profileService', () => ({ loadProfileDocument: vi.fn(async () => ({})
 
 import {
   __resetTeamDetailBaseSnapshotCacheForTests,
+  buildTeamAnalytics,
   buildTeamDetailModel,
   createStatTrackerConfigForApp,
   loadParentTeamDetail,
   loadParentTeamDetailBootstrap,
+  loadTeamDetailInsights,
   loadTeamTrackingAdmin,
   revokeTeamAdminAccessForApp,
   saveTeamTrackingItemForApp,
@@ -121,8 +132,121 @@ import {
 import { computeNativeStandings } from '../../../../js/native-standings.js';
 import { hasFullTeamAccess } from '../../../../js/team-access.js';
 
+describe('buildTeamAnalytics', () => {
+  it('builds chronological score trends, recent form, averages, and differential', () => {
+    const analytics = buildTeamAnalytics([
+      { id: 'game-3', status: 'completed', date: '2026-03-03T18:00:00Z', opponent: 'Owls', homeScore: 2, awayScore: 2 },
+      { id: 'game-1', status: 'completed', date: '2026-03-01T18:00:00Z', opponent: 'Bears', homeScore: 4, awayScore: 1 },
+      { id: 'game-2', status: 'completed', date: '2026-03-02T18:00:00Z', opponent: 'Cats', homeScore: 1, awayScore: 3 }
+    ]);
+
+    expect(analytics).toMatchObject({
+      seasonLabel: '2026',
+      completedGameCount: 3,
+      recentWins: 1,
+      recentLosses: 1,
+      recentTies: 1,
+      averagePointsFor: 2.3,
+      averagePointsAgainst: 2,
+      scoreDifferential: 1
+    });
+    expect(analytics.progression.map((game) => game.id)).toEqual(['game-1', 'game-2', 'game-3']);
+    expect(analytics.progression.map((game) => game.result)).toEqual(['W', 'L', 'T']);
+  });
+
+  it('accepts live-completed games and ignores games without final scores', () => {
+    const analytics = buildTeamAnalytics([
+      { id: 'live-finished', status: 'scheduled', liveStatus: 'completed', date: '2026-03-01T18:00:00Z', homeScore: 5, awayScore: 4 },
+      { id: 'no-score', status: 'completed', date: '2026-03-02T18:00:00Z' },
+      { id: 'practice', type: 'practice', status: 'completed', date: '2026-03-03T18:00:00Z', homeScore: 1, awayScore: 0 }
+    ]);
+
+    expect(analytics.completedGameCount).toBe(1);
+    expect(analytics.progression[0]).toMatchObject({ id: 'live-finished', result: 'W', differential: 1 });
+  });
+
+  it('orders the team score correctly for completed away games', () => {
+    const analytics = buildTeamAnalytics([
+      { id: 'away-win', status: 'completed', isHome: false, date: '2026-03-04T18:00:00Z', opponent: 'Bears', homeScore: 68, awayScore: 71 }
+    ], '2026');
+
+    expect(analytics.progression[0]).toMatchObject({
+      id: 'away-win',
+      pointsFor: 71,
+      pointsAgainst: 68,
+      result: 'W',
+      differential: 3
+    });
+    expect(analytics.scoreDifferential).toBe(3);
+  });
+
+  it('preserves team-oriented score order for shared-schedule away mirrors', () => {
+    const analytics = buildTeamAnalytics([{
+      id: 'mirrored-away-win',
+      status: 'completed',
+      isHome: false,
+      date: '2026-03-04T18:00:00Z',
+      opponent: 'Bears',
+      homeScore: 71,
+      awayScore: 68,
+      sharedScheduleSourceTeamId: 'team-alpha'
+    }], '2026');
+
+    expect(analytics.progression[0]).toMatchObject({
+      id: 'mirrored-away-win',
+      pointsFor: 71,
+      pointsAgainst: 68,
+      result: 'W',
+      differential: 3
+    });
+  });
+
+  it('returns an explicit empty snapshot without completed score-bearing games', () => {
+    expect(buildTeamAnalytics([])).toEqual({
+      seasonLabel: String(new Date().getFullYear()),
+      completedGameCount: 0,
+      recentWins: 0,
+      recentLosses: 0,
+      recentTies: 0,
+      averagePointsFor: 0,
+      averagePointsAgainst: 0,
+      scoreDifferential: 0,
+      recentForm: [],
+      progression: [],
+      availableSeasons: [],
+      seasons: []
+    });
+  });
+
+  it('keeps season snapshots separate and honors the preferred season', () => {
+    const analytics = buildTeamAnalytics([
+      { id: 'older', status: 'completed', seasonLabel: '2025', date: '2025-10-01T18:00:00Z', homeScore: 5, awayScore: 0 },
+      { id: 'current', status: 'completed', seasonLabel: '2026', date: '2026-03-01T18:00:00Z', homeScore: 1, awayScore: 3 }
+    ], '2026');
+
+    expect(analytics.availableSeasons).toEqual(['2026', '2025']);
+    expect(analytics.seasonLabel).toBe('2026');
+    expect(analytics.completedGameCount).toBe(1);
+    expect(analytics.scoreDifferential).toBe(-2);
+    expect(analytics.seasons.map((season) => [season.seasonLabel, season.completedGameCount])).toEqual([['2026', 1], ['2025', 1]]);
+  });
+
+  it('keeps the preferred season selected when only an older season has final scores', () => {
+    const analytics = buildTeamAnalytics([
+      { id: 'older', status: 'completed', seasonLabel: '2025', date: '2025-10-01T18:00:00Z', homeScore: 5, awayScore: 0 },
+      { id: 'scheduled-current', status: 'scheduled', seasonLabel: '2026', date: '2026-03-01T18:00:00Z' }
+    ], '2026');
+
+    expect(analytics.seasonLabel).toBe('2026');
+    expect(analytics.completedGameCount).toBe(0);
+    expect(analytics.availableSeasons).toEqual(['2026', '2025']);
+    expect(analytics.seasons.map((season) => [season.seasonLabel, season.completedGameCount])).toEqual([['2026', 0], ['2025', 1]]);
+  });
+});
+
 beforeEach(() => {
   vi.mocked(hasFullTeamAccess).mockImplementation(() => true);
+  seasonRecordMocks.listSeasonLabels.mockReturnValue([]);
   dbMocks.getPlayersWithPrivateRosterContacts.mockImplementation((_teamId: string, options: any = {}) => (
     Array.isArray(options.players) ? options.players : dbMocks.getPlayers(_teamId, options)
   ));
@@ -260,6 +384,20 @@ describe('team detail bootstrap loading', () => {
     expect(dbMocks.getPlayers).toHaveBeenCalledTimes(1);
     expect(dbMocks.getGames).toHaveBeenCalledTimes(1);
     expect(dbMocks.getConfigs).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps deferred insights aligned to the current header season without final scores', async () => {
+    seasonRecordMocks.listSeasonLabels.mockReturnValue(['2026', '2025']);
+    dbMocks.getGames.mockResolvedValue([
+      { id: 'current', type: 'game', status: 'scheduled', seasonLabel: '2026', date: '2026-03-01T18:00:00Z' },
+      { id: 'older', type: 'game', status: 'completed', seasonLabel: '2025', date: '2025-10-01T18:00:00Z', homeScore: 5, awayScore: 0 }
+    ]);
+
+    const insights = await loadTeamDetailInsights('team-1', { uid: 'parent-1' } as any);
+
+    expect(insights.teamAnalytics.seasonLabel).toBe('2026');
+    expect(insights.teamAnalytics.completedGameCount).toBe(0);
+    expect(insights.teamAnalytics.availableSeasons).toEqual(['2026', '2025']);
   });
 
   it('never hydrates or returns private roster contacts for a non-manager', async () => {

@@ -546,6 +546,7 @@ describe('standard tracker finish batch limits', () => {
                 data: expect.objectContaining({
                     homeScore: 14,
                     awayScore: 12,
+                    scoreOrientation: 'team-opponent',
                     summary: 'Partial finish failed at the end.',
                     status: 'completed'
                 })
