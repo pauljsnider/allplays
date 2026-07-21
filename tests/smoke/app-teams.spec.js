@@ -729,7 +729,7 @@ test.describe('mobile My Teams', () => {
         await expect(page.getByRole('heading', { name: 'Atlanta Fire' })).toBeVisible();
         await expect(page.getByRole('link', { name: 'Back to team search' })).toHaveAttribute('href', '#/teams/browse');
         await expect(page.getByRole('link', { name: 'Enter a join code' })).toHaveAttribute('href', '#/accept-invite');
-        await expect(page.getByRole('link', { name: 'Sign in' })).toHaveAttribute('href', '#/auth');
+        await expect(page.getByRole('link', { name: 'Sign in' })).toHaveCount(0);
         await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
     });
 
