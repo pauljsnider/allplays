@@ -9,6 +9,7 @@ export function PublicTeamDetail() {
   const [team, setTeam] = useState<PublicTeamProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [loadAttempt, setLoadAttempt] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -20,14 +21,35 @@ export function PublicTeamDetail() {
       .catch((loadError: any) => { if (active) { setTeam(null); setError(loadError?.message || 'Unable to load this public team.'); } })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [teamId]);
+  }, [teamId, loadAttempt]);
 
-  if (loading) return <div className="app-card p-10 text-center"><Loader2 className="mx-auto h-7 w-7 animate-spin text-primary-600" /></div>;
-  if (!team) return <Status tone="error" message={error || 'Public team not found.'} />;
+  if (loading) return (
+    <div className="app-card p-10 text-center" role="status" aria-live="polite">
+      <Loader2 className="mx-auto h-7 w-7 animate-spin text-primary-600" aria-hidden="true" />
+      <div className="mt-3 text-sm font-black text-gray-900">Loading public team</div>
+    </div>
+  );
+  if (!team) return (
+    <div className="app-card space-y-4 p-5 sm:p-6">
+      <Status tone="error" message={error || 'Public team not found.'} />
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <button type="button" className="primary-button w-full justify-center !min-h-11 text-sm sm:w-auto" onClick={() => setLoadAttempt((attempt) => attempt + 1)}>
+          Retry
+        </button>
+        <Link to="/teams/browse" className="secondary-button w-full justify-center !min-h-11 text-sm sm:w-auto">
+          Back to team search
+        </Link>
+      </div>
+    </div>
+  );
 
   return (
     <div className="mx-auto max-w-3xl space-y-4">
-      <div className="flex flex-wrap gap-3 text-sm font-black"><Link to="/discover?tab=teams" className="text-primary-700">← Find teams</Link><Link to="/discover" className="text-primary-700">Browse opportunities</Link></div>
+      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+        <Link to="/teams/browse" className="ghost-button w-full justify-center !min-h-11 text-sm sm:w-auto">Back to team search</Link>
+        <Link to="/accept-invite" className="secondary-button w-full justify-center !min-h-11 text-sm sm:w-auto">Enter a join code</Link>
+        <Link to="/auth" className="primary-button w-full justify-center !min-h-11 text-sm sm:w-auto">Sign in</Link>
+      </div>
       <section className="app-card overflow-hidden">
         <div className="bg-gradient-to-br from-primary-700 to-primary-950 p-6 text-white sm:p-8">
           <div className="flex items-start gap-4">
