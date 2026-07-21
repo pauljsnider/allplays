@@ -122,12 +122,13 @@ describe('createTeamFeeBatch collection mode persistence', () => {
 describe('updateTeamFeeRecipient manual payment validation', () => {
     it('writes an immutable audit entry with actor and server timestamp for a fee mutation', async () => {
         const transactionSet = vi.fn();
+        const transactionUpdate = vi.fn();
         const runTransaction = vi.fn(async (_db, handler) => handler({
             get: vi.fn(async () => ({
                 exists: () => true,
                 data: () => ({ amountDueCents: 5000, amountPaidCents: 0 })
             })),
-            update: vi.fn(),
+            update: transactionUpdate,
             set: transactionSet
         }));
         const updateTeamFeeRecipient = buildUpdateTeamFeeRecipient({
@@ -158,6 +159,8 @@ describe('updateTeamFeeRecipient manual payment validation', () => {
                 changedAt: 'server-ts'
             }
         );
+        const recipientPayload = transactionUpdate.mock.calls[0][1];
+        expect(recipientPayload.latestAuditActorId).toBe('deleted');
         expect(runTransaction).toHaveBeenCalledTimes(1);
     });
 

@@ -5532,6 +5532,7 @@ const PRIVATE_TEAM_FEE_RECIPIENT_FIELDS = new Set([
     'recordedBy',
     'adjustedBy',
     'canceledBy',
+    'latestAuditActorId',
     'internalNote',
     'adminNote',
     'note',
@@ -5673,7 +5674,7 @@ export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updat
         ...(hasAdminBilling ? { hasAdminBilling: true } : {}),
         ...(shouldWriteAudit ? {
             latestAuditId: auditId,
-            latestAuditActorId: mutationActorId,
+            latestAuditActorId: deleteField(),
             latestAuditAt: mutationTimestamp
         } : {}),
         updatedAt: mutationTimestamp

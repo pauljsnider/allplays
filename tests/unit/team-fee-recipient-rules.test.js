@@ -65,6 +65,8 @@ describe('team fee recipient Firestore rules', () => {
         expect(rules).toContain('existsAfter(auditPath)');
         expect(rules).toContain('getAfter(auditPath).data.actorId == request.auth.uid');
         expect(rules).toContain("request.resource.data.get('latestAuditAt', null) == request.time");
+        expect(rules).toContain('getAfter(auditPath).data.changedFields.toSet() == affectedKeys.intersection(financialFields.toSet())');
+        expect(rules).not.toContain("request.resource.data.get('latestAuditActorId', '') == request.auth.uid");
         expect(nestedRecipientBlock).toContain('hasRequiredTeamFeeMutationAudit(teamId, batchId, recipientId)');
     });
 
@@ -73,6 +75,7 @@ describe('team fee recipient Firestore rules', () => {
         expect(rules).toContain('function hasNoIntroducedPrivateTeamFeeBillingFields()');
         expect(rules).toContain("'stripePaymentIntentId'");
         expect(rules).toContain("'recordedBy'");
+        expect(rules).toContain("'latestAuditActorId'");
         expect(rules).toContain('hasNoPrivateTeamFeeBillingFields(request.resource.data)');
         expect(rules).toContain('hasNoIntroducedPrivateTeamFeeBillingFields()');
         expect(rules).toContain("request.resource.data.get('stripePaymentIntentId', null) == null");
@@ -142,13 +145,12 @@ describe('team fee recipient Firestore rules', () => {
             };
         }
 
-        async function writeAuditedUpdate(firestore, teamId, batchId, recipientId, actorId, update) {
+        async function writeAuditedUpdate(firestore, teamId, batchId, recipientId, actorId, update, auditOverrides = {}) {
             const batch = writeBatch(firestore);
             const auditId = `fee_mutation_${recipientId}`;
             batch.update(recipientRef(firestore, teamId, batchId, recipientId), {
                 ...update,
                 latestAuditId: auditId,
-                latestAuditActorId: actorId,
                 latestAuditAt: serverTimestamp()
             });
             batch.set(doc(firestore, `teams/${teamId}/feeBatches/${batchId}/feeRecipients/${recipientId}/audit/${auditId}`), {
@@ -157,8 +159,9 @@ describe('team fee recipient Firestore rules', () => {
                 recipientId,
                 actorId,
                 changedFields: Object.keys(update),
-                mutationType: 'test_update',
-                changedAt: serverTimestamp()
+                mutationType: 'fee_update',
+                changedAt: serverTimestamp(),
+                ...auditOverrides
             });
             return batch.commit();
         }
@@ -250,6 +253,33 @@ describe('team fee recipient Firestore rules', () => {
                 'financial-state',
                 'admin-a',
                 { amountDueCents: 0, status: 'paid' }
+            ));
+        });
+
+        it('denies financial updates with malformed or mismatched audit contents', async () => {
+            await seedRecipient(
+                'teams/team-a/feeBatches/batch-a/feeRecipients/invalid-audit',
+                recipientPayload()
+            );
+            const ownerDb = authedFirestore('owner-a', 'owner-a@example.com');
+
+            await assertFails(writeAuditedUpdate(
+                ownerDb,
+                'team-a',
+                'batch-a',
+                'invalid-audit',
+                'owner-a',
+                { status: 'paid', amountDueCents: 0 },
+                { changedFields: ['status'] }
+            ));
+            await assertFails(writeAuditedUpdate(
+                ownerDb,
+                'team-a',
+                'batch-a',
+                'invalid-audit',
+                'owner-a',
+                { status: 'paid', amountDueCents: 0 },
+                { mutationType: 'invented_mutation' }
             ));
         });
 
