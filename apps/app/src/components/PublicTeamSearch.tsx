@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { Search, XCircle, Loader2, Users } from 'lucide-react';
 import { type ParentHomeTeam } from '../lib/homeLogic';
 import { TeamAvatar, TeamLauncherChip, Status } from './TeamSummaryPrimitives';
@@ -14,7 +14,6 @@ function publicTeamRequestKey(searchText?: string | null) {
 }
 
 export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = false }: { autoBrowseOnMount?: boolean; showBackLink?: boolean }) {
-  const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [publicTeams, setPublicTeams] = useState<ParentHomeTeam[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
@@ -111,10 +110,6 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
     setLoading(false);
     setNextCursor(null);
   };
-
-  const handleOpenTeam = useCallback((team: ParentHomeTeam) => {
-    navigate(`/teams/${encodeURIComponent(team.teamId)}/public`);
-  }, [navigate]);
 
   useEffect(() => {
     if (!autoBrowseOnMount || autoBrowseTriggeredRef.current) {
@@ -228,7 +223,7 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
               <h3 className="text-lg font-black text-gray-950">{location}</h3>
               <div className="grid gap-2 sm:grid-cols-2">
                 {teams.map(team => (
-                  <PublicTeamCard key={team.teamId} team={team} onOpenTeam={handleOpenTeam} />
+                  <PublicTeamCard key={team.teamId} team={team} />
                 ))}
               </div>
             </div>
@@ -277,7 +272,7 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
   );
 }
 
-function PublicTeamCard({ team, onOpenTeam }: { team: ParentHomeTeam; onOpenTeam: (team: ParentHomeTeam) => void | Promise<void> }) {
+function PublicTeamCard({ team }: { team: ParentHomeTeam }) {
   const hasRosterCount = typeof team.publicRosterCount === 'number';
   const rosterCountLabel = hasRosterCount
     ? `${team.publicRosterCount}${team.publicRosterCountCapped ? '+' : ''} player${team.publicRosterCount === 1 && !team.publicRosterCountCapped ? '' : 's'}`
@@ -296,15 +291,12 @@ function PublicTeamCard({ team, onOpenTeam }: { team: ParentHomeTeam; onOpenTeam
         </span>
       </div>
 
-      <button
-        type="button"
-        className="primary-button mt-3 w-full justify-center !min-h-10 text-sm"
-        onClick={() => {
-          void onOpenTeam(team);
-        }}
+      <Link
+        to={`/teams/${encodeURIComponent(team.teamId)}/public`}
+        className="primary-button mt-3 w-full justify-center !min-h-11 text-sm"
       >
-        View public team
-      </button>
+        View {team.teamName} public team
+      </Link>
     </article>
   );
 }

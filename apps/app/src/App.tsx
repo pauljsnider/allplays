@@ -247,8 +247,8 @@ export default function App() {
         <Route path="/teams" element={<Protected auth={auth}><Teams auth={auth} /></Protected>} />
         <Route path="/teams/new" element={<Protected auth={auth}><CreateTeam auth={auth} /></Protected>} />
         <Route path="/teams/browse" element={<PublicPage auth={auth}><PublicTeamsBrowse /></PublicPage>} />
-        <Route path="/teams/:teamId/public" element={<PublicPage auth={auth}><PublicTeamDetail /></PublicPage>} />
-        <Route path="/teams/:teamId" element={auth.user || auth.loading ? <Protected auth={auth}><TeamDetail auth={auth} /></Protected> : <PublicPage auth={auth}><PublicTeamDetail /></PublicPage>} />
+        <Route path="/teams/:teamId/public" element={<PublicPage auth={auth}><PublicTeamDetail authUser={auth.user} /></PublicPage>} />
+        <Route path="/teams/:teamId" element={auth.user || auth.loading ? <Protected auth={auth}><TeamDetail auth={auth} /></Protected> : <PublicPage auth={auth}><PublicTeamDetail authUser={auth.user} /></PublicPage>} />
         <Route path="/teams/:teamId/edit" element={<Protected auth={auth}><TeamSettings auth={auth} /></Protected>} />
         <Route path="/teams/:teamId/certificates" element={<Protected auth={auth}><TeamCertificates auth={auth} /></Protected>} />
         <Route path="/teams/:teamId/drills" element={<Protected auth={auth}><TeamDrills auth={auth} /></Protected>} />
