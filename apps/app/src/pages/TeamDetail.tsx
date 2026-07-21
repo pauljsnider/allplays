@@ -42,7 +42,7 @@ import { getEventDetailPath } from '../lib/homeLogic';
 import { buildPrivateTeamCalendarFeedUrl, getAppleCalendarFeedUrl, getGoogleCalendarFeedUrl } from '../lib/parentToolsService';
 import { createStaffRsvpReminderPreviewLoader, sendStaffRsvpReminder, type StaffRsvpReminderSendResult } from '../lib/scheduleService';
 import type { ParentScheduleEvent, StaffRsvpReminderPreview } from '../lib/scheduleLogic';
-import { addRosterPlayerForApp, archiveTeamTrackingItemForApp, buildPublicTeamGamesIcsUrl, canExposePublicFanFeed, createRosterParentInviteForApp, createStatTrackerConfigForApp, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantTeamMediaManagerAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadParentTeamDetailBootstrap, loadRosterFieldDefinitionsForApp, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamRosterParentInvites, loadTeamStaffPermissions, loadTeamTrackingAdmin, reactivateRosterPlayerForApp, revokeScorekeeperAccessForApp, revokeTeamAdminAccessForApp, revokeTeamMediaManagerAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp, saveTeamTrackingItemForApp, setPlayerTrackingStatusForApp, updateStatTrackerConfigForApp, type CreateRosterParentInviteForAppResult, type InviteTeamAdminForAppResult, type TeamDetailAnalyticsSnapshot, type TeamDetailEvent, type TeamDetailModel, type TeamDetailPlayer, type TeamRosterFieldDefinition, type TeamRosterParentInviteSummary, type TeamScorekeeperGrantTarget, type TeamTrackingAdminItem } from '../lib/teamDetailService';
+import { addRosterPlayerForApp, archiveTeamTrackingItemForApp, buildPublicTeamGamesIcsUrl, canExposePublicFanFeed, createRosterParentInviteForApp, createStatTrackerConfigForApp, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantTeamMediaManagerAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadParentTeamDetailBootstrap, loadRosterFieldDefinitionsForApp, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamRosterParentInvites, loadTeamStaffPermissions, loadTeamTrackingAdmin, reactivateRosterPlayerForApp, revokeScorekeeperAccessForApp, revokeTeamAdminAccessForApp, revokeTeamMediaManagerAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp, saveTeamTrackingItemForApp, setPlayerTrackingStatusForApp, updateStatTrackerConfigForApp, type CreateRosterParentInviteForAppResult, type InviteTeamAdminForAppResult, type TeamDetailAnalytics, type TeamDetailAnalyticsSnapshot, type TeamDetailEvent, type TeamDetailModel, type TeamDetailPlayer, type TeamRosterFieldDefinition, type TeamRosterParentInviteSummary, type TeamScorekeeperGrantTarget, type TeamTrackingAdminItem } from '../lib/teamDetailService';
 import { buildStatTrackerConfigPayload, createBlankStatTrackerConfigColumnDraft, createEmptyStatTrackerConfigDraft, createStatTrackerConfigDraft, createStatTrackerConfigDraftFromPreset, getStatTrackerConfigPresetCatalog, validateStatTrackerConfigDraft, type StatTrackerConfigDraft } from '../lib/statTrackerConfigEditor';
 import { useViewLoadTimer } from '../lib/viewLoadTiming';
 import { buildTeamDetailNavigation, type TeamNavigationItem, type TeamNavigationSection } from '../lib/teamNavigation';
@@ -50,6 +50,21 @@ import type { AuthState } from '../lib/types';
 import { InviteResultCard } from './parent-tools/shared';
 
 type TeamTab = 'overview' | 'schedule' | 'roster' | 'insights' | 'more';
+
+const EMPTY_TEAM_ANALYTICS: TeamDetailAnalytics = {
+  seasonLabel: '',
+  completedGameCount: 0,
+  recentWins: 0,
+  recentLosses: 0,
+  recentTies: 0,
+  averagePointsFor: 0,
+  averagePointsAgainst: 0,
+  scoreDifferential: 0,
+  recentForm: [],
+  progression: [],
+  availableSeasons: [],
+  seasons: []
+};
 type RosterAiImportModule = typeof import('../lib/rosterAiImport');
 type RosterAiImportPreviewRow = import('../lib/rosterAiImport').RosterAiImportPreviewRow;
 
@@ -1724,9 +1739,9 @@ function InsightsTab({ model, loading, error }: { model: TeamDetailModel; loadin
 }
 
 function TeamPerformanceCard({ model, loading, error }: { model: TeamDetailModel; loading: boolean; error: string }) {
-  const analyticsRoot = model.teamAnalytics;
+  const analyticsRoot = model.teamAnalytics || EMPTY_TEAM_ANALYTICS;
   const [selectedSeason, setSelectedSeason] = useState(analyticsRoot.seasonLabel);
-  const availableSeasons = analyticsRoot.availableSeasons || [];
+  const availableSeasons = useMemo(() => analyticsRoot.availableSeasons || [], [analyticsRoot.availableSeasons]);
   const analytics = (analyticsRoot.seasons || []).find((season) => season.seasonLabel === selectedSeason) || analyticsRoot;
   const scoringLabels = getTeamScoringLabels(model.team.sport);
   const maxAverage = Math.max(analytics.averagePointsFor, analytics.averagePointsAgainst, 1);
