@@ -131,6 +131,7 @@ describe('buildTeamAnalytics', () => {
     ]);
 
     expect(analytics).toMatchObject({
+      seasonLabel: '2026',
       completedGameCount: 3,
       recentWins: 1,
       recentLosses: 1,
@@ -156,6 +157,7 @@ describe('buildTeamAnalytics', () => {
 
   it('returns an explicit empty snapshot without completed score-bearing games', () => {
     expect(buildTeamAnalytics([])).toEqual({
+      seasonLabel: String(new Date().getFullYear()),
       completedGameCount: 0,
       recentWins: 0,
       recentLosses: 0,
@@ -164,8 +166,23 @@ describe('buildTeamAnalytics', () => {
       averagePointsAgainst: 0,
       scoreDifferential: 0,
       recentForm: [],
-      progression: []
+      progression: [],
+      availableSeasons: [],
+      seasons: []
     });
+  });
+
+  it('keeps season snapshots separate and honors the preferred season', () => {
+    const analytics = buildTeamAnalytics([
+      { id: 'older', status: 'completed', seasonLabel: '2025', date: '2025-10-01T18:00:00Z', homeScore: 5, awayScore: 0 },
+      { id: 'current', status: 'completed', seasonLabel: '2026', date: '2026-03-01T18:00:00Z', homeScore: 1, awayScore: 3 }
+    ], '2026');
+
+    expect(analytics.availableSeasons).toEqual(['2026', '2025']);
+    expect(analytics.seasonLabel).toBe('2026');
+    expect(analytics.completedGameCount).toBe(1);
+    expect(analytics.scoreDifferential).toBe(-2);
+    expect(analytics.seasons.map((season) => [season.seasonLabel, season.completedGameCount])).toEqual([['2026', 1], ['2025', 1]]);
   });
 });
 

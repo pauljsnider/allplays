@@ -201,6 +201,7 @@ export type TeamDetailAnalyticsGame = {
   id: string;
   date: Date;
   dateLabel: string;
+  seasonLabel: string;
   opponent: string;
   pointsFor: number;
   pointsAgainst: number;
@@ -208,7 +209,8 @@ export type TeamDetailAnalyticsGame = {
   result: 'W' | 'L' | 'T';
 };
 
-export type TeamDetailAnalytics = {
+export type TeamDetailAnalyticsSnapshot = {
+  seasonLabel: string;
   completedGameCount: number;
   recentWins: number;
   recentLosses: number;
@@ -218,6 +220,11 @@ export type TeamDetailAnalytics = {
   scoreDifferential: number;
   recentForm: TeamDetailAnalyticsGame[];
   progression: TeamDetailAnalyticsGame[];
+};
+
+export type TeamDetailAnalytics = TeamDetailAnalyticsSnapshot & {
+  availableSeasons: string[];
+  seasons: TeamDetailAnalyticsSnapshot[];
 };
 
 export type TeamDetailSponsor = {
@@ -1768,7 +1775,7 @@ export function buildTeamDetailModel({
   const standings = buildStandings(team, games);
   const leaderboards = includeInsights ? buildLeaderboards(configs, normalizedPlayers, seasonStatsByPlayerId, team?.sport) : [];
   const trackingSummaries = includeInsights ? buildTrackingSummaries(normalizedPlayers, linkedPlayerIds, trackingItems, trackingStatuses) : [];
-  const teamAnalytics = buildTeamAnalytics(games);
+  const teamAnalytics = buildTeamAnalytics(games, seasonLabel);
   const canManageAdmins = canManageTeamAdmins(user, team);
   const staffPermissions = canManageTeam && includeStaffPermissions
     ? buildTeamStaffPermissionsSummary({ teamId, team, players, pendingAdminInvites, confirmedTeamMembers })
@@ -2449,7 +2456,7 @@ function getStreamUrl(team: Record<string, any>) {
   return getFirstUrl(embedUrl);
 }
 
-export function buildTeamAnalytics(games: any[] = []): TeamDetailAnalytics {
+export function buildTeamAnalytics(games: any[] = [], preferredSeasonLabel = ''): TeamDetailAnalytics {
   const completedGames = (Array.isArray(games) ? games : [])
     .filter(isCompletedGame)
     .map((game, index): TeamDetailAnalyticsGame => {
@@ -2462,6 +2469,7 @@ export function buildTeamAnalytics(games: any[] = []): TeamDetailAnalytics {
         id: cleanString(game?.id || game?.gameId) || `game-${index + 1}`,
         date,
         dateLabel: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+        seasonLabel: getAnalyticsSeasonLabel(game, date),
         opponent,
         pointsFor,
         pointsAgainst,
@@ -2470,37 +2478,45 @@ export function buildTeamAnalytics(games: any[] = []): TeamDetailAnalytics {
       };
     })
     .sort((a, b) => a.date.getTime() - b.date.getTime());
+  const availableSeasons = Array.from(new Set(completedGames.map((game) => game.seasonLabel)))
+    .filter(Boolean)
+    .sort((a, b) => b.localeCompare(a, undefined, { numeric: true, sensitivity: 'base' }));
+  const currentYear = String(new Date().getFullYear());
+  const seasonLabel = availableSeasons.includes(preferredSeasonLabel)
+    ? preferredSeasonLabel
+    : availableSeasons.includes(currentYear) ? currentYear : (availableSeasons[0] || preferredSeasonLabel || currentYear);
+  const seasons = availableSeasons.map((label) => buildTeamAnalyticsSnapshot(
+    completedGames.filter((game) => game.seasonLabel === label),
+    label
+  ));
+  const selectedSeason = seasons.find((season) => season.seasonLabel === seasonLabel)
+    || buildTeamAnalyticsSnapshot([], seasonLabel);
 
-  if (!completedGames.length) {
-    return {
-      completedGameCount: 0,
-      recentWins: 0,
-      recentLosses: 0,
-      recentTies: 0,
-      averagePointsFor: 0,
-      averagePointsAgainst: 0,
-      scoreDifferential: 0,
-      recentForm: [],
-      progression: []
-    };
-  }
+  return { ...selectedSeason, availableSeasons, seasons };
+}
 
+function buildTeamAnalyticsSnapshot(completedGames: TeamDetailAnalyticsGame[], seasonLabel: string): TeamDetailAnalyticsSnapshot {
   const recentForm = completedGames.slice(-5);
   const pointsFor = completedGames.reduce((total, game) => total + game.pointsFor, 0);
   const pointsAgainst = completedGames.reduce((total, game) => total + game.pointsAgainst, 0);
   const roundToTenth = (value: number) => Math.round(value * 10) / 10;
-
   return {
+    seasonLabel,
     completedGameCount: completedGames.length,
     recentWins: recentForm.filter((game) => game.result === 'W').length,
     recentLosses: recentForm.filter((game) => game.result === 'L').length,
     recentTies: recentForm.filter((game) => game.result === 'T').length,
-    averagePointsFor: roundToTenth(pointsFor / completedGames.length),
-    averagePointsAgainst: roundToTenth(pointsAgainst / completedGames.length),
+    averagePointsFor: completedGames.length ? roundToTenth(pointsFor / completedGames.length) : 0,
+    averagePointsAgainst: completedGames.length ? roundToTenth(pointsAgainst / completedGames.length) : 0,
     scoreDifferential: pointsFor - pointsAgainst,
     recentForm,
     progression: completedGames.slice(-10)
   };
+}
+
+function getAnalyticsSeasonLabel(game: any, date: Date) {
+  const explicit = cleanString(game?.seasonLabel);
+  return explicit || String(date.getFullYear());
 }
 
 function isCompletedGame(game: any) {
