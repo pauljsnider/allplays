@@ -1541,6 +1541,9 @@ export function loadTeamDetailInsights(teamId: string, user: AuthUser | null): P
     if (!team) throw new Error('Team not found.');
 
     const linkedPlayerIds = getLinkedPlayerIds(user, normalizedTeamId, players);
+    const seasonLabels = listSeasonLabels(games);
+    const currentYearLabel = String(new Date().getFullYear());
+    const seasonLabel = seasonLabels.includes(currentYearLabel) ? currentYearLabel : (seasonLabels[0] || currentYearLabel);
     const completedGameIds = (Array.isArray(games) ? games : [])
       .filter(isCompletedGame)
       .map((game: any) => cleanString(game.id || game.gameId))
@@ -1556,7 +1559,7 @@ export function loadTeamDetailInsights(teamId: string, user: AuthUser | null): P
     return {
       leaderboards: buildLeaderboards(configs, normalizedPlayers, seasonStatsByPlayerId, team?.sport),
       trackingSummaries: buildTrackingSummaries(normalizedPlayers, linkedPlayerIds, trackingItems, trackingStatuses),
-      teamAnalytics: buildTeamAnalytics(games)
+      teamAnalytics: buildTeamAnalytics(games, seasonLabel)
     };
   })();
   teamDetailInsightsCache.set(cacheKey, request);

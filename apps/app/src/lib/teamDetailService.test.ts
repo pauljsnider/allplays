@@ -50,6 +50,11 @@ const authServiceMocks = vi.hoisted(() => ({
   getNativeAuthIdToken: vi.fn()
 }));
 
+const seasonRecordMocks = vi.hoisted(() => ({
+  calculateSeasonRecord: vi.fn(() => ({ wins: 0, losses: 0, ties: 0 })),
+  listSeasonLabels: vi.fn((): string[] => [])
+}));
+
 vi.mock('@capacitor/core', () => ({ Capacitor: { isNativePlatform: vi.fn(() => false), getPlatform: vi.fn(() => 'web') } }));
 vi.mock('@capacitor-firebase/authentication', () => ({ FirebaseAuthentication: {} }));
 vi.mock('../../../../js/db.js', () => dbMocks);
@@ -74,10 +79,7 @@ vi.mock('../../../../js/schedule-notifications.js', () => ({
   describeScheduleReminderWindow: vi.fn(() => '24 hours'),
   normalizeScheduleNotificationSettings: vi.fn((value) => ({ enabled: Boolean(value?.enabled), reminderHours: 24, delivery: 'team_chat' }))
 }));
-vi.mock('../../../../js/season-record.js', () => ({
-  calculateSeasonRecord: vi.fn(() => ({ wins: 0, losses: 0, ties: 0 })),
-  listSeasonLabels: vi.fn(() => [])
-}));
+vi.mock('../../../../js/season-record.js', () => seasonRecordMocks);
 vi.mock('../../../../js/native-standings.js', () => ({ computeNativeStandings: vi.fn(() => []) }));
 vi.mock('../../../../js/stat-leaderboards.js', async () => {
   const actual = await vi.importActual<any>('../../../../js/stat-leaderboards.js');
@@ -113,6 +115,7 @@ import {
   createStatTrackerConfigForApp,
   loadParentTeamDetail,
   loadParentTeamDetailBootstrap,
+  loadTeamDetailInsights,
   loadTeamTrackingAdmin,
   revokeTeamAdminAccessForApp,
   saveTeamTrackingItemForApp,
@@ -215,6 +218,7 @@ describe('buildTeamAnalytics', () => {
 
 beforeEach(() => {
   vi.mocked(hasFullTeamAccess).mockImplementation(() => true);
+  seasonRecordMocks.listSeasonLabels.mockReturnValue([]);
   dbMocks.getPlayersWithPrivateRosterContacts.mockImplementation((_teamId: string, options: any = {}) => (
     Array.isArray(options.players) ? options.players : dbMocks.getPlayers(_teamId, options)
   ));
@@ -352,6 +356,20 @@ describe('team detail bootstrap loading', () => {
     expect(dbMocks.getPlayers).toHaveBeenCalledTimes(1);
     expect(dbMocks.getGames).toHaveBeenCalledTimes(1);
     expect(dbMocks.getConfigs).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps deferred insights aligned to the current header season without final scores', async () => {
+    seasonRecordMocks.listSeasonLabels.mockReturnValue(['2026', '2025']);
+    dbMocks.getGames.mockResolvedValue([
+      { id: 'current', type: 'game', status: 'scheduled', seasonLabel: '2026', date: '2026-03-01T18:00:00Z' },
+      { id: 'older', type: 'game', status: 'completed', seasonLabel: '2025', date: '2025-10-01T18:00:00Z', homeScore: 5, awayScore: 0 }
+    ]);
+
+    const insights = await loadTeamDetailInsights('team-1', { uid: 'parent-1' } as any);
+
+    expect(insights.teamAnalytics.seasonLabel).toBe('2026');
+    expect(insights.teamAnalytics.completedGameCount).toBe(0);
+    expect(insights.teamAnalytics.availableSeasons).toEqual(['2026', '2025']);
   });
 
   it('never hydrates or returns private roster contacts for a non-manager', async () => {
