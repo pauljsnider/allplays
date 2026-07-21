@@ -3,8 +3,9 @@ import { Loader2, MapPin, ShieldCheck, Users } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
 import { Status } from '../components/TeamSummaryPrimitives';
 import { getPublicTeamDetail, type PublicTeamProfile } from '../lib/publicTeamsService';
+import type { AuthState } from '../lib/types';
 
-export function PublicTeamDetail() {
+export function PublicTeamDetail({ authUser }: { authUser: AuthState['user'] }) {
   const { teamId = '' } = useParams();
   const [team, setTeam] = useState<PublicTeamProfile | null>(null);
   const [loading, setLoading] = useState(true);
@@ -48,7 +49,7 @@ export function PublicTeamDetail() {
       <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
         <Link to="/teams/browse" className="ghost-button w-full justify-center !min-h-11 text-sm sm:w-auto">Back to team search</Link>
         <Link to="/accept-invite" className="secondary-button w-full justify-center !min-h-11 text-sm sm:w-auto">Enter a join code</Link>
-        <Link to="/auth" className="primary-button w-full justify-center !min-h-11 text-sm sm:w-auto">Sign in</Link>
+        {!authUser ? <Link to="/auth" className="primary-button w-full justify-center !min-h-11 text-sm sm:w-auto">Sign in</Link> : null}
       </div>
       <section className="app-card overflow-hidden">
         <div className="bg-gradient-to-br from-primary-700 to-primary-950 p-6 text-white sm:p-8">
