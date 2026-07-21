@@ -25,6 +25,7 @@ import {
 import { createIdentityResolver, extractBearerToken } from './identity.js';
 import { createUserDb } from './firestoreRest.js';
 import { createOAuthBroker, metadataFor, OAuthError } from './oauth.js';
+import { createFileStore } from './fileStore.js';
 
 const PORT = Number(process.env.PORT) || 8787;
 const PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'game-flow-c6311';
@@ -46,7 +47,12 @@ if (FALLBACK_BEARER) {
     console.warn('[chatgpt-mcp] DEV_FALLBACK_BEARER is set: unauthenticated requests act as that user. Dev/test only.');
 }
 
-const oauth = createOAuthBroker();
+// OAuth broker state (registered clients + refresh grants) survives restarts
+// when OAUTH_STORE_PATH is set; otherwise it lives in memory and a restart
+// signs the connector out. Access tokens and auth codes are always in-memory.
+const oauthStore = process.env.OAUTH_STORE_PATH ? createFileStore(process.env.OAUTH_STORE_PATH) : null;
+if (oauthStore) console.log(`[chatgpt-mcp] OAuth state persisted to ${process.env.OAUTH_STORE_PATH}`);
+const oauth = createOAuthBroker({ store: oauthStore });
 const SIGNIN_REFERER = process.env.ALLPLAYS_REFERER || 'https://allplays.ai/';
 
 // Public base URL for OAuth metadata: env override, else derive from the

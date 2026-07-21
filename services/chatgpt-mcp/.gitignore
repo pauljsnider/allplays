@@ -1,0 +1,10 @@
+# OAuth broker state — holds Firebase refresh tokens (user credentials).
+# Never commit. Default dev location and any *.tmp write-then-rename artifacts.
+oauth-store.json
+oauth-store.json.tmp
+*.oauth-store.json
+.data/
+
+# Local env files
+.env
+.env.local

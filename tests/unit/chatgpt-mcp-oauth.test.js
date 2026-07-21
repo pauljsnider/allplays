@@ -155,6 +155,64 @@ describe('chatgpt-mcp oauth: refresh and access tokens', () => {
     });
 });
 
+describe('chatgpt-mcp oauth: persistence across restart', () => {
+    function memoryStore() {
+        let state = null;
+        return {
+            load: () => state,
+            save: (next) => { state = JSON.parse(JSON.stringify(next)); },
+            peek: () => state
+        };
+    }
+
+    it('persists clients and refresh grants but not codes or access tokens', () => {
+        const store = memoryStore();
+        const b1 = createOAuthBroker({ store });
+        const client = b1.registerClient({ redirect_uris: [REDIRECT] });
+        const code = b1.approveAuthorization({
+            clientId: client.client_id,
+            redirectUri: REDIRECT,
+            codeChallenge: s256Challenge(VERIFIER),
+            firebaseRefreshToken: 'firebase-rt-persist'
+        });
+        const tokens = b1.exchange({ grant_type: 'authorization_code', code, code_verifier: VERIFIER });
+
+        // Only long-lived state is written.
+        expect(Object.keys(store.peek().clients)).toContain(client.client_id);
+        expect(Object.keys(store.peek().refreshTokens)).toContain(tokens.refresh_token);
+        expect(store.peek()).not.toHaveProperty('codes');
+        expect(store.peek()).not.toHaveProperty('accessTokens');
+
+        // A fresh broker loading the same store honors the refresh grant and
+        // still knows the client — the two things that broke on restart.
+        const b2 = createOAuthBroker({ store });
+        const refreshed = b2.exchange({ grant_type: 'refresh_token', refresh_token: tokens.refresh_token });
+        expect(b2.resolveAccessToken(refreshed.access_token)).toEqual({ firebaseRefreshToken: 'firebase-rt-persist' });
+        expect(b2.validateAuthorizeRequest({
+            client_id: client.client_id,
+            redirect_uri: REDIRECT,
+            response_type: 'code',
+            code_challenge: s256Challenge(VERIFIER),
+            code_challenge_method: 'S256'
+        }).clientId).toBe(client.client_id);
+    });
+
+    it('access tokens do NOT survive a restart (in-memory by design)', () => {
+        const store = memoryStore();
+        const b1 = createOAuthBroker({ store });
+        const client = b1.registerClient({ redirect_uris: [REDIRECT] });
+        const code = b1.approveAuthorization({
+            clientId: client.client_id,
+            redirectUri: REDIRECT,
+            codeChallenge: s256Challenge(VERIFIER),
+            firebaseRefreshToken: 'rt'
+        });
+        const tokens = b1.exchange({ grant_type: 'authorization_code', code, code_verifier: VERIFIER });
+        const b2 = createOAuthBroker({ store });
+        expect(b2.resolveAccessToken(tokens.access_token)).toBeNull();
+    });
+});
+
 describe('chatgpt-mcp oauth: metadata', () => {
     it('publishes endpoints under the given base url', () => {
         const meta = metadataFor('https://example.ngrok.dev');

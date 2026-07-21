@@ -38,11 +38,39 @@ function isAllowedRedirectUri(uri) {
     }
 }
 
-export function createOAuthBroker({ now = () => Date.now(), randomId = (bytes = 32) => randomBytes(bytes).toString('base64url') } = {}) {
+/**
+ * @param store optional persistence hooks: `load()` returns the serialized
+ * state (or null), `save(state)` writes it. Only long-lived state persists —
+ * clients and refresh-token grants; codes and access tokens are short-lived
+ * by design and always start empty.
+ */
+export function createOAuthBroker({ now = () => Date.now(), randomId = (bytes = 32) => randomBytes(bytes).toString('base64url'), store = null } = {}) {
     const clients = new Map();
     const codes = new Map();
     const accessTokens = new Map();
     const refreshTokens = new Map();
+
+    if (store) {
+        try {
+            const state = store.load();
+            for (const [id, client] of Object.entries(state?.clients || {})) clients.set(id, client);
+            for (const [token, grant] of Object.entries(state?.refreshTokens || {})) refreshTokens.set(token, grant);
+        } catch (error) {
+            console.warn('[chatgpt-mcp] could not load OAuth store:', error.message);
+        }
+    }
+
+    function persist() {
+        if (!store) return;
+        try {
+            store.save({
+                clients: Object.fromEntries(clients),
+                refreshTokens: Object.fromEntries(refreshTokens)
+            });
+        } catch (error) {
+            console.warn('[chatgpt-mcp] could not save OAuth store:', error.message);
+        }
+    }
 
     function registerClient({ redirect_uris: redirectUris, client_name: clientName } = {}) {
         if (!Array.isArray(redirectUris) || redirectUris.length === 0) {
@@ -53,6 +81,7 @@ export function createOAuthBroker({ now = () => Date.now(), randomId = (bytes = 
         }
         const clientId = randomId(16);
         clients.set(clientId, { redirectUris, clientName: typeof clientName === 'string' ? clientName : '' });
+        persist();
         return {
             client_id: clientId,
             redirect_uris: redirectUris,
@@ -75,6 +104,7 @@ export function createOAuthBroker({ now = () => Date.now(), randomId = (bytes = 
             }
             client = { redirectUris: [redirectUri], clientName: '' };
             clients.set(clientId, client);
+            persist();
         }
         if (!client.redirectUris.includes(redirectUri)) {
             throw new OAuthError('invalid_request', 'redirect_uri is not registered for this client.');
@@ -105,6 +135,7 @@ export function createOAuthBroker({ now = () => Date.now(), randomId = (bytes = 
         const refreshToken = randomId(32);
         accessTokens.set(accessToken, { firebaseRefreshToken, expiresAt: now() + ACCESS_TOKEN_TTL_MS });
         refreshTokens.set(refreshToken, { firebaseRefreshToken, clientId });
+        persist();
         return {
             access_token: accessToken,
             token_type: 'Bearer',
