@@ -108,6 +108,7 @@ vi.mock('./profileService', () => ({ loadProfileDocument: vi.fn(async () => ({})
 
 import {
   __resetTeamDetailBaseSnapshotCacheForTests,
+  buildTeamAnalytics,
   buildTeamDetailModel,
   createStatTrackerConfigForApp,
   loadParentTeamDetail,
@@ -120,6 +121,53 @@ import {
 } from './teamDetailService';
 import { computeNativeStandings } from '../../../../js/native-standings.js';
 import { hasFullTeamAccess } from '../../../../js/team-access.js';
+
+describe('buildTeamAnalytics', () => {
+  it('builds chronological score trends, recent form, averages, and differential', () => {
+    const analytics = buildTeamAnalytics([
+      { id: 'game-3', status: 'completed', date: '2026-03-03T18:00:00Z', opponent: 'Owls', homeScore: 2, awayScore: 2 },
+      { id: 'game-1', status: 'completed', date: '2026-03-01T18:00:00Z', opponent: 'Bears', homeScore: 4, awayScore: 1 },
+      { id: 'game-2', status: 'completed', date: '2026-03-02T18:00:00Z', opponent: 'Cats', homeScore: 1, awayScore: 3 }
+    ]);
+
+    expect(analytics).toMatchObject({
+      completedGameCount: 3,
+      recentWins: 1,
+      recentLosses: 1,
+      recentTies: 1,
+      averagePointsFor: 2.3,
+      averagePointsAgainst: 2,
+      scoreDifferential: 1
+    });
+    expect(analytics.progression.map((game) => game.id)).toEqual(['game-1', 'game-2', 'game-3']);
+    expect(analytics.progression.map((game) => game.result)).toEqual(['W', 'L', 'T']);
+  });
+
+  it('accepts live-completed games and ignores games without final scores', () => {
+    const analytics = buildTeamAnalytics([
+      { id: 'live-finished', status: 'scheduled', liveStatus: 'completed', date: '2026-03-01T18:00:00Z', homeScore: 5, awayScore: 4 },
+      { id: 'no-score', status: 'completed', date: '2026-03-02T18:00:00Z' },
+      { id: 'practice', type: 'practice', status: 'completed', date: '2026-03-03T18:00:00Z', homeScore: 1, awayScore: 0 }
+    ]);
+
+    expect(analytics.completedGameCount).toBe(1);
+    expect(analytics.progression[0]).toMatchObject({ id: 'live-finished', result: 'W', differential: 1 });
+  });
+
+  it('returns an explicit empty snapshot without completed score-bearing games', () => {
+    expect(buildTeamAnalytics([])).toEqual({
+      completedGameCount: 0,
+      recentWins: 0,
+      recentLosses: 0,
+      recentTies: 0,
+      averagePointsFor: 0,
+      averagePointsAgainst: 0,
+      scoreDifferential: 0,
+      recentForm: [],
+      progression: []
+    });
+  });
+});
 
 beforeEach(() => {
   vi.mocked(hasFullTeamAccess).mockImplementation(() => true);

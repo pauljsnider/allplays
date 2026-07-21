@@ -197,6 +197,29 @@ export type TeamDetailTrackingSummary = {
   }>;
 };
 
+export type TeamDetailAnalyticsGame = {
+  id: string;
+  date: Date;
+  dateLabel: string;
+  opponent: string;
+  pointsFor: number;
+  pointsAgainst: number;
+  differential: number;
+  result: 'W' | 'L' | 'T';
+};
+
+export type TeamDetailAnalytics = {
+  completedGameCount: number;
+  recentWins: number;
+  recentLosses: number;
+  recentTies: number;
+  averagePointsFor: number;
+  averagePointsAgainst: number;
+  scoreDifferential: number;
+  recentForm: TeamDetailAnalyticsGame[];
+  progression: TeamDetailAnalyticsGame[];
+};
+
 export type TeamDetailSponsor = {
   id: string;
   name: string;
@@ -311,6 +334,7 @@ export type TeamDetailModel = {
   };
   leaderboards: TeamDetailLeaderboard[];
   trackingSummaries: TeamDetailTrackingSummary[];
+  teamAnalytics: TeamDetailAnalytics;
   sponsors: TeamDetailSponsor[];
   statTrackerConfigs: TeamDetailStatTrackerConfig[];
   canManageTeam: boolean;
@@ -357,6 +381,7 @@ export type TeamTrackingItemForAppInput = {
 export type TeamDetailInsightsPayload = {
   leaderboards: TeamDetailLeaderboard[];
   trackingSummaries: TeamDetailTrackingSummary[];
+  teamAnalytics: TeamDetailAnalytics;
 };
 
 export type TeamDetailSponsorsPayload = {
@@ -1523,7 +1548,8 @@ export function loadTeamDetailInsights(teamId: string, user: AuthUser | null): P
     const normalizedPlayers = normalizePlayers(players, linkedPlayerIds);
     return {
       leaderboards: buildLeaderboards(configs, normalizedPlayers, seasonStatsByPlayerId, team?.sport),
-      trackingSummaries: buildTrackingSummaries(normalizedPlayers, linkedPlayerIds, trackingItems, trackingStatuses)
+      trackingSummaries: buildTrackingSummaries(normalizedPlayers, linkedPlayerIds, trackingItems, trackingStatuses),
+      teamAnalytics: buildTeamAnalytics(games)
     };
   })();
   teamDetailInsightsCache.set(cacheKey, request);
@@ -1742,6 +1768,7 @@ export function buildTeamDetailModel({
   const standings = buildStandings(team, games);
   const leaderboards = includeInsights ? buildLeaderboards(configs, normalizedPlayers, seasonStatsByPlayerId, team?.sport) : [];
   const trackingSummaries = includeInsights ? buildTrackingSummaries(normalizedPlayers, linkedPlayerIds, trackingItems, trackingStatuses) : [];
+  const teamAnalytics = buildTeamAnalytics(games);
   const canManageAdmins = canManageTeamAdmins(user, team);
   const staffPermissions = canManageTeam && includeStaffPermissions
     ? buildTeamStaffPermissionsSummary({ teamId, team, players, pendingAdminInvites, confirmedTeamMembers })
@@ -1785,6 +1812,7 @@ export function buildTeamDetailModel({
     standings,
     leaderboards,
     trackingSummaries,
+    teamAnalytics,
     sponsors: sponsors.slice(0, 4),
     statTrackerConfigs: normalizedStatTrackerConfigs.items,
     canManageTeam,
@@ -2421,10 +2449,67 @@ function getStreamUrl(team: Record<string, any>) {
   return getFirstUrl(embedUrl);
 }
 
+export function buildTeamAnalytics(games: any[] = []): TeamDetailAnalytics {
+  const completedGames = (Array.isArray(games) ? games : [])
+    .filter(isCompletedGame)
+    .map((game, index): TeamDetailAnalyticsGame => {
+      const pointsFor = toNullableNumber(game?.homeScore) || 0;
+      const pointsAgainst = toNullableNumber(game?.awayScore) || 0;
+      const date = toDate(game?.date);
+      const opponent = cleanString(game?.opponent || game?.awayTeam || game?.title)
+        .replace(/^vs\.?\s*/i, '') || 'Opponent';
+      return {
+        id: cleanString(game?.id || game?.gameId) || `game-${index + 1}`,
+        date,
+        dateLabel: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+        opponent,
+        pointsFor,
+        pointsAgainst,
+        differential: pointsFor - pointsAgainst,
+        result: pointsFor > pointsAgainst ? 'W' : pointsFor < pointsAgainst ? 'L' : 'T'
+      };
+    })
+    .sort((a, b) => a.date.getTime() - b.date.getTime());
+
+  if (!completedGames.length) {
+    return {
+      completedGameCount: 0,
+      recentWins: 0,
+      recentLosses: 0,
+      recentTies: 0,
+      averagePointsFor: 0,
+      averagePointsAgainst: 0,
+      scoreDifferential: 0,
+      recentForm: [],
+      progression: []
+    };
+  }
+
+  const recentForm = completedGames.slice(-5);
+  const pointsFor = completedGames.reduce((total, game) => total + game.pointsFor, 0);
+  const pointsAgainst = completedGames.reduce((total, game) => total + game.pointsAgainst, 0);
+  const roundToTenth = (value: number) => Math.round(value * 10) / 10;
+
+  return {
+    completedGameCount: completedGames.length,
+    recentWins: recentForm.filter((game) => game.result === 'W').length,
+    recentLosses: recentForm.filter((game) => game.result === 'L').length,
+    recentTies: recentForm.filter((game) => game.result === 'T').length,
+    averagePointsFor: roundToTenth(pointsFor / completedGames.length),
+    averagePointsAgainst: roundToTenth(pointsAgainst / completedGames.length),
+    scoreDifferential: pointsFor - pointsAgainst,
+    recentForm,
+    progression: completedGames.slice(-10)
+  };
+}
+
 function isCompletedGame(game: any) {
   if (!game || game.type === 'practice') return false;
-  const status = cleanString(game.status || game.liveStatus).toLowerCase();
-  return (status === 'completed' || status === 'final') && toNullableNumber(game.homeScore) !== null && toNullableNumber(game.awayScore) !== null;
+  const status = cleanString(game.status).toLowerCase();
+  const liveStatus = cleanString(game.liveStatus).toLowerCase();
+  return (status === 'completed' || status === 'final' || liveStatus === 'completed' || liveStatus === 'final')
+    && toNullableNumber(game.homeScore) !== null
+    && toNullableNumber(game.awayScore) !== null;
 }
 
 function getWinPercentage(record: { wins: number; losses: number; ties: number }) {
