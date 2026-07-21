@@ -120,6 +120,46 @@ describe('createTeamFeeBatch collection mode persistence', () => {
 });
 
 describe('updateTeamFeeRecipient manual payment validation', () => {
+    it('writes an immutable audit entry with actor and server timestamp for a fee mutation', async () => {
+        const transactionSet = vi.fn();
+        const runTransaction = vi.fn(async (_db, handler) => handler({
+            get: vi.fn(async () => ({
+                exists: () => true,
+                data: () => ({ amountDueCents: 5000, amountPaidCents: 0 })
+            })),
+            update: vi.fn(),
+            set: transactionSet
+        }));
+        const updateTeamFeeRecipient = buildUpdateTeamFeeRecipient({
+            doc: vi.fn((_db, ...parts) => ({ path: parts.join('/') })),
+            updateDoc: vi.fn(),
+            setDoc: vi.fn(),
+            runTransaction,
+            serverTimestamp: vi.fn(() => 'server-ts'),
+            arrayUnion: vi.fn((...entries) => entries),
+            deleteField: vi.fn(() => 'deleted')
+        });
+
+        await updateTeamFeeRecipient('team-1', 'batch-1', 'recipient-1', {
+            status: 'partial',
+            amountDueCents: 4500,
+            adminBilling: { type: 'balance_adjustment', adjustedBy: 'coach-1' }
+        });
+
+        expect(transactionSet).toHaveBeenCalledWith(
+            expect.objectContaining({ path: expect.stringMatching(/\/audit\/fee_mutation_/) }),
+            {
+                teamId: 'team-1',
+                batchId: 'batch-1',
+                recipientId: 'recipient-1',
+                actorId: 'coach-1',
+                changedFields: ['status', 'amountDueCents'],
+                mutationType: 'balance_adjustment',
+                changedAt: 'server-ts'
+            }
+        );
+    });
+
     it('rejects manual payments that exceed the recipient remaining balance before persisting', async () => {
         const updateDoc = vi.fn();
         const transactionUpdate = vi.fn();

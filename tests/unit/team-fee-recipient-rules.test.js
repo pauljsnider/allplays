@@ -70,6 +70,13 @@ describe('team fee recipient Firestore rules', () => {
         expect(rules).toContain('allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);');
     });
 
+    it('allows append-only fee audit entries from the authenticated team admin', () => {
+        expect(nestedRecipientBlock).toContain('match /audit/{auditId} {');
+        expect(nestedRecipientBlock).toContain('request.resource.data.actorId == request.auth.uid');
+        expect(nestedRecipientBlock).toContain('request.resource.data.changedAt == request.time');
+        expect(nestedRecipientBlock).toContain('allow update, delete: if false;');
+    });
+
     describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('fee recipient rules engine coverage', () => {
         let testEnv;
 

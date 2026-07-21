@@ -5593,6 +5593,32 @@ function addManualPaymentLedgerEntryIds(ledgerEntries = []) {
     });
 }
 
+const TEAM_FEE_AUDIT_FIELDS = [
+    'status',
+    'amountCents',
+    'amountDueCents',
+    'adjustedAmountCents',
+    'balanceDueCents',
+    'remainingBalanceCents',
+    'amountPaidCents',
+    'paidAmountCents',
+    'amountRefundedCents',
+    'refundedAmountCents'
+];
+
+function getTeamFeeMutationActorId(updates = {}) {
+    const billing = updates?.adminBilling || {};
+    return String(
+        updates?.auditActorId
+        || billing.recordedBy
+        || billing.adjustedBy
+        || billing.refundedBy
+        || billing.canceledBy
+        || updates?.canceled?.canceledBy
+        || ''
+    ).trim();
+}
+
 export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updates = {}) {
     if (!teamId || !batchId || !recipientId) {
         throw new Error('Missing fee recipient context.');
@@ -5600,7 +5626,7 @@ export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updat
 
     const recipientRef = doc(db, 'teams', teamId, 'feeBatches', batchId, 'feeRecipients', recipientId);
     const adminBillingRef = doc(db, 'teams', teamId, 'feeBatches', batchId, 'feeRecipients', recipientId, 'adminBilling', 'latest');
-    const { ledgerEntries = [], adminBilling = null, ...unsafeRecipientUpdates } = updates;
+    const { ledgerEntries = [], adminBilling = null, auditActorId = null, ...unsafeRecipientUpdates } = updates;
     const recipientUpdates = sanitizeTeamFeeRecipientValue(unsafeRecipientUpdates, { topLevel: true });
     const safeLedgerEntries = Array.isArray(ledgerEntries)
         ? addManualPaymentLedgerEntryIds(sanitizeTeamFeeRecipientValue(ledgerEntries))
@@ -5614,13 +5640,29 @@ export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updat
         : null;
     const adminBillingDetails = explicitAdminBilling || deriveTeamFeeAdminBillingPayload(unsafeRecipientUpdates, ledgerEntries);
     const hasAdminBilling = Boolean(adminBillingDetails);
+    const auditedChangedFields = TEAM_FEE_AUDIT_FIELDS.filter((field) => Object.prototype.hasOwnProperty.call(recipientUpdates, field));
+    const mutationActorId = getTeamFeeMutationActorId({ ...unsafeRecipientUpdates, adminBilling, auditActorId });
+    const shouldWriteAudit = auditedChangedFields.length > 0 && Boolean(mutationActorId);
+    const mutationTimestamp = serverTimestamp();
+    const auditRef = shouldWriteAudit
+        ? doc(db, 'teams', teamId, 'feeBatches', batchId, 'feeRecipients', recipientId, 'audit', createTeamFeeLedgerEntryId('fee_mutation'))
+        : null;
+    const auditPayload = shouldWriteAudit ? {
+        teamId,
+        batchId,
+        recipientId,
+        actorId: mutationActorId,
+        changedFields: auditedChangedFields,
+        mutationType: String(adminBillingDetails?.type || 'fee_update'),
+        changedAt: mutationTimestamp
+    } : null;
 
     const updatePayload = {
         ...recipientUpdates,
         teamId,
         batchId,
         ...(hasAdminBilling ? { hasAdminBilling: true } : {}),
-        updatedAt: serverTimestamp()
+        updatedAt: mutationTimestamp
     };
 
     const adminBillingPayload = hasAdminBilling ? {
@@ -5660,7 +5702,7 @@ export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updat
         updatePayload.paymentLedger = arrayUnion(...safeLedgerEntries);
     }
 
-    if (isManualPaymentUpdate || isCancellationUpdate) {
+    if (isManualPaymentUpdate || isCancellationUpdate || shouldWriteAudit) {
         await runTransaction(db, async (transaction) => {
             const recipientSnapshot = await transaction.get(recipientRef);
             if (!recipientSnapshot.exists()) {
@@ -5704,6 +5746,9 @@ export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updat
             transaction.update(recipientRef, updatePayload);
             if (adminBillingPayload) {
                 transaction.set(adminBillingRef, adminBillingPayload, { merge: true });
+            }
+            if (auditPayload) {
+                transaction.set(auditRef, auditPayload);
             }
         });
         return;

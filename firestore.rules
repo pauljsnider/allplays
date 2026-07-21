@@ -3820,6 +3820,17 @@ service cloud.firestore {
           match /adminBilling/{billingId} {
             allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);
           }
+
+          match /audit/{auditId} {
+            allow read: if isTeamOwnerOrAdmin(teamId);
+            allow create: if isTeamOwnerOrAdmin(teamId) &&
+                             request.resource.data.teamId == teamId &&
+                             request.resource.data.batchId == batchId &&
+                             request.resource.data.recipientId == recipientId &&
+                             request.resource.data.actorId == request.auth.uid &&
+                             request.resource.data.changedAt == request.time;
+            allow update, delete: if false;
+          }
         }
       }
 
