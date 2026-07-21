@@ -992,9 +992,9 @@ function buildPublicRegistrationRateLimitBoundary(input, context = {}) {
   }).subject;
 }
 
-async function assertPublicRegistrationRateLimit(input, context = {}) {
+async function assertPublicRegistrationRateLimit(input, context = {}, reservationId = '') {
   const boundary = buildPublicRegistrationRateLimitBoundary(input, context);
-  const rateLimit = await getPublicRegistrationSubmissionRateLimit()(boundary);
+  const rateLimit = await getPublicRegistrationSubmissionRateLimit()(boundary, Date.now(), reservationId);
   if (!rateLimit.allowed) {
     throwPublicRegistrationError('resource-exhausted', 'Too many registration attempts. Please wait a few minutes and try again.', {
       reason: 'rate-limited',
@@ -1035,11 +1035,11 @@ function assertPublicRegistrationAppCheck(context = {}, operation = 'submit') {
   }
 }
 
-async function reserveStagedPublicRegistrationRateLimit({ operation, scope, boundary, mode }) {
+async function reserveStagedPublicRegistrationRateLimit({ operation, scope, boundary, mode, reservationId = '' }) {
   if (mode === 'disabled') return;
   let result;
   try {
-    result = await getPublicRegistrationStagedRateLimiter(operation, scope)(boundary);
+    result = await getPublicRegistrationStagedRateLimiter(operation, scope)(boundary, Date.now(), reservationId);
   } catch (error) {
     functions.logger.error('Public registration staged rate-limit reservation failed.', {
       event: 'public_registration_rate_limit_error',
@@ -1070,7 +1070,7 @@ async function reserveStagedPublicRegistrationRateLimit({ operation, scope, boun
   }
 }
 
-async function applyStagedPublicRegistrationRateLimits(input, context = {}, operation = 'submit') {
+async function applyStagedPublicRegistrationRateLimits(input, context = {}, operation = 'submit', reservationId = '') {
   const boundaries = buildPublicRegistrationRateLimitBoundaries(input, context, {
     operation,
     requestIp: getRequestIp(context.rawRequest || {})
@@ -1096,7 +1096,8 @@ async function applyStagedPublicRegistrationRateLimits(input, context = {}, oper
       operation,
       scope: check.scope,
       boundary: boundaries[check.scope],
-      mode: check.mode
+      mode: check.mode,
+      reservationId
     })
   )));
 }
@@ -1176,8 +1177,8 @@ exports.submitPublicRegistration = functions.https.onCall(async (data, context =
   });
   validatePublicRegistrationSubmission(initialForm, input, initialFeeSnapshot);
 
-  await assertPublicRegistrationRateLimit(input, context);
-  await applyStagedPublicRegistrationRateLimits(input, context, 'submit');
+  await assertPublicRegistrationRateLimit(input, context, submissionFingerprint);
+  await applyStagedPublicRegistrationRateLimits(input, context, 'submit', submissionFingerprint);
 
   let result = null;
 

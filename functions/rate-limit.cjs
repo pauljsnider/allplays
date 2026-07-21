@@ -125,7 +125,7 @@ function createFirestoreFixedWindowRateLimiter({
   const configuredMaxRequests = parsePositiveInteger(maxRequests, 120);
   const rateLimitCollection = firestore.collection(collectionName.trim());
 
-  return async function reserveRateLimitSlot(boundary, now = Date.now()) {
+  return async function reserveRateLimitSlot(boundary, now = Date.now(), reservationId = '') {
     if ((typeof boundary !== 'string' && typeof boundary !== 'number')
       || (typeof boundary === 'number' && !Number.isFinite(boundary))) {
       throw new TypeError('A string or finite number rate-limit boundary is required.');
@@ -137,6 +137,10 @@ function createFirestoreFixedWindowRateLimiter({
     if (Buffer.byteLength(normalizedBoundary, 'utf8') > MAX_RATE_LIMIT_BOUNDARY_BYTES) {
       throw new RangeError('The rate-limit boundary is too long.');
     }
+    const normalizedReservationId = String(reservationId || '').trim();
+    const reservationHash = normalizedReservationId
+      ? crypto.createHash('sha256').update(normalizedReservationId, 'utf8').digest('hex')
+      : '';
     const documentId = crypto.createHash('sha256').update(normalizedBoundary, 'utf8').digest('hex');
     const limitRef = rateLimitCollection.doc(documentId);
 
@@ -148,6 +152,16 @@ function createFirestoreFixedWindowRateLimiter({
       const resetAt = windowActive ? existingResetAt : now + configuredWindowMs;
       const existingCount = Number(existing.count);
       const validExistingCount = Number.isSafeInteger(existingCount) && existingCount >= 0;
+      const existingReservations = windowActive && Array.isArray(existing.reservationIds)
+        ? existing.reservationIds.filter((value) => typeof value === 'string')
+        : [];
+      if (reservationHash && validExistingCount && existingReservations.includes(reservationHash)) {
+        return {
+          allowed: true,
+          retryAfterSeconds: Math.max(1, Math.ceil((resetAt - now) / 1000)),
+          remaining: Math.max(0, configuredMaxRequests - existingCount)
+        };
+      }
       const count = windowActive && validExistingCount
         ? existingCount >= configuredMaxRequests
           ? configuredMaxRequests + 1
@@ -158,11 +172,17 @@ function createFirestoreFixedWindowRateLimiter({
       // without performing another write. Repeated abusive requests can still
       // incur a bounded lookup, but cannot amplify into unbounded writes.
       if (!windowActive || !validExistingCount || existingCount < configuredMaxRequests) {
-        transaction.set(limitRef, {
+        const nextValue = {
           count: Math.min(count, configuredMaxRequests),
           resetAt,
           expiresAt: new Date(resetAt)
-        });
+        };
+        if (existingReservations.length || reservationHash) {
+          nextValue.reservationIds = reservationHash
+            ? [...existingReservations, reservationHash]
+            : existingReservations;
+        }
+        transaction.set(limitRef, nextValue);
       }
 
       return {

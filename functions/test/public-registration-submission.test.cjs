@@ -53,6 +53,8 @@ function makeFirestore(seed = {}) {
     const state = new Map(Object.entries(clone(seed)));
     let nextAutoId = 1;
     let nextTransactionError = null;
+    let transactionQueue = Promise.resolve();
+    const readBarriers = new Map();
     const fieldValue = {
         serverTimestamp: () => ({ __op: 'serverTimestamp' }),
         delete: () => ({ __op: 'delete' }),
@@ -96,6 +98,12 @@ function makeFirestore(seed = {}) {
             path,
             id: String(path).split('/').pop(),
             async get() {
+                const barrier = readBarriers.get(path);
+                if (barrier && barrier.arrivals < barrier.target) {
+                    barrier.arrivals += 1;
+                    if (barrier.arrivals === barrier.target) barrier.release();
+                    await barrier.promise;
+                }
                 const data = state.get(path);
                 return {
                     exists: data !== undefined,
@@ -136,18 +144,23 @@ function makeFirestore(seed = {}) {
         _state: state,
         doc,
         collection,
-        async runTransaction(handler) {
-            if (nextTransactionError) {
-                const error = nextTransactionError;
-                nextTransactionError = null;
-                throw error;
-            }
-            const transaction = {
-                get: (ref) => ref.get(),
-                set: (ref, value, options) => ref.set(value, options),
-                update: (ref, value) => ref.update(value)
+        runTransaction(handler) {
+            const execute = async () => {
+                if (nextTransactionError) {
+                    const error = nextTransactionError;
+                    nextTransactionError = null;
+                    throw error;
+                }
+                const transaction = {
+                    get: (ref) => ref.get(),
+                    set: (ref, value, options) => ref.set(value, options),
+                    update: (ref, value) => ref.update(value)
+                };
+                return handler(transaction);
             };
-            return handler(transaction);
+            const result = transactionQueue.then(execute, execute);
+            transactionQueue = result.then(() => undefined, () => undefined);
+            return result;
         },
         snapshot(path) {
             return clone(state.get(path));
@@ -164,6 +177,13 @@ function makeFirestore(seed = {}) {
         },
         failNextTransaction(error) {
             nextTransactionError = error;
+        },
+        blockReadsUntil(path, target) {
+            let release;
+            const promise = new Promise((resolve) => {
+                release = resolve;
+            });
+            readBarriers.set(path, { arrivals: 0, target, promise, release });
         },
         FieldValue: fieldValue
     };
@@ -595,6 +615,24 @@ test('replays an identical keyed submission without duplicating capacity or cons
     assert.equal(firestore.snapshot('teams/team-1/registrationForms/form-1').registrationOptionCounts.u10.enrolled, 1);
     assert.deepEqual(firestore.rateLimitDocs(), rateLimitStateBeforeReplay);
     assert.match(first.registrationId, /^submission_[a-f0-9]{64}$/);
+});
+
+test('coalesces rate-limit reservations for concurrent identical keyed submissions', async () => {
+    const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration(buildSeedState());
+    const input = buildSubmission({ submissionIdempotencyKey: 'submission_token_1234567890' });
+    const registrationPath = 'teams/team-1/registrationForms/form-1/registrations/'
+        + 'submission_65863ce23fb33bdc600888a32367970e7b7318b0d9f969979ef2a66b604a69c3';
+    firestore.blockReadsUntil(registrationPath, 2);
+
+    const results = await Promise.all([
+        submitPublicRegistration(input, context),
+        submitPublicRegistration(input, context)
+    ]);
+
+    assert.equal(results.filter((result) => result.idempotentReplay === true).length, 1);
+    assert.equal(firestore.registrationDocs().length, 1);
+    assert.equal(firestore.snapshot('teams/team-1/registrationForms/form-1').registrationOptionCounts.u10.enrolled, 1);
+    assert.deepEqual(firestore.rateLimitDocs().map(({ data }) => data.count), [1, 1, 1]);
 });
 
 test('rejects reuse of a submission key with different applicant data', async () => {

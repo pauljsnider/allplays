@@ -142,6 +142,32 @@ test('shares an atomic fixed-window count across durable limiter instances', asy
     assert.equal(results.filter((result) => !result.allowed).length, 1);
 });
 
+test('counts concurrent reservations with the same id once across limiter instances', async () => {
+    const firestore = makeAtomicFirestore();
+    const options = {
+        firestore,
+        collectionName: 'publicRegistrationRateLimits',
+        windowMs: 10_000,
+        maxRequests: 3
+    };
+    const limiterA = createFirestoreFixedWindowRateLimiter(options);
+    const limiterB = createFirestoreFixedWindowRateLimiter(options);
+
+    const results = await Promise.all([
+        limiterA('form-1|parent@example.com', 1_000, 'submission-fingerprint'),
+        limiterB('form-1|parent@example.com', 1_000, 'submission-fingerprint')
+    ]);
+
+    assert.equal(results.every((result) => result.allowed), true);
+    assert.equal([...firestore.state.values()][0].count, 1);
+    assert.equal([...firestore.state.values()][0].reservationIds.length, 1);
+
+    await limiterA('form-1|parent@example.com', 1_100);
+    const replay = await limiterB('form-1|parent@example.com', 1_200, 'submission-fingerprint');
+    assert.equal(replay.allowed, true);
+    assert.equal([...firestore.state.values()][0].count, 2);
+});
+
 test('resets expired windows and isolates different boundaries', async () => {
     const firestore = makeAtomicFirestore();
     const limiter = createFirestoreFixedWindowRateLimiter({
