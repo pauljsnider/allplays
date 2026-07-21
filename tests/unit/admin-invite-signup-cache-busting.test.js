@@ -107,7 +107,7 @@ describe('admin invite signup cache busting', () => {
         });
         const staleConsumers = deployedSources.flatMap((relativePath) => {
             const source = readFileSync(resolve(process.cwd(), relativePath), 'utf8');
-            const staleImports = source.match(/(?:(?<![\w-])auth\.js\?v=(?!129\b)\d+|(?<![\w-])db\.js\?v=(?!11[78]\b)\d+|(?<![\w-])utils\.js\?v=(?!18\b)\d+)\b/g) || [];
+            const staleImports = source.match(/(?:(?<![\w-])auth\.js\?v=(?!129\b)\d+|(?<![\w-])db\.js\?v=(?!11[7-9]\b)\d+|(?<![\w-])utils\.js\?v=(?!18\b)\d+)\b/g) || [];
             return staleImports.map((importPath) => `${relativePath}: ${importPath}`);
         });
 

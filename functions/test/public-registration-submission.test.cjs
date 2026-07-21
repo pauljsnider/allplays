@@ -4,6 +4,15 @@ const Module = require('node:module');
 
 const repoIndexPath = require.resolve('../index.js');
 const originalModuleLoad = Module._load;
+const registrationSecurityEnvKeys = [
+    'PUBLIC_REGISTRATION_APP_CHECK_MODE',
+    'PUBLIC_REGISTRATION_NETWORK_RATE_LIMIT_MODE',
+    'PUBLIC_REGISTRATION_FORM_RATE_LIMIT_MODE',
+    'PUBLIC_REGISTRATION_CHECKOUT_RATE_LIMIT_MODE'
+];
+const originalRegistrationSecurityEnv = Object.fromEntries(
+    registrationSecurityEnvKeys.map((key) => [key, process.env[key]])
+);
 
 let adminStub = null;
 let functionsStub = null;
@@ -44,6 +53,8 @@ function makeFirestore(seed = {}) {
     const state = new Map(Object.entries(clone(seed)));
     let nextAutoId = 1;
     let nextTransactionError = null;
+    let transactionQueue = Promise.resolve();
+    const readBarriers = new Map();
     const fieldValue = {
         serverTimestamp: () => ({ __op: 'serverTimestamp' }),
         delete: () => ({ __op: 'delete' }),
@@ -87,6 +98,12 @@ function makeFirestore(seed = {}) {
             path,
             id: String(path).split('/').pop(),
             async get() {
+                const barrier = readBarriers.get(path);
+                if (barrier && barrier.arrivals < barrier.target) {
+                    barrier.arrivals += 1;
+                    if (barrier.arrivals === barrier.target) barrier.release();
+                    await barrier.promise;
+                }
                 const data = state.get(path);
                 return {
                     exists: data !== undefined,
@@ -114,7 +131,10 @@ function makeFirestore(seed = {}) {
         return {
             path,
             doc(id) {
-                const docId = id || `auto-${nextAutoId++}`;
+                if (arguments.length > 0 && typeof id !== 'string') {
+                    throw new Error('Document path must be a string when provided.');
+                }
+                const docId = arguments.length === 0 ? `auto-${nextAutoId++}` : id;
                 return doc(`${path}/${docId}`);
             }
         };
@@ -124,18 +144,23 @@ function makeFirestore(seed = {}) {
         _state: state,
         doc,
         collection,
-        async runTransaction(handler) {
-            if (nextTransactionError) {
-                const error = nextTransactionError;
-                nextTransactionError = null;
-                throw error;
-            }
-            const transaction = {
-                get: (ref) => ref.get(),
-                set: (ref, value, options) => ref.set(value, options),
-                update: (ref, value) => ref.update(value)
+        runTransaction(handler) {
+            const execute = async () => {
+                if (nextTransactionError) {
+                    const error = nextTransactionError;
+                    nextTransactionError = null;
+                    throw error;
+                }
+                const transaction = {
+                    get: (ref) => ref.get(),
+                    set: (ref, value, options) => ref.set(value, options),
+                    update: (ref, value) => ref.update(value)
+                };
+                return handler(transaction);
             };
-            return handler(transaction);
+            const result = transactionQueue.then(execute, execute);
+            transactionQueue = result.then(() => undefined, () => undefined);
+            return result;
         },
         snapshot(path) {
             return clone(state.get(path));
@@ -152,6 +177,13 @@ function makeFirestore(seed = {}) {
         },
         failNextTransaction(error) {
             nextTransactionError = error;
+        },
+        blockReadsUntil(path, target) {
+            let release;
+            const promise = new Promise((resolve) => {
+                release = resolve;
+            });
+            readBarriers.set(path, { arrivals: 0, target, promise, release });
         },
         FieldValue: fieldValue
     };
@@ -327,6 +359,7 @@ test.beforeEach(() => {
     functionsStub = null;
     StripeStub = null;
     stripeState = null;
+    registrationSecurityEnvKeys.forEach((key) => delete process.env[key]);
 });
 
 test.afterEach(() => {
@@ -336,6 +369,11 @@ test.afterEach(() => {
     functionsStub = null;
     StripeStub = null;
     stripeState = null;
+    registrationSecurityEnvKeys.forEach((key) => {
+        const value = originalRegistrationSecurityEnv[key];
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+    });
 });
 
 test('loads unrelated callables without Firestore transaction support', () => {
@@ -349,7 +387,7 @@ test('loads unrelated callables without Firestore transaction support', () => {
     assert.equal(typeof mod.listPublicOpportunities, 'function');
 });
 
-test('rejects nonexistent forms before creating a durable rate-limit document', async () => {
+test('rejects nonexistent form probes without creating attacker-keyed limiter documents', async () => {
     const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration({});
 
     await assert.rejects(
@@ -358,6 +396,21 @@ test('rejects nonexistent forms before creating a durable rate-limit document', 
             assert.equal(error.code, 'not-found');
             return true;
         }
+    );
+
+    assert.equal(firestore.rateLimitDocs().length, 0);
+    assert.equal(firestore.registrationDocs().length, 0);
+});
+
+test('rejects unpublished forms without creating attacker-keyed limiter documents', async () => {
+    const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration(buildSeedState({
+        published: false,
+        status: 'draft'
+    }));
+
+    await assert.rejects(
+        submitPublicRegistration(buildSubmission(), context),
+        (error) => error.code === 'not-found'
     );
 
     assert.equal(firestore.rateLimitDocs().length, 0);
@@ -541,8 +594,380 @@ test('isolates guardian submission limits for families sharing an IP address', a
     );
 
     assert.equal(result.success, true);
-    assert.equal(firestore.rateLimitDocs().length, 2);
+    assert.equal(firestore.rateLimitDocs().length, 4);
     assert.equal(firestore.registrationDocs().length, 4);
+});
+
+test('replays an identical keyed submission without duplicating capacity or consuming another rate slot', async () => {
+    const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration(buildSeedState());
+    const input = buildSubmission({ submissionIdempotencyKey: 'submission_token_1234567890' });
+
+    const first = await submitPublicRegistration(input, context);
+    const rateLimitStateBeforeReplay = clone(firestore.rateLimitDocs());
+    const replay = await submitPublicRegistration({
+        ...input,
+        participant: { playerName: 'Sam Player' }
+    }, context);
+
+    assert.equal(replay.registrationId, first.registrationId);
+    assert.equal(replay.idempotentReplay, true);
+    assert.equal(firestore.registrationDocs().length, 1);
+    assert.equal(firestore.snapshot('teams/team-1/registrationForms/form-1').registrationOptionCounts.u10.enrolled, 1);
+    assert.deepEqual(firestore.rateLimitDocs(), rateLimitStateBeforeReplay);
+    assert.match(first.registrationId, /^submission_[a-f0-9]{64}$/);
+});
+
+test('coalesces rate-limit reservations for concurrent identical keyed submissions', async () => {
+    const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration(buildSeedState());
+    const input = buildSubmission({ submissionIdempotencyKey: 'submission_token_1234567890' });
+    const registrationPath = 'teams/team-1/registrationForms/form-1/registrations/'
+        + 'submission_65863ce23fb33bdc600888a32367970e7b7318b0d9f969979ef2a66b604a69c3';
+    firestore.blockReadsUntil(registrationPath, 2);
+
+    const results = await Promise.all([
+        submitPublicRegistration(input, context),
+        submitPublicRegistration(input, context)
+    ]);
+
+    assert.equal(results.filter((result) => result.idempotentReplay === true).length, 1);
+    assert.equal(firestore.registrationDocs().length, 1);
+    assert.equal(firestore.snapshot('teams/team-1/registrationForms/form-1').registrationOptionCounts.u10.enrolled, 1);
+    assert.deepEqual(firestore.rateLimitDocs().map(({ data }) => data.count), [1, 1, 1]);
+});
+
+test('rejects reuse of a submission key with different applicant data', async () => {
+    const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration(buildSeedState());
+    const input = buildSubmission({ submissionIdempotencyKey: 'submission_token_1234567890' });
+    await submitPublicRegistration(input, context);
+
+    await assert.rejects(
+        submitPublicRegistration({
+            ...input,
+            participant: { playerName: 'Different Player' }
+        }, context),
+        (error) => {
+            assert.equal(error.code, 'already-exists');
+            assert.equal(error.details.reason, 'idempotency-conflict');
+            return true;
+        }
+    );
+    assert.equal(firestore.registrationDocs().length, 1);
+    assert.equal(firestore.snapshot('teams/team-1/registrationForms/form-1').registrationOptionCounts.u10.enrolled, 1);
+});
+
+test('stores authenticated caller attribution without trusting it as guardian input', async () => {
+    const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration(buildSeedState());
+    const input = buildSubmission({ submissionIdempotencyKey: 'submission_token_1234567890' });
+    const result = await submitPublicRegistration(input, {
+        ...context,
+        auth: { uid: 'signed-in-user', token: { email: 'different@example.com', email_verified: true } }
+    });
+
+    const registration = firestore.snapshot(`teams/team-1/registrationForms/form-1/registrations/${result.registrationId}`);
+    assert.equal(registration.submittedByUserId, 'signed-in-user');
+    assert.equal(registration.guardian.email, 'parent@example.com');
+});
+
+test('observes missing App Check by default and enforces only after the rollout flag changes', async () => {
+    const observed = loadSubmitPublicRegistration(buildSeedState());
+    await assert.doesNotReject(observed.submitPublicRegistration(buildSubmission(), context));
+
+    process.env.PUBLIC_REGISTRATION_APP_CHECK_MODE = 'enforce';
+    const enforced = loadSubmitPublicRegistration(buildSeedState());
+    await assert.rejects(
+        enforced.submitPublicRegistration(buildSubmission(), context),
+        (error) => {
+            assert.equal(error.code, 'failed-precondition');
+            assert.equal(error.details.reason, 'app-check-required');
+            return true;
+        }
+    );
+    assert.equal(enforced.firestore.registrationDocs().length, 0);
+
+    await assert.doesNotReject(enforced.submitPublicRegistration(buildSubmission(), {
+        ...context,
+        app: { appId: '1:123:web:verified' }
+    }));
+});
+
+test('does not trust a spoofed raw App Check header in enforce mode', async () => {
+    process.env.PUBLIC_REGISTRATION_APP_CHECK_MODE = 'enforce';
+    const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration(buildSeedState());
+
+    await assert.rejects(
+        submitPublicRegistration(buildSubmission(), {
+            rawRequest: {
+                ...context.rawRequest,
+                headers: { 'x-firebase-appcheck': 'attacker-controlled' }
+            }
+        }),
+        (error) => error.code === 'failed-precondition'
+            && error.details.reason === 'app-check-required'
+    );
+    assert.equal(firestore.registrationDocs().length, 0);
+    assert.equal(firestore.rateLimitDocs().length, 0);
+});
+
+test('applies the staged App Check gate to public registration checkout and cancellation', async () => {
+    process.env.PUBLIC_REGISTRATION_APP_CHECK_MODE = 'enforce';
+    const { mod } = loadFunctionsModule(buildSeedState({
+        paymentSettings: { offlinePaymentEnabled: true, onlineCheckoutEnabled: true }
+    }));
+    const verifiedContext = {
+        ...context,
+        app: { appId: '1:123:web:verified' }
+    };
+    const checkoutAttemptToken = 'checkouttoken123456';
+    const submission = await mod.submitPublicRegistration(buildSubmission({ checkoutAttemptToken }), verifiedContext);
+    const checkoutInput = {
+        teamId: 'team-1',
+        formId: 'form-1',
+        registrationId: submission.registrationId,
+        checkoutAttemptToken
+    };
+
+    await assert.rejects(
+        mod.createStripeRegistrationCheckout(checkoutInput),
+        (error) => error.code === 'failed-precondition' && error.details.reason === 'app-check-required'
+    );
+    const checkout = await mod.createStripeRegistrationCheckout(checkoutInput, verifiedContext);
+    assert.equal(checkout.checkoutUrl, 'https://stripe.test/checkout/1');
+
+    const cancelCheckoutAttemptToken = 'cancelcheckouttoken123456';
+    const cancelSubmission = await mod.submitPublicRegistration(buildSubmission({
+        guardian: { email: 'cancel@example.com' },
+        checkoutAttemptToken: cancelCheckoutAttemptToken
+    }), verifiedContext);
+    const cancelInput = {
+        teamId: 'team-1',
+        formId: 'form-1',
+        registrationId: cancelSubmission.registrationId,
+        checkoutAttemptToken: cancelCheckoutAttemptToken
+    };
+    await assert.rejects(
+        mod.cancelStripeRegistrationCheckout(cancelInput),
+        (error) => error.code === 'failed-precondition' && error.details.reason === 'app-check-required'
+    );
+    await assert.doesNotReject(mod.cancelStripeRegistrationCheckout(cancelInput, verifiedContext));
+});
+
+test('uses bounded network-only lookup limits before validating checkout and cancellation targets', async () => {
+    const { firestore, mod } = loadFunctionsModule(buildSeedState({
+        paymentSettings: { offlinePaymentEnabled: true, onlineCheckoutEnabled: true }
+    }));
+    const missingInput = {
+        teamId: 'team-1',
+        formId: 'form-1',
+        registrationId: 'missing-registration',
+        checkoutAttemptToken: 'missingcheckouttoken123456'
+    };
+
+    await assert.rejects(
+        mod.createStripeRegistrationCheckout(missingInput, context),
+        (error) => error.code === 'not-found'
+    );
+    await assert.rejects(
+        mod.cancelStripeRegistrationCheckout(missingInput, context),
+        (error) => error.code === 'not-found'
+    );
+
+    const rotatedInput = {
+        ...missingInput,
+        registrationId: 'another-missing-registration',
+        checkoutAttemptToken: 'anothermissingtoken123456'
+    };
+    await assert.rejects(
+        mod.createStripeRegistrationCheckout(rotatedInput, context),
+        (error) => error.code === 'not-found'
+    );
+    await assert.rejects(
+        mod.cancelStripeRegistrationCheckout(rotatedInput, context),
+        (error) => error.code === 'not-found'
+    );
+
+    const limiterDocs = firestore.rateLimitDocs();
+    assert.equal(limiterDocs.length, 2);
+    assert.deepEqual(limiterDocs.map(({ data }) => data.count).sort((a, b) => a - b), [2, 2]);
+});
+
+test('rejects rotated checkout tokens before writing subject limiter documents', async () => {
+    process.env.PUBLIC_REGISTRATION_NETWORK_RATE_LIMIT_MODE = 'disabled';
+    process.env.PUBLIC_REGISTRATION_FORM_RATE_LIMIT_MODE = 'disabled';
+    const { firestore, mod } = loadFunctionsModule(buildSeedState({
+        paymentSettings: { offlinePaymentEnabled: true, onlineCheckoutEnabled: true }
+    }));
+    const checkoutAttemptToken = 'checkouttoken123456';
+    const submission = await mod.submitPublicRegistration(buildSubmission({ checkoutAttemptToken }), context);
+    const limiterCountBeforeCheckout = firestore.rateLimitDocs().length;
+    process.env.PUBLIC_REGISTRATION_CHECKOUT_RATE_LIMIT_MODE = 'observe';
+    const rotatedInput = {
+        teamId: 'team-1',
+        formId: 'form-1',
+        registrationId: submission.registrationId,
+        checkoutAttemptToken: 'rotatedcheckouttoken123456'
+    };
+
+    await assert.rejects(
+        mod.createStripeRegistrationCheckout(rotatedInput, context),
+        (error) => error.code === 'failed-precondition'
+    );
+    assert.equal(firestore.rateLimitDocs().length, limiterCountBeforeCheckout + 1);
+
+    await assert.rejects(
+        mod.cancelStripeRegistrationCheckout(rotatedInput, context),
+        (error) => error.code === 'failed-precondition'
+    );
+    assert.equal(firestore.rateLimitDocs().length, limiterCountBeforeCheckout + 2);
+});
+
+test('keeps checkout available when an observe-only limiter reservation fails', async () => {
+    const { firestore, stripeState, mod } = loadFunctionsModule(buildSeedState({
+        paymentSettings: { offlinePaymentEnabled: true, onlineCheckoutEnabled: true }
+    }));
+    const checkoutAttemptToken = 'checkouttoken123456';
+    const submission = await mod.submitPublicRegistration(buildSubmission({ checkoutAttemptToken }), context);
+    firestore.failNextTransaction(new Error('observe-only limiter unavailable'));
+
+    const checkout = await mod.createStripeRegistrationCheckout({
+        teamId: 'team-1',
+        formId: 'form-1',
+        registrationId: submission.registrationId,
+        checkoutAttemptToken
+    }, context);
+
+    assert.equal(checkout.checkoutUrl, 'https://stripe.test/checkout/1');
+    assert.equal(stripeState.checkoutSessions.length, 1);
+});
+
+test('enforces the bounded checkout lookup limit before attacker-controlled target reads', async () => {
+    process.env.PUBLIC_REGISTRATION_CHECKOUT_RATE_LIMIT_MODE = 'enforce';
+    const { firestore, mod } = loadFunctionsModule(buildSeedState({
+        paymentSettings: { offlinePaymentEnabled: true, onlineCheckoutEnabled: true }
+    }));
+
+    for (let index = 0; index < 120; index += 1) {
+        await assert.rejects(
+            mod.cancelStripeRegistrationCheckout({
+                teamId: 'team-1',
+                formId: 'form-1',
+                registrationId: `missing-registration-${index}`,
+                checkoutAttemptToken: `missingcheckouttoken${String(index).padStart(6, '0')}`
+            }, context),
+            (error) => error.code === 'not-found'
+        );
+    }
+
+    await assert.rejects(
+        mod.cancelStripeRegistrationCheckout({
+            teamId: 'team-1',
+            formId: 'form-1',
+            registrationId: 'missing-registration-over-limit',
+            checkoutAttemptToken: 'missingcheckouttokenoverlimit'
+        }, context),
+        (error) => error.code === 'resource-exhausted'
+            && error.details.scope === 'lookup-network'
+    );
+    assert.equal(firestore.rateLimitDocs().length, 1);
+});
+
+test('stages network throttling in observe mode before explicit enforcement', async () => {
+    const form = buildSeedState({ registrationOptions: [], registrationOptionCounts: {} });
+    const observed = loadSubmitPublicRegistration(form);
+    for (let index = 0; index < 31; index += 1) {
+        await observed.submitPublicRegistration(buildSubmission({
+            guardian: { email: `family-${index}@example.com` },
+            selectedOptionId: ''
+        }), context);
+    }
+    assert.equal(observed.firestore.registrationDocs().length, 31);
+
+    process.env.PUBLIC_REGISTRATION_NETWORK_RATE_LIMIT_MODE = 'enforce';
+    const enforced = loadSubmitPublicRegistration(form);
+    for (let index = 0; index < 30; index += 1) {
+        await enforced.submitPublicRegistration(buildSubmission({
+            guardian: { email: `family-${index}@example.com` },
+            selectedOptionId: ''
+        }), context);
+    }
+    await assert.rejects(
+        enforced.submitPublicRegistration(buildSubmission({
+            guardian: { email: 'family-30@example.com' },
+            selectedOptionId: ''
+        }), context),
+        (error) => {
+            assert.equal(error.code, 'resource-exhausted');
+            assert.equal(error.details.scope, 'network');
+            return true;
+        }
+    );
+    assert.equal(enforced.firestore.registrationDocs().length, 30);
+});
+
+test('rejects oversized public field maps and unsafe quantities before any database write', async () => {
+    const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration(buildSeedState());
+    await assert.rejects(
+        submitPublicRegistration(buildSubmission({
+            participant: Object.fromEntries(Array.from({ length: 21 }, (_, index) => [`field${index}`, 'value']))
+        }), context),
+        (error) => error.code === 'invalid-argument'
+    );
+    await assert.rejects(
+        submitPublicRegistration(buildSubmission({ quantity: 21 }), context),
+        (error) => error.code === 'invalid-argument'
+    );
+    assert.equal(firestore.registrationDocs().length, 0);
+    assert.equal(firestore.rateLimitDocs().length, 0);
+});
+
+test('rejects oversized ignored request data before reads or limiter writes', async () => {
+    const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration(buildSeedState());
+
+    await assert.rejects(
+        submitPublicRegistration(buildSubmission({ ignoredPadding: 'x'.repeat((1024 * 1024) + 1) }), context),
+        (error) => error.code === 'invalid-argument' && /body is too large/.test(error.message)
+    );
+
+    assert.equal(firestore.registrationDocs().length, 0);
+    assert.equal(firestore.rateLimitDocs().length, 0);
+});
+
+test('validates required submission semantics before attacker-keyed limiter writes', async () => {
+    const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration(buildSeedState());
+
+    await assert.rejects(
+        submitPublicRegistration(buildSubmission({ waiverAccepted: false }), context),
+        (error) => error.code === 'invalid-argument' && /Waiver acceptance/.test(error.message)
+    );
+    await assert.rejects(
+        submitPublicRegistration(buildSubmission({ guardian: { email: '' } }), context),
+        (error) => error.code === 'invalid-argument' && /Guardian Email/.test(error.message)
+    );
+
+    assert.equal(firestore.registrationDocs().length, 0);
+    assert.equal(firestore.rateLimitDocs().length, 0);
+});
+
+test('rejects oversized checkout and cancellation bodies before lookup limiter writes', async () => {
+    const { firestore, mod } = loadFunctionsModule(buildSeedState({
+        paymentSettings: { offlinePaymentEnabled: true, onlineCheckoutEnabled: true }
+    }));
+    const oversizedInput = {
+        teamId: 'team-1',
+        formId: 'form-1',
+        registrationId: 'missing-registration',
+        checkoutAttemptToken: 'missingcheckouttoken123456',
+        ignoredPadding: 'x'.repeat((1024 * 1024) + 1)
+    };
+
+    await assert.rejects(
+        mod.createStripeRegistrationCheckout(oversizedInput, context),
+        (error) => error.code === 'invalid-argument' && /body is too large/.test(error.message)
+    );
+    await assert.rejects(
+        mod.cancelStripeRegistrationCheckout(oversizedInput, context),
+        (error) => error.code === 'invalid-argument' && /body is too large/.test(error.message)
+    );
+    assert.equal(firestore.rateLimitDocs().length, 0);
 });
 
 test('shares submission throttling across independently loaded function handlers', async () => {

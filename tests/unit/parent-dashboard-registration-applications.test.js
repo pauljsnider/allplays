@@ -14,14 +14,17 @@ describe('parent dashboard registration application statuses', () => {
         expect(html).toContain('registration-applications-list');
         expect(html).toContain('offer-extended');
         expect(html).toContain('Status is read-only and controlled by the team admin.');
+        expect(html).toContain("from './js/db.js?v=119';");
     });
 
-    it('loads registrations by guardian email without exposing write controls', () => {
+    it('loads registrations by verified guardian email or authoritative submitter uid without exposing write controls', () => {
         const db = readRepoFile('js/db.js');
         const rules = readRepoFile('firestore.rules');
 
         expect(db).toContain("collectionGroup(db, 'registrations')");
         expect(db).toContain("where('guardian.email', '==', email)");
+        expect(db).toContain("where('submittedByUserId', '==', userId)");
+        expect(db).toContain('seenRegistrationPaths');
         expect(db).toContain('registrationApplications');
         expect(rules).toContain('isCurrentUserRegistrationGuardian(resource.data)');
         const registrationRules = rules.match(/match \/registrations\/\{registrationId\} \{[\s\S]*?allow create:/)[0];

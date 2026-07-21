@@ -68,6 +68,16 @@ const {
   getTelemetryRateLimitBoundary,
   verifyTelemetryAppCheck
 } = require('./telemetry-ingress-core.cjs');
+const {
+  assertPublicRegistrationInputLimits,
+  assertPublicRegistrationRequestBodyLimit,
+  buildPublicRegistrationDocumentId,
+  buildPublicRegistrationRateLimitBoundaries,
+  buildPublicRegistrationSubmissionFingerprint,
+  evaluatePublicRegistrationAppCheck,
+  normalizePublicRegistrationIdempotencyKey,
+  normalizePublicRegistrationSecurityMode
+} = require('./public-registration-abuse-core.cjs');
 const { buildPublicGamesIcs, canExposeEmptyPublicFeed, isPublicFanGame } = require('./public-calendar-core.cjs');
 const { buildCalendarFeedGamesQuery } = require('./calendar-feed-window-core.cjs');
 const {
@@ -262,6 +272,7 @@ const checkStripeWebhookRateLimit = createInMemoryRateLimiter({
   maxKeys: 2_000
 });
 let checkPublicRegistrationSubmissionRateLimit;
+const publicRegistrationStagedRateLimiters = new Map();
 function getPublicRegistrationSubmissionRateLimit() {
   if (!checkPublicRegistrationSubmissionRateLimit) {
     checkPublicRegistrationSubmissionRateLimit = createFirestoreFixedWindowRateLimiter({
@@ -272,6 +283,22 @@ function getPublicRegistrationSubmissionRateLimit() {
     });
   }
   return checkPublicRegistrationSubmissionRateLimit;
+}
+
+function getPublicRegistrationStagedRateLimiter(operation, scope) {
+  const key = `${operation}:${scope}`;
+  if (!publicRegistrationStagedRateLimiters.has(key)) {
+    const maxRequests = operation === 'submit'
+      ? (scope === 'network' ? 30 : 250)
+      : (scope === 'subject' ? 12 : scope === 'lookup-network' ? 120 : scope === 'network' ? 60 : 500);
+    publicRegistrationStagedRateLimiters.set(key, createFirestoreFixedWindowRateLimiter({
+      firestore,
+      collectionName: 'publicRegistrationRateLimits',
+      windowMs: 10 * 60_000,
+      maxRequests
+    }));
+  }
+  return publicRegistrationStagedRateLimiters.get(key);
 }
 const checkPublicOpportunityBrowseRateLimit = createInMemoryRateLimiter({
   windowMs: 60_000,
@@ -557,6 +584,7 @@ function buildRegistrationCheckoutUrls(appUrl, input) {
 }
 
 function normalizePublicRegistrationInput(data = {}) {
+  const checkoutAttemptToken = normalizeCheckoutAttemptToken(data.checkoutAttemptToken);
   return {
     teamId: normalizeFirestoreId(data.teamId, 'teamId'),
     formId: normalizeFirestoreId(data.formId, 'formId'),
@@ -565,8 +593,11 @@ function normalizePublicRegistrationInput(data = {}) {
     waiverAccepted: data.waiverAccepted === true,
     selectedOptionId: String(data.selectedOptionId || data.selectedOption?.id || '').trim(),
     selectedPaymentPlanId: String(data.selectedPaymentPlanId || 'pay_full').trim() || 'pay_full',
-    quantity: Math.max(1, Math.floor(Number(data.quantity || data.feeSnapshot?.quantity || 1) || 1)),
-    checkoutAttemptToken: normalizeCheckoutAttemptToken(data.checkoutAttemptToken)
+    quantity: Math.floor(Number(data.quantity ?? data.feeSnapshot?.quantity ?? 1) || 1),
+    checkoutAttemptToken,
+    submissionIdempotencyKey: normalizePublicRegistrationIdempotencyKey(
+      data.submissionIdempotencyKey || checkoutAttemptToken
+    )
   };
 }
 
@@ -884,7 +915,16 @@ function validatePublicRegistrationRequiredFields(fields, values, groupLabel) {
   }
 }
 
-function buildPublicPendingRegistrationRecord({ form, input, selectedOption = null, status = 'pending', feeSnapshot, now }) {
+function buildPublicPendingRegistrationRecord({
+  form,
+  input,
+  selectedOption = null,
+  status = 'pending',
+  feeSnapshot,
+  now,
+  submissionFingerprint = '',
+  submittedByUid = ''
+}) {
   const paymentPlanForm = {
     ...form,
     feeAmountCents: feeSnapshot.finalAmountDueCents ?? form.feeAmountCents
@@ -906,6 +946,15 @@ function buildPublicPendingRegistrationRecord({ form, input, selectedOption = nu
     submittedAt: now,
     source: 'public-registration'
   };
+
+  if (submissionFingerprint) {
+    record.submissionFingerprint = submissionFingerprint;
+    record.submissionIdempotencyVersion = 1;
+  }
+
+  if (submittedByUid) {
+    record.submittedByUserId = submittedByUid;
+  }
 
   if (input.checkoutAttemptToken) {
     record.checkoutAttemptToken = input.checkoutAttemptToken;
@@ -936,27 +985,16 @@ function buildPublicPendingRegistrationRecord({ form, input, selectedOption = nu
   return record;
 }
 
-function getHeaderValue(headers = {}, name = '') {
-  const direct = headers[name] || headers[name.toLowerCase()];
-  return Array.isArray(direct) ? direct[0] : String(direct || '');
-}
-
 function buildPublicRegistrationRateLimitBoundary(input, context = {}) {
-  const rawRequest = context.rawRequest || {};
-  const requestIp = getRequestIp(rawRequest);
-  const appCheck = String(context.app?.appId || getHeaderValue(rawRequest.headers, 'x-firebase-appcheck') || '').trim();
-  const email = String(input.guardian?.email || input.guardian?.guardianEmail || '').trim().toLowerCase();
-  return [
-    input.teamId,
-    input.formId,
-    email || 'no-email',
-    appCheck || requestIp || 'unknown'
-  ].join('|');
+  return buildPublicRegistrationRateLimitBoundaries(input, context, {
+    operation: 'submit',
+    requestIp: getRequestIp(context.rawRequest || {})
+  }).subject;
 }
 
-async function assertPublicRegistrationRateLimit(input, context = {}) {
+async function assertPublicRegistrationRateLimit(input, context = {}, reservationId = '') {
   const boundary = buildPublicRegistrationRateLimitBoundary(input, context);
-  const rateLimit = await getPublicRegistrationSubmissionRateLimit()(boundary);
+  const rateLimit = await getPublicRegistrationSubmissionRateLimit()(boundary, Date.now(), reservationId);
   if (!rateLimit.allowed) {
     throwPublicRegistrationError('resource-exhausted', 'Too many registration attempts. Please wait a few minutes and try again.', {
       reason: 'rate-limited',
@@ -965,37 +1003,206 @@ async function assertPublicRegistrationRateLimit(input, context = {}) {
   }
 }
 
+function getPublicRegistrationSecurityMode(name) {
+  const runtimeConfigKeys = {
+    PUBLIC_REGISTRATION_APP_CHECK_MODE: 'app_check_mode',
+    PUBLIC_REGISTRATION_NETWORK_RATE_LIMIT_MODE: 'network_rate_limit_mode',
+    PUBLIC_REGISTRATION_FORM_RATE_LIMIT_MODE: 'form_rate_limit_mode',
+    PUBLIC_REGISTRATION_CHECKOUT_RATE_LIMIT_MODE: 'checkout_rate_limit_mode'
+  };
+  const runtimeConfig = functions.config()?.public_registration || {};
+  const configuredValue = process.env[name] ?? runtimeConfig[runtimeConfigKeys[name]];
+  return normalizePublicRegistrationSecurityMode(configuredValue, 'observe');
+}
+
+function assertPublicRegistrationAppCheck(context = {}, operation = 'submit') {
+  const decision = evaluatePublicRegistrationAppCheck(
+    context,
+    getPublicRegistrationSecurityMode('PUBLIC_REGISTRATION_APP_CHECK_MODE')
+  );
+  if (!decision.verified && decision.mode !== 'disabled') {
+    functions.logger.warn('Public registration request is missing verified App Check.', {
+      event: 'public_registration_app_check_missing',
+      operation,
+      mode: decision.mode,
+      enforced: decision.mode === 'enforce'
+    });
+  }
+  if (!decision.allowed) {
+    throwPublicRegistrationError('failed-precondition', 'App verification is required. Refresh and try again.', {
+      reason: 'app-check-required'
+    });
+  }
+}
+
+async function reserveStagedPublicRegistrationRateLimit({ operation, scope, boundary, mode, reservationId = '' }) {
+  if (mode === 'disabled') return;
+  let result;
+  try {
+    result = await getPublicRegistrationStagedRateLimiter(operation, scope)(boundary, Date.now(), reservationId);
+  } catch (error) {
+    functions.logger.error('Public registration staged rate-limit reservation failed.', {
+      event: 'public_registration_rate_limit_error',
+      operation,
+      scope,
+      mode,
+      errorCode: String(error?.code || 'unknown')
+    });
+    if (mode === 'enforce') throw error;
+    return;
+  }
+  if (result.allowed) return;
+
+  functions.logger.warn('Public registration staged rate limit exceeded.', {
+    event: 'public_registration_rate_limit_exceeded',
+    operation,
+    scope,
+    mode,
+    enforced: mode === 'enforce',
+    retryAfterSeconds: result.retryAfterSeconds
+  });
+  if (mode === 'enforce') {
+    throwPublicRegistrationError('resource-exhausted', 'Too many registration attempts. Please wait a few minutes and try again.', {
+      reason: 'rate-limited',
+      scope,
+      retryAfterSeconds: result.retryAfterSeconds
+    });
+  }
+}
+
+async function applyStagedPublicRegistrationRateLimits(input, context = {}, operation = 'submit', reservationId = '') {
+  const boundaries = buildPublicRegistrationRateLimitBoundaries(input, context, {
+    operation,
+    requestIp: getRequestIp(context.rawRequest || {})
+  });
+  const checks = [
+    {
+      scope: 'network',
+      mode: getPublicRegistrationSecurityMode('PUBLIC_REGISTRATION_NETWORK_RATE_LIMIT_MODE')
+    },
+    {
+      scope: 'form',
+      mode: getPublicRegistrationSecurityMode('PUBLIC_REGISTRATION_FORM_RATE_LIMIT_MODE')
+    }
+  ];
+  if (operation !== 'submit') {
+    checks.unshift({
+      scope: 'subject',
+      mode: getPublicRegistrationSecurityMode('PUBLIC_REGISTRATION_CHECKOUT_RATE_LIMIT_MODE')
+    });
+  }
+  await Promise.all(checks.map((check) => (
+    reserveStagedPublicRegistrationRateLimit({
+      operation,
+      scope: check.scope,
+      boundary: boundaries[check.scope],
+      mode: check.mode,
+      reservationId
+    })
+  )));
+}
+
+async function applyStagedPublicRegistrationLookupRateLimit(context = {}, operation) {
+  const requestIp = getRequestIp(context.rawRequest || {});
+  await reserveStagedPublicRegistrationRateLimit({
+    operation,
+    scope: 'lookup-network',
+    boundary: ['public-registration', operation, 'lookup-network', requestIp].join('|'),
+    mode: getPublicRegistrationSecurityMode('PUBLIC_REGISTRATION_CHECKOUT_RATE_LIMIT_MODE')
+  });
+}
+
 function throwPublicRegistrationError(code, message, details = {}) {
   throw new functions.https.HttpsError(code, message, details);
 }
 
+function buildPublicRegistrationReplayResult(registrationRef, existingRegistration, submissionFingerprint) {
+  if (existingRegistration.source !== 'public-registration'
+      || !existingRegistration.submissionFingerprint
+      || existingRegistration.submissionFingerprint !== submissionFingerprint) {
+    throwPublicRegistrationError('already-exists', 'This submission key was already used for a different registration.', {
+      reason: 'idempotency-conflict'
+    });
+  }
+  return {
+    success: true,
+    status: existingRegistration.status || 'pending',
+    registrationId: registrationRef.id,
+    feeSnapshot: existingRegistration.feeSnapshot || null,
+    idempotentReplay: true
+  };
+}
+
 exports.submitPublicRegistration = functions.https.onCall(async (data, context = {}) => {
+  assertPublicRegistrationAppCheck(context, 'submit');
   let input;
   try {
+    assertPublicRegistrationRequestBodyLimit(data || {}, context.rawRequest || {});
     input = normalizePublicRegistrationInput(data || {});
+    assertPublicRegistrationInputLimits(input);
   } catch (error) {
     throwPublicRegistrationError('invalid-argument', error.message || 'Invalid registration submission.');
   }
 
   const formRef = buildRegistrationFormRef(input);
-  const initialFormSnap = await formRef.get();
-  if (!initialFormSnap.exists) {
-    throwPublicRegistrationError('not-found', 'Registration form not found.');
+  const deterministicRegistrationId = buildPublicRegistrationDocumentId(input);
+  const registrationsRef = formRef.collection('registrations');
+  const registrationRef = deterministicRegistrationId
+    ? registrationsRef.doc(deterministicRegistrationId)
+    : registrationsRef.doc();
+  const submissionFingerprint = input.submissionIdempotencyKey
+    ? buildPublicRegistrationSubmissionFingerprint(input)
+    : '';
+  if (input.submissionIdempotencyKey) {
+    const existingRegistrationSnap = await registrationRef.get();
+    if (existingRegistrationSnap.exists) {
+      return buildPublicRegistrationReplayResult(
+        registrationRef,
+        existingRegistrationSnap.data() || {},
+        submissionFingerprint
+      );
+    }
   }
 
-  await assertPublicRegistrationRateLimit(input, context);
+  const initialFormSnap = await formRef.get();
+  const initialForm = initialFormSnap.exists
+    ? normalizePublicRegistrationForm(initialFormSnap.data() || {}, input)
+    : null;
+  if (!initialForm?.published) {
+    throwPublicRegistrationError('not-found', 'Registration form not found.');
+  }
+  const initialFeeSnapshot = calculatePublicRegistrationFeeSnapshot(initialForm, {
+    quantity: input.quantity,
+    now: new Date()
+  });
+  validatePublicRegistrationSubmission(initialForm, input, initialFeeSnapshot);
 
-  const registrationRef = formRef.collection('registrations').doc();
+  await assertPublicRegistrationRateLimit(input, context, submissionFingerprint);
+  await applyStagedPublicRegistrationRateLimits(input, context, 'submit', submissionFingerprint);
+
   let result = null;
 
   await firestore.runTransaction(async (transaction) => {
     const formSnap = await transaction.get(formRef);
+    const existingRegistrationSnap = input.submissionIdempotencyKey
+      ? await transaction.get(registrationRef)
+      : null;
+
+    if (existingRegistrationSnap?.exists) {
+      const existingRegistration = existingRegistrationSnap.data() || {};
+      result = buildPublicRegistrationReplayResult(registrationRef, existingRegistration, submissionFingerprint);
+      return;
+    }
+
     if (!formSnap.exists) {
       throwPublicRegistrationError('not-found', 'Registration form not found.');
     }
 
     const formData = formSnap.data() || {};
     const latestForm = normalizePublicRegistrationForm(formData, input);
+    if (!latestForm.published) {
+      throwPublicRegistrationError('not-found', 'Registration form not found.');
+    }
     const feeSnapshot = calculatePublicRegistrationFeeSnapshot(latestForm, { quantity: input.quantity, now: new Date() });
     validatePublicRegistrationSubmission(latestForm, input, feeSnapshot);
 
@@ -1042,7 +1249,9 @@ exports.submitPublicRegistration = functions.https.onCall(async (data, context =
       selectedOption,
       status,
       feeSnapshot,
-      now: admin.firestore.FieldValue.serverTimestamp()
+      now: admin.firestore.FieldValue.serverTimestamp(),
+      submissionFingerprint,
+      submittedByUid: String(context.auth?.uid || '').trim()
     });
 
     transaction.set(registrationRef, registrationRecord);
@@ -4279,14 +4488,17 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
   };
 });
 
-exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) => {
+exports.createStripeRegistrationCheckout = functions.https.onCall(async (data, context = {}) => {
+  assertPublicRegistrationAppCheck(context, 'create-checkout');
   let input;
   try {
+    assertPublicRegistrationRequestBodyLimit(data || {}, context.rawRequest || {});
     input = normalizeRegistrationCheckoutInput(data || {});
   } catch (error) {
     throw new functions.https.HttpsError('invalid-argument', error.message || 'Invalid registration checkout request.');
   }
 
+  await applyStagedPublicRegistrationLookupRateLimit(context, 'create-checkout');
   const resolvedInput = await resolveRegistrationCheckoutInput(input);
 
   const [formSnap, registrationSnap] = await Promise.all([
@@ -4339,6 +4551,7 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
   if (!registrationCheckoutAuthorityMatches(registration, resolvedInput)) {
     throw new functions.https.HttpsError('failed-precondition', 'Current public checkout capability is required.');
   }
+  await applyStagedPublicRegistrationRateLimits(resolvedInput, context, 'create-checkout');
   const retryCapacityReservationId = resolvedInput.retryPayment ? crypto.randomUUID() : '';
   let retryCapacityReservation = { reserved: false, retryCapacityReservationId: null };
   if (resolvedInput.retryPayment && registration.registrationCapacityReleased === true) {
@@ -4480,16 +4693,29 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
   return { checkoutUrl: session.url, sessionId: session.id };
 });
 
-exports.cancelStripeRegistrationCheckout = functions.https.onCall(async (data) => {
+exports.cancelStripeRegistrationCheckout = functions.https.onCall(async (data, context = {}) => {
+  assertPublicRegistrationAppCheck(context, 'cancel-checkout');
   let input;
   try {
+    assertPublicRegistrationRequestBodyLimit(data || {}, context.rawRequest || {});
     input = normalizeRegistrationCheckoutCancelInput(data || {});
   } catch (error) {
     throw new functions.https.HttpsError('invalid-argument', error.message || 'Invalid registration checkout cancellation request.');
   }
 
+  await applyStagedPublicRegistrationLookupRateLimit(context, 'cancel-checkout');
   const resolvedInput = await resolveRegistrationCheckoutInput(input);
+  const registrationSnap = await resolvedInput.registrationRef.get();
+  if (!registrationSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Registration not found.');
+  }
 
+  const registration = registrationSnap.data() || {};
+  if (!registrationCheckoutAuthorityMatches(registration, resolvedInput)) {
+    throw new functions.https.HttpsError('failed-precondition', 'Current public checkout capability is required.');
+  }
+
+  await applyStagedPublicRegistrationRateLimits(resolvedInput, context, 'cancel-checkout');
   return releaseRegistrationCheckoutCapacity(resolvedInput, {
     checkoutStatus: 'cancelled',
     paymentStatus: 'checkout_cancelled'

@@ -1132,11 +1132,63 @@ service cloud.firestore {
       return data.updatedBy == request.auth.uid;
     }
 
+    function registrationFormPath(teamId, formId) {
+      return /databases/$(database)/documents/teams/$(teamId)/registrationForms/$(formId);
+    }
+
+    function registrationDocPath(teamId, formId, registrationId) {
+      return /databases/$(database)/documents/teams/$(teamId)/registrationForms/$(formId)/registrations/$(registrationId);
+    }
+
+    function hasOnlyFlatStringValues(data) {
+      return data is map &&
+             data.keys().size() <= 20 &&
+             (data.keys().size() < 1 || data[data.keys()[0]] is string) &&
+             (data.keys().size() < 2 || data[data.keys()[1]] is string) &&
+             (data.keys().size() < 3 || data[data.keys()[2]] is string) &&
+             (data.keys().size() < 4 || data[data.keys()[3]] is string) &&
+             (data.keys().size() < 5 || data[data.keys()[4]] is string) &&
+             (data.keys().size() < 6 || data[data.keys()[5]] is string) &&
+             (data.keys().size() < 7 || data[data.keys()[6]] is string) &&
+             (data.keys().size() < 8 || data[data.keys()[7]] is string) &&
+             (data.keys().size() < 9 || data[data.keys()[8]] is string) &&
+             (data.keys().size() < 10 || data[data.keys()[9]] is string) &&
+             (data.keys().size() < 11 || data[data.keys()[10]] is string) &&
+             (data.keys().size() < 12 || data[data.keys()[11]] is string) &&
+             (data.keys().size() < 13 || data[data.keys()[12]] is string) &&
+             (data.keys().size() < 14 || data[data.keys()[13]] is string) &&
+             (data.keys().size() < 15 || data[data.keys()[14]] is string) &&
+             (data.keys().size() < 16 || data[data.keys()[15]] is string) &&
+             (data.keys().size() < 17 || data[data.keys()[16]] is string) &&
+             (data.keys().size() < 18 || data[data.keys()[17]] is string) &&
+             (data.keys().size() < 19 || data[data.keys()[18]] is string) &&
+             (data.keys().size() < 20 || data[data.keys()[19]] is string);
+    }
+
+    function hasConfiguredRegistrationOptions(data) {
+      return (data.get('registrationOptions', []) is list && data.get('registrationOptions', []).size() > 0) ||
+             (data.get('options', []) is list && data.get('options', []).size() > 0);
+    }
+
+    function canUseRegistrationGuardianEmailClaim() {
+      let policyPath = /databases/$(database)/documents/securityPolicies/verifiedEmail;
+      return request.auth.token.get('email_verified', false) == true ||
+             request.auth.token.get('email_verification_exempt', false) == true ||
+             !exists(policyPath) ||
+             get(policyPath).data.get('mode', 'observe') != 'enforce' ||
+             request.auth.uid in get(policyPath).data.get('exemptUserIds', []);
+    }
     function isCurrentUserRegistrationGuardian(data) {
       return isSignedIn() &&
-             request.auth.token.email is string &&
-             request.auth.token.email != '' &&
-             data.get('guardian', {}).get('email', '') == request.auth.token.email.lower();
+             (
+               data.get('submittedByUserId', '') == request.auth.uid ||
+               (
+                 request.auth.token.email is string &&
+                 request.auth.token.email != '' &&
+                 canUseRegistrationGuardianEmailClaim() &&
+                 data.get('guardian', {}).get('email', '') == request.auth.token.email.lower()
+               )
+             );
     }
 
     // Chat access: team owner, team admins, global admins, or any parent linked to the team

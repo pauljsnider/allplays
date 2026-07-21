@@ -541,6 +541,9 @@
                 return;
             }
 
+            const submissionAttempt = preparePublicRegistrationSubmission(submission);
+            submission.submissionIdempotencyKey = submissionAttempt.submissionIdempotencyKey;
+
             try {
                 const result = requiresRegistrationOption(activeForm)
                     ? await submitRegistrationWithCapacity(submission)
@@ -584,7 +587,8 @@
                 selectedPaymentPlanId: submission.selectedPaymentPlanId,
                 selectedOptionId: submission.selectedOptionId,
                 quantity: submission.feeSnapshot?.quantity || 1,
-                checkoutAttemptToken: submission.checkoutAttemptToken || ''
+                checkoutAttemptToken: submission.checkoutAttemptToken || '',
+                submissionIdempotencyKey: submission.submissionIdempotencyKey || submission.checkoutAttemptToken || ''
             });
             return result?.data || {};
         }
@@ -599,6 +603,7 @@
         }
 
         let preparedCheckoutRegistration = null;
+        let preparedPublicRegistrationSubmission = null;
 
         function normalizeCheckoutRetryValue(value) {
             if (Array.isArray(value)) {
@@ -626,6 +631,23 @@
                 currency,
                 quantity: submission.feeSnapshot?.quantity || 1
             }));
+        }
+
+        function preparePublicRegistrationSubmission(submission) {
+            const feeSnapshot = submission.feeSnapshot || {};
+            const retryKey = buildCheckoutRetryKey(
+                submission,
+                Math.max(0, Number(feeSnapshot.finalAmountDueCents || 0)),
+                String(feeSnapshot.currency || activeForm?.currency || 'USD').toLowerCase()
+            );
+            if (preparedPublicRegistrationSubmission?.retryKey === retryKey) {
+                return preparedPublicRegistrationSubmission;
+            }
+            preparedPublicRegistrationSubmission = {
+                retryKey,
+                submissionIdempotencyKey: createCheckoutAttemptToken()
+            };
+            return preparedPublicRegistrationSubmission;
         }
 
         payRegistrationButton.addEventListener('click', async (event) => {
@@ -687,10 +709,15 @@
                 }
 
                 const retryKey = buildCheckoutRetryKey(submission, amountCents, currency);
+                const submissionAttempt = preparePublicRegistrationSubmission(submission);
                 const checkoutAttemptToken = preparedCheckoutRegistration?.retryKey === retryKey
                     ? preparedCheckoutRegistration.checkoutAttemptToken
-                    : createCheckoutAttemptToken();
-                const checkoutSubmission = { ...submission, checkoutAttemptToken };
+                    : submissionAttempt.submissionIdempotencyKey;
+                const checkoutSubmission = {
+                    ...submission,
+                    checkoutAttemptToken,
+                    submissionIdempotencyKey: checkoutAttemptToken
+                };
                 const result = preparedCheckoutRegistration?.retryKey === retryKey
                     ? preparedCheckoutRegistration.result
                     : requiresRegistrationOption(activeForm)
@@ -737,6 +764,7 @@
                 } catch (checkoutError) {
                     await releaseCancelledStripeRegistration(result.registrationId, checkoutAttemptToken);
                     preparedCheckoutRegistration = null;
+                    preparedPublicRegistrationSubmission = null;
                     throw checkoutError;
                 }
 
@@ -745,6 +773,7 @@
                 } else {
                     await releaseCancelledStripeRegistration(result.registrationId, checkoutAttemptToken);
                     preparedCheckoutRegistration = null;
+                    preparedPublicRegistrationSubmission = null;
                     showFormError('Failed to get Stripe checkout URL.');
                 }
             } catch (error) {

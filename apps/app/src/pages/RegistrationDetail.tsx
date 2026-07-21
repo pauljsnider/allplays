@@ -22,6 +22,10 @@ import {
   hasQuantityDiscountRule
 } from '../lib/adapters/legacyRegistration';
 import type { AuthState } from '../lib/types';
+import {
+  getOrCreateRegistrationSubmissionAttempt,
+  type RegistrationSubmissionAttempt
+} from '../lib/registrationSubmissionIdempotency';
 
 type FieldErrors = Record<string, string>;
 type FeeSummaryLine = { label: string; amountCents: number; strong?: boolean };
@@ -72,6 +76,7 @@ function RegistrationDetailPage({ auth, publicAccess = false }: { auth: AuthStat
   const [reloadKey, setReloadKey] = useState(0);
   const formRef = useRef<HTMLFormElement | null>(null);
   const cancelledCheckoutReleaseKeyRef = useRef('');
+  const submissionAttemptRef = useRef<RegistrationSubmissionAttempt | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -109,7 +114,7 @@ function RegistrationDetailPage({ auth, publicAccess = false }: { auth: AuthStat
     return () => {
       cancelled = true;
     };
-  }, [auth.user?.uid, teamId, formId, publicAccess, reloadKey]);
+  }, [auth.user, teamId, formId, publicAccess, reloadKey]);
 
   const activeOptions: any[] = useMemo(() => form ? ((Array.isArray(form.options) && form.options.length) ? form.options : getActiveRegistrationOptions(form, form.registrationOptionCounts || {})) : [], [form]);
   const paymentPlanChoices: any[] = useMemo(() => form ? ((Array.isArray(form.paymentPlans) && form.paymentPlans.length) ? form.paymentPlans : getPaymentPlanChoices(form)) : [], [form]);
@@ -204,7 +209,22 @@ function RegistrationDetailPage({ auth, publicAccess = false }: { auth: AuthStat
     setSaving(true);
     try {
       const currentFeeSnapshot = calculateRegistrationFeeSnapshot(form, { quantity: currentQuantity, now: new Date() }); // currentQuantity is already effective
-      const checkoutAttemptToken = isRetryPaymentMode ? returnCheckoutAttemptToken : createCheckoutAttemptToken();
+      const submissionAttempt = getOrCreateRegistrationSubmissionAttempt(
+        submissionAttemptRef.current,
+        {
+          teamId: form.teamId,
+          formId: form.id,
+          participant: currentParticipant,
+          guardian: currentGuardian,
+          waiverAccepted: currentWaiverAccepted,
+          selectedOptionId: currentSelectedOptionId,
+          selectedPaymentPlanId: currentSelectedPaymentPlanId,
+          quantity: currentQuantity
+        },
+        createCheckoutAttemptToken
+      );
+      submissionAttemptRef.current = submissionAttempt;
+      const checkoutAttemptToken = isRetryPaymentMode ? returnCheckoutAttemptToken : submissionAttempt.token;
       if (form.onlineCheckout && Number(currentFeeSnapshot.finalAmountDueCents || 0) > 0) {
         if (isRetryPaymentMode) {
           if (!currentPublicCheckoutCapability && !checkoutAttemptToken) {
@@ -241,7 +261,8 @@ function RegistrationDetailPage({ auth, publicAccess = false }: { auth: AuthStat
         selectedPaymentPlanId: currentSelectedPaymentPlanId,
         quantity: currentQuantity,
         feeSnapshot: currentFeeSnapshot,
-        checkoutAttemptToken
+        checkoutAttemptToken,
+        submissionIdempotencyKey: checkoutAttemptToken
       });
       if (result.status === 'waitlisted') {
         setMessage('Registration submitted. You have been added to the waitlist.');

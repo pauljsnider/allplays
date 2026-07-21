@@ -329,6 +329,8 @@ test('CSV roster review saves family contacts and sends imported invitations', a
 
     await page.click('#import-csv-btn');
     await expect(page.locator('#csv-import-status')).toContainText('Imported 1 player row. Family invites: 1 emailed.');
+    await expect(page.locator('#import-csv-btn')).toBeEnabled();
+    await expect(page.locator('#import-csv-btn')).toHaveText('Review CSV');
     await expect(page.getByText('Family contacts', { exact: true })).toBeVisible();
     await expect(page.getByText('Pat Lee', { exact: true })).toBeVisible();
     await expect(page.getByText('pat@example.com · Mother · Invite needed')).toBeVisible();
