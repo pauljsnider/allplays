@@ -52,6 +52,13 @@ const authServiceMocks = vi.hoisted(() => ({
 
 const seasonRecordMocks = vi.hoisted(() => ({
   calculateSeasonRecord: vi.fn(() => ({ wins: 0, losses: 0, ties: 0 })),
+  getTeamScorePair: vi.fn((game: any) => {
+    const useStoredScoreOrder = Boolean(String(game?.sharedScheduleSourceTeamId || '').trim()) || game?.isHome !== false;
+    return {
+      teamScore: useStoredScoreOrder ? game?.homeScore : game?.awayScore,
+      opponentScore: useStoredScoreOrder ? game?.awayScore : game?.homeScore
+    };
+  }),
   listSeasonLabels: vi.fn((): string[] => [])
 }));
 

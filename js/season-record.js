@@ -20,6 +20,15 @@ export function isCompletedGame(game) {
   return typeof game.homeScore === 'number' && typeof game.awayScore === 'number';
 }
 
+export function getTeamScorePair(game) {
+  const useStoredScoreOrder = !!String(game?.sharedScheduleSourceTeamId || '').trim()
+    || game?.isHome !== false;
+  return {
+    teamScore: useStoredScoreOrder ? game?.homeScore : game?.awayScore,
+    opponentScore: useStoredScoreOrder ? game?.awayScore : game?.homeScore
+  };
+}
+
 export function calculateSeasonRecord(games, { seasonLabel } = {}) {
   let wins = 0;
   let losses = 0;
@@ -30,8 +39,9 @@ export function calculateSeasonRecord(games, { seasonLabel } = {}) {
     if (!gameCountsTowardSeasonRecord(game)) return;
     if (seasonLabel && inferSeasonLabelFromGame(game) !== seasonLabel) return;
 
-    if (game.homeScore > game.awayScore) wins += 1;
-    else if (game.homeScore < game.awayScore) losses += 1;
+    const { teamScore, opponentScore } = getTeamScorePair(game);
+    if (teamScore > opponentScore) wins += 1;
+    else if (teamScore < opponentScore) losses += 1;
     else ties += 1;
   });
 

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   inferSeasonLabelFromGame,
   gameCountsTowardSeasonRecord,
+  getTeamScorePair,
   isCompletedGame,
   calculateSeasonRecord,
   listSeasonLabels
@@ -38,6 +39,18 @@ describe('season record helpers', () => {
 
     expect(calculateSeasonRecord(games, { seasonLabel: '2026' })).toEqual({ wins: 1, losses: 1, ties: 1 });
     expect(calculateSeasonRecord(games, { seasonLabel: '2025' })).toEqual({ wins: 1, losses: 0, ties: 0 });
+  });
+
+  it('normalizes venue-oriented away scores and preserves mirrored score order', () => {
+    const awayGame = { isHome: false, homeScore: 68, awayScore: 71 };
+    const mirroredAwayGame = { ...awayGame, homeScore: 71, awayScore: 68, sharedScheduleSourceTeamId: 'team-alpha' };
+
+    expect(getTeamScorePair(awayGame)).toEqual({ teamScore: 71, opponentScore: 68 });
+    expect(getTeamScorePair(mirroredAwayGame)).toEqual({ teamScore: 71, opponentScore: 68 });
+    expect(calculateSeasonRecord([
+      { ...awayGame, type: 'game', status: 'completed', seasonLabel: '2026' },
+      { ...mirroredAwayGame, type: 'game', status: 'completed', seasonLabel: '2026' }
+    ], { seasonLabel: '2026' })).toEqual({ wins: 2, losses: 0, ties: 0 });
   });
 
   it('lists unique season labels in descending order', () => {

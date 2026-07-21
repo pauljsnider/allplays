@@ -26,6 +26,7 @@ import {
   getPublicTrackingItems,
   getRosterFieldDefinitions,
   getTeam,
+  getTeamScorePair,
   getVisiblePlayerTrackingSummary,
   grantScorekeeperAccess,
   grantTeamMediaManagerAccess,
@@ -2463,11 +2464,9 @@ export function buildTeamAnalytics(games: any[] = [], preferredSeasonLabel = '')
   const completedGames = (Array.isArray(games) ? games : [])
     .filter(isCompletedGame)
     .map((game, index): TeamDetailAnalyticsGame => {
-      const useStoredScoreOrder = Boolean(cleanString(game?.sharedScheduleSourceTeamId)) || game?.isHome !== false;
-      const homeScore = toNullableNumber(game?.homeScore) || 0;
-      const awayScore = toNullableNumber(game?.awayScore) || 0;
-      const pointsFor = useStoredScoreOrder ? homeScore : awayScore;
-      const pointsAgainst = useStoredScoreOrder ? awayScore : homeScore;
+      const scorePair = getTeamScorePair(game);
+      const pointsFor = toNullableNumber(scorePair.teamScore) || 0;
+      const pointsAgainst = toNullableNumber(scorePair.opponentScore) || 0;
       const date = toDate(game?.date);
       const opponent = cleanString(game?.opponent || game?.awayTeam || game?.title)
         .replace(/^vs\.?\s*/i, '') || 'Opponent';

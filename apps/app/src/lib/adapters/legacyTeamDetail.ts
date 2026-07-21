@@ -7,7 +7,7 @@ import { inviteExistingTeamAdmin as legacy_inviteExistingTeamAdmin } from '@lega
 import * as legacyFirebase from '@legacy/firebase.js';
 import { collectRosterParentContacts as legacy_collectRosterParentContacts, mergeStandardRosterFieldDefinitions as legacy_mergeStandardRosterFieldDefinitions, normalizeRosterFieldDefinitions as legacy_normalizeRosterFieldDefinitions, splitRosterProfileValuesByVisibility as legacy_splitRosterProfileValuesByVisibility, validateRosterProfileValues as legacy_validateRosterProfileValues } from '@legacy/roster-profile-fields.js';
 import { describeScheduleReminderWindow as legacy_describeScheduleReminderWindow, normalizeScheduleNotificationSettings as legacy_normalizeScheduleNotificationSettings } from '@legacy/schedule-notifications.js';
-import { calculateSeasonRecord as legacy_calculateSeasonRecord, listSeasonLabels as legacy_listSeasonLabels } from '@legacy/season-record.js';
+import { calculateSeasonRecord as legacy_calculateSeasonRecord, getTeamScorePair as legacy_getTeamScorePair, listSeasonLabels as legacy_listSeasonLabels } from '@legacy/season-record.js';
 import { computeNativeStandings as legacy_computeNativeStandings } from '@legacy/native-standings.js';
 import { buildPlayerLeaderboardSnapshot as legacy_buildPlayerLeaderboardSnapshot, normalizeStatTrackerConfig as legacy_normalizeStatTrackerConfig, selectAnalyticsConfig as legacy_selectAnalyticsConfig } from '@legacy/stat-leaderboards.js';
 import { getVisiblePlayerTrackingSummary as legacy_getVisiblePlayerTrackingSummary, normalizeTrackingStatus as legacy_normalizeTrackingStatus } from '@legacy/player-tracking-summary.js';
@@ -83,6 +83,7 @@ export const validateRosterProfileValues = legacy_validateRosterProfileValues as
 export const describeScheduleReminderWindow = legacy_describeScheduleReminderWindow as (...args: any[]) => any;
 export const normalizeScheduleNotificationSettings = legacy_normalizeScheduleNotificationSettings as (...args: any[]) => any;
 export const calculateSeasonRecord = legacy_calculateSeasonRecord as (...args: any[]) => any;
+export const getTeamScorePair = legacy_getTeamScorePair as (...args: any[]) => any;
 export const listSeasonLabels = legacy_listSeasonLabels as (...args: any[]) => any;
 export const computeNativeStandings = legacy_computeNativeStandings as (...args: any[]) => any;
 export const buildPlayerLeaderboardSnapshot = legacy_buildPlayerLeaderboardSnapshot as (...args: any[]) => any;
