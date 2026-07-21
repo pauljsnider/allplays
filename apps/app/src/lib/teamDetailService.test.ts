@@ -155,6 +155,21 @@ describe('buildTeamAnalytics', () => {
     expect(analytics.progression[0]).toMatchObject({ id: 'live-finished', result: 'W', differential: 1 });
   });
 
+  it('orders the team score correctly for completed away games', () => {
+    const analytics = buildTeamAnalytics([
+      { id: 'away-win', status: 'completed', isHome: false, date: '2026-03-04T18:00:00Z', opponent: 'Bears', homeScore: 68, awayScore: 71 }
+    ], '2026');
+
+    expect(analytics.progression[0]).toMatchObject({
+      id: 'away-win',
+      pointsFor: 71,
+      pointsAgainst: 68,
+      result: 'W',
+      differential: 3
+    });
+    expect(analytics.scoreDifferential).toBe(3);
+  });
+
   it('returns an explicit empty snapshot without completed score-bearing games', () => {
     expect(buildTeamAnalytics([])).toEqual({
       seasonLabel: String(new Date().getFullYear()),
@@ -183,6 +198,18 @@ describe('buildTeamAnalytics', () => {
     expect(analytics.completedGameCount).toBe(1);
     expect(analytics.scoreDifferential).toBe(-2);
     expect(analytics.seasons.map((season) => [season.seasonLabel, season.completedGameCount])).toEqual([['2026', 1], ['2025', 1]]);
+  });
+
+  it('keeps the preferred season selected when only an older season has final scores', () => {
+    const analytics = buildTeamAnalytics([
+      { id: 'older', status: 'completed', seasonLabel: '2025', date: '2025-10-01T18:00:00Z', homeScore: 5, awayScore: 0 },
+      { id: 'scheduled-current', status: 'scheduled', seasonLabel: '2026', date: '2026-03-01T18:00:00Z' }
+    ], '2026');
+
+    expect(analytics.seasonLabel).toBe('2026');
+    expect(analytics.completedGameCount).toBe(0);
+    expect(analytics.availableSeasons).toEqual(['2026', '2025']);
+    expect(analytics.seasons.map((season) => [season.seasonLabel, season.completedGameCount])).toEqual([['2026', 0], ['2025', 1]]);
   });
 });
 

@@ -2460,8 +2460,11 @@ export function buildTeamAnalytics(games: any[] = [], preferredSeasonLabel = '')
   const completedGames = (Array.isArray(games) ? games : [])
     .filter(isCompletedGame)
     .map((game, index): TeamDetailAnalyticsGame => {
-      const pointsFor = toNullableNumber(game?.homeScore) || 0;
-      const pointsAgainst = toNullableNumber(game?.awayScore) || 0;
+      const isHome = game?.isHome !== false;
+      const homeScore = toNullableNumber(game?.homeScore) || 0;
+      const awayScore = toNullableNumber(game?.awayScore) || 0;
+      const pointsFor = isHome ? homeScore : awayScore;
+      const pointsAgainst = isHome ? awayScore : homeScore;
       const date = toDate(game?.date);
       const opponent = cleanString(game?.opponent || game?.awayTeam || game?.title)
         .replace(/^vs\.?\s*/i, '') || 'Opponent';
@@ -2478,13 +2481,12 @@ export function buildTeamAnalytics(games: any[] = [], preferredSeasonLabel = '')
       };
     })
     .sort((a, b) => a.date.getTime() - b.date.getTime());
-  const availableSeasons = Array.from(new Set(completedGames.map((game) => game.seasonLabel)))
+  const availableSeasons = Array.from(new Set([preferredSeasonLabel, ...completedGames.map((game) => game.seasonLabel)]))
     .filter(Boolean)
     .sort((a, b) => b.localeCompare(a, undefined, { numeric: true, sensitivity: 'base' }));
   const currentYear = String(new Date().getFullYear());
-  const seasonLabel = availableSeasons.includes(preferredSeasonLabel)
-    ? preferredSeasonLabel
-    : availableSeasons.includes(currentYear) ? currentYear : (availableSeasons[0] || preferredSeasonLabel || currentYear);
+  const seasonLabel = preferredSeasonLabel
+    || (availableSeasons.includes(currentYear) ? currentYear : (availableSeasons[0] || currentYear));
   const seasons = availableSeasons.map((label) => buildTeamAnalyticsSnapshot(
     completedGames.filter((game) => game.seasonLabel === label),
     label
