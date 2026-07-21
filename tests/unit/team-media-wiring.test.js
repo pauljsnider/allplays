@@ -32,7 +32,7 @@ describe('team media page wiring', () => {
         expect(page).toContain('Add album');
         expect(page).toContain('Upload files');
         expect(page).toContain('Save video link');
-        expect(source).toContain("from './db.js?v=117'");
+        expect(source).toContain("from './db.js?v=118'");
         expect(source).toContain('normalizeTeamMediaVideoDraft');
         expect(source).toContain("import { checkAuth } from './auth.js?v=129';");
         expect(source).toContain('checkAuth(async (user) => {');
@@ -59,7 +59,7 @@ describe('team media page wiring', () => {
         ]) {
             const testSource = fs.readFileSync(path.join(repoRoot, testFile), 'utf8');
             expect(testSource).toContain(`vi.mock('../../js/db.js?v=${dbImportVersion}'`);
-            expect(testSource).not.toContain("vi.mock('../../js/db.js?v=84'");
+            expect(testSource).not.toContain("vi.mock('../../js/db.js?v=85'");
         }
     });
 
