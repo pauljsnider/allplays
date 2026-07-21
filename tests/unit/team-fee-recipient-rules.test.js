@@ -52,6 +52,12 @@ describe('team fee recipient Firestore rules', () => {
         expect(nestedRecipientBlock).toContain('hasNoIntroducedPrivateTeamFeeBillingFields()');
     });
 
+    it('uses the owner/admin-only fee financial state guard for recipient updates', () => {
+        expect(rules).toContain('function canWriteTeamFeeFinancialState(teamId)');
+        expect(rules).toContain('return isTeamOwnerOrAdmin(teamId);');
+        expect(nestedRecipientBlock).toContain('allow update: if canWriteTeamFeeFinancialState(teamId)');
+    });
+
     it('blocks private billing fields on parent-readable fee recipient documents while keeping adminBilling admin-only', () => {
         expect(rules).toContain('function hasNoPrivateTeamFeeBillingFields(data)');
         expect(rules).toContain('function hasNoIntroducedPrivateTeamFeeBillingFields()');
@@ -150,6 +156,46 @@ describe('team fee recipient Firestore rules', () => {
             await assertFails(updateDoc(validRef, { batchId: 'batch-b' }));
             await assertSucceeds(updateDoc(validRef, { status: 'paid' }));
             await assertSucceeds(deleteDoc(validRef));
+        });
+
+        it('denies parent fee amount/status tampering while allowing owner and admin updates', async () => {
+            await seedRecipient(
+                'teams/team-a/feeBatches/batch-a/feeRecipients/financial-state',
+                recipientPayload()
+            );
+
+            const parentRef = recipientRef(
+                authedFirestore('parent-a', 'parent-a@example.com'),
+                'team-a',
+                'batch-a',
+                'financial-state'
+            );
+            await assertFails(updateDoc(parentRef, {
+                amountDueCents: 1,
+                status: 'paid'
+            }));
+
+            const ownerRef = recipientRef(
+                authedFirestore('owner-a', 'owner-a@example.com'),
+                'team-a',
+                'batch-a',
+                'financial-state'
+            );
+            await assertSucceeds(updateDoc(ownerRef, {
+                amountDueCents: 2000,
+                status: 'partial'
+            }));
+
+            const adminRef = recipientRef(
+                authedFirestore('admin-a', 'admin-a@example.com'),
+                'team-a',
+                'batch-a',
+                'financial-state'
+            );
+            await assertSucceeds(updateDoc(adminRef, {
+                amountDueCents: 0,
+                status: 'paid'
+            }));
         });
 
         it('preserves scoped collection-group reads for linked parents and team admins', async () => {

@@ -950,6 +950,12 @@ service cloud.firestore {
              hasRecipientMatch;
     }
 
+    // Fee balances and payment statuses are authoritative financial state.
+    // Parent access is read-only; only team owners/admins may mutate recipient records.
+    function canWriteTeamFeeFinancialState(teamId) {
+      return isTeamOwnerOrAdmin(teamId);
+    }
+
     function hasNoPrivateTeamFeeBillingFields(data) {
       return !data.keys().hasAny([
                'stripeCheckoutSessionId',
@@ -3749,7 +3755,7 @@ service cloud.firestore {
                            request.resource.data.teamId == teamId &&
                            request.resource.data.batchId == batchId &&
                            hasNoPrivateTeamFeeBillingFields(request.resource.data);
-          allow update: if isTeamOwnerOrAdmin(teamId) &&
+          allow update: if canWriteTeamFeeFinancialState(teamId) &&
                            resource.data.teamId == teamId &&
                            resource.data.batchId == batchId &&
                            request.resource.data.teamId == teamId &&
