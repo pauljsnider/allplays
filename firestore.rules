@@ -956,6 +956,34 @@ service cloud.firestore {
       return isTeamOwnerOrAdmin(teamId);
     }
 
+    function hasRequiredTeamFeeMutationAudit(teamId, batchId, recipientId) {
+      let affectedKeys = request.resource.data.diff(resource.data).affectedKeys();
+      let auditId = request.resource.data.get('latestAuditId', '');
+      let auditPath = /databases/$(database)/documents/teams/$(teamId)/feeBatches/$(batchId)/feeRecipients/$(recipientId)/audit/$(auditId);
+      return !affectedKeys.hasAny([
+               'status',
+               'amountCents',
+               'amountDueCents',
+               'adjustedAmountCents',
+               'balanceDueCents',
+               'remainingBalanceCents',
+               'amountPaidCents',
+               'paidAmountCents',
+               'amountRefundedCents',
+               'refundedAmountCents'
+             ]) ||
+             (auditId is string &&
+              auditId.size() > 0 &&
+              request.resource.data.get('latestAuditActorId', '') == request.auth.uid &&
+              request.resource.data.get('latestAuditAt', null) == request.time &&
+              existsAfter(auditPath) &&
+              getAfter(auditPath).data.teamId == teamId &&
+              getAfter(auditPath).data.batchId == batchId &&
+              getAfter(auditPath).data.recipientId == recipientId &&
+              getAfter(auditPath).data.actorId == request.auth.uid &&
+              getAfter(auditPath).data.changedAt == request.time);
+    }
+
     function hasNoPrivateTeamFeeBillingFields(data) {
       return !data.keys().hasAny([
                'stripeCheckoutSessionId',
@@ -3812,7 +3840,8 @@ service cloud.firestore {
                            resource.data.batchId == batchId &&
                            request.resource.data.teamId == teamId &&
                            request.resource.data.batchId == batchId &&
-                           hasNoIntroducedPrivateTeamFeeBillingFields();
+                           hasNoIntroducedPrivateTeamFeeBillingFields() &&
+                           hasRequiredTeamFeeMutationAudit(teamId, batchId, recipientId);
           allow delete: if isTeamOwnerOrAdmin(teamId) &&
                            resource.data.teamId == teamId &&
                            resource.data.batchId == batchId;

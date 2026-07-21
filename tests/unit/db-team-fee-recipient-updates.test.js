@@ -158,6 +158,28 @@ describe('updateTeamFeeRecipient manual payment validation', () => {
                 changedAt: 'server-ts'
             }
         );
+        expect(runTransaction).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects fee amount and status mutations without an audit actor', async () => {
+        const runTransaction = vi.fn();
+        const updateDoc = vi.fn();
+        const updateTeamFeeRecipient = buildUpdateTeamFeeRecipient({
+            doc: vi.fn((_db, ...parts) => ({ path: parts.join('/') })),
+            updateDoc,
+            setDoc: vi.fn(),
+            runTransaction,
+            serverTimestamp: vi.fn(() => 'server-ts'),
+            arrayUnion: vi.fn((...entries) => entries),
+            deleteField: vi.fn(() => 'deleted')
+        });
+
+        await expect(updateTeamFeeRecipient('team-1', 'batch-1', 'recipient-1', {
+            status: 'paid',
+            amountPaidCents: 5000
+        })).rejects.toThrow('Fee amount and status changes require an audit actor.');
+        expect(runTransaction).not.toHaveBeenCalled();
+        expect(updateDoc).not.toHaveBeenCalled();
     });
 
     it('rejects manual payments that exceed the recipient remaining balance before persisting', async () => {
@@ -184,7 +206,8 @@ describe('updateTeamFeeRecipient manual payment validation', () => {
         await expect(updateTeamFeeRecipient('team-1', 'batch-1', 'recipient-1', {
             amountPaidCents: 2600,
             manualPayment: { amountPaidCents: 1100 },
-            ledgerEntries: [{ type: 'offline_payment', amountCents: 1100 }]
+            ledgerEntries: [{ type: 'offline_payment', amountCents: 1100 }],
+            auditActorId: 'coach-1'
         })).rejects.toThrow('cannot exceed the remaining balance');
         expect(updateDoc).not.toHaveBeenCalled();
         expect(transactionUpdate).not.toHaveBeenCalled();
@@ -212,7 +235,8 @@ describe('updateTeamFeeRecipient manual payment validation', () => {
         });
 
         await expect(updateTeamFeeRecipient('team-1', 'batch-1', 'recipient-1', {
-            manualPayment: {}
+            manualPayment: {},
+            auditActorId: 'coach-1'
         })).rejects.toThrow('Manual payment amount is required');
         expect(updateDoc).not.toHaveBeenCalled();
         expect(transactionUpdate).not.toHaveBeenCalled();
@@ -248,7 +272,8 @@ describe('updateTeamFeeRecipient manual payment validation', () => {
             remainingBalanceCents: 0,
             manualPayment: { amountPaidCents: 1000 },
             ledgerEntries: [{ type: 'offline_payment', amountCents: 1000 }],
-            adminBilling: { type: 'offline_payment', note: 'Check 1001' }
+            adminBilling: { type: 'offline_payment', note: 'Check 1001' },
+            auditActorId: 'coach-1'
         })).resolves.toBeUndefined();
 
         expect(runTransaction).toHaveBeenCalledTimes(1);
@@ -293,7 +318,6 @@ describe('updateTeamFeeRecipient manual payment validation', () => {
         });
 
         await expect(updateTeamFeeRecipient('team-1', 'batch-1', 'recipient-1', {
-            status: 'partial',
             adjustment: { amountCents: -500 },
             ledgerEntries: [{ type: 'balance_adjustment', amountCents: -500 }],
             adminBilling: { type: 'balance_adjustment', reason: 'Late fee' }
@@ -302,7 +326,6 @@ describe('updateTeamFeeRecipient manual payment validation', () => {
         expect(updateDoc).toHaveBeenCalledWith(
             { path: 'teams/team-1/feeBatches/batch-1/feeRecipients/recipient-1' },
             expect.objectContaining({
-                status: 'partial',
                 adjustment: { amountCents: -500 },
                 paymentLedger: [{ type: 'balance_adjustment', amountCents: -500 }],
                 hasAdminBilling: true,
@@ -349,7 +372,8 @@ describe('updateTeamFeeRecipient manual payment validation', () => {
             remainingBalanceCents: 6000,
             paidAt: null,
             manualPayment: { amountPaidCents: 4000, paidAt: '2026-07-14' },
-            ledgerEntries: [{ type: 'offline_payment', amountCents: 4000, paymentDate: '2026-07-14' }]
+            ledgerEntries: [{ type: 'offline_payment', amountCents: 4000, paymentDate: '2026-07-14' }],
+            auditActorId: 'coach-1'
         });
 
         expect(transactionUpdate).toHaveBeenCalledWith(
@@ -388,7 +412,8 @@ describe('updateTeamFeeRecipient manual payment validation', () => {
         });
         const paymentUpdate = {
             manualPayment: { amountPaidCents: 1000, paidAt: '2026-07-14' },
-            ledgerEntries: [{ type: 'offline_payment', amountCents: 1000, paymentDate: '2026-07-14' }]
+            ledgerEntries: [{ type: 'offline_payment', amountCents: 1000, paymentDate: '2026-07-14' }],
+            auditActorId: 'coach-1'
         };
 
         await updateTeamFeeRecipient('team-1', 'batch-1', 'recipient-1', paymentUpdate);
@@ -416,11 +441,19 @@ describe('updateTeamFeeRecipient manual payment validation', () => {
 
     it('strips private billing and staff fields from recipient updates before parent-readable writes', async () => {
         const updateDoc = vi.fn(async () => undefined);
+        const transactionUpdate = vi.fn();
         const updateTeamFeeRecipient = buildUpdateTeamFeeRecipient({
             doc: vi.fn((_db, ...parts) => ({ path: parts.join('/') })),
             updateDoc,
             setDoc: vi.fn(async () => undefined),
-            runTransaction: vi.fn(),
+            runTransaction: vi.fn(async (_db, handler) => handler({
+                get: vi.fn(async () => ({
+                    exists: () => true,
+                    data: () => ({ amountDueCents: 1000, amountPaidCents: 500 })
+                })),
+                update: transactionUpdate,
+                set: vi.fn()
+            })),
             serverTimestamp: vi.fn(() => 'server-ts'),
             arrayUnion: vi.fn((...entries) => entries),
             deleteField: vi.fn(() => 'deleted')
@@ -448,10 +481,11 @@ describe('updateTeamFeeRecipient manual payment validation', () => {
                 provider: 'stripe',
                 receiptEmail: 'parent@example.com',
                 amountPaidCents: 500
-            }
+            },
+            auditActorId: 'coach-1'
         });
 
-        expect(updateDoc).toHaveBeenCalledWith(
+        expect(transactionUpdate).toHaveBeenCalledWith(
             { path: 'teams/team-1/feeBatches/batch-1/feeRecipients/recipient-1' },
             expect.objectContaining({
                 notes: 'Public family note',
@@ -470,7 +504,7 @@ describe('updateTeamFeeRecipient manual payment validation', () => {
                 }]
             })
         );
-        const payload = updateDoc.mock.calls[0][1];
+        const payload = transactionUpdate.mock.calls[0][1];
         expect(payload).not.toHaveProperty('stripePaymentIntentId');
         expect(payload.refunded).not.toHaveProperty('note');
         expect(payload.refunded).not.toHaveProperty('recordedBy');

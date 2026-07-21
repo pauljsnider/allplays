@@ -408,6 +408,11 @@ function buildTeamFeeAdminBillingRef(recipientRef, id) {
   return recipientRef.collection('adminBilling').doc(safeId || 'latest');
 }
 
+function buildTeamFeeAuditRef(recipientRef, id) {
+  const safeId = String(id || 'fee_mutation').trim().replace(/[^\w.-]+/g, '_').slice(0, 120);
+  return recipientRef.collection('audit').doc(safeId || 'fee_mutation');
+}
+
 function withTeamFeeParentBillingClears(update = {}) {
   return {
     ...update,
@@ -4423,6 +4428,7 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
     await firestore.runTransaction(async (transaction) => {
       const latestSnap = await transaction.get(recipientRef);
       const refundAdminBillingRef = buildTeamFeeAdminBillingRef(recipientRef, refund.id || refundRequestId);
+      const refundAuditRef = buildTeamFeeAuditRef(recipientRef, `stripe_refund_${refund.id || refundRequestId}`);
       const refundAdminBillingSnap = await transaction.get(refundAdminBillingRef);
       if (!latestSnap.exists) {
         throw new functions.https.HttpsError('not-found', 'Fee recipient not found.');
@@ -4460,6 +4466,23 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
       if (adminBilling) {
         transaction.set(refundAdminBillingRef, adminBilling, { merge: true });
       }
+      transaction.set(refundAuditRef, {
+        teamId: input.teamId,
+        batchId: input.batchId,
+        recipientId: input.recipientId,
+        actorId: context.auth.uid,
+        changedFields: [
+          'status',
+          'paidAmountCents',
+          'amountPaidCents',
+          'balanceDueCents',
+          'remainingBalanceCents',
+          'refundedAmountCents',
+          'amountRefundedCents'
+        ],
+        mutationType: 'stripe_refund',
+        changedAt: refundedAt
+      });
       transaction.set(refundIntentRef, {
         status: 'recorded',
         stripeRefundId: refund.id || null,
@@ -5008,6 +5031,15 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
             receivedAt
           });
           transaction.set(recipientRef, withTeamFeeParentBillingClears(recipientUpdate), { merge: true });
+          transaction.set(buildTeamFeeAuditRef(recipientRef, `stripe_payment_${event.id}`), {
+            teamId,
+            batchId,
+            recipientId,
+            actorId: session.metadata?.payerUid || 'stripe',
+            changedFields: ['status', 'paidAmountCents', 'amountPaidCents', 'balanceDueCents'],
+            mutationType: 'stripe_checkout_paid',
+            changedAt: receivedAt
+          });
           if (adminBilling) {
             transaction.set(buildTeamFeeAdminBillingRef(recipientRef, event.id), adminBilling, { merge: true });
             transaction.set(buildTeamFeeAdminBillingRef(recipientRef, 'latest'), adminBilling, { merge: true });

@@ -5641,11 +5641,20 @@ export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updat
     const adminBillingDetails = explicitAdminBilling || deriveTeamFeeAdminBillingPayload(unsafeRecipientUpdates, ledgerEntries);
     const hasAdminBilling = Boolean(adminBillingDetails);
     const auditedChangedFields = TEAM_FEE_AUDIT_FIELDS.filter((field) => Object.prototype.hasOwnProperty.call(recipientUpdates, field));
+    if (isManualPaymentUpdate) {
+        ['status', 'amountPaidCents', 'remainingBalanceCents'].forEach((field) => {
+            if (!auditedChangedFields.includes(field)) auditedChangedFields.push(field);
+        });
+    }
     const mutationActorId = getTeamFeeMutationActorId({ ...unsafeRecipientUpdates, adminBilling, auditActorId });
-    const shouldWriteAudit = auditedChangedFields.length > 0 && Boolean(mutationActorId);
+    if (auditedChangedFields.length > 0 && !mutationActorId) {
+        throw new Error('Fee amount and status changes require an audit actor.');
+    }
+    const shouldWriteAudit = auditedChangedFields.length > 0;
     const mutationTimestamp = serverTimestamp();
+    const auditId = shouldWriteAudit ? createTeamFeeLedgerEntryId('fee_mutation') : null;
     const auditRef = shouldWriteAudit
-        ? doc(db, 'teams', teamId, 'feeBatches', batchId, 'feeRecipients', recipientId, 'audit', createTeamFeeLedgerEntryId('fee_mutation'))
+        ? doc(db, 'teams', teamId, 'feeBatches', batchId, 'feeRecipients', recipientId, 'audit', auditId)
         : null;
     const auditPayload = shouldWriteAudit ? {
         teamId,
@@ -5662,6 +5671,11 @@ export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updat
         teamId,
         batchId,
         ...(hasAdminBilling ? { hasAdminBilling: true } : {}),
+        ...(shouldWriteAudit ? {
+            latestAuditId: auditId,
+            latestAuditActorId: mutationActorId,
+            latestAuditAt: mutationTimestamp
+        } : {}),
         updatedAt: mutationTimestamp
     };
 

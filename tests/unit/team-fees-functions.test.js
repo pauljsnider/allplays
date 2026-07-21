@@ -397,6 +397,25 @@ describe('team fee checkout function helpers', () => {
         expect(source).toContain('hasStripeRefundLedgerEntry(latestRecipient, refund.id)');
     });
 
+    it('writes fee mutation audits in the Stripe payment and refund transactions', () => {
+        const source = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
+        const refundTransaction = source.slice(
+            source.indexOf('exports.refundStripeTeamFeePayment'),
+            source.indexOf('exports.createStripeRegistrationCheckout')
+        );
+        const teamFeeWebhook = source.slice(
+            source.indexOf('if (shouldMarkTeamFeePaidFromEvent(event) || shouldRecordTeamFeeCheckoutNotPaidFromEvent(event))'),
+            source.indexOf("res.status(200).json({ received: true, teamFeeUpdated")
+        );
+
+        expect(refundTransaction).toContain('buildTeamFeeAuditRef(recipientRef, `stripe_refund_${refund.id || refundRequestId}`)');
+        expect(refundTransaction).toContain("mutationType: 'stripe_refund'");
+        expect(refundTransaction).toContain('changedAt: refundedAt');
+        expect(teamFeeWebhook).toContain('buildTeamFeeAuditRef(recipientRef, `stripe_payment_${event.id}`)');
+        expect(teamFeeWebhook).toContain("mutationType: 'stripe_checkout_paid'");
+        expect(teamFeeWebhook).toContain('changedAt: receivedAt');
+    });
+
     it('guards team fee webhook processing behind the current checkout attempt', () => {
         const functionsSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
         const dbSource = readFileSync(new URL('../../js/db.js', import.meta.url), 'utf8');

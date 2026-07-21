@@ -11,8 +11,10 @@ import {
     doc,
     getDocs,
     query,
+    serverTimestamp,
     setDoc,
     updateDoc,
+    writeBatch,
     where
 } from 'firebase/firestore';
 import { extractMatchBlock } from '../../scripts/validate-firebase-rules-ci.mjs';
@@ -56,6 +58,14 @@ describe('team fee recipient Firestore rules', () => {
         expect(rules).toContain('function canWriteTeamFeeFinancialState(teamId)');
         expect(rules).toContain('return isTeamOwnerOrAdmin(teamId);');
         expect(nestedRecipientBlock).toContain('allow update: if canWriteTeamFeeFinancialState(teamId)');
+    });
+
+    it('requires financial recipient updates to create a matching actor-attributed audit', () => {
+        expect(rules).toContain('function hasRequiredTeamFeeMutationAudit(teamId, batchId, recipientId)');
+        expect(rules).toContain('existsAfter(auditPath)');
+        expect(rules).toContain('getAfter(auditPath).data.actorId == request.auth.uid');
+        expect(rules).toContain("request.resource.data.get('latestAuditAt', null) == request.time");
+        expect(nestedRecipientBlock).toContain('hasRequiredTeamFeeMutationAudit(teamId, batchId, recipientId)');
     });
 
     it('blocks private billing fields on parent-readable fee recipient documents while keeping adminBilling admin-only', () => {
@@ -132,6 +142,27 @@ describe('team fee recipient Firestore rules', () => {
             };
         }
 
+        async function writeAuditedUpdate(firestore, teamId, batchId, recipientId, actorId, update) {
+            const batch = writeBatch(firestore);
+            const auditId = `fee_mutation_${recipientId}`;
+            batch.update(recipientRef(firestore, teamId, batchId, recipientId), {
+                ...update,
+                latestAuditId: auditId,
+                latestAuditActorId: actorId,
+                latestAuditAt: serverTimestamp()
+            });
+            batch.set(doc(firestore, `teams/${teamId}/feeBatches/${batchId}/feeRecipients/${recipientId}/audit/${auditId}`), {
+                teamId,
+                batchId,
+                recipientId,
+                actorId,
+                changedFields: Object.keys(update),
+                mutationType: 'test_update',
+                changedAt: serverTimestamp()
+            });
+            return batch.commit();
+        }
+
         async function seedRecipient(path, data) {
             await testEnv.withSecurityRulesDisabled(async (context) => {
                 await setDoc(doc(context.firestore(), path), data);
@@ -161,7 +192,8 @@ describe('team fee recipient Firestore rules', () => {
             await assertFails(setDoc(invalidBatchRef, recipientPayload('team-a', 'batch-b')));
             await assertSucceeds(setDoc(validRef, recipientPayload()));
             await assertFails(updateDoc(validRef, { batchId: 'batch-b' }));
-            await assertSucceeds(updateDoc(validRef, { status: 'paid' }));
+            await assertFails(updateDoc(validRef, { status: 'paid' }));
+            await assertSucceeds(writeAuditedUpdate(ownerDb, 'team-a', 'batch-a', 'valid', 'owner-a', { status: 'paid' }));
             await assertSucceeds(deleteDoc(validRef));
         });
 
@@ -188,10 +220,18 @@ describe('team fee recipient Firestore rules', () => {
                 'batch-a',
                 'financial-state'
             );
-            await assertSucceeds(updateDoc(ownerRef, {
+            await assertFails(updateDoc(ownerRef, {
                 amountDueCents: 2000,
                 status: 'partial'
             }));
+            await assertSucceeds(writeAuditedUpdate(
+                authedFirestore('owner-a', 'owner-a@example.com'),
+                'team-a',
+                'batch-a',
+                'financial-state',
+                'owner-a',
+                { amountDueCents: 2000, status: 'partial' }
+            ));
 
             const adminRef = recipientRef(
                 authedFirestore('admin-a', 'admin-a@example.com'),
@@ -199,10 +239,18 @@ describe('team fee recipient Firestore rules', () => {
                 'batch-a',
                 'financial-state'
             );
-            await assertSucceeds(updateDoc(adminRef, {
+            await assertFails(updateDoc(adminRef, {
                 amountDueCents: 0,
                 status: 'paid'
             }));
+            await assertSucceeds(writeAuditedUpdate(
+                authedFirestore('admin-a', 'admin-a@example.com'),
+                'team-a',
+                'batch-a',
+                'financial-state',
+                'admin-a',
+                { amountDueCents: 0, status: 'paid' }
+            ));
         });
 
         it('preserves scoped collection-group reads for linked parents and team admins', async () => {
