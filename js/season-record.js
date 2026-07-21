@@ -25,7 +25,7 @@ export function getTeamScorePair(game) {
   const isSharedMirror = !!String(game?.sharedScheduleSourceTeamId || '').trim();
   const hasLegacyTrackerPayload = game?.liveHasData === true
     || Object.prototype.hasOwnProperty.call(game || {}, 'opponentStats');
-  const hasFinalLiveStatus = ['completed', 'final'].includes(String(game?.liveStatus || '').trim().toLowerCase());
+  const hasAppVenueTrackingMetadata = game?.liveStartedAt != null;
 
   // Shared mirrors and legacy trackers store team/opponent scores in the two
   // score fields. App/manual venue score writers store true home/away scores.
@@ -33,7 +33,7 @@ export function getTeamScorePair(game) {
   // tracker games completed before scoreOrientation was introduced.
   const useStoredScoreOrder = isSharedMirror
     || orientation === 'team-opponent'
-    || (orientation !== 'venue' && hasLegacyTrackerPayload && !hasFinalLiveStatus)
+    || (orientation !== 'venue' && hasLegacyTrackerPayload && !hasAppVenueTrackingMetadata)
     || game?.isHome !== false;
   return {
     teamScore: useStoredScoreOrder ? game?.homeScore : game?.awayScore,

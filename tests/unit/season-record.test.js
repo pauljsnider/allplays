@@ -58,7 +58,8 @@ describe('season record helpers', () => {
       isHome: false,
       homeScore: 71,
       awayScore: 68,
-      opponentStats: {}
+      opponentStats: {},
+      liveStatus: 'completed'
     };
     const explicitTeamOrientedGame = {
       isHome: false,
@@ -73,10 +74,19 @@ describe('season record helpers', () => {
       opponentStats: {},
       scoreOrientation: 'venue'
     };
+    const appTrackedAwayGame = {
+      isHome: false,
+      homeScore: 68,
+      awayScore: 71,
+      opponentStats: {},
+      liveStatus: 'completed',
+      liveStartedAt: '2026-03-04T18:00:00Z'
+    };
 
     expect(getTeamScorePair(legacyTrackedAwayGame)).toEqual({ teamScore: 71, opponentScore: 68 });
     expect(getTeamScorePair(explicitTeamOrientedGame)).toEqual({ teamScore: 3, opponentScore: 1 });
     expect(getTeamScorePair(explicitVenueGameWithLegacyPayload)).toEqual({ teamScore: 71, opponentScore: 68 });
+    expect(getTeamScorePair(appTrackedAwayGame)).toEqual({ teamScore: 71, opponentScore: 68 });
   });
 
   it('lists unique season labels in descending order', () => {
