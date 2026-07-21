@@ -173,6 +173,27 @@ describe('buildTeamAnalytics', () => {
     expect(analytics.scoreDifferential).toBe(3);
   });
 
+  it('preserves team-oriented score order for shared-schedule away mirrors', () => {
+    const analytics = buildTeamAnalytics([{
+      id: 'mirrored-away-win',
+      status: 'completed',
+      isHome: false,
+      date: '2026-03-04T18:00:00Z',
+      opponent: 'Bears',
+      homeScore: 71,
+      awayScore: 68,
+      sharedScheduleSourceTeamId: 'team-alpha'
+    }], '2026');
+
+    expect(analytics.progression[0]).toMatchObject({
+      id: 'mirrored-away-win',
+      pointsFor: 71,
+      pointsAgainst: 68,
+      result: 'W',
+      differential: 3
+    });
+  });
+
   it('returns an explicit empty snapshot without completed score-bearing games', () => {
     expect(buildTeamAnalytics([])).toEqual({
       seasonLabel: String(new Date().getFullYear()),

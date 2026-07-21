@@ -2463,11 +2463,11 @@ export function buildTeamAnalytics(games: any[] = [], preferredSeasonLabel = '')
   const completedGames = (Array.isArray(games) ? games : [])
     .filter(isCompletedGame)
     .map((game, index): TeamDetailAnalyticsGame => {
-      const isHome = game?.isHome !== false;
+      const useStoredScoreOrder = Boolean(cleanString(game?.sharedScheduleSourceTeamId)) || game?.isHome !== false;
       const homeScore = toNullableNumber(game?.homeScore) || 0;
       const awayScore = toNullableNumber(game?.awayScore) || 0;
-      const pointsFor = isHome ? homeScore : awayScore;
-      const pointsAgainst = isHome ? awayScore : homeScore;
+      const pointsFor = useStoredScoreOrder ? homeScore : awayScore;
+      const pointsAgainst = useStoredScoreOrder ? awayScore : homeScore;
       const date = toDate(game?.date);
       const opponent = cleanString(game?.opponent || game?.awayTeam || game?.title)
         .replace(/^vs\.?\s*/i, '') || 'Opponent';
