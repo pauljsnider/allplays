@@ -89,6 +89,7 @@ describe('team fee recipient Firestore rules', () => {
         expect(nestedRecipientBlock).toContain("data.get('latestAuditAt', null) == request.time");
         expect(nestedRecipientBlock).toContain('request.resource.data.actorId == request.auth.uid');
         expect(nestedRecipientBlock).toContain('request.resource.data.changedAt == request.time');
+        expect(nestedRecipientBlock).toContain('teamFeeAuditMatchesParentMutation(teamId, batchId, recipientId, request.resource.data)');
         expect(nestedRecipientBlock).toContain('allow update, delete: if false;');
     });
 
@@ -285,7 +286,7 @@ describe('team fee recipient Firestore rules', () => {
             ));
         });
 
-        it('denies phantom audits without an atomic parent recipient update', async () => {
+        it('denies phantom audits without a matching atomic financial mutation', async () => {
             const ownerDb = authedFirestore('owner-a', 'owner-a@example.com');
             await seedRecipient(
                 'teams/team-a/feeBatches/batch-a/feeRecipients/existing-recipient',
@@ -309,6 +310,17 @@ describe('team fee recipient Firestore rules', () => {
                 doc(ownerDb, 'teams/team-a/feeBatches/batch-a/feeRecipients/missing-recipient/audit/phantom'),
                 { ...auditPayload, recipientId: 'missing-recipient' }
             ));
+
+            const phantomBatch = writeBatch(ownerDb);
+            phantomBatch.update(
+                recipientRef(ownerDb, 'team-a', 'batch-a', 'existing-recipient'),
+                { latestAuditId: 'phantom', latestAuditAt: serverTimestamp() }
+            );
+            phantomBatch.set(
+                doc(ownerDb, 'teams/team-a/feeBatches/batch-a/feeRecipients/existing-recipient/audit/phantom'),
+                auditPayload
+            );
+            await assertFails(phantomBatch.commit());
         });
 
         it('accepts an audit that omits a supplied financial field whose value did not change', async () => {

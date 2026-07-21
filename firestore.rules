@@ -1033,6 +1033,25 @@ service cloud.firestore {
              ];
     }
 
+    function teamFeeAuditMatchesParentMutation(teamId, batchId, recipientId, data) {
+      let financialFields = [
+        'status',
+        'amountCents',
+        'amountDueCents',
+        'adjustedAmountCents',
+        'balanceDueCents',
+        'remainingBalanceCents',
+        'amountPaidCents',
+        'paidAmountCents',
+        'amountRefundedCents',
+        'refundedAmountCents'
+      ];
+      let recipientPath = /databases/$(database)/documents/teams/$(teamId)/feeBatches/$(batchId)/feeRecipients/$(recipientId);
+      let changedFinancialFields = getAfter(recipientPath).data.diff(get(recipientPath).data).affectedKeys().intersection(financialFields.toSet());
+      return changedFinancialFields.size() > 0 &&
+             data.changedFields.toSet() == changedFinancialFields;
+    }
+
     function hasNoPrivateTeamFeeBillingFields(data) {
       return !data.keys().hasAny([
                'stripeCheckoutSessionId',
@@ -3912,7 +3931,8 @@ service cloud.firestore {
                              request.resource.data.recipientId == recipientId &&
                              request.resource.data.actorId == request.auth.uid &&
                              request.resource.data.changedAt == request.time &&
-                             isValidTeamFeeAudit(request.resource.data);
+                             isValidTeamFeeAudit(request.resource.data) &&
+                             teamFeeAuditMatchesParentMutation(teamId, batchId, recipientId, request.resource.data);
             allow update, delete: if false;
           }
         }
