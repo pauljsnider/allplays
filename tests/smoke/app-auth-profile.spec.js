@@ -596,14 +596,14 @@ test('@visual app auth screen exposes sign in, sign up, Google, activation code,
         maxDiffPixelRatio: 0.01
     });
 
-    await page.getByRole('button', { name: 'Sign in' }).first().click();
+    await page.getByRole('tab', { name: 'Sign in' }).click();
     await page.getByRole('button', { name: 'Forgot password?' }).click();
     await page.locator('form').filter({ hasText: 'Password reset email' }).locator('input[type="email"]').fill('parent@example.com');
     await page.getByRole('button', { name: 'Send reset email' }).click();
     await expect(page.getByText("If an account exists for that email, we've sent a reset link.")).toBeVisible();
     expect(await page.evaluate(() => window.__appAuthCalls.sendResetEmail)).toEqual(['parent@example.com']);
 
-    await page.getByRole('button', { name: 'Sign up' }).first().click();
+    await page.getByRole('tab', { name: 'Sign up' }).click();
     await page.getByRole('button', { name: 'Continue with Google' }).click();
     expect(await page.evaluate(() => window.__appAuthCalls.signInWithGoogleAccount)).toEqual([{ activationCode: 'AB12CD34' }]);
 });
