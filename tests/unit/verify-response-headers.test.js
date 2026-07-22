@@ -120,6 +120,38 @@ describe('candidate response header verification', () => {
             .rejects.toThrow('/widget-scoreboard.html: widget CSP must allow frame-ancestors *');
     });
 
+    it('requires exact scoreboard CSP source values', async () => {
+        const spoofedSourceCsp = widgetCsp.replace(
+            'https://www.gstatic.com',
+            'https://www.gstatic.com.evil.example'
+        );
+        const fetchImpl = createFetch({
+            '/widget-scoreboard.html': () => new Response('widget', {
+                status: 200,
+                headers: securityHeaders(spoofedSourceCsp)
+            })
+        });
+
+        await expect(verifyResponseHeaders(candidateOrigin, { fetchImpl }))
+            .rejects.toThrow('/widget-scoreboard.html: widget CSP must preserve https://www.gstatic.com');
+    });
+
+    it('rejects duplicate scoreboard CSP directives', async () => {
+        const duplicateFrameAncestorsCsp = widgetCsp.replace(
+            'frame-ancestors *',
+            "frame-ancestors 'self'; frame-ancestors *"
+        );
+        const fetchImpl = createFetch({
+            '/widget-scoreboard.html': () => new Response('widget', {
+                status: 200,
+                headers: securityHeaders(duplicateFrameAncestorsCsp)
+            })
+        });
+
+        await expect(verifyResponseHeaders(candidateOrigin, { fetchImpl }))
+            .rejects.toThrow('/widget-scoreboard.html: CSP must not contain duplicate frame-ancestors directives');
+    });
+
     it('rejects cacheable or frameable runtime configuration', async () => {
         const cacheableFetch = createFetch({
             '/.well-known/allplays-runtime-config.json': () => new Response('{}', {

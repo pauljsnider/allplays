@@ -24,11 +24,17 @@ function requireHeader(response, path, name) {
     return value;
 }
 
-function cspDirectives(policy) {
-    return new Map(policy.split(';').map((directive) => directive.trim()).filter(Boolean).map((directive) => {
+function cspDirectives(policy, path) {
+    const directives = new Map();
+    for (const directive of policy.split(';').map((value) => value.trim()).filter(Boolean)) {
         const [name, ...values] = directive.split(/\s+/);
-        return [name.toLowerCase(), values];
-    }));
+        const normalizedName = name.toLowerCase();
+        if (directives.has(normalizedName)) {
+            fail(path, `CSP must not contain duplicate ${normalizedName} directives`);
+        }
+        directives.set(normalizedName, values);
+    }
+    return directives;
 }
 
 function directiveIncludes(directives, name, value) {
@@ -54,7 +60,7 @@ function validateCommonHeaders(response, path) {
 function validateBaselinePolicy(response, path) {
     const headers = validateCommonHeaders(response, path);
     const csp = headers.get('Content-Security-Policy');
-    const directives = cspDirectives(csp);
+    const directives = cspDirectives(csp, path);
 
     if (!directiveIncludes(directives, 'default-src', "'self'")) {
         fail(path, "baseline CSP must include default-src 'self'");
@@ -82,7 +88,7 @@ function validateBaselinePolicy(response, path) {
 function validateWidgetPolicy(response) {
     const headers = validateCommonHeaders(response, widgetPath);
     const csp = headers.get('Content-Security-Policy');
-    const directives = cspDirectives(csp);
+    const directives = cspDirectives(csp, widgetPath);
 
     if (!directiveIncludes(directives, 'frame-ancestors', '*')) {
         fail(widgetPath, 'widget CSP must allow frame-ancestors *');
@@ -95,7 +101,9 @@ function validateWidgetPolicy(response) {
         'https://*.firebaseapp.com',
         'https://recaptcha.google.com'
     ]) {
-        if (!csp.includes(requiredSource)) {
+        const hasSource = Array.from(directives.values())
+            .some((sources) => sources.includes(requiredSource));
+        if (!hasSource) {
             fail(widgetPath, `widget CSP must preserve ${requiredSource}`);
         }
     }
@@ -107,7 +115,7 @@ function validateWidgetPolicy(response) {
 function validateRuntimeConfigPolicy(response) {
     const headers = validateCommonHeaders(response, runtimeConfigPath);
     const csp = headers.get('Content-Security-Policy');
-    const directives = cspDirectives(csp);
+    const directives = cspDirectives(csp, runtimeConfigPath);
     const cacheControl = requireHeader(response, runtimeConfigPath, 'Cache-Control');
 
     if (!cacheControl.split(',').some((directive) => directive.trim().toLowerCase() === 'no-store')) {
@@ -146,9 +154,6 @@ async function fetchPath(origin, path, fetchImpl) {
         headers: { 'Cache-Control': 'no-cache' }
     });
     if (!response.ok) {
-        fail(path, `expected HTTP 200 but received ${response.status}`);
-    }
-    if (response.status !== 200) {
         fail(path, `expected HTTP 200 but received ${response.status}`);
     }
     if (response.url && new URL(response.url).origin !== origin) {
