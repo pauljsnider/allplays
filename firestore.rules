@@ -956,6 +956,103 @@ service cloud.firestore {
       return isTeamOwnerOrAdmin(teamId);
     }
 
+    function hasRequiredTeamFeeMutationAudit(teamId, batchId, recipientId) {
+      let affectedKeys = request.resource.data.diff(resource.data).affectedKeys();
+      let financialFields = [
+        'status',
+        'amountCents',
+        'amountDueCents',
+        'adjustedAmountCents',
+        'balanceDueCents',
+        'remainingBalanceCents',
+        'amountPaidCents',
+        'paidAmountCents',
+        'amountRefundedCents',
+        'refundedAmountCents'
+      ];
+      let auditId = request.resource.data.get('latestAuditId', '');
+      let auditPath = /databases/$(database)/documents/teams/$(teamId)/feeBatches/$(batchId)/feeRecipients/$(recipientId)/audit/$(auditId);
+      return !affectedKeys.hasAny(financialFields) ||
+             (auditId is string &&
+              auditId.size() > 0 &&
+              request.resource.data.get('latestAuditAt', null) == request.time &&
+              existsAfter(auditPath) &&
+              isValidTeamFeeAudit(getAfter(auditPath).data) &&
+              getAfter(auditPath).data.teamId == teamId &&
+              getAfter(auditPath).data.batchId == batchId &&
+              getAfter(auditPath).data.recipientId == recipientId &&
+              getAfter(auditPath).data.actorId == request.auth.uid &&
+              getAfter(auditPath).data.changedAt == request.time &&
+              getAfter(auditPath).data.changedFields.toSet() == affectedKeys.intersection(financialFields.toSet()));
+    }
+
+    function isValidTeamFeeAudit(data) {
+      let financialFields = [
+        'status',
+        'amountCents',
+        'amountDueCents',
+        'adjustedAmountCents',
+        'balanceDueCents',
+        'remainingBalanceCents',
+        'amountPaidCents',
+        'paidAmountCents',
+        'amountRefundedCents',
+        'refundedAmountCents'
+      ];
+      return data.keys().hasAll([
+               'teamId',
+               'batchId',
+               'recipientId',
+               'actorId',
+               'changedFields',
+               'mutationType',
+               'changedAt'
+             ]) &&
+             data.keys().hasOnly([
+               'teamId',
+               'batchId',
+               'recipientId',
+               'actorId',
+               'changedFields',
+               'mutationType',
+               'changedAt'
+             ]) &&
+             data.changedFields is list &&
+             data.changedFields.size() > 0 &&
+             data.changedFields.size() == data.changedFields.toSet().size() &&
+             data.changedFields.toSet().hasOnly(financialFields) &&
+             data.mutationType is string &&
+             data.mutationType in [
+               'fee_update',
+               'offline_payment',
+               'balance_adjustment',
+               'offline_refund',
+               'cancellation',
+               'stripe_refund',
+               'stripe_checkout_created',
+               'stripe_checkout_paid'
+             ];
+    }
+
+    function teamFeeAuditMatchesParentMutation(teamId, batchId, recipientId, data) {
+      let financialFields = [
+        'status',
+        'amountCents',
+        'amountDueCents',
+        'adjustedAmountCents',
+        'balanceDueCents',
+        'remainingBalanceCents',
+        'amountPaidCents',
+        'paidAmountCents',
+        'amountRefundedCents',
+        'refundedAmountCents'
+      ];
+      let recipientPath = /databases/$(database)/documents/teams/$(teamId)/feeBatches/$(batchId)/feeRecipients/$(recipientId);
+      let changedFinancialFields = getAfter(recipientPath).data.diff(get(recipientPath).data).affectedKeys().intersection(financialFields.toSet());
+      return changedFinancialFields.size() > 0 &&
+             data.changedFields.toSet() == changedFinancialFields;
+    }
+
     function hasNoPrivateTeamFeeBillingFields(data) {
       return !data.keys().hasAny([
                'stripeCheckoutSessionId',
@@ -968,6 +1065,7 @@ service cloud.firestore {
                'receiptEmail',
                'refundedBy',
                'recordedBy',
+               'latestAuditActorId',
                'internalNote',
                'adminNote',
                'reason'
@@ -986,6 +1084,7 @@ service cloud.firestore {
              (!affectedKeys.hasAny(['receiptEmail']) || request.resource.data.get('receiptEmail', null) == null) &&
              (!affectedKeys.hasAny(['refundedBy']) || request.resource.data.get('refundedBy', null) == null) &&
              (!affectedKeys.hasAny(['recordedBy']) || request.resource.data.get('recordedBy', null) == null) &&
+             (!affectedKeys.hasAny(['latestAuditActorId']) || request.resource.data.get('latestAuditActorId', null) == null) &&
              (!affectedKeys.hasAny(['internalNote']) || request.resource.data.get('internalNote', null) == null) &&
              (!affectedKeys.hasAny(['adminNote']) || request.resource.data.get('adminNote', null) == null) &&
              (!affectedKeys.hasAny(['reason']) || request.resource.data.get('reason', null) == null);
@@ -3812,13 +3911,30 @@ service cloud.firestore {
                            resource.data.batchId == batchId &&
                            request.resource.data.teamId == teamId &&
                            request.resource.data.batchId == batchId &&
-                           hasNoIntroducedPrivateTeamFeeBillingFields();
+                           hasNoIntroducedPrivateTeamFeeBillingFields() &&
+                           hasRequiredTeamFeeMutationAudit(teamId, batchId, recipientId);
           allow delete: if isTeamOwnerOrAdmin(teamId) &&
                            resource.data.teamId == teamId &&
                            resource.data.batchId == batchId;
 
           match /adminBilling/{billingId} {
             allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);
+          }
+
+          match /audit/{auditId} {
+            allow read: if isTeamOwnerOrAdmin(teamId);
+            allow create: if isTeamOwnerOrAdmin(teamId) &&
+                             existsAfter(/databases/$(database)/documents/teams/$(teamId)/feeBatches/$(batchId)/feeRecipients/$(recipientId)) &&
+                             getAfter(/databases/$(database)/documents/teams/$(teamId)/feeBatches/$(batchId)/feeRecipients/$(recipientId)).data.get('latestAuditId', '') == auditId &&
+                             getAfter(/databases/$(database)/documents/teams/$(teamId)/feeBatches/$(batchId)/feeRecipients/$(recipientId)).data.get('latestAuditAt', null) == request.time &&
+                             request.resource.data.teamId == teamId &&
+                             request.resource.data.batchId == batchId &&
+                             request.resource.data.recipientId == recipientId &&
+                             request.resource.data.actorId == request.auth.uid &&
+                             request.resource.data.changedAt == request.time &&
+                             isValidTeamFeeAudit(request.resource.data) &&
+                             teamFeeAuditMatchesParentMutation(teamId, batchId, recipientId, request.resource.data);
+            allow update, delete: if false;
           }
         }
       }

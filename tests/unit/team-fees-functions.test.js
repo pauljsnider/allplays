@@ -22,6 +22,7 @@ const {
     getTeamFeeStripePaidAmountCents,
     buildTeamFeeAdminBillingMetadata,
     getTeamFeeStripePaymentRefs,
+    getChangedTeamFeeFinancialFields,
     buildTeamFeePaidUpdate,
     buildTeamFeeStripeRefundUpdate
 } = require('../../functions/team-fees-core.cjs');
@@ -395,6 +396,88 @@ describe('team fee checkout function helpers', () => {
         expect(source).toContain("stripeRefundStatus !== 'succeeded'");
         expect(source).toContain('const ledgerRefundedAt = admin.firestore.Timestamp.now();');
         expect(source).toContain('hasStripeRefundLedgerEntry(latestRecipient, refund.id)');
+    });
+
+    it('writes fee mutation audits in the Stripe payment and refund transactions', () => {
+        const source = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
+        const refundTransaction = source.slice(
+            source.indexOf('exports.refundStripeTeamFeePayment'),
+            source.indexOf('exports.createStripeRegistrationCheckout')
+        );
+        const teamFeeWebhook = source.slice(
+            source.indexOf('if (shouldMarkTeamFeePaidFromEvent(event) || shouldRecordTeamFeeCheckoutNotPaidFromEvent(event))'),
+            source.indexOf("res.status(200).json({ received: true, teamFeeUpdated")
+        );
+
+        expect(refundTransaction).toContain('buildTeamFeeAuditRef(recipientRef, `stripe_refund_${refund.id || refundRequestId}`)');
+        expect(refundTransaction).toContain("mutationType: 'stripe_refund'");
+        expect(refundTransaction).toContain('changedAt: refundedAt');
+        expect(refundTransaction).toContain('latestAuditId: refundAuditRef.id');
+        expect(refundTransaction).toContain('getChangedTeamFeeFinancialFields(latestRecipient, recipientUpdate)');
+        expect(teamFeeWebhook).toContain('buildTeamFeeAuditRef(recipientRef, `stripe_payment_${event.id}`)');
+        expect(teamFeeWebhook).toContain("mutationType: 'stripe_checkout_paid'");
+        expect(teamFeeWebhook).toContain('changedAt: receivedAt');
+        expect(teamFeeWebhook).toContain('latestAuditId: paymentAuditRef.id');
+        expect(teamFeeWebhook).toContain('getChangedTeamFeeFinancialFields(recipient, recipientUpdate)');
+    });
+
+    it('atomically audits balance initialization when creating a Stripe checkout', () => {
+        const source = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
+        const checkoutFunction = source.slice(
+            source.indexOf('exports.createStripeTeamFeeCheckout'),
+            source.indexOf('exports.refundStripeTeamFeePayment')
+        );
+
+        expect(getChangedTeamFeeFinancialFields(
+            { amountCents: 7500 },
+            { balanceDueCents: 7500 }
+        )).toEqual(['balanceDueCents']);
+        expect(checkoutFunction).toContain('await firestore.runTransaction(async (transaction) => {');
+        expect(checkoutFunction).toContain('buildTeamFeeAuditRef(recipientRef, `stripe_checkout_${session.id}`)');
+        expect(checkoutFunction).toContain('getChangedTeamFeeFinancialFields(latestRecipient, recipientUpdate)');
+        expect(checkoutFunction).toContain("mutationType: 'stripe_checkout_created'");
+        expect(checkoutFunction).toContain('latestAuditId: checkoutAuditRef.id');
+        expect(checkoutFunction).toContain('actorId: context.auth.uid');
+    });
+
+    it('audits only financial fields actually changed by partial Stripe payments and refunds', () => {
+        const partiallyPaidRecipient = {
+            status: 'partial',
+            amountDueCents: 15000,
+            paidAmountCents: 2500,
+            amountPaidCents: 2500,
+            balanceDueCents: 12500,
+            remainingBalanceCents: 12500,
+            refundedAmountCents: 0,
+            amountRefundedCents: 0
+        };
+        const paidUpdate = buildTeamFeePaidUpdate({
+            recipient: partiallyPaidRecipient,
+            eventId: 'evt_partial',
+            receivedAt: 'server-now',
+            session: { amount_total: 5000, currency: 'usd' }
+        });
+        expect(getChangedTeamFeeFinancialFields(partiallyPaidRecipient, paidUpdate)).toEqual([
+            'balanceDueCents',
+            'amountPaidCents',
+            'paidAmountCents'
+        ]);
+
+        const refundUpdate = buildTeamFeeStripeRefundUpdate({
+            recipient: partiallyPaidRecipient,
+            refund: { id: 're_partial', status: 'succeeded' },
+            amountCents: 500,
+            actorId: 'admin_1',
+            refundedAt: 'server-now'
+        });
+        expect(getChangedTeamFeeFinancialFields(partiallyPaidRecipient, refundUpdate)).toEqual([
+            'balanceDueCents',
+            'remainingBalanceCents',
+            'amountPaidCents',
+            'paidAmountCents',
+            'amountRefundedCents',
+            'refundedAmountCents'
+        ]);
     });
 
     it('guards team fee webhook processing behind the current checkout attempt', () => {

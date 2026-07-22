@@ -11,8 +11,10 @@ import {
     doc,
     getDocs,
     query,
+    serverTimestamp,
     setDoc,
     updateDoc,
+    writeBatch,
     where
 } from 'firebase/firestore';
 import { extractMatchBlock } from '../../scripts/validate-firebase-rules-ci.mjs';
@@ -58,11 +60,22 @@ describe('team fee recipient Firestore rules', () => {
         expect(nestedRecipientBlock).toContain('allow update: if canWriteTeamFeeFinancialState(teamId)');
     });
 
+    it('requires financial recipient updates to create a matching actor-attributed audit', () => {
+        expect(rules).toContain('function hasRequiredTeamFeeMutationAudit(teamId, batchId, recipientId)');
+        expect(rules).toContain('existsAfter(auditPath)');
+        expect(rules).toContain('getAfter(auditPath).data.actorId == request.auth.uid');
+        expect(rules).toContain("request.resource.data.get('latestAuditAt', null) == request.time");
+        expect(rules).toContain('getAfter(auditPath).data.changedFields.toSet() == affectedKeys.intersection(financialFields.toSet())');
+        expect(rules).not.toContain("request.resource.data.get('latestAuditActorId', '') == request.auth.uid");
+        expect(nestedRecipientBlock).toContain('hasRequiredTeamFeeMutationAudit(teamId, batchId, recipientId)');
+    });
+
     it('blocks private billing fields on parent-readable fee recipient documents while keeping adminBilling admin-only', () => {
         expect(rules).toContain('function hasNoPrivateTeamFeeBillingFields(data)');
         expect(rules).toContain('function hasNoIntroducedPrivateTeamFeeBillingFields()');
         expect(rules).toContain("'stripePaymentIntentId'");
         expect(rules).toContain("'recordedBy'");
+        expect(rules).toContain("'latestAuditActorId'");
         expect(rules).toContain('hasNoPrivateTeamFeeBillingFields(request.resource.data)');
         expect(rules).toContain('hasNoIntroducedPrivateTeamFeeBillingFields()');
         expect(rules).toContain("request.resource.data.get('stripePaymentIntentId', null) == null");
@@ -70,8 +83,20 @@ describe('team fee recipient Firestore rules', () => {
         expect(rules).toContain('allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);');
     });
 
+    it('allows atomic append-only fee audit entries from the authenticated team admin', () => {
+        expect(nestedRecipientBlock).toContain('match /audit/{auditId} {');
+        expect(nestedRecipientBlock).toContain("data.get('latestAuditId', '') == auditId");
+        expect(nestedRecipientBlock).toContain("data.get('latestAuditAt', null) == request.time");
+        expect(nestedRecipientBlock).toContain('request.resource.data.actorId == request.auth.uid');
+        expect(nestedRecipientBlock).toContain('request.resource.data.changedAt == request.time');
+        expect(nestedRecipientBlock).toContain('teamFeeAuditMatchesParentMutation(teamId, batchId, recipientId, request.resource.data)');
+        expect(nestedRecipientBlock).toContain('allow update, delete: if false;');
+        expect(rules).toContain("'stripe_checkout_created'");
+    });
+
     describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('fee recipient rules engine coverage', () => {
         let testEnv;
+        let auditSequence = 0;
 
         beforeAll(async () => {
             testEnv = await initializeTestEnvironment({
@@ -125,6 +150,27 @@ describe('team fee recipient Firestore rules', () => {
             };
         }
 
+        async function writeAuditedUpdate(firestore, teamId, batchId, recipientId, actorId, update, auditOverrides = {}) {
+            const batch = writeBatch(firestore);
+            const auditId = `fee_mutation_${recipientId}_${actorId}_${++auditSequence}`;
+            batch.update(recipientRef(firestore, teamId, batchId, recipientId), {
+                ...update,
+                latestAuditId: auditId,
+                latestAuditAt: serverTimestamp()
+            });
+            batch.set(doc(firestore, `teams/${teamId}/feeBatches/${batchId}/feeRecipients/${recipientId}/audit/${auditId}`), {
+                teamId,
+                batchId,
+                recipientId,
+                actorId,
+                changedFields: Object.keys(update),
+                mutationType: 'fee_update',
+                changedAt: serverTimestamp(),
+                ...auditOverrides
+            });
+            return batch.commit();
+        }
+
         async function seedRecipient(path, data) {
             await testEnv.withSecurityRulesDisabled(async (context) => {
                 await setDoc(doc(context.firestore(), path), data);
@@ -154,7 +200,8 @@ describe('team fee recipient Firestore rules', () => {
             await assertFails(setDoc(invalidBatchRef, recipientPayload('team-a', 'batch-b')));
             await assertSucceeds(setDoc(validRef, recipientPayload()));
             await assertFails(updateDoc(validRef, { batchId: 'batch-b' }));
-            await assertSucceeds(updateDoc(validRef, { status: 'paid' }));
+            await assertFails(updateDoc(validRef, { status: 'paid' }));
+            await assertSucceeds(writeAuditedUpdate(ownerDb, 'team-a', 'batch-a', 'valid', 'owner-a', { status: 'paid' }));
             await assertSucceeds(deleteDoc(validRef));
         });
 
@@ -181,10 +228,18 @@ describe('team fee recipient Firestore rules', () => {
                 'batch-a',
                 'financial-state'
             );
-            await assertSucceeds(updateDoc(ownerRef, {
+            await assertFails(updateDoc(ownerRef, {
                 amountDueCents: 2000,
                 status: 'partial'
             }));
+            await assertSucceeds(writeAuditedUpdate(
+                authedFirestore('owner-a', 'owner-a@example.com'),
+                'team-a',
+                'batch-a',
+                'financial-state',
+                'owner-a',
+                { amountDueCents: 2000, status: 'partial' }
+            ));
 
             const adminRef = recipientRef(
                 authedFirestore('admin-a', 'admin-a@example.com'),
@@ -192,10 +247,104 @@ describe('team fee recipient Firestore rules', () => {
                 'batch-a',
                 'financial-state'
             );
-            await assertSucceeds(updateDoc(adminRef, {
+            await assertFails(updateDoc(adminRef, {
                 amountDueCents: 0,
                 status: 'paid'
             }));
+            await assertSucceeds(writeAuditedUpdate(
+                authedFirestore('admin-a', 'admin-a@example.com'),
+                'team-a',
+                'batch-a',
+                'financial-state',
+                'admin-a',
+                { amountDueCents: 0, status: 'paid' }
+            ));
+        });
+
+        it('denies financial updates with malformed or mismatched audit contents', async () => {
+            await seedRecipient(
+                'teams/team-a/feeBatches/batch-a/feeRecipients/invalid-audit',
+                recipientPayload()
+            );
+            const ownerDb = authedFirestore('owner-a', 'owner-a@example.com');
+
+            await assertFails(writeAuditedUpdate(
+                ownerDb,
+                'team-a',
+                'batch-a',
+                'invalid-audit',
+                'owner-a',
+                { status: 'paid', amountDueCents: 0 },
+                { changedFields: ['status'] }
+            ));
+            await assertFails(writeAuditedUpdate(
+                ownerDb,
+                'team-a',
+                'batch-a',
+                'invalid-audit',
+                'owner-a',
+                { status: 'paid', amountDueCents: 0 },
+                { mutationType: 'invented_mutation' }
+            ));
+        });
+
+        it('denies phantom audits without a matching atomic financial mutation', async () => {
+            const ownerDb = authedFirestore('owner-a', 'owner-a@example.com');
+            await seedRecipient(
+                'teams/team-a/feeBatches/batch-a/feeRecipients/existing-recipient',
+                recipientPayload()
+            );
+            const auditPayload = {
+                teamId: 'team-a',
+                batchId: 'batch-a',
+                recipientId: 'existing-recipient',
+                actorId: 'owner-a',
+                changedFields: ['status'],
+                mutationType: 'fee_update',
+                changedAt: serverTimestamp()
+            };
+
+            await assertFails(setDoc(
+                doc(ownerDb, 'teams/team-a/feeBatches/batch-a/feeRecipients/existing-recipient/audit/phantom'),
+                auditPayload
+            ));
+            await assertFails(setDoc(
+                doc(ownerDb, 'teams/team-a/feeBatches/batch-a/feeRecipients/missing-recipient/audit/phantom'),
+                { ...auditPayload, recipientId: 'missing-recipient' }
+            ));
+
+            const phantomBatch = writeBatch(ownerDb);
+            phantomBatch.update(
+                recipientRef(ownerDb, 'team-a', 'batch-a', 'existing-recipient'),
+                { latestAuditId: 'phantom', latestAuditAt: serverTimestamp() }
+            );
+            phantomBatch.set(
+                doc(ownerDb, 'teams/team-a/feeBatches/batch-a/feeRecipients/existing-recipient/audit/phantom'),
+                auditPayload
+            );
+            await assertFails(phantomBatch.commit());
+        });
+
+        it('accepts an audit that omits a supplied financial field whose value did not change', async () => {
+            await seedRecipient(
+                'teams/team-a/feeBatches/batch-a/feeRecipients/second-partial-payment',
+                {
+                    ...recipientPayload(),
+                    status: 'partial',
+                    amountPaidCents: 500,
+                    remainingBalanceCents: 2000
+                }
+            );
+
+            await assertSucceeds(writeAuditedUpdate(
+                authedFirestore('owner-a', 'owner-a@example.com'),
+                'team-a',
+                'batch-a',
+                'second-partial-payment',
+                'owner-a',
+                { status: 'partial', amountPaidCents: 1000, remainingBalanceCents: 1500 },
+                { changedFields: ['remainingBalanceCents', 'amountPaidCents'] }
+            ));
         });
 
         it('preserves scoped collection-group reads for linked parents and team admins', async () => {
