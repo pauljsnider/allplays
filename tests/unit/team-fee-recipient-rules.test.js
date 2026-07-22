@@ -96,6 +96,7 @@ describe('team fee recipient Firestore rules', () => {
 
     describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('fee recipient rules engine coverage', () => {
         let testEnv;
+        let auditSequence = 0;
 
         beforeAll(async () => {
             testEnv = await initializeTestEnvironment({
@@ -151,7 +152,7 @@ describe('team fee recipient Firestore rules', () => {
 
         async function writeAuditedUpdate(firestore, teamId, batchId, recipientId, actorId, update, auditOverrides = {}) {
             const batch = writeBatch(firestore);
-            const auditId = `fee_mutation_${recipientId}`;
+            const auditId = `fee_mutation_${recipientId}_${actorId}_${++auditSequence}`;
             batch.update(recipientRef(firestore, teamId, batchId, recipientId), {
                 ...update,
                 latestAuditId: auditId,
