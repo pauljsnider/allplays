@@ -589,7 +589,7 @@ test('@visual app auth screen exposes sign in, sign up, Google, activation code,
     await expect(page.getByText('We’ll verify it after you sign in or create your account.')).toBeVisible();
     await expect(page.getByLabel('Join code')).toHaveValue('AB12CD34');
     await expect(page.getByRole('button', { name: 'Continue with Google' })).toBeVisible();
-    await expect(page.getByRole('link', { name: 'Enter join code' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Enter join code' })).toHaveCount(0);
     await expect(page.getByRole('link', { name: 'Account action' })).toHaveCount(0);
     await expectVisualSnapshot(page, 'auth-join-code-signup.png', {
         maxDiffPixels: undefined,
