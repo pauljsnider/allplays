@@ -421,6 +421,25 @@ describe('team fee checkout function helpers', () => {
         expect(teamFeeWebhook).toContain('getChangedTeamFeeFinancialFields(recipient, recipientUpdate)');
     });
 
+    it('atomically audits balance initialization when creating a Stripe checkout', () => {
+        const source = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
+        const checkoutFunction = source.slice(
+            source.indexOf('exports.createStripeTeamFeeCheckout'),
+            source.indexOf('exports.refundStripeTeamFeePayment')
+        );
+
+        expect(getChangedTeamFeeFinancialFields(
+            { amountCents: 7500 },
+            { balanceDueCents: 7500 }
+        )).toEqual(['balanceDueCents']);
+        expect(checkoutFunction).toContain('await firestore.runTransaction(async (transaction) => {');
+        expect(checkoutFunction).toContain('buildTeamFeeAuditRef(recipientRef, `stripe_checkout_${session.id}`)');
+        expect(checkoutFunction).toContain('getChangedTeamFeeFinancialFields(latestRecipient, recipientUpdate)');
+        expect(checkoutFunction).toContain("mutationType: 'stripe_checkout_created'");
+        expect(checkoutFunction).toContain('latestAuditId: checkoutAuditRef.id');
+        expect(checkoutFunction).toContain('actorId: context.auth.uid');
+    });
+
     it('audits only financial fields actually changed by partial Stripe payments and refunds', () => {
         const partiallyPaidRecipient = {
             status: 'partial',

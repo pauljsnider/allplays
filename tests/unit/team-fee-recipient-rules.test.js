@@ -91,6 +91,7 @@ describe('team fee recipient Firestore rules', () => {
         expect(nestedRecipientBlock).toContain('request.resource.data.changedAt == request.time');
         expect(nestedRecipientBlock).toContain('teamFeeAuditMatchesParentMutation(teamId, batchId, recipientId, request.resource.data)');
         expect(nestedRecipientBlock).toContain('allow update, delete: if false;');
+        expect(rules).toContain("'stripe_checkout_created'");
     });
 
     describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('fee recipient rules engine coverage', () => {

@@ -1029,6 +1029,7 @@ service cloud.firestore {
                'offline_refund',
                'cancellation',
                'stripe_refund',
+               'stripe_checkout_created',
                'stripe_checkout_paid'
              ];
     }

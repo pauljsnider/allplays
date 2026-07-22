@@ -4244,20 +4244,58 @@ exports.createStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
     })
   });
 
-  const now = admin.firestore.FieldValue.serverTimestamp();
-  await recipientRef.set({
-    checkoutUrl: session.url,
-    paymentLink: session.url,
-    checkoutStatus: 'open',
-    paymentProvider: 'stripe',
-    stripeCheckoutSessionId: session.id,
-    checkoutAttemptToken,
-    stripePaymentStatus: session.payment_status || 'unpaid',
-    checkoutAmountCents: amountCents,
-    balanceDueCents: amountCents,
-    checkoutCreatedAt: now,
-    updatedAt: now
-  }, { merge: true });
+  const changedAt = admin.firestore.FieldValue.serverTimestamp();
+  const checkoutAuditRef = buildTeamFeeAuditRef(recipientRef, `stripe_checkout_${session.id}`);
+  await firestore.runTransaction(async (transaction) => {
+    const latestSnap = await transaction.get(recipientRef);
+    if (!latestSnap.exists) {
+      throw new functions.https.HttpsError('not-found', 'Fee recipient not found.');
+    }
+
+    const latestRecipient = { id: input.recipientId, ...(latestSnap.data() || {}) };
+    if (latestRecipient.teamId !== input.teamId || latestRecipient.batchId !== input.batchId) {
+      throw new functions.https.HttpsError('failed-precondition', 'Fee recipient does not match the requested fee batch.');
+    }
+    if (!isTeamFeeCheckoutEligible(latestRecipient) || getTeamFeeBalanceCents(latestRecipient) !== amountCents) {
+      throw new functions.https.HttpsError('aborted', 'The team fee balance changed before checkout was saved.');
+    }
+    if (!isEligibleTeamFeePayer({ team, user, uid: context.auth.uid, email, recipient: latestRecipient })) {
+      throw new functions.https.HttpsError('permission-denied', 'You no longer have access to pay this team fee.');
+    }
+
+    const recipientUpdate = {
+      checkoutUrl: session.url,
+      paymentLink: session.url,
+      checkoutStatus: 'open',
+      paymentProvider: 'stripe',
+      stripeCheckoutSessionId: session.id,
+      checkoutAttemptToken,
+      stripePaymentStatus: session.payment_status || 'unpaid',
+      checkoutAmountCents: amountCents,
+      balanceDueCents: amountCents,
+      checkoutCreatedAt: changedAt,
+      updatedAt: changedAt
+    };
+    const changedFields = getChangedTeamFeeFinancialFields(latestRecipient, recipientUpdate);
+    const auditedUpdate = changedFields.length > 0 ? {
+      ...recipientUpdate,
+      latestAuditId: checkoutAuditRef.id,
+      latestAuditAt: changedAt
+    } : recipientUpdate;
+
+    transaction.set(recipientRef, auditedUpdate, { merge: true });
+    if (changedFields.length > 0) {
+      transaction.set(checkoutAuditRef, {
+        teamId: input.teamId,
+        batchId: input.batchId,
+        recipientId: input.recipientId,
+        actorId: context.auth.uid,
+        changedFields,
+        mutationType: 'stripe_checkout_created',
+        changedAt
+      });
+    }
+  });
 
   return { checkoutUrl: session.url, sessionId: session.id };
 });
