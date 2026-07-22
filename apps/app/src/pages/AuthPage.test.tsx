@@ -214,8 +214,10 @@ describe('AuthPage signup validation', () => {
     renderAuthPage('/auth?mode=signup');
 
     expect(screen.getByRole('heading', { name: 'Create your account' })).toBeTruthy();
+    expect(screen.getByText('A team or family join code is required. Then verify your email.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Create account' })).toBeTruthy();
     expect(screen.getByLabelText('Join code')).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'Enter join code' })).toBeNull();
   });
 
   it('describes an unverified invite code without claiming it was applied', () => {
@@ -337,14 +339,34 @@ describe('AuthPage password reset', () => {
     cleanup();
   });
 
+  it('exposes disclosure state and reuses the entered sign-in email', () => {
+    renderAuthPage();
+
+    const authEmail = screen.getByLabelText('Email');
+    const trigger = screen.getByRole('button', { name: 'Forgot password?' });
+    fireEvent.change(authEmail, { target: { value: 'coach@example.com' } });
+
+    expect(trigger.getAttribute('aria-expanded')).toBe('false');
+    expect(trigger.getAttribute('aria-controls')).toBe('password-reset-form');
+
+    fireEvent.click(trigger);
+
+    const resetEmail = screen.getByLabelText('Password reset email') as HTMLInputElement;
+    expect(trigger.getAttribute('aria-expanded')).toBe('true');
+    expect(resetEmail.value).toBe('coach@example.com');
+
+    fireEvent.change(resetEmail, { target: { value: 'updated@example.com' } });
+    expect((authEmail as HTMLInputElement).value).toBe('updated@example.com');
+  });
+
   it('shows neutral confirmation copy after requesting a reset', async () => {
     authServiceMocks.sendResetEmail.mockResolvedValue(undefined);
     renderAuthPage();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Forgot password?' }));
-    fireEvent.change(screen.getByLabelText('Password reset email'), {
+    fireEvent.change(screen.getByLabelText('Email'), {
       target: { value: ' Missing@Example.COM ' }
     });
+    fireEvent.click(screen.getByRole('button', { name: 'Forgot password?' }));
     fireEvent.click(screen.getByRole('button', { name: 'Send reset email' }));
 
     await waitFor(() => expect(authServiceMocks.sendResetEmail).toHaveBeenCalledWith('missing@example.com'));

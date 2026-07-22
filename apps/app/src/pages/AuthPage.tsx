@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent, KeyboardEvent, ReactNode } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Eye, EyeOff, KeyRound, LogIn, Mail, ShieldCheck } from 'lucide-react';
 import { AuthFrame } from '../components/AuthFrame';
 import {
@@ -39,7 +39,6 @@ export function AuthPage({ auth }: { auth: AuthState }) {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [activationCode, setActivationCode] = useState(inviteCode);
-  const [resetEmail, setResetEmail] = useState('');
   const [showReset, setShowReset] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
@@ -51,7 +50,7 @@ export function AuthPage({ auth }: { auth: AuthState }) {
 
   const title = mode === 'signup' ? 'Create your account' : 'Sign in';
   const subtitle = mode === 'signup'
-    ? 'Use any 8-character ALL PLAYS join code, then verify your email.'
+    ? 'A team or family join code is required. Then verify your email.'
     : 'Use email/password or Google to continue.';
 
   const postAuthRoute = useMemo(() => {
@@ -215,7 +214,7 @@ export function AuthPage({ auth }: { auth: AuthState }) {
     setBusy(true);
 
     try {
-      const normalizedEmail = normalizeAuthEmail(resetEmail || email);
+      const normalizedEmail = normalizeAuthEmail(email);
       if (!isValidAuthEmail(normalizedEmail)) {
         throw new Error('Enter a valid email address.');
       }
@@ -357,15 +356,32 @@ export function AuthPage({ auth }: { auth: AuthState }) {
       </button>
 
       {mode === 'login' ? (
-        <button type="button" className="mt-3 w-full text-center text-sm font-black text-primary-700" onClick={() => setShowReset((current) => !current)}>
+        <button
+          type="button"
+          className="mt-3 w-full text-center text-sm font-black text-primary-700"
+          aria-expanded={showReset}
+          aria-controls="password-reset-form"
+          onClick={() => setShowReset((current) => !current)}
+        >
           Forgot password?
         </button>
       ) : null}
 
       {showReset ? (
-        <form className="mt-3 rounded-xl border border-gray-200 bg-gray-50 p-3" onSubmit={handleReset}>
+        <form id="password-reset-form" className="mt-3 rounded-xl border border-gray-200 bg-gray-50 p-3" onSubmit={handleReset}>
           <label htmlFor="password-reset-email" className="text-xs font-extrabold uppercase tracking-[0.04em] text-gray-500">Password reset email</label>
-          <input id="password-reset-email" className="auth-input mt-2" type="email" value={resetEmail} onChange={(event) => setResetEmail(event.target.value)} placeholder={email || 'you@example.com'} />
+          <input
+            id="password-reset-email"
+            className="auth-input mt-2"
+            type="email"
+            value={email}
+            onChange={(event) => {
+              setEmail(event.target.value);
+              clearStatus();
+            }}
+            placeholder="you@example.com"
+            autoComplete="email"
+          />
           <button type="submit" className="secondary-button mt-3 w-full" disabled={busy}>
             Send reset email
           </button>
@@ -378,10 +394,6 @@ export function AuthPage({ auth }: { auth: AuthState }) {
         aria-labelledby={`auth-tab-${mode === 'login' ? 'signup' : 'login'}`}
         hidden
       />
-
-      <div className="mt-4 flex flex-wrap justify-center gap-3 text-xs font-bold text-gray-500">
-        <Link to="/accept-invite" className="text-primary-700">Enter join code</Link>
-      </div>
     </AuthFrame>
   );
 }
