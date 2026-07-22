@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen } from '@testing-library/react';
 import { HashRouter, MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AcceptInvite } from './AcceptInvite';
@@ -88,6 +88,7 @@ describe('AcceptInvite', () => {
         renderAcceptInvite();
 
         expect(await screen.findByText('Invite accepted.')).toBeTruthy();
+        expect(screen.getByRole('status')).toHaveTextContent('Invite accepted.');
         expect(screen.queryByText('Home route')).toBeNull();
 
         await new Promise((resolve) => setTimeout(resolve, 750));
@@ -100,6 +101,21 @@ describe('AcceptInvite', () => {
             refresh: auth.refresh
         });
         expect(inviteRedemptionMocks.redeemSignedInInvite).toHaveBeenCalledTimes(1);
+    });
+
+    it('announces invite progress and errors with live semantics', async () => {
+        let rejectRedemption: (error: Error) => void = () => undefined;
+        inviteRedemptionMocks.redeemSignedInInvite.mockImplementation(() => new Promise((_resolve, reject) => {
+            rejectRedemption = reject;
+        }));
+
+        renderAcceptInvite();
+
+        expect(await screen.findByRole('status')).toHaveTextContent('Processing invite...');
+        await act(async () => {
+            rejectRedemption(new Error('Invite is no longer valid.'));
+        });
+        expect(await screen.findByRole('alert')).toHaveTextContent('Invite is no longer valid.');
     });
 
     it('does not apply the delayed success redirect after leaving the invite route', async () => {

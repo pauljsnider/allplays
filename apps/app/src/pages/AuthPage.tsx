@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
-import type { FormEvent, ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { FormEvent, KeyboardEvent, ReactNode } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { Eye, KeyRound, LogIn, Mail, ShieldCheck } from 'lucide-react';
+import { Eye, EyeOff, KeyRound, LogIn, Mail, ShieldCheck } from 'lucide-react';
 import { AuthFrame } from '../components/AuthFrame';
 import {
   completeGoogleRedirect,
@@ -41,9 +41,13 @@ export function AuthPage({ auth }: { auth: AuthState }) {
   const [activationCode, setActivationCode] = useState(inviteCode);
   const [resetEmail, setResetEmail] = useState('');
   const [showReset, setShowReset] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const loginTabRef = useRef<HTMLButtonElement>(null);
+  const signupTabRef = useRef<HTMLButtonElement>(null);
 
   const title = mode === 'signup' ? 'Create your account' : 'Sign in';
   const subtitle = mode === 'signup'
@@ -95,6 +99,30 @@ export function AuthPage({ auth }: { auth: AuthState }) {
   const clearStatus = () => {
     setError('');
     setMessage('');
+  };
+
+  const selectMode = (nextMode: AuthMode, focus = false) => {
+    setMode(nextMode);
+    if (focus) {
+      const tabRef = nextMode === 'login' ? loginTabRef : signupTabRef;
+      tabRef.current?.focus();
+    }
+  };
+
+  const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+    let nextMode: AuthMode | null = null;
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      nextMode = mode === 'login' ? 'signup' : 'login';
+    } else if (event.key === 'Home') {
+      nextMode = 'login';
+    } else if (event.key === 'End') {
+      nextMode = 'signup';
+    }
+
+    if (nextMode) {
+      event.preventDefault();
+      selectMode(nextMode, true);
+    }
   };
 
   const handleEmailSubmit = async (event: FormEvent) => {
@@ -220,18 +248,42 @@ export function AuthPage({ auth }: { auth: AuthState }) {
         </div>
       ) : null}
 
-      <div className="mt-4 grid grid-cols-2 gap-2 rounded-xl bg-gray-100 p-1">
-        <button type="button" className={`min-h-10 rounded-lg text-sm font-black ${mode === 'login' ? 'bg-white text-primary-700 shadow-sm' : 'text-gray-600'}`} onClick={() => setMode('login')}>
+      <div className="mt-4 grid grid-cols-2 gap-2 rounded-xl bg-gray-100 p-1" role="tablist" aria-label="Authentication mode">
+        <button
+          ref={loginTabRef}
+          id="auth-tab-login"
+          type="button"
+          role="tab"
+          aria-selected={mode === 'login'}
+          aria-controls="auth-panel-login"
+          tabIndex={mode === 'login' ? 0 : -1}
+          className={`min-h-10 rounded-lg text-sm font-black ${mode === 'login' ? 'bg-white text-primary-700 shadow-sm' : 'text-gray-600'}`}
+          onClick={() => selectMode('login')}
+          onKeyDown={handleTabKeyDown}
+        >
           Sign in
         </button>
-        <button type="button" className={`min-h-10 rounded-lg text-sm font-black ${mode === 'signup' ? 'bg-white text-primary-700 shadow-sm' : 'text-gray-600'}`} onClick={() => setMode('signup')}>
+        <button
+          ref={signupTabRef}
+          id="auth-tab-signup"
+          type="button"
+          role="tab"
+          aria-selected={mode === 'signup'}
+          aria-controls="auth-panel-signup"
+          tabIndex={mode === 'signup' ? 0 : -1}
+          className={`min-h-10 rounded-lg text-sm font-black ${mode === 'signup' ? 'bg-white text-primary-700 shadow-sm' : 'text-gray-600'}`}
+          onClick={() => selectMode('signup')}
+          onKeyDown={handleTabKeyDown}
+        >
           Sign up
         </button>
       </div>
 
+      <div id={`auth-panel-${mode}`} role="tabpanel" aria-labelledby={`auth-tab-${mode}`}>
       <form className="mt-4 space-y-3" onSubmit={handleEmailSubmit}>
-        <Field icon={Mail} label="Email">
+        <Field icon={Mail} label="Email" htmlFor="auth-email">
           <input
+            id="auth-email"
             className="auth-input"
             type="email"
             value={email}
@@ -243,38 +295,41 @@ export function AuthPage({ auth }: { auth: AuthState }) {
             autoComplete="email"
           />
         </Field>
-        <Field icon={KeyRound} label="Password">
-          <input
-            className="auth-input"
-            type="password"
+        <Field icon={KeyRound} label="Password" htmlFor="auth-password">
+          <PasswordInput
+            id="auth-password"
             value={password}
-            onChange={(event) => {
-              setPassword(event.target.value);
+            visible={showPassword}
+            onChange={(value) => {
+              setPassword(value);
               clearStatus();
             }}
-            required
-            minLength={6}
+            onToggle={() => setShowPassword((current) => !current)}
             autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+            showLabel="Show password"
+            hideLabel="Hide password"
           />
         </Field>
         {mode === 'signup' ? (
           <>
-            <Field icon={KeyRound} label="Confirm password">
-              <input
-                className="auth-input"
-                type="password"
+            <Field icon={KeyRound} label="Confirm password" htmlFor="auth-confirm-password">
+              <PasswordInput
+                id="auth-confirm-password"
                 value={confirmPassword}
-                onChange={(event) => {
-                  setConfirmPassword(event.target.value);
+                visible={showConfirmPassword}
+                onChange={(value) => {
+                  setConfirmPassword(value);
                   clearStatus();
                 }}
-                required
-                minLength={6}
+                onToggle={() => setShowConfirmPassword((current) => !current)}
                 autoComplete="new-password"
+                showLabel="Show confirmation password"
+                hideLabel="Hide confirmation password"
               />
             </Field>
-            <Field icon={Eye} label="Join code">
+            <Field icon={Eye} label="Join code" htmlFor="auth-join-code">
               <input
+                id="auth-join-code"
                 className="auth-input font-mono uppercase tracking-widest"
                 value={activationCode}
                 onChange={(event) => {
@@ -288,8 +343,9 @@ export function AuthPage({ auth }: { auth: AuthState }) {
           </>
         ) : null}
 
-        {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm font-bold text-rose-700">{error}</div> : null}
-        {message ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-bold text-emerald-700">{message}</div> : null}
+        {error ? <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm font-bold text-rose-700">{error}</div> : null}
+        {message ? <div role="status" aria-live="polite" className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-bold text-emerald-700">{message}</div> : null}
+        {busy ? <div role="status" aria-live="polite" className="sr-only">Authentication in progress.</div> : null}
 
         <button type="submit" className="primary-button w-full" disabled={busy}>
           {busy ? 'Working...' : mode === 'signup' ? 'Create account' : 'Sign in'}
@@ -315,6 +371,13 @@ export function AuthPage({ auth }: { auth: AuthState }) {
           </button>
         </form>
       ) : null}
+      </div>
+      <div
+        id={`auth-panel-${mode === 'login' ? 'signup' : 'login'}`}
+        role="tabpanel"
+        aria-labelledby={`auth-tab-${mode === 'login' ? 'signup' : 'login'}`}
+        hidden
+      />
 
       <div className="mt-4 flex flex-wrap justify-center gap-3 text-xs font-bold text-gray-500">
         <Link to="/accept-invite" className="text-primary-700">Enter join code</Link>
@@ -323,14 +386,49 @@ export function AuthPage({ auth }: { auth: AuthState }) {
   );
 }
 
-function Field({ icon: Icon, label, children }: { icon: typeof Mail; label: string; children: ReactNode }) {
+function Field({ icon: Icon, label, htmlFor, children }: { icon: typeof Mail; label: string; htmlFor: string; children: ReactNode }) {
   return (
-    <label className="block">
-      <span className="mb-1.5 flex items-center gap-1.5 text-xs font-extrabold uppercase tracking-[0.04em] text-gray-500">
+    <div className="block">
+      <label htmlFor={htmlFor} className="mb-1.5 flex items-center gap-1.5 text-xs font-extrabold uppercase tracking-[0.04em] text-gray-500">
         <Icon className="h-3.5 w-3.5" aria-hidden="true" />
         {label}
-      </span>
+      </label>
       {children}
-    </label>
+    </div>
+  );
+}
+
+function PasswordInput({ id, value, visible, onChange, onToggle, autoComplete, showLabel, hideLabel }: {
+  id: string;
+  value: string;
+  visible: boolean;
+  onChange: (value: string) => void;
+  onToggle: () => void;
+  autoComplete: string;
+  showLabel: string;
+  hideLabel: string;
+}) {
+  return (
+    <div className="relative">
+      <input
+        id={id}
+        className="auth-input pr-12"
+        type={visible ? 'text' : 'password'}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        required
+        minLength={6}
+        autoComplete={autoComplete}
+      />
+      <button
+        type="button"
+        className="absolute inset-y-0 right-0 flex w-12 items-center justify-center text-gray-500"
+        aria-label={visible ? hideLabel : showLabel}
+        aria-pressed={visible}
+        onClick={onToggle}
+      >
+        {visible ? <EyeOff className="h-5 w-5" aria-hidden="true" /> : <Eye className="h-5 w-5" aria-hidden="true" />}
+      </button>
+    </div>
   );
 }

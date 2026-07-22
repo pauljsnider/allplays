@@ -92,7 +92,7 @@ describe('AuthPage native post-login routing', () => {
 
     fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'coach@example.com' } });
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'password123' } });
-    fireEvent.click(screen.getAllByRole('button', { name: 'Sign in' })[1]);
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
 
     await waitFor(() => expect(authServiceMocks.signInWithEmail).toHaveBeenCalledWith('coach@example.com', 'password123'));
     await waitFor(() => expect(window.location.hash).toBe('#/home'));
@@ -116,6 +116,85 @@ describe('AuthPage native post-login routing', () => {
     await waitFor(() => expect(authServiceMocks.signInWithGoogleAccount).toHaveBeenCalledWith(null));
     await waitFor(() => expect(window.location.hash).toBe('#/home'));
     expect(window.location.reload).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('AuthPage accessibility controls', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    auth.refresh = vi.fn();
+    auth.signOut = vi.fn();
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('exposes authentication modes as keyboard-operable tabs', () => {
+    renderAuthPage();
+
+    const tablist = screen.getByRole('tablist', { name: 'Authentication mode' });
+    const signInTab = screen.getByRole('tab', { name: 'Sign in' });
+    const signUpTab = screen.getByRole('tab', { name: 'Sign up' });
+
+    expect(tablist).toBeTruthy();
+    expect(signInTab.getAttribute('aria-selected')).toBe('true');
+    expect(document.getElementById(signInTab.getAttribute('aria-controls') || '')).toBeTruthy();
+    expect(document.getElementById(signUpTab.getAttribute('aria-controls') || '')).toBeTruthy();
+    expect(screen.getByRole('tabpanel').getAttribute('aria-labelledby')).toBe('auth-tab-login');
+
+    fireEvent.keyDown(signInTab, { key: 'ArrowRight' });
+    expect(signUpTab.getAttribute('aria-selected')).toBe('true');
+    expect(document.activeElement).toBe(signUpTab);
+    expect(screen.getByRole('tabpanel').getAttribute('aria-labelledby')).toBe('auth-tab-signup');
+
+    fireEvent.keyDown(signUpTab, { key: 'Home' });
+    expect(document.activeElement).toBe(signInTab);
+    fireEvent.keyDown(signInTab, { key: 'End' });
+    expect(document.activeElement).toBe(signUpTab);
+    fireEvent.keyDown(signUpTab, { key: 'ArrowLeft' });
+    expect(document.activeElement).toBe(signInTab);
+  });
+
+  it('shows and hides password fields without clearing their values', () => {
+    renderAuthPage('/auth?mode=signup');
+
+    const password = screen.getByLabelText('Password');
+    const confirmation = screen.getByLabelText('Confirm password');
+    fireEvent.change(password, { target: { value: 'secret1' } });
+    fireEvent.change(confirmation, { target: { value: 'secret1' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show password' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Show confirmation password' }));
+    expect(password.getAttribute('type')).toBe('text');
+    expect(confirmation.getAttribute('type')).toBe('text');
+    expect((password as HTMLInputElement).value).toBe('secret1');
+    expect((confirmation as HTMLInputElement).value).toBe('secret1');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Hide password' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Hide confirmation password' }));
+    expect(password.getAttribute('type')).toBe('password');
+    expect(confirmation.getAttribute('type')).toBe('password');
+    expect((password as HTMLInputElement).value).toBe('secret1');
+    expect((confirmation as HTMLInputElement).value).toBe('secret1');
+  });
+
+  it('announces authentication errors and progress with live semantics', async () => {
+    authServiceMocks.signInWithEmail.mockImplementation(() => new Promise(() => undefined));
+    renderAuthPage();
+
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'coach@example.com' } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'password123' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    expect(await screen.findByRole('status')).toHaveTextContent('Authentication in progress.');
+
+    cleanup();
+    authServiceMocks.signInWithEmail.mockRejectedValue(new Error('Email or password is incorrect.'));
+    renderAuthPage();
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'coach@example.com' } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'wrong-password' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Email or password is incorrect.');
   });
 });
 
@@ -227,7 +306,7 @@ describe('AuthPage sign-in error state', () => {
 
     const emailInput = screen.getByLabelText('Email');
     const passwordInput = screen.getByLabelText('Password');
-    const submitButton = screen.getAllByRole('button', { name: 'Sign in' })[1];
+    const submitButton = screen.getByRole('button', { name: 'Sign in' });
 
     fireEvent.change(emailInput, { target: { value: 'coach@example.com' } });
     fireEvent.change(passwordInput, { target: { value: 'wrong-password' } });
@@ -270,6 +349,7 @@ describe('AuthPage password reset', () => {
 
     await waitFor(() => expect(authServiceMocks.sendResetEmail).toHaveBeenCalledWith('missing@example.com'));
     expect(await screen.findByText("If an account exists for that email, a reset email has been queued.")).toBeTruthy();
+    expect(screen.getByRole('status')).toHaveTextContent("If an account exists for that email, a reset email has been queued.");
     expect(screen.queryByText(/no all plays account/i)).toBeNull();
   });
 });
