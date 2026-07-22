@@ -40,6 +40,9 @@ jobs:
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
+      - name: Verify candidate response headers
+        run: node scripts/verify-response-headers.mjs https://game-flow-c6311.web.app
+
       - name: Run production smoke
         run: npx playwright test --config=playwright.smoke.config.js --reporter=line
         env:
