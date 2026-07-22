@@ -241,7 +241,11 @@ function Status({ icon: Icon, message, tone }: { icon: typeof KeyRound; message:
   };
 
   return (
-    <div className={`mt-4 flex items-center gap-2 rounded-xl border p-3 text-sm font-bold ${classes[tone]}`}>
+    <div
+      role={tone === 'error' ? 'alert' : 'status'}
+      aria-live={tone === 'error' ? 'assertive' : 'polite'}
+      className={`mt-4 flex items-center gap-2 rounded-xl border p-3 text-sm font-bold ${classes[tone]}`}
+    >
       <Icon className="h-4 w-4 flex-none" aria-hidden="true" />
       {message}
     </div>
