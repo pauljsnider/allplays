@@ -43,6 +43,13 @@ jobs:
       - name: Verify candidate response headers
         run: node scripts/verify-response-headers.mjs https://game-flow-c6311.web.app
 
+      - name: Verify authenticated candidate host
+        run: npx playwright test tests/smoke/candidate-host-auth.spec.js --config=playwright.smoke.config.js --reporter=line
+        env:
+          CANDIDATE_HOST_URL: https://game-flow-c6311.web.app
+          SMOKE_AUTH_EMAIL: ${{ secrets.SMOKE_AUTH_EMAIL }}
+          SMOKE_AUTH_PASSWORD: ${{ secrets.SMOKE_AUTH_PASSWORD }}
+
       - name: Run production smoke
         run: npx playwright test --config=playwright.smoke.config.js --reporter=line
         env:
