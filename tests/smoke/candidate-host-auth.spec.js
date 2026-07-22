@@ -3,10 +3,8 @@ import { expect, test } from '@playwright/test';
 const candidateHostUrl = process.env.CANDIDATE_HOST_URL || '';
 const authEmail = process.env.SMOKE_AUTH_EMAIL || '';
 const authPassword = process.env.SMOKE_AUTH_PASSWORD || '';
-const hasCredentials = Boolean(authEmail && authPassword);
 
 test.skip(!candidateHostUrl, 'CANDIDATE_HOST_URL is required for candidate-host auth smoke');
-test.skip(!hasCredentials, 'SMOKE_AUTH_EMAIL and SMOKE_AUTH_PASSWORD are required for candidate-host auth smoke');
 
 function candidateUrl(path) {
     return new URL(path, candidateHostUrl).toString();
@@ -14,6 +12,8 @@ function candidateUrl(path) {
 
 test('candidate host accepts authentication and loads a protected landing page', async ({ page }) => {
     test.setTimeout(45_000);
+    expect(authEmail, 'SMOKE_AUTH_EMAIL is required for candidate-host auth smoke').toBeTruthy();
+    expect(authPassword, 'SMOKE_AUTH_PASSWORD is required for candidate-host auth smoke').toBeTruthy();
 
     await test.step(`authenticate at ${candidateHostUrl}`, async () => {
         await page.goto(candidateUrl('/login.html'), { waitUntil: 'domcontentloaded' });
@@ -36,9 +36,13 @@ test('candidate host accepts authentication and loads a protected landing page',
     await test.step(`verify authenticated landing page at ${candidateHostUrl}`, async () => {
         const landingUrl = new URL(page.url());
         expect(
-            ['/dashboard.html', '/parent-dashboard.html'],
+            landingUrl.origin,
+            `Candidate post-login assertion failed at ${candidateHostUrl}: unexpected origin ${landingUrl.origin}`
+        ).toBe(new URL(candidateHostUrl).origin);
+        expect(
+            landingUrl.pathname,
             `Candidate post-login assertion failed at ${candidateHostUrl}: unexpected route ${landingUrl.pathname}`
-        ).toContain(landingUrl.pathname);
+        ).toMatch(/^\/(?:dashboard|parent-dashboard)\.html$/);
         await expect(
             page.locator('h1').first(),
             `Candidate post-login assertion failed at ${candidateHostUrl}: authenticated heading was not visible`

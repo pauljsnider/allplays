@@ -17,6 +17,13 @@ describe('candidate-host authenticated smoke coverage', () => {
         expect(spec).toContain("process.env.CANDIDATE_HOST_URL");
         expect(spec).toContain('Candidate authentication failed at ${candidateHostUrl}');
         expect(spec).toContain('Candidate post-login assertion failed at ${candidateHostUrl}');
+        expect(spec).toContain("expect(authEmail, 'SMOKE_AUTH_EMAIL is required for candidate-host auth smoke').toBeTruthy()");
+        expect(spec).toContain("expect(authPassword, 'SMOKE_AUTH_PASSWORD is required for candidate-host auth smoke').toBeTruthy()");
+        expect(spec).not.toContain('test.skip(!hasCredentials');
+        expect(spec).toContain('landingUrl.origin');
+        expect(spec).toContain('toBe(new URL(candidateHostUrl).origin)');
+        expect(spec).toContain("landingUrl.pathname,\n            `Candidate post-login assertion failed");
+        expect(spec).toContain('toMatch(/^\\/(?:dashboard|parent-dashboard)\\.html$/)');
     });
 
     it('does not enable App Check enforcement for candidate authentication', () => {
