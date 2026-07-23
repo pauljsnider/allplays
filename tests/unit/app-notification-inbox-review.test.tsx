@@ -403,4 +403,63 @@ describe('Notification inbox review regressions', () => {
             ]);
         });
     });
+
+    it('marks notifications read optimistically while the backend request is pending', async () => {
+        let resolveMarkAll!: () => void;
+        const onMarkAllRead = vi.fn(() => new Promise<void>((resolve) => {
+            resolveMarkAll = resolve;
+        }));
+
+        render(
+            <NotificationInboxSheet
+                items={[
+                    notificationItem({ id: 'unread-1', readAt: null }),
+                    notificationItem({ id: 'unread-2', readAt: null }),
+                ]}
+                inboxState="ready"
+                uid="user-1"
+                onClose={vi.fn()}
+                onMarkRead={vi.fn(() => Promise.resolve())}
+                onMarkAllRead={onMarkAllRead}
+            />
+        );
+
+        expect(screen.getAllByLabelText('Unread')).toHaveLength(2);
+        fireEvent.click(screen.getByRole('button', { name: /mark all read/i }));
+
+        expect(screen.queryByLabelText('Unread')).toBeNull();
+        expect(screen.getByRole('button', { name: 'Marking all notifications as read' }).hasAttribute('disabled')).toBe(true);
+        expect(onMarkAllRead).toHaveBeenCalledTimes(1);
+
+        resolveMarkAll();
+
+        await waitFor(() => {
+            expect(screen.getByRole('status').textContent).toContain('All read');
+        });
+    });
+
+    it('restores unread notifications and offers retry feedback when mark-all fails', async () => {
+        const rejection = new Error('offline');
+        const onMarkAllRead = vi.fn(() => Promise.reject(rejection));
+        vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+        render(
+            <NotificationInboxSheet
+                items={[notificationItem({ id: 'unread-1', readAt: null })]}
+                inboxState="ready"
+                uid="user-1"
+                onClose={vi.fn()}
+                onMarkRead={vi.fn(() => Promise.resolve())}
+                onMarkAllRead={onMarkAllRead}
+            />
+        );
+
+        fireEvent.click(screen.getByRole('button', { name: /mark all read/i }));
+
+        await waitFor(() => {
+            expect(screen.getByTestId('notification-mark-all-error')).toBeTruthy();
+        });
+        expect(screen.getByLabelText('Unread')).toBeTruthy();
+        expect(screen.getByRole('button', { name: /mark all read/i })).toBeTruthy();
+    });
 });
