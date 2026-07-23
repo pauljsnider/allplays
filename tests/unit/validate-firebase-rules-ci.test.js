@@ -93,21 +93,19 @@ on:
       - master
   workflow_dispatch:
 
+concurrency:
+  group: production-deploy-\${{ github.ref }}
+  cancel-in-progress: true
+
       - name: Checkout
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
       permissions:
         actions: read
-      - name: Detect Storage rules changes
-        id: storage_rules
-        run: |
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          elif git diff --quiet "\${{ github.event.before }}" "\${{ github.sha }}" -- storage.rules; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          fi
-      - name: Detect Firestore configuration changes
+      outputs:
+        storage_changed: \${{ steps.firestore_config.outputs.storage_changed }}
+      - name: Detect Firebase rules changes
         id: firestore_config
         env:
           GH_TOKEN: \${{ github.token }}
@@ -126,11 +124,13 @@ on:
             fi
           done
           if [[ "$lookup_succeeded" != "true" ]]; then
-            echo "The successful production deploy lookup failed; forcing Firestore-first ordering."
+            echo "The successful production deploy lookup failed; forcing authorization rules-first ordering."
             echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "storage_changed=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           git diff --quiet "$last_success_sha" "$GITHUB_SHA" -- firestore.rules firestore.indexes.json
+          git diff --quiet "$last_success_sha" "$GITHUB_SHA" -- storage.rules
       - name: Deploy Firebase Storage rules when available
         env:
           STORAGE_RULES_CHANGED: \${{ needs.prepare-deploy.outputs.storage_changed }}
@@ -160,6 +160,9 @@ on:
             validDeployCommand.replace('  workflow_dispatch:', '  pull_request:')
         )).toThrow('Production push and manual retry triggers');
         expect(() => validateProductionDeployCommand(
+            validDeployCommand.replace('group: production-deploy-${{ github.ref }}', 'group: production-deploy')
+        )).toThrow('Production ref-scoped concurrency');
+        expect(() => validateProductionDeployCommand(
             validDeployCommand.replace('baseline_branch="$GITHUB_REF_NAME"', 'baseline_branch="master"')
         )).toThrow('Production push baseline branch');
         expect(() => validateProductionDeployCommand(
@@ -170,12 +173,10 @@ on:
         )).toThrow('Production successful deploy branch filter');
         expect(() => validateProductionDeployCommand(
             validDeployCommand.replace(
-                `if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          elif git diff --quiet "\${{ github.event.before }}" "\${{ github.sha }}" -- storage.rules; then`,
-                'if git diff --quiet "\${{ github.event.before }}" "\${{ github.sha }}" -- storage.rules; then'
+                'git diff --quiet "$last_success_sha" "$GITHUB_SHA" -- storage.rules',
+                'git diff --quiet "\${{ github.event.before }}" "\${{ github.sha }}" -- storage.rules'
             )
-        )).toThrow('Production Storage rules manual retry-safe change detection');
+        )).toThrow('Production Storage rules successful-deploy baseline');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace('[[ "$STORAGE_RULES_CHANGED" != "true" ]]', '[[ true ]]'))).toThrow(
             'Production Storage rules unchanged-only skip'
         );
@@ -193,7 +194,11 @@ on:
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
             'echo "changed=true" >> "$GITHUB_OUTPUT"',
             'echo "changed=false" >> "$GITHUB_OUTPUT"'
-        ))).toThrow('Production successful deploy lookup failure must force Firestore-first ordering');
+        ))).toThrow('Production successful deploy lookup failure must force authorization rules-first ordering');
+        expect(() => validateProductionDeployCommand(validDeployCommand.replace(
+            'echo "storage_changed=true" >> "$GITHUB_OUTPUT"',
+            'echo "storage_changed=false" >> "$GITHUB_OUTPUT"'
+        ))).toThrow('Production successful deploy lookup failure must force authorization rules-first ordering');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
             'HTTP Error:[[:space:]]*409,[[:space:]]*Requested entity already exists',
             '(^|[^[:alnum:]])409([^[:alnum:]]|$)'
