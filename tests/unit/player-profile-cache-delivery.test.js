@@ -9,7 +9,7 @@ function read(relativePath) {
 describe('player profile cache delivery', () => {
     it('bumps externally loaded entry modules whose Firebase imports changed', () => {
         const entryModules = {
-            'admin.html': 'js/admin.js?v=22',
+            'admin.html': 'js/admin.js?v=23',
             'certificates.html': 'js/certificates/studio.js?v=19',
             'live-game.html': 'js/live-game.js?v=24',
             'live-tracker.html': 'js/live-tracker.js?v=7',

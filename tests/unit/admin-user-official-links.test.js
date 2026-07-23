@@ -70,6 +70,7 @@ describe('admin users official links', () => {
             teamCount: 1
         });
         expect(formatOfficialUserSummary(summary)).toBe('1 team: Falcons');
+        expect(matchesOfficialUserSearch({ phone: '+1 (555) 123-4567' }, null, '1234567')).toBe(true);
     });
 
     it('collects bounded lookup targets from only the visible users slice', () => {

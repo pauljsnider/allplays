@@ -49,6 +49,17 @@ describe('firestore.rules architecture fixes', () => {
         expect(getUserByEmailBody).toContain('where("email", "==", email), limitQuery(1)');
     });
 
+    it('restricts the materialized admin substring index to bounded global-admin reads', () => {
+        const indexRule = rules.slice(
+            rules.indexOf('match /adminUserSearch/{userId}'),
+            rules.indexOf('match /accountMergePreviewRequests/{requestId}')
+        );
+
+        expect(indexRule).toContain('allow get: if isGlobalAdmin();');
+        expect(indexRule).toContain('allow list: if isBoundedGlobalAdminListQuery();');
+        expect(indexRule).toContain('allow write: if false;');
+    });
+
     it('allows only bounded platform-admin official directory list queries', () => {
         const officialRuleMatches = [...rules.matchAll(/match \/officials\/\{officialId\} \{([\s\S]*?)\n      \}/g)];
         const collectionGroupRule = rules.match(/match \/\{path=\*\*\}\/officials\/\{officialId\} \{([\s\S]*?)\n    \}/)?.[1] || '';

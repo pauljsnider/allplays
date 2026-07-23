@@ -4,6 +4,7 @@ import {
     ADMIN_USER_SEARCH_MAX_LENGTH,
     ADMIN_USER_SEARCH_RESULT_LIMIT,
     ADMIN_USER_SEARCH_TOTAL_QUERY_CEILING,
+    buildAdminUserSearchHash,
     buildAdminUserSearchStrategies,
     createDebouncedAdminUserSearch,
     hasAdminGlobalSearchTerm,
@@ -76,6 +77,7 @@ describe('admin search collection selection', () => {
                 { field: 'fullName', prefix: 'Robin' },
                 { field: 'phone', prefix: 'robin' }
             ],
+            indexHash: buildAdminUserSearchHash('robin'),
             officials: [
                 { field: 'email', prefix: 'robin' },
                 { field: 'name', prefix: 'Robin' },
@@ -83,8 +85,8 @@ describe('admin search collection selection', () => {
             ],
             teams: [{ field: 'name', prefix: 'Robin' }]
         });
-        expect(ADMIN_USER_SEARCH_CANDIDATE_QUERY_CEILING).toBe(14);
-        expect(ADMIN_USER_SEARCH_TOTAL_QUERY_CEILING).toBe(18);
+        expect(ADMIN_USER_SEARCH_CANDIDATE_QUERY_CEILING).toBe(17);
+        expect(ADMIN_USER_SEARCH_TOTAL_QUERY_CEILING).toBe(21);
     });
 
     it('finds and caps a later server candidate without scanning paginated users', () => {

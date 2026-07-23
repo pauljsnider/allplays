@@ -139,5 +139,8 @@ export function matchesOfficialUserSearch(user = {}, summary = null, term = '') 
         .map((value) => String(value || '').toLowerCase())
         .join(' ');
 
-    return haystack.includes(normalizedTerm);
+    const compactTerm = normalizedTerm.replace(/[^a-z0-9]/g, '');
+    const compactHaystack = haystack.replace(/[^a-z0-9]/g, '');
+    return haystack.includes(normalizedTerm)
+        || (compactTerm.length >= 2 && compactHaystack.includes(compactTerm));
 }

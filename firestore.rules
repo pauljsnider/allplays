@@ -2863,6 +2863,14 @@ service cloud.firestore {
       }
     }
 
+    // Materialized substring index maintained by Cloud Functions. Only global
+    // admins may query it, and every list request remains explicitly bounded.
+    match /adminUserSearch/{userId} {
+      allow get: if isGlobalAdmin();
+      allow list: if isBoundedGlobalAdminListQuery();
+      allow write: if false;
+    }
+
     match /accountMergePreviewRequests/{requestId} {
       allow read: if isSignedIn() &&
                     (resource.data.destinationUid == request.auth.uid ||

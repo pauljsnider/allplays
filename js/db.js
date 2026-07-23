@@ -24,6 +24,7 @@ import {
     onSnapshot,
     serverTimestamp,
     collectionGroup,
+    documentId,
     writeBatch,
     runTransaction,
     functions,
@@ -32,7 +33,7 @@ import {
     uploadBytes,
     getDownloadURL,
     deleteObject
-} from './firebase.js?v=22';
+} from './firebase.js?v=23';
 import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=10';
 import { uploadBytesResumable } from './vendor/firebase-storage.js';
 import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=2';
@@ -56,7 +57,7 @@ import { isAvailabilityLocked, normalizeAvailabilityPreferences } from './availa
 import {
     collectOfficialLookupQueryTargets,
     collectOfficialLookupTargets
-} from './admin-user-official-links.js?v=2';
+} from './admin-user-official-links.js?v=3';
 import {
     ADMIN_OFFICIAL_ENRICHMENT_QUERY_CEILING,
     ADMIN_OFFICIAL_ENRICHMENT_USER_LIMIT,
@@ -65,7 +66,7 @@ import {
     ADMIN_USER_SEARCH_TEAM_LIMIT,
     buildAdminUserSearchStrategies,
     mergeBoundedAdminUserCandidates
-} from './admin-search.js?v=6';
+} from './admin-search.js?v=7';
 import { resolveAvailabilityCutoffEventDate } from './availability-cutoff-date.js?v=1';
 import { normalizeFamilyShareCalendarUrls, normalizeFamilyShareChildren } from './family-share-utils.js?v=2';
 import { normalizeChatAttachments } from './team-chat-media.js';
@@ -2212,20 +2213,27 @@ function buildAdminPrefixQuery(reference, strategy, resultLimit = ADMIN_USER_SEA
 }
 
 /**
- * Runs at most 14 Firestore queries: 3 user prefixes, 3 official prefixes,
- * 1 team prefix, 3 bounded team-official reads, and 4 contact-to-user lookups.
- * Official enrichment is separately capped at 4 queries, for 18 total per search.
+ * Runs at most 17 Firestore queries: 3 user prefixes, 1 substring-index lookup,
+ * 2 indexed-user lookups, 3 official prefixes, 1 team prefix, 3 bounded
+ * team-official reads, and 4 contact-to-user lookups. Official enrichment is
+ * separately capped at 4 queries, for 21 total per search.
  */
 export async function searchAdminUsers(searchTerm = '') {
     const strategies = buildAdminUserSearchStrategies(searchTerm);
     if (!strategies?.users?.length) return [];
 
     const usersRef = collection(db, 'users');
+    const userSearchRef = collection(db, 'adminUserSearch');
     const officialsRef = collectionGroup(db, 'officials');
     const teamsRef = collection(db, 'teams');
-    const [userSnapshots, officialSnapshots, teamSnapshots] = await Promise.all([
+    const [userSnapshots, userSearchSnapshot, officialSnapshots, teamSnapshots] = await Promise.all([
         Promise.all(strategies.users.map((strategy) =>
             getDocs(buildAdminPrefixQuery(usersRef, strategy))
+        )),
+        getDocs(query(
+            userSearchRef,
+            where('hashes', 'array-contains', strategies.indexHash),
+            limitQuery(ADMIN_USER_SEARCH_RESULT_LIMIT)
         )),
         Promise.all(strategies.officials.map((strategy) =>
             getDocs(buildAdminPrefixQuery(officialsRef, strategy))
@@ -2235,6 +2243,17 @@ export async function searchAdminUsers(searchTerm = '') {
         ))
     ]);
 
+    const indexedUserIds = userSearchSnapshot.docs
+        .map((docSnap) => String(docSnap.data()?.userId || docSnap.id || '').trim())
+        .filter(Boolean)
+        .slice(0, ADMIN_USER_SEARCH_RESULT_LIMIT);
+    const indexedUserSnapshots = await Promise.all(chunkArray(indexedUserIds).map((userIds) =>
+        getDocs(query(
+            usersRef,
+            where(documentId(), 'in', userIds),
+            limitQuery(ADMIN_USER_SEARCH_RESULT_LIMIT)
+        ))
+    ));
     const matchedTeams = teamSnapshots
         .flatMap(mapAdminSearchDocs)
         .slice(0, ADMIN_USER_SEARCH_TEAM_LIMIT);
@@ -2258,6 +2277,7 @@ export async function searchAdminUsers(searchTerm = '') {
     ]);
 
     return mergeBoundedAdminUserCandidates([
+        indexedUserSnapshots.flatMap(mapAdminSearchDocs),
         userSnapshots.flatMap(mapAdminSearchDocs),
         contactUserSnapshots.flatMap(mapAdminSearchDocs)
     ]);

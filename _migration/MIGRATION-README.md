@@ -42,6 +42,7 @@ The apply mode intentionally requires `--code`; bulk writes are not supported.
 ### Other scripts
 
 See the header comment in each script for usage:
+`backfill-admin-user-search-index.js`,
 `backfill-legacy-team-chat-target-fields.js`,
 `backfill-notification-recipients.js`,
 `backfill-public-team-search-fields.js`,

@@ -4,7 +4,7 @@ export const ADMIN_USER_SEARCH_DEBOUNCE_MS = 300;
 export const ADMIN_USER_SEARCH_RESULT_LIMIT = 50;
 export const ADMIN_USER_SEARCH_TEAM_LIMIT = 3;
 export const ADMIN_USER_SEARCH_CONTACT_LIMIT = 20;
-export const ADMIN_USER_SEARCH_CANDIDATE_QUERY_CEILING = 14;
+export const ADMIN_USER_SEARCH_CANDIDATE_QUERY_CEILING = 17;
 export const ADMIN_OFFICIAL_ENRICHMENT_USER_LIMIT = ADMIN_USER_SEARCH_RESULT_LIMIT;
 export const ADMIN_OFFICIAL_ENRICHMENT_QUERY_CEILING = 4;
 export const ADMIN_USER_SEARCH_TOTAL_QUERY_CEILING =
@@ -26,6 +26,25 @@ export function toAdminSearchTitleCase(value = '') {
     return normalizeAdminSearchTerm(value).replace(/\b\w/g, (character) => character.toUpperCase());
 }
 
+export function normalizeAdminUserSearchIndexValue(value = '') {
+    return normalizeAdminSearchTerm(value)
+        .normalize('NFKD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]/g, '');
+}
+
+export function buildAdminUserSearchHash(value = '') {
+    const normalized = normalizeAdminUserSearchIndexValue(value);
+    if (normalized.length < ADMIN_USER_SEARCH_MIN_LENGTH) return '';
+
+    let hash = 2166136261;
+    for (let index = 0; index < normalized.length; index += 1) {
+        hash ^= normalized.charCodeAt(index);
+        hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(36);
+}
+
 export function buildAdminUserSearchStrategies(value = '') {
     const term = normalizeAdminSearchTerm(value);
     if (!shouldRunRemoteAdminUserSearch(term)) return [];
@@ -37,6 +56,7 @@ export function buildAdminUserSearchStrategies(value = '') {
             { field: 'fullName', prefix: titleCaseTerm },
             { field: 'phone', prefix: term }
         ],
+        indexHash: buildAdminUserSearchHash(term),
         officials: term === 'official'
             ? [{ field: null, prefix: '' }]
             : [

@@ -2,7 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     ADMIN_OFFICIAL_ENRICHMENT_QUERY_CEILING,
     ADMIN_USER_SEARCH_CANDIDATE_QUERY_CEILING,
-    ADMIN_USER_SEARCH_RESULT_LIMIT
+    ADMIN_USER_SEARCH_RESULT_LIMIT,
+    buildAdminUserSearchHash
 } from '../../js/admin-search.js';
 
 const firebaseMocks = vi.hoisted(() => ({
@@ -13,10 +14,11 @@ const firebaseMocks = vi.hoisted(() => ({
     orderBy: vi.fn((field) => ({ type: 'orderBy', field })),
     limit: vi.fn((value) => ({ type: 'limit', value })),
     startAfter: vi.fn((value) => ({ type: 'startAfter', value })),
+    documentId: vi.fn(() => '__name__'),
     getDocs: vi.fn()
 }));
 
-vi.mock('../../js/firebase.js?v=22', () => ({
+vi.mock('../../js/firebase.js?v=23', () => ({
     db: {},
     auth: { currentUser: null },
     storage: {},
@@ -39,6 +41,7 @@ vi.mock('../../js/firebase.js?v=22', () => ({
     deleteField: vi.fn(),
     limit: firebaseMocks.limit,
     startAfter: firebaseMocks.startAfter,
+    documentId: firebaseMocks.documentId,
     getCountFromServer: vi.fn(),
     onSnapshot: vi.fn(),
     serverTimestamp: vi.fn(),
@@ -134,6 +137,32 @@ describe('bounded admin user search queries', () => {
             email: 'robin@example.com',
             fullName: 'Robin Ref'
         }]);
+        expect(firebaseMocks.getDocs.mock.calls.length).toBeLessThanOrEqual(ADMIN_USER_SEARCH_CANDIDATE_QUERY_CEILING);
+    });
+
+    it.each([
+        ['smith', { fullName: 'Jane McSmith', email: 'jane@school.org', phone: '+1 (555) 123-4567' }],
+        ['school', { fullName: 'Jane Doe', email: 'jane@School.org', phone: '+1 (555) 123-4567' }],
+        ['1234567', { fullName: 'Jane Doe', email: 'jane@school.org', phone: '+1 (555) 123-4567' }],
+        ['mCsMiTh', { fullName: 'Jane McSmith', email: 'jane@school.org', phone: '+1 (555) 123-4567' }]
+    ])('finds a later indexed user for substring search %s', async (term, userData) => {
+        const indexedUser = firestoreDoc('user-450', userData);
+        firebaseMocks.getDocs.mockImplementation(async (request) => {
+            const hashFilter = findConstraint(request, 'where', 'hashes');
+            if (hashFilter?.op === 'array-contains' && hashFilter.value === buildAdminUserSearchHash(term)) {
+                return { docs: [firestoreDoc('user-450', { userId: 'user-450' })] };
+            }
+            const idFilter = findConstraint(request, 'where', '__name__');
+            if (idFilter?.op === 'in' && idFilter.value.includes('user-450')) {
+                return { docs: [indexedUser] };
+            }
+            return { docs: [] };
+        });
+
+        const { searchAdminUsers } = await import('../../js/db.js?v=119-admin-user-search');
+        const users = await searchAdminUsers(term);
+
+        expect(users).toEqual([{ id: 'user-450', ...userData }]);
         expect(firebaseMocks.getDocs.mock.calls.length).toBeLessThanOrEqual(ADMIN_USER_SEARCH_CANDIDATE_QUERY_CEILING);
     });
 

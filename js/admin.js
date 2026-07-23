@@ -15,8 +15,8 @@ import {
     getTelemetryRouteDaily,
     getTelemetryEventDaily,
     getTelemetrySessions
-} from './db.js?v=121';
-import { db, collection, getDocs, doc, setDoc, updateDoc, serverTimestamp, query } from './firebase.js?v=22';
+} from './db.js?v=122';
+import { db, collection, getDocs, doc, setDoc, updateDoc, serverTimestamp, query } from './firebase.js?v=23';
 import { renderHeader, renderFooter, escapeHtml } from './utils.js?v=18';
 import { checkAuth } from './auth.js?v=129';
 import { DEFAULT_ADMIN_PAGE_SIZE, buildBoundedAdminDashboardScope, loadAdminCollectionPage, loadInitialAdminBootstrap } from './admin-bootstrap.js?v=2';
@@ -36,7 +36,7 @@ import {
     formatOfficialUserSummary,
     getOfficialUserSummary,
     matchesOfficialUserSearch
-} from './admin-user-official-links.js?v=2';
+} from './admin-user-official-links.js?v=3';
 import { buildAdminTeamOfficialsSummary } from './admin-team-officials.js?v=1';
 import {
     createDebouncedAdminUserSearch,
@@ -46,7 +46,7 @@ import {
     resolveAdminUserSearchResult,
     selectAdminItemById,
     selectAdminSearchCollection
-} from './admin-search.js?v=6';
+} from './admin-search.js?v=7';
 import {
     buildTrackedWorkflowLoadSummary,
     buildTelemetryPerformanceSummary,
