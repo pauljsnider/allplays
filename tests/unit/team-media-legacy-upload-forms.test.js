@@ -36,7 +36,7 @@ vi.mock('../../js/db.js?v=123', () => ({
     updateTeamMediaItem: vi.fn()
 }));
 
-vi.mock('../../js/auth.js?v=129', () => ({
+vi.mock('../../js/auth.js?v=130', () => ({
     checkAuth: mocks.checkAuth
 }));
 
