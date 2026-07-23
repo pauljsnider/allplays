@@ -14408,9 +14408,11 @@ async function deleteAccountQuery(query) {
   while (true) {
     const snapshot = await query.limit(250).get();
     if (snapshot.empty) return;
-    const batch = firestore.batch();
-    snapshot.docs.forEach((docSnapshot) => batch.delete(docSnapshot.ref));
-    await batch.commit();
+    for (let index = 0; index < snapshot.docs.length; index += 10) {
+      await Promise.all(snapshot.docs
+        .slice(index, index + 10)
+        .map((docSnapshot) => firestore.recursiveDelete(docSnapshot.ref)));
+    }
   }
 }
 

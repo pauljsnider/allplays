@@ -59,6 +59,7 @@ describe('mobile store legal and support pages', () => {
             ['rsvps', 'userId'],
             ['rideOffers', 'driverUserId'],
             ['rideRequests', 'parentUserId'],
+            ['membershipRequests', 'requesterUserId'],
             ['players', 'parentUserId'],
             ['players', 'guardianUserId'],
             ['media', 'uploadedBy'],

@@ -350,6 +350,7 @@ function getAccountDeletionCollectionGroupQueries() {
     ['rideRequests', 'parentUserId'],
     ['media', 'uploadedBy'],
     ['mediaItems', 'uploadedBy'],
+    ['membershipRequests', 'requesterUserId'],
     ['registrations', 'submittedByUserId'],
     ['notificationTargets', 'uid'],
     ['notificationRecipients', 'uid']

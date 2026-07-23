@@ -239,6 +239,7 @@ test('deletes current team media and denormalized notification indexes', () => {
     ['rideRequests', 'parentUserId'],
     ['media', 'uploadedBy'],
     ['mediaItems', 'uploadedBy'],
+    ['membershipRequests', 'requesterUserId'],
     ['registrations', 'submittedByUserId'],
     ['notificationTargets', 'uid'],
     ['notificationRecipients', 'uid']
@@ -404,6 +405,7 @@ test('gives the deletion worker extended runtime and automatic event retries', (
     /exports\.processAccountDeletionRequest = functions\s+\.runWith\(\{ timeoutSeconds: 540, memory: '1GB', failurePolicy: true \}\)\s+\.firestore/
   );
   const workerSource = functionsSource.slice(functionsSource.indexOf('exports.processAccountDeletionRequest'));
+  assert.match(functionsSource, /deleteAccountQuery[\s\S]*firestore\.recursiveDelete\(docSnapshot\.ref\)/);
   assert.ok(workerSource.indexOf('await scrubAccountTeamGrants(') < workerSource.indexOf('admin.auth().deleteUser(uid)'));
   assert.ok(workerSource.indexOf('await scrubAccountRosterParentLinks(') < workerSource.indexOf('admin.auth().deleteUser(uid)'));
 });
