@@ -395,7 +395,7 @@ describe('Teams launcher navigation', () => {
   });
 });
 
-describe('Teams single-team auto-navigate', () => {
+describe('Teams single-team navigation', () => {
   const singleTeam = {
     teamId: 'team-solo',
     teamName: 'Solo Bears',
@@ -429,15 +429,13 @@ describe('Teams single-team auto-navigate', () => {
     cleanup();
   });
 
-  it('opens the team page directly when the user has exactly one linked team', async () => {
+  it('keeps the My Teams chooser open when the initial load contains one linked team', async () => {
     renderTeamsWithNav();
 
-    await waitFor(() => {
-      expect(screen.getByTestId('team-hub')).toBeTruthy();
-    });
-
-    expect(screen.getByTestId('team-hub').textContent).toBe('Team hub: team-solo');
-    expect(screen.queryByText('Choose a team')).toBeNull();
+    expect(await screen.findByRole('heading', { name: '1 team ready' })).toBeTruthy();
+    expect(screen.getByText('Choose a team')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Open Solo Bears' })).toHaveAttribute('href', '/teams/team-solo');
+    expect(screen.queryByTestId('team-hub')).toBeNull();
     expect(screen.queryByText('Loading teams')).toBeNull();
   });
 
@@ -452,7 +450,7 @@ describe('Teams single-team auto-navigate', () => {
     expect(screen.queryByText('Choose a team')).toBeNull();
   });
 
-  it('opens the team page directly when the only team has no linked players yet', async () => {
+  it('keeps the chooser open when the only loaded team has no linked players yet', async () => {
     homeServiceMocks.loadParentTeamsSummaryBootstrap.mockResolvedValue(makeTeamSummaryBootstrap({
       ...singleTeamHome,
       teams: [{
@@ -472,7 +470,9 @@ describe('Teams single-team auto-navigate', () => {
 
     renderTeamsWithNav();
 
-    expect(await screen.findByTestId('team-hub')).toBeTruthy();
-    expect(screen.queryByText('Choose a team')).toBeNull();
+    expect(await screen.findByRole('heading', { name: '1 team ready' })).toBeTruthy();
+    expect(screen.getByText('Choose a team')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Open Solo Bears' })).toHaveAttribute('href', '/teams/team-solo');
+    expect(screen.queryByTestId('team-hub')).toBeNull();
   });
 });
