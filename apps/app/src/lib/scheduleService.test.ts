@@ -467,6 +467,21 @@ describe('parent schedule child scope', () => {
     expect(scope.staffTeams).toEqual([{ teamId: 'team-owned', teamName: 'Vipers' }]);
   });
 
+  it('keeps repeated direct schedule refreshes partial when staff discovery fails', async () => {
+    const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'], coachOf: ['team-owned'] } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: ['team-owned'] } as any);
+    vi.mocked(getStaffTeams)
+      .mockRejectedValueOnce(new Error('network unavailable'))
+      .mockRejectedValueOnce(new Error('network unavailable'));
+
+    const firstRefresh = await loadParentSchedule(coachUser, { hydrateDetails: false, expandStaffPlayers: false });
+    const secondRefresh = await loadParentSchedule(coachUser, { hydrateDetails: false, expandStaffPlayers: false });
+
+    expect(firstRefresh).toMatchObject({ staffTeams: [], isPartial: true });
+    expect(secondRefresh).toMatchObject({ staffTeams: [], isPartial: true });
+    expect(getStaffTeams).toHaveBeenCalledTimes(2);
+  });
+
   it('marks native staff scope partial when one REST fallback read fails', async () => {
     const previousWindow = (globalThis as any).window;
     const previousFetch = globalThis.fetch;

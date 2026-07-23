@@ -4041,7 +4041,10 @@ async function buildParentScheduleTeamChildren(user: AuthUser, profile: Record<s
     byTeam.get(child.teamId)?.push(child);
   });
 
-  const staffTeams = options.parentScope?.staffTeams || (await loadStaffTeams(user).catch(() => ({ teams: [], isPartial: true }))).teams;
+  const staffTeamResult: StaffTeamsLoadResult = options.parentScope?.staffTeams
+    ? { teams: options.parentScope.staffTeams, isPartial: options.parentScope.isPartial === true }
+    : await loadStaffTeams(user).catch(() => ({ teams: [], isPartial: true }));
+  const staffTeams = staffTeamResult.teams;
   await mapWithConcurrency(staffTeams, parentScheduleTeamConcurrency, async (team: any) => {
     const teamId = compactString(team?.id || team?.teamId);
     if (!teamId) return;
@@ -4074,7 +4077,7 @@ async function buildParentScheduleTeamChildren(user: AuthUser, profile: Record<s
     }
   });
 
-  return { children, byTeam, staffTeams };
+  return { children, byTeam, staffTeams, isStaffTeamScopePartial: staffTeamResult.isPartial };
 }
 
 /**
@@ -4301,7 +4304,7 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
     const profile = canReuseParentScope
       ? options.parentScope!.profile
       : await loadProfileDocument(user.uid);
-    const { children, byTeam, staffTeams } = await buildParentScheduleTeamChildren(user, profile as Record<string, unknown>, {
+    const { children, byTeam, staffTeams, isStaffTeamScopePartial } = await buildParentScheduleTeamChildren(user, profile as Record<string, unknown>, {
       ...options,
       expandStaffPlayers,
       parentScope: canReuseParentScope ? options.parentScope : undefined
@@ -4387,7 +4390,7 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
       ? await hydrateEventDetails(events, user)
       : [];
     finalizeSessionRsvpHydration(events, authoritativeEvents, user.uid);
-    const isPartial = failedTeamLoads.length > 0;
+    const isPartial = isStaffTeamScopePartial || failedTeamLoads.length > 0;
     timer.end({
       hydrateDetails,
       expandStaffPlayers,
