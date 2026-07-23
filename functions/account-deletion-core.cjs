@@ -114,11 +114,13 @@ function matchesRosterContactIdentity(contact = {}, identity = {}) {
   const contactPhone = String(
     contact.phone || contact.phoneNumber || contact.parentPhone || contact.guardianPhone || ''
   ).replace(/\D/g, '');
-  return Boolean(
-    (identity.uid && contactUid === identity.uid) ||
-    (identity.email && contactEmail === identity.email) ||
-    (identity.phone.length >= 7 && contactPhone === identity.phone)
-  );
+  if (contactUid) {
+    return Boolean(identity.uid && contactUid === identity.uid);
+  }
+  if (contactEmail) {
+    return Boolean(identity.email && contactEmail === identity.email);
+  }
+  return Boolean(identity.phone.length >= 7 && contactPhone === identity.phone);
 }
 
 function buildRosterParentScrubPlan(record = {}, accountIdentity) {

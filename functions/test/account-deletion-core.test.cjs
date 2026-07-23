@@ -142,6 +142,30 @@ test('scrubs deleted parent identities and their associated roster contact field
   });
 });
 
+test('preserves caregivers who share a phone number but have a different stable identity', () => {
+  const plan = buildRosterParentScrubPlan({
+    parents: [
+      { userId: 'deleted-parent', email: 'deleted@example.com', phone: '555-111-2222' },
+      { userId: 'remaining-parent', email: 'remaining@example.com', phone: '555-111-2222' }
+    ],
+    guardians: [
+      { email: 'deleted@example.com', phone: '555-111-2222' },
+      { email: 'remaining@example.com', phone: '555-111-2222' }
+    ],
+    familyContacts: [
+      { phone: '555-111-2222', name: 'Phone-only deleted contact' }
+    ]
+  }, { uid: 'deleted-parent', email: 'deleted@example.com', phone: '555-111-2222' });
+
+  assert.deepEqual(plan.parents, [
+    { userId: 'remaining-parent', email: 'remaining@example.com', phone: '555-111-2222' }
+  ]);
+  assert.deepEqual(plan.guardians, [
+    { email: 'remaining@example.com', phone: '555-111-2222' }
+  ]);
+  assert.deepEqual(plan.familyContacts, []);
+});
+
 test('scrubs reusable email and uid grants from team authorization fields', () => {
   assert.deepEqual(collectAccountTeamIds({
     coachOf: ['team-1', 'bad/team'],
