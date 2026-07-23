@@ -1713,8 +1713,8 @@ export function Profile({ auth }: { auth: AuthState }) {
             Delete my account
           </button>
           <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2 text-xs font-black">
-            <a href="/privacy.html" target="_blank" rel="noreferrer" className="text-primary-700">Privacy Policy</a>
-            <a href="/terms.html" target="_blank" rel="noreferrer" className="text-primary-700">Terms</a>
+            <a href="https://allplays.ai/privacy.html" target="_blank" rel="noreferrer" className="text-primary-700">Privacy Policy</a>
+            <a href="https://allplays.ai/terms.html" target="_blank" rel="noreferrer" className="text-primary-700">Terms</a>
             <a href="/support.html" target="_blank" rel="noreferrer" className="text-primary-700">Support</a>
           </div>
         </div>

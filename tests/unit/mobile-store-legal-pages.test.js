@@ -38,11 +38,22 @@ describe('mobile store legal and support pages', () => {
         expect(terms).toContain('/support.html');
     });
 
+    it('uses hosted legal pages from the Capacitor app', () => {
+        const authPage = readPage('apps/app/src/pages/AuthPage.tsx');
+        const profilePage = readPage('apps/app/src/pages/Profile.tsx');
+
+        [authPage, profilePage].forEach((source) => {
+            expect(source).toContain('https://allplays.ai/privacy.html');
+            expect(source).toContain('https://allplays.ai/terms.html');
+        });
+    });
+
     it('indexes every account-deletion collection-group lookup', () => {
         const indexes = JSON.parse(readPage('firestore.indexes.json'));
         const requiredIndexes = [
             ['messages', 'authorId'],
             ['chatMessages', 'senderId'],
+            ['comments', 'authorId'],
             ['reactions', 'userId'],
             ['rsvps', 'userId'],
             ['rideOffers', 'driverUserId'],

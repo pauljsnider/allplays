@@ -111,6 +111,8 @@ test('collects current and legacy storage fields from account-owned media record
 
 test('deletes account-owned share links and invite records', () => {
   const queries = getAccountDeletionCollectionQueries();
+  assert.ok(queries.some(([collection, field]) => collection === 'socialReports' && field === 'reporterId'));
+  assert.ok(!queries.some(([collection]) => collection === 'socialPostReports'));
   assert.ok(queries.some(([collection, field]) => collection === 'familyShareTokens' && field === 'ownerUserId'));
   assert.ok(queries.some(([collection, field]) => collection === 'accessCodes' && field === 'generatedBy'));
   assert.ok(queries.some(([collection, field]) => collection === 'accessCodes' && field === 'usedBy'));
@@ -120,6 +122,7 @@ test('deletes current team media and denormalized notification indexes', () => {
   assert.deepEqual(getAccountDeletionCollectionGroupQueries(), [
     ['messages', 'authorId'],
     ['chatMessages', 'senderId'],
+    ['comments', 'authorId'],
     ['reactions', 'userId'],
     ['rsvps', 'userId'],
     ['rideOffers', 'driverUserId'],

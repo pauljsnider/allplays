@@ -103,7 +103,7 @@ function collectAccountMediaStoragePaths(mediaRecords = []) {
 function getAccountDeletionCollectionQueries() {
   return [
     ['socialPosts', 'authorId', '=='],
-    ['socialPostReports', 'reporterId', '=='],
+    ['socialReports', 'reporterId', '=='],
     ['friendships', 'memberIds', 'array-contains'],
     ['publicOpportunities', 'ownerUserId', '=='],
     ['publicOpportunities', 'createdBy', '=='],
@@ -121,6 +121,7 @@ function getAccountDeletionCollectionGroupQueries() {
   return [
     ['messages', 'authorId'],
     ['chatMessages', 'senderId'],
+    ['comments', 'authorId'],
     ['reactions', 'userId'],
     ['rsvps', 'userId'],
     ['rideOffers', 'driverUserId'],

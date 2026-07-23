@@ -427,7 +427,7 @@ export function AuthPage({ auth }: { auth: AuthState }) {
         </form>
       ) : null}
       <p className="mt-4 text-center text-xs font-semibold leading-5 text-gray-500">
-        By continuing, you agree to our <a className="font-black text-primary-700" href="/terms.html" target="_blank" rel="noreferrer">Terms</a> and acknowledge our <a className="font-black text-primary-700" href="/privacy.html" target="_blank" rel="noreferrer">Privacy Policy</a>.
+        By continuing, you agree to our <a className="font-black text-primary-700" href="https://allplays.ai/terms.html" target="_blank" rel="noreferrer">Terms</a> and acknowledge our <a className="font-black text-primary-700" href="https://allplays.ai/privacy.html" target="_blank" rel="noreferrer">Privacy Policy</a>.
       </p>
       </div>
       <div
