@@ -63,6 +63,8 @@ describe('mobile store legal and support pages', () => {
             ['rideOffers', 'driverUserId'],
             ['rideRequests', 'parentUserId'],
             ['membershipRequests', 'requesterUserId'],
+            ['registrations', 'submittedByUserId'],
+            ['registrations', 'guardian.email'],
             ['players', 'parentUserId'],
             ['players', 'guardianUserId'],
             ['media', 'uploadedBy'],

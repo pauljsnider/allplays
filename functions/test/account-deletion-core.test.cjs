@@ -7,6 +7,7 @@ const { join } = require('node:path');
 const {
   buildChatConversationAccountScrubPlan,
   buildDeletionAuditId,
+  buildRegistrationAccountScrubPlan,
   buildRosterParentScrubPlan,
   buildTeamAccountGrantScrubPlan,
   classifyAccountStoragePaths,
@@ -204,6 +205,37 @@ test('scrubs deleted account identifiers from shared chat conversations', () => 
   });
 });
 
+test('anonymizes account-linked registrations without deleting team records', () => {
+  assert.deepEqual(buildRegistrationAccountScrubPlan({
+    submittedByUserId: 'deleted-user',
+    submittedByEmail: 'deleted@example.com',
+    guardian: {
+      name: 'Deleted Parent',
+      email: 'DELETED@example.com',
+      phone: '(555) 111-2222'
+    },
+    guardians: [
+      { email: 'deleted@example.com', name: 'Deleted Parent' },
+      { email: 'remaining@example.com', name: 'Remaining Parent' }
+    ],
+    status: 'enrolled',
+    paymentStatus: 'paid'
+  }, { uid: 'deleted-user', email: 'deleted@example.com' }), {
+    changed: true,
+    update: {
+      guardian: { redacted: true },
+      guardians: [{ email: 'remaining@example.com', name: 'Remaining Parent' }]
+    },
+    fieldsToDelete: [
+      'submittedByUserId',
+      'submittedBy',
+      'submittedByUid',
+      'submittedByEmail',
+      'submittedByName'
+    ]
+  });
+});
+
 test('routes account media cleanup to the primary and legacy image buckets', () => {
   const paths = classifyAccountStoragePaths('user-1', [
     'primary://athlete-profile-media/user-1/player-1/photo.jpg',
@@ -278,7 +310,6 @@ test('deletes current team media and denormalized notification indexes', () => {
     ['media', 'uploadedBy'],
     ['mediaItems', 'uploadedBy'],
     ['membershipRequests', 'requesterUserId'],
-    ['registrations', 'submittedByUserId'],
     ['notificationTargets', 'uid'],
     ['notificationRecipients', 'uid']
   ]);
@@ -453,5 +484,6 @@ test('gives the deletion worker extended runtime and automatic event retries', (
   assert.match(functionsSource, /deleteAccountQuery[\s\S]*firestore\.recursiveDelete\(docSnapshot\.ref\)/);
   assert.ok(workerSource.indexOf('await scrubAccountTeamGrants(') < workerSource.indexOf('admin.auth().deleteUser(uid)'));
   assert.ok(workerSource.indexOf('await scrubAccountChatConversationMembership(') < workerSource.indexOf('admin.auth().deleteUser(uid)'));
+  assert.ok(workerSource.indexOf('await scrubAccountRegistrationLinks(') < workerSource.indexOf('admin.auth().deleteUser(uid)'));
   assert.ok(workerSource.indexOf('await scrubAccountRosterParentLinks(') < workerSource.indexOf('admin.auth().deleteUser(uid)'));
 });

@@ -241,6 +241,7 @@ const { createAutoAcceptParentInviteHandler } = require('./parent-invite-auto-li
 const {
   buildChatConversationAccountScrubPlan,
   buildDeletionAuditId,
+  buildRegistrationAccountScrubPlan,
   buildRosterParentScrubPlan,
   buildTeamAccountGrantScrubPlan,
   classifyAccountStoragePaths,
@@ -14599,6 +14600,42 @@ async function scrubAccountChatConversationMembership(uid, email) {
   }
 }
 
+async function scrubAccountRegistrationLinks(uid, email) {
+  const documentsByPath = new Map();
+  const queryPromises = [
+    firestore.collectionGroup('registrations').where('submittedByUserId', '==', uid).get()
+  ];
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  if (normalizedEmail) {
+    queryPromises.push(
+      firestore.collectionGroup('registrations').where('guardian.email', '==', normalizedEmail).get()
+    );
+  }
+  const snapshots = await Promise.all(queryPromises);
+  snapshots.forEach((snapshot) => (snapshot.docs || []).forEach((document) => {
+    if (document?.ref?.path) documentsByPath.set(document.ref.path, document);
+  }));
+
+  const writes = [];
+  documentsByPath.forEach((document) => {
+    const plan = buildRegistrationAccountScrubPlan(document.data() || {}, { uid, email });
+    if (!plan.changed) return;
+    const update = {
+      ...plan.update,
+      updatedAt: admin.firestore.Timestamp.now()
+    };
+    plan.fieldsToDelete.forEach((field) => {
+      update[field] = admin.firestore.FieldValue.delete();
+    });
+    writes.push({ ref: document.ref, update });
+  });
+  for (let index = 0; index < writes.length; index += 200) {
+    const batch = firestore.batch();
+    writes.slice(index, index + 200).forEach(({ ref, update }) => batch.update(ref, update));
+    await batch.commit();
+  }
+}
+
 exports.processAccountDeletionRequest = functions
   .runWith({ timeoutSeconds: 540, memory: '1GB', failurePolicy: true })
   .firestore
@@ -14655,6 +14692,7 @@ exports.processAccountDeletionRequest = functions
       ]);
       await scrubAccountTeamGrants(uid, ownerEmail, userDoc.data() || {});
       await scrubAccountChatConversationMembership(uid, ownerEmail);
+      await scrubAccountRegistrationLinks(uid, ownerEmail);
       await scrubAccountRosterParentLinks(uid, userDoc.data() || {}, authUser);
 
       const directDocuments = [

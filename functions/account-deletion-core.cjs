@@ -295,6 +295,46 @@ function buildChatConversationAccountScrubPlan(conversation = {}, accountIdentit
   };
 }
 
+function buildRegistrationAccountScrubPlan(registration = {}, accountIdentity) {
+  const identity = normalizeRosterContactIdentity(accountIdentity);
+  const update = {};
+  const fieldsToDelete = [];
+  const submittedByMatches = Boolean(
+    (identity.uid && [
+      registration.submittedByUserId,
+      registration.submittedBy,
+      registration.submittedByUid
+    ].some((value) => String(value || '').trim() === identity.uid)) ||
+    (identity.email && String(registration.submittedByEmail || '').trim().toLowerCase() === identity.email)
+  );
+  const guardianMatches = matchesRosterContactIdentity(registration.guardian || {}, identity);
+  const topLevelGuardianMatches = matchesRosterContactIdentity({
+    userId: registration.guardianUserId,
+    email: registration.guardianEmail,
+    phone: registration.guardianPhone
+  }, identity);
+
+  if (guardianMatches) update.guardian = { redacted: true };
+  if (Array.isArray(registration.guardians)) {
+    const guardians = registration.guardians.filter((guardian) => (
+      !matchesRosterContactIdentity(guardian, identity)
+    ));
+    if (guardians.length !== registration.guardians.length) update.guardians = guardians;
+  }
+  if (submittedByMatches) {
+    fieldsToDelete.push('submittedByUserId', 'submittedBy', 'submittedByUid', 'submittedByEmail', 'submittedByName');
+  }
+  if (topLevelGuardianMatches) {
+    fieldsToDelete.push('guardianUserId', 'guardianEmail', 'guardianName', 'guardianPhone', 'guardianRelation');
+  }
+
+  return {
+    changed: Object.keys(update).length > 0 || fieldsToDelete.length > 0,
+    update,
+    fieldsToDelete
+  };
+}
+
 function classifyAccountStoragePaths(uid, mediaStoragePaths = [], profilePhotoUrls = []) {
   const normalizedUid = String(uid || '').trim();
   const athletePrefix = `athlete-profile-media/${normalizedUid}/`;
@@ -404,7 +444,6 @@ function getAccountDeletionCollectionGroupQueries() {
     ['media', 'uploadedBy'],
     ['mediaItems', 'uploadedBy'],
     ['membershipRequests', 'requesterUserId'],
-    ['registrations', 'submittedByUserId'],
     ['notificationTargets', 'uid'],
     ['notificationRecipients', 'uid']
   ];
@@ -527,6 +566,7 @@ module.exports = {
   assertRecentAuthentication,
   buildChatConversationAccountScrubPlan,
   buildDeletionAuditId,
+  buildRegistrationAccountScrubPlan,
   buildRosterParentScrubPlan,
   buildTeamAccountGrantScrubPlan,
   classifyAccountStoragePaths,
