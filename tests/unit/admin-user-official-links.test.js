@@ -136,5 +136,9 @@ describe('admin users official links', () => {
         expect(renderUsersView.indexOf('await loadVisibleOfficialUserLinks(users);')).toBeLessThan(
             renderUsersView.indexOf('const filtered = users.filter')
         );
+        expect(adminJs).toContain('createDebouncedAdminUserSearch');
+        expect(adminJs).toContain('searchAdminUsers');
+        expect(adminJs).not.toContain('ensureGlobalAdminUsersForSearch');
+        expect(adminJs).not.toContain('fetchPage: getAdminUsersPage,\n            itemsKey: \'users\'');
     });
 });

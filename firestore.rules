@@ -3362,7 +3362,9 @@ service cloud.firestore {
 
       // Officials directory for officiating assignments
       match /officials/{officialId} {
-        allow read, write: if isTeamOwnerOrAdmin(teamId);
+        allow get: if isGlobalAdmin() || isTeamOwnerOrAdmin(teamId);
+        allow list: if isBoundedGlobalAdminListQuery() || isTeamOwnerOrAdmin(teamId);
+        allow write: if isTeamOwnerOrAdmin(teamId);
       }
 
       match /notificationRecipients/{uid} {
@@ -3848,7 +3850,8 @@ service cloud.firestore {
 
       // Officials directory subcollection
       match /officials/{officialId} {
-        allow read: if isTeamOwnerOrAdmin(teamId);
+        allow get: if isGlobalAdmin() || isTeamOwnerOrAdmin(teamId);
+        allow list: if isBoundedGlobalAdminListQuery() || isTeamOwnerOrAdmin(teamId);
         allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
       }
 

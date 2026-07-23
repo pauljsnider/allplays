@@ -47,6 +47,17 @@ describe('firestore.rules architecture fixes', () => {
         expect(getUserByEmailBody).toContain('where("email", "==", email), limitQuery(1)');
     });
 
+    it('allows only bounded platform-admin official directory list queries', () => {
+        const officialRuleMatches = [...rules.matchAll(/match \/officials\/\{officialId\} \{([\s\S]*?)\n      \}/g)];
+
+        expect(officialRuleMatches.length).toBeGreaterThan(0);
+        officialRuleMatches.forEach((match) => {
+            expect(match[1]).toContain('allow get: if isGlobalAdmin() || isTeamOwnerOrAdmin(teamId);');
+            expect(match[1]).toContain('allow list: if isBoundedGlobalAdminListQuery() || isTeamOwnerOrAdmin(teamId);');
+            expect(match[1]).not.toContain('allow read: if isGlobalAdmin()');
+        });
+    });
+
     it('preserves unbounded public team list queries while keeping broad admin lists bounded', () => {
         const teamsStart = rules.indexOf('match /teams/{teamId}');
         const teamsEnd = rules.indexOf('\n    }', teamsStart) + '\n    }'.length;

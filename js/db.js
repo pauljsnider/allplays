@@ -57,6 +57,15 @@ import {
     collectOfficialLookupQueryTargets,
     collectOfficialLookupTargets
 } from './admin-user-official-links.js?v=2';
+import {
+    ADMIN_OFFICIAL_ENRICHMENT_QUERY_CEILING,
+    ADMIN_OFFICIAL_ENRICHMENT_USER_LIMIT,
+    ADMIN_USER_SEARCH_CONTACT_LIMIT,
+    ADMIN_USER_SEARCH_RESULT_LIMIT,
+    ADMIN_USER_SEARCH_TEAM_LIMIT,
+    buildAdminUserSearchStrategies,
+    mergeBoundedAdminUserCandidates
+} from './admin-search.js?v=3';
 import { resolveAvailabilityCutoffEventDate } from './availability-cutoff-date.js?v=1';
 import { normalizeFamilyShareCalendarUrls, normalizeFamilyShareChildren } from './family-share-utils.js?v=2';
 import { normalizeChatAttachments } from './team-chat-media.js';
@@ -2185,6 +2194,75 @@ export async function getAdminUsersPage(options = {}) {
     };
 }
 
+function mapAdminSearchDocs(snapshot) {
+    return snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+}
+
+function buildAdminPrefixQuery(reference, strategy, resultLimit = ADMIN_USER_SEARCH_RESULT_LIMIT) {
+    if (!strategy.field) {
+        return query(reference, limitQuery(resultLimit));
+    }
+    return query(
+        reference,
+        where(strategy.field, '>=', strategy.prefix),
+        where(strategy.field, '<=', `${strategy.prefix}\uf8ff`),
+        orderBy(strategy.field),
+        limitQuery(resultLimit)
+    );
+}
+
+/**
+ * Runs at most 14 Firestore queries: 3 user prefixes, 3 official prefixes,
+ * 1 team prefix, 3 bounded team-official reads, and 4 contact-to-user lookups.
+ * Official enrichment is separately capped at 4 queries, for 18 total per search.
+ */
+export async function searchAdminUsers(searchTerm = '') {
+    const strategies = buildAdminUserSearchStrategies(searchTerm);
+    if (!strategies?.users?.length) return [];
+
+    const usersRef = collection(db, 'users');
+    const officialsRef = collectionGroup(db, 'officials');
+    const teamsRef = collection(db, 'teams');
+    const [userSnapshots, officialSnapshots, teamSnapshots] = await Promise.all([
+        Promise.all(strategies.users.map((strategy) =>
+            getDocs(buildAdminPrefixQuery(usersRef, strategy))
+        )),
+        Promise.all(strategies.officials.map((strategy) =>
+            getDocs(buildAdminPrefixQuery(officialsRef, strategy))
+        )),
+        Promise.all(strategies.teams.map((strategy) =>
+            getDocs(buildAdminPrefixQuery(teamsRef, strategy, ADMIN_USER_SEARCH_TEAM_LIMIT))
+        ))
+    ]);
+
+    const matchedTeams = teamSnapshots
+        .flatMap(mapAdminSearchDocs)
+        .slice(0, ADMIN_USER_SEARCH_TEAM_LIMIT);
+    const teamOfficialSnapshots = await Promise.all(matchedTeams.map((team) =>
+        getDocs(query(collection(db, `teams/${team.id}/officials`), limitQuery(ADMIN_USER_SEARCH_RESULT_LIMIT)))
+    ));
+    const matchedOfficials = [
+        ...officialSnapshots.flatMap(mapAdminSearchDocs),
+        ...teamOfficialSnapshots.flatMap(mapAdminSearchDocs)
+    ].slice(0, ADMIN_USER_SEARCH_RESULT_LIMIT);
+    const contactTargets = collectOfficialLookupQueryTargets(matchedOfficials);
+    const emailChunks = chunkArray(contactTargets.emails.slice(0, ADMIN_USER_SEARCH_CONTACT_LIMIT));
+    const phoneChunks = chunkArray(contactTargets.phones.slice(0, ADMIN_USER_SEARCH_CONTACT_LIMIT));
+    const contactUserSnapshots = await Promise.all([
+        ...emailChunks.map((emails) =>
+            getDocs(query(usersRef, where('email', 'in', emails), limitQuery(ADMIN_USER_SEARCH_RESULT_LIMIT)))
+        ),
+        ...phoneChunks.map((phones) =>
+            getDocs(query(usersRef, where('phone', 'in', phones), limitQuery(ADMIN_USER_SEARCH_RESULT_LIMIT)))
+        )
+    ]);
+
+    return mergeBoundedAdminUserCandidates([
+        userSnapshots.flatMap(mapAdminSearchDocs),
+        contactUserSnapshots.flatMap(mapAdminSearchDocs)
+    ]);
+}
+
 export async function getAllUsers() {
     const userDocs = await getAllOrderedCollectionDocuments(collection(db, "users"), "email");
     return userDocs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -2782,8 +2860,9 @@ function chunkArray(values = [], chunkSize = 10) {
 }
 
 export async function getOfficialsForUsers(users = []) {
-    const normalizedTargets = collectOfficialLookupTargets(users);
-    const queryTargets = collectOfficialLookupQueryTargets(users);
+    const boundedUsers = users.slice(0, ADMIN_OFFICIAL_ENRICHMENT_USER_LIMIT);
+    const normalizedTargets = collectOfficialLookupTargets(boundedUsers);
+    const queryTargets = collectOfficialLookupQueryTargets(boundedUsers);
     if (!normalizedTargets.emails.length && !normalizedTargets.phones.length) {
         return [];
     }
@@ -2803,12 +2882,21 @@ export async function getOfficialsForUsers(users = []) {
         });
     };
 
-    const emailQueries = chunkArray(queryTargets.emails).map(async (chunk) => {
-        const snapshot = await getDocs(query(collectionGroup(db, 'officials'), where('email', 'in', chunk)));
+    const maxChunksPerField = ADMIN_OFFICIAL_ENRICHMENT_QUERY_CEILING / 2;
+    const emailQueries = chunkArray(queryTargets.emails).slice(0, maxChunksPerField).map(async (chunk) => {
+        const snapshot = await getDocs(query(
+            collectionGroup(db, 'officials'),
+            where('email', 'in', chunk),
+            limitQuery(ADMIN_USER_SEARCH_RESULT_LIMIT)
+        ));
         addSnapshotEntries(snapshot);
     });
-    const phoneQueries = chunkArray(queryTargets.phones).map(async (chunk) => {
-        const snapshot = await getDocs(query(collectionGroup(db, 'officials'), where('phone', 'in', chunk)));
+    const phoneQueries = chunkArray(queryTargets.phones).slice(0, maxChunksPerField).map(async (chunk) => {
+        const snapshot = await getDocs(query(
+            collectionGroup(db, 'officials'),
+            where('phone', 'in', chunk),
+            limitQuery(ADMIN_USER_SEARCH_RESULT_LIMIT)
+        ));
         addSnapshotEntries(snapshot);
     });
 
