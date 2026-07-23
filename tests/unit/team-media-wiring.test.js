@@ -27,10 +27,11 @@ describe('team media page wiring', () => {
     it('loads the team media module and cache-busted db dependency', () => {
         const page = fs.readFileSync(path.join(repoRoot, 'team-media.html'), 'utf8');
         const source = fs.readFileSync(path.join(repoRoot, 'js/team-media.js'), 'utf8');
+        const teamMediaVersion = page.match(/src="js\/team-media\.js\?v=(\d+)"/)?.[1];
 
-        // Cache-busting must be present and wired; the exact version is enforced by
-        // the consistency checks, not frozen here (frozen numbers break on rebase).
-        expect(page).toContain('src="js/team-media.js?v=');
+        // Keep a freshness floor without freezing future coordinated cache-bust bumps.
+        expect(teamMediaVersion, 'team-media.html has no cache-busted team-media.js entry point').toMatch(/^\d+$/);
+        expect(Number(teamMediaVersion), 'team-media.js must use v19 or newer').toBeGreaterThanOrEqual(19);
         expect(page).toContain('Add album');
         expect(page).toContain('Upload files');
         expect(page).toContain('Save video link');
