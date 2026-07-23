@@ -29,6 +29,7 @@ import {
 import { createLogger } from './logger';
 import { getPrimaryAppCheckHeaders } from './adapters/legacyFirebaseAppCheck';
 import { clearAppDataCache } from './appDataCache';
+import { mergeOwnedTeamIds } from './teamAccess';
 import type { AuthUser, UserRole } from './types';
 
 export const firebaseAuth = auth;
@@ -934,22 +935,21 @@ export async function hydrateFirebaseUser(user: FirebaseUser): Promise<HydratedU
     logger.warn('Failed to sync approved parent membership requests.', { error });
   }
 
-  if (!Array.isArray(profile.coachOf) || profile.coachOf.length === 0) {
-    try {
-      const teams = await withTimeout(
-        Promise.resolve(dbModule.getUserTeams(user.uid)),
-        'Team access load timed out.',
-        profileHydrationTimeoutMs
-      );
-      if (Array.isArray(teams) && teams.length > 0) {
-        profile = {
-          ...profile,
-          coachOf: teams.map((team: Record<string, unknown>) => team.id).filter(Boolean)
-        };
-      }
-    } catch (error) {
-      logger.warn('Failed to load owned teams.', { error });
+  try {
+    const teams = await withTimeout(
+      Promise.resolve(dbModule.getUserTeams(user.uid)),
+      'Team access load timed out.',
+      profileHydrationTimeoutMs
+    );
+    const coachOf = mergeOwnedTeamIds(profile.coachOf, teams);
+    if (coachOf.length > 0) {
+      profile = {
+        ...profile,
+        coachOf
+      };
     }
+  } catch (error) {
+    logger.warn('Failed to load owned teams.', { error });
   }
 
   return {
