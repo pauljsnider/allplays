@@ -11,6 +11,7 @@ import {
     mergeAdminUserSearchResults,
     mergeBoundedAdminUserCandidates,
     normalizeAdminSearchTerm,
+    resolveAdminUserSearchResult,
     selectAdminItemById,
     selectAdminSearchCollection,
     shouldRunRemoteAdminUserSearch
@@ -83,7 +84,7 @@ describe('admin search collection selection', () => {
             teams: [{ field: 'name', prefix: 'Robin' }]
         });
         expect(ADMIN_USER_SEARCH_CANDIDATE_QUERY_CEILING).toBe(14);
-        expect(ADMIN_USER_SEARCH_TOTAL_QUERY_CEILING).toBe(34);
+        expect(ADMIN_USER_SEARCH_TOTAL_QUERY_CEILING).toBe(18);
     });
 
     it('finds and caps a later server candidate without scanning paginated users', () => {
@@ -114,6 +115,24 @@ describe('admin search collection selection', () => {
         expect(candidates).toEqual([pageUsers[0], remoteUsers[0]]);
         expect(candidates.filter((user) => user.fullName.toLowerCase().includes('smith')))
             .toEqual([pageUsers[0], remoteUsers[0]]);
+    });
+
+    it('merges a completed remote result using the normalized term carried by that result', () => {
+        const pageUsers = [{ id: 'user-1', fullName: 'Jane Smith' }];
+        const remoteUsers = [{ id: 'user-99', fullName: 'Smithson, Robin' }];
+
+        expect(resolveAdminUserSearchResult(pageUsers, {
+            term: 'smith',
+            users: remoteUsers,
+            stale: false,
+            remote: true
+        })).toEqual([pageUsers[0], remoteUsers[0]]);
+        expect(resolveAdminUserSearchResult(pageUsers, {
+            term: 'smith',
+            users: remoteUsers,
+            stale: true,
+            remote: true
+        })).toBeNull();
     });
 
     it('requires two normalized characters and debounces rapid typing', async () => {

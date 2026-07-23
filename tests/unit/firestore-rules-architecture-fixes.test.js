@@ -7,8 +7,10 @@ import {
 } from '@firebase/rules-unit-testing';
 import {
     collection,
+    collectionGroup,
     getDocs,
     limit,
+    orderBy,
     query,
     setDoc,
     where,
@@ -49,6 +51,7 @@ describe('firestore.rules architecture fixes', () => {
 
     it('allows only bounded platform-admin official directory list queries', () => {
         const officialRuleMatches = [...rules.matchAll(/match \/officials\/\{officialId\} \{([\s\S]*?)\n      \}/g)];
+        const collectionGroupRule = rules.match(/match \/\{path=\*\*\}\/officials\/\{officialId\} \{([\s\S]*?)\n    \}/)?.[1] || '';
 
         expect(officialRuleMatches.length).toBeGreaterThan(0);
         officialRuleMatches.forEach((match) => {
@@ -56,6 +59,21 @@ describe('firestore.rules architecture fixes', () => {
             expect(match[1]).toContain('allow list: if isBoundedGlobalAdminListQuery() || isTeamOwnerOrAdmin(teamId);');
             expect(match[1]).not.toContain('allow read: if isGlobalAdmin()');
         });
+        expect(collectionGroupRule).toContain('allow list: if isBoundedGlobalAdminListQuery();');
+    });
+
+    it('declares collection-group indexes for every filtered officials search field', () => {
+        const indexes = JSON.parse(readFileSync(new URL('../../firestore.indexes.json', import.meta.url), 'utf8'));
+        const indexedOfficialFields = indexes.fieldOverrides
+            .filter((override) =>
+                override.collectionGroup === 'officials' &&
+                override.indexes.some((index) =>
+                    index.order === 'ASCENDING' && index.queryScope === 'COLLECTION_GROUP'
+                )
+            )
+            .map((override) => override.fieldPath);
+
+        expect(indexedOfficialFields).toEqual(expect.arrayContaining(['email', 'name', 'phone']));
     });
 
     it('preserves unbounded public team list queries while keeping broad admin lists bounded', () => {
@@ -142,6 +160,11 @@ describe('firestore.rules architecture fixes', () => {
                     adminEmails: [],
                     isPublic: false
                 });
+                await setDoc(doc(adminDb, 'teams/public-team/officials/official-1'), {
+                    name: 'Robin Ref',
+                    email: 'robin@example.com',
+                    phone: '5551234567'
+                });
             });
         });
 
@@ -163,6 +186,25 @@ describe('firestore.rules architecture fixes', () => {
             await assertFails(getDocs(query(collection(adminDb, 'users'), limit(101))));
             await assertFails(getDocs(collection(adminDb, 'teams')));
             await assertFails(getDocs(query(collection(adminDb, 'teams'), limit(101))));
+        });
+
+        it('allows only bounded platform-admin collection-group searches for officials', async () => {
+            const adminDb = adminFirestore();
+            const officials = collectionGroup(adminDb, 'officials');
+
+            await assertSucceeds(getDocs(query(
+                officials,
+                where('email', '>=', 'robin'),
+                where('email', '<=', `robin\uf8ff`),
+                orderBy('email'),
+                limit(50)
+            )));
+            await assertFails(getDocs(query(
+                officials,
+                where('email', '>=', 'robin'),
+                where('email', '<=', `robin\uf8ff`),
+                orderBy('email')
+            )));
         });
 
         it('allows public team browsing while denying private team list leakage', async () => {

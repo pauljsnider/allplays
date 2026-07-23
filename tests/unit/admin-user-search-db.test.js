@@ -148,9 +148,16 @@ describe('bounded admin user search queries', () => {
         await getOfficialsForUsers(users);
 
         expect(firebaseMocks.getDocs).toHaveBeenCalledTimes(ADMIN_OFFICIAL_ENRICHMENT_QUERY_CEILING);
+        const emailTargets = new Set();
+        const phoneTargets = new Set();
         firebaseMocks.getDocs.mock.calls.forEach(([request]) => {
             expect(findConstraint(request, 'limit')?.value).toBe(ADMIN_USER_SEARCH_RESULT_LIMIT);
-            expect(findConstraint(request, 'where')?.value).toHaveLength(10);
+            const filter = findConstraint(request, 'where');
+            expect(filter.value.length).toBeLessThanOrEqual(30);
+            const targets = filter.field === 'email' ? emailTargets : phoneTargets;
+            filter.value.forEach((value) => targets.add(value));
         });
+        expect(emailTargets.size).toBe(50);
+        expect(phoneTargets.size).toBe(50);
     });
 });

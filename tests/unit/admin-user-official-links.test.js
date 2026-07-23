@@ -138,7 +138,7 @@ describe('admin users official links', () => {
         );
         expect(adminJs).toContain('createDebouncedAdminUserSearch');
         expect(adminJs).toContain('searchAdminUsers');
-        expect(adminJs).toContain('mergeAdminUserSearchResults(allUsers, result.users, term)');
+        expect(adminJs).toContain('resolveAdminUserSearchResult(allUsers, result)');
         expect(adminJs).toContain('${escapeHtml(u.email || \'-\')}');
         expect(adminJs).toContain('${escapeHtml(u.fullName || \'-\')}');
         expect(adminJs).toContain('${escapeHtml(u.phone || \'-\')}');

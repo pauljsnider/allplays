@@ -2970,6 +2970,12 @@ service cloud.firestore {
     match /{path=**}/players/{playerId} {
       allow read: if false;
     }
+
+    // Collection group rule for the global-admin officials directory search.
+    match /{path=**}/officials/{officialId} {
+      allow list: if isBoundedGlobalAdminListQuery();
+    }
+
     // Collection group rule for registrations - allows parent dashboard to query own applications.
     match /{path=**}/registrations/{registrationId} {
       allow read: if isCurrentUserRegistrationGuardian(resource.data);

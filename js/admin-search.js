@@ -5,8 +5,8 @@ export const ADMIN_USER_SEARCH_RESULT_LIMIT = 50;
 export const ADMIN_USER_SEARCH_TEAM_LIMIT = 3;
 export const ADMIN_USER_SEARCH_CONTACT_LIMIT = 20;
 export const ADMIN_USER_SEARCH_CANDIDATE_QUERY_CEILING = 14;
-export const ADMIN_OFFICIAL_ENRICHMENT_USER_LIMIT = 50;
-export const ADMIN_OFFICIAL_ENRICHMENT_QUERY_CEILING = 20;
+export const ADMIN_OFFICIAL_ENRICHMENT_USER_LIMIT = 25;
+export const ADMIN_OFFICIAL_ENRICHMENT_QUERY_CEILING = 4;
 export const ADMIN_USER_SEARCH_TOTAL_QUERY_CEILING =
     ADMIN_USER_SEARCH_CANDIDATE_QUERY_CEILING + ADMIN_OFFICIAL_ENRICHMENT_QUERY_CEILING;
 
@@ -66,6 +66,12 @@ export function mergeAdminUserSearchResults(pageUsers = [], remoteUsers = [], se
         user?.phone
     ].some((value) => String(value || '').toLowerCase().includes(term)));
     return mergeBoundedAdminUserCandidates([pageMatches, remoteUsers]);
+}
+
+export function resolveAdminUserSearchResult(pageUsers = [], result = {}) {
+    if (result.stale) return null;
+    if (!result.remote) return pageUsers;
+    return mergeAdminUserSearchResults(pageUsers, result.users, result.term);
 }
 
 export function createDebouncedAdminUserSearch({
