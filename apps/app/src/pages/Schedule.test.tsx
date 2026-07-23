@@ -896,6 +896,36 @@ describe('Schedule', () => {
     expect(await screen.findByRole('heading', { name: 'Add game for Vipers' })).toBeTruthy();
   });
 
+  it('preserves cached parent events when linked child validation is incomplete', async () => {
+    scheduleServiceMocks.loadParentScheduleScope.mockResolvedValueOnce({
+      profile: {},
+      children: [],
+      staffTeams: [],
+      isPartial: true
+    });
+    appDataCacheMocks.loadCachedAppData.mockResolvedValueOnce({
+      children: [{
+        playerId: 'player-1',
+        playerName: 'Madison Snider',
+        teamId: 'team-parent',
+        teamName: 'Jr KC Current'
+      }],
+      events: [buildScheduleEvent(1, {
+        teamId: 'team-parent',
+        teamName: 'Jr KC Current',
+        isTeamStaff: false
+      })],
+      staffTeams: []
+    });
+
+    renderSchedule('/schedule?teamId=team-parent');
+
+    const teamFilter = await screen.findByLabelText('Team filter');
+    expect(within(teamFilter).getByRole('option', { name: 'Jr KC Current' })).toBeTruthy();
+    expect((teamFilter as HTMLSelectElement).value).toBe('team-parent');
+    expect(await screen.findByText('Next up')).toBeTruthy();
+  });
+
   it('removes cached events, filters, and management access when fresh scope revokes the team', async () => {
     scheduleServiceMocks.loadParentScheduleScope.mockResolvedValueOnce({
       profile: {},

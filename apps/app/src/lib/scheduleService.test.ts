@@ -354,6 +354,26 @@ describe('parent schedule child scope', () => {
     expect(getPlayers).not.toHaveBeenCalled();
   });
 
+  it.each(['team', 'player'])('marks parent scope partial when a linked %s validation read fails', async (failedRead) => {
+    vi.mocked(loadProfileDocument).mockResolvedValue({
+      parentPlayerKeys: ['team-1::player-1']
+    } as any);
+    vi.mocked(getStaffTeams).mockResolvedValue({ teams: [], isPartial: false } as any);
+    vi.mocked(getTeam).mockImplementation(async () => {
+      if (failedRead === 'team') throw new Error('team lookup unavailable');
+      return { id: 'team-1', name: 'Bears', active: true } as any;
+    });
+    vi.mocked(getDoc).mockImplementation(async () => {
+      if (failedRead === 'player') throw new Error('player lookup unavailable');
+      return playerSnapshot('player-1', { name: 'Avery Lee', active: true }) as any;
+    });
+
+    const scope = await loadParentScheduleScope(parentUser);
+
+    expect(scope.children).toEqual([]);
+    expect(scope.isPartial).toBe(true);
+  });
+
   it('reloads profile scope during schedule enrichment when the fast scope is partial', async () => {
     vi.mocked(loadProfileDocument).mockResolvedValue({
       parentOf: [],
