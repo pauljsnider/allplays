@@ -8,8 +8,54 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  preview-smoke:
+  changes:
     if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    outputs:
+      web: ${{ steps.filter.outputs.web }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Detect preview-relevant changes
+        id: filter
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          # Fail open: if we cannot compute a diff (new branch, missing base),
+          # run the smoke so we never silently skip a real regression.
+          if [ -z "$BASE_SHA" ] || ! git cat-file -e "$BASE_SHA" 2>/dev/null; then
+            echo "Base sha unavailable — running preview-smoke." >&2
+            echo "web=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          CHANGED=$(git diff --name-only "$BASE_SHA...$HEAD_SHA")
+          echo "Changed files:" >&2
+          echo "$CHANGED" >&2
+
+          # Paths that cannot affect the served static site or the /app/ bundle the
+          # smoke exercises: backend functions, security rules, native shells, docs,
+          # migrations, and unit tests. preview-smoke only needs to run when the diff
+          # touches something OUTSIDE this set. Anything unrecognized, including
+          # workflow changes under .github/workflows/, runs the smoke.
+          SKIPPABLE='^(functions/|ios/|android/|docs/|_migration/|tests/unit/)|^firestore\.(rules|indexes\.json)$|^storage\.rules$|^[A-Za-z0-9_.-]+\.md$'
+
+          if echo "$CHANGED" | grep -Ev "$SKIPPABLE" | grep -q .; then
+            echo "web=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Only backend/native/docs paths changed — skipping preview-smoke." >&2
+            echo "web=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  preview-smoke-run:
+    needs: changes
+    if: github.event.pull_request.head.repo.full_name == github.repository && needs.changes.outputs.web == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -118,3 +164,46 @@ jobs:
           path: |
             /tmp/allplays-preview-smoke.log
             /tmp/allplays-app-preview-smoke.log
+
+  # Required-check aggregate: always runs and reports the branch-protection status
+  # named "preview-smoke". Passes when the heavy job succeeded OR was skipped as
+  # not-applicable to this change (backend/native/docs-only); fails only on a real
+  # failure. Mirrors the mobile-build aggregate so a skipped run never blocks merge.
+  preview-smoke:
+    needs: [changes, preview-smoke-run]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report preview-smoke result
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          IS_SAME_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+          RUN_RESULT: ${{ needs.preview-smoke-run.result }}
+          SHOULD_RUN: ${{ needs.changes.outputs.web }}
+        run: |
+          set -euo pipefail
+          echo "changes result: $CHANGES_RESULT"
+          echo "preview-smoke-run result: $RUN_RESULT"
+
+          if [ "$IS_SAME_REPOSITORY" != "true" ]; then
+            echo "Fork PR — preview-smoke is not eligible to run."
+            exit 0
+          fi
+
+          if [ "$CHANGES_RESULT" != "success" ]; then
+            echo "Change detection did not succeed ($CHANGES_RESULT) — failing closed." >&2
+            exit 1
+          fi
+
+          if [ "$SHOULD_RUN" = "false" ] && [ "$RUN_RESULT" = "skipped" ]; then
+            echo "No preview-relevant changes — preview-smoke is not required."
+            exit 0
+          fi
+
+          if [ "$SHOULD_RUN" = "true" ] && [ "$RUN_RESULT" = "success" ]; then
+            echo "preview-smoke succeeded."
+            exit 0
+          fi
+
+          echo "preview-smoke result was inconsistent with change detection (web=$SHOULD_RUN, result=$RUN_RESULT)." >&2
+          exit 1
