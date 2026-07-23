@@ -109,14 +109,26 @@ test('scrubs deleted parent identities and their associated roster contact field
       { email: 'DELETED@example.com', name: 'Deleted Parent' },
       { email: 'remaining@example.com', name: 'Remaining Parent' }
     ],
+    guardians: [
+      { guardianUserId: 'deleted-parent', email: 'deleted@example.com' },
+      { userId: 'remaining-parent', email: 'remaining@example.com' }
+    ],
+    familyContacts: [
+      { phone: '(555) 111-2222', name: 'Deleted Parent' },
+      { phone: '(555) 333-4444', name: 'Remaining Parent' }
+    ],
     parentUserId: 'deleted-parent',
     parentEmail: 'deleted@example.com',
     parentName: 'Deleted Parent',
     guardianUserId: 'remaining-parent'
-  }, { uid: 'deleted-parent', email: 'deleted@example.com' }), {
+  }, { uid: 'deleted-parent', email: 'deleted@example.com', phone: '555-111-2222' }), {
     changed: true,
     contacts: [{ email: 'remaining@example.com', name: 'Remaining Parent' }],
     contactsChanged: true,
+    familyContacts: [{ phone: '(555) 333-4444', name: 'Remaining Parent' }],
+    familyContactsChanged: true,
+    guardians: [{ userId: 'remaining-parent', email: 'remaining@example.com' }],
+    guardiansChanged: true,
     parents: [{ accountUserId: 'remaining-parent', email: 'remaining@example.com' }],
     parentsChanged: true,
     fieldsToDelete: [
@@ -436,6 +448,7 @@ test('gives the deletion worker extended runtime and automatic event retries', (
   );
   assert.match(teamLoaderSource, /where\('ownerEmail', '==', candidate\)/);
   assert.match(teamLoaderSource, /where\('ownerEmailLower', '==', candidate\)/);
+  assert.match(functionsSource, /collectionGroup\('chatConversations'\)\.where\('mutedBy', 'array-contains', uid\)/);
   const workerSource = functionsSource.slice(functionsSource.indexOf('exports.processAccountDeletionRequest'));
   assert.match(functionsSource, /deleteAccountQuery[\s\S]*firestore\.recursiveDelete\(docSnapshot\.ref\)/);
   assert.ok(workerSource.indexOf('await scrubAccountTeamGrants(') < workerSource.indexOf('admin.auth().deleteUser(uid)'));

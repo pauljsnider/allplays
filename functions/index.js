@@ -14479,6 +14479,8 @@ function buildAccountRosterScrubUpdate(record, accountIdentity) {
   };
   if (plan.parentsChanged) update.parents = plan.parents;
   if (plan.contactsChanged) update.contacts = plan.contacts;
+  if (plan.guardiansChanged) update.guardians = plan.guardians;
+  if (plan.familyContactsChanged) update.familyContacts = plan.familyContacts;
   plan.fieldsToDelete.forEach((field) => {
     update[field] = admin.firestore.FieldValue.delete();
   });
@@ -14566,6 +14568,7 @@ async function scrubAccountChatConversationMembership(uid, email) {
   if (normalizedEmail) participantIds.push(`email:${normalizedEmail}`);
   const snapshots = await Promise.all([
     firestore.collectionGroup('chatConversations').where('directUserIds', 'array-contains', uid).get(),
+    firestore.collectionGroup('chatConversations').where('mutedBy', 'array-contains', uid).get(),
     ...participantIds.map((participantId) => (
       firestore.collectionGroup('chatConversations')
         .where('participantIds', 'array-contains', participantId)

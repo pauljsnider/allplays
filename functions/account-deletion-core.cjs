@@ -128,6 +128,10 @@ function buildRosterParentScrubPlan(record = {}, accountIdentity) {
       changed: false,
       contacts: [],
       contactsChanged: false,
+      familyContacts: [],
+      familyContactsChanged: false,
+      guardians: [],
+      guardiansChanged: false,
       parents: [],
       parentsChanged: false,
       fieldsToDelete: []
@@ -135,10 +139,16 @@ function buildRosterParentScrubPlan(record = {}, accountIdentity) {
   }
   const parents = Array.isArray(record.parents) ? record.parents : [];
   const contacts = Array.isArray(record.contacts) ? record.contacts : [];
+  const guardians = Array.isArray(record.guardians) ? record.guardians : [];
+  const familyContacts = Array.isArray(record.familyContacts) ? record.familyContacts : [];
   const filteredParents = parents.filter((parent) => !matchesRosterContactIdentity(parent, identity));
   const filteredContacts = contacts.filter((contact) => !matchesRosterContactIdentity(contact, identity));
+  const filteredGuardians = guardians.filter((guardian) => !matchesRosterContactIdentity(guardian, identity));
+  const filteredFamilyContacts = familyContacts.filter((contact) => !matchesRosterContactIdentity(contact, identity));
   const parentsChanged = filteredParents.length !== parents.length;
   const contactsChanged = filteredContacts.length !== contacts.length;
+  const guardiansChanged = filteredGuardians.length !== guardians.length;
+  const familyContactsChanged = filteredFamilyContacts.length !== familyContacts.length;
   const fieldsToDelete = [];
   if (matchesRosterContactIdentity({
     userId: record.parentUserId,
@@ -155,9 +165,14 @@ function buildRosterParentScrubPlan(record = {}, accountIdentity) {
     fieldsToDelete.push('guardianUserId', 'guardianEmail', 'guardianName', 'guardianPhone', 'guardianRelation');
   }
   return {
-    changed: parentsChanged || contactsChanged || fieldsToDelete.length > 0,
+    changed: parentsChanged || contactsChanged || guardiansChanged || familyContactsChanged ||
+      fieldsToDelete.length > 0,
     contacts: filteredContacts,
     contactsChanged,
+    familyContacts: filteredFamilyContacts,
+    familyContactsChanged,
+    guardians: filteredGuardians,
+    guardiansChanged,
     parents: filteredParents,
     parentsChanged,
     fieldsToDelete

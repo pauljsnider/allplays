@@ -56,6 +56,7 @@ describe('mobile store legal and support pages', () => {
             ['chatMessages', 'senderId'],
             ['chatConversations', 'participantIds', 'array'],
             ['chatConversations', 'directUserIds', 'array'],
+            ['chatConversations', 'mutedBy', 'array'],
             ['comments', 'authorId'],
             ['reactions', 'userId'],
             ['rsvps', 'userId'],

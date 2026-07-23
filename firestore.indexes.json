@@ -667,6 +667,14 @@
       ]
     },
     {
+      "collectionGroup": "chatConversations",
+      "fieldPath": "mutedBy",
+      "indexes": [
+        { "arrayConfig": "CONTAINS", "queryScope": "COLLECTION" },
+        { "arrayConfig": "CONTAINS", "queryScope": "COLLECTION_GROUP" }
+      ]
+    },
+    {
       "collectionGroup": "membershipRequests",
       "fieldPath": "requesterUserId",
       "indexes": [
