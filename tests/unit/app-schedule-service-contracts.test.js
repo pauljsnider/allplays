@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 
 const scheduleServiceSource = readFileSync(new URL('../../apps/app/src/lib/scheduleService.ts', import.meta.url), 'utf8');
+const legacyScheduleDbSource = readFileSync(new URL('../../apps/app/src/lib/adapters/legacyScheduleDb.ts', import.meta.url), 'utf8');
 
 function getScheduleServiceSlice(startMarker, endMarker) {
     const start = scheduleServiceSource.indexOf(startMarker);
@@ -456,6 +457,9 @@ describe('React app schedule service contract integration', () => {
         expect(staffTeamSource).toContain("nativeRunQuery('teams', 'ownerEmailLower', 'EQUAL', normalizedEmail)");
         expect(staffTeamSource).toContain("nativeRunQuery('teams', 'ownerEmail', 'EQUAL', ownerEmail)");
         expect(scheduleServiceSource).toContain('normalizeEmail(team.ownerEmailLower) === email || normalizeEmail(team.ownerEmail) === email');
+        expect(legacyScheduleDbSource).toContain("legacyFirebaseWhere('ownerEmailLower', '==', normalizedEmail)");
+        expect(legacyScheduleDbSource).toContain("legacyFirebaseWhere('ownerEmail', '==', ownerEmail)");
+        expect(legacyScheduleDbSource).toContain('ownerEmailSnapshots.flatMap((snapshot) => snapshot.docs)');
     });
 
     it('routes parent schedule event detail reads through typed schedule mappers', () => {
