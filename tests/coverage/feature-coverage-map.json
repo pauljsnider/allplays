@@ -251,6 +251,7 @@
                 "apps/app/src/pages/CreateTeam.test.tsx",
                 "apps/app/src/pages/Home.test.tsx",
                 "apps/app/src/pages/PlayerDetail.test.tsx",
+                "apps/app/src/pages/PublicTeamsBrowse.test.tsx",
                 "apps/app/src/pages/TeamDetail.test.tsx",
                 "apps/app/src/pages/TeamSettings.test.tsx",
                 "apps/app/src/pages/Teams.test.tsx",
@@ -265,12 +266,7 @@
                 "tests/smoke/team-fallback-regressions.spec.js",
                 "tests/smoke/teams-location-search.spec.js"
             ],
-            "knownGaps": [
-                {
-                    "tier": "integration",
-                    "description": "PublicTeamsBrowse needs a direct app page test around empty states, pagination, and location search."
-                }
-            ]
+            "knownGaps": []
         },
         {
             "id": "schedule.calendar-rsvp-availability",
