@@ -374,7 +374,11 @@ describe('React app auth/profile capability parity', () => {
         ]);
         expectContains(iosEntitlements, [
             'aps-environment',
-            '<string>development</string>'
+            '<string>$(APS_ENVIRONMENT)</string>'
+        ]);
+        expectContains(readProjectFile('ios/App/App.xcodeproj/project.pbxproj'), [
+            'APS_ENVIRONMENT = development;',
+            'APS_ENVIRONMENT = production;'
         ]);
         expectContains(iosAppDelegate, [
             'didRegisterForRemoteNotificationsWithDeviceToken',

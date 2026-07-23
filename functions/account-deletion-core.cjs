@@ -4,6 +4,7 @@ const crypto = require('node:crypto');
 
 const ACCOUNT_DELETION_CONFIRMATION = 'DELETE';
 const ACCOUNT_DELETION_MAX_DAYS = 30;
+const ACCOUNT_DELETION_MAX_AUTH_AGE_SECONDS = 5 * 60;
 
 function normalizeConfirmation(value) {
   return String(value || '').trim().toUpperCase();
@@ -20,28 +21,49 @@ function shouldProcessAccountDeletionRequest(beforeSnapshot, afterSnapshot) {
   return afterStatus === 'queued' && beforeStatus !== 'queued';
 }
 
-function extractAccountProfileStoragePath(value, uid) {
+function extractFirebaseStoragePath(value) {
   const rawValue = String(value || '').trim();
   if (!rawValue) return '';
 
-  let storagePath = '';
   try {
     const url = new URL(rawValue);
     if (url.hostname === 'firebasestorage.googleapis.com') {
       const match = url.pathname.match(/\/o\/(.+)$/);
-      storagePath = match ? decodeURIComponent(match[1]) : '';
+      return match ? decodeURIComponent(match[1]) : '';
     } else if (url.hostname === 'storage.googleapis.com') {
       const pathParts = url.pathname.split('/').filter(Boolean);
-      storagePath = pathParts.slice(1).join('/');
+      return pathParts.slice(1).join('/');
     }
   } catch {
     return '';
   }
+  return '';
+}
 
+function extractAccountProfileStoragePath(value, uid) {
+  const storagePath = extractFirebaseStoragePath(value);
   const normalizedUid = String(uid || '').trim();
   const scopedPrefix = `user-photos/${normalizedUid}/`;
   if (normalizedUid && storagePath.startsWith(scopedPrefix)) return storagePath;
   return '';
+}
+
+function extractLegacyAccountProfileStoragePath(value) {
+  const storagePath = extractFirebaseStoragePath(value);
+  const pathParts = storagePath.split('/');
+  return pathParts.length === 2 && pathParts[0] === 'user-photos' ? storagePath : '';
+}
+
+function getDeletableLegacyProfilePhotoPaths(uid, profilePhotoUrls = [], userDocuments = []) {
+  const candidates = new Set(
+    profilePhotoUrls.map(extractLegacyAccountProfileStoragePath).filter(Boolean)
+  );
+  userDocuments.forEach((document) => {
+    if (document.id === uid) return;
+    const referencedPath = extractLegacyAccountProfileStoragePath(document.data()?.photoUrl);
+    if (referencedPath) candidates.delete(referencedPath);
+  });
+  return [...candidates];
 }
 
 function classifyAccountStoragePaths(uid, mediaStoragePaths = [], profilePhotoUrls = []) {
@@ -138,6 +160,21 @@ function assertDeletionRequest(data, HttpsError) {
   }
 }
 
+function assertRecentAuthentication(context, HttpsError, nowSeconds = Math.floor(Date.now() / 1000)) {
+  const authTime = Number(context?.auth?.token?.auth_time);
+  if (
+    !Number.isFinite(authTime) ||
+    authTime <= 0 ||
+    nowSeconds - authTime > ACCOUNT_DELETION_MAX_AUTH_AGE_SECONDS ||
+    authTime - nowSeconds > 60
+  ) {
+    throw new HttpsError(
+      'failed-precondition',
+      'For your security, sign in again before permanently deleting your account.'
+    );
+  }
+}
+
 function summarizeOwnedTeams(snapshot) {
   const seenTeamIds = new Set();
   return (snapshot?.docs || [])
@@ -181,6 +218,7 @@ function createAccountDeletionRequestHandler({ firestore, auth, Timestamp, Https
     if (!uid) {
       throw new HttpsError('unauthenticated', 'Sign in before requesting account deletion.');
     }
+    assertRecentAuthentication(context, HttpsError);
     assertDeletionRequest(data, HttpsError);
 
     const userRecord = await auth.getUser(uid).catch(() => null);
@@ -215,13 +253,17 @@ function createAccountDeletionRequestHandler({ firestore, auth, Timestamp, Https
 
 module.exports = {
   ACCOUNT_DELETION_CONFIRMATION,
+  ACCOUNT_DELETION_MAX_AUTH_AGE_SECONDS,
   ACCOUNT_DELETION_MAX_DAYS,
   assertDeletionRequest,
+  assertRecentAuthentication,
   buildDeletionAuditId,
   classifyAccountStoragePaths,
   collectAccountMediaStoragePaths,
   createAccountDeletionRequestHandler,
   extractAccountProfileStoragePath,
+  extractLegacyAccountProfileStoragePath,
+  getDeletableLegacyProfilePhotoPaths,
   getAccountDeletionCollectionQueries,
   getAccountDeletionCollectionGroupQueries,
   loadOwnedTeams,

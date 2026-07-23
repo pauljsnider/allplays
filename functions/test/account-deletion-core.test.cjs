@@ -2,17 +2,23 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { readFileSync } = require('node:fs');
+const { join } = require('node:path');
 const {
   buildDeletionAuditId,
   classifyAccountStoragePaths,
   collectAccountMediaStoragePaths,
   createAccountDeletionRequestHandler,
   extractAccountProfileStoragePath,
+  extractLegacyAccountProfileStoragePath,
+  getDeletableLegacyProfilePhotoPaths,
   getAccountDeletionCollectionQueries,
   getAccountDeletionCollectionGroupQueries,
   shouldProcessAccountDeletionRequest,
   normalizeConfirmation
 } = require('../account-deletion-core.cjs');
+
+const recentAuthTime = Math.floor(Date.now() / 1000);
 
 class HttpsError extends Error {
   constructor(code, message, details) {
@@ -63,6 +69,41 @@ test('extracts only account profile photo paths from Firebase Storage URLs', () 
     ''
   );
   assert.equal(extractAccountProfileStoragePath('https://example.com/photo.jpg', 'user-1'), '');
+});
+
+test('extracts legacy unscoped profile paths separately for ownership verification', () => {
+  assert.equal(
+    extractLegacyAccountProfileStoragePath(
+      'https://firebasestorage.googleapis.com/v0/b/game-flow-img.firebasestorage.app/o/user-photos%2F171234_photo.jpg?alt=media'
+    ),
+    'user-photos/171234_photo.jpg'
+  );
+  assert.equal(
+    extractLegacyAccountProfileStoragePath(
+      'https://firebasestorage.googleapis.com/v0/b/game-flow-img.firebasestorage.app/o/user-photos%2Fuser-1%2Fphoto.jpg?alt=media'
+    ),
+    ''
+  );
+});
+
+test('deletes a legacy profile photo only when no other user references its object path', () => {
+  const candidateUrl = 'https://firebasestorage.googleapis.com/v0/b/images/o/user-photos%2F171234_photo.jpg?alt=media&token=owner';
+  const sameObjectWithAnotherToken = 'https://firebasestorage.googleapis.com/v0/b/images/o/user-photos%2F171234_photo.jpg?alt=media&token=other';
+  const userDocument = (id, photoUrl) => ({ id, data: () => ({ photoUrl }) });
+
+  assert.deepEqual(
+    getDeletableLegacyProfilePhotoPaths('user-1', [candidateUrl], [
+      userDocument('user-1', candidateUrl)
+    ]),
+    ['user-photos/171234_photo.jpg']
+  );
+  assert.deepEqual(
+    getDeletableLegacyProfilePhotoPaths('user-1', [candidateUrl], [
+      userDocument('user-1', candidateUrl),
+      userDocument('user-2', sameObjectWithAnotherToken)
+    ]),
+    []
+  );
 });
 
 test('routes account media cleanup to the primary and legacy image buckets', () => {
@@ -145,7 +186,10 @@ test('queues deletion for a signed-in non-owner', async () => {
     HttpsError
   });
 
-  const result = await handler({ confirmation: 'DELETE', source: 'ios' }, { auth: { uid: 'user-1', token: {} } });
+  const result = await handler(
+    { confirmation: 'DELETE', source: 'ios' },
+    { auth: { uid: 'user-1', token: { auth_time: recentAuthTime } } }
+  );
   assert.equal(result.status, 'queued');
   assert.equal(writes[0].path, 'accountDeletionRequests/user-1');
   assert.equal(writes[0].value.email, 'parent@example.com');
@@ -166,7 +210,10 @@ test('blocks deletion while the user owns a team', async () => {
   });
 
   await assert.rejects(
-    () => handler({ confirmation: 'DELETE' }, { auth: { uid: 'owner-1' } }),
+    () => handler(
+      { confirmation: 'DELETE' },
+      { auth: { uid: 'owner-1', token: { auth_time: recentAuthTime } } }
+    ),
     (error) => error.code === 'failed-precondition' && error.details.ownedTeams[0].name === 'Bears'
   );
 });
@@ -190,7 +237,10 @@ test('blocks deletion for a legacy email-based team owner', async () => {
   });
 
   await assert.rejects(
-    () => handler({ confirmation: 'DELETE' }, { auth: { uid: 'legacy-owner', token: {} } }),
+    () => handler(
+      { confirmation: 'DELETE' },
+      { auth: { uid: 'legacy-owner', token: { auth_time: recentAuthTime } } }
+    ),
     (error) => error.code === 'failed-precondition' &&
       error.details.ownedTeams[0].name === 'Legacy Bears'
   );
@@ -214,9 +264,34 @@ test('allows deletion after every owned team is deactivated', async () => {
 
   const result = await handler(
     { confirmation: 'DELETE', source: 'ios' },
-    { auth: { uid: 'user-1', token: { email: 'owner@example.com' } } }
+    { auth: { uid: 'user-1', token: { email: 'owner@example.com', auth_time: recentAuthTime } } }
   );
 
   assert.equal(result.status, 'queued');
   assert.equal(writes.length, 1);
+});
+
+test('requires a recent sign-in before queuing permanent account deletion', async () => {
+  const handler = createAccountDeletionRequestHandler({
+    firestore: {},
+    auth: {},
+    Timestamp: { now: () => 'now' },
+    HttpsError
+  });
+
+  await assert.rejects(
+    () => handler(
+      { confirmation: 'DELETE' },
+      { auth: { uid: 'user-1', token: { auth_time: recentAuthTime - 301 } } }
+    ),
+    (error) => error.code === 'failed-precondition' && /sign in again/i.test(error.message)
+  );
+});
+
+test('gives the deletion worker extended runtime and automatic event retries', () => {
+  const functionsSource = readFileSync(join(__dirname, '..', 'index.js'), 'utf8');
+  assert.match(
+    functionsSource,
+    /exports\.processAccountDeletionRequest = functions\s+\.runWith\(\{ timeoutSeconds: 540, memory: '1GB', failurePolicy: true \}\)\s+\.firestore/
+  );
 });
