@@ -65,7 +65,7 @@ const teamMediaUtilsMocks = vi.hoisted(() => ({
 
 const uploadTaskQueue = vi.hoisted(() => []);
 
-vi.mock('../../js/firebase.js?v=22', () => ({
+vi.mock('../../js/firebase.js?v=23', () => ({
     db: {},
     auth: { currentUser: { uid: 'user-1' } },
     storage: {},
@@ -92,6 +92,7 @@ vi.mock('../../js/firebase.js?v=22', () => ({
     onSnapshot: vi.fn(),
     serverTimestamp: firebaseMocks.serverTimestamp,
     collectionGroup: vi.fn(),
+    documentId: vi.fn(),
     writeBatch: firebaseMocks.writeBatch,
     runTransaction: firebaseMocks.runTransaction,
     httpsCallable: vi.fn(),
@@ -100,6 +101,8 @@ vi.mock('../../js/firebase.js?v=22', () => ({
     getDownloadURL: firebaseMocks.getDownloadURL,
     deleteObject: firebaseMocks.deleteObject
 }));
+
+vi.mock('../../js/firebase.js?v=22', async () => import('../../js/firebase.js?v=23'));
 
 vi.mock('../../js/firebase-images.js?v=10', () => ({
     imageStorage: {},

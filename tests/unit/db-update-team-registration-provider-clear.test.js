@@ -4,7 +4,7 @@ const updateDoc = vi.fn();
 const deleteField = vi.fn(() => '__DELETE_FIELD__');
 const doc = vi.fn((database, ...segments) => ({ database, path: segments.join('/') }));
 
-vi.mock('../../js/firebase.js?v=22', () => ({
+vi.mock('../../js/firebase.js?v=23', () => ({
     db: { name: 'mock-db' },
     auth: {},
     storage: {},
@@ -30,6 +30,7 @@ vi.mock('../../js/firebase.js?v=22', () => ({
     onSnapshot: vi.fn(),
     serverTimestamp: vi.fn(),
     collectionGroup: vi.fn(),
+    documentId: vi.fn(),
     writeBatch: vi.fn(),
     runTransaction: vi.fn(),
     functions: {},
@@ -39,6 +40,8 @@ vi.mock('../../js/firebase.js?v=22', () => ({
     getDownloadURL: vi.fn(),
     deleteObject: vi.fn()
 }));
+
+vi.mock('../../js/firebase.js?v=22', async () => import('../../js/firebase.js?v=23'));
 
 vi.mock('../../js/firebase-images.js?v=10', () => ({
     imageStorage: {},

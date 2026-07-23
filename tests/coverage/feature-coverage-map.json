@@ -76,12 +76,14 @@
             ],
             "cloudFunctions": [
                 "_internal",
-                "collectTelemetry"
+                "collectTelemetry",
+                "syncAdminUserSearchIndexOnUserWrite"
             ],
             "unitTests": [
                 "tests/unit/admin-bootstrap.test.js",
                 "tests/unit/admin-dashboard-stats.test.js",
                 "tests/unit/admin-status-page.test.js",
+                "functions/test/admin-user-search-index.test.cjs",
                 "tests/unit/app-capability-page.test.jsx",
                 "tests/unit/app-help-article.test.jsx",
                 "tests/unit/app-help-knowledge-service.test.js",

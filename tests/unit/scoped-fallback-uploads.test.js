@@ -29,7 +29,7 @@ const firebaseMocks = vi.hoisted(() => ({
     })
 }));
 
-vi.mock('../../js/firebase.js?v=22', () => ({
+vi.mock('../../js/firebase.js?v=23', () => ({
     db: {},
     auth: { currentUser: { uid: 'user-42' } },
     storage: 'main-storage',
@@ -55,6 +55,7 @@ vi.mock('../../js/firebase.js?v=22', () => ({
     onSnapshot: vi.fn(),
     serverTimestamp: vi.fn(),
     collectionGroup: vi.fn(),
+    documentId: vi.fn(),
     writeBatch: vi.fn(),
     runTransaction: vi.fn(),
     functions: {},
@@ -64,6 +65,8 @@ vi.mock('../../js/firebase.js?v=22', () => ({
     getDownloadURL: firebaseMocks.getDownloadURL,
     deleteObject: firebaseMocks.deleteObject
 }));
+
+vi.mock('../../js/firebase.js?v=22', async () => import('../../js/firebase.js?v=23'));
 
 vi.mock('../../js/firebase-images.js?v=10', () => ({
     imageStorage: 'image-storage',
