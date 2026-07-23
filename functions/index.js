@@ -243,8 +243,6 @@ const {
   classifyAccountStoragePaths,
   collectAccountMediaStoragePaths,
   createAccountDeletionRequestHandler,
-  extractLegacyAccountProfileStoragePath,
-  getDeletableLegacyProfilePhotoPaths,
   getAccountDeletionCollectionQueries,
   getAccountDeletionCollectionGroupQueries,
   loadOwnedTeams,
@@ -14409,19 +14407,6 @@ async function deleteAccountQuery(query) {
   }
 }
 
-async function findDeletableLegacyProfilePhotoPaths(uid, profilePhotoUrls = []) {
-  const candidates = profilePhotoUrls
-    .map(extractLegacyAccountProfileStoragePath)
-    .filter(Boolean);
-  if (!candidates.length) return [];
-
-  // Legacy uploads predate UID-scoped object names and have no trusted owner
-  // metadata. Only delete a candidate after confirming no other user profile
-  // currently references the same Storage object.
-  const users = await firestore.collection('users').select('photoUrl').get();
-  return getDeletableLegacyProfilePhotoPaths(uid, profilePhotoUrls, users.docs || []);
-}
-
 async function deleteAccountStorage(uid, mediaDocuments, profilePhotoUrls = []) {
   const primaryBucket = admin.storage().bucket();
   const imageBucket = admin.storage().bucket(
@@ -14439,15 +14424,11 @@ async function deleteAccountStorage(uid, mediaDocuments, profilePhotoUrls = []) 
     collectAccountMediaStoragePaths(mediaDocuments.map((document) => document.data() || {})),
     profilePhotoUrls
   );
-  const legacyProfilePhotoPaths = await findDeletableLegacyProfilePhotoPaths(uid, profilePhotoUrls);
   await Promise.all([
     ...primaryPaths.map((storagePath) => (
       primaryBucket.file(storagePath).delete({ ignoreNotFound: true })
     )),
     ...imagePaths.map((storagePath) => (
-      imageBucket.file(storagePath).delete({ ignoreNotFound: true })
-    )),
-    ...legacyProfilePhotoPaths.map((storagePath) => (
       imageBucket.file(storagePath).delete({ ignoreNotFound: true })
     ))
   ]);

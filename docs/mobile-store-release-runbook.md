@@ -81,7 +81,18 @@ gcloud storage buckets add-iam-policy-binding gs://game-flow-img.firebasestorage
   --role=roles/storage.objectAdmin
 ```
 
-Verify the binding and complete a non-owner account-deletion test that includes both a new scoped profile photo and an older unscoped profile photo.
+Verify the binding and complete a non-owner account-deletion test with a new
+UID-scoped profile photo.
+
+Legacy `user-photos/<timestamp>_<name>` objects cannot be deleted from a
+user-controlled `photoUrl`: that prefix also contains certificate signatures
+and the old objects have no trusted owner metadata. Before store submission,
+inventory those unscoped objects, establish ownership from a trusted export or
+Storage audit source, migrate confirmed current profile photos into
+`user-photos/<uid>/...`, and remove confirmed orphaned objects in a separately
+approved cleanup window. Do not make the account-deletion worker infer legacy
+ownership from a profile URL. Treat any remaining unscoped profile photo as a
+release blocker.
 
 ## Phase 4 — Verified app links
 

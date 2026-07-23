@@ -48,24 +48,6 @@ function extractAccountProfileStoragePath(value, uid) {
   return '';
 }
 
-function extractLegacyAccountProfileStoragePath(value) {
-  const storagePath = extractFirebaseStoragePath(value);
-  const pathParts = storagePath.split('/');
-  return pathParts.length === 2 && pathParts[0] === 'user-photos' ? storagePath : '';
-}
-
-function getDeletableLegacyProfilePhotoPaths(uid, profilePhotoUrls = [], userDocuments = []) {
-  const candidates = new Set(
-    profilePhotoUrls.map(extractLegacyAccountProfileStoragePath).filter(Boolean)
-  );
-  userDocuments.forEach((document) => {
-    if (document.id === uid) return;
-    const referencedPath = extractLegacyAccountProfileStoragePath(document.data()?.photoUrl);
-    if (referencedPath) candidates.delete(referencedPath);
-  });
-  return [...candidates];
-}
-
 function classifyAccountStoragePaths(uid, mediaStoragePaths = [], profilePhotoUrls = []) {
   const normalizedUid = String(uid || '').trim();
   const athletePrefix = `athlete-profile-media/${normalizedUid}/`;
@@ -149,6 +131,7 @@ function getAccountDeletionCollectionGroupQueries() {
     ['rideRequests', 'parentUserId'],
     ['media', 'uploadedBy'],
     ['mediaItems', 'uploadedBy'],
+    ['registrations', 'submittedByUserId'],
     ['notificationTargets', 'uid'],
     ['notificationRecipients', 'uid']
   ];
@@ -262,8 +245,6 @@ module.exports = {
   collectAccountMediaStoragePaths,
   createAccountDeletionRequestHandler,
   extractAccountProfileStoragePath,
-  extractLegacyAccountProfileStoragePath,
-  getDeletableLegacyProfilePhotoPaths,
   getAccountDeletionCollectionQueries,
   getAccountDeletionCollectionGroupQueries,
   loadOwnedTeams,

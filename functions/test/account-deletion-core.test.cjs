@@ -10,8 +10,6 @@ const {
   collectAccountMediaStoragePaths,
   createAccountDeletionRequestHandler,
   extractAccountProfileStoragePath,
-  extractLegacyAccountProfileStoragePath,
-  getDeletableLegacyProfilePhotoPaths,
   getAccountDeletionCollectionQueries,
   getAccountDeletionCollectionGroupQueries,
   shouldProcessAccountDeletionRequest,
@@ -69,41 +67,6 @@ test('extracts only account profile photo paths from Firebase Storage URLs', () 
     ''
   );
   assert.equal(extractAccountProfileStoragePath('https://example.com/photo.jpg', 'user-1'), '');
-});
-
-test('extracts legacy unscoped profile paths separately for ownership verification', () => {
-  assert.equal(
-    extractLegacyAccountProfileStoragePath(
-      'https://firebasestorage.googleapis.com/v0/b/game-flow-img.firebasestorage.app/o/user-photos%2F171234_photo.jpg?alt=media'
-    ),
-    'user-photos/171234_photo.jpg'
-  );
-  assert.equal(
-    extractLegacyAccountProfileStoragePath(
-      'https://firebasestorage.googleapis.com/v0/b/game-flow-img.firebasestorage.app/o/user-photos%2Fuser-1%2Fphoto.jpg?alt=media'
-    ),
-    ''
-  );
-});
-
-test('deletes a legacy profile photo only when no other user references its object path', () => {
-  const candidateUrl = 'https://firebasestorage.googleapis.com/v0/b/images/o/user-photos%2F171234_photo.jpg?alt=media&token=owner';
-  const sameObjectWithAnotherToken = 'https://firebasestorage.googleapis.com/v0/b/images/o/user-photos%2F171234_photo.jpg?alt=media&token=other';
-  const userDocument = (id, photoUrl) => ({ id, data: () => ({ photoUrl }) });
-
-  assert.deepEqual(
-    getDeletableLegacyProfilePhotoPaths('user-1', [candidateUrl], [
-      userDocument('user-1', candidateUrl)
-    ]),
-    ['user-photos/171234_photo.jpg']
-  );
-  assert.deepEqual(
-    getDeletableLegacyProfilePhotoPaths('user-1', [candidateUrl], [
-      userDocument('user-1', candidateUrl),
-      userDocument('user-2', sameObjectWithAnotherToken)
-    ]),
-    []
-  );
 });
 
 test('routes account media cleanup to the primary and legacy image buckets', () => {
@@ -167,6 +130,7 @@ test('deletes current team media and denormalized notification indexes', () => {
     ['rideRequests', 'parentUserId'],
     ['media', 'uploadedBy'],
     ['mediaItems', 'uploadedBy'],
+    ['registrations', 'submittedByUserId'],
     ['notificationTargets', 'uid'],
     ['notificationRecipients', 'uid']
   ]);
