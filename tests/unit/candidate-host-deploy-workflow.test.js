@@ -21,7 +21,7 @@ describe('candidate-host deployment workflow', () => {
         expect(workflowSource).not.toMatch(/\b(dns|domain:|functions|firestore|storage)\s+deploy\b/i);
     });
 
-    it('keeps executable tooling out of the branch-built artifact', () => {
+    it('prepares executable tooling outside the OIDC-capable deploy job', () => {
         const prepareJob = workflow.jobs['prepare-candidate-artifact'];
         const deployJob = workflow.jobs['deploy-candidate'];
         const prepareText = JSON.stringify(prepareJob);
@@ -32,11 +32,10 @@ describe('candidate-host deployment workflow', () => {
         expect(prepareText).toContain('scripts/write-firebase-hosting-config.mjs');
         expect(deployText).toContain('$bundle/site/index.html');
         expect(deployText).toContain('$bundle/site/app/index.html');
-        expect(prepareText).not.toContain('firebase-tools');
-        expect(prepareText).not.toContain('firebase.js');
-        expect(deployText).toContain('firebase-tools@15.24.0');
-        expect(deployText).toContain('$RUNNER_TEMP/firebase-cli/node_modules/firebase-tools/lib/bin/firebase.js');
-        expect(deployText).not.toContain('$bundle/firebase-cli');
+        expect(prepareText).toContain('firebase-tools@15.24.0');
+        expect(prepareText).toContain('$bundle/firebase-cli/node_modules/firebase-tools/lib/bin/firebase.js');
+        expect(deployText).not.toMatch(/npm (?:ci|install)/);
+        expect(deployText).toContain('$bundle/firebase-cli/node_modules/firebase-tools/lib/bin/firebase.js');
         expect(prepareJob.permissions?.['id-token']).toBeUndefined();
         expect(deployJob.permissions?.['id-token']).toBe('write');
         expect(deployText).not.toMatch(/stage-pages-bundle|write-firebase-hosting-config/);

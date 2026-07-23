@@ -10,6 +10,7 @@ function read(path) {
 
 const production = read('.github/workflows/deploy-prod.yml');
 const preview = read('.github/workflows/deploy-preview-trusted.yml');
+const candidate = read('.github/workflows/deploy-candidate-host.yml');
 const productionExtractorSha256 = createHash('sha256')
     .update(read('scripts/extract-production-functions-handoff.py'))
     .digest('hex');
@@ -30,8 +31,8 @@ function expectPinnedActions(workflow) {
 }
 
 describe('Firebase deploy Workload Identity boundary', () => {
-    it('uses only pinned keyless authentication in both credentialed deployers', () => {
-        for (const workflow of [production, preview]) {
+    it('uses only pinned keyless authentication in all credentialed deployers', () => {
+        for (const workflow of [production, preview, candidate]) {
             expectPinnedActions(workflow);
             expect(workflow).toContain('id-token: write');
             expect(workflow).toMatch(/google-github-actions\/auth@[0-9a-f]{40}/);
@@ -46,6 +47,7 @@ describe('Firebase deploy Workload Identity boundary', () => {
         }
         expect(production.match(/google-github-actions\/auth@[0-9a-f]{40}/g)).toHaveLength(2);
         expect(preview.match(/google-github-actions\/auth@[0-9a-f]{40}/g)).toHaveLength(1);
+        expect(candidate.match(/google-github-actions\/auth@[0-9a-f]{40}/g)).toHaveLength(1);
     });
 
     it('keeps raw preview input and dependency preparation in a separate no-OIDC job', () => {
@@ -121,6 +123,20 @@ describe('Firebase deploy Workload Identity boundary', () => {
         expect(production).toContain('functions-runtime.tar');
         expect(production).toContain('cp scripts/extract-production-functions-handoff.py "$FIREBASE_PRODUCTION_BUNDLE/context/"');
         expect(production).not.toContain('cp -R functions "$FIREBASE_PRODUCTION_BUNDLE/functions"');
+    });
+
+    it('keeps candidate build and dependency work outside the minimal OIDC deploy job', () => {
+        const install = candidate.indexOf('firebase-tools@15.24.0');
+        const handoff = candidate.indexOf('name: Upload trusted candidate deploy handoff');
+        const authentication = candidate.indexOf('name: Authenticate candidate Hosting deploy through OIDC');
+
+        expect(install).toBeGreaterThan(-1);
+        expect(handoff).toBeGreaterThan(install);
+        expect(authentication).toBeGreaterThan(handoff);
+        const oidcJobs = workflowJobs(candidate).filter((job) => job.permissions?.['id-token'] === 'write');
+        expect(oidcJobs).toHaveLength(1);
+        expect(JSON.stringify(oidcJobs[0])).not.toMatch(/npm (?:ci|install)|stage-pages-bundle|write-firebase-hosting-config/);
+        expect(JSON.stringify(oidcJobs[0])).toMatch(/actions\/download-artifact@[0-9a-f]{40}/);
     });
 
     it('keeps rule-changing releases rules-first and skips unchanged rule writes', () => {
