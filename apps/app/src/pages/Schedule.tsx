@@ -375,8 +375,10 @@ export function Schedule({ auth }: { auth: AuthState }) {
     const cached = getCachedAppData(cacheKey);
     const requestedUserId = auth.user.uid;
     let refreshedStaffTeams: ParentScheduleStaffTeam[] | null = null;
-    void loadParentScheduleScope(auth.user)
+    const parentScopePromise = loadParentScheduleScope(auth.user).catch(() => null);
+    void parentScopePromise
       .then((parentScope) => {
+        if (!parentScope || parentScope.isPartial === true) return;
         refreshedStaffTeams = parentScope.staffTeams ?? [];
         if (auth.user?.uid === requestedUserId) {
           setStaffTeams(refreshedStaffTeams);
@@ -390,16 +392,19 @@ export function Schedule({ auth }: { auth: AuthState }) {
             setSelectedTeamId('');
           }
         }
-      })
-      .catch(() => {
-        // A cached schedule remains useful offline; keep its last known staff
-        // scope when the background access refresh is unavailable.
       });
 
     return runScheduleRead(
       () => loadCachedAppData(
           cacheKey,
-          () => loadParentSchedule(auth.user, { hydrateDetails: false, expandStaffPlayers: false }),
+          async () => {
+            const parentScope = await parentScopePromise;
+            return loadParentSchedule(auth.user, {
+              hydrateDetails: false,
+              expandStaffPlayers: false,
+              ...(parentScope && parentScope.isPartial !== true ? { parentScope } : {})
+            });
+          },
           {
             ...scheduleCacheOptions,
             shouldCache: (loadedResult) => loadedResult?.isPartial !== true

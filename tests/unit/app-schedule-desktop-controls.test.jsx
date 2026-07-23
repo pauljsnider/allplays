@@ -237,7 +237,8 @@ beforeEach(() => {
     scheduleMocks.loadParentScheduleScope.mockResolvedValue({
         profile: {},
         children: [],
-        staffTeams: []
+        staffTeams: [],
+        isPartial: true
     });
     scheduleMocks.loadScheduleStatTrackerConfigsForApp.mockResolvedValue([{ id: 'cfg-basketball', name: 'Basketball' }]);
     scheduleMocks.removeTeamCalendarUrl.mockResolvedValue({ removed: true, calendarUrls: [] });

@@ -354,7 +354,7 @@ describe('parent schedule child scope', () => {
     expect(getPlayers).not.toHaveBeenCalled();
   });
 
-  it('reloads profile scope during schedule enrichment when the fast scope profile is empty', async () => {
+  it('reloads profile scope during schedule enrichment when the fast scope is partial', async () => {
     vi.mocked(loadProfileDocument).mockResolvedValue({
       parentOf: [],
       parentPlayerKeys: ['team-1::player-1']
@@ -370,7 +370,8 @@ describe('parent schedule child scope', () => {
       expandStaffPlayers: false,
       parentScope: {
         profile: {},
-        children: []
+        children: [],
+        isPartial: true
       }
     });
 
@@ -429,11 +430,23 @@ describe('parent schedule child scope', () => {
     });
 
     expect(scope.staffTeams).toEqual([{ teamId: 'team-owned', teamName: 'Vipers' }]);
+    expect(scope.isPartial).toBe(false);
     expect(schedule.staffTeams).toEqual([{ teamId: 'team-owned', teamName: 'Vipers' }]);
     expect(getStaffTeams).toHaveBeenCalledTimes(1);
     expect(getGames).toHaveBeenCalledWith('team-owned', expect.objectContaining({
       startDate: expect.any(Date)
     }));
+  });
+
+  it('marks parent scope partial when the authoritative staff-team read fails', async () => {
+    const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'], coachOf: ['team-owned'] } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: ['team-owned'] } as any);
+    vi.mocked(getStaffTeams).mockRejectedValueOnce(new Error('network unavailable'));
+
+    const scope = await loadParentScheduleScope(coachUser);
+
+    expect(scope.isPartial).toBe(true);
+    expect(scope.staffTeams).toEqual([]);
   });
 });
 

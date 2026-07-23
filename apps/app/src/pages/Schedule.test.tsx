@@ -258,7 +258,8 @@ describe('Schedule', () => {
     scheduleServiceMocks.loadParentScheduleScope.mockResolvedValue({
       profile: {},
       children: [],
-      staffTeams: []
+      staffTeams: [],
+      isPartial: true
     });
     shellLayoutMocks.isDesktopWeb = false;
     Object.defineProperty(window, 'scrollTo', {
@@ -345,6 +346,30 @@ describe('Schedule', () => {
     expect(options.force).toBe(false);
     expect(options.shouldCache({ isPartial: true })).toBe(false);
     expect(options.shouldCache({ isPartial: false })).toBe(true);
+  });
+
+  it('reuses a complete staff scope when loading a fresh schedule summary', async () => {
+    const parentScope = {
+      profile: {},
+      children: [],
+      staffTeams: [{ teamId: 'team-owned', teamName: 'Vipers' }],
+      isPartial: false
+    };
+    scheduleServiceMocks.loadParentScheduleScope.mockResolvedValueOnce(parentScope);
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [],
+      events: [],
+      staffTeams: parentScope.staffTeams
+    });
+
+    renderSchedule();
+
+    expect(await screen.findByText('No events in this filter')).toBeTruthy();
+    expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledWith(auth.user, expect.objectContaining({
+      hydrateDetails: false,
+      expandStaffPlayers: false,
+      parentScope
+    }));
   });
 
   it('progressively applies RSVP hydration after the fast schedule shell loads', async () => {
@@ -737,7 +762,8 @@ describe('Schedule', () => {
     scheduleServiceMocks.loadParentScheduleScope.mockResolvedValueOnce({
       profile: {},
       children: [],
-      staffTeams: [{ teamId: 'team-empty', teamName: 'Empty FC' }]
+      staffTeams: [{ teamId: 'team-empty', teamName: 'Empty FC' }],
+      isPartial: false
     });
     scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
       children: [],
@@ -780,7 +806,8 @@ describe('Schedule', () => {
     scheduleServiceMocks.loadParentScheduleScope.mockResolvedValueOnce({
       profile: {},
       children: [],
-      staffTeams: [{ teamId: 'team-owned', teamName: 'Vipers' }]
+      staffTeams: [{ teamId: 'team-owned', teamName: 'Vipers' }],
+      isPartial: false
     });
     scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
       children: [{
@@ -812,7 +839,8 @@ describe('Schedule', () => {
       staffTeams: [
         { teamId: 'team-parent', teamName: 'Jr KC Current' },
         { teamId: 'team-owned', teamName: 'Vipers' }
-      ]
+      ],
+      isPartial: false
     });
     appDataCacheMocks.loadCachedAppData.mockResolvedValueOnce({
       children: [{
@@ -835,6 +863,26 @@ describe('Schedule', () => {
     fireEvent.click(await screen.findByRole('button', { name: /manage schedule/i }));
 
     expect((await screen.findByLabelText('Team to manage') as HTMLSelectElement).value).toBe('team-owned');
+    expect(await screen.findByRole('heading', { name: 'Add game for Vipers' })).toBeTruthy();
+  });
+
+  it('preserves cached staff access when the fresh scope read is incomplete', async () => {
+    scheduleServiceMocks.loadParentScheduleScope.mockResolvedValueOnce({
+      profile: {},
+      children: [],
+      staffTeams: [],
+      isPartial: true
+    });
+    appDataCacheMocks.loadCachedAppData.mockResolvedValueOnce({
+      children: [],
+      events: [],
+      staffTeams: [{ teamId: 'team-owned', teamName: 'Vipers' }]
+    });
+
+    renderSchedule('/schedule?teamId=team-owned');
+
+    expect((await screen.findByLabelText('Team filter') as HTMLSelectElement).value).toBe('team-owned');
+    fireEvent.click(await screen.findByRole('button', { name: /manage schedule/i }));
     expect(await screen.findByRole('heading', { name: 'Add game for Vipers' })).toBeTruthy();
   });
 

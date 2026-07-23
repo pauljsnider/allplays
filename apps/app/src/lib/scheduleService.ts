@@ -376,11 +376,9 @@ export type ParentScheduleScope = {
   children: ParentScheduleChild[];
   /** Teams the user can manage, including newly created teams with no players or chat yet. */
   staffTeams?: ParentScheduleStaffTeam[];
+  /** True when any authoritative scope read failed and cached access should be preserved. */
+  isPartial?: boolean;
 };
-
-function hasResolvedParentProfile(profile: unknown): profile is Record<string, unknown> {
-  return Boolean(profile && typeof profile === 'object' && !Array.isArray(profile) && Object.keys(profile as Record<string, unknown>).length > 0);
-}
 
 export type ParentScheduleLoadOptions = {
   hydrateDetails?: boolean;
@@ -2788,14 +2786,22 @@ export async function loadParentScheduleScope(user: AuthUser | null): Promise<Pa
       staffTeams: []
     };
   }
+  let isPartial = false;
   const [profile, staffTeams] = await Promise.all([
-    loadProfileDocument(user.uid).catch(() => ({})),
-    loadStaffTeams(user).catch(() => [])
+    loadProfileDocument(user.uid).catch(() => {
+      isPartial = true;
+      return {};
+    }),
+    loadStaffTeams(user).catch(() => {
+      isPartial = true;
+      return [];
+    })
   ]);
   const children = await resolveParentScheduleChildren(user, profile as Record<string, unknown>);
   return {
     profile: profile as Record<string, unknown>,
     children,
+    isPartial,
     staffTeams: staffTeams
       .map((team: any) => {
         const teamId = compactString(team?.id);
@@ -4278,7 +4284,7 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
   const scheduleRangeByTeam = options.scheduleRangeByTeam || null;
 
   try {
-    const canReuseParentScope = hasResolvedParentProfile(options.parentScope?.profile);
+    const canReuseParentScope = Boolean(options.parentScope && options.parentScope.isPartial !== true);
     const profile = canReuseParentScope
       ? options.parentScope!.profile
       : await loadProfileDocument(user.uid);
