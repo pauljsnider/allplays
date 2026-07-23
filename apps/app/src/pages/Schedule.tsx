@@ -616,7 +616,10 @@ export function Schedule({ auth }: { auth: AuthState }) {
       setVisibleListCount((current) => current + listPageSize);
     }
   };
-  const teamOptions = useMemo(() => getParentScheduleTeamOptions(events, children), [children, events]);
+  const teamOptions = useMemo(
+    () => getParentScheduleTeamOptions(events, children, staffTeams),
+    [children, events, staffTeams]
+  );
   const selectedDayEntries = useMemo(() => {
     if (!selectedDay) return [];
     return calendarEntries.filter((event) =>

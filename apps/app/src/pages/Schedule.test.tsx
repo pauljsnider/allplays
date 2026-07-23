@@ -764,6 +764,28 @@ describe('Schedule', () => {
     });
   });
 
+  it('shows a zero-event staff team in the schedule team filter', async () => {
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [{
+        playerId: 'player-1',
+        playerName: 'Madison Snider',
+        teamId: 'team-parent',
+        teamName: 'Jr KC Current'
+      }],
+      events: [buildScheduleEvent(1, {
+        teamId: 'team-parent',
+        teamName: 'Jr KC Current'
+      })],
+      staffTeams: [{ teamId: 'team-owned', teamName: 'Vipers' }]
+    });
+
+    renderSchedule();
+
+    const teamFilter = await screen.findByLabelText('Team filter');
+    expect(within(teamFilter).getByRole('option', { name: 'Jr KC Current' })).toBeTruthy();
+    expect(within(teamFilter).getByRole('option', { name: 'Vipers' })).toBeTruthy();
+  });
+
   it('routes generic staff card opens to the game hub helper on mobile', () => {
     expect(getGenericEventDetailPath(buildScheduleEvent(1, {
       isTeamStaff: true,

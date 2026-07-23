@@ -236,6 +236,16 @@ describe('React app parent schedule logic', () => {
             { teamId: 'team-1', playerCount: 1 },
             { teamId: 'team-2', playerCount: 1 }
         ]);
+        expect(getParentScheduleTeamOptions(events, [], [
+            { teamId: 'team-empty', teamName: 'Vipers' }
+        ])).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                teamId: 'team-empty',
+                teamName: 'Vipers',
+                playerCount: 0,
+                eventCount: 0
+            })
+        ]));
         expect(getPracticePacketRows(events, now).map((row) => `${row.event.id}:${row.status}`)).toEqual([
             'practice-1:ready',
             'practice-2:completed'
