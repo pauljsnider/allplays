@@ -42,10 +42,11 @@ jobs:
           # Paths that cannot affect the served static site or the /app/ bundle the
           # smoke exercises: backend functions, security rules, native shells, docs,
           # migrations, and unit tests. preview-smoke only needs to run when the diff
-          # touches something OUTSIDE this set. Anything unrecognized runs the smoke.
+          # touches something OUTSIDE this set. Anything unrecognized, including
+          # workflow changes under .github/workflows/, runs the smoke.
           SKIPPABLE='^(functions/|ios/|android/|docs/|_migration/|tests/unit/)|^firestore\.(rules|indexes\.json)$|^storage\.rules$|^[A-Za-z0-9_.-]+\.md$'
 
-          if [ -z "$CHANGED" ] || echo "$CHANGED" | grep -Ev "$SKIPPABLE" | grep -q .; then
+          if echo "$CHANGED" | grep -Ev "$SKIPPABLE" | grep -q .; then
             echo "web=true" >> "$GITHUB_OUTPUT"
           else
             echo "Only backend/native/docs paths changed — skipping preview-smoke." >&2
@@ -175,16 +176,34 @@ jobs:
     steps:
       - name: Report preview-smoke result
         env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          IS_SAME_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
           RUN_RESULT: ${{ needs.preview-smoke-run.result }}
+          SHOULD_RUN: ${{ needs.changes.outputs.web }}
         run: |
           set -euo pipefail
+          echo "changes result: $CHANGES_RESULT"
           echo "preview-smoke-run result: $RUN_RESULT"
-          case "$RUN_RESULT" in
-            success|skipped)
-              echo "preview-smoke satisfied (ran and passed, or not applicable to this change)."
-              ;;
-            *)
-              echo "preview-smoke failed (result: $RUN_RESULT)." >&2
-              exit 1
-              ;;
-          esac
+
+          if [ "$IS_SAME_REPOSITORY" != "true" ]; then
+            echo "Fork PR — preview-smoke is not eligible to run."
+            exit 0
+          fi
+
+          if [ "$CHANGES_RESULT" != "success" ]; then
+            echo "Change detection did not succeed ($CHANGES_RESULT) — failing closed." >&2
+            exit 1
+          fi
+
+          if [ "$SHOULD_RUN" = "false" ] && [ "$RUN_RESULT" = "skipped" ]; then
+            echo "No preview-relevant changes — preview-smoke is not required."
+            exit 0
+          fi
+
+          if [ "$SHOULD_RUN" = "true" ] && [ "$RUN_RESULT" = "success" ]; then
+            echo "preview-smoke succeeded."
+            exit 0
+          fi
+
+          echo "preview-smoke result was inconsistent with change detection (web=$SHOULD_RUN, result=$RUN_RESULT)." >&2
+          exit 1
