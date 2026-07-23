@@ -240,6 +240,10 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
                 export async function getNativeAuthIdToken() {
                     return 'mock-token';
                 }
+
+                export async function revokeCurrentAppleAuthorizationForDeletion() {
+                    return;
+                }
             `
         });
     });
