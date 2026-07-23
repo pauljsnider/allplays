@@ -15,6 +15,7 @@
     "test:functions:notifications": "npm run test:notifications --prefix functions",
     "test:functions:auth-email": "node --test functions/test/auth-email-*.test.cjs",
     "test:functions:team-email": "node --test functions/test/team-email-*.test.cjs",
+    "smoke:candidate-host": "node scripts/smoke-candidate-host.mjs",
     "test:smoke": "playwright test --config=playwright.smoke.config.js",
     "test:smoke:visual": "npm run test:smoke:visual:assets && playwright test --config=playwright.smoke.config.js --grep @visual",
     "test:smoke:visual:assets": "node scripts/build-legacy-visual-css.mjs --check",
