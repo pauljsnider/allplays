@@ -47,8 +47,31 @@ describe('team owner access trigger', () => {
     expect(set).not.toHaveBeenCalled();
   });
 
+  it('propagates a transient write failure and succeeds when the event is retried', async () => {
+    const transientError = new Error('Firestore temporarily unavailable');
+    const set = vi.fn()
+      .mockRejectedValueOnce(transientError)
+      .mockResolvedValueOnce();
+    const handler = createTeamOwnerAccessSyncHandler({
+      firestore: { doc: () => ({ set }) },
+      fieldValue: {
+        arrayUnion: (...values) => ({ arrayUnion: values }),
+        serverTimestamp: () => ({ serverTimestamp: true })
+      }
+    });
+    const snapshot = { id: 'vipers', data: () => ({ ownerId: 'owner-1' }) };
+    const context = { params: { teamId: 'vipers' } };
+
+    await expect(handler(snapshot, context)).rejects.toBe(transientError);
+    await expect(handler(snapshot, context)).resolves.toEqual({
+      ownerId: 'owner-1',
+      teamId: 'vipers'
+    });
+    expect(set).toHaveBeenCalledTimes(2);
+  });
+
   it('wires the handler to team creation in Cloud Functions', () => {
-    expect(functionsSource).toContain("exports.syncTeamOwnerAccessOnCreate = functions.firestore");
+    expect(functionsSource).toContain("exports.syncTeamOwnerAccessOnCreate = functions\n  .runWith({ failurePolicy: true })\n  .firestore");
     expect(functionsSource).toContain(".document('teams/{teamId}')");
     expect(functionsSource).toContain('.onCreate(createTeamOwnerAccessSyncHandler({');
   });

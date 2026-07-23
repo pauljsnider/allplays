@@ -6876,7 +6876,9 @@ exports.syncTeamNotificationRecipientsOnTeamWrite = functions.firestore
     return null;
   });
 
-exports.syncTeamOwnerAccessOnCreate = functions.firestore
+exports.syncTeamOwnerAccessOnCreate = functions
+  .runWith({ failurePolicy: true })
+  .firestore
   .document('teams/{teamId}')
   .onCreate(createTeamOwnerAccessSyncHandler({
     firestore,
