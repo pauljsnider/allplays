@@ -25,7 +25,9 @@ describe('Schedule async operation contract', () => {
         expect(scheduleSource).toContain('run: runPastHistoryRead');
         expect(refreshScheduleSource).toContain('return runScheduleRead(');
         expect(refreshScheduleSource).toContain('() => loadCachedAppData(');
-        expect(refreshScheduleSource).toContain('() => loadParentSchedule(auth.user, { hydrateDetails: false, expandStaffPlayers: false })');
+        expect(refreshScheduleSource).toContain('const parentScope = await parentScopePromise;');
+        expect(refreshScheduleSource).toContain('return loadParentSchedule(auth.user, {');
+        expect(refreshScheduleSource).toContain('...(parentScope && parentScope.isPartial !== true ? { parentScope } : {})');
         expect(refreshScheduleSource).toContain('{ ttlMs: scheduleCacheTtlMs, force }');
         expect(refreshScheduleSource).not.toContain('setLoading(');
     });
