@@ -136,6 +136,40 @@ describe('homeService Teams bootstrap reuse', () => {
         expect(summary.home.metrics.teams).toBe(2);
     });
 
+    it('refreshes a cached schedule summary when the fast scope contains staff teams', async () => {
+        const scheduleScope = {
+            profile: { coachOf: ['team-owned'] },
+            children: [{
+                teamId: 'team-parent',
+                teamName: 'Jr KC Current',
+                playerId: 'player-1',
+                playerName: 'Madison Snider'
+            }],
+            staffTeams: [{ teamId: 'team-owned', teamName: 'Vipers' }]
+        };
+        scheduleServiceMocks.loadParentSchedule
+            .mockResolvedValueOnce({
+                children: scheduleScope.children,
+                events: []
+            })
+            .mockImplementationOnce(async (_authUser, options) => ({
+                children: options?.parentScope?.children || [],
+                events: [],
+                staffTeams: options?.parentScope?.staffTeams || []
+            }));
+
+        await loadParentScheduleSummary(user, { force: true });
+        const refreshed = await loadParentScheduleSummary(user, { scheduleScope });
+
+        expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
+        expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenLastCalledWith(user, expect.objectContaining({
+            parentScope: scheduleScope
+        }));
+        expect(refreshed.staffTeams).toEqual([
+            { teamId: 'team-owned', teamName: 'Vipers' }
+        ]);
+    });
+
     it('does not cache partial parent schedule summaries as complete results', async () => {
         scheduleServiceMocks.loadParentSchedule
             .mockResolvedValueOnce({

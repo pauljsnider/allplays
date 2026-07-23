@@ -265,6 +265,7 @@ export async function loadParentScheduleSummary(
   options: ParentHomeSummaryOptions & { onPartial?: (schedule: ParentScheduleLoadResult) => void } = {}
 ): Promise<ParentScheduleLoadResult> {
   if (!user?.uid) return { children: [], events: [] };
+  const hasScopedStaffTeams = Boolean(options.scheduleScope?.staffTeams?.length);
   return loadCachedAppData(
     getParentScheduleSummaryCacheKey(user.uid),
     () => loadParentSchedule(user, {
@@ -275,7 +276,7 @@ export async function loadParentScheduleSummary(
     }),
     {
       ttlMs: homeSummaryTtlMs,
-      force: options.force,
+      force: options.force || hasScopedStaffTeams,
       shouldCache: (result) => result?.isPartial !== true
     }
   );
