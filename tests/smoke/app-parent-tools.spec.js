@@ -189,8 +189,14 @@ const parentCertificatesServiceMock = `
     }
 `;
 
-async function mockParentToolsModules(page) {
-    await page.addInitScript(() => {
+async function mockParentToolsModules(page, { paymentsEnabled = false } = {}) {
+    await page.addInitScript(({ paymentsEnabled }) => {
+        if (paymentsEnabled) {
+            window.__ALLPLAYS_CONFIG__ = {
+                ...(window.__ALLPLAYS_CONFIG__ || {}),
+                paymentsEnabled: true
+            };
+        }
         window.__openedPublicUrls = [];
         window.__sharedUrls = [];
         window.__accessRequests = [];
@@ -219,7 +225,7 @@ async function mockParentToolsModules(page) {
                 }
             }
         });
-    });
+    }, { paymentsEnabled });
 
     await page.route(/\/src\/lib\/useAuth\.ts(\?.*)?$/, async (route) => {
         await route.fulfill({
@@ -534,7 +540,7 @@ async function mockParentToolsModules(page) {
 }
 
 test('parent tools hub completes access, fees, calendars, share, registration, and awards flows', async ({ page, baseURL }) => {
-    await mockParentToolsModules(page);
+    await mockParentToolsModules(page, { paymentsEnabled: true });
     await page.goto(appUrl(baseURL, '/parent-tools/access'), { waitUntil: 'domcontentloaded' });
 
     await expect(page.getByRole('heading', { name: 'Family workflows' })).toBeVisible({ timeout: 15000 });
@@ -657,7 +663,7 @@ test('mobile navigation keeps frequent destinations visible and exposes Family t
 });
 
 test('parent fees workflow renders payment states and blocks overlapping checkout', async ({ page, baseURL }) => {
-    await mockParentToolsModules(page);
+    await mockParentToolsModules(page, { paymentsEnabled: true });
     await page.addInitScript(() => {
         window.__teamFeeCheckoutCalls = [];
         window.__resolveTeamFeeCheckout = null;
