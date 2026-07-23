@@ -28,13 +28,15 @@ describe('team media page wiring', () => {
         const page = fs.readFileSync(path.join(repoRoot, 'team-media.html'), 'utf8');
         const source = fs.readFileSync(path.join(repoRoot, 'js/team-media.js'), 'utf8');
 
-        expect(page).toContain('src="js/team-media.js?v=19"');
+        // Cache-busting must be present and wired; the exact version is enforced by
+        // the consistency checks, not frozen here (frozen numbers break on rebase).
+        expect(page).toContain('src="js/team-media.js?v=');
         expect(page).toContain('Add album');
         expect(page).toContain('Upload files');
         expect(page).toContain('Save video link');
-        expect(source).toContain("from './db.js?v=117'");
+        expect(source).toContain("from './db.js?v=");
         expect(source).toContain('normalizeTeamMediaVideoDraft');
-        expect(source).toContain("import { checkAuth } from './auth.js?v=129';");
+        expect(source).toContain("import { checkAuth } from './auth.js?v=");
         expect(source).toContain('checkAuth(async (user) => {');
         expect(source).toContain('team.html#teamId=${encodeURIComponent(state.teamId)}');
         expect(source).toContain('Team media permissions are not enabled');
@@ -51,7 +53,8 @@ describe('team media page wiring', () => {
         const source = fs.readFileSync(path.join(repoRoot, 'js/team-media.js'), 'utf8');
         const dbImportVersion = source.match(/from '\.\/db\.js\?v=(\d+)'/)?.[1];
 
-        expect(dbImportVersion).toBe('117');
+        // A cache-busted db.js import must exist; its exact value is derived, not frozen.
+        expect(dbImportVersion, 'js/team-media.js has no cache-busted db.js import').toMatch(/^\d+$/);
 
         for (const testFile of [
             'tests/unit/team-media-item-rename.test.js',
@@ -59,7 +62,16 @@ describe('team media page wiring', () => {
         ]) {
             const testSource = fs.readFileSync(path.join(repoRoot, testFile), 'utf8');
             expect(testSource).toContain(`vi.mock('../../js/db.js?v=${dbImportVersion}'`);
-            expect(testSource).not.toContain("vi.mock('../../js/db.js?v=84'");
+            // No db.js mock in the test may reference a version other than the runtime
+            // import — that is the alignment this test protects, without hardcoding a
+            // known-stale number.
+            const mockedVersions = [...testSource.matchAll(/vi\.mock\('\.\.\/\.\.\/js\/db\.js\?v=(\d+)'/g)].map((m) => m[1]);
+            for (const mockedVersion of mockedVersions) {
+                expect(
+                    mockedVersion,
+                    `${testFile} mocks db.js?v=${mockedVersion} but js/team-media.js imports v=${dbImportVersion}`
+                ).toBe(dbImportVersion);
+            }
         }
     });
 
