@@ -251,10 +251,13 @@ describe('legacyScheduleDb staff team reads', () => {
         vi.mocked(doc).mockImplementation((...parts: unknown[]) => ({ path: parts.filter((part) => typeof part === 'string').join('/') }) as never);
     });
 
-    it('merges owner, normalized admin email, and unique coach team reads without a catalog load', async () => {
+    it('merges owner id, legacy owner email, normalized admin email, and unique coach team reads without a catalog load', async () => {
         vi.mocked(getDocs)
             .mockResolvedValueOnce({ docs: [snapshot('team-owner', { name: 'Owner' }), snapshot('team-shared', { name: 'Owner copy' })] } as never)
-            .mockResolvedValueOnce({ docs: [snapshot('team-admin', { name: 'Admin' }), snapshot('team-shared', { name: 'Admin copy' })] } as never);
+            .mockResolvedValueOnce({ docs: [snapshot('team-admin', { name: 'Admin' }), snapshot('team-shared', { name: 'Admin copy' })] } as never)
+            .mockResolvedValueOnce({ docs: [snapshot('team-owner-email-lower', { name: 'Legacy normalized owner' })] } as never)
+            .mockResolvedValueOnce({ docs: [snapshot('team-owner-email', { name: 'Legacy owner' })] } as never)
+            .mockResolvedValueOnce({ docs: [snapshot('team-owner-email-normalized', { name: 'Legacy normalized owner copy' })] } as never);
         vi.mocked(getDoc)
             .mockResolvedValueOnce(snapshot('team-coach', { name: 'Coach' }) as never)
             .mockRejectedValueOnce(new Error('Missing or insufficient permissions.'));
@@ -270,13 +273,19 @@ describe('legacyScheduleDb staff team reads', () => {
                 { id: 'team-owner', name: 'Owner' },
                 { id: 'team-shared', name: 'Admin copy' },
                 { id: 'team-admin', name: 'Admin' },
+                { id: 'team-owner-email-lower', name: 'Legacy normalized owner' },
+                { id: 'team-owner-email', name: 'Legacy owner' },
+                { id: 'team-owner-email-normalized', name: 'Legacy normalized owner copy' },
                 { id: 'team-coach', name: 'Coach' }
             ],
             isPartial: true
         });
-        expect(getDocs).toHaveBeenCalledTimes(2);
+        expect(getDocs).toHaveBeenCalledTimes(5);
         expect(where).toHaveBeenCalledWith('ownerId', '==', 'user-1');
         expect(where).toHaveBeenCalledWith('adminEmails', 'array-contains', 'staff@example.com');
+        expect(where).toHaveBeenCalledWith('ownerEmailLower', '==', 'staff@example.com');
+        expect(where).toHaveBeenCalledWith('ownerEmail', '==', 'STAFF@EXAMPLE.COM');
+        expect(where).toHaveBeenCalledWith('ownerEmail', '==', 'staff@example.com');
         expect(getDoc).toHaveBeenCalledTimes(2);
         expect(legacyGetTeams).not.toHaveBeenCalled();
     });
@@ -301,7 +310,7 @@ describe('legacyScheduleDb staff team reads', () => {
 
         await expect(getStaffTeams({ userId: 'coach-1', email: 'coach@example.com', coachTeamIds: [] })).rejects.toThrow('web sdk unavailable');
 
-        expect(getDocs).toHaveBeenCalledTimes(2);
+        expect(getDocs).toHaveBeenCalledTimes(4);
         expect(getDoc).not.toHaveBeenCalled();
     });
 });
