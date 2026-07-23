@@ -46,6 +46,7 @@ describe('mobile store legal and support pages', () => {
             expect(source).toContain('https://allplays.ai/privacy.html');
             expect(source).toContain('https://allplays.ai/terms.html');
         });
+        expect(profilePage).toContain('https://allplays.ai/support.html');
     });
 
     it('indexes every account-deletion collection-group lookup', () => {

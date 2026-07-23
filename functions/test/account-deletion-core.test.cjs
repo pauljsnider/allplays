@@ -46,7 +46,7 @@ test('extracts only account profile photo paths from Firebase Storage URLs', () 
       'https://firebasestorage.googleapis.com/v0/b/allplays.appspot.com/o/user-photos%2F171234_photo.jpg?alt=media',
       'user-1'
     ),
-    'user-photos/171234_photo.jpg'
+    ''
   );
   assert.equal(
     extractAccountProfileStoragePath(
@@ -85,10 +85,7 @@ test('routes account media cleanup to the primary and legacy image buckets', () 
     'team-media/team-2/folder-2/user-1/photo.jpg',
     'stat-sheets/team-chat/team-1/team/user-1/chat.jpg'
   ]);
-  assert.deepEqual(paths.imagePaths, [
-    'user-photos/171234_photo.jpg',
-    'athlete-profile-media/user-1/player-1/legacy.jpg'
-  ]);
+  assert.deepEqual(paths.imagePaths, ['athlete-profile-media/user-1/player-1/legacy.jpg']);
 });
 
 test('collects current and legacy storage fields from account-owned media records', () => {

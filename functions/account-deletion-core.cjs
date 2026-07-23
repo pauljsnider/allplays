@@ -41,7 +41,6 @@ function extractAccountProfileStoragePath(value, uid) {
   const normalizedUid = String(uid || '').trim();
   const scopedPrefix = `user-photos/${normalizedUid}/`;
   if (normalizedUid && storagePath.startsWith(scopedPrefix)) return storagePath;
-  if (/^user-photos\/[^/]+$/.test(storagePath)) return storagePath;
   return '';
 }
 
