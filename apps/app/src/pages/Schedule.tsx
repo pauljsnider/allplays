@@ -412,7 +412,12 @@ export function Schedule({ auth }: { auth: AuthState }) {
           if (selectedPlayerId && !result.children.some((child) => child.playerId === selectedPlayerId)) {
             setSelectedPlayerId('');
           }
-          if (selectedTeamId && !result.children.some((child) => child.teamId === selectedTeamId) && !result.events.some((event) => event.teamId === selectedTeamId)) {
+          if (
+            selectedTeamId
+            && !result.children.some((child) => child.teamId === selectedTeamId)
+            && !result.events.some((event) => event.teamId === selectedTeamId)
+            && !result.staffTeams?.some((team) => team.teamId === selectedTeamId)
+          ) {
             setSelectedTeamId('');
           }
           const firstUpcoming = filterParentScheduleEvents(result.events, { filter: 'upcoming-all' })[0];
@@ -616,7 +621,10 @@ export function Schedule({ auth }: { auth: AuthState }) {
       setVisibleListCount((current) => current + listPageSize);
     }
   };
-  const teamOptions = useMemo(() => getParentScheduleTeamOptions(events, children), [children, events]);
+  const teamOptions = useMemo(
+    () => getParentScheduleTeamOptions(events, children, staffTeams),
+    [children, events, staffTeams]
+  );
   const selectedDayEntries = useMemo(() => {
     if (!selectedDay) return [];
     return calendarEntries.filter((event) =>
@@ -1124,9 +1132,11 @@ type DeferredScheduleStaffToolsProps = {
 function DeferredScheduleStaffTools(props: DeferredScheduleStaffToolsProps) {
   const [StaffTools, setStaffTools] = useState<ComponentType<DeferredScheduleStaffToolsProps> | null>(null);
   const [loadError, setLoadError] = useState(false);
+  const [loadAttempt, setLoadAttempt] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
+    setLoadError(false);
     void loadScheduleStaffTools()
       .then((module) => {
         if (!cancelled) setStaffTools(() => module.default);
@@ -1137,10 +1147,21 @@ function DeferredScheduleStaffTools(props: DeferredScheduleStaffToolsProps) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [loadAttempt]);
 
   if (loadError) {
-    return <div role="alert" className="rounded-2xl border border-rose-200 bg-rose-50 p-3 text-sm font-bold text-rose-700">Unable to load schedule tools. Check your connection and refresh to try again.</div>;
+    return (
+      <div role="alert" className="rounded-2xl border border-rose-200 bg-rose-50 p-3 text-sm font-bold text-rose-700">
+        <p>Unable to load schedule tools. Check your connection and try again.</p>
+        <button
+          type="button"
+          className="mt-3 rounded-xl border border-rose-300 bg-white px-3 py-2 text-xs font-black text-rose-700"
+          onClick={() => setLoadAttempt((current) => current + 1)}
+        >
+          Retry schedule tools
+        </button>
+      </div>
+    );
   }
   if (!StaffTools) {
     return <div role="status" className="rounded-2xl border border-gray-200 bg-gray-50 p-3 text-sm font-bold text-gray-500">Loading schedule tools…</div>;

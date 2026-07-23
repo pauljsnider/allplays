@@ -1119,7 +1119,8 @@ export function filterParentScheduleEvents(
 
 export function getParentScheduleTeamOptions(
   events: ParentScheduleEvent[],
-  children: Array<{ teamId?: string; teamName?: string }> = []
+  children: Array<{ teamId?: string; teamName?: string }> = [],
+  staffTeams: Array<{ teamId?: string; teamName?: string }> = []
 ): ParentScheduleTeamOption[] {
   const byTeam = new Map<string, ParentScheduleTeamOption>();
   const playerIdsByTeam = new Map<string, Set<string>>();
@@ -1146,6 +1147,10 @@ export function getParentScheduleTeamOptions(
     if (option && playerId) {
       playerIdsByTeam.get(option.teamId)?.add(playerId);
     }
+  });
+
+  staffTeams.forEach((team) => {
+    ensureTeam(team.teamId || '', team.teamName);
   });
 
   events.forEach((event) => {
