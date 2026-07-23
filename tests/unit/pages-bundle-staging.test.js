@@ -250,6 +250,75 @@ describe('pages bundle staging', () => {
         expect(config.storage.rules).toBe('storage.rules');
     });
 
+    it('preserves the candidate-host route and artifact parity contract', () => {
+        const repoRoot = path.resolve(import.meta.dirname, '../..');
+        const rootDir = makeTempDir();
+        const destinationDir = path.join(makeTempDir(), 'site');
+        const outputFile = path.join(makeTempDir(), '.firebase-generated.json');
+
+        writeFile(path.join(rootDir, 'firebase.json'), fs.readFileSync(
+            path.join(repoRoot, 'firebase.json'),
+            'utf8'
+        ));
+        writeFile(
+            path.join(rootDir, 'index.html'),
+            '<!doctype html><html><head></head><body>Legacy root</body></html>'
+        );
+        writeFile(
+            path.join(rootDir, 'dashboard.html'),
+            '<!doctype html><html><head></head><body>Legacy route</body></html>'
+        );
+        writeFile(path.join(rootDir, 'css', 'site.css'), 'body {}');
+        writeFile(path.join(rootDir, 'img', 'logo.svg'), '<svg></svg>');
+        writeFile(
+            path.join(rootDir, 'widget-scoreboard.html'),
+            '<!doctype html><html><head></head><body>Scoreboard</body></html>'
+        );
+        writeFile(
+            path.join(rootDir, 'apps', 'app', 'dist', 'index.html'),
+            '<!doctype html><html><head></head><body><div id="root"></div></body></html>'
+        );
+        writeFile(
+            path.join(rootDir, 'apps', 'app', 'dist', 'assets', 'index-AbC123.js'),
+            'console.log("app");'
+        );
+        process.env.ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY =
+            'candidate-host-public-site-key';
+
+        stagePagesBundle(destinationDir, { rootDir });
+        const resolvedOutputFile = writeFirebaseHostingConfig(
+            destinationDir,
+            outputFile,
+            { rootDir }
+        );
+        const config = JSON.parse(fs.readFileSync(resolvedOutputFile, 'utf8'));
+
+        for (const relativePath of [
+            'index.html',
+            'dashboard.html',
+            'css/site.css',
+            'img/logo.svg',
+            'widget-scoreboard.html',
+            'app/index.html',
+            'app/assets/index-AbC123.js',
+            '.well-known/allplays-runtime-config.json'
+        ]) {
+            expect(fs.existsSync(path.join(destinationDir, relativePath))).toBe(true);
+        }
+
+        expect(config.hosting.public).toBe(path.resolve(destinationDir));
+        expect(config.hosting.ignore).not.toContain('**/.*');
+        expect(config.hosting.rewrites).toEqual([
+            {
+                source: '!/app/assets/**',
+                destination: '/index.html'
+            }
+        ]);
+        expect(fs.existsSync(
+            path.join(destinationDir, config.hosting.rewrites[0].destination)
+        )).toBe(true);
+    });
+
     it('does not let the generated Hosting config ignore staged App Check config', () => {
         const rootDir = makeTempDir();
         const publicDir = path.join(makeTempDir(), 'site');
