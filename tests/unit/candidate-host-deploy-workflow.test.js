@@ -21,7 +21,7 @@ describe('candidate-host deployment workflow', () => {
         expect(workflowSource).not.toMatch(/\b(dns|domain:|functions|firestore|storage)\s+deploy\b/i);
     });
 
-    it('stages the root site and React app before entering the OIDC job', () => {
+    it('keeps executable tooling out of the branch-built artifact', () => {
         const prepareJob = workflow.jobs['prepare-candidate-artifact'];
         const deployJob = workflow.jobs['deploy-candidate'];
         const prepareText = JSON.stringify(prepareJob);
@@ -32,9 +32,14 @@ describe('candidate-host deployment workflow', () => {
         expect(prepareText).toContain('scripts/write-firebase-hosting-config.mjs');
         expect(deployText).toContain('$bundle/site/index.html');
         expect(deployText).toContain('$bundle/site/app/index.html');
+        expect(prepareText).not.toContain('firebase-tools');
+        expect(prepareText).not.toContain('firebase.js');
+        expect(deployText).toContain('firebase-tools@15.24.0');
+        expect(deployText).toContain('$RUNNER_TEMP/firebase-cli/node_modules/firebase-tools/lib/bin/firebase.js');
+        expect(deployText).not.toContain('$bundle/firebase-cli');
         expect(prepareJob.permissions?.['id-token']).toBeUndefined();
         expect(deployJob.permissions?.['id-token']).toBe('write');
-        expect(deployText).not.toMatch(/npm (?:ci|install)|stage-pages-bundle|write-firebase-hosting-config/);
+        expect(deployText).not.toMatch(/stage-pages-bundle|write-firebase-hosting-config/);
     });
 
     it('validates the explicit Hosting-only handoff before authentication', () => {
