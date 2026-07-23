@@ -240,8 +240,9 @@ const { hasTeamAdminAccess } = require('./team-admin-access-core.cjs');
 const { createAutoAcceptParentInviteHandler } = require('./parent-invite-auto-link-callable.cjs');
 const {
   buildDeletionAuditId,
+  classifyAccountStoragePaths,
   createAccountDeletionRequestHandler,
-  extractAccountProfileStoragePath,
+  loadOwnedTeams,
   shouldProcessAccountDeletionRequest,
   summarizeOwnedTeams
 } = require('./account-deletion-core.cjs');
@@ -14404,20 +14405,30 @@ async function deleteAccountQuery(query) {
 }
 
 async function deleteAccountStorage(uid, mediaDocuments, profilePhotoUrls = []) {
-  const bucket = admin.storage().bucket();
-  const prefixes = [
-    `athlete-profile-media/${uid}/`,
-    `user-photos/${uid}/`
-  ];
-  await Promise.all(prefixes.map((prefix) => bucket.deleteFiles({ prefix, force: true })));
+  const primaryBucket = admin.storage().bucket();
+  const imageBucket = admin.storage().bucket(
+    process.env.IMAGE_STORAGE_BUCKET || 'game-flow-img.firebasestorage.app'
+  );
+  const athletePrefix = `athlete-profile-media/${uid}/`;
+  await Promise.all([
+    primaryBucket.deleteFiles({ prefix: athletePrefix, force: true }),
+    imageBucket.deleteFiles({ prefix: athletePrefix, force: true }),
+    imageBucket.deleteFiles({ prefix: `user-photos/${uid}/`, force: true })
+  ]);
 
-  const explicitPaths = new Set([
-    ...mediaDocuments.map((document) => String(document.data()?.storagePath || '').trim()),
-    ...profilePhotoUrls.map((url) => extractAccountProfileStoragePath(url, uid))
-  ].filter(Boolean));
-  await Promise.all([...explicitPaths].map((storagePath) => (
-    bucket.file(storagePath).delete({ ignoreNotFound: true })
-  )));
+  const { primaryPaths, imagePaths } = classifyAccountStoragePaths(
+    uid,
+    mediaDocuments.map((document) => document.data()?.storagePath),
+    profilePhotoUrls
+  );
+  await Promise.all([
+    ...primaryPaths.map((storagePath) => (
+      primaryBucket.file(storagePath).delete({ ignoreNotFound: true })
+    )),
+    ...imagePaths.map((storagePath) => (
+      imageBucket.file(storagePath).delete({ ignoreNotFound: true })
+    ))
+  ]);
 }
 
 exports.processAccountDeletionRequest = functions.firestore
@@ -14432,20 +14443,21 @@ exports.processAccountDeletionRequest = functions.firestore
     await requestRef.set({ status: 'processing', processingStartedAt: now, updatedAt: now }, { merge: true });
 
     try {
-      const ownedTeams = await firestore.collection('teams').where('ownerId', '==', uid).get();
-      if (summarizeOwnedTeams(ownedTeams).length) {
-        throw new Error('Account still owns one or more teams.');
-      }
-
       const userRef = firestore.doc(`users/${uid}`);
-      const [teamMedia, userDoc, authUser] = await Promise.all([
-        firestore.collectionGroup('media').where('uploadedBy', '==', uid).get(),
+      const [userDoc, authUser] = await Promise.all([
         userRef.get(),
         admin.auth().getUser(uid).catch((error) => {
           if (error?.code === 'auth/user-not-found') return null;
           throw error;
         })
       ]);
+      const ownerEmail = authUser?.email || userDoc.data()?.email || snapshot.data()?.email || '';
+      const ownedTeams = await loadOwnedTeams({ firestore, uid, email: ownerEmail });
+      if (ownedTeams.length) {
+        throw new Error('Account still owns one or more teams.');
+      }
+
+      const teamMedia = await firestore.collectionGroup('media').where('uploadedBy', '==', uid).get();
       await deleteAccountStorage(uid, teamMedia.docs || [], [
         userDoc.data()?.photoUrl,
         authUser?.photoURL

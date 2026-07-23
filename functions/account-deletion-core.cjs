@@ -45,6 +45,27 @@ function extractAccountProfileStoragePath(value, uid) {
   return '';
 }
 
+function classifyAccountStoragePaths(uid, mediaStoragePaths = [], profilePhotoUrls = []) {
+  const athletePrefix = `athlete-profile-media/${String(uid || '').trim()}/`;
+  const primaryPaths = new Set();
+  const imagePaths = new Set(
+    profilePhotoUrls.map((url) => extractAccountProfileStoragePath(url, uid)).filter(Boolean)
+  );
+
+  mediaStoragePaths.forEach((value) => {
+    const storagePath = String(value || '').trim();
+    if (storagePath.startsWith(`primary://${athletePrefix}`)) {
+      primaryPaths.add(storagePath.slice('primary://'.length));
+    } else if (storagePath.startsWith(athletePrefix)) {
+      imagePaths.add(storagePath);
+    }
+  });
+  return {
+    primaryPaths: [...primaryPaths],
+    imagePaths: [...imagePaths]
+  };
+}
+
 function assertDeletionRequest(data, HttpsError) {
   if (normalizeConfirmation(data?.confirmation) !== ACCOUNT_DELETION_CONFIRMATION) {
     throw new HttpsError('invalid-argument', `Type ${ACCOUNT_DELETION_CONFIRMATION} to confirm permanent account deletion.`);
@@ -52,12 +73,40 @@ function assertDeletionRequest(data, HttpsError) {
 }
 
 function summarizeOwnedTeams(snapshot) {
+  const seenTeamIds = new Set();
   return (snapshot?.docs || [])
     .filter((doc) => doc.data()?.active !== false)
+    .filter((doc) => {
+      if (seenTeamIds.has(doc.id)) return false;
+      seenTeamIds.add(doc.id);
+      return true;
+    })
     .map((doc) => ({
       id: doc.id,
       name: String(doc.data()?.name || doc.id)
     }));
+}
+
+async function loadOwnedTeams({ firestore, uid, email }) {
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  const emailCandidates = [...new Set([
+    String(email || '').trim(),
+    normalizedEmail
+  ].filter(Boolean))];
+  const queries = [
+    firestore.collection('teams').where('ownerId', '==', uid).get()
+  ];
+  if (normalizedEmail) {
+    queries.push(firestore.collection('teams').where('ownerEmailLower', '==', normalizedEmail).get());
+    emailCandidates.forEach((candidate) => {
+      queries.push(firestore.collection('teams').where('ownerEmail', '==', candidate).get());
+    });
+  }
+
+  const snapshots = await Promise.all(queries);
+  return summarizeOwnedTeams({
+    docs: snapshots.flatMap((snapshot) => snapshot.docs || [])
+  });
 }
 
 function createAccountDeletionRequestHandler({ firestore, auth, Timestamp, HttpsError }) {
@@ -68,9 +117,9 @@ function createAccountDeletionRequestHandler({ firestore, auth, Timestamp, Https
     }
     assertDeletionRequest(data, HttpsError);
 
-    const ownedTeams = summarizeOwnedTeams(
-      await firestore.collection('teams').where('ownerId', '==', uid).get()
-    );
+    const userRecord = await auth.getUser(uid).catch(() => null);
+    const accountEmail = userRecord?.email || context.auth?.token?.email || '';
+    const ownedTeams = await loadOwnedTeams({ firestore, uid, email: accountEmail });
     if (ownedTeams.length) {
       throw new HttpsError(
         'failed-precondition',
@@ -79,7 +128,6 @@ function createAccountDeletionRequestHandler({ firestore, auth, Timestamp, Https
       );
     }
 
-    const userRecord = await auth.getUser(uid).catch(() => null);
     const now = Timestamp.now();
     await firestore.doc(`accountDeletionRequests/${uid}`).set({
       uid,
@@ -104,8 +152,10 @@ module.exports = {
   ACCOUNT_DELETION_MAX_DAYS,
   assertDeletionRequest,
   buildDeletionAuditId,
+  classifyAccountStoragePaths,
   createAccountDeletionRequestHandler,
   extractAccountProfileStoragePath,
+  loadOwnedTeams,
   normalizeConfirmation,
   shouldProcessAccountDeletionRequest,
   summarizeOwnedTeams

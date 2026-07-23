@@ -73,6 +73,16 @@ Create or verify the `support@allplays.ai` mailbox first, send a message to it f
 6. Download a fresh `google-services.json` if Firebase configuration changed.
 7. Enable Google authentication in Firebase.
 
+The account-deletion worker runs in the primary `game-flow-c6311` Firebase project but must also delete profile photos from `game-flow-img`. Before releasing, grant the Functions runtime service account object-admin access to that image bucket:
+
+```sh
+gcloud storage buckets add-iam-policy-binding gs://game-flow-img.firebasestorage.app \
+  --member=serviceAccount:game-flow-c6311@appspot.gserviceaccount.com \
+  --role=roles/storage.objectAdmin
+```
+
+Verify the binding and complete a non-owner account-deletion test that includes both a new scoped profile photo and an older unscoped profile photo.
+
 ## Phase 4 — Verified app links
 
 ### iOS

@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   buildDeletionAuditId,
+  classifyAccountStoragePaths,
   createAccountDeletionRequestHandler,
   extractAccountProfileStoragePath,
   shouldProcessAccountDeletionRequest,
@@ -61,6 +62,23 @@ test('extracts only account profile photo paths from Firebase Storage URLs', () 
   assert.equal(extractAccountProfileStoragePath('https://example.com/photo.jpg', 'user-1'), '');
 });
 
+test('routes account media cleanup to the primary and legacy image buckets', () => {
+  const paths = classifyAccountStoragePaths('user-1', [
+    'primary://athlete-profile-media/user-1/player-1/photo.jpg',
+    'athlete-profile-media/user-1/player-1/legacy.jpg',
+    'primary://athlete-profile-media/other-user/player-2/not-ours.jpg',
+    'team-media/team-1/folder-1/user-1/file.jpg'
+  ], [
+    'https://firebasestorage.googleapis.com/v0/b/game-flow-img.firebasestorage.app/o/user-photos%2F171234_photo.jpg?alt=media'
+  ]);
+
+  assert.deepEqual(paths.primaryPaths, ['athlete-profile-media/user-1/player-1/photo.jpg']);
+  assert.deepEqual(paths.imagePaths, [
+    'user-photos/171234_photo.jpg',
+    'athlete-profile-media/user-1/player-1/legacy.jpg'
+  ]);
+});
+
 test('queues deletion for a signed-in non-owner', async () => {
   const writes = [];
   const handler = createAccountDeletionRequestHandler({
@@ -98,6 +116,31 @@ test('blocks deletion while the user owns a team', async () => {
   await assert.rejects(
     () => handler({ confirmation: 'DELETE' }, { auth: { uid: 'owner-1' } }),
     (error) => error.code === 'failed-precondition' && error.details.ownedTeams[0].name === 'Bears'
+  );
+});
+
+test('blocks deletion for a legacy email-based team owner', async () => {
+  const handler = createAccountDeletionRequestHandler({
+    firestore: {
+      collection: () => ({
+        where: (field, _operator, value) => ({
+          get: async () => ({
+            docs: field === 'ownerEmailLower' && value === 'legacy@example.com'
+              ? [{ id: 'legacy-team', data: () => ({ name: 'Legacy Bears' }) }]
+              : []
+          })
+        })
+      })
+    },
+    auth: { getUser: async () => ({ email: 'Legacy@Example.com' }) },
+    Timestamp: { now: () => 'now' },
+    HttpsError
+  });
+
+  await assert.rejects(
+    () => handler({ confirmation: 'DELETE' }, { auth: { uid: 'legacy-owner', token: {} } }),
+    (error) => error.code === 'failed-precondition' &&
+      error.details.ownedTeams[0].name === 'Legacy Bears'
   );
 });
 
