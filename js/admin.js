@@ -15,7 +15,7 @@ import {
     getTelemetryRouteDaily,
     getTelemetryEventDaily,
     getTelemetrySessions
-} from './db.js?v=122';
+} from './db.js?v=123';
 import { db, collection, getDocs, doc, setDoc, updateDoc, serverTimestamp, query } from './firebase.js?v=23';
 import { renderHeader, renderFooter, escapeHtml } from './utils.js?v=18';
 import { checkAuth } from './auth.js?v=129';

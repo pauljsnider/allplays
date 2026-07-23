@@ -109,7 +109,7 @@ describe('discoverPublicTeams search pagination', () => {
             .mockResolvedValueOnce({ docs: [] })
             .mockResolvedValueOnce({ docs: [] });
 
-        const { discoverPublicTeams } = await import('../../js/db.js?v=117');
+        const { discoverPublicTeams } = await import('../../js/db.js?v=123');
 
         const firstPage = await discoverPublicTeams({ searchText: 'atlanta', pageSize: 2 });
 
@@ -152,7 +152,7 @@ describe('discoverPublicTeams search pagination', () => {
             publicSearchName: 'atlanta united 2'
         });
 
-        const { discoverPublicTeams } = await import('../../js/db.js?v=117');
+        const { discoverPublicTeams } = await import('../../js/db.js?v=123');
 
         const page = await discoverPublicTeams({
             searchText: 'atlanta',
@@ -186,7 +186,7 @@ describe('public team roster count', () => {
         firebaseMocks.getCountFromServer.mockResolvedValue({
             data: () => ({ count: 10 })
         });
-        const { getPublicTeamRosterCount } = await import('../../js/db.js?v=117');
+        const { getPublicTeamRosterCount } = await import('../../js/db.js?v=123');
 
         await expect(getPublicTeamRosterCount('team-roster-1')).resolves.toEqual({
             count: 10,
@@ -202,7 +202,7 @@ describe('public team roster count', () => {
         firebaseMocks.getCountFromServer.mockResolvedValue({
             data: () => ({ count: 201 })
         });
-        const { getPublicTeamRosterCount } = await import('../../js/db.js?v=117');
+        const { getPublicTeamRosterCount } = await import('../../js/db.js?v=123');
 
         await expect(getPublicTeamRosterCount('team-large-roster')).resolves.toEqual({
             count: 200,
@@ -220,7 +220,7 @@ describe('bounded stat tracker config reads', () => {
         firebaseMocks.getDocs.mockResolvedValue({
             docs: [createTeamDoc('config-1', { name: 'Basketball Standard', baseType: 'Basketball' })]
         });
-        const { getConfigs } = await import('../../js/db.js?v=117');
+        const { getConfigs } = await import('../../js/db.js?v=123');
 
         await expect(getConfigs('team-1', { limit: 100 })).resolves.toEqual([
             expect.objectContaining({ id: 'config-1', name: 'Basketball Standard' })

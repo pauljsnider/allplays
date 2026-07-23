@@ -17,7 +17,7 @@ const mocks = vi.hoisted(() => ({
     checkAuth: vi.fn()
 }));
 
-vi.mock('../../js/db.js?v=117', () => ({
+vi.mock('../../js/db.js?v=123', () => ({
     getTeam: mocks.getTeam,
     getTeamMediaFolders: mocks.getTeamMediaFolders,
     getTeamMediaItemsPage: mocks.getTeamMediaItemsPage,
