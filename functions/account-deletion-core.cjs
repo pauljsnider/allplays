@@ -254,7 +254,8 @@ function classifyAccountStoragePaths(uid, mediaStoragePaths = [], profilePhotoUr
   );
 
   mediaStoragePaths.forEach((value) => {
-    const storagePath = String(value || '').trim();
+    const rawValue = String(value || '').trim();
+    const storagePath = extractFirebaseStoragePath(rawValue) || rawValue;
     if (storagePath.startsWith(`primary://${athletePrefix}`)) {
       primaryPaths.add(storagePath.slice('primary://'.length));
     } else if (storagePath.startsWith(athletePrefix)) {
@@ -291,13 +292,34 @@ function classifyAccountStoragePaths(uid, mediaStoragePaths = [], profilePhotoUr
 function collectAccountMediaStoragePaths(mediaRecords = []) {
   return mediaRecords.flatMap((record) => {
     const attachments = Array.isArray(record?.attachments) ? record.attachments : [];
+    const media = Array.isArray(record?.media) ? record.media : [];
     return [
       record?.storagePath,
       record?.path,
       record?.imagePath,
-      ...attachments.flatMap((attachment) => [attachment?.storagePath, attachment?.path])
+      ...attachments.flatMap((attachment) => [
+        attachment?.storagePath,
+        attachment?.path,
+        attachment?.url,
+        attachment?.thumbnailUrl
+      ]),
+      ...media.flatMap((item) => [
+        item?.storagePath,
+        item?.path,
+        item?.url,
+        item?.thumbnailUrl
+      ])
     ].map((value) => String(value || '').trim()).filter(Boolean);
   });
+}
+
+function getAccountTeamPermissionQueryFields() {
+  return [
+    'teamPermissions.scorekeeping.memberIds',
+    'teamPermissions.streaming.memberIds',
+    'teamPermissions.videography.memberIds',
+    'teamPermissions.teamMediaManagement.memberIds'
+  ];
 }
 
 function getAccountDeletionCollectionQueries() {
@@ -459,6 +481,7 @@ module.exports = {
   createAccountDeletionRequestHandler,
   extractAccountProfileStoragePath,
   getAccountEmailQueryCandidates,
+  getAccountTeamPermissionQueryFields,
   getLegacyUnscopedProfilePhotoPaths,
   getAccountDeletionCollectionQueries,
   getAccountDeletionCollectionGroupQueries,

@@ -250,6 +250,7 @@ const {
   getAccountDeletionCollectionQueries,
   getAccountDeletionCollectionGroupQueries,
   getAccountEmailQueryCandidates,
+  getAccountTeamPermissionQueryFields,
   getLegacyUnscopedProfilePhotoPaths,
   loadOwnedTeams,
   shouldProcessAccountDeletionRequest,
@@ -14516,6 +14517,9 @@ async function loadAccountTeamDocuments(uid, email, userData = {}) {
   const queryPromises = [
     firestore.collection('teams').where('ownerId', '==', uid).get()
   ];
+  getAccountTeamPermissionQueryFields().forEach((field) => {
+    queryPromises.push(firestore.collection('teams').where(field, 'array-contains', uid).get());
+  });
   getAccountEmailQueryCandidates(email).forEach((candidate) => {
     queryPromises.push(firestore.collection('teams').where('adminEmails', 'array-contains', candidate).get());
     queryPromises.push(firestore.collection('teams').where('streamVolunteerEmails', 'array-contains', candidate).get());
@@ -14589,15 +14593,17 @@ exports.processAccountDeletionRequest = functions
         throw migrationError;
       }
 
-      const [legacyTeamMedia, teamMediaItems, chatMessages] = await Promise.all([
+      const [legacyTeamMedia, teamMediaItems, chatMessages, socialPosts] = await Promise.all([
         firestore.collectionGroup('media').where('uploadedBy', '==', uid).get(),
         firestore.collectionGroup('mediaItems').where('uploadedBy', '==', uid).get(),
-        firestore.collectionGroup('chatMessages').where('senderId', '==', uid).get()
+        firestore.collectionGroup('chatMessages').where('senderId', '==', uid).get(),
+        firestore.collection('socialPosts').where('authorId', '==', uid).get()
       ]);
       await deleteAccountStorage(uid, [
         ...(legacyTeamMedia.docs || []),
         ...(teamMediaItems.docs || []),
-        ...(chatMessages.docs || [])
+        ...(chatMessages.docs || []),
+        ...(socialPosts.docs || [])
       ], [
         userDoc.data()?.photoUrl,
         authUser?.photoURL

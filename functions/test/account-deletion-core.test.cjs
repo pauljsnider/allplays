@@ -15,6 +15,7 @@ const {
   createAccountDeletionRequestHandler,
   extractAccountProfileStoragePath,
   getAccountEmailQueryCandidates,
+  getAccountTeamPermissionQueryFields,
   getLegacyUnscopedProfilePhotoPaths,
   getAccountDeletionCollectionQueries,
   getAccountDeletionCollectionGroupQueries,
@@ -134,6 +135,12 @@ test('scrubs reusable email and uid grants from team authorization fields', () =
     teamMediaUploadTeamIds: ['team-3']
   }), ['team-1', 'team-2', 'team-3']);
   assert.ok(getAccountEmailQueryCandidates('Coach@Example.com').includes(' coach@example.com '));
+  assert.deepEqual(getAccountTeamPermissionQueryFields(), [
+    'teamPermissions.scorekeeping.memberIds',
+    'teamPermissions.streaming.memberIds',
+    'teamPermissions.videography.memberIds',
+    'teamPermissions.teamMediaManagement.memberIds'
+  ]);
   assert.deepEqual(buildTeamAccountGrantScrubPlan({
     active: false,
     ownerId: 'deleted-user',
@@ -174,6 +181,7 @@ test('routes account media cleanup to the primary and legacy image buckets', () 
     'primary://team-media/team-2/folder-2/user-1/photo.jpg',
     'team-media/team-1/folder-1/other-user/not-ours.jpg',
     'stat-sheets/team-chat/team-1/team/user-1/chat.jpg',
+    'https://firebasestorage.googleapis.com/v0/b/images/o/stat-sheets%2Fteam-chat%2Fteam-1%2Fteam%2Fuser-1%2Fsocial.jpg?alt=media',
     'stat-sheets/team-chat/team-1/team/other-user/not-ours.jpg'
   ], [
     'https://firebasestorage.googleapis.com/v0/b/game-flow-img.firebasestorage.app/o/user-photos%2F171234_photo.jpg?alt=media'
@@ -183,7 +191,8 @@ test('routes account media cleanup to the primary and legacy image buckets', () 
     'athlete-profile-media/user-1/player-1/photo.jpg',
     'team-media/team-1/folder-1/user-1/file.jpg',
     'team-media/team-2/folder-2/user-1/photo.jpg',
-    'stat-sheets/team-chat/team-1/team/user-1/chat.jpg'
+    'stat-sheets/team-chat/team-1/team/user-1/chat.jpg',
+    'stat-sheets/team-chat/team-1/team/user-1/social.jpg'
   ]);
   assert.deepEqual(paths.imagePaths, ['athlete-profile-media/user-1/player-1/legacy.jpg']);
 });
@@ -195,13 +204,17 @@ test('collects current and legacy storage fields from account-owned media record
       attachments: [
         { path: 'stat-sheets/team-chat/team-1/team/user-1/chat.jpg' },
         { storagePath: 'stat-sheets/team-chat/team-1/team/user-1/clip.mp4' }
-      ]
+      ],
+      media: [{
+        url: 'https://firebasestorage.googleapis.com/v0/b/images/o/stat-sheets%2Fteam-chat%2Fteam-1%2Fteam%2Fuser-1%2Fsocial.jpg?alt=media'
+      }]
     },
     { imagePath: 'athlete-profile-media/user-1/player-1/photo.jpg' }
   ]), [
     'team-media/team-1/folder-1/user-1/file.jpg',
     'stat-sheets/team-chat/team-1/team/user-1/chat.jpg',
     'stat-sheets/team-chat/team-1/team/user-1/clip.mp4',
+    'https://firebasestorage.googleapis.com/v0/b/images/o/stat-sheets%2Fteam-chat%2Fteam-1%2Fteam%2Fuser-1%2Fsocial.jpg?alt=media',
     'athlete-profile-media/user-1/player-1/photo.jpg'
   ]);
 });
