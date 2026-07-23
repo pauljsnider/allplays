@@ -285,6 +285,23 @@ describe('AppShell', () => {
     expect(within(moreNav).getByRole('link', { name: /Discover/ })).toHaveAttribute('href', '/discover');
   });
 
+  it('keeps Schedule scoped to the team currently open in My Teams', () => {
+    useShellLayoutMock.mockReturnValue({ isDesktopWeb: false });
+    render(
+      <MemoryRouter initialEntries={['/teams/team-vipers']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<AppShell auth={signedInAuth}><div>Vipers</div></AppShell>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    const primaryNav = screen.getByRole('navigation', { name: 'Primary navigation' });
+    expect(within(primaryNav).getByRole('link', { name: 'Schedule' })).toHaveAttribute(
+      'href',
+      '/schedule?teamId=team-vipers'
+    );
+  });
+
   it('routes the mobile My Teams nav directly to the team page when the user has one team', () => {
     useShellLayoutMock.mockReturnValue({ isDesktopWeb: false });
     const oneTeamAuth: AuthState = {

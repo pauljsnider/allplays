@@ -7,6 +7,7 @@ import { PullToRefresh } from '../components/PullToRefresh';
 import {
   hydrateParentScheduleRsvps,
   loadParentSchedule,
+  loadParentScheduleScope,
   submitParentScheduleRsvp,
   submitParentScheduleRsvpForChildren,
   type ParentScheduleChild,
@@ -374,14 +375,32 @@ export function Schedule({ auth }: { auth: AuthState }) {
     const cached = getCachedAppData(cacheKey);
 
     return runScheduleRead(
-      () => loadCachedAppData(
-        cacheKey,
-        () => loadParentSchedule(auth.user, { hydrateDetails: false, expandStaffPlayers: false }),
-        {
-          ...scheduleCacheOptions,
-          shouldCache: (result) => result?.isPartial !== true
-        }
-      ),
+      async () => {
+        const parentScopePromise = loadParentScheduleScope(auth.user).catch(() => null);
+        const result = await loadCachedAppData(
+          cacheKey,
+          async () => {
+            const parentScope = await parentScopePromise;
+            return loadParentSchedule(auth.user, {
+              hydrateDetails: false,
+              expandStaffPlayers: false,
+              ...(parentScope ? { parentScope } : {})
+            });
+          },
+          {
+            ...scheduleCacheOptions,
+            shouldCache: (loadedResult) => loadedResult?.isPartial !== true
+          }
+        );
+        const parentScope = await parentScopePromise;
+        return {
+          ...result,
+          // Team ownership and staff access can change while the event summary
+          // remains cacheable. Keep management targets authoritative so a
+          // newly created team can be edited immediately.
+          staffTeams: parentScope?.staffTeams ?? result.staffTeams ?? []
+        };
+      },
       {
         getErrorMessage: (loadError) => {
           return getScheduleLoadErrorMessage(toAppServiceError(loadError, 'Unable to load schedule.'), hasExistingSchedule);

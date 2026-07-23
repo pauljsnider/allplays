@@ -309,8 +309,12 @@ export function AppShell({ auth, children }: AppShellProps) {
       ? 'Signed in'
       : 'Explore ALL PLAYS';
   const teamNavPath = getSingleTeamNavPath(auth.user);
-  const activeNavItems = hasSignedInSession ? withTeamNavPath(mobilePrimaryNavItems, teamNavPath) : publicNavItems;
-  const activeDesktopNavItems = hasSignedInSession ? withTeamNavPath(desktopNavItems, teamNavPath) : publicNavItems;
+  const activeNavItems = hasSignedInSession
+    ? withTeamContextSchedulePath(withTeamNavPath(mobilePrimaryNavItems, teamNavPath), location.pathname)
+    : publicNavItems;
+  const activeDesktopNavItems = hasSignedInSession
+    ? withTeamContextSchedulePath(withTeamNavPath(desktopNavItems, teamNavPath), location.pathname)
+    : publicNavItems;
   const moreNavActive = hasSignedInSession && mobileMoreNavItems.some((item) => isRouteActive(location.pathname, item.path));
   const commonAddWorkflows = commonAddWorkflowIds
     .map((id) => addWorkflows.find((workflow) => workflow.id === id))
@@ -931,6 +935,15 @@ function legacyUrl(path: string) {
 function withTeamNavPath(items: NavItem[], teamNavPath: string): NavItem[] {
   if (!teamNavPath) return items;
   return items.map((item) => item.path === '/teams' ? { ...item, path: teamNavPath } : item);
+}
+
+function withTeamContextSchedulePath(items: NavItem[], pathname: string): NavItem[] {
+  const match = String(pathname || '').match(/^\/teams\/([^/]+)$/);
+  const teamId = match?.[1] || '';
+  if (!teamId || teamId === 'browse' || teamId === 'new') return items;
+  return items.map((item) => item.path === '/schedule'
+    ? { ...item, path: `/schedule?teamId=${teamId}` }
+    : item);
 }
 
 function getSingleTeamNavPath(user: AuthUser | null) {
