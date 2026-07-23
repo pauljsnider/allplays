@@ -384,12 +384,15 @@ describe('parent schedule child scope', () => {
   it('uses scoped staff discovery and excludes inactive affiliated teams', async () => {
     const coachUser = { uid: 'coach-1', email: ' Coach@Example.com ', roles: ['coach'], coachOf: ['team-coach', 'team-coach'] } as any;
     vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [] } as any);
-    vi.mocked(getStaffTeams).mockResolvedValue([
-      { id: 'team-owner', name: 'Owner Team', ownerId: 'coach-1', active: true },
-      { id: 'team-admin', name: 'Admin Team', adminEmails: ['coach@example.com'], active: true },
-      { id: 'team-coach', name: 'Coach Team', active: true },
-      { id: 'team-inactive', name: 'Inactive Team', ownerId: 'coach-1', active: false }
-    ] as any);
+    vi.mocked(getStaffTeams).mockResolvedValue({
+      teams: [
+        { id: 'team-owner', name: 'Owner Team', ownerId: 'coach-1', active: true },
+        { id: 'team-admin', name: 'Admin Team', adminEmails: ['coach@example.com'], active: true },
+        { id: 'team-coach', name: 'Coach Team', active: true },
+        { id: 'team-inactive', name: 'Inactive Team', ownerId: 'coach-1', active: false }
+      ],
+      isPartial: false
+    } as any);
     vi.mocked(getTeam).mockImplementation(async (teamId: string) => ({
       'team-owner': { id: 'team-owner', name: 'Owner Team', ownerId: 'coach-1', active: true },
       'team-admin': { id: 'team-admin', name: 'Admin Team', adminEmails: ['coach@example.com'], active: true },
@@ -416,9 +419,10 @@ describe('parent schedule child scope', () => {
   it('carries newly created staff teams through the reusable parent scope', async () => {
     const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'], coachOf: ['team-owned'] } as any;
     vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: ['team-owned'] } as any);
-    vi.mocked(getStaffTeams).mockResolvedValue([
-      { id: 'team-owned', name: 'Vipers', ownerId: 'coach-1', active: true }
-    ] as any);
+    vi.mocked(getStaffTeams).mockResolvedValue({
+      teams: [{ id: 'team-owned', name: 'Vipers', ownerId: 'coach-1', active: true }],
+      isPartial: false
+    } as any);
     vi.mocked(getGames).mockResolvedValue([] as any);
     vi.mocked(getPracticeSessions).mockResolvedValue([] as any);
 
@@ -447,6 +451,20 @@ describe('parent schedule child scope', () => {
 
     expect(scope.isPartial).toBe(true);
     expect(scope.staffTeams).toEqual([]);
+  });
+
+  it('marks web staff scope partial when a coach-team document read is incomplete', async () => {
+    const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'], coachOf: ['team-owned', 'team-missing'] } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: coachUser.coachOf } as any);
+    vi.mocked(getStaffTeams).mockResolvedValueOnce({
+      teams: [{ id: 'team-owned', name: 'Vipers', ownerId: 'coach-1', active: true }],
+      isPartial: true
+    } as any);
+
+    const scope = await loadParentScheduleScope(coachUser);
+
+    expect(scope.isPartial).toBe(true);
+    expect(scope.staffTeams).toEqual([{ teamId: 'team-owned', teamName: 'Vipers' }]);
   });
 
   it('marks native staff scope partial when one REST fallback read fails', async () => {

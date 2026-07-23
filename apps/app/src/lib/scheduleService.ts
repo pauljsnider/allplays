@@ -1674,17 +1674,17 @@ async function loadStaffTeams(user: AuthUser): Promise<StaffTeamsLoadResult> {
     'staff teams',
     async () => {
       const coachTeamIds = Array.isArray(user.coachOf) ? user.coachOf.map(compactString).filter(Boolean) : [];
-      const visibleTeams = await getStaffTeams({
+      const staffTeamResult = await getStaffTeams({
         userId: user.uid,
         email: user.email,
         coachTeamIds,
         includeAll: (user as any).isAdmin === true
       });
       const teamsById = new Map<string, any>();
-      visibleTeams.filter(Boolean).forEach((team: any) => {
+      staffTeamResult.teams.filter(Boolean).forEach((team: any) => {
         if (team?.id && isTeamActive(team) && isTeamStaff(team, user)) teamsById.set(team.id, team);
       });
-      return { teams: [...teamsById.values()], isPartial: false };
+      return { teams: [...teamsById.values()], isPartial: staffTeamResult.isPartial };
     },
     async () => {
       const coachTeamIds = Array.isArray(user.coachOf) ? user.coachOf.map(compactString).filter(Boolean) : [];
