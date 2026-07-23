@@ -13,6 +13,38 @@ function buildDeletionAuditId(uid) {
   return crypto.createHash('sha256').update(String(uid || '')).digest('hex');
 }
 
+function shouldProcessAccountDeletionRequest(beforeSnapshot, afterSnapshot) {
+  if (!afterSnapshot?.exists) return false;
+  const beforeStatus = String(beforeSnapshot?.data?.()?.status || '').trim().toLowerCase();
+  const afterStatus = String(afterSnapshot.data()?.status || '').trim().toLowerCase();
+  return afterStatus === 'queued' && beforeStatus !== 'queued';
+}
+
+function extractAccountProfileStoragePath(value, uid) {
+  const rawValue = String(value || '').trim();
+  if (!rawValue) return '';
+
+  let storagePath = '';
+  try {
+    const url = new URL(rawValue);
+    if (url.hostname === 'firebasestorage.googleapis.com') {
+      const match = url.pathname.match(/\/o\/(.+)$/);
+      storagePath = match ? decodeURIComponent(match[1]) : '';
+    } else if (url.hostname === 'storage.googleapis.com') {
+      const pathParts = url.pathname.split('/').filter(Boolean);
+      storagePath = pathParts.slice(1).join('/');
+    }
+  } catch {
+    return '';
+  }
+
+  const normalizedUid = String(uid || '').trim();
+  const scopedPrefix = `user-photos/${normalizedUid}/`;
+  if (normalizedUid && storagePath.startsWith(scopedPrefix)) return storagePath;
+  if (/^user-photos\/[^/]+$/.test(storagePath)) return storagePath;
+  return '';
+}
+
 function assertDeletionRequest(data, HttpsError) {
   if (normalizeConfirmation(data?.confirmation) !== ACCOUNT_DELETION_CONFIRMATION) {
     throw new HttpsError('invalid-argument', `Type ${ACCOUNT_DELETION_CONFIRMATION} to confirm permanent account deletion.`);
@@ -73,6 +105,8 @@ module.exports = {
   assertDeletionRequest,
   buildDeletionAuditId,
   createAccountDeletionRequestHandler,
+  extractAccountProfileStoragePath,
   normalizeConfirmation,
+  shouldProcessAccountDeletionRequest,
   summarizeOwnedTeams
 };

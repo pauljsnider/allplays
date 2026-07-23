@@ -8,6 +8,6 @@ export function resolveImageFirebaseConfig(): any {
   return legacyResolveImageFirebaseConfig() ?? {};
 }
 
-export function uploadUserPhoto(file: File): Promise<string> {
-  return Promise.resolve(legacyUploadUserPhoto(file)) as Promise<string>;
+export function uploadUserPhoto(file: File, uid = ''): Promise<string> {
+  return Promise.resolve(legacyUploadUserPhoto(file, uid)) as Promise<string>;
 }

@@ -5,6 +5,8 @@ const assert = require('node:assert/strict');
 const {
   buildDeletionAuditId,
   createAccountDeletionRequestHandler,
+  extractAccountProfileStoragePath,
+  shouldProcessAccountDeletionRequest,
   normalizeConfirmation
 } = require('../account-deletion-core.cjs');
 
@@ -19,6 +21,44 @@ class HttpsError extends Error {
 test('normalizes explicit account deletion confirmation', () => {
   assert.equal(normalizeConfirmation(' delete '), 'DELETE');
   assert.equal(buildDeletionAuditId('user-1').length, 64);
+});
+
+test('processes new and retried queued deletion requests only once', () => {
+  const snapshot = (status, exists = true) => ({
+    exists,
+    data: () => ({ status })
+  });
+
+  assert.equal(shouldProcessAccountDeletionRequest(snapshot('', false), snapshot('queued')), true);
+  assert.equal(shouldProcessAccountDeletionRequest(snapshot('failed'), snapshot('queued')), true);
+  assert.equal(shouldProcessAccountDeletionRequest(snapshot('queued'), snapshot('processing')), false);
+  assert.equal(shouldProcessAccountDeletionRequest(snapshot('queued'), snapshot('queued')), false);
+  assert.equal(shouldProcessAccountDeletionRequest(snapshot('failed'), snapshot('', false)), false);
+});
+
+test('extracts only account profile photo paths from Firebase Storage URLs', () => {
+  assert.equal(
+    extractAccountProfileStoragePath(
+      'https://firebasestorage.googleapis.com/v0/b/allplays.appspot.com/o/user-photos%2F171234_photo.jpg?alt=media',
+      'user-1'
+    ),
+    'user-photos/171234_photo.jpg'
+  );
+  assert.equal(
+    extractAccountProfileStoragePath(
+      'https://storage.googleapis.com/allplays.appspot.com/user-photos/user-1/photo.jpg',
+      'user-1'
+    ),
+    'user-photos/user-1/photo.jpg'
+  );
+  assert.equal(
+    extractAccountProfileStoragePath(
+      'https://firebasestorage.googleapis.com/v0/b/allplays.appspot.com/o/user-photos%2Fother-user%2Fphoto.jpg',
+      'user-1'
+    ),
+    ''
+  );
+  assert.equal(extractAccountProfileStoragePath('https://example.com/photo.jpg', 'user-1'), '');
 });
 
 test('queues deletion for a signed-in non-owner', async () => {

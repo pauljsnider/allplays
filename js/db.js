@@ -521,7 +521,7 @@ export async function uploadPlayerPhoto(file) {
     return downloadURL;
 }
 
-export async function uploadUserPhoto(file) {
+export async function uploadUserPhoto(file, uid = '') {
     console.log('Starting user photo upload...', {
         fileName: file.name,
         fileSize: file.size,
@@ -530,7 +530,8 @@ export async function uploadUserPhoto(file) {
 
     await ensureImageAuth();
 
-    const path = `user-photos/${Date.now()}_${file.name}`;
+    const safeUid = String(uid || '').trim().replace(/[^\w.-]+/g, '_');
+    const path = `user-photos/${safeUid ? `${safeUid}/` : ''}${Date.now()}_${file.name}`;
     const storageRef = ref(imageStorage, path);
 
     const snapshot = await uploadBytes(storageRef, file);

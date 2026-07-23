@@ -241,6 +241,8 @@ const { createAutoAcceptParentInviteHandler } = require('./parent-invite-auto-li
 const {
   buildDeletionAuditId,
   createAccountDeletionRequestHandler,
+  extractAccountProfileStoragePath,
+  shouldProcessAccountDeletionRequest,
   summarizeOwnedTeams
 } = require('./account-deletion-core.cjs');
 const { createTeamOwnerAccessSyncHandler } = require('./team-owner-access-core.cjs');
@@ -14401,24 +14403,29 @@ async function deleteAccountQuery(query) {
   }
 }
 
-async function deleteAccountStorage(uid, mediaDocuments) {
+async function deleteAccountStorage(uid, mediaDocuments, profilePhotoUrls = []) {
   const bucket = admin.storage().bucket();
   const prefixes = [
     `athlete-profile-media/${uid}/`,
     `user-photos/${uid}/`
   ];
-  await Promise.all(prefixes.map((prefix) => bucket.deleteFiles({ prefix, force: true }).catch((error) => {
-    functions.logger.warn('Account deletion could not remove a storage prefix.', { uid, prefix, error });
-  })));
-  await Promise.all(mediaDocuments.map((document) => {
-    const storagePath = String(document.data()?.storagePath || '').trim();
-    return storagePath ? bucket.file(storagePath).delete({ ignoreNotFound: true }) : null;
-  }));
+  await Promise.all(prefixes.map((prefix) => bucket.deleteFiles({ prefix, force: true })));
+
+  const explicitPaths = new Set([
+    ...mediaDocuments.map((document) => String(document.data()?.storagePath || '').trim()),
+    ...profilePhotoUrls.map((url) => extractAccountProfileStoragePath(url, uid))
+  ].filter(Boolean));
+  await Promise.all([...explicitPaths].map((storagePath) => (
+    bucket.file(storagePath).delete({ ignoreNotFound: true })
+  )));
 }
 
 exports.processAccountDeletionRequest = functions.firestore
   .document('accountDeletionRequests/{uid}')
-  .onCreate(async (snapshot, context) => {
+  .onWrite(async (change, context) => {
+    if (!shouldProcessAccountDeletionRequest(change.before, change.after)) return null;
+
+    const snapshot = change.after;
     const uid = context.params.uid;
     const requestRef = snapshot.ref;
     const now = admin.firestore.Timestamp.now();
@@ -14430,8 +14437,19 @@ exports.processAccountDeletionRequest = functions.firestore
         throw new Error('Account still owns one or more teams.');
       }
 
-      const teamMedia = await firestore.collectionGroup('media').where('uploadedBy', '==', uid).get().catch(() => ({ docs: [] }));
-      await deleteAccountStorage(uid, teamMedia.docs || []);
+      const userRef = firestore.doc(`users/${uid}`);
+      const [teamMedia, userDoc, authUser] = await Promise.all([
+        firestore.collectionGroup('media').where('uploadedBy', '==', uid).get(),
+        userRef.get(),
+        admin.auth().getUser(uid).catch((error) => {
+          if (error?.code === 'auth/user-not-found') return null;
+          throw error;
+        })
+      ]);
+      await deleteAccountStorage(uid, teamMedia.docs || [], [
+        userDoc.data()?.photoUrl,
+        authUser?.photoURL
+      ]);
 
       const directDocuments = [
         `publicUserProfiles/${uid}`,
@@ -14470,8 +14488,6 @@ exports.processAccountDeletionRequest = functions.firestore
         await deleteAccountQuery(firestore.collectionGroup(collectionName).where(field, '==', uid));
       }
 
-      const userRef = firestore.doc(`users/${uid}`);
-      const userDoc = await userRef.get();
       if (userDoc.exists) await firestore.recursiveDelete(userRef);
 
       await admin.auth().deleteUser(uid).catch((error) => {

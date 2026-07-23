@@ -790,7 +790,7 @@ export function Profile({ auth }: { auth: AuthState }) {
       if (selectedPhotoChanged && selectedPhotoFile) {
         setProfileStatus({ message: 'Uploading photo...', tone: 'neutral' });
         const { uploadProfilePhoto } = await import('../lib/profilePhotoService');
-        nextPhotoUrl = await uploadProfilePhoto(selectedPhotoFile);
+        nextPhotoUrl = await uploadProfilePhoto(selectedPhotoFile, user.uid);
       }
 
       await saveProfileDocument(user.uid, {

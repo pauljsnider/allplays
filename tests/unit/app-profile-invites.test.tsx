@@ -784,7 +784,7 @@ describe('Profile invites', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
 
-    await waitFor(() => expect(profilePhotoServiceMocks.uploadProfilePhoto).toHaveBeenCalledWith(normalizedFile));
+    await waitFor(() => expect(profilePhotoServiceMocks.uploadProfilePhoto).toHaveBeenCalledWith(normalizedFile, 'user-1'));
   });
 
   it('keeps the most recent profile photo selection when normalization finishes out of order', async () => {
@@ -812,7 +812,7 @@ describe('Profile invites', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
 
-    await waitFor(() => expect(profilePhotoServiceMocks.uploadProfilePhoto).toHaveBeenCalledWith(secondNormalizedFile));
+    await waitFor(() => expect(profilePhotoServiceMocks.uploadProfilePhoto).toHaveBeenCalledWith(secondNormalizedFile, 'user-1'));
     expect(profilePhotoServiceMocks.uploadProfilePhoto).toHaveBeenCalledTimes(1);
     expect(profilePhotoServiceMocks.uploadProfilePhoto.mock.calls[0]?.[0]).toBe(secondNormalizedFile);
     expect(profilePhotoServiceMocks.uploadProfilePhoto.mock.calls[0]?.[0]).not.toBe(firstNormalizedFile);

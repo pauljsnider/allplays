@@ -310,7 +310,7 @@ async function createImageUploadSession(apiKey: string): Promise<ImageUploadSess
   return session;
 }
 
-export async function nativeUploadProfilePhoto(file: File) {
+export async function nativeUploadProfilePhoto(file: File, uid = '') {
   const imageConfig = resolveImageFirebaseConfig();
   const bucket = imageConfig.storageBucket;
   if (!imageConfig.apiKey || !bucket) {
@@ -319,7 +319,8 @@ export async function nativeUploadProfilePhoto(file: File) {
 
   const session = await getImageUploadSession(imageConfig.apiKey);
   const safeName = String(file.name || 'profile-photo').replace(/[^\w.-]+/g, '_');
-  const path = `user-photos/${Date.now()}_${safeName}`;
+  const safeUid = String(uid || '').trim().replace(/[^\w.-]+/g, '_');
+  const path = `user-photos/${safeUid ? `${safeUid}/` : ''}${Date.now()}_${safeName}`;
   const response = await withTimeout(fetch(`https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o?uploadType=media&name=${encodeURIComponent(path)}`, {
     method: 'POST',
     headers: {
@@ -341,19 +342,19 @@ export async function nativeUploadProfilePhoto(file: File) {
   return `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(payload.name || path)}?alt=media`;
 }
 
-export async function uploadProfilePhoto(file: File) {
+export async function uploadProfilePhoto(file: File, uid = '') {
   if (isNativeRuntime()) {
     try {
-      return await nativeUploadProfilePhoto(file);
+      return await nativeUploadProfilePhoto(file, uid);
     } catch (error) {
       logger.warn('Native profile photo upload failed, falling back to SDK upload.', { error });
     }
   }
 
   try {
-    return await withTimeout(uploadUserPhoto(file) as Promise<string>, 'Profile photo upload', nativeImageUploadTimeoutMs);
+    return await withTimeout(uploadUserPhoto(file, uid) as Promise<string>, 'Profile photo upload', nativeImageUploadTimeoutMs);
   } catch (error) {
     logger.warn('Falling back to REST profile photo upload.', { error });
-    return nativeUploadProfilePhoto(file);
+    return nativeUploadProfilePhoto(file, uid);
   }
 }
