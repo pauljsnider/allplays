@@ -256,6 +256,17 @@ export function validateFirebaseDeployWorkloadIdentity(workflow, label) {
 }
 
 export function validateProductionDeployCommand(deployProd) {
+    assertMatches(
+        deployProd,
+        /on:\s*\n\s+push:\s*\n\s+branches:\s*\n\s+- master\s*\n\s+workflow_dispatch:\s*(?:\n|$)/,
+        'Production push and manual retry triggers'
+    );
+    assertIncludes(deployProd, 'group: production-deploy-${{ github.ref }}', 'Production ref-scoped concurrency');
+    assertIncludes(deployProd, 'baseline_branch="$GITHUB_REF_NAME"', 'Production push baseline branch');
+    assertIncludes(deployProd, 'if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then', 'Production manual retry baseline selection');
+    assertIncludes(deployProd, 'if [[ "$GITHUB_REF" != "refs/heads/master" ]]; then', 'Production manual retry master restriction');
+    assertIncludes(deployProd, 'baseline_branch="master"', 'Production manual retry master baseline');
+
     const deployCommands = Array.from(deployProd.matchAll(/^\s*(?:npx firebase-tools@\S+|node "\$firebase_cli") deploy\b[^\n]*$/gm), match => match[0]);
     const deployCommand = deployCommands.find(command => /--only(?:=|\s+)"\$deploy_targets"/.test(command)) || '';
     if (!deployCommand) {
@@ -269,17 +280,21 @@ export function validateProductionDeployCommand(deployProd) {
     assertIncludes(deployProd, 'actions: read', 'Production workflow-run read permission');
     assertIncludes(deployProd, 'GH_TOKEN: ${{ github.token }}', 'Production workflow-run authentication');
     assertIncludes(deployProd, 'actions/workflows/deploy-prod.yml/runs', 'Production successful deploy lookup');
-    assertIncludes(deployProd, '-f branch="$GITHUB_REF_NAME"', 'Production successful deploy branch filter');
+    assertIncludes(deployProd, '-f branch="$baseline_branch"', 'Production successful deploy branch filter');
     assertIncludes(deployProd, '-f status=success', 'Production successful deploy filter');
     assertIncludes(deployProd, 'for ((lookup_attempt = 1; lookup_attempt <= lookup_max_attempts; lookup_attempt += 1)); do', 'Production successful deploy lookup retries');
     assertIncludes(deployProd, 'if last_success_sha="$(gh api', 'Production successful deploy guarded lookup');
     assertIncludes(deployProd, 'if [[ "$lookup_succeeded" != "true" ]]; then', 'Production successful deploy lookup failure fallback');
-    assertIncludes(deployProd, 'The successful production deploy lookup failed; forcing Firestore-first ordering.', 'Production successful deploy lookup warning');
+    assertIncludes(deployProd, 'The successful production deploy lookup failed; forcing authorization rules-first ordering.', 'Production successful deploy lookup warning');
     const lookupFallbackStart = deployProd.indexOf('if [[ "$lookup_succeeded" != "true" ]]; then');
     const baselineValidationStart = deployProd.indexOf('if [[ ! "$last_success_sha" =~', lookupFallbackStart);
     const lookupFallback = deployProd.slice(lookupFallbackStart, baselineValidationStart);
-    if (!lookupFallback.includes('echo "changed=true" >> "$GITHUB_OUTPUT"') || !lookupFallback.includes('exit 0')) {
-        throw new Error('Production successful deploy lookup failure must force Firestore-first ordering.');
+    if (
+        !lookupFallback.includes('echo "changed=true" >> "$GITHUB_OUTPUT"')
+        || !lookupFallback.includes('echo "storage_changed=true" >> "$GITHUB_OUTPUT"')
+        || !lookupFallback.includes('exit 0')
+    ) {
+        throw new Error('Production successful deploy lookup failure must force authorization rules-first ordering.');
     }
     assertIncludes(deployProd, 'git diff --quiet "$last_success_sha" "$GITHUB_SHA" -- firestore.rules firestore.indexes.json', 'Production Firestore change detection');
     if (deployProd.includes('git diff --quiet "${{ github.event.before }}" "${{ github.sha }}" -- firestore.rules firestore.indexes.json')) {
@@ -306,7 +321,11 @@ export function validateProductionDeployCommand(deployProd) {
     assertMatches(storageDeployCommand, /--project game-flow-c6311(?:\s|$)/, 'Production Storage rules deploy project');
     assertMatches(storageDeployCommand, /--config "\$firebase_config"(?:\s|$)/, 'Production Storage rules generated config');
     assertIncludes(deployProd, 'fetch-depth: 0', 'Production Storage rules change history');
-    assertIncludes(deployProd, 'git diff --quiet "${{ github.event.before }}" "${{ github.sha }}" -- storage.rules', 'Production Storage rules change detection');
+    assertIncludes(deployProd, 'git diff --quiet "$last_success_sha" "$GITHUB_SHA" -- storage.rules', 'Production Storage rules successful-deploy baseline');
+    if (deployProd.includes('git diff --quiet "${{ github.event.before }}" "${{ github.sha }}" -- storage.rules')) {
+        throw new Error('Production Storage rules changes must not use the immediately previous push as the deploy baseline.');
+    }
+    assertIncludes(deployProd, 'storage_changed: ${{ steps.firestore_config.outputs.storage_changed }}', 'Production Storage rules baseline output');
     assertIncludes(deployProd, 'STORAGE_RULES_CHANGED: ${{ needs.prepare-deploy.outputs.storage_changed }}', 'Production Storage rules change output');
     assertIncludes(deployProd, "sed -E 's/\\x1B\\[[0-9;]*[[:alpha:]]//g' \"$storage_log\" > \"$storage_plain_log\"", 'Production Storage rules ANSI log normalization');
     assertIncludes(deployProd, '[[ "$STORAGE_RULES_CHANGED" != "true" ]]', 'Production Storage rules unchanged-only skip');

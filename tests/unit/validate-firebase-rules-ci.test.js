@@ -87,32 +87,50 @@ service firebase.storage {
 
     it('skips an unavailable Storage service only when rules are unchanged', () => {
         const validDeployCommand = `
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+concurrency:
+  group: production-deploy-\${{ github.ref }}
+  cancel-in-progress: true
+
       - name: Checkout
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
       permissions:
         actions: read
-      - name: Detect Storage rules changes
-        id: storage_rules
-        run: git diff --quiet "\${{ github.event.before }}" "\${{ github.sha }}" -- storage.rules
-      - name: Detect Firestore configuration changes
+      outputs:
+        storage_changed: \${{ steps.firestore_config.outputs.storage_changed }}
+      - name: Detect Firebase rules changes
         id: firestore_config
         env:
           GH_TOKEN: \${{ github.token }}
         run: |
+          baseline_branch="$GITHUB_REF_NAME"
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            if [[ "$GITHUB_REF" != "refs/heads/master" ]]; then
+              exit 1
+            fi
+            baseline_branch="master"
+          fi
           lookup_max_attempts=3
           for ((lookup_attempt = 1; lookup_attempt <= lookup_max_attempts; lookup_attempt += 1)); do
-            if last_success_sha="$(gh api --method GET "repos/\${GITHUB_REPOSITORY}/actions/workflows/deploy-prod.yml/runs" -f branch="$GITHUB_REF_NAME" -f status=success)"; then
+            if last_success_sha="$(gh api --method GET "repos/\${GITHUB_REPOSITORY}/actions/workflows/deploy-prod.yml/runs" -f branch="$baseline_branch" -f status=success)"; then
               lookup_succeeded="true"
             fi
           done
           if [[ "$lookup_succeeded" != "true" ]]; then
-            echo "The successful production deploy lookup failed; forcing Firestore-first ordering."
+            echo "The successful production deploy lookup failed; forcing authorization rules-first ordering."
             echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "storage_changed=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           git diff --quiet "$last_success_sha" "$GITHUB_SHA" -- firestore.rules firestore.indexes.json
+          git diff --quiet "$last_success_sha" "$GITHUB_SHA" -- storage.rules
       - name: Deploy Firebase Storage rules when available
         env:
           STORAGE_RULES_CHANGED: \${{ needs.prepare-deploy.outputs.storage_changed }}
@@ -138,6 +156,27 @@ service firebase.storage {
         `;
 
         expect(() => validateProductionDeployCommand(validDeployCommand)).not.toThrow();
+        expect(() => validateProductionDeployCommand(
+            validDeployCommand.replace('  workflow_dispatch:', '  pull_request:')
+        )).toThrow('Production push and manual retry triggers');
+        expect(() => validateProductionDeployCommand(
+            validDeployCommand.replace('group: production-deploy-${{ github.ref }}', 'group: production-deploy')
+        )).toThrow('Production ref-scoped concurrency');
+        expect(() => validateProductionDeployCommand(
+            validDeployCommand.replace('baseline_branch="$GITHUB_REF_NAME"', 'baseline_branch="master"')
+        )).toThrow('Production push baseline branch');
+        expect(() => validateProductionDeployCommand(
+            validDeployCommand.replace('if [[ "$GITHUB_REF" != "refs/heads/master" ]]; then', 'if [[ "$GITHUB_REF" != "refs/heads/release" ]]; then')
+        )).toThrow('Production manual retry master restriction');
+        expect(() => validateProductionDeployCommand(
+            validDeployCommand.replace('-f branch="$baseline_branch"', '-f branch="$GITHUB_REF_NAME"')
+        )).toThrow('Production successful deploy branch filter');
+        expect(() => validateProductionDeployCommand(
+            validDeployCommand.replace(
+                'git diff --quiet "$last_success_sha" "$GITHUB_SHA" -- storage.rules',
+                'git diff --quiet "\${{ github.event.before }}" "\${{ github.sha }}" -- storage.rules'
+            )
+        )).toThrow('Production Storage rules successful-deploy baseline');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace('[[ "$STORAGE_RULES_CHANGED" != "true" ]]', '[[ true ]]'))).toThrow(
             'Production Storage rules unchanged-only skip'
         );
@@ -155,7 +194,11 @@ service firebase.storage {
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
             'echo "changed=true" >> "$GITHUB_OUTPUT"',
             'echo "changed=false" >> "$GITHUB_OUTPUT"'
-        ))).toThrow('Production successful deploy lookup failure must force Firestore-first ordering');
+        ))).toThrow('Production successful deploy lookup failure must force authorization rules-first ordering');
+        expect(() => validateProductionDeployCommand(validDeployCommand.replace(
+            'echo "storage_changed=true" >> "$GITHUB_OUTPUT"',
+            'echo "storage_changed=false" >> "$GITHUB_OUTPUT"'
+        ))).toThrow('Production successful deploy lookup failure must force authorization rules-first ordering');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
             'HTTP Error:[[:space:]]*409,[[:space:]]*Requested entity already exists',
             '(^|[^[:alnum:]])409([^[:alnum:]]|$)'
