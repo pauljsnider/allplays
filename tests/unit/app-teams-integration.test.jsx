@@ -420,7 +420,7 @@ describe('React app Teams page', () => {
         expect(container.textContent).not.toContain('Website tools available');
     });
 
-    it('opens the team page directly when the user has exactly one team', async () => {
+    it('keeps the team chooser open when the user has exactly one team', async () => {
         const singleTeamModel = {
             players: [],
             upcomingEvents: [],
@@ -445,31 +445,11 @@ describe('React app Teams page', () => {
         homeMocks.loadParentTeamsSummaryBootstrap.mockResolvedValueOnce(makeTeamSummaryBootstrap(singleTeamModel));
         homeMocks.loadParentHomeSummary.mockResolvedValueOnce(singleTeamModel);
 
-        const container = document.createElement('div');
-        document.body.appendChild(container);
-        const root = createRoot(container);
-        mountedRoots.add(root);
+        const { container } = await renderTeams('/teams');
 
-        function TeamHubRoute() {
-            return React.createElement('div', { 'data-testid': 'team-hub' }, 'Team hub stub');
-        }
-
-        await act(async () => {
-            root.render(React.createElement(
-                MemoryRouter,
-                { initialEntries: ['/teams'] },
-                React.createElement(
-                    Routes,
-                    null,
-                    React.createElement(Route, { path: '/teams', element: React.createElement(Teams, { auth }) }),
-                    React.createElement(Route, { path: '/teams/:teamId', element: React.createElement(TeamHubRoute) })
-                )
-            ));
-        });
-
-        await waitForText(container, 'Team hub stub');
-        expect(container.textContent).not.toContain('Choose a team');
-        expect(container.querySelector('[data-testid="team-hub"]')).toBeTruthy();
+        await waitForText(container, 'Choose a team');
+        expect(container.textContent).toContain('1 team ready');
+        expect(linkByAriaLabel(container, 'Open Solo Bears').getAttribute('href')).toBe('/teams/team-solo');
         expect(container.textContent).not.toContain('Loading teams');
     });
 

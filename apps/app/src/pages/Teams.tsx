@@ -163,7 +163,9 @@ export function Teams({ auth }: { auth: AuthState }) {
   const teamRoles = useMemo(() => getLoadedTeamRoles(home.teams), [home.teams]);
 
   useEffect(() => {
-    if (loading || selectedTeamId || !hasLoadedTeamSummary) return;
+    // My Teams is a chooser, even when a partial/fast load temporarily contains
+    // only one team. Only explicit workflow links may skip the chooser.
+    if (loading || selectedTeamId || !hasLoadedTeamSummary || !requestedWorkflow) return;
     if (shouldOpenSingleTeamDirectly(home.teams)) {
       navigate(getSingleTeamDestination(home.teams[0].teamId, requestedWorkflow), { replace: true });
     }
