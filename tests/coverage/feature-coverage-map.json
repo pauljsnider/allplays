@@ -228,7 +228,8 @@
                 "queueInviteEmail",
                 "queueParentInviteEmail",
                 "syncApprovedParentMembershipRequestUserLink",
-                "syncPublicUserProfileProjection"
+                "syncPublicUserProfileProjection",
+                "syncTeamOwnerAccessOnCreate"
             ],
             "unitTests": [
                 "tests/unit/app-friend-profile.test.jsx",
@@ -242,6 +243,7 @@
                 "tests/unit/edit-roster-registration-import.test.js",
                 "tests/unit/edit-team-registration-sync.test.js",
                 "tests/unit/public-user-profile-sync.test.js",
+                "tests/unit/team-owner-access-trigger.test.js",
                 "tests/unit/teams-public-visibility.test.js"
             ],
             "integrationTests": [
