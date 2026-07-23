@@ -966,6 +966,45 @@ describe('Schedule', () => {
     });
   });
 
+  it('ignores an older overlapping staff-scope refresh for the same account', async () => {
+    let resolveOlderScope!: (scope: {
+      profile: Record<string, unknown>;
+      children: [];
+      staffTeams: Array<{ teamId: string; teamName: string }>;
+      isPartial: false;
+    }) => void;
+    scheduleServiceMocks.loadParentScheduleScope
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolveOlderScope = resolve;
+      }))
+      .mockResolvedValueOnce({
+        profile: {},
+        children: [],
+        staffTeams: [{ teamId: 'team-new', teamName: 'Vipers' }],
+        isPartial: false
+      });
+    appDataCacheMocks.loadCachedAppData
+      .mockResolvedValue({ children: [], events: [], staffTeams: [] });
+
+    renderSchedule();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Refresh schedule' }));
+    const teamFilter = await screen.findByLabelText('Team filter');
+    expect(await within(teamFilter).findByRole('option', { name: 'Vipers' })).toBeTruthy();
+
+    resolveOlderScope({
+      profile: {},
+      children: [],
+      staffTeams: [{ teamId: 'team-old', teamName: 'Bears' }],
+      isPartial: false
+    });
+
+    await waitFor(() => {
+      expect(within(teamFilter).queryByRole('option', { name: 'Bears' })).toBeNull();
+      expect(within(teamFilter).getByRole('option', { name: 'Vipers' })).toBeTruthy();
+    });
+  });
+
   it('routes generic staff card opens to the game hub helper on mobile', () => {
     expect(getGenericEventDetailPath(buildScheduleEvent(1, {
       isTeamStaff: true,

@@ -176,6 +176,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const childrenRef = useRef<ParentScheduleChild[]>([]);
   const eventsRef = useRef<ParentScheduleEvent[]>([]);
   const activeUserIdRef = useRef<string | null>(auth.user?.uid || null);
+  const scheduleRefreshVersionRef = useRef(0);
   activeUserIdRef.current = auth.user?.uid || null;
   const rsvpHydrationVersionRef = useRef(0);
   const lastRsvpHydrationScopeRef = useRef('');
@@ -387,12 +388,14 @@ export function Schedule({ auth }: { auth: AuthState }) {
     const scheduleCacheOptions = { ttlMs: scheduleCacheTtlMs, force };
     const cached = getCachedAppData(cacheKey);
     const requestedUserId = auth.user.uid;
+    const refreshVersion = ++scheduleRefreshVersionRef.current;
     let refreshedStaffTeams: ParentScheduleStaffTeam[] | null = null;
     const parentScopePromise = loadParentScheduleScope(auth.user).catch(() => null);
     void parentScopePromise
       .then((parentScope) => {
         if (!parentScope || parentScope.isPartial === true) return;
         if (activeUserIdRef.current !== requestedUserId) return;
+        if (scheduleRefreshVersionRef.current !== refreshVersion) return;
         refreshedStaffTeams = parentScope.staffTeams ?? [];
         setStaffTeams(refreshedStaffTeams);
         updateScheduleEvents((currentEvents) => applyAuthoritativeStaffScope(currentEvents, refreshedStaffTeams!));
@@ -430,6 +433,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
         rethrow: false,
         onSuccess: (result) => {
           if (activeUserIdRef.current !== requestedUserId) return;
+          if (scheduleRefreshVersionRef.current !== refreshVersion) return;
           const authoritativeResult = refreshedStaffTeams === null
             ? result
             : {
@@ -492,6 +496,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
         },
         onError: (loadError) => {
           if (activeUserIdRef.current !== requestedUserId) return;
+          if (scheduleRefreshVersionRef.current !== refreshVersion) return;
           const mappedError = toAppServiceError(loadError, 'Unable to load schedule.');
           setScheduleLoadError(mappedError);
           if (!hasExistingSchedule) {
