@@ -91,6 +91,30 @@ export function getPublicSmokePages() {
             path: '/teams.html',
             titlePatterns: [/Teams - ALL PLAYS/i],
             readySelectors: ['#teams-list']
+        },
+        {
+            name: 'privacy policy',
+            path: '/privacy.html',
+            titlePatterns: [/Privacy Policy.*ALL PLAYS/i],
+            readySelectors: ['main']
+        },
+        {
+            name: 'terms of use',
+            path: '/terms.html',
+            titlePatterns: [/Terms of Use.*ALL PLAYS/i],
+            readySelectors: ['main']
+        },
+        {
+            name: 'support',
+            path: '/support.html',
+            titlePatterns: [/Support.*ALL PLAYS/i],
+            readySelectors: ['main']
+        },
+        {
+            name: 'account deletion',
+            path: '/account-deletion.html',
+            titlePatterns: [/Delete Account.*ALL PLAYS/i],
+            readySelectors: ['main']
         }
     ];
 }

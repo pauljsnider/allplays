@@ -30,6 +30,7 @@ import {
   hasQuantityDiscountRule
 } from '../lib/adapters/legacyRegistration';
 import type { AuthState } from '../lib/types';
+import { arePaymentsEnabled } from '../lib/launchFeatures';
 import {
   getOrCreateRegistrationSubmissionAttempt,
   type RegistrationSubmissionAttempt
@@ -115,7 +116,7 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
           setForm(null);
           return;
         }
-        setForm(nextForm);
+        setForm(arePaymentsEnabled() ? nextForm : { ...nextForm, onlineCheckout: false });
         if (staffReview) {
           const [nextPage, waitlistedPage, rosterPlayers] = await Promise.all([
             loadTeamRegistrationQueuePage(teamId, formId),

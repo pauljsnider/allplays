@@ -22,6 +22,7 @@ import {
   hasQuantityDiscountRule
 } from '../lib/adapters/legacyRegistration';
 import type { AuthState } from '../lib/types';
+import { arePaymentsEnabled } from '../lib/launchFeatures';
 import {
   getOrCreateRegistrationSubmissionAttempt,
   type RegistrationSubmissionAttempt
@@ -96,7 +97,7 @@ function RegistrationDetailPage({ auth, publicAccess = false }: { auth: AuthStat
           setForm(null);
           return;
         }
-        setForm(nextForm);
+        setForm(arePaymentsEnabled() ? nextForm : { ...nextForm, onlineCheckout: false });
         const initialOptions = (Array.isArray(nextForm.options) && nextForm.options.length) ? nextForm.options : getActiveRegistrationOptions(nextForm, nextForm.registrationOptionCounts || {});
         const initialOptionId = selectInitialRegistrationOption(nextForm, initialOptions);
         setSelectedOptionId((current) => {

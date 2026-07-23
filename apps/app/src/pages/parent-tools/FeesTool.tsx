@@ -4,6 +4,7 @@ import { useSearchParams } from 'react-router-dom';
 import { openPublicUrl } from '../../lib/publicActions';
 import { initiateParentTeamFeeCheckout, loadParentFeesForApp, type ParentFeeAppRecord } from '../../lib/parentFeesService';
 import type { AuthState } from '../../lib/types';
+import { arePaymentsEnabled } from '../../lib/launchFeatures';
 import { EmptyState, LoadingBlock, MetricCard, RetryableStatus, ToolHeader, formatDetailAmount, formatMoney, useParentToolAsyncOperation } from './shared';
 
 export function FeesTool({ auth, refreshVersion }: { auth: AuthState; refreshVersion: number }) {
@@ -126,7 +127,7 @@ export function FeesTool({ auth, refreshVersion }: { auth: AuthState; refreshVer
                 <div className="grid gap-3 lg:grid-cols-2">
                     {visibleFees.length ? visibleFees.map((fee) => {
                         const feeKey = getFeeCardKey(fee);
-                        return <FeeCard key={feeKey} fee={fee} onPay={payFee} paying={payingFeeId === feeKey} payBlocked={Boolean(payingFeeId)} error={feeErrors[feeKey] || ''} />;
+                        return <FeeCard key={feeKey} fee={fee} onPay={payFee} paying={payingFeeId === feeKey} payBlocked={Boolean(payingFeeId)} paymentsEnabled={arePaymentsEnabled()} error={feeErrors[feeKey] || ''} />;
                     }) : (
                         <EmptyState icon={DollarSign} title="No fees in this view" detail="Paid and canceled items are available under All." />
                     )}
@@ -153,7 +154,7 @@ function FeeMessageBlock({ title, message }: { title: string; message: string })
     );
 }
 
-function FeeCard({ fee, onPay, paying, payBlocked, error }: { fee: ParentFeeAppRecord; onPay: (fee: ParentFeeAppRecord) => void | Promise<void>; paying: boolean; payBlocked: boolean; error: string }) {
+function FeeCard({ fee, onPay, paying, payBlocked, paymentsEnabled, error }: { fee: ParentFeeAppRecord; onPay: (fee: ParentFeeAppRecord) => void | Promise<void>; paying: boolean; payBlocked: boolean; paymentsEnabled: boolean; error: string }) {
     const [detailsOpen, setDetailsOpen] = useState(false);
     const detailsId = useId();
     const notes = getFeeMessage(fee.notes, fee.feeNotes);
@@ -175,12 +176,12 @@ function FeeCard({ fee, onPay, paying, payBlocked, error }: { fee: ParentFeeAppR
                 <MetricCard label="Balance" value={formatMoney(Number(fee.balanceDueCents ?? 0))} urgent={Number(fee.balanceDueCents ?? 0) > 0} />
             </div>
             {offlinePaymentInstructions ? <FeeMessageBlock title="Offline payment" message={offlinePaymentInstructions} /> : null}
-            {fee.canPay ? (
+            {fee.canPay && paymentsEnabled ? (
                 <button type="button" className="primary-button mt-3 w-full" onClick={() => onPay(fee)} disabled={payBlocked}>
                     {paying ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <ExternalLink className="h-4 w-4" aria-hidden="true" />}
                     {paying ? 'Opening checkout' : 'Pay fee'}
                 </button>
-            ) : null}
+            ) : fee.canPay ? <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50 p-3 text-xs font-bold text-gray-600">Online payment is not available in this release. Follow your team’s offline payment instructions.</div> : null}
             {error ? <div className="mt-2 rounded-xl border border-rose-100 bg-rose-50 p-3 text-xs font-semibold text-rose-700">{error}</div> : null}
             {hasDetails ? (
                 <div className="mt-3">

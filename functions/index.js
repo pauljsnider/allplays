@@ -238,6 +238,11 @@ const {
 } = require('./friend-message-access-core.cjs');
 const { hasTeamAdminAccess } = require('./team-admin-access-core.cjs');
 const { createAutoAcceptParentInviteHandler } = require('./parent-invite-auto-link-callable.cjs');
+const {
+  buildDeletionAuditId,
+  createAccountDeletionRequestHandler,
+  summarizeOwnedTeams
+} = require('./account-deletion-core.cjs');
 const { createTeamOwnerAccessSyncHandler } = require('./team-owner-access-core.cjs');
 const {
   buildAdminUserSearchHashes,
@@ -255,6 +260,11 @@ if (admin.apps.length === 0) {
 }
 
 const firestore = admin.firestore();
+function assertPaymentsEnabled() {
+  if (process.env.PAYMENTS_ENABLED !== 'true') {
+    throw new functions.https.HttpsError('failed-precondition', 'Online payments are not enabled in this release.');
+  }
+}
 const assertSensitiveEmailVerified = createVerifiedEmailSensitiveActionGuard({
   firestore,
   HttpsError: functions.https.HttpsError,
@@ -4130,6 +4140,7 @@ exports.redeemScopedRsvpToken = functions.https.onRequest(async (req, res) => {
 });
 
 exports.createStripeTeamPassCheckout = functions.https.onCall(async (data, context) => {
+  assertPaymentsEnabled();
   if (!context.auth?.uid) {
     throw new functions.https.HttpsError('unauthenticated', 'Sign in before purchasing a team pass.');
   }
@@ -4174,6 +4185,7 @@ exports.createStripeTeamPassCheckout = functions.https.onCall(async (data, conte
 });
 
 exports.createStripeTeamFeeCheckout = functions.https.onCall(async (data, context) => {
+  assertPaymentsEnabled();
   if (!context.auth?.uid) {
     throw new functions.https.HttpsError('unauthenticated', 'Sign in before paying a team fee.');
   }
@@ -4306,6 +4318,7 @@ exports.createStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
 });
 
 exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context) => {
+  assertPaymentsEnabled();
   if (!context.auth?.uid) {
     throw new functions.https.HttpsError('unauthenticated', 'Sign in before refunding a team fee.');
   }
@@ -4552,6 +4565,7 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
 });
 
 exports.createStripeRegistrationCheckout = functions.https.onCall(async (data, context = {}) => {
+  assertPaymentsEnabled();
   assertPublicRegistrationAppCheck(context, 'create-checkout');
   let input;
   try {
@@ -4757,6 +4771,7 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data, c
 });
 
 exports.cancelStripeRegistrationCheckout = functions.https.onCall(async (data, context = {}) => {
+  assertPaymentsEnabled();
   assertPublicRegistrationAppCheck(context, 'cancel-checkout');
   let input;
   try {
@@ -14367,4 +14382,115 @@ exports.closePublicOpportunitiesForPrivateTeam = functions.firestore
       await batch.commit();
     }
     return null;
+  });
+
+exports.requestAccountDeletion = functions.https.onCall(createAccountDeletionRequestHandler({
+  firestore,
+  auth: admin.auth(),
+  Timestamp: admin.firestore.Timestamp,
+  HttpsError: functions.https.HttpsError
+}));
+
+async function deleteAccountQuery(query) {
+  while (true) {
+    const snapshot = await query.limit(250).get();
+    if (snapshot.empty) return;
+    const batch = firestore.batch();
+    snapshot.docs.forEach((docSnapshot) => batch.delete(docSnapshot.ref));
+    await batch.commit();
+  }
+}
+
+async function deleteAccountStorage(uid, mediaDocuments) {
+  const bucket = admin.storage().bucket();
+  const prefixes = [
+    `athlete-profile-media/${uid}/`,
+    `user-photos/${uid}/`
+  ];
+  await Promise.all(prefixes.map((prefix) => bucket.deleteFiles({ prefix, force: true }).catch((error) => {
+    functions.logger.warn('Account deletion could not remove a storage prefix.', { uid, prefix, error });
+  })));
+  await Promise.all(mediaDocuments.map((document) => {
+    const storagePath = String(document.data()?.storagePath || '').trim();
+    return storagePath ? bucket.file(storagePath).delete({ ignoreNotFound: true }) : null;
+  }));
+}
+
+exports.processAccountDeletionRequest = functions.firestore
+  .document('accountDeletionRequests/{uid}')
+  .onCreate(async (snapshot, context) => {
+    const uid = context.params.uid;
+    const requestRef = snapshot.ref;
+    const now = admin.firestore.Timestamp.now();
+    await requestRef.set({ status: 'processing', processingStartedAt: now, updatedAt: now }, { merge: true });
+
+    try {
+      const ownedTeams = await firestore.collection('teams').where('ownerId', '==', uid).get();
+      if (summarizeOwnedTeams(ownedTeams).length) {
+        throw new Error('Account still owns one or more teams.');
+      }
+
+      const teamMedia = await firestore.collectionGroup('media').where('uploadedBy', '==', uid).get().catch(() => ({ docs: [] }));
+      await deleteAccountStorage(uid, teamMedia.docs || []);
+
+      const directDocuments = [
+        `publicUserProfiles/${uid}`,
+        `privateAiUsers/${uid}`
+      ];
+      await Promise.all(directDocuments.map(async (path) => {
+        const ref = firestore.doc(path);
+        const doc = await ref.get();
+        if (doc.exists) await firestore.recursiveDelete(ref);
+      }));
+
+      const collectionQueries = [
+        ['socialPosts', 'authorId', '=='],
+        ['socialPostReports', 'reporterId', '=='],
+        ['friendships', 'memberIds', 'array-contains'],
+        ['publicOpportunities', 'ownerUserId', '=='],
+        ['publicOpportunities', 'createdBy', '=='],
+        ['publicOpportunityReports', 'reporterId', '=='],
+        ['opportunityInquiries', 'senderId', '=='],
+        ['athleteProfiles', 'parentUserId', '=='],
+        ['accountMergeRequests', 'requestedBy', '==']
+      ];
+      for (const [collectionName, field, operator] of collectionQueries) {
+        await deleteAccountQuery(firestore.collection(collectionName).where(field, operator, uid));
+      }
+
+      const collectionGroupQueries = [
+        ['messages', 'senderId'],
+        ['reactions', 'userId'],
+        ['rsvps', 'userId'],
+        ['rideOffers', 'driverUserId'],
+        ['rideRequests', 'parentUserId'],
+        ['media', 'uploadedBy']
+      ];
+      for (const [collectionName, field] of collectionGroupQueries) {
+        await deleteAccountQuery(firestore.collectionGroup(collectionName).where(field, '==', uid));
+      }
+
+      const userRef = firestore.doc(`users/${uid}`);
+      const userDoc = await userRef.get();
+      if (userDoc.exists) await firestore.recursiveDelete(userRef);
+
+      await admin.auth().deleteUser(uid).catch((error) => {
+        if (error?.code !== 'auth/user-not-found') throw error;
+      });
+
+      await firestore.doc(`accountDeletionAudit/${buildDeletionAuditId(uid)}`).set({
+        completedAt: admin.firestore.Timestamp.now(),
+        outcome: 'deleted',
+        version: 1
+      });
+      await requestRef.delete();
+    } catch (error) {
+      functions.logger.error('Account deletion processing failed.', { uid, error });
+      await requestRef.set({
+        status: 'failed',
+        updatedAt: admin.firestore.Timestamp.now(),
+        failureCode: 'processing-failed'
+      }, { merge: true });
+      throw error;
+    }
   });

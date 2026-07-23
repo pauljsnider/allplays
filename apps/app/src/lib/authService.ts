@@ -139,6 +139,7 @@ type NativePluginSignInResult = {
   credential?: {
     idToken?: string;
     accessToken?: string;
+    nonce?: string;
     serverAuthCode?: string;
   } | null;
   additionalUserInfo?: {
@@ -750,7 +751,7 @@ async function signInWithNativeRestSession(email: string, password: string) {
   return persistNativeRestAuthSession(signInPayload, lookupUser);
 }
 
-function getNativeGoogleRequestUri() {
+function getNativeOAuthRequestUri() {
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
   return origin.startsWith('http://') || origin.startsWith('https://') ? origin : 'https://allplays.ai';
 }
@@ -784,7 +785,7 @@ async function signInWithNativeGoogleRestSession(googleIdToken: string, googleAc
 
   const signInPayload = await callFirebaseAuthRest('accounts:signInWithIdp', {
     postBody: postBody.toString(),
-    requestUri: getNativeGoogleRequestUri(),
+    requestUri: getNativeOAuthRequestUri(),
     returnIdpCredential: true,
     returnSecureToken: true
   }) as NativeRestSignInPayload;
@@ -792,6 +793,31 @@ async function signInWithNativeGoogleRestSession(googleIdToken: string, googleAc
     idToken: signInPayload.idToken
   }).catch((error) => {
     logger.warn('Unable to load native Google REST auth profile.', { error });
+    return {};
+  }) as { users?: NativeRestLookupUser[] };
+  const lookupUser = Array.isArray(lookupPayload.users) ? lookupPayload.users[0] || {} : {};
+  return persistNativeRestAuthSession(signInPayload, lookupUser);
+}
+
+async function signInWithNativeAppleRestSession(appleIdToken: string, rawNonce?: string | null) {
+  const postBody = new URLSearchParams({
+    providerId: 'apple.com',
+    id_token: appleIdToken
+  });
+  if (rawNonce) {
+    postBody.set('nonce', rawNonce);
+  }
+
+  const signInPayload = await callFirebaseAuthRest('accounts:signInWithIdp', {
+    postBody: postBody.toString(),
+    requestUri: getNativeOAuthRequestUri(),
+    returnIdpCredential: true,
+    returnSecureToken: true
+  }) as NativeRestSignInPayload;
+  const lookupPayload = await callFirebaseAuthRest('accounts:lookup', {
+    idToken: signInPayload.idToken
+  }).catch((error) => {
+    logger.warn('Unable to load native Apple REST auth profile.', { error });
     return {};
   }) as { users?: NativeRestLookupUser[] };
   const lookupUser = Array.isArray(lookupPayload.users) ? lookupPayload.users[0] || {} : {};
@@ -1098,6 +1124,28 @@ async function signInWithNativeGoogleCredential() {
   } as UserCredential;
 }
 
+async function signInWithNativeAppleCredential() {
+  if (!(Capacitor as any).isPluginAvailable?.('FirebaseAuthentication') || Capacitor.getPlatform?.() !== 'ios') {
+    throw new Error('Sign in with Apple is available in the iOS app.');
+  }
+
+  const result = await withTimeout(
+    FirebaseAuthentication.signInWithApple({ skipNativeAuth: true } as any) as Promise<NativePluginSignInResult>,
+    'Sign in with Apple timed out.',
+    authTimeoutMs
+  );
+  const idToken = result?.credential?.idToken;
+  if (!idToken) {
+    throw new Error('Sign in with Apple did not return an ID token.');
+  }
+
+  const user = await signInWithNativeAppleRestSession(idToken, result?.credential?.nonce);
+  return {
+    user,
+    nativeRest: true
+  } as UserCredential;
+}
+
 async function processGoogleResult(result: UserCredential | null, activationCode?: string | null) {
   if (!result?.user) {
     return null;
@@ -1206,6 +1254,22 @@ export async function signInWithGoogleAccount(activationCode?: string | null) {
       return null;
     }
 
+    if (!code) {
+      window.sessionStorage.removeItem(pendingActivationCodeKey);
+    }
+    throw error;
+  }
+}
+
+export async function signInWithAppleAccount(activationCode?: string | null) {
+  const code = normalizeCode(activationCode);
+  if (code) {
+    window.sessionStorage.setItem(pendingActivationCodeKey, code);
+  }
+
+  try {
+    return await processGoogleResult(await signInWithNativeAppleCredential(), code);
+  } catch (error) {
     if (!code) {
       window.sessionStorage.removeItem(pendingActivationCodeKey);
     }

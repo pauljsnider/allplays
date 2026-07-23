@@ -104,10 +104,12 @@ function buildRecipient(index: number, overrides: Record<string, any> = {}) {
 
 describe('TeamFees recipient queue', () => {
   afterEach(() => {
+    delete window.__ALLPLAYS_CONFIG__;
     cleanup();
   });
 
   beforeEach(() => {
+    window.__ALLPLAYS_CONFIG__ = { paymentsEnabled: true };
     vi.clearAllMocks();
     teamFeesServiceMocks.recordOfflineTeamFeePayment.mockReset();
     teamFeesServiceMocks.recordTeamFeeBalanceAdjustment.mockReset();

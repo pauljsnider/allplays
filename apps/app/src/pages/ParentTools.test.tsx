@@ -202,6 +202,7 @@ describe('getHorizontalScrollTarget', () => {
 
 describe('ParentTools access', () => {
     beforeEach(() => {
+        window.__ALLPLAYS_CONFIG__ = { paymentsEnabled: true };
         vi.clearAllMocks();
         delete globalThis.__ALLPLAYS_PARENT_TOOLS_RENDER_TRACKER__;
         delete globalThis.__ALLPLAYS_PARENT_TOOLS_PANEL_LOAD_TRACKER__;
@@ -248,6 +249,7 @@ describe('ParentTools access', () => {
     });
 
     afterEach(() => {
+        delete window.__ALLPLAYS_CONFIG__;
         vi.restoreAllMocks();
         delete globalThis.__ALLPLAYS_PARENT_TOOLS_RENDER_TRACKER__;
         delete globalThis.__ALLPLAYS_PARENT_TOOLS_PANEL_LOAD_TRACKER__;

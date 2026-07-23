@@ -206,9 +206,11 @@ describe('RegistrationDetail payment notice', () => {
   beforeEach(() => {
     Object.values(parentRegistrationsServiceMocks).forEach((mock) => mock.mockReset());
     openPublicUrlMock.mockReset();
+    window.__ALLPLAYS_CONFIG__ = { paymentsEnabled: true };
   });
 
   afterEach(() => {
+    delete window.__ALLPLAYS_CONFIG__;
     cleanup();
   });
 

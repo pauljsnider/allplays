@@ -15,6 +15,10 @@ const successfulHtmlByPath = {
     '/': '<!doctype html><title>ALL PLAYS</title><body></body>',
     '/login.html': '<!doctype html><title>Login - ALL PLAYS</title><form id="login-form"></form>',
     '/teams.html': '<!doctype html><title>Browse Teams - ALL PLAYS</title><div id="teams-list"></div>',
+    '/privacy.html': '<!doctype html><title>Privacy Policy | ALL PLAYS</title><main><h1>Privacy Policy</h1></main>',
+    '/terms.html': '<!doctype html><title>Terms of Use | ALL PLAYS</title><main><h1>Terms of Use</h1></main>',
+    '/support.html': '<!doctype html><title>Support | ALL PLAYS</title><main><h1>Support</h1></main>',
+    '/account-deletion.html': '<!doctype html><title>Delete Account | ALL PLAYS</title><main><h1>Delete account</h1></main>',
     '/widget-scoreboard.html': '<!doctype html><title>ALL PLAYS Scoreboard Widget</title><main id="scoreboard-widget"></main>'
 };
 
@@ -81,6 +85,10 @@ describe('candidate host public smoke', () => {
             `${candidateOrigin}/`,
             `${candidateOrigin}/login.html`,
             `${candidateOrigin}/teams.html`,
+            `${candidateOrigin}/privacy.html`,
+            `${candidateOrigin}/terms.html`,
+            `${candidateOrigin}/support.html`,
+            `${candidateOrigin}/account-deletion.html`,
             `${candidateOrigin}/widget-scoreboard.html`,
             `${candidateOrigin}/.well-known/allplays-runtime-config.json`
         ]);

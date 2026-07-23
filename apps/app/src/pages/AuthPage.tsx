@@ -13,12 +13,15 @@ import {
   passwordResetConfirmationMessage,
   rememberPendingInvite,
   sendResetEmail,
+  signInWithAppleAccount,
   signInWithEmail,
   signInWithGoogleAccount,
   signUpWithEmail
 } from '../lib/authService';
 import type { AuthState } from '../lib/types';
 import { getSafeAuthNextRoute } from '../lib/authNextRoute';
+import { isNativeRuntime } from '../lib/nativeRuntime';
+import { Capacitor } from '@capacitor/core';
 
 type AuthMode = 'login' | 'signup';
 
@@ -208,6 +211,37 @@ export function AuthPage({ auth }: { auth: AuthState }) {
     }
   };
 
+  const handleApple = async () => {
+    clearStatus();
+    setBusy(true);
+
+    try {
+      const code = mode === 'signup' ? activationCode.trim().toUpperCase() : '';
+      if (mode === 'signup' && !code) {
+        throw new Error('Activation code is required for new Apple accounts.');
+      }
+      if (inviteCode) {
+        rememberPendingInvite(inviteCode, inviteType);
+      }
+
+      const result = await signInWithAppleAccount(code || null);
+      if (result) {
+        const hydrated = mode === 'signup' || inviteCode ? null : await hydrateFirebaseUser(result.user).catch(() => null);
+        const destination = mode === 'signup' && result.wasNewUser
+          ? requestedNextRoute ? `/verify-pending?next=${encodeURIComponent(requestedNextRoute)}` : '/verify-pending'
+          : inviteCode
+            ? postAuthRoute
+            : requestedNextRoute || getRouteForUser(hydrated?.user || auth.user);
+        window.location.hash = `#${destination}`;
+        window.location.reload();
+      }
+    } catch (appleError: any) {
+      setError(describeAuthError(appleError));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const handleReset = async (event: FormEvent) => {
     event.preventDefault();
     clearStatus();
@@ -354,6 +388,11 @@ export function AuthPage({ auth }: { auth: AuthState }) {
       <button type="button" className="secondary-button mt-3 w-full" onClick={handleGoogle} disabled={busy}>
         Continue with Google
       </button>
+      {isNativeRuntime() && Capacitor.getPlatform() === 'ios' ? (
+        <button type="button" className="mt-3 flex min-h-11 w-full items-center justify-center rounded-xl bg-black px-4 text-sm font-black text-white" onClick={handleApple} disabled={busy}>
+          Continue with Apple
+        </button>
+      ) : null}
 
       {mode === 'login' ? (
         <button
@@ -387,6 +426,9 @@ export function AuthPage({ auth }: { auth: AuthState }) {
           </button>
         </form>
       ) : null}
+      <p className="mt-4 text-center text-xs font-semibold leading-5 text-gray-500">
+        By continuing, you agree to our <a className="font-black text-primary-700" href="/terms.html" target="_blank" rel="noreferrer">Terms</a> and acknowledge our <a className="font-black text-primary-700" href="/privacy.html" target="_blank" rel="noreferrer">Privacy Policy</a>.
+      </p>
       </div>
       <div
         id={`auth-panel-${mode === 'login' ? 'signup' : 'login'}`}
