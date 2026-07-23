@@ -16,6 +16,7 @@ const CODE_TTL_MS = 10 * 60 * 1000;
 const ACCESS_TOKEN_TTL_MS = 60 * 60 * 1000;
 const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_STORED_GRANTS = 1000;
+const DEFAULT_TRUSTED_CLIENT_ID = 'allplays-chatgpt-connector';
 const TRUSTED_REDIRECT_URIS = new Set([
     'https://chatgpt.com/connector_platform_oauth_redirect'
 ]);
@@ -39,12 +40,19 @@ function isAllowedRedirectUri(uri) {
 export function createOAuthBroker({
     now = () => Date.now(),
     randomId = (bytes = 32) => randomBytes(bytes).toString('base64url'),
-    maxStoredGrants = MAX_STORED_GRANTS
+    maxStoredGrants = MAX_STORED_GRANTS,
+    trustedClientId = DEFAULT_TRUSTED_CLIENT_ID
 } = {}) {
     if (!Number.isInteger(maxStoredGrants) || maxStoredGrants < 1) {
         throw new Error('maxStoredGrants must be a positive integer.');
     }
-    let registeredClient = null;
+    if (typeof trustedClientId !== 'string' || !trustedClientId.trim()) {
+        throw new Error('trustedClientId must be a non-empty string.');
+    }
+    const registeredClient = {
+        clientId: trustedClientId.trim(),
+        redirectUris: [...TRUSTED_REDIRECT_URIS]
+    };
     const codes = new Map();
     const accessTokens = new Map();
     const refreshTokens = new Map();
@@ -63,22 +71,15 @@ export function createOAuthBroker({
         store.set(key, record);
     }
 
-    function registerClient({ redirect_uris: redirectUris, client_name: clientName } = {}) {
+    function registerClient({ redirect_uris: redirectUris } = {}) {
         if (!Array.isArray(redirectUris) || redirectUris.length === 0) {
             throw new OAuthError('invalid_request', 'redirect_uris is required.');
         }
         if (!redirectUris.every(isAllowedRedirectUri)) {
             throw new OAuthError('invalid_request', 'redirect_uris must use an approved ChatGPT callback.');
         }
-        // This broker only serves one trusted public client. Reusing its ID keeps
-        // unauthenticated dynamic registration from growing server memory.
-        if (!registeredClient) {
-            registeredClient = {
-                clientId: randomId(16),
-                redirectUris: [...new Set(redirectUris)],
-                clientName: typeof clientName === 'string' ? clientName : ''
-            };
-        }
+        // This broker only serves one trusted public client. Its configured ID
+        // is stable across instances.
         return {
             client_id: registeredClient.clientId,
             redirect_uris: registeredClient.redirectUris,
@@ -89,7 +90,7 @@ export function createOAuthBroker({
     }
 
     function validateAuthorizeRequest({ client_id: clientId, redirect_uri: redirectUri, response_type: responseType, code_challenge: codeChallenge, code_challenge_method: method }) {
-        if (!registeredClient || clientId !== registeredClient.clientId) {
+        if (clientId !== registeredClient.clientId) {
             throw new OAuthError('invalid_client', 'Unknown client_id.');
         }
         if (!registeredClient.redirectUris.includes(redirectUri)) {

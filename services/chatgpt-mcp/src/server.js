@@ -48,7 +48,9 @@ if (FALLBACK_BEARER) {
     console.warn('[chatgpt-mcp] DEV_FALLBACK_BEARER is set: unauthenticated requests act as that user. Dev/test only.');
 }
 
-const oauth = createOAuthBroker();
+const oauth = createOAuthBroker({
+    trustedClientId: process.env.CHATGPT_OAUTH_CLIENT_ID
+});
 const SIGNIN_REFERER = process.env.ALLPLAYS_REFERER || 'https://allplays.ai/';
 
 // Public base URL for OAuth metadata: env override, else derive from the
