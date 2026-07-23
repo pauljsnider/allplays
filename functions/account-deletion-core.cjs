@@ -46,7 +46,8 @@ function extractAccountProfileStoragePath(value, uid) {
 }
 
 function classifyAccountStoragePaths(uid, mediaStoragePaths = [], profilePhotoUrls = []) {
-  const athletePrefix = `athlete-profile-media/${String(uid || '').trim()}/`;
+  const normalizedUid = String(uid || '').trim();
+  const athletePrefix = `athlete-profile-media/${normalizedUid}/`;
   const primaryPaths = new Set();
   const imagePaths = new Set(
     profilePhotoUrls.map((url) => extractAccountProfileStoragePath(url, uid)).filter(Boolean)
@@ -58,12 +59,39 @@ function classifyAccountStoragePaths(uid, mediaStoragePaths = [], profilePhotoUr
       primaryPaths.add(storagePath.slice('primary://'.length));
     } else if (storagePath.startsWith(athletePrefix)) {
       imagePaths.add(storagePath);
+    } else {
+      const primaryStoragePath = storagePath.startsWith('primary://')
+        ? storagePath.slice('primary://'.length)
+        : storagePath;
+      const pathParts = primaryStoragePath.split('/');
+      if (
+        normalizedUid &&
+        pathParts.length >= 5 &&
+        pathParts[0] === 'team-media' &&
+        pathParts[3] === normalizedUid
+      ) {
+        primaryPaths.add(primaryStoragePath);
+      }
     }
   });
   return {
     primaryPaths: [...primaryPaths],
     imagePaths: [...imagePaths]
   };
+}
+
+function getAccountDeletionCollectionGroupQueries() {
+  return [
+    ['messages', 'senderId'],
+    ['reactions', 'userId'],
+    ['rsvps', 'userId'],
+    ['rideOffers', 'driverUserId'],
+    ['rideRequests', 'parentUserId'],
+    ['media', 'uploadedBy'],
+    ['mediaItems', 'uploadedBy'],
+    ['notificationTargets', 'uid'],
+    ['notificationRecipients', 'uid']
+  ];
 }
 
 function assertDeletionRequest(data, HttpsError) {
@@ -155,6 +183,7 @@ module.exports = {
   classifyAccountStoragePaths,
   createAccountDeletionRequestHandler,
   extractAccountProfileStoragePath,
+  getAccountDeletionCollectionGroupQueries,
   loadOwnedTeams,
   normalizeConfirmation,
   shouldProcessAccountDeletionRequest,

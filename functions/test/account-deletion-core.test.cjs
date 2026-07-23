@@ -7,6 +7,7 @@ const {
   classifyAccountStoragePaths,
   createAccountDeletionRequestHandler,
   extractAccountProfileStoragePath,
+  getAccountDeletionCollectionGroupQueries,
   shouldProcessAccountDeletionRequest,
   normalizeConfirmation
 } = require('../account-deletion-core.cjs');
@@ -67,15 +68,35 @@ test('routes account media cleanup to the primary and legacy image buckets', () 
     'primary://athlete-profile-media/user-1/player-1/photo.jpg',
     'athlete-profile-media/user-1/player-1/legacy.jpg',
     'primary://athlete-profile-media/other-user/player-2/not-ours.jpg',
-    'team-media/team-1/folder-1/user-1/file.jpg'
+    'team-media/team-1/folder-1/user-1/file.jpg',
+    'primary://team-media/team-2/folder-2/user-1/photo.jpg',
+    'team-media/team-1/folder-1/other-user/not-ours.jpg'
   ], [
     'https://firebasestorage.googleapis.com/v0/b/game-flow-img.firebasestorage.app/o/user-photos%2F171234_photo.jpg?alt=media'
   ]);
 
-  assert.deepEqual(paths.primaryPaths, ['athlete-profile-media/user-1/player-1/photo.jpg']);
+  assert.deepEqual(paths.primaryPaths, [
+    'athlete-profile-media/user-1/player-1/photo.jpg',
+    'team-media/team-1/folder-1/user-1/file.jpg',
+    'team-media/team-2/folder-2/user-1/photo.jpg'
+  ]);
   assert.deepEqual(paths.imagePaths, [
     'user-photos/171234_photo.jpg',
     'athlete-profile-media/user-1/player-1/legacy.jpg'
+  ]);
+});
+
+test('deletes current team media and denormalized notification indexes', () => {
+  assert.deepEqual(getAccountDeletionCollectionGroupQueries(), [
+    ['messages', 'senderId'],
+    ['reactions', 'userId'],
+    ['rsvps', 'userId'],
+    ['rideOffers', 'driverUserId'],
+    ['rideRequests', 'parentUserId'],
+    ['media', 'uploadedBy'],
+    ['mediaItems', 'uploadedBy'],
+    ['notificationTargets', 'uid'],
+    ['notificationRecipients', 'uid']
   ]);
 });
 

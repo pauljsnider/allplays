@@ -242,6 +242,7 @@ const {
   buildDeletionAuditId,
   classifyAccountStoragePaths,
   createAccountDeletionRequestHandler,
+  getAccountDeletionCollectionGroupQueries,
   loadOwnedTeams,
   shouldProcessAccountDeletionRequest,
   summarizeOwnedTeams
@@ -14457,8 +14458,14 @@ exports.processAccountDeletionRequest = functions.firestore
         throw new Error('Account still owns one or more teams.');
       }
 
-      const teamMedia = await firestore.collectionGroup('media').where('uploadedBy', '==', uid).get();
-      await deleteAccountStorage(uid, teamMedia.docs || [], [
+      const [legacyTeamMedia, teamMediaItems] = await Promise.all([
+        firestore.collectionGroup('media').where('uploadedBy', '==', uid).get(),
+        firestore.collectionGroup('mediaItems').where('uploadedBy', '==', uid).get()
+      ]);
+      await deleteAccountStorage(uid, [
+        ...(legacyTeamMedia.docs || []),
+        ...(teamMediaItems.docs || [])
+      ], [
         userDoc.data()?.photoUrl,
         authUser?.photoURL
       ]);
@@ -14488,15 +14495,7 @@ exports.processAccountDeletionRequest = functions.firestore
         await deleteAccountQuery(firestore.collection(collectionName).where(field, operator, uid));
       }
 
-      const collectionGroupQueries = [
-        ['messages', 'senderId'],
-        ['reactions', 'userId'],
-        ['rsvps', 'userId'],
-        ['rideOffers', 'driverUserId'],
-        ['rideRequests', 'parentUserId'],
-        ['media', 'uploadedBy']
-      ];
-      for (const [collectionName, field] of collectionGroupQueries) {
+      for (const [collectionName, field] of getAccountDeletionCollectionGroupQueries()) {
         await deleteAccountQuery(firestore.collectionGroup(collectionName).where(field, '==', uid));
       }
 
