@@ -66,33 +66,39 @@ function moduleVersionMap(moduleName, files) {
 // failure mode that actually ships a cache bug. Pinning exact numbers instead
 // turned every concurrent version bump into a false failure on rebase.
 describe('admin invite signup cache busting', () => {
-    // Single-version modules: every deployed consumer must import the exact same
-    // `?v=`. These are small/infrequently-bumped, so a split means a genuinely
-    // stale consumer.
-    it('keeps every deployed consumer of a single-version module on one agreed version', () => {
+    // Single-version modules: every deployed consumer must import the same fresh
+    // `?v=`. These are small/infrequently-bumped, so a split or a version below
+    // the known-good floor means a genuinely stale consumer.
+    it('keeps every deployed consumer of a single-version module on one fresh agreed version', () => {
         const deployed = collectVersionedSourceFiles(process.cwd());
-        const singleVersionModules = [
-            'auth.js',
-            'utils.js',
-            'signup-flow.js',
-            'admin-invite.js',
-            'accept-invite-flow.js'
-        ];
+        // These are freshness floors, not exact pins: a coordinated bump from
+        // master remains valid, while leaving every consumer on a known-stale
+        // pre-fix version still fails even though those consumers agree.
+        const minimumVersions = {
+            'auth.js': 129,
+            'utils.js': 18,
+            'signup-flow.js': 12,
+            'admin-invite.js': 6,
+            'accept-invite-flow.js': 11
+        };
 
-        const splits = {};
-        for (const moduleName of singleVersionModules) {
+        const violations = {};
+        for (const [moduleName, minimumVersion] of Object.entries(minimumVersions)) {
             const byVersion = moduleVersionMap(moduleName, deployed);
             const versions = Object.keys(byVersion);
-            if (versions.length > 1) {
-                splits[moduleName] = Object.fromEntries(
-                    versions.map((v) => [v, [...byVersion[v]].sort()])
-                );
+            if (versions.length !== 1 || Number(versions[0]) < minimumVersion) {
+                violations[moduleName] = {
+                    minimumVersion,
+                    consumersByVersion: Object.fromEntries(
+                        versions.map((v) => [v, [...byVersion[v]].sort()])
+                    )
+                };
             }
         }
 
         expect(
-            splits,
-            `Single-version modules imported at multiple versions (stale consumers): ${JSON.stringify(splits, null, 2)}`
+            violations,
+            `Single-version modules are missing, split, or stale: ${JSON.stringify(violations, null, 2)}`
         ).toEqual({});
     });
 
@@ -103,12 +109,17 @@ describe('admin invite signup cache busting', () => {
     // normal rollout stays within the window, and a truly stale consumer (many
     // versions behind) still fails. No frozen number, so rebases don't spiral.
     it('keeps db.js consumers within a bounded rollout window', () => {
+        const MIN_DB_VERSION = 117;
         const MAX_DB_VERSION_SPREAD = 2;
         const deployed = collectVersionedSourceFiles(process.cwd());
         const byVersion = moduleVersionMap('db.js', deployed);
         const versions = Object.keys(byVersion).map(Number);
 
         expect(versions.length, 'db.js is not imported anywhere').toBeGreaterThan(0);
+        expect(
+            Math.min(...versions),
+            `db.js consumers must use v${MIN_DB_VERSION} or newer`
+        ).toBeGreaterThanOrEqual(MIN_DB_VERSION);
 
         const spread = Math.max(...versions) - Math.min(...versions);
         const detail = Object.fromEntries(
