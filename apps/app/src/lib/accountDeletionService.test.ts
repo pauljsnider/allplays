@@ -6,7 +6,8 @@ const mocks = vi.hoisted(() => ({
   getPrimaryAppCheckHeaders: vi.fn(async (headers) => headers),
   getWebAuthIdToken: vi.fn(),
   httpsCallable: vi.fn(),
-  isNativeRuntime: vi.fn()
+  isNativeRuntime: vi.fn(),
+  revokeCurrentAppleAuthorizationForDeletion: vi.fn()
 }));
 
 vi.mock('./adapters/legacyAccountDb', () => ({
@@ -27,7 +28,8 @@ vi.mock('./authService', () => ({
     },
     currentUser: null as null | { getIdToken: typeof mocks.getWebAuthIdToken }
   },
-  getNativeAuthIdToken: mocks.getNativeAuthIdToken
+  getNativeAuthIdToken: mocks.getNativeAuthIdToken,
+  revokeCurrentAppleAuthorizationForDeletion: mocks.revokeCurrentAppleAuthorizationForDeletion
 }));
 
 vi.mock('./nativeRuntime', () => ({
@@ -44,6 +46,8 @@ describe('accountDeletionService', () => {
     mocks.getWebAuthIdToken.mockReset();
     mocks.httpsCallable.mockReset();
     mocks.isNativeRuntime.mockReset();
+    mocks.revokeCurrentAppleAuthorizationForDeletion.mockReset();
+    mocks.revokeCurrentAppleAuthorizationForDeletion.mockResolvedValue(undefined);
     const { firebaseAuth } = await import('./authService');
     firebaseAuth.currentUser = null;
     mocks.isNativeRuntime.mockReturnValue(false);
@@ -96,6 +100,37 @@ describe('accountDeletionService', () => {
       })
     );
     expect(mocks.httpsCallable).not.toHaveBeenCalled();
+  });
+
+  it('preflights Apple deletion, revokes a fresh authorization code, then queues deletion', async () => {
+    mocks.isNativeRuntime.mockReturnValue(true);
+    mocks.getNativeAuthIdToken.mockResolvedValue('native-id-token');
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          result: { success: false, status: 'requires-apple-reauth', completionTargetDays: 30 }
+        })
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          result: { success: true, status: 'queued', completionTargetDays: 30 }
+        })
+      });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(requestAccountDeletion('ios')).resolves.toMatchObject({ status: 'queued' });
+
+    expect(mocks.revokeCurrentAppleAuthorizationForDeletion).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({
+      data: {
+        confirmation: 'DELETE',
+        source: 'ios',
+        appleAuthorizationRevoked: true
+      }
+    });
   });
 
   it('rejects native deletion when no authenticated token is available', async () => {

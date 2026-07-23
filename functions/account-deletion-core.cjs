@@ -485,6 +485,13 @@ function summarizeOwnedTeams(snapshot) {
     }));
 }
 
+function accountUsesAppleProvider(userRecord = {}, authToken = {}) {
+  return Boolean(
+    (userRecord.providerData || []).some((provider) => provider?.providerId === 'apple.com') ||
+    authToken.firebase?.sign_in_provider === 'apple.com'
+  );
+}
+
 async function loadOwnedTeams({ firestore, uid, email }) {
   const normalizedEmail = String(email || '').trim().toLowerCase();
   const emailCandidates = [...new Set([
@@ -539,6 +546,14 @@ function createAccountDeletionRequestHandler({ firestore, auth, Timestamp, Https
       );
     }
 
+    if (accountUsesAppleProvider(userRecord, context.auth?.token) && data?.appleAuthorizationRevoked !== true) {
+      return {
+        success: false,
+        status: 'requires-apple-reauth',
+        completionTargetDays: ACCOUNT_DELETION_MAX_DAYS
+      };
+    }
+
     const now = Timestamp.now();
     await firestore.doc(`accountDeletionRequests/${uid}`).set({
       uid,
@@ -547,6 +562,7 @@ function createAccountDeletionRequestHandler({ firestore, auth, Timestamp, Https
       status: 'queued',
       email: String(userRecord?.email || context.auth?.token?.email || '').trim().toLowerCase(),
       source: String(data?.source || 'app').slice(0, 40),
+      appleAuthorizationRevoked: data?.appleAuthorizationRevoked === true,
       completionTargetDays: ACCOUNT_DELETION_MAX_DAYS
     }, { merge: true });
 
@@ -562,6 +578,7 @@ module.exports = {
   ACCOUNT_DELETION_CONFIRMATION,
   ACCOUNT_DELETION_MAX_AUTH_AGE_SECONDS,
   ACCOUNT_DELETION_MAX_DAYS,
+  accountUsesAppleProvider,
   assertDeletionRequest,
   assertRecentAuthentication,
   buildChatConversationAccountScrubPlan,

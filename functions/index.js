@@ -14608,7 +14608,9 @@ async function scrubAccountRegistrationLinks(uid, email) {
   const normalizedEmail = String(email || '').trim().toLowerCase();
   if (normalizedEmail) {
     queryPromises.push(
-      firestore.collectionGroup('registrations').where('guardian.email', '==', normalizedEmail).get()
+      firestore.collectionGroup('registrations').where('guardian.email', '==', normalizedEmail).get(),
+      firestore.collectionGroup('registrations').where('guardian.guardianEmail', '==', normalizedEmail).get(),
+      firestore.collectionGroup('registrations').where('guardianEmail', '==', normalizedEmail).get()
     );
   }
   const snapshots = await Promise.all(queryPromises);

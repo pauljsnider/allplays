@@ -65,6 +65,8 @@ describe('mobile store legal and support pages', () => {
             ['membershipRequests', 'requesterUserId'],
             ['registrations', 'submittedByUserId'],
             ['registrations', 'guardian.email'],
+            ['registrations', 'guardian.guardianEmail'],
+            ['registrations', 'guardianEmail'],
             ['players', 'parentUserId'],
             ['players', 'guardianUserId'],
             ['media', 'uploadedBy'],

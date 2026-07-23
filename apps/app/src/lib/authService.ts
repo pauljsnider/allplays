@@ -139,6 +139,7 @@ type NativePluginSignInResult = {
   credential?: {
     idToken?: string;
     accessToken?: string;
+    authorizationCode?: string;
     nonce?: string;
     serverAuthCode?: string;
   } | null;
@@ -1144,6 +1145,28 @@ async function signInWithNativeAppleCredential() {
     user,
     nativeRest: true
   } as UserCredential;
+}
+
+export async function revokeCurrentAppleAuthorizationForDeletion() {
+  if (!(Capacitor as any).isPluginAvailable?.('FirebaseAuthentication') || Capacitor.getPlatform?.() !== 'ios') {
+    throw new Error('Sign in with Apple account deletion is only available in the iOS app.');
+  }
+
+  const result = await withTimeout(
+    FirebaseAuthentication.signInWithApple({ skipNativeAuth: true } as any) as Promise<NativePluginSignInResult>,
+    'Sign in with Apple timed out.',
+    authTimeoutMs
+  );
+  const authorizationCode = String(result?.credential?.authorizationCode || '').trim();
+  if (!authorizationCode) {
+    throw new Error('Sign in with Apple did not return an authorization code for account deletion.');
+  }
+
+  await withTimeout(
+    FirebaseAuthentication.revokeAccessToken({ token: authorizationCode }),
+    'Apple authorization revocation timed out.',
+    authTimeoutMs
+  );
 }
 
 async function processGoogleResult(result: UserCredential | null, activationCode?: string | null) {

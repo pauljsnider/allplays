@@ -401,6 +401,14 @@
       ]
     },
     {
+      "collectionGroup": "registrations",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "teamId", "order": "ASCENDING" },
+        { "fieldPath": "guardianEmail", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "drillLibrary",
       "queryScope": "COLLECTION",
       "fields": [
@@ -684,6 +692,20 @@
     {
       "collectionGroup": "registrations",
       "fieldPath": "guardian.email",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
+    },
+    {
+      "collectionGroup": "registrations",
+      "fieldPath": "guardian.guardianEmail",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
+    },
+    {
+      "collectionGroup": "registrations",
+      "fieldPath": "guardianEmail",
       "indexes": [
         { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
       ]

@@ -341,6 +341,44 @@ test('queues deletion for a signed-in non-owner', async () => {
   assert.equal(writes[0].value.email, 'parent@example.com');
 });
 
+test('preflights Apple revocation before queuing account deletion', async () => {
+  const writes = [];
+  const handler = createAccountDeletionRequestHandler({
+    firestore: {
+      collection: () => ({
+        where: () => ({ get: async () => ({ docs: [] }) })
+      }),
+      doc: (path) => ({
+        get: async () => ({ exists: false, data: () => ({}) }),
+        set: async (value) => writes.push({ path, value })
+      })
+    },
+    auth: {
+      getUser: async () => ({
+        email: 'apple@example.com',
+        providerData: [{ providerId: 'apple.com' }]
+      })
+    },
+    Timestamp: { now: () => 'now' },
+    HttpsError
+  });
+  const context = { auth: { uid: 'apple-user', token: { auth_time: recentAuthTime } } };
+
+  const preflight = await handler(
+    { confirmation: 'DELETE', source: 'ios' },
+    context
+  );
+  assert.equal(preflight.status, 'requires-apple-reauth');
+  assert.equal(writes.length, 0);
+
+  const queued = await handler(
+    { confirmation: 'DELETE', source: 'ios', appleAuthorizationRevoked: true },
+    context
+  );
+  assert.equal(queued.status, 'queued');
+  assert.equal(writes[0].value.appleAuthorizationRevoked, true);
+});
+
 test('blocks deletion while the user owns a team', async () => {
   const handler = createAccountDeletionRequestHandler({
     firestore: {

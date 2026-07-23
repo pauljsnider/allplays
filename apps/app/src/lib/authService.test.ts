@@ -58,6 +58,7 @@ const authObserverMocks = vi.hoisted(() => ({
 }));
 
 const nativeAuthenticationMocks = vi.hoisted(() => ({
+  revokeAccessToken: vi.fn(),
   signInWithApple: vi.fn()
 }));
 
@@ -122,6 +123,7 @@ import {
   isValidAuthEmail,
   observeFirebaseUser,
   reloadCurrentUser,
+  revokeCurrentAppleAuthorizationForDeletion,
   resendVerificationEmail,
   sendResetEmail,
   signInWithEmail,
@@ -620,6 +622,22 @@ describe('native REST sign-in', () => {
       idToken: 'apple-firebase-id-token',
       refreshToken: 'apple-refresh-token',
       provider: 'rest'
+    });
+  });
+
+  it('reauthenticates with Apple and revokes the fresh authorization code before deletion', async () => {
+    nativeAuthenticationMocks.signInWithApple.mockResolvedValue({
+      credential: {
+        authorizationCode: 'fresh-apple-authorization-code'
+      }
+    });
+    nativeAuthenticationMocks.revokeAccessToken.mockResolvedValue(undefined);
+
+    await revokeCurrentAppleAuthorizationForDeletion();
+
+    expect(nativeAuthenticationMocks.signInWithApple).toHaveBeenCalledWith({ skipNativeAuth: true });
+    expect(nativeAuthenticationMocks.revokeAccessToken).toHaveBeenCalledWith({
+      token: 'fresh-apple-authorization-code'
     });
   });
 });

@@ -1,6 +1,10 @@
 import { functions, httpsCallable } from './adapters/legacyAccountDb';
 import { getPrimaryAppCheckHeaders } from './adapters/legacyFirebaseAppCheck';
-import { firebaseAuth, getNativeAuthIdToken } from './authService';
+import {
+  firebaseAuth,
+  getNativeAuthIdToken,
+  revokeCurrentAppleAuthorizationForDeletion
+} from './authService';
 import { isNativeRuntime } from './nativeRuntime';
 
 export type AccountDeletionResult = {
@@ -9,7 +13,16 @@ export type AccountDeletionResult = {
   completionTargetDays: number;
 };
 
-async function requestNativeAccountDeletion(source: string): Promise<AccountDeletionResult> {
+type AccountDeletionResponse = AccountDeletionResult | {
+  success: false;
+  status: 'requires-apple-reauth';
+  completionTargetDays: number;
+};
+
+async function postNativeAccountDeletion(
+  source: string,
+  appleAuthorizationRevoked = false
+): Promise<AccountDeletionResponse> {
   const nativeIdToken = await getNativeAuthIdToken(true).catch(() => null);
   const idToken = nativeIdToken || await firebaseAuth.currentUser?.getIdToken(true);
   if (!idToken) {
@@ -31,7 +44,8 @@ async function requestNativeAccountDeletion(source: string): Promise<AccountDele
     body: JSON.stringify({
       data: {
         confirmation: 'DELETE',
-        source
+        source,
+        ...(appleAuthorizationRevoked ? { appleAuthorizationRevoked: true } : {})
       }
     })
   });
@@ -43,7 +57,19 @@ async function requestNativeAccountDeletion(source: string): Promise<AccountDele
   if (!result) {
     throw new Error('Account deletion returned an invalid response.');
   }
-  return result as AccountDeletionResult;
+  return result as AccountDeletionResponse;
+}
+
+async function requestNativeAccountDeletion(source: string): Promise<AccountDeletionResult> {
+  let result = await postNativeAccountDeletion(source);
+  if (result.status === 'requires-apple-reauth') {
+    await revokeCurrentAppleAuthorizationForDeletion();
+    result = await postNativeAccountDeletion(source, true);
+  }
+  if (result.status !== 'queued') {
+    throw new Error('Account deletion could not be queued.');
+  }
+  return result;
 }
 
 export async function requestAccountDeletion(source = 'app'): Promise<AccountDeletionResult> {
@@ -56,5 +82,9 @@ export async function requestAccountDeletion(source = 'app'): Promise<AccountDel
     confirmation: 'DELETE',
     source
   });
-  return response.data as AccountDeletionResult;
+  const result = response.data as AccountDeletionResponse;
+  if (result.status === 'requires-apple-reauth') {
+    throw new Error('Open the ALL PLAYS iOS app to reauthenticate with Apple before deleting this account.');
+  }
+  return result;
 }
