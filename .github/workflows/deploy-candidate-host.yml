@@ -124,3 +124,27 @@ jobs:
             --project game-flow-c6311 \
             --config "$bundle/firebase-candidate.generated.json" \
             --non-interactive
+
+  smoke-candidate:
+    needs: deploy-candidate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      CANDIDATE_HOST_URL: https://game-flow-c6311.web.app
+      ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY: ${{ vars.APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Setup Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+
+      - name: Smoke candidate host
+        run: |
+          set -euo pipefail
+          echo "Testing candidate origin: $CANDIDATE_HOST_URL"
+          npm run smoke:candidate-host -- "$CANDIDATE_HOST_URL"

@@ -55,4 +55,18 @@ describe('candidate-host deployment workflow', () => {
         expect(workflowSource.slice(validation, authentication)).toContain('has("storage") | not');
         expect(workflowSource).not.toMatch(/credentials_json\s*:/i);
     });
+
+    it('smokes and reports the candidate origin only after deployment succeeds', () => {
+        const smokeJob = workflow.jobs['smoke-candidate'];
+        const smokeText = JSON.stringify(smokeJob);
+
+        expect(smokeJob.needs).toBe('deploy-candidate');
+        expect(smokeJob.permissions).toEqual({ contents: 'read' });
+        expect(smokeJob.permissions?.['id-token']).toBeUndefined();
+        expect(smokeJob.env.CANDIDATE_HOST_URL).toBe('https://game-flow-c6311.web.app');
+        expect(smokeJob.env.ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY)
+            .toBe('${{ vars.APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY }}');
+        expect(smokeText).toContain('echo \\"Testing candidate origin: $CANDIDATE_HOST_URL\\"');
+        expect(smokeText).toContain('npm run smoke:candidate-host -- \\"$CANDIDATE_HOST_URL\\"');
+    });
 });
