@@ -35,6 +35,7 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
             signInWithEmail: [],
             signUpWithEmail: [],
             signInWithGoogleAccount: [],
+            signInWithAppleAccount: [],
             sendResetEmail: [],
             redeemInviteForUser: [],
             confirmReset: [],
@@ -178,6 +179,11 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
                 export async function signInWithGoogleAccount(activationCode) {
                     window.__appAuthCalls.signInWithGoogleAccount.push({ activationCode });
                     return { user: mockUser() };
+                }
+
+                export async function signInWithAppleAccount(activationCode) {
+                    window.__appAuthCalls.signInWithAppleAccount.push({ activationCode });
+                    return { user: mockUser(), wasNewUser: false };
                 }
 
                 export async function sendResetEmail(email) {
