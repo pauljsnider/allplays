@@ -71,15 +71,24 @@ export function normalizeCandidateOrigin(candidateOrigin) {
 }
 
 export function getCandidateHostChecks() {
-    const paths = [
-        ...getPublicSmokePages().map(({ path }) => path),
-        widgetPath,
-        runtimeConfigPath
+    const pages = [
+        ...getPublicSmokePages(),
+        {
+            name: 'scoreboard widget',
+            path: widgetPath,
+            titlePatterns: [/ALL PLAYS Scoreboard Widget/i],
+            readySelectors: ['#scoreboard-widget']
+        }
     ];
-    return [...new Set(paths)].map((path) => ({
-        path,
-        expectedHeaders: configuredHeadersFor(path)
+    const checks = pages.map((page) => ({
+        ...page,
+        expectedHeaders: configuredHeadersFor(page.path)
     }));
+    checks.push({
+        path: runtimeConfigPath,
+        expectedHeaders: configuredHeadersFor(runtimeConfigPath)
+    });
+    return checks;
 }
 
 function fail(url, message) {
@@ -95,6 +104,40 @@ function validateHeaders(url, response, expectedHeaders) {
                 `header "${name}" expected "${expected}" but observed "${observed}"`
             );
         }
+    }
+}
+
+function escapeRegExp(value) {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function htmlContainsSelector(html, selector) {
+    if (/^#[A-Za-z][\w:-]*$/.test(selector)) {
+        const id = escapeRegExp(selector.slice(1));
+        return new RegExp(`\\bid\\s*=\\s*["']${id}["']`, 'i').test(html);
+    }
+    if (/^[A-Za-z][\w-]*$/.test(selector)) {
+        return new RegExp(`<${escapeRegExp(selector)}\\b`, 'i').test(html);
+    }
+    throw new Error(`Unsupported candidate host readiness selector: ${selector}`);
+}
+
+async function validateHtmlContent(url, response, { titlePatterns, readySelectors }) {
+    const html = await response.text();
+    const title = html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1]
+        .replace(/\s+/g, ' ')
+        .trim() ?? '<missing>';
+    if (!titlePatterns.some((pattern) => pattern.test(title))) {
+        fail(
+            url,
+            `title expected ${titlePatterns.map(String).join(' or ')} but observed "${title}"`
+        );
+    }
+    if (!readySelectors.some((selector) => htmlContainsSelector(html, selector))) {
+        fail(
+            url,
+            `expected at least one readiness selector: ${readySelectors.join(', ')}`
+        );
     }
 }
 
@@ -123,7 +166,8 @@ export async function smokeCandidateHost(
     const origin = normalizeCandidateOrigin(candidateOrigin);
     const verifiedUrls = [];
 
-    for (const { path, expectedHeaders } of getCandidateHostChecks()) {
+    for (const check of getCandidateHostChecks()) {
+        const { path, expectedHeaders } = check;
         const url = new URL(path, `${origin}/`).toString();
         const response = await fetchImpl(url, {
             redirect: 'follow',
@@ -140,6 +184,8 @@ export async function smokeCandidateHost(
         validateHeaders(url, response, expectedHeaders);
         if (path === runtimeConfigPath) {
             await validateRuntimeConfig(url, response, expectedRuntimeConfig);
+        } else {
+            await validateHtmlContent(url, response, check);
         }
         verifiedUrls.push(url);
     }

@@ -11,13 +11,20 @@ import {
 } from '../../scripts/smoke-candidate-host.mjs';
 
 const candidateOrigin = 'https://candidate.example.test';
+const successfulHtmlByPath = {
+    '/': '<!doctype html><title>ALL PLAYS</title><body></body>',
+    '/login.html': '<!doctype html><title>Login - ALL PLAYS</title><form id="login-form"></form>',
+    '/teams.html': '<!doctype html><title>Browse Teams - ALL PLAYS</title><div id="teams-list"></div>',
+    '/widget-scoreboard.html': '<!doctype html><title>ALL PLAYS Scoreboard Widget</title><main id="scoreboard-widget"></main>'
+};
 
 function successfulResponse(path) {
     const check = getCandidateHostChecks().find((candidate) => candidate.path === path);
     if (!check) throw new Error(`Test setup error: path ${path} not found in checks`);
     const body = path === '/.well-known/allplays-runtime-config.json'
         ? JSON.stringify(getExpectedRuntimeConfig())
-        : '<!doctype html>';
+        : successfulHtmlByPath[path];
+    if (!body) throw new Error(`Test setup error: no successful body for path ${path}`);
     return new Response(body, {
         status: 200,
         headers: Object.fromEntries(check.expectedHeaders)
@@ -101,6 +108,38 @@ describe('candidate host public smoke', () => {
 
         await expect(smokeCandidateHost(candidateOrigin, { fetchImpl })).rejects.toThrow(
             `${candidateOrigin}/login.html: expected HTTP 200 but observed HTTP 404`
+        );
+    });
+
+    it('rejects a catch-all rewrite that serves homepage HTML for a public route', async () => {
+        const fetchImpl = createFetch({
+            '/login.html': (path) => {
+                const response = successfulResponse(path);
+                return new Response(successfulHtmlByPath['/'], {
+                    status: 200,
+                    headers: response.headers
+                });
+            }
+        });
+
+        await expect(smokeCandidateHost(candidateOrigin, { fetchImpl })).rejects.toThrow(
+            `${candidateOrigin}/login.html: title expected /Login - ALL PLAYS/i but observed "ALL PLAYS"`
+        );
+    });
+
+    it('rejects route HTML that has the expected title but not its readiness marker', async () => {
+        const fetchImpl = createFetch({
+            '/teams.html': (path) => {
+                const response = successfulResponse(path);
+                return new Response('<title>Teams - ALL PLAYS</title><body></body>', {
+                    status: 200,
+                    headers: response.headers
+                });
+            }
+        });
+
+        await expect(smokeCandidateHost(candidateOrigin, { fetchImpl })).rejects.toThrow(
+            `${candidateOrigin}/teams.html: expected at least one readiness selector: #teams-list`
         );
     });
 
