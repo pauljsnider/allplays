@@ -34,4 +34,16 @@ describe('loadScheduleStaffTools', () => {
     expect(nestedRequest).toBe(firstRequest);
     expect(importer).toHaveBeenCalledTimes(1);
   });
+
+  it('allows a retry after a non-chunk import failure', async () => {
+    const module = { default: vi.fn() } as unknown as ScheduleStaffToolsModule;
+    const importer = vi.fn()
+      .mockRejectedValueOnce(new Error('Temporary import failure'))
+      .mockResolvedValueOnce(module);
+    const load = createScheduleStaffToolsLoader(importer);
+
+    await expect(load()).rejects.toThrow('Temporary import failure');
+    await expect(load()).resolves.toBe(module);
+    expect(importer).toHaveBeenCalledTimes(2);
+  });
 });

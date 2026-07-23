@@ -784,6 +784,10 @@ describe('Schedule', () => {
     const teamFilter = await screen.findByLabelText('Team filter');
     expect(within(teamFilter).getByRole('option', { name: 'Jr KC Current' })).toBeTruthy();
     expect(within(teamFilter).getByRole('option', { name: 'Vipers' })).toBeTruthy();
+
+    fireEvent.change(teamFilter, { target: { value: 'team-owned' } });
+
+    expect(await screen.findByText(/Calendar feeds and imports for Vipers/)).toBeTruthy();
   });
 
   it('routes generic staff card opens to the game hub helper on mobile', () => {
@@ -1727,6 +1731,25 @@ describe('Schedule', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Unable to load schedule tools');
     expect(screen.queryByText('Loading schedule tools…')).toBeNull();
+  });
+
+  it('retries schedule staff tools after a transient load failure', async () => {
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(buildStaffScheduleResult());
+    const RecoveredScheduleTools = () => <div>Recovered schedule tools</div>;
+    staffToolsLoaderMocks.load
+      .mockRejectedValueOnce(new Error('Temporary schedule tools failure'))
+      .mockResolvedValueOnce({
+        default: RecoveredScheduleTools,
+        ScheduleStaffTools: RecoveredScheduleTools
+      });
+
+    renderSchedule();
+
+    fireEvent.click(await screen.findByRole('button', { name: /manage schedule/i }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Retry schedule tools' }));
+
+    expect(await screen.findByText('Recovered schedule tools')).toBeTruthy();
+    expect(staffToolsLoaderMocks.load).toHaveBeenCalledTimes(2);
   });
 
   it('defers tracker config loading on mobile until staff tools are opened and caches the result', async () => {
