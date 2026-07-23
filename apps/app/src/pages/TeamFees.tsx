@@ -101,7 +101,7 @@ export function TeamFees({ auth }: { auth: AuthState }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid, teamId, batchId]);
 
-  const recipients = model?.recipients || [];
+  const recipients = useMemo(() => model?.recipients || [], [model?.recipients]);
   const rosterPlayers = model?.rosterPlayers || [];
 
   const totals = useMemo(() => {

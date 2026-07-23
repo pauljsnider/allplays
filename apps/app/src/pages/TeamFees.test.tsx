@@ -581,6 +581,22 @@ describe('TeamFees recipient queue', () => {
     expect(screen.queryByRole('button', { name: 'Save adjustment' })).toBeNull();
   });
 
+  it('renders the empty recipient state when a manageable team has no fee recipients', async () => {
+    teamFeesServiceMocks.loadTeamFeeManagementModel.mockResolvedValue({
+      team: { id: 'team-1', name: 'Bears' },
+      batches: [],
+      selectedBatch: null,
+      canManageFees: true,
+      rosterPlayers: [],
+      recipients: []
+    });
+
+    renderTeamFees('/teams/team-1/fees');
+
+    expect(await screen.findByText('No fee recipients')).toBeTruthy();
+    expect(screen.getByText('Create a fee batch above, then record offline payments, refunds, or adjustments here.')).toBeTruthy();
+  });
+
   it('retries a retryable team fee load failure from the shared error state', async () => {
     teamFeesServiceMocks.loadTeamFeeManagementModel
       .mockRejectedValueOnce(new Error('Team fees temporarily unavailable.'))
