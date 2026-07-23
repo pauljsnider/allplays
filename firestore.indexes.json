@@ -651,6 +651,22 @@
       ]
     },
     {
+      "collectionGroup": "chatConversations",
+      "fieldPath": "participantIds",
+      "indexes": [
+        { "arrayConfig": "CONTAINS", "queryScope": "COLLECTION" },
+        { "arrayConfig": "CONTAINS", "queryScope": "COLLECTION_GROUP" }
+      ]
+    },
+    {
+      "collectionGroup": "chatConversations",
+      "fieldPath": "directUserIds",
+      "indexes": [
+        { "arrayConfig": "CONTAINS", "queryScope": "COLLECTION" },
+        { "arrayConfig": "CONTAINS", "queryScope": "COLLECTION_GROUP" }
+      ]
+    },
+    {
       "collectionGroup": "membershipRequests",
       "fieldPath": "requesterUserId",
       "indexes": [

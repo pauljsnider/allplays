@@ -239,6 +239,7 @@ const {
 const { hasTeamAdminAccess } = require('./team-admin-access-core.cjs');
 const { createAutoAcceptParentInviteHandler } = require('./parent-invite-auto-link-callable.cjs');
 const {
+  buildChatConversationAccountScrubPlan,
   buildDeletionAuditId,
   buildRosterParentScrubPlan,
   buildTeamAccountGrantScrubPlan,
@@ -14558,6 +14559,43 @@ async function scrubAccountTeamGrants(uid, email, userData = {}) {
   }
 }
 
+async function scrubAccountChatConversationMembership(uid, email) {
+  const documentsByPath = new Map();
+  const participantIds = [uid, `user:${uid}`];
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  if (normalizedEmail) participantIds.push(`email:${normalizedEmail}`);
+  const snapshots = await Promise.all([
+    firestore.collectionGroup('chatConversations').where('directUserIds', 'array-contains', uid).get(),
+    ...participantIds.map((participantId) => (
+      firestore.collectionGroup('chatConversations')
+        .where('participantIds', 'array-contains', participantId)
+        .get()
+    ))
+  ]);
+  snapshots.forEach((snapshot) => (snapshot.docs || []).forEach((document) => {
+    if (document?.ref?.path) documentsByPath.set(document.ref.path, document);
+  }));
+
+  const writes = [];
+  documentsByPath.forEach((document) => {
+    const plan = buildChatConversationAccountScrubPlan(document.data() || {}, { uid, email });
+    if (!plan.changed) return;
+    const update = {
+      ...plan.update,
+      updatedAt: admin.firestore.Timestamp.now()
+    };
+    plan.fieldsToDelete.forEach((field) => {
+      update[field] = admin.firestore.FieldValue.delete();
+    });
+    writes.push({ ref: document.ref, update });
+  });
+  for (let index = 0; index < writes.length; index += 200) {
+    const batch = firestore.batch();
+    writes.slice(index, index + 200).forEach(({ ref, update }) => batch.update(ref, update));
+    await batch.commit();
+  }
+}
+
 exports.processAccountDeletionRequest = functions
   .runWith({ timeoutSeconds: 540, memory: '1GB', failurePolicy: true })
   .firestore
@@ -14613,6 +14651,7 @@ exports.processAccountDeletionRequest = functions
         authUser?.photoURL
       ]);
       await scrubAccountTeamGrants(uid, ownerEmail, userDoc.data() || {});
+      await scrubAccountChatConversationMembership(uid, ownerEmail);
       await scrubAccountRosterParentLinks(uid, userDoc.data() || {}, authUser);
 
       const directDocuments = [

@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const { readFileSync } = require('node:fs');
 const { join } = require('node:path');
 const {
+  buildChatConversationAccountScrubPlan,
   buildDeletionAuditId,
   buildRosterParentScrubPlan,
   buildTeamAccountGrantScrubPlan,
@@ -169,6 +170,25 @@ test('scrubs reusable email and uid grants from team authorization fields', () =
       }
     },
     fieldsToDelete: ['ownerId', 'ownerEmail', 'ownerEmailLower']
+  });
+});
+
+test('scrubs deleted account identifiers from shared chat conversations', () => {
+  assert.deepEqual(buildChatConversationAccountScrubPlan({
+    type: 'direct',
+    participantIds: ['user:deleted-user', 'email:deleted@example.com', 'user:remaining-user'],
+    directUserIds: ['deleted-user', 'remaining-user'],
+    mutedBy: ['deleted-user', 'remaining-user'],
+    friendshipId: 'deleted-user__remaining-user',
+    initiatedBy: 'deleted-user'
+  }, { uid: 'deleted-user', email: 'Deleted@Example.com' }), {
+    changed: true,
+    update: {
+      participantIds: ['user:remaining-user'],
+      directUserIds: ['remaining-user'],
+      mutedBy: ['remaining-user']
+    },
+    fieldsToDelete: ['initiatedBy', 'friendshipId']
   });
 });
 
@@ -419,5 +439,6 @@ test('gives the deletion worker extended runtime and automatic event retries', (
   const workerSource = functionsSource.slice(functionsSource.indexOf('exports.processAccountDeletionRequest'));
   assert.match(functionsSource, /deleteAccountQuery[\s\S]*firestore\.recursiveDelete\(docSnapshot\.ref\)/);
   assert.ok(workerSource.indexOf('await scrubAccountTeamGrants(') < workerSource.indexOf('admin.auth().deleteUser(uid)'));
+  assert.ok(workerSource.indexOf('await scrubAccountChatConversationMembership(') < workerSource.indexOf('admin.auth().deleteUser(uid)'));
   assert.ok(workerSource.indexOf('await scrubAccountRosterParentLinks(') < workerSource.indexOf('admin.auth().deleteUser(uid)'));
 });

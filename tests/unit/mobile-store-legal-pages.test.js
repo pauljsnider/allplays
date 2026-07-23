@@ -54,6 +54,8 @@ describe('mobile store legal and support pages', () => {
         const requiredIndexes = [
             ['messages', 'authorId'],
             ['chatMessages', 'senderId'],
+            ['chatConversations', 'participantIds', 'array'],
+            ['chatConversations', 'directUserIds', 'array'],
             ['comments', 'authorId'],
             ['reactions', 'userId'],
             ['rsvps', 'userId'],
@@ -68,14 +70,13 @@ describe('mobile store legal and support pages', () => {
             ['notificationRecipients', 'uid']
         ];
 
-        requiredIndexes.forEach(([collectionGroup, fieldPath]) => {
+        requiredIndexes.forEach(([collectionGroup, fieldPath, indexType]) => {
             const override = indexes.fieldOverrides.find((candidate) =>
                 candidate.collectionGroup === collectionGroup && candidate.fieldPath === fieldPath
             );
-            expect(override?.indexes).toContainEqual({
-                order: 'ASCENDING',
-                queryScope: 'COLLECTION_GROUP'
-            });
+            expect(override?.indexes).toContainEqual(indexType === 'array'
+                ? { arrayConfig: 'CONTAINS', queryScope: 'COLLECTION_GROUP' }
+                : { order: 'ASCENDING', queryScope: 'COLLECTION_GROUP' });
         });
     });
 });

@@ -245,6 +245,41 @@ function buildTeamAccountGrantScrubPlan(team = {}, accountIdentity) {
   };
 }
 
+function buildChatConversationAccountScrubPlan(conversation = {}, accountIdentity) {
+  const identity = normalizeRosterContactIdentity(accountIdentity);
+  const update = {};
+  const fieldsToDelete = [];
+  const matchesParticipant = (value) => {
+    const normalized = String(value || '').trim();
+    if (!normalized) return false;
+    if (identity.uid && (normalized === identity.uid || normalized === `user:${identity.uid}`)) return true;
+    return Boolean(
+      identity.email &&
+      normalized.toLowerCase() === `email:${identity.email}`
+    );
+  };
+  const filterIdentityArray = (field) => {
+    if (!Array.isArray(conversation[field])) return;
+    const filtered = conversation[field].filter((value) => !matchesParticipant(value));
+    if (filtered.length !== conversation[field].length) update[field] = filtered;
+  };
+
+  filterIdentityArray('participantIds');
+  filterIdentityArray('directUserIds');
+  filterIdentityArray('mutedBy');
+  if (identity.uid && String(conversation.initiatedBy || '').trim() === identity.uid) {
+    fieldsToDelete.push('initiatedBy');
+  }
+  const friendshipIds = String(conversation.friendshipId || '').split('__').map((value) => value.trim());
+  if (identity.uid && friendshipIds.includes(identity.uid)) fieldsToDelete.push('friendshipId');
+
+  return {
+    changed: Object.keys(update).length > 0 || fieldsToDelete.length > 0,
+    update,
+    fieldsToDelete
+  };
+}
+
 function classifyAccountStoragePaths(uid, mediaStoragePaths = [], profilePhotoUrls = []) {
   const normalizedUid = String(uid || '').trim();
   const athletePrefix = `athlete-profile-media/${normalizedUid}/`;
@@ -475,6 +510,7 @@ module.exports = {
   ACCOUNT_DELETION_MAX_DAYS,
   assertDeletionRequest,
   assertRecentAuthentication,
+  buildChatConversationAccountScrubPlan,
   buildDeletionAuditId,
   buildRosterParentScrubPlan,
   buildTeamAccountGrantScrubPlan,
