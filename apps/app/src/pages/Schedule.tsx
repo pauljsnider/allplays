@@ -121,15 +121,22 @@ function getScheduleTimeRangeFromQuery(value: string | null): ScheduleTimeRange 
   return scheduleTimeRangeValues.includes(normalized as ScheduleTimeRange) ? normalized as ScheduleTimeRange : null;
 }
 
-function applyAuthoritativeStaffScope(
+function applyAuthoritativeScheduleScope(
   events: ParentScheduleEvent[],
+  children: ParentScheduleChild[],
   staffTeams: ParentScheduleStaffTeam[]
 ) {
+  const accessibleTeamIds = new Set([
+    ...children.map((child) => child.teamId),
+    ...staffTeams.map((team) => team.teamId)
+  ]);
   const staffTeamIds = new Set(staffTeams.map((team) => team.teamId));
-  return events.map((event) => {
-    const isTeamStaff = staffTeamIds.has(event.teamId);
-    return event.isTeamStaff === isTeamStaff ? event : { ...event, isTeamStaff };
-  });
+  return events
+    .filter((event) => accessibleTeamIds.has(event.teamId))
+    .map((event) => {
+      const isTeamStaff = staffTeamIds.has(event.teamId);
+      return event.isTeamStaff === isTeamStaff ? event : { ...event, isTeamStaff };
+    });
 }
 
 export function Schedule({ auth }: { auth: AuthState }) {
@@ -389,6 +396,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     const cached = getCachedAppData(cacheKey);
     const requestedUserId = auth.user.uid;
     const refreshVersion = ++scheduleRefreshVersionRef.current;
+    let refreshedChildren: ParentScheduleChild[] | null = null;
     let refreshedStaffTeams: ParentScheduleStaffTeam[] | null = null;
     const parentScopePromise = loadParentScheduleScope(auth.user).catch(() => null);
     void parentScopePromise
@@ -396,13 +404,20 @@ export function Schedule({ auth }: { auth: AuthState }) {
         if (!parentScope || parentScope.isPartial === true) return;
         if (activeUserIdRef.current !== requestedUserId) return;
         if (scheduleRefreshVersionRef.current !== refreshVersion) return;
+        refreshedChildren = parentScope.children ?? [];
         refreshedStaffTeams = parentScope.staffTeams ?? [];
+        childrenRef.current = refreshedChildren;
+        setChildren(refreshedChildren);
         setStaffTeams(refreshedStaffTeams);
-        updateScheduleEvents((currentEvents) => applyAuthoritativeStaffScope(currentEvents, refreshedStaffTeams!));
+        updateScheduleEvents((currentEvents) => applyAuthoritativeScheduleScope(
+          currentEvents,
+          refreshedChildren!,
+          refreshedStaffTeams!
+        ));
         if (
           hasLoadedScheduleRef.current
           && selectedTeamId
-          && !childrenRef.current.some((child) => child.teamId === selectedTeamId)
+          && !refreshedChildren.some((child) => child.teamId === selectedTeamId)
           && !eventsRef.current.some((event) => event.teamId === selectedTeamId)
           && !refreshedStaffTeams.some((team) => team.teamId === selectedTeamId)
         ) {
@@ -438,7 +453,8 @@ export function Schedule({ auth }: { auth: AuthState }) {
             ? result
             : {
                 ...result,
-                events: applyAuthoritativeStaffScope(result.events, refreshedStaffTeams),
+                children: refreshedChildren!,
+                events: applyAuthoritativeScheduleScope(result.events, refreshedChildren!, refreshedStaffTeams),
                 staffTeams: refreshedStaffTeams
               };
           hasLoadedScheduleRef.current = true;
@@ -462,14 +478,14 @@ export function Schedule({ auth }: { auth: AuthState }) {
             void ensurePastSchedulePageLoaded(true);
           }
 
-          if (selectedPlayerId && !result.children.some((child) => child.playerId === selectedPlayerId)) {
+          if (selectedPlayerId && !authoritativeResult.children.some((child) => child.playerId === selectedPlayerId)) {
             setSelectedPlayerId('');
           }
           if (
             selectedTeamId
             && refreshedStaffTeams !== null
-            && !result.children.some((child) => child.teamId === selectedTeamId)
-            && !result.events.some((event) => event.teamId === selectedTeamId)
+            && !authoritativeResult.children.some((child) => child.teamId === selectedTeamId)
+            && !authoritativeResult.events.some((event) => event.teamId === selectedTeamId)
             && !refreshedStaffTeams.some((team) => team.teamId === selectedTeamId)
           ) {
             setSelectedTeamId('');

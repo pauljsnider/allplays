@@ -810,7 +810,12 @@ describe('Schedule', () => {
   it('shows a zero-event staff team in the schedule team filter', async () => {
     scheduleServiceMocks.loadParentScheduleScope.mockResolvedValueOnce({
       profile: {},
-      children: [],
+      children: [{
+        playerId: 'player-1',
+        playerName: 'Madison Snider',
+        teamId: 'team-parent',
+        teamName: 'Jr KC Current'
+      }],
       staffTeams: [{ teamId: 'team-owned', teamName: 'Vipers' }],
       isPartial: false
     });
@@ -891,7 +896,7 @@ describe('Schedule', () => {
     expect(await screen.findByRole('heading', { name: 'Add game for Vipers' })).toBeTruthy();
   });
 
-  it('removes cached management access when fresh staff scope revokes the team', async () => {
+  it('removes cached events, filters, and management access when fresh scope revokes the team', async () => {
     scheduleServiceMocks.loadParentScheduleScope.mockResolvedValueOnce({
       profile: {},
       children: [],
@@ -910,9 +915,11 @@ describe('Schedule', () => {
 
     renderSchedule('/schedule?teamId=team-owned');
 
-    expect(await screen.findByLabelText('Team filter')).toBeTruthy();
+    const teamFilter = await screen.findByLabelText('Team filter');
     await waitFor(() => {
       expect(screen.queryByRole('button', { name: /manage schedule/i })).toBeNull();
+      expect(within(teamFilter).queryByRole('option', { name: 'Vipers' })).toBeNull();
+      expect((teamFilter as HTMLSelectElement).value).toBe('');
     });
   });
 
