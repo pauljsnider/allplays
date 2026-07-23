@@ -14523,6 +14523,8 @@ async function loadAccountTeamDocuments(uid, email, userData = {}) {
     queryPromises.push(firestore.collection('teams').where(field, 'array-contains', uid).get());
   });
   getAccountEmailQueryCandidates(email).forEach((candidate) => {
+    queryPromises.push(firestore.collection('teams').where('ownerEmail', '==', candidate).get());
+    queryPromises.push(firestore.collection('teams').where('ownerEmailLower', '==', candidate).get());
     queryPromises.push(firestore.collection('teams').where('adminEmails', 'array-contains', candidate).get());
     queryPromises.push(firestore.collection('teams').where('streamVolunteerEmails', 'array-contains', candidate).get());
   });

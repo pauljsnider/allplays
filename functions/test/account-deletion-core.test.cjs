@@ -410,6 +410,12 @@ test('gives the deletion worker extended runtime and automatic event retries', (
     functionsSource,
     /exports\.processAccountDeletionRequest = functions\s+\.runWith\(\{ timeoutSeconds: 540, memory: '1GB', failurePolicy: true \}\)\s+\.firestore/
   );
+  const teamLoaderSource = functionsSource.slice(
+    functionsSource.indexOf('async function loadAccountTeamDocuments'),
+    functionsSource.indexOf('async function scrubAccountTeamGrants')
+  );
+  assert.match(teamLoaderSource, /where\('ownerEmail', '==', candidate\)/);
+  assert.match(teamLoaderSource, /where\('ownerEmailLower', '==', candidate\)/);
   const workerSource = functionsSource.slice(functionsSource.indexOf('exports.processAccountDeletionRequest'));
   assert.match(functionsSource, /deleteAccountQuery[\s\S]*firestore\.recursiveDelete\(docSnapshot\.ref\)/);
   assert.ok(workerSource.indexOf('await scrubAccountTeamGrants(') < workerSource.indexOf('admin.auth().deleteUser(uid)'));
