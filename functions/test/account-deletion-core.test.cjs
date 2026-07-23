@@ -223,6 +223,12 @@ test('deletes account-owned share links and invite records', () => {
   const queries = getAccountDeletionCollectionQueries();
   assert.ok(queries.some(([collection, field]) => collection === 'socialReports' && field === 'reporterId'));
   assert.ok(!queries.some(([collection]) => collection === 'socialPostReports'));
+  assert.ok(queries.some(([collection, field, operator]) =>
+    collection === 'publicOpportunities' && field === 'authorId' && operator === '=='));
+  assert.ok(queries.some(([collection, field, operator]) =>
+    collection === 'opportunityInquiries' && field === 'participantIds' && operator === 'array-contains'));
+  assert.ok(queries.some(([collection, field, operator]) =>
+    collection === 'opportunityInquiries' && field === 'recipientUserIds' && operator === 'array-contains'));
   assert.ok(queries.some(([collection, field]) => collection === 'familyShareTokens' && field === 'ownerUserId'));
   assert.ok(queries.some(([collection, field]) => collection === 'accessCodes' && field === 'generatedBy'));
   assert.ok(queries.some(([collection, field]) => collection === 'accessCodes' && field === 'usedBy'));
