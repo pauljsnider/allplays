@@ -107,6 +107,7 @@ describe('React app auth/profile capability parity', () => {
         ]);
         expect(authPage).not.toContain('Account action');
         expect(authPage).not.toContain('<Link to="/reset-password"');
+        expect(authPage).not.toContain('Enter join code');
         expectContains(authService, [
             'signInWithNativeRestSession',
             'signInWithNativeGoogleCredential',
