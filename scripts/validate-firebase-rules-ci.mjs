@@ -256,6 +256,16 @@ export function validateFirebaseDeployWorkloadIdentity(workflow, label) {
 }
 
 export function validateProductionDeployCommand(deployProd) {
+    assertMatches(
+        deployProd,
+        /on:\s*\n\s+push:\s*\n\s+branches:\s*\n\s+- master\s*\n\s+workflow_dispatch:\s*(?:\n|$)/,
+        'Production push and manual retry triggers'
+    );
+    assertIncludes(deployProd, 'baseline_branch="$GITHUB_REF_NAME"', 'Production push baseline branch');
+    assertIncludes(deployProd, 'if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then', 'Production manual retry baseline selection');
+    assertIncludes(deployProd, 'if [[ "$GITHUB_REF" != "refs/heads/master" ]]; then', 'Production manual retry master restriction');
+    assertIncludes(deployProd, 'baseline_branch="master"', 'Production manual retry master baseline');
+
     const deployCommands = Array.from(deployProd.matchAll(/^\s*(?:npx firebase-tools@\S+|node "\$firebase_cli") deploy\b[^\n]*$/gm), match => match[0]);
     const deployCommand = deployCommands.find(command => /--only(?:=|\s+)"\$deploy_targets"/.test(command)) || '';
     if (!deployCommand) {
@@ -269,7 +279,7 @@ export function validateProductionDeployCommand(deployProd) {
     assertIncludes(deployProd, 'actions: read', 'Production workflow-run read permission');
     assertIncludes(deployProd, 'GH_TOKEN: ${{ github.token }}', 'Production workflow-run authentication');
     assertIncludes(deployProd, 'actions/workflows/deploy-prod.yml/runs', 'Production successful deploy lookup');
-    assertIncludes(deployProd, '-f branch="$GITHUB_REF_NAME"', 'Production successful deploy branch filter');
+    assertIncludes(deployProd, '-f branch="$baseline_branch"', 'Production successful deploy branch filter');
     assertIncludes(deployProd, '-f status=success', 'Production successful deploy filter');
     assertIncludes(deployProd, 'for ((lookup_attempt = 1; lookup_attempt <= lookup_max_attempts; lookup_attempt += 1)); do', 'Production successful deploy lookup retries');
     assertIncludes(deployProd, 'if last_success_sha="$(gh api', 'Production successful deploy guarded lookup');

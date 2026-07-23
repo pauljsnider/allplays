@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - master
+  workflow_dispatch:
 
 concurrency:
   group: production-deploy
@@ -151,12 +152,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          baseline_branch="$GITHUB_REF_NAME"
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            if [[ "$GITHUB_REF" != "refs/heads/master" ]]; then
+              echo "::error::Production deployment retries must target the current master branch."
+              exit 1
+            fi
+            baseline_branch="master"
+          fi
           last_success_sha=""
           lookup_succeeded="false"
           lookup_max_attempts=3
           for ((lookup_attempt = 1; lookup_attempt <= lookup_max_attempts; lookup_attempt += 1)); do
             if last_success_sha="$(gh api --method GET "repos/${GITHUB_REPOSITORY}/actions/workflows/deploy-prod.yml/runs" \
-              -f branch="$GITHUB_REF_NAME" \
+              -f branch="$baseline_branch" \
               -f status=success \
               -F per_page=1 \
               --jq '.workflow_runs[0].head_sha // ""')"; then

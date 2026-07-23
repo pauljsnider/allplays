@@ -87,6 +87,12 @@ service firebase.storage {
 
     it('skips an unavailable Storage service only when rules are unchanged', () => {
         const validDeployCommand = `
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
       - name: Checkout
         uses: actions/checkout@v5
         with:
@@ -101,9 +107,16 @@ service firebase.storage {
         env:
           GH_TOKEN: \${{ github.token }}
         run: |
+          baseline_branch="$GITHUB_REF_NAME"
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            if [[ "$GITHUB_REF" != "refs/heads/master" ]]; then
+              exit 1
+            fi
+            baseline_branch="master"
+          fi
           lookup_max_attempts=3
           for ((lookup_attempt = 1; lookup_attempt <= lookup_max_attempts; lookup_attempt += 1)); do
-            if last_success_sha="$(gh api --method GET "repos/\${GITHUB_REPOSITORY}/actions/workflows/deploy-prod.yml/runs" -f branch="$GITHUB_REF_NAME" -f status=success)"; then
+            if last_success_sha="$(gh api --method GET "repos/\${GITHUB_REPOSITORY}/actions/workflows/deploy-prod.yml/runs" -f branch="$baseline_branch" -f status=success)"; then
               lookup_succeeded="true"
             fi
           done
@@ -138,6 +151,18 @@ service firebase.storage {
         `;
 
         expect(() => validateProductionDeployCommand(validDeployCommand)).not.toThrow();
+        expect(() => validateProductionDeployCommand(
+            validDeployCommand.replace('  workflow_dispatch:', '  pull_request:')
+        )).toThrow('Production push and manual retry triggers');
+        expect(() => validateProductionDeployCommand(
+            validDeployCommand.replace('baseline_branch="$GITHUB_REF_NAME"', 'baseline_branch="master"')
+        )).toThrow('Production push baseline branch');
+        expect(() => validateProductionDeployCommand(
+            validDeployCommand.replace('if [[ "$GITHUB_REF" != "refs/heads/master" ]]; then', 'if [[ "$GITHUB_REF" != "refs/heads/release" ]]; then')
+        )).toThrow('Production manual retry master restriction');
+        expect(() => validateProductionDeployCommand(
+            validDeployCommand.replace('-f branch="$baseline_branch"', '-f branch="$GITHUB_REF_NAME"')
+        )).toThrow('Production successful deploy branch filter');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace('[[ "$STORAGE_RULES_CHANGED" != "true" ]]', '[[ true ]]'))).toThrow(
             'Production Storage rules unchanged-only skip'
         );
