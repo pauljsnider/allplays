@@ -4786,7 +4786,6 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data, c
 });
 
 exports.cancelStripeRegistrationCheckout = functions.https.onCall(async (data, context = {}) => {
-  assertPaymentsEnabled();
   assertPublicRegistrationAppCheck(context, 'cancel-checkout');
   let input;
   try {
