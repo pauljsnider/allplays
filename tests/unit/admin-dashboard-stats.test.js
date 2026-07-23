@@ -17,7 +17,7 @@ describe('admin dashboard statistics scope', () => {
         expect(loadDashboardBody).not.toContain('getAllUsers()');
     });
 
-    it('keeps initial reads bounded while paging through complete explicit searches', () => {
+    it('keeps initial reads bounded while completing team searches and bounding user searches', () => {
         const adminJs = fs.readFileSync('js/admin.js', 'utf8');
 
         const adminHtml = fs.readFileSync('admin.html', 'utf8');
@@ -37,8 +37,9 @@ describe('admin dashboard statistics scope', () => {
         expect(adminJs).toContain('loadCompleteAdminSearchCollection({');
         expect(adminJs).toContain('fetchPage: getAdminTeamsPage');
         expect(adminJs).toContain("itemsKey: 'teams'");
-        expect(adminJs).toContain('fetchPage: getAdminUsersPage');
-        expect(adminJs).toContain("itemsKey: 'users'");
+        expect(adminJs).toContain('createDebouncedAdminUserSearch({');
+        expect(adminJs).toContain('search: searchAdminUsers');
+        expect(adminJs).not.toContain("itemsKey: 'users'");
         expect(adminJs).not.toContain('globalSearchTeamsPromise = getTeams(');
         expect(adminJs).not.toContain('globalSearchUsersPromise = getAllUsers(');
     });
