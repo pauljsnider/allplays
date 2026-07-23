@@ -4,6 +4,11 @@ App Check client initialization is fail-open by design. Deploying this code star
 attestation and metrics collection but does not reject a request if attestation
 fails. Firebase Console enforcement is the separate fail-closed rollout gate.
 
+Candidate-host validation and DNS cutover observation follow the
+[hosting cutover runbook](hosting-cutover-runbook.md). During that entire gate,
+every Firebase API remains **Unenforced**; enforcement is a separate rollout
+decision.
+
 ## Client configuration
 
 ### Web
