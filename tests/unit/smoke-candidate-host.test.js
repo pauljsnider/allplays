@@ -2,20 +2,21 @@ import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 
 import {
+    configuredHeadersFor,
+    getExpectedRuntimeConfig,
     getCandidateHostChecks,
+    loadJson,
     normalizeCandidateOrigin,
     smokeCandidateHost
 } from '../../scripts/smoke-candidate-host.mjs';
 
 const candidateOrigin = 'https://candidate.example.test';
-const runtimeConfig = JSON.parse(
-    readFileSync(new URL('../../.well-known/allplays-runtime-config.json', import.meta.url), 'utf8')
-);
 
 function successfulResponse(path) {
     const check = getCandidateHostChecks().find((candidate) => candidate.path === path);
+    if (!check) throw new Error(`Test setup error: path ${path} not found in checks`);
     const body = path === '/.well-known/allplays-runtime-config.json'
-        ? JSON.stringify(runtimeConfig)
+        ? JSON.stringify(getExpectedRuntimeConfig())
         : '<!doctype html>';
     return new Response(body, {
         status: 200,
@@ -31,6 +32,35 @@ function createFetch(overrides = {}) {
 }
 
 describe('candidate host public smoke', () => {
+    it.each([
+        'firebase.json',
+        '/.well-known/allplays-runtime-config.json'
+    ])('reports %s parse failures with the source name', (sourceName) => {
+        expect(() => loadJson(
+            new URL('../../firebase.json', import.meta.url),
+            sourceName,
+            { readFile: () => '{invalid' }
+        )).toThrow(`Failed to load ${sourceName}:`);
+    });
+
+    it('treats a missing Firebase hosting header configuration as no expected headers', () => {
+        expect(configuredHeadersFor('/teams.html', {})).toEqual(new Map());
+        expect(configuredHeadersFor('/teams.html', { hosting: {} })).toEqual(new Map());
+    });
+
+    it('derives the expected runtime configuration from the staging site-key contract', () => {
+        expect(getExpectedRuntimeConfig({
+            siteKey: ' public-site-key_123 ',
+            fallback: { appCheck: { enabled: false } }
+        })).toEqual({
+            appCheck: {
+                enabled: true,
+                recaptchaEnterpriseSiteKey: 'public-site-key_123',
+                isTokenAutoRefreshEnabled: true
+            }
+        });
+    });
+
     it('normalizes the supplied URL to one HTTPS origin for every configured request', async () => {
         const fetchImpl = createFetch();
 

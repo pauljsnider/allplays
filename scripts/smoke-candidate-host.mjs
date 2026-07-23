@@ -6,16 +6,46 @@ import { getPublicSmokePages } from '../tests/smoke/page-registry.js';
 
 const widgetPath = '/widget-scoreboard.html';
 const runtimeConfigPath = '/.well-known/allplays-runtime-config.json';
-const firebaseConfig = JSON.parse(
-    readFileSync(new URL('../firebase.json', import.meta.url), 'utf8')
+
+export function loadJson(fileUrl, label, { readFile = readFileSync } = {}) {
+    try {
+        return JSON.parse(readFile(fileUrl, 'utf8'));
+    } catch (error) {
+        throw new Error(`Failed to load ${label}: ${error.message}`);
+    }
+}
+
+const firebaseConfig = loadJson(
+    new URL('../firebase.json', import.meta.url),
+    'firebase.json'
 );
-const expectedRuntimeConfig = JSON.parse(
-    readFileSync(new URL(`..${runtimeConfigPath}`, import.meta.url), 'utf8')
+const fallbackRuntimeConfig = loadJson(
+    new URL(`..${runtimeConfigPath}`, import.meta.url),
+    runtimeConfigPath
 );
 
-function configuredHeadersFor(path) {
+export function getExpectedRuntimeConfig({
+    siteKey = process.env.ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY,
+    fallback = fallbackRuntimeConfig
+} = {}) {
+    const normalizedSiteKey = typeof siteKey === 'string' ? siteKey.trim() : '';
+    if (!/^[A-Za-z0-9_-]{10,200}$/.test(normalizedSiteKey)) return fallback;
+
+    return {
+        appCheck: {
+            enabled: true,
+            recaptchaEnterpriseSiteKey: normalizedSiteKey,
+            isTokenAutoRefreshEnabled: true
+        }
+    };
+}
+
+export function configuredHeadersFor(path, config = firebaseConfig) {
     const headers = new Map();
-    for (const rule of firebaseConfig.hosting.headers) {
+    const rules = config?.hosting?.headers;
+    if (!Array.isArray(rules)) return headers;
+
+    for (const rule of rules) {
         if (rule.source !== '**' && rule.source !== path) continue;
         for (const header of rule.headers || []) {
             headers.set(header.key, header.value);
@@ -68,7 +98,7 @@ function validateHeaders(url, response, expectedHeaders) {
     }
 }
 
-async function validateRuntimeConfig(url, response) {
+async function validateRuntimeConfig(url, response, expectedRuntimeConfig) {
     let observed;
     try {
         observed = await response.json();
@@ -83,7 +113,13 @@ async function validateRuntimeConfig(url, response) {
     }
 }
 
-export async function smokeCandidateHost(candidateOrigin, { fetchImpl = fetch } = {}) {
+export async function smokeCandidateHost(
+    candidateOrigin,
+    {
+        fetchImpl = fetch,
+        expectedRuntimeConfig = getExpectedRuntimeConfig()
+    } = {}
+) {
     const origin = normalizeCandidateOrigin(candidateOrigin);
     const verifiedUrls = [];
 
@@ -103,7 +139,7 @@ export async function smokeCandidateHost(candidateOrigin, { fetchImpl = fetch } 
 
         validateHeaders(url, response, expectedHeaders);
         if (path === runtimeConfigPath) {
-            await validateRuntimeConfig(url, response);
+            await validateRuntimeConfig(url, response, expectedRuntimeConfig);
         }
         verifiedUrls.push(url);
     }
