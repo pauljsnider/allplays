@@ -374,6 +374,8 @@ export type ParentScheduleLoadResult = {
 export type ParentScheduleScope = {
   profile: Record<string, unknown>;
   children: ParentScheduleChild[];
+  /** Teams the user can manage, including newly created teams with no players or chat yet. */
+  staffTeams?: ParentScheduleStaffTeam[];
 };
 
 function hasResolvedParentProfile(profile: unknown): profile is Record<string, unknown> {
@@ -2782,14 +2784,24 @@ export async function loadParentScheduleScope(user: AuthUser | null): Promise<Pa
   if (!user?.uid) {
     return {
       profile: {},
-      children: []
+      children: [],
+      staffTeams: []
     };
   }
-  const profile = await loadProfileDocument(user.uid).catch(() => ({}));
+  const [profile, staffTeams] = await Promise.all([
+    loadProfileDocument(user.uid).catch(() => ({})),
+    loadStaffTeams(user).catch(() => [])
+  ]);
   const children = await resolveParentScheduleChildren(user, profile as Record<string, unknown>);
   return {
     profile: profile as Record<string, unknown>,
-    children
+    children,
+    staffTeams: staffTeams
+      .map((team: any) => {
+        const teamId = compactString(team?.id);
+        return teamId ? { teamId, teamName: compactString(team?.name) || teamId } : null;
+      })
+      .filter(Boolean) as ParentScheduleStaffTeam[]
   };
 }
 
@@ -4010,11 +4022,11 @@ async function buildParentScheduleTeamChildren(user: AuthUser, profile: Record<s
     byTeam.get(child.teamId)?.push(child);
   });
 
-  const staffTeams = await loadStaffTeams(user).catch(() => []);
+  const staffTeams = options.parentScope?.staffTeams || await loadStaffTeams(user).catch(() => []);
   await mapWithConcurrency(staffTeams, parentScheduleTeamConcurrency, async (team: any) => {
-    const teamId = compactString(team?.id);
+    const teamId = compactString(team?.id || team?.teamId);
     if (!teamId) return;
-    const teamName = compactString(team?.name) || teamId;
+    const teamName = compactString(team?.name || team?.teamName) || teamId;
     const existingPlayerIds = new Set((byTeam.get(teamId) || []).map((child) => child.playerId));
     if (!expandStaffPlayers) {
       if (!existingPlayerIds.size) {
@@ -4277,8 +4289,8 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
     });
     const staffTeamSummaries = staffTeams
       .map((team: any) => {
-        const teamId = compactString(team?.id);
-        return teamId ? { teamId, teamName: compactString(team?.name) || teamId } : null;
+        const teamId = compactString(team?.id || team?.teamId);
+        return teamId ? { teamId, teamName: compactString(team?.name || team?.teamName) || teamId } : null;
       })
       .filter(Boolean) as ParentScheduleStaffTeam[];
 
