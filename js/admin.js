@@ -15,7 +15,7 @@ import {
     getTelemetryRouteDaily,
     getTelemetryEventDaily,
     getTelemetrySessions
-} from './db.js?v=120';
+} from './db.js?v=121';
 import { db, collection, getDocs, doc, setDoc, updateDoc, serverTimestamp, query } from './firebase.js?v=22';
 import { renderHeader, renderFooter, escapeHtml } from './utils.js?v=18';
 import { checkAuth } from './auth.js?v=129';
@@ -46,7 +46,7 @@ import {
     resolveAdminUserSearchResult,
     selectAdminItemById,
     selectAdminSearchCollection
-} from './admin-search.js?v=5';
+} from './admin-search.js?v=6';
 import {
     buildTrackedWorkflowLoadSummary,
     buildTelemetryPerformanceSummary,

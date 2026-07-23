@@ -65,7 +65,7 @@ import {
     ADMIN_USER_SEARCH_TEAM_LIMIT,
     buildAdminUserSearchStrategies,
     mergeBoundedAdminUserCandidates
-} from './admin-search.js?v=5';
+} from './admin-search.js?v=6';
 import { resolveAvailabilityCutoffEventDate } from './availability-cutoff-date.js?v=1';
 import { normalizeFamilyShareCalendarUrls, normalizeFamilyShareChildren } from './family-share-utils.js?v=2';
 import { normalizeChatAttachments } from './team-chat-media.js';

@@ -140,8 +140,8 @@ describe('bounded admin user search queries', () => {
     it('covers every bounded user contact while keeping enrichment query fan-out fixed', async () => {
         const users = Array.from({ length: 500 }, (_, index) => ({
             id: `user-${index}`,
-            email: `USER-${index}@example.com`,
-            phone: `+1 (555) 000-${String(index).padStart(4, '0')}`
+            email: `user-${index}@example.com`,
+            phone: `555000${String(index).padStart(4, '0')}`
         }));
         const { getOfficialsForUsers } = await import('../../js/db.js?v=119-admin-user-search');
 
@@ -159,5 +159,38 @@ describe('bounded admin user search queries', () => {
         });
         expect(emailTargets.size).toBe(50);
         expect(phoneTargets.size).toBe(50);
+    });
+
+    it('finds an official linked to a search result beyond position 25', async () => {
+        const users = Array.from({ length: ADMIN_USER_SEARCH_RESULT_LIMIT }, (_, index) => ({
+            id: `user-${index}`,
+            email: `user-${index}@example.com`
+        }));
+        const laterOfficial = {
+            id: 'official-30',
+            ref: { parent: { parent: { id: 'team-1' } } },
+            data: () => ({
+                name: 'Later Official',
+                email: 'user-29@example.com'
+            })
+        };
+        firebaseMocks.getDocs.mockImplementation(async (request) => {
+            const emailFilter = findConstraint(request, 'where', 'email');
+            return {
+                docs: emailFilter?.value.includes('user-29@example.com') ? [laterOfficial] : []
+            };
+        });
+        const { getOfficialsForUsers } = await import('../../js/db.js?v=119-admin-user-search');
+
+        const entries = await getOfficialsForUsers(users);
+
+        expect(entries).toEqual([{
+            teamId: 'team-1',
+            official: {
+                id: 'official-30',
+                name: 'Later Official',
+                email: 'user-29@example.com'
+            }
+        }]);
     });
 });
