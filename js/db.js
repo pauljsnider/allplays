@@ -65,7 +65,7 @@ import {
     ADMIN_USER_SEARCH_TEAM_LIMIT,
     buildAdminUserSearchStrategies,
     mergeBoundedAdminUserCandidates
-} from './admin-search.js?v=3';
+} from './admin-search.js?v=4';
 import { resolveAvailabilityCutoffEventDate } from './availability-cutoff-date.js?v=1';
 import { normalizeFamilyShareCalendarUrls, normalizeFamilyShareChildren } from './family-share-utils.js?v=2';
 import { normalizeChatAttachments } from './team-chat-media.js';
@@ -2214,7 +2214,7 @@ function buildAdminPrefixQuery(reference, strategy, resultLimit = ADMIN_USER_SEA
 /**
  * Runs at most 14 Firestore queries: 3 user prefixes, 3 official prefixes,
  * 1 team prefix, 3 bounded team-official reads, and 4 contact-to-user lookups.
- * Official enrichment is separately capped at 4 queries, for 18 total per search.
+ * Official enrichment is separately capped at 20 queries, for 34 total per search.
  */
 export async function searchAdminUsers(searchTerm = '') {
     const strategies = buildAdminUserSearchStrategies(searchTerm);

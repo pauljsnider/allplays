@@ -53,7 +53,7 @@ describe('RSVP precedence cache delivery', () => {
 
     it('propagates fresh keys through cached wrapper and shared utility entry modules', () => {
         const consumerVersions = {
-            'admin.html': 'js/admin.js?v=19',
+            'admin.html': 'js/admin.js?v=20',
             'certificates.html': 'js/certificates/studio.js?v=19',
             'live-game.html': 'js/live-game.js?v=24',
             'live-tracker.html': 'js/live-tracker.js?v=7',

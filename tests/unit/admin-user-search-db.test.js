@@ -89,7 +89,7 @@ describe('bounded admin user search queries', () => {
             return { docs: [] };
         });
 
-        const { searchAdminUsers } = await import('../../js/db.js?v=118-admin-user-search');
+        const { searchAdminUsers } = await import('../../js/db.js?v=119-admin-user-search');
         const users = await searchAdminUsers('zeta');
 
         expect(users).toEqual([{
@@ -126,7 +126,7 @@ describe('bounded admin user search queries', () => {
             return { docs: [] };
         });
 
-        const { searchAdminUsers } = await import('../../js/db.js?v=118-admin-user-search');
+        const { searchAdminUsers } = await import('../../js/db.js?v=119-admin-user-search');
         const users = await searchAdminUsers('robin');
 
         expect(users).toEqual([{
@@ -137,13 +137,13 @@ describe('bounded admin user search queries', () => {
         expect(firebaseMocks.getDocs.mock.calls.length).toBeLessThanOrEqual(ADMIN_USER_SEARCH_CANDIDATE_QUERY_CEILING);
     });
 
-    it('caps official enrichment for hundreds of supplied users', async () => {
+    it('covers every bounded user contact while keeping enrichment query fan-out fixed', async () => {
         const users = Array.from({ length: 500 }, (_, index) => ({
             id: `user-${index}`,
-            email: `user-${index}@example.com`,
-            phone: `555000${String(index).padStart(4, '0')}`
+            email: `USER-${index}@example.com`,
+            phone: `+1 (555) 000-${String(index).padStart(4, '0')}`
         }));
-        const { getOfficialsForUsers } = await import('../../js/db.js?v=118-admin-user-search');
+        const { getOfficialsForUsers } = await import('../../js/db.js?v=119-admin-user-search');
 
         await getOfficialsForUsers(users);
 

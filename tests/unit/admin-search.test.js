@@ -1,12 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
     ADMIN_USER_SEARCH_CANDIDATE_QUERY_CEILING,
+    ADMIN_USER_SEARCH_MAX_LENGTH,
     ADMIN_USER_SEARCH_RESULT_LIMIT,
     ADMIN_USER_SEARCH_TOTAL_QUERY_CEILING,
     buildAdminUserSearchStrategies,
     createDebouncedAdminUserSearch,
     hasAdminGlobalSearchTerm,
     loadCompleteAdminSearchCollection,
+    mergeAdminUserSearchResults,
     mergeBoundedAdminUserCandidates,
     normalizeAdminSearchTerm,
     selectAdminItemById,
@@ -50,6 +52,8 @@ describe('admin search collection selection', () => {
         expect(normalizeAdminSearchTerm('  Team Z  ')).toBe('team z');
         expect(hasAdminGlobalSearchTerm('  Team Z  ')).toBe(true);
         expect(hasAdminGlobalSearchTerm('\n\t')).toBe(false);
+        expect(normalizeAdminSearchTerm('X'.repeat(ADMIN_USER_SEARCH_MAX_LENGTH + 20)))
+            .toBe('x'.repeat(ADMIN_USER_SEARCH_MAX_LENGTH));
     });
 
     it('resolves row actions against global search results outside the current page', () => {
@@ -79,7 +83,7 @@ describe('admin search collection selection', () => {
             teams: [{ field: 'name', prefix: 'Robin' }]
         });
         expect(ADMIN_USER_SEARCH_CANDIDATE_QUERY_CEILING).toBe(14);
-        expect(ADMIN_USER_SEARCH_TOTAL_QUERY_CEILING).toBe(18);
+        expect(ADMIN_USER_SEARCH_TOTAL_QUERY_CEILING).toBe(34);
     });
 
     it('finds and caps a later server candidate without scanning paginated users', () => {
@@ -96,6 +100,20 @@ describe('admin search collection selection', () => {
         expect(candidates).toHaveLength(ADMIN_USER_SEARCH_RESULT_LIMIT);
         expect(candidates[0]).toEqual(laterMatch);
         expect(candidates.some((user) => user.id === 'user-450')).toBe(true);
+    });
+
+    it('keeps current-page substring matches alongside remote prefix candidates', () => {
+        const pageUsers = [
+            { id: 'user-1', fullName: 'Jane Smith' },
+            { id: 'user-2', fullName: 'Alex Jones' }
+        ];
+        const remoteUsers = [{ id: 'user-99', fullName: 'Smithson, Robin' }];
+
+        const candidates = mergeAdminUserSearchResults(pageUsers, remoteUsers, 'smith');
+
+        expect(candidates).toEqual([pageUsers[0], remoteUsers[0]]);
+        expect(candidates.filter((user) => user.fullName.toLowerCase().includes('smith')))
+            .toEqual([pageUsers[0], remoteUsers[0]]);
     });
 
     it('requires two normalized characters and debounces rapid typing', async () => {

@@ -1,16 +1,17 @@
 export const ADMIN_USER_SEARCH_MIN_LENGTH = 2;
+export const ADMIN_USER_SEARCH_MAX_LENGTH = 100;
 export const ADMIN_USER_SEARCH_DEBOUNCE_MS = 300;
 export const ADMIN_USER_SEARCH_RESULT_LIMIT = 50;
 export const ADMIN_USER_SEARCH_TEAM_LIMIT = 3;
 export const ADMIN_USER_SEARCH_CONTACT_LIMIT = 20;
 export const ADMIN_USER_SEARCH_CANDIDATE_QUERY_CEILING = 14;
 export const ADMIN_OFFICIAL_ENRICHMENT_USER_LIMIT = 50;
-export const ADMIN_OFFICIAL_ENRICHMENT_QUERY_CEILING = 4;
+export const ADMIN_OFFICIAL_ENRICHMENT_QUERY_CEILING = 20;
 export const ADMIN_USER_SEARCH_TOTAL_QUERY_CEILING =
     ADMIN_USER_SEARCH_CANDIDATE_QUERY_CEILING + ADMIN_OFFICIAL_ENRICHMENT_QUERY_CEILING;
 
 export function normalizeAdminSearchTerm(value = '') {
-    return String(value || '').trim().toLowerCase();
+    return String(value || '').trim().toLowerCase().slice(0, ADMIN_USER_SEARCH_MAX_LENGTH);
 }
 
 export function hasAdminGlobalSearchTerm(value = '') {
@@ -55,6 +56,16 @@ export function mergeBoundedAdminUserCandidates(candidateGroups = [], resultLimi
         usersById.set(id, user);
     });
     return Array.from(usersById.values());
+}
+
+export function mergeAdminUserSearchResults(pageUsers = [], remoteUsers = [], searchTerm = '') {
+    const term = normalizeAdminSearchTerm(searchTerm);
+    const pageMatches = pageUsers.filter((user) => [
+        user?.email,
+        user?.fullName,
+        user?.phone
+    ].some((value) => String(value || '').toLowerCase().includes(term)));
+    return mergeBoundedAdminUserCandidates([pageMatches, remoteUsers]);
 }
 
 export function createDebouncedAdminUserSearch({

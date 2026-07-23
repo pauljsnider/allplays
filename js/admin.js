@@ -15,7 +15,7 @@ import {
     getTelemetryRouteDaily,
     getTelemetryEventDaily,
     getTelemetrySessions
-} from './db.js?v=118';
+} from './db.js?v=119';
 import { db, collection, getDocs, doc, setDoc, updateDoc, serverTimestamp, query } from './firebase.js?v=22';
 import { renderHeader, renderFooter, escapeHtml } from './utils.js?v=18';
 import { checkAuth } from './auth.js?v=129';
@@ -42,10 +42,11 @@ import {
     createDebouncedAdminUserSearch,
     hasAdminGlobalSearchTerm,
     loadCompleteAdminSearchCollection,
+    mergeAdminUserSearchResults,
     normalizeAdminSearchTerm,
     selectAdminItemById,
     selectAdminSearchCollection
-} from './admin-search.js?v=3';
+} from './admin-search.js?v=4';
 import {
     buildTrackedWorkflowLoadSummary,
     buildTelemetryPerformanceSummary,
@@ -186,7 +187,7 @@ async function getAdminUsersForSearch(searchTerm = '') {
         globalSearchUsers = [];
         return allUsers;
     }
-    globalSearchUsers = result.users;
+    globalSearchUsers = mergeAdminUserSearchResults(allUsers, result.users, term);
     return globalSearchUsers;
 }
 
