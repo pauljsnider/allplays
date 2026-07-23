@@ -39,7 +39,11 @@ async function requestNativeAccountDeletion(source: string): Promise<AccountDele
   if (!response.ok || payload?.error) {
     throw new Error(payload?.error?.message || 'Unable to request account deletion.');
   }
-  return payload.data as AccountDeletionResult;
+  const result = payload?.result ?? payload?.data;
+  if (!result) {
+    throw new Error('Account deletion returned an invalid response.');
+  }
+  return result as AccountDeletionResult;
 }
 
 export async function requestAccountDeletion(source = 'app'): Promise<AccountDeletionResult> {

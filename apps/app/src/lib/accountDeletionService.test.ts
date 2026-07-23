@@ -68,7 +68,7 @@ describe('accountDeletionService', () => {
     const fetchMock = vi.fn(async () => ({
       ok: true,
       json: async () => ({
-        data: { success: true, status: 'queued', completionTargetDays: 30 }
+        result: { success: true, status: 'queued', completionTargetDays: 30 }
       })
     }));
     vi.stubGlobal('fetch', fetchMock);
@@ -114,7 +114,7 @@ describe('accountDeletionService', () => {
     const fetchMock = vi.fn(async () => ({
       ok: true,
       json: async () => ({
-        data: { success: true, status: 'queued', completionTargetDays: 30 }
+        result: { success: true, status: 'queued', completionTargetDays: 30 }
       })
     }));
     vi.stubGlobal('fetch', fetchMock);
