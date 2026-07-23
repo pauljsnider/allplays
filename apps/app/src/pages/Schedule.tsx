@@ -373,25 +373,17 @@ export function Schedule({ auth }: { auth: AuthState }) {
     const scheduleCacheTtlMs = 60 * 1000 * 5;
     const scheduleCacheOptions = { ttlMs: scheduleCacheTtlMs, force };
     const cached = getCachedAppData(cacheKey);
+    const parentScopePromise = loadParentScheduleScope(auth.user).catch(() => null);
 
     return runScheduleRead(
-      async () => {
-        const parentScopePromise = loadParentScheduleScope(auth.user).catch(() => null);
-        const result = await loadCachedAppData(
+      () => loadCachedAppData(
           cacheKey,
-          async () => {
-            const parentScope = await parentScopePromise;
-            return loadParentSchedule(auth.user, {
-              hydrateDetails: false,
-              expandStaffPlayers: false,
-              ...(parentScope ? { parentScope } : {})
-            });
-          },
+          () => loadParentSchedule(auth.user, { hydrateDetails: false, expandStaffPlayers: false }),
           {
             ...scheduleCacheOptions,
             shouldCache: (loadedResult) => loadedResult?.isPartial !== true
           }
-        );
+        ).then(async (result) => {
         const parentScope = await parentScopePromise;
         return {
           ...result,
@@ -400,7 +392,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
           // newly created team can be edited immediately.
           staffTeams: parentScope?.staffTeams ?? result.staffTeams ?? []
         };
-      },
+      }),
       {
         getErrorMessage: (loadError) => {
           return getScheduleLoadErrorMessage(toAppServiceError(loadError, 'Unable to load schedule.'), hasExistingSchedule);
