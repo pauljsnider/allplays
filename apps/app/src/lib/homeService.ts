@@ -149,7 +149,10 @@ export async function loadParentTeamsSummaryBootstrap(
         const model = buildParentHomeModel({
           children: scheduleScope.children,
           events: [],
-          inboxTeams: normalizeInboxTeams(chatInbox.teams || []),
+          inboxTeams: mergeTeamSummaries(
+            normalizeStaffTeams({ children: [], events: [], staffTeams: scheduleScope.staffTeams }),
+            normalizeInboxTeams(chatInbox.teams || [])
+          ),
           fees: []
         });
         timer.end({
@@ -299,4 +302,20 @@ function normalizeInboxTeams(teams: any[]): ParentHomeInboxTeam[] {
     archived: team.archived,
     status: team.status
   }));
+}
+
+function mergeTeamSummaries(
+  staffTeams: ParentHomeInboxTeam[],
+  inboxTeams: ParentHomeInboxTeam[]
+): ParentHomeInboxTeam[] {
+  const teamsById = new Map(staffTeams.map((team) => [team.id, team]));
+  inboxTeams.forEach((team) => {
+    const staffTeam = teamsById.get(team.id);
+    teamsById.set(team.id, {
+      ...staffTeam,
+      ...team,
+      role: staffTeam?.role || team.role
+    });
+  });
+  return [...teamsById.values()];
 }

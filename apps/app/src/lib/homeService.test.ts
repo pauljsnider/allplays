@@ -77,7 +77,8 @@ describe('homeService Teams bootstrap reuse', () => {
                 teamName: 'Fast Falcons',
                 playerId: 'player-1',
                 playerName: 'Avery Ace'
-            }]
+            }],
+            staffTeams: [{ teamId: 'team-owned', teamName: 'Vipers' }]
         };
         scheduleServiceMocks.loadParentScheduleScope.mockResolvedValue(scheduleScope);
         scheduleServiceMocks.loadParentSchedule.mockImplementation(async (_authUser, options) => ({
@@ -99,6 +100,40 @@ describe('homeService Teams bootstrap reuse', () => {
             parentScope: scheduleScope
         }));
         expect(window.localStorage.getItem('allplays:appDataCache:teams-summary-bootstrap%3Aparent-1')).toBeNull();
+    });
+
+    it('includes a newly created staff team before it has players, events, or chat', async () => {
+        scheduleServiceMocks.loadParentScheduleScope.mockResolvedValue({
+            profile: { coachOf: ['team-owned'] },
+            children: [{
+                teamId: 'team-parent',
+                teamName: 'Jr KC Current',
+                playerId: 'player-1',
+                playerName: 'Madison Snider'
+            }],
+            staffTeams: [{ teamId: 'team-owned', teamName: 'Vipers' }]
+        });
+        chatServiceMocks.loadChatInbox.mockResolvedValue({
+            teams: [{
+                id: 'team-parent',
+                name: 'Jr KC Current',
+                role: 'Parent',
+                unreadCount: 0
+            }]
+        });
+
+        const summary = await loadParentTeamsSummaryBootstrap(user, { force: true });
+
+        expect(summary.home.teams).toEqual(expect.arrayContaining([
+            expect.objectContaining({ teamId: 'team-parent', teamName: 'Jr KC Current' }),
+            expect.objectContaining({
+                teamId: 'team-owned',
+                teamName: 'Vipers',
+                role: 'Coach',
+                players: []
+            })
+        ]));
+        expect(summary.home.metrics.teams).toBe(2);
     });
 
     it('does not cache partial parent schedule summaries as complete results', async () => {

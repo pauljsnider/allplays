@@ -222,7 +222,7 @@ import { getCachedAppData, invalidateCachedAppData, loadCachedAppData } from './
 import { mapScheduleEventRecord } from './firestore/mappers';
 import { loadProfileDocument } from './profileService';
 import { getScheduleTournamentInfo } from './scheduleLogic';
-import { adjustGameScore, buildPlayerScoringLiveEvent, buildSingleGameTournamentLegacySchedulePayload, claimOfficialAssignmentItem, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, flushPendingLivePublishOperations, hydrateParentScheduleDetails, hydrateParentScheduleRsvps, loadOfficialAssignments, loadParentSchedule, loadParentScheduleChildren, loadParentScheduleEventDetail, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitParentScheduleRsvp, submitParentScheduleRsvpForChildren, submitStaffScheduleRsvpOverride, TournamentBlockPartialSaveError, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
+import { adjustGameScore, buildPlayerScoringLiveEvent, buildSingleGameTournamentLegacySchedulePayload, claimOfficialAssignmentItem, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, flushPendingLivePublishOperations, hydrateParentScheduleDetails, hydrateParentScheduleRsvps, loadOfficialAssignments, loadParentSchedule, loadParentScheduleChildren, loadParentScheduleEventDetail, loadParentScheduleScope, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitParentScheduleRsvp, submitParentScheduleRsvpForChildren, submitStaffScheduleRsvpOverride, TournamentBlockPartialSaveError, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
 
 function playerSnapshot(id: string, data: Record<string, unknown> | null) {
   return {
@@ -410,6 +410,30 @@ describe('parent schedule child scope', () => {
     expect(new Set(schedule.events.map((event) => event.teamId))).toEqual(new Set());
     expect(getTeam).not.toHaveBeenCalledWith('team-inactive');
     expect(getGames).toHaveBeenCalledTimes(3);
+  });
+
+  it('carries newly created staff teams through the reusable parent scope', async () => {
+    const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'], coachOf: ['team-owned'] } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: ['team-owned'] } as any);
+    vi.mocked(getStaffTeams).mockResolvedValue([
+      { id: 'team-owned', name: 'Vipers', ownerId: 'coach-1', active: true }
+    ] as any);
+    vi.mocked(getGames).mockResolvedValue([] as any);
+    vi.mocked(getPracticeSessions).mockResolvedValue([] as any);
+
+    const scope = await loadParentScheduleScope(coachUser);
+    const schedule = await loadParentSchedule(coachUser, {
+      hydrateDetails: false,
+      expandStaffPlayers: false,
+      parentScope: scope
+    });
+
+    expect(scope.staffTeams).toEqual([{ teamId: 'team-owned', teamName: 'Vipers' }]);
+    expect(schedule.staffTeams).toEqual([{ teamId: 'team-owned', teamName: 'Vipers' }]);
+    expect(getStaffTeams).toHaveBeenCalledTimes(1);
+    expect(getGames).toHaveBeenCalledWith('team-owned', expect.objectContaining({
+      startDate: expect.any(Date)
+    }));
   });
 });
 
