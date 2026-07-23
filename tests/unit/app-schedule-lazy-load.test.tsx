@@ -39,7 +39,8 @@ describe('Schedule lazy-load guards', () => {
         expect(refreshSource).toContain('...(parentScope && parentScope.isPartial !== true ? { parentScope } : {})');
         expect(refreshSource).toContain("getScheduleLoadErrorMessage(toAppServiceError(loadError, 'Unable to load schedule.'), hasExistingSchedule)");
         expect(refreshSource).toContain('onSuccess: (result) => {');
-        expect(refreshSource).toContain('events: applyAuthoritativeStaffScope(result.events, refreshedStaffTeams)');
+        expect(refreshSource).toContain('children: refreshedChildren!');
+        expect(refreshSource).toContain('events: applyAuthoritativeScheduleScope(result.events, refreshedChildren!, refreshedStaffTeams)');
         expect(refreshSource).toContain('applyScheduleResult(authoritativeResult);');
         expect(refreshSource).toContain('cacheHit: Boolean(cached) && !force');
         expect(refreshSource).toContain('onError: (loadError) => {');
