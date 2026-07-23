@@ -447,8 +447,8 @@ jobs:
                   fi
 
                   final_http_status="$(
-                    grep -Eio 'HTTP Error:[[:space:]]*(429|500|502|503|504)|(^|[^[:digit:]])(429|500|502|503|504)([^[:digit:]]|$)' "$deploy_log" \
-                      | grep -Eo '(429|500|502|503|504)' \
+                    grep -Eio 'HTTP Error:[[:space:]]*(409|429|500|502|503|504)|(^|[^[:digit:]])(409|429|500|502|503|504)([^[:digit:]]|$)' "$deploy_log" \
+                      | grep -Eo '(409|429|500|502|503|504)' \
                       | tail -n 1 \
                       || true
                   )"

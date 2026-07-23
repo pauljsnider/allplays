@@ -279,6 +279,12 @@ export function validateProductionDeployCommand(deployProd) {
     assertIncludes(deployProd, 'HTTP Error:[[:space:]]*409,[[:space:]]*Requested entity already exists', 'Production Firestore release-race retry');
     assertIncludes(deployProd, 'if [[ "$deploy_label" == "firestore" ]]; then', 'Production Firestore retry-exhaustion summary scope');
     assertIncludes(deployProd, 'Firestore Rules API (firebaserules.googleapis.com)', 'Production Firestore retry-exhaustion API surface');
+    assertIncludes(
+        deployProd,
+        `grep -Eio 'HTTP Error:[[:space:]]*(409|429|500|502|503|504)|(^|[^[:digit:]])(409|429|500|502|503|504)([^[:digit:]]|$)'`,
+        'Production Firestore retry-exhaustion HTTP status extraction'
+    );
+    assertIncludes(deployProd, `grep -Eo '(409|429|500|502|503|504)'`, 'Production Firestore retry-exhaustion HTTP status normalization');
     assertIncludes(deployProd, 'final_error_class="HTTP ${final_http_status}"', 'Production Firestore retry-exhaustion HTTP error class');
     assertIncludes(deployProd, 'echo "| Attempts exhausted | ${max_attempts}/${max_attempts} |"', 'Production Firestore retry-exhaustion attempt count');
     assertIncludes(deployProd, 'echo \'| Not deployed | `firestore:rules`, `firestore:indexes`, `hosting`, `functions` |\'', 'Production Firestore retry-exhaustion blocked surfaces');

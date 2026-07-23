@@ -149,6 +149,8 @@ concurrency:
           fi
           if [[ "$deploy_label" == "firestore" ]]; then
             api_surface="Firestore Rules API (firebaserules.googleapis.com)"
+            grep -Eio 'HTTP Error:[[:space:]]*(409|429|500|502|503|504)|(^|[^[:digit:]])(409|429|500|502|503|504)([^[:digit:]]|$)' "$deploy_log" \\
+              | grep -Eo '(409|429|500|502|503|504)'
             final_error_class="HTTP \${final_http_status}"
             echo "| Attempts exhausted | \${max_attempts}/\${max_attempts} |"
             echo '| Not deployed | \`firestore:rules\`, \`firestore:indexes\`, \`hosting\`, \`functions\` |'
@@ -216,6 +218,12 @@ concurrency:
             'Firestore Rules API (firebaserules.googleapis.com)',
             'Firestore API'
         ))).toThrow('Production Firestore retry-exhaustion API surface');
+        expect(() => validateProductionDeployCommand(validDeployCommand.replace(
+            `grep -Eio 'HTTP Error:[[:space:]]*(409|429|500|502|503|504)|(^|[^[:digit:]])(409|429|500|502|503|504)([^[:digit:]]|$)' "$deploy_log" \\
+              | grep -Eo '(409|429|500|502|503|504)'`,
+            `grep -Eio 'HTTP Error:[[:space:]]*(429|500|502|503|504)|(^|[^[:digit:]])(429|500|502|503|504)([^[:digit:]]|$)' "$deploy_log" \\
+              | grep -Eo '(429|500|502|503|504)'`
+        ))).toThrow('Production Firestore retry-exhaustion HTTP status extraction');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
             'final_error_class="HTTP ${final_http_status}"',
             'final_error_class="transient failure"'
