@@ -277,6 +277,18 @@ export function validateProductionDeployCommand(deployProd) {
     assertIncludes(deployProd, 'retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 8 30', 'Production Firestore deploy targets and bounded extended retry');
     assertIncludes(deployProd, 'if (( retry_delay_seconds > 120 )); then', 'Production Firebase retry delay cap');
     assertIncludes(deployProd, 'HTTP Error:[[:space:]]*409,[[:space:]]*Requested entity already exists', 'Production Firestore release-race retry');
+    assertIncludes(deployProd, 'if [[ "$deploy_label" == "firestore" ]]; then', 'Production Firestore retry-exhaustion summary scope');
+    assertIncludes(deployProd, 'Firestore Rules API (firebaserules.googleapis.com)', 'Production Firestore retry-exhaustion API surface');
+    assertIncludes(deployProd, 'final_error_class="HTTP ${final_http_status}"', 'Production Firestore retry-exhaustion HTTP error class');
+    assertIncludes(deployProd, 'echo "| Attempts exhausted | ${max_attempts}/${max_attempts} |"', 'Production Firestore retry-exhaustion attempt count');
+    assertIncludes(deployProd, 'echo \'| Not deployed | `firestore:rules`, `firestore:indexes`, `hosting`, `functions` |\'', 'Production Firestore retry-exhaustion blocked surfaces');
+    assertIncludes(deployProd, '} >> "$GITHUB_STEP_SUMMARY"', 'Production Firestore retry-exhaustion job summary');
+    assertIncludes(
+        deployProd,
+        '${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/master/docs/observability-runbook.md#firestore-rules-api-retry-exhaustion',
+        'Production Firestore retry-exhaustion recovery link'
+    );
+    assertIncludes(deployProd, 'Firestore configuration changes remain fail-closed, so Hosting and Functions were not deployed.', 'Production Firestore retry-exhaustion fail-closed guidance');
     assertIncludes(deployProd, 'actions: read', 'Production workflow-run read permission');
     assertIncludes(deployProd, 'GH_TOKEN: ${{ github.token }}', 'Production workflow-run authentication');
     assertIncludes(deployProd, 'actions/workflows/deploy-prod.yml/runs', 'Production successful deploy lookup');

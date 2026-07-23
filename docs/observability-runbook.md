@@ -67,6 +67,21 @@ Telemetry must never justify rolling back unrelated product code. If the collect
 
 If the critical workflow monitor is noisy, disable only its schedule while investigating and leave deploy, post-deploy smoke, and Firestore recovery workflows enabled. Close its managed issue only after a successful exact check.
 
+## Firestore Rules API retry exhaustion
+
+The production workflow makes eight bounded attempts when a transient Firestore configuration deployment fails. If those attempts are exhausted, the job summary identifies the Google API surface, final HTTP error class, attempt count, and surfaces that were not deployed. The summary uses only fixed operational labels and does not copy API response bodies, credentials, tenant identifiers, or application data.
+
+Firestore configuration changes remain fail-closed. When Rules or indexes differ from the last successful production deployment, Hosting and Functions do not deploy until the Firestore configuration succeeds. Existing production remains active; do not bypass the workflow or deploy application surfaces separately.
+
+Safe manual retry:
+
+1. Confirm the failed run targeted `master` and that its summary reports a transient Google API failure rather than a configuration or authorization error.
+2. Confirm `master` still contains the intended Firestore configuration. If a newer production deployment succeeded, no retry is needed.
+3. In GitHub Actions, open `deploy-prod`, choose **Run workflow**, select `master`, and run it. Manual dispatch is restricted to the current `master` branch and repeats the protected tests, change detection, keyless authentication, bounded retries, and fail-closed ordering.
+4. Confirm the Firestore configuration step succeeds before Hosting and Functions, then confirm the production smoke workflow succeeds.
+
+Do not run a local `firebase deploy`, increase retry limits, expose raw API output in the summary, or bypass the protected production environment. If another bounded run ends with the same external error class, treat it as an ongoing Google service incident and leave production on the last successful configuration.
+
 ## Critical workflow alert
 
 The managed incident title is `[Observability] Critical production signals are unhealthy`. The reconciler mutates an exact issue only when it was created by `github-actions[bot]`, carries the `security` label, and contains the private management marker. Duplicate or user-created collisions fail closed.

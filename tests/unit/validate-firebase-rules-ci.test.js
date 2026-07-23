@@ -147,6 +147,15 @@ concurrency:
           if (( retry_delay_seconds > 120 )); then
             retry_delay_seconds=120
           fi
+          if [[ "$deploy_label" == "firestore" ]]; then
+            api_surface="Firestore Rules API (firebaserules.googleapis.com)"
+            final_error_class="HTTP \${final_http_status}"
+            echo "| Attempts exhausted | \${max_attempts}/\${max_attempts} |"
+            echo '| Not deployed | \`firestore:rules\`, \`firestore:indexes\`, \`hosting\`, \`functions\` |'
+            echo "Firestore configuration changes remain fail-closed, so Hosting and Functions were not deployed."
+            echo "Recovery: \${GITHUB_SERVER_URL}/\${GITHUB_REPOSITORY}/blob/master/docs/observability-runbook.md#firestore-rules-api-retry-exhaustion"
+          } >> "$GITHUB_STEP_SUMMARY"
+          fi
           if [[ "$FIRESTORE_CONFIG_CHANGED" == "true" ]]; then
             retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 8 30
             retry_firebase_deploy "hosting,functions" "application"
@@ -203,6 +212,26 @@ concurrency:
             'HTTP Error:[[:space:]]*409,[[:space:]]*Requested entity already exists',
             '(^|[^[:alnum:]])409([^[:alnum:]]|$)'
         ))).toThrow('Production Firestore release-race retry');
+        expect(() => validateProductionDeployCommand(validDeployCommand.replace(
+            'Firestore Rules API (firebaserules.googleapis.com)',
+            'Firestore API'
+        ))).toThrow('Production Firestore retry-exhaustion API surface');
+        expect(() => validateProductionDeployCommand(validDeployCommand.replace(
+            'final_error_class="HTTP ${final_http_status}"',
+            'final_error_class="transient failure"'
+        ))).toThrow('Production Firestore retry-exhaustion HTTP error class');
+        expect(() => validateProductionDeployCommand(validDeployCommand.replace(
+            'echo "| Attempts exhausted | ${max_attempts}/${max_attempts} |"',
+            'echo "Retries exhausted"'
+        ))).toThrow('Production Firestore retry-exhaustion attempt count');
+        expect(() => validateProductionDeployCommand(validDeployCommand.replace(
+            'echo \'| Not deployed | `firestore:rules`, `firestore:indexes`, `hosting`, `functions` |\'',
+            'echo "Deployment blocked"'
+        ))).toThrow('Production Firestore retry-exhaustion blocked surfaces');
+        expect(() => validateProductionDeployCommand(validDeployCommand.replace(
+            '${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/master/docs/observability-runbook.md#firestore-rules-api-retry-exhaustion',
+            'docs/observability-runbook.md'
+        ))).toThrow('Production Firestore retry-exhaustion recovery link');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
             `retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 8 30
             retry_firebase_deploy "hosting,functions" "application"`,
