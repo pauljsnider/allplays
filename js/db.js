@@ -2216,7 +2216,7 @@ function buildAdminPrefixQuery(reference, strategy, resultLimit = ADMIN_USER_SEA
  * Runs at most 17 Firestore queries: 3 user prefixes, 1 substring-index lookup,
  * 2 indexed-user lookups, 3 official prefixes, 1 team prefix, 3 bounded
  * team-official reads, and 4 contact-to-user lookups. Official enrichment is
- * separately capped at 4 queries, for 21 total per search.
+ * separately capped at 8 queries, for 25 total per search.
  */
 export async function searchAdminUsers(searchTerm = '') {
     const strategies = buildAdminUserSearchStrategies(searchTerm);

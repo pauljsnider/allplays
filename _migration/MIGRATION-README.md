@@ -49,3 +49,6 @@ See the header comment in each script for usage:
 `backfill-reciprocal-parent-links.js`,
 `migrate-player-private-profile.js`,
 `quarantine-legacy-targeted-team-chat.js`.
+
+`backfill-admin-user-search-index.js` is also applied automatically by the
+production deployment when its migration or index-building logic changes.

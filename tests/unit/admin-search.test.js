@@ -86,7 +86,7 @@ describe('admin search collection selection', () => {
             teams: [{ field: 'name', prefix: 'Robin' }]
         });
         expect(ADMIN_USER_SEARCH_CANDIDATE_QUERY_CEILING).toBe(17);
-        expect(ADMIN_USER_SEARCH_TOTAL_QUERY_CEILING).toBe(21);
+        expect(ADMIN_USER_SEARCH_TOTAL_QUERY_CEILING).toBe(25);
     });
 
     it('finds and caps a later server candidate without scanning paginated users', () => {

@@ -89,6 +89,7 @@ jobs:
       actions: read
       contents: read
     outputs:
+      admin_user_search_backfill_needed: ${{ steps.firestore_config.outputs.admin_user_search_backfill_needed }}
       firestore_changed: ${{ steps.firestore_config.outputs.changed }}
       head_sha: ${{ steps.handoff_identity.outputs.head_sha }}
       storage_changed: ${{ steps.firestore_config.outputs.storage_changed }}
@@ -170,6 +171,7 @@ jobs:
 
           if [[ "$lookup_succeeded" != "true" ]]; then
             echo "::warning::The successful production deploy lookup failed; forcing authorization rules-first ordering."
+            echo "admin_user_search_backfill_needed=true" >> "$GITHUB_OUTPUT"
             echo "changed=true" >> "$GITHUB_OUTPUT"
             echo "storage_changed=true" >> "$GITHUB_OUTPUT"
             exit 0
@@ -177,13 +179,22 @@ jobs:
 
           if [[ ! "$last_success_sha" =~ ^[0-9a-f]{40}$ ]]; then
             echo "::warning::No valid successful production deploy baseline was found; forcing authorization rules-first ordering."
+            echo "admin_user_search_backfill_needed=true" >> "$GITHUB_OUTPUT"
             echo "changed=true" >> "$GITHUB_OUTPUT"
             echo "storage_changed=true" >> "$GITHUB_OUTPUT"
           elif ! git cat-file -e "${last_success_sha}^{commit}" 2>/dev/null; then
             echo "::warning::The last successful production deploy commit is unavailable locally; forcing authorization rules-first ordering."
+            echo "admin_user_search_backfill_needed=true" >> "$GITHUB_OUTPUT"
             echo "changed=true" >> "$GITHUB_OUTPUT"
             echo "storage_changed=true" >> "$GITHUB_OUTPUT"
           else
+            if git diff --quiet "$last_success_sha" "$GITHUB_SHA" -- \
+              _migration/backfill-admin-user-search-index.js \
+              functions/admin-user-search-index-core.cjs; then
+              echo "admin_user_search_backfill_needed=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "admin_user_search_backfill_needed=true" >> "$GITHUB_OUTPUT"
+            fi
             if git diff --quiet "$last_success_sha" "$GITHUB_SHA" -- firestore.rules firestore.indexes.json; then
               echo "changed=false" >> "$GITHUB_OUTPUT"
             else
@@ -206,6 +217,9 @@ jobs:
             -cf "$FIREBASE_PRODUCTION_BUNDLE/functions-runtime.tar" \
             functions
           mkdir -p "$FIREBASE_PRODUCTION_BUNDLE/context"
+          mkdir -p "$FIREBASE_PRODUCTION_BUNDLE/_migration"
+          cp _migration/backfill-admin-user-search-index.js \
+            "$FIREBASE_PRODUCTION_BUNDLE/_migration/backfill-admin-user-search-index.mjs"
           cp scripts/extract-production-functions-handoff.py "$FIREBASE_PRODUCTION_BUNDLE/context/"
 
       - name: Install isolated Firebase deploy CLI without OIDC or lifecycle scripts
@@ -262,6 +276,7 @@ jobs:
 
       - name: Validate and extract trusted production handoff before OIDC
         env:
+          ADMIN_USER_SEARCH_BACKFILL_NEEDED: ${{ needs.prepare-deploy.outputs.admin_user_search_backfill_needed }}
           FIRESTORE_CONFIG_CHANGED: ${{ needs.prepare-deploy.outputs.firestore_changed }}
           PREPARED_HEAD_SHA: ${{ needs.prepare-deploy.outputs.head_sha }}
           STORAGE_RULES_CHANGED: ${{ needs.prepare-deploy.outputs.storage_changed }}
@@ -276,6 +291,10 @@ jobs:
             echo "Invalid Firestore change state." >&2
             exit 1
           fi
+          if [[ "$ADMIN_USER_SEARCH_BACKFILL_NEEDED" != "true" && "$ADMIN_USER_SEARCH_BACKFILL_NEEDED" != "false" ]]; then
+            echo "Invalid admin user search backfill state." >&2
+            exit 1
+          fi
           if [[ "$STORAGE_RULES_CHANGED" != "true" && "$STORAGE_RULES_CHANGED" != "false" ]]; then
             echo "Invalid Storage change state." >&2
             exit 1
@@ -285,6 +304,8 @@ jobs:
           test -f "$bundle/functions-runtime.tar"
           test -f "$bundle/context/extract-production-functions-handoff.py"
           test ! -L "$bundle/context/extract-production-functions-handoff.py"
+          test -f "$bundle/_migration/backfill-admin-user-search-index.mjs"
+          test ! -L "$bundle/_migration/backfill-admin-user-search-index.mjs"
           test -f "$bundle/firestore.rules"
           test -f "$bundle/firestore.indexes.json"
           test -f "$bundle/storage.rules"
@@ -299,6 +320,7 @@ jobs:
           python3 "$bundle/context/extract-production-functions-handoff.py" \
             "$bundle/functions-runtime.tar" \
             "$bundle"
+          ln -s functions/node_modules "$bundle/node_modules"
           echo "FIREBASE_PRODUCTION_BUNDLE=$bundle" >> "$GITHUB_ENV"
 
       - name: Authenticate Storage deploy through exact-workflow OIDC
@@ -380,6 +402,7 @@ jobs:
         timeout-minutes: 20
         shell: bash
         env:
+          ADMIN_USER_SEARCH_BACKFILL_NEEDED: ${{ needs.prepare-deploy.outputs.admin_user_search_backfill_needed }}
           FIRESTORE_CONFIG_CHANGED: ${{ needs.prepare-deploy.outputs.firestore_changed }}
         run: |
           set -euo pipefail
@@ -437,6 +460,10 @@ jobs:
             # production deployment. Do not make a redundant Rules API write: an
             # unrelated Rules API outage must not fail a Hosting/Functions-only fix.
             retry_firebase_deploy "hosting,functions" "application"
+          fi
+
+          if [[ "$ADMIN_USER_SEARCH_BACKFILL_NEEDED" == "true" ]]; then
+            node "$FIREBASE_PRODUCTION_BUNDLE/_migration/backfill-admin-user-search-index.mjs" --apply
           fi
 
       - name: Remove production deploy credential

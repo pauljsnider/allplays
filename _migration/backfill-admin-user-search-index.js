@@ -1,16 +1,35 @@
 #!/usr/bin/env node
 
 import { createRequire } from 'node:module';
-import { getApps, initializeApp } from 'firebase-admin/app';
+import { readFileSync } from 'node:fs';
+import { applicationDefault, cert, getApps, initializeApp } from 'firebase-admin/app';
 import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 
 const require = createRequire(import.meta.url);
 const { buildAdminUserSearchHashes } = require('../functions/admin-user-search-index-core.cjs');
 const APPLY = process.argv.includes('--apply');
 const FIRESTORE_BATCH_LIMIT = 500;
+const FIREBASE_PROJECT_ID = 'game-flow-c6311';
+
+function getAdminAppOptions() {
+    if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+        return {
+            credential: applicationDefault(),
+            projectId: FIREBASE_PROJECT_ID
+        };
+    }
+
+    const serviceAccount = JSON.parse(
+        readFileSync(new URL('./serviceAccountKey.json', import.meta.url), 'utf8')
+    );
+    return {
+        credential: cert(serviceAccount),
+        projectId: FIREBASE_PROJECT_ID
+    };
+}
 
 async function main() {
-    if (!getApps().length) initializeApp();
+    if (!getApps().length) initializeApp(getAdminAppOptions());
 
     const db = getFirestore();
     const snapshot = await db.collection('users').get();

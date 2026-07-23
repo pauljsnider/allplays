@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
     ADMIN_OFFICIAL_ENRICHMENT_QUERY_CEILING,
     ADMIN_USER_SEARCH_CANDIDATE_QUERY_CEILING,
@@ -169,8 +170,8 @@ describe('bounded admin user search queries', () => {
     it('covers every bounded user contact while keeping enrichment query fan-out fixed', async () => {
         const users = Array.from({ length: 500 }, (_, index) => ({
             id: `user-${index}`,
-            email: `user-${index}@example.com`,
-            phone: `555000${String(index).padStart(4, '0')}`
+            email: `User-${index}@Example.com`,
+            phone: `+1 (555) 000-${String(index).padStart(4, '0')}`
         }));
         const { getOfficialsForUsers } = await import('../../js/db.js?v=123-admin-user-search');
 
@@ -186,8 +187,12 @@ describe('bounded admin user search queries', () => {
             const targets = filter.field === 'email' ? emailTargets : phoneTargets;
             filter.value.forEach((value) => targets.add(value));
         });
-        expect(emailTargets.size).toBe(50);
-        expect(phoneTargets.size).toBe(50);
+        expect(emailTargets.size).toBe(100);
+        expect(phoneTargets.size).toBe(100);
+        expect(emailTargets).toContain('User-49@Example.com');
+        expect(emailTargets).toContain('user-49@example.com');
+        expect(phoneTargets).toContain('+1 (555) 000-0049');
+        expect(phoneTargets).toContain('5550000049');
     });
 
     it('finds an official linked to a search result beyond position 25', async () => {
@@ -221,5 +226,16 @@ describe('bounded admin user search queries', () => {
                 email: 'user-29@example.com'
             }
         }]);
+    });
+
+    it('runs the existing-user index backfill in the normal production deployment', () => {
+        const workflow = readFileSync(new URL('../../.github/workflows/deploy-prod.yml', import.meta.url), 'utf8');
+        const migration = readFileSync(new URL('../../_migration/backfill-admin-user-search-index.js', import.meta.url), 'utf8');
+
+        expect(workflow).toContain('admin_user_search_backfill_needed:');
+        expect(workflow).toContain('cp _migration/backfill-admin-user-search-index.js');
+        expect(workflow).toContain('node "$FIREBASE_PRODUCTION_BUNDLE/_migration/backfill-admin-user-search-index.mjs" --apply');
+        expect(migration).toContain('applicationDefault()');
+        expect(migration).toContain("new URL('./serviceAccountKey.json', import.meta.url)");
     });
 });
