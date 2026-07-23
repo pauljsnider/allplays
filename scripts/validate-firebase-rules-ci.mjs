@@ -316,7 +316,11 @@ export function validateProductionDeployCommand(deployProd) {
     assertMatches(storageDeployCommand, /--project game-flow-c6311(?:\s|$)/, 'Production Storage rules deploy project');
     assertMatches(storageDeployCommand, /--config "\$firebase_config"(?:\s|$)/, 'Production Storage rules generated config');
     assertIncludes(deployProd, 'fetch-depth: 0', 'Production Storage rules change history');
-    assertIncludes(deployProd, 'git diff --quiet "${{ github.event.before }}" "${{ github.sha }}" -- storage.rules', 'Production Storage rules change detection');
+    assertMatches(
+        deployProd,
+        /if \[\[ "\$GITHUB_EVENT_NAME" == "workflow_dispatch" \]\]; then\s+echo "changed=false" >> "\$GITHUB_OUTPUT"\s+elif git diff --quiet "\$\{\{ github\.event\.before \}\}" "\$\{\{ github\.sha \}\}" -- storage\.rules; then/,
+        'Production Storage rules manual retry-safe change detection'
+    );
     assertIncludes(deployProd, 'STORAGE_RULES_CHANGED: ${{ needs.prepare-deploy.outputs.storage_changed }}', 'Production Storage rules change output');
     assertIncludes(deployProd, "sed -E 's/\\x1B\\[[0-9;]*[[:alpha:]]//g' \"$storage_log\" > \"$storage_plain_log\"", 'Production Storage rules ANSI log normalization');
     assertIncludes(deployProd, '[[ "$STORAGE_RULES_CHANGED" != "true" ]]', 'Production Storage rules unchanged-only skip');

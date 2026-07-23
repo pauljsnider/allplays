@@ -101,7 +101,12 @@ on:
         actions: read
       - name: Detect Storage rules changes
         id: storage_rules
-        run: git diff --quiet "\${{ github.event.before }}" "\${{ github.sha }}" -- storage.rules
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          elif git diff --quiet "\${{ github.event.before }}" "\${{ github.sha }}" -- storage.rules; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Detect Firestore configuration changes
         id: firestore_config
         env:
@@ -163,6 +168,14 @@ on:
         expect(() => validateProductionDeployCommand(
             validDeployCommand.replace('-f branch="$baseline_branch"', '-f branch="$GITHUB_REF_NAME"')
         )).toThrow('Production successful deploy branch filter');
+        expect(() => validateProductionDeployCommand(
+            validDeployCommand.replace(
+                `if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          elif git diff --quiet "\${{ github.event.before }}" "\${{ github.sha }}" -- storage.rules; then`,
+                'if git diff --quiet "\${{ github.event.before }}" "\${{ github.sha }}" -- storage.rules; then'
+            )
+        )).toThrow('Production Storage rules manual retry-safe change detection');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace('[[ "$STORAGE_RULES_CHANGED" != "true" ]]', '[[ true ]]'))).toThrow(
             'Production Storage rules unchanged-only skip'
         );

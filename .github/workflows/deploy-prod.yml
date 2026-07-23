@@ -139,7 +139,9 @@ jobs:
         id: storage_rules
         shell: bash
         run: |
-          if git diff --quiet "${{ github.event.before }}" "${{ github.sha }}" -- storage.rules; then
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          elif git diff --quiet "${{ github.event.before }}" "${{ github.sha }}" -- storage.rules; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
