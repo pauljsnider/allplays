@@ -938,7 +938,7 @@ function withTeamNavPath(items: NavItem[], teamNavPath: string): NavItem[] {
 }
 
 function withTeamContextSchedulePath(items: NavItem[], pathname: string): NavItem[] {
-  const match = String(pathname || '').match(/^\/teams\/([^/]+)$/);
+  const match = String(pathname || '').match(/^\/teams\/([^/]+)(?:\/|$)/);
   const teamId = match?.[1] || '';
   if (!teamId || teamId === 'browse' || teamId === 'new') return items;
   return items.map((item) => item.path === '/schedule'

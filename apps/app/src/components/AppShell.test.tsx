@@ -302,6 +302,23 @@ describe('AppShell', () => {
     );
   });
 
+  it('keeps Schedule scoped across nested team management pages', () => {
+    useShellLayoutMock.mockReturnValue({ isDesktopWeb: false });
+    render(
+      <MemoryRouter initialEntries={['/teams/team-vipers/settings']}>
+        <Routes>
+          <Route path="/teams/:teamId/settings" element={<AppShell auth={signedInAuth}><div>Vipers settings</div></AppShell>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    const primaryNav = screen.getByRole('navigation', { name: 'Primary navigation' });
+    expect(within(primaryNav).getByRole('link', { name: 'Schedule' })).toHaveAttribute(
+      'href',
+      '/schedule?teamId=team-vipers'
+    );
+  });
+
   it('routes the mobile My Teams nav directly to the team page when the user has one team', () => {
     useShellLayoutMock.mockReturnValue({ isDesktopWeb: false });
     const oneTeamAuth: AuthState = {
