@@ -1,0 +1,126 @@
+name: deploy-candidate-host
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: candidate-host-deploy
+  cancel-in-progress: true
+
+jobs:
+  prepare-candidate-artifact:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Setup Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install app dependencies
+        run: npm ci --prefix apps/app
+
+      - name: Build React app
+        run: npm run app:build
+
+      - name: Stage root site and React app
+        env:
+          ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY: ${{ vars.APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY }}
+          ALLPLAYS_APP_CHECK_ENFORCEMENT_READY: ${{ vars.APP_CHECK_ENFORCEMENT_READY }}
+        run: |
+          set -euo pipefail
+          bundle="$RUNNER_TEMP/firebase-candidate-ready"
+          node scripts/stage-pages-bundle.mjs "$bundle/site"
+          node scripts/write-firebase-hosting-config.mjs "$bundle/site" "$bundle/firebase-candidate.generated.json"
+          jq '
+            .hosting.public = "site"
+            | .hosting.site = "game-flow-c6311"
+            | del(.functions, .firestore, .storage)
+          ' "$bundle/firebase-candidate.generated.json" > "$bundle/firebase-candidate.generated.json.tmp"
+          mv "$bundle/firebase-candidate.generated.json.tmp" "$bundle/firebase-candidate.generated.json"
+          printf '%s\n' "$GITHUB_SHA" > "$bundle/head-sha"
+
+      - name: Install isolated Firebase Hosting deploy CLI without OIDC or lifecycle scripts
+        run: |
+          set -euo pipefail
+          bundle="$RUNNER_TEMP/firebase-candidate-ready"
+          npm install \
+            --prefix "$bundle/firebase-cli" \
+            --ignore-scripts \
+            --no-audit \
+            --no-fund \
+            --package-lock=false \
+            firebase-tools@15.24.0
+          node "$bundle/firebase-cli/node_modules/firebase-tools/lib/bin/firebase.js" --version
+
+      - name: Upload trusted candidate deploy handoff
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: firebase-candidate-trusted-ready
+          path: ${{ runner.temp }}/firebase-candidate-ready
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 7
+
+  deploy-candidate:
+    needs: prepare-candidate-artifact
+    runs-on: ubuntu-latest
+    environment: candidate-host
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Download trusted candidate deploy handoff
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: firebase-candidate-trusted-ready
+          path: ${{ runner.temp }}/firebase-candidate-ready
+
+      - name: Validate candidate target and artifact before OIDC
+        run: |
+          set -euo pipefail
+          bundle="$RUNNER_TEMP/firebase-candidate-ready"
+          grep -Fxq "$GITHUB_SHA" "$bundle/head-sha"
+          test -f "$bundle/site/index.html"
+          test -f "$bundle/site/app/index.html"
+          test -f "$bundle/firebase-cli/node_modules/firebase-tools/lib/bin/firebase.js"
+          jq -e '
+            .hosting.public == "site"
+            and .hosting.site == "game-flow-c6311"
+            and (has("functions") | not)
+            and (has("firestore") | not)
+            and (has("storage") | not)
+          ' "$bundle/firebase-candidate.generated.json" >/dev/null
+
+      - name: Authenticate candidate Hosting deploy through OIDC
+        id: google_auth_candidate
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.FIREBASE_DEPLOY_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.FIREBASE_DEPLOY_SERVICE_ACCOUNT }}
+          project_id: game-flow-c6311
+          create_credentials_file: true
+          cleanup_credentials: true
+
+      - name: Deploy candidate Firebase Hosting site
+        timeout-minutes: 4
+        run: |
+          set -euo pipefail
+          bundle="$RUNNER_TEMP/firebase-candidate-ready"
+          node "$bundle/firebase-cli/node_modules/firebase-tools/lib/bin/firebase.js" \
+            deploy \
+            --only hosting \
+            --project game-flow-c6311 \
+            --config "$bundle/firebase-candidate.generated.json" \
+            --non-interactive
