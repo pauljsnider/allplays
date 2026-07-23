@@ -37,7 +37,8 @@ describe('Schedule lazy-load guards', () => {
         expect(refreshSource).toContain("() => loadParentSchedule(auth.user, { hydrateDetails: false, expandStaffPlayers: false })");
         expect(refreshSource).toContain("getScheduleLoadErrorMessage(toAppServiceError(loadError, 'Unable to load schedule.'), hasExistingSchedule)");
         expect(refreshSource).toContain('onSuccess: (result) => {');
-        expect(refreshSource).toContain('applyScheduleResult(result);');
+        expect(refreshSource).toContain('applyScheduleResult({');
+        expect(refreshSource).toContain('staffTeams: refreshedStaffTeams ?? result.staffTeams ?? []');
         expect(refreshSource).toContain('cacheHit: Boolean(cached) && !force');
         expect(refreshSource).toContain('onError: (loadError) => {');
         expect(refreshSource).toContain("const mappedError = toAppServiceError(loadError, 'Unable to load schedule.');");

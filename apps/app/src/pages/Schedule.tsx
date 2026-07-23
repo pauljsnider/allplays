@@ -373,7 +373,28 @@ export function Schedule({ auth }: { auth: AuthState }) {
     const scheduleCacheTtlMs = 60 * 1000 * 5;
     const scheduleCacheOptions = { ttlMs: scheduleCacheTtlMs, force };
     const cached = getCachedAppData(cacheKey);
-    const parentScopePromise = loadParentScheduleScope(auth.user).catch(() => null);
+    const requestedUserId = auth.user.uid;
+    let refreshedStaffTeams: ParentScheduleStaffTeam[] | null = null;
+    void loadParentScheduleScope(auth.user)
+      .then((parentScope) => {
+        refreshedStaffTeams = parentScope.staffTeams ?? [];
+        if (auth.user?.uid === requestedUserId) {
+          setStaffTeams(refreshedStaffTeams);
+          if (
+            hasLoadedScheduleRef.current
+            && selectedTeamId
+            && !childrenRef.current.some((child) => child.teamId === selectedTeamId)
+            && !eventsRef.current.some((event) => event.teamId === selectedTeamId)
+            && !refreshedStaffTeams.some((team) => team.teamId === selectedTeamId)
+          ) {
+            setSelectedTeamId('');
+          }
+        }
+      })
+      .catch(() => {
+        // A cached schedule remains useful offline; keep its last known staff
+        // scope when the background access refresh is unavailable.
+      });
 
     return runScheduleRead(
       () => loadCachedAppData(
@@ -383,16 +404,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
             ...scheduleCacheOptions,
             shouldCache: (loadedResult) => loadedResult?.isPartial !== true
           }
-        ).then(async (result) => {
-        const parentScope = await parentScopePromise;
-        return {
-          ...result,
-          // Team ownership and staff access can change while the event summary
-          // remains cacheable. Keep management targets authoritative so a
-          // newly created team can be edited immediately.
-          staffTeams: parentScope?.staffTeams ?? result.staffTeams ?? []
-        };
-      }),
+        ),
       {
         getErrorMessage: (loadError) => {
           return getScheduleLoadErrorMessage(toAppServiceError(loadError, 'Unable to load schedule.'), hasExistingSchedule);
@@ -402,7 +414,13 @@ export function Schedule({ auth }: { auth: AuthState }) {
           hasLoadedScheduleRef.current = true;
           setLoadedScheduleUserId(auth.user?.uid || null);
           setScheduleLoadError(null);
-          applyScheduleResult(result);
+          applyScheduleResult({
+            ...result,
+            // Team ownership and staff access can change while the event
+            // summary remains cacheable. Use a completed access refresh when
+            // available without holding up the cached Schedule shell.
+            staffTeams: refreshedStaffTeams ?? result.staffTeams ?? []
+          });
           hydrateScheduleRsvpsInBackground(result);
           completeParentCoreWorkflowTimer('schedule', {
             targetPage: 'schedule',
@@ -425,9 +443,10 @@ export function Schedule({ auth }: { auth: AuthState }) {
           }
           if (
             selectedTeamId
+            && refreshedStaffTeams !== null
             && !result.children.some((child) => child.teamId === selectedTeamId)
             && !result.events.some((event) => event.teamId === selectedTeamId)
-            && !result.staffTeams?.some((team) => team.teamId === selectedTeamId)
+            && !refreshedStaffTeams.some((team) => team.teamId === selectedTeamId)
           ) {
             setSelectedTeamId('');
           }
