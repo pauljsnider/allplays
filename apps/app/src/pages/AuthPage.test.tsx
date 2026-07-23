@@ -24,12 +24,21 @@ const authServiceMocks = vi.hoisted(() => ({
   passwordResetConfirmationMessage: "If an account exists for that email, a reset email has been queued.",
   rememberPendingInvite: vi.fn(),
   sendResetEmail: vi.fn(),
+  signInWithAppleAccount: vi.fn(),
   signInWithEmail: vi.fn(),
   signInWithGoogleAccount: vi.fn(),
   signUpWithEmail: vi.fn()
 }));
 
 vi.mock('../lib/authService', () => authServiceMocks);
+vi.mock('../lib/nativeRuntime', () => ({
+  isNativeRuntime: () => true
+}));
+vi.mock('@capacitor/core', () => ({
+  Capacitor: {
+    getPlatform: () => 'ios'
+  }
+}));
 
 const auth: AuthState = {
   user: null,
@@ -62,6 +71,7 @@ describe('AuthPage native post-login routing', () => {
     auth.signOut = vi.fn();
     authServiceMocks.hydrateFirebaseUser.mockReset();
     authServiceMocks.signInWithEmail.mockReset();
+    authServiceMocks.signInWithAppleAccount.mockReset();
     authServiceMocks.signInWithGoogleAccount.mockReset();
     window.location.hash = '';
     Object.defineProperty(window, 'location', {
@@ -114,6 +124,25 @@ describe('AuthPage native post-login routing', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Continue with Google' }));
 
     await waitFor(() => expect(authServiceMocks.signInWithGoogleAccount).toHaveBeenCalledWith(null));
+    await waitFor(() => expect(window.location.hash).toBe('#/home'));
+    expect(window.location.reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('routes the Apple button through native sign-in and reloads the home page', async () => {
+    authServiceMocks.signInWithAppleAccount.mockResolvedValue({
+      user: { uid: 'apple-user', email: 'apple@example.com' },
+      nativeRest: true
+    });
+    authServiceMocks.hydrateFirebaseUser.mockResolvedValue({
+      user: { uid: 'apple-user', email: 'apple@example.com', displayName: 'Apple User', roles: ['parent'] },
+      profile: {}
+    });
+
+    renderAuthPage();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Continue with Apple' }));
+
+    await waitFor(() => expect(authServiceMocks.signInWithAppleAccount).toHaveBeenCalledWith(null));
     await waitFor(() => expect(window.location.hash).toBe('#/home'));
     expect(window.location.reload).toHaveBeenCalledTimes(1);
   });

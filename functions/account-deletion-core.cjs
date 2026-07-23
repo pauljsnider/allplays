@@ -71,6 +71,14 @@ function classifyAccountStoragePaths(uid, mediaStoragePaths = [], profilePhotoUr
         pathParts[3] === normalizedUid
       ) {
         primaryPaths.add(primaryStoragePath);
+      } else if (
+        normalizedUid &&
+        pathParts.length >= 6 &&
+        pathParts[0] === 'stat-sheets' &&
+        pathParts[1] === 'team-chat' &&
+        pathParts[4] === normalizedUid
+      ) {
+        primaryPaths.add(primaryStoragePath);
       }
     }
   });
@@ -80,9 +88,39 @@ function classifyAccountStoragePaths(uid, mediaStoragePaths = [], profilePhotoUr
   };
 }
 
+function collectAccountMediaStoragePaths(mediaRecords = []) {
+  return mediaRecords.flatMap((record) => {
+    const attachments = Array.isArray(record?.attachments) ? record.attachments : [];
+    return [
+      record?.storagePath,
+      record?.path,
+      record?.imagePath,
+      ...attachments.flatMap((attachment) => [attachment?.storagePath, attachment?.path])
+    ].map((value) => String(value || '').trim()).filter(Boolean);
+  });
+}
+
+function getAccountDeletionCollectionQueries() {
+  return [
+    ['socialPosts', 'authorId', '=='],
+    ['socialPostReports', 'reporterId', '=='],
+    ['friendships', 'memberIds', 'array-contains'],
+    ['publicOpportunities', 'ownerUserId', '=='],
+    ['publicOpportunities', 'createdBy', '=='],
+    ['publicOpportunityReports', 'reporterId', '=='],
+    ['opportunityInquiries', 'senderId', '=='],
+    ['athleteProfiles', 'parentUserId', '=='],
+    ['accountMergeRequests', 'requestedBy', '=='],
+    ['familyShareTokens', 'ownerUserId', '=='],
+    ['accessCodes', 'generatedBy', '=='],
+    ['accessCodes', 'usedBy', '==']
+  ];
+}
+
 function getAccountDeletionCollectionGroupQueries() {
   return [
-    ['messages', 'senderId'],
+    ['messages', 'authorId'],
+    ['chatMessages', 'senderId'],
     ['reactions', 'userId'],
     ['rsvps', 'userId'],
     ['rideOffers', 'driverUserId'],
@@ -181,8 +219,10 @@ module.exports = {
   assertDeletionRequest,
   buildDeletionAuditId,
   classifyAccountStoragePaths,
+  collectAccountMediaStoragePaths,
   createAccountDeletionRequestHandler,
   extractAccountProfileStoragePath,
+  getAccountDeletionCollectionQueries,
   getAccountDeletionCollectionGroupQueries,
   loadOwnedTeams,
   normalizeConfirmation,

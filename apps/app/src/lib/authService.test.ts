@@ -57,14 +57,20 @@ const authObserverMocks = vi.hoisted(() => ({
   onAuthStateChanged: vi.fn()
 }));
 
+const nativeAuthenticationMocks = vi.hoisted(() => ({
+  signInWithApple: vi.fn()
+}));
+
 vi.mock('@capacitor/core', () => ({
   Capacitor: {
-    isNativePlatform: vi.fn(() => true)
+    getPlatform: vi.fn(() => 'ios'),
+    isNativePlatform: vi.fn(() => true),
+    isPluginAvailable: vi.fn(() => true)
   }
 }));
 
 vi.mock('@capacitor-firebase/authentication', () => ({
-  FirebaseAuthentication: {}
+  FirebaseAuthentication: nativeAuthenticationMocks
 }));
 
 vi.mock('./firebaseAuthRuntime', () => ({
@@ -119,6 +125,7 @@ import {
   resendVerificationEmail,
   sendResetEmail,
   signInWithEmail,
+  signInWithAppleAccount,
   signInWithGoogleAccount,
   signOut,
   signUpWithEmail
@@ -517,11 +524,23 @@ describe('native REST sign-in', () => {
           expiresIn: '3600'
         });
       }
+      if (url.includes('accounts:signInWithIdp')) {
+        return createJsonResponse({
+          localId: 'apple-user',
+          email: 'apple@example.com',
+          idToken: 'apple-firebase-id-token',
+          refreshToken: 'apple-refresh-token',
+          expiresIn: '3600',
+          isNewUser: true
+        });
+      }
       return createJsonResponse({
         users: [{
-          email: 'new@example.com',
+          email: url.includes('accounts:lookup') ? 'apple@example.com' : 'new@example.com',
           emailVerified: true,
-          displayName: 'New User'
+          displayName: 'Apple User',
+          createdAt: '1700000000000',
+          lastLoginAt: '1700000000001'
         }]
       });
     }));
@@ -557,6 +576,51 @@ describe('native REST sign-in', () => {
     }));
 
     expect(getNativeAuthUserId()).toBe('persisted-user');
+  });
+
+  it('exchanges the Apple plugin token and nonce, persists the REST session, and redeems the join code', async () => {
+    nativeAuthenticationMocks.signInWithApple.mockResolvedValue({
+      credential: {
+        idToken: 'apple-provider-id-token',
+        nonce: 'apple-raw-nonce'
+      }
+    });
+    legacyAuthMocks.validateAccessCode.mockResolvedValue({
+      valid: true,
+      type: 'team_invite',
+      codeId: 'apple-code-id',
+      data: { code: 'APPLE123' }
+    });
+    legacyAuthMocks.markAccessCodeAsUsed.mockResolvedValue(undefined);
+
+    const result = await signInWithAppleAccount('apple123');
+
+    expect(nativeAuthenticationMocks.signInWithApple).toHaveBeenCalledWith({ skipNativeAuth: true });
+    const fetchMock = vi.mocked(fetch);
+    const idpCall = fetchMock.mock.calls.find(([url]) => String(url).includes('accounts:signInWithIdp'));
+    expect(idpCall).toBeTruthy();
+    const request = JSON.parse(String(idpCall?.[1]?.body || '{}'));
+    const postBody = new URLSearchParams(request.postBody);
+    expect(postBody.get('providerId')).toBe('apple.com');
+    expect(postBody.get('id_token')).toBe('apple-provider-id-token');
+    expect(postBody.get('nonce')).toBe('apple-raw-nonce');
+    expect(legacyAuthMocks.validateAccessCode).toHaveBeenCalledWith(
+      'APPLE123',
+      { nativeAuthToken: 'apple-firebase-id-token' }
+    );
+    expect(legacyAuthMocks.markAccessCodeAsUsed).toHaveBeenCalledWith('apple-code-id', 'apple-user');
+    expect(result).toMatchObject({
+      nativeRest: true,
+      activationCodeRedeemed: true,
+      wasNewUser: true,
+      user: { uid: 'apple-user' }
+    });
+    expect(JSON.parse(window.localStorage.getItem('allplays-native-auth-session') || '{}')).toMatchObject({
+      uid: 'apple-user',
+      idToken: 'apple-firebase-id-token',
+      refreshToken: 'apple-refresh-token',
+      provider: 'rest'
+    });
   });
 });
 

@@ -5,8 +5,10 @@ const assert = require('node:assert/strict');
 const {
   buildDeletionAuditId,
   classifyAccountStoragePaths,
+  collectAccountMediaStoragePaths,
   createAccountDeletionRequestHandler,
   extractAccountProfileStoragePath,
+  getAccountDeletionCollectionQueries,
   getAccountDeletionCollectionGroupQueries,
   shouldProcessAccountDeletionRequest,
   normalizeConfirmation
@@ -70,7 +72,9 @@ test('routes account media cleanup to the primary and legacy image buckets', () 
     'primary://athlete-profile-media/other-user/player-2/not-ours.jpg',
     'team-media/team-1/folder-1/user-1/file.jpg',
     'primary://team-media/team-2/folder-2/user-1/photo.jpg',
-    'team-media/team-1/folder-1/other-user/not-ours.jpg'
+    'team-media/team-1/folder-1/other-user/not-ours.jpg',
+    'stat-sheets/team-chat/team-1/team/user-1/chat.jpg',
+    'stat-sheets/team-chat/team-1/team/other-user/not-ours.jpg'
   ], [
     'https://firebasestorage.googleapis.com/v0/b/game-flow-img.firebasestorage.app/o/user-photos%2F171234_photo.jpg?alt=media'
   ]);
@@ -78,7 +82,8 @@ test('routes account media cleanup to the primary and legacy image buckets', () 
   assert.deepEqual(paths.primaryPaths, [
     'athlete-profile-media/user-1/player-1/photo.jpg',
     'team-media/team-1/folder-1/user-1/file.jpg',
-    'team-media/team-2/folder-2/user-1/photo.jpg'
+    'team-media/team-2/folder-2/user-1/photo.jpg',
+    'stat-sheets/team-chat/team-1/team/user-1/chat.jpg'
   ]);
   assert.deepEqual(paths.imagePaths, [
     'user-photos/171234_photo.jpg',
@@ -86,9 +91,35 @@ test('routes account media cleanup to the primary and legacy image buckets', () 
   ]);
 });
 
+test('collects current and legacy storage fields from account-owned media records', () => {
+  assert.deepEqual(collectAccountMediaStoragePaths([
+    {
+      storagePath: 'team-media/team-1/folder-1/user-1/file.jpg',
+      attachments: [
+        { path: 'stat-sheets/team-chat/team-1/team/user-1/chat.jpg' },
+        { storagePath: 'stat-sheets/team-chat/team-1/team/user-1/clip.mp4' }
+      ]
+    },
+    { imagePath: 'athlete-profile-media/user-1/player-1/photo.jpg' }
+  ]), [
+    'team-media/team-1/folder-1/user-1/file.jpg',
+    'stat-sheets/team-chat/team-1/team/user-1/chat.jpg',
+    'stat-sheets/team-chat/team-1/team/user-1/clip.mp4',
+    'athlete-profile-media/user-1/player-1/photo.jpg'
+  ]);
+});
+
+test('deletes account-owned share links and invite records', () => {
+  const queries = getAccountDeletionCollectionQueries();
+  assert.ok(queries.some(([collection, field]) => collection === 'familyShareTokens' && field === 'ownerUserId'));
+  assert.ok(queries.some(([collection, field]) => collection === 'accessCodes' && field === 'generatedBy'));
+  assert.ok(queries.some(([collection, field]) => collection === 'accessCodes' && field === 'usedBy'));
+});
+
 test('deletes current team media and denormalized notification indexes', () => {
   assert.deepEqual(getAccountDeletionCollectionGroupQueries(), [
-    ['messages', 'senderId'],
+    ['messages', 'authorId'],
+    ['chatMessages', 'senderId'],
     ['reactions', 'userId'],
     ['rsvps', 'userId'],
     ['rideOffers', 'driverUserId'],

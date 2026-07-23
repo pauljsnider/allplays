@@ -37,4 +37,30 @@ describe('mobile store legal and support pages', () => {
         expect(terms).toContain('/privacy.html');
         expect(terms).toContain('/support.html');
     });
+
+    it('indexes every account-deletion collection-group lookup', () => {
+        const indexes = JSON.parse(readPage('firestore.indexes.json'));
+        const requiredIndexes = [
+            ['messages', 'authorId'],
+            ['chatMessages', 'senderId'],
+            ['reactions', 'userId'],
+            ['rsvps', 'userId'],
+            ['rideOffers', 'driverUserId'],
+            ['rideRequests', 'parentUserId'],
+            ['media', 'uploadedBy'],
+            ['mediaItems', 'uploadedBy'],
+            ['notificationTargets', 'uid'],
+            ['notificationRecipients', 'uid']
+        ];
+
+        requiredIndexes.forEach(([collectionGroup, fieldPath]) => {
+            const override = indexes.fieldOverrides.find((candidate) =>
+                candidate.collectionGroup === collectionGroup && candidate.fieldPath === fieldPath
+            );
+            expect(override?.indexes).toContainEqual({
+                order: 'ASCENDING',
+                queryScope: 'COLLECTION_GROUP'
+            });
+        });
+    });
 });

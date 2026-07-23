@@ -241,7 +241,9 @@ const { createAutoAcceptParentInviteHandler } = require('./parent-invite-auto-li
 const {
   buildDeletionAuditId,
   classifyAccountStoragePaths,
+  collectAccountMediaStoragePaths,
   createAccountDeletionRequestHandler,
+  getAccountDeletionCollectionQueries,
   getAccountDeletionCollectionGroupQueries,
   loadOwnedTeams,
   shouldProcessAccountDeletionRequest,
@@ -14419,7 +14421,7 @@ async function deleteAccountStorage(uid, mediaDocuments, profilePhotoUrls = []) 
 
   const { primaryPaths, imagePaths } = classifyAccountStoragePaths(
     uid,
-    mediaDocuments.map((document) => document.data()?.storagePath),
+    collectAccountMediaStoragePaths(mediaDocuments.map((document) => document.data() || {})),
     profilePhotoUrls
   );
   await Promise.all([
@@ -14458,13 +14460,15 @@ exports.processAccountDeletionRequest = functions.firestore
         throw new Error('Account still owns one or more teams.');
       }
 
-      const [legacyTeamMedia, teamMediaItems] = await Promise.all([
+      const [legacyTeamMedia, teamMediaItems, chatMessages] = await Promise.all([
         firestore.collectionGroup('media').where('uploadedBy', '==', uid).get(),
-        firestore.collectionGroup('mediaItems').where('uploadedBy', '==', uid).get()
+        firestore.collectionGroup('mediaItems').where('uploadedBy', '==', uid).get(),
+        firestore.collectionGroup('chatMessages').where('senderId', '==', uid).get()
       ]);
       await deleteAccountStorage(uid, [
         ...(legacyTeamMedia.docs || []),
-        ...(teamMediaItems.docs || [])
+        ...(teamMediaItems.docs || []),
+        ...(chatMessages.docs || [])
       ], [
         userDoc.data()?.photoUrl,
         authUser?.photoURL
@@ -14480,18 +14484,7 @@ exports.processAccountDeletionRequest = functions.firestore
         if (doc.exists) await firestore.recursiveDelete(ref);
       }));
 
-      const collectionQueries = [
-        ['socialPosts', 'authorId', '=='],
-        ['socialPostReports', 'reporterId', '=='],
-        ['friendships', 'memberIds', 'array-contains'],
-        ['publicOpportunities', 'ownerUserId', '=='],
-        ['publicOpportunities', 'createdBy', '=='],
-        ['publicOpportunityReports', 'reporterId', '=='],
-        ['opportunityInquiries', 'senderId', '=='],
-        ['athleteProfiles', 'parentUserId', '=='],
-        ['accountMergeRequests', 'requestedBy', '==']
-      ];
-      for (const [collectionName, field, operator] of collectionQueries) {
+      for (const [collectionName, field, operator] of getAccountDeletionCollectionQueries()) {
         await deleteAccountQuery(firestore.collection(collectionName).where(field, operator, uid));
       }
 
