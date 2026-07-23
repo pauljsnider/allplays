@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { arePaymentsEnabled } from './launchFeatures';
+import { applyRegistrationPaymentLaunchState, arePaymentsEnabled } from './launchFeatures';
 
 describe('launchFeatures', () => {
   beforeEach(() => {
@@ -19,5 +19,23 @@ describe('launchFeatures', () => {
   it('requires explicit runtime enablement', () => {
     window.__ALLPLAYS_CONFIG__ = { paymentsEnabled: true };
     expect(arePaymentsEnabled()).toBe(true);
+  });
+
+  it('blocks online-only registration while preserving an explicit offline path', () => {
+    expect(applyRegistrationPaymentLaunchState({
+      onlineCheckout: true,
+      paymentSettings: { offlinePaymentEnabled: false, onlineCheckoutEnabled: true }
+    })).toMatchObject({
+      onlineCheckout: false,
+      onlinePaymentUnavailable: true
+    });
+
+    expect(applyRegistrationPaymentLaunchState({
+      onlineCheckout: true,
+      paymentSettings: { offlinePaymentEnabled: true, onlineCheckoutEnabled: true }
+    })).toMatchObject({
+      onlineCheckout: false,
+      onlinePaymentUnavailable: false
+    });
   });
 });

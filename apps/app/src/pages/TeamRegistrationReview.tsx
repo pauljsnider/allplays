@@ -30,7 +30,7 @@ import {
   hasQuantityDiscountRule
 } from '../lib/adapters/legacyRegistration';
 import type { AuthState } from '../lib/types';
-import { arePaymentsEnabled } from '../lib/launchFeatures';
+import { applyRegistrationPaymentLaunchState } from '../lib/launchFeatures';
 import {
   getOrCreateRegistrationSubmissionAttempt,
   type RegistrationSubmissionAttempt
@@ -116,7 +116,7 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
           setForm(null);
           return;
         }
-        setForm(arePaymentsEnabled() ? nextForm : { ...nextForm, onlineCheckout: false });
+        setForm(applyRegistrationPaymentLaunchState(nextForm));
         if (staffReview) {
           const [nextPage, waitlistedPage, rosterPlayers] = await Promise.all([
             loadTeamRegistrationQueuePage(teamId, formId),
@@ -177,6 +177,10 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
   const effectiveQuantity = useMemo(() => hasQuantityDiscount ? quantity : 1, [hasQuantityDiscount, quantity]);
   const displayFeeSnapshot = useMemo(() => form ? calculateRegistrationFeeSnapshot(form, { quantity: effectiveQuantity, now: new Date() }) : null, [form, effectiveQuantity]);
   const displayFeeLines = useMemo<FeeSummaryLine[]>(() => displayFeeSnapshot ? formatFeeSnapshotLines(displayFeeSnapshot) : [], [displayFeeSnapshot]);
+  const onlinePaymentRequiredButUnavailable = Boolean(
+    form?.onlinePaymentUnavailable &&
+    Number(displayFeeSnapshot?.finalAmountDueCents || 0) > 0
+  );
   const selectedPaymentPlanSummary = useMemo(() => {
     if (!form || !displayFeeSnapshot) return null;
     return buildRegistrationPaymentPlanSummary(form, displayFeeSnapshot, selectedPaymentPlanId, 0);
@@ -277,6 +281,10 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
     if (Object.keys(nextErrors).length) return;
     if (currentPlacement?.status === 'blocked') {
       setError(currentPlacement.message || 'This registration option is not available.');
+      return;
+    }
+    if (onlinePaymentRequiredButUnavailable) {
+      setError('This paid registration requires online checkout, which is not available in this release. Contact the organizer.');
       return;
     }
 
@@ -658,6 +666,7 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
 
       {message ? <Status tone="success" message={message} /> : null}
       {error ? <Status tone="error" message={error} /> : null}
+      {onlinePaymentRequiredButUnavailable ? <Status tone="error" message="This paid registration requires online checkout, which is not available in this release. Contact the organizer." /> : null}
       {placement ? <Status tone={placement.status === 'blocked' ? 'error' : 'success'} message={placement.status === 'waitlisted' ? 'This option is full. Submitting will add you to the waitlist.' : placement.status === 'pending' ? 'This option has capacity. Submitting creates a pending registration.' : placement.message || 'This option is not available.'} /> : null}
 
       {isPaymentSuccessReturn ? (
@@ -788,9 +797,9 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
             </div>
           ) : null}
 
-          <button type="button" className="primary-button" onClick={submit} disabled={saving || Boolean(message)}>
+          <button type="button" className="primary-button" onClick={submit} disabled={saving || Boolean(message) || onlinePaymentRequiredButUnavailable}>
             {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Send className="h-4 w-4" aria-hidden="true" />}
-            {saving ? (form.onlineCheckout ? 'Opening checkout...' : 'Submitting registration...') : (form.onlineCheckout ? (isRetryPaymentMode ? 'Retry payment with Stripe' : 'Pay registration with Stripe') : 'Submit registration')}
+            {onlinePaymentRequiredButUnavailable ? 'Online payment unavailable' : saving ? (form.onlineCheckout ? 'Opening checkout...' : 'Submitting registration...') : (form.onlineCheckout ? (isRetryPaymentMode ? 'Retry payment with Stripe' : 'Pay registration with Stripe') : 'Submit registration')}
           </button>
         </form>
       </section> : null}

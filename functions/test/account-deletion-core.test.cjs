@@ -7,11 +7,14 @@ const { join } = require('node:path');
 const {
   buildDeletionAuditId,
   buildRosterParentScrubPlan,
+  buildTeamAccountGrantScrubPlan,
   classifyAccountStoragePaths,
   collectAccountRosterScopes,
+  collectAccountTeamIds,
   collectAccountMediaStoragePaths,
   createAccountDeletionRequestHandler,
   extractAccountProfileStoragePath,
+  getAccountEmailQueryCandidates,
   getLegacyUnscopedProfilePhotoPaths,
   getAccountDeletionCollectionQueries,
   getAccountDeletionCollectionGroupQueries,
@@ -100,13 +103,20 @@ test('scrubs deleted parent identities and their associated roster contact field
       { userId: 'deleted-parent', email: 'deleted@example.com' },
       { accountUserId: 'remaining-parent', email: 'remaining@example.com' }
     ],
+    contacts: [
+      { email: 'DELETED@example.com', name: 'Deleted Parent' },
+      { email: 'remaining@example.com', name: 'Remaining Parent' }
+    ],
     parentUserId: 'deleted-parent',
     parentEmail: 'deleted@example.com',
     parentName: 'Deleted Parent',
     guardianUserId: 'remaining-parent'
-  }, 'deleted-parent'), {
+  }, { uid: 'deleted-parent', email: 'deleted@example.com' }), {
     changed: true,
+    contacts: [{ email: 'remaining@example.com', name: 'Remaining Parent' }],
+    contactsChanged: true,
     parents: [{ accountUserId: 'remaining-parent', email: 'remaining@example.com' }],
+    parentsChanged: true,
     fieldsToDelete: [
       'parentUserId',
       'parentEmail',
@@ -114,6 +124,44 @@ test('scrubs deleted parent identities and their associated roster contact field
       'parentPhone',
       'parentRelation'
     ]
+  });
+});
+
+test('scrubs reusable email and uid grants from team authorization fields', () => {
+  assert.deepEqual(collectAccountTeamIds({
+    coachOf: ['team-1', 'bad/team'],
+    parentTeamIds: ['team-2'],
+    teamMediaUploadTeamIds: ['team-3']
+  }), ['team-1', 'team-2', 'team-3']);
+  assert.ok(getAccountEmailQueryCandidates('Coach@Example.com').includes(' coach@example.com '));
+  assert.deepEqual(buildTeamAccountGrantScrubPlan({
+    active: false,
+    ownerId: 'deleted-user',
+    ownerEmail: 'Coach@Example.com',
+    adminEmails: ['coach@example.com', 'remaining@example.com'],
+    streamVolunteerEmails: [' COACH@example.com ', 'streamer@example.com'],
+    staffIds: ['deleted-user', 'remaining-user'],
+    coaches: [
+      { userId: 'deleted-user', email: 'coach@example.com' },
+      { userId: 'remaining-user', email: 'remaining@example.com' }
+    ],
+    teamPermissions: {
+      scorekeeping: { mode: 'selected', memberIds: ['deleted-user', 'remaining-user'] },
+      streaming: { mode: 'all_confirmed', memberIds: [] }
+    }
+  }, { uid: 'deleted-user', email: 'coach@example.com' }), {
+    changed: true,
+    update: {
+      adminEmails: ['remaining@example.com'],
+      streamVolunteerEmails: ['streamer@example.com'],
+      staffIds: ['remaining-user'],
+      coaches: [{ userId: 'remaining-user', email: 'remaining@example.com' }],
+      teamPermissions: {
+        scorekeeping: { mode: 'selected', memberIds: ['remaining-user'] },
+        streaming: { mode: 'all_confirmed', memberIds: [] }
+      }
+    },
+    fieldsToDelete: ['ownerId', 'ownerEmail', 'ownerEmailLower']
   });
 });
 
@@ -342,4 +390,7 @@ test('gives the deletion worker extended runtime and automatic event retries', (
     functionsSource,
     /exports\.processAccountDeletionRequest = functions\s+\.runWith\(\{ timeoutSeconds: 540, memory: '1GB', failurePolicy: true \}\)\s+\.firestore/
   );
+  const workerSource = functionsSource.slice(functionsSource.indexOf('exports.processAccountDeletionRequest'));
+  assert.ok(workerSource.indexOf('await scrubAccountTeamGrants(') < workerSource.indexOf('admin.auth().deleteUser(uid)'));
+  assert.ok(workerSource.indexOf('await scrubAccountRosterParentLinks(') < workerSource.indexOf('admin.auth().deleteUser(uid)'));
 });

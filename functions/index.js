@@ -241,12 +241,15 @@ const { createAutoAcceptParentInviteHandler } = require('./parent-invite-auto-li
 const {
   buildDeletionAuditId,
   buildRosterParentScrubPlan,
+  buildTeamAccountGrantScrubPlan,
   classifyAccountStoragePaths,
   collectAccountRosterScopes,
+  collectAccountTeamIds,
   collectAccountMediaStoragePaths,
   createAccountDeletionRequestHandler,
   getAccountDeletionCollectionQueries,
   getAccountDeletionCollectionGroupQueries,
+  getAccountEmailQueryCandidates,
   getLegacyUnscopedProfilePhotoPaths,
   loadOwnedTeams,
   shouldProcessAccountDeletionRequest,
@@ -14464,33 +14467,81 @@ async function loadAccountRosterPlayerDocuments(uid, userData = {}) {
   return [...documentsByPath.values()];
 }
 
-function buildAccountRosterScrubUpdate(record, uid) {
-  const plan = buildRosterParentScrubPlan(record, uid);
+function buildAccountRosterScrubUpdate(record, accountIdentity) {
+  const plan = buildRosterParentScrubPlan(record, accountIdentity);
   if (!plan.changed) return null;
   const update = {
-    parents: plan.parents,
     updatedAt: admin.firestore.Timestamp.now()
   };
+  if (plan.parentsChanged) update.parents = plan.parents;
+  if (plan.contactsChanged) update.contacts = plan.contacts;
   plan.fieldsToDelete.forEach((field) => {
     update[field] = admin.firestore.FieldValue.delete();
   });
   return update;
 }
 
-async function scrubAccountRosterParentLinks(uid, userData = {}) {
+async function scrubAccountRosterParentLinks(uid, userData = {}, authUser = null) {
   const playerDocuments = await loadAccountRosterPlayerDocuments(uid, userData);
+  const accountIdentity = {
+    uid,
+    email: authUser?.email || userData.email || '',
+    phone: authUser?.phoneNumber || userData.phoneNumber || userData.phone || ''
+  };
   const privateProfileDocuments = await Promise.all(playerDocuments.map((playerDocument) => (
     playerDocument.ref.collection('private').doc('profile').get()
   )));
   const writes = [];
   playerDocuments.forEach((document) => {
-    const update = buildAccountRosterScrubUpdate(document.data() || {}, uid);
+    const update = buildAccountRosterScrubUpdate(document.data() || {}, accountIdentity);
     if (update) writes.push({ ref: document.ref, update });
   });
   privateProfileDocuments.forEach((document) => {
     if (!document.exists) return;
-    const update = buildAccountRosterScrubUpdate(document.data() || {}, uid);
+    const update = buildAccountRosterScrubUpdate(document.data() || {}, accountIdentity);
     if (update) writes.push({ ref: document.ref, update });
+  });
+  for (let index = 0; index < writes.length; index += 200) {
+    const batch = firestore.batch();
+    writes.slice(index, index + 200).forEach(({ ref, update }) => batch.update(ref, update));
+    await batch.commit();
+  }
+}
+
+async function loadAccountTeamDocuments(uid, email, userData = {}) {
+  const documentsByPath = new Map();
+  const remember = (document) => {
+    if (document?.exists !== false && document?.ref?.path) documentsByPath.set(document.ref.path, document);
+  };
+  const queryPromises = [
+    firestore.collection('teams').where('ownerId', '==', uid).get()
+  ];
+  getAccountEmailQueryCandidates(email).forEach((candidate) => {
+    queryPromises.push(firestore.collection('teams').where('adminEmails', 'array-contains', candidate).get());
+    queryPromises.push(firestore.collection('teams').where('streamVolunteerEmails', 'array-contains', candidate).get());
+  });
+  const snapshots = await Promise.all(queryPromises);
+  snapshots.forEach((snapshot) => (snapshot.docs || []).forEach(remember));
+  for (const teamId of collectAccountTeamIds(userData)) {
+    if (!documentsByPath.has(`teams/${teamId}`)) remember(await firestore.doc(`teams/${teamId}`).get());
+  }
+  return [...documentsByPath.values()];
+}
+
+async function scrubAccountTeamGrants(uid, email, userData = {}) {
+  const teamDocuments = await loadAccountTeamDocuments(uid, email, userData);
+  const writes = [];
+  teamDocuments.forEach((document) => {
+    const plan = buildTeamAccountGrantScrubPlan(document.data() || {}, { uid, email });
+    if (!plan.changed) return;
+    const update = {
+      ...plan.update,
+      updatedAt: admin.firestore.Timestamp.now()
+    };
+    plan.fieldsToDelete.forEach((field) => {
+      update[field] = admin.firestore.FieldValue.delete();
+    });
+    writes.push({ ref: document.ref, update });
   });
   for (let index = 0; index < writes.length; index += 200) {
     const batch = firestore.batch();
@@ -14551,7 +14602,8 @@ exports.processAccountDeletionRequest = functions
         userDoc.data()?.photoUrl,
         authUser?.photoURL
       ]);
-      await scrubAccountRosterParentLinks(uid, userDoc.data() || {});
+      await scrubAccountTeamGrants(uid, ownerEmail, userDoc.data() || {});
+      await scrubAccountRosterParentLinks(uid, userDoc.data() || {}, authUser);
 
       const directDocuments = [
         `publicUserProfiles/${uid}`,

@@ -97,21 +97,150 @@ function getParentContactUserId(parent = {}) {
   ).trim();
 }
 
-function buildRosterParentScrubPlan(record = {}, uid) {
-  const normalizedUid = String(uid || '').trim();
-  if (!normalizedUid) return { changed: false, parents: [], fieldsToDelete: [] };
+function normalizeRosterContactIdentity(identity) {
+  const source = typeof identity === 'string' ? { uid: identity } : (identity || {});
+  return {
+    uid: String(source.uid || '').trim(),
+    email: String(source.email || '').trim().toLowerCase(),
+    phone: String(source.phone || source.phoneNumber || '').replace(/\D/g, '')
+  };
+}
+
+function matchesRosterContactIdentity(contact = {}, identity = {}) {
+  const contactUid = getParentContactUserId(contact);
+  const contactEmail = String(
+    contact.email || contact.emailAddress || contact.parentEmail || contact.guardianEmail || ''
+  ).trim().toLowerCase();
+  const contactPhone = String(
+    contact.phone || contact.phoneNumber || contact.parentPhone || contact.guardianPhone || ''
+  ).replace(/\D/g, '');
+  return Boolean(
+    (identity.uid && contactUid === identity.uid) ||
+    (identity.email && contactEmail === identity.email) ||
+    (identity.phone.length >= 7 && contactPhone === identity.phone)
+  );
+}
+
+function buildRosterParentScrubPlan(record = {}, accountIdentity) {
+  const identity = normalizeRosterContactIdentity(accountIdentity);
+  if (!identity.uid && !identity.email && !identity.phone) {
+    return {
+      changed: false,
+      contacts: [],
+      contactsChanged: false,
+      parents: [],
+      parentsChanged: false,
+      fieldsToDelete: []
+    };
+  }
   const parents = Array.isArray(record.parents) ? record.parents : [];
-  const filteredParents = parents.filter((parent) => getParentContactUserId(parent) !== normalizedUid);
+  const contacts = Array.isArray(record.contacts) ? record.contacts : [];
+  const filteredParents = parents.filter((parent) => !matchesRosterContactIdentity(parent, identity));
+  const filteredContacts = contacts.filter((contact) => !matchesRosterContactIdentity(contact, identity));
+  const parentsChanged = filteredParents.length !== parents.length;
+  const contactsChanged = filteredContacts.length !== contacts.length;
   const fieldsToDelete = [];
-  if (String(record.parentUserId || '').trim() === normalizedUid) {
+  if (matchesRosterContactIdentity({
+    userId: record.parentUserId,
+    email: record.parentEmail,
+    phone: record.parentPhone
+  }, identity)) {
     fieldsToDelete.push('parentUserId', 'parentEmail', 'parentName', 'parentPhone', 'parentRelation');
   }
-  if (String(record.guardianUserId || '').trim() === normalizedUid) {
+  if (matchesRosterContactIdentity({
+    userId: record.guardianUserId,
+    email: record.guardianEmail,
+    phone: record.guardianPhone
+  }, identity)) {
     fieldsToDelete.push('guardianUserId', 'guardianEmail', 'guardianName', 'guardianPhone', 'guardianRelation');
   }
   return {
-    changed: filteredParents.length !== parents.length || fieldsToDelete.length > 0,
+    changed: parentsChanged || contactsChanged || fieldsToDelete.length > 0,
+    contacts: filteredContacts,
+    contactsChanged,
     parents: filteredParents,
+    parentsChanged,
+    fieldsToDelete
+  };
+}
+
+function getAccountEmailQueryCandidates(email) {
+  const original = String(email || '').trim();
+  const normalized = original.toLowerCase();
+  return [...new Set([
+    original,
+    normalized,
+    ` ${original}`,
+    `${original} `,
+    ` ${original} `,
+    ` ${normalized}`,
+    `${normalized} `,
+    ` ${normalized} `
+  ].filter((value) => value.trim()))];
+}
+
+function collectAccountTeamIds(userData = {}) {
+  const teamIds = new Set();
+  ['coachOf', 'parentTeamIds', 'teamMediaUploadTeamIds', 'mediaUploadTeamIds'].forEach((field) => {
+    (Array.isArray(userData[field]) ? userData[field] : []).forEach((value) => {
+      const normalized = String(value || '').trim();
+      if (normalized && normalized.length <= 200 && !normalized.includes('/')) teamIds.add(normalized);
+    });
+  });
+  return [...teamIds];
+}
+
+function buildTeamAccountGrantScrubPlan(team = {}, accountIdentity) {
+  const identity = normalizeRosterContactIdentity(accountIdentity);
+  const update = {};
+  const fieldsToDelete = [];
+  const filterEmailArray = (field) => {
+    if (!Array.isArray(team[field]) || !identity.email) return;
+    const filtered = team[field].filter((value) => String(value || '').trim().toLowerCase() !== identity.email);
+    if (filtered.length !== team[field].length) update[field] = filtered;
+  };
+  const filterUidArray = (field) => {
+    if (!Array.isArray(team[field]) || !identity.uid) return;
+    const filtered = team[field].filter((value) => String(value || '').trim() !== identity.uid);
+    if (filtered.length !== team[field].length) update[field] = filtered;
+  };
+  filterEmailArray('adminEmails');
+  filterEmailArray('streamVolunteerEmails');
+  ['adminIds', 'coachIds', 'staffIds', 'managerIds'].forEach(filterUidArray);
+  ['admins', 'coaches', 'staff'].forEach((field) => {
+    if (!Array.isArray(team[field])) return;
+    const filtered = team[field].filter((entry) => {
+      if (typeof entry === 'string') return String(entry).trim() !== identity.uid;
+      return !matchesRosterContactIdentity(entry, identity);
+    });
+    if (filtered.length !== team[field].length) update[field] = filtered;
+  });
+  if (team.teamPermissions && typeof team.teamPermissions === 'object') {
+    const nextPermissions = {};
+    let permissionsChanged = false;
+    Object.entries(team.teamPermissions).forEach(([key, permission]) => {
+      if (!permission || typeof permission !== 'object' || !Array.isArray(permission.memberIds)) {
+        nextPermissions[key] = permission;
+        return;
+      }
+      const memberIds = permission.memberIds.filter((value) => String(value || '').trim() !== identity.uid);
+      nextPermissions[key] = memberIds.length === permission.memberIds.length
+        ? permission
+        : { ...permission, memberIds };
+      permissionsChanged ||= memberIds.length !== permission.memberIds.length;
+    });
+    if (permissionsChanged) update.teamPermissions = nextPermissions;
+  }
+  if (
+    (identity.uid && String(team.ownerId || '').trim() === identity.uid) ||
+    (identity.email && [team.ownerEmail, team.ownerEmailLower]
+      .some((value) => String(value || '').trim().toLowerCase() === identity.email))
+  ) {
+    fieldsToDelete.push('ownerId', 'ownerEmail', 'ownerEmailLower');
+  }
+  return {
+    changed: Object.keys(update).length > 0 || fieldsToDelete.length > 0,
+    update,
     fieldsToDelete
   };
 }
@@ -322,11 +451,14 @@ module.exports = {
   assertRecentAuthentication,
   buildDeletionAuditId,
   buildRosterParentScrubPlan,
+  buildTeamAccountGrantScrubPlan,
   classifyAccountStoragePaths,
   collectAccountRosterScopes,
+  collectAccountTeamIds,
   collectAccountMediaStoragePaths,
   createAccountDeletionRequestHandler,
   extractAccountProfileStoragePath,
+  getAccountEmailQueryCandidates,
   getLegacyUnscopedProfilePhotoPaths,
   getAccountDeletionCollectionQueries,
   getAccountDeletionCollectionGroupQueries,
