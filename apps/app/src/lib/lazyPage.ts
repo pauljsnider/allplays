@@ -31,17 +31,21 @@ export function handleLazyPageLoadError(error: unknown): Promise<{ default: Comp
   return new Promise(() => {});
 }
 
+export function clearLazyChunkReloadAttempt() {
+  try {
+    window.sessionStorage?.removeItem(lazyChunkReloadKey);
+  } catch {
+    // Session storage is best-effort only.
+  }
+}
+
 export function lazyNamedPage<TModule extends Record<string, unknown>, TExport extends keyof TModule>(
   loadModule: () => Promise<TModule>,
   exportName: TExport
 ) {
   return lazy(() => loadModule()
     .then((module) => {
-      try {
-        window.sessionStorage?.removeItem(lazyChunkReloadKey);
-      } catch {
-        // Session storage is best-effort only.
-      }
+      clearLazyChunkReloadAttempt();
       return { default: module[exportName] as ComponentType<any> };
     })
     .catch(handleLazyPageLoadError));

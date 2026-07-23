@@ -779,14 +779,12 @@ describe('Schedule', () => {
       staffTeams: [{ teamId: 'team-owned', teamName: 'Vipers' }]
     });
 
-    renderSchedule();
+    renderSchedule('/schedule?teamId=team-owned');
 
     const teamFilter = await screen.findByLabelText('Team filter');
     expect(within(teamFilter).getByRole('option', { name: 'Jr KC Current' })).toBeTruthy();
     expect(within(teamFilter).getByRole('option', { name: 'Vipers' })).toBeTruthy();
-
-    fireEvent.change(teamFilter, { target: { value: 'team-owned' } });
-
+    expect((teamFilter as HTMLSelectElement).value).toBe('team-owned');
     expect(await screen.findByText(/Calendar feeds and imports for Vipers/)).toBeTruthy();
   });
 

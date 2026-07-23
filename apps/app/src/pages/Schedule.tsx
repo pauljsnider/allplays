@@ -412,7 +412,12 @@ export function Schedule({ auth }: { auth: AuthState }) {
           if (selectedPlayerId && !result.children.some((child) => child.playerId === selectedPlayerId)) {
             setSelectedPlayerId('');
           }
-          if (selectedTeamId && !result.children.some((child) => child.teamId === selectedTeamId) && !result.events.some((event) => event.teamId === selectedTeamId)) {
+          if (
+            selectedTeamId
+            && !result.children.some((child) => child.teamId === selectedTeamId)
+            && !result.events.some((event) => event.teamId === selectedTeamId)
+            && !result.staffTeams?.some((team) => team.teamId === selectedTeamId)
+          ) {
             setSelectedTeamId('');
           }
           const firstUpcoming = filterParentScheduleEvents(result.events, { filter: 'upcoming-all' })[0];

@@ -1,7 +1,13 @@
-import { describe, expect, it, vi } from 'vitest';
+// @vitest-environment jsdom
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { shouldAttemptLazyChunkReload } from '../../lib/lazyPage';
 import { createScheduleStaffToolsLoader, type ScheduleStaffToolsModule } from './loadScheduleStaffTools';
 
 describe('loadScheduleStaffTools', () => {
+  beforeEach(() => {
+    window.sessionStorage.clear();
+  });
+
   it('caches the dynamic import across repeated open requests', async () => {
     const module = { default: vi.fn() } as unknown as ScheduleStaffToolsModule;
     const importer = vi.fn(async () => module);
@@ -45,5 +51,16 @@ describe('loadScheduleStaffTools', () => {
     await expect(load()).rejects.toThrow('Temporary import failure');
     await expect(load()).resolves.toBe(module);
     expect(importer).toHaveBeenCalledTimes(2);
+  });
+
+  it('releases the stale-chunk reload guard after a successful import', async () => {
+    const chunkError = new TypeError('Failed to fetch dynamically imported module: /ScheduleStaffTools-old.js');
+    window.sessionStorage.setItem('allplays:lazy-chunk-reload-attempted', '1');
+    const module = { default: vi.fn() } as unknown as ScheduleStaffToolsModule;
+    const load = createScheduleStaffToolsLoader(vi.fn(async () => module));
+
+    await expect(load()).resolves.toBe(module);
+
+    expect(shouldAttemptLazyChunkReload(chunkError)).toBe(true);
   });
 });
