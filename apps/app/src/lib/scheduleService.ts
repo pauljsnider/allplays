@@ -1664,7 +1664,12 @@ function isTeamStaff(team: any, user: AuthUser | null) {
   return false;
 }
 
-async function loadStaffTeams(user: AuthUser) {
+type StaffTeamsLoadResult = {
+  teams: any[];
+  isPartial: boolean;
+};
+
+async function loadStaffTeams(user: AuthUser): Promise<StaffTeamsLoadResult> {
   return readWithNativeFallback(
     'staff teams',
     async () => {
@@ -1679,27 +1684,34 @@ async function loadStaffTeams(user: AuthUser) {
       visibleTeams.filter(Boolean).forEach((team: any) => {
         if (team?.id && isTeamActive(team) && isTeamStaff(team, user)) teamsById.set(team.id, team);
       });
-      return [...teamsById.values()];
+      return { teams: [...teamsById.values()], isPartial: false };
     },
     async () => {
       const coachTeamIds = Array.isArray(user.coachOf) ? user.coachOf.map(compactString).filter(Boolean) : [];
       const normalizedEmail = normalizeEmail(user.email);
       const ownerEmailCandidates = Array.from(new Set([compactString(user.email), normalizedEmail].filter(Boolean)));
       const ownerEmailLookups = ownerEmailCandidates.map((ownerEmail) =>
-        nativeRunQuery('teams', 'ownerEmail', 'EQUAL', ownerEmail).catch(() => [])
+        nativeRunQuery('teams', 'ownerEmail', 'EQUAL', ownerEmail)
       );
-      const [ownedTeams, adminTeams, ownerEmailLowerTeams, ...ownerEmailTeams] = await Promise.all([
-        nativeRunQuery('teams', 'ownerId', 'EQUAL', user.uid).catch(() => []),
-        normalizedEmail ? nativeRunQuery('teams', 'adminEmails', 'ARRAY_CONTAINS', normalizedEmail).catch(() => []) : Promise.resolve([]),
-        normalizedEmail ? nativeRunQuery('teams', 'ownerEmailLower', 'EQUAL', normalizedEmail).catch(() => []) : Promise.resolve([]),
+      const queryResults = await Promise.allSettled([
+        nativeRunQuery('teams', 'ownerId', 'EQUAL', user.uid),
+        ...(normalizedEmail ? [
+          nativeRunQuery('teams', 'adminEmails', 'ARRAY_CONTAINS', normalizedEmail),
+          nativeRunQuery('teams', 'ownerEmailLower', 'EQUAL', normalizedEmail)
+        ] : []),
         ...ownerEmailLookups
       ]);
-      const coachTeams = await Promise.all(coachTeamIds.map((teamId) => nativeGetDocument(`teams/${encodeURIComponent(teamId)}`).catch(() => null)));
+      const coachTeamResults = await Promise.allSettled(
+        coachTeamIds.map((teamId) => nativeGetDocument(`teams/${encodeURIComponent(teamId)}`))
+      );
+      const isPartial = [...queryResults, ...coachTeamResults].some((result) => result.status === 'rejected');
       const teamsById = new Map<string, any>();
-      [...ownedTeams, ...adminTeams, ...ownerEmailLowerTeams, ...ownerEmailTeams.flat(), ...coachTeams].forEach((team) => {
+      const queryTeams = queryResults.flatMap((result) => result.status === 'fulfilled' ? result.value : []);
+      const coachTeams = coachTeamResults.flatMap((result) => result.status === 'fulfilled' && result.value ? [result.value] : []);
+      [...queryTeams, ...coachTeams].forEach((team) => {
         if (team?.id && isTeamActive(team) && isTeamStaff(team, user)) teamsById.set(team.id, team);
       });
-      return [...teamsById.values()];
+      return { teams: [...teamsById.values()], isPartial };
     }
   );
 }
@@ -2787,22 +2799,23 @@ export async function loadParentScheduleScope(user: AuthUser | null): Promise<Pa
     };
   }
   let isPartial = false;
-  const [profile, staffTeams] = await Promise.all([
+  const [profile, staffTeamResult] = await Promise.all([
     loadProfileDocument(user.uid).catch(() => {
       isPartial = true;
       return {};
     }),
     loadStaffTeams(user).catch(() => {
       isPartial = true;
-      return [];
+      return { teams: [], isPartial: true };
     })
   ]);
+  if (staffTeamResult.isPartial) isPartial = true;
   const children = await resolveParentScheduleChildren(user, profile as Record<string, unknown>);
   return {
     profile: profile as Record<string, unknown>,
     children,
     isPartial,
-    staffTeams: staffTeams
+    staffTeams: staffTeamResult.teams
       .map((team: any) => {
         const teamId = compactString(team?.id);
         return teamId ? { teamId, teamName: compactString(team?.name) || teamId } : null;
@@ -4028,7 +4041,7 @@ async function buildParentScheduleTeamChildren(user: AuthUser, profile: Record<s
     byTeam.get(child.teamId)?.push(child);
   });
 
-  const staffTeams = options.parentScope?.staffTeams || await loadStaffTeams(user).catch(() => []);
+  const staffTeams = options.parentScope?.staffTeams || (await loadStaffTeams(user).catch(() => ({ teams: [], isPartial: true }))).teams;
   await mapWithConcurrency(staffTeams, parentScheduleTeamConcurrency, async (team: any) => {
     const teamId = compactString(team?.id || team?.teamId);
     if (!teamId) return;
