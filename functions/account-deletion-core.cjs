@@ -48,6 +48,74 @@ function extractAccountProfileStoragePath(value, uid) {
   return '';
 }
 
+function getLegacyUnscopedProfilePhotoPaths(profilePhotoUrls = []) {
+  return [...new Set(profilePhotoUrls.map((value) => {
+    const storagePath = extractFirebaseStoragePath(value);
+    const pathParts = storagePath.split('/');
+    return pathParts.length === 2 && pathParts[0] === 'user-photos' ? storagePath : '';
+  }).filter(Boolean))];
+}
+
+function collectAccountRosterScopes(userData = {}) {
+  const normalizeDocumentId = (value) => {
+    const normalized = String(value || '').trim();
+    return normalized && normalized.length <= 200 && !normalized.includes('/') ? normalized : '';
+  };
+  const playerPaths = new Set();
+  const teamIds = new Set(
+    (Array.isArray(userData.parentTeamIds) ? userData.parentTeamIds : [])
+      .map(normalizeDocumentId)
+      .filter(Boolean)
+  );
+  (Array.isArray(userData.parentOf) ? userData.parentOf : []).forEach((link) => {
+    const teamId = normalizeDocumentId(link?.teamId);
+    const playerId = normalizeDocumentId(link?.playerId);
+    if (teamId) teamIds.add(teamId);
+    if (teamId && playerId) playerPaths.add(`teams/${teamId}/players/${playerId}`);
+  });
+  (Array.isArray(userData.parentPlayerKeys) ? userData.parentPlayerKeys : []).forEach((key) => {
+    const [rawTeamId, rawPlayerId] = String(key || '').split('::');
+    const teamId = normalizeDocumentId(rawTeamId);
+    const playerId = normalizeDocumentId(rawPlayerId);
+    if (teamId) teamIds.add(teamId);
+    if (teamId && playerId) playerPaths.add(`teams/${teamId}/players/${playerId}`);
+  });
+  return {
+    playerPaths: [...playerPaths],
+    teamIds: [...teamIds]
+  };
+}
+
+function getParentContactUserId(parent = {}) {
+  return String(
+    parent.userId ||
+    parent.uid ||
+    parent.parentUserId ||
+    parent.accountUserId ||
+    parent.guardianUserId ||
+    ''
+  ).trim();
+}
+
+function buildRosterParentScrubPlan(record = {}, uid) {
+  const normalizedUid = String(uid || '').trim();
+  if (!normalizedUid) return { changed: false, parents: [], fieldsToDelete: [] };
+  const parents = Array.isArray(record.parents) ? record.parents : [];
+  const filteredParents = parents.filter((parent) => getParentContactUserId(parent) !== normalizedUid);
+  const fieldsToDelete = [];
+  if (String(record.parentUserId || '').trim() === normalizedUid) {
+    fieldsToDelete.push('parentUserId', 'parentEmail', 'parentName', 'parentPhone', 'parentRelation');
+  }
+  if (String(record.guardianUserId || '').trim() === normalizedUid) {
+    fieldsToDelete.push('guardianUserId', 'guardianEmail', 'guardianName', 'guardianPhone', 'guardianRelation');
+  }
+  return {
+    changed: filteredParents.length !== parents.length || fieldsToDelete.length > 0,
+    parents: filteredParents,
+    fieldsToDelete
+  };
+}
+
 function classifyAccountStoragePaths(uid, mediaStoragePaths = [], profilePhotoUrls = []) {
   const normalizedUid = String(uid || '').trim();
   const athletePrefix = `athlete-profile-media/${normalizedUid}/`;
@@ -214,6 +282,18 @@ function createAccountDeletionRequestHandler({ firestore, auth, Timestamp, Https
         { ownedTeams }
       );
     }
+    const userDoc = await firestore.doc(`users/${uid}`).get();
+    const legacyProfilePhotoPaths = getLegacyUnscopedProfilePhotoPaths([
+      userDoc.data()?.photoUrl,
+      userRecord?.photoURL
+    ]);
+    if (legacyProfilePhotoPaths.length) {
+      throw new HttpsError(
+        'failed-precondition',
+        'Your legacy profile photo must be migrated before account deletion can complete. Contact support.',
+        { reason: 'legacy-profile-photo-migration-required' }
+      );
+    }
 
     const now = Timestamp.now();
     await firestore.doc(`accountDeletionRequests/${uid}`).set({
@@ -241,10 +321,13 @@ module.exports = {
   assertDeletionRequest,
   assertRecentAuthentication,
   buildDeletionAuditId,
+  buildRosterParentScrubPlan,
   classifyAccountStoragePaths,
+  collectAccountRosterScopes,
   collectAccountMediaStoragePaths,
   createAccountDeletionRequestHandler,
   extractAccountProfileStoragePath,
+  getLegacyUnscopedProfilePhotoPaths,
   getAccountDeletionCollectionQueries,
   getAccountDeletionCollectionGroupQueries,
   loadOwnedTeams,

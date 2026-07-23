@@ -637,6 +637,20 @@
       ]
     },
     {
+      "collectionGroup": "players",
+      "fieldPath": "parentUserId",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
+    },
+    {
+      "collectionGroup": "players",
+      "fieldPath": "guardianUserId",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
+    },
+    {
       "collectionGroup": "membershipRequests",
       "fieldPath": "requesterUserId",
       "indexes": [

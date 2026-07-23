@@ -6,10 +6,13 @@ const { readFileSync } = require('node:fs');
 const { join } = require('node:path');
 const {
   buildDeletionAuditId,
+  buildRosterParentScrubPlan,
   classifyAccountStoragePaths,
+  collectAccountRosterScopes,
   collectAccountMediaStoragePaths,
   createAccountDeletionRequestHandler,
   extractAccountProfileStoragePath,
+  getLegacyUnscopedProfilePhotoPaths,
   getAccountDeletionCollectionQueries,
   getAccountDeletionCollectionGroupQueries,
   shouldProcessAccountDeletionRequest,
@@ -67,6 +70,51 @@ test('extracts only account profile photo paths from Firebase Storage URLs', () 
     ''
   );
   assert.equal(extractAccountProfileStoragePath('https://example.com/photo.jpg', 'user-1'), '');
+});
+
+test('blocks only legacy unscoped profile photo paths for trusted migration', () => {
+  assert.deepEqual(getLegacyUnscopedProfilePhotoPaths([
+    'https://firebasestorage.googleapis.com/v0/b/images/o/user-photos%2F171234_photo.jpg?alt=media',
+    'https://storage.googleapis.com/images/user-photos/user-1/photo.jpg',
+    'https://example.com/photo.jpg'
+  ]), ['user-photos/171234_photo.jpg']);
+});
+
+test('collects canonical roster scopes without accepting injected document paths', () => {
+  assert.deepEqual(collectAccountRosterScopes({
+    parentTeamIds: ['team-1', 'bad/team'],
+    parentOf: [{ teamId: 'team-2', playerId: 'player-2' }],
+    parentPlayerKeys: ['team-3::player-3', 'bad/team::player-4']
+  }), {
+    playerPaths: [
+      'teams/team-2/players/player-2',
+      'teams/team-3/players/player-3'
+    ],
+    teamIds: ['team-1', 'team-2', 'team-3']
+  });
+});
+
+test('scrubs deleted parent identities and their associated roster contact fields', () => {
+  assert.deepEqual(buildRosterParentScrubPlan({
+    parents: [
+      { userId: 'deleted-parent', email: 'deleted@example.com' },
+      { accountUserId: 'remaining-parent', email: 'remaining@example.com' }
+    ],
+    parentUserId: 'deleted-parent',
+    parentEmail: 'deleted@example.com',
+    parentName: 'Deleted Parent',
+    guardianUserId: 'remaining-parent'
+  }, 'deleted-parent'), {
+    changed: true,
+    parents: [{ accountUserId: 'remaining-parent', email: 'remaining@example.com' }],
+    fieldsToDelete: [
+      'parentUserId',
+      'parentEmail',
+      'parentName',
+      'parentPhone',
+      'parentRelation'
+    ]
+  });
 });
 
 test('routes account media cleanup to the primary and legacy image buckets', () => {
@@ -143,7 +191,10 @@ test('queues deletion for a signed-in non-owner', async () => {
       collection: () => ({
         where: () => ({ get: async () => ({ docs: [] }) })
       }),
-      doc: (path) => ({ set: async (value) => writes.push({ path, value }) })
+      doc: (path) => ({
+        get: async () => ({ exists: false, data: () => ({}) }),
+        set: async (value) => writes.push({ path, value })
+      })
     },
     auth: { getUser: async () => ({ email: 'Parent@example.com' }) },
     Timestamp: { now: () => 'now' },
@@ -219,7 +270,10 @@ test('allows deletion after every owned team is deactivated', async () => {
           get: async () => ({ docs: [{ id: 'team-1', data: () => ({ name: 'Falcons', active: false }) }] })
         })
       }),
-      doc: (path) => ({ set: async (value) => writes.push({ path, value }) })
+      doc: (path) => ({
+        get: async () => ({ exists: false, data: () => ({}) }),
+        set: async (value) => writes.push({ path, value })
+      })
     },
     auth: { getUser: async () => ({ email: 'owner@example.com' }) },
     Timestamp: { now: () => 'now' },
@@ -233,6 +287,36 @@ test('allows deletion after every owned team is deactivated', async () => {
 
   assert.equal(result.status, 'queued');
   assert.equal(writes.length, 1);
+});
+
+test('blocks queuing until a legacy unscoped profile photo is migrated', async () => {
+  const handler = createAccountDeletionRequestHandler({
+    firestore: {
+      collection: () => ({
+        where: () => ({ get: async () => ({ docs: [] }) })
+      }),
+      doc: () => ({
+        get: async () => ({
+          exists: true,
+          data: () => ({
+            photoUrl: 'https://firebasestorage.googleapis.com/v0/b/images/o/user-photos%2F171234_photo.jpg?alt=media'
+          })
+        })
+      })
+    },
+    auth: { getUser: async () => ({ email: 'parent@example.com' }) },
+    Timestamp: { now: () => 'now' },
+    HttpsError
+  });
+
+  await assert.rejects(
+    () => handler(
+      { confirmation: 'DELETE' },
+      { auth: { uid: 'user-1', token: { auth_time: recentAuthTime } } }
+    ),
+    (error) => error.code === 'failed-precondition' &&
+      error.details.reason === 'legacy-profile-photo-migration-required'
+  );
 });
 
 test('requires a recent sign-in before queuing permanent account deletion', async () => {

@@ -240,11 +240,14 @@ const { hasTeamAdminAccess } = require('./team-admin-access-core.cjs');
 const { createAutoAcceptParentInviteHandler } = require('./parent-invite-auto-link-callable.cjs');
 const {
   buildDeletionAuditId,
+  buildRosterParentScrubPlan,
   classifyAccountStoragePaths,
+  collectAccountRosterScopes,
   collectAccountMediaStoragePaths,
   createAccountDeletionRequestHandler,
   getAccountDeletionCollectionQueries,
   getAccountDeletionCollectionGroupQueries,
+  getLegacyUnscopedProfilePhotoPaths,
   loadOwnedTeams,
   shouldProcessAccountDeletionRequest,
   summarizeOwnedTeams
@@ -14434,6 +14437,68 @@ async function deleteAccountStorage(uid, mediaDocuments, profilePhotoUrls = []) 
   ]);
 }
 
+async function loadAccountRosterPlayerDocuments(uid, userData = {}) {
+  const documentsByPath = new Map();
+  const rememberDocuments = (documents = []) => {
+    documents.forEach((document) => {
+      if (document?.exists !== false && document?.ref?.path) {
+        documentsByPath.set(document.ref.path, document);
+      }
+    });
+  };
+  const { playerPaths, teamIds } = collectAccountRosterScopes(userData);
+  const [parentMatches, guardianMatches] = await Promise.all([
+    firestore.collectionGroup('players').where('parentUserId', '==', uid).get(),
+    firestore.collectionGroup('players').where('guardianUserId', '==', uid).get()
+  ]);
+  rememberDocuments(parentMatches.docs);
+  rememberDocuments(guardianMatches.docs);
+  for (const teamId of teamIds) {
+    const scopedPlayers = await firestore.collection(`teams/${teamId}/players`).get();
+    rememberDocuments(scopedPlayers.docs);
+  }
+  const linkedPlayerDocuments = await Promise.all(playerPaths
+    .filter((path) => !documentsByPath.has(path))
+    .map((path) => firestore.doc(path).get()));
+  rememberDocuments(linkedPlayerDocuments);
+  return [...documentsByPath.values()];
+}
+
+function buildAccountRosterScrubUpdate(record, uid) {
+  const plan = buildRosterParentScrubPlan(record, uid);
+  if (!plan.changed) return null;
+  const update = {
+    parents: plan.parents,
+    updatedAt: admin.firestore.Timestamp.now()
+  };
+  plan.fieldsToDelete.forEach((field) => {
+    update[field] = admin.firestore.FieldValue.delete();
+  });
+  return update;
+}
+
+async function scrubAccountRosterParentLinks(uid, userData = {}) {
+  const playerDocuments = await loadAccountRosterPlayerDocuments(uid, userData);
+  const privateProfileDocuments = await Promise.all(playerDocuments.map((playerDocument) => (
+    playerDocument.ref.collection('private').doc('profile').get()
+  )));
+  const writes = [];
+  playerDocuments.forEach((document) => {
+    const update = buildAccountRosterScrubUpdate(document.data() || {}, uid);
+    if (update) writes.push({ ref: document.ref, update });
+  });
+  privateProfileDocuments.forEach((document) => {
+    if (!document.exists) return;
+    const update = buildAccountRosterScrubUpdate(document.data() || {}, uid);
+    if (update) writes.push({ ref: document.ref, update });
+  });
+  for (let index = 0; index < writes.length; index += 200) {
+    const batch = firestore.batch();
+    writes.slice(index, index + 200).forEach(({ ref, update }) => batch.update(ref, update));
+    await batch.commit();
+  }
+}
+
 exports.processAccountDeletionRequest = functions
   .runWith({ timeoutSeconds: 540, memory: '1GB', failurePolicy: true })
   .firestore
@@ -14461,6 +14526,17 @@ exports.processAccountDeletionRequest = functions
       if (ownedTeams.length) {
         throw new Error('Account still owns one or more teams.');
       }
+      const legacyProfilePhotoPaths = getLegacyUnscopedProfilePhotoPaths([
+        userDoc.data()?.photoUrl,
+        authUser?.photoURL
+      ]);
+      if (legacyProfilePhotoPaths.length) {
+        const migrationError = new Error(
+          'Legacy profile photo migration is required before account deletion can complete.'
+        );
+        migrationError.code = 'legacy-profile-photo-migration-required';
+        throw migrationError;
+      }
 
       const [legacyTeamMedia, teamMediaItems, chatMessages] = await Promise.all([
         firestore.collectionGroup('media').where('uploadedBy', '==', uid).get(),
@@ -14475,6 +14551,7 @@ exports.processAccountDeletionRequest = functions
         userDoc.data()?.photoUrl,
         authUser?.photoURL
       ]);
+      await scrubAccountRosterParentLinks(uid, userDoc.data() || {});
 
       const directDocuments = [
         `publicUserProfiles/${uid}`,
@@ -14511,7 +14588,9 @@ exports.processAccountDeletionRequest = functions
       await requestRef.set({
         status: 'failed',
         updatedAt: admin.firestore.Timestamp.now(),
-        failureCode: 'processing-failed'
+        failureCode: error?.code === 'legacy-profile-photo-migration-required'
+          ? error.code
+          : 'processing-failed'
       }, { merge: true });
       throw error;
     }
