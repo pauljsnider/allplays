@@ -269,6 +269,22 @@ describe('hydrateFirebaseUser', () => {
     expect(hydrated.user.roles).toContain('coach');
     expect(hydrated.user.roles).not.toEqual(['parent']);
   });
+
+  it('queries owned teams and merges them when the stored coachOf list is already non-empty', async () => {
+    legacyAuthMocks.getUserTeams.mockResolvedValue([
+      { id: 'team-1', name: 'Current Team' },
+      { id: 'team-2', name: 'Vipers' }
+    ]);
+
+    const hydrated = await hydrateFirebaseUser({
+      uid: 'coach-1',
+      email: 'coach@example.com'
+    });
+
+    expect(legacyAuthMocks.getUserTeams).toHaveBeenCalledWith('coach-1');
+    expect(hydrated.profile.coachOf).toEqual(['team-1', 'team-2']);
+    expect(hydrated.user.coachOf).toEqual(['team-1', 'team-2']);
+  });
 });
 
 describe('signOut', () => {

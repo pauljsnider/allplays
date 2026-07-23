@@ -238,6 +238,7 @@ const {
 } = require('./friend-message-access-core.cjs');
 const { hasTeamAdminAccess } = require('./team-admin-access-core.cjs');
 const { createAutoAcceptParentInviteHandler } = require('./parent-invite-auto-link-callable.cjs');
+const { createTeamOwnerAccessSyncHandler } = require('./team-owner-access-core.cjs');
 const {
   normalizeParentInviteEmail,
   appendUniqueParentLink,
@@ -6874,6 +6875,15 @@ exports.syncTeamNotificationRecipientsOnTeamWrite = functions.firestore
     await syncNotificationRecipientsForTeamChange(context.params.teamId, before, after);
     return null;
   });
+
+exports.syncTeamOwnerAccessOnCreate = functions
+  .runWith({ failurePolicy: true })
+  .firestore
+  .document('teams/{teamId}')
+  .onCreate(createTeamOwnerAccessSyncHandler({
+    firestore,
+    fieldValue: admin.firestore.FieldValue
+  }));
 
 exports.syncTeamNotificationTargetsOnPreferenceWrite = functions.firestore
   .document('users/{uid}/notificationPreferences/{teamId}')

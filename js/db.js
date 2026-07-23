@@ -1001,6 +1001,10 @@ export async function getTeams(options = {}) {
                 : Promise.resolve({ docs: [] }),
             currentUserEmail
                 ? getDocs(query(teamsRef, where("adminEmails", "array-contains", currentUserEmail)))
+                    .catch((error) => {
+                        console.warn('Unable to load teams granted through admin email; continuing with public and owned teams.', error);
+                        return { docs: [] };
+                    })
                 : Promise.resolve({ docs: [] })
         ]);
         const teamsById = new Map();
@@ -1832,7 +1836,12 @@ export async function getUserTeamsWithAccess(userId, email, options = {}) {
         : Promise.resolve({ docs: [] });
     const [ownedSnap, adminSnap, ...ownerEmailSnaps] = await Promise.all([
         getDocs(query(collection(db, "teams"), where("ownerId", "==", userId))),
-        normalizedEmail ? getDocs(query(collection(db, "teams"), where("adminEmails", "array-contains", normalizedEmail))) : Promise.resolve({ docs: [] }),
+        normalizedEmail
+            ? optionalTeamQuery(
+                getDocs(query(collection(db, "teams"), where("adminEmails", "array-contains", normalizedEmail))),
+                `adminEmails:${normalizedEmail}`
+            )
+            : Promise.resolve({ docs: [] }),
         ownerEmailLowerQuery,
         ...ownerEmailQueries
     ]);
@@ -2221,24 +2230,7 @@ export async function createTeam(teamData) {
         teamData.deactivatedBy = null;
     }
     const docRef = await addDoc(collection(db, "teams"), teamData);
-    if (teamData.ownerId) {
-        await grantCoachRoleForTeam(teamData.ownerId, docRef.id);
-    }
     return docRef.id;
-}
-
-export async function grantCoachRoleForTeam(userId, teamId) {
-    if (!userId || !teamId) return false;
-    try {
-        await setDoc(doc(db, "users", userId), {
-            coachOf: arrayUnion(teamId),
-            roles: arrayUnion('coach')
-        }, { merge: true });
-        return true;
-    } catch (error) {
-        console.warn('Unable to grant coach role for team owner:', error);
-        return false;
-    }
 }
 
 function getSelectedTeamMediaManagerIds(teamPermissions = {}) {
