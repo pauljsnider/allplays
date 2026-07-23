@@ -255,6 +255,11 @@ function resolveAppSourcePath(relativePath: string) {
 describe('Schedule', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    appDataCacheMocks.getCachedAppData.mockReturnValue(null);
+    appDataCacheMocks.loadCachedAppData.mockImplementation(async (
+      _key: string,
+      loader: () => Promise<unknown>
+    ) => loader());
     scheduleServiceMocks.loadParentScheduleScope.mockResolvedValue({
       profile: {},
       children: [],
@@ -884,6 +889,81 @@ describe('Schedule', () => {
     expect((await screen.findByLabelText('Team filter') as HTMLSelectElement).value).toBe('team-owned');
     fireEvent.click(await screen.findByRole('button', { name: /manage schedule/i }));
     expect(await screen.findByRole('heading', { name: 'Add game for Vipers' })).toBeTruthy();
+  });
+
+  it('removes cached management access when fresh staff scope revokes the team', async () => {
+    scheduleServiceMocks.loadParentScheduleScope.mockResolvedValueOnce({
+      profile: {},
+      children: [],
+      staffTeams: [],
+      isPartial: false
+    });
+    appDataCacheMocks.loadCachedAppData.mockResolvedValueOnce({
+      children: [],
+      events: [buildScheduleEvent(1, {
+        teamId: 'team-owned',
+        teamName: 'Vipers',
+        isTeamStaff: true
+      })],
+      staffTeams: [{ teamId: 'team-owned', teamName: 'Vipers' }]
+    });
+
+    renderSchedule('/schedule?teamId=team-owned');
+
+    expect(await screen.findByLabelText('Team filter')).toBeTruthy();
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: /manage schedule/i })).toBeNull();
+    });
+  });
+
+  it('ignores a delayed staff-scope response from the previous account', async () => {
+    let resolvePreviousScope!: (scope: {
+      profile: Record<string, unknown>;
+      children: [];
+      staffTeams: Array<{ teamId: string; teamName: string }>;
+      isPartial: false;
+    }) => void;
+    scheduleServiceMocks.loadParentScheduleScope
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolvePreviousScope = resolve;
+      }));
+    appDataCacheMocks.loadCachedAppData
+      .mockResolvedValue({ children: [], events: [], staffTeams: [] });
+
+    const previousAuth = {
+      ...auth,
+      user: { ...auth.user!, uid: 'previous-user' } as AuthState['user']
+    };
+    const nextAuth = {
+      ...auth,
+      user: { ...auth.user!, uid: 'next-user' } as AuthState['user']
+    };
+    const { rerender } = render(
+      <MemoryRouter initialEntries={['/schedule']}>
+        <Routes>
+          <Route path="/schedule" element={<Schedule auth={previousAuth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    rerender(
+      <MemoryRouter initialEntries={['/schedule']}>
+        <Routes>
+          <Route path="/schedule" element={<Schedule auth={nextAuth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+    resolvePreviousScope({
+      profile: {},
+      children: [],
+      staffTeams: [{ teamId: 'team-owned', teamName: 'Vipers' }],
+      isPartial: false
+    });
+
+    const teamFilter = await screen.findByLabelText('Team filter');
+    await waitFor(() => {
+      expect(within(teamFilter).queryByRole('option', { name: 'Vipers' })).toBeNull();
+    });
   });
 
   it('routes generic staff card opens to the game hub helper on mobile', () => {
@@ -1901,10 +1981,10 @@ describe('Schedule', () => {
       .mockResolvedValueOnce(buildMultiTeamStaffScheduleResult());
     scheduleServiceMocks.createScheduledGameForApp.mockResolvedValueOnce('game-2');
 
-    renderSchedule();
+    renderSchedule('/schedule?teamId=team-1');
 
     fireEvent.click(await screen.findByRole('button', { name: /manage schedule/i }));
-    expect(await screen.findByRole('heading', { name: 'Choose the team to manage' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Add game for Bears' })).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText('Team to manage'), { target: { value: 'team-2' } });
 
@@ -1922,6 +2002,10 @@ describe('Schedule', () => {
         opponent: 'Falcons',
         location: 'West Gym'
       }), auth.user);
+    });
+    await waitFor(() => {
+      expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
+      expect(screen.getByRole('heading', { name: 'Add game for Wolves' })).toBeTruthy();
     });
   });
 

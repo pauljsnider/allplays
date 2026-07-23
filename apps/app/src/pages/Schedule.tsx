@@ -121,6 +121,17 @@ function getScheduleTimeRangeFromQuery(value: string | null): ScheduleTimeRange 
   return scheduleTimeRangeValues.includes(normalized as ScheduleTimeRange) ? normalized as ScheduleTimeRange : null;
 }
 
+function applyAuthoritativeStaffScope(
+  events: ParentScheduleEvent[],
+  staffTeams: ParentScheduleStaffTeam[]
+) {
+  const staffTeamIds = new Set(staffTeams.map((team) => team.teamId));
+  return events.map((event) => {
+    const isTeamStaff = staffTeamIds.has(event.teamId);
+    return event.isTeamStaff === isTeamStaff ? event : { ...event, isTeamStaff };
+  });
+}
+
 export function Schedule({ auth }: { auth: AuthState }) {
   const [searchParams] = useSearchParams();
   const { isDesktopWeb } = useShellLayout();
@@ -164,6 +175,8 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const pastHistoryLoadedRef = useRef(false);
   const childrenRef = useRef<ParentScheduleChild[]>([]);
   const eventsRef = useRef<ParentScheduleEvent[]>([]);
+  const activeUserIdRef = useRef<string | null>(auth.user?.uid || null);
+  activeUserIdRef.current = auth.user?.uid || null;
   const rsvpHydrationVersionRef = useRef(0);
   const lastRsvpHydrationScopeRef = useRef('');
   const bulkRsvpQueryHandledRef = useRef(false);
@@ -379,18 +392,18 @@ export function Schedule({ auth }: { auth: AuthState }) {
     void parentScopePromise
       .then((parentScope) => {
         if (!parentScope || parentScope.isPartial === true) return;
+        if (activeUserIdRef.current !== requestedUserId) return;
         refreshedStaffTeams = parentScope.staffTeams ?? [];
-        if (auth.user?.uid === requestedUserId) {
-          setStaffTeams(refreshedStaffTeams);
-          if (
-            hasLoadedScheduleRef.current
-            && selectedTeamId
-            && !childrenRef.current.some((child) => child.teamId === selectedTeamId)
-            && !eventsRef.current.some((event) => event.teamId === selectedTeamId)
-            && !refreshedStaffTeams.some((team) => team.teamId === selectedTeamId)
-          ) {
-            setSelectedTeamId('');
-          }
+        setStaffTeams(refreshedStaffTeams);
+        updateScheduleEvents((currentEvents) => applyAuthoritativeStaffScope(currentEvents, refreshedStaffTeams!));
+        if (
+          hasLoadedScheduleRef.current
+          && selectedTeamId
+          && !childrenRef.current.some((child) => child.teamId === selectedTeamId)
+          && !eventsRef.current.some((event) => event.teamId === selectedTeamId)
+          && !refreshedStaffTeams.some((team) => team.teamId === selectedTeamId)
+        ) {
+          setSelectedTeamId('');
         }
       });
 
@@ -416,17 +429,19 @@ export function Schedule({ auth }: { auth: AuthState }) {
         },
         rethrow: false,
         onSuccess: (result) => {
+          if (activeUserIdRef.current !== requestedUserId) return;
+          const authoritativeResult = refreshedStaffTeams === null
+            ? result
+            : {
+                ...result,
+                events: applyAuthoritativeStaffScope(result.events, refreshedStaffTeams),
+                staffTeams: refreshedStaffTeams
+              };
           hasLoadedScheduleRef.current = true;
           setLoadedScheduleUserId(auth.user?.uid || null);
           setScheduleLoadError(null);
-          applyScheduleResult({
-            ...result,
-            // Team ownership and staff access can change while the event
-            // summary remains cacheable. Use a completed access refresh when
-            // available without holding up the cached Schedule shell.
-            staffTeams: refreshedStaffTeams ?? result.staffTeams ?? []
-          });
-          hydrateScheduleRsvpsInBackground(result);
+          applyScheduleResult(authoritativeResult);
+          hydrateScheduleRsvpsInBackground(authoritativeResult);
           completeParentCoreWorkflowTimer('schedule', {
             targetPage: 'schedule',
             teamId: selectedTeamId || '',
@@ -476,6 +491,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
           });
         },
         onError: (loadError) => {
+          if (activeUserIdRef.current !== requestedUserId) return;
           const mappedError = toAppServiceError(loadError, 'Unable to load schedule.');
           setScheduleLoadError(mappedError);
           if (!hasExistingSchedule) {

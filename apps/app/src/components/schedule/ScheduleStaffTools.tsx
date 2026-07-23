@@ -153,6 +153,7 @@ export function ScheduleStaffTools({
   activeTrackerConfigTeamIdRef.current = selectedCalendarTeam?.teamId || null;
   const shouldShowManageScheduleTeamPicker = manageableTeamOptions.length > 1;
   const previousSelectedTeamIdRef = useRef(selectedCalendarTeam?.teamId);
+  const appliedPageSelectedTeamIdRef = useRef('');
 
   useEffect(() => {
     if (selectedStaffManageTeamId && !manageableTeamOptions.some((team) => team.teamId === selectedStaffManageTeamId)) {
@@ -161,8 +162,15 @@ export function ScheduleStaffTools({
   }, [manageableTeamOptions, selectedStaffManageTeamId]);
 
   useEffect(() => {
-    if (selectedTeamId && manageableTeamOptions.some((team) => team.teamId === selectedTeamId)) {
+    if (
+      selectedTeamId
+      && selectedTeamId !== appliedPageSelectedTeamIdRef.current
+      && manageableTeamOptions.some((team) => team.teamId === selectedTeamId)
+    ) {
       setSelectedStaffManageTeamId(selectedTeamId);
+      appliedPageSelectedTeamIdRef.current = selectedTeamId;
+    } else if (!selectedTeamId) {
+      appliedPageSelectedTeamIdRef.current = '';
     }
   }, [manageableTeamOptions, selectedTeamId]);
 
