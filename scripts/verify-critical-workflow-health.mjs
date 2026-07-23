@@ -95,12 +95,33 @@ export function evaluateCriticalWorkflowHealth({ now = new Date(), masterSha, de
     if (!Number.isFinite(nowMs)) throw new Error('Current time is invalid.');
 
     const deploySignal = evaluateExactRun('production-deploy', normalizeRuns(deploy), masterSha, nowMs);
-    const smokeSignal = deploySignal.state === 'pending'
-        ? { name: 'production-smoke', healthy: true, state: 'waiting_for_deploy', runId: null }
-        : evaluateExactRun('production-smoke', normalizeRuns(smoke), masterSha, nowMs);
+    let smokeSignal;
+    if (deploySignal.state === 'pending') {
+        smokeSignal = { name: 'production-smoke', healthy: true, state: 'waiting_for_deploy', runId: null };
+    } else {
+        smokeSignal = evaluateExactRun('production-smoke', normalizeRuns(smoke), masterSha, nowMs);
+        if (deploySignal.state.startsWith('completed_') && smokeSignal.state === 'completed_skipped') {
+            smokeSignal = { ...smokeSignal, state: 'blocked_by_failed_deploy' };
+        }
+    }
     const recoverySignal = evaluateRecovery(normalizeRuns(recovery), nowMs);
     const signals = [deploySignal, smokeSignal, recoverySignal];
     return { healthy: signals.every((signal) => signal.healthy), masterSha, signals };
+}
+
+export function formatCriticalWorkflowSummary(result) {
+    const lines = [
+        '## Critical workflow health',
+        '',
+        `- evaluated master: \`${result.masterSha}\``,
+        ...result.signals.map((signal) => `- ${signal.name}: **${signal.state}**${signal.runId ? ` (run ${signal.runId})` : ''}`)
+    ];
+    const smokeSignal = result.signals.find((signal) => signal.name === 'production-smoke');
+    const deploySignal = result.signals.find((signal) => signal.name === 'production-deploy');
+    if (smokeSignal?.state === 'blocked_by_failed_deploy') {
+        lines.push(`- remediation: fix failed production-deploy run ${deploySignal.runId}; production-smoke is blocked until deployment succeeds`);
+    }
+    return [...lines, ''].join('\n');
 }
 
 function required(environment, name) {
@@ -170,13 +191,7 @@ export function verifyCriticalWorkflowHealthFromEnvironment(environment = proces
     console.log(JSON.stringify(result));
     const summaryPath = String(environment.GITHUB_STEP_SUMMARY || '').trim();
     if (summaryPath) {
-        appendFileSync(summaryPath, [
-            '## Critical workflow health',
-            '',
-            `- evaluated master: \`${result.masterSha}\``,
-            ...result.signals.map((signal) => `- ${signal.name}: **${signal.state}**${signal.runId ? ` (run ${signal.runId})` : ''}`),
-            ''
-        ].join('\n'), { encoding: 'utf8' });
+        appendFileSync(summaryPath, formatCriticalWorkflowSummary(result), { encoding: 'utf8' });
     }
     if (!result.healthy) process.exitCode = 1;
     return result;

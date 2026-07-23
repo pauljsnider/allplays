@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
     evaluateCriticalWorkflowHealth,
+    formatCriticalWorkflowSummary,
     verifyCriticalWorkflowHealthFromEnvironment,
     OBSERVABILITY_REF,
     OBSERVABILITY_REPOSITORY
@@ -70,6 +71,38 @@ describe('critical workflow health evaluation', () => {
         }));
         expect(stale.healthy).toBe(false);
         expect(stale.signals[2].state).toBe('stale');
+    });
+
+    it('reports skipped smoke as blocked by its failed deployment prerequisite', () => {
+        const result = evaluateCriticalWorkflowHealth(healthyInput({
+            deploy: response([run({ id: 10, conclusion: 'failure' })]),
+            smoke: response([run({ id: 11, conclusion: 'skipped' })])
+        }));
+
+        expect(result.healthy).toBe(false);
+        expect(result.signals[0]).toEqual({
+            name: 'production-deploy', healthy: false, state: 'completed_failure', runId: 10
+        });
+        expect(result.signals[1]).toEqual({
+            name: 'production-smoke', healthy: false, state: 'blocked_by_failed_deploy', runId: 11
+        });
+        expect(formatCriticalWorkflowSummary(result)).toContain(
+            'remediation: fix failed production-deploy run 10; production-smoke is blocked until deployment succeeds'
+        );
+    });
+
+    it('keeps skipped smoke independently unhealthy after a successful deployment', () => {
+        const result = evaluateCriticalWorkflowHealth(healthyInput({
+            deploy: response([run({ id: 12 })]),
+            smoke: response([run({ id: 13, conclusion: 'skipped' })])
+        }));
+
+        expect(result.healthy).toBe(false);
+        expect(result.signals[0].state).toBe('success');
+        expect(result.signals[1]).toEqual({
+            name: 'production-smoke', healthy: false, state: 'completed_skipped', runId: 13
+        });
+        expect(formatCriticalWorkflowSummary(result)).not.toContain('remediation: fix failed production-deploy');
     });
 
     it('fails closed on malformed API data and workflow identities', () => {
