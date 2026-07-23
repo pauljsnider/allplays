@@ -1,4 +1,5 @@
 import { AlertCircle, Bell, CheckCheck, Loader2, RotateCcw, X } from 'lucide-react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { NotificationInboxItem } from '../lib/notificationInboxService';
 import { formatNotificationRecency, normalizeNotificationTimestamp } from '../lib/notificationRecency';
@@ -15,7 +16,9 @@ interface NotificationInboxSheetProps {
 
 export function NotificationInboxSheet({ items, inboxState, uid, onClose, onRetry, onMarkRead, onMarkAllRead }: NotificationInboxSheetProps) {
     const navigate = useNavigate();
-    const unreadItems = items.filter((item) => !item.readAt);
+    const [optimisticallyReadIds, setOptimisticallyReadIds] = useState<Set<string>>(() => new Set());
+    const [markAllState, setMarkAllState] = useState<'idle' | 'pending' | 'success' | 'error'>('idle');
+    const unreadItems = items.filter((item) => !item.readAt && !optimisticallyReadIds.has(item.id));
 
     const handleItemClick = (item: NotificationInboxItem) => {
         if (item.appRoute) {
@@ -30,11 +33,29 @@ export function NotificationInboxSheet({ items, inboxState, uid, onClose, onRetr
         }
     };
 
-    const handleMarkAllRead = () => {
-        if (!onMarkAllRead || unreadItems.length === 0) return;
-        void onMarkAllRead(uid, unreadItems).catch((error) => {
-            console.error('Failed to mark notifications read:', error);
+    const handleMarkAllRead = async () => {
+        if (!onMarkAllRead || unreadItems.length === 0 || markAllState === 'pending') return;
+
+        const itemsToMarkRead = unreadItems;
+        setOptimisticallyReadIds((current) => {
+            const next = new Set(current);
+            itemsToMarkRead.forEach((item) => next.add(item.id));
+            return next;
         });
+        setMarkAllState('pending');
+
+        try {
+            await onMarkAllRead(uid, itemsToMarkRead);
+            setMarkAllState('success');
+        } catch (error) {
+            setOptimisticallyReadIds((current) => {
+                const next = new Set(current);
+                itemsToMarkRead.forEach((item) => next.delete(item.id));
+                return next;
+            });
+            setMarkAllState('error');
+            console.error('Failed to mark notifications read:', error);
+        }
     };
 
     const renderBody = () => {
@@ -86,6 +107,16 @@ export function NotificationInboxSheet({ items, inboxState, uid, onClose, onRetr
 
         return (
             <>
+                {markAllState === 'error' ? (
+                    <div
+                        className="flex items-center gap-2 border-b border-red-100 bg-red-50 px-4 py-2 text-xs font-semibold text-red-700"
+                        role="alert"
+                        data-testid="notification-mark-all-error"
+                    >
+                        <AlertCircle className="h-4 w-4 flex-none" aria-hidden="true" />
+                        <span>Could not mark all as read. Please try again.</span>
+                    </div>
+                ) : null}
                 {inboxState === 'error' && (
                     <div
                         className="flex items-center gap-2 border-b border-red-100 bg-red-50 px-4 py-2 text-xs font-semibold text-red-600"
@@ -108,7 +139,7 @@ export function NotificationInboxSheet({ items, inboxState, uid, onClose, onRetr
                 )}
                 <ul role="list" className="divide-y divide-gray-100">
                     {items.map((item) => {
-                        const isUnread = !item.readAt;
+                        const isUnread = !item.readAt && !optimisticallyReadIds.has(item.id);
                         const createdAt = normalizeNotificationTimestamp(item.createdAt);
                         const recencyLabel = formatNotificationRecency(createdAt);
                         return (
@@ -169,15 +200,34 @@ export function NotificationInboxSheet({ items, inboxState, uid, onClose, onRetr
                         <h2 className="text-lg font-black text-gray-950">Notifications</h2>
                     </div>
                     <div className="flex items-center gap-2">
-                        {unreadItems.length > 0 && onMarkAllRead ? (
+                        {markAllState === 'pending' ? (
                             <button
                                 type="button"
                                 className="ghost-button !h-10 !min-h-10 text-xs"
-                                onClick={handleMarkAllRead}
+                                disabled
+                                aria-label="Marking all notifications as read"
+                            >
+                                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                                Marking read…
+                            </button>
+                        ) : unreadItems.length > 0 && onMarkAllRead ? (
+                            <button
+                                type="button"
+                                className="ghost-button !h-10 !min-h-10 text-xs"
+                                onClick={() => void handleMarkAllRead()}
                             >
                                 <CheckCheck className="h-4 w-4" aria-hidden="true" />
                                 Mark all read
                             </button>
+                        ) : markAllState === 'success' ? (
+                            <span
+                                className="flex h-10 items-center gap-1.5 px-2 text-xs font-bold text-emerald-700"
+                                role="status"
+                                aria-live="polite"
+                            >
+                                <CheckCheck className="h-4 w-4" aria-hidden="true" />
+                                All read
+                            </span>
                         ) : null}
                         <button
                             type="button"
