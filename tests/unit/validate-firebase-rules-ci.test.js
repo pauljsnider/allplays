@@ -153,8 +153,9 @@ concurrency:
               | grep -Eo '(409|429|500|502|503|504)'
             final_error_class="HTTP \${final_http_status}"
             echo "| Attempts exhausted | \${max_attempts}/\${max_attempts} |"
-            echo '| Not deployed | \`firestore:rules\`, \`firestore:indexes\`, \`hosting\`, \`functions\` |'
-            echo "Firestore configuration changes remain fail-closed, so Hosting and Functions were not deployed."
+            echo '| Guaranteed not deployed | \`hosting\`, \`functions\` |'
+            echo "| Firestore configuration | Rules and indexes may be partially deployed; verify both before retrying. |"
+            echo "Application deployment remains fail-closed, so Hosting and Functions were not deployed."
             echo "Recovery: \${GITHUB_SERVER_URL}/\${GITHUB_REPOSITORY}/blob/master/docs/observability-runbook.md#firestore-rules-api-retry-exhaustion"
           } >> "$GITHUB_STEP_SUMMARY"
           fi
@@ -233,9 +234,13 @@ concurrency:
             'echo "Retries exhausted"'
         ))).toThrow('Production Firestore retry-exhaustion attempt count');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
-            'echo \'| Not deployed | `firestore:rules`, `firestore:indexes`, `hosting`, `functions` |\'',
+            'echo \'| Guaranteed not deployed | `hosting`, `functions` |\'',
             'echo "Deployment blocked"'
-        ))).toThrow('Production Firestore retry-exhaustion blocked surfaces');
+        ))).toThrow('Production Firestore retry-exhaustion blocked application surfaces');
+        expect(() => validateProductionDeployCommand(validDeployCommand.replace(
+            'Rules and indexes may be partially deployed; verify both before retrying.',
+            'Rules and indexes were not deployed.'
+        ))).toThrow('Production Firestore retry-exhaustion partial configuration status');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
             '${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/master/docs/observability-runbook.md#firestore-rules-api-retry-exhaustion',
             'docs/observability-runbook.md'

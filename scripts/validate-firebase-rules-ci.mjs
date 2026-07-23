@@ -287,14 +287,19 @@ export function validateProductionDeployCommand(deployProd) {
     assertIncludes(deployProd, `grep -Eo '(409|429|500|502|503|504)'`, 'Production Firestore retry-exhaustion HTTP status normalization');
     assertIncludes(deployProd, 'final_error_class="HTTP ${final_http_status}"', 'Production Firestore retry-exhaustion HTTP error class');
     assertIncludes(deployProd, 'echo "| Attempts exhausted | ${max_attempts}/${max_attempts} |"', 'Production Firestore retry-exhaustion attempt count');
-    assertIncludes(deployProd, 'echo \'| Not deployed | `firestore:rules`, `firestore:indexes`, `hosting`, `functions` |\'', 'Production Firestore retry-exhaustion blocked surfaces');
+    assertIncludes(deployProd, 'echo \'| Guaranteed not deployed | `hosting`, `functions` |\'', 'Production Firestore retry-exhaustion blocked application surfaces');
+    assertIncludes(
+        deployProd,
+        'Rules and indexes may be partially deployed; verify both before retrying.',
+        'Production Firestore retry-exhaustion partial configuration status'
+    );
     assertIncludes(deployProd, '} >> "$GITHUB_STEP_SUMMARY"', 'Production Firestore retry-exhaustion job summary');
     assertIncludes(
         deployProd,
         '${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/master/docs/observability-runbook.md#firestore-rules-api-retry-exhaustion',
         'Production Firestore retry-exhaustion recovery link'
     );
-    assertIncludes(deployProd, 'Firestore configuration changes remain fail-closed, so Hosting and Functions were not deployed.', 'Production Firestore retry-exhaustion fail-closed guidance');
+    assertIncludes(deployProd, 'Application deployment remains fail-closed, so Hosting and Functions were not deployed.', 'Production Firestore retry-exhaustion fail-closed guidance');
     assertIncludes(deployProd, 'actions: read', 'Production workflow-run read permission');
     assertIncludes(deployProd, 'GH_TOKEN: ${{ github.token }}', 'Production workflow-run authentication');
     assertIncludes(deployProd, 'actions/workflows/deploy-prod.yml/runs', 'Production successful deploy lookup');

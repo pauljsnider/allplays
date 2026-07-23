@@ -465,9 +465,10 @@ jobs:
                     echo "| Google API surface | ${api_surface} |"
                     echo "| Final error class | ${final_error_class} |"
                     echo "| Attempts exhausted | ${max_attempts}/${max_attempts} |"
-                    echo '| Not deployed | `firestore:rules`, `firestore:indexes`, `hosting`, `functions` |'
+                    echo '| Guaranteed not deployed | `hosting`, `functions` |'
+                    echo "| Firestore configuration | Rules and indexes may be partially deployed; verify both before retrying. |"
                     echo
-                    echo "The external transient failure exhausted all bounded attempts. Firestore configuration changes remain fail-closed, so Hosting and Functions were not deployed."
+                    echo "The external transient failure exhausted all bounded attempts. Application deployment remains fail-closed, so Hosting and Functions were not deployed."
                     echo
                     echo "Recovery: follow the [production Firestore deploy retry procedure](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/master/docs/observability-runbook.md#firestore-rules-api-retry-exhaustion)."
                   } >> "$GITHUB_STEP_SUMMARY"
