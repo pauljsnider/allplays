@@ -33,6 +33,36 @@ describe('chatgpt-mcp oauth: registration', () => {
         expect(client.token_endpoint_auth_method).toBe('none');
     });
 
+    it('uses one configured client registration across broker instances', () => {
+        const options = { trustedClientId: 'configured-chatgpt-client' };
+        const firstBroker = createOAuthBroker({
+            ...options,
+            randomId: () => 'instance-one-random-id'
+        });
+        const secondBroker = createOAuthBroker({
+            ...options,
+            randomId: () => 'instance-two-random-id'
+        });
+
+        const firstRegistration = firstBroker.registerClient({ redirect_uris: [REDIRECT] });
+        const secondRegistration = secondBroker.registerClient({ redirect_uris: [REDIRECT] });
+
+        expect(firstRegistration.client_id).toBe('configured-chatgpt-client');
+        expect(secondRegistration.client_id).toBe(firstRegistration.client_id);
+
+        const freshBroker = createOAuthBroker(options);
+        expect(freshBroker.validateAuthorizeRequest({
+            client_id: firstRegistration.client_id,
+            redirect_uri: REDIRECT,
+            response_type: 'code',
+            code_challenge: s256Challenge(VERIFIER),
+            code_challenge_method: 'S256'
+        })).toMatchObject({
+            clientId: 'configured-chatgpt-client',
+            redirectUri: REDIRECT
+        });
+    });
+
     it('rejects untrusted redirect uris regardless of scheme', () => {
         const broker = createOAuthBroker();
         expect(() => broker.registerClient({ redirect_uris: ['https://evil.example/cb'] })).toThrow(OAuthError);
