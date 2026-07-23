@@ -10,7 +10,8 @@ export type AccountDeletionResult = {
 };
 
 async function requestNativeAccountDeletion(source: string): Promise<AccountDeletionResult> {
-  const idToken = await getNativeAuthIdToken(true);
+  const nativeIdToken = await getNativeAuthIdToken(true).catch(() => null);
+  const idToken = nativeIdToken || await firebaseAuth.currentUser?.getIdToken(true);
   if (!idToken) {
     throw new Error('Native auth token is unavailable.');
   }

@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   callable: vi.fn(),
   getNativeAuthIdToken: vi.fn(),
   getPrimaryAppCheckHeaders: vi.fn(async (headers) => headers),
+  getWebAuthIdToken: vi.fn(),
   httpsCallable: vi.fn(),
   isNativeRuntime: vi.fn()
 }));
@@ -23,7 +24,8 @@ vi.mock('./authService', () => ({
       options: {
         projectId: 'all-plays-test'
       }
-    }
+    },
+    currentUser: null as null | { getIdToken: typeof mocks.getWebAuthIdToken }
   },
   getNativeAuthIdToken: mocks.getNativeAuthIdToken
 }));
@@ -35,12 +37,15 @@ vi.mock('./nativeRuntime', () => ({
 import { requestAccountDeletion } from './accountDeletionService';
 
 describe('accountDeletionService', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     mocks.callable.mockReset();
     mocks.getNativeAuthIdToken.mockReset();
     mocks.getPrimaryAppCheckHeaders.mockClear();
+    mocks.getWebAuthIdToken.mockReset();
     mocks.httpsCallable.mockReset();
     mocks.isNativeRuntime.mockReset();
+    const { firebaseAuth } = await import('./authService');
+    firebaseAuth.currentUser = null;
     mocks.isNativeRuntime.mockReturnValue(false);
     mocks.httpsCallable.mockReturnValue(mocks.callable);
     vi.unstubAllGlobals();
@@ -98,6 +103,37 @@ describe('accountDeletionService', () => {
     mocks.getNativeAuthIdToken.mockResolvedValue(null);
 
     await expect(requestAccountDeletion('ios')).rejects.toThrow('Native auth token is unavailable.');
+  });
+
+  it('falls back to the Web SDK token after native email/password signup', async () => {
+    mocks.isNativeRuntime.mockReturnValue(true);
+    mocks.getNativeAuthIdToken.mockResolvedValue(null);
+    mocks.getWebAuthIdToken.mockResolvedValue('web-id-token');
+    const { firebaseAuth } = await import('./authService');
+    firebaseAuth.currentUser = { getIdToken: mocks.getWebAuthIdToken };
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        data: { success: true, status: 'queued', completionTargetDays: 30 }
+      })
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(requestAccountDeletion('ios')).resolves.toEqual({
+      success: true,
+      status: 'queued',
+      completionTargetDays: 30
+    });
+    expect(mocks.getNativeAuthIdToken).toHaveBeenCalledWith(true);
+    expect(mocks.getWebAuthIdToken).toHaveBeenCalledWith(true);
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://us-central1-all-plays-test.cloudfunctions.net/requestAccountDeletion',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: 'Bearer web-id-token'
+        })
+      })
+    );
   });
 
   it('surfaces callable errors from the native authenticated endpoint', async () => {
