@@ -34,10 +34,14 @@ describe('Schedule lazy-load guards', () => {
         expect(refreshSource).toContain('const cached = getCachedAppData(cacheKey);');
         expect(refreshSource).toContain('return runScheduleRead(');
         expect(refreshSource).toContain('() => loadCachedAppData(');
-        expect(refreshSource).toContain("() => loadParentSchedule(auth.user, { hydrateDetails: false, expandStaffPlayers: false })");
+        expect(refreshSource).toContain('const parentScope = await parentScopePromise;');
+        expect(refreshSource).toContain('return loadParentSchedule(auth.user, {');
+        expect(refreshSource).toContain('...(parentScope && parentScope.isPartial !== true ? { parentScope } : {})');
         expect(refreshSource).toContain("getScheduleLoadErrorMessage(toAppServiceError(loadError, 'Unable to load schedule.'), hasExistingSchedule)");
         expect(refreshSource).toContain('onSuccess: (result) => {');
-        expect(refreshSource).toContain('applyScheduleResult(result);');
+        expect(refreshSource).toContain('children: refreshedChildren!');
+        expect(refreshSource).toContain('events: applyAuthoritativeScheduleScope(result.events, refreshedChildren!, refreshedStaffTeams)');
+        expect(refreshSource).toContain('applyScheduleResult(authoritativeResult);');
         expect(refreshSource).toContain('cacheHit: Boolean(cached) && !force');
         expect(refreshSource).toContain('onError: (loadError) => {');
         expect(refreshSource).toContain("const mappedError = toAppServiceError(loadError, 'Unable to load schedule.');");

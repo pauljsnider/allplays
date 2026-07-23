@@ -376,11 +376,9 @@ export type ParentScheduleScope = {
   children: ParentScheduleChild[];
   /** Teams the user can manage, including newly created teams with no players or chat yet. */
   staffTeams?: ParentScheduleStaffTeam[];
+  /** True when any authoritative scope read failed and cached access should be preserved. */
+  isPartial?: boolean;
 };
-
-function hasResolvedParentProfile(profile: unknown): profile is Record<string, unknown> {
-  return Boolean(profile && typeof profile === 'object' && !Array.isArray(profile) && Object.keys(profile as Record<string, unknown>).length > 0);
-}
 
 export type ParentScheduleLoadOptions = {
   hydrateDetails?: boolean;
@@ -1666,42 +1664,54 @@ function isTeamStaff(team: any, user: AuthUser | null) {
   return false;
 }
 
-async function loadStaffTeams(user: AuthUser) {
+type StaffTeamsLoadResult = {
+  teams: any[];
+  isPartial: boolean;
+};
+
+async function loadStaffTeams(user: AuthUser): Promise<StaffTeamsLoadResult> {
   return readWithNativeFallback(
     'staff teams',
     async () => {
       const coachTeamIds = Array.isArray(user.coachOf) ? user.coachOf.map(compactString).filter(Boolean) : [];
-      const visibleTeams = await getStaffTeams({
+      const staffTeamResult = await getStaffTeams({
         userId: user.uid,
         email: user.email,
         coachTeamIds,
         includeAll: (user as any).isAdmin === true
       });
       const teamsById = new Map<string, any>();
-      visibleTeams.filter(Boolean).forEach((team: any) => {
+      staffTeamResult.teams.filter(Boolean).forEach((team: any) => {
         if (team?.id && isTeamActive(team) && isTeamStaff(team, user)) teamsById.set(team.id, team);
       });
-      return [...teamsById.values()];
+      return { teams: [...teamsById.values()], isPartial: staffTeamResult.isPartial };
     },
     async () => {
       const coachTeamIds = Array.isArray(user.coachOf) ? user.coachOf.map(compactString).filter(Boolean) : [];
       const normalizedEmail = normalizeEmail(user.email);
       const ownerEmailCandidates = Array.from(new Set([compactString(user.email), normalizedEmail].filter(Boolean)));
       const ownerEmailLookups = ownerEmailCandidates.map((ownerEmail) =>
-        nativeRunQuery('teams', 'ownerEmail', 'EQUAL', ownerEmail).catch(() => [])
+        nativeRunQuery('teams', 'ownerEmail', 'EQUAL', ownerEmail)
       );
-      const [ownedTeams, adminTeams, ownerEmailLowerTeams, ...ownerEmailTeams] = await Promise.all([
-        nativeRunQuery('teams', 'ownerId', 'EQUAL', user.uid).catch(() => []),
-        normalizedEmail ? nativeRunQuery('teams', 'adminEmails', 'ARRAY_CONTAINS', normalizedEmail).catch(() => []) : Promise.resolve([]),
-        normalizedEmail ? nativeRunQuery('teams', 'ownerEmailLower', 'EQUAL', normalizedEmail).catch(() => []) : Promise.resolve([]),
+      const queryResults = await Promise.allSettled([
+        nativeRunQuery('teams', 'ownerId', 'EQUAL', user.uid),
+        ...(normalizedEmail ? [
+          nativeRunQuery('teams', 'adminEmails', 'ARRAY_CONTAINS', normalizedEmail),
+          nativeRunQuery('teams', 'ownerEmailLower', 'EQUAL', normalizedEmail)
+        ] : []),
         ...ownerEmailLookups
       ]);
-      const coachTeams = await Promise.all(coachTeamIds.map((teamId) => nativeGetDocument(`teams/${encodeURIComponent(teamId)}`).catch(() => null)));
+      const coachTeamResults = await Promise.allSettled(
+        coachTeamIds.map((teamId) => nativeGetDocument(`teams/${encodeURIComponent(teamId)}`))
+      );
+      const isPartial = [...queryResults, ...coachTeamResults].some((result) => result.status === 'rejected');
       const teamsById = new Map<string, any>();
-      [...ownedTeams, ...adminTeams, ...ownerEmailLowerTeams, ...ownerEmailTeams.flat(), ...coachTeams].forEach((team) => {
+      const queryTeams = queryResults.flatMap((result) => result.status === 'fulfilled' ? result.value : []);
+      const coachTeams = coachTeamResults.flatMap((result) => result.status === 'fulfilled' && result.value ? [result.value] : []);
+      [...queryTeams, ...coachTeams].forEach((team) => {
         if (team?.id && isTeamActive(team) && isTeamStaff(team, user)) teamsById.set(team.id, team);
       });
-      return [...teamsById.values()];
+      return { teams: [...teamsById.values()], isPartial };
     }
   );
 }
@@ -2719,11 +2729,17 @@ function collectParentScopeLinks(user: AuthUser, profile: Record<string, unknown
   return [...linksByKey.values()];
 }
 
-async function resolveParentScheduleChildren(user: AuthUser, profile: Record<string, unknown>): Promise<ParentScheduleChild[]> {
+type ParentScheduleChildrenResult = {
+  children: ParentScheduleChild[];
+  isPartial: boolean;
+};
+
+async function resolveParentScheduleChildren(user: AuthUser, profile: Record<string, unknown>): Promise<ParentScheduleChildrenResult> {
   const links = collectParentScopeLinks(user, profile);
-  if (!links.length) return [];
+  if (!links.length) return { children: [], isPartial: false };
 
   const linksByTeam = new Map<string, ParentScopeLink[]>();
+  let isPartial = false;
   links.forEach((link) => {
     if (!linksByTeam.has(link.teamId)) linksByTeam.set(link.teamId, []);
     linksByTeam.get(link.teamId)?.push(link);
@@ -2731,14 +2747,17 @@ async function resolveParentScheduleChildren(user: AuthUser, profile: Record<str
 
   const batches = await mapWithConcurrency([...linksByTeam.entries()], parentScheduleTeamConcurrency, async ([teamId, teamLinks]) => {
     const rawTeam = await loadRawTeam(teamId).catch((error) => {
+      isPartial = true;
       logScheduleWarning('Unable to validate parent-linked team.', 'parent-team-scope-load', error, { teamId });
       return undefined;
     });
+    if (rawTeam === undefined) return [];
     if (rawTeam === null) return [];
     if (rawTeam && !isTeamActive(rawTeam as Record<string, any>)) return [];
 
     const linkedPlayers = await mapWithConcurrency(teamLinks, parentSchedulePlayerConcurrency, async (link) => {
       const player = await loadPlayer(teamId, link.playerId).catch((error) => {
+        isPartial = true;
         logScheduleWarning('Unable to validate parent-linked player.', 'parent-player-scope-load', error, {
           teamId,
           playerId: link.playerId
@@ -2771,13 +2790,14 @@ async function resolveParentScheduleChildren(user: AuthUser, profile: Record<str
       .filter(Boolean) as ParentScheduleChild[];
   });
 
-  return batches.flat();
+  return { children: batches.flat(), isPartial };
 }
 
 export async function loadParentScheduleChildren(user: AuthUser | null, options: { profile?: Record<string, unknown> } = {}): Promise<ParentScheduleChild[]> {
   if (!user?.uid) return [];
   const profile = options.profile || await loadProfileDocument(user.uid).catch(() => ({}));
-  return resolveParentScheduleChildren(user, profile as Record<string, unknown>);
+  const result = await resolveParentScheduleChildren(user, profile as Record<string, unknown>);
+  return result.children;
 }
 
 export async function loadParentScheduleScope(user: AuthUser | null): Promise<ParentScheduleScope> {
@@ -2788,15 +2808,25 @@ export async function loadParentScheduleScope(user: AuthUser | null): Promise<Pa
       staffTeams: []
     };
   }
-  const [profile, staffTeams] = await Promise.all([
-    loadProfileDocument(user.uid).catch(() => ({})),
-    loadStaffTeams(user).catch(() => [])
+  let isPartial = false;
+  const [profile, staffTeamResult] = await Promise.all([
+    loadProfileDocument(user.uid).catch(() => {
+      isPartial = true;
+      return {};
+    }),
+    loadStaffTeams(user).catch(() => {
+      isPartial = true;
+      return { teams: [], isPartial: true };
+    })
   ]);
-  const children = await resolveParentScheduleChildren(user, profile as Record<string, unknown>);
+  if (staffTeamResult.isPartial) isPartial = true;
+  const childResult = await resolveParentScheduleChildren(user, profile as Record<string, unknown>);
+  if (childResult.isPartial) isPartial = true;
   return {
     profile: profile as Record<string, unknown>,
-    children,
-    staffTeams: staffTeams
+    children: childResult.children,
+    isPartial,
+    staffTeams: staffTeamResult.teams
       .map((team: any) => {
         const teamId = compactString(team?.id);
         return teamId ? { teamId, teamName: compactString(team?.name) || teamId } : null;
@@ -4015,14 +4045,20 @@ export async function hydrateParentScheduleDetails(schedule: ParentScheduleLoadR
 
 async function buildParentScheduleTeamChildren(user: AuthUser, profile: Record<string, unknown>, options: ParentScheduleLoadOptions = {}) {
   const expandStaffPlayers = options.expandStaffPlayers !== false;
-  const children = options.parentScope?.children || await resolveParentScheduleChildren(user, profile as Record<string, unknown>);
+  const childResult: ParentScheduleChildrenResult = options.parentScope?.children
+    ? { children: options.parentScope.children, isPartial: options.parentScope.isPartial === true }
+    : await resolveParentScheduleChildren(user, profile as Record<string, unknown>);
+  const children = childResult.children;
   const byTeam = new Map<string, ParentScheduleChild[]>();
   children.forEach((child) => {
     if (!byTeam.has(child.teamId)) byTeam.set(child.teamId, []);
     byTeam.get(child.teamId)?.push(child);
   });
 
-  const staffTeams = options.parentScope?.staffTeams || await loadStaffTeams(user).catch(() => []);
+  const staffTeamResult: StaffTeamsLoadResult = options.parentScope?.staffTeams
+    ? { teams: options.parentScope.staffTeams, isPartial: options.parentScope.isPartial === true }
+    : await loadStaffTeams(user).catch(() => ({ teams: [], isPartial: true }));
+  const staffTeams = staffTeamResult.teams;
   await mapWithConcurrency(staffTeams, parentScheduleTeamConcurrency, async (team: any) => {
     const teamId = compactString(team?.id || team?.teamId);
     if (!teamId) return;
@@ -4055,7 +4091,7 @@ async function buildParentScheduleTeamChildren(user: AuthUser, profile: Record<s
     }
   });
 
-  return { children, byTeam, staffTeams };
+  return { children, byTeam, staffTeams, isParentScopePartial: childResult.isPartial || staffTeamResult.isPartial };
 }
 
 /**
@@ -4151,7 +4187,7 @@ export async function loadParentPlayerSchedule(user: AuthUser | null, options: P
 
   try {
     const profile = await loadProfileDocument(user.uid);
-    const children = await resolveParentScheduleChildren(user, profile as Record<string, unknown>);
+    const { children } = await resolveParentScheduleChildren(user, profile as Record<string, unknown>);
     let child = (requestedTeamId && requestedPlayerId)
       ? children.find((entry) => entry.teamId === requestedTeamId && entry.playerId === requestedPlayerId)
       : children.find((entry) => entry.playerId === requestedPlayerId);
@@ -4278,11 +4314,11 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
   const scheduleRangeByTeam = options.scheduleRangeByTeam || null;
 
   try {
-    const canReuseParentScope = hasResolvedParentProfile(options.parentScope?.profile);
+    const canReuseParentScope = Boolean(options.parentScope && options.parentScope.isPartial !== true);
     const profile = canReuseParentScope
       ? options.parentScope!.profile
       : await loadProfileDocument(user.uid);
-    const { children, byTeam, staffTeams } = await buildParentScheduleTeamChildren(user, profile as Record<string, unknown>, {
+    const { children, byTeam, staffTeams, isParentScopePartial } = await buildParentScheduleTeamChildren(user, profile as Record<string, unknown>, {
       ...options,
       expandStaffPlayers,
       parentScope: canReuseParentScope ? options.parentScope : undefined
@@ -4368,7 +4404,7 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
       ? await hydrateEventDetails(events, user)
       : [];
     finalizeSessionRsvpHydration(events, authoritativeEvents, user.uid);
-    const isPartial = failedTeamLoads.length > 0;
+    const isPartial = isParentScopePartial || failedTeamLoads.length > 0;
     timer.end({
       hydrateDetails,
       expandStaffPlayers,

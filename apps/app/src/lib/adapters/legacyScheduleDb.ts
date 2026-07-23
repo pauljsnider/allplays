@@ -163,27 +163,38 @@ export type StaffTeamsQuery = {
     includeAll?: boolean;
 };
 
+export type StaffTeamsResult = {
+    teams: Record<string, unknown>[];
+    isPartial: boolean;
+};
+
 export async function getStaffTeams({ userId, email, coachTeamIds = [], includeAll = false }: StaffTeamsQuery) {
     if (includeAll) {
-        return await Promise.resolve(legacyGetTeams({ includePrivate: true }));
+        return {
+            teams: await Promise.resolve(legacyGetTeams({ includePrivate: true })),
+            isPartial: false
+        };
     }
 
     const teamsRef = legacyFirebaseCollection(legacyFirebaseDb, 'teams');
     const normalizedEmail = String(email || '').trim().toLowerCase();
     const uniqueCoachTeamIds = [...new Set(coachTeamIds.map((teamId) => String(teamId || '').trim()).filter(Boolean))];
     const emptySnapshot = { docs: [] };
-    const [ownedSnapshot, adminSnapshot, coachSnapshots] = await Promise.all([
+    const [ownedSnapshot, adminSnapshot, coachSnapshotResults] = await Promise.all([
         userId
             ? legacyFirebaseGetDocs(legacyFirebaseQuery(teamsRef, legacyFirebaseWhere('ownerId', '==', userId)))
             : Promise.resolve(emptySnapshot),
         normalizedEmail
             ? legacyFirebaseGetDocs(legacyFirebaseQuery(teamsRef, legacyFirebaseWhere('adminEmails', 'array-contains', normalizedEmail)))
             : Promise.resolve(emptySnapshot),
-        Promise.all(uniqueCoachTeamIds.map((teamId) => (
-            legacyFirebaseGetDoc(legacyFirebaseDoc(legacyFirebaseDb, 'teams', teamId)).catch(() => null)
+        Promise.allSettled(uniqueCoachTeamIds.map((teamId) => (
+            legacyFirebaseGetDoc(legacyFirebaseDoc(legacyFirebaseDb, 'teams', teamId))
         )))
     ]);
 
+    const coachSnapshots = coachSnapshotResults.flatMap((result) => (
+        result.status === 'fulfilled' && result.value ? [result.value] : []
+    ));
     const teamsById = new Map<string, Record<string, unknown>>();
     [...ownedSnapshot.docs, ...adminSnapshot.docs, ...coachSnapshots]
         .filter((snapshot): snapshot is NonNullable<typeof snapshot> => Boolean(snapshot && ('exists' in snapshot ? snapshot.exists() : true)))
@@ -191,7 +202,10 @@ export async function getStaffTeams({ userId, email, coachTeamIds = [], includeA
             const id = String(snapshot.id || '').trim();
             if (id) teamsById.set(id, { id, ...snapshot.data() });
         });
-    return [...teamsById.values()];
+    return {
+        teams: [...teamsById.values()],
+        isPartial: coachSnapshotResults.some((result) => result.status === 'rejected')
+    };
 }
 
 export class LegacyTournamentGameAdapterValidationError extends Error {

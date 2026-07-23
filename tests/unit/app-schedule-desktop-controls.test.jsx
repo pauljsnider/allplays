@@ -13,6 +13,7 @@ const scheduleMocks = vi.hoisted(() => ({
     createScheduleImportPractice: vi.fn(),
     finalizeScheduleImportBatch: vi.fn(),
     loadParentSchedule: vi.fn(),
+    loadParentScheduleScope: vi.fn(),
     loadScheduleStatTrackerConfigsForApp: vi.fn(),
     removeTeamCalendarUrl: vi.fn(),
     generateScheduleAiImportRows: vi.fn(),
@@ -233,6 +234,12 @@ beforeEach(() => {
     scheduleMocks.createScheduleImportGame.mockResolvedValue('game-new');
     scheduleMocks.createScheduleImportPractice.mockResolvedValue('practice-new');
     scheduleMocks.finalizeScheduleImportBatch.mockResolvedValue(undefined);
+    scheduleMocks.loadParentScheduleScope.mockResolvedValue({
+        profile: {},
+        children: [],
+        staffTeams: [],
+        isPartial: true
+    });
     scheduleMocks.loadScheduleStatTrackerConfigsForApp.mockResolvedValue([{ id: 'cfg-basketball', name: 'Basketball' }]);
     scheduleMocks.removeTeamCalendarUrl.mockResolvedValue({ removed: true, calendarUrls: [] });
     scheduleMocks.generateScheduleAiImportRows.mockResolvedValue({ rows: [], errors: [] });

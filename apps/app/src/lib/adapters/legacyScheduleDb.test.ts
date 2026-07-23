@@ -265,12 +265,15 @@ describe('legacyScheduleDb staff team reads', () => {
             coachTeamIds: ['team-coach', 'team-coach', 'team-inaccessible']
         });
 
-        expect(teams).toEqual([
-            { id: 'team-owner', name: 'Owner' },
-            { id: 'team-shared', name: 'Admin copy' },
-            { id: 'team-admin', name: 'Admin' },
-            { id: 'team-coach', name: 'Coach' }
-        ]);
+        expect(teams).toEqual({
+            teams: [
+                { id: 'team-owner', name: 'Owner' },
+                { id: 'team-shared', name: 'Admin copy' },
+                { id: 'team-admin', name: 'Admin' },
+                { id: 'team-coach', name: 'Coach' }
+            ],
+            isPartial: true
+        });
         expect(getDocs).toHaveBeenCalledTimes(2);
         expect(where).toHaveBeenCalledWith('ownerId', '==', 'user-1');
         expect(where).toHaveBeenCalledWith('adminEmails', 'array-contains', 'staff@example.com');
@@ -281,7 +284,10 @@ describe('legacyScheduleDb staff team reads', () => {
     it('skips the admin-email query and direct reads when affiliations are empty', async () => {
         vi.mocked(getDocs).mockResolvedValueOnce({ docs: [] } as never);
 
-        await expect(getStaffTeams({ userId: 'parent-1', email: '   ', coachTeamIds: [] })).resolves.toEqual([]);
+        await expect(getStaffTeams({ userId: 'parent-1', email: '   ', coachTeamIds: [] })).resolves.toEqual({
+            teams: [],
+            isPartial: false
+        });
 
         expect(getDocs).toHaveBeenCalledTimes(1);
         expect(where).toHaveBeenCalledTimes(1);

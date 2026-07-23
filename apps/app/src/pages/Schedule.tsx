@@ -7,6 +7,7 @@ import { PullToRefresh } from '../components/PullToRefresh';
 import {
   hydrateParentScheduleRsvps,
   loadParentSchedule,
+  loadParentScheduleScope,
   submitParentScheduleRsvp,
   submitParentScheduleRsvpForChildren,
   type ParentScheduleChild,
@@ -120,6 +121,24 @@ function getScheduleTimeRangeFromQuery(value: string | null): ScheduleTimeRange 
   return scheduleTimeRangeValues.includes(normalized as ScheduleTimeRange) ? normalized as ScheduleTimeRange : null;
 }
 
+function applyAuthoritativeScheduleScope(
+  events: ParentScheduleEvent[],
+  children: ParentScheduleChild[],
+  staffTeams: ParentScheduleStaffTeam[]
+) {
+  const accessibleTeamIds = new Set([
+    ...children.map((child) => child.teamId),
+    ...staffTeams.map((team) => team.teamId)
+  ]);
+  const staffTeamIds = new Set(staffTeams.map((team) => team.teamId));
+  return events
+    .filter((event) => accessibleTeamIds.has(event.teamId))
+    .map((event) => {
+      const isTeamStaff = staffTeamIds.has(event.teamId);
+      return event.isTeamStaff === isTeamStaff ? event : { ...event, isTeamStaff };
+    });
+}
+
 export function Schedule({ auth }: { auth: AuthState }) {
   const [searchParams] = useSearchParams();
   const { isDesktopWeb } = useShellLayout();
@@ -163,6 +182,9 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const pastHistoryLoadedRef = useRef(false);
   const childrenRef = useRef<ParentScheduleChild[]>([]);
   const eventsRef = useRef<ParentScheduleEvent[]>([]);
+  const activeUserIdRef = useRef<string | null>(auth.user?.uid || null);
+  const scheduleRefreshVersionRef = useRef(0);
+  activeUserIdRef.current = auth.user?.uid || null;
   const rsvpHydrationVersionRef = useRef(0);
   const lastRsvpHydrationScopeRef = useRef('');
   const bulkRsvpQueryHandledRef = useRef(false);
@@ -372,27 +394,74 @@ export function Schedule({ auth }: { auth: AuthState }) {
     const scheduleCacheTtlMs = 60 * 1000 * 5;
     const scheduleCacheOptions = { ttlMs: scheduleCacheTtlMs, force };
     const cached = getCachedAppData(cacheKey);
+    const requestedUserId = auth.user.uid;
+    const refreshVersion = ++scheduleRefreshVersionRef.current;
+    let refreshedChildren: ParentScheduleChild[] | null = null;
+    let refreshedStaffTeams: ParentScheduleStaffTeam[] | null = null;
+    const parentScopePromise = loadParentScheduleScope(auth.user).catch(() => null);
+    void parentScopePromise
+      .then((parentScope) => {
+        if (!parentScope || parentScope.isPartial === true) return;
+        if (activeUserIdRef.current !== requestedUserId) return;
+        if (scheduleRefreshVersionRef.current !== refreshVersion) return;
+        refreshedChildren = parentScope.children ?? [];
+        refreshedStaffTeams = parentScope.staffTeams ?? [];
+        childrenRef.current = refreshedChildren;
+        setChildren(refreshedChildren);
+        setStaffTeams(refreshedStaffTeams);
+        updateScheduleEvents((currentEvents) => applyAuthoritativeScheduleScope(
+          currentEvents,
+          refreshedChildren!,
+          refreshedStaffTeams!
+        ));
+        if (
+          hasLoadedScheduleRef.current
+          && selectedTeamId
+          && !refreshedChildren.some((child) => child.teamId === selectedTeamId)
+          && !eventsRef.current.some((event) => event.teamId === selectedTeamId)
+          && !refreshedStaffTeams.some((team) => team.teamId === selectedTeamId)
+        ) {
+          setSelectedTeamId('');
+        }
+      });
 
     return runScheduleRead(
       () => loadCachedAppData(
-        cacheKey,
-        () => loadParentSchedule(auth.user, { hydrateDetails: false, expandStaffPlayers: false }),
-        {
-          ...scheduleCacheOptions,
-          shouldCache: (result) => result?.isPartial !== true
-        }
-      ),
+          cacheKey,
+          async () => {
+            const parentScope = await parentScopePromise;
+            return loadParentSchedule(auth.user, {
+              hydrateDetails: false,
+              expandStaffPlayers: false,
+              ...(parentScope && parentScope.isPartial !== true ? { parentScope } : {})
+            });
+          },
+          {
+            ...scheduleCacheOptions,
+            shouldCache: (loadedResult) => loadedResult?.isPartial !== true
+          }
+        ),
       {
         getErrorMessage: (loadError) => {
           return getScheduleLoadErrorMessage(toAppServiceError(loadError, 'Unable to load schedule.'), hasExistingSchedule);
         },
         rethrow: false,
         onSuccess: (result) => {
+          if (activeUserIdRef.current !== requestedUserId) return;
+          if (scheduleRefreshVersionRef.current !== refreshVersion) return;
+          const authoritativeResult = refreshedStaffTeams === null
+            ? result
+            : {
+                ...result,
+                children: refreshedChildren!,
+                events: applyAuthoritativeScheduleScope(result.events, refreshedChildren!, refreshedStaffTeams),
+                staffTeams: refreshedStaffTeams
+              };
           hasLoadedScheduleRef.current = true;
           setLoadedScheduleUserId(auth.user?.uid || null);
           setScheduleLoadError(null);
-          applyScheduleResult(result);
-          hydrateScheduleRsvpsInBackground(result);
+          applyScheduleResult(authoritativeResult);
+          hydrateScheduleRsvpsInBackground(authoritativeResult);
           completeParentCoreWorkflowTimer('schedule', {
             targetPage: 'schedule',
             teamId: selectedTeamId || '',
@@ -409,14 +478,15 @@ export function Schedule({ auth }: { auth: AuthState }) {
             void ensurePastSchedulePageLoaded(true);
           }
 
-          if (selectedPlayerId && !result.children.some((child) => child.playerId === selectedPlayerId)) {
+          if (selectedPlayerId && !authoritativeResult.children.some((child) => child.playerId === selectedPlayerId)) {
             setSelectedPlayerId('');
           }
           if (
             selectedTeamId
-            && !result.children.some((child) => child.teamId === selectedTeamId)
-            && !result.events.some((event) => event.teamId === selectedTeamId)
-            && !result.staffTeams?.some((team) => team.teamId === selectedTeamId)
+            && refreshedStaffTeams !== null
+            && !authoritativeResult.children.some((child) => child.teamId === selectedTeamId)
+            && !authoritativeResult.events.some((event) => event.teamId === selectedTeamId)
+            && !refreshedStaffTeams.some((team) => team.teamId === selectedTeamId)
           ) {
             setSelectedTeamId('');
           }
@@ -441,6 +511,8 @@ export function Schedule({ auth }: { auth: AuthState }) {
           });
         },
         onError: (loadError) => {
+          if (activeUserIdRef.current !== requestedUserId) return;
+          if (scheduleRefreshVersionRef.current !== refreshVersion) return;
           const mappedError = toAppServiceError(loadError, 'Unable to load schedule.');
           setScheduleLoadError(mappedError);
           if (!hasExistingSchedule) {

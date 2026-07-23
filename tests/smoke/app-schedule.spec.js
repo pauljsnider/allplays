@@ -528,7 +528,11 @@ async function mockScheduleModules(page, options = {}) {
                 export async function loadParentScheduleScope(user) {
                     return {
                         profile: { uid: user?.uid || 'user-1' },
-                        children: await loadParentScheduleChildren()
+                        children: await loadParentScheduleChildren(),
+                        staffTeams: ${staffManageable
+                          ? "[{ teamId: 'team-1', teamName: 'Bears' }]"
+                          : '[]'},
+                        isPartial: false
                     };
                 }
 

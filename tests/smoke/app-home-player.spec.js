@@ -538,6 +538,10 @@ async function mockHomePlayerModules(page) {
                     return { children, events: scheduleEvents(), isPartial: false };
                 }
 
+                export async function loadParentScheduleScope() {
+                    return { profile: {}, children, staffTeams: [] };
+                }
+
                 export async function hydrateParentScheduleRsvps(schedule, _user, options = {}) {
                     options.onProgress?.([...schedule.events]);
                     return schedule;

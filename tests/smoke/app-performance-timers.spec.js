@@ -167,6 +167,14 @@ async function mockScheduleAppModules(page) {
                     };
                 }
 
+                export async function loadParentScheduleScope() {
+                    return {
+                        profile: {},
+                        children: [{ teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Avery' }],
+                        staffTeams: [{ teamId: 'team-1', teamName: 'Bears' }]
+                    };
+                }
+
                 export async function hydrateParentScheduleRsvps(schedule, _user, options = {}) {
                     options.onProgress?.([...schedule.events]);
                     return schedule;

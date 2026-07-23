@@ -18,6 +18,7 @@ const scheduleServiceMocks = vi.hoisted(() => ({
   finalizeScheduleImportBatch: vi.fn(),
   hydrateParentScheduleRsvps: vi.fn(async (schedule: unknown, _user?: unknown, _options?: unknown) => schedule),
   loadParentSchedule: vi.fn(),
+  loadParentScheduleScope: vi.fn(),
   loadScheduleStatTrackerConfigsForApp: vi.fn().mockResolvedValue([]),
   removeTeamCalendarUrl: vi.fn(),
   submitParentScheduleRsvp: vi.fn(),
@@ -254,6 +255,17 @@ function resolveAppSourcePath(relativePath: string) {
 describe('Schedule', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    appDataCacheMocks.getCachedAppData.mockReturnValue(null);
+    appDataCacheMocks.loadCachedAppData.mockImplementation(async (
+      _key: string,
+      loader: () => Promise<unknown>
+    ) => loader());
+    scheduleServiceMocks.loadParentScheduleScope.mockResolvedValue({
+      profile: {},
+      children: [],
+      staffTeams: [],
+      isPartial: true
+    });
     shellLayoutMocks.isDesktopWeb = false;
     Object.defineProperty(window, 'scrollTo', {
       value: vi.fn(),
@@ -275,6 +287,7 @@ describe('Schedule', () => {
 
     expect(uxTimingMocks.recordFirstMeaningfulRender).not.toHaveBeenCalled();
 
+    await waitFor(() => expect(typeof resolveSchedule).toBe('function'));
     resolveSchedule({
       children: [
         { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
@@ -302,10 +315,10 @@ describe('Schedule', () => {
     await waitFor(() => {
       expect(screen.queryByRole('status', { name: 'Loading schedule' })).toBeNull();
     });
-    expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledWith(auth.user, {
+    expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledWith(auth.user, expect.objectContaining({
       hydrateDetails: false,
       expandStaffPlayers: false
-    });
+    }));
   });
 
   it('passes the full schedule cache contract into the summary loader', async () => {
@@ -338,6 +351,30 @@ describe('Schedule', () => {
     expect(options.force).toBe(false);
     expect(options.shouldCache({ isPartial: true })).toBe(false);
     expect(options.shouldCache({ isPartial: false })).toBe(true);
+  });
+
+  it('reuses a complete staff scope when loading a fresh schedule summary', async () => {
+    const parentScope = {
+      profile: {},
+      children: [],
+      staffTeams: [{ teamId: 'team-owned', teamName: 'Vipers' }],
+      isPartial: false
+    };
+    scheduleServiceMocks.loadParentScheduleScope.mockResolvedValueOnce(parentScope);
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [],
+      events: [],
+      staffTeams: parentScope.staffTeams
+    });
+
+    renderSchedule();
+
+    expect(await screen.findByText('No events in this filter')).toBeTruthy();
+    expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledWith(auth.user, expect.objectContaining({
+      hydrateDetails: false,
+      expandStaffPlayers: false,
+      parentScope
+    }));
   });
 
   it('progressively applies RSVP hydration after the fast schedule shell loads', async () => {
@@ -727,6 +764,12 @@ describe('Schedule', () => {
   });
 
   it('clears zero-event staff teams when the schedule is replaced without staff team data', async () => {
+    scheduleServiceMocks.loadParentScheduleScope.mockResolvedValueOnce({
+      profile: {},
+      children: [],
+      staffTeams: [{ teamId: 'team-empty', teamName: 'Empty FC' }],
+      isPartial: false
+    });
     scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
       children: [],
       events: [],
@@ -765,6 +808,17 @@ describe('Schedule', () => {
   });
 
   it('shows a zero-event staff team in the schedule team filter', async () => {
+    scheduleServiceMocks.loadParentScheduleScope.mockResolvedValueOnce({
+      profile: {},
+      children: [{
+        playerId: 'player-1',
+        playerName: 'Madison Snider',
+        teamId: 'team-parent',
+        teamName: 'Jr KC Current'
+      }],
+      staffTeams: [{ teamId: 'team-owned', teamName: 'Vipers' }],
+      isPartial: false
+    });
     scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
       children: [{
         playerId: 'player-1',
@@ -786,6 +840,206 @@ describe('Schedule', () => {
     expect(within(teamFilter).getByRole('option', { name: 'Vipers' })).toBeTruthy();
     expect((teamFilter as HTMLSelectElement).value).toBe('team-owned');
     expect(await screen.findByText(/Calendar feeds and imports for Vipers/)).toBeTruthy();
+  });
+
+  it('uses fresh staff scope when the cached event summary predates a newly created team', async () => {
+    scheduleServiceMocks.loadParentScheduleScope.mockResolvedValueOnce({
+      profile: {},
+      children: [],
+      staffTeams: [
+        { teamId: 'team-parent', teamName: 'Jr KC Current' },
+        { teamId: 'team-owned', teamName: 'Vipers' }
+      ],
+      isPartial: false
+    });
+    appDataCacheMocks.loadCachedAppData.mockResolvedValueOnce({
+      children: [{
+        playerId: 'player-1',
+        playerName: 'Madison Snider',
+        teamId: 'team-parent',
+        teamName: 'Jr KC Current'
+      }],
+      events: [buildScheduleEvent(1, {
+        teamId: 'team-parent',
+        teamName: 'Jr KC Current',
+        isTeamStaff: true
+      })],
+      staffTeams: [{ teamId: 'team-parent', teamName: 'Jr KC Current' }]
+    });
+
+    renderSchedule('/schedule?teamId=team-owned');
+
+    expect((await screen.findByLabelText('Team filter') as HTMLSelectElement).value).toBe('team-owned');
+    fireEvent.click(await screen.findByRole('button', { name: /manage schedule/i }));
+
+    expect((await screen.findByLabelText('Team to manage') as HTMLSelectElement).value).toBe('team-owned');
+    expect(await screen.findByRole('heading', { name: 'Add game for Vipers' })).toBeTruthy();
+  });
+
+  it('preserves cached staff access when the fresh scope read is incomplete', async () => {
+    scheduleServiceMocks.loadParentScheduleScope.mockResolvedValueOnce({
+      profile: {},
+      children: [],
+      staffTeams: [],
+      isPartial: true
+    });
+    appDataCacheMocks.loadCachedAppData.mockResolvedValueOnce({
+      children: [],
+      events: [],
+      staffTeams: [{ teamId: 'team-owned', teamName: 'Vipers' }]
+    });
+
+    renderSchedule('/schedule?teamId=team-owned');
+
+    expect((await screen.findByLabelText('Team filter') as HTMLSelectElement).value).toBe('team-owned');
+    fireEvent.click(await screen.findByRole('button', { name: /manage schedule/i }));
+    expect(await screen.findByRole('heading', { name: 'Add game for Vipers' })).toBeTruthy();
+  });
+
+  it('preserves cached parent events when linked child validation is incomplete', async () => {
+    scheduleServiceMocks.loadParentScheduleScope.mockResolvedValueOnce({
+      profile: {},
+      children: [],
+      staffTeams: [],
+      isPartial: true
+    });
+    appDataCacheMocks.loadCachedAppData.mockResolvedValueOnce({
+      children: [{
+        playerId: 'player-1',
+        playerName: 'Madison Snider',
+        teamId: 'team-parent',
+        teamName: 'Jr KC Current'
+      }],
+      events: [buildScheduleEvent(1, {
+        teamId: 'team-parent',
+        teamName: 'Jr KC Current',
+        isTeamStaff: false
+      })],
+      staffTeams: []
+    });
+
+    renderSchedule('/schedule?teamId=team-parent');
+
+    const teamFilter = await screen.findByLabelText('Team filter');
+    expect(within(teamFilter).getByRole('option', { name: 'Jr KC Current' })).toBeTruthy();
+    expect((teamFilter as HTMLSelectElement).value).toBe('team-parent');
+    expect(await screen.findByText('Next up')).toBeTruthy();
+  });
+
+  it('removes cached events, filters, and management access when fresh scope revokes the team', async () => {
+    scheduleServiceMocks.loadParentScheduleScope.mockResolvedValueOnce({
+      profile: {},
+      children: [],
+      staffTeams: [],
+      isPartial: false
+    });
+    appDataCacheMocks.loadCachedAppData.mockResolvedValueOnce({
+      children: [],
+      events: [buildScheduleEvent(1, {
+        teamId: 'team-owned',
+        teamName: 'Vipers',
+        isTeamStaff: true
+      })],
+      staffTeams: [{ teamId: 'team-owned', teamName: 'Vipers' }]
+    });
+
+    renderSchedule('/schedule?teamId=team-owned');
+
+    const teamFilter = await screen.findByLabelText('Team filter');
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: /manage schedule/i })).toBeNull();
+      expect(within(teamFilter).queryByRole('option', { name: 'Vipers' })).toBeNull();
+      expect((teamFilter as HTMLSelectElement).value).toBe('');
+    });
+  });
+
+  it('ignores a delayed staff-scope response from the previous account', async () => {
+    let resolvePreviousScope!: (scope: {
+      profile: Record<string, unknown>;
+      children: [];
+      staffTeams: Array<{ teamId: string; teamName: string }>;
+      isPartial: false;
+    }) => void;
+    scheduleServiceMocks.loadParentScheduleScope
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolvePreviousScope = resolve;
+      }));
+    appDataCacheMocks.loadCachedAppData
+      .mockResolvedValue({ children: [], events: [], staffTeams: [] });
+
+    const previousAuth = {
+      ...auth,
+      user: { ...auth.user!, uid: 'previous-user' } as AuthState['user']
+    };
+    const nextAuth = {
+      ...auth,
+      user: { ...auth.user!, uid: 'next-user' } as AuthState['user']
+    };
+    const { rerender } = render(
+      <MemoryRouter initialEntries={['/schedule']}>
+        <Routes>
+          <Route path="/schedule" element={<Schedule auth={previousAuth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    rerender(
+      <MemoryRouter initialEntries={['/schedule']}>
+        <Routes>
+          <Route path="/schedule" element={<Schedule auth={nextAuth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+    resolvePreviousScope({
+      profile: {},
+      children: [],
+      staffTeams: [{ teamId: 'team-owned', teamName: 'Vipers' }],
+      isPartial: false
+    });
+
+    const teamFilter = await screen.findByLabelText('Team filter');
+    await waitFor(() => {
+      expect(within(teamFilter).queryByRole('option', { name: 'Vipers' })).toBeNull();
+    });
+  });
+
+  it('ignores an older overlapping staff-scope refresh for the same account', async () => {
+    let resolveOlderScope!: (scope: {
+      profile: Record<string, unknown>;
+      children: [];
+      staffTeams: Array<{ teamId: string; teamName: string }>;
+      isPartial: false;
+    }) => void;
+    scheduleServiceMocks.loadParentScheduleScope
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolveOlderScope = resolve;
+      }))
+      .mockResolvedValueOnce({
+        profile: {},
+        children: [],
+        staffTeams: [{ teamId: 'team-new', teamName: 'Vipers' }],
+        isPartial: false
+      });
+    appDataCacheMocks.loadCachedAppData
+      .mockResolvedValue({ children: [], events: [], staffTeams: [] });
+
+    renderSchedule();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Refresh schedule' }));
+    const teamFilter = await screen.findByLabelText('Team filter');
+    expect(await within(teamFilter).findByRole('option', { name: 'Vipers' })).toBeTruthy();
+
+    resolveOlderScope({
+      profile: {},
+      children: [],
+      staffTeams: [{ teamId: 'team-old', teamName: 'Bears' }],
+      isPartial: false
+    });
+
+    await waitFor(() => {
+      expect(within(teamFilter).queryByRole('option', { name: 'Bears' })).toBeNull();
+      expect(within(teamFilter).getByRole('option', { name: 'Vipers' })).toBeTruthy();
+    });
   });
 
   it('routes generic staff card opens to the game hub helper on mobile', () => {
@@ -1803,10 +2057,10 @@ describe('Schedule', () => {
       .mockResolvedValueOnce(buildMultiTeamStaffScheduleResult());
     scheduleServiceMocks.createScheduledGameForApp.mockResolvedValueOnce('game-2');
 
-    renderSchedule();
+    renderSchedule('/schedule?teamId=team-1');
 
     fireEvent.click(await screen.findByRole('button', { name: /manage schedule/i }));
-    expect(await screen.findByRole('heading', { name: 'Choose the team to manage' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Add game for Bears' })).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText('Team to manage'), { target: { value: 'team-2' } });
 
@@ -1824,6 +2078,10 @@ describe('Schedule', () => {
         opponent: 'Falcons',
         location: 'West Gym'
       }), auth.user);
+    });
+    await waitFor(() => {
+      expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
+      expect(screen.getByRole('heading', { name: 'Add game for Wolves' })).toBeTruthy();
     });
   });
 

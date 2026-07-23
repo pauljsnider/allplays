@@ -139,25 +139,40 @@ export function ScheduleStaffTools({
   const trackerConfigRequestPromiseRef = useRef<Partial<Record<string, Promise<ScheduleStatTrackerConfigOption[]>>>>({});
   const [selectedStaffManageTeamId, setSelectedStaffManageTeamId] = useState('');
   const selectedCalendarTeam = useMemo(() => {
+    const explicitlySelectedManageableTeam = selectedStaffManageTeamId
+      ? manageableTeamOptions.find((team) => team.teamId === selectedStaffManageTeamId) || null
+      : null;
+    if (explicitlySelectedManageableTeam) return explicitlySelectedManageableTeam;
     const pageSelectedManageableTeam = selectedTeamId
       ? manageableTeamOptions.find((team) => team.teamId === selectedTeamId) || null
       : null;
     if (pageSelectedManageableTeam) return pageSelectedManageableTeam;
-    if (selectedStaffManageTeamId) {
-      return manageableTeamOptions.find((team) => team.teamId === selectedStaffManageTeamId) || null;
-    }
     return manageableTeamOptions.length === 1 ? manageableTeamOptions[0] : null;
   }, [manageableTeamOptions, selectedStaffManageTeamId, selectedTeamId]);
   const activeTrackerConfigTeamIdRef = useRef<string | null>(null);
   activeTrackerConfigTeamIdRef.current = selectedCalendarTeam?.teamId || null;
-  const shouldShowManageScheduleTeamPicker = !selectedCalendarTeam && manageableTeamOptions.length > 1;
+  const shouldShowManageScheduleTeamPicker = manageableTeamOptions.length > 1;
   const previousSelectedTeamIdRef = useRef(selectedCalendarTeam?.teamId);
+  const appliedPageSelectedTeamIdRef = useRef('');
 
   useEffect(() => {
     if (selectedStaffManageTeamId && !manageableTeamOptions.some((team) => team.teamId === selectedStaffManageTeamId)) {
       setSelectedStaffManageTeamId('');
     }
   }, [manageableTeamOptions, selectedStaffManageTeamId]);
+
+  useEffect(() => {
+    if (
+      selectedTeamId
+      && selectedTeamId !== appliedPageSelectedTeamIdRef.current
+      && manageableTeamOptions.some((team) => team.teamId === selectedTeamId)
+    ) {
+      setSelectedStaffManageTeamId(selectedTeamId);
+      appliedPageSelectedTeamIdRef.current = selectedTeamId;
+    } else if (!selectedTeamId) {
+      appliedPageSelectedTeamIdRef.current = '';
+    }
+  }, [manageableTeamOptions, selectedTeamId]);
 
   useEffect(() => {
     if (previousSelectedTeamIdRef.current && previousSelectedTeamIdRef.current !== selectedCalendarTeam?.teamId) {
@@ -226,31 +241,41 @@ export function ScheduleStaffTools({
   };
 
   const renderScheduleStaffToolsContent = () => {
-    if (shouldShowManageScheduleTeamPicker) {
+    const teamPicker = shouldShowManageScheduleTeamPicker ? (
+      <section className="app-card p-3 sm:p-4" aria-label="Choose team to manage">
+        <div className="app-label">Manage team</div>
+        <label className="mt-2 block text-xs font-bold uppercase tracking-wide text-gray-600">
+          Team to manage
+          <select
+            aria-label="Team to manage"
+            className="auth-input mt-1"
+            value={selectedCalendarTeam?.teamId || ''}
+            onChange={(event) => setSelectedStaffManageTeamId(event.target.value)}
+          >
+            <option value="">Select a team</option>
+            {manageableTeamOptions.map((team) => (
+              <option key={team.teamId} value={team.teamId}>{team.teamName}</option>
+            ))}
+          </select>
+        </label>
+      </section>
+    ) : null;
+
+    if (!selectedCalendarTeam) {
       return (
-        <section className="app-card p-3 sm:p-4" aria-label="Choose team to manage">
-          <div className="app-label">Choose team</div>
-          <h3 className="mt-1 text-base font-black text-gray-950">Choose the team to manage</h3>
-          <p className="mt-1 text-sm font-semibold leading-6 text-gray-600">Pick a team here to unlock game, practice, tournament, and import tools.</p>
-          <label className="mt-3 block text-xs font-bold uppercase tracking-wide text-gray-600">
-            Team to manage
-            <select
-              aria-label="Team to manage"
-              className="auth-input mt-1"
-              value={selectedStaffManageTeamId}
-              onChange={(event) => setSelectedStaffManageTeamId(event.target.value)}
-            >
-              <option value="">Select a team</option>
-              {manageableTeamOptions.map((team) => (
-                <option key={team.teamId} value={team.teamId}>{team.teamName}</option>
-              ))}
-            </select>
-          </label>
-        </section>
+        <>
+          {teamPicker}
+          <section className="app-card p-3 sm:p-4" aria-label="Choose team to manage">
+            <div className="app-label">Choose team</div>
+            <h3 className="mt-1 text-base font-black text-gray-950">Choose the team to manage</h3>
+            <p className="mt-1 text-sm font-semibold leading-6 text-gray-600">Pick a team here to unlock game, practice, tournament, and import tools.</p>
+          </section>
+        </>
       );
     }
-    return selectedCalendarTeam ? (
+    return (
       <>
+        {teamPicker}
         <ScheduleGameCreatePanel
           teamName={selectedCalendarTeam.teamName}
           form={gameForm}
@@ -364,7 +389,7 @@ export function ScheduleStaffTools({
           onClearCsv={handleCsvClear}
         />
       </>
-    ) : null;
+    );
   };
 
   useEffect(() => {
