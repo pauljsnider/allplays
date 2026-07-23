@@ -416,6 +416,7 @@ jobs:
             local max_attempts="${3:-3}"
             local base_delay_seconds="${4:-15}"
             local attempt deploy_log deploy_status retry_delay_seconds
+            local api_surface final_error_class final_http_status
 
             for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do
               deploy_log="$RUNNER_TEMP/firebase-${deploy_label}-deploy-attempt-${attempt}.log"
@@ -437,6 +438,41 @@ jobs:
               fi
 
               if (( attempt == max_attempts )); then
+                if [[ "$deploy_label" == "firestore" ]]; then
+                  api_surface="Firebase Firestore deployment API"
+                  if grep -Eiq 'firebaserules\.googleapis\.com|ruleset|rules release' "$deploy_log"; then
+                    api_surface="Firestore Rules API (firebaserules.googleapis.com)"
+                  elif grep -Eiq 'firestore\.googleapis\.com|firestore index' "$deploy_log"; then
+                    api_surface="Cloud Firestore Admin API (firestore.googleapis.com)"
+                  fi
+
+                  final_http_status="$(
+                    grep -Eio 'HTTP Error:[[:space:]]*(409|429|500|502|503|504)|(^|[^[:digit:]])(409|429|500|502|503|504)([^[:digit:]]|$)' "$deploy_log" \
+                      | grep -Eo '(409|429|500|502|503|504)' \
+                      | tail -n 1 \
+                      || true
+                  )"
+                  final_error_class="Transient service/network error (no HTTP status reported)"
+                  if [[ -n "$final_http_status" ]]; then
+                    final_error_class="HTTP ${final_http_status}"
+                  fi
+
+                  {
+                    echo "### Firestore configuration deploy blocked"
+                    echo
+                    echo "| Signal | Result |"
+                    echo "| --- | --- |"
+                    echo "| Google API surface | ${api_surface} |"
+                    echo "| Final error class | ${final_error_class} |"
+                    echo "| Attempts exhausted | ${max_attempts}/${max_attempts} |"
+                    echo '| Guaranteed not deployed | `hosting`, `functions` |'
+                    echo "| Firestore configuration | Rules and indexes may be partially deployed; verify both before retrying. |"
+                    echo
+                    echo "The external transient failure exhausted all bounded attempts. Application deployment remains fail-closed, so Hosting and Functions were not deployed."
+                    echo
+                    echo "Recovery: follow the [production Firestore deploy retry procedure](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/master/docs/observability-runbook.md#firestore-rules-api-retry-exhaustion)."
+                  } >> "$GITHUB_STEP_SUMMARY"
+                fi
                 echo "Firebase ${deploy_label} deploy failed after ${max_attempts} transient attempts." >&2
                 return "$deploy_status"
               fi

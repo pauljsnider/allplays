@@ -147,6 +147,18 @@ concurrency:
           if (( retry_delay_seconds > 120 )); then
             retry_delay_seconds=120
           fi
+          if [[ "$deploy_label" == "firestore" ]]; then
+            api_surface="Firestore Rules API (firebaserules.googleapis.com)"
+            grep -Eio 'HTTP Error:[[:space:]]*(409|429|500|502|503|504)|(^|[^[:digit:]])(409|429|500|502|503|504)([^[:digit:]]|$)' "$deploy_log" \\
+              | grep -Eo '(409|429|500|502|503|504)'
+            final_error_class="HTTP \${final_http_status}"
+            echo "| Attempts exhausted | \${max_attempts}/\${max_attempts} |"
+            echo '| Guaranteed not deployed | \`hosting\`, \`functions\` |'
+            echo "| Firestore configuration | Rules and indexes may be partially deployed; verify both before retrying. |"
+            echo "Application deployment remains fail-closed, so Hosting and Functions were not deployed."
+            echo "Recovery: \${GITHUB_SERVER_URL}/\${GITHUB_REPOSITORY}/blob/master/docs/observability-runbook.md#firestore-rules-api-retry-exhaustion"
+          } >> "$GITHUB_STEP_SUMMARY"
+          fi
           if [[ "$FIRESTORE_CONFIG_CHANGED" == "true" ]]; then
             retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 8 30
             retry_firebase_deploy "hosting,functions" "application"
@@ -203,6 +215,36 @@ concurrency:
             'HTTP Error:[[:space:]]*409,[[:space:]]*Requested entity already exists',
             '(^|[^[:alnum:]])409([^[:alnum:]]|$)'
         ))).toThrow('Production Firestore release-race retry');
+        expect(() => validateProductionDeployCommand(validDeployCommand.replace(
+            'Firestore Rules API (firebaserules.googleapis.com)',
+            'Firestore API'
+        ))).toThrow('Production Firestore retry-exhaustion API surface');
+        expect(() => validateProductionDeployCommand(validDeployCommand.replace(
+            `grep -Eio 'HTTP Error:[[:space:]]*(409|429|500|502|503|504)|(^|[^[:digit:]])(409|429|500|502|503|504)([^[:digit:]]|$)' "$deploy_log" \\
+              | grep -Eo '(409|429|500|502|503|504)'`,
+            `grep -Eio 'HTTP Error:[[:space:]]*(429|500|502|503|504)|(^|[^[:digit:]])(429|500|502|503|504)([^[:digit:]]|$)' "$deploy_log" \\
+              | grep -Eo '(429|500|502|503|504)'`
+        ))).toThrow('Production Firestore retry-exhaustion HTTP status extraction');
+        expect(() => validateProductionDeployCommand(validDeployCommand.replace(
+            'final_error_class="HTTP ${final_http_status}"',
+            'final_error_class="transient failure"'
+        ))).toThrow('Production Firestore retry-exhaustion HTTP error class');
+        expect(() => validateProductionDeployCommand(validDeployCommand.replace(
+            'echo "| Attempts exhausted | ${max_attempts}/${max_attempts} |"',
+            'echo "Retries exhausted"'
+        ))).toThrow('Production Firestore retry-exhaustion attempt count');
+        expect(() => validateProductionDeployCommand(validDeployCommand.replace(
+            'echo \'| Guaranteed not deployed | `hosting`, `functions` |\'',
+            'echo "Deployment blocked"'
+        ))).toThrow('Production Firestore retry-exhaustion blocked application surfaces');
+        expect(() => validateProductionDeployCommand(validDeployCommand.replace(
+            'Rules and indexes may be partially deployed; verify both before retrying.',
+            'Rules and indexes were not deployed.'
+        ))).toThrow('Production Firestore retry-exhaustion partial configuration status');
+        expect(() => validateProductionDeployCommand(validDeployCommand.replace(
+            '${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/master/docs/observability-runbook.md#firestore-rules-api-retry-exhaustion',
+            'docs/observability-runbook.md'
+        ))).toThrow('Production Firestore retry-exhaustion recovery link');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
             `retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 8 30
             retry_firebase_deploy "hosting,functions" "application"`,
