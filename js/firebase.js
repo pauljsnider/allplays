@@ -46,6 +46,7 @@ import {
     onSnapshot,
     serverTimestamp,
     collectionGroup,
+    documentId,
     writeBatch,
     runTransaction
 } from "./vendor/firebase-firestore.js";
@@ -141,6 +142,7 @@ export {
     onSnapshot,
     serverTimestamp,
     collectionGroup,
+    documentId,
     writeBatch,
     runTransaction
 };

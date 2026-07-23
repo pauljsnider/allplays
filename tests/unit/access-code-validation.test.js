@@ -6,7 +6,7 @@ const collectionMock = vi.fn((database, path) => ({ database, path }));
 const whereMock = vi.fn((field, op, value) => ({ field, op, value }));
 const queryMock = vi.fn((...parts) => parts);
 
-vi.mock('../../js/firebase.js?v=22', () => ({
+vi.mock('../../js/firebase.js?v=23', () => ({
     db: {},
     auth: {},
     functions: {},
@@ -35,6 +35,7 @@ vi.mock('../../js/firebase.js?v=22', () => ({
     onSnapshot: vi.fn(),
     serverTimestamp: vi.fn(),
     collectionGroup: vi.fn(),
+    documentId: vi.fn(),
     writeBatch: vi.fn(),
     runTransaction: vi.fn(),
     httpsCallable: httpsCallableMock,
@@ -43,6 +44,8 @@ vi.mock('../../js/firebase.js?v=22', () => ({
     getDownloadURL: vi.fn(),
     deleteObject: vi.fn()
 }));
+
+vi.mock('../../js/firebase.js?v=22', async () => import('../../js/firebase.js?v=23'));
 
 vi.mock('../../js/firebase-images.js?v=10', () => ({
     imageStorage: {},

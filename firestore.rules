@@ -2863,6 +2863,14 @@ service cloud.firestore {
       }
     }
 
+    // Materialized substring index maintained by Cloud Functions. Only global
+    // admins may query it, and every list request remains explicitly bounded.
+    match /adminUserSearch/{userId} {
+      allow get: if isGlobalAdmin();
+      allow list: if isBoundedGlobalAdminListQuery();
+      allow write: if false;
+    }
+
     match /accountMergePreviewRequests/{requestId} {
       allow read: if isSignedIn() &&
                     (resource.data.destinationUid == request.auth.uid ||
@@ -2970,6 +2978,12 @@ service cloud.firestore {
     match /{path=**}/players/{playerId} {
       allow read: if false;
     }
+
+    // Collection group rule for the global-admin officials directory search.
+    match /{path=**}/officials/{officialId} {
+      allow list: if isBoundedGlobalAdminListQuery();
+    }
+
     // Collection group rule for registrations - allows parent dashboard to query own applications.
     match /{path=**}/registrations/{registrationId} {
       allow read: if isCurrentUserRegistrationGuardian(resource.data);
@@ -3362,7 +3376,9 @@ service cloud.firestore {
 
       // Officials directory for officiating assignments
       match /officials/{officialId} {
-        allow read, write: if isTeamOwnerOrAdmin(teamId);
+        allow get: if isGlobalAdmin() || isTeamOwnerOrAdmin(teamId);
+        allow list: if isBoundedGlobalAdminListQuery() || isTeamOwnerOrAdmin(teamId);
+        allow write: if isTeamOwnerOrAdmin(teamId);
       }
 
       match /notificationRecipients/{uid} {
@@ -3848,7 +3864,8 @@ service cloud.firestore {
 
       // Officials directory subcollection
       match /officials/{officialId} {
-        allow read: if isTeamOwnerOrAdmin(teamId);
+        allow get: if isGlobalAdmin() || isTeamOwnerOrAdmin(teamId);
+        allow list: if isBoundedGlobalAdminListQuery() || isTeamOwnerOrAdmin(teamId);
         allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
       }
 

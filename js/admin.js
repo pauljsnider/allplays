@@ -1,6 +1,7 @@
 import {
     getAdminTeamsPage,
     getAdminUsersPage,
+    searchAdminUsers,
     getGames,
     getOfficials,
     getOfficialsForUsers,
@@ -14,10 +15,10 @@ import {
     getTelemetryRouteDaily,
     getTelemetryEventDaily,
     getTelemetrySessions
-} from './db.js?v=117';
-import { db, collection, getDocs, doc, setDoc, updateDoc, serverTimestamp, query } from './firebase.js?v=22';
+} from './db.js?v=123';
+import { db, collection, getDocs, doc, setDoc, updateDoc, serverTimestamp, query } from './firebase.js?v=23';
 import { renderHeader, renderFooter, escapeHtml } from './utils.js?v=18';
-import { checkAuth } from './auth.js?v=129';
+import { checkAuth } from './auth.js?v=130';
 import { DEFAULT_ADMIN_PAGE_SIZE, buildBoundedAdminDashboardScope, loadAdminCollectionPage, loadInitialAdminBootstrap } from './admin-bootstrap.js?v=2';
 import {
     adminRegistrationDefaults,
@@ -35,15 +36,17 @@ import {
     formatOfficialUserSummary,
     getOfficialUserSummary,
     matchesOfficialUserSearch
-} from './admin-user-official-links.js?v=2';
+} from './admin-user-official-links.js?v=3';
 import { buildAdminTeamOfficialsSummary } from './admin-team-officials.js?v=1';
 import {
+    createDebouncedAdminUserSearch,
     hasAdminGlobalSearchTerm,
     loadCompleteAdminSearchCollection,
     normalizeAdminSearchTerm,
+    resolveAdminUserSearchResult,
     selectAdminItemById,
     selectAdminSearchCollection
-} from './admin-search.js?v=2';
+} from './admin-search.js?v=7';
 import {
     buildTrackedWorkflowLoadSummary,
     buildTelemetryPerformanceSummary,
@@ -88,9 +91,10 @@ let loadedDashboardGamesKey = '';
 let loadedTeamsOfficialsPageKey = '';
 let loadedUsersOfficialsKey = '';
 let globalSearchTeamsLoaded = false;
-let globalSearchUsersLoaded = false;
 let globalSearchTeamsPromise = null;
-let globalSearchUsersPromise = null;
+const runDebouncedAdminUserSearch = createDebouncedAdminUserSearch({
+    search: searchAdminUsers
+});
 
 function getCurrentTeamPage() {
     return teamPageState.pages[teamPageState.currentIndex] || [];
@@ -143,9 +147,7 @@ function resetGlobalAdminSearchCollections() {
     globalSearchTeams = [];
     globalSearchUsers = [];
     globalSearchTeamsLoaded = false;
-    globalSearchUsersLoaded = false;
     globalSearchTeamsPromise = null;
-    globalSearchUsersPromise = null;
 }
 
 async function ensureGlobalAdminTeamsForSearch() {
@@ -167,25 +169,6 @@ async function ensureGlobalAdminTeamsForSearch() {
     return globalSearchTeamsPromise;
 }
 
-async function ensureGlobalAdminUsersForSearch() {
-    if (globalSearchUsersLoaded) return globalSearchUsers;
-    if (!globalSearchUsersPromise) {
-        globalSearchUsersPromise = loadCompleteAdminSearchCollection({
-            fetchPage: getAdminUsersPage,
-            itemsKey: 'users'
-        })
-            .then((users) => {
-                globalSearchUsers = users;
-                globalSearchUsersLoaded = true;
-                return globalSearchUsers;
-            })
-            .finally(() => {
-                globalSearchUsersPromise = null;
-            });
-    }
-    return globalSearchUsersPromise;
-}
-
 async function getAdminTeamsForSearch(searchTerm = '') {
     if (hasAdminGlobalSearchTerm(searchTerm)) {
         await ensureGlobalAdminTeamsForSearch();
@@ -198,14 +181,15 @@ async function getAdminTeamsForSearch(searchTerm = '') {
 }
 
 async function getAdminUsersForSearch(searchTerm = '') {
-    if (hasAdminGlobalSearchTerm(searchTerm)) {
-        await ensureGlobalAdminUsersForSearch();
+    const result = await runDebouncedAdminUserSearch(searchTerm);
+    const users = resolveAdminUserSearchResult(allUsers, result);
+    if (!users) return null;
+    if (!result.remote) {
+        globalSearchUsers = [];
+        return users;
     }
-    return selectAdminSearchCollection({
-        searchTerm,
-        pageItems: allUsers,
-        globalItems: globalSearchUsers
-    });
+    globalSearchUsers = users;
+    return globalSearchUsers;
 }
 
 function setTeamsPage(page, nextCursor, index = 0) {
@@ -1715,6 +1699,7 @@ async function renderCurrentUsersView() {
     const term = normalizeAdminSearchTerm(document.getElementById('search-users')?.value || '');
     const officialFilter = document.getElementById('filter-users-official-status')?.value || 'all';
     const users = await getAdminUsersForSearch(term);
+    if (!users) return;
     const latestTerm = normalizeAdminSearchTerm(document.getElementById('search-users')?.value || '');
     if (term !== latestTerm) return;
 

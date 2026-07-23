@@ -70,6 +70,7 @@ describe('admin users official links', () => {
             teamCount: 1
         });
         expect(formatOfficialUserSummary(summary)).toBe('1 team: Falcons');
+        expect(matchesOfficialUserSearch({ phone: '+1 (555) 123-4567' }, null, '1234567')).toBe(true);
     });
 
     it('collects bounded lookup targets from only the visible users slice', () => {
@@ -136,5 +137,13 @@ describe('admin users official links', () => {
         expect(renderUsersView.indexOf('await loadVisibleOfficialUserLinks(users);')).toBeLessThan(
             renderUsersView.indexOf('const filtered = users.filter')
         );
+        expect(adminJs).toContain('createDebouncedAdminUserSearch');
+        expect(adminJs).toContain('searchAdminUsers');
+        expect(adminJs).toContain('resolveAdminUserSearchResult(allUsers, result)');
+        expect(adminJs).toContain('${escapeHtml(u.email || \'-\')}');
+        expect(adminJs).toContain('${escapeHtml(u.fullName || \'-\')}');
+        expect(adminJs).toContain('${escapeHtml(u.phone || \'-\')}');
+        expect(adminJs).not.toContain('ensureGlobalAdminUsersForSearch');
+        expect(adminJs).not.toContain('fetchPage: getAdminUsersPage,\n            itemsKey: \'users\'');
     });
 });

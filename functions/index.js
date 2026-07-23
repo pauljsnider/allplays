@@ -240,6 +240,10 @@ const { hasTeamAdminAccess } = require('./team-admin-access-core.cjs');
 const { createAutoAcceptParentInviteHandler } = require('./parent-invite-auto-link-callable.cjs');
 const { createTeamOwnerAccessSyncHandler } = require('./team-owner-access-core.cjs');
 const {
+  buildAdminUserSearchHashes,
+  haveAdminUserSearchFieldsChanged
+} = require('./admin-user-search-index-core.cjs');
+const {
   normalizeParentInviteEmail,
   appendUniqueParentLink,
   appendUniqueValue,
@@ -6864,6 +6868,27 @@ exports.syncTeamNotificationRecipientsOnUserWrite = functions.firestore
     const before = change.before.exists ? (change.before.data() || {}) : null;
     const after = change.after.exists ? (change.after.data() || {}) : null;
     await syncNotificationRecipientsForUserChange(context.params.uid, before, after);
+    return null;
+  });
+
+exports.syncAdminUserSearchIndexOnUserWrite = functions.firestore
+  .document('users/{uid}')
+  .onWrite(async (change, context) => {
+    const before = change.before.exists ? (change.before.data() || {}) : null;
+    const after = change.after.exists ? (change.after.data() || {}) : null;
+    const indexRef = firestore.doc(`adminUserSearch/${context.params.uid}`);
+
+    if (!after) {
+      await indexRef.delete();
+      return null;
+    }
+    if (!haveAdminUserSearchFieldsChanged(before, after)) return null;
+
+    await indexRef.set({
+      userId: context.params.uid,
+      hashes: buildAdminUserSearchHashes(after),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
     return null;
   });
 

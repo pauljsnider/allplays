@@ -42,9 +42,13 @@ The apply mode intentionally requires `--code`; bulk writes are not supported.
 ### Other scripts
 
 See the header comment in each script for usage:
+`backfill-admin-user-search-index.js`,
 `backfill-legacy-team-chat-target-fields.js`,
 `backfill-notification-recipients.js`,
 `backfill-public-team-search-fields.js`,
 `backfill-reciprocal-parent-links.js`,
 `migrate-player-private-profile.js`,
 `quarantine-legacy-targeted-team-chat.js`.
+
+`backfill-admin-user-search-index.js` is also applied automatically by the
+production deployment when its migration or index-building logic changes.
