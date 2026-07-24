@@ -182,13 +182,16 @@ export async function getStaffTeams({ userId, email, coachTeamIds = [], includeA
     const ownerEmailCandidates = [...new Set([staffEmail, normalizedEmail].filter(Boolean))];
     const uniqueCoachTeamIds = [...new Set(coachTeamIds.map((teamId) => String(teamId || '').trim()).filter(Boolean))];
     const emptySnapshot = { docs: [] };
-    const [ownedSnapshot, adminSnapshot, legacyOwnerSnapshotResults, coachSnapshotResults] = await Promise.all([
-        userId
-            ? legacyFirebaseGetDocs(legacyFirebaseQuery(teamsRef, legacyFirebaseWhere('ownerId', '==', userId)))
-            : Promise.resolve(emptySnapshot),
-        normalizedEmail
-            ? legacyFirebaseGetDocs(legacyFirebaseQuery(teamsRef, legacyFirebaseWhere('adminEmails', 'array-contains', normalizedEmail)))
-            : Promise.resolve(emptySnapshot),
+    const coreStaffQueries = [
+        ...(userId
+            ? [legacyFirebaseGetDocs(legacyFirebaseQuery(teamsRef, legacyFirebaseWhere('ownerId', '==', userId)))]
+            : []),
+        ...(normalizedEmail
+            ? [legacyFirebaseGetDocs(legacyFirebaseQuery(teamsRef, legacyFirebaseWhere('adminEmails', 'array-contains', normalizedEmail)))]
+            : [])
+    ];
+    const [coreStaffSnapshotResults, legacyOwnerSnapshotResults, coachSnapshotResults] = await Promise.all([
+        Promise.allSettled(coreStaffQueries),
         Promise.allSettled([
             normalizedEmail
                 ? legacyFirebaseGetDocs(legacyFirebaseQuery(teamsRef, legacyFirebaseWhere('ownerEmailLower', '==', normalizedEmail)))
@@ -202,6 +205,13 @@ export async function getStaffTeams({ userId, email, coachTeamIds = [], includeA
         )))
     ]);
 
+    const successfulCoreStaffSnapshots = coreStaffSnapshotResults.flatMap((result) => (
+        result.status === 'fulfilled' && result.value ? [result.value] : []
+    ));
+    if (!successfulCoreStaffSnapshots.length) {
+        const firstCoreFailure = coreStaffSnapshotResults.find((result) => result.status === 'rejected');
+        if (firstCoreFailure?.status === 'rejected') throw firstCoreFailure.reason;
+    }
     const legacyOwnerSnapshots = legacyOwnerSnapshotResults.flatMap((result) => (
         result.status === 'fulfilled' && result.value ? [result.value] : []
     ));
@@ -209,7 +219,7 @@ export async function getStaffTeams({ userId, email, coachTeamIds = [], includeA
         result.status === 'fulfilled' && result.value ? [result.value] : []
     ));
     const teamsById = new Map<string, Record<string, unknown>>();
-    [...ownedSnapshot.docs, ...adminSnapshot.docs, ...legacyOwnerSnapshots.flatMap((snapshot) => snapshot.docs), ...coachSnapshots]
+    [...successfulCoreStaffSnapshots.flatMap((snapshot) => snapshot.docs), ...legacyOwnerSnapshots.flatMap((snapshot) => snapshot.docs), ...coachSnapshots]
         .filter((snapshot): snapshot is NonNullable<typeof snapshot> => Boolean(snapshot && ('exists' in snapshot ? snapshot.exists() : true)))
         .forEach((snapshot) => {
             const id = String(snapshot.id || '').trim();
@@ -217,7 +227,8 @@ export async function getStaffTeams({ userId, email, coachTeamIds = [], includeA
         });
     return {
         teams: [...teamsById.values()],
-        isPartial: [...legacyOwnerSnapshotResults, ...coachSnapshotResults].some((result) => result.status === 'rejected')
+        isPartial: [...coreStaffSnapshotResults, ...legacyOwnerSnapshotResults, ...coachSnapshotResults]
+            .some((result) => result.status === 'rejected')
     };
 }
 

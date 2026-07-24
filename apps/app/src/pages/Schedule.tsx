@@ -139,6 +139,38 @@ function applyAuthoritativeScheduleScope(
     });
 }
 
+function mergePartialScheduleScope(
+  currentChildren: ParentScheduleChild[],
+  currentEvents: ParentScheduleEvent[],
+  currentStaffTeams: ParentScheduleStaffTeam[],
+  partialChildren: ParentScheduleChild[],
+  partialStaffTeams: ParentScheduleStaffTeam[]
+) {
+  const childrenByKey = new Map(
+    currentChildren.map((child) => [`${child.teamId}::${child.playerId}`, child])
+  );
+  partialChildren.forEach((child) => {
+    childrenByKey.set(`${child.teamId}::${child.playerId}`, child);
+  });
+
+  const staffTeamsById = new Map(currentStaffTeams.map((team) => [team.teamId, team]));
+  partialStaffTeams.forEach((team) => {
+    staffTeamsById.set(team.teamId, team);
+  });
+  const mergedStaffTeams = [...staffTeamsById.values()];
+  const discoveredStaffTeamIds = new Set(partialStaffTeams.map((team) => team.teamId));
+
+  return {
+    children: [...childrenByKey.values()],
+    events: currentEvents.map((event) => (
+      discoveredStaffTeamIds.has(event.teamId) && event.isTeamStaff !== true
+        ? { ...event, isTeamStaff: true }
+        : event
+    )),
+    staffTeams: mergedStaffTeams
+  };
+}
+
 export function Schedule({ auth }: { auth: AuthState }) {
   const [searchParams] = useSearchParams();
   const { isDesktopWeb } = useShellLayout();
@@ -398,12 +430,38 @@ export function Schedule({ auth }: { auth: AuthState }) {
     const refreshVersion = ++scheduleRefreshVersionRef.current;
     let refreshedChildren: ParentScheduleChild[] | null = null;
     let refreshedStaffTeams: ParentScheduleStaffTeam[] | null = null;
+    let partialScopeChildren: ParentScheduleChild[] = [];
+    let partialScopeStaffTeams: ParentScheduleStaffTeam[] = [];
     const parentScopePromise = loadParentScheduleScope(auth.user).catch(() => null);
     void parentScopePromise
       .then((parentScope) => {
-        if (!parentScope || parentScope.isPartial === true) return;
+        if (!parentScope) return;
         if (activeUserIdRef.current !== requestedUserId) return;
         if (scheduleRefreshVersionRef.current !== refreshVersion) return;
+        if (parentScope.isPartial === true) {
+          partialScopeChildren = parentScope.children ?? [];
+          partialScopeStaffTeams = parentScope.staffTeams ?? [];
+          const mergedScope = mergePartialScheduleScope(
+            childrenRef.current,
+            eventsRef.current,
+            [],
+            partialScopeChildren,
+            partialScopeStaffTeams
+          );
+          childrenRef.current = mergedScope.children;
+          setChildren(mergedScope.children);
+          setStaffTeams((currentStaffTeams) => (
+            mergePartialScheduleScope(
+              childrenRef.current,
+              eventsRef.current,
+              currentStaffTeams,
+              [],
+              partialScopeStaffTeams
+            ).staffTeams
+          ));
+          updateScheduleEvents(() => mergedScope.events);
+          return;
+        }
         refreshedChildren = parentScope.children ?? [];
         refreshedStaffTeams = parentScope.staffTeams ?? [];
         childrenRef.current = refreshedChildren;
@@ -450,7 +508,13 @@ export function Schedule({ auth }: { auth: AuthState }) {
           if (activeUserIdRef.current !== requestedUserId) return;
           if (scheduleRefreshVersionRef.current !== refreshVersion) return;
           const authoritativeResult = refreshedStaffTeams === null
-            ? result
+            ? mergePartialScheduleScope(
+                result.children,
+                result.events,
+                result.staffTeams ?? [],
+                partialScopeChildren,
+                partialScopeStaffTeams
+              )
             : {
                 ...result,
                 children: refreshedChildren!,

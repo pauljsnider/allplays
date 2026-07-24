@@ -304,6 +304,18 @@ describe('legacyScheduleDb staff team reads', () => {
         expect(getDoc).not.toHaveBeenCalled();
     });
 
+    it('propagates an owner-id failure for blank-email users so native callers can use the REST fallback', async () => {
+        const queryError = new Error('web sdk unavailable');
+        vi.mocked(getDocs).mockRejectedValueOnce(queryError);
+
+        await expect(getStaffTeams({ userId: 'parent-1', email: '   ', coachTeamIds: [] })).rejects.toThrow('web sdk unavailable');
+
+        expect(getDocs).toHaveBeenCalledTimes(1);
+        expect(where).toHaveBeenCalledTimes(1);
+        expect(where).toHaveBeenCalledWith('ownerId', '==', 'parent-1');
+        expect(getDoc).not.toHaveBeenCalled();
+    });
+
     it('keeps UID and admin teams when the normalized legacy owner query is denied', async () => {
         vi.mocked(getDocs)
             .mockResolvedValueOnce({ docs: [snapshot('team-owner', { name: 'Owner' })] } as never)
@@ -344,9 +356,51 @@ describe('legacyScheduleDb staff team reads', () => {
         });
     });
 
+    it('keeps the in-app-created owner team when the admin-email query is denied', async () => {
+        vi.mocked(getDocs)
+            .mockResolvedValueOnce({ docs: [snapshot('team-vipers', { name: 'Vipers', ownerId: 'user-1' })] } as never)
+            .mockRejectedValueOnce(new Error('adminEmails denied'))
+            .mockResolvedValueOnce({ docs: [] } as never)
+            .mockResolvedValueOnce({ docs: [] } as never);
+
+        await expect(getStaffTeams({
+            userId: 'user-1',
+            email: 'paul@allplays.ai',
+            coachTeamIds: []
+        })).resolves.toEqual({
+            teams: [
+                { id: 'team-vipers', name: 'Vipers', ownerId: 'user-1' }
+            ],
+            isPartial: true
+        });
+    });
+
+    it('keeps admin teams when the owner-id query is denied', async () => {
+        vi.mocked(getDocs)
+            .mockRejectedValueOnce(new Error('ownerId denied'))
+            .mockResolvedValueOnce({ docs: [snapshot('team-admin', { name: 'Admin' })] } as never)
+            .mockResolvedValueOnce({ docs: [] } as never)
+            .mockResolvedValueOnce({ docs: [] } as never);
+
+        await expect(getStaffTeams({
+            userId: 'user-1',
+            email: 'staff@example.com',
+            coachTeamIds: []
+        })).resolves.toEqual({
+            teams: [
+                { id: 'team-admin', name: 'Admin' }
+            ],
+            isPartial: true
+        });
+    });
+
     it('propagates owner and admin query failures so native callers can use the REST fallback', async () => {
         const queryError = new Error('web sdk unavailable');
-        vi.mocked(getDocs).mockRejectedValueOnce(queryError);
+        vi.mocked(getDocs)
+            .mockRejectedValueOnce(queryError)
+            .mockRejectedValueOnce(queryError)
+            .mockRejectedValueOnce(queryError)
+            .mockRejectedValueOnce(queryError);
 
         await expect(getStaffTeams({ userId: 'coach-1', email: 'coach@example.com', coachTeamIds: [] })).rejects.toThrow('web sdk unavailable');
 
