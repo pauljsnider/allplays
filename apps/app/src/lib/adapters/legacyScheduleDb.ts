@@ -182,15 +182,16 @@ export async function getStaffTeams({ userId, email, coachTeamIds = [], includeA
     const ownerEmailCandidates = [...new Set([staffEmail, normalizedEmail].filter(Boolean))];
     const uniqueCoachTeamIds = [...new Set(coachTeamIds.map((teamId) => String(teamId || '').trim()).filter(Boolean))];
     const emptySnapshot = { docs: [] };
+    const coreStaffQueries = [
+        ...(userId
+            ? [legacyFirebaseGetDocs(legacyFirebaseQuery(teamsRef, legacyFirebaseWhere('ownerId', '==', userId)))]
+            : []),
+        ...(normalizedEmail
+            ? [legacyFirebaseGetDocs(legacyFirebaseQuery(teamsRef, legacyFirebaseWhere('adminEmails', 'array-contains', normalizedEmail)))]
+            : [])
+    ];
     const [coreStaffSnapshotResults, legacyOwnerSnapshotResults, coachSnapshotResults] = await Promise.all([
-        Promise.allSettled([
-            userId
-                ? legacyFirebaseGetDocs(legacyFirebaseQuery(teamsRef, legacyFirebaseWhere('ownerId', '==', userId)))
-                : Promise.resolve(emptySnapshot),
-            normalizedEmail
-                ? legacyFirebaseGetDocs(legacyFirebaseQuery(teamsRef, legacyFirebaseWhere('adminEmails', 'array-contains', normalizedEmail)))
-                : Promise.resolve(emptySnapshot)
-        ]),
+        Promise.allSettled(coreStaffQueries),
         Promise.allSettled([
             normalizedEmail
                 ? legacyFirebaseGetDocs(legacyFirebaseQuery(teamsRef, legacyFirebaseWhere('ownerEmailLower', '==', normalizedEmail)))

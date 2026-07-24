@@ -304,6 +304,18 @@ describe('legacyScheduleDb staff team reads', () => {
         expect(getDoc).not.toHaveBeenCalled();
     });
 
+    it('propagates an owner-id failure for blank-email users so native callers can use the REST fallback', async () => {
+        const queryError = new Error('web sdk unavailable');
+        vi.mocked(getDocs).mockRejectedValueOnce(queryError);
+
+        await expect(getStaffTeams({ userId: 'parent-1', email: '   ', coachTeamIds: [] })).rejects.toThrow('web sdk unavailable');
+
+        expect(getDocs).toHaveBeenCalledTimes(1);
+        expect(where).toHaveBeenCalledTimes(1);
+        expect(where).toHaveBeenCalledWith('ownerId', '==', 'parent-1');
+        expect(getDoc).not.toHaveBeenCalled();
+    });
+
     it('keeps UID and admin teams when the normalized legacy owner query is denied', async () => {
         vi.mocked(getDocs)
             .mockResolvedValueOnce({ docs: [snapshot('team-owner', { name: 'Owner' })] } as never)
