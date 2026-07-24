@@ -26,6 +26,7 @@ import { createIdentityResolver, extractBearerToken } from './identity.js';
 import { createUserDb } from './firestoreRest.js';
 import { createOAuthBroker, metadataFor, OAuthError } from './oauth.js';
 import { createFileStore } from './fileStore.js';
+import { createFirestoreStore } from './firestoreStore.js';
 
 const PORT = Number(process.env.PORT) || 8787;
 const PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'game-flow-c6311';
@@ -48,10 +49,18 @@ if (FALLBACK_BEARER) {
 }
 
 // OAuth broker state (registered clients + refresh grants) survives restarts
-// when OAUTH_STORE_PATH is set; otherwise it lives in memory and a restart
-// signs the connector out. Access tokens and auth codes are always in-memory.
-const oauthStore = process.env.OAUTH_STORE_PATH ? createFileStore(process.env.OAUTH_STORE_PATH) : null;
-if (oauthStore) console.log(`[chatgpt-mcp] OAuth state persisted to ${process.env.OAUTH_STORE_PATH}`);
+// when a store is configured; otherwise it lives in memory and a restart signs
+// the connector out. Access tokens and auth codes are always in-memory.
+// Precedence: Firestore (hosted, multi-instance safe) > file (single-box dev).
+let oauthStore = null;
+if (process.env.OAUTH_STORE_FIRESTORE === '1') {
+    oauthStore = createFirestoreStore({ projectId: PROJECT_ID });
+    await oauthStore.warmup();
+    console.log('[chatgpt-mcp] OAuth state persisted to Firestore (oauthBrokerState/state)');
+} else if (process.env.OAUTH_STORE_PATH) {
+    oauthStore = createFileStore(process.env.OAUTH_STORE_PATH);
+    console.log(`[chatgpt-mcp] OAuth state persisted to ${process.env.OAUTH_STORE_PATH}`);
+}
 const oauth = createOAuthBroker({ store: oauthStore });
 const SIGNIN_REFERER = process.env.ALLPLAYS_REFERER || 'https://allplays.ai/';
 
@@ -202,7 +211,9 @@ const app = express();
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: false }));
 
-app.get('/healthz', (req, res) => res.json({ ok: true }));
+// Liveness. Not /healthz — Google's Front End reserves that path on Cloud Run
+// and returns a 404 before the request reaches the container.
+app.get(['/', '/health'], (req, res) => res.json({ ok: true, service: 'allplays-chatgpt-mcp' }));
 
 // --- OAuth broker endpoints (discovery, registration, authorize, token) ---
 

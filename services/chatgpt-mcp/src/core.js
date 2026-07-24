@@ -53,6 +53,23 @@ async function safeGetDoc(db, path) {
     }
 }
 
+// Role-discovery queries can be denied by rules for query shapes the engine
+// can't prove safe (e.g. the teams `adminEmails array-contains` list query,
+// whose rule lowercases the token email and so isn't provably satisfied by the
+// filter). Degrade a denial to "no teams via that path" — never a hard failure
+// and never extra data. A denied path just yields no teams; other paths
+// (ownerId equality, parentOf direct gets) still populate the context.
+async function safeQuery(runQuery) {
+    try {
+        return await runQuery();
+    } catch (error) {
+        if (error instanceof DomainError && error.code === 'permission_denied') {
+            return { docs: [] };
+        }
+        throw error;
+    }
+}
+
 /**
  * Build the caller's authorization context from Firestore. Roles are always
  * re-derived per request; nothing supplied by the model is trusted.
@@ -67,9 +84,9 @@ export async function resolveUserContext(db, { uid, email }) {
         .filter((link) => link && typeof link.teamId === 'string' && link.teamId);
 
     const [ownedSnap, adminSnap] = await Promise.all([
-        db.collection('teams').where('ownerId', '==', uid).get(),
+        safeQuery(() => db.collection('teams').where('ownerId', '==', uid).get()),
         normalizedEmail
-            ? db.collection('teams').where('adminEmails', 'array-contains', normalizedEmail).get()
+            ? safeQuery(() => db.collection('teams').where('adminEmails', 'array-contains', normalizedEmail).get())
             : Promise.resolve({ docs: [] })
     ]);
 

@@ -135,6 +135,29 @@ describe('chatgpt-mcp core: resolveUserContext', () => {
     it('rejects a missing uid as unauthenticated', async () => {
         await expect(resolveUserContext(parentDb(), {})).rejects.toMatchObject({ code: 'unauthenticated' });
     });
+
+    it('still resolves parent teams when rules deny the admin-teams list query', async () => {
+        // Firestore denies the `adminEmails array-contains` list query for query
+        // shapes it can't prove safe. That must degrade to "no admin teams", not
+        // fail the whole request — the parent team still comes from parentOf.
+        const db = parentDb();
+        const realCollection = db.collection.bind(db);
+        db.collection = (path) => {
+            const q = realCollection(path);
+            const realWhere = q.where.bind(q);
+            q.where = (field, op, value) => {
+                const sub = realWhere(field, op, value);
+                if (path === 'teams' && field === 'adminEmails') {
+                    sub.get = async () => { throw new DomainError('permission_denied', 'denied'); };
+                }
+                return sub;
+            };
+            return q;
+        };
+        const context = await resolveUserContext(db, parentIdentity);
+        expect(context.teams.has('team-a')).toBe(true);
+        expect([...context.teams.get('team-a').roles]).toEqual(['parent']);
+    });
 });
 
 describe('chatgpt-mcp core: listMyTeams', () => {

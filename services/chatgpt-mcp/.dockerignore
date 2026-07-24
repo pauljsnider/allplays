@@ -1,0 +1,9 @@
+node_modules
+.data
+oauth-store.json
+oauth-store.json.tmp
+*.oauth-store.json
+.env
+.env.local
+.gitignore
+README.md
