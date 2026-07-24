@@ -24,6 +24,7 @@ import {
   XCircle
 } from 'lucide-react';
 import { AvatarImage } from '../components/AvatarImage';
+import { Modal } from '../components/Modal';
 import { describeAuthError, reloadCurrentUser, resendVerificationEmail, sendResetEmail, setCurrentUserPassword } from '../lib/authService';
 import {
   createProfileAccessCode,
@@ -1793,8 +1794,11 @@ export function Profile({ auth }: { auth: AuthState }) {
       ) : null}
 
       {photoChooserOpen ? (
-        <div className="fixed inset-0 z-50 flex items-end bg-gray-950/40 p-0 sm:items-center sm:justify-center sm:p-4" role="dialog" aria-modal="true" aria-labelledby="profile-photo-chooser-title">
-          <button type="button" className="absolute inset-0 h-full w-full cursor-default" onClick={() => setPhotoChooserOpen(false)} aria-label="Close photo options" />
+        <Modal
+          ariaLabelledBy="profile-photo-chooser-title"
+          onClose={() => setPhotoChooserOpen(false)}
+          overlayClassName="z-50 flex items-end bg-gray-950/40 p-0 sm:items-center sm:justify-center sm:p-4"
+        >
           <section className="relative w-full rounded-t-3xl bg-white p-4 shadow-2xl sm:max-w-sm sm:rounded-2xl">
             <div className="app-label">Profile photo</div>
             <h2 id="profile-photo-chooser-title" className="mt-1 text-lg font-black text-gray-950">Choose how to update your photo</h2>
@@ -1810,7 +1814,7 @@ export function Profile({ auth }: { auth: AuthState }) {
               </button>
             </div>
           </section>
-        </div>
+        </Modal>
       ) : null}
       {accountDeletionOpen ? (
         <div className="fixed inset-0 z-[90] flex items-end bg-gray-950/50 sm:items-center sm:justify-center sm:p-4" role="dialog" aria-modal="true" aria-labelledby="account-deletion-title">
