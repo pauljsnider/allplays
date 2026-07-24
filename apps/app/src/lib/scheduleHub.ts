@@ -1,6 +1,7 @@
 import {
   formatEventDateLabel,
   formatEventTimeLabel,
+  getScheduleLocationLabel,
   getScheduleTitle,
   type ParentScheduleEvent
 } from './scheduleLogic';
@@ -26,7 +27,7 @@ export type ScheduleHubDestination = {
 export function buildGameHubDestinations(event: ParentScheduleEvent): ScheduleHubDestination[] {
   const liveStatus = String(event.liveStatus || '').toLowerCase();
   const title = `${event.teamName} ${getScheduleTitle(event)}`;
-  const whenWhere = `${formatEventDateLabel(event.date)} ${formatEventTimeLabel(event.date)} · ${event.location || 'Location TBD'}`;
+  const whenWhere = `${formatEventDateLabel(event.date)} ${formatEventTimeLabel(event.date)} · ${getScheduleLocationLabel(event, 'Location TBD')}`;
   const destinations: ScheduleHubDestination[] = [];
 
   if (liveStatus === 'completed') {
@@ -110,7 +111,7 @@ export function getPracticeShareText(event: ParentScheduleEvent) {
   return [
     `${event.teamName} ${event.title || 'practice'}`,
     `${formatEventDateLabel(event.date)} ${formatEventTimeLabel(event.date)}`,
-    event.location || 'Location TBD',
+    getScheduleLocationLabel(event, 'Location TBD'),
     event.arrivalTime ? `Arrive ${formatEventTimeLabel(event.arrivalTime)}` : '',
     event.practiceHomePacketSummary ? `Packet: ${event.practiceHomePacketSummary}` : '',
     event.notes || ''

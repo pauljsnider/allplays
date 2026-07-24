@@ -8,6 +8,7 @@ import {
   isPracticeEvent,
   isTrackedCalendarEvent
 } from './adapters/legacyScheduleHelpers';
+import { getCalendarLocationDetail } from './scheduleLogic';
 
 export type FamilyShareTokenErrorReason = 'missing' | 'invalid' | 'revoked' | 'expired' | 'load-failed';
 
@@ -46,6 +47,7 @@ export type FamilyShareEvent = {
   title: string;
   opponent: string;
   location: string;
+  locationDetail?: string | null;
   status: string;
   isCancelled: boolean;
   isDbGame: boolean;
@@ -218,6 +220,7 @@ function normalizeProjectedFamilyEvents(value: unknown): FamilyShareEvent[] {
       title: compactString(event.title),
       opponent: compactString(event.opponent),
       location: compactString(event.location) || 'TBD',
+      locationDetail: compactString(event.locationDetail) || null,
       status: compactString(event.status) || 'scheduled',
       isCancelled: event.isCancelled === true,
       isDbGame: false,
@@ -471,6 +474,7 @@ function buildCalendarEvent(
     title: type === 'practice' ? summary || 'Practice' : '',
     opponent: type === 'game' ? extractOpponent(summary, teamName) || 'TBD' : '',
     location: compactString(calendarEvent.location) || 'TBD',
+    locationDetail: getCalendarLocationDetail(calendarEvent.description),
     status: compactString(calendarEvent.status) || 'scheduled',
     isCancelled: compactString(calendarEvent.status).toUpperCase() === 'CANCELLED' || /\[CANCELED\]/i.test(compactString(calendarEvent.summary)),
     isDbGame: false,
@@ -488,6 +492,7 @@ function buildFamilyEvent(input: {
   title: string;
   opponent: string;
   location: string;
+  locationDetail?: string | null;
   status: string;
   isCancelled: boolean;
   isDbGame: boolean;
@@ -509,6 +514,7 @@ function buildFamilyEvent(input: {
     title: compactString(input.title),
     opponent: compactString(input.opponent),
     location: compactString(input.location) || 'TBD',
+    locationDetail: compactString(input.locationDetail) || null,
     status: compactString(input.status) || 'scheduled',
     isCancelled: input.isCancelled,
     isDbGame: input.isDbGame,

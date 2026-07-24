@@ -34,7 +34,8 @@ test('projects bounded recurring ICS events without returning source URLs or sen
     'DTEND:20260720T190000Z',
     'RRULE:FREQ=WEEKLY;COUNT=3;BYDAY=MO',
     'SUMMARY:Practice',
-    'LOCATION:Field 1',
+    'LOCATION:Blue Valley Recreation Sports Complex',
+    'DESCRIPTION:Field 14',
     'END:VEVENT',
     'END:VCALENDAR'
   ].join('\r\n'), {
@@ -50,6 +51,7 @@ test('projects bounded recurring ICS events without returning source URLs or sen
     '2026-08-03T18:00:00.000Z'
   ]);
   assert.ok(events.every((event) => event.type === 'practice'));
+  assert.ok(events.every((event) => event.locationDetail === 'Field 14'));
   const response = sanitizeFamilyShareViewResponse({
     token: {
       ownerUserId: 'SENTINEL_OWNER_UID',
@@ -67,6 +69,7 @@ test('projects bounded recurring ICS events without returning source URLs or sen
   assert.equal(payload.includes('extraCalendarUrls'), false);
   assert.equal(payload.includes('calendarUrls'), false);
   assert.equal(payload.includes('calendarUidHash'), false);
+  assert.equal(response.externalEvents[0].locationDetail, 'Field 14');
   assert.equal(response.presentation.label, 'Grandma');
 });
 

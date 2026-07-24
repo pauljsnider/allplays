@@ -36,6 +36,7 @@ import {
   getManageableScheduleTeamOptions,
   getParentScheduleTeamOptions,
   getScheduleEventDetailPath,
+  getScheduleLocationLabel,
   getWindowedCalendarScheduleEntries,
   getWindowedPracticePacketRows,
   getScheduleTitle,
@@ -1459,7 +1460,7 @@ function BulkRsvpModal({ events, onClose, onSubmit }: {
                     <span className={`rounded-full border px-2 py-0.5 text-[10px] font-black uppercase ${rsvpBadgeClasses[currentRsvp]}`}>{rsvpLabels[currentRsvp]}</span>
                   </span>
                   <span className="mt-0.5 block text-xs font-bold text-gray-600">{formatEventDateLabel(event.date)} · {formatEventTimeLabel(event.date)} · {event.childName}</span>
-                  <span className="mt-0.5 block truncate text-xs font-semibold text-gray-500">{event.teamName} · {event.location || 'Location TBD'}</span>
+                  <span className="mt-0.5 block truncate text-xs font-semibold text-gray-500">{event.teamName} · {getScheduleLocationLabel(event, 'Location TBD')}</span>
                 </span>
               </label>
             );
@@ -1571,7 +1572,7 @@ function ScheduleNextUpCard({ event, preferGameHubForStaff }: { event: ParentSch
             <div className="mt-0.5 truncate text-xs font-black text-indigo-700">{tournamentInfo.label}</div>
           ) : null}
           <div className="mt-1 text-sm font-bold text-gray-700">{formatEventDateLabel(event.date)} · {formatEventTimeLabel(event.date)}</div>
-          <div className="mt-0.5 truncate text-xs font-semibold text-gray-600">{event.childName} · {event.location || 'Location TBD'}</div>
+          <div className="mt-0.5 truncate text-xs font-semibold text-gray-600">{event.childName} · {getScheduleLocationLabel(event, 'Location TBD')}</div>
         </div>
         <span className={`inline-flex min-h-6 flex-none items-center rounded-full border px-2 text-[11px] font-extrabold uppercase tracking-[0.04em] ${rsvpBadgeClasses[rsvp]}`}>
           {rsvpLabels[rsvp]}
@@ -1926,7 +1927,7 @@ function CompactScheduleList({ events, totalCount, visibleCount, pageSize, canSh
                 </div>
                 <div className="min-w-0">
                   <div className="truncate text-sm font-black text-gray-950">{getScheduleTitle(event)}</div>
-                  <div className="mt-0.5 truncate text-xs font-semibold text-gray-500">{getScheduleChildLabel(event)} · {event.teamName} · {event.location || 'TBD'}</div>
+                  <div className="mt-0.5 truncate text-xs font-semibold text-gray-500">{getScheduleChildLabel(event)} · {event.teamName} · {getScheduleLocationLabel(event)}</div>
                   {tournamentInfo.isTournament ? (
                     <div className="mt-0.5 truncate text-xs font-bold text-indigo-700">{tournamentInfo.label}</div>
                   ) : null}
@@ -1996,7 +1997,7 @@ function PracticePacketsPanel({ rows, totalCount, readyCount, visibleCount, page
                   <h2 className="truncate text-sm font-black text-gray-950">{getScheduleTitle(row.event)}</h2>
                 </div>
                 <div className="mt-1 truncate text-xs font-semibold text-gray-500">
-                  {row.event.childName} · {formatEventDateLabel(row.event.date)} {formatEventTimeLabel(row.event.date)} · {row.event.location || 'TBD'}
+                  {row.event.childName} · {formatEventDateLabel(row.event.date)} {formatEventTimeLabel(row.event.date)} · {getScheduleLocationLabel(row.event)}
                 </div>
                 <div className="mt-1 truncate text-xs font-bold text-blue-800">
                   {row.event.practiceHomePacketSummary}
@@ -2060,7 +2061,7 @@ function ScheduleEventCard({ event, preferGameHubForStaff }: {
               {childLabel} · {event.teamName}
             </div>
             <div className="truncate text-xs font-semibold leading-5 text-gray-500">
-              {event.location || 'TBD'}
+              {getScheduleLocationLabel(event)}
             </div>
             {tournamentInfo.isTournament ? (
               <div className="truncate text-xs font-bold leading-5 text-indigo-700">
@@ -2114,7 +2115,7 @@ function ScheduleEventCard({ event, preferGameHubForStaff }: {
               <span>{formatEventTimeLabel(event.date)}</span>
               <span className="inline-flex min-w-0 items-center gap-1">
                 <MapPin className="h-3.5 w-3.5 flex-none" aria-hidden="true" />
-                <span className="truncate">{event.location || 'TBD'}</span>
+                <span className="truncate">{getScheduleLocationLabel(event)}</span>
                 {mapHref ? (
                   <a href={mapHref} target="_blank" rel="noreferrer" className="ml-1 flex-none text-xs font-black text-primary-700 hover:underline" onClick={(clickEvent) => clickEvent.stopPropagation()}>
                     Map
@@ -2419,7 +2420,7 @@ function CalendarEventPickerRow({ entry, preferGameHubForStaff }: { entry: Calen
             <h3 className="truncate text-sm font-black text-gray-950">{getScheduleTitle(entry)}</h3>
           </div>
           <div className="mt-1 truncate text-xs font-bold text-gray-600">{childLabel} · {entry.teamName}</div>
-          <div className="mt-0.5 truncate text-xs font-semibold text-gray-500">{entry.location || 'Location TBD'}</div>
+          <div className="mt-0.5 truncate text-xs font-semibold text-gray-500">{getScheduleLocationLabel(entry, 'Location TBD')}</div>
           {tournamentInfo.isTournament ? (
             <div className="mt-0.5 truncate text-xs font-bold text-indigo-700">{tournamentInfo.label}</div>
           ) : null}

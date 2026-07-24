@@ -42,6 +42,14 @@ function unescapeIcsText(value) {
     .replace(/\\\\/g, '\\'));
 }
 
+function getCalendarLocationDetail(value) {
+  const locationLines = unescapeIcsText(value)
+    .split(/\r?\n/)
+    .map((part) => compactText(part, 300))
+    .filter((part) => /\b(field|diamond|court|pitch|rink|gym|arena)\b/i.test(part));
+  return locationLines.length ? compactText(locationLines.join(' · '), 300) : null;
+}
+
 function unfoldIcsLines(icsText) {
   const unfolded = [];
   for (const rawLine of String(icsText || '').split(/\r\n|\n|\r/)) {
@@ -184,6 +192,7 @@ function parseBoundedIcsEvents(icsText) {
     if (name === 'DTEND') current.dtend = parseIcsDate(value, params.TZID || current.recurrenceTimeZone);
     if (name === 'SUMMARY') current.summary = unescapeIcsText(value);
     if (name === 'LOCATION') current.location = unescapeIcsText(value);
+    if (name === 'DESCRIPTION') current.description = unescapeIcsText(value);
     if (name === 'STATUS') current.status = compactText(value, 32).toUpperCase();
     if (name === 'UID') current.uid = compactText(value, 256);
     if (name === 'RRULE') current.rrule = parseRrule(value, current.recurrenceTimeZone);
@@ -305,6 +314,7 @@ function buildExternalCalendarEvents(icsText, { sourceId, sourceLabel = 'Shared 
       title: type === 'practice' ? (summary || 'Practice') : '',
       opponent: type === 'game' ? extractOpponent(summary, teamName) : '',
       location: compactText(event.location, 300) || 'TBD',
+      locationDetail: getCalendarLocationDetail(event.description),
       status: compactText(event.status, 32).toLowerCase() || 'scheduled',
       isCancelled: event.status === 'CANCELLED' || /\[CANCELED\]/i.test(event.summary || ''),
       isDbGame: false,
@@ -411,6 +421,7 @@ function sanitizeFamilyShareViewResponse({ token, children = [], teams = [], ext
     'title',
     'opponent',
     'location',
+    'locationDetail',
     'status',
     'isCancelled',
     'isDbGame',

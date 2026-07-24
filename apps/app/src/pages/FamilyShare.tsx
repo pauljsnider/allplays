@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { AlertCircle, CalendarDays, Loader2, MapPin, RefreshCw, ShieldCheck, Trophy, Users } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
 import { formatShortDate, formatTimeOfDay } from '../lib/datetime';
+import { getScheduleLocationLabel } from '../lib/scheduleLogic';
 import {
   FamilyShareTokenError,
   loadFamilyShareView,
@@ -195,7 +196,7 @@ function FamilyEventRow({ event, compact = false }: { event: FamilyShareEvent; c
       </div>
       {!compact ? (
         <div className="mt-3 flex flex-wrap gap-2 text-xs font-semibold text-gray-600">
-          <span className="inline-flex items-center gap-1"><MapPin className="h-3.5 w-3.5" aria-hidden="true" />{event.location}</span>
+          <span className="inline-flex items-center gap-1"><MapPin className="h-3.5 w-3.5" aria-hidden="true" />{getScheduleLocationLabel(event)}</span>
           {event.sourceLabel ? <span>{event.sourceLabel}</span> : null}
         </div>
       ) : null}
