@@ -490,6 +490,50 @@ test('requires a checkout token when an online registration has a balance', asyn
     assert.equal(firestore.registrationDocs().length, 0);
 });
 
+test('accepts offline fallback when launch payments are disabled', async () => {
+    const previousPaymentsEnabled = process.env.PAYMENTS_ENABLED;
+    process.env.PAYMENTS_ENABLED = 'false';
+    try {
+        const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration(buildSeedState({
+            paymentSettings: { offlinePaymentEnabled: true, onlineCheckoutEnabled: true }
+        }));
+
+        const result = await submitPublicRegistration(buildSubmission(), context);
+
+        assert.equal(result.success, true);
+        const registrations = firestore.registrationDocs();
+        assert.equal(registrations.length, 1);
+        assert.deepEqual(registrations[0].data.paymentSettings, {
+            offlinePaymentEnabled: true,
+            onlineCheckoutEnabled: false
+        });
+        assert.equal('checkoutAttemptToken' in registrations[0].data, false);
+    } finally {
+        if (previousPaymentsEnabled === undefined) delete process.env.PAYMENTS_ENABLED;
+        else process.env.PAYMENTS_ENABLED = previousPaymentsEnabled;
+    }
+});
+
+test('rejects paid online-only registration when launch payments are disabled', async () => {
+    const previousPaymentsEnabled = process.env.PAYMENTS_ENABLED;
+    process.env.PAYMENTS_ENABLED = 'false';
+    try {
+        const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration(buildSeedState({
+            paymentSettings: { offlinePaymentEnabled: false, onlineCheckoutEnabled: true }
+        }));
+
+        await assert.rejects(
+            submitPublicRegistration(buildSubmission(), context),
+            (error) => error.code === 'failed-precondition'
+                && error.message === 'Payment is not available for this registration.'
+        );
+        assert.equal(firestore.registrationDocs().length, 0);
+    } finally {
+        if (previousPaymentsEnabled === undefined) delete process.env.PAYMENTS_ENABLED;
+        else process.env.PAYMENTS_ENABLED = previousPaymentsEnabled;
+    }
+});
+
 test('normalizes guardian email casing for parent readback rules', async () => {
     const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration(buildSeedState());
 

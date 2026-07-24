@@ -676,7 +676,8 @@ function normalizePublicRegistrationForm(form = {}, context = {}) {
 function normalizeRegistrationPaymentSettings(settings = {}) {
   return {
     offlinePaymentEnabled: settings?.offlinePaymentEnabled === true,
-    onlineCheckoutEnabled: settings?.onlineCheckoutEnabled === true
+    onlineCheckoutEnabled: process.env.PAYMENTS_ENABLED === 'true'
+      && settings?.onlineCheckoutEnabled === true
   };
 }
 
@@ -936,8 +937,14 @@ function validatePublicRegistrationSubmission(form, input, feeSnapshot) {
   if (form.installmentPlan?.enabled !== true && input.selectedPaymentPlanId !== 'pay_full') {
     throwPublicRegistrationError('invalid-argument', 'Please select a payment plan.');
   }
+  const finalAmountDueCents = Number(feeSnapshot?.finalAmountDueCents || 0);
+  if (finalAmountDueCents > 0
+      && form.paymentSettings?.onlineCheckoutEnabled !== true
+      && form.paymentSettings?.offlinePaymentEnabled !== true) {
+    throwPublicRegistrationError('failed-precondition', 'Payment is not available for this registration.');
+  }
   if (form.paymentSettings?.onlineCheckoutEnabled === true
-      && Number(feeSnapshot?.finalAmountDueCents || 0) > 0
+      && finalAmountDueCents > 0
       && !input.checkoutAttemptToken) {
     throwPublicRegistrationError('invalid-argument', 'A checkout attempt token is required.');
   }
