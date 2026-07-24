@@ -122,7 +122,7 @@ jobs:
           done
 
       - name: Audit app dependencies
-        run: npm --prefix apps/app audit --audit-level=moderate
+        run: node scripts/audit-app-dependencies.mjs
 
       - name: Typecheck app
         run: npm --prefix apps/app run typecheck

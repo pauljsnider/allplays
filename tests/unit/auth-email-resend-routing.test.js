@@ -119,28 +119,40 @@ describe('authentication email delivery routing', () => {
 
         expect(firebaseDeployCommands).toEqual([
             'node "$firebase_cli" deploy --only storage --project game-flow-c6311 --config "$firebase_config" --non-interactive',
-            'node "$firebase_cli" deploy --only "$deploy_targets" --project game-flow-c6311 --config "$firebase_config" --non-interactive'
+            'node "$firebase_cli" deploy "${deploy_args[@]}"'
         ]);
         expect(productionSource).toContain('firebase-tools@14.25.0');
         expect(productionSource).toContain('[[ "$STORAGE_RULES_CHANGED" != "true" ]]');
         expect(productionSource).toContain('exit "$storage_status"');
-        expect(productionSource.match(/--force/g) ?? []).toHaveLength(0);
+        expect(productionSource).toContain('if [[ "$deploy_targets" != "functions:processAccountDeletionRequest,functions:syncTeamOwnerAccessOnCreate" ]]; then');
+        expect(productionSource).toContain('deploy_args+=(--force)');
+        expect(productionSource).toContain('Refusing --force outside the reviewed retry-enabled function allowlist.');
+        expect(productionSource).toContain(
+            '"functions:processAccountDeletionRequest,functions:syncTeamOwnerAccessOnCreate"'
+        );
+        expect(productionSource).toContain('"retry-enabled-functions"');
+        expect(productionSource.match(/deploy_args\+=\(--force\)/g) ?? []).toHaveLength(1);
         expect(productionSource).toContain('local max_attempts="${3:-3}"');
         expect(productionSource).toContain('local base_delay_seconds="${4:-15}"');
+        expect(productionSource).toContain('local acknowledge_failure_policy="${5:-false}"');
         expect(productionSource).toContain('for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do');
         expect(productionSource).toContain('if (( attempt == max_attempts )); then');
         expect(productionSource).toContain('retry_delay_seconds=$((base_delay_seconds * (2 ** (attempt - 1))))');
         expect(productionSource).toContain('if (( retry_delay_seconds > 120 )); then');
         expect(productionSource).toContain('retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 8 30');
         expect(productionSource).toContain('retry_firebase_deploy "hosting,functions" "application"');
+        const retryEnabledDeploy = productionSource.indexOf('"retry-enabled-functions"');
         const changedBranchStart = productionSource.indexOf('if [[ "$FIRESTORE_CONFIG_CHANGED" == "true" ]]; then');
         const unchangedBranchStart = productionSource.indexOf('\n          else', changedBranchStart);
         const conditionalEnd = productionSource.indexOf('\n          fi', unchangedBranchStart);
         const changedBranch = productionSource.slice(changedBranchStart, unchangedBranchStart);
         const unchangedBranch = productionSource.slice(unchangedBranchStart, conditionalEnd);
-        expect(changedBranch.indexOf('"firestore"')).toBeLessThan(changedBranch.indexOf('"application"'));
-        expect(unchangedBranch).toContain('"application"');
+        const applicationDeploy = productionSource.lastIndexOf('retry_firebase_deploy "hosting,functions" "application"');
+        expect(changedBranch).toContain('"firestore"');
+        expect(unchangedBranch).not.toContain('"application"');
         expect(unchangedBranch).not.toContain('"firestore"');
+        expect(retryEnabledDeploy).toBeGreaterThan(conditionalEnd);
+        expect(applicationDeploy).toBeGreaterThan(retryEnabledDeploy);
     });
 
     it('retries only transient production deploy failures and fails fast otherwise', () => {

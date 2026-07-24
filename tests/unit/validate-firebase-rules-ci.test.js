@@ -140,7 +140,17 @@ concurrency:
           if [[ "$STORAGE_RULES_CHANGED" != "true" ]]; then exit 0; fi
           exit "$storage_status"
             transient_pattern='HTTP Error:[[:space:]]*409,[[:space:]]*Requested entity already exists'
-            node "$firebase_cli" deploy --only "$deploy_targets" --project game-flow-c6311 --config "$firebase_config" --non-interactive
+            local -a deploy_args=(
+              --only "$deploy_targets"
+              --project game-flow-c6311
+              --config "$firebase_config"
+              --non-interactive
+            )
+            if [[ "$deploy_targets" != "functions:processAccountDeletionRequest,functions:syncTeamOwnerAccessOnCreate" ]]; then
+              echo "Refusing --force outside the reviewed retry-enabled function allowlist."
+            fi
+            deploy_args+=(--force)
+            node "$firebase_cli" deploy "\${deploy_args[@]}"
           env:
             FIRESTORE_CONFIG_CHANGED: \${{ needs.prepare-deploy.outputs.firestore_changed }}
           retry_delay_seconds=$((base_delay_seconds * (2 ** (attempt - 1))))
@@ -161,10 +171,11 @@ concurrency:
           fi
           if [[ "$FIRESTORE_CONFIG_CHANGED" == "true" ]]; then
             retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 8 30
-            retry_firebase_deploy "hosting,functions" "application"
           else
-            retry_firebase_deploy "hosting,functions" "application"
+            :
           fi
+          retry_firebase_deploy "functions:processAccountDeletionRequest,functions:syncTeamOwnerAccessOnCreate" "retry-enabled-functions" 3 15 true
+          retry_firebase_deploy "hosting,functions" "application"
         `;
 
         expect(() => validateProductionDeployCommand(validDeployCommand)).not.toThrow();
@@ -183,6 +194,15 @@ concurrency:
         expect(() => validateProductionDeployCommand(
             validDeployCommand.replace('-f branch="$baseline_branch"', '-f branch="$GITHUB_REF_NAME"')
         )).toThrow('Production successful deploy branch filter');
+        expect(() => validateProductionDeployCommand(
+            validDeployCommand.replace('"retry-enabled-functions" 3 15 true', '"retry-enabled-functions" 3 15')
+        )).toThrow('Production retry-enabled function failure-policy acknowledgement call');
+        expect(() => validateProductionDeployCommand(
+            validDeployCommand.replace('              --project game-flow-c6311\n', '')
+        )).toThrow('Production Firebase deploy project');
+        expect(() => validateProductionDeployCommand(
+            validDeployCommand.replace('              --config "$firebase_config"\n', '')
+        )).toThrow('Production Firebase generated config');
         expect(() => validateProductionDeployCommand(
             validDeployCommand.replace(
                 'git diff --quiet "$last_success_sha" "$GITHUB_SHA" -- storage.rules',
@@ -246,17 +266,17 @@ concurrency:
             'docs/observability-runbook.md'
         ))).toThrow('Production Firestore retry-exhaustion recovery link');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
-            `retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 8 30
-            retry_firebase_deploy "hosting,functions" "application"`,
+            `retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 8 30`,
             `retry_firebase_deploy "hosting,functions" "application"
             retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 8 30`
         ))).toThrow('Production Firestore deploy must run first when its configuration changed');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
             `else
-            retry_firebase_deploy "hosting,functions" "application"`,
+            :
+          fi`,
             `else
             retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 8 30
-            retry_firebase_deploy "hosting,functions" "application"`
+          fi`
         ))).toThrow('Production must not redeploy unchanged Firestore configuration');
     });
 

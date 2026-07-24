@@ -145,10 +145,13 @@ describe('Firebase deploy Workload Identity boundary', () => {
         const end = production.indexOf('\n          fi', unchangedStart);
         const changed = production.slice(changedStart, unchangedStart);
         const unchanged = production.slice(unchangedStart, end);
+        const retryEnabledDeploy = production.indexOf('"retry-enabled-functions"', end);
+        const applicationDeploy = production.lastIndexOf('retry_firebase_deploy "hosting,functions" "application"');
 
         expect(changed.indexOf('"firestore"')).toBeGreaterThan(-1);
-        expect(changed.indexOf('"firestore"')).toBeLessThan(changed.indexOf('"application"'));
-        expect(unchanged).toContain('"application"');
+        expect(unchanged).not.toContain('"application"');
         expect(unchanged).not.toContain('"firestore"');
+        expect(retryEnabledDeploy).toBeGreaterThan(end);
+        expect(applicationDeploy).toBeGreaterThan(retryEnabledDeploy);
     });
 });
