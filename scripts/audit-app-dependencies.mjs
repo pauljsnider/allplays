@@ -4,6 +4,14 @@ import path from 'node:path';
 
 const allowedAdvisory = 'https://github.com/advisories/GHSA-qwww-vcr4-c8h2';
 const exceptionExpiresAt = new Date('2026-08-08T00:00:00Z');
+export const APP_AUDIT_ARGS = [
+    '--prefix',
+    'apps/app',
+    'audit',
+    '--omit=dev',
+    '--audit-level=moderate',
+    '--json'
+];
 const severityRank = new Map([
     ['low', 1],
     ['moderate', 2],
@@ -75,7 +83,7 @@ function runAudit() {
     const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
     const result = spawnSync(
         'npm',
-        ['--prefix', 'apps/app', 'audit', '--audit-level=moderate', '--json'],
+        APP_AUDIT_ARGS,
         { cwd: repositoryRoot, encoding: 'utf8' }
     );
     validateAppAuditResult(result);

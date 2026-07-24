@@ -12,6 +12,18 @@ const FIRESTORE_BATCH_LIMIT = 500;
 const FIREBASE_PROJECT_ID = 'game-flow-c6311';
 
 function getAdminAppOptions() {
+    if (process.env.GOOGLE_OAUTH_ACCESS_TOKEN) {
+        const accessToken = process.env.GOOGLE_OAUTH_ACCESS_TOKEN;
+        return {
+            credential: {
+                getAccessToken: async () => ({
+                    access_token: accessToken,
+                    expires_in: 3600
+                })
+            },
+            projectId: FIREBASE_PROJECT_ID
+        };
+    }
     if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
         return {
             credential: applicationDefault(),

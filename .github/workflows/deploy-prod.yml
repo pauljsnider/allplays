@@ -394,6 +394,7 @@ jobs:
           project_id: game-flow-c6311
           create_credentials_file: true
           cleanup_credentials: true
+          token_format: access_token
 
       - name: Deploy Firebase production
         # Updating the full first-generation Functions fleet routinely takes
@@ -404,6 +405,7 @@ jobs:
         env:
           ADMIN_USER_SEARCH_BACKFILL_NEEDED: ${{ needs.prepare-deploy.outputs.admin_user_search_backfill_needed }}
           FIRESTORE_CONFIG_CHANGED: ${{ needs.prepare-deploy.outputs.firestore_changed }}
+          GOOGLE_OAUTH_ACCESS_TOKEN: ${{ steps.google_auth_production.outputs.access_token }}
         run: |
           set -euo pipefail
           firebase_cli="$FIREBASE_PRODUCTION_BUNDLE/firebase-cli/node_modules/firebase-tools/lib/bin/firebase.js"

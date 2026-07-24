@@ -235,6 +235,10 @@ describe('bounded admin user search queries', () => {
         expect(workflow).toContain('admin_user_search_backfill_needed:');
         expect(workflow).toContain('cp _migration/backfill-admin-user-search-index.js');
         expect(workflow).toContain('node "$FIREBASE_PRODUCTION_BUNDLE/_migration/backfill-admin-user-search-index.mjs" --apply');
+        expect(workflow).toContain('token_format: access_token');
+        expect(workflow).toContain('GOOGLE_OAUTH_ACCESS_TOKEN: ${{ steps.google_auth_production.outputs.access_token }}');
+        expect(migration).toContain('process.env.GOOGLE_OAUTH_ACCESS_TOKEN');
+        expect(migration).toContain('process.env.GOOGLE_APPLICATION_CREDENTIALS');
         expect(migration).toContain('applicationDefault()');
         expect(migration).toContain("new URL('./serviceAccountKey.json', import.meta.url)");
     });

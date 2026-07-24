@@ -221,7 +221,27 @@ describe('React app parent schedule logic', () => {
         expect(getCalendarLocationDetail('Bring water')).toBeNull();
         expect(getCalendarLocationDetail('Field 14\nBring water')).toBe('Field 14');
         expect(getCalendarLocationDetail('Court #2\nGym A')).toBe('Court #2 · Gym A');
+        expect(getCalendarLocationDetail('Scheels field 7 NE')).toBe('Scheels field 7 NE');
+        expect(getCalendarLocationDetail('Blue Valley field #02 south')).toBe('Blue Valley field #02 south');
+        expect(getCalendarLocationDetail('Scheels Field 7 NE')).toBe('Scheels Field 7 NE');
+        expect(getCalendarLocationDetail('Blue Valley Court #02 south')).toBe('Blue Valley Court #02 south');
+        expect(getCalendarLocationDetail('Scheels field 7')).toBeNull();
+        expect(getCalendarLocationDetail('Field 7 NE')).toBe('Field 7 NE');
+        expect(getCalendarLocationDetail('Court 2 South')).toBe('Court 2 South');
         expect(getCalendarLocationDetail('Bring turf shoes for the field')).toBeNull();
+        expect(getCalendarLocationDetail('Bring water to field 7')).toBeNull();
+        expect(getCalendarLocationDetail('Practice is on field 7')).toBeNull();
+        expect(getCalendarLocationDetail('Check in at court 2')).toBeNull();
+        expect(getCalendarLocationDetail('Practice Is On field 7')).toBeNull();
+        expect(getCalendarLocationDetail('Meet At field 7')).toBeNull();
+        expect(getCalendarLocationDetail('Meet At field 7 NE')).toBeNull();
+        expect(getCalendarLocationDetail('Practice Is On field 7 south')).toBeNull();
+        expect(getCalendarLocationDetail('Gate Opens field 7 NE')).toBeNull();
+        expect(getCalendarLocationDetail('Coach Says Field 7')).toBeNull();
+        expect(getCalendarLocationDetail('Warm Up Field 7')).toBeNull();
+        expect(getCalendarLocationDetail('Gate Opens Field 7')).toBeNull();
+        expect(getCalendarLocationDetail('We Play Field 7')).toBeNull();
+        expect(getCalendarLocationDetail('Baseball field in between OTE and OTMS.')).toBeNull();
         expect(getCalendarLocationDetail('Use the gym entrance')).toBeNull();
     });
 

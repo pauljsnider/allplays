@@ -413,7 +413,27 @@ export function getScheduleLocationLabel(
 }
 
 const CALENDAR_LOCATION_DETAIL_PATTERN =
-  /^(?:field|diamond|court|pitch|rink|gym|arena)\s*(?:(?:#|no\.?|number|:|-)\s*)?(?:\d+[a-z]?|[a-z])$/i;
+  /^(?:field|diamond|court|pitch|rink|gym|arena)\s*(?:(?:#|no\.?|number|:|-)\s*)?(?:\d+[a-z]?|[a-z])(?:\s+(?:n|s|e|w|ne|nw|se|sw|north|south|east|west|northeast|northwest|southeast|southwest))?$/i;
+const NAMED_CALENDAR_LOCATION_DETAIL_PATTERN =
+  /^((?:[\p{L}\p{N}'’-]+\s+){1,2})(?:field|diamond|court|pitch|rink|gym|arena)\s*(?:(?:#|no\.?|number|:|-)\s*)?(?:\d+[a-z]?|[a-z])\s+(\p{L}+)$/iu;
+const CALENDAR_LOCATION_DIRECTIONS = new Set([
+  'n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw',
+  'north', 'south', 'east', 'west',
+  'northeast', 'northwest', 'southeast', 'southwest'
+]);
+
+function isNamedCalendarLocationDetail(value: string) {
+  const match = value.match(NAMED_CALENDAR_LOCATION_DETAIL_PATTERN);
+  const prefixParts = match?.[1]?.trim().split(/\s+/) || [];
+  const hasProperNameShape = prefixParts.length > 0 && prefixParts.every((part) =>
+    /^[\p{Lu}\p{N}]/u.test(part) && [...part].length >= 3
+  );
+  const hasSentenceLikeEnding = prefixParts.length > 1
+    && /(?:s|ed|ing)$/i.test(prefixParts[prefixParts.length - 1]);
+  return hasProperNameShape
+    && !hasSentenceLikeEnding
+    && CALENDAR_LOCATION_DIRECTIONS.has(match?.[2]?.toLowerCase() || '');
+}
 
 export function getCalendarLocationDetail(value: unknown) {
   const locationLines = String(value || '')
@@ -421,7 +441,8 @@ export function getCalendarLocationDetail(value: unknown) {
     .replace(/\\,/g, ',')
     .split(/\r?\n/)
     .map((part) => part.trim())
-    .filter((part) => CALENDAR_LOCATION_DETAIL_PATTERN.test(part));
+    .filter((part) => CALENDAR_LOCATION_DETAIL_PATTERN.test(part)
+      || isNamedCalendarLocationDetail(part));
   return locationLines.length ? locationLines.join(' · ') : null;
 }
 
