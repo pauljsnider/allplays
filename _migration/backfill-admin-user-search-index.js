@@ -2,7 +2,7 @@
 
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
-import { cert, getApps, initializeApp } from 'firebase-admin/app';
+import { applicationDefault, cert, getApps, initializeApp } from 'firebase-admin/app';
 import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 
 const require = createRequire(import.meta.url);
@@ -21,6 +21,12 @@ function getAdminAppOptions() {
                     expires_in: 3600
                 })
             },
+            projectId: FIREBASE_PROJECT_ID
+        };
+    }
+    if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+        return {
+            credential: applicationDefault(),
             projectId: FIREBASE_PROJECT_ID
         };
     }

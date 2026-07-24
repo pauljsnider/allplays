@@ -225,6 +225,8 @@ describe('React app parent schedule logic', () => {
         expect(getCalendarLocationDetail('Blue Valley field #02 south')).toBe('Blue Valley field #02 south');
         expect(getCalendarLocationDetail('Bring turf shoes for the field')).toBeNull();
         expect(getCalendarLocationDetail('Bring water to field 7')).toBeNull();
+        expect(getCalendarLocationDetail('Practice is on field 7')).toBeNull();
+        expect(getCalendarLocationDetail('Check in at court 2')).toBeNull();
         expect(getCalendarLocationDetail('Baseball field in between OTE and OTMS.')).toBeNull();
         expect(getCalendarLocationDetail('Use the gym entrance')).toBeNull();
     });

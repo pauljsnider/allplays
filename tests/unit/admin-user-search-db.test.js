@@ -238,7 +238,8 @@ describe('bounded admin user search queries', () => {
         expect(workflow).toContain('token_format: access_token');
         expect(workflow).toContain('GOOGLE_OAUTH_ACCESS_TOKEN: ${{ steps.google_auth_production.outputs.access_token }}');
         expect(migration).toContain('process.env.GOOGLE_OAUTH_ACCESS_TOKEN');
-        expect(migration).not.toContain('applicationDefault()');
+        expect(migration).toContain('process.env.GOOGLE_APPLICATION_CREDENTIALS');
+        expect(migration).toContain('applicationDefault()');
         expect(migration).toContain("new URL('./serviceAccountKey.json', import.meta.url)");
     });
 });

@@ -415,7 +415,13 @@ export function getScheduleLocationLabel(
 const CALENDAR_LOCATION_DETAIL_PATTERN =
   /^(?:field|diamond|court|pitch|rink|gym|arena)\s*(?:(?:#|no\.?|number|:|-)\s*)?(?:\d+[a-z]?|[a-z])$/i;
 const NAMED_CALENDAR_LOCATION_DETAIL_PATTERN =
-  /^(?!bring\b|use\b|meet\b|park\b|enter\b|arrive\b)(?:[\p{L}\p{N}'’-]+\s+){1,4}(?:field|diamond|court|pitch|rink|gym|arena)\s*(?:(?:#|no\.?|number|:|-)\s*)?(?:\d+[a-z]?|[a-z])(?:\s+(?:n|s|e|w|ne|nw|se|sw|north|south|east|west|northeast|northwest|southeast|southwest))?$/iu;
+  /^((?:[\p{L}\p{N}'’-]+\s+){1,4})(?:field|diamond|court|pitch|rink|gym|arena)\s*(?:(?:#|no\.?|number|:|-)\s*)?(?:\d+[a-z]?|[a-z])(?:\s+(?:n|s|e|w|ne|nw|se|sw|north|south|east|west|northeast|northwest|southeast|southwest))?$/iu;
+
+function isNamedCalendarLocationDetail(value: string) {
+  const match = value.match(NAMED_CALENDAR_LOCATION_DETAIL_PATTERN);
+  return Boolean(match?.[1]
+    && match[1].trim().split(/\s+/).every((part) => /^[\p{Lu}\p{N}]/u.test(part)));
+}
 
 export function getCalendarLocationDetail(value: unknown) {
   const locationLines = String(value || '')
@@ -424,7 +430,7 @@ export function getCalendarLocationDetail(value: unknown) {
     .split(/\r?\n/)
     .map((part) => part.trim())
     .filter((part) => CALENDAR_LOCATION_DETAIL_PATTERN.test(part)
-      || NAMED_CALENDAR_LOCATION_DETAIL_PATTERN.test(part));
+      || isNamedCalendarLocationDetail(part));
   return locationLines.length ? locationLines.join(' · ') : null;
 }
 
