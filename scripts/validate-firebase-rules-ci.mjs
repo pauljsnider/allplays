@@ -454,7 +454,7 @@ export function validateFirebaseRulesCi() {
     validateFirebaseDeployWorkloadIdentity(deployProd, 'Production deploy');
     assertMatches(deployProd, /needs:\s*\[\s*unit-tests\s*,\s*regression-guards\s*\]/, 'Production deploy gate');
 
-    assertMatches(deployPreviewBuild, /needs:\s*\[\s*unit-tests\s*,\s*regression-guards\s*\]/, 'Preview artifact build gate');
+    assertMatches(deployPreviewBuild, /needs:\s*\[\s*regression-guards\s*\]/, 'Preview artifact build gate');
     validatePreviewDeployCommand(deployPreviewTrusted);
     validateFirebaseDeployWorkloadIdentity(deployPreviewTrusted, 'Trusted preview deploy');
     assertPreviewDeploySkipHandling(deployPreviewTrusted);

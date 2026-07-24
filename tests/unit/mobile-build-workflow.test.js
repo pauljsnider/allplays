@@ -28,6 +28,19 @@ describe('mobile-build CI workflow', () => {
         expect(workflow).toContain('capacitor\\.config\\.json');
     });
 
+    it('defers native integration while external development owns the PR and reruns on handoff', () => {
+        const triggerSection = workflow.slice(workflow.indexOf('\non:'), workflow.indexOf('\nconcurrency:'));
+        const changesSection = workflow.slice(workflow.indexOf('  changes:'), workflow.indexOf('  android-debug:'));
+        const gateSection = workflow.slice(workflow.indexOf('  mobile-build:'));
+
+        expect(triggerSection).toContain('      - unlabeled');
+        expect(changesSection).toContain("contains(github.event.pull_request.labels.*.name, 'external-claim')");
+        expect(changesSection).toContain('[ "$EXTERNAL_CLAIMED" = "true" ]');
+        expect(changesSection).toContain('echo "landing=false" >> "$GITHUB_OUTPUT"');
+        expect(changesSection).toContain('[ "$LABEL_NAME" != "external-claim" ]');
+        expect(gateSection).toContain('needs.changes.outputs.landing');
+    });
+
     it('skips the native builds themselves for non-mobile changes but always runs the required mobile-build gate job', () => {
         const androidStart = workflow.indexOf('  android-debug:');
         const androidSection = workflow.slice(androidStart, workflow.indexOf('  ios-simulator:'));

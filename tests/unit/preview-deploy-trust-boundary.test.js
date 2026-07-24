@@ -179,16 +179,16 @@ describe('preview deployment workflow trust boundary', () => {
         expect(pullRequestWorkflow).not.toMatch(/^\s+\w[\w-]*:\s+write\s*$/m);
         expect(pullRequestWorkflow).toContain('name: firebase-preview-hosting-bundle');
         expect(pullRequestWorkflow).toContain('include-hidden-files: true');
-        expect(pullRequestWorkflow).toMatch(/build-preview-artifact:[\s\S]*needs: \[unit-tests, regression-guards\]/);
+        expect(pullRequestWorkflow).toMatch(/build-preview-artifact:[\s\S]*needs: \[regression-guards\]/);
+        expect(pullRequestWorkflow).not.toContain('  unit-tests:');
+        expect(pullRequestWorkflow).toContain("!contains(github.event.pull_request.labels.*.name, 'external-claim')");
     });
 
     it('cancels in-flight preview work when its pull request closes', () => {
         expect(pullRequestWorkflow).toContain('      - closed');
         expect(pullRequestWorkflow).toContain('group: preview-${{ github.event.pull_request.number }}');
         expect(pullRequestWorkflow).toContain('cancel-in-progress: true');
-        expect(pullRequestWorkflow.match(
-            /if: github\.event\.action != 'closed' && github\.event\.pull_request\.head\.repo\.full_name == github\.repository/g
-        )).toHaveLength(3);
+        expect(pullRequestWorkflow).toContain('      - unlabeled');
     });
 
     it('runs the credentialed deploy only from trusted default-branch code', () => {
