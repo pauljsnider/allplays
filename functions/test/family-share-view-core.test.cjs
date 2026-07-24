@@ -88,7 +88,7 @@ test('does not promote ordinary calendar notes into location details', () => {
     'DTSTART:20260721T180000Z',
     'SUMMARY:Practice',
     'LOCATION:Blue Valley Recreation Sports Complex',
-    'DESCRIPTION:Court #2\\nBring water',
+    `DESCRIPTION:${'A'.repeat(260)}\\nCourt #2\\nBring water`,
     'END:VEVENT',
     'END:VCALENDAR'
   ].join('\r\n'), { sourceId: 'opaque-source-id' });
