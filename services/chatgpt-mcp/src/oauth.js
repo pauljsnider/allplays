@@ -7,9 +7,8 @@
 // resolve broker token → Firebase credential → rules-enforced Firestore
 // access, unchanged from the direct-bearer path.
 //
-// Authorization codes remain process-local under issue #4159. Issued access
-// and refresh grants use an injected store so production instances share one
-// durable, atomic lifecycle boundary.
+// Authorization codes and issued grants use an injected store so production
+// instances share one durable, atomic lifecycle boundary.
 
 import { createHash, randomBytes } from 'node:crypto';
 import { createMemoryOAuthGrantStore } from './oauthStore.js';
@@ -54,6 +53,8 @@ export function createOAuthBroker({
     }
     if (
         !grantStore
+        || typeof grantStore.issueAuthorizationCode !== 'function'
+        || typeof grantStore.consumeAuthorizationCode !== 'function'
         || typeof grantStore.issueGrantPair !== 'function'
         || typeof grantStore.resolveAccessToken !== 'function'
         || typeof grantStore.rotateRefreshToken !== 'function'
@@ -64,22 +65,6 @@ export function createOAuthBroker({
         clientId: trustedClientId.trim(),
         redirectUris: [...TRUSTED_REDIRECT_URIS]
     };
-    const codes = new Map();
-
-    function pruneExpired(store) {
-        for (const [key, record] of store) {
-            if (record.expiresAt <= now()) store.delete(key);
-        }
-    }
-
-    function setBounded(store, key, record) {
-        pruneExpired(store);
-        while (store.size >= maxStoredGrants) {
-            store.delete(store.keys().next().value);
-        }
-        store.set(key, record);
-    }
-
     function registerClient({ redirect_uris: redirectUris } = {}) {
         if (!Array.isArray(redirectUris) || redirectUris.length === 0) {
             throw new OAuthError('invalid_request', 'redirect_uris is required.');
@@ -111,7 +96,7 @@ export function createOAuthBroker({
         return { clientId, redirectUri, codeChallenge };
     }
 
-    function approveAuthorization({ clientId, redirectUri, codeChallenge, firebaseRefreshToken }) {
+    async function approveAuthorization({ clientId, redirectUri, codeChallenge, firebaseRefreshToken }) {
         if (!firebaseRefreshToken) throw new OAuthError('invalid_request', 'Sign-in did not produce a credential.');
         // Re-validate so a tampered approval form cannot bypass the checks.
         validateAuthorizeRequest({
@@ -122,7 +107,14 @@ export function createOAuthBroker({
             code_challenge_method: 'S256'
         });
         const code = randomId(32);
-        setBounded(codes, code, { clientId, redirectUri, codeChallenge, firebaseRefreshToken, expiresAt: now() + CODE_TTL_MS });
+        await grantStore.issueAuthorizationCode({
+            code,
+            clientId,
+            redirectUri,
+            codeChallenge,
+            firebaseRefreshToken,
+            expiresAt: now() + CODE_TTL_MS
+        });
         return code;
     }
 
@@ -153,8 +145,7 @@ export function createOAuthBroker({
     async function exchange(params = {}) {
         const grantType = params.grant_type;
         if (grantType === 'authorization_code') {
-            const record = codes.get(params.code);
-            codes.delete(params.code); // single-use, success or not
+            const record = await grantStore.consumeAuthorizationCode(params.code);
             if (!record || record.expiresAt <= now()) {
                 throw new OAuthError('invalid_grant', 'Authorization code is invalid or expired.');
             }

@@ -192,7 +192,7 @@ describe('chatgpt-mcp oauth: authorize validation', () => {
 describe('chatgpt-mcp oauth: code exchange', () => {
     it('exchanges a code with the right PKCE verifier for tokens bound to the Firebase credential', async () => {
         const { broker, clientId } = registeredBroker();
-        const code = authorize(broker, clientId, 'firebase-rt-42');
+        const code = await authorize(broker, clientId, 'firebase-rt-42');
         const tokens = await broker.exchange({
             grant_type: 'authorization_code',
             code,
@@ -209,23 +209,29 @@ describe('chatgpt-mcp oauth: code exchange', () => {
 
     it('rejects a wrong PKCE verifier and burns the code', async () => {
         const { broker, clientId } = registeredBroker();
-        const code = authorize(broker, clientId);
+        const code = await authorize(broker, clientId);
         await expect(broker.exchange({
             grant_type: 'authorization_code',
             code,
             code_verifier: 'wrong'
-        })).rejects.toThrow(/PKCE/);
+        })).rejects.toMatchObject({ code: 'invalid_grant' });
         // Code is single-use even after a failed attempt.
         await expect(broker.exchange({
             grant_type: 'authorization_code',
             code,
             code_verifier: VERIFIER
         })).rejects.toThrow(/invalid or expired/);
+
+        const missingVerifierCode = await authorize(broker, clientId);
+        await expect(broker.exchange({
+            grant_type: 'authorization_code',
+            code: missingVerifierCode
+        })).rejects.toMatchObject({ code: 'invalid_grant' });
     });
 
     it('rejects reuse of a successfully exchanged code', async () => {
         const { broker, clientId } = registeredBroker();
-        const code = authorize(broker, clientId);
+        const code = await authorize(broker, clientId);
         await broker.exchange({ grant_type: 'authorization_code', code, code_verifier: VERIFIER });
         await expect(broker.exchange({
             grant_type: 'authorization_code',
@@ -237,31 +243,125 @@ describe('chatgpt-mcp oauth: code exchange', () => {
     it('rejects expired codes', async () => {
         let time = 0;
         const { broker, clientId } = registeredBroker({ now: () => time });
-        const code = authorize(broker, clientId);
+        const code = await authorize(broker, clientId);
         time = 11 * 60 * 1000;
         await expect(broker.exchange({
             grant_type: 'authorization_code',
             code,
             code_verifier: VERIFIER
-        })).rejects.toThrow(/expired/);
+        })).rejects.toMatchObject({ code: 'invalid_grant' });
     });
 
     it('rejects a mismatched client_id on exchange', async () => {
         const { broker, clientId } = registeredBroker();
-        const code = authorize(broker, clientId);
+        const code = await authorize(broker, clientId);
         await expect(broker.exchange({
             grant_type: 'authorization_code',
             code,
             code_verifier: VERIFIER,
             client_id: 'other'
-        })).rejects.toThrow(/client_id/);
+        })).rejects.toMatchObject({ code: 'invalid_grant' });
+    });
+
+    it('exchanges a code through another broker instance using shared durable state', async () => {
+        const state = {};
+        const first = registeredBroker({
+            grantStore: createMemoryOAuthGrantStore({ state })
+        });
+        const second = registeredBroker({
+            grantStore: createMemoryOAuthGrantStore({ state })
+        });
+        const code = await authorize(first.broker, first.clientId, 'firebase-cross-instance-code');
+
+        const tokens = await second.broker.exchange({
+            grant_type: 'authorization_code',
+            code,
+            code_verifier: VERIFIER,
+            client_id: first.clientId,
+            redirect_uri: REDIRECT
+        });
+
+        await expect(second.broker.resolveAccessToken(tokens.access_token)).resolves.toEqual({
+            firebaseRefreshToken: 'firebase-cross-instance-code'
+        });
+    });
+
+    it('allows exactly one concurrent authorization-code exchange across brokers', async () => {
+        const state = {};
+        const first = registeredBroker({
+            grantStore: createMemoryOAuthGrantStore({ state })
+        });
+        const second = registeredBroker({
+            grantStore: createMemoryOAuthGrantStore({ state })
+        });
+        const code = await authorize(first.broker, first.clientId, 'firebase-code-race');
+        const params = {
+            grant_type: 'authorization_code',
+            code,
+            code_verifier: VERIFIER
+        };
+
+        const attempts = await Promise.allSettled([
+            first.broker.exchange(params),
+            second.broker.exchange(params)
+        ]);
+
+        expect(attempts.filter(({ status }) => status === 'fulfilled')).toHaveLength(1);
+        expect(attempts.filter(({ status }) => status === 'rejected')).toHaveLength(1);
+        expect(attempts.find(({ status }) => status === 'rejected').reason).toMatchObject({
+            code: 'invalid_grant'
+        });
+        await expect(first.broker.exchange(params)).rejects.toMatchObject({
+            code: 'invalid_grant'
+        });
+    });
+
+    it('returns invalid_grant for redirect mismatch and consumes the code', async () => {
+        const { broker, clientId } = registeredBroker();
+        const code = await authorize(broker, clientId);
+
+        await expect(broker.exchange({
+            grant_type: 'authorization_code',
+            code,
+            code_verifier: VERIFIER,
+            redirect_uri: 'https://example.invalid/callback'
+        })).rejects.toMatchObject({ code: 'invalid_grant' });
+        await expect(broker.exchange({
+            grant_type: 'authorization_code',
+            code,
+            code_verifier: VERIFIER
+        })).rejects.toMatchObject({ code: 'invalid_grant' });
+    });
+
+    it('bounds retained unconsumed authorization codes in memory', async () => {
+        const state = {};
+        let sequence = 0;
+        const { broker, clientId } = registeredBroker({
+            randomId: () => `opaque-${sequence += 1}`,
+            maxStoredGrants: 2,
+            grantStore: createMemoryOAuthGrantStore({
+                state,
+                maxStoredGrants: 2
+            })
+        });
+        const codes = [];
+        for (let index = 0; index < 3; index += 1) {
+            codes.push(await authorize(broker, clientId, `firebase-bounded-${index}`));
+        }
+
+        await expect(broker.exchange({
+            grant_type: 'authorization_code',
+            code: codes[0],
+            code_verifier: VERIFIER
+        })).rejects.toMatchObject({ code: 'invalid_grant' });
+        expect(state.authorizationCodes.size).toBe(2);
     });
 });
 
 describe('chatgpt-mcp oauth: refresh and access tokens', () => {
     it('supports the refresh_token grant', async () => {
         const { broker, clientId } = registeredBroker();
-        const code = authorize(broker, clientId, 'firebase-rt-9');
+        const code = await authorize(broker, clientId, 'firebase-rt-9');
         const first = await broker.exchange({ grant_type: 'authorization_code', code, code_verifier: VERIFIER });
         const second = await broker.exchange({ grant_type: 'refresh_token', refresh_token: first.refresh_token });
         expect(second.access_token).not.toBe(first.access_token);
@@ -279,7 +379,7 @@ describe('chatgpt-mcp oauth: refresh and access tokens', () => {
         const { broker, clientId } = registeredBroker({ now: () => time, maxStoredGrants: 2 });
         const issued = [];
         for (let index = 0; index < 3; index += 1) {
-            const code = authorize(broker, clientId, `firebase-rt-${index}`);
+            const code = await authorize(broker, clientId, `firebase-rt-${index}`);
             issued.push(await broker.exchange({
                 grant_type: 'authorization_code',
                 code,
@@ -299,7 +399,7 @@ describe('chatgpt-mcp oauth: refresh and access tokens', () => {
     it('expires access tokens and returns null for unknown tokens', async () => {
         let time = 0;
         const { broker, clientId } = registeredBroker({ now: () => time });
-        const code = authorize(broker, clientId);
+        const code = await authorize(broker, clientId);
         const tokens = await broker.exchange({ grant_type: 'authorization_code', code, code_verifier: VERIFIER });
         await expect(broker.resolveAccessToken(tokens.access_token)).resolves.toBeTruthy();
         time = 2 * 60 * 60 * 1000;
@@ -320,7 +420,7 @@ describe('chatgpt-mcp oauth: refresh and access tokens', () => {
         const second = registeredBroker({
             grantStore: createMemoryOAuthGrantStore({ state })
         });
-        const code = authorize(first.broker, first.clientId, 'firebase-cross-instance');
+        const code = await authorize(first.broker, first.clientId, 'firebase-cross-instance');
         const tokens = await first.broker.exchange({
             grant_type: 'authorization_code',
             code,
@@ -337,7 +437,7 @@ describe('chatgpt-mcp oauth: refresh and access tokens', () => {
         const beforeRestart = registeredBroker({
             grantStore: createMemoryOAuthGrantStore({ state })
         });
-        const code = authorize(beforeRestart.broker, beforeRestart.clientId, 'firebase-after-restart');
+        const code = await authorize(beforeRestart.broker, beforeRestart.clientId, 'firebase-after-restart');
         const first = await beforeRestart.broker.exchange({
             grant_type: 'authorization_code',
             code,
@@ -364,7 +464,7 @@ describe('chatgpt-mcp oauth: refresh and access tokens', () => {
         const secondBroker = registeredBroker({
             grantStore: createMemoryOAuthGrantStore({ state })
         });
-        const code = authorize(firstBroker.broker, firstBroker.clientId, 'firebase-atomic');
+        const code = await authorize(firstBroker.broker, firstBroker.clientId, 'firebase-atomic');
         const first = await firstBroker.broker.exchange({
             grant_type: 'authorization_code',
             code,
@@ -400,7 +500,7 @@ describe('chatgpt-mcp oauth: refresh and access tokens', () => {
             now: () => time,
             grantStore: createMemoryOAuthGrantStore({ state, now: () => time })
         });
-        const code = authorize(broker, clientId, 'firebase-expiring');
+        const code = await authorize(broker, clientId, 'firebase-expiring');
         const tokens = await broker.exchange({
             grant_type: 'authorization_code',
             code,
@@ -473,17 +573,36 @@ describe('chatgpt-mcp oauth: Firestore grant store', () => {
             if (!document) return { ok: false, status: 404, json: async () => ({}) };
             return { ok: true, json: async () => document };
         };
-        const store = createFirestoreOAuthGrantStore({
+        const storeOptions = {
             projectId: 'oauth-project',
             encryptionKey: Buffer.alloc(32, 7).toString('base64'),
             accessTokenProvider: async () => 'service-access-token',
             fetchImpl,
             now: () => time
-        });
+        };
+        const store = createFirestoreOAuthGrantStore(storeOptions);
+        const secondStore = createFirestoreOAuthGrantStore(storeOptions);
         const { broker, clientId } = registeredBroker({ grantStore: store, now: () => time });
-        const { broker: secondBroker } = registeredBroker({ grantStore: store, now: () => time });
-        const code = authorize(broker, clientId, 'firebase-secret-binding');
-        const first = await broker.exchange({
+        const { broker: secondBroker } = registeredBroker({
+            grantStore: secondStore,
+            now: () => time
+        });
+        const code = await authorize(broker, clientId, 'firebase-secret-binding');
+        const codeDocuments = [...documents.entries()].filter(([name]) => name.includes('/code_'));
+        expect(codeDocuments).toHaveLength(1);
+        expect(codeDocuments[0][0]).not.toContain(code);
+        expect(JSON.stringify(codeDocuments[0][1])).not.toContain(code);
+        expect(JSON.stringify(codeDocuments[0][1])).not.toContain('firebase-secret-binding');
+        expect(codeDocuments[0][1].fields).toMatchObject({
+            type: { stringValue: 'code' },
+            clientId: { stringValue: clientId },
+            redirectUri: { stringValue: REDIRECT },
+            codeChallenge: { stringValue: s256Challenge(VERIFIER) },
+            expiresAt: { timestampValue: expect.any(String) },
+            encryptedBinding: { mapValue: expect.any(Object) }
+        });
+
+        const first = await secondBroker.exchange({
             grant_type: 'authorization_code',
             code,
             code_verifier: VERIFIER
@@ -496,6 +615,48 @@ describe('chatgpt-mcp oauth: Firestore grant store', () => {
         await expect(broker.resolveAccessToken(first.access_token)).resolves.toEqual({
             firebaseRefreshToken: 'firebase-secret-binding'
         });
+
+        const racingCode = await authorize(broker, clientId, 'firebase-code-race');
+        const codeExchanges = await Promise.allSettled([
+            broker.exchange({
+                grant_type: 'authorization_code',
+                code: racingCode,
+                code_verifier: VERIFIER
+            }),
+            secondBroker.exchange({
+                grant_type: 'authorization_code',
+                code: racingCode,
+                code_verifier: VERIFIER
+            })
+        ]);
+        expect(codeExchanges.filter(({ status }) => status === 'fulfilled')).toHaveLength(1);
+        expect(codeExchanges.filter(({ status }) => status === 'rejected')).toHaveLength(1);
+        expect(codeExchanges.find(({ status }) => status === 'rejected').reason).toMatchObject({
+            code: 'invalid_grant'
+        });
+        const codeConsumeCommit = requests
+            .filter(({ url, body }) => (
+                url.endsWith('/documents:commit')
+                && body?.writes?.length === 1
+                && body.writes[0].delete?.includes('/code_')
+            ))
+            .at(-1).body;
+        expect(codeConsumeCommit.writes[0]).toMatchObject({
+            delete: expect.stringContaining('/code_'),
+            currentDocument: { updateTime: expect.any(String) }
+        });
+
+        const expiredCode = await authorize(broker, clientId, 'firebase-expired-code');
+        time = 11 * 60 * 1000;
+        await expect(secondBroker.exchange({
+            grant_type: 'authorization_code',
+            code: expiredCode,
+            code_verifier: VERIFIER
+        })).rejects.toMatchObject({ code: 'invalid_grant' });
+        expect(requests.some(({ method, url }) => (
+            method === 'DELETE' && url.includes('/code_')
+        ))).toBe(true);
+        time = 0;
 
         const rotations = await Promise.allSettled([
             broker.exchange({
@@ -536,7 +697,7 @@ describe('chatgpt-mcp oauth: Firestore grant store', () => {
             refresh_token: second.refresh_token
         })).rejects.toMatchObject({ code: 'invalid_grant' });
 
-        const expiringCode = authorize(broker, clientId, 'firebase-expiring-binding');
+        const expiringCode = await authorize(broker, clientId, 'firebase-expiring-binding');
         const expiring = await broker.exchange({
             grant_type: 'authorization_code',
             code: expiringCode,

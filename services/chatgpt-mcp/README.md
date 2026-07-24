@@ -80,14 +80,18 @@ grant, and opaque access tokens that map to the signed-in user's Firebase
 refresh token. Codes are single-use with a 10-minute TTL; access tokens last
 1 hour. The trusted ChatGPT client registration is configuration-backed and
 stable across instances. Access and refresh grants use Firestore in production,
-so they survive restarts and resolve across Cloud Run instances. Refresh-token
-consume-and-reissue is one conditional Firestore commit, so concurrent reuse has
-one winner. Authorization codes remain process-local under issue #4159.
+so they survive restarts and resolve across Cloud Run instances. Authorization
+codes use the same durable store, retain their PKCE/client/redirect/expiry
+binding, and are atomically consumed before token-exchange validation.
+Refresh-token consume-and-reissue and authorization-code consumption use
+conditional Firestore commits, so concurrent reuse has one winner.
 
-Raw broker tokens are not stored. Firestore document IDs contain SHA-256 token
-digests, and the Firebase refresh-token binding is encrypted with AES-256-GCM.
-The service checks `expiresAt` on every read or rotation; Firestore TTL provides
-eventual physical cleanup.
+Raw broker tokens and authorization codes are not stored. Firestore document IDs
+contain SHA-256 digests, and the Firebase refresh-token binding is encrypted
+with AES-256-GCM. Authorization-code client, redirect, PKCE, and expiry metadata
+is authenticated with that encryption envelope. The service checks `expiresAt`
+on every consume, read, or rotation; Firestore TTL provides eventual physical
+cleanup.
 
 Sign-in accepts AllPlays email/password (proxied to Firebase Identity Toolkit
 with the site referer; the password is never stored). Google sign-in is a
@@ -162,6 +166,7 @@ gcloud run deploy allplays-chatgpt-mcp \
 ```
 
 Before increasing the minimum or maximum instance count, verify cross-instance
+authorization-code exchange, concurrent single-use code consumption,
 access-token resolution, refresh exchange after a revision restart, and a
 two-request refresh race with exactly one success.
 
