@@ -2,7 +2,7 @@
 
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
-import { applicationDefault, cert, getApps, initializeApp } from 'firebase-admin/app';
+import { cert, getApps, initializeApp } from 'firebase-admin/app';
 import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 
 const require = createRequire(import.meta.url);
@@ -12,9 +12,15 @@ const FIRESTORE_BATCH_LIMIT = 500;
 const FIREBASE_PROJECT_ID = 'game-flow-c6311';
 
 function getAdminAppOptions() {
-    if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+    if (process.env.GOOGLE_OAUTH_ACCESS_TOKEN) {
+        const accessToken = process.env.GOOGLE_OAUTH_ACCESS_TOKEN;
         return {
-            credential: applicationDefault(),
+            credential: {
+                getAccessToken: async () => ({
+                    access_token: accessToken,
+                    expires_in: 3600
+                })
+            },
             projectId: FIREBASE_PROJECT_ID
         };
     }

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+    APP_AUDIT_ARGS,
     validateAppAuditReport,
     validateAppAuditResult
 } from '../../scripts/audit-app-dependencies.mjs';
@@ -34,6 +35,10 @@ const reviewedReport = {
 };
 
 describe('app dependency audit exception', () => {
+    it('audits shipped app dependencies without development-only tooling', () => {
+        expect(APP_AUDIT_ARGS).toContain('--omit=dev');
+    });
+
     it('allows only the temporary client-inapplicable React Router RSC advisory', () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         expect(() => validateAppAuditReport(reviewedReport, new Date('2026-07-24T00:00:00Z'))).not.toThrow();
