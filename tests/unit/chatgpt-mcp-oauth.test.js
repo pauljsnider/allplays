@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createServer } from 'node:http';
+import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import {
     createOAuthBroker,
@@ -578,6 +579,50 @@ describe('chatgpt-mcp oauth: Firestore grant store', () => {
 
 describe('chatgpt-mcp oauth: durable deployment configuration', () => {
     it('fails production closed and documents store, TTL, IAM, encryption, and rollback', () => {
+        const serverModuleUrl = new URL(
+            '../../services/chatgpt-mcp/src/server.js',
+            import.meta.url
+        ).href;
+        const productionEnv = {
+            ...process.env,
+            NODE_ENV: 'production',
+            FIREBASE_PROJECT_ID: 'application-project',
+            FIREBASE_WEB_API_KEY: 'test-api-key',
+            OAUTH_GRANT_STORE: 'firestore',
+            OAUTH_GRANT_ENCRYPTION_KEY: Buffer.alloc(32).toString('base64')
+        };
+        delete productionEnv.K_SERVICE;
+        delete productionEnv.OAUTH_GRANT_STORE_PROJECT_ID;
+        delete productionEnv.OAUTH_GRANT_STORE_DATABASE_ID;
+        const importServer = (env) => spawnSync(
+            process.execPath,
+            ['--input-type=module', '--eval', `import(${JSON.stringify(serverModuleUrl)})`],
+            { encoding: 'utf8', env }
+        );
+
+        const implicitApplicationStore = importServer(productionEnv);
+        expect(implicitApplicationStore.status).not.toBe(0);
+        expect(implicitApplicationStore.stderr).toContain(
+            'require explicit OAUTH_GRANT_STORE_PROJECT_ID and OAUTH_GRANT_STORE_DATABASE_ID'
+        );
+
+        const explicitApplicationStore = importServer({
+            ...productionEnv,
+            OAUTH_GRANT_STORE_PROJECT_ID: 'application-project',
+            OAUTH_GRANT_STORE_DATABASE_ID: '(default)'
+        });
+        expect(explicitApplicationStore.status).not.toBe(0);
+        expect(explicitApplicationStore.stderr).toContain(
+            'must use an isolated project or a non-default Firestore database'
+        );
+
+        const isolatedStore = importServer({
+            ...productionEnv,
+            OAUTH_GRANT_STORE_PROJECT_ID: 'oauth-grant-project',
+            OAUTH_GRANT_STORE_DATABASE_ID: '(default)'
+        });
+        expect(isolatedStore.status).toBe(0);
+
         const serverSource = readFileSync(
             new URL('../../services/chatgpt-mcp/src/server.js', import.meta.url),
             'utf8'
@@ -593,6 +638,7 @@ describe('chatgpt-mcp oauth: durable deployment configuration', () => {
         expect(serverSource).toContain('Production and Cloud Run require OAUTH_GRANT_STORE=firestore.');
         expect(serverSource).toContain('process.env.OAUTH_GRANT_ENCRYPTION_KEY');
         expect(readme).toContain('roles/datastore.user');
+        expect(readme).toContain('resource.name==');
         expect(readme).toContain('roles/secretmanager.secretAccessor');
         expect(readme).toContain('gcloud firestore fields ttls update expiresAt');
         expect(readme).toContain('--enable-ttl');

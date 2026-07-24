@@ -103,8 +103,8 @@ Required production variables:
 | Variable | Purpose |
 |---|---|
 | `OAUTH_GRANT_STORE=firestore` | Enables shared durable grants. Production rejects any other value. |
-| `OAUTH_GRANT_STORE_PROJECT_ID` | Project containing the isolated grant store. Defaults to `FIREBASE_PROJECT_ID`, but a dedicated project/database reduces blast radius. |
-| `OAUTH_GRANT_STORE_DATABASE_ID` | Firestore database ID. Defaults to `(default)`. |
+| `OAUTH_GRANT_STORE_PROJECT_ID` | Explicit project containing the isolated grant store. Required in production; it never defaults to the application project. |
+| `OAUTH_GRANT_STORE_DATABASE_ID` | Explicit Firestore database ID. Required in production. The application project's `(default)` database is rejected. |
 | `OAUTH_GRANT_STORE_COLLECTION` | Collection/collection-group name. Defaults to `chatgptMcpOAuthGrants`. |
 | `OAUTH_GRANT_ENCRYPTION_KEY` | Base64-encoded 32-byte AES key, supplied from Secret Manager. |
 
@@ -119,10 +119,20 @@ openssl rand -base64 32 | tr -d '\n' \
 ```
 
 Use a dedicated Cloud Run service account. Grant it `roles/datastore.user` only
-in the isolated grant-store project and `roles/secretmanager.secretAccessor`
-only on `chatgpt-mcp-oauth-grant-key`. Do not grant Editor, Owner, or application
-data administration roles. Firestore IAM is project/database scoped, not
-collection scoped, which is why a dedicated project or database is preferred.
+in an isolated grant-store project, or use an IAM condition that limits the role
+to a dedicated non-default database. For example:
+
+```bash
+gcloud projects add-iam-policy-binding "$OAUTH_GRANT_STORE_PROJECT_ID" \
+  --member="serviceAccount:$OAUTH_SERVICE_ACCOUNT" \
+  --role=roles/datastore.user \
+  --condition="expression=resource.name=='projects/$OAUTH_GRANT_STORE_PROJECT_ID/databases/$OAUTH_GRANT_STORE_DATABASE_ID',title=oauth-grant-database"
+```
+
+Grant `roles/secretmanager.secretAccessor` only on
+`chatgpt-mcp-oauth-grant-key`. Do not grant Editor, Owner, project-wide
+application data access, or application data administration roles. Firestore
+IAM cannot be collection-scoped.
 
 Enable TTL on the `expiresAt` field:
 

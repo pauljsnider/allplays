@@ -61,10 +61,29 @@ if (IS_PRODUCTION && OAUTH_GRANT_STORE !== 'firestore') {
 if (!['memory', 'firestore'].includes(OAUTH_GRANT_STORE)) {
     throw new Error('OAUTH_GRANT_STORE must be "memory" or "firestore".');
 }
+const OAUTH_GRANT_STORE_PROJECT_ID = process.env.OAUTH_GRANT_STORE_PROJECT_ID
+    || (IS_PRODUCTION ? '' : PROJECT_ID);
+const OAUTH_GRANT_STORE_DATABASE_ID = process.env.OAUTH_GRANT_STORE_DATABASE_ID
+    || (IS_PRODUCTION ? '' : '(default)');
+if (IS_PRODUCTION && (!OAUTH_GRANT_STORE_PROJECT_ID || !OAUTH_GRANT_STORE_DATABASE_ID)) {
+    throw new Error(
+        'Production and Cloud Run require explicit OAUTH_GRANT_STORE_PROJECT_ID '
+        + 'and OAUTH_GRANT_STORE_DATABASE_ID values.'
+    );
+}
+if (
+    IS_PRODUCTION
+    && OAUTH_GRANT_STORE_PROJECT_ID === PROJECT_ID
+    && OAUTH_GRANT_STORE_DATABASE_ID === '(default)'
+) {
+    throw new Error(
+        'Production OAuth grants must use an isolated project or a non-default Firestore database.'
+    );
+}
 const oauthGrantStore = OAUTH_GRANT_STORE === 'firestore'
     ? createFirestoreOAuthGrantStore({
-        projectId: process.env.OAUTH_GRANT_STORE_PROJECT_ID || PROJECT_ID,
-        databaseId: process.env.OAUTH_GRANT_STORE_DATABASE_ID || '(default)',
+        projectId: OAUTH_GRANT_STORE_PROJECT_ID,
+        databaseId: OAUTH_GRANT_STORE_DATABASE_ID,
         collectionId: process.env.OAUTH_GRANT_STORE_COLLECTION || 'chatgptMcpOAuthGrants',
         encryptionKey: process.env.OAUTH_GRANT_ENCRYPTION_KEY,
         accessTokenProvider: createMetadataAccessTokenProvider()
