@@ -97,6 +97,38 @@ test('does not promote ordinary calendar notes into location details', () => {
   assert.equal(events.find((event) => event.calendarUidHash === hashFamilyShareCalendarEventUid('field-label'))?.locationDetail, 'Court #2');
 });
 
+test('keeps named and directional calendar fields in server-side Family Share parsing', () => {
+  const descriptions = [
+    ['named-field', 'Scheels field 7 NE', 'Scheels field 7 NE'],
+    ['named-field-south', 'Blue Valley field #02 south', 'Blue Valley field #02 south'],
+    ['directional-field', 'Field 7 NE', 'Field 7 NE'],
+    ['directional-court', 'Court 2 South', 'Court 2 South'],
+    ['title-case-note', 'Practice Is On field 7', null],
+    ['title-case-instruction', 'Meet At field 7', null]
+  ];
+  const icsLines = ['BEGIN:VCALENDAR'];
+  descriptions.forEach(([uid, description], index) => {
+    icsLines.push(
+      'BEGIN:VEVENT',
+      `UID:${uid}`,
+      `DTSTART:202607${String(index + 20).padStart(2, '0')}T180000Z`,
+      'SUMMARY:Practice',
+      'LOCATION:Blue Valley Recreation Sports Complex',
+      `DESCRIPTION:${description}`,
+      'END:VEVENT'
+    );
+  });
+  icsLines.push('END:VCALENDAR');
+
+  const events = buildExternalCalendarEvents(icsLines.join('\r\n'), { sourceId: 'safe-hash' });
+  for (const [uid, , expected] of descriptions) {
+    const event = events.find((candidate) =>
+      candidate.calendarUidHash === hashFamilyShareCalendarEventUid(uid)
+    );
+    assert.equal(event?.locationDetail ?? null, expected);
+  }
+});
+
 test('preserves TZID wall-clock recurrence times across daylight saving transitions', () => {
   const ics = [
     'BEGIN:VCALENDAR',

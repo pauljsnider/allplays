@@ -413,14 +413,22 @@ export function getScheduleLocationLabel(
 }
 
 const CALENDAR_LOCATION_DETAIL_PATTERN =
-  /^(?:field|diamond|court|pitch|rink|gym|arena)\s*(?:(?:#|no\.?|number|:|-)\s*)?(?:\d+[a-z]?|[a-z])$/i;
+  /^(?:field|diamond|court|pitch|rink|gym|arena)\s*(?:(?:#|no\.?|number|:|-)\s*)?(?:\d+[a-z]?|[a-z])(?:\s+(?:n|s|e|w|ne|nw|se|sw|north|south|east|west|northeast|northwest|southeast|southwest))?$/i;
 const NAMED_CALENDAR_LOCATION_DETAIL_PATTERN =
   /^((?:[\p{L}\p{N}'’-]+\s+){1,4})(?:field|diamond|court|pitch|rink|gym|arena)\s*(?:(?:#|no\.?|number|:|-)\s*)?(?:\d+[a-z]?|[a-z])(?:\s+(?:n|s|e|w|ne|nw|se|sw|north|south|east|west|northeast|northwest|southeast|southwest))?$/iu;
+const CALENDAR_LOCATION_PREFIX_STOP_WORDS = new Set([
+  'a', 'an', 'and', 'arrive', 'at', 'behind', 'between', 'bring', 'check',
+  'enter', 'for', 'in', 'is', 'meet', 'near', 'next', 'on', 'or', 'park',
+  'practice', 'the', 'to', 'use'
+]);
 
 function isNamedCalendarLocationDetail(value: string) {
   const match = value.match(NAMED_CALENDAR_LOCATION_DETAIL_PATTERN);
-  return Boolean(match?.[1]
-    && match[1].trim().split(/\s+/).every((part) => /^[\p{Lu}\p{N}]/u.test(part)));
+  const prefixParts = match?.[1]?.trim().split(/\s+/) || [];
+  return prefixParts.length > 0 && prefixParts.every((part) =>
+    /^[\p{Lu}\p{N}]/u.test(part)
+    && !CALENDAR_LOCATION_PREFIX_STOP_WORDS.has(part.toLowerCase())
+  );
 }
 
 export function getCalendarLocationDetail(value: unknown) {
