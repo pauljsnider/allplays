@@ -317,6 +317,75 @@ describe('Schedule', () => {
     });
   });
 
+  it('renders partial rows and filters while loading, then reconciles to the final schedule', async () => {
+    let emitPartial!: (result: {
+      children: Array<{ playerId: string; playerName: string; teamId: string; teamName: string }>;
+      events: ParentScheduleEvent[];
+      isPartial?: boolean;
+    }) => void;
+    let resolveSchedule!: (value: {
+      children: Array<{ playerId: string; playerName: string; teamId: string; teamName: string }>;
+      events: ParentScheduleEvent[];
+      isPartial?: boolean;
+    }) => void;
+    scheduleServiceMocks.loadParentSchedule.mockImplementationOnce((_user: unknown, options: {
+      onPartial: typeof emitPartial;
+    }) => {
+      emitPartial = options.onPartial;
+      return new Promise((resolve) => {
+        resolveSchedule = resolve;
+      });
+    });
+
+    renderSchedule();
+
+    expect(screen.getByRole('status', { name: 'Loading schedule' })).toBeTruthy();
+    await waitFor(() => expect(typeof emitPartial).toBe('function'));
+
+    act(() => {
+      emitPartial({
+        children: buildScopedScheduleResult('team-1', 'Bears', 1).children,
+        events: [],
+        isPartial: true
+      });
+    });
+
+    expect(screen.getByRole('status', { name: 'Loading schedule' })).toBeTruthy();
+    expect(screen.queryByText('No events in this filter')).toBeNull();
+
+    act(() => {
+      emitPartial({
+        ...buildScopedScheduleResult('team-1', 'Bears', 1),
+        isPartial: true
+      });
+    });
+
+    expect((await screen.findAllByText('vs. Rivals')).length).toBeGreaterThan(0);
+    expect(screen.getByRole('status', { name: 'Loading remaining schedule' })).toBeTruthy();
+    expect(screen.queryByRole('status', { name: 'Loading schedule' })).toBeNull();
+    expect(screen.queryByText('No events in this filter')).toBeNull();
+    expect((screen.getByLabelText('Team filter') as HTMLSelectElement).textContent).toContain('Bears');
+    expect(screen.getByRole('button', { name: 'Refresh schedule' })).toBeDisabled();
+
+    act(() => {
+      const finalResult = buildScopedScheduleResult('team-2', 'Wolves', 2);
+      resolveSchedule({
+        ...finalResult,
+        events: finalResult.events.map((event) => ({ ...event, opponent: 'Comets' })),
+        isPartial: false
+      });
+    });
+
+    expect((await screen.findAllByText('vs. Comets')).length).toBeGreaterThan(0);
+    await waitFor(() => {
+      expect(screen.queryByRole('status', { name: 'Loading remaining schedule' })).toBeNull();
+      expect(screen.queryAllByText('vs. Rivals')).toHaveLength(0);
+    });
+    expect((screen.getByLabelText('Team filter') as HTMLSelectElement).textContent).toContain('Wolves');
+    expect((screen.getByLabelText('Team filter') as HTMLSelectElement).textContent).not.toContain('Bears');
+    expect(screen.getByRole('button', { name: 'Refresh schedule' })).not.toBeDisabled();
+  });
+
   it.each([
     new TypeError('Failed to fetch'),
     new Error('Schedule unavailable.')

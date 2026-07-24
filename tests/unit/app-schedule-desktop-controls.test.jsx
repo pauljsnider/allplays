@@ -477,8 +477,16 @@ describe('React app desktop Schedule controls', () => {
         expect(scheduleMocks.addTeamCalendarUrl).toHaveBeenCalledWith('team-1', 'https://example.com/team.ics', auth.user);
         await waitForText(container, 'Calendar link saved and schedule refreshed.');
         expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
-        expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(1, auth.user, { hydrateDetails: false, expandStaffPlayers: false });
-        expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(2, auth.user, { hydrateDetails: false, expandStaffPlayers: false });
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(1, auth.user, {
+            hydrateDetails: false,
+            expandStaffPlayers: false,
+            onPartial: expect.any(Function)
+        });
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(2, auth.user, {
+            hydrateDetails: false,
+            expandStaffPlayers: false,
+            onPartial: expect.any(Function)
+        });
     });
 
     it('keeps mobile staff schedule tools collapsed until explicitly opened', async () => {
@@ -593,8 +601,16 @@ describe('React app desktop Schedule controls', () => {
         expect(window.confirm).toHaveBeenCalledWith('Remove this external calendar link? Imported events from this feed will disappear after the schedule refreshes.');
         expect(scheduleMocks.removeTeamCalendarUrl).toHaveBeenCalledWith('team-1', 'https://example.com/stale.ics', auth.user);
         expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
-        expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(1, auth.user, { hydrateDetails: false, expandStaffPlayers: false });
-        expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(2, auth.user, { hydrateDetails: false, expandStaffPlayers: false });
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(1, auth.user, {
+            hydrateDetails: false,
+            expandStaffPlayers: false,
+            onPartial: expect.any(Function)
+        });
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(2, auth.user, {
+            hydrateDetails: false,
+            expandStaffPlayers: false,
+            onPartial: expect.any(Function)
+        });
         await waitForText(container, 'Calendar link removed and schedule refreshed.');
     });
 
@@ -708,7 +724,11 @@ describe('React app desktop Schedule controls', () => {
             })
         }), auth.user);
         expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledTimes(3);
-        expect(scheduleMocks.loadParentSchedule).toHaveBeenLastCalledWith(auth.user, { hydrateDetails: false, expandStaffPlayers: false });
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenLastCalledWith(auth.user, {
+            hydrateDetails: false,
+            expandStaffPlayers: false,
+            onPartial: expect.any(Function)
+        });
         await waitForText(container, 'Imported 2 schedule row(s) and refreshed the schedule.');
     });
 

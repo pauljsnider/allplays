@@ -492,7 +492,13 @@ export function Schedule({ auth }: { auth: AuthState }) {
             return loadParentSchedule(auth.user, {
               hydrateDetails: false,
               expandStaffPlayers: false,
-              ...(parentScope && parentScope.isPartial !== true ? { parentScope } : {})
+              ...(parentScope && parentScope.isPartial !== true ? { parentScope } : {}),
+              onPartial: (partialResult) => {
+                if (activeUserIdRef.current !== requestedUserId) return;
+                if (scheduleRefreshVersionRef.current !== refreshVersion) return;
+                if (!partialResult.events.length && eventsRef.current.length) return;
+                applyScheduleResult(partialResult);
+              }
             });
           },
           {
@@ -910,7 +916,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
   };
 
   return (
-    <PullToRefresh onRefresh={() => refreshSchedule(true)} disabled={!auth.user?.uid}>
+    <PullToRefresh onRefresh={() => refreshSchedule(true)} disabled={!auth.user?.uid || scheduleReadLoading}>
     <div className="schedule-page space-y-4">
       <section className="schedule-header app-card p-3 sm:hidden">
         <div className="flex items-center justify-between gap-2">
@@ -1145,7 +1151,9 @@ export function Schedule({ auth }: { auth: AuthState }) {
             <ScheduleActionQueue events={visibleEvents} compact hideWhenEmpty preferGameHubForStaff />
           ) : null}
 
-          {scheduleReadLoading || isInitialScheduleLoad ? (
+          {scheduleReadLoading && events.length ? <ScheduleProgressLoading /> : null}
+
+          {(scheduleReadLoading || isInitialScheduleLoad) && !events.length ? (
             <LoadingSchedule />
           ) : view === 'calendar' ? (
             <CalendarSchedule
@@ -1840,6 +1848,20 @@ function ScheduleActionQueue({ events, compact = false, hideWhenEmpty = false, p
 
 function LoadingSchedule() {
   return <SchedulePageSkeleton />;
+}
+
+function ScheduleProgressLoading() {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      aria-label="Loading remaining schedule"
+      className="flex items-center gap-2 rounded-xl border border-primary-100 bg-primary-50 px-3 py-2 text-xs font-bold text-primary-700"
+    >
+      <RefreshCw className="h-4 w-4 animate-spin" aria-hidden="true" />
+      Loading remaining teams…
+    </div>
+  );
 }
 
 function ScheduleList({ events, totalCount, visibleCount, pageSize, canShowMore, loadingMore, preferGameHubForStaff, onShowMore }: {
