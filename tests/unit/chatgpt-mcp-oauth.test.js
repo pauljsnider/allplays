@@ -641,7 +641,14 @@ describe('chatgpt-mcp oauth: durable deployment configuration', () => {
         expect(readme).toContain('resource.name==');
         expect(readme).toContain('roles/secretmanager.secretAccessor');
         expect(readme).toContain('gcloud firestore fields ttls update expiresAt');
+        expect(readme).toContain('--collection-group="$OAUTH_GRANT_STORE_COLLECTION"');
         expect(readme).toContain('--enable-ttl');
+        expect(readme).toContain('--database="$OAUTH_GRANT_STORE_DATABASE_ID"');
+        expect(readme).toContain('OAUTH_GRANT_KEY_VERSION=1');
+        expect(readme).toContain(
+            'projects/$OAUTH_GRANT_STORE_PROJECT_ID/secrets/chatgpt-mcp-oauth-grant-key:$OAUTH_GRANT_KEY_VERSION'
+        );
+        expect(readme).not.toContain('chatgpt-mcp-oauth-grant-key:latest');
         expect(readme).toContain('Key rotation and rollback');
         expect(readme).toContain('Never');
         expect(readme).toContain('OAUTH_GRANT_STORE=memory');

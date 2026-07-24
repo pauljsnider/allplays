@@ -138,9 +138,9 @@ Enable TTL on the `expiresAt` field:
 
 ```bash
 gcloud firestore fields ttls update expiresAt \
-  --collection-group=chatgptMcpOAuthGrants \
+  --collection-group="$OAUTH_GRANT_STORE_COLLECTION" \
   --enable-ttl \
-  --database='(default)' \
+  --database="$OAUTH_GRANT_STORE_DATABASE_ID" \
   --project "$OAUTH_GRANT_STORE_PROJECT_ID"
 ```
 
@@ -150,13 +150,15 @@ rejects expired grants immediately and opportunistically deletes them.
 ## Deploy (Cloud Run)
 
 ```bash
+OAUTH_GRANT_KEY_VERSION=1 # Pin the numeric version created above.
+
 gcloud run deploy allplays-chatgpt-mcp \
   --source services/chatgpt-mcp \
   --project game-flow-c6311 \
   --region us-central1 \
   --service-account chatgpt-mcp@game-flow-c6311.iam.gserviceaccount.com \
   --set-env-vars OAUTH_GRANT_STORE=firestore,OAUTH_GRANT_STORE_PROJECT_ID=oauth-grant-project,OAUTH_GRANT_STORE_DATABASE_ID='(default)',OAUTH_GRANT_STORE_COLLECTION=chatgptMcpOAuthGrants \
-  --set-secrets OAUTH_GRANT_ENCRYPTION_KEY=chatgpt-mcp-oauth-grant-key:latest
+  --set-secrets "OAUTH_GRANT_ENCRYPTION_KEY=projects/$OAUTH_GRANT_STORE_PROJECT_ID/secrets/chatgpt-mcp-oauth-grant-key:$OAUTH_GRANT_KEY_VERSION"
 ```
 
 Before increasing the minimum or maximum instance count, verify cross-instance
