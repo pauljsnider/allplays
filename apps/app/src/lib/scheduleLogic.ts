@@ -403,8 +403,11 @@ export function getScheduleLocationLabel(
     .map((part) => part.trim())
     .filter(Boolean)
     .join(' · ');
+  const normalizedFallback = String(fallback || '').trim().toLowerCase();
+  const isPlaceholderLocation = location.toLowerCase() === 'tbd'
+    || (normalizedFallback && location.toLowerCase() === normalizedFallback);
   if (!locationDetail) return location || fallback;
-  if (!location) return locationDetail;
+  if (!location || isPlaceholderLocation) return locationDetail;
   if (location.toLowerCase().includes(locationDetail.toLowerCase())) return location;
   return `${location} · ${locationDetail}`;
 }

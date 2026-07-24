@@ -2,7 +2,7 @@
 
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { EventDetailsPanel } from './EventDetailsPanel';
+import { EventDetailsPanel } from '../../apps/app/src/components/schedule/EventDetailsPanel';
 
 describe('EventDetailsPanel calendar locations', () => {
   it('renders an imported calendar field detail with its venue', () => {

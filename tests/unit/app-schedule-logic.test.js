@@ -213,6 +213,8 @@ describe('React app parent schedule logic', () => {
         });
 
         expect(getScheduleLocationLabel(importedEvent)).toBe('Blue Valley Recreation Sports Complex · Field 14');
+        expect(getScheduleLocationLabel({ location: 'TBD', locationDetail: 'Field 14' })).toBe('Field 14');
+        expect(getScheduleLocationLabel({ location: 'Unknown', locationDetail: 'Field 14' }, 'Unknown')).toBe('Field 14');
         expect(buildScheduleIcs([importedEvent])).toContain('LOCATION:Blue Valley Recreation Sports Complex · Field 14');
         expect(getScheduleMapHref(importedEvent.location)).toContain('Blue+Valley+Recreation+Sports+Complex');
         expect(getScheduleMapHref(importedEvent.location)).not.toContain('Field+14');
