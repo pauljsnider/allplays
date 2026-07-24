@@ -74,6 +74,26 @@ describe('Capacitor native config', () => {
         expect(appPnpmLock).toContain(`'@vitejs/plugin-react@${pluginReactVersion}(vite@8.1.5`);
     });
 
+    it('forces patched glob dependency versions throughout the app npm lockfile', () => {
+        const appPackage = JSON.parse(readProjectFile('apps/app/package.json'));
+        const appPackageLock = JSON.parse(readProjectFile('apps/app/package-lock.json'));
+        const patchedVersions = {
+            'brace-expansion': '5.0.8',
+            minimatch: '10.2.5'
+        };
+
+        expect(appPackage.overrides).toEqual(patchedVersions);
+
+        Object.entries(patchedVersions).forEach(([dependency, version]) => {
+            const resolvedVersions = Object.entries(appPackageLock.packages)
+                .filter(([path]) => path === `node_modules/${dependency}` || path.endsWith(`/node_modules/${dependency}`))
+                .map(([, packageMetadata]) => packageMetadata.version);
+
+            expect(resolvedVersions).not.toHaveLength(0);
+            expect(new Set(resolvedVersions)).toEqual(new Set([version]));
+        });
+    });
+
     it('wires App Check into both native shells without a SwiftPM identity collision', () => {
         const config = JSON.parse(readProjectFile('capacitor.config.json'));
         const rootPackage = JSON.parse(readProjectFile('package.json'));
