@@ -129,6 +129,7 @@ Enable TTL on the `expiresAt` field:
 ```bash
 gcloud firestore fields ttls update expiresAt \
   --collection-group=chatgptMcpOAuthGrants \
+  --enable-ttl \
   --database='(default)' \
   --project "$OAUTH_GRANT_STORE_PROJECT_ID"
 ```

@@ -111,7 +111,7 @@ export function createMemoryOAuthGrantStore({
 
 function decodeEncryptionKey(value) {
     const encoded = String(value || '').trim();
-    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) {
+    if (encoded.length !== 44 || !/^[A-Za-z0-9+/]{43}=$/.test(encoded)) {
         throw new Error('OAUTH_GRANT_ENCRYPTION_KEY must be a base64-encoded 32-byte key.');
     }
     const key = Buffer.from(encoded, 'base64');
@@ -386,7 +386,14 @@ export function createFirestoreOAuthGrantStore({
         }) {
             const current = await readGrant('refresh', refreshToken);
             if (!current) return false;
-            const grant = decryptGrant('refresh', current);
+            let grant;
+            try {
+                grant = decryptGrant('refresh', current);
+            } catch {
+                // Key replacement and corrupt records make this specific grant
+                // unusable; clients must reconnect instead of retrying it.
+                return false;
+            }
             if (grant.expiresAt <= now()) {
                 await deleteExpired('refresh', current.digest, current.document.updateTime);
                 return false;

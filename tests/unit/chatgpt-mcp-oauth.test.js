@@ -525,6 +525,16 @@ describe('chatgpt-mcp oauth: Firestore grant store', () => {
             firebaseRefreshToken: 'firebase-secret-binding'
         });
 
+        for (const document of documents.values()) {
+            if (document.fields.type.stringValue === 'refresh') {
+                document.fields.encryptedBinding.mapValue.fields.tag.stringValue = Buffer.alloc(16, 9).toString('base64');
+            }
+        }
+        await expect(broker.exchange({
+            grant_type: 'refresh_token',
+            refresh_token: second.refresh_token
+        })).rejects.toMatchObject({ code: 'invalid_grant' });
+
         const expiringCode = authorize(broker, clientId, 'firebase-expiring-binding');
         const expiring = await broker.exchange({
             grant_type: 'authorization_code',
@@ -547,11 +557,22 @@ describe('chatgpt-mcp oauth: Firestore grant store', () => {
     });
 
     it('fails closed when credential-protection configuration is invalid', () => {
+        const validKey = Buffer.alloc(32).toString('base64');
         expect(() => createFirestoreOAuthGrantStore({
             projectId: 'oauth-project',
             encryptionKey: Buffer.alloc(16).toString('base64'),
             accessTokenProvider: async () => 'service-access-token'
         })).toThrow(/32-byte/);
+        expect(() => createFirestoreOAuthGrantStore({
+            projectId: 'oauth-project',
+            encryptionKey: `${validKey}=`,
+            accessTokenProvider: async () => 'service-access-token'
+        })).toThrow(/32-byte/);
+        const storeSource = readFileSync(
+            new URL('../../services/chatgpt-mcp/src/oauthStore.js', import.meta.url),
+            'utf8'
+        );
+        expect(storeSource).toContain('encoded.length !== 44');
     });
 });
 
@@ -574,6 +595,7 @@ describe('chatgpt-mcp oauth: durable deployment configuration', () => {
         expect(readme).toContain('roles/datastore.user');
         expect(readme).toContain('roles/secretmanager.secretAccessor');
         expect(readme).toContain('gcloud firestore fields ttls update expiresAt');
+        expect(readme).toContain('--enable-ttl');
         expect(readme).toContain('Key rotation and rollback');
         expect(readme).toContain('Never');
         expect(readme).toContain('OAUTH_GRANT_STORE=memory');
