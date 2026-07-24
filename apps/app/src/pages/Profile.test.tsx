@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import { readFileSync } from 'node:fs';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Profile } from './Profile';
+import { APP_BACK_DISMISS_EVENT, dispatchNativeBackDismissEvent, getNativeBackTarget } from '../lib/nativeBackButton';
 import type { AuthState } from '../lib/types';
 
 const authServiceMocks = vi.hoisted(() => ({
@@ -52,6 +53,10 @@ const pushServiceMocks = vi.hoisted(() => ({
   runPushNotificationPrimer: vi.fn(async () => true)
 }));
 
+const shellLayoutMocks = vi.hoisted(() => ({
+  isNative: false
+}));
+
 vi.mock('../lib/authService', () => authServiceMocks);
 vi.mock('../lib/profileService', () => profileServiceMocks);
 vi.mock('../lib/pushService', () => pushServiceMocks);
@@ -62,7 +67,7 @@ vi.mock('../lib/publicActions', () => ({
   sharePublicUrl: vi.fn(async () => ({ shared: true }))
 }));
 vi.mock('../lib/useShellLayout', () => ({
-  useShellLayout: () => ({ isDesktop: false, isNative: false, isDesktopWeb: false })
+  useShellLayout: () => ({ isDesktop: false, isNative: shellLayoutMocks.isNative, isDesktopWeb: false })
 }));
 vi.mock('lucide-react', () => {
   const Icon = () => null;
@@ -119,11 +124,39 @@ function TestRouteControls() {
   );
 }
 
-function renderProfile(initialEntry = '/profile', includeRouteControls = false) {
+function NativeBackRouteControls() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const handleNativeBack = () => {
+    if (dispatchNativeBackDismissEvent()) return;
+    const target = getNativeBackTarget(location.pathname, location.search);
+    if (target) navigate(target);
+  };
+  return (
+    <>
+      <button type="button" onClick={handleNativeBack}>Simulate native Back</button>
+      <output aria-label="Current route">{`${location.pathname}${location.search}`}</output>
+    </>
+  );
+}
+
+function ProfileTestRoute({ includeRouteControls = false, includeNativeBackControls = false }) {
+  return (
+    <>
+      <Profile auth={auth} />
+      {includeRouteControls ? <TestRouteControls /> : null}
+      {includeNativeBackControls ? <NativeBackRouteControls /> : null}
+    </>
+  );
+}
+
+function renderProfile(initialEntry = '/profile', includeRouteControls = false, includeNativeBackControls = false) {
   return render(
     <MemoryRouter initialEntries={[initialEntry]}>
       <Routes>
-        <Route path="/profile" element={<><Profile auth={auth} />{includeRouteControls ? <TestRouteControls /> : null}</>} />
+        <Route path="/profile" element={<ProfileTestRoute includeRouteControls={includeRouteControls} includeNativeBackControls={includeNativeBackControls} />} />
+        <Route path="/profile/settings" element={<ProfileTestRoute includeRouteControls={includeRouteControls} includeNativeBackControls={includeNativeBackControls} />} />
+        <Route path="/home" element={<div>Home route</div>} />
       </Routes>
     </MemoryRouter>
   );
@@ -142,6 +175,7 @@ function createDeferredPromise<T>() {
 describe('Profile', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    shellLayoutMocks.isNative = false;
     profileServiceMocks.loadNotificationPreferences.mockResolvedValue({ liveChat: true, liveScore: false, schedule: true });
     profileServiceMocks.loadNotificationTeams.mockResolvedValue([{ id: 'team-1', name: 'Blue Team' }]);
     profileServiceMocks.loadParentTeams.mockResolvedValue([{ id: 'team-1', name: 'Blue Team' }]);
@@ -400,5 +434,68 @@ describe('Profile', () => {
     expect(await screen.findByRole('heading', { name: 'Your Account' })).toBeTruthy();
     expect(screen.queryByText('Notification preferences')).toBeNull();
     expect(screen.queryByRole('combobox')).toBeNull();
+  });
+
+  it('dismisses the native photo chooser on native Back without clearing unsaved profile fields', async () => {
+    shellLayoutMocks.isNative = true;
+    renderProfile('/profile/settings');
+
+    const fullNameInput = await screen.findByLabelText('Full name');
+    const phoneInput = screen.getByLabelText('Phone');
+    fireEvent.change(fullNameInput, { target: { value: 'Unsaved Parent' } });
+    fireEvent.change(phoneInput, { target: { value: '555-0199' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Choose photo' }));
+    expect(screen.getByRole('dialog', { name: 'Choose how to update your photo' })).toBeTruthy();
+
+    const event = new Event(APP_BACK_DISMISS_EVENT, { cancelable: true });
+    fireEvent(window, event);
+
+    expect(event.defaultPrevented).toBe(true);
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: 'Choose how to update your photo' })).toBeNull();
+    });
+    expect(fullNameInput).toHaveValue('Unsaved Parent');
+    expect(phoneInput).toHaveValue('555-0199');
+  });
+
+  it('keeps Profile mounted when native Back closes the chooser, then follows Profile-to-Home navigation', async () => {
+    shellLayoutMocks.isNative = true;
+    renderProfile('/profile/settings', false, true);
+
+    expect(await screen.findByRole('heading', { name: 'Your Account' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Choose photo' }));
+    expect(screen.getByRole('dialog', { name: 'Choose how to update your photo' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Simulate native Back' }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: 'Choose how to update your photo' })).toBeNull();
+    });
+    expect(screen.getByRole('heading', { name: 'Your Account' })).toBeTruthy();
+    expect(screen.getByLabelText('Current route')).toHaveTextContent('/profile/settings');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Simulate native Back' }));
+
+    expect(await screen.findByText('Home route')).toBeTruthy();
+  });
+
+  it('continues to dismiss the native photo chooser from Cancel and the backdrop', async () => {
+    shellLayoutMocks.isNative = true;
+    renderProfile('/profile/settings');
+
+    expect(await screen.findByRole('heading', { name: 'Your Account' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Choose photo' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: 'Choose how to update your photo' })).toBeNull();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Choose photo' }));
+    const dialog = screen.getByRole('dialog', { name: 'Choose how to update your photo' });
+    fireEvent.mouseDown(dialog);
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: 'Choose how to update your photo' })).toBeNull();
+    });
   });
 });
