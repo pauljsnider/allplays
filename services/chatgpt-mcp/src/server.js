@@ -1,10 +1,9 @@
 // AllPlays ChatGPT MCP service — Streamable HTTP entry point.
 //
-// Credential-free by design: the service holds no service account. Each
-// request's bearer token (Firebase refresh token or ID token) is resolved to
-// the user's ID token, and all Firestore access happens AS THAT USER over the
-// REST API — the same security rules that protect the AllPlays web/app clients
-// authorize every read here.
+// Application reads remain user-credentialed: each request's Firebase token is
+// resolved to the user's ID token, and Firestore access happens AS THAT USER.
+// The Cloud Run service identity is used only for the isolated OAuth grant
+// store; it never performs application-data reads.
 //
 // Tool names mirror the in-app private AI registry (apps/app/src/lib/
 // privateAiService.ts) so the ChatGPT surface and the app assistant stay one
@@ -25,10 +24,16 @@ import {
 import { createIdentityResolver, extractBearerToken } from './identity.js';
 import { createUserDb } from './firestoreRest.js';
 import { createOAuthBroker, metadataFor, OAuthError } from './oauth.js';
+import {
+    createFirestoreOAuthGrantStore,
+    createMemoryOAuthGrantStore,
+    createMetadataAccessTokenProvider
+} from './oauthStore.js';
 
 const PORT = Number(process.env.PORT) || 8787;
 const PROJECT_ID = process.env.FIREBASE_PROJECT_ID;
 const WEB_API_KEY = process.env.FIREBASE_WEB_API_KEY;
+const IS_PRODUCTION = process.env.NODE_ENV === 'production' || Boolean(process.env.K_SERVICE);
 
 if (!PROJECT_ID || !WEB_API_KEY) {
     throw new Error('FIREBASE_PROJECT_ID and FIREBASE_WEB_API_KEY must be set.');
@@ -40,16 +45,34 @@ const resolveIdentity = createIdentityResolver({ apiKey: WEB_API_KEY });
 // an Authorization header authenticate as this token's user. Anyone who can
 // reach the endpoint gets that user's (rules-scoped) data — use only with a
 // test account behind a private tunnel, never in production.
-const FALLBACK_BEARER = process.env.NODE_ENV === 'production' ? '' : (process.env.DEV_FALLBACK_BEARER || '');
-if (process.env.NODE_ENV === 'production' && process.env.DEV_FALLBACK_BEARER) {
+const FALLBACK_BEARER = IS_PRODUCTION ? '' : (process.env.DEV_FALLBACK_BEARER || '');
+if (IS_PRODUCTION && process.env.DEV_FALLBACK_BEARER) {
     throw new Error('DEV_FALLBACK_BEARER must not be set in production.');
 }
 if (FALLBACK_BEARER) {
     console.warn('[chatgpt-mcp] DEV_FALLBACK_BEARER is set: unauthenticated requests act as that user. Dev/test only.');
 }
 
+const OAUTH_GRANT_STORE = process.env.OAUTH_GRANT_STORE
+    || (IS_PRODUCTION ? 'firestore' : 'memory');
+if (IS_PRODUCTION && OAUTH_GRANT_STORE !== 'firestore') {
+    throw new Error('Production and Cloud Run require OAUTH_GRANT_STORE=firestore.');
+}
+if (!['memory', 'firestore'].includes(OAUTH_GRANT_STORE)) {
+    throw new Error('OAUTH_GRANT_STORE must be "memory" or "firestore".');
+}
+const oauthGrantStore = OAUTH_GRANT_STORE === 'firestore'
+    ? createFirestoreOAuthGrantStore({
+        projectId: process.env.OAUTH_GRANT_STORE_PROJECT_ID || PROJECT_ID,
+        databaseId: process.env.OAUTH_GRANT_STORE_DATABASE_ID || '(default)',
+        collectionId: process.env.OAUTH_GRANT_STORE_COLLECTION || 'chatgptMcpOAuthGrants',
+        encryptionKey: process.env.OAUTH_GRANT_ENCRYPTION_KEY,
+        accessTokenProvider: createMetadataAccessTokenProvider()
+    })
+    : createMemoryOAuthGrantStore();
 const oauth = createOAuthBroker({
-    trustedClientId: process.env.CHATGPT_OAUTH_CLIENT_ID
+    trustedClientId: process.env.CHATGPT_OAUTH_CLIENT_ID,
+    grantStore: oauthGrantStore
 });
 const SIGNIN_REFERER = process.env.ALLPLAYS_REFERER || 'https://allplays.ai/';
 
@@ -255,13 +278,16 @@ app.post('/oauth/authorize', async (req, res) => {
     }
 });
 
-app.post('/oauth/token', (req, res) => {
+app.post('/oauth/token', async (req, res) => {
     try {
-        res.json(oauth.exchange(req.body || {}));
+        res.json(await oauth.exchange(req.body || {}));
     } catch (error) {
         const code = error instanceof OAuthError ? error.code : 'server_error';
         if (!(error instanceof OAuthError)) console.error('[chatgpt-mcp] token failure:', error);
-        res.status(400).json({ error: code, error_description: error.message });
+        res.status(error instanceof OAuthError ? 400 : 503).json({
+            error: code,
+            error_description: error instanceof OAuthError ? error.message : 'OAuth grant store unavailable.'
+        });
     }
 });
 
@@ -273,7 +299,7 @@ app.post('/mcp', async (req, res) => {
         // Broker-issued access tokens resolve to the user's Firebase refresh
         // token; direct Firebase refresh/ID tokens pass through unchanged.
         const bearer = extractBearerToken(authHeader);
-        const brokerGrant = bearer ? oauth.resolveAccessToken(bearer) : null;
+        const brokerGrant = bearer ? await oauth.resolveAccessToken(bearer) : null;
         if (brokerGrant) authHeader = `Bearer ${brokerGrant.firebaseRefreshToken}`;
         identity = await resolveIdentity(authHeader);
     } catch (error) {
