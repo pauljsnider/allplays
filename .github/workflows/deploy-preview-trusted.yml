@@ -14,11 +14,59 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  prepare-preview:
+  classify-trigger:
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'pull_request' &&
       github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+    outputs:
+      preview_ready: ${{ steps.classify.outputs.preview_ready }}
+
+    steps:
+      - name: Classify artifact-producing and intentionally deferred runs
+        id: classify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          jobs_json="$RUNNER_TEMP/firebase-preview-source-jobs.json"
+          artifacts_json="$RUNNER_TEMP/firebase-preview-source-artifacts.json"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$WORKFLOW_RUN_ID/jobs?per_page=100" > "$jobs_json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$WORKFLOW_RUN_ID/artifacts?per_page=100" > "$artifacts_json"
+
+          bundle_count="$(jq '[.artifacts[]? | select(.name == "firebase-preview-hosting-bundle")] | length' "$artifacts_json")"
+          if [ "$bundle_count" -eq 1 ]; then
+            echo "preview_ready=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$bundle_count" -ne 0 ]; then
+            echo "Expected at most one preview bundle, found $bundle_count." >&2
+            exit 1
+          fi
+
+          regression_result="$(jq -r '[.jobs[]? | select(.name == "regression-guards") | .conclusion] | last // ""' "$jobs_json")"
+          build_result="$(jq -r '[.jobs[]? | select(.name == "build-preview-artifact") | .conclusion] | last // ""' "$jobs_json")"
+          if [ "$regression_result" = "skipped" ] && [ "$build_result" = "skipped" ]; then
+            echo "Preview source run was intentionally deferred; no trusted deploy is needed."
+            echo "preview_ready=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Successful preview source run had no bundle without an intentional two-job deferral." >&2
+          exit 1
+
+  prepare-preview:
+    needs: classify-trigger
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      needs.classify-trigger.outputs.preview_ready == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

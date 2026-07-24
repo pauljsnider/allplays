@@ -6,6 +6,7 @@ on:
       - opened
       - synchronize
       - reopened
+      - labeled
       - unlabeled
       - closed
 
@@ -15,7 +16,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: preview-${{ github.event.pull_request.number }}
+  group: ${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'external-claim' && format('preview-label-noop-{0}', github.run_id) || format('preview-{0}', github.event.pull_request.number) }}
   cancel-in-progress: true
 
 jobs:
@@ -24,7 +25,7 @@ jobs:
       github.event.action != 'closed' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       !contains(github.event.pull_request.labels.*.name, 'external-claim') &&
-      (github.event.action != 'unlabeled' || github.event.label.name == 'external-claim')
+      ((github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'external-claim')
     runs-on: ubuntu-latest
 
     steps:
@@ -70,7 +71,7 @@ jobs:
       github.event.action != 'closed' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       !contains(github.event.pull_request.labels.*.name, 'external-claim') &&
-      (github.event.action != 'unlabeled' || github.event.label.name == 'external-claim')
+      ((github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'external-claim')
     needs: [regression-guards]
     runs-on: ubuntu-latest
 

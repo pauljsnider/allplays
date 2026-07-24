@@ -186,13 +186,18 @@ describe('preview deployment workflow trust boundary', () => {
 
     it('cancels in-flight preview work when its pull request closes', () => {
         expect(pullRequestWorkflow).toContain('      - closed');
-        expect(pullRequestWorkflow).toContain('group: preview-${{ github.event.pull_request.number }}');
+        expect(pullRequestWorkflow).toContain("format('preview-{0}', github.event.pull_request.number)");
         expect(pullRequestWorkflow).toContain('cancel-in-progress: true');
         expect(pullRequestWorkflow).toContain('      - unlabeled');
+        expect(pullRequestWorkflow).toContain('      - labeled');
     });
 
     it('runs the credentialed deploy only from trusted default-branch code', () => {
         expect(trustedWorkflow).toContain('workflow_run:');
+        expect(trustedWorkflow).toContain('classify-trigger:');
+        expect(trustedWorkflow).toContain('preview_ready: ${{ steps.classify.outputs.preview_ready }}');
+        expect(trustedWorkflow).toContain('Successful preview source run had no bundle without an intentional two-job deferral.');
+        expect(trustedWorkflow).toContain("needs.classify-trigger.outputs.preview_ready == 'true'");
         expect(trustedWorkflow).toContain(
             'group: trusted-preview-pr-${{ github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.id }}'
         );

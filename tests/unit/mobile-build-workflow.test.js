@@ -34,10 +34,13 @@ describe('mobile-build CI workflow', () => {
         const gateSection = workflow.slice(workflow.indexOf('  mobile-build:'));
 
         expect(triggerSection).toContain('      - unlabeled');
+        expect(triggerSection).toContain('      - labeled');
         expect(changesSection).toContain("contains(github.event.pull_request.labels.*.name, 'external-claim')");
         expect(changesSection).toContain('[ "$EXTERNAL_CLAIMED" = "true" ]');
         expect(changesSection).toContain('echo "landing=false" >> "$GITHUB_OUTPUT"');
-        expect(changesSection).toContain('[ "$LABEL_NAME" != "external-claim" ]');
+        expect(changesSection).toContain('[ "$ACTION" = "labeled" ] || [ "$ACTION" = "unlabeled" ]');
+        expect(workflow).toContain("format('mobile-build-label-noop-{0}', github.run_id)");
+        expect(gateSection).toContain("'mobile-build-label-noop' || 'mobile-build'");
         expect(gateSection).toContain('needs.changes.outputs.landing');
     });
 
