@@ -388,7 +388,7 @@
             listFamilyShareTokens,
             revokeFamilyShareToken,
             updateFamilyShareTokenCalendars
-        } from './js/db.js?v=123';
+        } from './js/db.js?v=124';
         import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } from './js/utils.js?v=18';
         import {
             getIncentiveRules,
@@ -407,7 +407,7 @@
             getCapSetting,
             saveCapSetting as saveCapSettingFn,
         } from './js/parent-incentives.js?v=3';
-        import { requireAuth, checkAuth } from './js/auth.js?v=130';
+        import { requireAuth, checkAuth } from './js/auth.js?v=131';
         import { resolveScheduleWatchCta } from './js/schedule-watch-cta.js?v=1';
         import {
             resolvePracticePacketSessionIdForEvent as resolvePracticePacketSessionIdForEventBase,
@@ -428,6 +428,7 @@
         import { buildLegacyJoinUrl } from './js/join-code.js?v=1';
         import { buildAvailabilityNoteRows, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from './js/availability-preferences.js?v=1';
 
+        const paymentsEnabled = window.__ALLPLAYS_CONFIG__?.paymentsEnabled === true;
         renderFooter(document.getElementById('footer-container'));
 
         let allScheduleEvents = [];
@@ -1533,12 +1534,14 @@
                 });
 
                 initShareLinkControls();
-                document.getElementById('team-fees-list')?.addEventListener('click', (event) => {
-                    handleParentTeamFeeCheckoutClick(event, {
-                        initiateCheckout: initiateTeamFeeCheckout,
-                        locationTarget: window.location
+                if (paymentsEnabled) {
+                    document.getElementById('team-fees-list')?.addEventListener('click', (event) => {
+                        handleParentTeamFeeCheckoutClick(event, {
+                            initiateCheckout: initiateTeamFeeCheckout,
+                            locationTarget: window.location
+                        });
                     });
-                });
+                }
 
                 const [data] = await Promise.all([
                     getParentDashboardData(user.uid),
@@ -1668,7 +1671,7 @@
 
             try {
                 const fees = await listParentTeamFeeRecipients(userId, children || []);
-                const html = renderParentTeamFees(fees);
+                const html = renderParentTeamFees(fees, { paymentsEnabled });
                 if (!html) {
                     card.classList.add('hidden');
                     list.innerHTML = '';

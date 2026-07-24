@@ -12,6 +12,7 @@ import {
   saveRegistrationFormEditorForApp
 } from '../lib/registrationFormAdminService';
 import type { AuthState } from '../lib/types';
+import { arePaymentsEnabled } from '../lib/launchFeatures';
 
 type DraftRecord = Record<string, any>;
 
@@ -257,7 +258,7 @@ export function TeamRegistrationForms({ auth }: { auth: AuthState }) {
             <h2 className="text-lg font-black text-gray-950">Payments and discounts</h2>
             <div className="mt-4 flex flex-wrap gap-4">
               <Check label="Allow offline payment" checked={(draft.paymentSettings as DraftRecord).offlinePaymentEnabled === true} onChange={(checked) => updateDraft({ paymentSettings: { ...draft.paymentSettings, offlinePaymentEnabled: checked } })} />
-              <Check label="Allow online checkout" checked={(draft.paymentSettings as DraftRecord).onlineCheckoutEnabled === true} onChange={(checked) => updateDraft({ paymentSettings: { ...draft.paymentSettings, onlineCheckoutEnabled: checked } })} />
+              <Check label="Allow online checkout (coming later)" checked={arePaymentsEnabled() && (draft.paymentSettings as DraftRecord).onlineCheckoutEnabled === true} onChange={(checked) => updateDraft({ paymentSettings: { ...draft.paymentSettings, onlineCheckoutEnabled: arePaymentsEnabled() && checked } })} disabled={!arePaymentsEnabled()} />
               <Check label="Offer payment plan" checked={(draft.installmentPlan as DraftRecord).enabled === true} onChange={(checked) => updateDraft({ installmentPlan: { ...draft.installmentPlan, enabled: checked } })} />
             </div>
             {(draft.installmentPlan as DraftRecord).enabled ? (
@@ -309,8 +310,8 @@ function Field({ label, children, wide = false }: { label: string; children: Rea
   return <label className={`block ${wide ? 'sm:col-span-2' : ''}`}><span className="mb-1 block text-xs font-black uppercase tracking-wide text-gray-600">{label}</span>{children}</label>;
 }
 
-function Check({ label, checked, onChange }: { label: string; checked: boolean; onChange: (checked: boolean) => void }) {
-  return <label className="inline-flex items-center gap-2 text-sm font-bold text-gray-700"><input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} className="h-4 w-4 rounded border-gray-300 text-primary-600" />{label}</label>;
+function Check({ label, checked, onChange, disabled = false }: { label: string; checked: boolean; onChange: (checked: boolean) => void; disabled?: boolean }) {
+  return <label className={`inline-flex items-center gap-2 text-sm font-bold ${disabled ? 'text-gray-400' : 'text-gray-700'}`}><input type="checkbox" checked={checked} disabled={disabled} onChange={(event) => onChange(event.target.checked)} className="h-4 w-4 rounded border-gray-300 text-primary-600" />{label}</label>;
 }
 
 function IconButton({ label, disabled = false, onClick, children }: { label: string; disabled?: boolean; onClick: () => void; children: ReactNode }) {

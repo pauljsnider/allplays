@@ -45,6 +45,7 @@ import { startAppInitialLoadTimer } from '../lib/telemetry';
 import { useShellLayout } from '../lib/useShellLayout';
 import { useViewLoadTimer } from '../lib/viewLoadTiming';
 import { NOTIFICATION_PREFERENCE_GROUPS } from '../lib/adapters/legacyProfile';
+import { requestAccountDeletion } from '../lib/accountDeletionService';
 import type { AccessCodeRecord, NotificationCategory, NotificationPreferences, NotificationTeam, ProfileDocument } from '../lib/profileService';
 import type { ProfilePhotoSource } from '../lib/profilePhotoService';
 import type { PushNotificationPrimerContext, PushNotificationPermissionStatus } from '../lib/pushService';
@@ -146,6 +147,10 @@ export function Profile({ auth }: { auth: AuthState }) {
   const [passwordStatus, setPasswordStatus] = useState<Status | null>(null);
   const [inviteStatus, setInviteStatus] = useState<Status | null>(null);
   const [accountMergeStatus, setAccountMergeStatus] = useState<Status | null>(null);
+  const [accountDeletionOpen, setAccountDeletionOpen] = useState(false);
+  const [accountDeletionConfirmation, setAccountDeletionConfirmation] = useState('');
+  const [accountDeletionPassword, setAccountDeletionPassword] = useState('');
+  const [accountDeletionError, setAccountDeletionError] = useState('');
   const [inviteActionStatus, setInviteActionStatus] = useState('');
   const [inviteHistoryExpanded, setInviteHistoryExpanded] = useState(false);
   const [activeProfileSection, setActiveProfileSection] = useState<ProfileSectionId>(searchSection);
@@ -787,7 +792,7 @@ export function Profile({ auth }: { auth: AuthState }) {
       if (selectedPhotoChanged && selectedPhotoFile) {
         setProfileStatus({ message: 'Uploading photo...', tone: 'neutral' });
         const { uploadProfilePhoto } = await import('../lib/profilePhotoService');
-        nextPhotoUrl = await uploadProfilePhoto(selectedPhotoFile);
+        nextPhotoUrl = await uploadProfilePhoto(selectedPhotoFile, user.uid);
       }
 
       await saveProfileDocument(user.uid, {
@@ -1236,6 +1241,35 @@ export function Profile({ auth }: { auth: AuthState }) {
     }
   };
 
+  const submitAccountDeletion = async (event: FormEvent) => {
+    event.preventDefault();
+    if (accountDeletionConfirmation.trim().toUpperCase() !== 'DELETE') {
+      setPasswordStatus({ message: 'Type DELETE to confirm permanent account deletion.', tone: 'error' });
+      return;
+    }
+
+    setBusy('account-deletion');
+    setPasswordStatus(null);
+    setAccountDeletionError('');
+    try {
+      const result = await requestAccountDeletion(isNative ? 'native-app' : 'web-app', accountDeletionPassword);
+      await auth.signOut();
+      navigate(`/auth?deleted=requested&days=${result.completionTargetDays}`, { replace: true });
+    } catch (error: any) {
+      const ownedTeams = error?.details?.ownedTeams;
+      const suffix = Array.isArray(ownedTeams) && ownedTeams.length
+        ? ` Owned teams: ${ownedTeams.map((team: any) => team.name || team.id).join(', ')}.`
+        : '';
+      setPasswordStatus({
+        message: `${error?.message || 'Unable to request account deletion.'}${suffix}`,
+        tone: 'error'
+      });
+      setAccountDeletionError(`${error?.message || 'Unable to request account deletion.'}${suffix}`);
+    } finally {
+      setBusy('');
+    }
+  };
+
   if (!user) {
     return null;
   }
@@ -1671,6 +1705,22 @@ export function Profile({ auth }: { auth: AuthState }) {
           </button>
         </div>
         <StatusMessage status={passwordStatus} className="mt-3" />
+
+        <div className="mt-6 border-t border-rose-200 pt-5">
+          <div className="text-sm font-black text-rose-900">Delete account</div>
+          <p className="mt-1 text-sm font-semibold leading-6 text-gray-600">
+            Permanently delete your ALL PLAYS login and personal account data. Team and player records controlled by a team remain with that team. Transfer or deactivate teams you own first.
+          </p>
+          <button type="button" className="mt-3 min-h-11 rounded-xl border border-rose-300 bg-white px-4 text-sm font-black text-rose-700" onClick={() => setAccountDeletionOpen(true)}>
+            <Trash2 className="mr-2 inline h-4 w-4" aria-hidden="true" />
+            Delete my account
+          </button>
+          <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2 text-xs font-black">
+            <a href="https://allplays.ai/privacy.html" target="_blank" rel="noreferrer" className="text-primary-700">Privacy Policy</a>
+            <a href="https://allplays.ai/terms.html" target="_blank" rel="noreferrer" className="text-primary-700">Terms</a>
+            <a href="https://allplays.ai/support.html" target="_blank" rel="noreferrer" className="text-primary-700">Support</a>
+          </div>
+        </div>
       </section>
       ) : null}
 
@@ -1760,6 +1810,30 @@ export function Profile({ auth }: { auth: AuthState }) {
               </button>
             </div>
           </section>
+        </div>
+      ) : null}
+      {accountDeletionOpen ? (
+        <div className="fixed inset-0 z-[90] flex items-end bg-gray-950/50 sm:items-center sm:justify-center sm:p-4" role="dialog" aria-modal="true" aria-labelledby="account-deletion-title">
+          <button type="button" className="absolute inset-0 h-full w-full cursor-default" onClick={() => setAccountDeletionOpen(false)} aria-label="Cancel account deletion" />
+          <form className="relative w-full rounded-t-3xl bg-white p-5 shadow-2xl sm:max-w-md sm:rounded-2xl" onSubmit={submitAccountDeletion}>
+            <h2 id="account-deletion-title" className="text-xl font-black text-gray-950">Permanently delete account?</h2>
+            <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">This signs you out immediately and queues permanent deletion. It cannot be undone. Completion may take up to 30 days.</p>
+            <label className="mt-4 block">
+              <span className="app-label">Type DELETE to confirm</span>
+              <input className="auth-input mt-1" value={accountDeletionConfirmation} onChange={(event) => setAccountDeletionConfirmation(event.target.value)} autoComplete="off" />
+            </label>
+            <label className="mt-4 block">
+              <span className="app-label">Account password (email sign-in only)</span>
+              <input className="auth-input mt-1" type="password" value={accountDeletionPassword} onChange={(event) => setAccountDeletionPassword(event.target.value)} autoComplete="current-password" />
+            </label>
+            {accountDeletionError ? <p className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-800">{accountDeletionError}</p> : null}
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <button type="button" className="secondary-button justify-center" onClick={() => setAccountDeletionOpen(false)} disabled={busy === 'account-deletion'}>Cancel</button>
+              <button type="submit" className="min-h-11 rounded-xl bg-rose-700 px-4 text-sm font-black text-white disabled:opacity-60" disabled={busy === 'account-deletion' || accountDeletionConfirmation.trim().toUpperCase() !== 'DELETE'}>
+                {busy === 'account-deletion' ? 'Requesting…' : 'Delete account'}
+              </button>
+            </div>
+          </form>
         </div>
       ) : null}
     </div>

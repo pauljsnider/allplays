@@ -59,6 +59,22 @@ describe('parent dashboard team fees', () => {
         expect(html).not.toContain('Offline payment:');
     });
 
+    it('hides legacy Stripe actions while launch payments are disabled', () => {
+        const html = renderParentTeamFees([{
+            feeTitle: 'Tournament dues',
+            amountCents: 12500,
+            balanceDueCents: 12500,
+            status: 'unpaid',
+            collectionMode: 'online_stripe',
+            teamId: 'team-1',
+            batchId: 'batch-1',
+            recipientId: 'player-1'
+        }], { paymentsEnabled: false });
+
+        expect(html).not.toContain('Pay online');
+        expect(html).not.toContain('data-team-fee-checkout="true"');
+    });
+
     it('normalizes paid, unpaid, partial, canceled, and adjusted status styling', () => {
         const html = renderParentTeamFees([
             { title: 'Paid fee', status: 'paid', amountCents: 1000 },

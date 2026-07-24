@@ -238,6 +238,26 @@ const {
 } = require('./friend-message-access-core.cjs');
 const { hasTeamAdminAccess } = require('./team-admin-access-core.cjs');
 const { createAutoAcceptParentInviteHandler } = require('./parent-invite-auto-link-callable.cjs');
+const {
+  buildChatConversationAccountScrubPlan,
+  buildDeletionAuditId,
+  buildRegistrationAccountScrubPlan,
+  buildRosterParentScrubPlan,
+  buildTeamAccountGrantScrubPlan,
+  classifyAccountStoragePaths,
+  collectAccountRosterScopes,
+  collectAccountTeamIds,
+  collectAccountMediaStoragePaths,
+  createAccountDeletionRequestHandler,
+  getAccountDeletionCollectionQueries,
+  getAccountDeletionCollectionGroupQueries,
+  getAccountEmailQueryCandidates,
+  getAccountTeamPermissionQueryFields,
+  getLegacyUnscopedProfilePhotoPaths,
+  loadOwnedTeams,
+  shouldProcessAccountDeletionRequest,
+  summarizeOwnedTeams
+} = require('./account-deletion-core.cjs');
 const { createTeamOwnerAccessSyncHandler } = require('./team-owner-access-core.cjs');
 const {
   buildAdminUserSearchHashes,
@@ -255,6 +275,11 @@ if (admin.apps.length === 0) {
 }
 
 const firestore = admin.firestore();
+function assertPaymentsEnabled() {
+  if (process.env.PAYMENTS_ENABLED !== 'true') {
+    throw new functions.https.HttpsError('failed-precondition', 'Online payments are not enabled in this release.');
+  }
+}
 const assertSensitiveEmailVerified = createVerifiedEmailSensitiveActionGuard({
   firestore,
   HttpsError: functions.https.HttpsError,
@@ -651,7 +676,8 @@ function normalizePublicRegistrationForm(form = {}, context = {}) {
 function normalizeRegistrationPaymentSettings(settings = {}) {
   return {
     offlinePaymentEnabled: settings?.offlinePaymentEnabled === true,
-    onlineCheckoutEnabled: settings?.onlineCheckoutEnabled === true
+    onlineCheckoutEnabled: process.env.PAYMENTS_ENABLED === 'true'
+      && settings?.onlineCheckoutEnabled === true
   };
 }
 
@@ -911,8 +937,14 @@ function validatePublicRegistrationSubmission(form, input, feeSnapshot) {
   if (form.installmentPlan?.enabled !== true && input.selectedPaymentPlanId !== 'pay_full') {
     throwPublicRegistrationError('invalid-argument', 'Please select a payment plan.');
   }
+  const finalAmountDueCents = Number(feeSnapshot?.finalAmountDueCents || 0);
+  if (finalAmountDueCents > 0
+      && form.paymentSettings?.onlineCheckoutEnabled !== true
+      && form.paymentSettings?.offlinePaymentEnabled !== true) {
+    throwPublicRegistrationError('failed-precondition', 'Payment is not available for this registration.');
+  }
   if (form.paymentSettings?.onlineCheckoutEnabled === true
-      && Number(feeSnapshot?.finalAmountDueCents || 0) > 0
+      && finalAmountDueCents > 0
       && !input.checkoutAttemptToken) {
     throwPublicRegistrationError('invalid-argument', 'A checkout attempt token is required.');
   }
@@ -4130,6 +4162,7 @@ exports.redeemScopedRsvpToken = functions.https.onRequest(async (req, res) => {
 });
 
 exports.createStripeTeamPassCheckout = functions.https.onCall(async (data, context) => {
+  assertPaymentsEnabled();
   if (!context.auth?.uid) {
     throw new functions.https.HttpsError('unauthenticated', 'Sign in before purchasing a team pass.');
   }
@@ -4174,6 +4207,7 @@ exports.createStripeTeamPassCheckout = functions.https.onCall(async (data, conte
 });
 
 exports.createStripeTeamFeeCheckout = functions.https.onCall(async (data, context) => {
+  assertPaymentsEnabled();
   if (!context.auth?.uid) {
     throw new functions.https.HttpsError('unauthenticated', 'Sign in before paying a team fee.');
   }
@@ -4552,6 +4586,7 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
 });
 
 exports.createStripeRegistrationCheckout = functions.https.onCall(async (data, context = {}) => {
+  assertPaymentsEnabled();
   assertPublicRegistrationAppCheck(context, 'create-checkout');
   let input;
   try {
@@ -14367,4 +14402,345 @@ exports.closePublicOpportunitiesForPrivateTeam = functions.firestore
       await batch.commit();
     }
     return null;
+  });
+
+exports.requestAccountDeletion = functions.https.onCall(createAccountDeletionRequestHandler({
+  firestore,
+  auth: admin.auth(),
+  Timestamp: admin.firestore.Timestamp,
+  HttpsError: functions.https.HttpsError
+}));
+
+async function deleteAccountQuery(query) {
+  while (true) {
+    const snapshot = await query.limit(250).get();
+    if (snapshot.empty) return;
+    for (let index = 0; index < snapshot.docs.length; index += 10) {
+      await Promise.all(snapshot.docs
+        .slice(index, index + 10)
+        .map((docSnapshot) => firestore.recursiveDelete(docSnapshot.ref)));
+    }
+  }
+}
+
+async function deleteAccountStorage(uid, mediaDocuments, profilePhotoUrls = []) {
+  const primaryBucket = admin.storage().bucket();
+  const imageBucket = admin.storage().bucket(
+    process.env.IMAGE_STORAGE_BUCKET || 'game-flow-img.firebasestorage.app'
+  );
+  const athletePrefix = `athlete-profile-media/${uid}/`;
+  await Promise.all([
+    primaryBucket.deleteFiles({ prefix: athletePrefix, force: true }),
+    imageBucket.deleteFiles({ prefix: athletePrefix, force: true }),
+    imageBucket.deleteFiles({ prefix: `user-photos/${uid}/`, force: true })
+  ]);
+
+  const { primaryPaths, imagePaths } = classifyAccountStoragePaths(
+    uid,
+    collectAccountMediaStoragePaths(mediaDocuments.map((document) => document.data() || {})),
+    profilePhotoUrls
+  );
+  await Promise.all([
+    ...primaryPaths.map((storagePath) => (
+      primaryBucket.file(storagePath).delete({ ignoreNotFound: true })
+    )),
+    ...imagePaths.map((storagePath) => (
+      imageBucket.file(storagePath).delete({ ignoreNotFound: true })
+    ))
+  ]);
+}
+
+async function loadAccountRosterPlayerDocuments(uid, userData = {}) {
+  const documentsByPath = new Map();
+  const rememberDocuments = (documents = []) => {
+    documents.forEach((document) => {
+      if (document?.exists !== false && document?.ref?.path) {
+        documentsByPath.set(document.ref.path, document);
+      }
+    });
+  };
+  const { playerPaths, teamIds } = collectAccountRosterScopes(userData);
+  const [parentMatches, guardianMatches] = await Promise.all([
+    firestore.collectionGroup('players').where('parentUserId', '==', uid).get(),
+    firestore.collectionGroup('players').where('guardianUserId', '==', uid).get()
+  ]);
+  rememberDocuments(parentMatches.docs);
+  rememberDocuments(guardianMatches.docs);
+  for (const teamId of teamIds) {
+    const scopedPlayers = await firestore.collection(`teams/${teamId}/players`).get();
+    rememberDocuments(scopedPlayers.docs);
+  }
+  const linkedPlayerDocuments = await Promise.all(playerPaths
+    .filter((path) => !documentsByPath.has(path))
+    .map((path) => firestore.doc(path).get()));
+  rememberDocuments(linkedPlayerDocuments);
+  return [...documentsByPath.values()];
+}
+
+function buildAccountRosterScrubUpdate(record, accountIdentity) {
+  const plan = buildRosterParentScrubPlan(record, accountIdentity);
+  if (!plan.changed) return null;
+  const update = {
+    updatedAt: admin.firestore.Timestamp.now()
+  };
+  if (plan.parentsChanged) update.parents = plan.parents;
+  if (plan.contactsChanged) update.contacts = plan.contacts;
+  if (plan.guardiansChanged) update.guardians = plan.guardians;
+  if (plan.familyContactsChanged) update.familyContacts = plan.familyContacts;
+  plan.fieldsToDelete.forEach((field) => {
+    update[field] = admin.firestore.FieldValue.delete();
+  });
+  return update;
+}
+
+async function scrubAccountRosterParentLinks(uid, userData = {}, authUser = null) {
+  const playerDocuments = await loadAccountRosterPlayerDocuments(uid, userData);
+  const accountIdentity = {
+    uid,
+    email: authUser?.email || userData.email || '',
+    phone: authUser?.phoneNumber || userData.phoneNumber || userData.phone || ''
+  };
+  const privateProfileDocuments = await Promise.all(playerDocuments.map((playerDocument) => (
+    playerDocument.ref.collection('private').doc('profile').get()
+  )));
+  const writes = [];
+  playerDocuments.forEach((document) => {
+    const update = buildAccountRosterScrubUpdate(document.data() || {}, accountIdentity);
+    if (update) writes.push({ ref: document.ref, update });
+  });
+  privateProfileDocuments.forEach((document) => {
+    if (!document.exists) return;
+    const update = buildAccountRosterScrubUpdate(document.data() || {}, accountIdentity);
+    if (update) writes.push({ ref: document.ref, update });
+  });
+  for (let index = 0; index < writes.length; index += 200) {
+    const batch = firestore.batch();
+    writes.slice(index, index + 200).forEach(({ ref, update }) => batch.update(ref, update));
+    await batch.commit();
+  }
+}
+
+async function loadAccountTeamDocuments(uid, email, userData = {}) {
+  const documentsByPath = new Map();
+  const remember = (document) => {
+    if (document?.exists !== false && document?.ref?.path) documentsByPath.set(document.ref.path, document);
+  };
+  const queryPromises = [
+    firestore.collection('teams').where('ownerId', '==', uid).get()
+  ];
+  getAccountTeamPermissionQueryFields().forEach((field) => {
+    queryPromises.push(firestore.collection('teams').where(field, 'array-contains', uid).get());
+  });
+  getAccountEmailQueryCandidates(email).forEach((candidate) => {
+    queryPromises.push(firestore.collection('teams').where('ownerEmail', '==', candidate).get());
+    queryPromises.push(firestore.collection('teams').where('ownerEmailLower', '==', candidate).get());
+    queryPromises.push(firestore.collection('teams').where('adminEmails', 'array-contains', candidate).get());
+    queryPromises.push(firestore.collection('teams').where('streamVolunteerEmails', 'array-contains', candidate).get());
+  });
+  const snapshots = await Promise.all(queryPromises);
+  snapshots.forEach((snapshot) => (snapshot.docs || []).forEach(remember));
+  for (const teamId of collectAccountTeamIds(userData)) {
+    if (!documentsByPath.has(`teams/${teamId}`)) remember(await firestore.doc(`teams/${teamId}`).get());
+  }
+  return [...documentsByPath.values()];
+}
+
+async function scrubAccountTeamGrants(uid, email, userData = {}) {
+  const teamDocuments = await loadAccountTeamDocuments(uid, email, userData);
+  const writes = [];
+  teamDocuments.forEach((document) => {
+    const plan = buildTeamAccountGrantScrubPlan(document.data() || {}, { uid, email });
+    if (!plan.changed) return;
+    const update = {
+      ...plan.update,
+      updatedAt: admin.firestore.Timestamp.now()
+    };
+    plan.fieldsToDelete.forEach((field) => {
+      update[field] = admin.firestore.FieldValue.delete();
+    });
+    writes.push({ ref: document.ref, update });
+  });
+  for (let index = 0; index < writes.length; index += 200) {
+    const batch = firestore.batch();
+    writes.slice(index, index + 200).forEach(({ ref, update }) => batch.update(ref, update));
+    await batch.commit();
+  }
+}
+
+async function scrubAccountChatConversationMembership(uid, email) {
+  const documentsByPath = new Map();
+  const participantIds = [uid, `user:${uid}`];
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  if (normalizedEmail) participantIds.push(`email:${normalizedEmail}`);
+  const snapshots = await Promise.all([
+    firestore.collectionGroup('chatConversations').where('directUserIds', 'array-contains', uid).get(),
+    firestore.collectionGroup('chatConversations').where('mutedBy', 'array-contains', uid).get(),
+    ...participantIds.map((participantId) => (
+      firestore.collectionGroup('chatConversations')
+        .where('participantIds', 'array-contains', participantId)
+        .get()
+    ))
+  ]);
+  snapshots.forEach((snapshot) => (snapshot.docs || []).forEach((document) => {
+    if (document?.ref?.path) documentsByPath.set(document.ref.path, document);
+  }));
+
+  const writes = [];
+  documentsByPath.forEach((document) => {
+    const plan = buildChatConversationAccountScrubPlan(document.data() || {}, { uid, email });
+    if (!plan.changed) return;
+    const update = {
+      ...plan.update,
+      updatedAt: admin.firestore.Timestamp.now()
+    };
+    plan.fieldsToDelete.forEach((field) => {
+      update[field] = admin.firestore.FieldValue.delete();
+    });
+    writes.push({ ref: document.ref, update });
+  });
+  for (let index = 0; index < writes.length; index += 200) {
+    const batch = firestore.batch();
+    writes.slice(index, index + 200).forEach(({ ref, update }) => batch.update(ref, update));
+    await batch.commit();
+  }
+}
+
+async function scrubAccountRegistrationLinks(uid, email) {
+  const documentsByPath = new Map();
+  const queryPromises = [
+    firestore.collectionGroup('registrations').where('submittedByUserId', '==', uid).get()
+  ];
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  if (normalizedEmail) {
+    queryPromises.push(
+      firestore.collectionGroup('registrations').where('guardian.email', '==', normalizedEmail).get(),
+      firestore.collectionGroup('registrations').where('guardian.guardianEmail', '==', normalizedEmail).get(),
+      firestore.collectionGroup('registrations').where('guardianEmail', '==', normalizedEmail).get()
+    );
+  }
+  const snapshots = await Promise.all(queryPromises);
+  snapshots.forEach((snapshot) => (snapshot.docs || []).forEach((document) => {
+    if (document?.ref?.path) documentsByPath.set(document.ref.path, document);
+  }));
+
+  const writes = [];
+  documentsByPath.forEach((document) => {
+    const plan = buildRegistrationAccountScrubPlan(document.data() || {}, { uid, email });
+    if (!plan.changed) return;
+    const update = {
+      ...plan.update,
+      updatedAt: admin.firestore.Timestamp.now()
+    };
+    plan.fieldsToDelete.forEach((field) => {
+      update[field] = admin.firestore.FieldValue.delete();
+    });
+    writes.push({ ref: document.ref, update });
+  });
+  for (let index = 0; index < writes.length; index += 200) {
+    const batch = firestore.batch();
+    writes.slice(index, index + 200).forEach(({ ref, update }) => batch.update(ref, update));
+    await batch.commit();
+  }
+}
+
+exports.processAccountDeletionRequest = functions
+  .runWith({ timeoutSeconds: 540, memory: '1GB', failurePolicy: true })
+  .firestore
+  .document('accountDeletionRequests/{uid}')
+  .onWrite(async (change, context) => {
+    if (!shouldProcessAccountDeletionRequest(change.before, change.after)) return null;
+
+    const snapshot = change.after;
+    const uid = context.params.uid;
+    const requestRef = snapshot.ref;
+    const now = admin.firestore.Timestamp.now();
+    await requestRef.set({ status: 'processing', processingStartedAt: now, updatedAt: now }, { merge: true });
+
+    try {
+      const userRef = firestore.doc(`users/${uid}`);
+      const [userDoc, authUser] = await Promise.all([
+        userRef.get(),
+        admin.auth().getUser(uid).catch((error) => {
+          if (error?.code === 'auth/user-not-found') return null;
+          throw error;
+        })
+      ]);
+      const ownerEmail = authUser?.email || userDoc.data()?.email || snapshot.data()?.email || '';
+      const ownedTeams = await loadOwnedTeams({ firestore, uid, email: ownerEmail });
+      if (ownedTeams.length) {
+        throw new Error('Account still owns one or more teams.');
+      }
+      const legacyProfilePhotoPaths = getLegacyUnscopedProfilePhotoPaths([
+        userDoc.data()?.photoUrl,
+        authUser?.photoURL
+      ]);
+      if (legacyProfilePhotoPaths.length) {
+        const migrationError = new Error(
+          'Legacy profile photo migration is required before account deletion can complete.'
+        );
+        migrationError.code = 'legacy-profile-photo-migration-required';
+        throw migrationError;
+      }
+
+      const [legacyTeamMedia, teamMediaItems, chatMessages, socialPosts] = await Promise.all([
+        firestore.collectionGroup('media').where('uploadedBy', '==', uid).get(),
+        firestore.collectionGroup('mediaItems').where('uploadedBy', '==', uid).get(),
+        firestore.collectionGroup('chatMessages').where('senderId', '==', uid).get(),
+        firestore.collection('socialPosts').where('authorId', '==', uid).get()
+      ]);
+      await deleteAccountStorage(uid, [
+        ...(legacyTeamMedia.docs || []),
+        ...(teamMediaItems.docs || []),
+        ...(chatMessages.docs || []),
+        ...(socialPosts.docs || [])
+      ], [
+        userDoc.data()?.photoUrl,
+        authUser?.photoURL
+      ]);
+      await scrubAccountTeamGrants(uid, ownerEmail, userDoc.data() || {});
+      await scrubAccountChatConversationMembership(uid, ownerEmail);
+      await scrubAccountRegistrationLinks(uid, ownerEmail);
+      await scrubAccountRosterParentLinks(uid, userDoc.data() || {}, authUser);
+
+      const directDocuments = [
+        `publicUserProfiles/${uid}`,
+        `privateAiUsers/${uid}`
+      ];
+      await Promise.all(directDocuments.map(async (path) => {
+        const ref = firestore.doc(path);
+        const doc = await ref.get();
+        if (doc.exists) await firestore.recursiveDelete(ref);
+      }));
+
+      for (const [collectionName, field, operator] of getAccountDeletionCollectionQueries()) {
+        await deleteAccountQuery(firestore.collection(collectionName).where(field, operator, uid));
+      }
+
+      for (const [collectionName, field] of getAccountDeletionCollectionGroupQueries()) {
+        await deleteAccountQuery(firestore.collectionGroup(collectionName).where(field, '==', uid));
+      }
+
+      if (userDoc.exists) await firestore.recursiveDelete(userRef);
+
+      await admin.auth().deleteUser(uid).catch((error) => {
+        if (error?.code !== 'auth/user-not-found') throw error;
+      });
+
+      await firestore.doc(`accountDeletionAudit/${buildDeletionAuditId(uid)}`).set({
+        completedAt: admin.firestore.Timestamp.now(),
+        outcome: 'deleted',
+        version: 1
+      });
+      await requestRef.delete();
+    } catch (error) {
+      functions.logger.error('Account deletion processing failed.', { uid, error });
+      await requestRef.set({
+        status: 'failed',
+        updatedAt: admin.firestore.Timestamp.now(),
+        failureCode: error?.code === 'legacy-profile-photo-migration-required'
+          ? error.code
+          : 'processing-failed'
+      }, { merge: true });
+      throw error;
+    }
   });

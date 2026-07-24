@@ -431,7 +431,7 @@
 
     <script type="module">
         import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=18';
-        import { checkAuth, setUserPassword, resendVerificationEmail } from './js/auth.js?v=130';
+        import { checkAuth, setUserPassword, resendVerificationEmail } from './js/auth.js?v=131';
         import {
             getUserProfile,
             updateUserProfile,
@@ -444,7 +444,7 @@
             getNotificationPreferencesForTeam,
             saveNotificationPreferencesForTeam,
             upsertNotificationDeviceToken
-        } from './js/db.js?v=123';
+        } from './js/db.js?v=124';
         import { normalizeTeamNotificationPreferences, NOTIFICATION_PREFERENCE_GROUPS } from './js/notification-preferences.js?v=2';
         import { registerPushNotifications } from './js/push-notifications.js?v=1';
         import { buildLegacyJoinUrl } from './js/join-code.js?v=1';
@@ -860,7 +860,7 @@
                 if (photoChanged && fileInput.files[0]) {
                     status.textContent = 'Uploading photo...';
                     try {
-                        currentPhotoUrl = await uploadUserPhoto(fileInput.files[0]);
+                        currentPhotoUrl = await uploadUserPhoto(fileInput.files[0], currentUser.uid);
                     } catch (uploadError) {
                         console.error('Photo upload failed:', uploadError);
                         alert('Failed to upload photo. Please try again.\n\nError: ' + uploadError.message);

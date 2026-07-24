@@ -139,6 +139,8 @@ type NativePluginSignInResult = {
   credential?: {
     idToken?: string;
     accessToken?: string;
+    authorizationCode?: string;
+    nonce?: string;
     serverAuthCode?: string;
   } | null;
   additionalUserInfo?: {
@@ -750,7 +752,7 @@ async function signInWithNativeRestSession(email: string, password: string) {
   return persistNativeRestAuthSession(signInPayload, lookupUser);
 }
 
-function getNativeGoogleRequestUri() {
+function getNativeOAuthRequestUri() {
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
   return origin.startsWith('http://') || origin.startsWith('https://') ? origin : 'https://allplays.ai';
 }
@@ -784,7 +786,7 @@ async function signInWithNativeGoogleRestSession(googleIdToken: string, googleAc
 
   const signInPayload = await callFirebaseAuthRest('accounts:signInWithIdp', {
     postBody: postBody.toString(),
-    requestUri: getNativeGoogleRequestUri(),
+    requestUri: getNativeOAuthRequestUri(),
     returnIdpCredential: true,
     returnSecureToken: true
   }) as NativeRestSignInPayload;
@@ -792,6 +794,31 @@ async function signInWithNativeGoogleRestSession(googleIdToken: string, googleAc
     idToken: signInPayload.idToken
   }).catch((error) => {
     logger.warn('Unable to load native Google REST auth profile.', { error });
+    return {};
+  }) as { users?: NativeRestLookupUser[] };
+  const lookupUser = Array.isArray(lookupPayload.users) ? lookupPayload.users[0] || {} : {};
+  return persistNativeRestAuthSession(signInPayload, lookupUser);
+}
+
+async function signInWithNativeAppleRestSession(appleIdToken: string, rawNonce?: string | null) {
+  const postBody = new URLSearchParams({
+    providerId: 'apple.com',
+    id_token: appleIdToken
+  });
+  if (rawNonce) {
+    postBody.set('nonce', rawNonce);
+  }
+
+  const signInPayload = await callFirebaseAuthRest('accounts:signInWithIdp', {
+    postBody: postBody.toString(),
+    requestUri: getNativeOAuthRequestUri(),
+    returnIdpCredential: true,
+    returnSecureToken: true
+  }) as NativeRestSignInPayload;
+  const lookupPayload = await callFirebaseAuthRest('accounts:lookup', {
+    idToken: signInPayload.idToken
+  }).catch((error) => {
+    logger.warn('Unable to load native Apple REST auth profile.', { error });
     return {};
   }) as { users?: NativeRestLookupUser[] };
   const lookupUser = Array.isArray(lookupPayload.users) ? lookupPayload.users[0] || {} : {};
@@ -1098,7 +1125,60 @@ async function signInWithNativeGoogleCredential() {
   } as UserCredential;
 }
 
-async function processGoogleResult(result: UserCredential | null, activationCode?: string | null) {
+async function signInWithNativeAppleCredential() {
+  if (!(Capacitor as any).isPluginAvailable?.('FirebaseAuthentication') || Capacitor.getPlatform?.() !== 'ios') {
+    throw new Error('Sign in with Apple is available in the iOS app.');
+  }
+
+  const result = await withTimeout(
+    FirebaseAuthentication.signInWithApple({ skipNativeAuth: true } as any) as Promise<NativePluginSignInResult>,
+    'Sign in with Apple timed out.',
+    authTimeoutMs
+  );
+  const idToken = result?.credential?.idToken;
+  if (!idToken) {
+    throw new Error('Sign in with Apple did not return an ID token.');
+  }
+
+  const user = await signInWithNativeAppleRestSession(idToken, result?.credential?.nonce);
+  return {
+    user,
+    nativeRest: true
+  } as UserCredential;
+}
+
+export async function revokeCurrentAppleAuthorizationForDeletion() {
+  if (!(Capacitor as any).isPluginAvailable?.('FirebaseAuthentication') || Capacitor.getPlatform?.() !== 'ios') {
+    throw new Error('Sign in with Apple account deletion is only available in the iOS app.');
+  }
+
+  const result = await withTimeout(
+    FirebaseAuthentication.signInWithApple({ skipNativeAuth: true } as any) as Promise<NativePluginSignInResult>,
+    'Sign in with Apple timed out.',
+    authTimeoutMs
+  );
+  const authorizationCode = String(result?.credential?.authorizationCode || '').trim();
+  const idToken = String(result?.credential?.idToken || '').trim();
+  if (!authorizationCode) {
+    throw new Error('Sign in with Apple did not return an authorization code for account deletion.');
+  }
+  if (!idToken) {
+    throw new Error('Sign in with Apple did not return an ID token for account deletion.');
+  }
+
+  await signInWithNativeAppleRestSession(idToken, result?.credential?.nonce);
+  await withTimeout(
+    FirebaseAuthentication.revokeAccessToken({ token: authorizationCode }),
+    'Apple authorization revocation timed out.',
+    authTimeoutMs
+  );
+}
+
+async function processGoogleResult(
+  result: UserCredential | null,
+  activationCode?: string | null,
+  options: { preserveMissingProfileFields?: boolean } = {}
+) {
   if (!result?.user) {
     return null;
   }
@@ -1110,13 +1190,18 @@ async function processGoogleResult(result: UserCredential | null, activationCode
       await redeemInviteForUser(result.user.uid, code, result.user.email);
       result.activationCodeRedeemed = true;
     }
-    await dbModule.updateUserProfile(result.user.uid, {
+    const profileUpdate: Record<string, unknown> = {
       email: result.user.email || '',
-      fullName: result.user.displayName || '',
-      photoUrl: result.user.photoURL || '',
       lastLogin: new Date()
-    }).catch((error: unknown) => {
-      logger.warn('Unable to update Google lastLogin; continuing sign-in.', { error });
+    };
+    if (!options.preserveMissingProfileFields || result.user.displayName) {
+      profileUpdate.fullName = result.user.displayName || '';
+    }
+    if (!options.preserveMissingProfileFields || result.user.photoURL) {
+      profileUpdate.photoUrl = result.user.photoURL || '';
+    }
+    await dbModule.updateUserProfile(result.user.uid, profileUpdate).catch((error: unknown) => {
+      logger.warn('Unable to update provider lastLogin; continuing sign-in.', { error });
     });
     window.sessionStorage.removeItem(pendingActivationCodeKey);
     result.wasNewUser = false;
@@ -1211,6 +1296,53 @@ export async function signInWithGoogleAccount(activationCode?: string | null) {
     }
     throw error;
   }
+}
+
+export async function signInWithAppleAccount(activationCode?: string | null) {
+  const code = normalizeCode(activationCode);
+  if (code) {
+    window.sessionStorage.setItem(pendingActivationCodeKey, code);
+  }
+
+  try {
+    return await processGoogleResult(await signInWithNativeAppleCredential(), code, {
+      preserveMissingProfileFields: true
+    });
+  } catch (error) {
+    if (!code) {
+      window.sessionStorage.removeItem(pendingActivationCodeKey);
+    }
+    throw error;
+  }
+}
+
+export async function reauthenticateCurrentUserForDeletion(
+  provider: 'apple' | 'google' | 'password' | 'unknown',
+  password = ''
+): Promise<{ appleAuthorizationRevoked: boolean }> {
+  if (provider === 'apple') {
+    await revokeCurrentAppleAuthorizationForDeletion();
+    return { appleAuthorizationRevoked: true };
+  }
+  if (provider === 'google') {
+    await signInWithGoogleAccount();
+    return { appleAuthorizationRevoked: false };
+  }
+  if (provider === 'password') {
+    const currentUser = auth.currentUser || getNativeAuthFallbackUser();
+    const email = String(currentUser?.email || '').trim();
+    if (!password) {
+      const error = new Error('Enter your account password to confirm deletion.') as Error & { code?: string };
+      error.code = 'account-deletion/password-required';
+      throw error;
+    }
+    if (!email) {
+      throw new Error('The signed-in account email is unavailable.');
+    }
+    await signInWithEmail(email, password);
+    return { appleAuthorizationRevoked: false };
+  }
+  throw new Error('Sign out, sign in again, and retry account deletion.');
 }
 
 export async function completeGoogleRedirect() {

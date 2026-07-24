@@ -206,9 +206,11 @@ describe('RegistrationDetail payment notice', () => {
   beforeEach(() => {
     Object.values(parentRegistrationsServiceMocks).forEach((mock) => mock.mockReset());
     openPublicUrlMock.mockReset();
+    window.__ALLPLAYS_CONFIG__ = { paymentsEnabled: true };
   });
 
   afterEach(() => {
+    delete window.__ALLPLAYS_CONFIG__;
     cleanup();
   });
 
@@ -223,6 +225,50 @@ describe('RegistrationDetail payment notice', () => {
     expect(await screen.findByRole('heading', { name: 'Payment' })).toBeTruthy();
     expect(screen.getByText('Payment will be collected in Stripe before your registration is complete.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Pay registration with Stripe' })).toBeTruthy();
+  });
+
+  it('blocks paid online-only registration when payments are disabled', async () => {
+    window.__ALLPLAYS_CONFIG__ = { paymentsEnabled: false };
+    parentRegistrationsServiceMocks.loadPublicRegistrationDetail.mockResolvedValue(buildDetail({
+      paymentNotice: 'Online payment is required.',
+      onlineCheckout: true,
+      form: {
+        paymentSettings: {
+          offlinePaymentEnabled: false,
+          onlineCheckoutEnabled: true
+        }
+      }
+    }));
+
+    renderPublicRegistration();
+
+    const button = await screen.findByRole('button', { name: 'Online payment unavailable' });
+    expect(button).toBeDisabled();
+    expect(screen.getByText('This paid registration requires online checkout, which is not available in this release. Contact the organizer.')).toBeTruthy();
+    expect(parentRegistrationsServiceMocks.submitOfflineRegistration).not.toHaveBeenCalled();
+  });
+
+  it('uses the configured offline path when online payments are disabled', async () => {
+    window.__ALLPLAYS_CONFIG__ = { paymentsEnabled: false };
+    parentRegistrationsServiceMocks.loadPublicRegistrationDetail.mockResolvedValue(buildDetail({
+      onlineCheckout: true,
+      form: {
+        paymentSettings: {
+          offlinePaymentEnabled: true,
+          onlineCheckoutEnabled: true
+        }
+      }
+    }));
+    parentRegistrationsServiceMocks.submitOfflineRegistration.mockResolvedValue({
+      status: 'pending',
+      registrationId: 'registration-1'
+    });
+
+    renderPublicRegistration();
+    fireEvent.click(await screen.findByRole('button', { name: 'Submit registration' }));
+
+    await waitFor(() => expect(parentRegistrationsServiceMocks.submitOfflineRegistration).toHaveBeenCalledTimes(1));
+    expect(parentRegistrationsServiceMocks.initiateRegistrationCheckout).not.toHaveBeenCalled();
   });
 
   it('hides the payment section when no notice exists for authenticated parent forms', async () => {

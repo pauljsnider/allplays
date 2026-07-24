@@ -35,6 +35,7 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
             signInWithEmail: [],
             signUpWithEmail: [],
             signInWithGoogleAccount: [],
+            signInWithAppleAccount: [],
             sendResetEmail: [],
             redeemInviteForUser: [],
             confirmReset: [],
@@ -180,6 +181,11 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
                     return { user: mockUser() };
                 }
 
+                export async function signInWithAppleAccount(activationCode) {
+                    window.__appAuthCalls.signInWithAppleAccount.push({ activationCode });
+                    return { user: mockUser(), wasNewUser: false };
+                }
+
                 export async function sendResetEmail(email) {
                     window.__appAuthCalls.sendResetEmail.push(email);
                 }
@@ -233,6 +239,14 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
 
                 export async function getNativeAuthIdToken() {
                     return 'mock-token';
+                }
+
+                export async function revokeCurrentAppleAuthorizationForDeletion() {
+                    return;
+                }
+
+                export async function reauthenticateCurrentUserForDeletion() {
+                    return { appleAuthorizationRevoked: false };
                 }
             `
         });

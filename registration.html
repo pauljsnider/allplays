@@ -128,6 +128,7 @@
         const retryCheckoutAttemptToken = params.get('checkoutAttemptToken') || '';
         const retryPublicCheckoutCapability = params.get('publicCheckoutCapability') || '';
         const retryPaymentRequested = params.get('retryPayment') === '1' && !!(retryPublicCheckoutCapability || retryRegistrationId);
+        const paymentsEnabled = window.__ALLPLAYS_CONFIG__?.paymentsEnabled === true;
         let activeForm = null;
         let currentPublicCheckoutCapability = retryPublicCheckoutCapability;
         let cancelledCheckoutReleasePromise = Promise.resolve();
@@ -268,6 +269,21 @@
             formElement.classList.remove('hidden');
         }
 
+        function applyRegistrationPaymentLaunchState(form) {
+            if (paymentsEnabled || !hasOnlineRegistrationCheckout(form)) {
+                return { ...form, onlinePaymentUnavailable: false };
+            }
+            const offlinePaymentEnabled = form.paymentSettings?.offlinePaymentEnabled === true;
+            return {
+                ...form,
+                paymentSettings: {
+                    ...form.paymentSettings,
+                    onlineCheckoutEnabled: false
+                },
+                onlinePaymentUnavailable: !offlinePaymentEnabled
+            };
+        }
+
         function renderRegistrationPaymentSettings(form) {
             const section = document.getElementById('registration-payment-section');
             const notice = document.getElementById('registration-payment-notice');
@@ -306,7 +322,8 @@
         }
 
         function setRegistrationUnavailableState(form) {
-            const unavailable = hasUnavailableRegistrationOptions(form);
+            const paymentUnavailable = form.onlinePaymentUnavailable === true;
+            const unavailable = hasUnavailableRegistrationOptions(form) || paymentUnavailable;
             const unavailableMessage = document.getElementById('registration-options-unavailable');
             const allowRetryPayment = retryPaymentRequested && hasOnlineRegistrationCheckout(form);
 
@@ -315,7 +332,9 @@
             payRegistrationButton.disabled = unavailable && !allowRetryPayment;
 
             if (unavailable) {
-                showFormError('Registration is currently unavailable. No registration options are available.');
+                showFormError(paymentUnavailable
+                    ? 'Online registration payment is not available yet. Contact the organizer for another payment option.'
+                    : 'Registration is currently unavailable. No registration options are available.');
             }
         }
 
@@ -491,7 +510,9 @@
                     return;
                 }
 
-                activeForm = normalizeRegistrationForm(snap.data(), { teamId, formId });
+                activeForm = applyRegistrationPaymentLaunchState(
+                    normalizeRegistrationForm(snap.data(), { teamId, formId })
+                );
                 if (!activeForm.published) {
                     showError('This registration form is not accepting submissions.');
                     return;

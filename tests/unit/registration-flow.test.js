@@ -376,6 +376,10 @@ describe('public registration flow', () => {
         expect(page).toContain('registration-payment-section');
         expect(page).toContain('getRegistrationPaymentNotice');
         expect(page).toContain('hasOnlineRegistrationCheckout');
+        expect(page).toContain("const paymentsEnabled = window.__ALLPLAYS_CONFIG__?.paymentsEnabled === true");
+        expect(page).toContain('function applyRegistrationPaymentLaunchState(form)');
+        expect(page).toContain('onlineCheckoutEnabled: false');
+        expect(page).toContain('onlinePaymentUnavailable: !offlinePaymentEnabled');
         expect(page).toContain('payment-plan-section');
         expect(page).toContain('getPaymentPlanChoices');
         expect(page).toContain('fee-summary-section');

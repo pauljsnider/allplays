@@ -402,7 +402,8 @@ export function sortParentFeeRecords(fees) {
     });
 }
 
-export function renderParentTeamFees(fees) {
+export function renderParentTeamFees(fees, options = {}) {
+    const paymentsEnabled = options.paymentsEnabled !== false;
     const normalizedFees = sortParentFeeRecords(fees).map(normalizeParentFeeRecord);
     if (normalizedFees.length === 0) {
         return '';
@@ -426,9 +427,9 @@ export function renderParentTeamFees(fees) {
         const lineItems = renderInvoiceLineItems(fee);
         const installmentSchedule = renderInstallmentSchedule(fee);
         const receiptActivity = renderReceiptActivity(fee);
-        const payAction = isOnlineTeamFeeCollection(fee) && fee.checkoutUrl && isPayActionAllowed(fee)
+        const payAction = paymentsEnabled && isOnlineTeamFeeCollection(fee) && fee.checkoutUrl && isPayActionAllowed(fee)
             ? `<a class="inline-flex items-center justify-center rounded-lg bg-blue-600 px-3 py-2 text-sm font-bold text-white hover:bg-blue-700" href="${escapeHtml(fee.checkoutUrl)}">Pay online</a>`
-            : canInitiateCheckout(fee)
+            : paymentsEnabled && canInitiateCheckout(fee)
                 ? `<button type="button" data-team-fee-checkout="true" data-team-id="${escapeHtml(fee.teamId)}" data-batch-id="${escapeHtml(fee.batchId)}" data-recipient-id="${escapeHtml(fee.recipientId)}" class="inline-flex items-center justify-center rounded-lg bg-blue-600 px-3 py-2 text-sm font-bold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-70">Pay online</button>`
                 : '';
 

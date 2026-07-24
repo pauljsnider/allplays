@@ -1,0 +1,184 @@
+name: mobile-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_name:
+        description: Store version, for example 1.0.0
+        required: true
+        default: 1.0.0
+      upload_android:
+        description: Upload Android bundle to the Play internal track
+        type: boolean
+        default: false
+      upload_ios:
+        description: Upload iOS archive to TestFlight
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-release
+  cancel-in-progress: false
+
+jobs:
+  android-release:
+    runs-on: ubuntu-latest
+    environment: mobile-release
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: android-actions/setup-android@v3
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm ci --prefix apps/app
+      - name: Validate Android signing secrets
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          test -n "$KEYSTORE_BASE64"
+          test -n "$KEYSTORE_PASSWORD"
+          test -n "$KEY_ALIAS"
+          test -n "$KEY_PASSWORD"
+      - name: Restore upload keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/allplays-upload.jks"
+      - name: Build signed Android App Bundle
+        env:
+          ALLPLAYS_ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/allplays-upload.jks
+          ALLPLAYS_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ALLPLAYS_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ALLPLAYS_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ALLPLAYS_ANDROID_VERSION_CODE: ${{ github.run_number }}
+          ALLPLAYS_VERSION_NAME: ${{ inputs.version_name }}
+        run: npm run mobile:bundle:android
+      - name: Upload signed AAB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: allplays-android-${{ inputs.version_name }}-${{ github.run_number }}
+          path: android/app/build/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload to Play internal testing
+        if: inputs.upload_android
+        env:
+          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          ANDROID_BUNDLE_PATH: android/app/build/outputs/bundle/release/app-release.aab
+          ANDROID_PACKAGE_NAME: ai.allplays.lite
+          ALLPLAYS_RELEASE_NAME: ALL PLAYS ${{ inputs.version_name }} (${{ github.run_number }})
+        run: node scripts/upload-play-internal.mjs
+
+  ios-release:
+    runs-on: macos-15
+    environment: mobile-release
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm ci --prefix apps/app
+      - name: Validate iOS signing secrets
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_PASSWORD }}
+          PROFILE_BASE64: ${{ secrets.IOS_APP_STORE_PROFILE_BASE64 }}
+          TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+        run: |
+          test -n "$CERTIFICATE_BASE64"
+          test -n "$CERTIFICATE_PASSWORD"
+          test -n "$PROFILE_BASE64"
+          test -n "$TEAM_ID"
+      - name: Install signing certificate and provisioning profile
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_PASSWORD }}
+          PROFILE_BASE64: ${{ secrets.IOS_APP_STORE_PROFILE_BASE64 }}
+        run: |
+          CERTIFICATE_PATH="$RUNNER_TEMP/distribution.p12"
+          PROFILE_PATH="$RUNNER_TEMP/allplays.mobileprovision"
+          KEYCHAIN_PATH="$RUNNER_TEMP/mobile-release.keychain-db"
+          echo "$CERTIFICATE_BASE64" | base64 --decode > "$CERTIFICATE_PATH"
+          echo "$PROFILE_BASE64" | base64 --decode > "$PROFILE_PATH"
+          security create-keychain -p "$RUNNER_TEMP" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$RUNNER_TEMP" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -k "$RUNNER_TEMP" "$KEYCHAIN_PATH"
+          PROFILE_PLIST="$RUNNER_TEMP/profile.plist"
+          security cms -D -i "$PROFILE_PATH" > "$PROFILE_PLIST"
+          PROFILE_UUID=$(/usr/libexec/PlistBuddy -c "Print UUID" "$PROFILE_PLIST")
+          PROFILE_NAME=$(/usr/libexec/PlistBuddy -c "Print Name" "$PROFILE_PLIST")
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          cp "$PROFILE_PATH" "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.mobileprovision"
+          echo "IOS_PROFILE_NAME=$PROFILE_NAME" >> "$GITHUB_ENV"
+      - name: Build web assets and sync iOS
+        run: npm run mobile:sync
+      - name: Archive signed iOS app
+        env:
+          TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+        run: |
+          xcodebuild \
+            -project ios/App/App.xcodeproj \
+            -scheme App \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath "$RUNNER_TEMP/ALLPLAYS.xcarchive" \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            MARKETING_VERSION="${{ inputs.version_name }}" \
+            CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
+            CODE_SIGN_STYLE=Manual \
+            PROVISIONING_PROFILE_SPECIFIER="$IOS_PROFILE_NAME" \
+            archive
+      - name: Export IPA
+        env:
+          TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+        run: |
+          /usr/libexec/PlistBuddy -c "Add :method string app-store-connect" "$RUNNER_TEMP/ExportOptions.plist"
+          /usr/libexec/PlistBuddy -c "Add :teamID string $TEAM_ID" "$RUNNER_TEMP/ExportOptions.plist"
+          /usr/libexec/PlistBuddy -c "Add :signingStyle string manual" "$RUNNER_TEMP/ExportOptions.plist"
+          /usr/libexec/PlistBuddy -c "Add :provisioningProfiles dict" "$RUNNER_TEMP/ExportOptions.plist"
+          /usr/libexec/PlistBuddy -c "Add :provisioningProfiles:ai.allplays.lite string $IOS_PROFILE_NAME" "$RUNNER_TEMP/ExportOptions.plist"
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/ALLPLAYS.xcarchive" \
+            -exportPath "$RUNNER_TEMP/ios-export" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist"
+      - name: Upload signed IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: allplays-ios-${{ inputs.version_name }}-${{ github.run_number }}
+          path: ${{ runner.temp }}/ios-export/*.ipa
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload to TestFlight
+        if: inputs.upload_ios
+        env:
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+        run: |
+          mkdir -p "$HOME/.appstoreconnect/private_keys"
+          printf '%s' "$APP_STORE_CONNECT_PRIVATE_KEY" > "$HOME/.appstoreconnect/private_keys/AuthKey_$APP_STORE_CONNECT_KEY_ID.p8"
+          xcrun altool --upload-app \
+            --type ios \
+            --file "$(find "$RUNNER_TEMP/ios-export" -name '*.ipa' -print -quit)" \
+            --apiKey "$APP_STORE_CONNECT_KEY_ID" \
+            --apiIssuer "$APP_STORE_CONNECT_ISSUER_ID"

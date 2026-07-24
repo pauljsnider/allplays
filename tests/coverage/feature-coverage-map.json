@@ -120,9 +120,13 @@
                 "workflow"
             ],
             "legacyPages": [
+                "account-deletion.html",
                 "accept-invite.html",
                 "login.html",
+                "privacy.html",
                 "reset-password.html",
+                "support.html",
+                "terms.html",
                 "verify-pending.html"
             ],
             "appPages": [
@@ -138,12 +142,14 @@
                 "cleanupInviteSignupOnAuthDelete",
                 "confirmParentAccountMerge",
                 "previewAccountMerge",
+                "processAccountDeletionRequest",
                 "processPasswordResetEmailRequest",
                 "resendEmailWebhook",
                 "sweepPendingPasswordResetEmailRequests",
                 "queueEmailVerification",
                 "queueInviteSignInEmail",
                 "queuePasswordResetEmail",
+                "requestAccountDeletion",
                 "redeemAdminInvite",
                 "redeemCoParentInvite",
                 "redeemHouseholdInvite",
@@ -151,6 +157,7 @@
                 "validateAccessCodeForAcceptance"
             ],
             "unitTests": [
+                "functions/test/account-deletion-core.test.cjs",
                 "functions/test/account-merge-core.test.cjs",
                 "functions/test/auth-email-callables.test.cjs",
                 "functions/test/auth-email-core.test.cjs",
@@ -160,6 +167,7 @@
                 "functions/test/auth-email-resend-delivery.test.cjs",
                 "functions/test/failed-invite-signup-cleanup.test.cjs",
                 "tests/unit/accept-invite-flow.test.js",
+                "tests/unit/mobile-store-legal-pages.test.js",
                 "tests/unit/accept-invite-page.test.js",
                 "tests/unit/access-code-validation.test.js",
                 "tests/unit/access-code-atomic-redemption-guard.test.js",

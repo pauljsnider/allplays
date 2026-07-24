@@ -70,15 +70,23 @@ function registrationForm(overrides = {}) {
     };
 }
 
-async function mockRegistrationModules(page, { form = registrationForm(), submitResult = { status: 'pending', registrationId: 'reg-1' } } = {}) {
+async function mockRegistrationModules(page, {
+    form = registrationForm(),
+    submitResult = { status: 'pending', registrationId: 'reg-1' },
+    paymentsEnabled = true
+} = {}) {
     const encodedForm = encodeModuleValue(form);
     const encodedSubmitResult = encodeModuleValue(submitResult);
 
-    await page.addInitScript(() => {
+    await page.addInitScript(({ launchPaymentsEnabled }) => {
+        window.__ALLPLAYS_CONFIG__ = {
+            ...(window.__ALLPLAYS_CONFIG__ || {}),
+            paymentsEnabled: launchPaymentsEnabled
+        };
         window.__registrationCalls = [];
         window.__registrationStripeCalls = [];
         window.__registrationCancelCalls = [];
-    });
+    }, { launchPaymentsEnabled: paymentsEnabled });
 
     await page.route(/\/js\/firebase\.js\?v=\d+$/, async (route) => {
         await route.fulfill({
@@ -212,6 +220,32 @@ test('public registration submits an offline-payment registration with option, p
         selectedOptionId: 'u12',
         quantity: 2
     });
+});
+
+test('legacy registration falls back to offline submission while launch payments are disabled', async ({ page, baseURL }) => {
+    await mockRegistrationModules(page, {
+        paymentsEnabled: false,
+        form: registrationForm({
+            paymentSettings: {
+                offlinePaymentEnabled: true,
+                onlineCheckoutEnabled: true
+            }
+        })
+    });
+    await page.goto(buildUrl(baseURL, '/registration.html?teamId=team-1&formId=form-1'), { waitUntil: 'domcontentloaded' });
+
+    await expect(page.getByText('Offline payment is accepted for this registration.')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Pay registration with Stripe' })).toHaveCount(0);
+    await fillRequiredRegistrationFields(page);
+    await page.getByRole('button', { name: 'Submit registration' }).click();
+    await expect(page.getByRole('heading', { name: 'Registration submitted' })).toBeVisible();
+
+    const result = await page.evaluate(() => ({
+        submitCalls: window.__registrationCalls.filter((call) => call.name === 'submitPublicRegistration'),
+        stripeCalls: window.__registrationStripeCalls
+    }));
+    expect(result.submitCalls).toHaveLength(1);
+    expect(result.stripeCalls).toEqual([]);
 });
 
 test('public registration shows an unavailable state when all configured options are full', async ({ page, baseURL }) => {

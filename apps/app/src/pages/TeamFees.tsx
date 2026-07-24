@@ -16,6 +16,7 @@ import { isRetryableAppServiceError, toAppServiceError } from '../lib/appErrors'
 import { copyPublicText, sharePublicUrl } from '../lib/publicActions';
 import { useAppAsyncOperation } from '../lib/useAsyncOperation';
 import type { AuthState } from '../lib/types';
+import { arePaymentsEnabled } from '../lib/launchFeatures';
 
 type RecipientFormState = {
   paymentAmount: string;
@@ -100,7 +101,7 @@ export function TeamFees({ auth }: { auth: AuthState }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid, teamId, batchId]);
 
-  const recipients = model?.recipients || [];
+  const recipients = useMemo(() => model?.recipients || [], [model?.recipients]);
   const rosterPlayers = model?.rosterPlayers || [];
 
   const totals = useMemo(() => {
@@ -659,6 +660,7 @@ function formatSignedMoney(value: string) {
 }
 
 function isOnlineCollectionRecipient(recipient: TeamFeeRecipientSummary) {
+  if (!arePaymentsEnabled()) return false;
   return ['online_stripe', 'stripe', 'stripe_checkout', 'online'].includes(String(recipient.collectionMode || '').trim().toLowerCase());
 }
 

@@ -22,6 +22,7 @@ type ErrorTrackingInitOptions = {
 };
 
 type RuntimeConfig = {
+  paymentsEnabled?: boolean;
   errorTracking?: {
     dsn?: string;
     environment?: string;

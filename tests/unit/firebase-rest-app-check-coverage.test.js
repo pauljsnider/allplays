@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 const primaryRestCallers = [
+    '../../apps/app/src/lib/accountDeletionService.ts',
     '../../apps/app/src/lib/authService.ts',
     '../../apps/app/src/lib/chatService.ts',
     '../../apps/app/src/lib/profileService.ts',
@@ -45,6 +46,7 @@ describe('raw Firebase REST App Check coverage', () => {
             .sort();
 
         expect(inventoriedCallers).toEqual([
+            'apps/app/src/lib/accountDeletionService.ts',
             'apps/app/src/lib/authService.ts',
             'apps/app/src/lib/chatService.ts',
             'apps/app/src/lib/profilePhotoService.ts',

@@ -236,6 +236,7 @@ async function ensureRegistrationOptionResolved(container, optionLabel = 'Option
 }
 
 beforeEach(() => {
+  window.__ALLPLAYS_CONFIG__ = { paymentsEnabled: true };
   vi.clearAllMocks();
   registrationFlowMocks.decideRegistrationPlacement.mockImplementation((params) => ({
     status: 'pending',

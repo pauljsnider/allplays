@@ -216,6 +216,7 @@ async function openManualAccessRequest(container) {
 }
 
 beforeEach(() => {
+    window.__ALLPLAYS_CONFIG__ = { paymentsEnabled: true };
     vi.clearAllMocks();
     window.requestAnimationFrame = (callback) => {
         callback(0);

@@ -38,6 +38,8 @@
     "mobile:sync:native-debug": "npm --prefix apps/app run build:native-debug && node scripts/verify-app-bundle-visualizer.mjs && npx cap sync",
     "mobile:build:ios": "npm run mobile:sync:native-debug && DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build",
     "mobile:build:android": "npm run mobile:sync:native-debug && cd android && JAVA_HOME=\"/Applications/Android Studio.app/Contents/jbr/Contents/Home\" ./gradlew :app:assembleDebug",
+    "mobile:bundle:android": "npm run mobile:sync && cd android && ./gradlew :app:bundleRelease",
+    "mobile:archive:ios": "npm run mobile:sync && xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Release -destination 'generic/platform=iOS' archive",
     "mobile:open:ios": "DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer npx cap open ios",
     "mobile:open:android": "npx cap open android",
     "mobile:run:ios": "npm run app:build && DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer npx cap run ios",

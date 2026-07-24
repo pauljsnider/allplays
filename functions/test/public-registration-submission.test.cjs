@@ -490,6 +490,50 @@ test('requires a checkout token when an online registration has a balance', asyn
     assert.equal(firestore.registrationDocs().length, 0);
 });
 
+test('accepts offline fallback when launch payments are disabled', async () => {
+    const previousPaymentsEnabled = process.env.PAYMENTS_ENABLED;
+    process.env.PAYMENTS_ENABLED = 'false';
+    try {
+        const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration(buildSeedState({
+            paymentSettings: { offlinePaymentEnabled: true, onlineCheckoutEnabled: true }
+        }));
+
+        const result = await submitPublicRegistration(buildSubmission(), context);
+
+        assert.equal(result.success, true);
+        const registrations = firestore.registrationDocs();
+        assert.equal(registrations.length, 1);
+        assert.deepEqual(registrations[0].data.paymentSettings, {
+            offlinePaymentEnabled: true,
+            onlineCheckoutEnabled: false
+        });
+        assert.equal('checkoutAttemptToken' in registrations[0].data, false);
+    } finally {
+        if (previousPaymentsEnabled === undefined) delete process.env.PAYMENTS_ENABLED;
+        else process.env.PAYMENTS_ENABLED = previousPaymentsEnabled;
+    }
+});
+
+test('rejects paid online-only registration when launch payments are disabled', async () => {
+    const previousPaymentsEnabled = process.env.PAYMENTS_ENABLED;
+    process.env.PAYMENTS_ENABLED = 'false';
+    try {
+        const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration(buildSeedState({
+            paymentSettings: { offlinePaymentEnabled: false, onlineCheckoutEnabled: true }
+        }));
+
+        await assert.rejects(
+            submitPublicRegistration(buildSubmission(), context),
+            (error) => error.code === 'failed-precondition'
+                && error.message === 'Payment is not available for this registration.'
+        );
+        assert.equal(firestore.registrationDocs().length, 0);
+    } finally {
+        if (previousPaymentsEnabled === undefined) delete process.env.PAYMENTS_ENABLED;
+        else process.env.PAYMENTS_ENABLED = previousPaymentsEnabled;
+    }
+});
+
 test('normalizes guardian email casing for parent readback rules', async () => {
     const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration(buildSeedState());
 
@@ -749,6 +793,42 @@ test('applies the staged App Check gate to public registration checkout and canc
         (error) => error.code === 'failed-precondition' && error.details.reason === 'app-check-required'
     );
     await assert.doesNotReject(mod.cancelStripeRegistrationCheckout(cancelInput, verifiedContext));
+});
+
+test('keeps cancellation cleanup available while new payment checkout is disabled', async () => {
+    const previousPaymentsEnabled = process.env.PAYMENTS_ENABLED;
+    process.env.PAYMENTS_ENABLED = 'false';
+    try {
+        const { firestore, mod } = loadFunctionsModule(buildSeedState({
+            paymentSettings: { offlinePaymentEnabled: true, onlineCheckoutEnabled: true }
+        }));
+        const checkoutAttemptToken = 'disabledpaymentstoken123456';
+        const submission = await mod.submitPublicRegistration(buildSubmission({
+            checkoutAttemptToken
+        }), context);
+        const checkoutInput = {
+            teamId: 'team-1',
+            formId: 'form-1',
+            registrationId: submission.registrationId,
+            checkoutAttemptToken
+        };
+
+        await assert.rejects(
+            mod.createStripeRegistrationCheckout(checkoutInput, context),
+            (error) => error.code === 'failed-precondition'
+                && error.message === 'Online payments are not enabled in this release.'
+        );
+        await assert.doesNotReject(mod.cancelStripeRegistrationCheckout(checkoutInput, context));
+
+        const registration = firestore.snapshot(`teams/team-1/registrationForms/form-1/registrations/${submission.registrationId}`);
+        const form = firestore.snapshot('teams/team-1/registrationForms/form-1');
+        assert.equal(registration.checkoutStatus, 'cancelled');
+        assert.equal(registration.paymentStatus, 'checkout_cancelled');
+        assert.equal(form.registrationOptionCounts.u10.enrolled, 0);
+    } finally {
+        if (previousPaymentsEnabled === undefined) delete process.env.PAYMENTS_ENABLED;
+        else process.env.PAYMENTS_ENABLED = previousPaymentsEnabled;
+    }
 });
 
 test('uses bounded network-only lookup limits before validating checkout and cancellation targets', async () => {

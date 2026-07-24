@@ -21,7 +21,7 @@ describe('team fees admin page routing', () => {
         const adminSource = readFileSync(new URL('../../js/team-fees-admin.js', import.meta.url), 'utf8');
         const pageSource = readFileSync(new URL('../../team-fees.html', import.meta.url), 'utf8');
 
-        expect(adminSource).toContain("import('./db.js?v=123')");
+        expect(adminSource).toContain("import('./db.js?v=124')");
         expect(pageSource).toContain('<script type="module" src="./js/team-fees-admin.js?v=20"></script>');
     });
 
@@ -45,6 +45,9 @@ describe('create team fee form', () => {
         expect(source).toContain('No credit card, Stripe, checkout, email, push, or SMS workflow is created.');
         expect(source).toContain('Create online team fee');
         expect(source).toContain('Pay online action');
+        expect(source).toContain("window?.__ALLPLAYS_CONFIG__?.paymentsEnabled === true");
+        expect(source).toContain("paymentsEnabled ? '' : 'disabled'");
+        expect(source).toContain('Online collection is disabled for the initial store release.');
     });
 
     it('keeps advanced invoice controls collapsed by default and available after expansion', () => {

@@ -104,10 +104,12 @@ function buildRecipient(index: number, overrides: Record<string, any> = {}) {
 
 describe('TeamFees recipient queue', () => {
   afterEach(() => {
+    delete window.__ALLPLAYS_CONFIG__;
     cleanup();
   });
 
   beforeEach(() => {
+    window.__ALLPLAYS_CONFIG__ = { paymentsEnabled: true };
     vi.clearAllMocks();
     teamFeesServiceMocks.recordOfflineTeamFeePayment.mockReset();
     teamFeesServiceMocks.recordTeamFeeBalanceAdjustment.mockReset();
@@ -577,6 +579,22 @@ describe('TeamFees recipient queue', () => {
 
     expect(await screen.findByText('Admin access required')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Save adjustment' })).toBeNull();
+  });
+
+  it('renders the empty recipient state when a manageable team has no fee recipients', async () => {
+    teamFeesServiceMocks.loadTeamFeeManagementModel.mockResolvedValue({
+      team: { id: 'team-1', name: 'Bears' },
+      batches: [],
+      selectedBatch: null,
+      canManageFees: true,
+      rosterPlayers: [],
+      recipients: []
+    });
+
+    renderTeamFees('/teams/team-1/fees');
+
+    expect(await screen.findByText('No fee recipients')).toBeTruthy();
+    expect(screen.getByText('Create a fee batch above, then record offline payments, refunds, or adjustments here.')).toBeTruthy();
   });
 
   it('retries a retryable team fee load failure from the shared error state', async () => {
