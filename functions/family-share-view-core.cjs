@@ -7,6 +7,8 @@ const MAX_FAMILY_SHARE_RECURRENCES = 366;
 const MAX_FAMILY_SHARE_CHILDREN = 50;
 const MAX_FAMILY_SHARE_TEAMS = 20;
 const MAX_FAMILY_SHARE_DB_EVENTS = 500;
+const CALENDAR_LOCATION_DETAIL_PATTERN =
+  /^(?:field|diamond|court|pitch|rink|gym|arena)\s*(?:(?:#|no\.?|number|:|-)\s*)?(?:\d+[a-z]?|[a-z])$/i;
 
 function compactText(value, maxLength = 240) {
   return String(value == null ? '' : value)
@@ -40,6 +42,15 @@ function unescapeIcsText(value) {
     .replace(/\\,/g, ',')
     .replace(/\\;/g, ';')
     .replace(/\\\\/g, '\\'));
+}
+
+function getCalendarLocationDetail(value) {
+  const locationLines = String(value || '')
+    .replace(/\\[nN]/g, '\n')
+    .split(/\r?\n/)
+    .map((part) => unescapeIcsText(part))
+    .filter((part) => CALENDAR_LOCATION_DETAIL_PATTERN.test(part));
+  return locationLines.length ? compactText(locationLines.join(' · '), 300) : null;
 }
 
 function unfoldIcsLines(icsText) {
@@ -184,6 +195,10 @@ function parseBoundedIcsEvents(icsText) {
     if (name === 'DTEND') current.dtend = parseIcsDate(value, params.TZID || current.recurrenceTimeZone);
     if (name === 'SUMMARY') current.summary = unescapeIcsText(value);
     if (name === 'LOCATION') current.location = unescapeIcsText(value);
+    if (name === 'DESCRIPTION') {
+      current.description = unescapeIcsText(value);
+      current.locationDetail = getCalendarLocationDetail(value);
+    }
     if (name === 'STATUS') current.status = compactText(value, 32).toUpperCase();
     if (name === 'UID') current.uid = compactText(value, 256);
     if (name === 'RRULE') current.rrule = parseRrule(value, current.recurrenceTimeZone);
@@ -305,6 +320,7 @@ function buildExternalCalendarEvents(icsText, { sourceId, sourceLabel = 'Shared 
       title: type === 'practice' ? (summary || 'Practice') : '',
       opponent: type === 'game' ? extractOpponent(summary, teamName) : '',
       location: compactText(event.location, 300) || 'TBD',
+      locationDetail: event.locationDetail || getCalendarLocationDetail(event.description),
       status: compactText(event.status, 32).toLowerCase() || 'scheduled',
       isCancelled: event.status === 'CANCELLED' || /\[CANCELED\]/i.test(event.summary || ''),
       isDbGame: false,
@@ -411,6 +427,7 @@ function sanitizeFamilyShareViewResponse({ token, children = [], teams = [], ext
     'title',
     'opponent',
     'location',
+    'locationDetail',
     'status',
     'isCancelled',
     'isDbGame',

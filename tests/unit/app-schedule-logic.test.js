@@ -7,12 +7,14 @@ import {
     findScheduleRideRequestForChild,
     filterParentScheduleEvents,
     getCalendarScheduleEntries,
+    getCalendarLocationDetail,
     getScheduleEventDetailPath,
     getNextRideConfirmedSeatCount,
     getOpenScheduleAssignments,
     getParentScheduleTeamOptions,
     getPracticePacketRows,
     getScheduleAssignmentStatus,
+    getScheduleLocationLabel,
     PRACTICE_PACKET_DETAIL_SECTION,
     getScheduleMapHref,
     getScheduleRideSeatInfo,
@@ -202,6 +204,25 @@ describe('React app parent schedule logic', () => {
         expect(ics).toContain('LOCATION:Main Gym');
         expect(ics).toContain('Arrival:');
         expect(ics).toContain('Bring blue kit');
+    });
+
+    it('shows external calendar field details with the venue without changing map input', () => {
+        const importedEvent = event({
+            location: 'Blue Valley Recreation Sports Complex',
+            locationDetail: 'Field 14'
+        });
+
+        expect(getScheduleLocationLabel(importedEvent)).toBe('Blue Valley Recreation Sports Complex · Field 14');
+        expect(getScheduleLocationLabel({ location: 'TBD', locationDetail: 'Field 14' })).toBe('Field 14');
+        expect(getScheduleLocationLabel({ location: 'Unknown', locationDetail: 'Field 14' }, 'Unknown')).toBe('Field 14');
+        expect(buildScheduleIcs([importedEvent])).toContain('LOCATION:Blue Valley Recreation Sports Complex · Field 14');
+        expect(getScheduleMapHref(importedEvent.location)).toContain('Blue+Valley+Recreation+Sports+Complex');
+        expect(getScheduleMapHref(importedEvent.location)).not.toContain('Field+14');
+        expect(getCalendarLocationDetail('Bring water')).toBeNull();
+        expect(getCalendarLocationDetail('Field 14\nBring water')).toBe('Field 14');
+        expect(getCalendarLocationDetail('Court #2\nGym A')).toBe('Court #2 · Gym A');
+        expect(getCalendarLocationDetail('Bring turf shoes for the field')).toBeNull();
+        expect(getCalendarLocationDetail('Use the gym entrance')).toBeNull();
     });
 
     it('builds team options, packet rows, agenda text, and map links for shared UX', () => {

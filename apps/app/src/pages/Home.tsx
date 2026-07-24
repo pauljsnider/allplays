@@ -62,6 +62,7 @@ import {
   formatEventDateLabel,
   formatEventTimeLabel,
   getOpenScheduleAssignments,
+  getScheduleLocationLabel,
   getScheduleTitle,
   normalizeRsvpResponse,
   type ParentScheduleEvent,
@@ -2429,7 +2430,7 @@ function HomeEventCard({ event }: { event: ParentScheduleEvent }) {
             <span className={`flex-none rounded-full px-2 py-0.5 text-[10px] font-black uppercase ${event.type === 'practice' ? 'bg-amber-100 text-amber-800' : 'bg-primary-100 text-primary-800'}`}>{event.type}</span>
           </div>
           <h3 className="mt-1 truncate text-base font-black text-gray-950">{getScheduleTitle(event)}</h3>
-          <div className="mt-0.5 truncate text-xs font-semibold text-gray-500">{formatEventTimeLabel(event.date)} · {event.location || 'TBD'}</div>
+          <div className="mt-0.5 truncate text-xs font-semibold text-gray-500">{formatEventTimeLabel(event.date)} · {getScheduleLocationLabel(event)}</div>
           <div className="mt-2 flex flex-wrap gap-1.5">
             <span className={`rounded-full border px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.04em] ${rsvpBadgeClasses[rsvp]}`}>{rsvp === 'not_responded' ? 'RSVP' : rsvp.replace('_', ' ')}</span>
             <span className="rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.04em] text-gray-600">{event.childName}</span>

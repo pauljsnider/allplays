@@ -167,7 +167,8 @@ describe('familyShareViewerService', () => {
           type: 'practice',
           date: '2026-07-14T18:00:00.000Z',
           title: 'Skills practice',
-          location: 'Field 2',
+          location: 'Blue Valley Recreation Sports Complex',
+          locationDetail: 'Field 2',
           childIds: ['player-1'],
           childNames: ['Sam Player']
         }],
@@ -186,6 +187,7 @@ describe('familyShareViewerService', () => {
     expect(scheduleDbMocks.getGames).not.toHaveBeenCalled();
     expect(scheduleHelperMocks.fetchAndParseCalendar).not.toHaveBeenCalled();
     expect(model.events.map((event) => event.id)).toEqual(['game-1', 'external-1']);
+    expect(model.events.find((event) => event.id === 'external-1')?.locationDetail).toBe('Field 2');
     expect(JSON.stringify(model)).not.toContain('extraCalendarUrls');
     expect(JSON.stringify(model)).not.toContain('ownerUserId');
   });

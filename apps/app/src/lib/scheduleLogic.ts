@@ -146,6 +146,7 @@ export type ParentScheduleEvent = {
   date: Date;
   endDate?: Date | null;
   location: string;
+  locationDetail?: string | null;
   opponent?: string | null;
   opponentTeamId?: string | null;
   opponentTeamName?: string | null;
@@ -388,6 +389,40 @@ export function getScheduleTitle(event: Pick<ParentScheduleEvent, 'type' | 'titl
     return event.title || 'Practice';
   }
   return `vs. ${event.opponent || 'TBD'}`;
+}
+
+export function getScheduleLocationLabel(
+  event: Pick<ParentScheduleEvent, 'location' | 'locationDetail'>,
+  fallback = 'TBD'
+) {
+  const location = String(event.location || '').trim();
+  const locationDetail = String(event.locationDetail || '')
+    .replace(/\\n/gi, '\n')
+    .replace(/\\,/g, ',')
+    .split(/\r?\n/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .join(' · ');
+  const normalizedFallback = String(fallback || '').trim().toLowerCase();
+  const isPlaceholderLocation = location.toLowerCase() === 'tbd'
+    || (normalizedFallback && location.toLowerCase() === normalizedFallback);
+  if (!locationDetail) return location || fallback;
+  if (!location || isPlaceholderLocation) return locationDetail;
+  if (location.toLowerCase().includes(locationDetail.toLowerCase())) return location;
+  return `${location} · ${locationDetail}`;
+}
+
+const CALENDAR_LOCATION_DETAIL_PATTERN =
+  /^(?:field|diamond|court|pitch|rink|gym|arena)\s*(?:(?:#|no\.?|number|:|-)\s*)?(?:\d+[a-z]?|[a-z])$/i;
+
+export function getCalendarLocationDetail(value: unknown) {
+  const locationLines = String(value || '')
+    .replace(/\\n/gi, '\n')
+    .replace(/\\,/g, ',')
+    .split(/\r?\n/)
+    .map((part) => part.trim())
+    .filter((part) => CALENDAR_LOCATION_DETAIL_PATTERN.test(part));
+  return locationLines.length ? locationLines.join(' · ') : null;
 }
 
 export function normalizeRsvpResponse(response: unknown): RsvpResponse {
@@ -1466,7 +1501,7 @@ export function buildScheduleIcs(events: ParentScheduleEvent[], now = new Date()
       `DTSTART:${formatIcsDate(event.date)}`,
       `DTEND:${formatIcsDate(endDate)}`,
       `SUMMARY:${escapeIcsText(summary)}`,
-      `LOCATION:${escapeIcsText(event.location || 'TBD')}`,
+      `LOCATION:${escapeIcsText(getScheduleLocationLabel(event))}`,
       `DESCRIPTION:${escapeIcsText(description)}`,
       'END:VEVENT'
     );
@@ -1483,7 +1518,7 @@ export function buildScheduleAgendaText(events: ParentScheduleEvent[]) {
       `${formatEventDateLabel(event.date)} ${formatEventTimeLabel(event.date)}`,
       getScheduleTitle(event),
       event.teamName,
-      event.location || 'Location TBD',
+      getScheduleLocationLabel(event, 'Location TBD'),
       childLabel
     ].filter(Boolean).join(' · ');
   }).join('\n');

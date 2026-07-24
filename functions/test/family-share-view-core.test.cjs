@@ -34,7 +34,8 @@ test('projects bounded recurring ICS events without returning source URLs or sen
     'DTEND:20260720T190000Z',
     'RRULE:FREQ=WEEKLY;COUNT=3;BYDAY=MO',
     'SUMMARY:Practice',
-    'LOCATION:Field 1',
+    'LOCATION:Blue Valley Recreation Sports Complex',
+    'DESCRIPTION:Field 14',
     'END:VEVENT',
     'END:VCALENDAR'
   ].join('\r\n'), {
@@ -50,6 +51,7 @@ test('projects bounded recurring ICS events without returning source URLs or sen
     '2026-08-03T18:00:00.000Z'
   ]);
   assert.ok(events.every((event) => event.type === 'practice'));
+  assert.ok(events.every((event) => event.locationDetail === 'Field 14'));
   const response = sanitizeFamilyShareViewResponse({
     token: {
       ownerUserId: 'SENTINEL_OWNER_UID',
@@ -67,7 +69,32 @@ test('projects bounded recurring ICS events without returning source URLs or sen
   assert.equal(payload.includes('extraCalendarUrls'), false);
   assert.equal(payload.includes('calendarUrls'), false);
   assert.equal(payload.includes('calendarUidHash'), false);
+  assert.equal(response.externalEvents[0].locationDetail, 'Field 14');
   assert.equal(response.presentation.label, 'Grandma');
+});
+
+test('does not promote ordinary calendar notes into location details', () => {
+  const events = buildExternalCalendarEvents([
+    'BEGIN:VCALENDAR',
+    'BEGIN:VEVENT',
+    'UID:note-only',
+    'DTSTART:20260720T180000Z',
+    'SUMMARY:Practice',
+    'LOCATION:Blue Valley Recreation Sports Complex',
+    'DESCRIPTION:Bring turf shoes for the field\\nUse the gym entrance',
+    'END:VEVENT',
+    'BEGIN:VEVENT',
+    'UID:field-label',
+    'DTSTART:20260721T180000Z',
+    'SUMMARY:Practice',
+    'LOCATION:Blue Valley Recreation Sports Complex',
+    `DESCRIPTION:${'A'.repeat(260)}\\nCourt #2\\nBring water`,
+    'END:VEVENT',
+    'END:VCALENDAR'
+  ].join('\r\n'), { sourceId: 'opaque-source-id' });
+
+  assert.equal(events.find((event) => event.calendarUidHash === hashFamilyShareCalendarEventUid('note-only'))?.locationDetail, null);
+  assert.equal(events.find((event) => event.calendarUidHash === hashFamilyShareCalendarEventUid('field-label'))?.locationDetail, 'Court #2');
 });
 
 test('preserves TZID wall-clock recurrence times across daylight saving transitions', () => {

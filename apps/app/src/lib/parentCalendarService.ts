@@ -1,7 +1,7 @@
 import { getTeam } from './adapters/legacyParentTools';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import { loadParentScheduleSummary } from './homeService';
-import { formatEventDateLabel, formatEventTimeLabel, getScheduleTitle, type ParentScheduleEvent } from './scheduleLogic';
+import { formatEventDateLabel, formatEventTimeLabel, getScheduleLocationLabel, getScheduleTitle, type ParentScheduleEvent } from './scheduleLogic';
 import type { AuthUser } from './types';
 
 export type ParentCalendarTeam = {
@@ -55,7 +55,7 @@ export function buildParentScheduleIcs(events: ParentScheduleEvent[], calendarNa
             `DTSTART:${formatIcsDate(start)}`,
             `DTEND:${formatIcsDate(end)}`,
             `SUMMARY:${escapeIcs(title)}`,
-            `LOCATION:${escapeIcs(event.location || 'TBD')}`,
+            `LOCATION:${escapeIcs(getScheduleLocationLabel(event))}`,
             `DESCRIPTION:${escapeIcs(description)}`,
             'END:VEVENT'
         );
@@ -126,7 +126,7 @@ export function getCalendarEventShareText(event: ParentScheduleEvent) {
         getScheduleTitle(event),
         formatEventDateLabel(event.date),
         formatEventTimeLabel(event.date),
-        event.location || 'Location TBD'
+        getScheduleLocationLabel(event, 'Location TBD')
     ].filter(Boolean).join(' - ');
 }
 

@@ -15,7 +15,7 @@ describe('React app parent tools single-event ICS coverage', () => {
         expect(source).toContain("event.type === 'practice' ? 'Practice' : 'Game'");
         expect(source).toContain("event.childName ? `Player: ${event.childName}` : ''");
         expect(source).toContain('`SUMMARY:${escapeIcs(title)}`');
-        expect(source).toContain('`LOCATION:${escapeIcs(event.location || \'TBD\')}`');
+        expect(source).toContain('`LOCATION:${escapeIcs(getScheduleLocationLabel(event))}`');
         expect(source).toContain('`DESCRIPTION:${escapeIcs(description)}`');
     });
 });

@@ -379,6 +379,7 @@ beforeEach(() => {
             dtstart: new Date('2026-05-24T18:00:00Z'),
             dtend: new Date('2026-05-24T19:00:00Z'),
             location: 'Imported Field',
+            description: 'Field 14',
             status: 'CONFIRMED'
         }
     ]);
@@ -582,7 +583,8 @@ describe('React app schedule service contract integration', () => {
             sourceType: 'calendar',
             sourceLabel: 'Imported calendar',
             opponent: 'Eagles',
-            location: 'Imported Field'
+            location: 'Imported Field',
+            locationDetail: 'Field 14'
         });
     });
 

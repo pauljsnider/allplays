@@ -98,9 +98,11 @@ import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import { startUxTimer } from './uxTiming';
 import {
   countOpenScheduleAssignments,
+  getCalendarLocationDetail,
   getNextRideConfirmedSeatCount,
   getScheduleRideSeatInfo,
   getScheduleRideshareSummary,
+  getScheduleLocationLabel,
   getScheduleTitle,
   normalizeScheduleAssignment,
   normalizeRideOfferDirection,
@@ -3298,6 +3300,7 @@ function createScheduleEvent(input: {
   date: Date;
   endDate?: unknown;
   location?: string | null;
+  locationDetail?: string | null;
   opponent?: string | null;
   opponentTeamId?: string | null;
   opponentTeamName?: string | null;
@@ -3363,6 +3366,7 @@ function createScheduleEvent(input: {
     date: input.date,
     endDate,
     location: input.location || 'TBD',
+    locationDetail: compactString(input.locationDetail) || null,
     opponent: input.opponent || null,
     opponentTeamId: compactString(input.opponentTeamId) || null,
     opponentTeamName: input.opponentTeamName || null,
@@ -3636,6 +3640,7 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
           date,
           endDate: calendarEvent.dtend || calendarEvent.end || null,
           location: calendarEvent.location || 'TBD',
+          locationDetail: getCalendarLocationDetail(calendarEvent.description),
           opponent: extractOpponent(cleanSummary, teamName),
           title: isPractice ? cleanSummary || 'Practice' : null,
           isDbGame: false,
@@ -6979,7 +6984,7 @@ function buildStaffPracticePacketResult(event: ParentScheduleEvent, sessionId: s
     eventId: event.id,
     title: event.title || 'Practice',
     date: event.date,
-    location: event.location || 'TBD',
+    location: getScheduleLocationLabel(event),
     homePacket,
     completions,
     children: getPracticePacketChildren(childEvents, event),
@@ -7098,7 +7103,7 @@ export async function loadParentPracticePacket(event: ParentScheduleEvent, child
     eventId: event.id,
     title: event.title || 'Practice',
     date: event.date,
-    location: event.location || 'TBD',
+    location: getScheduleLocationLabel(event),
     homePacket: event.practiceHomePacket,
     completions,
     children: getPracticePacketChildren(childEvents, event)

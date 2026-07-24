@@ -74,6 +74,7 @@ import {
   formatEventTimeLabel,
   getScheduleMapHref,
   getScheduleForecastHref,
+  getScheduleLocationLabel,
   canSubmitScheduleEventRsvp,
   isScheduleAssignmentOpen,
   getScheduleTitle,
@@ -646,7 +647,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
               eventType={selectedEvent.type}
               title={title}
               timeLabel={formatHeroTime(selectedEvent)}
-              location={selectedEvent.location}
+              location={getScheduleLocationLabel(selectedEvent, 'Location TBD')}
               playerSummary={events.length > 1 ? (
                 <>
                   <PlayerSwitcher events={events} selectedChildId={selectedEvent.childId} onSelect={selectChild} compact />
@@ -1798,7 +1799,7 @@ function GameHubSection({ auth, event, childEvents, requestedPanel, onPanelChang
                 <div className="text-sm font-black text-gray-950">{isPractice ? event.title || 'Practice' : getScheduleTitle(event)}</div>
                 <div className="mt-1 flex min-w-0 flex-wrap gap-x-2 gap-y-1 text-xs font-semibold text-gray-500">
                   <span>{formatEventDateLabel(event.date)} · {formatEventTimeLabel(event.date)}</span>
-                  <span className="min-w-0 truncate">{event.location || 'Location TBD'}</span>
+                  <span className="min-w-0 truncate">{getScheduleLocationLabel(event, 'Location TBD')}</span>
                 </div>
               </div>
               <div className="flex flex-none flex-col items-end gap-1 text-right">
