@@ -409,13 +409,16 @@ export function getScheduleLocationLabel(
   return `${location} · ${locationDetail}`;
 }
 
+const CALENDAR_LOCATION_DETAIL_PATTERN =
+  /^(?:field|diamond|court|pitch|rink|gym|arena)\s*(?:(?:#|no\.?|number|:|-)\s*)?(?:\d+[a-z]?|[a-z])$/i;
+
 export function getCalendarLocationDetail(value: unknown) {
   const locationLines = String(value || '')
     .replace(/\\n/gi, '\n')
     .replace(/\\,/g, ',')
     .split(/\r?\n/)
     .map((part) => part.trim())
-    .filter((part) => /\b(field|diamond|court|pitch|rink|gym|arena)\b/i.test(part));
+    .filter((part) => CALENDAR_LOCATION_DETAIL_PATTERN.test(part));
   return locationLines.length ? locationLines.join(' · ') : null;
 }
 

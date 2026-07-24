@@ -218,6 +218,9 @@ describe('React app parent schedule logic', () => {
         expect(getScheduleMapHref(importedEvent.location)).not.toContain('Field+14');
         expect(getCalendarLocationDetail('Bring water')).toBeNull();
         expect(getCalendarLocationDetail('Field 14\nBring water')).toBe('Field 14');
+        expect(getCalendarLocationDetail('Court #2\nGym A')).toBe('Court #2 · Gym A');
+        expect(getCalendarLocationDetail('Bring turf shoes for the field')).toBeNull();
+        expect(getCalendarLocationDetail('Use the gym entrance')).toBeNull();
     });
 
     it('builds team options, packet rows, agenda text, and map links for shared UX', () => {

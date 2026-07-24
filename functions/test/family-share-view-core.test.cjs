@@ -73,6 +73,30 @@ test('projects bounded recurring ICS events without returning source URLs or sen
   assert.equal(response.presentation.label, 'Grandma');
 });
 
+test('does not promote ordinary calendar notes into location details', () => {
+  const events = buildExternalCalendarEvents([
+    'BEGIN:VCALENDAR',
+    'BEGIN:VEVENT',
+    'UID:note-only',
+    'DTSTART:20260720T180000Z',
+    'SUMMARY:Practice',
+    'LOCATION:Blue Valley Recreation Sports Complex',
+    'DESCRIPTION:Bring turf shoes for the field\\nUse the gym entrance',
+    'END:VEVENT',
+    'BEGIN:VEVENT',
+    'UID:field-label',
+    'DTSTART:20260721T180000Z',
+    'SUMMARY:Practice',
+    'LOCATION:Blue Valley Recreation Sports Complex',
+    'DESCRIPTION:Court #2\\nBring water',
+    'END:VEVENT',
+    'END:VCALENDAR'
+  ].join('\r\n'), { sourceId: 'opaque-source-id' });
+
+  assert.equal(events.find((event) => event.calendarUidHash === hashFamilyShareCalendarEventUid('note-only'))?.locationDetail, null);
+  assert.equal(events.find((event) => event.calendarUidHash === hashFamilyShareCalendarEventUid('field-label'))?.locationDetail, 'Court #2');
+});
+
 test('preserves TZID wall-clock recurrence times across daylight saving transitions', () => {
   const ics = [
     'BEGIN:VCALENDAR',

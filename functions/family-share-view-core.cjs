@@ -7,6 +7,8 @@ const MAX_FAMILY_SHARE_RECURRENCES = 366;
 const MAX_FAMILY_SHARE_CHILDREN = 50;
 const MAX_FAMILY_SHARE_TEAMS = 20;
 const MAX_FAMILY_SHARE_DB_EVENTS = 500;
+const CALENDAR_LOCATION_DETAIL_PATTERN =
+  /^(?:field|diamond|court|pitch|rink|gym|arena)\s*(?:(?:#|no\.?|number|:|-)\s*)?(?:\d+[a-z]?|[a-z])$/i;
 
 function compactText(value, maxLength = 240) {
   return String(value == null ? '' : value)
@@ -46,7 +48,7 @@ function getCalendarLocationDetail(value) {
   const locationLines = unescapeIcsText(value)
     .split(/\r?\n/)
     .map((part) => compactText(part, 300))
-    .filter((part) => /\b(field|diamond|court|pitch|rink|gym|arena)\b/i.test(part));
+    .filter((part) => CALENDAR_LOCATION_DETAIL_PATTERN.test(part));
   return locationLines.length ? compactText(locationLines.join(' · '), 300) : null;
 }
 
