@@ -122,8 +122,32 @@ jobs:
             done
           done
 
+      - name: Resolve Playwright version
+        id: pw-version
+        run: |
+          set -euo pipefail
+          # Key the browser cache on the installed Playwright version so a version
+          # bump misses the cache and re-downloads, but same-version runs reuse it.
+          version="$(node -e "console.log(require('@playwright/test/package.json').version)" 2>/dev/null \
+            || node -e "console.log(require('playwright/package.json').version)")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        id: pw-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ steps.pw-version.outputs.version }}
+
       - name: Install Playwright Chromium
-        run: npx playwright install --with-deps chromium
+        run: |
+          if [ "${{ steps.pw-cache.outputs.cache-hit }}" = "true" ]; then
+            # Browser binaries restored from cache; only (re)install the OS libs,
+            # which are not cached and are cheap.
+            npx playwright install-deps chromium
+          else
+            npx playwright install --with-deps chromium
+          fi
 
       - name: Run static-hosting smoke
         run: npx playwright test --config=playwright.smoke.config.js --grep-invert @visual --reporter=line
