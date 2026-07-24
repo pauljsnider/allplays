@@ -268,12 +268,36 @@ export function validateProductionDeployCommand(deployProd) {
     assertIncludes(deployProd, 'baseline_branch="master"', 'Production manual retry master baseline');
 
     const deployCommands = Array.from(deployProd.matchAll(/^\s*(?:npx firebase-tools@\S+|node "\$firebase_cli") deploy\b[^\n]*$/gm), match => match[0]);
-    const deployCommand = deployCommands.find(command => /--only(?:=|\s+)"\$deploy_targets"/.test(command)) || '';
+    const deployCommand = deployCommands.find(command =>
+        /--only(?:=|\s+)"\$deploy_targets"/.test(command) || command.includes('"${deploy_args[@]}"')
+    ) || '';
     if (!deployCommand) {
         throw new Error('Production Firebase deploy command is missing.');
     }
+    const deployArgsStart = deployProd.indexOf('local -a deploy_args=(');
+    const deployArgsEnd = deployProd.indexOf('\n            )', deployArgsStart);
+    const deployArgs = deployProd.slice(deployArgsStart, deployArgsEnd);
+    assertIncludes(deployArgs, '--only "$deploy_targets"', 'Production Firebase deploy target arguments');
+    assertIncludes(deployArgs, '--project game-flow-c6311', 'Production Firebase deploy project');
+    assertIncludes(deployArgs, '--config "$firebase_config"', 'Production Firebase generated config');
 
     assertIncludes(deployProd, 'retry_firebase_deploy "hosting,functions" "application"', 'Production application deploy targets');
+    assertIncludes(
+        deployProd,
+        '"functions:processAccountDeletionRequest,functions:syncTeamOwnerAccessOnCreate"',
+        'Production retry-enabled function allowlist'
+    );
+    assertIncludes(deployProd, 'deploy_args+=(--force)', 'Production targeted failure-policy acknowledgement');
+    assertMatches(
+        deployProd,
+        /retry_firebase_deploy\s+\\?\s*"functions:processAccountDeletionRequest,functions:syncTeamOwnerAccessOnCreate"\s+\\?\s*"retry-enabled-functions"\s+\\?\s*3\s+\\?\s*15\s+\\?\s*true/,
+        'Production retry-enabled function failure-policy acknowledgement call'
+    );
+    assertIncludes(
+        deployProd,
+        'Refusing --force outside the reviewed retry-enabled function allowlist.',
+        'Production force-deploy allowlist guard'
+    );
     assertIncludes(deployProd, 'retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 8 30', 'Production Firestore deploy targets and bounded extended retry');
     assertIncludes(deployProd, 'if (( retry_delay_seconds > 120 )); then', 'Production Firebase retry delay cap');
     assertIncludes(deployProd, 'HTTP Error:[[:space:]]*409,[[:space:]]*Requested entity already exists', 'Production Firestore release-race retry');
@@ -330,14 +354,21 @@ export function validateProductionDeployCommand(deployProd) {
     const conditionalEnd = deployProd.indexOf('\n          fi', unchangedBranchStart);
     const changedBranch = deployProd.slice(changedBranchStart, unchangedBranchStart);
     const unchangedBranch = deployProd.slice(unchangedBranchStart, conditionalEnd);
-    if (changedBranch.indexOf('"firestore"') > changedBranch.indexOf('"application"')) {
-        throw new Error('Production Firestore deploy must run first when its configuration changed.');
-    }
-    if (!unchangedBranch.includes('"application"')) {
-        throw new Error('Production application deploy is missing when Firestore configuration is unchanged.');
-    }
     if (unchangedBranch.includes('"firestore"')) {
         throw new Error('Production must not redeploy unchanged Firestore configuration.');
+    }
+    const retryEnabledDeploy = deployProd.indexOf('"retry-enabled-functions"', conditionalEnd);
+    const applicationDeploy = deployProd.indexOf('retry_firebase_deploy "hosting,functions" "application"', conditionalEnd);
+    const firstApplicationDeploy = deployProd.indexOf('retry_firebase_deploy "hosting,functions" "application"');
+    if (retryEnabledDeploy === -1 || applicationDeploy <= retryEnabledDeploy) {
+        throw new Error('Production application deploy must follow the targeted retry-enabled function acknowledgement.');
+    }
+    if (
+        changedBranch.indexOf('"firestore"') === -1
+        || conditionalEnd >= retryEnabledDeploy
+        || firstApplicationDeploy < conditionalEnd
+    ) {
+        throw new Error('Production Firestore deploy must run first when its configuration changed.');
     }
 
     const storageDeployCommand = deployCommands.find(command => /--only(?:=|\s+)storage(?:\s|$)/.test(command)) || '';
@@ -353,8 +384,6 @@ export function validateProductionDeployCommand(deployProd) {
     assertIncludes(deployProd, "sed -E 's/\\x1B\\[[0-9;]*[[:alpha:]]//g' \"$storage_log\" > \"$storage_plain_log\"", 'Production Storage rules ANSI log normalization');
     assertIncludes(deployProd, '[[ "$STORAGE_RULES_CHANGED" != "true" ]]', 'Production Storage rules unchanged-only skip');
     assertIncludes(deployProd, 'exit "$storage_status"', 'Production Storage rules changed failure');
-    assertMatches(deployCommand, /(?:^|\s)--project game-flow-c6311(?:\s|$)/, 'Production Firebase deploy project');
-    assertMatches(deployCommand, /(?:^|\s)--config "\$firebase_config"(?:\s|$)/, 'Production Firebase generated config');
 }
 
 export function validateFirebaseRulesCi() {

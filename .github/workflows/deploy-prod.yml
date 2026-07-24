@@ -415,15 +415,33 @@ jobs:
             local deploy_label="$2"
             local max_attempts="${3:-3}"
             local base_delay_seconds="${4:-15}"
+            local acknowledge_failure_policy="${5:-false}"
             local attempt deploy_log deploy_status retry_delay_seconds
             local api_surface final_error_class final_http_status
+            local -a deploy_args=(
+              --only "$deploy_targets"
+              --project game-flow-c6311
+              --config "$firebase_config"
+              --non-interactive
+            )
+
+            if [[ "$acknowledge_failure_policy" == "true" ]]; then
+              if [[ "$deploy_targets" != "functions:processAccountDeletionRequest,functions:syncTeamOwnerAccessOnCreate" ]]; then
+                echo "Refusing --force outside the reviewed retry-enabled function allowlist." >&2
+                return 1
+              fi
+              deploy_args+=(--force)
+            elif [[ "$acknowledge_failure_policy" != "false" ]]; then
+              echo "Invalid failure-policy acknowledgement state." >&2
+              return 1
+            fi
 
             for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do
               deploy_log="$RUNNER_TEMP/firebase-${deploy_label}-deploy-attempt-${attempt}.log"
               set +e
               (
                 cd "$FIREBASE_PRODUCTION_BUNDLE"
-                node "$firebase_cli" deploy --only "$deploy_targets" --project game-flow-c6311 --config "$firebase_config" --non-interactive
+                node "$firebase_cli" deploy "${deploy_args[@]}"
               ) 2>&1 | tee "$deploy_log"
               deploy_status="${PIPESTATUS[0]}"
               set -e
@@ -490,13 +508,23 @@ jobs:
             # Keep coupled authorization/index changes fail-closed: application code
             # must not publish until its Firestore configuration is active.
             retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 8 30
-            retry_firebase_deploy "hosting,functions" "application"
           else
             # No authorization/index drift exists relative to the last successful
             # production deployment. Do not make a redundant Rules API write: an
             # unrelated Rules API outage must not fail a Hosting/Functions-only fix.
-            retry_firebase_deploy "hosting,functions" "application"
+            :
           fi
+          # These two event handlers intentionally enable automatic retries and
+          # have idempotency coverage. A targeted --force acknowledges only that
+          # failure policy; the subsequent full-fleet deploy remains unforced so
+          # deletions and unsafe trigger migrations still fail closed.
+          retry_firebase_deploy \
+            "functions:processAccountDeletionRequest,functions:syncTeamOwnerAccessOnCreate" \
+            "retry-enabled-functions" \
+            3 \
+            15 \
+            true
+          retry_firebase_deploy "hosting,functions" "application"
 
           if [[ "$ADMIN_USER_SEARCH_BACKFILL_NEEDED" == "true" ]]; then
             node "$FIREBASE_PRODUCTION_BUNDLE/_migration/backfill-admin-user-search-index.mjs" --apply
