@@ -8,13 +8,15 @@ Spec: `/spec/chatgpt-app-integration/` · Plan: `AllPlays_ChatGPT_App_Integratio
 
 ## How authorization works
 
-The service holds **no privileged credentials** (no service account, no Admin
-SDK). The connector's bearer token is the user's Firebase **refresh token**
-(or a short-lived ID token). Per request the service exchanges it for an ID
-token and calls the **Firestore REST API as that user**, so every read is
-authorized by the same `firestore.rules` that protect the AllPlays web and
-mobile clients. Cross-team access fails at the database, not just in service
-code (which also checks, as defense-in-depth).
+Application data access holds **no privileged credentials**. The connector's
+bearer token resolves to the user's Firebase refresh token (or a short-lived ID
+token). Per request the service exchanges it for an ID token and calls the
+Firestore REST API as that user, so every application read is authorized by the
+same `firestore.rules` that protect the AllPlays web and mobile clients.
+
+The production OAuth grant store is a separate control plane. Cloud Run's
+service identity may access only that Firestore store and its encryption secret;
+it never reads application data with service privileges.
 
 ## Run locally
 
@@ -31,6 +33,10 @@ npm start           # listens on :8787, endpoint POST /mcp
 exits at startup when either is missing. `CHATGPT_OAUTH_CLIENT_ID` identifies
 the trusted public ChatGPT client and defaults to `allplays-chatgpt-connector`;
 set the same value on every broker instance.
+
+Local development defaults to `OAUTH_GRANT_STORE=memory`. This mode is bounded
+but process-local. Production rejects memory mode and requires the durable
+configuration below.
 
 Get a bearer token (prints your refresh token):
 
@@ -73,9 +79,15 @@ dynamic client registration, authorization code + PKCE (S256 only), refresh
 grant, and opaque access tokens that map to the signed-in user's Firebase
 refresh token. Codes are single-use with a 10-minute TTL; access tokens last
 1 hour. The trusted ChatGPT client registration is configuration-backed and
-stable across instances. Authorization codes and tokens remain in-memory, so
-a restart logs everyone out; Firestore-backed grant storage is still required
-for complete multi-instance Cloud Run support.
+stable across instances. Access and refresh grants use Firestore in production,
+so they survive restarts and resolve across Cloud Run instances. Refresh-token
+consume-and-reissue is one conditional Firestore commit, so concurrent reuse has
+one winner. Authorization codes remain process-local under issue #4159.
+
+Raw broker tokens are not stored. Firestore document IDs contain SHA-256 token
+digests, and the Firebase refresh-token binding is encrypted with AES-256-GCM.
+The service checks `expiresAt` on every read or rotation; Firestore TTL provides
+eventual physical cleanup.
 
 Sign-in accepts AllPlays email/password (proxied to Firebase Identity Toolkit
 with the site referer; the password is never stored). Google sign-in is a
@@ -84,27 +96,106 @@ follow-up.
 For manual curl testing you can still bypass OAuth: a Firebase refresh token
 or ID token works directly as the MCP bearer.
 
-## Deploy (dev Cloud Run)
+## Durable grant-store configuration
+
+Required production variables:
+
+| Variable | Purpose |
+|---|---|
+| `OAUTH_GRANT_STORE=firestore` | Enables shared durable grants. Production rejects any other value. |
+| `OAUTH_GRANT_STORE_PROJECT_ID` | Explicit project containing the isolated grant store. Required in production; it never defaults to the application project. |
+| `OAUTH_GRANT_STORE_DATABASE_ID` | Explicit Firestore database ID. Required in production. The application project's `(default)` database is rejected. |
+| `OAUTH_GRANT_STORE_COLLECTION` | Collection/collection-group name. Defaults to `chatgptMcpOAuthGrants`. |
+| `OAUTH_GRANT_ENCRYPTION_KEY` | Base64-encoded 32-byte AES key, supplied from Secret Manager. |
+
+Create the encryption secret without committing the key:
 
 ```bash
+openssl rand -base64 32 | tr -d '\n' \
+  | gcloud secrets create chatgpt-mcp-oauth-grant-key \
+      --data-file=- \
+      --replication-policy=automatic \
+      --project "$OAUTH_GRANT_STORE_PROJECT_ID"
+```
+
+Use a dedicated Cloud Run service account. Grant it `roles/datastore.user` only
+in an isolated grant-store project, or use an IAM condition that limits the role
+to a dedicated non-default database. For example:
+
+```bash
+gcloud projects add-iam-policy-binding "$OAUTH_GRANT_STORE_PROJECT_ID" \
+  --member="serviceAccount:$OAUTH_SERVICE_ACCOUNT" \
+  --role=roles/datastore.user \
+  --condition="expression=resource.name=='projects/$OAUTH_GRANT_STORE_PROJECT_ID/databases/$OAUTH_GRANT_STORE_DATABASE_ID',title=oauth-grant-database"
+```
+
+Grant `roles/secretmanager.secretAccessor` only on
+`chatgpt-mcp-oauth-grant-key`. Do not grant Editor, Owner, project-wide
+application data access, or application data administration roles. Firestore
+IAM cannot be collection-scoped.
+
+Enable TTL on the `expiresAt` field:
+
+```bash
+gcloud firestore fields ttls update expiresAt \
+  --collection-group="$OAUTH_GRANT_STORE_COLLECTION" \
+  --enable-ttl \
+  --database="$OAUTH_GRANT_STORE_DATABASE_ID" \
+  --project "$OAUTH_GRANT_STORE_PROJECT_ID"
+```
+
+TTL deletion is asynchronous and is not an authorization control. The service
+rejects expired grants immediately and opportunistically deletes them.
+
+## Deploy (Cloud Run)
+
+```bash
+OAUTH_GRANT_KEY_VERSION=1 # Pin the numeric version created above.
+
 gcloud run deploy allplays-chatgpt-mcp \
   --source services/chatgpt-mcp \
   --project game-flow-c6311 \
-  --region us-central1
+  --region us-central1 \
+  --service-account chatgpt-mcp@game-flow-c6311.iam.gserviceaccount.com \
+  --set-env-vars OAUTH_GRANT_STORE=firestore,OAUTH_GRANT_STORE_PROJECT_ID=oauth-grant-project,OAUTH_GRANT_STORE_DATABASE_ID='(default)',OAUTH_GRANT_STORE_COLLECTION=chatgptMcpOAuthGrants \
+  --set-secrets "OAUTH_GRANT_ENCRYPTION_KEY=projects/$OAUTH_GRANT_STORE_PROJECT_ID/secrets/chatgpt-mcp-oauth-grant-key:$OAUTH_GRANT_KEY_VERSION"
 ```
 
-No secrets to provision — the service is stateless and credential-free. The
-production path replaces raw refresh tokens with an OAuth broker
-(authorization code + PKCE) that yields the same user-scoped credential.
+Before increasing the minimum or maximum instance count, verify cross-instance
+access-token resolution, refresh exchange after a revision restart, and a
+two-request refresh race with exactly one success.
+
+### Key rotation and rollback
+
+The current envelope version uses one active key. Replacing the secret value
+makes existing grants unreadable and intentionally forces every connector to
+reconnect. Treat key replacement as a controlled revocation:
+
+1. Announce the reconnect window and record the change.
+2. Add a new Secret Manager version and deploy a revision pinned to that version.
+3. Verify new grants, then disable the old version after the maximum 30-day
+   refresh lifetime or after explicitly accepting immediate revocation.
+
+Rollback must keep the same key version and durable-store configuration. Never
+roll a production revision back to `OAUTH_GRANT_STORE=memory`; that reintroduces
+instance-local grants and invalidates the multi-instance guarantee.
 
 ## Security model
 
 - Identity comes only from the bearer token; tool arguments are never trusted.
+- Opaque broker tokens are stored only as SHA-256 lookup digests.
+- Firebase refresh-token bindings are AES-256-GCM encrypted before persistence.
+- Firestore refresh rotation atomically consumes the predecessor and creates
+  both successor grants.
 - All Firestore access is user-credentialed — `firestore.rules` is the
-  enforcement point, identical to the parent UI.
+  enforcement point for application data, identical to the parent UI.
+- The Cloud Run service identity is limited to the isolated OAuth grant store
+  and encryption secret; audit both IAM access paths.
 - Responses are additionally field-whitelisted in `src/core.js`;
   `players/*/private/*` and `privatePlayerStats` are never requested.
 - A forged JWT yields no data: every Firestore call presents that same token
   and is rejected by the backend.
 
-Unit tests: `npx vitest run tests/unit/chatgpt-mcp-core.test.js` from the repo root.
+Focused OAuth tests:
+`npx vitest run tests/unit/chatgpt-mcp-oauth.test.js --reporter=verbose`
+from the repo root.

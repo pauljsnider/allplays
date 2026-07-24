@@ -7,10 +7,12 @@
 // resolve broker token → Firebase credential → rules-enforced Firestore
 // access, unchanged from the direct-bearer path.
 //
-// Storage is in-memory: fine for a single-instance dev deployment, replaced
-// by Firestore-backed storage before multi-instance Cloud Run (see spec).
+// Authorization codes remain process-local under issue #4159. Issued access
+// and refresh grants use an injected store so production instances share one
+// durable, atomic lifecycle boundary.
 
 import { createHash, randomBytes } from 'node:crypto';
+import { createMemoryOAuthGrantStore } from './oauthStore.js';
 
 const CODE_TTL_MS = 10 * 60 * 1000;
 const ACCESS_TOKEN_TTL_MS = 60 * 60 * 1000;
@@ -41,7 +43,8 @@ export function createOAuthBroker({
     now = () => Date.now(),
     randomId = (bytes = 32) => randomBytes(bytes).toString('base64url'),
     maxStoredGrants = MAX_STORED_GRANTS,
-    trustedClientId = DEFAULT_TRUSTED_CLIENT_ID
+    trustedClientId = DEFAULT_TRUSTED_CLIENT_ID,
+    grantStore = createMemoryOAuthGrantStore({ now, maxStoredGrants })
 } = {}) {
     if (!Number.isInteger(maxStoredGrants) || maxStoredGrants < 1) {
         throw new Error('maxStoredGrants must be a positive integer.');
@@ -49,13 +52,19 @@ export function createOAuthBroker({
     if (typeof trustedClientId !== 'string' || !trustedClientId.trim()) {
         throw new Error('trustedClientId must be a non-empty string.');
     }
+    if (
+        !grantStore
+        || typeof grantStore.issueGrantPair !== 'function'
+        || typeof grantStore.resolveAccessToken !== 'function'
+        || typeof grantStore.rotateRefreshToken !== 'function'
+    ) {
+        throw new Error('grantStore must implement the OAuth grant store contract.');
+    }
     const registeredClient = {
         clientId: trustedClientId.trim(),
         redirectUris: [...TRUSTED_REDIRECT_URIS]
     };
     const codes = new Map();
-    const accessTokens = new Map();
-    const refreshTokens = new Map();
 
     function pruneExpired(store) {
         for (const [key, record] of store) {
@@ -117,15 +126,7 @@ export function createOAuthBroker({
         return code;
     }
 
-    function issueTokens(firebaseRefreshToken, clientId) {
-        const accessToken = randomId(32);
-        const refreshToken = randomId(32);
-        setBounded(accessTokens, accessToken, { firebaseRefreshToken, expiresAt: now() + ACCESS_TOKEN_TTL_MS });
-        setBounded(refreshTokens, refreshToken, {
-            firebaseRefreshToken,
-            clientId,
-            expiresAt: now() + REFRESH_TOKEN_TTL_MS
-        });
+    function tokenResponse(accessToken, refreshToken) {
         return {
             access_token: accessToken,
             token_type: 'Bearer',
@@ -134,7 +135,22 @@ export function createOAuthBroker({
         };
     }
 
-    function exchange(params = {}) {
+    async function issueTokens(firebaseRefreshToken, clientId) {
+        const accessToken = randomId(32);
+        const refreshToken = randomId(32);
+        const issuedAt = now();
+        await grantStore.issueGrantPair({
+            accessToken,
+            refreshToken,
+            firebaseRefreshToken,
+            clientId,
+            accessExpiresAt: issuedAt + ACCESS_TOKEN_TTL_MS,
+            refreshExpiresAt: issuedAt + REFRESH_TOKEN_TTL_MS
+        });
+        return tokenResponse(accessToken, refreshToken);
+    }
+
+    async function exchange(params = {}) {
         const grantType = params.grant_type;
         if (grantType === 'authorization_code') {
             const record = codes.get(params.code);
@@ -154,20 +170,24 @@ export function createOAuthBroker({
             return issueTokens(record.firebaseRefreshToken, record.clientId);
         }
         if (grantType === 'refresh_token') {
-            pruneExpired(refreshTokens);
-            const record = refreshTokens.get(params.refresh_token);
-            if (!record) throw new OAuthError('invalid_grant', 'Unknown refresh token.');
-            refreshTokens.delete(params.refresh_token); // rotate on every use
-            return issueTokens(record.firebaseRefreshToken, record.clientId);
+            const accessToken = randomId(32);
+            const refreshToken = randomId(32);
+            const issuedAt = now();
+            const rotated = await grantStore.rotateRefreshToken({
+                refreshToken: params.refresh_token,
+                newAccessToken: accessToken,
+                newRefreshToken: refreshToken,
+                accessExpiresAt: issuedAt + ACCESS_TOKEN_TTL_MS,
+                refreshExpiresAt: issuedAt + REFRESH_TOKEN_TTL_MS
+            });
+            if (!rotated) throw new OAuthError('invalid_grant', 'Unknown refresh token.');
+            return tokenResponse(accessToken, refreshToken);
         }
         throw new OAuthError('invalid_request', 'Unsupported grant_type.');
     }
 
-    function resolveAccessToken(token) {
-        pruneExpired(accessTokens);
-        const record = accessTokens.get(token);
-        if (!record) return null;
-        return { firebaseRefreshToken: record.firebaseRefreshToken };
+    async function resolveAccessToken(token) {
+        return grantStore.resolveAccessToken(token);
     }
 
     return { registerClient, validateAuthorizeRequest, approveAuthorization, exchange, resolveAccessToken };
