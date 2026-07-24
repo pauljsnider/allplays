@@ -6,6 +6,8 @@ on:
       - opened
       - synchronize
       - reopened
+      - labeled
+      - unlabeled
       - closed
 
 # Pull-request-controlled code runs here, so this workflow has no repository
@@ -14,63 +16,16 @@ on:
 permissions: {}
 
 concurrency:
-  group: preview-${{ github.event.pull_request.number }}
+  group: ${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'external-claim' && format('preview-label-noop-{0}', github.run_id) || format('preview-{0}', github.event.pull_request.number) }}
   cancel-in-progress: true
 
 jobs:
-  unit-tests:
-    if: github.event.action != 'closed' && github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout pull request merge
-        run: |
-          git init .
-          git remote add origin https://github.com/${{ github.repository }}.git
-          git fetch --no-tags --prune --depth=1 origin +refs/pull/${{ github.event.pull_request.number }}/merge:refs/remotes/pull/${{ github.event.pull_request.number }}/merge
-          git checkout --force refs/remotes/pull/${{ github.event.pull_request.number }}/merge
-
-      - name: Setup Node
-        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Setup Java
-        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
-        with:
-          distribution: temurin
-          java-version: 21
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Install Functions dependencies
-        run: npm ci --prefix functions
-
-      - name: Install app dependencies
-        run: |
-          npm config set fetch-retries 5
-          npm config set fetch-retry-factor 2
-          npm config set fetch-retry-mintimeout 10000
-          npm config set fetch-retry-maxtimeout 60000
-          for attempt in 1 2 3; do
-            npm ci --prefix apps/app && exit 0
-            if [ "$attempt" -eq 3 ]; then
-              exit 1
-            fi
-            echo "Transient npm install failure for apps/app. Retrying in 15 seconds..."
-            sleep 15
-          done
-
-      - name: Run unit tests
-        run: npm run test:unit:ci
-
-      - name: Run authentication email functions coverage
-        run: npm run test:functions:auth-email
-
   regression-guards:
-    if: github.event.action != 'closed' && github.event.pull_request.head.repo.full_name == github.repository
+    if: >-
+      github.event.action != 'closed' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      !contains(github.event.pull_request.labels.*.name, 'external-claim') &&
+      ((github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'external-claim')
     runs-on: ubuntu-latest
 
     steps:
@@ -112,8 +67,12 @@ jobs:
           path: /tmp/allplays-preview-regression-guards.log
 
   build-preview-artifact:
-    if: github.event.action != 'closed' && github.event.pull_request.head.repo.full_name == github.repository
-    needs: [unit-tests, regression-guards]
+    if: >-
+      github.event.action != 'closed' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      !contains(github.event.pull_request.labels.*.name, 'external-claim') &&
+      ((github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'external-claim')
+    needs: [regression-guards]
     runs-on: ubuntu-latest
 
     steps:

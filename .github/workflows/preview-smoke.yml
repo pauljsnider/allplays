@@ -2,9 +2,18 @@ name: preview-smoke
 
 on:
   pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - labeled
+      - unlabeled
 
 concurrency:
-  group: preview-smoke-${{ github.event.pull_request.number }}
+  # Unrelated label churn must neither cancel a landing smoke nor publish a
+  # replacement required context. external-claim transitions intentionally use
+  # the normal PR group so activating the lease cancels expensive work.
+  group: ${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'external-claim' && format('preview-smoke-label-noop-{0}', github.run_id) || format('preview-smoke-{0}', github.event.pull_request.number) }}
   cancel-in-progress: true
 
 jobs:
@@ -12,6 +21,7 @@ jobs:
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     outputs:
+      landing: ${{ steps.filter.outputs.landing }}
       web: ${{ steps.filter.outputs.web }}
     steps:
       - name: Checkout
@@ -22,10 +32,32 @@ jobs:
       - name: Detect preview-relevant changes
         id: filter
         env:
+          ACTION: ${{ github.event.action }}
+          EXTERNAL_CLAIMED: ${{ contains(github.event.pull_request.labels.*.name, 'external-claim') }}
+          LABEL_NAME: ${{ github.event.label.name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
+
+          # external-claim is the active-development lease. Its removal is the
+          # handoff to the serialized landing worker and reruns the full smoke.
+          if [ "$EXTERNAL_CLAIMED" = "true" ]; then
+            echo "external-claim is active — deferring full preview smoke." >&2
+            echo "landing=false" >> "$GITHUB_OUTPUT"
+            echo "web=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if { [ "$ACTION" = "labeled" ] || [ "$ACTION" = "unlabeled" ]; } &&
+             [ "$LABEL_NAME" != "external-claim" ]; then
+            echo "Unrelated label transition — not restarting preview smoke." >&2
+            echo "landing=false" >> "$GITHUB_OUTPUT"
+            echo "web=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "landing=true" >> "$GITHUB_OUTPUT"
 
           # Fail open: if we cannot compute a diff (new branch, missing base),
           # run the smoke so we never silently skip a real regression.
@@ -194,8 +226,9 @@ jobs:
   # not-applicable to this change (backend/native/docs-only); fails only on a real
   # failure. Mirrors the mobile-build aggregate so a skipped run never blocks merge.
   preview-smoke:
+    name: ${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'external-claim' && 'preview-smoke-label-noop' || 'preview-smoke' }}
     needs: [changes, preview-smoke-run]
-    if: always()
+    if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - name: Report preview-smoke result
@@ -217,6 +250,11 @@ jobs:
           if [ "$CHANGES_RESULT" != "success" ]; then
             echo "Change detection did not succeed ($CHANGES_RESULT) — failing closed." >&2
             exit 1
+          fi
+
+          if [ "${{ needs.changes.outputs.landing }}" != "true" ]; then
+            echo "Development ownership is still active — full preview smoke deferred until external-claim is removed."
+            exit 0
           fi
 
           if [ "$SHOULD_RUN" = "false" ] && [ "$RUN_RESULT" = "skipped" ]; then

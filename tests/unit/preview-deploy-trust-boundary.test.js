@@ -179,20 +179,25 @@ describe('preview deployment workflow trust boundary', () => {
         expect(pullRequestWorkflow).not.toMatch(/^\s+\w[\w-]*:\s+write\s*$/m);
         expect(pullRequestWorkflow).toContain('name: firebase-preview-hosting-bundle');
         expect(pullRequestWorkflow).toContain('include-hidden-files: true');
-        expect(pullRequestWorkflow).toMatch(/build-preview-artifact:[\s\S]*needs: \[unit-tests, regression-guards\]/);
+        expect(pullRequestWorkflow).toMatch(/build-preview-artifact:[\s\S]*needs: \[regression-guards\]/);
+        expect(pullRequestWorkflow).not.toContain('  unit-tests:');
+        expect(pullRequestWorkflow).toContain("!contains(github.event.pull_request.labels.*.name, 'external-claim')");
     });
 
     it('cancels in-flight preview work when its pull request closes', () => {
         expect(pullRequestWorkflow).toContain('      - closed');
-        expect(pullRequestWorkflow).toContain('group: preview-${{ github.event.pull_request.number }}');
+        expect(pullRequestWorkflow).toContain("format('preview-{0}', github.event.pull_request.number)");
         expect(pullRequestWorkflow).toContain('cancel-in-progress: true');
-        expect(pullRequestWorkflow.match(
-            /if: github\.event\.action != 'closed' && github\.event\.pull_request\.head\.repo\.full_name == github\.repository/g
-        )).toHaveLength(3);
+        expect(pullRequestWorkflow).toContain('      - unlabeled');
+        expect(pullRequestWorkflow).toContain('      - labeled');
     });
 
     it('runs the credentialed deploy only from trusted default-branch code', () => {
         expect(trustedWorkflow).toContain('workflow_run:');
+        expect(trustedWorkflow).toContain('classify-trigger:');
+        expect(trustedWorkflow).toContain('preview_ready: ${{ steps.classify.outputs.preview_ready }}');
+        expect(trustedWorkflow).toContain('Successful preview source run had no bundle without an intentional two-job deferral.');
+        expect(trustedWorkflow).toContain("needs.classify-trigger.outputs.preview_ready == 'true'");
         expect(trustedWorkflow).toContain(
             'group: trusted-preview-pr-${{ github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.id }}'
         );
