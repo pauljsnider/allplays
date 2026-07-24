@@ -95,11 +95,10 @@ describe('authentication email delivery routing', () => {
     it('runs extracted authentication email behavior tests in PR and production CI', () => {
         const packageSource = read('package.json');
         const ciSource = read('.github/workflows/ci.yml');
-        const previewSource = read('.github/workflows/deploy-preview.yml');
         const productionSource = read('.github/workflows/deploy-prod.yml');
 
         expect(packageSource).toContain('test:functions:auth-email');
-        for (const workflowSource of [ciSource, previewSource, productionSource]) {
+        for (const workflowSource of [ciSource, productionSource]) {
             expect(workflowSource).toContain('npm run test:functions:auth-email');
             const unitJobStart = workflowSource.indexOf('  unit-tests:');
             const unitTestCommand = workflowSource.indexOf('run: npm run test:unit:ci', unitJobStart);

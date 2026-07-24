@@ -2,19 +2,29 @@ name: mobile-build
 
 on:
   pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - labeled
+      - unlabeled
   push:
     branches:
       - master
   workflow_dispatch:
 
 concurrency:
-  group: mobile-build-${{ github.workflow }}-${{ github.ref }}
+  # Only external-claim label transitions share the integration-run group.
+  # Other label churn gets a unique no-op run so it cannot cancel or replace a
+  # required mobile-build check for this head.
+  group: ${{ github.event_name == 'pull_request' && (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'external-claim' && format('mobile-build-label-noop-{0}', github.run_id) || format('mobile-build-{0}-{1}', github.workflow, github.ref) }}
   cancel-in-progress: true
 
 jobs:
   changes:
     runs-on: ubuntu-latest
     outputs:
+      landing: ${{ steps.filter.outputs.landing }}
       mobile: ${{ steps.filter.outputs.mobile }}
     steps:
       - name: Checkout
@@ -25,7 +35,10 @@ jobs:
       - name: Detect mobile-relevant changes
         id: filter
         env:
+          ACTION: ${{ github.event.action }}
+          EXTERNAL_CLAIMED: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'external-claim') }}
           EVENT_NAME: ${{ github.event_name }}
+          LABEL_NAME: ${{ github.event.label.name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           BEFORE_SHA: ${{ github.event.before }}
@@ -35,9 +48,31 @@ jobs:
 
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             echo "Manual run — always building." >&2
+            echo "landing=true" >> "$GITHUB_OUTPUT"
             echo "mobile=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+
+          # While another session owns the PR, keep the stable required
+          # mobile-build context cheap. Removing external-claim is the landing
+          # handoff and triggers this workflow again for the full native build.
+          if [ "$EVENT_NAME" = "pull_request" ] && [ "$EXTERNAL_CLAIMED" = "true" ]; then
+            echo "external-claim is active — deferring native integration builds." >&2
+            echo "landing=false" >> "$GITHUB_OUTPUT"
+            echo "mobile=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "$EVENT_NAME" = "pull_request" ] &&
+             { [ "$ACTION" = "labeled" ] || [ "$ACTION" = "unlabeled" ]; } &&
+             [ "$LABEL_NAME" != "external-claim" ]; then
+            echo "Unrelated label transition — not restarting native integration builds." >&2
+            echo "landing=false" >> "$GITHUB_OUTPUT"
+            echo "mobile=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "landing=true" >> "$GITHUB_OUTPUT"
 
           if [ "$EVENT_NAME" = "pull_request" ]; then
             CHANGED=$(git diff --name-only "$BASE_SHA...$HEAD_SHA")
@@ -255,8 +290,9 @@ jobs:
   # waiting on a check that never runs, while a PR that does touch mobile
   # paths can't merge with a red native build (the gap this job closes).
   mobile-build:
+    name: ${{ github.event_name == 'pull_request' && (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'external-claim' && 'mobile-build-label-noop' || 'mobile-build' }}
     needs: [changes, android-debug, ios-simulator]
-    if: always()
+    if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - name: Check native build results
@@ -264,6 +300,11 @@ jobs:
           if [ "${{ needs.changes.result }}" != "success" ]; then
             echo "changes job did not complete successfully (${{ needs.changes.result }}) — failing closed instead of assuming no mobile-relevant changes."
             exit 1
+          fi
+
+          if [ "${{ needs.changes.outputs.landing }}" != "true" ]; then
+            echo "Development ownership is still active — full native build deferred until external-claim is removed."
+            exit 0
           fi
 
           if [ "${{ needs.changes.outputs.mobile }}" != "true" ]; then

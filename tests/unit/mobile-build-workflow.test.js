@@ -28,6 +28,22 @@ describe('mobile-build CI workflow', () => {
         expect(workflow).toContain('capacitor\\.config\\.json');
     });
 
+    it('defers native integration while external development owns the PR and reruns on handoff', () => {
+        const triggerSection = workflow.slice(workflow.indexOf('\non:'), workflow.indexOf('\nconcurrency:'));
+        const changesSection = workflow.slice(workflow.indexOf('  changes:'), workflow.indexOf('  android-debug:'));
+        const gateSection = workflow.slice(workflow.indexOf('  mobile-build:'));
+
+        expect(triggerSection).toContain('      - unlabeled');
+        expect(triggerSection).toContain('      - labeled');
+        expect(changesSection).toContain("contains(github.event.pull_request.labels.*.name, 'external-claim')");
+        expect(changesSection).toContain('[ "$EXTERNAL_CLAIMED" = "true" ]');
+        expect(changesSection).toContain('echo "landing=false" >> "$GITHUB_OUTPUT"');
+        expect(changesSection).toContain('[ "$ACTION" = "labeled" ] || [ "$ACTION" = "unlabeled" ]');
+        expect(workflow).toContain("format('mobile-build-label-noop-{0}', github.run_id)");
+        expect(gateSection).toContain("'mobile-build-label-noop' || 'mobile-build'");
+        expect(gateSection).toContain('needs.changes.outputs.landing');
+    });
+
     it('skips the native builds themselves for non-mobile changes but always runs the required mobile-build gate job', () => {
         const androidStart = workflow.indexOf('  android-debug:');
         const androidSection = workflow.slice(androidStart, workflow.indexOf('  ios-simulator:'));
@@ -41,7 +57,14 @@ describe('mobile-build CI workflow', () => {
 
         const gateSection = workflow.slice(workflow.indexOf('  mobile-build:'));
         expect(gateSection).toContain('needs: [changes, android-debug, ios-simulator]');
-        expect(gateSection).toContain('if: always()');
+        expect(gateSection).toContain('if: ${{ always() && !cancelled() }}');
+    });
+
+    it('does not turn an intentional concurrency cancellation into a required-check failure', () => {
+        const gateSection = workflow.slice(workflow.indexOf('  mobile-build:'));
+
+        expect(gateSection).toContain('always()');
+        expect(gateSection).toContain('!cancelled()');
     });
 
     it('fails the required gate job when a mobile-relevant PR actually breaks native builds', () => {
