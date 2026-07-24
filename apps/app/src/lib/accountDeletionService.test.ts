@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   callable: vi.fn(),
   getNativeAuthIdToken: vi.fn(),
+  getNativeAuthUserId: vi.fn(),
   getPrimaryAppCheckHeaders: vi.fn(async (headers) => headers),
   getWebAuthIdToken: vi.fn(),
   httpsCallable: vi.fn(),
@@ -30,6 +31,7 @@ vi.mock('./authService', () => ({
     currentUser: null as null | { getIdToken: typeof mocks.getWebAuthIdToken }
   },
   getNativeAuthIdToken: mocks.getNativeAuthIdToken,
+  getNativeAuthUserId: mocks.getNativeAuthUserId,
   reauthenticateCurrentUserForDeletion: mocks.reauthenticateCurrentUserForDeletion,
   revokeCurrentAppleAuthorizationForDeletion: mocks.revokeCurrentAppleAuthorizationForDeletion
 }));
@@ -44,6 +46,8 @@ describe('accountDeletionService', () => {
   beforeEach(async () => {
     mocks.callable.mockReset();
     mocks.getNativeAuthIdToken.mockReset();
+    mocks.getNativeAuthUserId.mockReset();
+    mocks.getNativeAuthUserId.mockReturnValue('user-1');
     mocks.getPrimaryAppCheckHeaders.mockClear();
     mocks.getWebAuthIdToken.mockReset();
     mocks.httpsCallable.mockReset();
@@ -89,6 +93,26 @@ describe('accountDeletionService', () => {
     });
     expect(mocks.reauthenticateCurrentUserForDeletion).toHaveBeenCalledWith('password', 'correct horse');
     expect(mocks.callable).toHaveBeenCalledTimes(2);
+  });
+
+  it('cancels deletion when provider reauthentication selects a different account', async () => {
+    mocks.callable.mockResolvedValueOnce({
+      data: {
+        success: false,
+        status: 'requires-recent-auth',
+        provider: 'google',
+        completionTargetDays: 30
+      }
+    });
+    mocks.getNativeAuthUserId
+      .mockReturnValueOnce('user-1')
+      .mockReturnValueOnce('user-2');
+
+    await expect(requestAccountDeletion('web-app')).rejects.toThrow(
+      'Account deletion was cancelled because reauthentication selected a different account.'
+    );
+    expect(mocks.reauthenticateCurrentUserForDeletion).toHaveBeenCalledWith('google', '');
+    expect(mocks.callable).toHaveBeenCalledTimes(1);
   });
 
   it('authenticates native REST sessions when requesting deletion', async () => {

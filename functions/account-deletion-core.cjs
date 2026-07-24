@@ -372,6 +372,14 @@ function classifyAccountStoragePaths(uid, mediaStoragePaths = [], profilePhotoUr
         pathParts[4] === normalizedUid
       ) {
         primaryPaths.add(primaryStoragePath);
+      } else if (
+        normalizedUid &&
+        pathParts.length >= 5 &&
+        pathParts[0] === 'stat-sheets' &&
+        pathParts[1] === 'team-chat' &&
+        pathParts[3] === normalizedUid
+      ) {
+        primaryPaths.add(primaryStoragePath);
       }
     }
   });

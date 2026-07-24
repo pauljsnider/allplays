@@ -3,6 +3,7 @@ import { getPrimaryAppCheckHeaders } from './adapters/legacyFirebaseAppCheck';
 import {
   firebaseAuth,
   getNativeAuthIdToken,
+  getNativeAuthUserId,
   reauthenticateCurrentUserForDeletion,
   revokeCurrentAppleAuthorizationForDeletion
 } from './authService';
@@ -80,6 +81,15 @@ async function requestAccountDeletionWithReauthentication(
   password = ''
 ): Promise<AccountDeletionResult> {
   const native = isNativeRuntime();
+  const originalUserId = getNativeAuthUserId();
+  if (!originalUserId) {
+    throw new Error('The signed-in account is unavailable.');
+  }
+  const assertOriginalUserIsCurrent = () => {
+    if (getNativeAuthUserId() !== originalUserId) {
+      throw new Error('Account deletion was cancelled because reauthentication selected a different account.');
+    }
+  };
   let appleAuthorizationRevoked = false;
   const postRequest = () => native
     ? postNativeAccountDeletion(source, appleAuthorizationRevoked)
@@ -88,6 +98,7 @@ async function requestAccountDeletionWithReauthentication(
 
   if (result.status === 'requires-recent-auth') {
     const reauthentication = await reauthenticateCurrentUserForDeletion(result.provider, password);
+    assertOriginalUserIsCurrent();
     appleAuthorizationRevoked = reauthentication.appleAuthorizationRevoked;
     result = await postRequest();
   }
@@ -96,6 +107,7 @@ async function requestAccountDeletionWithReauthentication(
       throw new Error('Open the ALL PLAYS iOS app to reauthenticate with Apple before deleting this account.');
     }
     await revokeCurrentAppleAuthorizationForDeletion();
+    assertOriginalUserIsCurrent();
     appleAuthorizationRevoked = true;
     result = await postRequest();
   }
