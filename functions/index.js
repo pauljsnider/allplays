@@ -4333,7 +4333,6 @@ exports.createStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
 });
 
 exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context) => {
-  assertPaymentsEnabled();
   if (!context.auth?.uid) {
     throw new functions.https.HttpsError('unauthenticated', 'Sign in before refunding a team fee.');
   }

@@ -45,6 +45,9 @@ describe('create team fee form', () => {
         expect(source).toContain('No credit card, Stripe, checkout, email, push, or SMS workflow is created.');
         expect(source).toContain('Create online team fee');
         expect(source).toContain('Pay online action');
+        expect(source).toContain("window?.__ALLPLAYS_CONFIG__?.paymentsEnabled === true");
+        expect(source).toContain("paymentsEnabled ? '' : 'disabled'");
+        expect(source).toContain('Online collection is disabled for the initial store release.');
     });
 
     it('keeps advanced invoice controls collapsed by default and available after expansion', () => {

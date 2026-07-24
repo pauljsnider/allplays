@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   getWebAuthIdToken: vi.fn(),
   httpsCallable: vi.fn(),
   isNativeRuntime: vi.fn(),
+  reauthenticateCurrentUserForDeletion: vi.fn(),
   revokeCurrentAppleAuthorizationForDeletion: vi.fn()
 }));
 
@@ -29,6 +30,7 @@ vi.mock('./authService', () => ({
     currentUser: null as null | { getIdToken: typeof mocks.getWebAuthIdToken }
   },
   getNativeAuthIdToken: mocks.getNativeAuthIdToken,
+  reauthenticateCurrentUserForDeletion: mocks.reauthenticateCurrentUserForDeletion,
   revokeCurrentAppleAuthorizationForDeletion: mocks.revokeCurrentAppleAuthorizationForDeletion
 }));
 
@@ -46,6 +48,8 @@ describe('accountDeletionService', () => {
     mocks.getWebAuthIdToken.mockReset();
     mocks.httpsCallable.mockReset();
     mocks.isNativeRuntime.mockReset();
+    mocks.reauthenticateCurrentUserForDeletion.mockReset();
+    mocks.reauthenticateCurrentUserForDeletion.mockResolvedValue({ appleAuthorizationRevoked: false });
     mocks.revokeCurrentAppleAuthorizationForDeletion.mockReset();
     mocks.revokeCurrentAppleAuthorizationForDeletion.mockResolvedValue(undefined);
     const { firebaseAuth } = await import('./authService');
@@ -64,6 +68,27 @@ describe('accountDeletionService', () => {
     });
     expect(mocks.httpsCallable).toHaveBeenCalledWith({ name: 'functions' }, 'requestAccountDeletion');
     expect(mocks.callable).toHaveBeenCalledWith({ confirmation: 'DELETE', source: 'ios' });
+  });
+
+  it('reauthenticates an ordinary long-lived session before retrying deletion', async () => {
+    mocks.callable
+      .mockResolvedValueOnce({
+        data: {
+          success: false,
+          status: 'requires-recent-auth',
+          provider: 'password',
+          completionTargetDays: 30
+        }
+      })
+      .mockResolvedValueOnce({
+        data: { success: true, status: 'queued', completionTargetDays: 30 }
+      });
+
+    await expect(requestAccountDeletion('web-app', 'correct horse')).resolves.toMatchObject({
+      status: 'queued'
+    });
+    expect(mocks.reauthenticateCurrentUserForDeletion).toHaveBeenCalledWith('password', 'correct horse');
+    expect(mocks.callable).toHaveBeenCalledTimes(2);
   });
 
   it('authenticates native REST sessions when requesting deletion', async () => {

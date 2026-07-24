@@ -1158,10 +1158,15 @@ export async function revokeCurrentAppleAuthorizationForDeletion() {
     authTimeoutMs
   );
   const authorizationCode = String(result?.credential?.authorizationCode || '').trim();
+  const idToken = String(result?.credential?.idToken || '').trim();
   if (!authorizationCode) {
     throw new Error('Sign in with Apple did not return an authorization code for account deletion.');
   }
+  if (!idToken) {
+    throw new Error('Sign in with Apple did not return an ID token for account deletion.');
+  }
 
+  await signInWithNativeAppleRestSession(idToken, result?.credential?.nonce);
   await withTimeout(
     FirebaseAuthentication.revokeAccessToken({ token: authorizationCode }),
     'Apple authorization revocation timed out.',
@@ -1169,7 +1174,11 @@ export async function revokeCurrentAppleAuthorizationForDeletion() {
   );
 }
 
-async function processGoogleResult(result: UserCredential | null, activationCode?: string | null) {
+async function processGoogleResult(
+  result: UserCredential | null,
+  activationCode?: string | null,
+  options: { preserveMissingProfileFields?: boolean } = {}
+) {
   if (!result?.user) {
     return null;
   }
@@ -1181,13 +1190,18 @@ async function processGoogleResult(result: UserCredential | null, activationCode
       await redeemInviteForUser(result.user.uid, code, result.user.email);
       result.activationCodeRedeemed = true;
     }
-    await dbModule.updateUserProfile(result.user.uid, {
+    const profileUpdate: Record<string, unknown> = {
       email: result.user.email || '',
-      fullName: result.user.displayName || '',
-      photoUrl: result.user.photoURL || '',
       lastLogin: new Date()
-    }).catch((error: unknown) => {
-      logger.warn('Unable to update Google lastLogin; continuing sign-in.', { error });
+    };
+    if (!options.preserveMissingProfileFields || result.user.displayName) {
+      profileUpdate.fullName = result.user.displayName || '';
+    }
+    if (!options.preserveMissingProfileFields || result.user.photoURL) {
+      profileUpdate.photoUrl = result.user.photoURL || '';
+    }
+    await dbModule.updateUserProfile(result.user.uid, profileUpdate).catch((error: unknown) => {
+      logger.warn('Unable to update provider lastLogin; continuing sign-in.', { error });
     });
     window.sessionStorage.removeItem(pendingActivationCodeKey);
     result.wasNewUser = false;
@@ -1291,13 +1305,44 @@ export async function signInWithAppleAccount(activationCode?: string | null) {
   }
 
   try {
-    return await processGoogleResult(await signInWithNativeAppleCredential(), code);
+    return await processGoogleResult(await signInWithNativeAppleCredential(), code, {
+      preserveMissingProfileFields: true
+    });
   } catch (error) {
     if (!code) {
       window.sessionStorage.removeItem(pendingActivationCodeKey);
     }
     throw error;
   }
+}
+
+export async function reauthenticateCurrentUserForDeletion(
+  provider: 'apple' | 'google' | 'password' | 'unknown',
+  password = ''
+): Promise<{ appleAuthorizationRevoked: boolean }> {
+  if (provider === 'apple') {
+    await revokeCurrentAppleAuthorizationForDeletion();
+    return { appleAuthorizationRevoked: true };
+  }
+  if (provider === 'google') {
+    await signInWithGoogleAccount();
+    return { appleAuthorizationRevoked: false };
+  }
+  if (provider === 'password') {
+    const currentUser = auth.currentUser || getNativeAuthFallbackUser();
+    const email = String(currentUser?.email || '').trim();
+    if (!password) {
+      const error = new Error('Enter your account password to confirm deletion.') as Error & { code?: string };
+      error.code = 'account-deletion/password-required';
+      throw error;
+    }
+    if (!email) {
+      throw new Error('The signed-in account email is unavailable.');
+    }
+    await signInWithEmail(email, password);
+    return { appleAuthorizationRevoked: false };
+  }
+  throw new Error('Sign out, sign in again, and retry account deletion.');
 }
 
 export async function completeGoogleRedirect() {

@@ -149,6 +149,8 @@ export function Profile({ auth }: { auth: AuthState }) {
   const [accountMergeStatus, setAccountMergeStatus] = useState<Status | null>(null);
   const [accountDeletionOpen, setAccountDeletionOpen] = useState(false);
   const [accountDeletionConfirmation, setAccountDeletionConfirmation] = useState('');
+  const [accountDeletionPassword, setAccountDeletionPassword] = useState('');
+  const [accountDeletionError, setAccountDeletionError] = useState('');
   const [inviteActionStatus, setInviteActionStatus] = useState('');
   const [inviteHistoryExpanded, setInviteHistoryExpanded] = useState(false);
   const [activeProfileSection, setActiveProfileSection] = useState<ProfileSectionId>(searchSection);
@@ -1248,8 +1250,9 @@ export function Profile({ auth }: { auth: AuthState }) {
 
     setBusy('account-deletion');
     setPasswordStatus(null);
+    setAccountDeletionError('');
     try {
-      const result = await requestAccountDeletion(isNative ? 'native-app' : 'web-app');
+      const result = await requestAccountDeletion(isNative ? 'native-app' : 'web-app', accountDeletionPassword);
       await auth.signOut();
       navigate(`/auth?deleted=requested&days=${result.completionTargetDays}`, { replace: true });
     } catch (error: any) {
@@ -1261,7 +1264,7 @@ export function Profile({ auth }: { auth: AuthState }) {
         message: `${error?.message || 'Unable to request account deletion.'}${suffix}`,
         tone: 'error'
       });
-      setAccountDeletionOpen(false);
+      setAccountDeletionError(`${error?.message || 'Unable to request account deletion.'}${suffix}`);
     } finally {
       setBusy('');
     }
@@ -1819,6 +1822,11 @@ export function Profile({ auth }: { auth: AuthState }) {
               <span className="app-label">Type DELETE to confirm</span>
               <input className="auth-input mt-1" value={accountDeletionConfirmation} onChange={(event) => setAccountDeletionConfirmation(event.target.value)} autoComplete="off" />
             </label>
+            <label className="mt-4 block">
+              <span className="app-label">Account password (email sign-in only)</span>
+              <input className="auth-input mt-1" type="password" value={accountDeletionPassword} onChange={(event) => setAccountDeletionPassword(event.target.value)} autoComplete="current-password" />
+            </label>
+            {accountDeletionError ? <p className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-800">{accountDeletionError}</p> : null}
             <div className="mt-4 grid grid-cols-2 gap-2">
               <button type="button" className="secondary-button justify-center" onClick={() => setAccountDeletionOpen(false)} disabled={busy === 'account-deletion'}>Cancel</button>
               <button type="submit" className="min-h-11 rounded-xl bg-rose-700 px-4 text-sm font-black text-white disabled:opacity-60" disabled={busy === 'account-deletion' || accountDeletionConfirmation.trim().toUpperCase() !== 'DELETE'}>

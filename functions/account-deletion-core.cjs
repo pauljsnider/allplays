@@ -457,14 +457,18 @@ function assertDeletionRequest(data, HttpsError) {
   }
 }
 
-function assertRecentAuthentication(context, HttpsError, nowSeconds = Math.floor(Date.now() / 1000)) {
+function hasRecentAuthentication(context, nowSeconds = Math.floor(Date.now() / 1000)) {
   const authTime = Number(context?.auth?.token?.auth_time);
-  if (
-    !Number.isFinite(authTime) ||
-    authTime <= 0 ||
-    nowSeconds - authTime > ACCOUNT_DELETION_MAX_AUTH_AGE_SECONDS ||
-    authTime - nowSeconds > 60
-  ) {
+  return (
+    Number.isFinite(authTime) &&
+    authTime > 0 &&
+    nowSeconds - authTime <= ACCOUNT_DELETION_MAX_AUTH_AGE_SECONDS &&
+    authTime - nowSeconds <= 60
+  );
+}
+
+function assertRecentAuthentication(context, HttpsError, nowSeconds = Math.floor(Date.now() / 1000)) {
+  if (!hasRecentAuthentication(context, nowSeconds)) {
     throw new HttpsError(
       'failed-precondition',
       'For your security, sign in again before permanently deleting your account.'
@@ -494,12 +498,23 @@ function accountUsesAppleProvider(userRecord = {}, authToken = {}) {
   );
 }
 
+function getAccountReauthenticationProvider(userRecord = {}, authToken = {}) {
+  const providerIds = new Set(
+    (userRecord.providerData || [])
+      .map((provider) => String(provider?.providerId || '').trim())
+      .filter(Boolean)
+  );
+  const signInProvider = String(authToken.firebase?.sign_in_provider || '').trim();
+  if (signInProvider) providerIds.add(signInProvider);
+  if (providerIds.has('apple.com')) return 'apple';
+  if (providerIds.has('google.com')) return 'google';
+  if (providerIds.has('password')) return 'password';
+  return 'unknown';
+}
+
 async function loadOwnedTeams({ firestore, uid, email }) {
   const normalizedEmail = String(email || '').trim().toLowerCase();
-  const emailCandidates = [...new Set([
-    String(email || '').trim(),
-    normalizedEmail
-  ].filter(Boolean))];
+  const emailCandidates = getAccountEmailQueryCandidates(email);
   const queries = [
     firestore.collection('teams').where('ownerId', '==', uid).get()
   ];
@@ -522,10 +537,17 @@ function createAccountDeletionRequestHandler({ firestore, auth, Timestamp, Https
     if (!uid) {
       throw new HttpsError('unauthenticated', 'Sign in before requesting account deletion.');
     }
-    assertRecentAuthentication(context, HttpsError);
     assertDeletionRequest(data, HttpsError);
 
     const userRecord = await auth.getUser(uid).catch(() => null);
+    if (!hasRecentAuthentication(context)) {
+      return {
+        success: false,
+        status: 'requires-recent-auth',
+        provider: getAccountReauthenticationProvider(userRecord, context.auth?.token),
+        completionTargetDays: ACCOUNT_DELETION_MAX_DAYS
+      };
+    }
     const accountEmail = userRecord?.email || context.auth?.token?.email || '';
     const ownedTeams = await loadOwnedTeams({ firestore, uid, email: accountEmail });
     if (ownedTeams.length) {
@@ -595,11 +617,13 @@ module.exports = {
   createAccountDeletionRequestHandler,
   extractAccountProfileStoragePath,
   getAccountEmailQueryCandidates,
+  getAccountReauthenticationProvider,
   getAccountTeamPermissionQueryFields,
   getLegacyUnscopedProfilePhotoPaths,
   getAccountDeletionCollectionQueries,
   getAccountDeletionCollectionGroupQueries,
   loadOwnedTeams,
+  hasRecentAuthentication,
   normalizeConfirmation,
   shouldProcessAccountDeletionRequest,
   summarizeOwnedTeams

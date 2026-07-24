@@ -3,6 +3,7 @@ import { escapeHtml, getUrlParams, renderFooter, renderHeader } from './utils.js
 export const OFFLINE_TEAM_FEE_LABEL = 'Offline/manual collection only';
 export const OFFLINE_TEAM_FEE_INSTRUCTIONS = 'Collect payment outside ALL PLAYS. No online payment is processed.';
 export const ONLINE_TEAM_FEE_LABEL = 'Online Stripe collection';
+const paymentsEnabled = globalThis.window?.__ALLPLAYS_CONFIG__?.paymentsEnabled === true;
 
 const STATUS_LABELS = {
     paid: 'Paid',
@@ -935,11 +936,11 @@ async function renderCreateMode({ container, teamId, team, user, getPlayers, cre
                                 <span class="mt-1 block text-sm text-gray-600">Keep the current instructions-based workflow. Parents will not get a Stripe Pay online action.</span>
                             </span>
                         </label>
-                        <label class="flex cursor-pointer items-start gap-3 rounded-2xl border border-sky-200 bg-sky-50 p-4">
-                            <input name="collectionMode" type="radio" value="online_stripe" class="mt-1 h-4 w-4 border-gray-300 text-primary-600">
+                        <label class="flex items-start gap-3 rounded-2xl border border-sky-200 bg-sky-50 p-4 ${paymentsEnabled ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'}">
+                            <input name="collectionMode" type="radio" value="online_stripe" class="mt-1 h-4 w-4 border-gray-300 text-primary-600" ${paymentsEnabled ? '' : 'disabled'}>
                             <span>
-                                <span class="block font-semibold text-gray-900">Online Stripe collection</span>
-                                <span class="mt-1 block text-sm text-gray-600">Parents will see a Pay online action in their dashboard and complete payment in Stripe when they are eligible.</span>
+                                <span class="block font-semibold text-gray-900">Online Stripe collection${paymentsEnabled ? '' : ' (coming later)'}</span>
+                                <span class="mt-1 block text-sm text-gray-600">${paymentsEnabled ? 'Parents will see a Pay online action in their dashboard and complete payment in Stripe when they are eligible.' : 'Online collection is disabled for the initial store release. Use offline/manual collection.'}</span>
                             </span>
                         </label>
                     </div>

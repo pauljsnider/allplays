@@ -428,6 +428,7 @@
         import { buildLegacyJoinUrl } from './js/join-code.js?v=1';
         import { buildAvailabilityNoteRows, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from './js/availability-preferences.js?v=1';
 
+        const paymentsEnabled = window.__ALLPLAYS_CONFIG__?.paymentsEnabled === true;
         renderFooter(document.getElementById('footer-container'));
 
         let allScheduleEvents = [];
@@ -1533,12 +1534,14 @@
                 });
 
                 initShareLinkControls();
-                document.getElementById('team-fees-list')?.addEventListener('click', (event) => {
-                    handleParentTeamFeeCheckoutClick(event, {
-                        initiateCheckout: initiateTeamFeeCheckout,
-                        locationTarget: window.location
+                if (paymentsEnabled) {
+                    document.getElementById('team-fees-list')?.addEventListener('click', (event) => {
+                        handleParentTeamFeeCheckoutClick(event, {
+                            initiateCheckout: initiateTeamFeeCheckout,
+                            locationTarget: window.location
+                        });
                     });
-                });
+                }
 
                 const [data] = await Promise.all([
                     getParentDashboardData(user.uid),
@@ -1668,7 +1671,7 @@
 
             try {
                 const fees = await listParentTeamFeeRecipients(userId, children || []);
-                const html = renderParentTeamFees(fees);
+                const html = renderParentTeamFees(fees, { paymentsEnabled });
                 if (!html) {
                     card.classList.add('hidden');
                     list.innerHTML = '';

@@ -454,6 +454,34 @@ test('blocks deletion for a legacy email-based team owner', async () => {
   );
 });
 
+test('blocks deletion for a whitespace-padded legacy owner email', async () => {
+  const handler = createAccountDeletionRequestHandler({
+    firestore: {
+      collection: () => ({
+        where: (field, _operator, value) => ({
+          get: async () => ({
+            docs: field === 'ownerEmail' && value === ' Legacy@Example.com '
+              ? [{ id: 'legacy-team', data: () => ({ name: 'Legacy Bears' }) }]
+              : []
+          })
+        })
+      })
+    },
+    auth: { getUser: async () => ({ email: 'Legacy@Example.com' }) },
+    Timestamp: { now: () => 'now' },
+    HttpsError
+  });
+
+  await assert.rejects(
+    () => handler(
+      { confirmation: 'DELETE' },
+      { auth: { uid: 'legacy-owner', token: { auth_time: recentAuthTime } } }
+    ),
+    (error) => error.code === 'failed-precondition' &&
+      error.details.ownedTeams[0].name === 'Legacy Bears'
+  );
+});
+
 test('allows deletion after every owned team is deactivated', async () => {
   const writes = [];
   const handler = createAccountDeletionRequestHandler({
@@ -515,18 +543,25 @@ test('blocks queuing until a legacy unscoped profile photo is migrated', async (
 test('requires a recent sign-in before queuing permanent account deletion', async () => {
   const handler = createAccountDeletionRequestHandler({
     firestore: {},
-    auth: {},
+    auth: {
+      getUser: async () => ({
+        providerData: [{ providerId: 'password' }]
+      })
+    },
     Timestamp: { now: () => 'now' },
     HttpsError
   });
 
-  await assert.rejects(
-    () => handler(
-      { confirmation: 'DELETE' },
-      { auth: { uid: 'user-1', token: { auth_time: recentAuthTime - 301 } } }
-    ),
-    (error) => error.code === 'failed-precondition' && /sign in again/i.test(error.message)
+  const result = await handler(
+    { confirmation: 'DELETE' },
+    { auth: { uid: 'user-1', token: { auth_time: recentAuthTime - 301 } } }
   );
+  assert.deepEqual(result, {
+    success: false,
+    status: 'requires-recent-auth',
+    provider: 'password',
+    completionTargetDays: 30
+  });
 });
 
 test('gives the deletion worker extended runtime and automatic event retries', () => {

@@ -3,6 +3,7 @@ import { getPrimaryAppCheckHeaders } from './adapters/legacyFirebaseAppCheck';
 import {
   firebaseAuth,
   getNativeAuthIdToken,
+  reauthenticateCurrentUserForDeletion,
   revokeCurrentAppleAuthorizationForDeletion
 } from './authService';
 import { isNativeRuntime } from './nativeRuntime';
@@ -16,6 +17,11 @@ export type AccountDeletionResult = {
 type AccountDeletionResponse = AccountDeletionResult | {
   success: false;
   status: 'requires-apple-reauth';
+  completionTargetDays: number;
+} | {
+  success: false;
+  status: 'requires-recent-auth';
+  provider: 'apple' | 'google' | 'password' | 'unknown';
   completionTargetDays: number;
 };
 
@@ -60,11 +66,38 @@ async function postNativeAccountDeletion(
   return result as AccountDeletionResponse;
 }
 
-async function requestNativeAccountDeletion(source: string): Promise<AccountDeletionResult> {
-  let result = await postNativeAccountDeletion(source);
+async function postWebAccountDeletion(source: string): Promise<AccountDeletionResponse> {
+  const callable = httpsCallable(functions, 'requestAccountDeletion');
+  const response = await callable({
+    confirmation: 'DELETE',
+    source
+  });
+  return response.data as AccountDeletionResponse;
+}
+
+async function requestAccountDeletionWithReauthentication(
+  source: string,
+  password = ''
+): Promise<AccountDeletionResult> {
+  const native = isNativeRuntime();
+  let appleAuthorizationRevoked = false;
+  const postRequest = () => native
+    ? postNativeAccountDeletion(source, appleAuthorizationRevoked)
+    : postWebAccountDeletion(source);
+  let result = await postRequest();
+
+  if (result.status === 'requires-recent-auth') {
+    const reauthentication = await reauthenticateCurrentUserForDeletion(result.provider, password);
+    appleAuthorizationRevoked = reauthentication.appleAuthorizationRevoked;
+    result = await postRequest();
+  }
   if (result.status === 'requires-apple-reauth') {
+    if (!native) {
+      throw new Error('Open the ALL PLAYS iOS app to reauthenticate with Apple before deleting this account.');
+    }
     await revokeCurrentAppleAuthorizationForDeletion();
-    result = await postNativeAccountDeletion(source, true);
+    appleAuthorizationRevoked = true;
+    result = await postRequest();
   }
   if (result.status !== 'queued') {
     throw new Error('Account deletion could not be queued.');
@@ -72,19 +105,6 @@ async function requestNativeAccountDeletion(source: string): Promise<AccountDele
   return result;
 }
 
-export async function requestAccountDeletion(source = 'app'): Promise<AccountDeletionResult> {
-  if (isNativeRuntime()) {
-    return requestNativeAccountDeletion(source);
-  }
-
-  const callable = httpsCallable(functions, 'requestAccountDeletion');
-  const response = await callable({
-    confirmation: 'DELETE',
-    source
-  });
-  const result = response.data as AccountDeletionResponse;
-  if (result.status === 'requires-apple-reauth') {
-    throw new Error('Open the ALL PLAYS iOS app to reauthenticate with Apple before deleting this account.');
-  }
-  return result;
+export async function requestAccountDeletion(source = 'app', password = ''): Promise<AccountDeletionResult> {
+  return requestAccountDeletionWithReauthentication(source, password);
 }

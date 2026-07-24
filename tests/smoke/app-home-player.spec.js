@@ -184,6 +184,7 @@ async function mockHomePlayerModules(page) {
                 export function describeAuthError(error) { return error?.message || 'Authentication failed.'; }
                 export async function getNativeAuthIdToken() { return null; }
                 export async function revokeCurrentAppleAuthorizationForDeletion() {}
+                export async function reauthenticateCurrentUserForDeletion() { return { appleAuthorizationRevoked: false }; }
                 export async function hydrateFirebaseUser(user) { return user; }
                 export function observeFirebaseUser(callback) {
                     queueMicrotask(() => callback(null));

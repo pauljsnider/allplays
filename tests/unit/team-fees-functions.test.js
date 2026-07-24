@@ -396,6 +396,11 @@ describe('team fee checkout function helpers', () => {
         expect(source).toContain("stripeRefundStatus !== 'succeeded'");
         expect(source).toContain('const ledgerRefundedAt = admin.firestore.Timestamp.now();');
         expect(source).toContain('hasStripeRefundLedgerEntry(latestRecipient, refund.id)');
+        const refundFunction = source.slice(
+            source.indexOf('exports.refundStripeTeamFeePayment'),
+            source.indexOf('exports.createStripeRegistrationCheckout')
+        );
+        expect(refundFunction).not.toContain('assertPaymentsEnabled();');
     });
 
     it('writes fee mutation audits in the Stripe payment and refund transactions', () => {

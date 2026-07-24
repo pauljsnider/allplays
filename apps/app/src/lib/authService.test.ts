@@ -625,10 +625,48 @@ describe('native REST sign-in', () => {
     });
   });
 
+  it('preserves existing profile fields when Apple omits them on a later sign-in', async () => {
+    nativeAuthenticationMocks.signInWithApple.mockResolvedValue({
+      credential: {
+        idToken: 'apple-provider-id-token',
+        nonce: 'apple-raw-nonce'
+      }
+    });
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('accounts:signInWithIdp')) {
+        return createJsonResponse({
+          localId: 'apple-user',
+          email: 'apple@example.com',
+          idToken: 'apple-firebase-id-token',
+          refreshToken: 'apple-refresh-token',
+          expiresIn: '3600',
+          isNewUser: false
+        });
+      }
+      return createJsonResponse({
+        users: [{
+          email: 'apple@example.com',
+          emailVerified: true,
+          providerUserInfo: [{ providerId: 'apple.com' }]
+        }]
+      });
+    }));
+
+    await signInWithAppleAccount();
+
+    const profileCalls = legacyAuthMocks.updateUserProfile.mock.calls;
+    const profileUpdate = profileCalls[profileCalls.length - 1]?.[1];
+    expect(profileUpdate).toMatchObject({ email: 'apple@example.com' });
+    expect(profileUpdate).not.toHaveProperty('fullName');
+    expect(profileUpdate).not.toHaveProperty('photoUrl');
+  });
+
   it('reauthenticates with Apple and revokes the fresh authorization code before deletion', async () => {
     nativeAuthenticationMocks.signInWithApple.mockResolvedValue({
       credential: {
-        authorizationCode: 'fresh-apple-authorization-code'
+        authorizationCode: 'fresh-apple-authorization-code',
+        idToken: 'fresh-apple-id-token',
+        nonce: 'fresh-apple-nonce'
       }
     });
     nativeAuthenticationMocks.revokeAccessToken.mockResolvedValue(undefined);
@@ -638,6 +676,10 @@ describe('native REST sign-in', () => {
     expect(nativeAuthenticationMocks.signInWithApple).toHaveBeenCalledWith({ skipNativeAuth: true });
     expect(nativeAuthenticationMocks.revokeAccessToken).toHaveBeenCalledWith({
       token: 'fresh-apple-authorization-code'
+    });
+    expect(JSON.parse(window.localStorage.getItem('allplays-native-auth-session') || '{}')).toMatchObject({
+      uid: 'apple-user',
+      idToken: 'apple-firebase-id-token'
     });
   });
 });

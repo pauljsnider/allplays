@@ -244,6 +244,10 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
                 export async function revokeCurrentAppleAuthorizationForDeletion() {
                     return;
                 }
+
+                export async function reauthenticateCurrentUserForDeletion() {
+                    return { appleAuthorizationRevoked: false };
+                }
             `
         });
     });
