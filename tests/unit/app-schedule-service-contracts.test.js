@@ -459,7 +459,8 @@ describe('React app schedule service contract integration', () => {
         expect(scheduleServiceSource).toContain('normalizeEmail(team.ownerEmailLower) === email || normalizeEmail(team.ownerEmail) === email');
         expect(legacyScheduleDbSource).toContain("legacyFirebaseWhere('ownerEmailLower', '==', normalizedEmail)");
         expect(legacyScheduleDbSource).toContain("legacyFirebaseWhere('ownerEmail', '==', ownerEmail)");
-        expect(legacyScheduleDbSource).toContain('ownerEmailSnapshots.flatMap((snapshot) => snapshot.docs)');
+        expect(legacyScheduleDbSource).toContain('Promise.allSettled([');
+        expect(legacyScheduleDbSource).toContain('legacyOwnerSnapshots.flatMap((snapshot) => snapshot.docs)');
     });
 
     it('routes parent schedule event detail reads through typed schedule mappers', () => {

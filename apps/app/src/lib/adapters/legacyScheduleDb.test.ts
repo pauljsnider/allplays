@@ -304,6 +304,46 @@ describe('legacyScheduleDb staff team reads', () => {
         expect(getDoc).not.toHaveBeenCalled();
     });
 
+    it('keeps UID and admin teams when the normalized legacy owner query is denied', async () => {
+        vi.mocked(getDocs)
+            .mockResolvedValueOnce({ docs: [snapshot('team-owner', { name: 'Owner' })] } as never)
+            .mockResolvedValueOnce({ docs: [snapshot('team-admin', { name: 'Admin' })] } as never)
+            .mockRejectedValueOnce(new Error('ownerEmailLower denied'))
+            .mockResolvedValueOnce({ docs: [] } as never);
+
+        await expect(getStaffTeams({
+            userId: 'user-1',
+            email: 'staff@example.com',
+            coachTeamIds: []
+        })).resolves.toEqual({
+            teams: [
+                { id: 'team-owner', name: 'Owner' },
+                { id: 'team-admin', name: 'Admin' }
+            ],
+            isPartial: true
+        });
+    });
+
+    it('keeps UID and admin teams when a legacy ownerEmail query is denied', async () => {
+        vi.mocked(getDocs)
+            .mockResolvedValueOnce({ docs: [snapshot('team-owner', { name: 'Owner' })] } as never)
+            .mockResolvedValueOnce({ docs: [snapshot('team-admin', { name: 'Admin' })] } as never)
+            .mockResolvedValueOnce({ docs: [] } as never)
+            .mockRejectedValueOnce(new Error('ownerEmail denied'));
+
+        await expect(getStaffTeams({
+            userId: 'user-1',
+            email: 'staff@example.com',
+            coachTeamIds: []
+        })).resolves.toEqual({
+            teams: [
+                { id: 'team-owner', name: 'Owner' },
+                { id: 'team-admin', name: 'Admin' }
+            ],
+            isPartial: true
+        });
+    });
+
     it('propagates owner and admin query failures so native callers can use the REST fallback', async () => {
         const queryError = new Error('web sdk unavailable');
         vi.mocked(getDocs).mockRejectedValueOnce(queryError);
