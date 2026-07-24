@@ -101,10 +101,15 @@ test('keeps named and directional calendar fields in server-side Family Share pa
   const descriptions = [
     ['named-field', 'Scheels field 7 NE', 'Scheels field 7 NE'],
     ['named-field-south', 'Blue Valley field #02 south', 'Blue Valley field #02 south'],
+    ['ambiguous-named-field', 'Scheels field 7', null],
     ['directional-field', 'Field 7 NE', 'Field 7 NE'],
     ['directional-court', 'Court 2 South', 'Court 2 South'],
     ['title-case-note', 'Practice Is On field 7', null],
-    ['title-case-instruction', 'Meet At field 7', null]
+    ['title-case-instruction', 'Meet At field 7', null],
+    ['coach-note', 'Coach Says Field 7', null],
+    ['warmup-note', 'Warm Up Field 7', null],
+    ['gate-note', 'Gate Opens Field 7', null],
+    ['play-note', 'We Play Field 7', null]
   ];
   const icsLines = ['BEGIN:VCALENDAR'];
   descriptions.forEach(([uid, description], index) => {

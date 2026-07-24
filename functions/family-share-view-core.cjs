@@ -10,11 +10,11 @@ const MAX_FAMILY_SHARE_DB_EVENTS = 500;
 const CALENDAR_LOCATION_DETAIL_PATTERN =
   /^(?:field|diamond|court|pitch|rink|gym|arena)\s*(?:(?:#|no\.?|number|:|-)\s*)?(?:\d+[a-z]?|[a-z])(?:\s+(?:n|s|e|w|ne|nw|se|sw|north|south|east|west|northeast|northwest|southeast|southwest))?$/i;
 const NAMED_CALENDAR_LOCATION_DETAIL_PATTERN =
-  /^((?:[\p{L}\p{N}'’-]+\s+){1,4})(?:field|diamond|court|pitch|rink|gym|arena)\s*(?:(?:#|no\.?|number|:|-)\s*)?(?:\d+[a-z]?|[a-z])(?:\s+(?:n|s|e|w|ne|nw|se|sw|north|south|east|west|northeast|northwest|southeast|southwest))?$/iu;
-const CALENDAR_LOCATION_PREFIX_STOP_WORDS = new Set([
-  'a', 'an', 'and', 'arrive', 'at', 'behind', 'between', 'bring', 'check',
-  'enter', 'for', 'in', 'is', 'meet', 'near', 'next', 'on', 'or', 'park',
-  'practice', 'the', 'to', 'use'
+  /^((?:[\p{L}\p{N}'’-]+\s+){1,4})(?:field|diamond|court|pitch|rink|gym|arena)\s*(?:(?:#|no\.?|number|:|-)\s*)?(?:\d+[a-zA-Z]?|[a-zA-Z])\s+(\p{L}+)$/u;
+const CALENDAR_LOCATION_DIRECTIONS = new Set([
+  'n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw',
+  'north', 'south', 'east', 'west',
+  'northeast', 'northwest', 'southeast', 'southwest'
 ]);
 
 function compactText(value, maxLength = 240) {
@@ -66,8 +66,7 @@ function isNamedCalendarLocationDetail(value) {
   const prefixParts = match?.[1]?.trim().split(/\s+/) || [];
   return prefixParts.length > 0 && prefixParts.every((part) =>
     /^[\p{Lu}\p{N}]/u.test(part)
-    && !CALENDAR_LOCATION_PREFIX_STOP_WORDS.has(part.toLowerCase())
-  );
+  ) && CALENDAR_LOCATION_DIRECTIONS.has(match?.[2]?.toLowerCase() || '');
 }
 
 function unfoldIcsLines(icsText) {
