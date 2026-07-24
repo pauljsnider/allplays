@@ -1042,6 +1042,35 @@ describe('Schedule', () => {
     });
   });
 
+  it('keeps a verified in-app-created staff team from a partial scope response in the filter and editor', async () => {
+    scheduleServiceMocks.loadParentScheduleScope.mockResolvedValueOnce({
+      profile: {},
+      children: [],
+      staffTeams: [{ teamId: 'team-owned', teamName: 'Vipers' }],
+      isPartial: true
+    });
+    appDataCacheMocks.loadCachedAppData.mockResolvedValueOnce({
+      children: [],
+      events: [buildScheduleEvent(1, {
+        teamId: 'team-parent',
+        teamName: 'Jr KC Current',
+        isTeamStaff: true
+      })],
+      staffTeams: [{ teamId: 'team-parent', teamName: 'Jr KC Current' }]
+    });
+
+    renderSchedule('/schedule?teamId=team-owned');
+
+    const teamFilter = await screen.findByLabelText('Team filter');
+    expect(await within(teamFilter).findByRole('option', { name: 'Vipers' })).toBeTruthy();
+    expect((teamFilter as HTMLSelectElement).value).toBe('team-owned');
+
+    fireEvent.click(await screen.findByRole('button', { name: /manage schedule/i }));
+
+    expect(await screen.findByRole('heading', { name: 'Add game for Vipers' })).toBeTruthy();
+    expect((screen.getByLabelText('Team to manage') as HTMLSelectElement).value).toBe('team-owned');
+  });
+
   it('routes generic staff card opens to the game hub helper on mobile', () => {
     expect(getGenericEventDetailPath(buildScheduleEvent(1, {
       isTeamStaff: true,
