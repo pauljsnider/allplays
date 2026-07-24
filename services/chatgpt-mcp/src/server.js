@@ -274,7 +274,12 @@ app.post('/oauth/authorize', async (req, res) => {
         // do not persist an unverified refresh_token posted to this public route.
         const signedIn = await firebaseSignIn(String(params.email || ''), String(params.password || ''));
         const firebaseRefreshToken = signedIn.refreshToken;
-        const code = oauth.approveAuthorization({ clientId, redirectUri, codeChallenge, firebaseRefreshToken });
+        const code = await oauth.approveAuthorization({
+            clientId,
+            redirectUri,
+            codeChallenge,
+            firebaseRefreshToken
+        });
         const redirect = new URL(redirectUri);
         redirect.searchParams.set('code', code);
         if (params.state) redirect.searchParams.set('state', params.state);

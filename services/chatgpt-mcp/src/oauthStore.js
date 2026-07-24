@@ -1,4 +1,4 @@
-// OAuth access/refresh grant persistence.
+// OAuth authorization-code and access/refresh grant persistence.
 //
 // Production grants live in Firestore under SHA-256 token identifiers. The
 // user's Firebase refresh-token binding is encrypted with AES-256-GCM before
@@ -22,6 +22,7 @@ function tokenDigest(token) {
 }
 
 function initializeMemoryState(state) {
+    if (!state.authorizationCodes) state.authorizationCodes = new Map();
     if (!state.accessTokens) state.accessTokens = new Map();
     if (!state.refreshTokens) state.refreshTokens = new Map();
     return state;
@@ -52,6 +53,35 @@ export function createMemoryOAuthGrantStore({
     const stores = initializeMemoryState(state);
 
     return {
+        async issueAuthorizationCode({
+            code,
+            clientId,
+            redirectUri,
+            codeChallenge,
+            firebaseRefreshToken,
+            expiresAt
+        }) {
+            setBounded(stores.authorizationCodes, code, {
+                clientId,
+                redirectUri,
+                codeChallenge,
+                firebaseRefreshToken,
+                expiresAt
+            }, now(), maxStoredGrants);
+        },
+
+        async consumeAuthorizationCode(code) {
+            const currentTime = now();
+            pruneExpired(stores.authorizationCodes, currentTime);
+            const record = stores.authorizationCodes.get(code);
+            if (!record) return null;
+
+            // No await occurs between the read and delete, so concurrent calls
+            // against shared state have one consume winner.
+            stores.authorizationCodes.delete(code);
+            return { ...record };
+        },
+
         async issueGrantPair({
             accessToken,
             refreshToken,
@@ -121,13 +151,18 @@ function decodeEncryptionKey(value) {
     return key;
 }
 
-function authenticatedMetadata({ type, digest, clientId, expiresAt }) {
-    return Buffer.from(JSON.stringify({
+function authenticatedMetadata({ type, digest, clientId, expiresAt, redirectUri, codeChallenge }) {
+    const metadata = {
         type,
         digest,
         clientId: clientId || '',
         expiresAt
-    }), 'utf8');
+    };
+    if (type === 'code') {
+        metadata.redirectUri = redirectUri || '';
+        metadata.codeChallenge = codeChallenge || '';
+    }
+    return Buffer.from(JSON.stringify(metadata), 'utf8');
 }
 
 function encryptBinding(key, firebaseRefreshToken, metadata) {
@@ -178,6 +213,39 @@ function grantRecord({ type, token, firebaseRefreshToken, clientId, expiresAt, e
         fields: {
             type,
             clientId,
+            expiresAt: new Date(expiresAt),
+            encryptedBinding: encryptBinding(encryptionKey, firebaseRefreshToken, metadata)
+        }
+    };
+}
+
+function authorizationCodeRecord({
+    code,
+    clientId,
+    redirectUri,
+    codeChallenge,
+    firebaseRefreshToken,
+    expiresAt,
+    encryptionKey
+}) {
+    const type = 'code';
+    const digest = tokenDigest(code);
+    const metadata = {
+        type,
+        digest,
+        clientId,
+        redirectUri,
+        codeChallenge,
+        expiresAt
+    };
+    return {
+        id: `${type}_${digest}`,
+        digest,
+        fields: {
+            type,
+            clientId,
+            redirectUri,
+            codeChallenge,
             expiresAt: new Date(expiresAt),
             encryptedBinding: encryptBinding(encryptionKey, firebaseRefreshToken, metadata)
         }
@@ -334,7 +402,84 @@ export function createFirestoreOAuthGrantStore({
         };
     }
 
+    function decryptAuthorizationCode(result) {
+        const expiresAt = result.record.expiresAt instanceof Date
+            ? result.record.expiresAt.getTime()
+            : Number.NaN;
+        if (
+            result.record.type !== 'code'
+            || !Number.isFinite(expiresAt)
+            || typeof result.record.clientId !== 'string'
+            || typeof result.record.redirectUri !== 'string'
+            || typeof result.record.codeChallenge !== 'string'
+        ) {
+            throw new Error('Stored OAuth authorization code has an invalid schema.');
+        }
+        const metadata = {
+            type: 'code',
+            digest: result.digest,
+            clientId: result.record.clientId,
+            redirectUri: result.record.redirectUri,
+            codeChallenge: result.record.codeChallenge,
+            expiresAt
+        };
+        return {
+            clientId: result.record.clientId,
+            redirectUri: result.record.redirectUri,
+            codeChallenge: result.record.codeChallenge,
+            expiresAt,
+            firebaseRefreshToken: decryptBinding(
+                key,
+                result.record.encryptedBinding,
+                metadata
+            )
+        };
+    }
+
     return {
+        async issueAuthorizationCode({
+            code,
+            clientId,
+            redirectUri,
+            codeChallenge,
+            firebaseRefreshToken,
+            expiresAt
+        }) {
+            const record = authorizationCodeRecord({
+                code,
+                clientId,
+                redirectUri,
+                codeChallenge,
+                firebaseRefreshToken,
+                expiresAt,
+                encryptionKey: key
+            });
+            const result = await commit([
+                createdDocumentWrite(documentName(record.id), record)
+            ]);
+            if (!result.ok) throw new Error('OAuth authorization code collision.');
+        },
+
+        async consumeAuthorizationCode(code) {
+            const current = await readGrant('code', code);
+            if (!current) return null;
+            let record;
+            try {
+                record = decryptAuthorizationCode(current);
+            } catch {
+                return null;
+            }
+            if (record.expiresAt <= now()) {
+                await deleteExpired('code', current.digest, current.document.updateTime);
+                return null;
+            }
+            const result = await commit([{
+                delete: documentName(`code_${current.digest}`),
+                currentDocument: { updateTime: current.document.updateTime }
+            }]);
+            return result.ok ? record : null;
+        },
+
         async issueGrantPair({
             accessToken,
             refreshToken,
