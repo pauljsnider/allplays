@@ -228,7 +228,7 @@ jobs:
   preview-smoke:
     name: ${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'external-claim' && 'preview-smoke-label-noop' || 'preview-smoke' }}
     needs: [changes, preview-smoke-run]
-    if: always()
+    if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - name: Report preview-smoke result

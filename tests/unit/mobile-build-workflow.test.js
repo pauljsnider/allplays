@@ -57,7 +57,14 @@ describe('mobile-build CI workflow', () => {
 
         const gateSection = workflow.slice(workflow.indexOf('  mobile-build:'));
         expect(gateSection).toContain('needs: [changes, android-debug, ios-simulator]');
-        expect(gateSection).toContain('if: always()');
+        expect(gateSection).toContain('if: ${{ always() && !cancelled() }}');
+    });
+
+    it('does not turn an intentional concurrency cancellation into a required-check failure', () => {
+        const gateSection = workflow.slice(workflow.indexOf('  mobile-build:'));
+
+        expect(gateSection).toContain('always()');
+        expect(gateSection).toContain('!cancelled()');
     });
 
     it('fails the required gate job when a mobile-relevant PR actually breaks native builds', () => {

@@ -292,7 +292,7 @@ jobs:
   mobile-build:
     name: ${{ github.event_name == 'pull_request' && (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'external-claim' && 'mobile-build-label-noop' || 'mobile-build' }}
     needs: [changes, android-debug, ios-simulator]
-    if: always()
+    if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - name: Check native build results

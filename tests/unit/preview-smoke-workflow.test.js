@@ -49,4 +49,10 @@ describe('preview-smoke CI workflow', () => {
         expect(intentionalSkipCheck).toBeGreaterThan(changesResultCheck);
         expect(gate).not.toContain('success|skipped');
     });
+
+    it('does not turn an intentional concurrency cancellation into a required-check failure', () => {
+        const gate = workflow.slice(workflow.indexOf('  preview-smoke:'));
+
+        expect(gate).toContain('if: ${{ always() && !cancelled() }}');
+    });
 });
