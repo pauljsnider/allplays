@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Schedule, getGenericEventDetailPath } from './Schedule';
@@ -66,6 +66,7 @@ vi.mock('../lib/performanceInstrumentation', () => ({
 vi.mock('../lib/uxTiming', () => ({
   recordFirstMeaningfulRender: uxTimingMocks.recordFirstMeaningfulRender,
   startScreenMountTimer: vi.fn(() => ({ end: uxTimingMocks.end })),
+  startWarmResumeTimer: vi.fn(() => ({ end: vi.fn() })),
   startUxTimer: vi.fn(() => ({ end: vi.fn(), cancel: vi.fn() }))
 }));
 vi.mock('../lib/useShellLayout', () => ({
@@ -204,6 +205,21 @@ function buildMultiTeamStaffScheduleResult() {
         title: 'Practice'
       })
     ]
+  };
+}
+
+function buildScopedScheduleResult(teamId: string, teamName: string, index: number) {
+  const playerId = `${teamId}-player`;
+  return {
+    children: [{ playerId, playerName: `${teamName} Player`, teamId, teamName }],
+    events: [buildScheduleEvent(index, {
+      eventKey: `${teamId}::event-${index}::${playerId}::2100-06-${String(index).padStart(2, '0')}T18:00:00.000Z::game`,
+      id: `event-${index}`,
+      teamId,
+      teamName,
+      childId: playerId,
+      childName: `${teamName} Player`
+    })]
   };
 }
 
@@ -1000,6 +1016,86 @@ describe('Schedule', () => {
     const teamFilter = await screen.findByLabelText('Team filter');
     await waitFor(() => {
       expect(within(teamFilter).queryByRole('option', { name: 'Vipers' })).toBeNull();
+    });
+  });
+
+  it('ignores an older schedule result that finishes after a newer refresh', async () => {
+    let resolveOlderSchedule!: (result: ReturnType<typeof buildScopedScheduleResult>) => void;
+    scheduleServiceMocks.loadParentSchedule
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolveOlderSchedule = resolve;
+      }))
+      .mockResolvedValueOnce(buildScopedScheduleResult('team-new', 'Vipers', 2));
+
+    renderSchedule();
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(1);
+    });
+    const resumeAt = Date.now() + (6 * 60 * 1000);
+    const dateNow = vi.spyOn(Date, 'now').mockReturnValue(resumeAt);
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    dateNow.mockRestore();
+
+    const teamFilter = await screen.findByLabelText('Team filter');
+    expect(await within(teamFilter).findByRole('option', { name: 'Vipers' })).toBeTruthy();
+
+    await act(async () => {
+      resolveOlderSchedule(buildScopedScheduleResult('team-old', 'Bears', 1));
+    });
+
+    await waitFor(() => {
+      expect(within(teamFilter).queryByRole('option', { name: 'Bears' })).toBeNull();
+      expect(within(teamFilter).getByRole('option', { name: 'Vipers' })).toBeTruthy();
+    });
+  });
+
+  it('ignores a delayed schedule result from the previous account', async () => {
+    let resolvePreviousSchedule!: (result: ReturnType<typeof buildScopedScheduleResult>) => void;
+    scheduleServiceMocks.loadParentSchedule
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolvePreviousSchedule = resolve;
+      }))
+      .mockResolvedValueOnce(buildScopedScheduleResult('team-next', 'Vipers', 2));
+    const previousAuth = {
+      ...auth,
+      user: { ...auth.user!, uid: 'previous-user' } as AuthState['user']
+    };
+    const nextAuth = {
+      ...auth,
+      user: { ...auth.user!, uid: 'next-user' } as AuthState['user']
+    };
+    const { rerender } = render(
+      <MemoryRouter initialEntries={['/schedule']}>
+        <Routes>
+          <Route path="/schedule" element={<Schedule auth={previousAuth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(1);
+    });
+    rerender(
+      <MemoryRouter initialEntries={['/schedule']}>
+        <Routes>
+          <Route path="/schedule" element={<Schedule auth={nextAuth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    const teamFilter = await screen.findByLabelText('Team filter');
+    expect(await within(teamFilter).findByRole('option', { name: 'Vipers' })).toBeTruthy();
+
+    await act(async () => {
+      resolvePreviousSchedule(buildScopedScheduleResult('team-old', 'Bears', 1));
+    });
+
+    await waitFor(() => {
+      expect(within(teamFilter).queryByRole('option', { name: 'Bears' })).toBeNull();
+      expect(within(teamFilter).getByRole('option', { name: 'Vipers' })).toBeTruthy();
     });
   });
 
