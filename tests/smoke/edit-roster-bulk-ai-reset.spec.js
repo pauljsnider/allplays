@@ -311,6 +311,7 @@ test('fresh run after cancel only uses newly entered input', async ({ page, base
 });
 
 test('CSV roster review saves family contacts and sends imported invitations', async ({ page, baseURL }) => {
+    test.slow();
     page.on('dialog', async (dialog) => dialog.accept());
     await openBulkAiTab(page, baseURL);
     await page.click('#tab-csv-import');

@@ -183,6 +183,7 @@ async function mockHomePlayerModules(page) {
                 export const firebaseAuth = { app: { options: { projectId: 'test-project' } }, currentUser: null };
                 export function describeAuthError(error) { return error?.message || 'Authentication failed.'; }
                 export async function getNativeAuthIdToken() { return null; }
+                export function getNativeAuthUserId() { return 'user-1'; }
                 export async function revokeCurrentAppleAuthorizationForDeletion() {}
                 export async function reauthenticateCurrentUserForDeletion() { return { appleAuthorizationRevoked: false }; }
                 export async function hydrateFirebaseUser(user) { return user; }

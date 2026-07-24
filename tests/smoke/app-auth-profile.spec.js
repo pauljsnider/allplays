@@ -241,6 +241,10 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
                     return 'mock-token';
                 }
 
+                export function getNativeAuthUserId() {
+                    return window.__mockAuthState?.user?.uid || null;
+                }
+
                 export async function revokeCurrentAppleAuthorizationForDeletion() {
                     return;
                 }
