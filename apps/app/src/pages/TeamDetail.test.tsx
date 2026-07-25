@@ -1257,6 +1257,44 @@ describe('TeamDetail', () => {
     expect(await screen.findByText('Imported 1 player: #14 Alex New.')).toBeTruthy();
   });
 
+  it('attaches an image pasted into the roster AI text box', async () => {
+    const managedModel = {
+      ...model,
+      canManageTeam: true
+    };
+    const image = new File(['roster'], 'roster.png', { type: 'image/png' });
+    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue(managedModel);
+    rosterAiImportMocks.generateRosterAiImportRows.mockResolvedValue({
+      rows: [],
+      errors: ['AI did not find any players to import.']
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1?tab=roster']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    fireEvent.click(await screen.findByRole('button', { name: 'Import roster' }));
+    fireEvent.paste(screen.getByRole('textbox', { name: 'Roster text or AI instructions' }), {
+      clipboardData: {
+        items: [{ type: 'image/png', getAsFile: () => image }]
+      }
+    });
+
+    expect(screen.getByText('Image ready: roster.png')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Generate preview' }));
+
+    await waitFor(() => expect(rosterAiImportMocks.generateRosterAiImportRows).toHaveBeenCalledWith({
+      text: '',
+      imageFile: image,
+      currentPlayers: [managedModel.players[0], managedModel.inactivePlayers[0]]
+    }));
+  });
+
   it('uses descriptive alt text for team and roster photos', async () => {
     teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue({
       ...model,

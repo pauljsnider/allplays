@@ -35,6 +35,7 @@ import {
 import { AvatarImage } from '../components/AvatarImage';
 import { TeamDetailPageSkeleton } from '../components/PageSkeletons';
 import { DetailLoadErrorState } from '../components/DetailLoadErrorState';
+import { capturePastedImage } from '../lib/clipboardImage';
 import { copyPublicText, openPublicUrl, sharePublicUrl } from '../lib/publicActions';
 import { isRetryableAppServiceError, toAppServiceError, type AppServiceError } from '../lib/appErrors';
 import { useAppAsyncOperation } from '../lib/useAsyncOperation';
@@ -1077,6 +1078,13 @@ function RosterAiImportCard({
     setErrors([]);
   }
 
+  function handleImageChange(file: File | null) {
+    setImageFile(file);
+    setImageName(file?.name || (file ? 'Pasted roster image' : ''));
+    setPreviewRows([]);
+    setErrors([]);
+  }
+
   async function generatePreview() {
     if (processing) return;
     setProcessing(true);
@@ -1167,7 +1175,7 @@ function RosterAiImportCard({
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <div className="text-sm font-black text-gray-950">Import roster with AI</div>
-          <div className="mt-1 text-xs font-semibold text-gray-600">Paste roster text or upload one photo, edit the preview, then create player records.</div>
+          <div className="mt-1 text-xs font-semibold text-gray-600">Paste roster text or an image, edit the preview, then create player records.</div>
         </div>
         {!open ? (
           <button type="button" className="secondary-button !min-h-10 text-xs" onClick={() => setOpen(true)}>
@@ -1190,9 +1198,12 @@ function RosterAiImportCard({
               placeholder="Paste roster rows, or add instructions like 'only varsity' when uploading a photo."
               value={text}
               onChange={(event) => setText(event.target.value)}
+              onPaste={(event) => capturePastedImage(event, handleImageChange)}
               disabled={processing || importing}
               aria-label="Roster text or AI instructions"
+              aria-describedby="roster-ai-paste-help"
             />
+            <span id="roster-ai-paste-help" className="mt-1 block text-[11px] font-semibold text-gray-500">Paste text normally, or paste a copied roster screenshot here to attach it.</span>
           </label>
           <label className="block">
             <span className="text-[11px] font-black uppercase tracking-[0.04em] text-violet-700">Roster photo</span>
@@ -1200,17 +1211,11 @@ function RosterAiImportCard({
               type="file"
               accept="image/png,image/jpeg,image/webp,image/heic,image/heif"
               className="mt-2 block w-full text-sm font-semibold text-gray-600 file:mr-4 file:rounded-xl file:border-0 file:bg-white file:px-3 file:py-2 file:text-sm file:font-black file:text-violet-700"
-              onChange={(event) => {
-                const file = event.target.files?.[0] || null;
-                setImageFile(file);
-                setImageName(file?.name || '');
-                setPreviewRows([]);
-                setErrors([]);
-              }}
+              onChange={(event) => handleImageChange(event.target.files?.[0] || null)}
               disabled={processing || importing}
               aria-label="Roster photo"
             />
-            {imageName ? <div className="mt-1 text-[11px] font-semibold text-gray-500"><ImageIcon className="mr-1 inline h-3 w-3" aria-hidden="true" />{imageName}</div> : null}
+            {imageName ? <div className="mt-1 text-[11px] font-semibold text-gray-500" role="status" aria-live="polite"><ImageIcon className="mr-1 inline h-3 w-3" aria-hidden="true" />Image ready: {imageName}</div> : null}
           </label>
 
           {errors.length ? (

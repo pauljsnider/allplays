@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { ClipboardCheck, Link as LinkIcon } from 'lucide-react';
 import { Modal } from '../../components/Modal';
+import { capturePastedImage } from '../../lib/clipboardImage';
 import {
   addTeamCalendarUrl,
   createScheduledGameForApp,
@@ -1216,7 +1217,7 @@ function ScheduleAiImportPanel({ teamName, text, imageName, previewRows, errors,
         <div className="min-w-0 flex-1">
           <div className="app-label">Staff schedule tools</div>
           <h2 className="mt-1 text-base font-black text-gray-950">Draft schedule with AI</h2>
-          <p className="mt-1 text-xs font-semibold leading-5 text-gray-500">Paste schedule text or upload one image for {teamName}. AI drafts game rows only; nothing is saved until you review and import.</p>
+          <p className="mt-1 text-xs font-semibold leading-5 text-gray-500">Paste schedule text or an image for {teamName}. AI drafts game rows only; nothing is saved until you review and import.</p>
         </div>
       </div>
 
@@ -1228,8 +1229,12 @@ function ScheduleAiImportPanel({ teamName, text, imageName, previewRows, errors,
             placeholder="Paste schedule lines, or add instructions like 'only home games' when uploading an image."
             value={text}
             onChange={(event) => onTextChange(event.target.value)}
+            onPaste={(event) => capturePastedImage(event, onImageChange)}
+            disabled={processing || importing}
             aria-label="Schedule text or AI instructions"
+            aria-describedby="schedule-ai-paste-help"
           />
+          <span id="schedule-ai-paste-help" className="mt-1 block text-[11px] font-semibold text-gray-500">Paste text normally, or paste a copied schedule screenshot here to attach it.</span>
         </label>
 
         <label className="block">
@@ -1240,9 +1245,10 @@ function ScheduleAiImportPanel({ teamName, text, imageName, previewRows, errors,
             accept="image/png,image/jpeg,image/webp,image/heic,image/heif"
             aria-label="Schedule image"
             onChange={(event) => onImageChange(event.target.files?.[0] || null)}
+            disabled={processing || importing}
           />
         </label>
-        {imageName ? <div className="text-xs font-bold text-gray-500">Loaded {imageName}</div> : null}
+        {imageName ? <div className="text-xs font-bold text-gray-500" role="status" aria-live="polite">Image ready: {imageName}</div> : null}
 
         {errors.length ? (
           <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-bold text-rose-700" role="alert">
