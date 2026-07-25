@@ -8,7 +8,7 @@ const dbMocks = vi.hoisted(() => ({
 
 vi.mock('./adapters/legacyPublicTeamsDb', () => dbMocks);
 
-import { getPublicTeamDetail, getPublicTeamsByLocation, getPublicTeamsPage } from './publicTeamsService';
+import { getPublicTeamDetail, getPublicTeamsByLocation, getPublicTeamsPage, hydratePublicTeamRosterCounts } from './publicTeamsService';
 
 describe('publicTeamsService', () => {
     beforeEach(() => {
@@ -71,6 +71,67 @@ describe('publicTeamsService', () => {
             nextCursor: 'cursor-2'
         });
         expect(dbMocks.getPublicTeamRosterCount).not.toHaveBeenCalled();
+    });
+
+    it('hydrates lightweight teams six at a time and maps aggregation failures to unavailable', async () => {
+        dbMocks.discoverPublicTeams.mockResolvedValue({
+            teams: Array.from({ length: 7 }, (_, index) => ({
+                id: `team-${index + 1}`,
+                name: `Team ${index + 1}`
+            })),
+            nextCursor: null
+        });
+        const lightweightPage = await getPublicTeamsPage({ includeRosterCounts: false });
+        let activeRequests = 0;
+        let maxActiveRequests = 0;
+        const pending: Array<{
+            teamId: string;
+            resolve: (value: { count: number; isCapped: boolean }) => void;
+            reject: (reason: unknown) => void;
+        }> = [];
+        dbMocks.getPublicTeamRosterCount.mockImplementation((teamId: string) => new Promise((resolve, reject) => {
+            activeRequests += 1;
+            maxActiveRequests = Math.max(maxActiveRequests, activeRequests);
+            pending.push({
+                teamId,
+                resolve: (value) => {
+                    activeRequests -= 1;
+                    resolve(value);
+                },
+                reject: (reason) => {
+                    activeRequests -= 1;
+                    reject(reason);
+                }
+            });
+        }));
+
+        const hydration = hydratePublicTeamRosterCounts(lightweightPage.teams);
+
+        expect(dbMocks.getPublicTeamRosterCount).toHaveBeenCalledTimes(6);
+        const firstBatch = pending.splice(0, 6);
+        firstBatch.forEach((request, index) => {
+            if (request.teamId === 'team-3') {
+                request.reject({ code: 'permission-denied' });
+            } else {
+                request.resolve({ count: index + 1, isCapped: request.teamId === 'team-6' });
+            }
+        });
+
+        await vi.waitFor(() => expect(dbMocks.getPublicTeamRosterCount).toHaveBeenCalledTimes(7));
+        expect(pending).toHaveLength(1);
+        pending[0].resolve({ count: 7, isCapped: false });
+
+        const hydratedTeams = await hydration;
+        expect(maxActiveRequests).toBe(6);
+        expect(hydratedTeams).toEqual([
+            expect.objectContaining({ teamId: 'team-1', publicRosterCount: 1, publicRosterCountCapped: false }),
+            expect.objectContaining({ teamId: 'team-2', publicRosterCount: 2, publicRosterCountCapped: false }),
+            expect.objectContaining({ teamId: 'team-3', publicRosterCount: null, publicRosterCountCapped: false }),
+            expect.objectContaining({ teamId: 'team-4', publicRosterCount: 4, publicRosterCountCapped: false }),
+            expect.objectContaining({ teamId: 'team-5', publicRosterCount: 5, publicRosterCountCapped: false }),
+            expect.objectContaining({ teamId: 'team-6', publicRosterCount: 6, publicRosterCountCapped: true }),
+            expect.objectContaining({ teamId: 'team-7', publicRosterCount: 7, publicRosterCountCapped: false })
+        ]);
     });
 
     it('omits a roster count when public aggregation access is denied', async () => {

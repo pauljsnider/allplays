@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { Search, XCircle, Loader2, Users } from 'lucide-react';
 import { type ParentHomeTeam } from '../lib/homeLogic';
 import { TeamAvatar, TeamLauncherChip, Status } from './TeamSummaryPrimitives';
-import { getPublicTeamsPage } from '../lib/publicTeamsService';
+import { getPublicTeamsPage, hydratePublicTeamRosterCounts } from '../lib/publicTeamsService';
 import { resolveZip } from '../lib/utils';
 
 type PendingSearchMode = 'browse' | 'search';
@@ -24,8 +24,10 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
   const [pendingRequestKey, setPendingRequestKey] = useState<string | null>(null);
   const [hasSearched, setHasSearched] = useState<boolean>(false);
   const [nextCursor, setNextCursor] = useState<unknown | null>(null);
+  const [rosterCountsLoading, setRosterCountsLoading] = useState<Set<string>>(() => new Set());
   const autoBrowseTriggeredRef = useRef(false);
   const latestRequestIdRef = useRef(0);
+  const rosterHydrationGenerationRef = useRef(0);
   const pendingRequestKeyRef = useRef<string | null>(null);
 
   const fetchPublicTeams = useCallback(async ({ searchText, cursor = null, append = false }: { searchText?: string; cursor?: unknown | null; append?: boolean } = {}) => {
@@ -37,6 +39,12 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
 
     const requestId = latestRequestIdRef.current + 1;
     latestRequestIdRef.current = requestId;
+    const rosterHydrationGeneration = append
+      ? rosterHydrationGenerationRef.current
+      : rosterHydrationGenerationRef.current + 1;
+    if (!append) {
+      rosterHydrationGenerationRef.current = rosterHydrationGeneration;
+    }
 
     setLoading(true);
     if (!append) {
@@ -48,13 +56,41 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
     }
     setHasSearched(true);
     try {
-      const result = await getPublicTeamsPage({ searchText: submittedSearchText, cursor });
+      const result = await getPublicTeamsPage({ searchText: submittedSearchText, cursor, includeRosterCounts: false });
       if (requestId !== latestRequestIdRef.current) {
         return;
       }
+      const discoveredTeamIds = new Set(result.teams.map((team) => team.teamId));
+      setRosterCountsLoading((current) => append
+        ? new Set([...current, ...discoveredTeamIds])
+        : discoveredTeamIds);
       setPublicTeams((current) => append ? [...current, ...result.teams] : result.teams);
       setNextCursor(result.nextCursor);
       setActiveSearchQuery(submittedSearchText || null);
+      void hydratePublicTeamRosterCounts(result.teams)
+        .then((hydratedTeams) => {
+          if (rosterHydrationGeneration !== rosterHydrationGenerationRef.current) {
+            return;
+          }
+          const hydratedById = new Map(hydratedTeams.map((team) => [team.teamId, {
+            publicRosterCount: team.publicRosterCount,
+            publicRosterCountCapped: team.publicRosterCountCapped
+          }]));
+          setPublicTeams((current) => current.map((team) => {
+            const hydratedCount = hydratedById.get(team.teamId);
+            return hydratedCount ? { ...team, ...hydratedCount } : team;
+          }));
+        })
+        .finally(() => {
+          if (rosterHydrationGeneration !== rosterHydrationGenerationRef.current) {
+            return;
+          }
+          setRosterCountsLoading((current) => {
+            const next = new Set(current);
+            discoveredTeamIds.forEach((teamId) => next.delete(teamId));
+            return next;
+          });
+        });
     } catch (err: any) {
       if (requestId !== latestRequestIdRef.current) {
         return;
@@ -98,6 +134,7 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
 
   const handleClear = () => {
     latestRequestIdRef.current += 1;
+    rosterHydrationGenerationRef.current += 1;
     setSearchQuery('');
     setPublicTeams([]);
     setError('');
@@ -109,6 +146,7 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
     setHasSearched(false);
     setLoading(false);
     setNextCursor(null);
+    setRosterCountsLoading(new Set());
   };
 
   useEffect(() => {
@@ -223,7 +261,7 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
               <h3 className="text-lg font-black text-gray-950">{location}</h3>
               <div className="grid gap-2 sm:grid-cols-2">
                 {teams.map(team => (
-                  <PublicTeamCard key={team.teamId} team={team} />
+                  <PublicTeamCard key={team.teamId} team={team} rosterCountLoading={rosterCountsLoading.has(team.teamId)} />
                 ))}
               </div>
             </div>
@@ -272,9 +310,11 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
   );
 }
 
-function PublicTeamCard({ team }: { team: ParentHomeTeam }) {
+function PublicTeamCard({ team, rosterCountLoading }: { team: ParentHomeTeam; rosterCountLoading: boolean }) {
   const hasRosterCount = typeof team.publicRosterCount === 'number';
-  const rosterCountLabel = hasRosterCount
+  const rosterCountLabel = rosterCountLoading
+    ? 'Loading roster count'
+    : hasRosterCount
     ? `${team.publicRosterCount}${team.publicRosterCountCapped ? '+' : ''} player${team.publicRosterCount === 1 && !team.publicRosterCountCapped ? '' : 's'}`
     : 'Roster count unavailable';
 

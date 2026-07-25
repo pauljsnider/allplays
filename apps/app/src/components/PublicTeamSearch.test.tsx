@@ -6,11 +6,12 @@ import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } fr
 import { render, screen, fireEvent, waitFor, cleanup, within } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { PublicTeamSearch } from './PublicTeamSearch';
-import { getPublicTeamsPage } from '../lib/publicTeamsService';
+import { getPublicTeamsPage, hydratePublicTeamRosterCounts } from '../lib/publicTeamsService';
 import { ParentHomeTeam } from '../lib/homeLogic';
 
 vi.mock('../lib/publicTeamsService', () => ({
-    getPublicTeamsPage: vi.fn() as MockInstance<(args?: { searchText?: string; cursor?: unknown | null; pageSize?: number }) => Promise<{ teams: ParentHomeTeam[]; nextCursor: unknown | null }>>,
+    getPublicTeamsPage: vi.fn() as MockInstance<(args?: { searchText?: string; cursor?: unknown | null; pageSize?: number; includeRosterCounts?: boolean }) => Promise<{ teams: ParentHomeTeam[]; nextCursor: unknown | null }>>,
+    hydratePublicTeamRosterCounts: vi.fn() as MockInstance<(teams: ParentHomeTeam[]) => Promise<ParentHomeTeam[]>>,
 }));
 
 const mockTeams: ParentHomeTeam[] = [
@@ -62,6 +63,14 @@ function renderSearch(props: ComponentProps<typeof PublicTeamSearch> = {}, initi
     );
 }
 
+function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((promiseResolve) => {
+        resolve = promiseResolve;
+    });
+    return { promise, resolve };
+}
+
 describe('PublicTeamSearch', () => {
     afterEach(() => {
         cleanup();
@@ -70,6 +79,7 @@ describe('PublicTeamSearch', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         (getPublicTeamsPage as import('vitest').Mock).mockResolvedValue({ teams: mockTeams, nextCursor: null });
+        (hydratePublicTeamRosterCounts as import('vitest').Mock).mockImplementation(async (teams: ParentHomeTeam[]) => teams);
     });
 
     it('renders an empty search-first state without loading teams on mount', () => {
@@ -114,7 +124,7 @@ describe('PublicTeamSearch', () => {
         fireEvent.change(searchInput, { target: { value: 'atlanta' } });
         fireEvent.click(screen.getByRole('button', { name: 'Search public teams' }));
 
-        await waitFor(() => expect(getPublicTeamsPage).toHaveBeenCalledWith({ searchText: 'atlanta', cursor: null }));
+        await waitFor(() => expect(getPublicTeamsPage).toHaveBeenCalledWith({ searchText: 'atlanta', cursor: null, includeRosterCounts: false }));
         expect(screen.getByText('Atlanta United')).toBeTruthy();
         expect(screen.queryByText('New York Knicks')).toBeNull();
         expect(screen.getByRole('button', { name: 'Clear public team search' })).toBeTruthy();
@@ -182,12 +192,12 @@ describe('PublicTeamSearch', () => {
 
         fireEvent.click(screen.getByRole('button', { name: /Browse all public teams/i }));
 
-        await waitFor(() => expect(getPublicTeamsPage).toHaveBeenCalledWith({ searchText: undefined, cursor: null }));
+        await waitFor(() => expect(getPublicTeamsPage).toHaveBeenCalledWith({ searchText: undefined, cursor: null, includeRosterCounts: false }));
         expect(screen.getByText('Atlanta United')).toBeTruthy();
         expect(screen.queryByText('New York Knicks')).toBeNull();
         fireEvent.click(screen.getByRole('button', { name: /Load more teams/i }));
 
-        await waitFor(() => expect(getPublicTeamsPage).toHaveBeenLastCalledWith({ searchText: undefined, cursor: 'cursor-2' }));
+        await waitFor(() => expect(getPublicTeamsPage).toHaveBeenLastCalledWith({ searchText: undefined, cursor: 'cursor-2', includeRosterCounts: false }));
         expect(screen.getByText('New York Knicks')).toBeTruthy();
     });
 
@@ -219,13 +229,13 @@ describe('PublicTeamSearch', () => {
         fireEvent.change(searchInput, { target: { value: 'atlanta' } });
         fireEvent.click(screen.getByRole('button', { name: 'Search public teams' }));
 
-        await waitFor(() => expect(getPublicTeamsPage).toHaveBeenCalledWith({ searchText: 'atlanta', cursor: null }));
+        await waitFor(() => expect(getPublicTeamsPage).toHaveBeenCalledWith({ searchText: 'atlanta', cursor: null, includeRosterCounts: false }));
         expect(screen.getByText('Atlanta Fire')).toBeTruthy();
         expect(screen.getByRole('button', { name: /Load more teams/i })).toBeTruthy();
 
         fireEvent.click(screen.getByRole('button', { name: /Load more teams/i }));
 
-        await waitFor(() => expect(getPublicTeamsPage).toHaveBeenLastCalledWith({ searchText: 'atlanta', cursor: 'search-cursor-2' }));
+        await waitFor(() => expect(getPublicTeamsPage).toHaveBeenLastCalledWith({ searchText: 'atlanta', cursor: 'search-cursor-2', includeRosterCounts: false }));
         expect(searchInput.value).toBe('atlanta');
         expect(screen.getByText('Atlanta Fire')).toBeTruthy();
         expect(screen.getByText('Atlanta United 2')).toBeTruthy();
@@ -292,7 +302,7 @@ describe('PublicTeamSearch', () => {
         await waitFor(() => expect(screen.getByText(/No public teams found/i)).toBeTruthy());
         fireEvent.click(screen.getByRole('button', { name: /Browse all public teams/i }));
 
-        await waitFor(() => expect(getPublicTeamsPage).toHaveBeenNthCalledWith(2, { searchText: undefined, cursor: null }));
+        await waitFor(() => expect(getPublicTeamsPage).toHaveBeenNthCalledWith(2, { searchText: undefined, cursor: null, includeRosterCounts: false }));
         expect(screen.getByText('Atlanta United')).toBeTruthy();
         expect(screen.getByText('New York Knicks')).toBeTruthy();
         expect(screen.queryByText(/No public teams found/i)).toBeNull();
@@ -306,6 +316,121 @@ describe('PublicTeamSearch', () => {
         await waitFor(() => expect(screen.getByText('Atlanta United')).toBeTruthy());
         expect(screen.getByText('New York Knicks')).toBeTruthy();
         expect(screen.getAllByRole('heading', { level: 3 }).length).toBe(2);
+    });
+
+    it('renders public team cards and links before roster-count hydration resolves', async () => {
+        const rosterHydration = deferred<ParentHomeTeam[]>();
+        (getPublicTeamsPage as import('vitest').Mock).mockResolvedValueOnce({
+            teams: [{ ...mockTeams[0], publicRosterCount: null }],
+            nextCursor: null
+        });
+        (hydratePublicTeamRosterCounts as import('vitest').Mock).mockReturnValueOnce(rosterHydration.promise);
+        renderSearch();
+
+        fireEvent.click(screen.getByRole('button', { name: /Browse all public teams/i }));
+
+        const teamLink = await screen.findByRole('link', { name: 'View Atlanta United public team' });
+        const teamCard = teamLink.closest('article');
+        expect(teamCard).toBeTruthy();
+        expect(within(teamCard as HTMLElement).getByText('Loading roster count')).toBeTruthy();
+        expect(within(teamCard as HTMLElement).queryByText('Roster count unavailable')).toBeNull();
+        expect(getPublicTeamsPage).toHaveBeenCalledWith({
+            searchText: undefined,
+            cursor: null,
+            includeRosterCounts: false
+        });
+
+        rosterHydration.resolve([{
+            ...mockTeams[0],
+            publicRosterCount: 12,
+            publicRosterCountCapped: false
+        }]);
+
+        await waitFor(() => expect(within(teamCard as HTMLElement).getByText('12 players')).toBeTruthy());
+        expect(within(teamCard as HTMLElement).queryByText('Loading roster count')).toBeNull();
+    });
+
+    it('ignores late roster-count hydration from a superseded search', async () => {
+        const staleHydration = deferred<ParentHomeTeam[]>();
+        const sharedTeamId = 'team-shared-result';
+        const atlantaResult = { ...mockTeams[0], teamId: sharedTeamId, publicRosterCount: null };
+        const newYorkResult = {
+            ...mockTeams[1],
+            teamId: sharedTeamId,
+            publicRosterCount: null
+        };
+        (getPublicTeamsPage as import('vitest').Mock)
+            .mockResolvedValueOnce({ teams: [atlantaResult], nextCursor: null })
+            .mockResolvedValueOnce({ teams: [newYorkResult], nextCursor: null });
+        (hydratePublicTeamRosterCounts as import('vitest').Mock)
+            .mockReturnValueOnce(staleHydration.promise)
+            .mockResolvedValueOnce([{
+                ...newYorkResult,
+                publicRosterCount: 5,
+                publicRosterCountCapped: false
+            }]);
+        renderSearch();
+
+        const searchInput = screen.getByPlaceholderText('Search by team, city, state, or zip');
+        fireEvent.change(searchInput, { target: { value: 'atlanta' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Search public teams' }));
+        await screen.findByText('Atlanta United');
+
+        fireEvent.change(searchInput, { target: { value: 'new york' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Search public teams' }));
+
+        const currentTeam = await screen.findByText('New York Knicks');
+        const currentCard = currentTeam.closest('article');
+        expect(currentCard).toBeTruthy();
+        await waitFor(() => expect(within(currentCard as HTMLElement).getByText('5 players')).toBeTruthy());
+
+        staleHydration.resolve([{
+            ...atlantaResult,
+            publicRosterCount: 99,
+            publicRosterCountCapped: false
+        }]);
+
+        await waitFor(() => expect(within(currentCard as HTMLElement).queryByText('99 players')).toBeNull());
+        expect(within(currentCard as HTMLElement).getByText('5 players')).toBeTruthy();
+    });
+
+    it('appends the next page before its independent roster hydration completes', async () => {
+        const firstHydration = deferred<ParentHomeTeam[]>();
+        const secondHydration = deferred<ParentHomeTeam[]>();
+        (getPublicTeamsPage as import('vitest').Mock)
+            .mockResolvedValueOnce({ teams: [{ ...mockTeams[0], publicRosterCount: null }], nextCursor: 'cursor-2' })
+            .mockResolvedValueOnce({ teams: [{ ...mockTeams[1], publicRosterCount: null }], nextCursor: null });
+        (hydratePublicTeamRosterCounts as import('vitest').Mock)
+            .mockReturnValueOnce(firstHydration.promise)
+            .mockReturnValueOnce(secondHydration.promise);
+        renderSearch();
+
+        fireEvent.click(screen.getByRole('button', { name: /Browse all public teams/i }));
+        const firstTeam = await screen.findByText('Atlanta United');
+        fireEvent.click(screen.getByRole('button', { name: /Load more teams/i }));
+
+        const secondTeam = await screen.findByText('New York Knicks');
+        const firstCard = firstTeam.closest('article');
+        const secondCard = secondTeam.closest('article');
+        expect(firstCard).toBeTruthy();
+        expect(secondCard).toBeTruthy();
+        expect(within(firstCard as HTMLElement).getByText('Loading roster count')).toBeTruthy();
+        expect(within(secondCard as HTMLElement).getByText('Loading roster count')).toBeTruthy();
+
+        secondHydration.resolve([{
+            ...mockTeams[1],
+            publicRosterCount: 4,
+            publicRosterCountCapped: false
+        }]);
+        await waitFor(() => expect(within(secondCard as HTMLElement).getByText('4 players')).toBeTruthy());
+        expect(within(firstCard as HTMLElement).getByText('Loading roster count')).toBeTruthy();
+
+        firstHydration.resolve([{
+            ...mockTeams[0],
+            publicRosterCount: 2,
+            publicRosterCountCapped: false
+        }]);
+        await waitFor(() => expect(within(firstCard as HTMLElement).getByText('2 players')).toBeTruthy());
     });
 
     it('shows the roster-backed count without treating the empty linked-player array as zero', async () => {
@@ -430,7 +555,7 @@ describe('PublicTeamSearch', () => {
 
         renderSearch({ autoBrowseOnMount: true }, '/teams/browse');
 
-        await waitFor(() => expect(getPublicTeamsPage).toHaveBeenNthCalledWith(1, { searchText: undefined, cursor: null }));
+        await waitFor(() => expect(getPublicTeamsPage).toHaveBeenNthCalledWith(1, { searchText: undefined, cursor: null, includeRosterCounts: false }));
 
         expect(screen.getByRole('button', { name: 'Search public teams' })).toBeTruthy();
 
@@ -438,7 +563,7 @@ describe('PublicTeamSearch', () => {
         fireEvent.change(searchInput, { target: { value: 'atlanta' } });
         fireEvent.click(screen.getByRole('button', { name: 'Search public teams' }));
 
-        await waitFor(() => expect(getPublicTeamsPage).toHaveBeenNthCalledWith(2, { searchText: 'atlanta', cursor: null }));
+        await waitFor(() => expect(getPublicTeamsPage).toHaveBeenNthCalledWith(2, { searchText: 'atlanta', cursor: null, includeRosterCounts: false }));
         expect(screen.getByText('Searching public teams for "atlanta".')).toBeTruthy();
         expect(screen.queryByText('Browsing teams across all regions.')).toBeNull();
 
@@ -485,7 +610,7 @@ describe('PublicTeamSearch', () => {
     it('can auto-browse on mount for the dedicated discovery route', async () => {
         renderSearch({ autoBrowseOnMount: true }, '/teams/browse');
 
-        await waitFor(() => expect(getPublicTeamsPage).toHaveBeenCalledWith({ searchText: undefined, cursor: null }));
+        await waitFor(() => expect(getPublicTeamsPage).toHaveBeenCalledWith({ searchText: undefined, cursor: null, includeRosterCounts: false }));
         expect(screen.getByText('Atlanta United')).toBeTruthy();
     });
 });

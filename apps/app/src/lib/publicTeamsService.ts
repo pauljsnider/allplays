@@ -75,26 +75,34 @@ function mapPublicTeam(team: PublicTeamSearchResult, rosterCount: PublicTeamRost
     };
 }
 
-async function mapPublicTeamsWithRosterCounts(teams: PublicTeamSearchResult[]): Promise<ParentHomeTeam[]> {
-    const mappedTeams: ParentHomeTeam[] = [];
+export async function hydratePublicTeamRosterCounts(teams: ParentHomeTeam[]): Promise<ParentHomeTeam[]> {
+    const hydratedTeams: ParentHomeTeam[] = [];
 
     for (let index = 0; index < teams.length; index += PUBLIC_ROSTER_COUNT_CONCURRENCY) {
         const teamBatch = teams.slice(index, index + PUBLIC_ROSTER_COUNT_CONCURRENCY);
         const mappedBatch = await Promise.all(teamBatch.map(async (team) => {
             try {
-                const rosterCount = await getPublicTeamRosterCount(team.id);
-                return mapPublicTeam(team, rosterCount);
+                const rosterCount = await getPublicTeamRosterCount(team.teamId);
+                return {
+                    ...team,
+                    publicRosterCount: rosterCount.count,
+                    publicRosterCountCapped: rosterCount.isCapped
+                };
             } catch {
                 // A legacy roster can contain a document that is not publicly
                 // readable. Preserve that boundary and omit the count instead
                 // of falling back to fetching roster records or showing zero.
-                return mapPublicTeam(team, null);
+                return {
+                    ...team,
+                    publicRosterCount: null,
+                    publicRosterCountCapped: false
+                };
             }
         }));
-        mappedTeams.push(...mappedBatch);
+        hydratedTeams.push(...mappedBatch);
     }
 
-    return mappedTeams;
+    return hydratedTeams;
 }
 
 function matchesPublicTeamSearch(team: { name?: string | null; city?: string | null; state?: string | null; zip?: string | null }, searchText: string): boolean {
@@ -136,9 +144,10 @@ export async function getPublicTeamsPage({ searchText, locationFilter, cursor = 
     });
     const matchingTeams = result.teams
         .filter((team: { name?: string | null; city?: string | null; state?: string | null; zip?: string | null }) => matchesPublicTeamSearch(team, normalizedSearchText));
+    const lightweightTeams = matchingTeams.map((team: PublicTeamSearchResult) => mapPublicTeam(team, null));
     const teams = includeRosterCounts
-        ? await mapPublicTeamsWithRosterCounts(matchingTeams)
-        : matchingTeams.map((team: PublicTeamSearchResult) => mapPublicTeam(team, null));
+        ? await hydratePublicTeamRosterCounts(lightweightTeams)
+        : lightweightTeams;
 
     return {
         teams,
