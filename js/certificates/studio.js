@@ -2201,6 +2201,14 @@ async function printSelectedDrafts() {
         showAlert('Select at least one certificate to print.', 'warning');
         return;
     }
+    if (!state.demoMode) {
+        try {
+            await setCertificateDefaults(state.teamId, state.shared);
+        } catch (error) {
+            console.warn('[certificates] Unable to save certificate defaults before printing:', error);
+            showAlert('Printing will continue, but team defaults could not be updated.', 'warning');
+        }
+    }
     try {
         const blobs = [];
         for (const draft of drafts) {

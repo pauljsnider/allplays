@@ -46,6 +46,7 @@ function createCertificateStudioHarness() {
         'async function waitForActiveRegeneration',
         'async function downloadSelectedPng',
         'async function downloadSelectedZip',
+        'async function printSelectedDrafts',
         'async function saveDrafts'
     ].map((signature) => extractFunction(studio, signature)).join('\n\n');
 
@@ -121,6 +122,9 @@ function createCertificateStudioHarness() {
         renderDraftToBlob: vi.fn(async (draft) => new Blob([draft.recipientName])),
         getCertificateFilename: vi.fn(({ recipientName, extension }) => `${recipientName}.${extension}`),
         downloadCertificateZip: vi.fn(async () => undefined),
+        printCertificateBlobs: vi.fn(async () => undefined),
+        printCertificates: vi.fn(async () => undefined),
+        createExportNode: vi.fn((draft) => ({ draft })),
         certificateTeamName: vi.fn(() => 'Demo Team'),
         listCertificates: vi.fn(async () => []),
         listCertificateBatches: vi.fn(async () => []),
@@ -165,6 +169,9 @@ function createCertificateStudioHarness() {
         const renderDraftToBlob = deps.renderDraftToBlob;
         const getCertificateFilename = deps.getCertificateFilename;
         const downloadCertificateZip = deps.downloadCertificateZip;
+        const printCertificateBlobs = deps.printCertificateBlobs;
+        const printCertificates = deps.printCertificates;
+        const createExportNode = deps.createExportNode;
         const certificateTeamName = deps.certificateTeamName;
         const listCertificates = deps.listCertificates;
         const listCertificateBatches = deps.listCertificateBatches;
@@ -201,6 +208,7 @@ function createCertificateStudioHarness() {
             saveDrafts,
             downloadSelectedPng,
             downloadSelectedZip,
+            printSelectedDrafts,
             openSavedBatch,
             openSavedCertificate,
             startCustomCertificate,
@@ -211,6 +219,8 @@ function createCertificateStudioHarness() {
             setCertificateDefaults,
             downloadDraftPng,
             downloadCertificateZip,
+            printCertificateBlobs,
+            printCertificates,
             listCertificates
         };
     `)(deps);
@@ -454,6 +464,47 @@ describe('awards and certificates workflow wiring', () => {
         );
         expect(warn).toHaveBeenCalledWith(
             '[certificates] Unable to save certificate defaults after ZIP export:',
+            expect.any(Error)
+        );
+        warn.mockRestore();
+    });
+
+    it('persists shared defaults before printing the selected certificates', async () => {
+        const harness = createCertificateStudioHarness();
+        harness.state.drafts = [
+            { id: 'draft-1', recipientName: 'Pat Star', includeInExport: true },
+            { id: 'draft-2', recipientName: 'Sam Star', includeInExport: false }
+        ];
+
+        await harness.printSelectedDrafts();
+
+        expect(harness.setCertificateDefaults).toHaveBeenCalledWith('team-1', harness.state.shared);
+        expect(harness.printCertificateBlobs).toHaveBeenCalledWith([
+            expect.any(Blob)
+        ]);
+        expect(harness.setCertificateDefaults.mock.invocationCallOrder[0])
+            .toBeLessThan(harness.printCertificateBlobs.mock.invocationCallOrder[0]);
+    });
+
+    it('continues printing when defaults persistence fails', async () => {
+        const harness = createCertificateStudioHarness();
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        harness.state.drafts = [{
+            id: 'draft-1',
+            recipientName: 'Pat Star',
+            includeInExport: true
+        }];
+        harness.setCertificateDefaults.mockRejectedValue(new Error('permission denied'));
+
+        await harness.printSelectedDrafts();
+
+        expect(harness.printCertificateBlobs).toHaveBeenCalledOnce();
+        expect(harness.showAlert).toHaveBeenCalledWith(
+            'Printing will continue, but team defaults could not be updated.',
+            'warning'
+        );
+        expect(warn).toHaveBeenCalledWith(
+            '[certificates] Unable to save certificate defaults before printing:',
             expect.any(Error)
         );
         warn.mockRestore();
