@@ -9,7 +9,8 @@ const require = createRequire(import.meta.url);
 const { buildAdminUserSearchHashes } = require('../functions/admin-user-search-index-core.cjs');
 const APPLY = process.argv.includes('--apply');
 const FIRESTORE_BATCH_LIMIT = 500;
-const FIREBASE_PROJECT_ID = 'game-flow-c6311';
+const FIRESTORE_REST_BATCH_LIMIT = 20;
+const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'game-flow-c6311';
 const FIRESTORE_DATABASE_PATH =
     `projects/${FIREBASE_PROJECT_ID}/databases/(default)`;
 const FIRESTORE_API_BASE =
@@ -62,9 +63,11 @@ async function runAccessTokenBackfill(accessToken) {
         }
     });
     const writes = [];
+    let documentCount = 0;
     for (const result of results) {
         const document = result.document;
         if (!document?.name) continue;
+        documentCount += 1;
         const userId = document.name.slice(document.name.lastIndexOf('/') + 1);
         const fields = document.fields || {};
         const hashes = buildAdminUserSearchHashes({
@@ -90,10 +93,16 @@ async function runAccessTokenBackfill(accessToken) {
         });
     }
 
-    for (let start = 0; start < writes.length; start += FIRESTORE_BATCH_LIMIT) {
+    for (let start = 0; start < writes.length; start += FIRESTORE_REST_BATCH_LIMIT) {
+        const batchWrites = writes.slice(start, start + FIRESTORE_REST_BATCH_LIMIT);
         const result = await firestoreRestRequest(accessToken, '/documents:batchWrite', {
-            writes: writes.slice(start, start + FIRESTORE_BATCH_LIMIT)
+            writes: batchWrites
         });
+        if (!Array.isArray(result.status) || result.status.length !== batchWrites.length) {
+            throw new Error(
+                `Firestore REST batch write returned ${result.status?.length ?? 0} status entries for ${batchWrites.length} writes`
+            );
+        }
         const failedWrite = result.status?.find((status) => Number(status.code || 0) !== 0);
         if (failedWrite) {
             throw new Error(
@@ -101,7 +110,7 @@ async function runAccessTokenBackfill(accessToken) {
             );
         }
     }
-    console.log(`[backfill-admin-user-search-index] Done. ${APPLY ? `Wrote ${writes.length}` : `Would write ${results.filter((result) => result.document).length}`} index document(s).`);
+    console.log(`[backfill-admin-user-search-index] Done. ${APPLY ? `Wrote ${writes.length}` : `Would write ${documentCount}`} index document(s).`);
 }
 
 async function main() {
