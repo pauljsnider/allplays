@@ -156,6 +156,50 @@ describe('team calendar subscription feed', () => {
         });
     });
 
+    it('preserves recurring wall-clock times across DST and positive UTC offsets', () => {
+        const chicagoOccurrences = expandRecurringCalendarEvent({
+            id: 'chicago-evening',
+            type: 'practice',
+            isSeriesMaster: true,
+            date: new Date('2025-01-07T00:00:00Z'),
+            startTime: '18:00',
+            endTime: '19:30',
+            timeZone: 'America/Chicago',
+            recurrence: {
+                freq: 'weekly',
+                interval: 1,
+                byDays: ['MO']
+            }
+        }, {
+            now: new Date('2026-07-25T12:00:00Z')
+        });
+        const karachiOccurrences = expandRecurringCalendarEvent({
+            id: 'karachi-evening',
+            type: 'practice',
+            isSeriesMaster: true,
+            date: new Date('2025-01-06T13:00:00Z'),
+            startTime: '18:00',
+            endTime: '19:30',
+            timeZone: 'Asia/Karachi',
+            recurrence: {
+                freq: 'weekly',
+                interval: 1,
+                byDays: ['MO']
+            }
+        }, {
+            now: new Date('2026-07-25T12:00:00Z')
+        });
+
+        expect(chicagoOccurrences.find((occurrence) => occurrence.instanceDate === '2026-07-27')).toMatchObject({
+            date: new Date('2026-07-27T23:00:00Z'),
+            end: new Date('2026-07-28T00:30:00Z')
+        });
+        expect(karachiOccurrences.find((occurrence) => occurrence.instanceDate === '2026-07-27')).toMatchObject({
+            date: new Date('2026-07-27T13:00:00Z'),
+            end: new Date('2026-07-27T14:30:00Z')
+        });
+    });
+
     it('builds feeds from game-level fields without depending on attendee RSVP arrays', () => {
         const baseEvent = {
             id: 'game-2',

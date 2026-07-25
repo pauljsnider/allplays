@@ -162,12 +162,80 @@ function getRecurrenceUtcOffsetMinutes(master) {
   return offsetMinutes;
 }
 
+function getWallClockParts(date, timeZone) {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hourCycle: 'h23'
+    }).formatToParts(date);
+    const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
+    return {
+      year: Number(values.year),
+      month: Number(values.month) - 1,
+      day: Number(values.day),
+      hour: Number(values.hour),
+      minute: Number(values.minute),
+      second: Number(values.second)
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
+function parseWallClockTime(occurrenceDay, time, timeZone) {
+  const [hour, minute] = time.split(':').map(Number);
+  const targetMs = Date.UTC(
+    occurrenceDay.getUTCFullYear(),
+    occurrenceDay.getUTCMonth(),
+    occurrenceDay.getUTCDate(),
+    hour,
+    minute
+  );
+  let resolvedMs = targetMs;
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const observed = getWallClockParts(new Date(resolvedMs), timeZone);
+    if (!observed) return null;
+    const observedMs = Date.UTC(
+      observed.year,
+      observed.month,
+      observed.day,
+      observed.hour,
+      observed.minute,
+      observed.second
+    );
+    const nextMs = resolvedMs + (targetMs - observedMs);
+    if (nextMs === resolvedMs) return new Date(resolvedMs);
+    resolvedMs = nextMs;
+  }
+
+  return null;
+}
+
 function buildRecurringOccurrence(master, occurrenceDay, dateKey, override = {}, utcOffsetMinutes = 0) {
   const startDate = new Date(occurrenceDay);
   const startTime = String(override.startTime || master.startTime || '').trim();
+  const timeZone = String(master.timeZone || master.timezone || '').trim();
   if (/^\d{2}:\d{2}$/.test(startTime)) {
     const [hours, minutes] = startTime.split(':').map(Number);
-    startDate.setUTCHours(hours, minutes - utcOffsetMinutes, 0, 0);
+    const zonedStart = timeZone ? parseWallClockTime(occurrenceDay, startTime, timeZone) : null;
+    if (zonedStart) {
+      startDate.setTime(zonedStart.getTime());
+    } else {
+      startDate.setTime(Date.UTC(
+        occurrenceDay.getUTCFullYear(),
+        occurrenceDay.getUTCMonth(),
+        occurrenceDay.getUTCDate(),
+        hours,
+        minutes
+      ) - utcOffsetMinutes * 60 * 1000);
+    }
   } else {
     const masterStart = toDate(master.date);
     startDate.setUTCHours(
@@ -193,12 +261,25 @@ function buildRecurringOccurrence(master, occurrenceDay, dateKey, override = {},
   if (/^\d{2}:\d{2}$/.test(endTime)) {
     const [hours, minutes] = endTime.split(':').map(Number);
     const endDate = new Date(occurrenceDay);
-    endDate.setUTCHours(hours, minutes - utcOffsetMinutes, 0, 0);
     const explicitDayOffset = override.endDayOffset ?? master.endDayOffset;
-    const inferredDayOffset = endDate <= startDate ? 1 : 0;
-    endDate.setUTCDate(endDate.getUTCDate() + (
-      explicitDayOffset == null ? inferredDayOffset : Math.max(0, Number(explicitDayOffset) || 0)
-    ));
+    const [startHours, startMinutes] = startTime.split(':').map(Number);
+    const inferredDayOffset = hours * 60 + minutes <= startHours * 60 + startMinutes ? 1 : 0;
+    const endDayOffset = explicitDayOffset == null
+      ? inferredDayOffset
+      : Math.max(0, Number(explicitDayOffset) || 0);
+    endDate.setUTCDate(endDate.getUTCDate() + endDayOffset);
+    const zonedEnd = timeZone ? parseWallClockTime(endDate, endTime, timeZone) : null;
+    if (zonedEnd) {
+      endDate.setTime(zonedEnd.getTime());
+    } else {
+      endDate.setTime(Date.UTC(
+        endDate.getUTCFullYear(),
+        endDate.getUTCMonth(),
+        endDate.getUTCDate(),
+        hours,
+        minutes
+      ) - utcOffsetMinutes * 60 * 1000);
+    }
     occurrence.end = endDate;
   } else {
     const masterStart = toDate(master.date);
@@ -240,7 +321,11 @@ function expandRecurringCalendarEvent(master, { now = new Date() } = {}) {
     ? master.overrides
     : {};
   const utcOffsetMinutes = getRecurrenceUtcOffsetMinutes(master);
-  const localSeriesStart = new Date(seriesStart.getTime() + utcOffsetMinutes * 60 * 1000);
+  const timeZone = String(master.timeZone || master.timezone || '').trim();
+  const zonedSeriesStart = timeZone ? getWallClockParts(seriesStart, timeZone) : null;
+  const localSeriesStart = zonedSeriesStart
+    ? new Date(Date.UTC(zonedSeriesStart.year, zonedSeriesStart.month, zonedSeriesStart.day))
+    : new Date(seriesStart.getTime() + utcOffsetMinutes * 60 * 1000);
   const startDay = new Date(Date.UTC(
     localSeriesStart.getUTCFullYear(),
     localSeriesStart.getUTCMonth(),

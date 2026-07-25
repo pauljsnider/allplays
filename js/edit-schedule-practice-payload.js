@@ -17,6 +17,7 @@ export function applyPracticeRecurrenceFields({
     recurrenceConfig = {},
     startDate,
     endDate,
+    timeZone = '',
     Timestamp,
     deleteField,
     generateSeriesId
@@ -47,6 +48,7 @@ export function applyPracticeRecurrenceFields({
         practiceData.startTime = startDate.toTimeString().slice(0, 5);
         practiceData.endTime = endDate.toTimeString().slice(0, 5);
         practiceData.endDayOffset = Math.max(0, Math.round((endDay.getTime() - startDay.getTime()) / 86400000));
+        practiceData.timeZone = String(timeZone || '').trim();
         practiceData.recurrence = {
             freq,
             interval,
