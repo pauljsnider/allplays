@@ -147,6 +147,27 @@ describe('chatgpt-mcp core: resolveUserContext', () => {
         expect([...context.teams.get('team-legacy-lower').roles]).toEqual(['owner']);
     });
 
+    it('keeps owner and parent teams when optional email-based queries are denied', async () => {
+        const db = parentDb({
+            queries: {
+                teams: (filters) => {
+                    if (filters.some((filter) => ['adminEmails', 'ownerEmail', 'ownerEmailLower'].includes(filter.field))) {
+                        throw new DomainError('permission_denied', 'Rules rejected an optional email query.');
+                    }
+                    if (filters.some((filter) => filter.field === 'ownerId')) {
+                        return [{ id: 'team-owned', data: { name: 'Owned', ownerId: 'parent-1' } }];
+                    }
+                    return [];
+                }
+            }
+        });
+
+        const context = await resolveUserContext(db, parentIdentity);
+
+        expect([...context.teams.get('team-owned').roles]).toEqual(['owner']);
+        expect([...context.teams.get('team-a').roles]).toEqual(['parent']);
+    });
+
     it('keeps private parent teams when direct team reads are denied by rules', async () => {
         const db = parentDb({
             docs: {

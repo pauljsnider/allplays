@@ -62,6 +62,21 @@ async function safeGetDoc(db, path) {
     }
 }
 
+// Legacy email-based team-access queries are intentionally best-effort in the
+// app. Firestore rules can reject one as not provably safe depending on the
+// stored email's casing/shape. One optional lookup must not prevent the user's
+// UID-owned or parent-linked teams from loading.
+async function safeGetQuery(query) {
+    try {
+        return await query.get();
+    } catch (error) {
+        if (error instanceof DomainError && error.code === 'permission_denied') {
+            return { docs: [] };
+        }
+        throw error;
+    }
+}
+
 /**
  * Build the caller's authorization context from Firestore. Roles are always
  * re-derived per request; nothing supplied by the model is trusted.
@@ -99,13 +114,13 @@ export async function resolveUserContext(db, { uid, email }) {
     const [ownedSnap, adminSnap, ownerEmailLowerSnap, ...ownerEmailSnaps] = await Promise.all([
         db.collection('teams').where('ownerId', '==', uid).get(),
         normalizedEmail
-            ? db.collection('teams').where('adminEmails', 'array-contains', normalizedEmail).get()
+            ? safeGetQuery(db.collection('teams').where('adminEmails', 'array-contains', normalizedEmail))
             : Promise.resolve({ docs: [] }),
         normalizedEmail
-            ? db.collection('teams').where('ownerEmailLower', '==', normalizedEmail).get()
+            ? safeGetQuery(db.collection('teams').where('ownerEmailLower', '==', normalizedEmail))
             : Promise.resolve({ docs: [] }),
         ...ownerEmailCandidates.map((ownerEmail) => (
-            db.collection('teams').where('ownerEmail', '==', ownerEmail).get()
+            safeGetQuery(db.collection('teams').where('ownerEmail', '==', ownerEmail))
         ))
     ]);
 
