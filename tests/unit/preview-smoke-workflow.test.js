@@ -7,20 +7,19 @@ const workflow = readFileSync(
 );
 
 describe('preview-smoke CI workflow', () => {
-    it('defers the full smoke while external development owns the PR and reruns on handoff', () => {
+    it('runs for code changes without creating duplicate runs for label churn', () => {
         const triggerSection = workflow.slice(workflow.indexOf('\non:'), workflow.indexOf('\nconcurrency:'));
         const changesSection = workflow.slice(workflow.indexOf('  changes:'), workflow.indexOf('  preview-smoke-run:'));
         const gateSection = workflow.slice(workflow.indexOf('  preview-smoke:'));
 
-        expect(triggerSection).toContain('      - unlabeled');
-        expect(triggerSection).toContain('      - labeled');
-        expect(changesSection).toContain("contains(github.event.pull_request.labels.*.name, 'external-claim')");
-        expect(changesSection).toContain('[ "$EXTERNAL_CLAIMED" = "true" ]');
-        expect(changesSection).toContain('echo "landing=false" >> "$GITHUB_OUTPUT"');
-        expect(changesSection).toContain('[ "$ACTION" = "labeled" ] || [ "$ACTION" = "unlabeled" ]');
-        expect(workflow).toContain("format('preview-smoke-label-noop-{0}', github.run_id)");
-        expect(gateSection).toContain("'preview-smoke-label-noop' || 'preview-smoke'");
-        expect(gateSection).toContain('needs.changes.outputs.landing');
+        expect(triggerSection).toContain('      - synchronize');
+        expect(triggerSection).not.toContain('      - unlabeled');
+        expect(triggerSection).not.toContain('      - labeled');
+        expect(workflow).toContain('group: preview-smoke-${{ github.event.pull_request.number }}');
+        expect(changesSection).not.toContain('external-claim');
+        expect(changesSection).not.toContain('LABEL_NAME');
+        expect(gateSection).toContain('name: preview-smoke');
+        expect(gateSection).not.toContain('label-noop');
     });
 
     it('runs smoke only when at least one changed path is not skippable', () => {
