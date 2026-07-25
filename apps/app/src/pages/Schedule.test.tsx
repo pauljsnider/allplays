@@ -1549,7 +1549,7 @@ describe('Schedule', () => {
     const { container } = renderSchedule();
 
     const mobileRow = await waitFor(() => {
-      const row = container.querySelector('.schedule-list > a');
+      const row = container.querySelector('.schedule-event-row-detail');
       expect(row).toBeTruthy();
       return row as HTMLAnchorElement;
     });
