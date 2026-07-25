@@ -300,7 +300,11 @@ export function validateProductionDeployCommand(deployProd) {
     );
     assertIncludes(deployProd, 'retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 8 30', 'Production Firestore deploy targets and bounded extended retry');
     assertIncludes(deployProd, 'if (( retry_delay_seconds > 120 )); then', 'Production Firebase retry delay cap');
+    assertIncludes(deployProd, 'retry_jitter_seconds=$((RANDOM % 16))', 'Production Firebase retry jitter');
     assertIncludes(deployProd, 'HTTP Error:[[:space:]]*409,[[:space:]]*Requested entity already exists', 'Production Firestore release-race retry');
+    assertIncludes(deployProd, 'latest version of firestore.rules already up to date, skipping upload', 'Production Firestore current-rules verification');
+    assertIncludes(deployProd, 'deployed indexes in firestore.indexes.json successfully', 'Production Firestore current-indexes verification');
+    assertIncludes(deployProd, 'accepting the duplicate release 409 as success', 'Production Firestore verified duplicate-release recovery');
     assertIncludes(deployProd, 'if [[ "$deploy_label" == "firestore" ]]; then', 'Production Firestore retry-exhaustion summary scope');
     assertIncludes(deployProd, 'Firestore Rules API (firebaserules.googleapis.com)', 'Production Firestore retry-exhaustion API surface');
     assertIncludes(
@@ -325,6 +329,8 @@ export function validateProductionDeployCommand(deployProd) {
     );
     assertIncludes(deployProd, 'Application deployment remains fail-closed, so Hosting and Functions were not deployed.', 'Production Firestore retry-exhaustion fail-closed guidance');
     assertIncludes(deployProd, 'actions: read', 'Production workflow-run read permission');
+    assertIncludes(deployProd, 'deployments: read', 'Production component deployment read permission');
+    assertIncludes(deployProd, 'deployments: write', 'Production component deployment write permission');
     assertIncludes(deployProd, 'GH_TOKEN: ${{ github.token }}', 'Production workflow-run authentication');
     assertIncludes(deployProd, 'actions/workflows/deploy-prod.yml/runs', 'Production successful deploy lookup');
     assertIncludes(deployProd, '-f branch="$baseline_branch"', 'Production successful deploy branch filter');
@@ -343,7 +349,13 @@ export function validateProductionDeployCommand(deployProd) {
     ) {
         throw new Error('Production successful deploy lookup failure must force authorization rules-first ordering.');
     }
-    assertIncludes(deployProd, 'git diff --quiet "$last_success_sha" "$GITHUB_SHA" -- firestore.rules firestore.indexes.json', 'Production Firestore change detection');
+    assertIncludes(deployProd, 'repos/${GITHUB_REPOSITORY}/deployments', 'Production Firestore component deployment lookup');
+    assertIncludes(deployProd, '-f environment=production-firestore', 'Production Firestore component environment filter');
+    assertIncludes(deployProd, 'firestore_success_sha="$deployment_sha"', 'Production Firestore component successful SHA');
+    assertIncludes(deployProd, 'git diff --quiet "$firestore_success_sha" "$GITHUB_SHA" -- firestore.rules firestore.indexes.json', 'Production Firestore component change detection');
+    assertIncludes(deployProd, 'record_component_deployment()', 'Production component deployment recorder');
+    assertIncludes(deployProd, '"production-firestore"', 'Production Firestore component marker');
+    assertIncludes(deployProd, 'state: "success"', 'Production Firestore component success status');
     if (deployProd.includes('git diff --quiet "${{ github.event.before }}" "${{ github.sha }}" -- firestore.rules firestore.indexes.json')) {
         throw new Error('Production Firestore changes must not use the immediately previous push as the deploy baseline.');
     }
@@ -358,6 +370,7 @@ export function validateProductionDeployCommand(deployProd) {
         throw new Error('Production must not redeploy unchanged Firestore configuration.');
     }
     const retryEnabledDeploy = deployProd.indexOf('"retry-enabled-functions"', conditionalEnd);
+    const componentMarker = deployProd.indexOf('record_component_deployment', conditionalEnd);
     const applicationDeploy = deployProd.indexOf('retry_firebase_deploy "hosting,functions" "application"', conditionalEnd);
     const firstApplicationDeploy = deployProd.indexOf('retry_firebase_deploy "hosting,functions" "application"');
     if (retryEnabledDeploy === -1 || applicationDeploy <= retryEnabledDeploy) {
@@ -366,9 +379,11 @@ export function validateProductionDeployCommand(deployProd) {
     if (
         changedBranch.indexOf('"firestore"') === -1
         || conditionalEnd >= retryEnabledDeploy
+        || componentMarker === -1
+        || componentMarker >= retryEnabledDeploy
         || firstApplicationDeploy < conditionalEnd
     ) {
-        throw new Error('Production Firestore deploy must run first when its configuration changed.');
+        throw new Error('Production Firestore deploy and component marker must run first when its configuration changed.');
     }
 
     const storageDeployCommand = deployCommands.find(command => /--only(?:=|\s+)storage(?:\s|$)/.test(command)) || '';

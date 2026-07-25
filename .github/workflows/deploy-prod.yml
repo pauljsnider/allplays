@@ -88,6 +88,7 @@ jobs:
     permissions:
       actions: read
       contents: read
+      deployments: read
     outputs:
       admin_user_search_backfill_needed: ${{ steps.firestore_config.outputs.admin_user_search_backfill_needed }}
       firestore_changed: ${{ steps.firestore_config.outputs.changed }}
@@ -152,6 +153,7 @@ jobs:
             baseline_branch="master"
           fi
           last_success_sha=""
+          firestore_success_sha=""
           lookup_succeeded="false"
           lookup_max_attempts=3
           for ((lookup_attempt = 1; lookup_attempt <= lookup_max_attempts; lookup_attempt += 1)); do
@@ -177,6 +179,49 @@ jobs:
             exit 0
           fi
 
+          component_lookup_succeeded="false"
+          component_lookup_max_attempts=3
+          for ((lookup_attempt = 1; lookup_attempt <= component_lookup_max_attempts; lookup_attempt += 1)); do
+            deployments_json=""
+            if deployments_json="$(gh api --method GET "repos/${GITHUB_REPOSITORY}/deployments" \
+              -f environment=production-firestore \
+              -F per_page=20)"; then
+              component_lookup_succeeded="true"
+              while IFS=$'\t' read -r deployment_id deployment_sha; do
+                [[ "$deployment_id" =~ ^[0-9]+$ ]] || continue
+                [[ "$deployment_sha" =~ ^[0-9a-f]{40}$ ]] || continue
+                deployment_state=""
+                if ! deployment_state="$(gh api --method GET \
+                  "repos/${GITHUB_REPOSITORY}/deployments/${deployment_id}/statuses" \
+                  -F per_page=1 \
+                  --jq '.[0].state // ""')"; then
+                  component_lookup_succeeded="false"
+                  break
+                fi
+                if [[ "$deployment_state" == "success" ]]; then
+                  firestore_success_sha="$deployment_sha"
+                  break
+                fi
+              done < <(jq -r '.[] | [.id, .sha] | @tsv' <<< "$deployments_json")
+              if [[ "$component_lookup_succeeded" == "true" ]]; then
+                break
+              fi
+            fi
+
+            if (( lookup_attempt < component_lookup_max_attempts )); then
+              sleep $((5 * lookup_attempt))
+            fi
+          done
+
+          if [[ "$component_lookup_succeeded" != "true" ]]; then
+            echo "::warning::The Firestore component deployment lookup failed; falling back to the last complete production deployment."
+          elif [[ -z "$firestore_success_sha" ]]; then
+            echo "::notice::No Firestore component deployment marker exists yet; using the last complete production deployment as the migration baseline."
+          fi
+          if [[ ! "$firestore_success_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            firestore_success_sha="$last_success_sha"
+          fi
+
           if [[ ! "$last_success_sha" =~ ^[0-9a-f]{40}$ ]]; then
             echo "::warning::No valid successful production deploy baseline was found; forcing authorization rules-first ordering."
             echo "admin_user_search_backfill_needed=true" >> "$GITHUB_OUTPUT"
@@ -195,7 +240,11 @@ jobs:
             else
               echo "admin_user_search_backfill_needed=true" >> "$GITHUB_OUTPUT"
             fi
-            if git diff --quiet "$last_success_sha" "$GITHUB_SHA" -- firestore.rules firestore.indexes.json; then
+            if [[ ! "$firestore_success_sha" =~ ^[0-9a-f]{40}$ ]] \
+              || ! git cat-file -e "${firestore_success_sha}^{commit}" 2>/dev/null; then
+              echo "::warning::The Firestore component deployment commit is unavailable locally; forcing authorization rules-first ordering."
+              echo "changed=true" >> "$GITHUB_OUTPUT"
+            elif git diff --quiet "$firestore_success_sha" "$GITHUB_SHA" -- firestore.rules firestore.indexes.json; then
               echo "changed=false" >> "$GITHUB_OUTPUT"
             else
               echo "changed=true" >> "$GITHUB_OUTPUT"
@@ -262,6 +311,7 @@ jobs:
     permissions:
       actions: read
       contents: read
+      deployments: write
       id-token: write
 
     steps:
@@ -405,6 +455,7 @@ jobs:
         env:
           ADMIN_USER_SEARCH_BACKFILL_NEEDED: ${{ needs.prepare-deploy.outputs.admin_user_search_backfill_needed }}
           FIRESTORE_CONFIG_CHANGED: ${{ needs.prepare-deploy.outputs.firestore_changed }}
+          GH_TOKEN: ${{ github.token }}
           GOOGLE_OAUTH_ACCESS_TOKEN: ${{ steps.google_auth_production.outputs.access_token }}
         run: |
           set -euo pipefail
@@ -418,7 +469,7 @@ jobs:
             local max_attempts="${3:-3}"
             local base_delay_seconds="${4:-15}"
             local acknowledge_failure_policy="${5:-false}"
-            local attempt deploy_log deploy_status retry_delay_seconds
+            local attempt deploy_log deploy_plain_log deploy_status retry_delay_seconds retry_jitter_seconds
             local api_surface final_error_class final_http_status
             local -a deploy_args=(
               --only "$deploy_targets"
@@ -450,6 +501,17 @@ jobs:
 
               if (( deploy_status == 0 )); then
                 return 0
+              fi
+
+              if [[ "$deploy_label" == "firestore" ]]; then
+                deploy_plain_log="${deploy_log}.plain"
+                sed -E 's/\x1B\[[0-9;]*[[:alpha:]]//g' "$deploy_log" > "$deploy_plain_log"
+                if grep -Fq "latest version of firestore.rules already up to date, skipping upload" "$deploy_plain_log" \
+                  && grep -Fq "deployed indexes in firestore.indexes.json successfully" "$deploy_plain_log" \
+                  && grep -Eq 'HTTP Error:[[:space:]]*409,[[:space:]]*Requested entity already exists' "$deploy_plain_log"; then
+                  echo "::notice::Firestore rules and indexes are already current; accepting the duplicate release 409 as success."
+                  return 0
+                fi
               fi
 
               if ! grep -Eiq "$transient_pattern" "$deploy_log"; then
@@ -498,12 +560,68 @@ jobs:
               fi
 
               retry_delay_seconds=$((base_delay_seconds * (2 ** (attempt - 1))))
+              retry_jitter_seconds=$((RANDOM % 16))
+              retry_delay_seconds=$((retry_delay_seconds + retry_jitter_seconds))
               if (( retry_delay_seconds > 120 )); then
                 retry_delay_seconds=120
               fi
               echo "Transient Firebase ${deploy_label} deploy failure; retrying in ${retry_delay_seconds} seconds (attempt $((attempt + 1))/${max_attempts})." >&2
               sleep "$retry_delay_seconds"
             done
+          }
+
+          record_component_deployment() {
+            local component_environment="$1"
+            local component_description="$2"
+            local attempt deployment_id deployment_status
+
+            for attempt in 1 2 3; do
+              deployment_id="$(
+                jq -n \
+                  --arg ref "$GITHUB_SHA" \
+                  --arg environment "$component_environment" \
+                  '{
+                    ref: $ref,
+                    environment: $environment,
+                    auto_merge: false,
+                    required_contexts: [],
+                    transient_environment: false,
+                    production_environment: true,
+                    description: "Component deployment marker"
+                  }' \
+                  | gh api --method POST "repos/${GITHUB_REPOSITORY}/deployments" --input - --jq '.id'
+              )" || deployment_id=""
+
+              if [[ "$deployment_id" =~ ^[0-9]+$ ]]; then
+                deployment_status="$(
+                  jq -n \
+                    --arg description "$component_description" \
+                    --arg environment "$component_environment" \
+                    --arg log_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+                    '{
+                      state: "success",
+                      description: $description,
+                      environment: $environment,
+                      log_url: $log_url,
+                      auto_inactive: true
+                    }' \
+                    | gh api --method POST \
+                      "repos/${GITHUB_REPOSITORY}/deployments/${deployment_id}/statuses" \
+                      --input - \
+                      --jq '.state'
+                )" || deployment_status=""
+                if [[ "$deployment_status" == "success" ]]; then
+                  return 0
+                fi
+              fi
+
+              if (( attempt < 3 )); then
+                sleep $((5 * attempt))
+              fi
+            done
+
+            echo "Unable to record the ${component_environment} deployment marker." >&2
+            return 1
           }
 
           if [[ "$FIRESTORE_CONFIG_CHANGED" == "true" ]]; then
@@ -516,6 +634,14 @@ jobs:
             # unrelated Rules API outage must not fail a Hosting/Functions-only fix.
             :
           fi
+          # Record this component immediately. A later Hosting, Functions, or
+          # migration failure must not make the next run redeploy current rules.
+          if ! record_component_deployment \
+            "production-firestore" \
+            "Firestore rules and indexes are current at ${GITHUB_SHA}."; then
+            echo "::warning::Firestore is current, but its component marker could not be recorded. A future failed production retry may conservatively redeploy it."
+          fi
+
           # These two event handlers intentionally enable automatic retries and
           # have idempotency coverage. A targeted --force acknowledges only that
           # failure policy; the subsequent full-fleet deploy remains unforced so
