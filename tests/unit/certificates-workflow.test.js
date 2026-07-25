@@ -510,18 +510,28 @@ describe('awards and certificates workflow wiring', () => {
         warn.mockRestore();
     });
 
-    it('does not block printing while defaults persistence is pending', async () => {
+    it('waits for pending defaults persistence before printing', async () => {
         const harness = createCertificateStudioHarness();
         harness.state.drafts = [{
             id: 'draft-1',
             recipientName: 'Pat Star',
             includeInExport: true
         }];
-        harness.setCertificateDefaults.mockImplementation(() => new Promise(() => {}));
+        let resolveDefaults;
+        harness.setCertificateDefaults.mockImplementation(() => new Promise((resolve) => {
+            resolveDefaults = resolve;
+        }));
 
-        await harness.printSelectedDrafts();
+        const printPromise = harness.printSelectedDrafts();
+        await vi.waitFor(() => {
+            expect(harness.setCertificateDefaults).toHaveBeenCalledWith('team-1', harness.state.shared);
+        });
 
-        expect(harness.setCertificateDefaults).toHaveBeenCalledWith('team-1', harness.state.shared);
+        expect(harness.printCertificateBlobs).not.toHaveBeenCalled();
+
+        resolveDefaults();
+        await printPromise;
+
         expect(harness.printCertificateBlobs).toHaveBeenCalledOnce();
     });
 

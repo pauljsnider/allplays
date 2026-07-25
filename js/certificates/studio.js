@@ -2202,10 +2202,12 @@ async function printSelectedDrafts() {
         return;
     }
     if (!state.demoMode && state.mode !== 'parent-detail') {
-        void setCertificateDefaults(state.teamId, state.shared).catch((error) => {
+        try {
+            await setCertificateDefaults(state.teamId, state.shared);
+        } catch (error) {
             console.warn('[certificates] Unable to save certificate defaults before printing:', error);
             showAlert('Printing will continue, but team defaults could not be updated.', 'warning');
-        });
+        }
     }
     try {
         const blobs = [];
