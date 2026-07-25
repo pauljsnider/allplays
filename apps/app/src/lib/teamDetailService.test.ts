@@ -455,6 +455,137 @@ describe('team detail bootstrap loading', () => {
     ]);
   });
 
+  it('keeps cancelled imported calendar events out of the team overview', () => {
+    const built = buildTeamDetailModel({
+      teamId: 'team-1',
+      team: { id: 'team-1', ownerId: 'owner-1', name: 'Bears' },
+      scheduleEvents: [{
+        eventKey: 'team-1::cancelled-practice::staff-team-team-1',
+        id: 'cancelled-practice',
+        teamId: 'team-1',
+        teamName: 'Bears',
+        type: 'practice',
+        title: 'Cancelled Practice',
+        date: new Date('2100-06-01T18:00:00Z'),
+        location: 'Fieldhouse',
+        opponent: null,
+        childId: 'staff-team-team-1',
+        childName: 'Bears',
+        isDbGame: false,
+        isCancelled: true,
+        assignments: [],
+        openAssignmentCount: 0
+      }]
+    });
+
+    expect(built.upcomingEvents).toEqual([]);
+  });
+
+  it('overlays database metadata onto matching calendar projections', () => {
+    const built = buildTeamDetailModel({
+      teamId: 'team-1',
+      team: { id: 'team-1', ownerId: 'owner-1', name: 'Bears' },
+      configs: [{ id: 'config-1', name: 'Varsity', baseType: 'Basketball' }],
+      games: [{
+        id: 'game-1',
+        type: 'game',
+        date: new Date('2100-06-01T18:00:00Z'),
+        opponent: 'Falcons',
+        statTrackerConfigId: 'config-1',
+        isPrivate: true,
+        isPublic: false,
+        shareable: false,
+        publicCalendar: false
+      }],
+      scheduleEvents: [{
+        eventKey: 'team-1::game-1::staff-team-team-1',
+        id: 'game-1',
+        teamId: 'team-1',
+        teamName: 'Bears',
+        type: 'game',
+        title: 'vs. Falcons',
+        date: new Date('2100-06-01T18:00:00Z'),
+        location: 'Main Gym',
+        opponent: 'Falcons',
+        childId: 'staff-team-team-1',
+        childName: 'Bears',
+        isDbGame: true,
+        isCancelled: false,
+        assignments: [],
+        openAssignmentCount: 0
+      }]
+    });
+
+    expect(built.upcomingEvents).toEqual([
+      expect.objectContaining({
+        id: 'game-1',
+        statTrackerConfigId: 'config-1',
+        statTrackerConfigLabel: 'Varsity',
+        statTrackerConfigExists: true,
+        isPrivate: true,
+        isPublic: false,
+        shareable: false,
+        publicCalendar: false
+      })
+    ]);
+  });
+
+  it('replaces recurring practice masters with their expanded schedule occurrences', () => {
+    const built = buildTeamDetailModel({
+      teamId: 'team-1',
+      team: { id: 'team-1', ownerId: 'owner-1', name: 'Bears' },
+      games: [{
+        id: 'practice-master',
+        type: 'practice',
+        title: 'Weekly Practice',
+        date: new Date('2100-06-01T18:00:00Z'),
+        recurring: true
+      }],
+      scheduleEvents: [{
+        eventKey: 'team-1::practice-master__2100-06-08::staff-team-team-1',
+        id: 'practice-master__2100-06-08',
+        teamId: 'team-1',
+        teamName: 'Bears',
+        type: 'practice',
+        title: 'Weekly Practice',
+        date: new Date('2100-06-08T18:00:00Z'),
+        location: 'Practice Field',
+        opponent: null,
+        childId: 'staff-team-team-1',
+        childName: 'Bears',
+        isDbGame: true,
+        isCancelled: false,
+        assignments: [],
+        openAssignmentCount: 0
+      }]
+    });
+
+    expect(built.upcomingEvents.map((event) => event.id)).toEqual(['practice-master__2100-06-08']);
+  });
+
+  it('falls back to database events when the optional calendar load exceeds its deadline', async () => {
+    vi.useFakeTimers();
+    try {
+      dbMocks.getGames.mockResolvedValueOnce([{
+        id: 'game-1',
+        type: 'game',
+        title: 'vs. Falcons',
+        date: new Date('2100-06-01T18:00:00Z'),
+        opponent: 'Falcons'
+      }]);
+      scheduleServiceMocks.loadTeamOverviewSchedule.mockReturnValueOnce(new Promise(() => {}));
+
+      const modelPromise = loadParentTeamDetail('team-1', { uid: 'owner-1' } as any, { includeDeferredData: false });
+      await vi.advanceTimersByTimeAsync(1500);
+
+      await expect(modelPromise).resolves.toMatchObject({
+        upcomingEvents: [expect.objectContaining({ id: 'game-1', isDbGame: true })]
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('keeps deferred insights aligned to the current header season without final scores', async () => {
     seasonRecordMocks.listSeasonLabels.mockReturnValue(['2026', '2025']);
     dbMocks.getGames.mockResolvedValue([

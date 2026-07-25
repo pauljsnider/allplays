@@ -74,6 +74,7 @@ import type { ParentScheduleEvent } from './scheduleLogic';
 import type { AuthUser } from './types';
 
 const primaryDataTimeoutMs = 5000;
+const optionalCalendarTimeoutMs = 1500;
 const logger = createLogger('team-detail-service');
 
 export type TeamDetailPlayer = {
@@ -1520,7 +1521,11 @@ export async function loadParentTeamDetail(
 
 async function loadTeamDetailOverviewSchedule(teamId: string, teamName: string, user: AuthUser | null) {
   const { loadTeamOverviewSchedule } = await import('./scheduleService');
-  return loadTeamOverviewSchedule(teamId, teamName, user);
+  return withTimeout(
+    loadTeamOverviewSchedule(teamId, teamName, user),
+    'Optional team calendar',
+    optionalCalendarTimeoutMs
+  );
 }
 
 export async function loadParentTeamDetailBootstrap(teamId: string, user: AuthUser | null): Promise<TeamDetailModel> {
@@ -2264,7 +2269,7 @@ function normalizeEvents(games: any[], configById: Map<string, TeamDetailStatTra
         publicCalendar: game?.publicCalendar === true,
         homeScore: toNullableNumber(game?.homeScore),
         awayScore: toNullableNumber(game?.awayScore),
-        isCancelled: cleanString(game?.status).toLowerCase() === 'cancelled',
+        isCancelled: game?.isCancelled === true || cleanString(game?.status).toLowerCase() === 'cancelled',
         isDbGame: game?.isDbGame !== false,
         sourceLabel: cleanString(game?.sourceLabel) || null,
         statTrackerConfigId,
@@ -2291,18 +2296,38 @@ function normalizeEvents(games: any[], configById: Map<string, TeamDetailStatTra
 function mergeTeamScheduleSources(games: any[], scheduleEvents?: ParentScheduleEvent[]) {
   if (!scheduleEvents) return games;
 
-  const scheduledDbGameIds = new Set(
-    scheduleEvents
-      .filter((event) => event?.isDbGame !== false)
-      .map((event) => cleanString(event?.id))
-      .filter(Boolean)
+  const dbGames = Array.isArray(games) ? games : [];
+  const dbGamesById = new Map(
+    dbGames
+      .map((game) => [cleanString(game?.id || game?.gameId), game] as const)
+      .filter(([gameId]) => Boolean(gameId))
   );
+  const dbGameIdsByLength = Array.from(dbGamesById.keys()).sort((a, b) => b.length - a.length);
+  const consumedDbGameIds = new Set<string>();
+
+  const mergedScheduleEvents = scheduleEvents.map((event) => {
+    if (event?.isDbGame === false) return event;
+
+    const eventId = cleanString(event?.id);
+    const sourceGameId = dbGamesById.has(eventId)
+      ? eventId
+      : dbGameIdsByLength.find((gameId) => eventId.startsWith(`${gameId}__`));
+    const sourceGame = sourceGameId ? dbGamesById.get(sourceGameId) : null;
+
+    if (!sourceGameId || !sourceGame) return event;
+
+    consumedDbGameIds.add(sourceGameId);
+    return {
+      ...sourceGame,
+      ...event
+    };
+  });
 
   return [
-    ...scheduleEvents,
-    ...(Array.isArray(games) ? games : []).filter((game) => {
+    ...mergedScheduleEvents,
+    ...dbGames.filter((game) => {
       const gameId = cleanString(game?.id || game?.gameId);
-      return !gameId || !scheduledDbGameIds.has(gameId);
+      return !gameId || !consumedDbGameIds.has(gameId);
     })
   ];
 }
