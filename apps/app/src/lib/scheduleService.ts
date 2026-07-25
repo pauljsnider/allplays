@@ -6322,7 +6322,7 @@ export async function cancelScheduledGameForApp(event: ParentScheduleEvent, user
   const notificationFailures: string[] = [];
   const senderName = user.displayName || user.email;
   const senderEmail = user.email;
-  const counterpartTeamId = compactString(event.opponentTeamId || event.sharedScheduleOpponentTeamId) || null;
+  const counterpartTeamId = compactString(event.sharedScheduleOpponentTeamId) || null;
 
   try {
     await postChatMessage(event.teamId, {

@@ -3110,6 +3110,32 @@ describe('ScheduleEventDetail assignments', () => {
     });
   });
 
+  it('does not promise both chat notifications for a linked opponent without reciprocal shared-game metadata', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        canUpdateScore: true,
+        opponentTeamId: 'team-2',
+        sharedScheduleOpponentTeamId: null
+      })],
+      children: []
+    });
+    scheduleServiceMocks.cancelScheduledGameForApp.mockResolvedValue({ notificationError: null });
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Cancel game' })).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel game' }));
+
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining('notifies the team in chat'));
+    expect(confirmSpy).not.toHaveBeenCalledWith(expect.stringContaining('both team chats'));
+    await waitFor(() => {
+      expect(screen.getByText('Game cancelled and team chat notified.')).toBeTruthy();
+    });
+  });
+
   it('passes the recurring practice occurrence through cancellation without falling back to the series', async () => {
     const recurringOccurrence = buildEvent({
       eventKey: 'team-1::practice-master__2026-06-04::player-1::2026-06-04T18:00:00.000Z::practice',

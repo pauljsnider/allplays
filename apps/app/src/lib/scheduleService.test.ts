@@ -88,6 +88,8 @@ vi.mock('./adapters/legacyScheduleDb', () => ({
   submitRsvpForPlayer: vi.fn(),
   broadcastLiveEvent: vi.fn(),
   updateGame: vi.fn(),
+  postChatMessage: vi.fn(),
+  postSharedGameCancellationNotification: vi.fn(),
   updatePracticeAttendance: vi.fn(),
   updateTeam: vi.fn(),
   upsertPracticePacketCompletion: vi.fn()
@@ -215,14 +217,14 @@ vi.mock('./appDataCache', () => ({
   getParentScheduleSummaryCacheKey: (userId: string) => `app-schedule-summary:${userId}`
 }));
 
-import { addGame, addPractice, broadcastLiveEvent, buildSingleLegacyTournamentGameDocument, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, claimOpenOfficiatingSlot, clearOccurrenceOverride, releaseAssignmentClaim, respondToOfficiatingAssignment, updateEvent, updateGame, updateOccurrence, getAssignmentClaims, getGame, getGames, getMyRsvps, getPlayers, getPracticeSession, getPracticeSessions, getRsvpBreakdownByPlayer, getRsvpSummaries, getRsvps, getStaffTeams, getTeam, getTeams, listRideOffersForEvent, submitRsvp, submitRsvpForPlayer, updatePracticeAttendance, getDoc, getDocs } from './adapters/legacyScheduleDb';
+import { addGame, addPractice, broadcastLiveEvent, buildSingleLegacyTournamentGameDocument, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, claimOpenOfficiatingSlot, clearOccurrenceOverride, releaseAssignmentClaim, respondToOfficiatingAssignment, updateEvent, updateGame, updateOccurrence, getAssignmentClaims, getGame, getGames, getMyRsvps, getPlayers, getPracticeSession, getPracticeSessions, getRsvpBreakdownByPlayer, getRsvpSummaries, getRsvps, getStaffTeams, getTeam, getTeams, listRideOffersForEvent, postChatMessage, postSharedGameCancellationNotification, submitRsvp, submitRsvpForPlayer, updatePracticeAttendance, getDoc, getDocs } from './adapters/legacyScheduleDb';
 import { getNativeAuthIdToken } from './authService';
 import { expandRecurrence, fetchAndParseCalendar, isTeamActive, mergeAssignmentsWithClaims } from './adapters/legacyScheduleHelpers';
 import { getCachedAppData, invalidateCachedAppData, loadCachedAppData } from './appDataCache';
 import { mapScheduleEventRecord } from './firestore/mappers';
 import { loadProfileDocument } from './profileService';
 import { getScheduleTournamentInfo } from './scheduleLogic';
-import { adjustGameScore, buildPlayerScoringLiveEvent, buildSingleGameTournamentLegacySchedulePayload, claimOfficialAssignmentItem, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, flushPendingLivePublishOperations, hydrateParentScheduleDetails, hydrateParentScheduleRsvps, loadOfficialAssignments, loadParentSchedule, loadParentScheduleChildren, loadParentScheduleEventDetail, loadParentScheduleScope, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitParentScheduleRsvp, submitParentScheduleRsvpForChildren, submitStaffScheduleRsvpOverride, TournamentBlockPartialSaveError, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
+import { adjustGameScore, buildPlayerScoringLiveEvent, buildSingleGameTournamentLegacySchedulePayload, cancelScheduledGameForApp, claimOfficialAssignmentItem, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, flushPendingLivePublishOperations, hydrateParentScheduleDetails, hydrateParentScheduleRsvps, loadOfficialAssignments, loadParentSchedule, loadParentScheduleChildren, loadParentScheduleEventDetail, loadParentScheduleScope, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitParentScheduleRsvp, submitParentScheduleRsvpForChildren, submitStaffScheduleRsvpOverride, TournamentBlockPartialSaveError, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
 
 function playerSnapshot(id: string, data: Record<string, unknown> | null) {
   return {
@@ -4198,6 +4200,43 @@ describe('resolveCachedParentScheduleEvents (#2649)', () => {
   it('returns empty on a cache miss', () => {
     vi.mocked(getCachedAppData).mockReturnValue(null);
     expect(resolveCachedParentScheduleEvents('u1', 't1', 'e1')).toEqual([]);
+  });
+});
+
+describe('cancelScheduledGameForApp', () => {
+  const user = { uid: 'coach-1', displayName: 'Coach', email: 'coach@example.com', roles: [] } as any;
+  const event = {
+    teamId: 'team-1',
+    id: 'game-1',
+    type: 'game',
+    isDbGame: true,
+    isCancelled: false,
+    canUpdateScore: true,
+    opponent: 'Wolves',
+    date: new Date('2026-06-04T18:00:00.000Z')
+  } as any;
+
+  beforeEach(() => {
+    (globalThis as any).window = { location: { protocol: 'https:' }, setTimeout, clearTimeout } as any;
+    vi.clearAllMocks();
+  });
+
+  it('does not request a counterpart notice for a linked opponent without reciprocal shared-game metadata', async () => {
+    await cancelScheduledGameForApp({ ...event, opponentTeamId: 'team-2' }, user);
+
+    expect(vi.mocked(updateGame)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(postChatMessage)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(postSharedGameCancellationNotification)).not.toHaveBeenCalled();
+  });
+
+  it('requests a counterpart notice for reciprocal shared-game metadata', async () => {
+    await cancelScheduledGameForApp({ ...event, sharedScheduleOpponentTeamId: 'team-2' }, user);
+
+    expect(vi.mocked(postSharedGameCancellationNotification)).toHaveBeenCalledWith(expect.objectContaining({
+      teamId: 'team-1',
+      gameId: 'game-1',
+      counterpartTeamId: 'team-2'
+    }));
   });
 });
 

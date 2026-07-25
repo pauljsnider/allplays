@@ -1612,7 +1612,7 @@ function GameHubSection({ auth, event, childEvents, requestedPanel, onPanelChang
   const isRecurringPracticeOccurrence = Boolean(isPractice && event.id.includes('__'));
   const canCancelPracticeOccurrence = Boolean(isRecurringPracticeOccurrence && event.isDbGame && !event.isCancelled && event.isTeamAdmin && auth.user);
   const canPublishLineup = Boolean(!isPractice && event.isDbGame && event.isTeamStaff);
-  const notifiesCounterpartTeam = Boolean(event.opponentTeamId || event.sharedScheduleOpponentTeamId);
+  const notifiesCounterpartTeam = Boolean(event.sharedScheduleOpponentTeamId);
   const hubDestinations = isPractice ? buildPracticeHubDestinations(event) : buildGameHubDestinations(event);
   const standardTrackerHref = `/schedule/${encodeURIComponent(event.teamId)}/${encodeURIComponent(event.id)}/track`;
   const availablePanelIds = useMemo(() => {
