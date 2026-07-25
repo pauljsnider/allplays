@@ -51,6 +51,13 @@ export default defineConfig(({ mode }) => {
   ],
   server: {
     port: 5174,
+    proxy: {
+      '/__allplays/calendar': {
+        target: 'https://us-central1-game-flow-c6311.cloudfunctions.net',
+        changeOrigin: true,
+        rewrite: (requestPath) => requestPath.replace(/^\/__allplays\/calendar/, '/fetchCalendarIcs')
+      }
+    },
     fs: {
       allow: ['../..']
     }

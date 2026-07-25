@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from 'react';
-import { AlertCircle, CalendarDays, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, ClipboardCheck, Copy, Download, Filter, ListChecks, MapPin, RefreshCw } from 'lucide-react';
+import { AlertCircle, CalendarDays, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, ClipboardCheck, Copy, Download, Filter, ListChecks, MapPin, MessageCircle, RefreshCw, Sparkles } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Modal } from '../components/Modal';
 import { SchedulePageSkeleton } from '../components/PageSkeletons';
 import { PullToRefresh } from '../components/PullToRefresh';
+import { hasFamilyScheduleAccess, hasStaffScheduleAccess, ScheduleRoleSubmenu } from '../components/ScheduleRoleSubmenu';
 import {
   hydrateParentScheduleRsvps,
   loadParentSchedule,
@@ -21,6 +22,7 @@ import { recordFirstMeaningfulRender, startScreenMountTimer } from '../lib/uxTim
 import { completeParentCoreWorkflowTimer } from '../lib/parentWorkflowTiming';
 import { openPublicUrl } from '../lib/publicActions';
 import { useViewLoadTimer } from '../lib/viewLoadTiming';
+import { buildPrivateAiLaunchPath } from '../lib/privateAiLaunch';
 import { useAsyncOperation } from '../lib/useAsyncOperation';
 import { useRefreshOnResume } from '../lib/useRefreshOnResume';
 import { useShellLayout } from '../lib/useShellLayout';
@@ -88,7 +90,7 @@ const scheduleViewModes: ScheduleViewMode[] = ['list', 'compact', 'calendar', 'p
 const scheduleFilterValues = filterOptions.map((option) => option.value);
 const scheduleTimeRangeValues = timeRangeOptions.map((option) => option.value);
 
-const upcomingListPageSize = 20;
+const upcomingListPageSize = 10;
 const pastListPageSize = 10;
 const pastScheduleCutoffMs = 3 * 60 * 60 * 1000;
 const pastScheduleHistoryPageWindowMs = 365 * 24 * 60 * 60 * 1000;
@@ -176,6 +178,13 @@ function mergePartialScheduleScope(
 export function Schedule({ auth }: { auth: AuthState }) {
   const [searchParams] = useSearchParams();
   const { isDesktopWeb } = useShellLayout();
+  const requestedScheduleScope = searchParams.get('scope');
+  const scheduleScope = requestedScheduleScope === 'staff' || requestedScheduleScope === 'family'
+    ? requestedScheduleScope
+    : hasStaffScheduleAccess(auth) && !hasFamilyScheduleAccess(auth)
+      ? 'staff'
+      : 'family';
+  const staffSection = String(searchParams.get('staffSection') || '').trim();
   const [filter, setFilter] = useState<ParentScheduleFilter>(() => getScheduleFilterFromQuery(searchParams.get('filter')) || 'upcoming-all');
   const [view, setView] = useState<ScheduleViewMode>(() => getScheduleViewFromQuery(searchParams.get('view')) || 'list');
   const [selectedPlayerId, setSelectedPlayerId] = useState(() => String(searchParams.get('playerId') || '').trim());
@@ -410,6 +419,16 @@ export function Schedule({ auth }: { auth: AuthState }) {
     setSelectedTeamId(String(searchParams.get('teamId') || '').trim());
     setSelectedPlayerId(String(searchParams.get('playerId') || '').trim());
   }, [searchParams]);
+
+  useEffect(() => {
+    if (searchParams.get('staffTools') !== '1') return;
+    setStaffToolsRequested(true);
+    if (isDesktopWeb) {
+      setDesktopStaffToolsOpen(true);
+    } else {
+      setMobileStaffToolsOpen(true);
+    }
+  }, [isDesktopWeb, searchParams]);
 
   const refreshSchedule = async (force = false) => {
     if (!auth.user) return null;
@@ -653,15 +672,23 @@ export function Schedule({ auth }: { auth: AuthState }) {
     recordFirstMeaningfulRender('schedule');
   }, [isInitialScheduleLoad, scheduleReadLoading]);
 
+  const scopedEvents = useMemo(() => {
+    if (scheduleScope === 'staff') {
+      const staffTeamIds = new Set(staffTeams.map((team) => team.teamId));
+      return events.filter((event) => event.isTeamStaff === true || staffTeamIds.has(event.teamId));
+    }
+    const familyTeamIds = new Set(children.map((child) => child.teamId));
+    return events.filter((event) => event.isLinkedParentChild === true || familyTeamIds.has(event.teamId));
+  }, [children, events, scheduleScope, staffTeams]);
   const visibleEvents = useMemo(() => (
-    filterParentScheduleEvents(events, { filter, playerId: selectedPlayerId, teamId: selectedTeamId, timeRange })
-  ), [events, filter, selectedPlayerId, selectedTeamId, timeRange]);
-  const allBulkRsvpCandidates = useMemo(() => getBulkRsvpCandidates(filterParentScheduleEvents(events, {
+    filterParentScheduleEvents(scopedEvents, { filter, playerId: selectedPlayerId, teamId: selectedTeamId, timeRange })
+  ), [filter, scopedEvents, selectedPlayerId, selectedTeamId, timeRange]);
+  const allBulkRsvpCandidates = useMemo(() => getBulkRsvpCandidates(filterParentScheduleEvents(scopedEvents, {
     filter: 'upcoming-all',
     playerId: selectedPlayerId,
     teamId: selectedTeamId,
     timeRange: 'all'
-  })), [events, selectedPlayerId, selectedTeamId]);
+  })), [scopedEvents, selectedPlayerId, selectedTeamId]);
   const bulkRsvpCandidates = useMemo(
     () => getBulkRsvpNoteReadyCandidates(allBulkRsvpCandidates),
     [allBulkRsvpCandidates]
@@ -710,7 +737,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
 
   useEffect(() => {
     setVisibleListCount(filter === 'past-all' ? pastListPageSize : upcomingListPageSize);
-  }, [filter, selectedPlayerId, selectedTeamId, timeRange, view]);
+  }, [filter, scheduleScope, selectedPlayerId, selectedTeamId, timeRange, view]);
 
   const listWindowLimit = visibleListCount + 1;
   const calendarEntries = useMemo(() => (
@@ -802,6 +829,13 @@ export function Schedule({ auth }: { auth: AuthState }) {
       : null;
     return selectedManageableTeam?.teamName
       || (manageableTeamOptions.length === 1 ? manageableTeamOptions[0].teamName : null);
+  }, [manageableTeamOptions, selectedTeamId]);
+  const staffAiTeam = useMemo(() => {
+    const selectedManageableTeam = selectedTeamId
+      ? manageableTeamOptions.find((team) => team.teamId === selectedTeamId)
+      : null;
+    return selectedManageableTeam
+      || (manageableTeamOptions.length === 1 ? manageableTeamOptions[0] : null);
   }, [manageableTeamOptions, selectedTeamId]);
 
   useEffect(() => {
@@ -937,70 +971,19 @@ export function Schedule({ auth }: { auth: AuthState }) {
           </div>
         </div>
 
-        <div className="mt-3 grid grid-cols-3 gap-2">
-          <Segment active={view === 'list'} onClick={() => setView('list')} icon={ListChecks} label="List" />
-          <Segment active={view === 'calendar'} onClick={() => setView('calendar')} icon={CalendarDays} label="Calendar" />
-          <Segment active={view === 'packets'} onClick={() => setView('packets')} icon={ClipboardCheck} label="Packets" />
-        </div>
-
-        <div className="mt-2 grid grid-cols-2 gap-2">
-          <label>
-            <span className="sr-only">Schedule filter</span>
-            <select
-              aria-label="Schedule filter"
-              className="auth-input min-h-11 truncate !px-3 !py-2 text-xs font-black"
-              value={filter}
-              onChange={(event) => setFilter(event.target.value as ParentScheduleFilter)}
-            >
-              {filterOptions.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <span className="sr-only">Schedule range</span>
-            <select
-              aria-label="Schedule range"
-              className="auth-input min-h-11 truncate !px-3 !py-2 text-xs font-black"
-              value={timeRange}
-              onChange={(event) => setTimeRange(event.target.value as ScheduleTimeRange)}
-            >
-              {timeRangeOptions.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
-          </label>
-        </div>
-
-        <div className="mt-2 grid grid-cols-2 gap-2">
-          <label>
-            <span className="sr-only">Team filter</span>
-            <select aria-label="Team filter" className="auth-input min-h-11 truncate !px-3 !py-2 text-xs font-black" value={selectedTeamId} onChange={(event) => setSelectedTeamId(event.target.value)}>
-              <option value="">All Teams</option>
-              {teamOptions.map((team) => (
-                <option key={team.teamId} value={team.teamId}>{team.teamName}</option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <span className="sr-only">Player filter</span>
-            <select aria-label="Player filter" className="auth-input min-h-11 truncate !px-3 !py-2 text-xs font-black" value={selectedPlayerId} onChange={(event) => setSelectedPlayerId(event.target.value)}>
-              <option value="">All Players</option>
-              {children.map((child) => (
-                <option key={`${child.teamId}-${child.playerId}`} value={child.playerId}>{child.playerName}</option>
-              ))}
-            </select>
-          </label>
-        </div>
       </section>
 
       <section className="schedule-header app-card hidden p-3 sm:block sm:p-4">
         <div className="schedule-web-hero-layout">
           <div className="min-w-0 flex-1">
             <div className="app-label">Schedule</div>
-            <h1 className="mt-1 text-xl font-black text-gray-950 sm:text-2xl">Games, practices, RSVP</h1>
+            <h1 className="mt-1 text-xl font-black text-gray-950 sm:text-2xl">
+              {scheduleScope === 'staff' ? 'Team schedule management' : 'Games, practices, RSVP'}
+            </h1>
             <p className="mt-2 hidden text-sm font-semibold leading-6 text-gray-600 sm:block">
-              A family command center for what is next, what needs a parent decision, and what can wait.
+              {scheduleScope === 'staff'
+                ? 'Review team events, add games and practices, track attendance, or open import and AI tools.'
+                : 'A family command center for what is next, what needs a parent decision, and what can wait.'}
             </p>
 
             <div className="mt-3 grid grid-cols-5 gap-1.5 sm:mt-4 sm:gap-2">
@@ -1034,16 +1017,41 @@ export function Schedule({ auth }: { auth: AuthState }) {
           <ScheduleNextUpCard event={webInsights.nextEvent} preferGameHubForStaff={!isDesktopWeb} />
         </div>
 
-        {!isDesktopWeb ? (
-          <div className="mt-3 grid grid-cols-3 gap-2 sm:mt-4 sm:flex sm:flex-wrap">
-            <Segment active={view === 'list'} onClick={() => setView('list')} icon={ListChecks} label="List" />
-            <Segment active={view === 'calendar'} onClick={() => setView('calendar')} icon={CalendarDays} label="Calendar" />
-            <Segment active={view === 'packets'} onClick={() => setView('packets')} icon={ClipboardCheck} label="Packets" />
-            <label className="sm:hidden">
+      </section>
+
+      {!isDesktopWeb ? (
+        <ScheduleRoleSubmenu
+          auth={auth}
+          selectedTeamId={selectedTeamId}
+          variant="page"
+          activeState={{ scope: scheduleScope, view, filter, staffSection }}
+        />
+      ) : null}
+
+      {!isDesktopWeb && (scheduleScope === 'family' || !staffSection) ? (
+        <section className="schedule-mobile-controls app-card p-3" aria-label="Schedule view and filters">
+          <div className="app-label">{scheduleScope === 'staff' ? 'Team schedule view' : 'Refine schedule'}</div>
+          <div className="mt-2 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+            {scheduleScope === 'staff' ? (
+              <label className="min-w-0 sm:min-w-36 sm:max-w-44">
+                <span className="sr-only">Schedule view</span>
+                <select
+                  aria-label="Schedule view"
+                  className="auth-input min-h-11 truncate !px-3 !py-2 text-xs font-black sm:text-sm"
+                  value={view === 'calendar' || view === 'packets' ? view : 'list'}
+                  onChange={(event) => setView(event.target.value as ScheduleViewMode)}
+                >
+                  <option value="list">List</option>
+                  <option value="calendar">Calendar</option>
+                  <option value="packets">Packets</option>
+                </select>
+              </label>
+            ) : null}
+            <label className="min-w-0 sm:min-w-40 sm:max-w-48">
               <span className="sr-only">Schedule filter</span>
               <select
                 aria-label="Schedule filter"
-                className="auth-input min-h-11 truncate !px-3 !py-2 text-xs font-black"
+                className="auth-input min-h-11 truncate !px-3 !py-2 text-xs font-black sm:text-sm"
                 value={filter}
                 onChange={(event) => setFilter(event.target.value as ParentScheduleFilter)}
               >
@@ -1052,26 +1060,26 @@ export function Schedule({ auth }: { auth: AuthState }) {
                 ))}
               </select>
             </label>
-            <label className="min-w-0 flex-1 sm:min-w-32 sm:max-w-40">
-              <span className="sr-only">Range</span>
-              <select aria-label="Range" className="auth-input min-h-11 truncate !px-3 !py-2 text-xs font-black sm:text-sm" value={timeRange} onChange={(event) => setTimeRange(event.target.value as ScheduleTimeRange)}>
+            <label className="min-w-0 sm:min-w-32 sm:max-w-40">
+              <span className="sr-only">Schedule range</span>
+              <select aria-label="Schedule range" className="auth-input min-h-11 truncate !px-3 !py-2 text-xs font-black sm:text-sm" value={timeRange} onChange={(event) => setTimeRange(event.target.value as ScheduleTimeRange)}>
                 {timeRangeOptions.map((option) => (
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
               </select>
             </label>
-            <label className="min-w-0 flex-1 sm:min-w-48 sm:max-w-64">
-              <span className="sr-only">Team</span>
-              <select aria-label="Team" className="auth-input min-h-11 truncate !px-3 !py-2 text-xs font-black sm:text-sm" value={selectedTeamId} onChange={(event) => setSelectedTeamId(event.target.value)}>
+            <label className="min-w-0 sm:min-w-48 sm:max-w-64">
+              <span className="sr-only">Team filter</span>
+              <select aria-label="Team filter" className="auth-input min-h-11 truncate !px-3 !py-2 text-xs font-black sm:text-sm" value={selectedTeamId} onChange={(event) => setSelectedTeamId(event.target.value)}>
                 <option value="">All Teams</option>
                 {teamOptions.map((team) => (
                   <option key={team.teamId} value={team.teamId}>{team.teamName}</option>
                 ))}
               </select>
             </label>
-            <label className="min-w-0 flex-1 sm:min-w-48 sm:max-w-64">
-              <span className="sr-only">Player</span>
-              <select aria-label="Player" className="auth-input min-h-11 truncate !px-3 !py-2 text-xs font-black sm:text-sm" value={selectedPlayerId} onChange={(event) => setSelectedPlayerId(event.target.value)}>
+            <label className={`min-w-0 sm:min-w-48 sm:max-w-64 ${scheduleScope === 'staff' ? 'col-span-2' : ''}`}>
+              <span className="sr-only">Player filter</span>
+              <select aria-label="Player filter" className="auth-input min-h-11 truncate !px-3 !py-2 text-xs font-black sm:text-sm" value={selectedPlayerId} onChange={(event) => setSelectedPlayerId(event.target.value)}>
                 <option value="">All Players</option>
                 {children.map((child) => (
                   <option key={`${child.teamId}-${child.playerId}`} value={child.playerId}>{child.playerName}</option>
@@ -1079,13 +1087,14 @@ export function Schedule({ auth }: { auth: AuthState }) {
               </select>
             </label>
           </div>
-        ) : null}
-      </section>
+        </section>
+      ) : null}
 
       <div className="schedule-workbench">
         {isDesktopWeb ? (
           <aside className="schedule-web-sidebar space-y-3">
             <ScheduleWebControls
+              scope={scheduleScope}
               filter={filter}
               view={view}
               selectedPlayerId={selectedPlayerId}
@@ -1154,6 +1163,13 @@ export function Schedule({ auth }: { auth: AuthState }) {
 
           {scheduleReadLoading && events.length ? <ScheduleProgressLoading /> : null}
 
+          {scheduleScope === 'staff' && hasManageableScheduleTeams ? (
+            <ScheduleAiManagerCard
+              teamId={staffAiTeam?.teamId || ''}
+              teamName={staffAiTeam?.teamName || ''}
+            />
+          ) : null}
+
           {(scheduleReadLoading || isInitialScheduleLoad) && !events.length ? (
             <LoadingSchedule />
           ) : view === 'calendar' ? (
@@ -1216,9 +1232,9 @@ export function Schedule({ auth }: { auth: AuthState }) {
               {staffToolsRequested ? (
                 <DeferredScheduleStaffTools
                   auth={auth}
-                  events={events}
                   manageableTeamOptions={manageableTeamOptions}
                   selectedTeamId={selectedTeamId}
+                  initialSection={staffSection}
                   onRefresh={() => refreshSchedule(true)}
                   onStatusMessage={setStatusMessage}
                   onClearError={clearScheduleReadError}
@@ -1241,9 +1257,9 @@ export function Schedule({ auth }: { auth: AuthState }) {
               {staffToolsRequested ? (
                 <DeferredScheduleStaffTools
                   auth={auth}
-                  events={events}
                   manageableTeamOptions={manageableTeamOptions}
                   selectedTeamId={selectedTeamId}
+                  initialSection={staffSection}
                   onRefresh={() => refreshSchedule(true)}
                   onStatusMessage={setStatusMessage}
                   onClearError={clearScheduleReadError}
@@ -1267,9 +1283,9 @@ export function Schedule({ auth }: { auth: AuthState }) {
 
 type DeferredScheduleStaffToolsProps = {
   auth: AuthState;
-  events: ParentScheduleEvent[];
   manageableTeamOptions: ParentScheduleTeamOption[];
   selectedTeamId: string;
+  initialSection?: string;
   onRefresh: () => Promise<unknown>;
   onStatusMessage: (message: string | null) => void;
   onClearError: () => void;
@@ -1315,6 +1331,48 @@ function DeferredScheduleStaffTools(props: DeferredScheduleStaffToolsProps) {
   return <StaffTools {...props} />;
 }
 
+function ScheduleAiManagerCard({ teamId, teamName }: { teamId: string; teamName: string }) {
+  const teamLabel = teamName || 'your managed teams';
+  const launchPath = buildPrivateAiLaunchPath({
+    intent: 'schedule-import',
+    teamId,
+    teamName: teamName || 'my teams'
+  });
+
+  return (
+    <section id="schedule-staff-ai" className="app-card scroll-mt-24 overflow-hidden border-violet-200 bg-gradient-to-br from-violet-100 via-white to-primary-50 p-4 shadow-sm" aria-label="Manage schedule with AI">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 items-start gap-3">
+          <div className="flex h-10 w-10 flex-none items-center justify-center rounded-xl bg-violet-100 text-violet-700">
+            <Sparkles className="h-4 w-4" aria-hidden="true" />
+          </div>
+          <div className="min-w-0">
+            <div className="app-label text-violet-700">Your AI schedule manager</div>
+            <h2 className="mt-1 text-lg font-black text-gray-950">Manage the whole schedule in chat</h2>
+            <p className="mt-1 text-xs font-semibold leading-5 text-gray-600">
+              Tell AI what the schedule needs for {teamLabel}: add or update games, create one-time or recurring practices, cancel events, send RSVP reminders, or import a CSV, image, or PDF.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-1.5 text-[11px] font-black text-violet-700">
+              <span className="rounded-full bg-white px-2 py-1">Games</span>
+              <span className="rounded-full bg-white px-2 py-1">Recurring practices</span>
+              <span className="rounded-full bg-white px-2 py-1">Updates & cancellations</span>
+              <span className="rounded-full bg-white px-2 py-1">RSVP reminders</span>
+              <span className="rounded-full bg-white px-2 py-1">Bulk imports</span>
+            </div>
+            <div className="mt-2 text-[11px] font-bold text-gray-500">
+              {teamId ? `${teamName} is preselected` : 'AI will resolve the team from your request'} · nothing saves or sends before you reply yes
+            </div>
+          </div>
+        </div>
+        <Link className="primary-button !min-h-10 flex-none text-xs" to={launchPath}>
+          <MessageCircle className="h-4 w-4" aria-hidden="true" />
+          Manage with AI
+        </Link>
+      </div>
+    </section>
+  );
+}
+
 function ScheduleStaffToolsSection({ open, teamName, contentId, onToggle, children }: { open: boolean; teamName: string | null; contentId: string; onToggle: () => void; children: ReactNode }) {
   return (
     <section className="app-card p-3" aria-label="Manage schedule tools">
@@ -1328,7 +1386,7 @@ function ScheduleStaffToolsSection({ open, teamName, contentId, onToggle, childr
         <div className="min-w-0">
           <div className="app-label">Staff schedule tools</div>
           <h2 className="mt-1 text-base font-black text-gray-950">Manage schedule</h2>
-          <p className="mt-1 text-xs font-semibold leading-5 text-gray-500">{teamName ? `Calendar feeds and imports for ${teamName} stay tucked away until you need them.` : 'Choose a team here to unlock schedule tools without relying on the page-level team filter.'}</p>
+          <p className="mt-1 text-xs font-semibold leading-5 text-gray-500">{teamName ? `Add games and recurring practices, manage attendance, or connect calendar feeds for ${teamName}.` : 'Choose a team here to unlock its schedule tools without relying on the page-level team filter.'}</p>
         </div>
         <ChevronDown className={`h-5 w-5 flex-none text-gray-500 transition ${open ? 'rotate-180' : ''}`} aria-hidden="true" />
       </button>
@@ -1595,7 +1653,8 @@ function ScheduleNextUpCard({ event, preferGameHubForStaff }: { event: ParentSch
   );
 }
 
-function ScheduleWebControls({ filter, view, selectedPlayerId, selectedTeamId, timeRange, children, teamOptions, loading, insights, advancedControlsOpen, onFilterChange, onViewChange, onPlayerChange, onTeamChange, onTimeRangeChange, onRefresh, onExport, onCopyAgenda, onAdvancedControlsOpenChange, onResetFilters }: {
+function ScheduleWebControls({ scope, filter, view, selectedPlayerId, selectedTeamId, timeRange, children, teamOptions, loading, insights, advancedControlsOpen, onFilterChange, onViewChange, onPlayerChange, onTeamChange, onTimeRangeChange, onRefresh, onExport, onCopyAgenda, onAdvancedControlsOpenChange, onResetFilters }: {
+  scope: 'staff' | 'family';
   filter: ParentScheduleFilter;
   view: ScheduleViewMode;
   selectedPlayerId: string;
@@ -1627,7 +1686,7 @@ function ScheduleWebControls({ filter, view, selectedPlayerId, selectedTeamId, t
       <div className="flex items-center justify-between gap-2">
         <div>
           <div className="app-label">Plan view</div>
-          <h2 className="mt-1 text-base font-black text-gray-950">Family agenda</h2>
+          <h2 className="mt-1 text-base font-black text-gray-950">{scope === 'staff' ? 'Team plan' : 'Family agenda'}</h2>
         </div>
         <button type="button" className="ghost-button !h-11 !min-h-11 !w-11 !p-0" onClick={onRefresh} disabled={loading} aria-label="Refresh schedule">
           <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />
@@ -1671,6 +1730,16 @@ function ScheduleWebControls({ filter, view, selectedPlayerId, selectedTeamId, t
       </div>
 
       <label className="mt-4 block">
+        <span className="app-label">Team</span>
+        <select aria-label="Team" className="auth-input mt-1 min-h-10 truncate !px-3 !py-2 text-sm font-black" value={selectedTeamId} onChange={(event) => onTeamChange(event.target.value)}>
+          <option value="">All Teams</option>
+          {teamOptions.map((team) => (
+            <option key={team.teamId} value={team.teamId}>{team.teamName}</option>
+          ))}
+        </select>
+      </label>
+
+      <label className="mt-3 block">
         <span className="app-label">Player</span>
         <select aria-label="Player" className="auth-input mt-1 min-h-10 truncate !px-3 !py-2 text-sm font-black" value={selectedPlayerId} onChange={(event) => onPlayerChange(event.target.value)}>
           <option value="">All Players</option>
@@ -1693,12 +1762,17 @@ function ScheduleWebControls({ filter, view, selectedPlayerId, selectedTeamId, t
 
       {advancedControlsOpen ? (
         <>
-      <div className="mt-4 grid grid-cols-2 gap-2">
-        <Segment active={view === 'list'} onClick={() => onViewChange('list')} icon={ListChecks} label="List" />
-        <Segment active={view === 'compact'} onClick={() => onViewChange('compact')} icon={ListChecks} label="Compact" />
-        <Segment active={view === 'calendar'} onClick={() => onViewChange('calendar')} icon={CalendarDays} label="Calendar" />
-        <Segment active={view === 'packets'} onClick={() => onViewChange('packets')} icon={ClipboardCheck} label="Packets" />
-      </div>
+      <button
+        type="button"
+        className={`mt-4 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border px-3 py-2 text-sm font-black transition ${
+          view === 'compact' ? 'border-primary-200 bg-primary-50 text-primary-700' : 'border-gray-200 bg-white text-gray-600'
+        }`}
+        onClick={() => onViewChange('compact')}
+        aria-pressed={view === 'compact'}
+      >
+        <ListChecks className="h-4 w-4" aria-hidden="true" />
+        Compact
+      </button>
 
       <label className="mt-4 block">
         <span className="app-label">Range</span>
@@ -1708,52 +1782,6 @@ function ScheduleWebControls({ filter, view, selectedPlayerId, selectedTeamId, t
           ))}
         </select>
       </label>
-
-      <label className="mt-4 block">
-        <span className="app-label">Team</span>
-        <select aria-label="Team" className="auth-input mt-1 min-h-10 truncate !px-3 !py-2 text-sm font-black" value={selectedTeamId} onChange={(event) => onTeamChange(event.target.value)}>
-          <option value="">All Teams</option>
-          {teamOptions.map((team) => (
-            <option key={team.teamId} value={team.teamId}>{team.teamName}</option>
-          ))}
-        </select>
-      </label>
-
-      <label className="mt-4 block">
-        <span className="app-label">Player</span>
-        <select aria-label="Player" className="auth-input mt-1 min-h-10 truncate !px-3 !py-2 text-sm font-black" value={selectedPlayerId} onChange={(event) => onPlayerChange(event.target.value)}>
-          <option value="">All Players</option>
-          {children.map((child) => (
-            <option key={`${child.teamId}-${child.playerId}`} value={child.playerId}>{child.playerName}</option>
-          ))}
-        </select>
-      </label>
-
-      <div className="mt-4 space-y-2" aria-label="Schedule filters">
-        {filterOptions.map((option) => (
-          <ScheduleFilterButton
-            key={option.value}
-            option={option}
-            active={filter === option.value}
-            onClick={() => onFilterChange(option.value)}
-            fullWidth
-          />
-        ))}
-      </div>
-
-      <div className="mt-4 grid grid-cols-2 gap-2">
-        <button type="button" className="secondary-button w-full" onClick={onExport}>
-          <Download className="h-4 w-4" aria-hidden="true" />
-          Download
-        </button>
-        <button type="button" className="secondary-button w-full" onClick={onCopyAgenda}>
-          <Copy className="h-4 w-4" aria-hidden="true" />
-          Copy
-        </button>
-      </div>
-      <div className="mt-2 rounded-xl border border-gray-200 bg-gray-50 p-2 text-[11px] font-semibold leading-4 text-gray-500">
-        Use the calendar file for Apple or Google Calendar import. Copy agenda sends plain event details.
-      </div>
 
       <div className="mt-4 grid grid-cols-2 gap-2">
         <ScheduleInsightMini label="RSVP" value={insights.rsvpNeeded} />

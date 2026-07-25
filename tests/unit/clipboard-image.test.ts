@@ -55,19 +55,25 @@ describe('clipboardImage', () => {
     expect(onImage).not.toHaveBeenCalled();
   });
 
-  it('wires both app AI import text boxes to the shared paste helper', () => {
+  it('routes schedule and roster imports through the image-aware private AI composer', () => {
     const scheduleSource = readFileSync(
-      path.resolve(process.cwd(), 'apps/app/src/components/schedule/ScheduleStaffTools.tsx'),
+      path.resolve(process.cwd(), 'apps/app/src/pages/Schedule.tsx'),
       'utf8'
     );
     const rosterSource = readFileSync(
       path.resolve(process.cwd(), 'apps/app/src/pages/TeamDetail.tsx'),
       'utf8'
     );
+    const chatSource = readFileSync(
+      path.resolve(process.cwd(), 'apps/app/src/pages/PrivateAiChat.tsx'),
+      'utf8'
+    );
 
-    expect(scheduleSource).toContain('onPaste={(event) => capturePastedImage(event, onImageChange)}');
-    expect(scheduleSource).toContain('paste a copied schedule screenshot here to attach it');
-    expect(rosterSource).toContain('onPaste={(event) => capturePastedImage(event, handleImageChange)}');
-    expect(rosterSource).toContain('paste a copied roster screenshot here to attach it');
+    expect(scheduleSource).toContain("intent: 'schedule-import'");
+    expect(scheduleSource).toContain('Manage with AI');
+    expect(rosterSource).toContain("intent: 'roster-import'");
+    expect(rosterSource).toContain('Start roster import');
+    expect(chatSource).toContain('const pastedImages = getPastedImageFiles(event.clipboardData)');
+    expect(chatSource).toContain('onAttachmentChange(pastedImages[0])');
   });
 });

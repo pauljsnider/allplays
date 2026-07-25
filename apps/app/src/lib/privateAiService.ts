@@ -13,6 +13,7 @@ import {
   limit,
   orderBy,
   query,
+  runTransaction,
   serverTimestamp,
   startAfter,
   setDoc
@@ -73,13 +74,40 @@ import {
   markParentPracticePacketComplete,
   requestParentScheduleRideSpot,
   releaseParentScheduleAssignmentClaim,
+  createScheduleImportGame,
+  createScheduleImportPractice,
+  finalizeScheduleImportBatch,
   setParentScheduleRideOfferStatus,
   submitParentScheduleRsvp,
   submitParentScheduleRsvpForChildren,
   summarizeParentScheduleRideOffers
 } from './scheduleService';
-import { loadParentTeamDetail } from './teamDetailService';
+import {
+  applyRosterImportPlanForApp,
+  createRosterParentInviteForApp,
+  loadParentTeamDetail,
+  loadRosterImportContextForApp,
+  retryRosterParentInviteEmailForApp,
+  type RosterImportPlannedOperationForApp
+} from './teamDetailService';
+import {
+  buildRosterAiImportCommitPlan,
+  extractPastedRosterCsv,
+  generateRosterAiImportRows,
+  normalizeRosterAiImportResponse,
+  type RosterAiImportPreviewRow
+} from './rosterAiImport';
+import {
+  generateScheduleAiImportRows
+} from './scheduleAiImport';
+import {
+  buildScheduleImportPreview,
+  inferScheduleCsvMapping,
+  parseCsvText,
+  type ScheduleCsvImportPreviewRow
+} from './scheduleCsvImport';
 import type { AuthUser } from './types';
+import { startWorkflowTimer, WORKFLOW_TIMING } from './workflowTiming';
 
 export type PrivateAiRole = 'user' | 'assistant';
 
@@ -89,8 +117,84 @@ export type PrivateAiMessage = {
   text: string;
   createdAt: Date;
   conversationId?: string;
+  attachment?: PrivateAiAttachmentReceipt;
   toolNames?: string[];
+  pendingActionIds?: string[];
+  artifacts?: PrivateAiArtifactReference[];
   error?: boolean;
+};
+
+export type PrivateAiAttachmentReceipt = {
+  name: string;
+  kind: 'csv' | 'image' | 'pdf';
+  mimeType: string;
+};
+
+export type PrivateAiRosterArtifactReference = {
+  type: 'roster-import';
+  confirmationId: string;
+  teamId: string;
+  teamName: string;
+  source: 'csv' | 'ai-text' | 'ai-image' | 'ai-document';
+  summary: {
+    total: number;
+    add: number;
+    update: number;
+    deactivate: number;
+    reactivate: number;
+    invitations: number;
+    errors: number;
+  };
+  previewRows?: RosterAiImportPreviewRow[];
+};
+
+export type PrivateAiScheduleArtifactReference = {
+  type: 'schedule-import';
+  confirmationId: string;
+  teamId: string;
+  teamName: string;
+  source: 'csv' | 'ai-text' | 'ai-image' | 'ai-document';
+  summary: {
+    total: number;
+    games: number;
+    practices: number;
+    errors: number;
+  };
+  previewRows?: ScheduleCsvImportPreviewRow[];
+};
+
+export type PrivateAiDocumentArtifactReference = {
+  type: 'document-analysis';
+  confirmationId: '';
+  teamId: string;
+  teamName: string;
+  source: 'csv' | 'image' | 'pdf';
+  fileName: string;
+  mimeType: string;
+  summary: {
+    total: 1;
+    errors: number;
+  };
+};
+
+export type PrivateAiArtifactReference =
+  | PrivateAiRosterArtifactReference
+  | PrivateAiScheduleArtifactReference
+  | PrivateAiDocumentArtifactReference;
+
+export type PrivateAiRosterProposalRevision = {
+  confirmationId: string;
+  teamId: string;
+  rows: RosterAiImportPreviewRow[];
+};
+
+export type PrivateAiAttachmentIntent = 'roster-import' | 'schedule-import' | 'general-analysis';
+
+export type PrivateAiAttachmentInput = {
+  teamId?: string;
+  teamName?: string;
+  text?: string;
+  file: File;
 };
 
 export type PrivateAiConversation = {
@@ -135,6 +239,7 @@ const maxToolCallsPerRound = 3;
 const maxPromptCharacters = 1800;
 const maxAnswerCharacters = 2400;
 const confirmationIdPrefix = 'ai';
+export const maxPrivateAiAttachmentBytes = 10 * 1024 * 1024;
 
 let aiModelCache: any = null;
 const pendingActionMemory = new Map<string, PrivateAiPendingAction>();
@@ -150,6 +255,9 @@ type PrivateAiPendingAction = {
   createdAt: string;
   conversationId?: string;
   confirmationGroupId?: string;
+  previewSummary?: Record<string, unknown>;
+  expiresAt: string;
+  status: 'pending' | 'executing' | 'completed' | 'failed' | 'superseded';
 };
 
 type PrivateAiToolDefinition = {
@@ -157,6 +265,13 @@ type PrivateAiToolDefinition = {
   mode: PrivateAiToolMode;
   description: string;
   aliases?: string[];
+  domain?: string;
+  audience?: 'all' | 'family' | 'manager';
+  prepare?: (user: AuthUser, args: Record<string, unknown>) => Promise<{
+    args: Record<string, unknown>;
+    summary?: string;
+    previewSummary?: Record<string, unknown>;
+  }>;
   resolve: (user: AuthUser, args: Record<string, unknown>) => Promise<unknown>;
 };
 
@@ -164,6 +279,8 @@ type PrivateAiToolContext = {
   conversationId?: string;
   confirmationGroupId?: string;
 };
+
+const pendingActionLifetimeMs = 30 * 60 * 1000;
 
 export function resetPrivateAiModel() {
   aiModelCache = null;
@@ -295,15 +412,26 @@ async function loadPrivateAiMessagesForConversation(
 export async function sendPrivateAiMessage(
   user: AuthUser,
   prompt: string,
-  conversationId = DEFAULT_PRIVATE_AI_CONVERSATION_ID
+  conversationId = DEFAULT_PRIVATE_AI_CONVERSATION_ID,
+  requestContext: { teamId?: string; teamName?: string } = {}
 ): Promise<PrivateAiSendResult> {
   if (!user?.uid) {
     throw new Error('Sign in before using the AI chat.');
   }
 
-  const question = compactText(prompt).slice(0, maxPromptCharacters);
+  const rawQuestion = String(prompt || '').trim().slice(0, maxPromptCharacters);
+  const question = compactText(rawQuestion);
   if (!question) {
     throw new Error('Type a message first.');
+  }
+  if (isPrivateAiRosterImportRequest(rawQuestion)) {
+    const csvText = extractPastedRosterCsv(rawQuestion);
+    return sendPrivateAiRosterImportMessage(user, {
+      teamId: compactText(requestContext.teamId),
+      teamName: compactText(requestContext.teamName),
+      text: rawQuestion,
+      csvText: csvText || undefined
+    }, conversationId);
   }
 
   const requestedConversationId = normalizeConversationId(conversationId);
@@ -332,7 +460,11 @@ export async function sendPrivateAiMessage(
       role: 'assistant',
       text: aiResult.answer,
       conversationId: activeConversationId,
-      toolNames: aiResult.toolResults.filter((result) => result.ok).map((result) => result.name)
+      toolNames: aiResult.toolResults.filter((result) => result.ok).map((result) => result.name),
+      pendingActionIds: aiResult.toolResults
+        .filter((result) => result.ok && result.requiresConfirmation === true)
+        .map((result) => compactText(result.confirmationId))
+        .filter(Boolean)
     });
     await touchPrivateAiConversation(user, activeConversationId, {
       title: buildConversationTitle(question),
@@ -363,6 +495,570 @@ export async function sendPrivateAiMessage(
       toolResults: []
     };
   }
+}
+
+export function getPrivateAiAttachmentValidationError(file: File | null): string {
+  if (!file) return 'Choose an image, CSV, or PDF first.';
+  const fileName = file.name.toLowerCase();
+  const supported = file.type === 'application/pdf'
+    || file.type === 'text/csv'
+    || file.type === 'application/csv'
+    || file.type.startsWith('image/')
+    || /\.(csv|pdf|png|jpe?g|webp|heic|heif)$/.test(fileName);
+  if (!supported) return 'Attach a CSV, PDF, PNG, JPEG, WebP, HEIC, or HEIF file.';
+  if (file.size <= 0) return 'That attachment is empty.';
+  if (file.size > maxPrivateAiAttachmentBytes) return 'Attachments must be 10 MB or smaller.';
+  return '';
+}
+
+export function inferPrivateAiAttachmentIntent(input: {
+  text?: string;
+  fileName?: string;
+  csvText?: string;
+}): PrivateAiAttachmentIntent {
+  const instruction = compactText(input.text).toLowerCase();
+  const fileName = compactText(input.fileName).toLowerCase();
+  const header = String(input.csvText || '').split(/\r?\n/, 1)[0].toLowerCase();
+  const rosterInstruction = /\b(roster|player|players|athlete|athletes|jersey|guardian|parent contacts?|family contacts?)\b/.test(instruction);
+  const scheduleInstruction = /\b(schedule|calendar|games?|practices?|fixtures?|tournament)\b/.test(instruction);
+  if (rosterInstruction && !scheduleInstruction) return 'roster-import';
+  if (scheduleInstruction && !rosterInstruction) return 'schedule-import';
+
+  const rosterHeaderScore = [
+    /\b(player|player name|athlete|athlete name)\b/.test(header),
+    /\b(jersey|jersey number|position)\b/.test(header),
+    /\b(parent|guardian|emergency contact)\b/.test(header)
+  ].filter(Boolean).length;
+  const scheduleHeaderScore = [
+    /\b(date|start date|start date time|start time)\b/.test(header),
+    /\b(opponent|event type|game|practice)\b/.test(header),
+    /\b(location|arrival time|home|away)\b/.test(header)
+  ].filter(Boolean).length;
+  if (rosterHeaderScore >= 2 && rosterHeaderScore > scheduleHeaderScore) return 'roster-import';
+  if (scheduleHeaderScore >= 2 && scheduleHeaderScore > rosterHeaderScore) return 'schedule-import';
+
+  if (/\b(roster|players?|athletes?)\b/.test(fileName)) return 'roster-import';
+  if (/\b(schedule|calendar|games?|fixtures?)\b/.test(fileName)) return 'schedule-import';
+  return 'general-analysis';
+}
+
+export async function sendPrivateAiAttachmentMessage(
+  user: AuthUser,
+  input: PrivateAiAttachmentInput,
+  conversationId = DEFAULT_PRIVATE_AI_CONVERSATION_ID
+): Promise<PrivateAiSendResult> {
+  if (!user?.uid) throw new Error('Sign in before using the AI chat.');
+  const validationError = getPrivateAiAttachmentValidationError(input.file);
+  if (validationError) throw new Error(validationError);
+
+  const isCsv = isPrivateAiCsvFile(input.file);
+  const csvText = isCsv ? await input.file.text() : '';
+  const attachment = buildPrivateAiAttachmentReceipt(input.file);
+  const intent = await classifyPrivateAiAttachment({
+    text: input.text,
+    file: input.file,
+    csvText
+  });
+
+  if (intent === 'roster-import') {
+    return sendPrivateAiRosterImportMessage(user, {
+      teamId: input.teamId,
+      teamName: input.teamName,
+      text: input.text,
+      csvText,
+      imageFile: isCsv ? null : input.file,
+      attachmentName: input.file.name,
+      attachment
+    }, conversationId);
+  }
+  if (intent === 'schedule-import') {
+    return sendPrivateAiScheduleImportMessage(user, {
+      teamId: input.teamId,
+      teamName: input.teamName,
+      text: input.text,
+      csvText,
+      documentFile: isCsv ? null : input.file,
+      attachmentName: input.file.name,
+      attachment
+    }, conversationId);
+  }
+  return sendPrivateAiDocumentAnalysisMessage(user, {
+    ...input,
+    csvText
+  }, conversationId);
+}
+
+async function classifyPrivateAiAttachment(input: {
+  text?: string;
+  file: File;
+  csvText?: string;
+}): Promise<PrivateAiAttachmentIntent> {
+  const inferred = inferPrivateAiAttachmentIntent({
+    text: input.text,
+    fileName: input.file.name,
+    csvText: input.csvText
+  });
+  if (inferred !== 'general-analysis') return inferred;
+
+  try {
+    const model = await getPrivateAiModel();
+    const prompt = `Classify one attachment for ALL PLAYS. Return strict JSON only as {"intent":"roster-import|schedule-import|general-analysis"}.
+Choose roster-import only when the attachment contains player, staff, guardian, emergency-contact, or roster-status rows intended to manage a team roster.
+Choose schedule-import only when it contains games, practices, fixtures, dates, opponents, or locations intended to manage a team schedule.
+Choose general-analysis for flyers, policies, forms, reports, receipts, instructions, or anything the user only wants summarized or explained.
+User instruction: ${compactText(input.text) || 'Analyze this attachment.'}
+File name: ${compactText(input.file.name)}
+${input.csvText ? `CSV content:\n${input.csvText.slice(0, 60_000)}` : ''}`;
+    const parts: any[] = [prompt];
+    if (!input.csvText) parts.push(await fileToPrivateAiGenerativePart(input.file));
+    const result = await model.generateContent(parts);
+    const parsed = parseJsonObject(result?.response?.text?.() || '');
+    const intent = compactText(parsed?.intent) as PrivateAiAttachmentIntent;
+    return ['roster-import', 'schedule-import', 'general-analysis'].includes(intent)
+      ? intent
+      : 'general-analysis';
+  } catch (error) {
+    logger.warn('Attachment classification failed; using general analysis.', { error });
+    return 'general-analysis';
+  }
+}
+
+async function sendPrivateAiDocumentAnalysisMessage(
+  user: AuthUser,
+  input: PrivateAiAttachmentInput & { csvText?: string },
+  conversationId: string
+): Promise<PrivateAiSendResult> {
+  const question = compactText(input.text) || `Analyze ${compactText(input.file.name) || 'this attachment'}.`;
+  const attachment = buildPrivateAiAttachmentReceipt(input.file);
+  const requestedConversationId = normalizeConversationId(conversationId);
+  const activeConversationId = requestedConversationId === DRAFT_PRIVATE_AI_CONVERSATION_ID
+    ? await createPrivateAiConversation(user, buildConversationTitle(question)).then((conversation) => conversation.id)
+    : requestedConversationId;
+  const userMessage = await savePrivateAiMessage(user, {
+    role: 'user',
+    text: question,
+    conversationId: activeConversationId,
+    attachment
+  });
+  const kind = getPrivateAiAttachmentKind(input.file);
+  const artifact: PrivateAiDocumentArtifactReference = {
+    type: 'document-analysis',
+    confirmationId: '',
+    teamId: compactText(input.teamId),
+    teamName: compactText(input.teamName),
+    source: kind,
+    fileName: compactText(input.file.name) || 'Attachment',
+    mimeType: compactText(input.file.type) || getPrivateAiAttachmentMimeType(input.file),
+    summary: { total: 1, errors: 0 }
+  };
+
+  let answer = '';
+  let error = false;
+  try {
+    const model = await getPrivateAiModel();
+    const prompt = `You are ALL PLAYS, a private youth-sports assistant. Analyze the attached ${kind}.
+Answer the user's request clearly. Extract relevant dates, people, requirements, amounts, contacts, and action items when present.
+Do not claim that any ALL PLAYS data was changed. If the user appears to want roster or schedule changes, explain that they should identify the managed team and ask you to prepare an import preview.
+Do not reproduce sensitive content that is unrelated to the user's request.
+User request: ${question}
+File name: ${artifact.fileName}
+${input.csvText ? `CSV content:\n${input.csvText.slice(0, 120_000)}` : ''}`;
+    const parts: any[] = [prompt];
+    if (!input.csvText) parts.push(await fileToPrivateAiGenerativePart(input.file));
+    const result = await model.generateContent(parts);
+    answer = clampAnswer(result?.response?.text?.() || '');
+    if (!answer) throw new Error('AI returned an empty attachment analysis.');
+  } catch (analysisError: any) {
+    logger.warn('Unable to analyze private AI attachment.', { analysisError });
+    artifact.summary.errors = 1;
+    answer = analysisError?.message
+      ? `I could not analyze that attachment: ${analysisError.message}`
+      : 'I could not analyze that attachment. Try a clearer image or a text-based PDF.';
+    error = true;
+  }
+
+  const assistantMessage = await savePrivateAiMessage(user, {
+    role: 'assistant',
+    text: answer,
+    conversationId: activeConversationId,
+    artifacts: [artifact],
+    error
+  });
+  assistantMessage.artifacts = [artifact];
+  await touchPrivateAiConversation(user, activeConversationId, {
+    title: buildConversationTitle(question),
+    lastMessagePreview: answer
+  }).catch(() => {});
+  return { userMessage, assistantMessage, toolResults: [] };
+}
+
+async function sendPrivateAiScheduleImportMessage(
+  user: AuthUser,
+  input: {
+    teamId?: string;
+    teamName?: string;
+    text?: string;
+    csvText?: string;
+    documentFile?: File | null;
+    attachmentName?: string;
+    attachment?: PrivateAiAttachmentReceipt;
+  },
+  conversationId: string
+): Promise<PrivateAiSendResult> {
+  const teamId = await resolveAccessibleTeamId(user, input, { requireManager: true });
+  if (!teamId) throw new Error('Choose a team you manage before importing a schedule.');
+  const detail = await loadParentTeamDetail(teamId, user);
+  if (!detail.canManageTeam) throw new Error('You do not have permission to manage this team schedule.');
+  const teamName = compactText(detail.team?.name) || compactText(input.teamName) || 'Team';
+  const source = input.csvText
+    ? 'csv'
+    : input.documentFile
+      ? getPrivateAiAttachmentKind(input.documentFile) === 'pdf' ? 'ai-document' : 'ai-image'
+      : 'ai-text';
+  const sourceLabel = source === 'csv' ? 'schedule CSV' : source === 'ai-document' ? 'schedule PDF' : source === 'ai-image' ? 'schedule image' : 'schedule instructions';
+  const previewTimer = startWorkflowTimer(WORKFLOW_TIMING.scheduleAiPreview, {
+    source,
+    teamId
+  });
+  const question = compactText(input.text) || `Review the attached ${sourceLabel} for schedule import.`;
+  const requestedConversationId = normalizeConversationId(conversationId);
+  const activeConversationId = requestedConversationId === DRAFT_PRIVATE_AI_CONVERSATION_ID
+    ? await createPrivateAiConversation(user, buildConversationTitle(question)).then((conversation) => conversation.id)
+    : requestedConversationId;
+  const userMessage = await savePrivateAiMessage(user, {
+    role: 'user',
+    text: question,
+    conversationId: activeConversationId,
+    attachment: input.attachment
+  });
+  const schedule = await loadParentSchedule(user, { includePastGames: true });
+  const currentGames = (schedule.events || [])
+    .filter((event) => event.teamId === teamId && event.type === 'game' && event.isDbGame)
+    .map((event) => ({
+      id: event.id,
+      date: event.date,
+      opponent: event.opponent,
+      location: event.location,
+      status: event.isCancelled ? 'cancelled' : 'scheduled'
+    }));
+
+  let rows: ScheduleCsvImportPreviewRow[] = [];
+  let previewErrors: string[] = [];
+  try {
+    if (input.csvText) {
+      try {
+        const parsed = parseCsvText(input.csvText);
+        const mapping = inferScheduleCsvMapping(parsed.headers);
+        const deterministic = buildScheduleImportPreview({ rows: parsed.rows, mapping, teamName });
+        rows = deterministic.rows;
+        previewErrors = deterministic.errors;
+      } catch (csvError: any) {
+        previewErrors = [csvError?.message || 'Could not parse the schedule CSV.'];
+      }
+      if (previewErrors.length || !rows.length) {
+        const fallback = await generateScheduleAiImportRows({
+          teamName,
+          text: `${input.text || ''}\n\nSchedule CSV:\n${input.csvText.slice(0, 120_000)}`,
+          currentGames
+        });
+        if (fallback.rows.length) {
+          rows = fallback.rows;
+          previewErrors = fallback.errors;
+        } else {
+          previewErrors = [...previewErrors, ...fallback.errors];
+        }
+      }
+    } else {
+      const preview = await generateScheduleAiImportRows({
+        teamName,
+        text: input.text,
+        imageFile: input.documentFile,
+        currentGames
+      });
+      rows = preview.rows;
+      previewErrors = preview.errors;
+    }
+  } finally {
+    previewTimer.end({
+      rowCount: rows.length,
+      errorCount: previewErrors.length
+    });
+  }
+  if (rows.length > 200) {
+    rows = rows.slice(0, 200);
+    previewErrors.push('Import at most 200 schedule rows at a time.');
+  }
+
+  const invalidRows = rows.filter((row) => row.errors.length > 0);
+  const summary = summarizeSchedulePreview(rows);
+  let toolResult: PrivateAiToolResult | null = null;
+  let assistantText = '';
+  if (previewErrors.length || invalidRows.length || !rows.length) {
+    assistantText = [
+      `I reviewed the ${sourceLabel} for ${teamName}, but it is not ready to confirm.`,
+      ...previewErrors,
+      ...invalidRows.flatMap((row) => row.errors),
+      rows.length ? 'Send corrected instructions or attach a corrected file to prepare a new preview.' : ''
+    ].filter(Boolean).join(' ');
+  } else {
+    toolResult = await runPrivateAiTool(user, {
+      name: 'apply_schedule_import',
+      args: {
+        teamId,
+        __preparedScheduleRows: rows.map((row) => row.normalized),
+        source
+      }
+    }, {
+      conversationId: activeConversationId,
+      confirmationGroupId: createConfirmationGroupId()
+    });
+    assistantText = `I prepared ${summary.total} schedule row${summary.total === 1 ? '' : 's'} for ${teamName}: ${summary.games} game${summary.games === 1 ? '' : 's'} and ${summary.practices} practice${summary.practices === 1 ? '' : 's'}. Reply yes to import this schedule.`;
+  }
+
+  const artifact: PrivateAiScheduleArtifactReference = {
+    type: 'schedule-import',
+    confirmationId: toolResult?.confirmationId || '',
+    teamId,
+    teamName,
+    source,
+    summary: {
+      ...summary,
+      errors: previewErrors.length + invalidRows.reduce((count, row) => count + row.errors.length, 0)
+    },
+    previewRows: rows
+  };
+  const assistantMessage = await savePrivateAiMessage(user, {
+    role: 'assistant',
+    text: assistantText,
+    conversationId: activeConversationId,
+    toolNames: toolResult?.ok ? ['apply_schedule_import'] : [],
+    pendingActionIds: toolResult?.ok && toolResult.requiresConfirmation && toolResult.confirmationId
+      ? [toolResult.confirmationId]
+      : [],
+    artifacts: [artifact]
+  });
+  assistantMessage.artifacts = [artifact];
+  await touchPrivateAiConversation(user, activeConversationId, {
+    title: buildConversationTitle(question),
+    lastMessagePreview: assistantText
+  }).catch(() => {});
+  return {
+    userMessage,
+    assistantMessage,
+    toolResults: toolResult ? [toolResult] : []
+  };
+}
+
+export async function sendPrivateAiRosterImportMessage(
+  user: AuthUser,
+  input: {
+    teamId?: string;
+    teamName?: string;
+    text?: string;
+    csvText?: string;
+    imageFile?: File | null;
+    attachmentName?: string;
+    attachment?: PrivateAiAttachmentReceipt;
+  },
+  conversationId = DEFAULT_PRIVATE_AI_CONVERSATION_ID
+): Promise<PrivateAiSendResult> {
+  if (!user?.uid) throw new Error('Sign in before using the AI chat.');
+  const teamId = await resolveAccessibleTeamId(user, input, { requireManager: true });
+  if (!teamId) throw new Error('Choose a team you manage before importing a roster.');
+
+  const requestedConversationId = normalizeConversationId(conversationId);
+  const sourceLabel = input.csvText
+    ? 'CSV'
+    : input.imageFile
+      ? getPrivateAiAttachmentKind(input.imageFile) === 'pdf' ? 'roster PDF' : 'roster image'
+      : 'roster instructions';
+  const question = compactText(input.text) || `Review the attached ${sourceLabel} for roster import.`;
+  const activeConversationId = requestedConversationId === DRAFT_PRIVATE_AI_CONVERSATION_ID
+    ? await createPrivateAiConversation(user, buildConversationTitle(question)).then((conversation) => conversation.id)
+    : requestedConversationId;
+  const [context, detail] = await Promise.all([
+    loadRosterImportContextForApp(teamId, user),
+    loadParentTeamDetail(teamId, user)
+  ]);
+  if (!detail.canManageTeam) throw new Error('You do not have permission to manage this team roster.');
+
+  const userMessage = await savePrivateAiMessage(user, {
+    role: 'user',
+    text: question,
+    conversationId: activeConversationId,
+    attachment: input.attachment
+  });
+  const preview = await generateRosterAiImportRows({
+    text: input.text,
+    csvText: input.csvText,
+    imageFile: input.imageFile,
+    currentPlayers: context.players,
+    rosterFields: context.fields
+  });
+  const summary = summarizeRosterPreview(preview.rows);
+  const invalidRows = preview.rows.filter((row) => row.errors.length > 0);
+  const teamName = compactText(detail.team?.name) || compactText(input.teamName) || 'Team';
+  let toolResult: PrivateAiToolResult | null = null;
+  let assistantText = '';
+
+  if (preview.errors.length || invalidRows.length || !preview.rows.length) {
+    assistantText = [
+      `I reviewed the ${sourceLabel} for ${teamName}, but it is not ready to confirm.`,
+      ...preview.errors,
+      ...invalidRows.flatMap((row) => row.errors)
+    ].filter(Boolean).join(' ');
+    if (preview.rows.length && invalidRows.length) {
+      const plan = buildRosterAiImportCommitPlan(preview.rows);
+      const validationErrors = invalidRows.flatMap((row) => row.errors);
+      const definition = getPrivateAiToolDefinition('apply_roster_import');
+      if (definition) {
+        const pending = await savePrivateAiPendingAction(user, definition, {
+          teamId,
+          operations: plan.operations,
+          __rosterValidationErrors: validationErrors
+        }, {
+          conversationId: activeConversationId,
+          confirmationGroupId: createConfirmationGroupId()
+        }, {
+          summary: `Roster import | Team: ${teamId} | ${summary.total} operations | ${summary.invitations} invitations | ${validationErrors.length} errors`,
+          previewSummary: { ...summary, errors: validationErrors.length }
+        });
+        toolResult = {
+          name: definition.name,
+          ok: true,
+          requiresConfirmation: true,
+          confirmationId: pending.id,
+          data: {
+            summary: pending.summary,
+            previewSummary: pending.previewSummary
+          }
+        };
+        assistantText += ' Edit the highlighted fields in this review; confirmation stays blocked until every error is fixed.';
+      }
+    }
+  } else {
+    const plan = buildRosterAiImportCommitPlan(preview.rows);
+    toolResult = await runPrivateAiTool(user, {
+      name: 'apply_roster_import',
+      args: {
+        teamId,
+        __preparedRosterOperations: plan.operations,
+        source: preview.source
+      }
+    }, {
+      conversationId: activeConversationId,
+      confirmationGroupId: createConfirmationGroupId()
+    });
+    assistantText = `I prepared ${summary.total} roster operation${summary.total === 1 ? '' : 's'} for ${teamName}: ${summary.add} add, ${summary.update} update, ${summary.deactivate} deactivate, ${summary.reactivate} reactivate, and ${summary.invitations} family invitation${summary.invitations === 1 ? '' : 's'}. Reply yes to import these players and email these contacts.`;
+  }
+
+  const artifact: PrivateAiArtifactReference = {
+    type: 'roster-import',
+    confirmationId: toolResult?.confirmationId || '',
+    teamId,
+    teamName,
+    source: preview.source,
+    summary: {
+      ...summary,
+      errors: preview.errors.length + invalidRows.reduce((count, row) => count + row.errors.length, 0)
+    },
+    previewRows: preview.rows
+  };
+  const assistantMessage = await savePrivateAiMessage(user, {
+    role: 'assistant',
+    text: assistantText,
+    conversationId: activeConversationId,
+    toolNames: toolResult?.ok ? ['apply_roster_import'] : [],
+    pendingActionIds: toolResult?.ok && toolResult.requiresConfirmation && toolResult.confirmationId
+      ? [toolResult.confirmationId]
+      : [],
+    artifacts: [artifact]
+  });
+  assistantMessage.artifacts = [artifact];
+  await touchPrivateAiConversation(user, activeConversationId, {
+    title: buildConversationTitle(question),
+    lastMessagePreview: assistantText
+  }).catch(() => {});
+
+  return {
+    userMessage,
+    assistantMessage,
+    toolResults: toolResult ? [toolResult] : []
+  };
+}
+
+export async function revisePrivateAiRosterImportProposal(
+  user: AuthUser,
+  revision: PrivateAiRosterProposalRevision
+): Promise<PrivateAiRosterArtifactReference['summary']> {
+  if (!user?.uid) throw new Error('Sign in before editing an AI roster proposal.');
+  const confirmationId = compactText(revision.confirmationId);
+  const teamId = compactText(revision.teamId);
+  if (!confirmationId || !teamId) throw new Error('This roster proposal is no longer editable.');
+
+  const pending = await loadPrivateAiPendingAction(user, confirmationId);
+  if (!pending || pending.toolName !== 'apply_roster_import') {
+    throw new Error('This roster proposal expired, was replaced, or was already confirmed.');
+  }
+  if (compactText(pending.args.teamId) !== teamId) {
+    throw new Error('This roster proposal does not match the selected team.');
+  }
+  const authorizedTeamId = await resolveAccessibleTeamId(user, { teamId }, { requireManager: true });
+  if (authorizedTeamId !== teamId) {
+    throw new Error('You no longer have permission to manage this team roster.');
+  }
+
+  const rows = Array.isArray(revision.rows) ? revision.rows : [];
+  if (!rows.length) throw new Error('Keep at least one roster row in the proposal.');
+  if (rows.length > 200) throw new Error('Import at most 200 roster rows at a time.');
+  const plan = buildRosterAiImportCommitPlan(rows);
+  const validationErrors = rows.flatMap((row) => row.errors || []);
+  const rosterSummary = summarizeRosterPreview(rows);
+  const artifactSummary = {
+    ...rosterSummary,
+    errors: validationErrors.length
+  };
+  const nextArgs = {
+    teamId,
+    operations: plan.operations,
+    ...(validationErrors.length ? { __rosterValidationErrors: validationErrors } : {})
+  };
+  const nextSummary = `Roster import | Team: ${teamId} | ${rosterSummary.total} operations | ${rosterSummary.invitations} invitations${validationErrors.length ? ` | ${validationErrors.length} errors` : ''}`;
+  const pendingRef = doc(db, 'users', user.uid, privateAiPendingActionCollectionName, confirmationId);
+
+  const updated = await runTransaction(db, async (transaction: any) => {
+    const snapshot = await transaction.get(pendingRef);
+    const data = typeof snapshot?.data === 'function' ? snapshot.data() : null;
+    if (
+      !snapshot?.exists?.()
+      || !isPlainObject(data)
+      || data.status !== 'pending'
+      || compactText(data.userId) !== user.uid
+      || compactText(data.toolName) !== 'apply_roster_import'
+      || compactText(isPlainObject(data.args) ? data.args.teamId : '') !== teamId
+      || Date.parse(compactText(data.expiresAt)) <= Date.now()
+    ) return false;
+    transaction.set(pendingRef, {
+      args: nextArgs,
+      summary: nextSummary,
+      previewSummary: artifactSummary,
+      editedAt: serverTimestamp(),
+      audit: {
+        lastEditedBy: user.uid,
+        lastEditedAt: new Date().toISOString()
+      }
+    }, { merge: true });
+    return true;
+  });
+  if (!updated) {
+    throw new Error('This roster proposal expired, was replaced, or is currently being confirmed.');
+  }
+
+  pending.args = nextArgs;
+  pending.summary = nextSummary;
+  pending.previewSummary = artifactSummary;
+  pendingActionMemory.set(`${user.uid}:${confirmationId}`, pending);
+  return artifactSummary;
 }
 
 export async function generatePrivateAiAnswer(
@@ -475,6 +1171,7 @@ export async function runPrivateAiTool(user: AuthUser, call: PrivateAiToolCall, 
   const name = compactText(call.name);
   const args = isPlainObject(call.args) ? call.args : {};
   const definition = getPrivateAiToolDefinition(name);
+  let scheduleImportTimer: ReturnType<typeof startWorkflowTimer> | null = null;
 
   try {
     if (!definition) {
@@ -482,7 +1179,8 @@ export async function runPrivateAiTool(user: AuthUser, call: PrivateAiToolCall, 
     }
 
     if (definition.mode === 'write' && args.__confirmed !== true) {
-      const pending = await savePrivateAiPendingAction(user, definition, args, context);
+      const prepared = definition.prepare ? await definition.prepare(user, args) : { args };
+      const pending = await savePrivateAiPendingAction(user, definition, prepared.args, context, prepared);
       return {
         name,
         ok: true,
@@ -490,12 +1188,20 @@ export async function runPrivateAiTool(user: AuthUser, call: PrivateAiToolCall, 
         confirmationId: pending.id,
         data: {
           summary: pending.summary,
+          previewSummary: pending.previewSummary,
           confirmationText: 'Reply "yes" to apply this change.'
         }
       };
     }
 
+    if (definition.name === 'apply_schedule_import' && args.__confirmed === true) {
+      scheduleImportTimer = startWorkflowTimer(WORKFLOW_TIMING.scheduleImport, {
+        teamId: compactText(args.teamId),
+        rowCount: Array.isArray(args.rows) ? args.rows.length : 0
+      });
+    }
     const data = await definition.resolve(user, args);
+    scheduleImportTimer?.end({ success: true });
     if (definition.mode === 'write') {
       await savePrivateAiActionAudit(user, definition.name, args, data).catch(() => {});
     }
@@ -505,6 +1211,7 @@ export async function runPrivateAiTool(user: AuthUser, call: PrivateAiToolCall, 
       data
     };
   } catch (error: any) {
+    scheduleImportTimer?.end({ success: false });
     return {
       name,
       ok: false,
@@ -514,6 +1221,7 @@ export async function runPrivateAiTool(user: AuthUser, call: PrivateAiToolCall, 
 }
 
 const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
+  ...buildCoachAdminPrivateAiToolDefinitions(),
   {
     name: 'get_profile',
     mode: 'read',
@@ -523,9 +1231,23 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
   {
     name: 'get_home',
     mode: 'read',
-    description: 'Parent dashboard tasks, players, teams, next events, unread messages, packets, fees, and priority actions.',
+    domain: 'account-and-discovery',
+    description: 'Combined family/player and coach/admin dashboard context: tasks, players, teams, managed teams, next events, unread messages, packets, fees, and priority actions.',
     aliases: ['list_tasks'],
-    resolve: async (user) => summarizeHome(await loadParentHome(user))
+    resolve: async (user) => {
+      const [home, teams] = await Promise.all([
+        loadParentHome(user).catch(() => ({ teams: [], players: [] } as any)),
+        loadAccessibleAiTeams(user)
+      ]);
+      return {
+        ...summarizeHome(home),
+        managedTeams: teams.filter((team) => team.canManageTeam).map((team) => ({
+          teamId: team.teamId,
+          teamName: team.teamName,
+          playerCount: team.playerCount
+        }))
+      };
+    }
   },
   {
     name: 'list_schedule',
@@ -665,6 +1387,52 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
     }
   },
   {
+    name: 'list_managed_teams',
+    mode: 'read',
+    domain: 'team-management',
+    audience: 'manager',
+    description: 'Teams the signed-in coach or administrator can manage, including roster and schedule context.',
+    aliases: ['get_managed_teams'],
+    resolve: async (user) => {
+      const teams = await loadAccessibleAiTeams(user);
+      return {
+        teams: teams
+          .filter((team) => team.canManageTeam)
+          .map((team) => ({
+            teamId: team.teamId,
+            teamName: team.teamName,
+            playerCount: team.playerCount,
+            canManageTeam: true
+          }))
+      };
+    }
+  },
+  {
+    name: 'get_team_roster',
+    mode: 'read',
+    domain: 'roster-and-invites',
+    audience: 'manager',
+    description: 'Managed team roster with active/inactive state and family invitation context. Args: teamId or teamName.',
+    aliases: ['list_team_roster'],
+    resolve: async (user, args) => {
+      const teamId = await resolveAccessibleTeamId(user, args, { requireManager: true });
+      if (!teamId) throw new Error('No managed team matched that request.');
+      const detail = await loadParentTeamDetail(teamId, user);
+      return {
+        teamId,
+        teamName: detail.team?.name || '',
+        players: [...(detail.players || []), ...(detail.inactivePlayers || [])].map((player: any) => pickFields(player, [
+          'id',
+          'name',
+          'number',
+          'position',
+          'active',
+          'parentContacts'
+        ]))
+      };
+    }
+  },
+  {
     name: 'get_player_stats',
     mode: 'read',
     description: 'Linked player profile, recent game stats/data, tracking, incentives, certificates, clips, and development context.',
@@ -741,6 +1509,211 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
       roles: user.roles || [],
       limit: Number(args.limit || 5)
     }))
+  },
+  {
+    name: 'apply_roster_import',
+    mode: 'write',
+    domain: 'roster-and-invites',
+    audience: 'manager',
+    description: 'Prepare a grouped roster import for a managed team. Supports add, update, deactivate/reactivate, all roster fields, address, family contacts, and mandatory contact invitations. Args: teamId/teamName and operations.',
+    aliases: ['bulk_import_roster', 'manage_roster_players'],
+    prepare: async (user, args) => {
+      const teamId = await resolveAccessibleTeamId(user, args, { requireManager: true });
+      if (!teamId) throw new Error('No managed team matched that roster import.');
+      const context = await loadRosterImportContextForApp(teamId, user);
+      let operations: RosterImportPlannedOperationForApp[];
+      if (Array.isArray(args.__preparedRosterOperations)) {
+        operations = args.__preparedRosterOperations as RosterImportPlannedOperationForApp[];
+      } else {
+        const rawOperations = Array.isArray(args.operations) ? args.operations as Array<Record<string, unknown>> : [];
+        const preview = normalizeRosterAiImportResponse({ operations: rawOperations }, {
+          currentPlayers: context.players,
+          rosterFields: context.fields
+        });
+        if (preview.errors.length) throw new Error(preview.errors.join(' '));
+        operations = buildRosterAiImportCommitPlan(preview.rows).operations;
+      }
+      if (!operations.length) throw new Error('No roster operations were provided.');
+      if (operations.length > 200) throw new Error('Import at most 200 roster rows at a time.');
+      const invalid = operations.flatMap((operation) => operation.errors || []);
+      if (invalid.length) throw new Error(invalid.join(' '));
+      const summary = summarizeRosterOperations(operations);
+      return {
+        args: {
+          teamId,
+          operations
+        },
+        summary: `Roster import | Team: ${teamId} | ${summary.total} operations | ${summary.invitations} invitations`,
+        previewSummary: summary
+      };
+    },
+    resolve: async (user, args) => {
+      const teamId = await resolveAccessibleTeamId(user, args, { requireManager: true });
+      if (!teamId) throw new Error('You no longer have permission to manage this team.');
+      const validationErrors = Array.isArray(args.__rosterValidationErrors)
+        ? args.__rosterValidationErrors.map(compactText).filter(Boolean)
+        : [];
+      if (validationErrors.length) {
+        throw new Error(`Fix the roster review errors before confirming. ${validationErrors.join(' ')}`);
+      }
+      const operations = Array.isArray(args.operations) ? args.operations as RosterImportPlannedOperationForApp[] : [];
+      if (!operations.length) throw new Error('No valid roster operations remain to import.');
+      return applyRosterImportPlanForApp(teamId, user, operations);
+    }
+  },
+  {
+    name: 'apply_schedule_import',
+    mode: 'write',
+    domain: 'schedule-attendance-planning',
+    audience: 'manager',
+    description: 'Prepare one grouped schedule import from an image, CSV, PDF, or pasted text. Supports reviewed game and practice rows. Args: teamId/teamName and rows.',
+    aliases: ['bulk_import_schedule', 'import_schedule_rows'],
+    prepare: async (user, args) => {
+      const teamId = await resolveAccessibleTeamId(user, args, { requireManager: true });
+      if (!teamId) throw new Error('No managed team matched that schedule import.');
+      const rows = Array.isArray(args.__preparedScheduleRows)
+        ? args.__preparedScheduleRows as ScheduleCsvImportPreviewRow['normalized'][]
+        : Array.isArray(args.rows)
+          ? args.rows as ScheduleCsvImportPreviewRow['normalized'][]
+          : [];
+      if (!rows.length) throw new Error('No schedule rows were provided.');
+      if (rows.length > 200) throw new Error('Import at most 200 schedule rows at a time.');
+      const invalidRows = rows.filter((row) => (
+        !row
+        || !['game', 'practice'].includes(compactText(row.eventType).toLowerCase())
+        || !compactText(row.startsAt)
+        || (compactText(row.eventType).toLowerCase() === 'game' && !compactText(row.opponent))
+      ));
+      if (invalidRows.length) throw new Error(`${invalidRows.length} schedule row${invalidRows.length === 1 ? ' is' : 's are'} incomplete.`);
+      const summary = summarizeScheduleRows(rows);
+      return {
+        args: {
+          teamId,
+          rows,
+          source: compactText(args.source) || 'ai'
+        },
+        summary: `Schedule import | Team: ${teamId} | ${summary.total} rows`,
+        previewSummary: summary
+      };
+    },
+    resolve: async (user, args) => {
+      const teamId = await resolveAccessibleTeamId(user, args, { requireManager: true });
+      if (!teamId) throw new Error('You no longer have permission to manage this team.');
+      const rows = Array.isArray(args.rows) ? args.rows as ScheduleCsvImportPreviewRow['normalized'][] : [];
+      if (!rows.length) throw new Error('No valid schedule rows remain to import.');
+      const batchId = `ai-schedule-import-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+      const importedAt = new Date().toISOString();
+      const createdIds: string[] = [];
+      const failures: Array<{ rowNumber: number; error: string }> = [];
+      for (const [index, row] of rows.entries()) {
+        const normalizedRow = {
+          ...row,
+          importBatch: {
+            batchId,
+            totalCount: rows.length,
+            rowNumber: row.rowNumber || index + 1,
+            importedAt,
+            importedBy: user.uid
+          }
+        };
+        try {
+          const createdId = row.eventType === 'practice'
+            ? await createScheduleImportPractice(teamId, normalizedRow, user)
+            : await createScheduleImportGame(teamId, normalizedRow, user);
+          if (createdId) createdIds.push(createdId);
+        } catch (error: any) {
+          failures.push({
+            rowNumber: row.rowNumber || index + 1,
+            error: error?.message || 'Schedule row import failed.'
+          });
+        }
+      }
+      if (rows.length > 3 && createdIds.length) {
+        await finalizeScheduleImportBatch(teamId, batchId, createdIds.length, user).catch(() => {});
+      }
+      return {
+        teamId,
+        importedCount: createdIds.length,
+        failedCount: failures.length,
+        failures
+      };
+    }
+  },
+  {
+    name: 'invite_roster_parent',
+    mode: 'write',
+    domain: 'roster-and-invites',
+    audience: 'manager',
+    description: 'Invite a parent or guardian to one player on a managed team using the normal acceptance email. Args: playerId/playerName, email, relation, and optional teamId/teamName. A unique managed-roster player match resolves the team automatically.',
+    aliases: ['invite_parent_to_player'],
+    prepare: async (user, args) => {
+      const target = await resolveManagedRosterPlayer(user, args);
+      const email = compactText(args.email).toLowerCase();
+      if (!email || !email.includes('@')) throw new Error('A valid parent email is required.');
+      return {
+        args: {
+          teamId: target.teamId,
+          playerId: target.player.id,
+          email,
+          relation: compactText(args.relation) || 'Parent'
+        },
+        summary: `Invite ${email} to ${target.player.name} on ${target.teamName}.`,
+        previewSummary: {
+          teamId: target.teamId,
+          teamName: target.teamName,
+          playerId: target.player.id,
+          playerName: target.player.name,
+          email
+        }
+      };
+    },
+    resolve: async (user, args) => {
+      const teamId = await resolveAccessibleTeamId(user, args, { requireManager: true });
+      if (!teamId) throw new Error('You no longer have permission to manage this team.');
+      const detail = await loadParentTeamDetail(teamId, user);
+      const player = resolveTeamDetailPlayer(detail, args);
+      if (!player) throw new Error('No matching roster player was found.');
+      return createRosterParentInviteForApp(teamId, user, player, {
+        email: compactText(args.email),
+        relation: compactText(args.relation) || 'Parent'
+      });
+    }
+  },
+  {
+    name: 'resend_roster_parent_invite',
+    mode: 'write',
+    domain: 'roster-and-invites',
+    audience: 'manager',
+    description: 'Retry the acceptance email for an existing active parent invitation. Args: playerId/playerName, email, and optional teamId/teamName. A unique managed-roster player match resolves the team automatically.',
+    aliases: ['retry_parent_invite_email', 'resend_parent_invite'],
+    prepare: async (user, args) => {
+      const target = await resolveManagedRosterPlayer(user, args);
+      const email = compactText(args.email).toLowerCase();
+      if (!email || !email.includes('@')) throw new Error('A valid parent email is required.');
+      return {
+        args: {
+          teamId: target.teamId,
+          playerId: target.player.id,
+          email
+        },
+        summary: `Retry the invitation email to ${email} for ${target.player.name} on ${target.teamName}.`,
+        previewSummary: {
+          teamId: target.teamId,
+          teamName: target.teamName,
+          playerId: target.player.id,
+          playerName: target.player.name,
+          email
+        }
+      };
+    },
+    resolve: async (user, args) => {
+      const teamId = await resolveAccessibleTeamId(user, args, { requireManager: true });
+      if (!teamId) throw new Error('You no longer have permission to manage this team.');
+      const detail = await loadParentTeamDetail(teamId, user);
+      const player = resolveTeamDetailPlayer(detail, args);
+      if (!player) throw new Error('No matching roster player was found.');
+      return retryRosterParentInviteEmailForApp(teamId, user, player, compactText(args.email));
+    }
   },
   {
     name: 'update_rsvp',
@@ -1036,6 +2009,387 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
   }
 ];
 
+function buildCoachAdminPrivateAiToolDefinitions(): PrivateAiToolDefinition[] {
+  const definitions: PrivateAiToolDefinition[] = [
+    {
+      name: 'get_team_management_overview',
+      mode: 'read',
+      domain: 'team-management',
+      description: 'Managed team settings, roster, staff permissions, tracking items, parent invites, schedule, and analytics. Args: teamId or teamName.',
+      resolve: async (user, args) => {
+        const teamId = await resolveAccessibleTeamId(user, args, { requireManager: true });
+        if (!teamId) throw new Error('No managed team matched that request.');
+        const service = await import('./teamDetailService');
+        const [detail, staff, tracking, invites] = await Promise.all([
+          service.loadParentTeamDetail(teamId, user),
+          service.loadTeamStaffPermissions(teamId, user).catch(() => null),
+          service.loadTeamTrackingAdmin(teamId, user).catch(() => []),
+          service.loadTeamRosterParentInvites(teamId, user).catch(() => [])
+        ]);
+        return {
+          detail: summarizeTeamDetail(detail),
+          staff,
+          tracking,
+          parentInvites: invites
+        };
+      }
+    },
+    {
+      name: 'update_team_settings',
+      mode: 'write',
+      domain: 'team-management',
+      description: 'Update managed team name, sport, ZIP, public visibility, league URL, or livestream URL. Args: teamId/teamName and settings.',
+      prepare: (user, args) => prepareManagedTeamAction(user, args, 'Update team settings'),
+      resolve: async (user, args) => {
+        const teamId = await requireManagedTeamId(user, args);
+        const service = await import('./teamDetailService');
+        const detail = await service.loadParentTeamDetail(teamId, user);
+        const input = isPlainObject(args.settings) ? args.settings : args;
+        return service.updateTeamSettingsForApp(teamId, user, {
+          name: hasOwn(input, 'name') ? compactText(input.name) : compactText(detail.team?.name),
+          sport: hasOwn(input, 'sport') ? compactText(input.sport) : compactText(detail.team?.sport),
+          zip: hasOwn(input, 'zip') ? compactText(input.zip) : compactText(detail.team?.zip),
+          isPublic: hasOwn(input, 'isPublic') ? input.isPublic === true : detail.team?.isPublic === true,
+          leagueUrl: hasOwn(input, 'leagueUrl') ? compactText(input.leagueUrl) : compactText(detail.team?.leagueUrl),
+          streamUrl: hasOwn(input, 'streamUrl') ? compactText(input.streamUrl) : compactText(detail.team?.streamUrl)
+        });
+      }
+    },
+    {
+      name: 'invite_team_admin',
+      mode: 'write',
+      domain: 'staff-access',
+      description: 'Invite an administrator to a managed team. Args: teamId/teamName and email.',
+      prepare: (user, args) => prepareManagedTeamAction(user, args, `Invite team admin ${compactText(args.email)}`),
+      resolve: async (user, args) => {
+        const teamId = await requireManagedTeamId(user, args);
+        const { inviteTeamAdminForApp } = await import('./teamDetailService');
+        return inviteTeamAdminForApp(teamId, compactText(args.email), user);
+      }
+    },
+    {
+      name: 'save_team_tracking_item',
+      mode: 'write',
+      domain: 'tracking-and-stats',
+      description: 'Create or update a managed-team tracking requirement. Args: teamId/teamName, itemId optional, title, description, type, dueDate, required.',
+      prepare: (user, args) => prepareManagedTeamAction(user, args, 'Save team tracking item'),
+      resolve: async (user, args) => {
+        const teamId = await requireManagedTeamId(user, args);
+        const { saveTeamTrackingItemForApp } = await import('./teamDetailService');
+        const input = isPlainObject(args.item) ? args.item : args;
+        return saveTeamTrackingItemForApp(teamId, user, input as any, { itemId: compactText(args.itemId) });
+      }
+    },
+    {
+      name: 'set_player_tracking_status',
+      mode: 'write',
+      domain: 'tracking-and-stats',
+      description: 'Mark a team tracking item complete or incomplete for a roster player. Args: teamId/teamName, playerId/playerName, itemId, complete.',
+      prepare: (user, args) => prepareManagedTeamAction(user, args, 'Update player tracking status'),
+      resolve: async (user, args) => {
+        const teamId = await requireManagedTeamId(user, args);
+        const detail = await loadParentTeamDetail(teamId, user);
+        const player = resolveTeamDetailPlayer(detail, args);
+        if (!player) throw new Error('No matching roster player was found.');
+        const { setPlayerTrackingStatusForApp } = await import('./teamDetailService');
+        return setPlayerTrackingStatusForApp(teamId, user, compactText(args.itemId), player, args.complete === true);
+      }
+    },
+    {
+      name: 'save_stat_configuration',
+      mode: 'write',
+      domain: 'tracking-and-stats',
+      description: 'Create or update a team stat-tracker configuration. Args: teamId/teamName, configId optional, config.',
+      prepare: (user, args) => prepareManagedTeamAction(user, args, 'Save stat configuration'),
+      resolve: async (user, args) => {
+        const teamId = await requireManagedTeamId(user, args);
+        const service = await import('./teamDetailService');
+        const config = isPlainObject(args.config) ? args.config : args;
+        return compactText(args.configId)
+          ? service.updateStatTrackerConfigForApp(teamId, compactText(args.configId), user, config as any)
+          : service.createStatTrackerConfigForApp(teamId, user, config as any);
+      }
+    },
+    {
+      name: 'create_schedule_event',
+      mode: 'write',
+      domain: 'schedule-attendance-planning',
+      description: 'Create a managed-team game or practice. Args: teamId/teamName, eventType game|practice, and input with dates, location, opponent/title, notifications, recurrence, and tracker config.',
+      prepare: (user, args) => prepareManagedTeamAction(user, args, 'Create schedule event'),
+      resolve: async (user, args) => {
+        const teamId = await requireManagedTeamId(user, args);
+        const service = await import('./scheduleService');
+        const input = (isPlainObject(args.input) ? args.input : args) as any;
+        return compactText(args.eventType || args.type).toLowerCase() === 'practice'
+          ? service.createScheduledPracticeForApp(teamId, input, user)
+          : service.createScheduledGameForApp(teamId, input, user);
+      }
+    },
+    {
+      name: 'update_schedule_event',
+      mode: 'write',
+      domain: 'schedule-attendance-planning',
+      description: 'Update a managed-team game or practice. Args: teamId, eventId, eventType, input, and practice scope occurrence|series.',
+      prepare: (user, args) => prepareManagedTeamAction(user, args, 'Update schedule event'),
+      resolve: async (user, args) => {
+        const teamId = await requireManagedTeamId(user, args);
+        const service = await import('./scheduleService');
+        const input = (isPlainObject(args.input) ? args.input : args) as any;
+        const eventId = compactText(args.eventId || args.gameId);
+        return compactText(args.eventType || args.type).toLowerCase() === 'practice'
+          ? service.updateScheduledPracticeForApp(teamId, input, user, {
+              eventId,
+              scope: compactText(args.scope) === 'occurrence' ? 'occurrence' : 'series',
+              instanceDate: compactText(args.instanceDate)
+            } as any)
+          : service.updateScheduledGameForApp(teamId, eventId, input, user);
+      }
+    },
+    {
+      name: 'cancel_schedule_event',
+      mode: 'write',
+      domain: 'schedule-attendance-planning',
+      description: 'Cancel a managed-team game or practice without deleting history. Args: teamId, eventId, eventType.',
+      prepare: (user, args) => prepareManagedTeamAction(user, args, 'Cancel schedule event'),
+      resolve: async (user, args) => {
+        await requireManagedTeamId(user, args);
+        const event = await resolveAccessibleScheduleEvent(user, args);
+        if (!event) throw new Error('No matching schedule event was found.');
+        const service = await import('./scheduleService');
+        return event.type === 'practice'
+          ? service.cancelPracticeOccurrenceForApp(event, user)
+          : service.cancelScheduledGameForApp(event, user);
+      }
+    },
+    {
+      name: 'send_rsvp_reminder',
+      mode: 'write',
+      domain: 'schedule-attendance-planning',
+      description: 'Send the normal staff RSVP reminder for a managed-team event. Args: teamId, eventId.',
+      prepare: (user, args) => prepareManagedTeamAction(user, args, 'Send RSVP reminder'),
+      resolve: async (user, args) => {
+        await requireManagedTeamId(user, args);
+        const event = await resolveAccessibleScheduleEvent(user, args);
+        if (!event) throw new Error('No matching schedule event was found.');
+        const { sendStaffRsvpReminder } = await import('./scheduleService');
+        return sendStaffRsvpReminder(event, user, await getUserProfile(user.uid).catch(() => ({})));
+      }
+    },
+    {
+      name: 'manage_schedule_assignment',
+      mode: 'write',
+      domain: 'schedule-attendance-planning',
+      description: 'Create, update, or remove a managed event assignment. Args: teamId, eventId, action create|update|remove, role/currentRole, assignment.',
+      prepare: (user, args) => prepareManagedTeamAction(user, args, 'Manage schedule assignment'),
+      resolve: async (user, args) => {
+        await requireManagedTeamId(user, args);
+        const event = await resolveAccessibleScheduleEvent(user, args);
+        if (!event) throw new Error('No matching schedule event was found.');
+        const service = await import('./scheduleService');
+        const action = compactText(args.action).toLowerCase();
+        if (action === 'remove') return service.removeScheduleAssignment(event, user, compactText(args.role || args.currentRole));
+        if (action === 'update') return service.updateScheduleAssignment(event, user, compactText(args.currentRole || args.role), (isPlainObject(args.assignment) ? args.assignment : args) as any);
+        return service.createScheduleAssignment(event, user, (isPlainObject(args.assignment) ? args.assignment : args) as any);
+      }
+    },
+    {
+      name: 'save_practice_attendance',
+      mode: 'write',
+      domain: 'schedule-attendance-planning',
+      description: 'Save player attendance for a managed practice. Args: teamId, eventId, attendance with player statuses and notes.',
+      prepare: (user, args) => prepareManagedTeamAction(user, args, 'Save practice attendance'),
+      resolve: async (user, args) => {
+        await requireManagedTeamId(user, args);
+        const event = await resolveAccessibleScheduleEvent(user, { ...args, type: 'practice' });
+        if (!event) throw new Error('No matching practice was found.');
+        const service = await import('./scheduleService');
+        const currentAttendance = await service.loadStaffPracticeAttendance(event, user);
+        const attendanceInput = isPlainObject(args.attendance) ? args.attendance : args;
+        const suppliedPlayers = Array.isArray(attendanceInput.players) ? attendanceInput.players : [];
+        if (suppliedPlayers.length === 0) {
+          throw new Error('At least one player attendance change is required.');
+        }
+        const playersById = new Map(currentAttendance.players.map((player) => [player.playerId, player]));
+        suppliedPlayers.forEach((player) => {
+          const playerId = compactText(player?.playerId);
+          if (!playerId) return;
+          playersById.set(playerId, {
+            ...(playersById.get(playerId) || {}),
+            ...player,
+            playerId
+          } as any);
+        });
+        const attendance = {
+          ...currentAttendance,
+          ...attendanceInput,
+          players: Array.from(playersById.values())
+        };
+        return service.saveStaffPracticeAttendance(event, user, attendance as any);
+      }
+    },
+    {
+      name: 'save_practice_packet',
+      mode: 'write',
+      domain: 'schedule-attendance-planning',
+      description: 'Save the home/practice packet for a managed practice. Args: teamId, eventId, packet with title, due date, notes, and blocks.',
+      prepare: (user, args) => prepareManagedTeamAction(user, args, 'Save practice packet'),
+      resolve: async (user, args) => {
+        await requireManagedTeamId(user, args);
+        const event = await resolveAccessibleScheduleEvent(user, { ...args, type: 'practice' });
+        if (!event) throw new Error('No matching practice was found.');
+        const { saveStaffPracticePacket } = await import('./scheduleService');
+        return saveStaffPracticePacket(event, user, (isPlainObject(args.packet) ? args.packet : args) as any, []);
+      }
+    },
+    {
+      name: 'update_game_score',
+      mode: 'write',
+      domain: 'game-planning-and-wrap-up',
+      description: 'Update the score for a managed game. Args: teamId, eventId/gameId, homeScore, awayScore.',
+      prepare: (user, args) => prepareManagedTeamAction(user, args, 'Update game score'),
+      resolve: async (user, args) => {
+        const teamId = await requireManagedTeamId(user, args);
+        const { updateGameScore } = await import('./scheduleService');
+        return updateGameScore(teamId, compactText(args.gameId || args.eventId), {
+          homeScore: Number(args.homeScore),
+          awayScore: Number(args.awayScore)
+        }, user);
+      }
+    },
+    {
+      name: 'complete_game_wrapup',
+      mode: 'write',
+      domain: 'game-planning-and-wrap-up',
+      description: 'Complete a managed game wrap-up with final report payload. Args: teamId, gameId/eventId, payload.',
+      prepare: (user, args) => prepareManagedTeamAction(user, args, 'Complete game wrap-up'),
+      resolve: async (user, args) => {
+        const teamId = await requireManagedTeamId(user, args);
+        const { completeGameWrapupForApp } = await import('./scheduleService');
+        return completeGameWrapupForApp(teamId, compactText(args.gameId || args.eventId), isPlainObject(args.payload) ? args.payload : args, user);
+      }
+    },
+    {
+      name: 'send_team_email',
+      mode: 'write',
+      domain: 'team-communications',
+      description: 'Send a managed-team email using the normal team email service. Args: teamId/teamName, subject, body, targetType full_team|staff|individuals, recipientIds.',
+      prepare: (user, args) => prepareManagedTeamAction(user, args, `Send team email: ${compactText(args.subject)}`),
+      resolve: async (user, args) => {
+        const teamId = await requireManagedTeamId(user, args);
+        const { sendTeamEmailMessage } = await import('./chatService');
+        const requestedTargetType = compactText(args.targetType || args.target).toLowerCase();
+        const targetType = requestedTargetType === 'staff' || requestedTargetType === 'individuals'
+          ? requestedTargetType
+          : 'full_team';
+        return sendTeamEmailMessage({
+          teamId,
+          subject: compactText(args.subject),
+          body: compactText(args.body || args.message),
+          targetType,
+          recipientIds: Array.isArray(args.recipientIds) ? args.recipientIds.map(compactText).filter(Boolean) : []
+        });
+      }
+    },
+    {
+      name: 'create_team_fee',
+      mode: 'write',
+      domain: 'fees-payments-registration',
+      description: 'Create a managed-team fee for the whole roster or selected player IDs. Args: teamId, title, amount, dueDate, recipientIds, applyToWholeRoster, installmentPlan.',
+      prepare: (user, args) => prepareManagedTeamAction(user, args, 'Create team fee'),
+      resolve: async (user, args) => {
+        const teamId = await requireManagedTeamId(user, args);
+        const { createTeamFeeBatchForApp } = await import('./teamFeesService');
+        return createTeamFeeBatchForApp({
+          teamId,
+          title: compactText(args.title),
+          amount: args.amount as any,
+          dueDate: compactText(args.dueDate),
+          recipientIds: Array.isArray(args.recipientIds) ? args.recipientIds.map(compactText).filter(Boolean) : [],
+          applyToWholeRoster: args.applyToWholeRoster === true,
+          installmentPlan: isPlainObject(args.installmentPlan) ? args.installmentPlan as any : null,
+          user
+        });
+      }
+    },
+    {
+      name: 'review_registration',
+      mode: 'write',
+      domain: 'fees-payments-registration',
+      description: 'Approve, reject, extend, or accept a managed-team registration/waitlist offer. Args: teamId, formId, registrationId, action, playerId, decisionNote.',
+      prepare: (user, args) => prepareManagedTeamAction(user, args, 'Review registration'),
+      resolve: async (user, args) => {
+        const teamId = await requireManagedTeamId(user, args);
+        const service = await import('./parentRegistrationsService');
+        const formId = compactText(args.formId);
+        const registrationId = compactText(args.registrationId);
+        const note = compactText(args.decisionNote);
+        const action = compactText(args.action).toLowerCase();
+        if (action === 'reject') return service.rejectTeamRegistrationForApp(user, teamId, formId, registrationId, note);
+        if (action === 'extend') return service.extendTeamRegistrationOfferForApp(user, teamId, formId, registrationId, note);
+        if (action === 'accept') return service.acceptTeamRegistrationOfferForApp(user, teamId, formId, registrationId, note);
+        return service.approveTeamRegistrationForApp(user, teamId, formId, registrationId, { playerId: compactText(args.playerId), decisionNote: note });
+      }
+    },
+    {
+      name: 'set_team_drill_favorite',
+      mode: 'write',
+      domain: 'drills-practice-awards-social',
+      description: 'Add or remove a drill from a managed team’s favorites. Args: teamId, drillId, favorite.',
+      prepare: (user, args) => prepareManagedTeamAction(user, args, 'Update team drill favorite'),
+      resolve: async (user, args) => {
+        const teamId = await requireManagedTeamId(user, args);
+        const { setTeamDrillFavorite } = await import('./teamDrillsService');
+        await setTeamDrillFavorite(teamId, user, compactText(args.drillId), args.favorite !== false);
+        return { teamId, drillId: compactText(args.drillId), favorite: args.favorite !== false };
+      }
+    },
+    {
+      name: 'save_practice_timeline',
+      mode: 'write',
+      domain: 'drills-practice-awards-social',
+      description: 'Save a managed practice timeline with ordered drill blocks. Args: teamId, eventId, sessionId optional, title, date, location, blocks.',
+      prepare: (user, args) => prepareManagedTeamAction(user, args, 'Save practice timeline'),
+      resolve: async (user, args) => {
+        const teamId = await requireManagedTeamId(user, args);
+        const { savePracticeTimelineForApp } = await import('./practiceTimelineService');
+        return savePracticeTimelineForApp({
+          teamId,
+          eventId: compactText(args.eventId),
+          sessionId: compactText(args.sessionId) || null,
+          title: compactText(args.title),
+          date: args.date as any,
+          location: compactText(args.location),
+          blocks: Array.isArray(args.blocks) ? args.blocks as any : [],
+          user
+        });
+      }
+    }
+  ];
+  return definitions.map((definition) => ({ ...definition, audience: 'manager' as const }));
+}
+
+async function requireManagedTeamId(user: AuthUser, args: Record<string, unknown>) {
+  const teamId = await resolveAccessibleTeamId(user, args, { requireManager: true });
+  if (!teamId) throw new Error('No managed team matched that request or your access changed.');
+  return teamId;
+}
+
+async function prepareManagedTeamAction(user: AuthUser, args: Record<string, unknown>, label: string) {
+  const teamId = await requireManagedTeamId(user, args);
+  return {
+    args: {
+      ...args,
+      teamId
+    },
+    summary: `${label} | Team: ${teamId}`,
+    previewSummary: {
+      domain: 'team-management',
+      teamId,
+      action: label
+    }
+  };
+}
+
 function getPrivateAiToolDefinition(name: string) {
   const normalized = compactText(name);
   return privateAiToolDefinitions.find((definition) => (
@@ -1164,29 +2518,130 @@ async function savePrivateAiPendingAction(
   user: AuthUser,
   definition: PrivateAiToolDefinition,
   args: Record<string, unknown>,
-  context: PrivateAiToolContext = {}
+  context: PrivateAiToolContext = {},
+  prepared: {
+    summary?: string;
+    previewSummary?: Record<string, unknown>;
+  } = {}
 ): Promise<PrivateAiPendingAction> {
   const id = createConfirmationId();
+  const createdAt = new Date();
+  const conversationId = normalizeConversationId(context.conversationId);
+  const confirmationGroupId = compactText(context.confirmationGroupId);
+  await supersedeOlderPendingActions(user, conversationId, confirmationGroupId);
   const pending: PrivateAiPendingAction = {
     id,
     userId: user.uid,
     toolName: definition.name,
     args: sanitizePendingActionArgs(args),
-    summary: buildPendingActionSummary(definition, args),
-    createdAt: new Date().toISOString(),
-    conversationId: normalizeConversationId(context.conversationId),
-    confirmationGroupId: compactText(context.confirmationGroupId)
+    summary: compactText(prepared.summary) || buildPendingActionSummary(definition, args),
+    createdAt: createdAt.toISOString(),
+    conversationId,
+    confirmationGroupId,
+    previewSummary: prepared.previewSummary,
+    expiresAt: new Date(createdAt.getTime() + pendingActionLifetimeMs).toISOString(),
+    status: 'pending'
   };
   pendingActionMemory.set(`${user.uid}:${id}`, pending);
   await setDoc(doc(db, 'users', user.uid, privateAiPendingActionCollectionName, id), {
     ...pending,
     createdAt: serverTimestamp(),
     clientCreatedAt: pending.createdAt,
-    status: 'pending'
+    expiresAt: pending.expiresAt,
+    status: pending.status,
+    audit: {
+      preparedBy: user.uid,
+      preparedAt: pending.createdAt,
+      conversationId,
+      confirmationGroupId
+    }
   }).catch((error) => {
     logger.warn('Unable to persist private AI pending action.', { error, toolName: definition.name });
   });
   return pending;
+}
+
+async function supersedeOlderPendingActions(
+  user: AuthUser,
+  conversationId: string,
+  confirmationGroupId: string
+) {
+  const writes: Promise<unknown>[] = [];
+  pendingActionMemory.forEach((pending, key) => {
+    if (
+      pending.userId !== user.uid
+      || pending.status !== 'pending'
+      || normalizeConversationId(pending.conversationId) !== conversationId
+      || pending.confirmationGroupId === confirmationGroupId
+    ) return;
+    pending.status = 'superseded';
+    pendingActionMemory.set(key, pending);
+    writes.push(setDoc(doc(db, 'users', user.uid, privateAiPendingActionCollectionName, pending.id), {
+      status: 'superseded',
+      supersededAt: serverTimestamp()
+    }, { merge: true }).catch(() => {}));
+  });
+  const snapshot = await getDocs(query(
+    collection(db, 'users', user.uid, privateAiPendingActionCollectionName),
+    orderBy('createdAt', 'desc'),
+    limit(20)
+  )).catch(() => null);
+  (snapshot?.docs || []).forEach((candidate: any) => {
+    const data = typeof candidate?.data === 'function' ? candidate.data() : null;
+    const pendingId = compactText(candidate?.id);
+    if (
+      !pendingId
+      || !isPlainObject(data)
+      || data.status !== 'pending'
+      || compactText(data.userId) !== user.uid
+      || normalizeConversationId(data.conversationId) !== conversationId
+      || compactText(data.confirmationGroupId) === confirmationGroupId
+    ) return;
+    writes.push(setDoc(doc(db, 'users', user.uid, privateAiPendingActionCollectionName, pendingId), {
+      status: 'superseded',
+      supersededAt: serverTimestamp()
+    }, { merge: true }).catch(() => {}));
+  });
+  await Promise.all(writes);
+}
+
+async function claimPrivateAiPendingAction(user: AuthUser, pending: PrivateAiPendingAction) {
+  const memoryKey = `${user.uid}:${pending.id}`;
+  const memoryPending = pendingActionMemory.get(memoryKey);
+  if (memoryPending && memoryPending.status !== 'pending') return false;
+  if (memoryPending) {
+    memoryPending.status = 'executing';
+    pendingActionMemory.set(memoryKey, memoryPending);
+  }
+
+  if (typeof runTransaction !== 'function') return Boolean(memoryPending);
+  const pendingRef = doc(db, 'users', user.uid, privateAiPendingActionCollectionName, pending.id);
+  try {
+    return await runTransaction(db, async (transaction: any) => {
+      const snapshot = await transaction.get(pendingRef);
+      const data = typeof snapshot?.data === 'function' ? snapshot.data() : null;
+      if (
+        !snapshot?.exists?.()
+        || !isPlainObject(data)
+        || data.status !== 'pending'
+        || compactText(data.userId) !== user.uid
+        || Date.parse(compactText(data.expiresAt)) <= Date.now()
+      ) return false;
+      transaction.set(pendingRef, {
+        status: 'executing',
+        executionStartedAt: serverTimestamp(),
+        executionStartedBy: user.uid
+      }, { merge: true });
+      return true;
+    });
+  } catch (error) {
+    logger.warn('Unable to transactionally claim private AI action.', { error, confirmationId: pending.id });
+    if (memoryPending) {
+      memoryPending.status = 'pending';
+      pendingActionMemory.set(memoryKey, memoryPending);
+    }
+    return false;
+  }
 }
 
 async function executeConfirmedPrivateAiAction(user: AuthUser, confirmationId: string): Promise<PrivateAiToolResult> {
@@ -1199,6 +2654,13 @@ async function executeConfirmedPrivateAiAction(user: AuthUser, confirmationId: s
   if (!definition || definition.mode !== 'write') {
     return { name: pending.toolName || 'confirm_action', ok: false, error: 'That pending AI action is no longer supported.' };
   }
+  if (Date.parse(pending.expiresAt) <= Date.now()) {
+    return { name: pending.toolName, ok: false, error: 'That AI preview expired. Prepare the change again before confirming.' };
+  }
+  const claimed = await claimPrivateAiPendingAction(user, pending);
+  if (!claimed) {
+    return { name: pending.toolName, ok: false, error: 'That AI change was already confirmed, superseded, or is currently running.' };
+  }
 
   const result = await runPrivateAiTool(user, {
     name: definition.name,
@@ -1208,10 +2670,20 @@ async function executeConfirmedPrivateAiAction(user: AuthUser, confirmationId: s
     }
   });
   if (result.ok) {
-    pendingActionMemory.delete(`${user.uid}:${id}`);
+    pending.status = 'completed';
+    pendingActionMemory.set(`${user.uid}:${id}`, pending);
     await setDoc(doc(db, 'users', user.uid, privateAiPendingActionCollectionName, id), {
       status: 'completed',
-      completedAt: serverTimestamp()
+      completedAt: serverTimestamp(),
+      completedBy: user.uid
+    }, { merge: true }).catch(() => {});
+  } else {
+    pending.status = 'failed';
+    pendingActionMemory.set(`${user.uid}:${id}`, pending);
+    await setDoc(doc(db, 'users', user.uid, privateAiPendingActionCollectionName, id), {
+      status: 'failed',
+      failedAt: serverTimestamp(),
+      failure: result.error || 'Action failed.'
     }, { merge: true }).catch(() => {});
   }
   return {
@@ -1223,7 +2695,7 @@ async function executeConfirmedPrivateAiAction(user: AuthUser, confirmationId: s
 async function loadPrivateAiPendingAction(user: AuthUser, confirmationId: string): Promise<PrivateAiPendingAction | null> {
   const memoryKey = `${user.uid}:${confirmationId}`;
   const fromMemory = pendingActionMemory.get(memoryKey);
-  if (fromMemory) return fromMemory;
+  if (fromMemory?.status === 'pending') return fromMemory;
 
   const snapshot = await getDoc(doc(db, 'users', user.uid, privateAiPendingActionCollectionName, confirmationId)).catch(() => null);
   const data = typeof snapshot?.data === 'function' ? snapshot.data() : null;
@@ -1237,7 +2709,10 @@ async function loadPrivateAiPendingAction(user: AuthUser, confirmationId: string
     summary: compactText(data.summary),
     createdAt: normalizeScheduleDate(data.createdAt)?.toISOString() || compactText(data.clientCreatedAt) || new Date().toISOString(),
     conversationId: normalizeConversationId(data.conversationId),
-    confirmationGroupId: compactText(data.confirmationGroupId)
+    confirmationGroupId: compactText(data.confirmationGroupId),
+    previewSummary: isPlainObject(data.previewSummary) ? data.previewSummary : undefined,
+    expiresAt: compactText(data.expiresAt) || new Date(Date.now() + pendingActionLifetimeMs).toISOString(),
+    status: 'pending'
   };
 }
 
@@ -1247,11 +2722,17 @@ async function resolvePendingActionIdsForNaturalConfirmation(
   context: PrivateAiToolContext = {}
 ) {
   const conversationId = normalizeConversationId(context.conversationId);
-  const fromHistory = [...priorMessages]
+  const fromMessageReference = [...priorMessages]
     .reverse()
-    .map((message) => parseConfirmationId(message.text))
-    .find(Boolean);
-  if (fromHistory) return [fromHistory];
+    .find((message) => (
+      message.role === 'assistant'
+      && messageBelongsToConversation(message, conversationId)
+      && Array.isArray(message.pendingActionIds)
+      && message.pendingActionIds.length > 0
+    ));
+  if (fromMessageReference?.pendingActionIds?.length) {
+    return fromMessageReference.pendingActionIds;
+  }
 
   const fromMemory = selectPendingActionsForNaturalConfirmation(
     [...pendingActionMemory.values()].filter((pending) => pending.userId === user.uid && normalizeConversationId(pending.conversationId) === conversationId)
@@ -1275,7 +2756,10 @@ async function resolvePendingActionIdsForNaturalConfirmation(
       summary: compactText(data.summary),
       createdAt: normalizeScheduleDate(data.createdAt)?.toISOString() || compactText(data.clientCreatedAt) || new Date().toISOString(),
       conversationId,
-      confirmationGroupId: compactText(data.confirmationGroupId)
+      confirmationGroupId: compactText(data.confirmationGroupId),
+      previewSummary: isPlainObject(data.previewSummary) ? data.previewSummary : undefined,
+      expiresAt: compactText(data.expiresAt) || new Date(Date.now() + pendingActionLifetimeMs).toISOString(),
+      status: 'pending' as const
     };
   }).filter((pending: PrivateAiPendingAction | null): pending is PrivateAiPendingAction => Boolean(pending?.id));
   return selectPendingActionsForNaturalConfirmation(pendingActions).map((pending) => pending.id);
@@ -1298,7 +2782,7 @@ async function savePrivateAiActionAudit(
 }
 
 function parseConfirmationId(question: string) {
-  const match = compactText(question).match(/\bconfirm\s+([a-z0-9_-]{4,24})\b/i);
+  const match = compactText(question).match(/\bconfirm\s+(ai_[a-z0-9]{6,32})\b/i);
   return match?.[1] || '';
 }
 
@@ -1320,7 +2804,7 @@ function createConfirmationGroupId() {
 
 function selectPendingActionsForNaturalConfirmation(actions: PrivateAiPendingAction[]) {
   const sorted = actions
-    .filter((pending) => pending.id)
+    .filter((pending) => pending.id && pending.status === 'pending' && Date.parse(pending.expiresAt) > Date.now())
     .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
   const latest = sorted[0];
   if (!latest) return [];
@@ -1367,6 +2851,29 @@ function summarizeExecutedAction(result: PrivateAiToolResult) {
   if (result.name === 'request_ride_spot') return 'Ride request submitted.';
   if (result.name === 'cancel_ride_request') return 'Ride request cancelled.';
   if (result.name === 'set_ride_offer_status') return 'Ride offer updated.';
+  if (result.name === 'apply_roster_import') return 'Roster imported and family invitations processed.';
+  if (result.name === 'apply_schedule_import') return 'Schedule imported.';
+  if (result.name === 'invite_roster_parent') {
+    const data = isPlainObject(result.data) ? result.data : {};
+    const email = compactText(data.email);
+    const playerName = compactText(data.playerName);
+    const recipient = [email, playerName ? `for ${playerName}` : ''].filter(Boolean).join(' ');
+    if (data.emailQueued === true || data.emailSent === true) {
+      return data.emailDeduplicated === true
+        ? `The parent invitation ${recipient} was already queued for email.`
+        : `Parent invitation created and acceptance email queued ${recipient}.`;
+    }
+    if (data.autoLinked === true) {
+      return `The existing parent account ${recipient} was linked, but the notification email could not be queued. Ask me to retry the invitation email.`;
+    }
+    return `Parent invitation created ${recipient}, but its acceptance email could not be queued. Ask me to retry the invitation email.`;
+  }
+  if (result.name === 'resend_roster_parent_invite') {
+    const data = isPlainObject(result.data) ? result.data : {};
+    return data.emailDeduplicated === true
+      ? 'The parent invitation email was already queued.'
+      : 'The parent invitation email was queued again.';
+  }
   if (result.name === 'send_team_message') return 'Team message sent.';
   if (result.name === 'create_household_invite') return 'Household invite created.';
   if (result.name === 'create_family_share_link') return 'Family share link created.';
@@ -1388,14 +2895,257 @@ function summarizeExecutedActions(results: PrivateAiToolResult[]) {
 
 function summarizeAuditResult(result: unknown) {
   if (!isPlainObject(result)) return result;
-  return pickFields(result, ['event', 'offerId', 'requestId', 'status', 'response', 'updatedChildren', 'tokenId', 'url', 'email', 'role', 'teamId', 'playerId', 'child', 'text', 'target']);
+  return pickFields(result, ['event', 'offerId', 'requestId', 'status', 'response', 'updatedChildren', 'tokenId', 'url', 'email', 'role', 'teamId', 'playerId', 'child', 'text', 'target', 'importedCount', 'failedCount']);
+}
+
+function summarizeRosterPreview(rows: RosterAiImportPreviewRow[]) {
+  return rows.reduce((summary, row) => {
+    summary.total += 1;
+    summary[row.action] += 1;
+    summary.invitations += row.inviteCount;
+    return summary;
+  }, {
+    total: 0,
+    add: 0,
+    update: 0,
+    deactivate: 0,
+    reactivate: 0,
+    invitations: 0
+  });
+}
+
+function summarizeRosterOperations(operations: RosterImportPlannedOperationForApp[]) {
+  return operations.reduce((summary, operation) => {
+    summary.total += 1;
+    summary[operation.type] += 1;
+    summary.invitations += operation.inviteRequests?.length || 0;
+    return summary;
+  }, {
+    total: 0,
+    add: 0,
+    update: 0,
+    deactivate: 0,
+    reactivate: 0,
+    invitations: 0
+  });
+}
+
+function summarizeSchedulePreview(rows: ScheduleCsvImportPreviewRow[]) {
+  return summarizeScheduleRows(rows.map((row) => row.normalized));
+}
+
+function summarizeScheduleRows(rows: ScheduleCsvImportPreviewRow['normalized'][]) {
+  return rows.reduce((summary, row) => {
+    summary.total += 1;
+    if (row.eventType === 'practice') summary.practices += 1;
+    else summary.games += 1;
+    return summary;
+  }, {
+    total: 0,
+    games: 0,
+    practices: 0
+  });
+}
+
+function stripPrivateAiArtifactForStorage(artifact: PrivateAiArtifactReference) {
+  const stored: Record<string, unknown> = {
+    type: artifact.type,
+    confirmationId: artifact.confirmationId,
+    teamId: artifact.teamId,
+    teamName: artifact.teamName,
+    source: artifact.source,
+    summary: artifact.summary
+  };
+  if (artifact.type === 'document-analysis') {
+    stored.fileName = artifact.fileName;
+    stored.mimeType = artifact.mimeType;
+  } else if (artifact.type === 'roster-import' && artifact.previewRows?.length) {
+    stored.previewRows = sanitizePrivateAiStorageValue(artifact.previewRows.slice(0, 200).map((row) => ({
+      rowNumber: row.rowNumber,
+      action: row.action,
+      playerId: row.playerId,
+      name: row.name,
+      number: row.number,
+      reason: row.reason,
+      fields: row.fields,
+      contacts: row.contacts,
+      inviteCount: row.inviteCount,
+      duplicatePlayerId: row.duplicatePlayerId,
+      duplicatePlayerName: row.duplicatePlayerName,
+      errors: row.errors
+    })));
+  } else if (artifact.type === 'schedule-import' && artifact.previewRows?.length) {
+    stored.previewRows = sanitizePrivateAiStorageValue(artifact.previewRows.slice(0, 200).map((row) => ({
+      rowNumber: row.rowNumber,
+      normalized: row.normalized,
+      errors: row.errors
+    })));
+  }
+  return stored;
+}
+
+function normalizePrivateAiArtifact(value: unknown): PrivateAiArtifactReference | null {
+  if (!isPlainObject(value)) return null;
+  const summary = isPlainObject(value.summary) ? value.summary : {};
+  if (value.type === 'document-analysis') {
+    return {
+      type: 'document-analysis',
+      confirmationId: '',
+      teamId: compactText(value.teamId),
+      teamName: compactText(value.teamName),
+      source: value.source === 'csv' || value.source === 'pdf' ? value.source : 'image',
+      fileName: compactText(value.fileName) || 'Attachment',
+      mimeType: compactText(value.mimeType),
+      summary: {
+        total: 1,
+        errors: Number(summary.errors || 0)
+      }
+    };
+  }
+  if (value.type === 'schedule-import') {
+    return {
+      type: 'schedule-import',
+      confirmationId: compactText(value.confirmationId),
+      teamId: compactText(value.teamId),
+      teamName: compactText(value.teamName) || 'Team',
+      source: normalizePrivateAiImportSource(value.source),
+      summary: {
+        total: Number(summary.total || 0),
+        games: Number(summary.games || 0),
+        practices: Number(summary.practices || 0),
+        errors: Number(summary.errors || 0)
+      },
+      previewRows: normalizeStoredSchedulePreviewRows(value.previewRows)
+    };
+  }
+  if (value.type !== 'roster-import') return null;
+  return {
+    type: 'roster-import',
+    confirmationId: compactText(value.confirmationId),
+    teamId: compactText(value.teamId),
+    teamName: compactText(value.teamName) || 'Team',
+    source: normalizePrivateAiImportSource(value.source),
+    summary: {
+      total: Number(summary.total || 0),
+      add: Number(summary.add || 0),
+      update: Number(summary.update || 0),
+      deactivate: Number(summary.deactivate || 0),
+      reactivate: Number(summary.reactivate || 0),
+      invitations: Number(summary.invitations || 0),
+      errors: Number(summary.errors || 0)
+    },
+    previewRows: normalizeStoredRosterPreviewRows(value.previewRows)
+  };
+}
+
+function normalizeStoredRosterPreviewRows(value: unknown): RosterAiImportPreviewRow[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const rows = value.slice(0, 200).map((candidate, index) => {
+    if (!isPlainObject(candidate)) return null;
+    const action = ['add', 'update', 'deactivate', 'reactivate'].includes(String(candidate.action))
+      ? candidate.action as RosterAiImportPreviewRow['action']
+      : null;
+    if (!action) return null;
+    const fields = Array.isArray(candidate.fields)
+      ? candidate.fields.filter((field) => isPlainObject(field)
+        && compactText(field.key)
+        && compactText(field.label)
+        && ['text', 'menu', 'checkbox', 'date'].includes(String(field.type))) as RosterAiImportPreviewRow['fields']
+      : [];
+    const contacts = Array.isArray(candidate.contacts)
+      ? candidate.contacts.filter(isPlainObject) as RosterAiImportPreviewRow['contacts']
+      : [];
+    return {
+      rowNumber: Number(candidate.rowNumber) || index + 1,
+      action,
+      playerId: compactText(candidate.playerId),
+      name: compactText(candidate.name),
+      number: compactText(candidate.number),
+      reason: compactText(candidate.reason),
+      fields,
+      contacts,
+      inviteCount: Number(candidate.inviteCount) || 0,
+      duplicatePlayerId: compactText(candidate.duplicatePlayerId),
+      duplicatePlayerName: compactText(candidate.duplicatePlayerName),
+      errors: Array.isArray(candidate.errors)
+        ? candidate.errors.map((error) => compactText(error)).filter(Boolean)
+        : [],
+      operation: (isPlainObject(candidate.operation)
+        ? candidate.operation
+        : {
+            type: action,
+            playerId: compactText(candidate.playerId),
+            payload: {},
+            errors: Array.isArray(candidate.errors)
+              ? candidate.errors.map((error) => compactText(error)).filter(Boolean)
+              : []
+          }) as unknown as RosterAiImportPreviewRow['operation'],
+      rawOperation: isPlainObject(candidate.rawOperation)
+        ? candidate.rawOperation
+        : undefined
+    };
+  }).filter(Boolean) as RosterAiImportPreviewRow[];
+  return rows.length ? rows : undefined;
+}
+
+function normalizeStoredSchedulePreviewRows(value: unknown): ScheduleCsvImportPreviewRow[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const rows = value.slice(0, 200).map((candidate, index) => {
+    if (!isPlainObject(candidate) || !isPlainObject(candidate.normalized)) return null;
+    const normalized = candidate.normalized;
+    const eventType = normalized.eventType === 'practice' ? 'practice' : normalized.eventType === 'game' ? 'game' : null;
+    if (!eventType) return null;
+    return {
+      rowNumber: Number(candidate.rowNumber) || index + 1,
+      draft: {},
+      normalized: {
+        rowNumber: Number(normalized.rowNumber) || Number(candidate.rowNumber) || index + 1,
+        eventType,
+        startsAt: compactText(normalized.startsAt),
+        endsAt: normalized.endsAt == null ? null : compactText(normalized.endsAt),
+        opponent: normalized.opponent == null ? null : compactText(normalized.opponent),
+        title: normalized.title == null ? null : compactText(normalized.title),
+        location: normalized.location == null ? null : compactText(normalized.location),
+        arrivalTime: normalized.arrivalTime == null ? null : compactText(normalized.arrivalTime),
+        isHome: typeof normalized.isHome === 'boolean' ? normalized.isHome : null,
+        notes: normalized.notes == null ? null : compactText(normalized.notes)
+      },
+      errors: Array.isArray(candidate.errors)
+        ? candidate.errors.map((error) => compactText(error)).filter(Boolean)
+        : []
+    };
+  }).filter(Boolean) as ScheduleCsvImportPreviewRow[];
+  return rows.length ? rows : undefined;
+}
+
+function sanitizePrivateAiStorageValue(value: unknown): unknown {
+  if (value === undefined || typeof value === 'function' || typeof value === 'symbol') return undefined;
+  if (Array.isArray(value)) {
+    return value
+      .map(sanitizePrivateAiStorageValue)
+      .filter((item) => item !== undefined);
+  }
+  if (!isPlainObject(value)) return value;
+  return Object.entries(value).reduce<Record<string, unknown>>((stored, [key, item]) => {
+    const sanitized = sanitizePrivateAiStorageValue(item);
+    if (sanitized !== undefined) stored[key] = sanitized;
+    return stored;
+  }, {});
+}
+
+function normalizePrivateAiImportSource(value: unknown): 'csv' | 'ai-text' | 'ai-image' | 'ai-document' {
+  if (value === 'csv' || value === 'ai-image' || value === 'ai-document') return value;
+  return 'ai-text';
 }
 
 async function savePrivateAiMessage(user: AuthUser, input: {
   role: PrivateAiRole;
   text: string;
   conversationId?: string;
+  attachment?: PrivateAiAttachmentReceipt;
   toolNames?: string[];
+  pendingActionIds?: string[];
+  artifacts?: PrivateAiArtifactReference[];
   error?: boolean;
 }): Promise<PrivateAiMessage> {
   const createdAt = new Date();
@@ -1404,7 +3154,10 @@ async function savePrivateAiMessage(user: AuthUser, input: {
     role: input.role,
     text: input.text,
     conversationId,
+    ...(input.attachment ? { attachment: input.attachment } : {}),
     toolNames: input.toolNames || [],
+    pendingActionIds: (input.pendingActionIds || []).map(compactText).filter(Boolean),
+    artifacts: (input.artifacts || []).map(stripPrivateAiArtifactForStorage),
     error: input.error === true,
     createdAt: serverTimestamp(),
     clientCreatedAt: createdAt.toISOString()
@@ -1416,7 +3169,10 @@ async function savePrivateAiMessage(user: AuthUser, input: {
     text: input.text,
     conversationId,
     createdAt,
+    attachment: input.attachment,
     toolNames: input.toolNames || [],
+    pendingActionIds: (input.pendingActionIds || []).map(compactText).filter(Boolean),
+    artifacts: input.artifacts || [],
     error: input.error === true
   };
 }
@@ -1461,7 +3217,12 @@ function normalizePrivateAiMessage(id: string, data: Record<string, any>): Priva
     text,
     conversationId: compactText(data.conversationId) || DEFAULT_PRIVATE_AI_CONVERSATION_ID,
     createdAt: normalizeScheduleDate(data.createdAt) || normalizeScheduleDate(data.clientCreatedAt) || new Date(0),
+    attachment: normalizePrivateAiAttachmentReceipt(data.attachment),
     toolNames: Array.isArray(data.toolNames) ? data.toolNames.map((name: unknown) => compactText(name)).filter(Boolean) : [],
+    pendingActionIds: Array.isArray(data.pendingActionIds)
+      ? data.pendingActionIds.map((id: unknown) => compactText(id)).filter(Boolean)
+      : [],
+    artifacts: Array.isArray(data.artifacts) ? data.artifacts.map(normalizePrivateAiArtifact).filter(Boolean) as PrivateAiArtifactReference[] : [],
     error: data.error === true
   };
 }
@@ -1523,10 +3284,12 @@ function buildPlannerPrompt({
     `If you need data, return {"toolCalls":[{"name":"list_schedule","args":{"range":"upcoming","limit":8}}]}.\n` +
     `For last/previous game questions, call get_last_game. For game-specific questions, do not answer with practices as substitutes.\n` +
     `For writes, call the write tool with normalized args. The app will stage it and require user confirmation before execution.\n` +
+    `For a parent/guardian roster invitation, call invite_roster_parent with the player name and email even when the team was not stated. The tool searches every managed roster, resolves a unique player automatically, and reports ambiguity when a team choice is genuinely required.\n` +
+    `If the user asks to retry a failed parent invitation email, call resend_roster_parent_invite with the player name and email from the recent chat.\n` +
     `If you have enough information, return {"answer":"..."}.\n\n` +
-    `AVAILABLE TOOLS:\n` +
-    privateAiToolDefinitions.map((definition) => (
-      `- ${definition.name} (${definition.mode}): ${definition.description}`
+    `AVAILABLE ROLE-AUTHORIZED TOOLS (family/player and coach/admin capabilities are combined):\n` +
+    getRoleAuthorizedPrivateAiToolDefinitions(user).map((definition) => (
+      `- [${definition.domain || inferPrivateAiToolDomain(definition.name)}] ${definition.name} (${definition.mode}): ${definition.description}`
     )).join('\n') + `\n\n` +
     `USER:\n${JSON.stringify(summarizeSignedInUser(user))}\n\n` +
     `RECENT CHAT HISTORY:\n${JSON.stringify(history)}\n\n` +
@@ -1568,12 +3331,32 @@ function formatToolResultsForPrompt(toolResults: PrivateAiToolResult[]) {
   }));
 }
 
+function inferPrivateAiToolDomain(name: string) {
+  if (/profile|help|home/.test(name)) return 'account-profile-notifications-discovery';
+  if (/roster|team|message/.test(name)) return 'team-roster-communications';
+  if (/schedule|rsvp|assignment|ride|practice_packet/.test(name)) return 'schedule-attendance-planning';
+  if (/fee|registration|incentive|paid/.test(name)) return 'fees-payments-registration-incentives';
+  if (/household|family_share|access_request|player/.test(name)) return 'family-player-household-sharing';
+  return 'account-authorized-operations';
+}
+
+function getRoleAuthorizedPrivateAiToolDefinitions(user: AuthUser) {
+  const roles = new Set((user.roles || []).map((role) => compactText(role).toLowerCase()));
+  const hasManagerRole = Boolean(
+    user.coachOf?.length
+    || ['coach', 'admin', 'administrator', 'team-admin', 'team_admin', 'staff', 'manager'].some((role) => roles.has(role))
+  );
+  return privateAiToolDefinitions.filter((definition) => definition.audience !== 'manager' || hasManagerRole);
+}
+
 function summarizeSignedInUser(user: AuthUser) {
   return {
     uid: user.uid,
     email: user.email,
     displayName: user.displayName,
     roles: user.roles || [],
+    linkedPlayerCount: user.parentPlayerKeys?.length || user.parentOf?.length || 0,
+    managedTeamCount: user.coachOf?.length || 0,
     emailVerified: user.emailVerified === true
   };
 }
@@ -1946,24 +3729,173 @@ function summarizeHelpKnowledge(results: ReturnType<typeof searchHelpKnowledge>)
   };
 }
 
-async function resolveAccessibleTeamId(user: AuthUser, args: Record<string, unknown>) {
+async function loadAccessibleAiTeams(user: AuthUser) {
+  const home = await loadParentHome(user).catch(() => ({ teams: [], players: [] } as any));
+  const teamIds = new Set<string>();
+  (home.teams || []).forEach((team: any) => {
+    const teamId = compactText(team.teamId || team.id);
+    if (teamId) teamIds.add(teamId);
+  });
+  (user.coachOf || []).forEach((teamId) => {
+    const normalized = compactText(teamId);
+    if (normalized) teamIds.add(normalized);
+  });
+
+  const details = await Promise.all(Array.from(teamIds).slice(0, 60).map(async (teamId) => {
+    const detail = await loadParentTeamDetail(teamId, user).catch(() => null);
+    if (!detail?.team) return null;
+    return {
+      teamId,
+      teamName: compactText(detail.team.name) || teamId,
+      canManageTeam: detail.canManageTeam === true,
+      playerCount: (detail.players || []).length + (detail.inactivePlayers || []).length,
+      detail
+    };
+  }));
+  return details.filter((team): team is NonNullable<typeof team> => Boolean(team));
+}
+
+async function resolveAccessibleTeamId(
+  user: AuthUser,
+  args: Record<string, unknown>,
+  options: { requireManager?: boolean } = {}
+) {
   const teamId = compactText(args.teamId);
   const teamName = compactText(args.teamName).toLowerCase();
-  const home = await loadParentHome(user);
-  const teams = home.teams || [];
-  if (teamId && teams.some((team: any) => team.teamId === teamId)) return teamId;
+  const teams = await loadAccessibleAiTeams(user);
+  const eligibleTeams = options.requireManager ? teams.filter((team) => team.canManageTeam) : teams;
+  if (teamId && eligibleTeams.some((team) => team.teamId === teamId)) return teamId;
+  if (teamId && options.requireManager) {
+    const directDetail = await loadParentTeamDetail(teamId, user).catch(() => null);
+    if (directDetail?.team && directDetail.canManageTeam === true) return teamId;
+  }
   if (teamId) return null;
   if (teamName) {
-    return teams.find((team: any) => compactText(team.teamName).toLowerCase().includes(teamName))?.teamId || null;
+    return eligibleTeams.find((team) => compactText(team.teamName).toLowerCase().includes(teamName))?.teamId || null;
   }
-  return teams[0]?.teamId || null;
+  const requestText = compactText(args.text || args.prompt || args.query).toLowerCase();
+  if (requestText) {
+    const scoredTeams = eligibleTeams
+      .map((team) => ({
+        team,
+        score: scoreTeamNameMention(requestText, compactText(team.teamName))
+      }))
+      .filter((candidate) => candidate.score > 0)
+      .sort((left, right) => right.score - left.score);
+    if (scoredTeams.length && (scoredTeams.length === 1 || scoredTeams[0].score > scoredTeams[1].score)) {
+      return scoredTeams[0].team.teamId;
+    }
+  }
+  return eligibleTeams.length === 1 ? eligibleTeams[0].teamId : null;
+}
+
+function scoreTeamNameMention(requestText: string, teamName: string): number {
+  const normalizedName = compactText(teamName).toLowerCase();
+  if (!normalizedName) return 0;
+  if (requestText.includes(normalizedName)) return 1000 + normalizedName.length;
+  const ignoredTokens = new Set(['team', 'club', 'soccer', 'football', 'baseball', 'basketball']);
+  return normalizedName
+    .split(/[^a-z0-9]+/)
+    .filter((token) => token.length >= 3 && !ignoredTokens.has(token))
+    .reduce((score, token) => requestText.includes(token) ? score + token.length : score, 0);
+}
+
+function isPrivateAiRosterImportRequest(question: string): boolean {
+  const rawQuestion = String(question || '').trim();
+  if (extractPastedRosterCsv(rawQuestion)) return true;
+
+  const normalized = compactText(rawQuestion).toLowerCase();
+  const mentionsRosterData = /\b(roster|players?|athletes?|jersey(?:\s+number)?|family\s+contacts?|parents?|guardians?)\b/.test(normalized);
+  const startsWithQuestion = /^(?:can|could|would|should|how|what|who|when|where|why|is|are|do|does|did|will|may)\b/.test(normalized);
+  const requestsBulkImport = !startsWithQuestion && /\b(import|bulk)\b/.test(normalized);
+  const startsWithRosterMutation = /^(?:(?:for|on)\s+.{1,100},\s*)?(?:please\s+)?(?:add|update|deactivate|reactivate|remove|delete)\b/.test(normalized);
+  const preparesRosterMutation = /\b(?:prepare|stage|draft)\b.{0,80}\b(?:add|update|deactivate|reactivate|remove|delete)\b/.test(normalized);
+  return mentionsRosterData && (requestsBulkImport || startsWithRosterMutation || preparesRosterMutation);
+}
+
+async function resolveManagedRosterPlayer(user: AuthUser, args: Record<string, unknown>) {
+  const requestedTeamId = compactText(args.teamId);
+  const requestedTeamName = compactText(args.teamName).toLowerCase();
+  const requestedPlayerId = compactText(args.playerId || args.childId);
+  const requestedPlayerName = compactText(args.playerName || args.childName).toLowerCase();
+  if (!requestedPlayerId && !requestedPlayerName) {
+    throw new Error('A player name or player ID is required for a parent invitation.');
+  }
+
+  let managedTeams: any[] = (await loadAccessibleAiTeams(user))
+    .filter((team) => team.canManageTeam);
+  if (requestedTeamId && !managedTeams.some((team) => team.teamId === requestedTeamId)) {
+    const directDetail = await loadParentTeamDetail(requestedTeamId, user).catch(() => null);
+    if (directDetail?.team && directDetail.canManageTeam === true) {
+      managedTeams.push({
+        teamId: requestedTeamId,
+        teamName: compactText(directDetail.team.name) || requestedTeamId,
+        canManageTeam: true,
+        detail: directDetail
+      });
+    }
+  }
+
+  if (requestedTeamId) {
+    managedTeams = managedTeams.filter((team) => team.teamId === requestedTeamId);
+  } else if (requestedTeamName) {
+    const exactTeams = managedTeams.filter((team) => compactText(team.teamName).toLowerCase() === requestedTeamName);
+    const matchingTeams = exactTeams.length
+      ? exactTeams
+      : managedTeams.filter((team) => compactText(team.teamName).toLowerCase().includes(requestedTeamName));
+    if (matchingTeams.length > 1) {
+      throw new Error(`More than one managed team matches "${compactText(args.teamName)}". Choose one team.`);
+    }
+    managedTeams = matchingTeams;
+  }
+  if (!managedTeams.length) {
+    throw new Error('No managed team matched that parent invitation.');
+  }
+
+  const candidates = managedTeams.flatMap((team) => [
+    ...(team.detail.players || []).map((player: any) => ({ team, player, inactive: false })),
+    ...(team.detail.inactivePlayers || []).map((player: any) => ({ team, player, inactive: true }))
+  ]);
+  let matchingPlayers = requestedPlayerId
+    ? candidates.filter((candidate) => compactText(candidate.player.id || candidate.player.playerId) === requestedPlayerId)
+    : candidates.filter((candidate) => compactText(candidate.player.name || candidate.player.playerName).toLowerCase() === requestedPlayerName);
+  if (!matchingPlayers.length && requestedPlayerName) {
+    matchingPlayers = candidates.filter((candidate) => (
+      compactText(candidate.player.name || candidate.player.playerName).toLowerCase().includes(requestedPlayerName)
+    ));
+  }
+  const activeMatches = matchingPlayers.filter((candidate) => !candidate.inactive);
+  if (activeMatches.length) matchingPlayers = activeMatches;
+
+  const uniqueMatches = Array.from(new Map(matchingPlayers.map((candidate) => [
+    `${candidate.team.teamId}:${compactText(candidate.player.id || candidate.player.playerId)}`,
+    candidate
+  ])).values());
+  if (!uniqueMatches.length) {
+    throw new Error(`No managed roster player matched "${compactText(args.playerName || args.playerId)}".`);
+  }
+  if (uniqueMatches.length > 1) {
+    const teamNames = Array.from(new Set(uniqueMatches.map((candidate) => compactText(candidate.team.teamName) || candidate.team.teamId)));
+    throw new Error(
+      `Multiple managed roster players match "${compactText(args.playerName || args.playerId)}" (${teamNames.join(', ')}). Tell me which team.`
+    );
+  }
+
+  const match = uniqueMatches[0]!;
+  return {
+    teamId: match.team.teamId,
+    teamName: compactText(match.team.teamName) || match.team.teamId,
+    detail: match.team.detail,
+    player: match.player
+  };
 }
 
 async function resolveAccessiblePlayer(user: AuthUser, args: Record<string, unknown>) {
   const requestedTeamId = compactText(args.teamId);
   const requestedPlayerId = compactText(args.playerId);
   const requestedPlayerName = compactText(args.playerName).toLowerCase();
-  const home = await loadParentHome(user);
+  const home = await loadParentHome(user).catch(() => ({ teams: [], players: [] } as any));
+  const accessibleTeams = await loadAccessibleAiTeams(user);
   const players = [
     ...(home.players || []).map((player: any) => ({
       teamId: player.teamId,
@@ -1975,6 +3907,15 @@ async function resolveAccessiblePlayer(user: AuthUser, args: Record<string, unkn
       teamId: team.teamId,
       playerId: player.playerId || player.childId || player.id,
       name: player.name || player.childName || player.playerName,
+      teamName: team.teamName
+    }))),
+    ...accessibleTeams.flatMap((team) => [
+      ...(team.detail.players || []),
+      ...(team.detail.inactivePlayers || [])
+    ].map((player: any) => ({
+      teamId: team.teamId,
+      playerId: player.id || player.playerId,
+      name: player.name || player.playerName,
       teamName: team.teamName
     })))
   ].filter((player: any) => player.teamId && player.playerId);
@@ -1989,6 +3930,15 @@ async function resolveAccessiblePlayer(user: AuthUser, args: Record<string, unkn
     return players.find((player: any) => compactText(player.name).toLowerCase().includes(requestedPlayerName)) || null;
   }
   return players[0] || null;
+}
+
+function resolveTeamDetailPlayer(detail: any, args: Record<string, unknown>) {
+  const playerId = compactText(args.playerId || args.childId);
+  const playerName = compactText(args.playerName || args.childName).toLowerCase();
+  const players = [...(detail.players || []), ...(detail.inactivePlayers || [])];
+  if (playerId) return players.find((player: any) => compactText(player.id) === playerId) || null;
+  if (playerName) return players.find((player: any) => compactText(player.name).toLowerCase().includes(playerName)) || null;
+  return players.length === 1 ? players[0] : null;
 }
 
 function resolvePracticePacketChild(packet: any, args: Record<string, unknown>) {
@@ -2109,6 +4059,67 @@ function pickFields(source: Record<string, any>, fields: string[]) {
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function isPrivateAiCsvFile(file: File) {
+  return file.type === 'text/csv'
+    || file.type === 'application/csv'
+    || file.name.toLowerCase().endsWith('.csv');
+}
+
+function getPrivateAiAttachmentKind(file: File): 'csv' | 'image' | 'pdf' {
+  if (isPrivateAiCsvFile(file)) return 'csv';
+  if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) return 'pdf';
+  return 'image';
+}
+
+function buildPrivateAiAttachmentReceipt(file: File): PrivateAiAttachmentReceipt {
+  return {
+    name: compactText(file.name) || 'Attachment',
+    kind: getPrivateAiAttachmentKind(file),
+    mimeType: compactText(file.type) || getPrivateAiAttachmentMimeType(file)
+  };
+}
+
+function normalizePrivateAiAttachmentReceipt(value: unknown): PrivateAiAttachmentReceipt | undefined {
+  if (!isPlainObject(value)) return undefined;
+  const name = compactText(value.name);
+  const kind = ['csv', 'image', 'pdf'].includes(String(value.kind))
+    ? value.kind as PrivateAiAttachmentReceipt['kind']
+    : null;
+  if (!name || !kind) return undefined;
+  return {
+    name,
+    kind,
+    mimeType: compactText(value.mimeType)
+  };
+}
+
+function getPrivateAiAttachmentMimeType(file: File) {
+  const kind = getPrivateAiAttachmentKind(file);
+  if (kind === 'csv') return 'text/csv';
+  if (kind === 'pdf') return 'application/pdf';
+  const extension = file.name.toLowerCase().split('.').pop();
+  if (extension === 'jpg' || extension === 'jpeg') return 'image/jpeg';
+  if (extension === 'webp') return 'image/webp';
+  if (extension === 'heic') return 'image/heic';
+  if (extension === 'heif') return 'image/heif';
+  return 'image/png';
+}
+
+async function fileToPrivateAiGenerativePart(file: File) {
+  const buffer = await file.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  bytes.forEach((byte) => {
+    binary += String.fromCharCode(byte);
+  });
+  return {
+    inlineData: {
+      data: btoa(binary),
+      mimeType: compactText(file.type) || getPrivateAiAttachmentMimeType(file)
+    }
+  };
 }
 
 function compactText(value: unknown) {

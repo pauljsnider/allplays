@@ -83,6 +83,33 @@ describe('scheduleAiImport', () => {
     expect(result.rows[0].errors).toEqual([]);
   });
 
+  it('normalizes practice events from schedule images and PDFs', () => {
+    const result = normalizeScheduleAiImportResponse({
+      operations: [{
+        action: 'add',
+        event: {
+          eventType: 'practice',
+          startsAt: '2026-06-07T17:30:00',
+          endsAt: '2026-06-07T19:00:00',
+          title: 'Team practice',
+          location: 'West Gym',
+          notes: 'Bring water'
+        }
+      }]
+    }, { teamName: 'Bears' });
+
+    expect(result.errors).toEqual([]);
+    expect(result.rows[0].normalized).toMatchObject({
+      eventType: 'practice',
+      startsAt: '2026-06-07T17:30',
+      endsAt: '2026-06-07T19:00',
+      title: 'Team practice',
+      opponent: null,
+      location: 'West Gym'
+    });
+    expect(result.rows[0].errors).toEqual([]);
+  });
+
   it('returns actionable errors for malformed or empty AI responses', () => {
     expect(normalizeScheduleAiImportResponse({ nope: [] }).errors[0]).toContain('operations array');
     expect(normalizeScheduleAiImportResponse({ operations: [] }).errors[0]).toContain('did not find any games');

@@ -31,6 +31,7 @@ function buildRosterImportOperationHelper() {
         Timestamp: { now: vi.fn(() => 'now') },
         db: {},
         collection: vi.fn((database, path) => ({ path })),
+        deleteField: vi.fn(() => '__deleted__'),
         doc: vi.fn((...args) => {
             if (args.length === 1) return { id: 'generated-player', path: `${args[0].path}/generated-player` };
             if (args.length === 3) return { id: args[2], path: `${args[1]}/${args[2]}` };
@@ -39,7 +40,7 @@ function buildRosterImportOperationHelper() {
         writeBatch: vi.fn(() => batch)
     };
     const factory = new Function('deps', `
-        const { Timestamp, db, collection, doc, writeBatch } = deps;
+        const { Timestamp, db, collection, deleteField, doc, writeBatch } = deps;
         ${assertSource}
         ${atomicUpdateSource}
         ${applySource}
@@ -73,11 +74,11 @@ describe('roster CSV import planning', () => {
                 number: '4',
                 profile: { customFields: { throwsRight: true } }
             },
-            privateRosterFields: { grade: '6', birthDate: '2014-02-03' }
+            privateRosterFields: { grade: '6', birthDate: '2014-02-03', medicalNote: 'Allergy' }
         });
         expect(plan.operations[0].payload.profile.customFields).not.toHaveProperty('birthDate');
         expect(plan.operations[0].payload.profile.customFields).not.toHaveProperty('medicalNote');
-        expect(JSON.stringify(plan.operations)).not.toContain('Allergy');
+        expect(plan.operations[0].privateRosterFields.medicalNote).toBe('Allergy');
 
         expect(plan.operations[1]).toMatchObject({
             type: 'add',
@@ -86,7 +87,7 @@ describe('roster CSV import planning', () => {
                 number: '12',
                 profile: { customFields: { throwsRight: false } }
             },
-            privateRosterFields: { grade: '7', birthDate: '2013-09-01' }
+            privateRosterFields: { grade: '7', birthDate: '2013-09-01', medicalNote: '' }
         });
     });
 
@@ -109,6 +110,32 @@ describe('roster CSV import planning', () => {
             privateRosterFields: { grade: '6' }
         });
         expect(plan.operations[0].payload).not.toHaveProperty('number');
+    });
+
+    it('maps CSV delete/restore operations to recoverable deactivate/reactivate writes', () => {
+        const existingPlayers = [
+            { id: 'p1', name: 'Avery Lee', active: true },
+            { id: 'p2', name: 'Sam Jones', active: false }
+        ];
+        const plan = planRosterCsvImport({
+            fields,
+            existingPlayers,
+            csvText: 'Name,Operation\nAvery Lee,delete\nSam Jones,restore'
+        });
+
+        expect(plan.errors).toEqual([]);
+        expect(plan.operations).toEqual([
+            expect.objectContaining({ type: 'deactivate', playerId: 'p1' }),
+            expect.objectContaining({ type: 'reactivate', playerId: 'p2' })
+        ]);
+    });
+
+    it('blocks CSV imports above the shared 200-row limit', () => {
+        const csvText = ['Name', ...Array.from({ length: 201 }, (_, index) => `Player ${index + 1}`)].join('\n');
+        expect(planRosterCsvImport({ fields, csvText })).toEqual({
+            errors: ['Import at most 200 roster rows at a time.'],
+            operations: []
+        });
     });
 
     it('accepts configured field keys as headers and rejects unknown headers', () => {
@@ -665,6 +692,25 @@ describe('roster CSV import planning', () => {
         expect(batch.commit).toHaveBeenCalledTimes(1);
     });
 
+    it('commits deactivate and reactivate operations in the same recoverable roster batch', async () => {
+        const { applyRosterCsvImportOperations, batch } = buildRosterImportOperationHelper();
+
+        await applyRosterCsvImportOperations('team-1', [
+            { type: 'deactivate', playerId: 'player-1', payload: {} },
+            { type: 'reactivate', playerId: 'player-2', payload: {} }
+        ]);
+
+        expect(batch.update).toHaveBeenNthCalledWith(1,
+            expect.objectContaining({ path: 'teams/team-1/players/player-1' }),
+            { active: false, deactivatedAt: 'now', updatedAt: 'now' }
+        );
+        expect(batch.update).toHaveBeenNthCalledWith(2,
+            expect.objectContaining({ path: 'teams/team-1/players/player-2' }),
+            { active: true, deactivatedAt: '__deleted__', updatedAt: 'now' }
+        );
+        expect(batch.commit).toHaveBeenCalledTimes(1);
+    });
+
     it('stages registration and Bulk AI migration writes in one batch before a failed commit', async () => {
         const { applyRosterCsvImportOperations, batch } = buildRosterImportOperationHelper();
         batch.commit.mockRejectedValueOnce(new Error('commit failed'));
@@ -749,7 +795,8 @@ describe('roster CSV import planning', () => {
         expect(page).toContain('download-roster-template-btn');
         expect(page).toContain('mergeStandardRosterFieldDefinitions(rosterFieldDefinitionDrafts)');
         expect(page).toContain('splitRosterProfileValuesByVisibility(rosterFieldDefinitions, profileValues)');
-        expect(page).toContain('roster-csv-send-invites');
+        expect(page).not.toContain('id="roster-csv-send-invites"');
+        expect(page).toContain('Family invitations are included');
         expect(page).toContain('csv-import-preview');
         expect(page).toContain('renderRosterCsvReview(plan)');
         expect(page).toContain('sendImportedRosterContactInvite');
@@ -781,6 +828,68 @@ describe('roster CSV import planning', () => {
         expect(template).toContain('Guardian 2 Name,Guardian 2 Relation,Guardian 2 Email,Guardian 2 Phone');
         expect(template).toContain('Grade,Throws Right,Birth Date,Medical Note');
         expect(template).toContain('Avery Lee,4,Forward,2014-02-03');
+    });
+
+    it('round-trips every full-template column into the shared public/private/contact contract', () => {
+        const template = buildFullRosterCsvTemplate(fields);
+        const headers = template.trim().split('\n')[0].split(',');
+        const valuesByHeader = {
+            Name: 'Avery Lee',
+            Number: '4',
+            Position: 'Forward',
+            DOB: '2014-02-03',
+            Gender: 'Female',
+            Address: '123 Main St',
+            City: 'Kansas City',
+            State: 'MO',
+            Zip: '64110',
+            'Roster Status': 'Staff',
+            Operation: 'Add',
+            'Parent Name': 'Pat Lee',
+            'Parent Relation': 'Parent',
+            'Parent Email': 'pat@example.com',
+            'Parent Phone': '555-0101',
+            'Guardian 2 Name': 'Robin Lee',
+            'Guardian 2 Relation': 'Guardian',
+            'Guardian 2 Email': 'robin@example.com',
+            'Guardian 2 Phone': '555-0102',
+            Grade: '6',
+            'Throws Right': 'false',
+            'Birth Date': '2014-02-03',
+            'Medical Note': 'Allergy'
+        };
+        const csvText = `${headers.join(',')}\n${headers.map((header) => valuesByHeader[header] || '').join(',')}`;
+        const plan = planRosterCsvImport({ fields, csvText });
+
+        expect(plan.errors).toEqual([]);
+        expect(plan.operations[0]).toMatchObject({
+            type: 'add',
+            payload: {
+                name: 'Avery Lee',
+                number: '4',
+                position: 'Forward',
+                profile: {
+                    rosterStatus: 'staff',
+                    customFields: { throwsRight: false }
+                }
+            },
+            privateRosterFields: {
+                birthDate: '2014-02-03',
+                gender: 'Female',
+                grade: '6',
+                medicalNote: 'Allergy',
+                address: {
+                    address1: '123 Main St',
+                    city: 'Kansas City',
+                    state: 'MO',
+                    zip: '64110'
+                }
+            }
+        });
+        expect(plan.operations[0].inviteRequests.map((request) => request.email)).toEqual([
+            'pat@example.com',
+            'robin@example.com'
+        ]);
     });
 
     it('omits configured roster field headers that collide with built-in template columns', () => {

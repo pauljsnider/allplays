@@ -7,6 +7,7 @@ import {
     mergeRosterParentContacts,
     mergeStandardRosterFieldDefinitions,
     normalizeRosterFieldDefinitions,
+    planRosterAiImport,
     splitRosterProfileValuesByVisibility,
     validateRosterProfileValues
 } from '../../js/roster-profile-fields.js';
@@ -225,5 +226,83 @@ describe('roster profile fields', () => {
             expect.objectContaining({ name: 'Robin Lee', phone: '555-0102', relation: 'Guardian', source: 'registration' }),
             expect.objectContaining({ name: 'Dana Lee', email: 'dana@example.com', relation: 'Parent', source: 'roster-ai' })
         ]);
+    });
+
+    it('plans sparse AI updates from property presence, including false values and intentional clears', () => {
+        const fields = [
+            { key: 'callSign', label: 'Call Sign', type: 'text', visibility: 'public', active: true },
+            { key: 'waiver', label: 'Waiver', type: 'checkbox', visibility: 'team', active: true }
+        ];
+        const plan = planRosterAiImport({
+            fields,
+            existingPlayers: [{
+                id: 'p1',
+                name: 'Avery Ace',
+                number: '10',
+                profile: { customFields: { callSign: 'Ace' } },
+                privateProfileRosterFields: { waiver: true }
+            }],
+            aiOperations: [{
+                action: 'update',
+                playerId: 'p1',
+                changes: {
+                    callSign: '',
+                    waiver: false,
+                    familyContacts: [{ email: 'parent@example.com' }]
+                }
+            }]
+        });
+
+        expect(plan.errors).toEqual([]);
+        expect(plan.operations[0].providedFields).toEqual([
+            expect.objectContaining({ key: 'callSign', value: '' }),
+            expect.objectContaining({ key: 'waiver', value: false })
+        ]);
+        expect(plan.operations[0].providedFields.map((field) => field.key)).not.toContain('number');
+        expect(plan.operations[0].providedContacts).toEqual([
+            expect.objectContaining({ email: 'parent@example.com', providedKeys: ['email'] })
+        ]);
+        expect(plan.operations[0].inviteRequests).toEqual([
+            expect.objectContaining({ email: 'parent@example.com' })
+        ]);
+    });
+
+    it('keeps unknown AI fields and invalid values visible as review errors', () => {
+        const plan = planRosterAiImport({
+            fields: [{ key: 'level', label: 'Level', type: 'menu', visibility: 'public', options: [{ value: 'A', label: 'A' }], active: true }],
+            aiOperations: [{
+                action: 'add',
+                player: { name: 'Sam Starter', level: 'Z', mysteryField: 'keep visible' }
+            }]
+        });
+
+        expect(plan.operations[0].errors).toEqual(expect.arrayContaining([
+            expect.stringContaining('Level must be one of'),
+            expect.stringContaining('unknown roster field "mysteryField"')
+        ]));
+        expect(plan.operations[0].providedFields).toEqual(expect.arrayContaining([
+            expect.objectContaining({ key: 'level', value: 'Z' })
+        ]));
+    });
+
+    it('does not render empty contact properties in sparse AI review metadata', () => {
+        const plan = planRosterAiImport({
+            fields: [],
+            aiOperations: [{
+                action: 'add',
+                player: {
+                    name: 'Sam Starter',
+                    familyContacts: [{ name: 'Pat Starter', email: '', phone: '' }]
+                }
+            }]
+        });
+
+        expect(plan.operations[0].providedContacts).toEqual([
+            expect.objectContaining({
+                name: 'Pat Starter',
+                providedKeys: ['name']
+            })
+        ]);
+        expect(plan.operations[0].inviteRequests).toEqual([]);
     });
 });

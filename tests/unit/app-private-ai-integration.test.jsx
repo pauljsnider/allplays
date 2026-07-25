@@ -2,6 +2,7 @@
 import React, { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot } from 'react-dom/client';
+import { MemoryRouter } from 'react-router-dom';
 
 const privateAiMocks = vi.hoisted(() => ({
     DEFAULT_PRIVATE_AI_CONVERSATION_ID: 'default',
@@ -51,7 +52,13 @@ async function renderPrivateAi() {
     const root = createRoot(container);
 
     await act(async () => {
-        root.render(React.createElement(PrivateAiChat, { auth }));
+        root.render(
+            React.createElement(
+                MemoryRouter,
+                { initialEntries: ['/ai'] },
+                React.createElement(PrivateAiChat, { auth })
+            )
+        );
     });
 
     await flush();

@@ -1,8 +1,12 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import type { MutableRefObject } from 'react';
+import { useLocation } from 'react-router-dom';
 import {
   ChevronRight,
   ChevronsDown,
+  FileText,
+  FileSpreadsheet,
+  ImageIcon,
   Loader2,
   MessageCircle,
   Mic,
@@ -10,17 +14,30 @@ import {
   RefreshCw,
   Send,
   ShieldCheck,
-  Sparkles
+  Sparkles,
+  X
 } from 'lucide-react';
 import {
   DEFAULT_PRIVATE_AI_CONVERSATION_ID,
   DRAFT_PRIVATE_AI_CONVERSATION_ID,
   loadPrivateAiConversations,
   loadPrivateAiMessages,
+  getPrivateAiAttachmentValidationError,
+  revisePrivateAiRosterImportProposal,
+  sendPrivateAiAttachmentMessage,
   sendPrivateAiMessage,
+  type PrivateAiAttachmentReceipt,
+  type PrivateAiArtifactReference,
+  type PrivateAiRosterArtifactReference,
   type PrivateAiConversation,
   type PrivateAiMessage
 } from '../lib/privateAiService';
+import { loadRosterImportContextForApp } from '../lib/teamDetailService';
+import {
+  getPrivateAiLaunchIntentLabel,
+  parsePrivateAiLaunchContext,
+  type PrivateAiLaunchContext
+} from '../lib/privateAiLaunch';
 import {
   formatChatDay,
   formatChatMessageHtml,
@@ -35,6 +52,7 @@ import {
   startNativeSpeechDictation,
   type SpeechRecognitionLike
 } from '../lib/dictation';
+import { getPastedImageFiles } from '../lib/clipboardFiles';
 import { useShellLayout } from '../lib/useShellLayout';
 import type { AuthState } from '../lib/types';
 
@@ -42,6 +60,11 @@ type ChatStatus = {
   tone: 'neutral' | 'error' | 'success';
   message: string;
 };
+
+type RosterArtifactEdit =
+  | { type: 'field'; rowNumber: number; fieldKey: string; value: unknown }
+  | { type: 'contact'; rowNumber: number; contactIndex: number; contactKey: 'name' | 'email' | 'phone' | 'relation'; value: string }
+  | { type: 'action'; rowNumber: number; action: 'add' };
 
 const suggestedPrompts = [
   'What do I need to handle today?',
@@ -66,6 +89,7 @@ const secondarySuggestedPrompts = suggestedPrompts.filter((prompt) => prompt !==
 const isDraftConversationId = (conversationId: string) => conversationId === DRAFT_PRIVATE_AI_CONVERSATION_ID;
 const draftConversationLabel = 'New chat';
 const draftConversationPreview = 'Start typing. This draft will save after your first message.';
+const privateAiConversationPageSize = 6;
 
 const resolveActiveConversationId = (
   currentConversationId: string,
@@ -80,11 +104,19 @@ const resolveActiveConversationId = (
 
 export function PrivateAiChat({ auth }: { auth: AuthState }) {
   const { isDesktopWeb } = useShellLayout();
+  const location = useLocation();
+  const launchContext = useMemo(() => parsePrivateAiLaunchContext(location.search), [location.search]);
   const [messages, setMessages] = useState<PrivateAiMessage[]>([]);
   const [conversations, setConversations] = useState<PrivateAiConversation[]>([]);
   const [conversationLoading, setConversationLoading] = useState(true);
-  const [activeConversationId, setActiveConversationId] = useState(DEFAULT_PRIVATE_AI_CONVERSATION_ID);
-  const [draft, setDraft] = useState('');
+  const [activeConversationId, setActiveConversationId] = useState(
+    launchContext.newChat ? DRAFT_PRIVATE_AI_CONVERSATION_ID : DEFAULT_PRIVATE_AI_CONVERSATION_ID
+  );
+  const [draft, setDraft] = useState(launchContext.prompt);
+  const [activeLaunchContext, setActiveLaunchContext] = useState<PrivateAiLaunchContext | null>(
+    launchContext.teamId ? launchContext : null
+  );
+  const [attachment, setAttachment] = useState<File | null>(null);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [dictating, setDictating] = useState(false);
@@ -93,6 +125,22 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const stopNativeDictationRef = useRef<(() => Promise<void>) | null>(null);
   const preserveMessagesForConversationRef = useRef<string | null>(null);
+  const appliedLaunchSearchRef = useRef('');
+  const rosterEditContextRef = useRef(new Map<string, Awaited<ReturnType<typeof loadRosterImportContextForApp>>>());
+  const managedTeamContext = activeLaunchContext?.teamId || '';
+  const isTeamManager = Boolean(auth.user?.coachOf?.length || auth.isCoach || auth.isAdmin);
+
+  useEffect(() => {
+    if (appliedLaunchSearchRef.current === location.search) return;
+    appliedLaunchSearchRef.current = location.search;
+    setActiveLaunchContext(launchContext.teamId ? launchContext : null);
+    if (launchContext.newChat) {
+      setActiveConversationId(DRAFT_PRIVATE_AI_CONVERSATION_ID);
+      setMessages([]);
+      setAttachment(null);
+    }
+    if (launchContext.prompt) setDraft(launchContext.prompt);
+  }, [launchContext, location.search]);
 
   const refreshConversations = async (showLoading = true, currentConversationId = activeConversationId) => {
     if (!auth.user) {
@@ -150,8 +198,11 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
 
   useEffect(() => {
     preserveMessagesForConversationRef.current = null;
-    setActiveConversationId(DEFAULT_PRIVATE_AI_CONVERSATION_ID);
-    void refreshConversations(true, '');
+    const requestedConversationId = launchContext.newChat
+      ? DRAFT_PRIVATE_AI_CONVERSATION_ID
+      : DEFAULT_PRIVATE_AI_CONVERSATION_ID;
+    setActiveConversationId(requestedConversationId);
+    void refreshConversations(true, requestedConversationId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid]);
 
@@ -281,22 +332,36 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
 
   const sendPrompt = async (text: string) => {
     const trimmedText = text.trim();
-    if (!auth.user || sending || !trimmedText) return;
+    if (!auth.user || sending || (!trimmedText && !attachment)) return;
+    const sentAttachment = attachment;
+    const attachmentReceipt = sentAttachment ? buildAttachmentReceipt(sentAttachment) : undefined;
 
     setDraft('');
+    setAttachment(null);
     setSending(true);
     setStatus(null);
     const optimisticUser: PrivateAiMessage = {
       id: `local-user-${Date.now()}`,
       role: 'user',
-      text: trimmedText,
+      text: trimmedText || `Analyze ${sentAttachment?.name || 'attachment'}`,
       conversationId: activeConversationId,
-      createdAt: new Date()
+      createdAt: new Date(),
+      attachment: attachmentReceipt
     };
     setMessages((current) => [...current, optimisticUser]);
 
     try {
-      const result = await sendPrivateAiMessage(auth.user, trimmedText, activeConversationId);
+      const result = sentAttachment
+        ? await sendPrivateAiAttachmentMessage(auth.user, {
+            teamId: managedTeamContext,
+            text: trimmedText,
+            file: sentAttachment
+          }, activeConversationId)
+        : managedTeamContext
+          ? await sendPrivateAiMessage(auth.user, trimmedText, activeConversationId, {
+              teamId: managedTeamContext
+            })
+          : await sendPrivateAiMessage(auth.user, trimmedText, activeConversationId);
       const nextConversationId = result.userMessage.conversationId || activeConversationId;
       setMessages((current) => [
         ...current.filter((message) => message.id !== optimisticUser.id),
@@ -308,16 +373,42 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
         setActiveConversationId(nextConversationId);
       }
       await refreshConversations(false, nextConversationId);
+      if (sentAttachment) {
+        setStatus({
+          tone: 'success',
+          message: `AI processed ${sentAttachment.name}. The attachment was cleared from the composer.`
+        });
+      }
     } catch (error: any) {
       setMessages((current) => current.filter((message) => message.id !== optimisticUser.id));
       setDraft(trimmedText);
+      if (sentAttachment) setAttachment(sentAttachment);
       setStatus({
         tone: 'error',
-        message: error?.message || 'Unable to send message.'
+        message: `${error?.message || 'Unable to send message.'}${sentAttachment ? ' The attachment was restored so you can try again.' : ''}`
       });
     } finally {
       setSending(false);
     }
+  };
+
+  const updateAttachment = (file: File | null) => {
+    if (!file) {
+      setAttachment(null);
+      setStatus(null);
+      return;
+    }
+    const error = getPrivateAiAttachmentValidationError(file);
+    if (error) {
+      setAttachment(null);
+      setStatus({ tone: 'error', message: error });
+      return;
+    }
+    setAttachment(file);
+    setStatus({
+      tone: 'neutral',
+      message: 'Attachment ready. Add what you want AI to do, or send it for automatic analysis.'
+    });
   };
 
   const sendMessage = (event?: FormEvent) => {
@@ -329,17 +420,100 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
     void sendPrompt(prompt);
   };
 
+  const editAndRetryRequest = (request: { text: string; hadAttachment: boolean }) => {
+    setDraft(stripLegacyAttachmentSuffix(request.text));
+    setAttachment(null);
+    setStatus({
+      tone: 'neutral',
+      message: request.hadAttachment
+        ? 'Request copied into the composer. Edit it, then paste or attach the source file again.'
+        : 'Request copied into the composer. Edit it, then send when ready.'
+    });
+    requestAnimationFrame(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' }));
+  };
+
+  const editRosterArtifact = async (
+    messageId: string,
+    artifact: PrivateAiRosterArtifactReference,
+    edit: RosterArtifactEdit
+  ) => {
+    if (!auth.user || !artifact.confirmationId || !artifact.previewRows?.length) return;
+    const previousRows = artifact.previewRows;
+    setStatus({ tone: 'neutral', message: 'Revalidating and saving the reviewed roster changes…' });
+    try {
+      let context = rosterEditContextRef.current.get(artifact.teamId);
+      if (!context) {
+        context = await loadRosterImportContextForApp(artifact.teamId, auth.user);
+        rosterEditContextRef.current.set(artifact.teamId, context);
+      }
+      const rosterImport = await import('../lib/rosterAiImport');
+      const nextRows = edit.type === 'contact'
+        ? rosterImport.updateRosterAiImportPreviewContact(
+            previousRows,
+            edit.rowNumber,
+            edit.contactIndex,
+            edit.contactKey,
+            edit.value,
+            context.players,
+            context.fields
+          )
+        : edit.type === 'action'
+          ? rosterImport.changeRosterAiImportPreviewAction(
+              previousRows,
+              edit.rowNumber,
+              edit.action,
+              context.players,
+              context.fields
+            )
+          : rosterImport.updateRosterAiImportPreviewField(
+            previousRows,
+            edit.rowNumber,
+            edit.fieldKey,
+            edit.value,
+            context.players,
+            context.fields
+          );
+      const summary = await revisePrivateAiRosterImportProposal(auth.user, {
+        confirmationId: artifact.confirmationId,
+        teamId: artifact.teamId,
+        rows: nextRows
+      });
+      setMessages((current) => current.map((message) => message.id === messageId
+        ? {
+            ...message,
+            artifacts: message.artifacts?.map((candidate) => candidate.type === 'roster-import' && candidate.confirmationId === artifact.confirmationId
+              ? { ...candidate, previewRows: nextRows, summary }
+              : candidate)
+          }
+        : message));
+      setStatus({
+        tone: summary.errors ? 'error' : 'success',
+        message: summary.errors
+          ? `Saved the edit. Fix ${summary.errors} remaining roster review error${summary.errors === 1 ? '' : 's'} before replying yes.`
+          : 'Roster review updated. Reply yes when the complete proposal looks right.'
+      });
+    } catch (error: any) {
+      setStatus({
+        tone: 'error',
+        message: error?.message || 'Unable to save that roster review edit.'
+      });
+    }
+  };
+
   const startNewConversation = () => {
     if (!auth.user || conversationLoading) return;
     setStatus(null);
     setActiveConversationId(DRAFT_PRIVATE_AI_CONVERSATION_ID);
     setMessages([]);
     setDraft('');
+    setAttachment(null);
+    setActiveLaunchContext(null);
   };
 
   const selectConversation = (conversationId: string) => {
     setActiveConversationId(conversationId || DEFAULT_PRIVATE_AI_CONVERSATION_ID);
     setStatus(null);
+    setActiveLaunchContext(null);
   };
 
   const stats = useMemo(() => ({
@@ -366,9 +540,15 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
       onSubmit={sendMessage}
       onToggleDictation={toggleDictation}
       onStarterPrompt={sendSuggestion}
+      isTeamManager={isTeamManager}
+      attachment={attachment}
+      onAttachmentChange={updateAttachment}
+      launchContext={activeLaunchContext}
       dictating={dictating}
       status={status}
       bottomRef={bottomRef}
+      onRosterArtifactEdit={editRosterArtifact}
+      onEditAndRetryRequest={editAndRetryRequest}
     />
   );
 
@@ -507,6 +687,12 @@ function PrivateAiConversationList({
   compact?: boolean;
 }) {
   const showDraftConversation = isDraftConversationId(activeConversationId);
+  const [visibleConversationCount, setVisibleConversationCount] = useState(privateAiConversationPageSize);
+  const visibleConversations = conversations.slice(0, visibleConversationCount);
+  const hiddenConversationCount = Math.max(0, conversations.length - visibleConversations.length);
+  const loadMoreConversations = () => {
+    setVisibleConversationCount((current) => Math.min(conversations.length, current + privateAiConversationPageSize));
+  };
 
   if (compact) {
     return (
@@ -528,7 +714,7 @@ function PrivateAiConversationList({
             <span>{draftConversationLabel}</span>
           </button>
         ) : null}
-        {!loading && conversations.length ? conversations.map((conversation) => (
+        {!loading && visibleConversations.length ? visibleConversations.map((conversation) => (
           <button
             key={conversation.id}
             type="button"
@@ -540,6 +726,17 @@ function PrivateAiConversationList({
             <span>{conversation.title}</span>
           </button>
         )) : null}
+        {!loading && hiddenConversationCount ? (
+          <button
+            type="button"
+            className="private-ai-conversation-chip"
+            onClick={loadMoreConversations}
+            aria-label="Load more chats"
+          >
+            <ChevronsDown className="h-4 w-4" aria-hidden="true" />
+            <span>Load more ({hiddenConversationCount})</span>
+          </button>
+        ) : null}
         {!loading && !showDraftConversation && !conversations.length ? (
           <span className="private-ai-conversation-chip private-ai-conversation-chip-muted">No saved chats</span>
         ) : null}
@@ -582,7 +779,7 @@ function PrivateAiConversationList({
             <span className="private-ai-conversation-preview">{draftConversationPreview}</span>
           </button>
         ) : null}
-        {!loading && conversations.length ? conversations.map((conversation) => (
+        {!loading && visibleConversations.length ? visibleConversations.map((conversation) => (
           <button
             key={conversation.id}
             type="button"
@@ -596,6 +793,18 @@ function PrivateAiConversationList({
             </span>
           </button>
         )) : null}
+        {!loading && hiddenConversationCount ? (
+          <button
+            type="button"
+            className="secondary-button w-full !min-h-10 text-xs"
+            onClick={loadMoreConversations}
+            aria-label="Load more chats"
+          >
+            <ChevronsDown className="h-4 w-4" aria-hidden="true" />
+            Load more chats
+            <span className="font-semibold text-gray-500">{hiddenConversationCount} remaining</span>
+          </button>
+        ) : null}
         {!loading && !showDraftConversation && !conversations.length ? (
           <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 px-3 py-4 text-sm font-bold text-gray-500">
             Start a private chat and it will stay here for later.
@@ -646,9 +855,15 @@ function PrivateAiThread({
   onSubmit,
   onToggleDictation,
   onStarterPrompt,
+  isTeamManager,
+  attachment,
+  onAttachmentChange,
+  launchContext,
   dictating,
   status,
-  bottomRef
+  bottomRef,
+  onRosterArtifactEdit,
+  onEditAndRetryRequest
 }: {
   messages: PrivateAiMessage[];
   loading: boolean;
@@ -658,9 +873,15 @@ function PrivateAiThread({
   onSubmit: (event?: FormEvent) => void;
   onToggleDictation: () => void;
   onStarterPrompt: (prompt: string) => void;
+  isTeamManager: boolean;
+  attachment: File | null;
+  onAttachmentChange: (file: File | null) => void;
+  launchContext: PrivateAiLaunchContext | null;
   dictating: boolean;
   status: ChatStatus | null;
   bottomRef: MutableRefObject<HTMLDivElement | null>;
+  onRosterArtifactEdit: (messageId: string, artifact: PrivateAiRosterArtifactReference, edit: RosterArtifactEdit) => Promise<void>;
+  onEditAndRetryRequest: (request: { text: string; hadAttachment: boolean }) => void;
 }) {
   return (
     <section className="app-card chat-body private-ai-card">
@@ -673,11 +894,27 @@ function PrivateAiThread({
             </div>
           ) : null}
 
-          {!loading && !messages.length ? <PrivateAiWelcome sending={sending} onStarterPrompt={onStarterPrompt} /> : null}
+          {!loading && !messages.length ? <PrivateAiWelcome sending={sending} onStarterPrompt={onStarterPrompt} isTeamManager={isTeamManager} /> : null}
 
-          {!loading ? messages.map((message, index) => (
-            <PrivateAiBubble key={message.id} message={message} previous={messages[index - 1] || null} />
-          )) : null}
+          {!loading ? messages.map((message, index) => {
+            const previousUserMessage = findPreviousUserMessage(messages, index);
+            return (
+              <PrivateAiBubble
+                key={message.id}
+                message={message}
+                previous={messages[index - 1] || null}
+                retryRequest={previousUserMessage
+                  ? {
+                      text: previousUserMessage.text,
+                      hadAttachment: Boolean(previousUserMessage.attachment)
+                        || hasLegacyAttachmentSuffix(previousUserMessage.text)
+                    }
+                  : null}
+                onRosterArtifactEdit={onRosterArtifactEdit}
+                onEditAndRetryRequest={onEditAndRetryRequest}
+              />
+            );
+          }) : null}
 
           {sending ? <TypingBubble /> : null}
           <div ref={bottomRef} />
@@ -687,10 +924,46 @@ function PrivateAiThread({
       {status ? <StatusBanner status={status} /> : null}
 
       <form className="chat-composer private-ai-composer safe-bottom border border-gray-200 bg-white p-2 shadow-app" onSubmit={onSubmit}>
+        {launchContext?.teamId ? (
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-violet-100 bg-violet-50 px-3 py-2" aria-label="AI team context">
+            <span className="flex min-w-0 items-center gap-2">
+              <Sparkles className="h-4 w-4 flex-none text-violet-700" aria-hidden="true" />
+              <span className="min-w-0">
+                <span className="block truncate text-xs font-black text-gray-950">{launchContext.teamName || 'Managed team'}</span>
+                <span className="block text-[10px] font-black uppercase tracking-[0.06em] text-violet-700">{getPrivateAiLaunchIntentLabel(launchContext.intent)}</span>
+              </span>
+            </span>
+            <span className="text-[10px] font-bold text-gray-500">
+              {messages.length ? 'Team scoped · writes still require yes' : 'Draft only · nothing sent yet'}
+            </span>
+          </div>
+        ) : null}
+        {attachment ? (
+          <div className="mb-2 flex items-center justify-between gap-2 rounded-xl border border-primary-100 bg-primary-50 px-3 py-2 text-xs font-bold text-primary-800">
+            <span className="flex min-w-0 items-center gap-2">
+              <AttachmentIcon file={attachment} />
+              <span className="min-w-0">
+                <span className="block truncate">{attachment.name}</span>
+                <span className="block text-[10px] font-black uppercase tracking-[0.06em] text-primary-600">
+                  {getAttachmentLabel(attachment)} · AI decides roster, schedule, or analysis
+                </span>
+              </span>
+            </span>
+            <button type="button" className="ghost-button !h-8 !min-h-8 !w-8 !p-0" onClick={() => onAttachmentChange(null)} disabled={sending} aria-label="Remove attachment">
+              <X className="h-4 w-4" aria-hidden="true" />
+            </button>
+          </div>
+        ) : null}
         <div className="chat-composer-input-shell">
           <textarea
             value={draft}
             onChange={(event) => onDraftChange(event.target.value)}
+            onPaste={(event) => {
+              const pastedImages = getPastedImageFiles(event.clipboardData);
+              if (!pastedImages.length) return;
+              event.preventDefault();
+              onAttachmentChange(pastedImages[0]);
+            }}
             onKeyDown={(event) => {
               if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault();
@@ -698,20 +971,34 @@ function PrivateAiThread({
               }
             }}
             className="chat-composer-textarea"
-            placeholder="Ask ALL PLAYS..."
+            placeholder={attachment ? 'What should AI do with this file?' : 'Ask ALL PLAYS...'}
             rows={1}
             disabled={sending}
           />
           <button
             type="submit"
             className="chat-composer-send primary-button"
-            disabled={sending || !draft.trim()}
+            disabled={sending || (!draft.trim() && !attachment)}
             aria-label="Send AI message"
           >
             {sending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Send className="h-4 w-4" aria-hidden="true" />}
           </button>
         </div>
         <div className="chat-composer-toolbar private-ai-composer-toolbar">
+          <label className="chat-tool-button cursor-pointer" title="Attach image, CSV, or PDF">
+              <Plus className="h-4 w-4" aria-hidden="true" />
+              <input
+                type="file"
+                className="sr-only"
+                aria-label="Attach image, CSV, or PDF"
+                accept=".csv,.pdf,text/csv,application/pdf,image/png,image/jpeg,image/webp,image/heic,image/heif"
+                onChange={(event) => {
+                  onAttachmentChange(event.target.files?.[0] || null);
+                  event.target.value = '';
+                }}
+                disabled={sending}
+              />
+          </label>
           <button
             type="button"
             className={`chat-tool-button ${dictating ? 'chat-tool-button-active' : ''}`}
@@ -724,7 +1011,7 @@ function PrivateAiThread({
           </button>
           <div className="chat-composer-notice private-ai-composer-notice" aria-live="polite">
             {dictating ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />}
-            <span className="truncate">{dictating ? 'Listening...' : 'Private AI chat'}</span>
+            <span className="truncate">{dictating ? 'Listening...' : 'Paste an image here, or attach an image, CSV, or PDF'}</span>
           </div>
         </div>
       </form>
@@ -805,10 +1092,12 @@ function PromptSection({
 
 function PrivateAiWelcome({
   sending,
-  onStarterPrompt
+  onStarterPrompt,
+  isTeamManager
 }: {
   sending: boolean;
   onStarterPrompt: (prompt: string) => void;
+  isTeamManager: boolean;
 }) {
   return (
     <div className="private-ai-welcome">
@@ -817,7 +1106,7 @@ function PrivateAiWelcome({
       </div>
       <div className="mt-3 text-base font-black text-gray-950">What do you need from ALL PLAYS?</div>
       <div className="mt-1 text-sm font-semibold leading-6 text-gray-500">
-        Ask about your teams, schedule, messages, fees, player development, coaching ideas, registrations, and profile.
+        Ask about your teams, schedule, messages, fees, player development, coaching ideas, registrations, and profile. Attach an image, CSV, or PDF for AI to analyze.
       </div>
       <div className="mt-4">
         <PromptSection
@@ -828,13 +1117,38 @@ function PrivateAiWelcome({
           variant="welcome"
         />
       </div>
+      {isTeamManager ? (
+        <section className="mt-5 rounded-2xl border border-primary-100 bg-primary-50 p-4 text-left">
+          <div className="app-label text-primary-700">Manage a team with AI</div>
+          <div className="mt-1 text-sm font-black text-gray-950">Prepare bulk team work in one conversation</div>
+          <div className="mt-1 text-xs font-semibold leading-5 text-gray-600">Attach an image, CSV, or PDF, then ask for roster, schedule, attendance, message, or team operations. AI identifies the file’s purpose and shows a scoped preview; nothing writes or emails until you reply yes.</div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button type="button" className="secondary-button !min-h-10 text-xs" onClick={() => onStarterPrompt('Show the teams I can manage and their current roster counts')} disabled={sending}>Show managed teams</button>
+            <button type="button" className="secondary-button !min-h-10 text-xs" onClick={() => onStarterPrompt('Help me prepare a bulk roster import')} disabled={sending}>Bulk roster import</button>
+          </div>
+        </section>
+      ) : null}
     </div>
   );
 }
 
-function PrivateAiBubble({ message, previous }: { message: PrivateAiMessage; previous: PrivateAiMessage | null }) {
+function PrivateAiBubble({
+  message,
+  previous,
+  retryRequest,
+  onRosterArtifactEdit,
+  onEditAndRetryRequest
+}: {
+  message: PrivateAiMessage;
+  previous: PrivateAiMessage | null;
+  retryRequest: { text: string; hadAttachment: boolean } | null;
+  onRosterArtifactEdit: (messageId: string, artifact: PrivateAiRosterArtifactReference, edit: RosterArtifactEdit) => Promise<void>;
+  onEditAndRetryRequest: (request: { text: string; hadAttachment: boolean }) => void;
+}) {
   const isOwn = message.role === 'user';
   const showDay = !previous || formatChatDay(previous.createdAt) !== formatChatDay(message.createdAt);
+  const hasRecoverableError = message.error === true
+    || Boolean(message.artifacts?.some((artifact) => artifact.summary.errors > 0));
 
   return (
     <>
@@ -855,6 +1169,200 @@ function PrivateAiBubble({ message, previous }: { message: PrivateAiMessage; pre
             className={`chat-message-html private-ai-message-text ${isOwn ? 'chat-message-html-own' : ''}`}
             dangerouslySetInnerHTML={{ __html: formatChatMessageHtml(message.text) }}
           />
+          {isOwn && message.attachment ? (
+            <PrivateAiAttachmentReceiptCard
+              attachment={message.attachment}
+              sending={message.id.startsWith('local-user-')}
+            />
+          ) : null}
+          {!isOwn ? message.artifacts?.map((artifact) => artifact.type === 'document-analysis' ? (
+            <PrivateAiDocumentArtifactCard key={`${artifact.type}-${artifact.fileName}-${message.id}`} artifact={artifact} />
+          ) : artifact.type === 'schedule-import' ? (
+            <PrivateAiScheduleArtifactCard key={`${artifact.type}-${artifact.confirmationId || message.id}`} artifact={artifact} />
+          ) : (
+            <section key={`${artifact.type}-${artifact.confirmationId || message.id}`} className="mt-3 rounded-xl border border-primary-100 bg-primary-50 p-3 text-gray-950">
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <div className="text-[10px] font-black uppercase tracking-[0.08em] text-primary-700">Roster review · {formatImportSource(artifact.source)}</div>
+                  <div className="mt-1 text-sm font-black">{artifact.teamName}</div>
+                </div>
+                <span className="rounded-full bg-white px-2 py-1 text-[10px] font-black text-primary-700">{artifact.summary.total} rows</span>
+              </div>
+              <div className="mt-2 flex flex-wrap gap-x-2 gap-y-1 text-[11px] font-bold text-gray-700">
+                <span>{artifact.summary.add} add</span>
+                <span>{artifact.summary.update} update</span>
+                <span>{artifact.summary.deactivate} deactivate</span>
+                <span>{artifact.summary.reactivate} reactivate</span>
+                <span>{artifact.summary.invitations} invites</span>
+                {artifact.summary.errors ? <span className="text-rose-700">{artifact.summary.errors} errors</span> : null}
+              </div>
+              {artifact.previewRows?.length ? (
+                <details className="mt-3 rounded-lg border border-primary-100 bg-white p-2">
+                  <summary className="cursor-pointer text-xs font-black text-primary-800">Review extracted rows and fields</summary>
+                  <div className="mt-2 space-y-2">
+                    {artifact.previewRows.map((row) => (
+                      <details
+                        key={row.rowNumber}
+                        className={`rounded-lg border p-2 ${row.errors.length ? 'border-rose-200 bg-rose-50' : 'border-gray-200'}`}
+                        open={artifact.previewRows!.length <= 3 || row.errors.length > 0}
+                      >
+                        <summary className="cursor-pointer list-none">
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <div className="text-xs font-black"><span className="mr-1 uppercase text-primary-700">{row.action}</span>{row.number ? `#${row.number} ` : ''}{row.name}</div>
+                              <div className="mt-1 text-[10px] font-semibold text-gray-500">{row.fields.length} supplied field{row.fields.length === 1 ? '' : 's'} · {row.contacts.length} contact{row.contacts.length === 1 ? '' : 's'}</div>
+                            </div>
+                            <span className="text-[10px] font-black text-primary-700">Edit</span>
+                          </div>
+                        </summary>
+                        <div className="mt-2 grid gap-2 border-t border-gray-100 pt-2 sm:grid-cols-2">
+                          {row.fields.map((field) => {
+                            const options = field.key === 'rosterStatus'
+                              ? [
+                                  { value: 'player', label: 'Player' },
+                                  { value: 'staff', label: 'Staff' },
+                                  { value: 'non-player', label: 'Non-player' }
+                                ]
+                              : field.options || [];
+                            return (
+                              <label key={field.key} className="block">
+                                <span className="text-[10px] font-black uppercase tracking-[0.04em] text-gray-500">{field.label}</span>
+                                {field.type === 'checkbox' ? (
+                                  <span className="mt-1 flex min-h-10 items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 text-xs font-semibold">
+                                    <input
+                                      type="checkbox"
+                                      checked={field.value === true}
+                                      disabled={!artifact.confirmationId}
+                                      onChange={(event) => void onRosterArtifactEdit(message.id, artifact, {
+                                        type: 'field',
+                                        rowNumber: row.rowNumber,
+                                        fieldKey: field.key,
+                                        value: event.target.checked
+                                      })}
+                                      aria-label={`Row ${row.rowNumber} ${field.label}`}
+                                    />
+                                    {field.value === true ? 'Yes' : 'No'}
+                                  </span>
+                                ) : field.type === 'menu' && options.length ? (
+                                  <select
+                                    className="mt-1 min-h-10 w-full rounded-lg border border-gray-200 bg-white px-2 text-xs font-semibold text-gray-950"
+                                    value={String(field.value ?? '')}
+                                    disabled={!artifact.confirmationId}
+                                    onChange={(event) => void onRosterArtifactEdit(message.id, artifact, {
+                                      type: 'field',
+                                      rowNumber: row.rowNumber,
+                                      fieldKey: field.key,
+                                      value: event.target.value
+                                    })}
+                                    aria-label={`Row ${row.rowNumber} ${field.label}`}
+                                  >
+                                    <option value="">Clear value</option>
+                                    {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                                  </select>
+                                ) : (
+                                  <input
+                                    key={`${field.key}-${String(field.value ?? '')}`}
+                                    type={field.type === 'date' ? 'date' : 'text'}
+                                    className="mt-1 min-h-10 w-full rounded-lg border border-gray-200 bg-white px-2 text-xs font-semibold text-gray-950"
+                                    defaultValue={String(field.value ?? '')}
+                                    disabled={!artifact.confirmationId}
+                                    onBlur={(event) => {
+                                      if (event.target.value === String(field.value ?? '')) return;
+                                      void onRosterArtifactEdit(message.id, artifact, {
+                                        type: 'field',
+                                        rowNumber: row.rowNumber,
+                                        fieldKey: field.key,
+                                        value: event.target.value
+                                      });
+                                    }}
+                                    aria-label={`Row ${row.rowNumber} ${field.label}`}
+                                  />
+                                )}
+                              </label>
+                            );
+                          })}
+                        </div>
+                        {row.contacts.map((contact, contactIndex) => (
+                          <fieldset key={`${row.rowNumber}-contact-${contactIndex}`} className="mt-2 rounded-lg border border-gray-200 bg-white p-2">
+                            <legend className="px-1 text-[10px] font-black uppercase tracking-[0.04em] text-gray-500">Contact {contactIndex + 1}</legend>
+                            <div className="grid gap-2 sm:grid-cols-2">
+                              {(contact.providedKeys || ['name', 'relation', 'email', 'phone'])
+                                .filter((key) => ['name', 'relation', 'email', 'phone'].includes(key))
+                                .map((key) => (
+                                  <label key={key} className="block">
+                                    <span className="text-[10px] font-black capitalize text-gray-500">{key}</span>
+                                    <input
+                                      key={`${key}-${String(contact[key as keyof typeof contact] ?? '')}`}
+                                      type={key === 'email' ? 'email' : key === 'phone' ? 'tel' : 'text'}
+                                      className="mt-1 min-h-10 w-full rounded-lg border border-gray-200 bg-white px-2 text-xs font-semibold text-gray-950"
+                                      defaultValue={String(contact[key as keyof typeof contact] ?? '')}
+                                      disabled={!artifact.confirmationId}
+                                      onBlur={(event) => {
+                                        if (event.target.value === String(contact[key as keyof typeof contact] ?? '')) return;
+                                        void onRosterArtifactEdit(message.id, artifact, {
+                                          type: 'contact',
+                                          rowNumber: row.rowNumber,
+                                          contactIndex,
+                                          contactKey: key as 'name' | 'email' | 'phone' | 'relation',
+                                          value: event.target.value
+                                        });
+                                      }}
+                                      aria-label={`Row ${row.rowNumber} contact ${contactIndex + 1} ${key}`}
+                                    />
+                                  </label>
+                                ))}
+                            </div>
+                          </fieldset>
+                        ))}
+                        {row.action === 'update' && row.errors.some((error) => error.includes('no matching existing player was found')) ? (
+                          <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-[11px] font-semibold text-amber-950">
+                            <div className="font-black">Choose how to handle this row</div>
+                            <p className="mt-1">
+                              If this is already on the roster, change the Name above to exactly match that player. If this is a new player, import it as a new roster entry.
+                            </p>
+                            <button
+                              type="button"
+                              className="mt-2 min-h-9 rounded-lg border border-amber-300 bg-white px-3 py-2 font-black text-amber-900"
+                              disabled={!artifact.confirmationId}
+                              onClick={() => void onRosterArtifactEdit(message.id, artifact, {
+                                type: 'action',
+                                rowNumber: row.rowNumber,
+                                action: 'add'
+                              })}
+                            >
+                              Import as a new player
+                            </button>
+                          </div>
+                        ) : null}
+                        {row.errors.length ? <div className="mt-2 text-[11px] font-bold text-rose-700" role="alert">{row.errors.join(' ')}</div> : null}
+                      </details>
+                    ))}
+                  </div>
+                </details>
+              ) : null}
+              <div className="mt-2 text-[11px] font-semibold text-primary-900">
+                {artifact.summary.errors
+                  ? 'Fix the highlighted errors before confirming.'
+                  : 'Reply yes to import these players and email these contacts.'}
+                {' '}A newer proposal in this chat replaces it.
+              </div>
+            </section>
+          )) : null}
+          {!isOwn && hasRecoverableError && retryRequest ? (
+            <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-amber-950">
+              <div className="text-[11px] font-semibold leading-5">
+                Edit the original request and try again.
+                {retryRequest.hadAttachment ? ' For privacy, attach or paste the source file again.' : ''}
+              </div>
+              <button
+                type="button"
+                className="mt-2 min-h-9 rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-black text-amber-900"
+                onClick={() => onEditAndRetryRequest(retryRequest)}
+              >
+                Edit request
+              </button>
+            </div>
+          ) : null}
           <div className={`private-ai-message-meta mt-1 flex flex-wrap items-center justify-end gap-1 text-[10px] font-bold ${isOwn ? 'text-white/75' : 'text-gray-400'}`}>
             {message.toolNames?.length ? <span>Looked up {message.toolNames.join(', ')}</span> : null}
             <span>{formatChatTime(message.createdAt)}</span>
@@ -862,6 +1370,132 @@ function PrivateAiBubble({ message, previous }: { message: PrivateAiMessage; pre
         </div>
       </div>
     </>
+  );
+}
+
+function PrivateAiScheduleArtifactCard({
+  artifact
+}: {
+  artifact: Extract<PrivateAiArtifactReference, { type: 'schedule-import' }>;
+}) {
+  return (
+    <section className="mt-3 rounded-xl border border-emerald-100 bg-emerald-50 p-3 text-gray-950">
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <div className="text-[10px] font-black uppercase tracking-[0.08em] text-emerald-700">Schedule review · {formatImportSource(artifact.source)}</div>
+          <div className="mt-1 text-sm font-black">{artifact.teamName}</div>
+        </div>
+        <span className="rounded-full bg-white px-2 py-1 text-[10px] font-black text-emerald-700">{artifact.summary.total} rows</span>
+      </div>
+      <div className="mt-2 flex flex-wrap gap-x-2 gap-y-1 text-[11px] font-bold text-gray-700">
+        <span>{artifact.summary.games} games</span>
+        <span>{artifact.summary.practices} practices</span>
+        {artifact.summary.errors ? <span className="text-rose-700">{artifact.summary.errors} errors</span> : null}
+      </div>
+      {artifact.previewRows?.length ? (
+        <details className="mt-3 rounded-lg border border-emerald-100 bg-white p-2">
+          <summary className="cursor-pointer text-xs font-black text-emerald-800">Review extracted schedule rows</summary>
+          <div className="mt-2 space-y-2">
+            {artifact.previewRows.map((row) => (
+              <details
+                key={row.rowNumber}
+                className={`rounded-lg border p-2 ${row.errors.length ? 'border-rose-200 bg-rose-50' : 'border-gray-200'}`}
+                open={artifact.previewRows!.length <= 3 || row.errors.length > 0}
+              >
+                <summary className="cursor-pointer list-none">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="text-xs font-black">
+                        <span className="mr-1 uppercase text-emerald-700">{row.normalized.eventType}</span>
+                        {row.normalized.eventType === 'game'
+                          ? `vs. ${row.normalized.opponent || 'Opponent needed'}`
+                          : row.normalized.title || 'Practice'}
+                      </div>
+                      <div className="mt-1 text-[10px] font-semibold text-gray-500">{formatScheduleDateTime(row.normalized.startsAt)}</div>
+                    </div>
+                    <span className="text-[10px] font-black text-emerald-700">Row {row.rowNumber}</span>
+                  </div>
+                </summary>
+                <dl className="mt-2 grid gap-2 border-t border-gray-100 pt-2 text-[11px] sm:grid-cols-2">
+                  {row.normalized.location ? <ScheduleArtifactValue label="Location" value={row.normalized.location} /> : null}
+                  {row.normalized.arrivalTime ? <ScheduleArtifactValue label="Arrival" value={formatScheduleDateTime(row.normalized.arrivalTime)} /> : null}
+                  {row.normalized.isHome !== null ? <ScheduleArtifactValue label="Site" value={row.normalized.isHome ? 'Home' : 'Away'} /> : null}
+                  {row.normalized.endsAt ? <ScheduleArtifactValue label="Ends" value={formatScheduleDateTime(row.normalized.endsAt)} /> : null}
+                  {row.normalized.notes ? <ScheduleArtifactValue label="Notes" value={row.normalized.notes} wide /> : null}
+                </dl>
+                {row.errors.length ? <div className="mt-2 text-[11px] font-bold text-rose-700" role="alert">{row.errors.join(' ')}</div> : null}
+              </details>
+            ))}
+          </div>
+        </details>
+      ) : null}
+      <div className="mt-2 text-[11px] font-semibold text-emerald-900">
+        {artifact.summary.errors
+          ? 'Send corrected instructions or a corrected file to prepare a new review.'
+          : 'Reply yes to import this schedule.'}
+        {' '}A newer proposal in this chat replaces it.
+      </div>
+    </section>
+  );
+}
+
+function ScheduleArtifactValue({ label, value, wide = false }: { label: string; value: string; wide?: boolean }) {
+  return (
+    <div className={wide ? 'sm:col-span-2' : ''}>
+      <dt className="font-black uppercase tracking-[0.04em] text-gray-400">{label}</dt>
+      <dd className="mt-0.5 whitespace-pre-wrap font-semibold text-gray-700">{value}</dd>
+    </div>
+  );
+}
+
+function PrivateAiDocumentArtifactCard({
+  artifact
+}: {
+  artifact: Extract<PrivateAiArtifactReference, { type: 'document-analysis' }>;
+}) {
+  return (
+    <section className="mt-3 flex items-start gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3 text-gray-950">
+      <div className="flex h-9 w-9 flex-none items-center justify-center rounded-xl bg-white text-primary-700 shadow-sm">
+        {artifact.source === 'csv'
+          ? <FileSpreadsheet className="h-4 w-4" aria-hidden="true" />
+          : artifact.source === 'pdf'
+            ? <FileText className="h-4 w-4" aria-hidden="true" />
+            : <ImageIcon className="h-4 w-4" aria-hidden="true" />}
+      </div>
+      <div className="min-w-0">
+        <div className="text-[10px] font-black uppercase tracking-[0.08em] text-primary-700">
+          {artifact.summary.errors ? 'Attachment analysis failed' : 'Attachment analyzed'}
+        </div>
+        <div className="mt-1 truncate text-xs font-black">{artifact.fileName}</div>
+        <div className="mt-1 text-[11px] font-semibold text-gray-500">No app data was changed.</div>
+      </div>
+    </section>
+  );
+}
+
+function PrivateAiAttachmentReceiptCard({
+  attachment,
+  sending
+}: {
+  attachment: PrivateAiAttachmentReceipt;
+  sending: boolean;
+}) {
+  const Icon = attachment.kind === 'csv'
+    ? FileSpreadsheet
+    : attachment.kind === 'pdf'
+      ? FileText
+      : ImageIcon;
+  const kindLabel = attachment.kind === 'csv' ? 'CSV' : attachment.kind === 'pdf' ? 'PDF' : 'image';
+  return (
+    <div className="mt-2 flex items-center gap-2 rounded-lg border border-white/25 bg-white/10 px-2.5 py-2 text-white">
+      <Icon className="h-4 w-4 flex-none" aria-hidden="true" />
+      <span className="min-w-0">
+        <span className="block text-[10px] font-semibold uppercase tracking-[0.05em] text-white/75">
+          {sending ? `Sending ${kindLabel} to AI` : `AI received this ${kindLabel}`}
+        </span>
+        <span className="block truncate text-xs font-medium">{attachment.name}</span>
+      </span>
+    </div>
   );
 }
 
@@ -874,6 +1508,63 @@ function TypingBubble() {
       </div>
     </div>
   );
+}
+
+function AttachmentIcon({ file }: { file: File }) {
+  const label = getAttachmentLabel(file);
+  if (label === 'CSV') return <FileSpreadsheet className="h-4 w-4 flex-none" aria-hidden="true" />;
+  if (label === 'PDF') return <FileText className="h-4 w-4 flex-none" aria-hidden="true" />;
+  return <ImageIcon className="h-4 w-4 flex-none" aria-hidden="true" />;
+}
+
+function getAttachmentLabel(file: File) {
+  if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) return 'PDF';
+  if (file.type === 'text/csv' || file.name.toLowerCase().endsWith('.csv')) return 'CSV';
+  return 'Image';
+}
+
+function buildAttachmentReceipt(file: File): PrivateAiAttachmentReceipt {
+  const label = getAttachmentLabel(file);
+  return {
+    name: file.name || 'Attachment',
+    kind: label === 'CSV' ? 'csv' : label === 'PDF' ? 'pdf' : 'image',
+    mimeType: file.type || ''
+  };
+}
+
+function findPreviousUserMessage(messages: PrivateAiMessage[], beforeIndex: number) {
+  for (let index = beforeIndex - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === 'user') return messages[index]!;
+  }
+  return null;
+}
+
+function hasLegacyAttachmentSuffix(value: string) {
+  return /\s+\([^()\n]+\.(?:csv|pdf|png|jpe?g|webp|heic|heif)\)\s*$/i.test(value);
+}
+
+function stripLegacyAttachmentSuffix(value: string) {
+  return value.replace(/\s+\([^()\n]+\.(?:csv|pdf|png|jpe?g|webp|heic|heif)\)\s*$/i, '').trim();
+}
+
+function formatImportSource(source: 'csv' | 'ai-text' | 'ai-image' | 'ai-document') {
+  if (source === 'csv') return 'CSV';
+  if (source === 'ai-image') return 'Image';
+  if (source === 'ai-document') return 'PDF';
+  return 'AI text';
+}
+
+function formatScheduleDateTime(value: string | null) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit'
+  });
 }
 
 function StatusBanner({ status }: { status: ChatStatus }) {

@@ -14,6 +14,7 @@ vi.mock('@capacitor-firebase/authentication', () => ({
 
 vi.mock('../../js/db.js', () => ({
     addPlayer: vi.fn(),
+    applyRosterCsvImportOperations: vi.fn(),
     getAggregatedStatsForGames: vi.fn(),
     getAdSpaceSponsors: vi.fn(),
     getConfigs: vi.fn(),
@@ -89,9 +90,9 @@ vi.mock('../../apps/app/src/lib/profileService.ts', () => ({
     loadProfileDocument: vi.fn(async () => ({}))
 }));
 
-import { __resetTeamDetailBaseSnapshotCacheForTests, addRosterPlayerForApp, buildAdminAcceptInviteUrl, buildPublicTeamGamesIcsUrl, buildRosterParentInviteSummaries, buildTeamDetailModel, canExposePublicFanFeed, createRosterParentInviteForApp, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantTeamMediaManagerAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadParentTeamDetailBootstrap, loadRosterFieldDefinitionsForApp, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamRosterParentInvites, loadTeamStaffPermissions, reactivateRosterPlayerForApp, revokeScorekeeperAccessForApp, revokeTeamAdminAccessForApp, revokeTeamMediaManagerAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp, updateTeamSettingsForApp } from '../../apps/app/src/lib/teamDetailService.ts';
+import { __resetTeamDetailBaseSnapshotCacheForTests, addRosterPlayerForApp, applyRosterImportPlanForApp, buildAdminAcceptInviteUrl, buildPublicTeamGamesIcsUrl, buildRosterParentInviteSummaries, buildTeamDetailModel, canExposePublicFanFeed, createRosterParentInviteForApp, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantTeamMediaManagerAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadParentTeamDetailBootstrap, loadRosterFieldDefinitionsForApp, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamRosterParentInvites, loadTeamStaffPermissions, reactivateRosterPlayerForApp, retryRosterParentInviteEmailForApp, revokeScorekeeperAccessForApp, revokeTeamAdminAccessForApp, revokeTeamMediaManagerAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp, updateTeamSettingsForApp } from '../../apps/app/src/lib/teamDetailService.ts';
 import { collection, doc, getDoc, getDocs, query, where } from '../../js/firebase.js';
-import { addPlayer, getAggregatedStatsForGames, getAdSpaceSponsors, getAllUsers, getConfigs, getEvents, getGames, getLocalAttractionSponsors, getPlayerTrackingStatuses, getPlayers, getPlayersWithPrivateRosterContacts, getPublicTrackingItems, getRosterFieldDefinitions, getTeam, grantScorekeeperAccess, grantTeamMediaManagerAccess, grantVideographerAccess, inviteAdmin, inviteParent, addTeamAdminEmail, revokeScorekeeperAccess, revokeTeamMediaManagerAccess, revokeVideographerAccess, deactivatePlayer, reactivatePlayer, setPlayerPrivateRosterProfileFields, updateEvent, updateGame, updateTeam, uploadPlayerPhoto, uploadTeamPhoto } from '../../js/db.js';
+import { addPlayer, applyRosterCsvImportOperations, getAggregatedStatsForGames, getAdSpaceSponsors, getAllUsers, getConfigs, getEvents, getGames, getLocalAttractionSponsors, getPlayerTrackingStatuses, getPlayers, getPlayersWithPrivateRosterContacts, getPublicTrackingItems, getRosterFieldDefinitions, getTeam, grantScorekeeperAccess, grantTeamMediaManagerAccess, grantVideographerAccess, inviteAdmin, inviteParent, addTeamAdminEmail, revokeScorekeeperAccess, revokeTeamMediaManagerAccess, revokeVideographerAccess, deactivatePlayer, reactivatePlayer, setPlayerPrivateRosterProfileFields, updateEvent, updateGame, updateTeam, uploadPlayerPhoto, uploadTeamPhoto } from '../../js/db.js';
 import { sendInviteEmail } from '../../js/auth.js';
 import { queueInviteEmail } from '../../js/invite-email.js';
 import { buildPlayerLeaderboardSnapshot } from '../../js/stat-leaderboards.js';
@@ -251,6 +252,8 @@ describe('React app team detail model', () => {
             inviteUrl: 'http://localhost:3000/app#/accept-invite?code=ABCD1234&type=parent',
             status: 'pending',
             email: null,
+            emailQueued: false,
+            emailError: null,
             emailSent: false
         });
     });
@@ -272,7 +275,13 @@ describe('React app team detail model', () => {
 
         expect(inviteParent).toHaveBeenCalledWith('team-1', 'player-1', '9', 'parent@example.com', 'Guardian');
         expect(queueInviteEmail).toHaveBeenCalledWith('ABCD1234');
-        expect(result).toMatchObject({ email: 'parent@example.com', emailSent: true });
+        expect(result).toMatchObject({
+            email: 'parent@example.com',
+            emailQueued: true,
+            emailDeduplicated: false,
+            emailSent: true,
+            emailError: null
+        });
     });
 
     it('returns the created parent invite when email queuing fails', async () => {
@@ -294,8 +303,136 @@ describe('React app team detail model', () => {
         expect(result).toMatchObject({
             code: 'ABCD1234',
             email: 'parent@example.com',
+            emailQueued: false,
             emailSent: false,
+            emailError: 'mail unavailable',
             status: 'pending'
+        });
+    });
+
+    it('keeps saved roster changes when one sibling invite email fails and scopes each invite to its player', async () => {
+        const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'] };
+        const submittedOperations = [
+            {
+                type: 'add',
+                payload: { name: 'Sibling One', number: '21' },
+                inviteRequests: [{ email: 'parent@allplays.ai', relation: 'Parent' }],
+                errors: []
+            },
+            {
+                type: 'add',
+                payload: { name: 'Sibling Two', number: '22' },
+                inviteRequests: [{ email: 'parent@allplays.ai', relation: 'Guardian' }],
+                errors: []
+            }
+        ];
+        const savedOperations = [
+            { ...submittedOperations[0], playerId: 'player-1' },
+            { ...submittedOperations[1], playerId: 'player-2' }
+        ];
+        getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', ownerId: 'coach-1' });
+        getPlayers.mockResolvedValue([]);
+        getGames.mockResolvedValue([]);
+        getConfigs.mockResolvedValue([]);
+        applyRosterCsvImportOperations.mockResolvedValue(savedOperations);
+        inviteParent
+            .mockResolvedValueOnce({
+                code: 'SIBLING1',
+                autoLinked: false,
+                existingUser: false,
+                teamName: 'Bears',
+                playerName: 'Sibling One'
+            })
+            .mockResolvedValueOnce({
+                code: 'SIBLING2',
+                autoLinked: false,
+                existingUser: false,
+                teamName: 'Bears',
+                playerName: 'Sibling Two'
+            });
+        queueInviteEmail
+            .mockResolvedValueOnce({ queued: true })
+            .mockRejectedValueOnce(new Error('mail unavailable'));
+
+        const result = await applyRosterImportPlanForApp('team-1', coachUser, submittedOperations);
+
+        expect(applyRosterCsvImportOperations).toHaveBeenCalledWith('team-1', submittedOperations);
+        expect(inviteParent).toHaveBeenNthCalledWith(
+            1,
+            'team-1',
+            'player-1',
+            '21',
+            'parent@allplays.ai',
+            'Parent'
+        );
+        expect(inviteParent).toHaveBeenNthCalledWith(
+            2,
+            'team-1',
+            'player-2',
+            '22',
+            'parent@allplays.ai',
+            'Guardian'
+        );
+        expect(queueInviteEmail).toHaveBeenNthCalledWith(1, 'SIBLING1');
+        expect(queueInviteEmail).toHaveBeenNthCalledWith(2, 'SIBLING2');
+        expect(result.savedOperations).toEqual(savedOperations);
+        expect(result.inviteResults).toEqual([
+            {
+                playerId: 'player-1',
+                email: 'parent@allplays.ai',
+                status: 'emailed',
+                code: 'SIBLING1'
+            },
+            {
+                playerId: 'player-2',
+                email: 'parent@allplays.ai',
+                status: 'code-created',
+                code: 'SIBLING2'
+            }
+        ]);
+    });
+
+    it('retries the existing active parent invite email without creating a second invite', async () => {
+        const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'] };
+        getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', ownerId: 'coach-1' });
+        getPlayers.mockResolvedValue([]);
+        getGames.mockResolvedValue([]);
+        getConfigs.mockResolvedValue([]);
+        getDocs.mockResolvedValue({
+            docs: [{
+                id: 'invite-doc-1',
+                data: () => ({
+                    type: 'parent_invite',
+                    code: 'ABCD1234',
+                    teamId: 'team-1',
+                    teamName: 'Bears',
+                    playerId: 'player-1',
+                    playerName: 'Pat Star',
+                    email: 'parent@example.com',
+                    generatedBy: 'coach-1',
+                    used: false,
+                    createdAt: { toMillis: () => 200 }
+                })
+            }]
+        });
+        queueInviteEmail.mockResolvedValue({ queued: true, deduplicated: true });
+
+        const result = await retryRosterParentInviteEmailForApp(
+            'team-1',
+            coachUser,
+            { id: 'player-1', name: 'Pat Star' },
+            ' Parent@Example.com '
+        );
+
+        expect(queueInviteEmail).toHaveBeenCalledWith('ABCD1234');
+        expect(inviteParent).not.toHaveBeenCalled();
+        expect(result).toMatchObject({
+            code: 'ABCD1234',
+            email: 'parent@example.com',
+            emailQueued: true,
+            emailDeduplicated: true,
+            teamName: 'Bears',
+            playerName: 'Pat Star'
         });
     });
 

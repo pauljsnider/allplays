@@ -111,6 +111,7 @@ function ScheduleNavigationHarness() {
   return (
     <>
       <button type="button" onClick={() => navigate('/schedule')}>Go root schedule</button>
+      <button type="button" onClick={() => navigate('/schedule?scope=family')}>Go family schedule</button>
       <Schedule auth={auth} />
     </>
   );
@@ -924,7 +925,7 @@ describe('Schedule', () => {
     expect(within(teamFilter).getByRole('option', { name: 'Jr KC Current' })).toBeTruthy();
     expect(within(teamFilter).getByRole('option', { name: 'Vipers' })).toBeTruthy();
     expect((teamFilter as HTMLSelectElement).value).toBe('team-owned');
-    expect(await screen.findByText(/Calendar feeds and imports for Vipers/)).toBeTruthy();
+    expect(await screen.findByText(/Add games and recurring practices, manage attendance, or connect calendar feeds for Vipers/)).toBeTruthy();
   });
 
   it('uses fresh staff scope when the cached event summary predates a newly created team', async () => {
@@ -1402,7 +1403,7 @@ describe('Schedule', () => {
 
     renderSchedule();
 
-    expect(await screen.findByText('Showing 20 of 22 events')).toBeTruthy();
+    expect(await screen.findByText('Showing 10 of 22 events')).toBeTruthy();
     expect(screen.getByText('1 open assignment')).toBeTruthy();
   });
 
@@ -1419,7 +1420,7 @@ describe('Schedule', () => {
 
     const { container } = renderSchedule();
 
-    expect(await screen.findByText('Showing 20 of 22 events')).toBeTruthy();
+    expect(await screen.findByText('Showing 10 of 22 events')).toBeTruthy();
     expect(container.querySelector('.schedule-action-queue-mobile')?.textContent).toContain('1 open assignment');
   });
 
@@ -1570,15 +1571,50 @@ describe('Schedule', () => {
 
     renderSchedule();
 
-    expect(await screen.findByText('Showing 20 of 21 events')).toBeTruthy();
+    expect(await screen.findByText('Showing 10 of 21 events')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Show 10 more' })).toBeTruthy();
+    expect(screen.getAllByText('vs. Rivals 10').length).toBeGreaterThan(0);
+    expect(screen.queryAllByText('vs. Rivals 11')).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show 10 more' }));
+
+    expect((await screen.findAllByText('vs. Rivals 20')).length).toBeGreaterThan(0);
     expect(screen.getByRole('button', { name: 'Show 1 more' })).toBeTruthy();
-    expect(screen.getAllByText('vs. Rivals 20').length).toBeGreaterThan(0);
-    expect(screen.queryAllByText('vs. Rivals 21')).toHaveLength(0);
 
     fireEvent.click(screen.getByRole('button', { name: 'Show 1 more' }));
 
     expect((await screen.findAllByText('vs. Rivals 21')).length).toBeGreaterThan(0);
     expect(screen.queryByRole('button', { name: 'Show 1 more' })).toBeNull();
+  });
+
+  it('resets expanded rows and hides the coach AI manager when switching to family scope', async () => {
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [
+        { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
+      ],
+      events: Array.from({ length: 16 }, (_, index) => buildScheduleEvent(index + 1, {
+        isTeamStaff: true,
+        opponent: `Rivals ${index + 1}`
+      }))
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/schedule?scope=staff']}>
+        <Routes>
+          <Route path="/schedule" element={<ScheduleNavigationHarness />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('Showing 10 of 16 events')).toBeTruthy();
+    expect(screen.getByRole('region', { name: 'Manage schedule with AI' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Show 6 more' }));
+    expect(screen.queryByText('Showing 10 of 16 events')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Go family schedule' }));
+
+    expect(await screen.findByText('Showing 10 of 16 events')).toBeTruthy();
+    expect(screen.queryByRole('region', { name: 'Manage schedule with AI' })).toBeNull();
   });
 
   it('paginates practice packet rows while keeping the all-packet summary count', async () => {
@@ -1592,10 +1628,15 @@ describe('Schedule', () => {
     renderSchedule('/schedule?view=packets');
 
     expect(await screen.findByText('21 practice packets need review')).toBeTruthy();
-    expect(screen.getByText('Showing 20 of 21 packets')).toBeTruthy();
+    expect(screen.getByText('Showing 10 of 21 packets')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Show 10 more' })).toBeTruthy();
+    expect(screen.getByText('Practice Packet 10')).toBeTruthy();
+    expect(screen.queryByText('Practice Packet 11')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show 10 more' }));
+
+    expect(await screen.findByText('Practice Packet 20')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Show 1 more' })).toBeTruthy();
-    expect(screen.getByText('Practice Packet 20')).toBeTruthy();
-    expect(screen.queryByText('Practice Packet 21')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Show 1 more' }));
 
@@ -1623,8 +1664,10 @@ describe('Schedule', () => {
 
     expect(await screen.findByText('Practice Packet 5')).toBeTruthy();
     expect(screen.getByText('All visible packets are handled')).toBeTruthy();
-    expect(screen.queryByText('Showing 5 of 5 packets')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Show 10 more' })).toBeNull();
+    await waitFor(() => {
+      expect(screen.queryByText('Showing 5 of 5 packets')).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Show 10 more' })).toBeNull();
+    });
   });
 
   it('applies schedule team and view query params on direct links', async () => {
@@ -1655,7 +1698,7 @@ describe('Schedule', () => {
 
     await screen.findByText('No practice packets in this filter');
     expect((screen.getByLabelText('Team filter') as HTMLSelectElement).value).toBe('team-2');
-    expect(screen.getAllByRole('button', { name: 'Packets' }).some((button) => button.getAttribute('aria-pressed') === 'true')).toBe(true);
+    expect(screen.getByRole('link', { name: 'Packets' }).getAttribute('aria-current')).toBe('page');
   });
 
   it('clears URL-scoped team and player filters when schedule query params disappear', async () => {
@@ -1740,7 +1783,7 @@ describe('Schedule', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Show packets' }));
     expect(screen.getByRole('button', { name: 'Show packets' }).getAttribute('aria-pressed')).toBe('true');
-    expect(screen.getAllByRole('button', { name: 'Packets' }).some((button) => button.getAttribute('aria-pressed') === 'true')).toBe(true);
+    expect(screen.getByRole('link', { name: 'Packets' }).getAttribute('aria-current')).toBe('page');
   });
 
   it('renders web-created tournament game metadata and the create tournament flow', async () => {

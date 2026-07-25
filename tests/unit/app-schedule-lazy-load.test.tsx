@@ -50,12 +50,12 @@ describe('Schedule lazy-load guards', () => {
         expect(refreshSource).not.toContain('finally {');
     });
 
-    it('loads staff AI and CSV helpers through on-demand dynamic imports', () => {
-        expect(scheduleStaffToolsSource).toContain("scheduleCsvImportModulePromise = import('../../lib/scheduleCsvImport')");
-        expect(scheduleStaffToolsSource).toContain("scheduleAiImportModulePromise = import('../../lib/scheduleAiImport')");
-        expect(scheduleStaffToolsSource).toContain('loadScheduleCsvImportModule()');
-        expect(scheduleStaffToolsSource).toContain('const [{ parseCsvText, inferScheduleCsvMapping }, csvText] = await Promise.all([');
-        expect(scheduleStaffToolsSource).toContain("const { buildScheduleImportPreview } = await loadScheduleCsvImportModule();");
-        expect(scheduleStaffToolsSource).toContain("const { generateScheduleAiImportRows } = await loadScheduleAiImportModule();");
+    it('routes staff schedule imports into one team-scoped private AI workflow', () => {
+        expect(scheduleStaffToolsSource).not.toContain("import('../../lib/scheduleCsvImport')");
+        expect(scheduleStaffToolsSource).not.toContain("import('../../lib/scheduleAiImport')");
+        expect(scheduleSource).toContain("import { buildPrivateAiLaunchPath } from '../lib/privateAiLaunch'");
+        expect(scheduleSource).toContain("intent: 'schedule-import'");
+        expect(scheduleSource).toContain('Manage with AI');
+        expect(scheduleSource.indexOf('<ScheduleAiManagerCard')).toBeLessThan(scheduleSource.indexOf('<ScheduleList'));
     });
 });

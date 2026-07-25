@@ -3143,31 +3143,43 @@ export async function applyRosterCsvImportOperations(teamId, operations = []) {
     const batch = writeBatch(db);
     const savedOperations = plannedOperations.map((operation) => {
         const type = operation?.type;
-        if (type !== 'add' && type !== 'update') {
+        if (!['add', 'update', 'deactivate', 'reactivate'].includes(type)) {
             throw new Error('Roster import contains an unsupported operation.');
         }
         const payload = { ...(operation.payload || {}) };
         assertNoSensitivePlayerFields(payload);
         const existingPlayerId = String(operation.playerId || '').trim();
-        if (type === 'update' && !existingPlayerId) {
-            throw new Error('Roster import update is missing a player.');
+        if (type !== 'add' && !existingPlayerId) {
+            throw new Error(`Roster import ${type} is missing a player.`);
         }
-        const playerRef = type === 'update'
-            ? doc(db, `teams/${normalizedTeamId}/players`, existingPlayerId)
-            : doc(collection(db, `teams/${normalizedTeamId}/players`));
+        const playerRef = type === 'add'
+            ? doc(collection(db, `teams/${normalizedTeamId}/players`))
+            : doc(db, `teams/${normalizedTeamId}/players`, existingPlayerId);
         if (!playerRef.id) throw new Error('Roster import player is required.');
 
         if (type === 'update') {
             batch.update(playerRef, { ...payload, updatedAt: Timestamp.now() });
-        } else {
+        } else if (type === 'add') {
             batch.set(playerRef, {
                 ...payload,
                 active: Object.prototype.hasOwnProperty.call(payload, 'active') ? payload.active : true,
                 createdAt: Timestamp.now()
             });
+        } else if (type === 'deactivate') {
+            batch.update(playerRef, {
+                active: false,
+                deactivatedAt: Timestamp.now(),
+                updatedAt: Timestamp.now()
+            });
+        } else {
+            batch.update(playerRef, {
+                active: true,
+                deactivatedAt: deleteField(),
+                updatedAt: Timestamp.now()
+            });
         }
 
-        if (operation.privateRosterFields || operation.privateFamilyContacts) {
+        if ((type === 'add' || type === 'update') && (operation.privateRosterFields || operation.privateFamilyContacts)) {
             const privateProfileUpdate = {
                 updatedAt: Timestamp.now()
             };

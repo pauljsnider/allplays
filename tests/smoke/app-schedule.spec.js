@@ -27,11 +27,11 @@ function mobileScheduleHeader(page) {
 }
 
 function mobileScheduleFilter(page) {
-    return mobileScheduleHeader(page).getByLabel('Schedule filter', { exact: true });
+    return page.locator('.schedule-mobile-controls').getByLabel('Schedule filter', { exact: true });
 }
 
 function mobilePlayerFilter(page) {
-    return mobileScheduleHeader(page).getByLabel('Player filter', { exact: true });
+    return page.locator('.schedule-mobile-controls').getByLabel('Player filter', { exact: true });
 }
 
 async function mockScheduleModules(page, options = {}) {
@@ -1378,7 +1378,7 @@ test('calendar day selection opens a visible event picker for multiple events', 
     await mockScheduleModules(page, { practiceDate: '2030-05-28T19:00:00Z' });
     await page.goto(appUrl(baseURL, '/schedule'), { waitUntil: 'domcontentloaded' });
 
-    const calendarToggle = page.getByRole('button', { name: 'Calendar', exact: true });
+    const calendarToggle = page.getByRole('link', { name: 'Calendar', exact: true });
     await waitForScheduleRoute(page, mobileScheduleFilter(page));
     await expect(calendarToggle).toBeVisible();
     await calendarToggle.click();
@@ -1586,8 +1586,12 @@ test('iOS-sized staff schedule keeps tools collapsed below the event list', asyn
 
     await page.getByRole('button', { name: /Manage schedule/ }).click();
     await expect(page.getByText('Add external calendar')).toBeVisible();
-    await expect(page.getByText('Draft schedule with AI')).toBeVisible();
-    await expect(page.getByText('Import schedule CSV')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Import schedule' })).toBeVisible();
+    const importLink = page.getByRole('link', { name: 'Start schedule import' });
+    await expect(importLink).toBeVisible();
+    await expect(importLink).toHaveAttribute('href', /\/ai\?.*newChat=1.*intent=schedule-import/);
+    await expect(page.getByText('Draft schedule with AI')).toHaveCount(0);
+    await expect(page.getByText('Import schedule CSV')).toHaveCount(0);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
 });
 
@@ -1973,9 +1977,11 @@ test('app schedule paginates long agenda lists and resets on filter changes', as
     const mobileRows = page.locator('.schedule-event-row-detail');
     await expect(async () => {
         await expect(mobileRows.first()).toBeVisible({ timeout: 1000 });
-        await expect(mobileRows).toHaveCount(20, { timeout: 1000 });
-        await expect(page.getByText(/Showing 20 of 2[45] events/)).toBeVisible({ timeout: 1000 });
+        await expect(mobileRows).toHaveCount(10, { timeout: 1000 });
+        await expect(page.getByText(/Showing 10 of 2[45] events/)).toBeVisible({ timeout: 1000 });
     }).toPass({ timeout: 15000 });
+    await page.getByRole('button', { name: 'Show 10 more' }).click();
+    await expect(mobileRows).toHaveCount(20);
     await page.getByRole('button', { name: /Show [45] more/ }).click();
     const expandedRowCount = await mobileRows.count();
     expect(expandedRowCount).toBeGreaterThanOrEqual(24);

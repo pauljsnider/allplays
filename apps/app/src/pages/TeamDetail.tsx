@@ -18,13 +18,13 @@ import {
   ImageIcon,
   LinkIcon,
   Loader2,
-  MapPin,
   MessageCircle,
   Radio,
   Save,
   Settings,
   Shield,
   SlidersHorizontal,
+  Sparkles,
   Ticket,
   Trophy,
   UserRound,
@@ -35,16 +35,16 @@ import {
 import { AvatarImage } from '../components/AvatarImage';
 import { TeamDetailPageSkeleton } from '../components/PageSkeletons';
 import { DetailLoadErrorState } from '../components/DetailLoadErrorState';
-import { capturePastedImage } from '../lib/clipboardImage';
 import { copyPublicText, openPublicUrl, sharePublicUrl } from '../lib/publicActions';
 import { isRetryableAppServiceError, toAppServiceError, type AppServiceError } from '../lib/appErrors';
 import { useAppAsyncOperation } from '../lib/useAsyncOperation';
 import { getEventDetailPath } from '../lib/homeLogic';
 import { buildPrivateTeamCalendarFeedUrl, getAppleCalendarFeedUrl, getGoogleCalendarFeedUrl } from '../lib/parentToolsService';
-import { createStaffRsvpReminderPreviewLoader, sendStaffRsvpReminder, type StaffRsvpReminderSendResult } from '../lib/scheduleService';
+import { createStaffRsvpReminderPreviewLoader, loadParentSchedule, sendStaffRsvpReminder, type StaffRsvpReminderSendResult } from '../lib/scheduleService';
 import type { ParentScheduleEvent, StaffRsvpReminderPreview } from '../lib/scheduleLogic';
 import { addRosterPlayerForApp, archiveTeamTrackingItemForApp, buildPublicTeamGamesIcsUrl, canExposePublicFanFeed, createRosterParentInviteForApp, createStatTrackerConfigForApp, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantTeamMediaManagerAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadParentTeamDetailBootstrap, loadRosterFieldDefinitionsForApp, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamRosterParentInvites, loadTeamStaffPermissions, loadTeamTrackingAdmin, reactivateRosterPlayerForApp, revokeScorekeeperAccessForApp, revokeTeamAdminAccessForApp, revokeTeamMediaManagerAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp, saveTeamTrackingItemForApp, setPlayerTrackingStatusForApp, updateStatTrackerConfigForApp, type CreateRosterParentInviteForAppResult, type InviteTeamAdminForAppResult, type TeamDetailAnalytics, type TeamDetailAnalyticsSnapshot, type TeamDetailEvent, type TeamDetailModel, type TeamDetailPlayer, type TeamRosterFieldDefinition, type TeamRosterParentInviteSummary, type TeamScorekeeperGrantTarget, type TeamTrackingAdminItem } from '../lib/teamDetailService';
 import { buildStatTrackerConfigPayload, createBlankStatTrackerConfigColumnDraft, createEmptyStatTrackerConfigDraft, createStatTrackerConfigDraft, createStatTrackerConfigDraftFromPreset, getStatTrackerConfigPresetCatalog, validateStatTrackerConfigDraft, type StatTrackerConfigDraft } from '../lib/statTrackerConfigEditor';
+import { buildPrivateAiLaunchPath } from '../lib/privateAiLaunch';
 import { useViewLoadTimer } from '../lib/viewLoadTiming';
 import { buildTeamDetailNavigation, type TeamNavigationItem, type TeamNavigationSection } from '../lib/teamNavigation';
 import type { AuthState } from '../lib/types';
@@ -66,10 +66,6 @@ const EMPTY_TEAM_ANALYTICS: TeamDetailAnalytics = {
   availableSeasons: [],
   seasons: []
 };
-type RosterAiImportModule = typeof import('../lib/rosterAiImport');
-type RosterAiImportPreviewRow = import('../lib/rosterAiImport').RosterAiImportPreviewRow;
-
-let rosterAiImportModulePromise: Promise<RosterAiImportModule> | null = null;
 const initialStandingsRowLimit = 5;
 export const rosterRenderLimits = {
   activePlayers: 32,
@@ -97,13 +93,6 @@ const tabs: Array<{ id: TeamTab; label: string; icon: LucideIcon }> = [
   { id: 'insights', label: 'Insights', icon: BarChart3 },
   { id: 'more', label: 'More', icon: Ticket }
 ];
-
-function loadRosterAiImportModule() {
-  if (!rosterAiImportModulePromise) {
-    rosterAiImportModulePromise = import('../lib/rosterAiImport');
-  }
-  return rosterAiImportModulePromise;
-}
 
 function getTeamTabFromSearch(search: string): TeamTab {
   const nextTab = new URLSearchParams(search).get('tab');
@@ -171,6 +160,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
   const [detailCollectionsLoading, setDetailCollectionsLoading] = useState(false);
   const [detailCollectionsError, setDetailCollectionsError] = useState('');
   const [detailCollectionsReloadVersion, setDetailCollectionsReloadVersion] = useState(0);
+  const [authoritativeUpcomingCount, setAuthoritativeUpcomingCount] = useState<number | null>(null);
   const authUserRef = useRef(auth.user);
   const activeTabRef = useRef(activeTab);
   const detailCollectionsLoadingRef = useRef(detailCollectionsLoading);
@@ -180,6 +170,10 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
   const hasTeamModel = Boolean(model);
   const canManageTeam = Boolean(model?.canManageTeam);
   const hasStaffPermissions = Boolean(model?.staffPermissions);
+
+  useEffect(() => {
+    setAuthoritativeUpcomingCount(null);
+  }, [teamId]);
 
   useEffect(() => {
     authUserRef.current = auth.user;
@@ -288,7 +282,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
   useEffect(() => {
     let cancelled = false;
     async function loadDeferredTeamCollections() {
-      if (!teamId || !hasTeamModel || detailCollectionsLoaded || detailCollectionsLoadingRef.current || detailCollectionsError || (activeTab !== 'schedule' && activeTab !== 'more')) return;
+      if (!teamId || !hasTeamModel || detailCollectionsLoaded || detailCollectionsLoadingRef.current || detailCollectionsError || activeTab !== 'more') return;
       setDetailCollectionsLoading(true);
       setDetailCollectionsError('');
       try {
@@ -457,7 +451,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
 
   async function refreshTeamDetail() {
     if (!teamId) return;
-    const nextModel = detailCollectionsLoaded || activeTab === 'schedule' || activeTab === 'more'
+    const nextModel = detailCollectionsLoaded || activeTab === 'more'
       ? await loadParentTeamDetail(teamId, auth.user, { includeDeferredData: false })
       : await loadParentTeamDetailBootstrap(teamId, auth.user);
     const mergedModel = {
@@ -511,16 +505,16 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
 
   const tabBadges = useMemo(() => ({
     overview: 0,
-    schedule: model?.upcomingEvents.length || 0,
+    schedule: authoritativeUpcomingCount ?? model?.upcomingEvents.length ?? 0,
     roster: 0,
     insights: (model?.leaderboards.length || 0) + (model?.trackingSummaries.length || 0),
     more: model?.sponsors.length || 0
-  }), [model]);
+  }), [authoritativeUpcomingCount, model]);
   const trackedTeamTab = activeTab === 'schedule' || activeTab === 'roster' || activeTab === 'insights' || activeTab === 'more';
   const teamTabRoute = `/teams/${teamId}${activeTab === 'overview' ? '' : `?tab=${activeTab}`}`;
   const teamTabReady = Boolean(model && !loading && (
     activeTab === 'schedule'
-      ? !detailCollectionsLoading
+      ? true
       : activeTab === 'roster'
         ? !rosterInviteLoading && !trackingLoading
         : activeTab === 'insights'
@@ -530,7 +524,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
             : false
   ));
   const teamTabError = activeTab === 'schedule'
-    ? detailCollectionsError
+    ? ''
     : activeTab === 'roster'
       ? rosterInviteError || trackingError
       : activeTab === 'insights'
@@ -587,7 +581,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
 
   return (
     <div className="team-detail-page space-y-4">
-      <TeamHero model={model} />
+      <TeamHero model={model} upcomingCount={authoritativeUpcomingCount} />
 
       <nav
         className="team-detail-tab-nav sticky top-24 z-30 -mx-1 bg-gray-50/95 py-2 backdrop-blur"
@@ -619,12 +613,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
       </nav>
 
       {activeTab === 'overview' ? <OverviewTab model={model} /> : null}
-      {activeTab === 'schedule' ? (
-        detailCollectionsLoading ? <InlineDeferredLoading copy="Loading team schedule…" /> : detailCollectionsError ? <DeferredCollectionsErrorState message={detailCollectionsError} onRetry={() => {
-          setDetailCollectionsError('');
-          setDetailCollectionsReloadVersion((current) => current + 1);
-        }} /> : <ScheduleTab model={model} auth={auth} onOpenStatTrackerConfigs={() => navigateToTab('more')} />
-      ) : null}
+      {activeTab === 'schedule' ? <ScheduleTab model={model} auth={auth} onScheduleLoaded={setAuthoritativeUpcomingCount} onOpenStatTrackerConfigs={() => navigateToTab('more')} /> : null}
       {activeTab === 'roster' ? <RosterTab key={model.team.id} model={model} authUser={auth.user} onRefresh={refreshTeamDetail} rosterInviteLoading={rosterInviteLoading} rosterInviteError={rosterInviteError} rosterInviteSummaries={rosterInviteSummaries} onInviteCreated={refreshRosterInvites} trackingLoading={trackingLoading} trackingError={trackingError} trackingItems={trackingItems} onTrackingChanged={refreshTrackingItems} /> : null}
       {activeTab === 'insights' ? <InsightsTab model={model} loading={insightsLoading} error={insightsError} /> : null}
       {activeTab === 'more' ? (
@@ -637,7 +626,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
   );
 }
 
-function TeamHero({ model }: { model: TeamDetailModel }) {
+function TeamHero({ model, upcomingCount = null }: { model: TeamDetailModel; upcomingCount?: number | null }) {
   const { team } = model;
   return (
     <section className="app-card overflow-hidden">
@@ -668,7 +657,7 @@ function TeamHero({ model }: { model: TeamDetailModel }) {
       <div className="grid grid-cols-3 gap-2 p-3">
         <SummaryStat icon={Trophy} label="Record" value={formatRecord(model.record)} to={`/schedule?teamId=${encodeURIComponent(model.team.id)}&filter=recent-results`} />
         <SummaryStat icon={Users} label="Roster" value={String(model.players.length)} to={`/teams/${encodeURIComponent(model.team.id)}?tab=roster`} />
-        <SummaryStat icon={CalendarDays} label="Upcoming" value={String(model.upcomingEvents.length)} to={`/teams/${encodeURIComponent(model.team.id)}?tab=schedule`} />
+        <SummaryStat icon={CalendarDays} label="Upcoming" value={String(upcomingCount ?? model.upcomingEvents.length)} to={`/teams/${encodeURIComponent(model.team.id)}?tab=schedule`} />
       </div>
       {team.description ? <p className="border-t border-gray-100 px-4 py-3 text-sm font-semibold leading-6 text-gray-600">{team.description}</p> : null}
     </section>
@@ -911,9 +900,122 @@ function StandingsSection({ model }: { model: TeamDetailModel }) {
   );
 }
 
-function ScheduleTab({ model, auth, onOpenStatTrackerConfigs }: { model: TeamDetailModel; auth: AuthState; onOpenStatTrackerConfigs: () => void }) {
-  const events = [...model.upcomingEvents.slice(0, 8), ...model.recentResults.slice(0, 3)];
+export function buildTeamSchedulePreviewEvents(
+  scheduleEvents: ParentScheduleEvent[],
+  modelEvents: TeamDetailEvent[],
+  teamId: string,
+  now = Date.now()
+) {
+  const modelEventsByIdentity = new Map(
+    modelEvents.map((event) => [`${event.id}:${event.date.getTime()}`, event])
+  );
+  const uniqueEvents = new Map<string, TeamDetailEvent>();
+
+  for (const scheduleEvent of scheduleEvents) {
+    if (scheduleEvent.teamId !== teamId || !scheduleEvent.id || !scheduleEvent.date) continue;
+    const identity = `${scheduleEvent.id}:${scheduleEvent.date.getTime()}`;
+    if (uniqueEvents.has(identity)) continue;
+    const existingEvent = modelEventsByIdentity.get(identity);
+    uniqueEvents.set(identity, {
+      id: scheduleEvent.id,
+      isDbGame: scheduleEvent.isDbGame,
+      type: scheduleEvent.type,
+      title: scheduleEvent.title?.trim() || (scheduleEvent.type === 'practice' ? 'Practice' : `vs. ${scheduleEvent.opponent?.trim() || 'TBD'}`),
+      date: scheduleEvent.date,
+      location: scheduleEvent.location?.trim() || 'TBD',
+      opponent: scheduleEvent.opponent?.trim() || 'TBD',
+      status: scheduleEvent.status?.trim() || (scheduleEvent.isCancelled ? 'cancelled' : 'scheduled'),
+      liveStatus: scheduleEvent.liveStatus?.trim() || '',
+      visibility: scheduleEvent.visibility?.trim() || existingEvent?.visibility || '',
+      isPrivate: existingEvent?.isPrivate || false,
+      isPublic: existingEvent?.isPublic || false,
+      shareable: existingEvent?.shareable || false,
+      publicCalendar: existingEvent?.publicCalendar || false,
+      homeScore: scheduleEvent.homeScore ?? null,
+      awayScore: scheduleEvent.awayScore ?? null,
+      isCancelled: scheduleEvent.isCancelled,
+      statTrackerConfigId: scheduleEvent.statTrackerConfigId?.trim() || existingEvent?.statTrackerConfigId || '',
+      statTrackerConfigLabel: existingEvent?.statTrackerConfigLabel || 'No config assigned',
+      statTrackerConfigBaseType: existingEvent?.statTrackerConfigBaseType || '',
+      statTrackerConfigExists: existingEvent?.statTrackerConfigExists || false,
+      statTrackerConfigIsBasketball: existingEvent?.statTrackerConfigIsBasketball || false
+    });
+  }
+
+  for (const modelEvent of modelEvents) {
+    const identity = `${modelEvent.id}:${modelEvent.date.getTime()}`;
+    if (!uniqueEvents.has(identity)) uniqueEvents.set(identity, modelEvent);
+  }
+
+  const events = [...uniqueEvents.values()];
+  const upcoming = events
+    .filter((event) => !event.isCancelled && event.status.toLowerCase() !== 'completed' && event.date.getTime() >= now - 3 * 60 * 60 * 1000)
+    .sort((a, b) => a.date.getTime() - b.date.getTime())
+    .slice(0, 8);
+  const recent = events
+    .filter((event) => event.status.toLowerCase() === 'completed' || (event.homeScore !== null && event.awayScore !== null && event.date.getTime() < now))
+    .sort((a, b) => b.date.getTime() - a.date.getTime())
+    .slice(0, 3);
+
+  return [...upcoming, ...recent];
+}
+
+function countUpcomingTeamScheduleEvents(scheduleEvents: ParentScheduleEvent[], teamId: string, now = Date.now()) {
+  const identities = new Set<string>();
+  for (const event of scheduleEvents) {
+    if (
+      event.teamId !== teamId
+      || !event.id
+      || !event.date
+      || event.isCancelled
+      || event.status?.toLowerCase() === 'completed'
+      || event.date.getTime() < now - 3 * 60 * 60 * 1000
+    ) continue;
+    identities.add(`${event.id}:${event.date.getTime()}`);
+  }
+  return identities.size;
+}
+
+function ScheduleTab({ model, auth, onScheduleLoaded, onOpenStatTrackerConfigs }: { model: TeamDetailModel; auth: AuthState; onScheduleLoaded: (upcomingCount: number) => void; onOpenStatTrackerConfigs: () => void }) {
+  const [authoritativeEvents, setAuthoritativeEvents] = useState<ParentScheduleEvent[] | null>(null);
+  const [scheduleLoading, setScheduleLoading] = useState(true);
+  const [scheduleError, setScheduleError] = useState('');
+  const [scheduleReloadVersion, setScheduleReloadVersion] = useState(0);
+  const modelEvents = useMemo(() => [...model.upcomingEvents, ...model.recentResults], [model.recentResults, model.upcomingEvents]);
+  const events = useMemo(
+    () => buildTeamSchedulePreviewEvents(authoritativeEvents || [], modelEvents, model.team.id),
+    [authoritativeEvents, model.team.id, modelEvents]
+  );
   const reminderPreviewLoader = useMemo(() => createStaffRsvpReminderPreviewLoader(), []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadTeamSchedule() {
+      setScheduleLoading(true);
+      setScheduleError('');
+      try {
+        const result = await loadParentSchedule(auth.user, {
+          hydrateDetails: false,
+          expandStaffPlayers: false,
+          includePastGames: true
+        });
+        if (!cancelled) {
+          const teamEvents = result.events.filter((event) => event.teamId === model.team.id);
+          setAuthoritativeEvents(teamEvents);
+          onScheduleLoaded(countUpcomingTeamScheduleEvents(teamEvents, model.team.id));
+        }
+      } catch (loadError: any) {
+        if (!cancelled) setScheduleError(loadError?.message || 'Unable to load the team schedule.');
+      } finally {
+        if (!cancelled) setScheduleLoading(false);
+      }
+    }
+    void loadTeamSchedule();
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.user, model.team.id, onScheduleLoaded, scheduleReloadVersion]);
+
   return (
     <section className="app-card p-4">
       <div className="flex items-center justify-between gap-3">
@@ -924,8 +1026,18 @@ function ScheduleTab({ model, auth, onOpenStatTrackerConfigs }: { model: TeamDet
         <Link to={`/schedule?teamId=${encodeURIComponent(model.team.id)}`} className="secondary-button !min-h-9 text-xs">Open</Link>
       </div>
       <div className="mt-3 space-y-2">
+        {scheduleLoading ? <InlineDeferredLoading copy="Loading the complete team schedule…" /> : null}
+        {scheduleError ? (
+          <div className="rounded-xl border border-rose-200 bg-rose-50 p-4">
+            <div className="text-sm font-black text-gray-950">Team schedule unavailable</div>
+            <div className="mt-1 text-xs font-semibold text-rose-700">{scheduleError}</div>
+            <button type="button" className="secondary-button mt-3 !min-h-9 text-xs" onClick={() => setScheduleReloadVersion((current) => current + 1)}>
+              Retry schedule
+            </button>
+          </div>
+        ) : null}
         {events.length ? events.map((event) => <TeamEventRow key={`${event.id}-${event.date.toISOString()}`} event={event} model={model} auth={auth} reminderPreviewLoader={reminderPreviewLoader} onOpenStatTrackerConfigs={onOpenStatTrackerConfigs} />) : (
-          <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No team events found.</div>
+          !scheduleLoading && !scheduleError ? <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No team events found.</div> : null
         )}
       </div>
     </section>
@@ -1009,7 +1121,7 @@ function RosterTab({
       {model.canManageTeam && rosterInviteLoading ? <div className="mt-3 text-xs font-semibold text-gray-500">Loading parent invite status…</div> : null}
       {model.canManageTeam && rosterInviteError ? <div className="mt-3 text-xs font-black text-rose-700">{rosterInviteError}</div> : null}
       {model.canManageTeam ? <AddPlayerCard teamId={model.team.id} authUser={authUser} onCreated={onRefresh} /> : null}
-      {model.canManageTeam ? <RosterAiImportCard teamId={model.team.id} teamName={model.team.name} authUser={authUser} currentPlayers={[...activePlayers, ...inactivePlayers]} onImported={onRefresh} /> : null}
+      {model.canManageTeam ? <RosterAiChatLauncher teamId={model.team.id} teamName={model.team.name} /> : null}
       <div className="mt-3 grid gap-2 sm:grid-cols-2">
         {activePlayers.length ? visibleActivePlayers.map((player) => <PlayerRow key={player.id} teamId={model.team.id} teamName={model.team.name} authUser={authUser} player={player} canManageTeam={model.canManageTeam} pending={pendingPlayerId === player.id} onToggleActive={togglePlayerActiveState} inviteSummary={rosterInviteSummaries[player.id]} onInviteCreated={onInviteCreated} />) : (
           <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No players have been added yet.</div>
@@ -1044,227 +1156,32 @@ function RosterTab({
   );
 }
 
-function RosterAiImportCard({
-  teamId,
-  teamName,
-  authUser,
-  currentPlayers,
-  onImported
-}: {
-  teamId: string;
-  teamName: string;
-  authUser: AuthState['user'];
-  currentPlayers: TeamDetailPlayer[];
-  onImported: () => Promise<void>;
-}) {
-  const [open, setOpen] = useState(false);
-  const [text, setText] = useState('');
-  const [imageFile, setImageFile] = useState<File | null>(null);
-  const [imageName, setImageName] = useState('');
-  const [previewRows, setPreviewRows] = useState<RosterAiImportPreviewRow[]>([]);
-  const [errors, setErrors] = useState<string[]>([]);
-  const [processing, setProcessing] = useState(false);
-  const [importing, setImporting] = useState(false);
-  const [status, setStatus] = useState<{ success: boolean; message: string } | null>(null);
-
-  const duplicateCount = previewRows.filter((row) => row.duplicatePlayerId).length;
-  const invalidCount = previewRows.filter((row) => row.errors.length > 0).length;
-
-  function clearDraft() {
-    setText('');
-    setImageFile(null);
-    setImageName('');
-    setPreviewRows([]);
-    setErrors([]);
-  }
-
-  function handleImageChange(file: File | null) {
-    setImageFile(file);
-    setImageName(file?.name || (file ? 'Pasted roster image' : ''));
-    setPreviewRows([]);
-    setErrors([]);
-  }
-
-  async function generatePreview() {
-    if (processing) return;
-    setProcessing(true);
-    setErrors([]);
-    setStatus(null);
-    try {
-      const { generateRosterAiImportRows } = await loadRosterAiImportModule();
-      const result = await generateRosterAiImportRows({
-        text,
-        imageFile,
-        currentPlayers
-      });
-      setPreviewRows(result.rows);
-      setErrors(result.errors);
-      if (result.rows.length) {
-        setStatus({ success: true, message: `AI drafted ${result.rows.length} player row${result.rows.length === 1 ? '' : 's'} for review.` });
-      }
-    } catch (error: any) {
-      setPreviewRows([]);
-      setErrors([error?.message || 'Unable to generate roster import preview.']);
-    } finally {
-      setProcessing(false);
-    }
-  }
-
-  async function updatePreviewRow(rowNumber: number, changes: { name?: string; number?: string }) {
-    const { updateRosterAiImportPreviewRow } = await loadRosterAiImportModule();
-    setPreviewRows((rows) => updateRosterAiImportPreviewRow(rows, rowNumber, changes, currentPlayers));
-  }
-
-  async function removePreviewRow(rowNumber: number) {
-    const { removeRosterAiImportPreviewRow } = await loadRosterAiImportModule();
-    setPreviewRows((rows) => removeRosterAiImportPreviewRow(rows, rowNumber));
-  }
-
-  async function importRows() {
-    if (importing) return;
-    if (!previewRows.length) {
-      setErrors(['Generate and review player rows before importing.']);
-      return;
-    }
-    if (invalidCount > 0) {
-      setErrors(['Fix or remove duplicate/invalid rows before importing.']);
-      return;
-    }
-    const confirmed = window.confirm(`Import ${previewRows.length} reviewed player row${previewRows.length === 1 ? '' : 's'} to ${teamName}?`);
-    if (!confirmed) return;
-
-    setImporting(true);
-    setErrors([]);
-    setStatus(null);
-    try {
-      const { buildRosterAiImportCommitPlan } = await loadRosterAiImportModule();
-      const plan = buildRosterAiImportCommitPlan(previewRows);
-      const successful: string[] = [];
-      const failed: string[] = [];
-
-      for (const player of plan.addPlayers) {
-        try {
-          await addRosterPlayerForApp(teamId, authUser || null, {
-            name: player.name,
-            number: player.number,
-            rosterFieldValues: {}
-          });
-          successful.push(player.number ? `#${player.number} ${player.name}` : player.name);
-        } catch (error: any) {
-          failed.push(`${player.name}: ${error?.message || 'Unable to add player.'}`);
-        }
-      }
-
-      if (successful.length) await onImported();
-      if (failed.length) {
-        setStatus({ success: false, message: `Imported ${successful.length} player${successful.length === 1 ? '' : 's'}${successful.length ? `: ${successful.join(', ')}` : ''}. ${failed.length} failed: ${failed.join(' ')}` });
-      } else {
-        setStatus({ success: true, message: `Imported ${successful.length} player${successful.length === 1 ? '' : 's'}: ${successful.join(', ')}.` });
-        clearDraft();
-        setOpen(false);
-      }
-    } catch (error: any) {
-      setErrors([error?.message || 'Unable to import reviewed roster rows.']);
-    } finally {
-      setImporting(false);
-    }
-  }
-
+function RosterAiChatLauncher({ teamId, teamName }: { teamId: string; teamName: string }) {
+  const launchPath = buildPrivateAiLaunchPath({
+    intent: 'roster-import',
+    teamId,
+    teamName
+  });
   return (
-    <div className="mt-3 rounded-xl border border-violet-100 bg-violet-50 p-3">
+    <div className="mt-3 overflow-hidden rounded-2xl border border-violet-100 bg-gradient-to-br from-violet-50 via-white to-primary-50 p-3 sm:p-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <div className="text-sm font-black text-gray-950">Import roster with AI</div>
-          <div className="mt-1 text-xs font-semibold text-gray-600">Paste roster text or an image, edit the preview, then create player records.</div>
-        </div>
-        {!open ? (
-          <button type="button" className="secondary-button !min-h-10 text-xs" onClick={() => setOpen(true)}>
-            <Zap className="h-4 w-4" aria-hidden="true" />
-            Import roster
-          </button>
-        ) : (
-          <button type="button" className="secondary-button !min-h-10 text-xs" onClick={() => setOpen(false)} disabled={processing || importing}>
-            Cancel
-          </button>
-        )}
-      </div>
-      {status ? <div className={`mt-3 text-xs font-black ${status.success ? 'text-emerald-700' : 'text-rose-700'}`} role="status" aria-live="polite" aria-atomic="true">{status.message}</div> : null}
-      {open ? (
-        <div className="mt-3 space-y-3">
-          <label className="block">
-            <span className="text-[11px] font-black uppercase tracking-[0.04em] text-violet-700">Roster text or AI instructions</span>
-            <textarea
-              className="mt-2 min-h-28 w-full rounded-xl border border-violet-200 bg-white px-3 py-2 text-sm font-semibold text-gray-950 outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-100"
-              placeholder="Paste roster rows, or add instructions like 'only varsity' when uploading a photo."
-              value={text}
-              onChange={(event) => setText(event.target.value)}
-              onPaste={(event) => capturePastedImage(event, handleImageChange)}
-              disabled={processing || importing}
-              aria-label="Roster text or AI instructions"
-              aria-describedby="roster-ai-paste-help"
-            />
-            <span id="roster-ai-paste-help" className="mt-1 block text-[11px] font-semibold text-gray-500">Paste text normally, or paste a copied roster screenshot here to attach it.</span>
-          </label>
-          <label className="block">
-            <span className="text-[11px] font-black uppercase tracking-[0.04em] text-violet-700">Roster photo</span>
-            <input
-              type="file"
-              accept="image/png,image/jpeg,image/webp,image/heic,image/heif"
-              className="mt-2 block w-full text-sm font-semibold text-gray-600 file:mr-4 file:rounded-xl file:border-0 file:bg-white file:px-3 file:py-2 file:text-sm file:font-black file:text-violet-700"
-              onChange={(event) => handleImageChange(event.target.files?.[0] || null)}
-              disabled={processing || importing}
-              aria-label="Roster photo"
-            />
-            {imageName ? <div className="mt-1 text-[11px] font-semibold text-gray-500" role="status" aria-live="polite"><ImageIcon className="mr-1 inline h-3 w-3" aria-hidden="true" />Image ready: {imageName}</div> : null}
-          </label>
-
-          {errors.length ? (
-            <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-bold text-rose-700" role="alert">
-              {errors.map((item) => <div key={item}>{item}</div>)}
+        <div className="flex min-w-0 items-start gap-3">
+          <div className="flex h-10 w-10 flex-none items-center justify-center rounded-xl bg-violet-100 text-violet-700">
+            <Sparkles className="h-4 w-4" aria-hidden="true" />
+          </div>
+          <div className="min-w-0">
+            <div className="text-sm font-black text-gray-950">Bulk roster import</div>
+            <div className="mt-1 text-xs font-semibold leading-5 text-gray-600">
+              Start a private AI chat for {teamName}. Attach a CSV, image, or PDF, or paste player and family-contact details.
             </div>
-          ) : null}
-
-          {previewRows.length ? (
-            <div className="space-y-2">
-              <div className="text-xs font-black uppercase tracking-[0.08em] text-gray-500">
-                Editable preview {previewRows.length} row{previewRows.length === 1 ? '' : 's'}{duplicateCount ? `, ${duplicateCount} duplicate ${duplicateCount === 1 ? 'flag' : 'flags'}` : ''}
-              </div>
-              {previewRows.map((row) => (
-                <div key={row.rowNumber} className={`rounded-xl border p-3 ${row.errors.length ? 'border-amber-200 bg-amber-50' : 'border-violet-200 bg-white'}`}>
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="text-xs font-black uppercase tracking-[0.08em] text-gray-500">Row {row.rowNumber}</div>
-                    <button type="button" className="text-xs font-black text-rose-700" onClick={() => void removePreviewRow(row.rowNumber)} disabled={processing || importing}>Remove</button>
-                  </div>
-                  <div className="mt-2 grid gap-2 sm:grid-cols-[1fr_8rem]">
-                    <label className="block">
-                      <span className="text-[11px] font-black uppercase tracking-[0.04em] text-gray-500">Name</span>
-                      <input className="mt-1 min-h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-950 outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-100" value={row.name} onChange={(event) => void updatePreviewRow(row.rowNumber, { name: event.target.value })} disabled={processing || importing} aria-label={`Row ${row.rowNumber} player name`} />
-                    </label>
-                    <label className="block">
-                      <span className="text-[11px] font-black uppercase tracking-[0.04em] text-gray-500">Number</span>
-                      <input className="mt-1 min-h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-950 outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-100" value={row.number} onChange={(event) => void updatePreviewRow(row.rowNumber, { number: event.target.value })} disabled={processing || importing} aria-label={`Row ${row.rowNumber} jersey number`} />
-                    </label>
-                  </div>
-                  {row.reason ? <div className="mt-2 text-xs font-semibold text-gray-500">{row.reason}</div> : null}
-                  {row.errors.length ? <ul className="mt-2 list-disc pl-4 text-xs font-bold text-amber-800">{row.errors.map((item) => <li key={item}>{item}</li>)}</ul> : null}
-                </div>
-              ))}
-            </div>
-          ) : null}
-
-          <div className="flex flex-wrap gap-2">
-            <button type="button" className="secondary-button !min-h-10 text-xs" onClick={() => void generatePreview()} disabled={processing || importing}>
-              {processing ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Zap className="h-4 w-4" aria-hidden="true" />}
-              Generate preview
-            </button>
-            <button type="button" className="primary-button !min-h-10 text-xs" onClick={() => void importRows()} disabled={!previewRows.length || invalidCount > 0 || processing || importing}>
-              {importing ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
-              Import reviewed players
-            </button>
-            <button type="button" className="secondary-button !min-h-10 text-xs" onClick={clearDraft} disabled={processing || importing}>Clear</button>
+            <div className="mt-2 text-[11px] font-bold text-violet-700">Editable review first · invitations send only after you reply yes</div>
           </div>
         </div>
-      ) : null}
+        <Link className="primary-button !min-h-10 flex-none text-xs" to={launchPath}>
+          <MessageCircle className="h-4 w-4" aria-hidden="true" />
+          Start roster import
+        </Link>
+      </div>
     </div>
   );
 }
@@ -3221,7 +3138,7 @@ function TeamEventReminderAction({ event, model, auth, reminderPreviewLoader }: 
 }
 
 function buildTeamReminderScheduleEvent(event: TeamDetailEvent, model: TeamDetailModel): ParentScheduleEvent | null {
-  if (!model.canManageTeam || !event.isDbGame || event.isCancelled || !event.id || !event.date) return null;
+  if (!model.canManageTeam || event.isDbGame === false || event.isCancelled || !event.id || !event.date) return null;
   return {
     eventKey: `${model.team.id}:${event.id}`,
     id: event.id,
@@ -3234,7 +3151,7 @@ function buildTeamReminderScheduleEvent(event: TeamDetailEvent, model: TeamDetai
     title: event.title,
     childId: '',
     childName: '',
-    isDbGame: event.isDbGame,
+    isDbGame: true,
     isCancelled: event.isCancelled,
     status: event.status,
     homeScore: event.homeScore,

@@ -24,6 +24,7 @@ export type ScheduleAiImportResult = {
 
 type ScheduleAiOperation = {
   action?: string;
+  event?: Record<string, unknown>;
   game?: Record<string, unknown>;
   reason?: string;
 };
@@ -51,7 +52,7 @@ export async function generateScheduleAiImportRows(input: ScheduleAiImportInput)
   } catch (error: any) {
     return {
       rows: [],
-      errors: [error?.message ? `AI could not parse the schedule: ${error.message}` : 'AI could not parse the schedule. Try clearer text or a sharper image.']
+      errors: [error?.message ? `AI could not parse the schedule: ${error.message}` : 'AI could not parse the schedule. Try clearer text, a sharper image, or a text-based PDF.']
     };
   }
 }
@@ -67,9 +68,12 @@ export function buildScheduleAiImportPrompt(input: ScheduleAiImportInput): strin
     status: compactText(game.status || 'scheduled')
   }));
   const text = compactText(input.text || '');
-  const hasImage = Boolean(input.imageFile);
+  const hasDocument = Boolean(input.imageFile);
+  const documentLabel = input.imageFile?.type === 'application/pdf' || input.imageFile?.name.toLowerCase().endsWith('.pdf')
+    ? 'PDF'
+    : 'image';
 
-  return `Parse this youth sports schedule into add-game draft rows for review in ALL PLAYS.
+  return `Parse this youth sports schedule into add-event draft rows for review in ALL PLAYS.
 
 CONTEXT:
 - Today: ${now.toISOString().split('T')[0]}
@@ -78,21 +82,21 @@ CONTEXT:
 - Current games JSON: ${JSON.stringify(currentGames)}
 
 INPUT:
-${hasImage ? '- The schedule is attached as an image. Extract visible game rows from the image.' : '- Schedule text is pasted below.'}
+${hasDocument ? `- The schedule is attached as ${documentLabel === 'image' ? 'an' : 'a'} ${documentLabel}. Extract visible game and practice rows from the attachment.` : '- Schedule text is pasted below.'}
 ${text ? `- Pasted schedule text or instructions:\n${text}` : '- No extra text instructions were provided.'}
 
 OUTPUT RULES:
 1. Return strict JSON only with an operations array.
-2. Only create operations with action "add". Do not update or delete existing games.
-3. Each operation must include a game object with date, opponent, location, isHome, arrivalTime, notes, assignments, and status when known.
+2. Only create operations with action "add". Do not update or delete existing schedule events.
+3. Each operation must include an event object. Use eventType "game" or "practice". Include date/startsAt, endsAt, title, opponent, location, isHome, arrivalTime, notes, assignments, and status when known.
 4. Convert dates to ISO 8601 local datetime strings like YYYY-MM-DDTHH:mm:ss. Use year ${now.getFullYear()} for future dates and ${now.getFullYear() + 1} for dates that have already passed.
-5. Opponent is the team that is not "${teamName}". Skip rows where you cannot identify a real game opponent.
+5. Game rows require the opponent that is not "${teamName}". Practice rows do not require an opponent and should use their visible title or "Practice".
 6. Use isHome true for home, false for away, and null/omit when unknown.
 7. Put uncertainty, filters used, assignment details, and skipped-row explanations in notes or reason.
-8. If no games are found, return {"operations":[]}.
+8. If no games or practices are found, return {"operations":[]}.
 
 JSON shape:
-{"operations":[{"action":"add","game":{"date":"2026-06-01T18:00:00","opponent":"Rockets","location":"Field 1","isHome":true,"arrivalTime":"2026-06-01T17:30:00","notes":"Snack: Lee family","assignments":[{"role":"snack","value":"Lee family"}],"status":"scheduled"},"reason":"read from schedule row"}]}`;
+{"operations":[{"action":"add","event":{"eventType":"game","date":"2026-06-01T18:00:00","opponent":"Rockets","location":"Field 1","isHome":true,"arrivalTime":"2026-06-01T17:30:00","notes":"Snack: Lee family","assignments":[{"role":"snack","value":"Lee family"}],"status":"scheduled"},"reason":"read from schedule row"},{"action":"add","event":{"eventType":"practice","date":"2026-06-02T17:30:00","endsAt":"2026-06-02T19:00:00","title":"Team practice","location":"Gym"}}]}`;
 }
 
 export function normalizeScheduleAiImportResponse(response: unknown, input: Partial<Pick<ScheduleAiImportInput, 'teamName' | 'currentGames'>> = {}): ScheduleAiImportResult {
@@ -102,14 +106,16 @@ export function normalizeScheduleAiImportResponse(response: unknown, input: Part
   }
 
   const rows = operations
-    .filter((operation) => compactText(operation?.action || '').toLowerCase() === 'add' && operation.game)
+    .filter((operation) => compactText(operation?.action || '').toLowerCase() === 'add' && (operation.event || operation.game))
     .map((operation, index) => {
-      const draft = buildDraftFromAiGame(operation.game || {}, operation.reason);
+      const draft = buildDraftFromAiEvent(operation.event || operation.game || {}, operation.reason);
       const preview = normalizeScheduleImportDraft(draft, {
         rowNumber: index + 1,
         teamName: input.teamName || ''
       }) as ScheduleCsvImportPreviewRow;
-      const conflictErrors = findCurrentGameConflictErrors(preview, input.currentGames || []);
+      const conflictErrors = preview.normalized.eventType === 'game'
+        ? findCurrentGameConflictErrors(preview, input.currentGames || [])
+        : [];
       return {
         ...preview,
         errors: [...preview.errors, ...conflictErrors]
@@ -117,7 +123,7 @@ export function normalizeScheduleAiImportResponse(response: unknown, input: Part
     });
 
   if (!rows.length) {
-    return { rows: [], errors: ['AI did not find any games to import. Try adding more schedule details or a clearer image.'] };
+    return { rows: [], errors: ['AI did not find any games or practices to import. Try adding more schedule details or a clearer image.'] };
   }
 
   return { rows, errors: [] };
@@ -130,6 +136,30 @@ export function buildScheduleAiImportSchema() {
         items: Schema.object({
           properties: {
             action: Schema.string(),
+            event: Schema.object({
+              properties: {
+                eventType: Schema.string(),
+                date: Schema.string(),
+                startsAt: Schema.string(),
+                endsAt: Schema.string(),
+                title: Schema.string(),
+                opponent: Schema.string(),
+                location: Schema.string(),
+                isHome: Schema.boolean({ nullable: true }),
+                arrivalTime: Schema.string(),
+                notes: Schema.string(),
+                assignments: Schema.array({
+                  items: Schema.object({
+                    properties: {
+                      role: Schema.string(),
+                      value: Schema.string()
+                    }
+                  })
+                }),
+                status: Schema.string()
+              },
+              optionalProperties: ['date', 'startsAt', 'endsAt', 'title', 'opponent', 'location', 'isHome', 'arrivalTime', 'notes', 'assignments', 'status']
+            }),
             game: Schema.object({
               properties: {
                 date: Schema.string(),
@@ -152,7 +182,7 @@ export function buildScheduleAiImportSchema() {
             }),
             reason: Schema.string()
           },
-          optionalProperties: ['game', 'reason']
+          optionalProperties: ['event', 'game', 'reason']
         })
       })
     }
@@ -200,23 +230,24 @@ async function fileToBase64(file: File): Promise<string> {
   return btoa(binary);
 }
 
-function buildDraftFromAiGame(game: Record<string, unknown>, reason?: string) {
-  const assignments = Array.isArray(game.assignments)
-    ? game.assignments
+function buildDraftFromAiEvent(event: Record<string, unknown>, reason?: string) {
+  const assignments = Array.isArray(event.assignments)
+    ? event.assignments
         .map((item: any) => `${compactText(item?.role || 'Assignment')}: ${compactText(item?.value || '')}`)
         .filter((item: string) => !item.endsWith(':'))
     : [];
-  const noteParts = [compactText(game.notes), ...assignments, compactText(reason)].filter(Boolean);
+  const noteParts = [compactText(event.notes), ...assignments, compactText(reason)].filter(Boolean);
+  const eventType = compactText(event.eventType || event.type).toLowerCase() === 'practice' ? 'practice' : 'game';
 
   return {
-    eventType: 'game',
-    startsAt: compactText(game.date || game.startsAt || ''),
-    endsAt: '',
-    opponent: compactText(game.opponent || ''),
-    title: '',
-    location: compactText(game.location || ''),
-    arrivalTime: compactText(game.arrivalTime || ''),
-    isHome: game.isHome === true ? 'home' : game.isHome === false ? 'away' : '',
+    eventType,
+    startsAt: compactText(event.date || event.startsAt || ''),
+    endsAt: compactText(event.endsAt || ''),
+    opponent: compactText(event.opponent || ''),
+    title: eventType === 'practice' ? compactText(event.title || 'Practice') : '',
+    location: compactText(event.location || ''),
+    arrivalTime: compactText(event.arrivalTime || ''),
+    isHome: event.isHome === true ? 'home' : event.isHome === false ? 'away' : '',
     notes: Array.from(new Set(noteParts)).join('\n')
   };
 }

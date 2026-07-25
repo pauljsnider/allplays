@@ -2,12 +2,14 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { createMemoryRouter, MemoryRouter, Outlet, Route, RouterProvider, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { calculateRosterRenderWindow, rosterRenderLimits, TeamDetail } from './TeamDetail';
+import { buildTeamSchedulePreviewEvents, calculateRosterRenderWindow, rosterRenderLimits, TeamDetail } from './TeamDetail';
 import { clearScrollRestorationForTests, ScrollRestoration } from '../components/ScrollRestoration';
+import { buildPrivateAiLaunchPrompt, parsePrivateAiLaunchContext } from '../lib/privateAiLaunch';
 import type { AuthState } from '../lib/types';
 
 const teamDetailServiceMocks = vi.hoisted(() => ({
   addRosterPlayerForApp: vi.fn(),
+  applyRosterImportPlanForApp: vi.fn(),
   archiveTeamTrackingItemForApp: vi.fn(),
   buildPublicTeamGamesIcsUrl: vi.fn(() => 'https://calendar.example.test/team.ics'),
   canExposePublicFanFeed: vi.fn(() => true),
@@ -21,6 +23,7 @@ const teamDetailServiceMocks = vi.hoisted(() => ({
   loadParentTeamDetail: vi.fn(),
   loadParentTeamDetailBootstrap: vi.fn(),
   loadRosterFieldDefinitionsForApp: vi.fn(),
+  loadRosterImportContextForApp: vi.fn(),
   loadTeamDetailInsights: vi.fn(),
   loadTeamDetailSponsors: vi.fn(),
   loadTeamRosterParentInvites: vi.fn(),
@@ -38,6 +41,7 @@ const teamDetailServiceMocks = vi.hoisted(() => ({
 }));
 
 const scheduleServiceMocks = vi.hoisted(() => ({
+  loadParentSchedule: vi.fn(),
   loadPreview: vi.fn(),
   createStaffRsvpReminderPreviewLoader: vi.fn(),
   sendStaffRsvpReminder: vi.fn()
@@ -45,11 +49,14 @@ const scheduleServiceMocks = vi.hoisted(() => ({
 
 const rosterAiImportMocks = vi.hoisted(() => ({
   buildRosterAiImportCommitPlan: vi.fn((rows: any[] = []) => ({
+    operations: rows.filter((row) => !row.errors?.length).map((row) => row.operation),
     addPlayers: rows.filter((row) => !row.errors?.length).map((row) => ({ name: row.name, number: row.number })),
     skippedRows: rows.filter((row) => row.errors?.length)
   })),
   generateRosterAiImportRows: vi.fn(),
   removeRosterAiImportPreviewRow: vi.fn((rows: any[] = [], rowNumber: number) => rows.filter((row) => row.rowNumber !== rowNumber)),
+  updateRosterAiImportPreviewContact: vi.fn((rows: any[] = []) => rows),
+  updateRosterAiImportPreviewField: vi.fn((rows: any[] = []) => rows),
   updateRosterAiImportPreviewRow: vi.fn((rows: any[] = [], rowNumber: number, changes: any) => rows.map((row) => row.rowNumber === rowNumber ? { ...row, ...changes, errors: [], duplicatePlayerId: '', duplicatePlayerName: '' } : row))
 }));
 
@@ -85,6 +92,7 @@ vi.mock('lucide-react', () => {
     DollarSign: Icon,
     Dumbbell: Icon,
     ExternalLink: Icon,
+    FileSpreadsheet: Icon,
     ImageIcon: Icon,
     LinkIcon: Icon,
     Link2: Icon,
@@ -97,6 +105,7 @@ vi.mock('lucide-react', () => {
     Settings: Icon,
     Shield: Icon,
     SlidersHorizontal: Icon,
+    Sparkles: Icon,
     Ticket: Icon,
     Trophy: Icon,
     Share2: Icon,
@@ -249,9 +258,19 @@ describe('TeamDetail', () => {
       value: vi.fn(),
       writable: true
     });
-    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue(model);
+    teamDetailServiceMocks.loadParentTeamDetail.mockReset().mockResolvedValue(model);
     teamDetailServiceMocks.loadParentTeamDetailBootstrap.mockImplementation((...args: any[]) => teamDetailServiceMocks.loadParentTeamDetail(...args));
     teamDetailServiceMocks.loadRosterFieldDefinitionsForApp.mockResolvedValue([]);
+    teamDetailServiceMocks.loadRosterImportContextForApp.mockResolvedValue({
+      fields: [],
+      players: [...model.players, ...model.inactivePlayers]
+    });
+    teamDetailServiceMocks.applyRosterImportPlanForApp.mockResolvedValue({
+      savedOperations: [],
+      deactivatedCount: 0,
+      reactivatedCount: 0,
+      inviteResults: []
+    });
     teamDetailServiceMocks.loadTeamDetailInsights.mockResolvedValue({ leaderboards: [], trackingSummaries: [], teamAnalytics: model.teamAnalytics });
     teamDetailServiceMocks.loadTeamDetailSponsors.mockResolvedValue({ sponsors: [] });
     teamDetailServiceMocks.loadTeamRosterParentInvites.mockResolvedValue([]);
@@ -276,6 +295,11 @@ describe('TeamDetail', () => {
     teamDetailServiceMocks.setPlayerTrackingStatusForApp.mockResolvedValue(undefined);
     teamDetailServiceMocks.updateStatTrackerConfigForApp.mockResolvedValue(undefined);
     scheduleServiceMocks.loadPreview.mockReset();
+    scheduleServiceMocks.loadParentSchedule.mockReset().mockResolvedValue({
+      children: [],
+      events: [],
+      staffTeams: []
+    });
     scheduleServiceMocks.createStaffRsvpReminderPreviewLoader.mockReset();
     scheduleServiceMocks.sendStaffRsvpReminder.mockReset();
     scheduleServiceMocks.createStaffRsvpReminderPreviewLoader.mockReturnValue({ loadPreview: scheduleServiceMocks.loadPreview });
@@ -300,6 +324,46 @@ describe('TeamDetail', () => {
     vi.restoreAllMocks();
     Object.defineProperty(window, 'scrollY', { configurable: true, value: 0, writable: true });
     Object.defineProperty(window, 'pageYOffset', { configurable: true, value: 0, writable: true });
+  });
+
+  it('builds a team preview from imported schedule events and removes player-scope duplicates', () => {
+    const date = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    const importedPractice = {
+      eventKey: 'team-1:calendar-practice:player-1',
+      id: 'calendar-practice',
+      teamId: 'team-1',
+      teamName: 'Bears',
+      title: 'Imported skills practice',
+      type: 'practice',
+      date,
+      location: 'Field 2',
+      opponent: null,
+      childId: 'player-1',
+      childName: 'Avery',
+      isDbGame: false,
+      isCancelled: false,
+      status: 'scheduled',
+      assignments: [],
+      openAssignmentCount: 0
+    } as any;
+
+    const preview = buildTeamSchedulePreviewEvents(
+      [
+        importedPractice,
+        { ...importedPractice, eventKey: 'team-1:calendar-practice:player-2', childId: 'player-2', childName: 'Blake' },
+        { ...importedPractice, eventKey: 'team-2:calendar-practice', teamId: 'team-2' }
+      ],
+      [],
+      'team-1'
+    );
+
+    expect(preview).toHaveLength(1);
+    expect(preview[0]).toMatchObject({
+      id: 'calendar-practice',
+      title: 'Imported skills practice',
+      type: 'practice',
+      location: 'Field 2'
+    });
   });
 
   it('shows the shared team skeleton while team detail is loading', () => {
@@ -337,37 +401,36 @@ describe('TeamDetail', () => {
     expect(teamDetailServiceMocks.loadParentTeamDetail).toHaveBeenCalledTimes(2);
   });
 
-  it('uses the lightweight bootstrap on roster and defers full detail until schedule opens', async () => {
+  it('uses the lightweight bootstrap on roster and loads the authoritative schedule when schedule opens', async () => {
     teamDetailServiceMocks.loadParentTeamDetailBootstrap.mockResolvedValue({
       ...model,
+      canManageTeam: true,
       upcomingEvents: [],
       recentResults: [],
       statTrackerConfigs: []
     });
-    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue({
-      ...model,
-      upcomingEvents: [{
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValue({
+      children: [],
+      staffTeams: [{ teamId: 'team-1', teamName: 'Bears' }],
+      events: [{
+        eventKey: 'team-1:game-next',
         id: 'game-next',
+        teamId: 'team-1',
+        teamName: 'Bears',
         title: 'Bears vs Tigers',
         type: 'game',
         date: new Date(Date.now() + 24 * 60 * 60 * 1000),
         location: 'Main Gym',
         opponent: 'Tigers',
+        childId: '',
+        childName: '',
+        isDbGame: false,
         status: 'scheduled',
-        liveStatus: '',
-        visibility: 'public',
-        isPrivate: false,
-        isPublic: true,
-        shareable: true,
-        publicCalendar: true,
         homeScore: null,
         awayScore: null,
         isCancelled: false,
-        statTrackerConfigId: '',
-        statTrackerConfigLabel: 'No config assigned',
-        statTrackerConfigBaseType: '',
-        statTrackerConfigExists: false,
-        statTrackerConfigIsBasketball: false
+        assignments: [],
+        openAssignmentCount: 0
       }]
     });
 
@@ -385,8 +448,11 @@ describe('TeamDetail', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /schedule/i }));
 
-    await waitFor(() => expect(teamDetailServiceMocks.loadParentTeamDetail).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(1));
     expect(await screen.findByText('Bears vs Tigers')).toBeTruthy();
+    expect(screen.getByRole('link', { name: /1\s+Upcoming/ })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Review reminder' })).toBeNull();
+    expect(teamDetailServiceMocks.loadParentTeamDetail).not.toHaveBeenCalled();
   });
 
   it('hydrates overview collections before rendering the default team hub stats', async () => {
@@ -543,39 +609,37 @@ describe('TeamDetail', () => {
     expect(screen.queryByText('1 completed games · 100%')).toBeNull();
   });
 
-  it('surfaces deferred team collection failures on the schedule tab and lets users retry', async () => {
+  it('surfaces authoritative schedule failures on the schedule tab and lets users retry', async () => {
     teamDetailServiceMocks.loadParentTeamDetailBootstrap.mockResolvedValue({
       ...model,
       upcomingEvents: [],
       recentResults: [],
       statTrackerConfigs: []
     });
-    teamDetailServiceMocks.loadParentTeamDetail
+    scheduleServiceMocks.loadParentSchedule
       .mockRejectedValueOnce(new Error('Schedule load failed.'))
       .mockResolvedValueOnce({
-        ...model,
-        upcomingEvents: [{
+        children: [],
+        staffTeams: [{ teamId: 'team-1', teamName: 'Bears' }],
+        events: [{
+          eventKey: 'team-1:game-next',
           id: 'game-next',
+          teamId: 'team-1',
+          teamName: 'Bears',
           title: 'Bears vs Tigers',
           type: 'game',
           date: new Date(Date.now() + 24 * 60 * 60 * 1000),
           location: 'Main Gym',
           opponent: 'Tigers',
+          childId: '',
+          childName: '',
+          isDbGame: true,
           status: 'scheduled',
-          liveStatus: '',
-          visibility: 'public',
-          isPrivate: false,
-          isPublic: true,
-          shareable: true,
-          publicCalendar: true,
           homeScore: null,
           awayScore: null,
           isCancelled: false,
-          statTrackerConfigId: '',
-          statTrackerConfigLabel: 'No config assigned',
-          statTrackerConfigBaseType: '',
-          statTrackerConfigExists: false,
-          statTrackerConfigIsBasketball: false
+          assignments: [],
+          openAssignmentCount: 0
         }]
       });
 
@@ -590,10 +654,10 @@ describe('TeamDetail', () => {
     expect(await screen.findByText('Schedule load failed.')).toBeTruthy();
     expect(screen.queryByText('No team events found.')).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Retry schedule' }));
 
     expect(await screen.findByText('Bears vs Tigers')).toBeTruthy();
-    expect(teamDetailServiceMocks.loadParentTeamDetail).toHaveBeenCalledTimes(2);
+    expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
   });
 
   it('retries a retryable RSVP reminder preview failure from the shared error state', async () => {
@@ -1179,120 +1243,40 @@ describe('TeamDetail', () => {
     expect(status.closest('[role="status"]')?.getAttribute('aria-live')).toBe('polite');
   });
 
-  it('lazy-loads roster AI import, previews editable rows, and writes through the manual add service', async () => {
+  it('opens bulk roster import in a new team-scoped AI chat instead of rendering a second importer', async () => {
     const managedModel = {
       ...model,
       canManageTeam: true
     };
-    teamDetailServiceMocks.loadParentTeamDetail
-      .mockResolvedValueOnce(managedModel)
-      .mockResolvedValueOnce({
-        ...managedModel,
-        players: [
-          ...managedModel.players,
-          { id: 'player-3', name: 'Alex New', number: '14', photoUrl: null, position: '', isLinked: false, active: true }
-        ]
-      });
-    rosterAiImportMocks.generateRosterAiImportRows.mockResolvedValue({
-      errors: [],
-      rows: [
-        {
-          rowNumber: 1,
-          action: 'add',
-          name: 'Pat Star',
-          number: '9',
-          reason: 'read from photo row 1',
-          duplicatePlayerId: 'player-1',
-          duplicatePlayerName: 'Pat Star',
-          errors: ['Possible duplicate of existing roster player Pat Star #9.']
-        },
-        {
-          rowNumber: 2,
-          action: 'add',
-          name: 'Alex New',
-          number: '14',
-          reason: 'read from photo row 2',
-          duplicatePlayerId: '',
-          duplicatePlayerName: '',
-          errors: []
-        }
-      ]
-    });
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
-
-    render(
-      <MemoryRouter initialEntries={['/teams/team-1?tab=roster']}>
-        <Routes>
-          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
-        </Routes>
-      </MemoryRouter>
-    );
-
-    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
-    expect(rosterAiImportMocks.generateRosterAiImportRows).not.toHaveBeenCalled();
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Import roster' }));
-    fireEvent.change(screen.getByLabelText('Roster text or AI instructions'), { target: { value: '#14 Alex New' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Generate preview' }));
-
-    await waitFor(() => expect(rosterAiImportMocks.generateRosterAiImportRows).toHaveBeenCalledWith({
-      text: '#14 Alex New',
-      imageFile: null,
-      currentPlayers: [managedModel.players[0], managedModel.inactivePlayers[0]]
-    }));
-    expect(await screen.findByText('Possible duplicate of existing roster player Pat Star #9.')).toBeTruthy();
-    expect((screen.getByRole('button', { name: 'Import reviewed players' }) as HTMLButtonElement).disabled).toBe(true);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Remove' })[0]);
-    expect(await screen.findByDisplayValue('Alex New')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Import reviewed players' }));
-
-    expect(confirmSpy).toHaveBeenCalledWith('Import 1 reviewed player row to Bears?');
-    await waitFor(() => expect(teamDetailServiceMocks.addRosterPlayerForApp).toHaveBeenCalledWith('team-1', auth.user, {
-      name: 'Alex New',
-      number: '14',
-      rosterFieldValues: {}
-    }));
-    await waitFor(() => expect(teamDetailServiceMocks.loadParentTeamDetail).toHaveBeenCalledTimes(2));
-    expect(await screen.findByText('Imported 1 player: #14 Alex New.')).toBeTruthy();
-  });
-
-  it('attaches an image pasted into the roster AI text box', async () => {
-    const managedModel = {
-      ...model,
-      canManageTeam: true
-    };
-    const image = new File(['roster'], 'roster.png', { type: 'image/png' });
     teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue(managedModel);
-    rosterAiImportMocks.generateRosterAiImportRows.mockResolvedValue({
-      rows: [],
-      errors: ['AI did not find any players to import.']
-    });
 
     render(
       <MemoryRouter initialEntries={['/teams/team-1?tab=roster']}>
         <Routes>
           <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+          <Route path="/ai" element={<div>AI chat destination</div>} />
         </Routes>
       </MemoryRouter>
     );
 
     expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
-    fireEvent.click(await screen.findByRole('button', { name: 'Import roster' }));
-    fireEvent.paste(screen.getByRole('textbox', { name: 'Roster text or AI instructions' }), {
-      clipboardData: {
-        items: [{ type: 'image/png', getAsFile: () => image }]
-      }
+    expect(screen.getByText('Bulk roster import')).toBeTruthy();
+    expect(screen.queryByLabelText('Roster text or AI instructions')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Confirm roster import' })).toBeNull();
+
+    const launchLink = screen.getByRole('link', { name: 'Start roster import' });
+    const href = launchLink.getAttribute('href') || '';
+    const context = parsePrivateAiLaunchContext(href.slice(href.indexOf('?')));
+    expect(context).toEqual({
+      newChat: true,
+      intent: 'roster-import',
+      teamId: 'team-1',
+      teamName: 'Bears',
+      prompt: buildPrivateAiLaunchPrompt('roster-import', 'Bears')
     });
 
-    expect(screen.getByText('Image ready: roster.png')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Generate preview' }));
-
-    await waitFor(() => expect(rosterAiImportMocks.generateRosterAiImportRows).toHaveBeenCalledWith({
-      text: '',
-      imageFile: image,
-      currentPlayers: [managedModel.players[0], managedModel.inactivePlayers[0]]
-    }));
+    fireEvent.click(launchLink);
+    expect(await screen.findByText('AI chat destination')).toBeTruthy();
   });
 
   it('uses descriptive alt text for team and roster photos', async () => {

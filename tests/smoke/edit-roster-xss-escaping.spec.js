@@ -171,8 +171,8 @@ test('malicious AI-imported player name is escaped in proposed changes (no XSS)'
     await page.click('#process-ai-btn');
     await expect(page.locator('#proposed-changes-section')).toBeVisible();
 
-    const nameInput = page.locator('#proposed-changes-list input[placeholder="Player Name"]');
-    const numberInput = page.locator('#proposed-changes-list input[placeholder="Number (optional)"]');
+    const nameInput = page.locator('#proposed-changes-list .bulk-ai-field-input[data-field-key="name"]');
+    const numberInput = page.locator('#proposed-changes-list .bulk-ai-field-input[data-field-key="number"]');
     // The full payloads are preserved as inert input values (proves both the name
     // and the jersey number were escaped into the attribute, not parsed as markup).
     await expect(nameInput).toHaveValue(MALICIOUS_NAME);

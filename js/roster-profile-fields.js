@@ -457,7 +457,7 @@ function getProfileHeaderMapping(normalizedHeader = '', label = '') {
     };
 }
 
-function normalizeImportedContact(contact = {}) {
+function normalizeImportedContact(contact = {}, options = {}) {
     const name = String(contact.name || '').trim() || [contact.firstName, contact.lastName]
         .map((part) => String(part || '').trim())
         .filter(Boolean)
@@ -471,7 +471,7 @@ function normalizeImportedContact(contact = {}) {
         email,
         phone,
         relation,
-        source: 'roster-csv'
+        source: String(options.source || contact.source || 'roster-csv').trim() || 'roster-csv'
     };
 }
 
@@ -665,12 +665,12 @@ function collectExistingRosterContacts(existing = {}, primaryKeys = [], fallback
     return existing[fallbackKey];
 }
 
-function buildRosterCsvContactPlan(contactValues = new Map(), rowNumber = 0) {
+function buildRosterCsvContactPlan(contactValues = new Map(), rowNumber = 0, options = {}) {
     const guardians = [];
     const contacts = [];
     const errors = [];
     contactValues.forEach((draft) => {
-        const normalized = normalizeImportedContact(draft);
+        const normalized = normalizeImportedContact(draft, options);
         if (!normalized) return;
         if (normalized.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalized.email)) {
             errors.push(`Row ${rowNumber}: ${normalized.relation} email must be valid.`);
@@ -684,8 +684,13 @@ function buildRosterCsvContactPlan(contactValues = new Map(), rowNumber = 0) {
     });
     const familyContacts = [...guardians, ...contacts];
     errors.push(...collectContactIdentityConflictErrors(familyContacts, rowNumber));
+    const seenInviteEmails = new Set();
     const inviteRequests = familyContacts
-        .filter((contact) => contact.email)
+        .filter((contact) => {
+            if (!contact.email || seenInviteEmails.has(contact.email)) return false;
+            seenInviteEmails.add(contact.email);
+            return true;
+        })
         .map((contact) => ({
             email: contact.email,
             displayName: contact.name || contact.email,
@@ -768,7 +773,7 @@ function escapeRosterCsvCell(value) {
 
 export function buildFullRosterCsvTemplate(fields = []) {
     const builtInHeaders = [
-        'Name', 'Number', 'Position', 'DOB', 'Gender', 'Address', 'City', 'State', 'Zip', 'Roster Status',
+        'Name', 'Number', 'Position', 'DOB', 'Gender', 'Address', 'City', 'State', 'Zip', 'Roster Status', 'Operation',
         'Parent Name', 'Parent Relation', 'Parent Email', 'Parent Phone',
         'Guardian 2 Name', 'Guardian 2 Relation', 'Guardian 2 Email', 'Guardian 2 Phone'
     ];
@@ -787,7 +792,7 @@ export function buildFullRosterCsvTemplate(fields = []) {
         ...customHeaders
     ];
     const sample = [
-        'Avery Lee', '4', 'Forward', '2014-02-03', '', '123 Main St', 'Kansas City', 'MO', '64110', 'Player',
+        'Avery Lee', '4', 'Forward', '2014-02-03', '', '123 Main St', 'Kansas City', 'MO', '64110', 'Player', 'Add',
         'Pat Lee', 'Parent', 'pat@example.com', '555-0101',
         '', '', '', '',
         ...customHeaders.map(() => '')
@@ -811,6 +816,7 @@ export function planRosterCsvImport({ csvText = '', fields = [], existingPlayers
     const normalizedFields = normalizeRosterFieldDefinitions(fields);
     const rows = parseCsvRows(csvText);
     if (rows.length === 0) return { errors: ['CSV is empty.'], operations: [] };
+    if (rows.length - 1 > 200) return { errors: ['Import at most 200 roster rows at a time.'], operations: [] };
 
     const headers = rows[0].map((header) => String(header || '').trim());
     const fieldByHeader = new Map();
@@ -831,7 +837,10 @@ export function planRosterCsvImport({ csvText = '', fields = [], existingPlayers
         ['jersey', 'number'],
         ['jerseynumber', 'number'],
         ['uniformnumber', 'number'],
-        ['no', 'number']
+        ['no', 'number'],
+        ['operation', 'action'],
+        ['action', 'action'],
+        ['importaction', 'action']
     ]);
 
     const mappings = headers.map((header, index) => {
@@ -859,8 +868,8 @@ export function planRosterCsvImport({ csvText = '', fields = [], existingPlayers
     mappings.forEach((mapping) => {
         if (mapping.type === 'unknown') {
             errors.push(`Unknown CSV header "${mapping.label}". Use Name, Number, a supported player profile header, a supported parent/guardian contact header, or a configured roster field label/key.`);
-        } else if (mapping.type === 'name' || mapping.type === 'number') {
-            if (seenTypes.has(mapping.type)) errors.push(`Duplicate ${mapping.type === 'name' ? 'name' : 'number'} header.`);
+        } else if (mapping.type === 'name' || mapping.type === 'number' || mapping.type === 'action') {
+            if (seenTypes.has(mapping.type)) errors.push(`Duplicate ${mapping.type === 'name' ? 'name' : mapping.type === 'number' ? 'number' : 'operation'} header.`);
             seenTypes.add(mapping.type);
         } else if (mapping.type === 'field') {
             if (seenFields.has(mapping.field.key)) errors.push(`Duplicate roster field header for ${mapping.field.label}.`);
@@ -887,6 +896,7 @@ export function planRosterCsvImport({ csvText = '', fields = [], existingPlayers
         const values = {};
         let name = '';
         let number = '';
+        let requestedAction = '';
         const contactValues = new Map();
         const profileValues = {};
         const addressValues = {};
@@ -895,6 +905,7 @@ export function planRosterCsvImport({ csvText = '', fields = [], existingPlayers
             const rawValue = row[mapping.index] ?? '';
             if (mapping.type === 'name') name = String(rawValue || '').trim();
             if (mapping.type === 'number') number = String(rawValue || '').trim();
+            if (mapping.type === 'action') requestedAction = normalizeRosterAiAction(rawValue);
             if (mapping.type === 'field') values[mapping.field.key] = rawValue;
             if (mapping.type === 'profile') {
                 const parsed = parseRosterCsvProfileValue(mapping, rawValue);
@@ -947,12 +958,14 @@ export function planRosterCsvImport({ csvText = '', fields = [], existingPlayers
             delete profileValuesForMerge[key];
         });
 
-        validateRosterProfileValues(normalizedFields, parsedValues).forEach((error) => {
-            errors.push(`Row ${rowNumber}: ${error}`);
-        });
+        if (requestedAction !== 'deactivate' && requestedAction !== 'reactivate') {
+            validateRosterProfileValues(normalizedFields, parsedValues).forEach((error) => {
+                errors.push(`Row ${rowNumber}: ${error}`);
+            });
+        }
 
         if (!name) return;
-        const { publicValues, privateValues } = splitRosterProfileValuesByVisibility(normalizedFields, parsedValues, { includeAdminPrivate: false });
+        const { publicValues, privateValues } = splitRosterProfileValuesByVisibility(normalizedFields, parsedValues);
         PRIVATE_BUILT_IN_PROFILE_FIELDS.forEach((key) => {
             if (!Object.prototype.hasOwnProperty.call(profileValuesForMerge, key)) return;
             privateValues[key] = profileValuesForMerge[key];
@@ -970,6 +983,34 @@ export function planRosterCsvImport({ csvText = '', fields = [], existingPlayers
         }
 
         const existing = matches[0];
+        if (requestedAction && !['add', 'update', 'deactivate', 'reactivate'].includes(requestedAction)) {
+            errors.push(`Row ${rowNumber}: unsupported roster operation "${requestedAction}".`);
+            return;
+        }
+        if (requestedAction === 'update' && !existing) {
+            errors.push(`Row ${rowNumber}: no existing player named ${name} was found for update.`);
+            return;
+        }
+        if ((requestedAction === 'deactivate' || requestedAction === 'reactivate') && !existing) {
+            errors.push(`Row ${rowNumber}: no existing player named ${name} was found for ${requestedAction}.`);
+            return;
+        }
+        if (requestedAction === 'deactivate' || requestedAction === 'reactivate') {
+            operations.push({
+                type: requestedAction,
+                action: requestedAction,
+                playerId: existing.id,
+                payload: {},
+                privateRosterFields: null,
+                privateFamilyContacts: null,
+                familyContacts: [],
+                inviteRequests: [],
+                providedFields: [{ key: 'name', label: 'Name', type: 'text', section: 'Identity', value: name }],
+                providedContacts: [],
+                errors: []
+            });
+            return;
+        }
         const { publicProfile: existingProfile, privateValues: legacyPrivateValues } = splitProtectedRosterProfileValues(existing?.profile || {});
         const existingPrivateValues = existing?.privateProfileRosterFields && typeof existing.privateProfileRosterFields === 'object'
             ? existing.privateProfileRosterFields
@@ -1014,13 +1055,526 @@ export function planRosterCsvImport({ csvText = '', fields = [], existingPlayers
                 ...(mergedContacts.length > 0 ? { contacts: mergedContacts } : {})
             }
             : null;
-        operations.push(existing
-            ? { type: 'update', playerId: existing.id, payload, privateRosterFields, privateFamilyContacts, familyContacts: contactPlan.familyContacts, inviteRequests: contactPlan.inviteRequests }
-            : { type: 'add', payload, privateRosterFields, privateFamilyContacts, familyContacts: contactPlan.familyContacts, inviteRequests: contactPlan.inviteRequests });
+        const providedFields = [
+            { key: 'name', label: 'Name', type: 'text', section: 'Identity', value: name },
+            ...(hasNumberColumn ? [{ key: 'number', label: 'Number', type: 'text', section: 'Roster', value: number }] : [])
+        ];
+        normalizedFields.forEach((field) => {
+            if (!Object.prototype.hasOwnProperty.call(parsedValues, field.key)) return;
+            providedFields.push({
+                key: field.key,
+                label: field.label,
+                type: field.type,
+                section: field.section,
+                value: parsedValues[field.key]
+            });
+        });
+        Object.entries(addressValues).forEach(([key, value]) => {
+            providedFields.push({
+                key: `address.${key}`,
+                label: ROSTER_AI_ADDRESS_FIELDS?.find?.((field) => field.key === key)?.label || key,
+                type: 'text',
+                section: 'Address',
+                value
+            });
+        });
+        if (Object.prototype.hasOwnProperty.call(profileValues, 'rosterStatus')) {
+            providedFields.push({
+                key: 'rosterStatus',
+                label: 'Roster Status',
+                type: 'menu',
+                section: 'Roster',
+                value: profileValues.rosterStatus
+            });
+        }
+        const providedContacts = contactPlan.familyContacts.map((contact) => ({
+            ...contact,
+            bucket: contactPlan.guardians.includes(contact) ? 'guardians' : 'contacts',
+            providedKeys: ['name', 'relation', 'email', 'phone'].filter((key) => String(contact[key] ?? '').trim() !== '')
+        }));
+        const operationType = existing ? 'update' : 'add';
+        operations.push(operationType === 'update'
+            ? { type: 'update', action: 'update', playerId: existing.id, payload, privateRosterFields, privateFamilyContacts, familyContacts: contactPlan.familyContacts, inviteRequests: contactPlan.inviteRequests, providedFields, providedContacts, errors: [] }
+            : { type: 'add', action: 'add', payload, privateRosterFields, privateFamilyContacts, familyContacts: contactPlan.familyContacts, inviteRequests: contactPlan.inviteRequests, providedFields, providedContacts, errors: [] });
     });
 
     if (errors.length) return { errors, operations: [] };
     return { errors: [], operations };
+}
+
+const ROSTER_AI_CORE_KEYS = new Set([
+    'name', 'number', 'rosterFields', 'fields', 'customFields', 'address', 'rosterStatus',
+    'familyContacts', 'parents', 'guardians', 'contacts',
+    'parentName', 'parentRelation', 'parentEmail', 'parentPhone',
+    'guardianName', 'guardianRelation', 'guardianEmail', 'guardianPhone'
+]);
+
+const ROSTER_AI_PROFILE_ALIASES = Object.freeze({
+    nickname: 'preferredName',
+    dateOfBirth: 'birthDate',
+    dob: 'birthDate',
+    uniformSize: 'jerseySize',
+    dominantHand: 'dominantHandFoot',
+    dominantFoot: 'dominantHandFoot'
+});
+
+const ROSTER_AI_ADDRESS_FIELDS = Object.freeze([
+    { key: 'address1', label: 'Address' },
+    { key: 'address2', label: 'Address 2' },
+    { key: 'street', label: 'Street' },
+    { key: 'city', label: 'City' },
+    { key: 'state', label: 'State' },
+    { key: 'zip', label: 'ZIP' }
+]);
+
+function hasOwn(value, key) {
+    return Object.prototype.hasOwnProperty.call(value || {}, key);
+}
+
+function normalizeRosterAiAction(value) {
+    const action = String(value || 'add').trim().toLowerCase();
+    if (action === 'delete' || action === 'remove' || action === 'archive') return 'deactivate';
+    if (action === 'restore' || action === 'activate') return 'reactivate';
+    return action;
+}
+
+function getRosterAiFieldByInputKey(fields = []) {
+    const byKey = new Map();
+    fields.forEach((field) => {
+        byKey.set(normalizeHeaderKey(field.key), field);
+        byKey.set(normalizeHeaderKey(field.label), field);
+    });
+    Object.entries(ROSTER_AI_PROFILE_ALIASES).forEach(([alias, fieldKey]) => {
+        const field = fields.find((candidate) => candidate.key === fieldKey);
+        if (field) byKey.set(normalizeHeaderKey(alias), field);
+    });
+    return byKey;
+}
+
+function getRosterAiOperationDraft(operation = {}, action = '') {
+    if (action === 'add') return operation.player && typeof operation.player === 'object' ? operation.player : {};
+    if (operation.changes && typeof operation.changes === 'object') return operation.changes;
+    if (operation.player && typeof operation.player === 'object') return operation.player;
+    return {};
+}
+
+function getRosterAiExistingPlayer(operation = {}, draft = {}, existingPlayers = []) {
+    const requestedId = String(operation.playerId || draft.playerId || '').trim();
+    if (requestedId) {
+        return {
+            player: existingPlayers.find((candidate) => String(candidate?.id || '').trim() === requestedId) || null,
+            ambiguous: false
+        };
+    }
+    const requestedName = String(draft.name || operation.playerName || '').trim().toLowerCase();
+    if (!requestedName) return { player: null, ambiguous: false };
+    const matches = existingPlayers.filter((candidate) => String(candidate?.name || '').trim().toLowerCase() === requestedName);
+    return {
+        player: matches.length === 1 ? matches[0] : null,
+        ambiguous: matches.length > 1
+    };
+}
+
+function normalizeRosterAiContactDraft(contact = {}, defaults = {}) {
+    const providedKeys = ['name', 'firstName', 'lastName', 'email', 'phone', 'relation']
+        .filter((key) => hasOwn(contact, key) && String(contact[key] ?? '').trim() !== '');
+    if (providedKeys.length === 0) return null;
+    const normalized = normalizeImportedContact({
+        ...contact,
+        relation: contact.relation || defaults.relation,
+        source: defaults.source
+    }, { source: defaults.source });
+    if (!normalized) return null;
+    return {
+        contact: normalized,
+        bucket: defaults.bucket === 'contacts' ? 'contacts' : 'guardians',
+        providedKeys: providedKeys.map((key) => key === 'firstName' || key === 'lastName' ? 'name' : key)
+    };
+}
+
+function collectRosterAiContactDrafts(draft = {}, rowNumber = 0, source = 'roster-ai') {
+    const candidates = [];
+    const appendContacts = (contacts, defaults) => {
+        (Array.isArray(contacts) ? contacts : []).forEach((contact) => {
+            if (!contact || typeof contact !== 'object') return;
+            const kind = String(contact.kind || contact.type || '').trim().toLowerCase();
+            candidates.push(normalizeRosterAiContactDraft(contact, {
+                ...defaults,
+                bucket: ['contact', 'family contact', 'emergency', 'emergency contact'].includes(kind)
+                    ? 'contacts'
+                    : defaults.bucket,
+                source
+            }));
+        });
+    };
+
+    appendContacts(draft.familyContacts, { bucket: 'guardians', relation: 'Parent' });
+    appendContacts(draft.parents, { bucket: 'guardians', relation: 'Parent' });
+    appendContacts(draft.guardians, { bucket: 'guardians', relation: 'Guardian' });
+    appendContacts(draft.contacts, { bucket: 'contacts', relation: 'Family Contact' });
+
+    const appendLegacyContact = (prefix, defaultRelation) => {
+        const raw = {};
+        ['Name', 'Relation', 'Email', 'Phone'].forEach((suffix) => {
+            const key = `${prefix}${suffix}`;
+            if (hasOwn(draft, key)) raw[suffix.toLowerCase()] = draft[key];
+        });
+        if (Object.keys(raw).length > 0) {
+            candidates.push(normalizeRosterAiContactDraft(raw, {
+                bucket: 'guardians',
+                relation: defaultRelation,
+                source
+            }));
+        }
+    };
+    appendLegacyContact('parent', 'Parent');
+    appendLegacyContact('guardian', 'Guardian');
+
+    const errors = [];
+    const guardians = [];
+    const contacts = [];
+    const providedContacts = [];
+    const seenContacts = new Set();
+    candidates.filter(Boolean).forEach((candidate) => {
+        const contact = candidate.contact;
+        if (contact.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(contact.email)) {
+            errors.push(`Row ${rowNumber}: ${contact.relation} email must be valid.`);
+        }
+        const key = getContactDedupeKey(contact);
+        if (seenContacts.has(key)) return;
+        seenContacts.add(key);
+        if (candidate.bucket === 'contacts') contacts.push(contact);
+        else guardians.push(contact);
+        providedContacts.push({
+            ...contact,
+            bucket: candidate.bucket,
+            providedKeys: Array.from(new Set(candidate.providedKeys))
+        });
+    });
+
+    const familyContacts = [...guardians, ...contacts];
+    errors.push(...collectContactIdentityConflictErrors(familyContacts, rowNumber));
+    const seenInviteEmails = new Set();
+    const inviteRequests = familyContacts
+        .filter((contact) => {
+            if (!contact.email || seenInviteEmails.has(contact.email)) return false;
+            seenInviteEmails.add(contact.email);
+            return true;
+        })
+        .map((contact) => ({
+            email: contact.email,
+            displayName: contact.name || contact.email,
+            relation: contact.relation,
+            phone: contact.phone
+        }));
+
+    return { guardians, contacts, familyContacts, providedContacts, inviteRequests, errors };
+}
+
+function collectRosterAiFieldDraft(draft = {}, fields = [], rowNumber = 0) {
+    const fieldByInputKey = getRosterAiFieldByInputKey(fields);
+    const rawValues = new Map();
+    const unknownFields = [];
+    const addRawValue = (inputKey, value) => {
+        const field = fieldByInputKey.get(normalizeHeaderKey(inputKey));
+        if (!field) {
+            unknownFields.push({ key: String(inputKey || '').trim(), value });
+            return;
+        }
+        rawValues.set(field.key, { field, value });
+    };
+
+    ['rosterFields', 'fields', 'customFields'].forEach((containerKey) => {
+        const container = draft[containerKey];
+        if (!container || typeof container !== 'object' || Array.isArray(container)) return;
+        Object.entries(container).forEach(([key, value]) => addRawValue(key, value));
+    });
+
+    Object.entries(draft).forEach(([key, value]) => {
+        if (ROSTER_AI_CORE_KEYS.has(key)) return;
+        const field = fieldByInputKey.get(normalizeHeaderKey(key));
+        if (field) rawValues.set(field.key, { field, value });
+        else unknownFields.push({ key, value });
+    });
+
+    const values = {};
+    const providedFields = [];
+    const errors = [];
+    rawValues.forEach(({ field, value }) => {
+        const parsed = parseRosterCsvFieldValue(field, value);
+        if (parsed.error) errors.push(`Row ${rowNumber}: ${parsed.error}`);
+        else values[field.key] = parsed.value;
+        providedFields.push({
+            key: field.key,
+            label: field.label,
+            type: field.type,
+            section: field.section,
+            value: parsed.error ? value : parsed.value
+        });
+    });
+    const uniqueUnknownFields = new Map();
+    unknownFields.forEach((field) => {
+        if (field?.key && !uniqueUnknownFields.has(field.key)) uniqueUnknownFields.set(field.key, field.value);
+    });
+    uniqueUnknownFields.forEach((value, field) => {
+        providedFields.push({
+            key: `unknown.${field}`,
+            label: `Unknown field: ${field}`,
+            type: 'text',
+            section: 'Needs review',
+            value
+        });
+        errors.push(`Row ${rowNumber}: unknown roster field "${field}" with value "${String(value ?? '')}".`);
+    });
+    return { values, providedFields, errors };
+}
+
+function collectRosterAiAddressDraft(draft = {}) {
+    if (!hasOwn(draft, 'address')) return { address: null, providedFields: [] };
+    const rawAddress = draft.address;
+    if (rawAddress && typeof rawAddress === 'object' && !Array.isArray(rawAddress)) {
+        const address = {};
+        const providedFields = [];
+        ROSTER_AI_ADDRESS_FIELDS.forEach(({ key, label }) => {
+            if (!hasOwn(rawAddress, key)) return;
+            const value = String(rawAddress[key] ?? '').trim();
+            address[key] = value;
+            providedFields.push({ key: `address.${key}`, label, type: 'text', section: 'Address', value });
+        });
+        return { address, providedFields };
+    }
+    const value = String(rawAddress ?? '').trim();
+    return {
+        address: { address1: value },
+        providedFields: [{ key: 'address.address1', label: 'Address', type: 'text', section: 'Address', value }]
+    };
+}
+
+function collectRosterAiStatusDraft(draft = {}, rowNumber = 0) {
+    if (!hasOwn(draft, 'rosterStatus')) return { profileValues: {}, providedFields: [], errors: [] };
+    const parsed = normalizeRosterStatusValue(draft.rosterStatus, { label: 'Roster Status', statusMode: 'status' });
+    if (parsed.error) {
+        return { profileValues: {}, providedFields: [], errors: [`Row ${rowNumber}: ${parsed.error}`] };
+    }
+    return {
+        profileValues: parsed.value || {},
+        providedFields: [{
+            key: 'rosterStatus',
+            label: 'Roster Status',
+            type: 'menu',
+            section: 'Roster',
+            value: parsed.value?.rosterStatus || ''
+        }],
+        errors: []
+    };
+}
+
+/**
+ * Describes the complete field contract supplied to roster AI prompts and
+ * structured response schemas. UI layers should render proposed fields from
+ * each operation's providedFields list, not from this full catalog.
+ */
+export function getRosterAiImportFieldCatalog(fields = []) {
+    const rosterFields = mergeStandardRosterFieldDefinitions(fields);
+    return [
+        { key: 'name', label: 'Name', type: 'text', section: 'Identity', required: true },
+        { key: 'number', label: 'Number', type: 'text', section: 'Roster', required: false },
+        ...rosterFields.map((field) => ({
+            key: field.key,
+            label: field.label,
+            type: field.type,
+            section: field.section,
+            required: field.required === true,
+            visibility: field.visibility,
+            options: field.options || []
+        })),
+        ...ROSTER_AI_ADDRESS_FIELDS.map((field) => ({
+            ...field,
+            key: `address.${field.key}`,
+            type: 'text',
+            section: 'Address',
+            required: false,
+            visibility: 'team'
+        })),
+        {
+            key: 'rosterStatus',
+            label: 'Roster Status',
+            type: 'menu',
+            section: 'Roster',
+            required: false,
+            options: ['player', 'staff', 'non-player']
+        },
+        {
+            key: 'familyContacts',
+            label: 'Family Contacts',
+            type: 'contacts',
+            section: 'Family',
+            required: false,
+            fields: ['name', 'relation', 'email', 'phone', 'kind']
+        }
+    ];
+}
+
+/**
+ * Converts structured AI operations into the same public/private write shape
+ * used by CSV imports while retaining sparse property-presence metadata.
+ */
+export function planRosterAiImport({
+    aiOperations = [],
+    fields = [],
+    existingPlayers = [],
+    source = 'roster-ai'
+} = {}) {
+    const normalizedFields = mergeStandardRosterFieldDefinitions(fields);
+    const inputOperations = Array.isArray(aiOperations) ? aiOperations.slice(0, 200) : [];
+    const planErrors = [];
+    if (!Array.isArray(aiOperations)) return { errors: ['AI response did not include an operations array.'], operations: [] };
+    if (aiOperations.length > 200) planErrors.push('Import at most 200 roster rows at a time.');
+
+    const operations = inputOperations.map((operation, index) => {
+        const rowNumber = index + 1;
+        const requestedAction = normalizeRosterAiAction(operation?.action);
+        const draft = getRosterAiOperationDraft(operation, requestedAction);
+        const errors = [];
+        if (!['add', 'update', 'deactivate', 'reactivate'].includes(requestedAction)) {
+            errors.push(`Row ${rowNumber}: unsupported action "${String(operation?.action || '')}".`);
+        }
+
+        const match = getRosterAiExistingPlayer(operation, draft, existingPlayers);
+        if (match.ambiguous) errors.push(`Row ${rowNumber}: multiple existing players match ${String(draft.name || 'this name')}.`);
+        let action = requestedAction;
+        let existingPlayer = match.player;
+        if (action === 'add' && existingPlayer) action = 'update';
+        if (['update', 'deactivate', 'reactivate'].includes(action) && !existingPlayer) {
+            errors.push(`Row ${rowNumber}: no matching existing player was found.`);
+        }
+
+        const providedFields = [];
+        if (hasOwn(draft, 'name')) {
+            providedFields.push({
+                key: 'name',
+                label: 'Name',
+                type: 'text',
+                section: 'Identity',
+                value: String(draft.name ?? '').trim()
+            });
+        }
+        if (hasOwn(draft, 'number')) {
+            providedFields.push({
+                key: 'number',
+                label: 'Number',
+                type: 'text',
+                section: 'Roster',
+                value: String(draft.number ?? '').trim()
+            });
+        }
+
+        if (action === 'add' && !String(draft.name || '').trim()) {
+            errors.push(`Row ${rowNumber}: player name is required.`);
+        }
+        if (hasOwn(draft, 'name') && !String(draft.name || '').trim()) {
+            errors.push(`Row ${rowNumber}: player name cannot be blank.`);
+        }
+
+        if (action === 'deactivate' || action === 'reactivate') {
+            return {
+                type: action,
+                action,
+                playerId: String(existingPlayer?.id || operation?.playerId || '').trim(),
+                payload: {},
+                providedFields,
+                providedContacts: [],
+                familyContacts: [],
+                inviteRequests: [],
+                source,
+                reason: String(operation?.reason || '').trim(),
+                errors
+            };
+        }
+
+        const fieldDraft = collectRosterAiFieldDraft(draft, normalizedFields, rowNumber);
+        const addressDraft = collectRosterAiAddressDraft(draft);
+        const statusDraft = collectRosterAiStatusDraft(draft, rowNumber);
+        const contactDraft = collectRosterAiContactDrafts(draft, rowNumber, source);
+        providedFields.push(...fieldDraft.providedFields, ...addressDraft.providedFields, ...statusDraft.providedFields);
+        errors.push(...fieldDraft.errors, ...statusDraft.errors, ...contactDraft.errors);
+
+        const existingValues = existingPlayer ? getRosterProfileValues(existingPlayer) : {};
+        const validationValues = action === 'update'
+            ? { ...existingValues, ...fieldDraft.values }
+            : fieldDraft.values;
+        validateRosterProfileValues(normalizedFields, validationValues).forEach((error) => {
+            errors.push(`Row ${rowNumber}: ${error}`);
+        });
+
+        const { publicValues, privateValues } = splitRosterProfileValuesByVisibility(normalizedFields, fieldDraft.values);
+        const { publicProfile: existingPublicProfile, privateValues: legacyPrivateValues } = splitProtectedRosterProfileValues(existingPlayer?.profile || {});
+        const existingPrivateValues = existingPlayer?.privateProfileRosterFields && typeof existingPlayer.privateProfileRosterFields === 'object'
+            ? existingPlayer.privateProfileRosterFields
+            : {};
+        const nextPrivateValues = action === 'update'
+            ? { ...legacyPrivateValues, ...existingPrivateValues, ...privateValues }
+            : { ...privateValues };
+        if (addressDraft.address) {
+            nextPrivateValues.address = {
+                ...(action === 'update' && existingPrivateValues.address && typeof existingPrivateValues.address === 'object'
+                    ? existingPrivateValues.address
+                    : {}),
+                ...addressDraft.address
+            };
+        }
+
+        const payload = {};
+        if (hasOwn(draft, 'name')) payload.name = String(draft.name ?? '').trim();
+        if (hasOwn(draft, 'number')) payload.number = String(draft.number ?? '').trim();
+        if (Object.keys(publicValues).length > 0 || Object.keys(statusDraft.profileValues).length > 0) {
+            payload.profile = {
+                ...(action === 'update' ? existingPublicProfile : {}),
+                ...statusDraft.profileValues,
+                customFields: {
+                    ...(action === 'update' ? existingPublicProfile.customFields || {} : {}),
+                    ...publicValues
+                }
+            };
+        }
+        if (hasOwn(publicValues, 'position')) payload.position = publicValues.position;
+
+        const existingGuardians = collectExistingRosterContacts(existingPlayer, ['privateProfileParents', 'parents', 'guardians'], 'familyContacts');
+        const existingContacts = collectExistingRosterContacts(existingPlayer, ['privateProfileContacts', 'contacts']);
+        const mergedGuardians = action === 'update'
+            ? mergeImportedContacts(existingGuardians, contactDraft.guardians)
+            : contactDraft.guardians;
+        const mergedContacts = action === 'update'
+            ? mergeImportedContacts(existingContacts, contactDraft.contacts)
+            : contactDraft.contacts;
+        const privateFamilyContacts = mergedGuardians.length > 0 || mergedContacts.length > 0
+            ? {
+                ...(mergedGuardians.length > 0 ? { parents: mergedGuardians } : {}),
+                ...(mergedContacts.length > 0 ? { contacts: mergedContacts } : {})
+            }
+            : null;
+
+        return {
+            type: action,
+            action,
+            ...(action === 'update' ? { playerId: String(existingPlayer?.id || '').trim() } : {}),
+            payload,
+            privateRosterFields: Object.keys(nextPrivateValues).length > 0 ? nextPrivateValues : null,
+            privateFamilyContacts,
+            familyContacts: contactDraft.familyContacts,
+            inviteRequests: contactDraft.inviteRequests,
+            providedFields,
+            providedContacts: contactDraft.providedContacts,
+            source,
+            reason: String(operation?.reason || '').trim(),
+            errors
+        };
+    });
+
+    return {
+        errors: planErrors,
+        operations
+    };
 }
 
 function createBaseField(field) {
