@@ -422,6 +422,7 @@ describe('React app schedule score updates', () => {
             location: 'Main Gym',
             opponent: 'Falcons',
             opponentTeamId: 'team-2',
+            sharedScheduleOpponentTeamId: 'team-2',
             counterpartTitle: 'vs. Bears',
             childId: 'player-1',
             childName: 'Pat',
