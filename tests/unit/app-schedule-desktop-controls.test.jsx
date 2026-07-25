@@ -548,6 +548,12 @@ describe('React app desktop Schedule controls', () => {
                     id: 'game-2',
                     opponent: 'Hawks',
                     location: 'River Field'
+                }),
+                event({
+                    eventKey: 'team-1::game-3::player-1',
+                    id: 'game-3',
+                    opponent: 'Owls',
+                    location: 'TBD'
                 })
             ]
         });
@@ -557,8 +563,12 @@ describe('React app desktop Schedule controls', () => {
 
         const falconsDirections = container.querySelector('button[aria-label="Directions to vs. Falcons at Main Gym"]');
         const hawksDirections = container.querySelector('button[aria-label="Directions to vs. Hawks at River Field"]');
+        const tbdRow = Array.from(container.querySelectorAll('.schedule-event-row-mobile'))
+            .find((row) => row.textContent.includes('Owls'));
         expect(falconsDirections).toBeTruthy();
         expect(hawksDirections).toBeTruthy();
+        expect(tbdRow).toBeTruthy();
+        expect(tbdRow.querySelector('.schedule-event-directions')).toBeNull();
         expect(falconsDirections.textContent.trim()).toBe('Directions');
         expect(hawksDirections.textContent.trim()).toBe('Directions');
         expect(falconsDirections.className).toContain('min-h-11');
@@ -570,6 +580,19 @@ describe('React app desktop Schedule controls', () => {
         expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith(getScheduleMapHref('Main Gym'));
         expect(container.querySelector('[data-testid="route-probe"]').textContent)
             .toBe('/schedule?filter=upcoming-games');
+
+        const falconsDetail = falconsDirections.closest('.schedule-event-row-mobile')
+            .querySelector('.schedule-event-row-detail');
+        expect(falconsDetail.getAttribute('href'))
+            .toBe('/schedule/team-1/game-1?childId=player-1&section=availability');
+
+        await act(async () => {
+            falconsDetail.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        });
+
+        expect(container.querySelector('[data-testid="route-probe"]').textContent)
+            .toBe('/schedule/team-1/game-1?childId=player-1&section=availability');
+        expect(publicActionMocks.openPublicUrl).toHaveBeenCalledTimes(1);
     });
 
     it('reuses the cached schedule when the route remounts', async () => {
