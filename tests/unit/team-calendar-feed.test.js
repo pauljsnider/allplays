@@ -156,7 +156,7 @@ describe('team calendar subscription feed', () => {
         });
     });
 
-    it('preserves recurring wall-clock times across DST and positive UTC offsets', () => {
+    it('preserves legacy Chicago wall-clock times across DST without a stored timezone', () => {
         const chicagoOccurrences = expandRecurringCalendarEvent({
             id: 'chicago-evening',
             type: 'practice',
@@ -164,7 +164,6 @@ describe('team calendar subscription feed', () => {
             date: new Date('2025-01-07T00:00:00Z'),
             startTime: '18:00',
             endTime: '19:30',
-            timeZone: 'America/Chicago',
             recurrence: {
                 freq: 'weekly',
                 interval: 1,
@@ -173,6 +172,13 @@ describe('team calendar subscription feed', () => {
         }, {
             now: new Date('2026-07-25T12:00:00Z')
         });
+        expect(chicagoOccurrences.find((occurrence) => occurrence.instanceDate === '2026-07-27')).toMatchObject({
+            date: new Date('2026-07-27T23:00:00Z'),
+            end: new Date('2026-07-28T00:30:00Z')
+        });
+    });
+
+    it('preserves explicit timezones and legacy offsets above UTC+12', () => {
         const karachiOccurrences = expandRecurringCalendarEvent({
             id: 'karachi-evening',
             type: 'practice',
@@ -189,14 +195,59 @@ describe('team calendar subscription feed', () => {
         }, {
             now: new Date('2026-07-25T12:00:00Z')
         });
-
-        expect(chicagoOccurrences.find((occurrence) => occurrence.instanceDate === '2026-07-27')).toMatchObject({
-            date: new Date('2026-07-27T23:00:00Z'),
-            end: new Date('2026-07-28T00:30:00Z')
+        const kiritimatiOccurrences = expandRecurringCalendarEvent({
+            id: 'kiritimati-evening',
+            type: 'practice',
+            isSeriesMaster: true,
+            date: new Date('2025-01-06T04:00:00Z'),
+            startTime: '18:00',
+            endTime: '19:30',
+            recurrence: {
+                freq: 'weekly',
+                interval: 1,
+                byDays: ['MO']
+            }
+        }, {
+            now: new Date('2026-07-25T12:00:00Z')
         });
+
         expect(karachiOccurrences.find((occurrence) => occurrence.instanceDate === '2026-07-27')).toMatchObject({
             date: new Date('2026-07-27T13:00:00Z'),
             end: new Date('2026-07-27T14:30:00Z')
+        });
+        expect(kiritimatiOccurrences.find((occurrence) => occurrence.instanceDate === '2026-07-27')).toMatchObject({
+            date: new Date('2026-07-27T04:00:00Z'),
+            end: new Date('2026-07-27T05:30:00Z')
+        });
+    });
+
+    it('infers an overnight day offset for legacy occurrence overrides', () => {
+        const occurrences = expandRecurringCalendarEvent({
+            id: 'overnight-override',
+            type: 'practice',
+            isSeriesMaster: true,
+            date: new Date('2025-01-07T00:00:00Z'),
+            startTime: '18:00',
+            endTime: '19:00',
+            endDayOffset: 0,
+            recurrence: {
+                freq: 'weekly',
+                interval: 1,
+                byDays: ['MO']
+            },
+            overrides: {
+                '2026-07-27': {
+                    startTime: '23:30',
+                    endTime: '01:00'
+                }
+            }
+        }, {
+            now: new Date('2026-07-25T12:00:00Z')
+        });
+
+        expect(occurrences.find((occurrence) => occurrence.instanceDate === '2026-07-27')).toMatchObject({
+            date: new Date('2026-07-28T04:30:00Z'),
+            end: new Date('2026-07-28T06:00:00Z')
         });
     });
 

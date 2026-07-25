@@ -950,6 +950,7 @@ describe('scheduled practice writes', () => {
       title: 'Summer Skills',
       startDate: new Date('2026-06-24T18:00:00.000Z'),
       endDate: new Date('2026-06-24T19:30:00.000Z'),
+      timeZone: 'America/Chicago',
       location: 'Field 3',
       notes: 'Bring pinnies',
       recurrence: {
@@ -990,6 +991,7 @@ describe('scheduled practice writes', () => {
       },
       startDate: new Date('2026-06-24T18:00:00.000Z'),
       endDate: new Date('2026-06-24T19:30:00.000Z'),
+      timeZone: 'America/Chicago',
       Timestamp: { fromDate: (value: Date) => value },
       deleteField: () => ({ __deleteField: true }),
       generateSeriesId: () => 'series-generated'
@@ -1014,6 +1016,7 @@ describe('scheduled practice writes', () => {
       title: 'Special Session',
       startTime: '17:15',
       endTime: '18:45',
+      endDayOffset: 0,
       location: 'Indoor court',
       notes: 'Film first 15 minutes'
     });
@@ -1049,6 +1052,7 @@ describe('scheduled practice writes', () => {
           title: { stringValue: 'Special Session' },
           startTime: { stringValue: '17:15' },
           endTime: { stringValue: '18:45' },
+          endDayOffset: { integerValue: '0' },
           location: { stringValue: 'Indoor court' },
           notes: { stringValue: 'Film first 15 minutes' }
         }
@@ -1056,6 +1060,25 @@ describe('scheduled practice writes', () => {
     });
     expect(payload.fields.updatedBy).toEqual({ stringValue: 'coach-1' });
     expect(typeof payload.fields.updatedAt.timestampValue).toBe('string');
+  });
+
+  it('persists overnight occurrence overrides with the next-day offset', async () => {
+    await updateScheduledPracticeForApp('team-1', {
+      title: 'Late Practice',
+      startDate: new Date(2026, 5, 24, 23, 30),
+      endDate: new Date(2026, 5, 25, 1, 0),
+      location: 'Indoor court',
+      notes: ''
+    }, coachUser, {
+      eventId: 'practice-master__2026-06-24',
+      scope: 'occurrence'
+    });
+
+    expect(updateOccurrence).toHaveBeenCalledWith('team-1', 'practice-master', '2026-06-24', expect.objectContaining({
+      startTime: '23:30',
+      endTime: '01:00',
+      endDayOffset: 1
+    }));
   });
 
   it('reverts occurrence overrides without touching the series master', async () => {

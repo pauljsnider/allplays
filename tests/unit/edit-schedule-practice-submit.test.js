@@ -261,6 +261,7 @@ describe('edit schedule practice save flow', () => {
         expect(source).toContain("import { savePracticeForm } from './js/edit-schedule-practice-submit.js?v=3';");
         expect(source).toContain('const { savedPracticeId } = await savePracticeForm({');
         expect(source).toContain('applyPracticeRecurrenceFields');
+        expect(source).toContain("endDayOffset: document.getElementById('occurrence-end-time').value <= document.getElementById('occurrence-start-time').value ? 1 : 0");
     });
 
     it('does not save isSeriesMaster or recurrence when editing a non-recurring practice', async () => {

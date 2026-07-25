@@ -5,6 +5,7 @@ const {
 
 const FEED_PRODUCT_ID = '-//ALL PLAYS//Team Calendar//EN';
 const DEFAULT_EVENT_DURATION_MS = 60 * 60 * 1000;
+const DEFAULT_RECURRENCE_TIME_ZONE = 'America/Chicago';
 const MILLIS_PER_DAY = 24 * 60 * 60 * 1000;
 const RECURRENCE_DAY_CODES = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
 
@@ -157,7 +158,7 @@ function getRecurrenceUtcOffsetMinutes(master) {
   const [localHours, localMinutes] = startTime.split(':').map(Number);
   let offsetMinutes = (localHours * 60 + localMinutes) -
     (masterStart.getUTCHours() * 60 + masterStart.getUTCMinutes());
-  if (offsetMinutes > 12 * 60) offsetMinutes -= 24 * 60;
+  if (offsetMinutes > 14 * 60) offsetMinutes -= 24 * 60;
   if (offsetMinutes < -12 * 60) offsetMinutes += 24 * 60;
   return offsetMinutes;
 }
@@ -218,10 +219,30 @@ function parseWallClockTime(occurrenceDay, time, timeZone) {
   return null;
 }
 
-function buildRecurringOccurrence(master, occurrenceDay, dateKey, override = {}, utcOffsetMinutes = 0) {
+function getRecurrenceTimeZone(master, fallbackTimeZone = DEFAULT_RECURRENCE_TIME_ZONE) {
+  const explicitTimeZone = String(master.timeZone || master.timezone || '').trim();
+  if (explicitTimeZone) return explicitTimeZone;
+
+  const masterStart = toDate(master.date);
+  const startTime = String(master.startTime || '').trim();
+  const fallback = String(fallbackTimeZone || '').trim();
+  if (!masterStart || !fallback || !/^\d{2}:\d{2}$/.test(startTime)) return '';
+
+  const wallClock = getWallClockParts(masterStart, fallback);
+  const [hours, minutes] = startTime.split(':').map(Number);
+  return wallClock?.hour === hours && wallClock?.minute === minutes ? fallback : '';
+}
+
+function buildRecurringOccurrence(
+  master,
+  occurrenceDay,
+  dateKey,
+  override = {},
+  utcOffsetMinutes = 0,
+  timeZone = ''
+) {
   const startDate = new Date(occurrenceDay);
   const startTime = String(override.startTime || master.startTime || '').trim();
-  const timeZone = String(master.timeZone || master.timezone || '').trim();
   if (/^\d{2}:\d{2}$/.test(startTime)) {
     const [hours, minutes] = startTime.split(':').map(Number);
     const zonedStart = timeZone ? parseWallClockTime(occurrenceDay, startTime, timeZone) : null;
@@ -261,7 +282,10 @@ function buildRecurringOccurrence(master, occurrenceDay, dateKey, override = {},
   if (/^\d{2}:\d{2}$/.test(endTime)) {
     const [hours, minutes] = endTime.split(':').map(Number);
     const endDate = new Date(occurrenceDay);
-    const explicitDayOffset = override.endDayOffset ?? master.endDayOffset;
+    const hasOverrideEndTime = Object.prototype.hasOwnProperty.call(override, 'endTime');
+    const explicitDayOffset = Object.prototype.hasOwnProperty.call(override, 'endDayOffset')
+      ? override.endDayOffset
+      : (hasOverrideEndTime ? null : master.endDayOffset);
     const [startHours, startMinutes] = startTime.split(':').map(Number);
     const inferredDayOffset = hours * 60 + minutes <= startHours * 60 + startMinutes ? 1 : 0;
     const endDayOffset = explicitDayOffset == null
@@ -292,7 +316,10 @@ function buildRecurringOccurrence(master, occurrenceDay, dateKey, override = {},
   return occurrence;
 }
 
-function expandRecurringCalendarEvent(master, { now = new Date() } = {}) {
+function expandRecurringCalendarEvent(master, {
+  now = new Date(),
+  fallbackTimeZone = DEFAULT_RECURRENCE_TIME_ZONE
+} = {}) {
   if (master?.type !== 'practice' || master?.isSeriesMaster !== true || !master?.recurrence) {
     return [master];
   }
@@ -321,7 +348,7 @@ function expandRecurringCalendarEvent(master, { now = new Date() } = {}) {
     ? master.overrides
     : {};
   const utcOffsetMinutes = getRecurrenceUtcOffsetMinutes(master);
-  const timeZone = String(master.timeZone || master.timezone || '').trim();
+  const timeZone = getRecurrenceTimeZone(master, fallbackTimeZone);
   const zonedSeriesStart = timeZone ? getWallClockParts(seriesStart, timeZone) : null;
   const localSeriesStart = zonedSeriesStart
     ? new Date(Date.UTC(zonedSeriesStart.year, zonedSeriesStart.month, zonedSeriesStart.day))
@@ -361,7 +388,8 @@ function expandRecurringCalendarEvent(master, { now = new Date() } = {}) {
       current,
       dateKey,
       overrides[dateKey] || {},
-      utcOffsetMinutes
+      utcOffsetMinutes,
+      timeZone
     );
     if (excludedDates.has(dateKey)) {
       occurrence.status = 'cancelled';
@@ -385,7 +413,10 @@ function buildTeamCalendarIcs({ teamId, team = {}, events = [], now = new Date()
   ];
 
   events
-    .flatMap((event) => expandRecurringCalendarEvent(event, { now }))
+    .flatMap((event) => expandRecurringCalendarEvent(event, {
+      now,
+      fallbackTimeZone: team.timeZone || team.timezone || DEFAULT_RECURRENCE_TIME_ZONE
+    }))
     .filter(isVisibleCalendarEvent)
     .sort((a, b) => toDate(a.date) - toDate(b.date))
     .forEach((event) => {

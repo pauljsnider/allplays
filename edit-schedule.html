@@ -3772,6 +3772,7 @@
                 title: document.getElementById('occurrence-title').value,
                 startTime: document.getElementById('occurrence-start-time').value,
                 endTime: document.getElementById('occurrence-end-time').value,
+                endDayOffset: document.getElementById('occurrence-end-time').value <= document.getElementById('occurrence-start-time').value ? 1 : 0,
                 location: document.getElementById('occurrence-location').value,
                 notes: document.getElementById('occurrence-notes').value
             };
