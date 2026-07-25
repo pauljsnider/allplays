@@ -548,6 +548,10 @@ async function mockPublicTeamsBrowseModule(page, { slowSearch = false } = {}) {
                     return { teams: [], nextCursor: null };
                 }
 
+                export async function hydratePublicTeamRosterCounts(teams) {
+                    return teams;
+                }
+
                 export async function getPublicTeamDetail(teamId) {
                     return {
                         id: teamId,
