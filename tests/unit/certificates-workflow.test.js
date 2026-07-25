@@ -44,6 +44,7 @@ function createCertificateStudioHarness() {
         'async function openSavedCertificate',
         'function startCustomCertificate',
         'async function waitForActiveRegeneration',
+        'async function downloadSelectedPng',
         'async function downloadSelectedZip',
         'async function saveDrafts'
     ].map((signature) => extractFunction(studio, signature)).join('\n\n');
@@ -116,6 +117,7 @@ function createCertificateStudioHarness() {
         archiveCertificate: vi.fn(async () => undefined),
         updateCertificateBatch: vi.fn(async () => undefined),
         setCertificateDefaults: vi.fn(async () => undefined),
+        downloadDraftPng: vi.fn(async () => undefined),
         renderDraftToBlob: vi.fn(async (draft) => new Blob([draft.recipientName])),
         getCertificateFilename: vi.fn(({ recipientName, extension }) => `${recipientName}.${extension}`),
         downloadCertificateZip: vi.fn(async () => undefined),
@@ -159,6 +161,7 @@ function createCertificateStudioHarness() {
         const archiveCertificate = deps.archiveCertificate;
         const updateCertificateBatch = deps.updateCertificateBatch;
         const setCertificateDefaults = deps.setCertificateDefaults;
+        const downloadDraftPng = deps.downloadDraftPng;
         const renderDraftToBlob = deps.renderDraftToBlob;
         const getCertificateFilename = deps.getCertificateFilename;
         const downloadCertificateZip = deps.downloadCertificateZip;
@@ -196,6 +199,7 @@ function createCertificateStudioHarness() {
             archiveSavedCertificate,
             saveDraftsToLocalHistory,
             saveDrafts,
+            downloadSelectedPng,
             downloadSelectedZip,
             openSavedBatch,
             openSavedCertificate,
@@ -205,6 +209,7 @@ function createCertificateStudioHarness() {
             archiveCertificate,
             updateCertificateBatch,
             setCertificateDefaults,
+            downloadDraftPng,
             downloadCertificateZip,
             listCertificates
         };
@@ -361,6 +366,54 @@ describe('awards and certificates workflow wiring', () => {
         expect(saveBody).toContain('if (!guardPublishableDraftDescriptions(status)) return;');
         expect(saveBody).toContain('createCertificateBatch(state.teamId');
         expect(saveBody).toContain('createCertificate(state.teamId');
+    });
+
+    it('persists the complete shared setup after downloading selected certificate PNGs', async () => {
+        const harness = createCertificateStudioHarness();
+        harness.state.shared.signers = [{ name: 'Coach Rivera', title: 'Head Coach' }];
+        harness.state.shared.foregroundImageRef = { assetId: 'foreground-1' };
+        harness.state.shared.backgroundImageRef = { assetId: 'background-1' };
+        harness.state.shared.watermarkImageRef = { assetId: 'watermark-1' };
+        harness.state.drafts = [
+            { id: 'draft-1', recipientName: 'Pat Star', includeInExport: true },
+            { id: 'draft-2', recipientName: 'Sam Star', includeInExport: true }
+        ];
+
+        await harness.downloadSelectedPng();
+
+        expect(harness.downloadDraftPng).toHaveBeenCalledTimes(2);
+        expect(harness.downloadDraftPng).toHaveBeenNthCalledWith(1, harness.state.drafts[0]);
+        expect(harness.downloadDraftPng).toHaveBeenNthCalledWith(2, harness.state.drafts[1]);
+        expect(harness.setCertificateDefaults).toHaveBeenCalledWith('team-1', harness.state.shared);
+        expect(harness.downloadDraftPng.mock.invocationCallOrder[1])
+            .toBeLessThan(harness.setCertificateDefaults.mock.invocationCallOrder[0]);
+        expect(harness.setCertificateDefaults.mock.invocationCallOrder[0])
+            .toBeLessThan(harness.showAlert.mock.invocationCallOrder[0]);
+        expect(harness.showAlert).toHaveBeenCalledWith('Downloaded 2 PNG files.', 'success');
+    });
+
+    it('keeps downloaded PNGs complete when defaults persistence fails', async () => {
+        const harness = createCertificateStudioHarness();
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        harness.state.drafts = [{
+            id: 'draft-1',
+            recipientName: 'Pat Star',
+            includeInExport: true
+        }];
+        harness.setCertificateDefaults.mockRejectedValue(new Error('permission denied'));
+
+        await harness.downloadSelectedPng();
+
+        expect(harness.downloadDraftPng).toHaveBeenCalledOnce();
+        expect(harness.showAlert).toHaveBeenCalledWith(
+            'PNGs downloaded, but team defaults could not be updated.',
+            'warning'
+        );
+        expect(warn).toHaveBeenCalledWith(
+            '[certificates] Unable to save certificate defaults after PNG export:',
+            expect.any(Error)
+        );
+        warn.mockRestore();
     });
 
     it('persists shared defaults before downloading the selected certificate ZIP', async () => {
