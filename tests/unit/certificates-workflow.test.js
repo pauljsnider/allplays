@@ -510,29 +510,35 @@ describe('awards and certificates workflow wiring', () => {
         warn.mockRestore();
     });
 
-    it('waits for pending defaults persistence before printing', async () => {
+    it('continues printing when defaults persistence never settles', async () => {
+        vi.useFakeTimers();
         const harness = createCertificateStudioHarness();
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
         harness.state.drafts = [{
             id: 'draft-1',
             recipientName: 'Pat Star',
             includeInExport: true
         }];
-        let resolveDefaults;
-        harness.setCertificateDefaults.mockImplementation(() => new Promise((resolve) => {
-            resolveDefaults = resolve;
-        }));
+        harness.setCertificateDefaults.mockImplementation(() => new Promise(() => undefined));
 
         const printPromise = harness.printSelectedDrafts();
-        await vi.waitFor(() => {
-            expect(harness.setCertificateDefaults).toHaveBeenCalledWith('team-1', harness.state.shared);
-        });
-
+        await Promise.resolve();
         expect(harness.printCertificateBlobs).not.toHaveBeenCalled();
 
-        resolveDefaults();
+        await vi.advanceTimersByTimeAsync(2000);
         await printPromise;
 
         expect(harness.printCertificateBlobs).toHaveBeenCalledOnce();
+        expect(harness.showAlert).toHaveBeenCalledWith(
+            'Printing will continue, but team defaults could not be updated.',
+            'warning'
+        );
+        expect(warn).toHaveBeenCalledWith(
+            '[certificates] Unable to save certificate defaults before printing:',
+            expect.objectContaining({ message: 'Certificate defaults persistence timed out.' })
+        );
+        warn.mockRestore();
+        vi.useRealTimers();
     });
 
     it('does not persist team defaults when a parent prints a certificate', async () => {
