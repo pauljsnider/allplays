@@ -510,6 +510,36 @@ describe('awards and certificates workflow wiring', () => {
         warn.mockRestore();
     });
 
+    it('does not block printing while defaults persistence is pending', async () => {
+        const harness = createCertificateStudioHarness();
+        harness.state.drafts = [{
+            id: 'draft-1',
+            recipientName: 'Pat Star',
+            includeInExport: true
+        }];
+        harness.setCertificateDefaults.mockImplementation(() => new Promise(() => {}));
+
+        await harness.printSelectedDrafts();
+
+        expect(harness.setCertificateDefaults).toHaveBeenCalledWith('team-1', harness.state.shared);
+        expect(harness.printCertificateBlobs).toHaveBeenCalledOnce();
+    });
+
+    it('does not persist team defaults when a parent prints a certificate', async () => {
+        const harness = createCertificateStudioHarness();
+        harness.state.mode = 'parent-detail';
+        harness.state.drafts = [{
+            id: 'draft-1',
+            recipientName: 'Pat Star',
+            includeInExport: true
+        }];
+
+        await harness.printSelectedDrafts();
+
+        expect(harness.setCertificateDefaults).not.toHaveBeenCalled();
+        expect(harness.printCertificateBlobs).toHaveBeenCalledOnce();
+    });
+
     it('persists a distinct frame purchase link and renders only safe parent actions', async () => {
         const studio = readRepoFile('js/certificates/studio.js');
         const framePurchaseHelpers = new Function(`
