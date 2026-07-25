@@ -2201,6 +2201,24 @@ async function printSelectedDrafts() {
         showAlert('Select at least one certificate to print.', 'warning');
         return;
     }
+    if (!state.demoMode && state.mode !== 'parent-detail') {
+        let persistenceTimeout;
+        try {
+            await Promise.race([
+                setCertificateDefaults(state.teamId, state.shared),
+                new Promise((_, reject) => {
+                    persistenceTimeout = setTimeout(() => {
+                        reject(new Error('Certificate defaults persistence timed out.'));
+                    }, 2000);
+                })
+            ]);
+        } catch (error) {
+            console.warn('[certificates] Unable to save certificate defaults before printing:', error);
+            showAlert('Printing will continue, but team defaults could not be updated.', 'warning');
+        } finally {
+            clearTimeout(persistenceTimeout);
+        }
+    }
     try {
         const blobs = [];
         for (const draft of drafts) {
