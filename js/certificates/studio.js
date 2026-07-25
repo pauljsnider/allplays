@@ -2170,6 +2170,14 @@ async function downloadSelectedZip() {
                 blob: await renderDraftToBlob(draft)
             });
         }
+        if (!state.demoMode) {
+            try {
+                await setCertificateDefaults(state.teamId, state.shared);
+            } catch (error) {
+                console.warn('[certificates] Unable to save certificate defaults after ZIP export:', error);
+                showAlert('ZIP export will continue, but team defaults could not be updated.', 'warning');
+            }
+        }
         await downloadCertificateZip(files, `${certificateTeamName().toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'team'}-certificates.zip`);
     } catch (error) {
         showAlert(error?.message || 'Unable to export ZIP. Use Print selected if an image blocks canvas export.', 'error');
