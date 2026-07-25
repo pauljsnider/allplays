@@ -469,6 +469,21 @@ describe('React app schedule service contract integration', () => {
         expect(dbMocks.getTeam).not.toHaveBeenCalled();
     });
 
+    it('does not expose a team overview schedule to an unrelated authenticated user', async () => {
+        profileMocks.loadProfileDocument.mockResolvedValueOnce({ parentOf: [] });
+        const unrelatedUser = {
+            uid: 'unrelated-user',
+            email: 'unrelated@example.com',
+            roles: ['parent'],
+            parentOf: []
+        };
+
+        await expect(loadTeamOverviewSchedule('team-1', 'Bears', unrelatedUser)).resolves.toEqual([]);
+
+        expect(dbMocks.getGames).not.toHaveBeenCalled();
+        expect(utilsMocks.fetchAndParseCalendar).not.toHaveBeenCalled();
+    });
+
     it('keeps ordinary staff discovery on the scoped adapter instead of the team catalog', () => {
         const staffTeamSource = getScheduleServiceSlice('async function loadStaffTeams', 'async function saveTeamCalendarUrls');
 

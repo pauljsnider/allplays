@@ -2317,9 +2317,12 @@ function mergeTeamScheduleSources(games: any[], scheduleEvents?: ParentScheduleE
     if (!sourceGameId || !sourceGame) return event;
 
     consumedDbGameIds.add(sourceGameId);
+    const definedEventFields = Object.fromEntries(
+      Object.entries(event).filter(([, value]) => value !== null && value !== undefined)
+    );
     return {
       ...sourceGame,
-      ...event
+      ...definedEventFields
     };
   });
 

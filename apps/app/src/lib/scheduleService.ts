@@ -3702,6 +3702,11 @@ export async function loadTeamOverviewSchedule(teamId: string, teamName: string,
   const normalizedTeamId = compactString(teamId);
   if (!normalizedTeamId || !user?.uid) return [];
 
+  const scope = await loadParentScheduleScope(user);
+  const hasTeamAccess = scope.children.some((child) => child.teamId === normalizedTeamId)
+    || scope.staffTeams?.some((team) => team.teamId === normalizedTeamId) === true;
+  if (!hasTeamAccess) return [];
+
   const normalizedTeamName = compactString(teamName) || normalizedTeamId;
   return buildTeamSchedule(normalizedTeamId, [{
     teamId: normalizedTeamId,
