@@ -284,7 +284,7 @@ test('bulk AI cancel clears stale image state before another run', async ({ page
     const fileCount = await page.evaluate(() => document.getElementById('roster-image-input').files.length);
     expect(fileCount).toBe(0);
     await expect(page.locator('#roster-image-preview')).toBeHidden();
-    await expect(page.locator('#roster-image-preview-img')).toHaveAttribute('src', '');
+    await expect(page.locator('#roster-image-preview-img')).not.toHaveAttribute('src');
 
     await page.click('#process-ai-btn');
     expect(dialogs.at(-1)).toBe('Please upload an image or paste roster text');
