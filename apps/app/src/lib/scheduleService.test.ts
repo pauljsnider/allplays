@@ -159,7 +159,7 @@ vi.mock('./adapters/legacyScheduleHelpers', () => ({
   hasScorekeepingTeamAccess: vi.fn(),
   isTeamActive: vi.fn(() => true),
   applyPracticeRecurrenceFields: vi.fn((payload: any) => {
-    const { practiceData, isRecurring, editingPracticeId = null, editingSeriesId = null, recurrenceConfig = {}, startDate, endDate, Timestamp, deleteField, generateSeriesId } = payload;
+    const { practiceData, isRecurring, editingPracticeId = null, editingSeriesId = null, recurrenceConfig = {}, startDate, endDate, timeZone = '', Timestamp, deleteField, generateSeriesId } = payload;
     if (isRecurring) {
       const { freq = 'weekly', interval = 1, byDays = [], endType = 'never', untilValue = '', countValue = 10 } = recurrenceConfig;
       practiceData.isSeriesMaster = true;
@@ -171,6 +171,7 @@ vi.mock('./adapters/legacyScheduleHelpers', () => ({
       practiceData.startTime = startDate.toTimeString().slice(0, 5);
       practiceData.endTime = endDate.toTimeString().slice(0, 5);
       practiceData.endDayOffset = Math.max(0, Math.round((endDay.getTime() - startDay.getTime()) / 86400000));
+      practiceData.timeZone = String(timeZone || '').trim();
       practiceData.recurrence = { freq, interval, byDays };
       if (endType === 'until' && untilValue) {
         practiceData.recurrence.until = Timestamp.fromDate(new Date(untilValue));
