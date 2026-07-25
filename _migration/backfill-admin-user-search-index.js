@@ -2,6 +2,7 @@
 
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 import { applicationDefault, cert, getApps, initializeApp } from 'firebase-admin/app';
 import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 
@@ -49,7 +50,7 @@ async function firestoreRestRequest(accessToken, path, body) {
     return response.json();
 }
 
-async function runAccessTokenBackfill(accessToken) {
+export async function runAccessTokenBackfill(accessToken, { apply = APPLY } = {}) {
     const results = await firestoreRestRequest(accessToken, '/documents:runQuery', {
         structuredQuery: {
             from: [{ collectionId: 'users' }],
@@ -75,8 +76,8 @@ async function runAccessTokenBackfill(accessToken) {
             fullName: fields.fullName?.stringValue,
             phone: fields.phone?.stringValue
         });
-        console.log(`[backfill-admin-user-search-index] ${APPLY ? 'Queue' : 'Would index'} ${userId} (${hashes.length} hashes)`);
-        if (!APPLY) continue;
+        console.log(`[backfill-admin-user-search-index] ${apply ? 'Queue' : 'Would index'} ${userId} (${hashes.length} hashes)`);
+        if (!apply) continue;
         writes.push({
             update: {
                 name: `${FIRESTORE_DATABASE_PATH}/documents/adminUserSearch/${userId}`,
@@ -110,7 +111,7 @@ async function runAccessTokenBackfill(accessToken) {
             );
         }
     }
-    console.log(`[backfill-admin-user-search-index] Done. ${APPLY ? `Wrote ${writes.length}` : `Would write ${documentCount}`} index document(s).`);
+    console.log(`[backfill-admin-user-search-index] Done. ${apply ? `Wrote ${writes.length}` : `Would write ${documentCount}`} index document(s).`);
 }
 
 async function main() {
@@ -152,7 +153,9 @@ async function main() {
     console.log(`[backfill-admin-user-search-index] Done. ${APPLY ? `Wrote ${written}` : `Would write ${snapshot.size}`} index document(s).`);
 }
 
-main().catch((error) => {
-    console.error('[backfill-admin-user-search-index] Failed:', error);
-    process.exitCode = 1;
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+    main().catch((error) => {
+        console.error('[backfill-admin-user-search-index] Failed:', error);
+        process.exitCode = 1;
+    });
+}
