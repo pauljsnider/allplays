@@ -2143,6 +2143,15 @@ async function downloadSelectedPng() {
         for (const draft of drafts) {
             await downloadDraftPng(draft);
         }
+        if (!state.demoMode) {
+            try {
+                await setCertificateDefaults(state.teamId, state.shared);
+            } catch (error) {
+                console.warn('[certificates] Unable to save certificate defaults after PNG export:', error);
+                showAlert('PNGs downloaded, but team defaults could not be updated.', 'warning');
+                return;
+            }
+        }
         showAlert(drafts.length === 1 ? 'Downloaded 1 PNG.' : `Downloaded ${drafts.length} PNG files.`, 'success');
     } catch (error) {
         showAlert(error?.message || 'Unable to export PNG. Use Print selected if the image is blocked by browser canvas rules.', 'error');
