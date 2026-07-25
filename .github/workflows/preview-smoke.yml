@@ -22,9 +22,10 @@ jobs:
       web: ${{ steps.filter.outputs.web }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Detect preview-relevant changes
         id: filter
@@ -66,11 +67,16 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Record preview-smoke start
+        run: date -u +%s > "$RUNNER_TEMP/preview-smoke-start-epoch"
+
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
 
       - name: Setup Node
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 22
           cache: npm
@@ -141,7 +147,7 @@ jobs:
 
       - name: Cache Playwright browsers
         id: pw-cache
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-${{ steps.pw-version.outputs.version }}
@@ -180,7 +186,7 @@ jobs:
 
       - name: Upload visual regression diffs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: preview-visual-regression-diffs
           path: test-results/
@@ -189,12 +195,32 @@ jobs:
 
       - name: Upload server log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: preview-smoke-http-log
           path: |
             /tmp/allplays-preview-smoke.log
             /tmp/allplays-app-preview-smoke.log
+
+      - name: Report preview-smoke timing
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ ! -s "$RUNNER_TEMP/preview-smoke-start-epoch" ]; then
+            echo "preview-smoke timing unavailable because setup failed before timing started." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          start_epoch="$(cat "$RUNNER_TEMP/preview-smoke-start-epoch")"
+          end_epoch="$(date -u +%s)"
+          duration_seconds=$((end_epoch - start_epoch))
+          {
+            echo "### preview-smoke timing"
+            echo
+            echo "- Duration: ${duration_seconds}s"
+            echo "- Playwright browser cache hit: ${PLAYWRIGHT_CACHE_HIT:-unknown}"
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          PLAYWRIGHT_CACHE_HIT: ${{ steps.pw-cache.outputs.cache-hit }}
 
   # Required-check aggregate: always runs and reports the branch-protection status
   # named "preview-smoke". Passes when the heavy job succeeded OR was skipped as

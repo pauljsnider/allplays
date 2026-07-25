@@ -68,8 +68,12 @@ describe('mobile-build CI workflow', () => {
 
     it('fails the required gate job when a mobile-relevant PR actually breaks native builds', () => {
         const gateSection = workflow.slice(workflow.indexOf('  mobile-build:'));
-        expect(gateSection).toContain("needs.android-debug.result }}\" != \"success\"");
-        expect(gateSection).toContain("needs.ios-simulator.result }}\" != \"success\"");
+        const gateRun = gateSection.slice(gateSection.indexOf('        run: |'));
+        expect(gateSection).toContain('ANDROID_RESULT: ${{ needs.android-debug.result }}');
+        expect(gateSection).toContain('IOS_RESULT: ${{ needs.ios-simulator.result }}');
+        expect(gateSection).toContain('"$ANDROID_RESULT" != "success"');
+        expect(gateSection).toContain('"$IOS_RESULT" != "success"');
+        expect(gateRun).not.toContain('${{ needs.');
         expect(gateSection).toContain('exit 1');
     });
 
@@ -81,8 +85,11 @@ describe('mobile-build CI workflow', () => {
         // success even though neither native build ran, exactly the gap this job
         // exists to close.
         const gateSection = workflow.slice(workflow.indexOf('  mobile-build:'));
-        const changesResultCheckIndex = gateSection.indexOf('needs.changes.result }}\" != \"success\"');
-        const mobileOutputCheckIndex = gateSection.indexOf('needs.changes.outputs.mobile }}\" != \"true\"');
+        expect(gateSection).toContain('CHANGES_RESULT: ${{ needs.changes.result }}');
+        expect(gateSection).toContain('SHOULD_BUILD_MOBILE: ${{ needs.changes.outputs.mobile }}');
+
+        const changesResultCheckIndex = gateSection.indexOf('"$CHANGES_RESULT" != "success"');
+        const mobileOutputCheckIndex = gateSection.indexOf('"$SHOULD_BUILD_MOBILE" != "true"');
 
         expect(changesResultCheckIndex).toBeGreaterThan(-1);
         expect(mobileOutputCheckIndex).toBeGreaterThan(-1);
