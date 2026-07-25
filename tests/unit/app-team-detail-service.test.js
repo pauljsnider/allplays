@@ -381,15 +381,26 @@ describe('React app team detail model', () => {
                 playerId: 'player-1',
                 email: 'parent@allplays.ai',
                 status: 'emailed',
+                emailStatus: 'emailed',
                 code: 'SIBLING1'
             },
             {
                 playerId: 'player-2',
                 email: 'parent@allplays.ai',
                 status: 'code-created',
+                emailStatus: 'retryable',
+                error: 'mail unavailable',
                 code: 'SIBLING2'
             }
         ]);
+        expect(result.invitationSummary).toEqual({
+            linked: 0,
+            emailed: 1,
+            retryable: 1,
+            failed: 0,
+            retryableRecipients: ['parent@allplays.ai'],
+            failedRecipients: []
+        });
     });
 
     it('retries the existing active parent invite email without creating a second invite', async () => {

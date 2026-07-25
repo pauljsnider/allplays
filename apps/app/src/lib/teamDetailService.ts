@@ -163,10 +163,19 @@ export type RosterImportApplyResultForApp = {
   savedOperations: RosterImportPlannedOperationForApp[];
   deactivatedCount: number;
   reactivatedCount: number;
+  invitationSummary: {
+    linked: number;
+    emailed: number;
+    retryable: number;
+    failed: number;
+    retryableRecipients: string[];
+    failedRecipients: string[];
+  };
   inviteResults: Array<{
     playerId: string;
     email: string;
     status: 'linked' | 'emailed' | 'code-created' | 'failed';
+    emailStatus: 'emailed' | 'retryable' | 'failed';
     code?: string;
     error?: string;
   }>;
@@ -1392,6 +1401,8 @@ export async function applyRosterImportPlanForApp(
           playerId,
           email: request.email,
           status: result.autoLinked ? 'linked' : result.emailSent ? 'emailed' : 'code-created',
+          emailStatus: result.emailSent ? 'emailed' : 'retryable',
+          ...(result.emailError ? { error: result.emailError } : {}),
           ...(result.code ? { code: result.code } : {})
         });
       } catch (error: any) {
@@ -1404,6 +1415,7 @@ export async function applyRosterImportPlanForApp(
           playerId,
           email: request.email,
           status: 'failed',
+          emailStatus: 'failed',
           error: error?.message || 'Invite failed.'
         });
       }
@@ -1411,10 +1423,31 @@ export async function applyRosterImportPlanForApp(
   }
 
   invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
+  const invitationSummary = inviteResults.reduce<RosterImportApplyResultForApp['invitationSummary']>((summary, invite) => {
+    if (invite.status === 'linked') summary.linked += 1;
+    if (invite.emailStatus === 'emailed') summary.emailed += 1;
+    if (invite.emailStatus === 'retryable') {
+      summary.retryable += 1;
+      summary.retryableRecipients.push(invite.email);
+    }
+    if (invite.status === 'failed') {
+      summary.failed += 1;
+      summary.failedRecipients.push(invite.email);
+    }
+    return summary;
+  }, {
+    linked: 0,
+    emailed: 0,
+    retryable: 0,
+    failed: 0,
+    retryableRecipients: [],
+    failedRecipients: []
+  });
   return {
     savedOperations,
     deactivatedCount,
     reactivatedCount,
+    invitationSummary,
     inviteResults
   };
 }

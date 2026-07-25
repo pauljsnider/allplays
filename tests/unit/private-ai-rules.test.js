@@ -52,6 +52,18 @@ describe('private AI Firestore rules', () => {
         }
     });
 
+    it('keeps prepared roster payloads behind current team-manager access', () => {
+        const teamRules = extractRuleBlock(
+            'match /privateAiPendingActions/{actionId}',
+            '// Players subcollection'
+        );
+
+        expect(teamRules).toContain('allow read: if isTeamOwnerOrAdmin(teamId) &&');
+        expect(teamRules).toContain("resource.data.get('status', '') == 'pending'");
+        expect(teamRules).toContain("resource.data.get('expiresAtAt', null) > request.time");
+        expect(teamRules).toContain('allow create, update, delete: if isVerifiedForSensitiveWrite() && isTeamOwnerOrAdmin(teamId);');
+    });
+
     describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('emulator authorization coverage', () => {
         let testEnv;
 
@@ -67,6 +79,14 @@ describe('private AI Firestore rules', () => {
             await testEnv.withSecurityRulesDisabled(async (context) => {
                 const adminDb = context.firestore();
                 await setDoc(doc(adminDb, 'users/platform-admin'), { isAdmin: true });
+                await setDoc(doc(adminDb, 'teams/team-1'), { ownerId: 'owner', name: 'Bears' });
+                await setDoc(doc(adminDb, 'teams/team-1/privateAiPendingActions/seeded'), {
+                    userId: 'owner',
+                    toolName: 'apply_roster_import',
+                    status: 'pending',
+                    expiresAtAt: new Date(Date.now() + 60_000),
+                    args: { operations: [{ privateFamilyContacts: { parents: [{ email: 'private@example.com' }] } }] }
+                });
                 for (const collectionName of privateAiCollections) {
                     await setDoc(doc(adminDb, `users/owner/${collectionName}/seeded`), {
                         content: 'private history'
@@ -107,6 +127,33 @@ describe('private AI Firestore rules', () => {
                 await assertFails(updateDoc(seededRef, { content: 'altered' }));
                 await assertFails(deleteDoc(seededRef));
             }
+        });
+
+        it('allows current team managers and denies removed or unrelated staff from roster payloads', async () => {
+            const ownerDb = testEnv.authenticatedContext('owner').firestore();
+            const unrelatedDb = testEnv.authenticatedContext('former-coach').firestore();
+            const payloadPath = 'teams/team-1/privateAiPendingActions/seeded';
+
+            await assertSucceeds(getDoc(doc(ownerDb, payloadPath)));
+            await assertSucceeds(setDoc(doc(ownerDb, 'teams/team-1/privateAiPendingActions/new'), {
+                userId: 'owner',
+                toolName: 'apply_roster_import',
+                status: 'pending',
+                expiresAtAt: new Date(Date.now() + 60_000),
+                args: { operations: [] }
+            }));
+            await assertSucceeds(setDoc(doc(ownerDb, 'teams/team-1/privateAiPendingActions/expired'), {
+                userId: 'owner',
+                toolName: 'apply_roster_import',
+                status: 'pending',
+                expiresAtAt: new Date(Date.now() - 60_000),
+                args: { operations: [] }
+            }));
+            await assertFails(getDoc(doc(ownerDb, 'teams/team-1/privateAiPendingActions/expired')));
+            await assertFails(getDoc(doc(unrelatedDb, payloadPath)));
+            await assertFails(setDoc(doc(unrelatedDb, 'teams/team-1/privateAiPendingActions/injected'), {
+                args: { operations: [] }
+            }));
         });
     });
 });

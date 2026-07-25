@@ -3156,6 +3156,16 @@ service cloud.firestore {
                         (isTeamOwnerOrAdmin(teamId) && keepsTeamPrivilegeFieldsImmutable()));
       allow delete: if isVerifiedForSensitiveWrite() && isGlobalAdmin();
 
+      // Prepared AI roster payloads contain private youth/contact data and must
+      // remain behind the team's current manager authorization boundary.
+      match /privateAiPendingActions/{actionId} {
+        allow read: if isTeamOwnerOrAdmin(teamId) &&
+                       resource.data.get('status', '') == 'pending' &&
+                       resource.data.get('expiresAtAt', null) is timestamp &&
+                       resource.data.get('expiresAtAt', null) > request.time;
+        allow create, update, delete: if isVerifiedForSensitiveWrite() && isTeamOwnerOrAdmin(teamId);
+      }
+
 	      // Players subcollection
 	      match /players/{playerId} {
 	        // Public player doc is only safe if it contains no sensitive fields.

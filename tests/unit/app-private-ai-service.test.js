@@ -74,10 +74,12 @@ const scheduleMocks = vi.hoisted(() => ({
     loadParentScheduleAssignments: vi.fn(),
     loadParentScheduleEventDetail: vi.fn(),
     loadParentScheduleRideOffers: vi.fn(),
+    loadStaffPracticeAttendance: vi.fn(),
     markParentPracticePacketComplete: vi.fn(),
     requestParentScheduleRideSpot: vi.fn(),
     releaseParentScheduleAssignmentClaim: vi.fn(),
     setParentScheduleRideOfferStatus: vi.fn(),
+    saveStaffPracticeAttendance: vi.fn(),
     submitParentScheduleRsvp: vi.fn(),
     submitParentScheduleRsvpForChildren: vi.fn(),
     summarizeParentScheduleRideOffers: vi.fn()
@@ -87,6 +89,9 @@ const teamMocks = vi.hoisted(() => ({
     applyRosterImportPlanForApp: vi.fn(),
     createRosterParentInviteForApp: vi.fn(),
     loadParentTeamDetail: vi.fn(),
+    loadTeamRosterParentInvites: vi.fn(),
+    loadTeamStaffPermissions: vi.fn(),
+    loadTeamTrackingAdmin: vi.fn(),
     loadRosterImportContextForApp: vi.fn(),
     retryRosterParentInviteEmailForApp: vi.fn()
 }));
@@ -217,6 +222,19 @@ function rosterPreviewRow(overrides = {}) {
     };
 }
 
+async function executeConfirmedToolForTest(user, call, context = {}) {
+    const { generatePrivateAiAnswer, runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+    const staged = await runPrivateAiTool(user, call, context);
+    if (!staged.requiresConfirmation || !staged.confirmationId) return staged;
+    const confirmed = await generatePrivateAiAnswer(
+        user,
+        `confirm ${staged.confirmationId}`,
+        [],
+        { conversationId: context.conversationId }
+    );
+    return confirmed.toolResults[0];
+}
+
 beforeEach(async () => {
     vi.clearAllMocks();
     aiMocks.model.generateContent.mockReset();
@@ -282,6 +300,22 @@ beforeEach(async () => {
     scheduleMocks.loadParentScheduleEventDetail.mockResolvedValue({ events: [] });
     scheduleMocks.markParentPracticePacketComplete.mockResolvedValue({ id: 'user-1__player-1', childId: 'player-1', status: 'completed' });
     scheduleMocks.loadParentScheduleRideOffers.mockResolvedValue([]);
+    scheduleMocks.loadStaffPracticeAttendance.mockResolvedValue({
+        sessionId: 'practice-session-1',
+        teamId: 'team-1',
+        eventId: 'practice-1',
+        rosterSize: 1,
+        checkedInCount: 0,
+        players: [{
+            playerId: 'player-1',
+            displayName: 'Avery',
+            playerNumber: '9',
+            status: 'not_marked',
+            checkedInAt: null,
+            note: null
+        }]
+    });
+    scheduleMocks.saveStaffPracticeAttendance.mockImplementation(async (event, user, attendance) => attendance);
     scheduleMocks.summarizeParentScheduleRideOffers.mockReturnValue({ offerCount: 0, seatsLeft: 0, requests: 0, pending: 0, confirmed: 0, isFull: false });
     teamMocks.loadParentTeamDetail.mockResolvedValue({
         team: { id: 'team-1', name: 'Bears', sport: 'Basketball' },
@@ -305,8 +339,19 @@ beforeEach(async () => {
         savedOperations: [],
         deactivatedCount: 0,
         reactivatedCount: 0,
+        invitationSummary: {
+            linked: 0,
+            emailed: 0,
+            retryable: 0,
+            failed: 0,
+            retryableRecipients: [],
+            failedRecipients: []
+        },
         inviteResults: []
     });
+    teamMocks.loadTeamStaffPermissions.mockResolvedValue({ members: [] });
+    teamMocks.loadTeamTrackingAdmin.mockResolvedValue([]);
+    teamMocks.loadTeamRosterParentInvites.mockResolvedValue([]);
     teamMocks.createRosterParentInviteForApp.mockResolvedValue({
         code: 'ABCD1234',
         inviteUrl: 'https://allplays.ai/app/#/accept-invite?code=ABCD1234',
@@ -871,6 +916,66 @@ describe('private AI service', () => {
         expect(teamMocks.loadParentTeamDetail).toHaveBeenCalledWith('team-1', authUser);
     });
 
+    it('fails closed instead of inferring a team when any accessible-team read fails', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1', 'team-2'],
+            parentPlayerKeys: []
+        };
+        homeMocks.loadParentHome.mockResolvedValue({
+            teams: [
+                { teamId: 'team-1', teamName: 'Bears', players: [] },
+                { teamId: 'team-2', teamName: 'Vipers', players: [] }
+            ],
+            players: []
+        });
+        teamMocks.loadParentTeamDetail.mockImplementation(async (teamId) => {
+            if (teamId === 'team-2') throw new Error('Vipers lookup failed');
+            return {
+                team: { id: 'team-1', name: 'Bears' },
+                players: [],
+                inactivePlayers: [],
+                canManageTeam: true
+            };
+        });
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        await expect(runPrivateAiTool(coachUser, {
+            name: 'update_team_settings',
+            args: { settings: { name: 'Wrong Team' } }
+        })).resolves.toMatchObject({
+            ok: false,
+            error: 'Vipers lookup failed'
+        });
+    });
+
+    it('reports home and team-management read failures instead of presenting empty complete data', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        homeMocks.loadParentHome.mockRejectedValueOnce(new Error('Home unavailable'));
+        await expect(runPrivateAiTool(coachUser, { name: 'get_home' })).resolves.toMatchObject({
+            ok: false,
+            error: 'Home unavailable'
+        });
+
+        homeMocks.loadParentHome.mockResolvedValue({ teams: [], players: [] });
+        teamMocks.loadTeamStaffPermissions.mockRejectedValueOnce(new Error('Staff unavailable'));
+        await expect(runPrivateAiTool(coachUser, {
+            name: 'get_team_management_overview',
+            args: { teamId: 'team-1' }
+        })).resolves.toMatchObject({
+            ok: false,
+            error: 'Staff unavailable'
+        });
+    });
+
     it('combines coach-managed teams with family access in the same tool registry', async () => {
         const coachUser = {
             ...authUser,
@@ -1018,15 +1123,9 @@ describe('private AI service', () => {
         const storedAssistant = firebaseMocks.addDoc.mock.calls
             .map((call) => call[1])
             .find((payload) => payload.role === 'assistant');
-        expect(storedAssistant.artifacts[0].previewRows).toEqual([
-            expect.objectContaining({
-                rowNumber: 1,
-                name: 'Avery',
-                fields: expect.arrayContaining([
-                    expect.objectContaining({ key: 'number', value: '10' })
-                ])
-            })
-        ]);
+        expect(storedAssistant.artifacts[0]).not.toHaveProperty('previewRows');
+        expect(JSON.stringify(storedAssistant.artifacts[0])).not.toContain('Avery');
+        expect(JSON.stringify(storedAssistant.artifacts[0])).not.toContain('number');
     });
 
     it('stores a private attachment receipt without persisting the raw roster file', async () => {
@@ -1053,7 +1152,7 @@ describe('private AI service', () => {
         }, 'roster-chat');
 
         expect(result.userMessage).toMatchObject({
-            text: 'Update the Bears roster.',
+            text: 'Review pasted roster CSV data for import.',
             attachment: {
                 name: 'players.csv',
                 kind: 'csv',
@@ -1064,7 +1163,7 @@ describe('private AI service', () => {
             .map((call) => call[1])
             .find((payload) => payload.role === 'user');
         expect(storedUser).toMatchObject({
-            text: 'Update the Bears roster.',
+            text: 'Review pasted roster CSV data for import.',
             attachment: {
                 name: 'players.csv',
                 kind: 'csv',
@@ -1387,15 +1486,13 @@ describe('private AI service', () => {
             children: [{ playerId: 'player-1', name: 'Avery', teamId: 'team-1', teamName: 'Bears' }],
             events: [futureEvent(), practiceEvent]
         });
-        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
-
-        await runPrivateAiTool(authUser, { name: 'send_team_message', args: { teamId: 'team-1', text: 'See you at practice', __confirmed: true } });
-        await runPrivateAiTool(authUser, { name: 'claim_assignment', args: { eventId: 'game-1', teamId: 'team-1', role: 'Snacks', __confirmed: true } });
-        await runPrivateAiTool(authUser, { name: 'release_assignment', args: { eventId: 'game-1', teamId: 'team-1', role: 'Snacks', __confirmed: true } });
-        const packetResult = await runPrivateAiTool(authUser, { name: 'mark_practice_packet_complete', args: { eventId: 'practice-1', teamId: 'team-1', __confirmed: true } });
-        await runPrivateAiTool(authUser, { name: 'submit_access_request', args: { teamId: 'team-1', playerId: 'player-1', relation: 'Parent', __confirmed: true } });
-        await runPrivateAiTool(authUser, { name: 'revoke_family_share_link', args: { tokenId: 'share-1', __confirmed: true } });
-        await runPrivateAiTool(authUser, { name: 'update_family_share_calendars', args: { tokenId: 'share-1', extraCalendarUrls: ['https://calendar.example/feed.ics'], __confirmed: true } });
+        await executeConfirmedToolForTest(authUser, { name: 'send_team_message', args: { teamId: 'team-1', text: 'See you at practice' } });
+        await executeConfirmedToolForTest(authUser, { name: 'claim_assignment', args: { eventId: 'game-1', teamId: 'team-1', role: 'Snacks' } });
+        await executeConfirmedToolForTest(authUser, { name: 'release_assignment', args: { eventId: 'game-1', teamId: 'team-1', role: 'Snacks' } });
+        const packetResult = await executeConfirmedToolForTest(authUser, { name: 'mark_practice_packet_complete', args: { eventId: 'practice-1', teamId: 'team-1' } });
+        await executeConfirmedToolForTest(authUser, { name: 'submit_access_request', args: { teamId: 'team-1', playerId: 'player-1', relation: 'Parent' } });
+        await executeConfirmedToolForTest(authUser, { name: 'revoke_family_share_link', args: { tokenId: 'share-1' } });
+        await executeConfirmedToolForTest(authUser, { name: 'update_family_share_calendars', args: { tokenId: 'share-1', extraCalendarUrls: ['https://calendar.example/feed.ics'] } });
 
         expect(chatMocks.sendTeamChatMessage).toHaveBeenCalledWith(expect.objectContaining({
             teamId: 'team-1',
@@ -1423,15 +1520,13 @@ describe('private AI service', () => {
             children: [{ playerId: 'player-1', name: 'Avery', teamId: 'team-1', teamName: 'Bears' }],
             events: [practiceEvent]
         });
-        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
-
-        await expect(runPrivateAiTool(authUser, { name: 'revoke_family_share_link', args: { __confirmed: true } })).resolves.toMatchObject({
+        await expect(executeConfirmedToolForTest(authUser, { name: 'revoke_family_share_link', args: {} })).resolves.toMatchObject({
             ok: false,
             error: 'tokenId is required for family share changes.'
         });
-        await expect(runPrivateAiTool(authUser, {
+        await expect(executeConfirmedToolForTest(authUser, {
             name: 'mark_practice_packet_complete',
-            args: { eventId: 'practice-1', teamId: 'team-1', playerName: 'Missing Child', __confirmed: true }
+            args: { eventId: 'practice-1', teamId: 'team-1', playerName: 'Missing Child' }
         })).resolves.toMatchObject({
             ok: false,
             error: 'No matching child was found for this practice packet.'
@@ -1441,11 +1536,9 @@ describe('private AI service', () => {
     });
 
     it('executes confirmed AI player incentive writes', async () => {
-        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
-
-        await runPrivateAiTool(authUser, { name: 'save_player_incentive_rule', args: { teamId: 'team-1', playerId: 'player-1', statKey: 'goals', amount: 2, __confirmed: true } });
-        await runPrivateAiTool(authUser, { name: 'set_player_incentive_cap', args: { teamId: 'team-1', playerId: 'player-1', maxPerGameAmount: 5, __confirmed: true } });
-        await runPrivateAiTool(authUser, { name: 'mark_player_incentive_paid', args: { teamId: 'team-1', playerId: 'player-1', gameId: 'game-1', amount: 4, __confirmed: true } });
+        await executeConfirmedToolForTest(authUser, { name: 'save_player_incentive_rule', args: { teamId: 'team-1', playerId: 'player-1', statKey: 'goals', amount: 2 } });
+        await executeConfirmedToolForTest(authUser, { name: 'set_player_incentive_cap', args: { teamId: 'team-1', playerId: 'player-1', maxPerGameAmount: 5 } });
+        await executeConfirmedToolForTest(authUser, { name: 'mark_player_incentive_paid', args: { teamId: 'team-1', playerId: 'player-1', gameId: 'game-1', amount: 4 } });
 
         expect(playerMocks.saveParentPlayerIncentiveRule).toHaveBeenCalledWith(expect.objectContaining({
             teamId: 'team-1',
@@ -1508,6 +1601,33 @@ describe('private AI service', () => {
                 })
             })
         );
+    });
+
+    it('ignores planner-supplied confirmation flags and still stages writes', async () => {
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await runPrivateAiTool(authUser, {
+            name: 'update_rsvp',
+            args: {
+                teamId: 'team-1',
+                eventId: 'game-1',
+                playerId: 'player-1',
+                response: 'going',
+                __confirmed: true
+            }
+        });
+
+        expect(result).toMatchObject({
+            ok: true,
+            requiresConfirmation: true,
+            confirmationId: expect.stringMatching(/^ai_/)
+        });
+        expect(scheduleMocks.submitParentScheduleRsvp).not.toHaveBeenCalled();
+        const pendingWrite = firebaseMocks.setDoc.mock.calls.find((call) => (
+            call[0]?.path?.includes('privateAiPendingActions')
+            && call[1]?.toolName === 'update_rsvp'
+        ));
+        expect(pendingWrite[1].args).not.toHaveProperty('__confirmed');
     });
 
     it('executes confirmed pending RSVP writes through the app schedule service', async () => {
@@ -1621,20 +1741,186 @@ describe('private AI service', () => {
         });
 
         expect(summary).toMatchObject({ total: 1, add: 1, errors: 0 });
-        expect(transactionSet).toHaveBeenCalledWith(
-            expect.anything(),
+        expect(transactionSet).toHaveBeenNthCalledWith(
+            1,
+            expect.objectContaining({ path: ['users', 'user-1', 'privateAiPendingActions', staged.confirmationId] }),
+            expect.objectContaining({
+                args: {
+                    teamId: 'team-1',
+                    source: '',
+                    operationSummary: expect.objectContaining({ total: 1, add: 1 }),
+                    validationErrorCount: 0
+                },
+                previewSummary: expect.objectContaining({ total: 1, errors: 0 })
+            }),
+            { merge: true }
+        );
+        expect(transactionSet).toHaveBeenNthCalledWith(
+            2,
+            expect.objectContaining({ path: ['teams', 'team-1', 'privateAiPendingActions', staged.confirmationId] }),
             expect.objectContaining({
                 args: {
                     teamId: 'team-1',
                     operations: [revisedOperation]
-                },
-                previewSummary: expect.objectContaining({ total: 1, errors: 0 })
+                }
             }),
             { merge: true }
         );
 
         await generatePrivateAiAnswer(coachUser, `confirm ${staged.confirmationId}`, [], { conversationId: 'roster-chat' });
         expect(teamMocks.applyRosterImportPlanForApp).toHaveBeenCalledWith('team-1', coachUser, [revisedOperation]);
+    });
+
+    it('stores private roster payloads at team scope and reports invitation delivery outcomes', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        homeMocks.loadParentHome.mockResolvedValue({ teams: [], players: [] });
+        const operation = {
+            type: 'add',
+            payload: {
+                name: 'Private Player',
+                medicalInfo: 'Private medical note'
+            },
+            privateFamilyContacts: {
+                parents: [{ email: 'retry@example.com', relation: 'Parent' }]
+            },
+            inviteRequests: [
+                { email: 'retry@example.com', relation: 'Parent' },
+                { email: 'failed@example.com', relation: 'Guardian' }
+            ],
+            errors: []
+        };
+        teamMocks.applyRosterImportPlanForApp.mockResolvedValueOnce({
+            savedOperations: [{ ...operation, playerId: 'player-private' }],
+            deactivatedCount: 0,
+            reactivatedCount: 0,
+            invitationSummary: {
+                linked: 0,
+                emailed: 0,
+                retryable: 1,
+                failed: 1,
+                retryableRecipients: ['retry@example.com'],
+                failedRecipients: ['failed@example.com']
+            },
+            inviteResults: [
+                { playerId: 'player-private', email: 'retry@example.com', status: 'code-created' },
+                { playerId: 'player-private', email: 'failed@example.com', status: 'failed', error: 'Invite failed' }
+            ]
+        });
+        const { generatePrivateAiAnswer, runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const staged = await runPrivateAiTool(coachUser, {
+            name: 'apply_roster_import',
+            args: {
+                teamId: 'team-1',
+                __preparedRosterOperations: [operation]
+            }
+        }, { conversationId: 'private-roster' });
+
+        const userPendingWrite = firebaseMocks.setDoc.mock.calls.find((call) => (
+            call[0]?.path?.join('/') === `users/user-1/privateAiPendingActions/${staged.confirmationId}`
+            && call[1]?.toolName === 'apply_roster_import'
+        ));
+        const teamPendingWrite = firebaseMocks.setDoc.mock.calls.find((call) => (
+            call[0]?.path?.join('/') === `teams/team-1/privateAiPendingActions/${staged.confirmationId}`
+            && call[1]?.toolName === 'apply_roster_import'
+        ));
+        expect(userPendingWrite[1]).toMatchObject({
+            payloadScope: 'team',
+            teamId: 'team-1',
+            args: {
+                teamId: 'team-1',
+                operationSummary: expect.objectContaining({ total: 1, add: 1, invitations: 2 })
+            }
+        });
+        expect(JSON.stringify(userPendingWrite[1])).not.toContain('Private Player');
+        expect(JSON.stringify(userPendingWrite[1])).not.toContain('Private medical note');
+        expect(JSON.stringify(userPendingWrite[1])).not.toContain('retry@example.com');
+        expect(JSON.stringify(teamPendingWrite[1])).toContain('Private medical note');
+        expect(JSON.stringify(teamPendingWrite[1])).toContain('retry@example.com');
+
+        const confirmed = await generatePrivateAiAnswer(
+            coachUser,
+            `confirm ${staged.confirmationId}`,
+            [],
+            { conversationId: 'private-roster' }
+        );
+
+        expect(confirmed.answer).toContain('1 operation');
+        expect(confirmed.answer).toContain('1 retryable');
+        expect(confirmed.answer).toContain('1 failed');
+        expect(confirmed.answer).toContain('retry@example.com');
+        expect(confirmed.answer).toContain('failed@example.com');
+        const auditWrite = firebaseMocks.setDoc.mock.calls.find((call) => call[0]?.path?.includes('privateAiActionAudit'));
+        expect(JSON.stringify(auditWrite[1])).not.toContain('Private medical note');
+        expect(JSON.stringify(auditWrite[1])).not.toContain('retry@example.com');
+        expect(firebaseMocks.setDoc).toHaveBeenCalledWith(
+            expect.objectContaining({ path: ['teams', 'team-1', 'privateAiPendingActions', staged.confirmationId] }),
+            expect.objectContaining({ args: {}, status: 'completed' }),
+            { merge: true }
+        );
+    });
+
+    it('reloads roster confirmation payloads only from the authorized team-scoped document', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        const operation = {
+            type: 'update',
+            playerId: 'player-1',
+            payload: { medicalInfo: 'Team-scoped note' },
+            errors: []
+        };
+        homeMocks.loadParentHome.mockResolvedValue({ teams: [], players: [] });
+        const { generatePrivateAiAnswer, resetPrivateAiModel } = await import('../../apps/app/src/lib/privateAiService.ts');
+        resetPrivateAiModel();
+        firebaseMocks.getDoc.mockImplementation(async (reference) => {
+            const path = reference?.path?.join('/');
+            if (path === 'users/user-1/privateAiPendingActions/ai_reload1') {
+                return {
+                    exists: () => true,
+                    data: () => ({
+                        status: 'pending',
+                        userId: 'user-1',
+                        toolName: 'apply_roster_import',
+                        args: {
+                            teamId: 'team-1',
+                            operationSummary: { total: 1, update: 1 }
+                        },
+                        payloadScope: 'team',
+                        teamId: 'team-1',
+                        expiresAt: new Date(Date.now() + 60_000).toISOString()
+                    })
+                };
+            }
+            if (path === 'teams/team-1/privateAiPendingActions/ai_reload1') {
+                return {
+                    exists: () => true,
+                    data: () => ({
+                        status: 'pending',
+                        userId: 'user-1',
+                        toolName: 'apply_roster_import',
+                        args: { teamId: 'team-1', operations: [operation] }
+                    })
+                };
+            }
+            return { exists: () => false, data: () => null };
+        });
+
+        const confirmed = await generatePrivateAiAnswer(coachUser, 'confirm ai_reload1');
+
+        expect(teamMocks.applyRosterImportPlanForApp).toHaveBeenCalledWith('team-1', coachUser, [operation]);
+        expect(confirmed.toolResults[0]).toMatchObject({ ok: true, confirmationId: 'ai_reload1' });
+        expect(firebaseMocks.getDoc).toHaveBeenCalledWith(expect.objectContaining({
+            path: ['teams', 'team-1', 'privateAiPendingActions', 'ai_reload1']
+        }));
     });
 
     it('previews a grouped schedule import and executes it only once after confirmation', async () => {
@@ -1726,6 +2012,160 @@ describe('private AI service', () => {
         expect(repeated.answer).toContain('could not complete');
         expect(scheduleMocks.createScheduleImportGame).toHaveBeenCalledTimes(1);
         expect(scheduleMocks.createScheduleImportPractice).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports partial and total schedule-import failures with failed row numbers', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        homeMocks.loadParentHome.mockResolvedValue({ teams: [], players: [] });
+        const rows = [
+            {
+                rowNumber: 1,
+                eventType: 'game',
+                startsAt: '2026-07-30T18:00:00.000Z',
+                opponent: 'Rockets'
+            },
+            {
+                rowNumber: 2,
+                eventType: 'practice',
+                startsAt: '2026-07-31T18:00:00.000Z',
+                title: 'Practice'
+            }
+        ];
+        const { generatePrivateAiAnswer, runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        scheduleMocks.createScheduleImportPractice.mockRejectedValueOnce(new Error('Practice save failed'));
+        const partial = await runPrivateAiTool(coachUser, {
+            name: 'apply_schedule_import',
+            args: { teamId: 'team-1', __preparedScheduleRows: rows }
+        }, { conversationId: 'partial-schedule' });
+        const partialResult = await generatePrivateAiAnswer(
+            coachUser,
+            `confirm ${partial.confirmationId}`,
+            [],
+            { conversationId: 'partial-schedule' }
+        );
+
+        expect(partialResult.answer).toContain('partially completed');
+        expect(partialResult.answer).toContain('1 imported and 1 failed');
+        expect(partialResult.answer).toContain('rows 2');
+        expect(partialResult.toolResults[0]).toMatchObject({
+            ok: true,
+            data: {
+                importedCount: 1,
+                failedCount: 1,
+                failures: [{ rowNumber: 2, error: 'Practice save failed' }]
+            }
+        });
+
+        scheduleMocks.createScheduleImportGame.mockRejectedValueOnce(new Error('Game save failed'));
+        scheduleMocks.createScheduleImportPractice.mockRejectedValueOnce(new Error('Practice save failed'));
+        const failed = await runPrivateAiTool(coachUser, {
+            name: 'apply_schedule_import',
+            args: { teamId: 'team-1', __preparedScheduleRows: rows }
+        }, { conversationId: 'failed-schedule' });
+        const failedResult = await generatePrivateAiAnswer(
+            coachUser,
+            `confirm ${failed.confirmationId}`,
+            [],
+            { conversationId: 'failed-schedule' }
+        );
+
+        expect(failedResult.answer).toContain('could not complete');
+        expect(failedResult.answer).toContain('no rows were saved');
+        expect(failedResult.answer).toContain('Failed rows: 1, 2');
+        expect(failedResult.toolResults[0]).toMatchObject({ ok: false });
+    });
+
+    it('rejects unknown attendance players and ignores AI-supplied session metadata', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        homeMocks.loadParentHome.mockResolvedValue({ teams: [], players: [] });
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            children: [],
+            events: [futureEvent({
+                id: 'practice-1',
+                eventKey: 'team-1:practice-1:',
+                type: 'practice',
+                practiceSessionId: 'practice-session-1',
+                childId: '',
+                childName: '',
+                isTeamAdmin: true
+            })]
+        });
+        const { generatePrivateAiAnswer, runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const unknown = await runPrivateAiTool(coachUser, {
+            name: 'save_practice_attendance',
+            args: {
+                teamId: 'team-1',
+                eventId: 'practice-1',
+                attendance: {
+                    sessionId: 'forged-session',
+                    rosterSize: 999,
+                    players: [{ playerId: 'not-on-roster', status: 'present' }]
+                }
+            }
+        }, { conversationId: 'unknown-attendance' });
+        const unknownResult = await generatePrivateAiAnswer(
+            coachUser,
+            `confirm ${unknown.confirmationId}`,
+            [],
+            { conversationId: 'unknown-attendance' }
+        );
+
+        expect(unknownResult.answer).toContain('not on the current practice roster');
+        expect(scheduleMocks.saveStaffPracticeAttendance).not.toHaveBeenCalled();
+
+        const corrected = await runPrivateAiTool(coachUser, {
+            name: 'save_practice_attendance',
+            args: {
+                teamId: 'team-1',
+                eventId: 'practice-1',
+                attendance: {
+                    sessionId: 'forged-session',
+                    teamId: 'forged-team',
+                    eventId: 'forged-event',
+                    rosterSize: 999,
+                    checkedInCount: 999,
+                    players: [{ playerId: 'player-1', status: 'late', note: 'Traffic' }]
+                }
+            }
+        }, { conversationId: 'valid-attendance' });
+        const validResult = await generatePrivateAiAnswer(
+            coachUser,
+            `confirm ${corrected.confirmationId}`,
+            [],
+            { conversationId: 'valid-attendance' }
+        );
+
+        expect(validResult.toolResults[0]).toMatchObject({ ok: true });
+        expect(scheduleMocks.saveStaffPracticeAttendance).toHaveBeenCalledWith(
+            expect.objectContaining({ id: 'practice-1', teamId: 'team-1' }),
+            coachUser,
+            expect.objectContaining({
+                sessionId: 'practice-session-1',
+                teamId: 'team-1',
+                eventId: 'practice-1',
+                rosterSize: 1,
+                checkedInCount: 0,
+                players: [expect.objectContaining({
+                    playerId: 'player-1',
+                    displayName: 'Avery',
+                    playerNumber: '9',
+                    status: 'late',
+                    note: 'Traffic'
+                })]
+            })
+        );
     });
 
     it('lets a natural yes confirm the latest pending parent workflow write', async () => {
@@ -1944,15 +2384,12 @@ describe('private AI service', () => {
     });
 
     it('preserves omitted private player profile fields during AI profile writes', async () => {
-        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
-
-        await expect(runPrivateAiTool(authUser, {
+        await expect(executeConfirmedToolForTest(authUser, {
             name: 'update_player_profile',
             args: {
                 teamId: 'team-1',
                 playerId: 'player-1',
-                emergencyContactPhone: '555-0199',
-                __confirmed: true
+                emergencyContactPhone: '555-0199'
             }
         })).resolves.toMatchObject({
             name: 'update_player_profile',

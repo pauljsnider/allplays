@@ -228,6 +228,7 @@ export type PrivateAiSendResult = {
 const privateAiCollectionName = 'privateAiMessages';
 const privateAiConversationCollectionName = 'privateAiConversations';
 const privateAiPendingActionCollectionName = 'privateAiPendingActions';
+const teamPrivateAiPendingActionCollectionName = 'privateAiPendingActions';
 const logger = createLogger('private-ai');
 export const DEFAULT_PRIVATE_AI_CONVERSATION_ID = 'default';
 export const DRAFT_PRIVATE_AI_CONVERSATION_ID = '__draft__';
@@ -240,6 +241,7 @@ const maxPromptCharacters = 1800;
 const maxAnswerCharacters = 2400;
 const confirmationIdPrefix = 'ai';
 export const maxPrivateAiAttachmentBytes = 10 * 1024 * 1024;
+const confirmedWriteExecutionToken = Symbol('confirmed-private-ai-write');
 
 let aiModelCache: any = null;
 const pendingActionMemory = new Map<string, PrivateAiPendingAction>();
@@ -256,6 +258,8 @@ type PrivateAiPendingAction = {
   conversationId?: string;
   confirmationGroupId?: string;
   previewSummary?: Record<string, unknown>;
+  teamId?: string;
+  payloadScope?: 'user' | 'team';
   expiresAt: string;
   status: 'pending' | 'executing' | 'completed' | 'failed' | 'superseded';
 };
@@ -278,6 +282,10 @@ type PrivateAiToolDefinition = {
 type PrivateAiToolContext = {
   conversationId?: string;
   confirmationGroupId?: string;
+};
+
+type InternalPrivateAiToolContext = PrivateAiToolContext & {
+  confirmedWriteToken?: symbol;
 };
 
 const pendingActionLifetimeMs = 30 * 60 * 1000;
@@ -873,7 +881,11 @@ export async function sendPrivateAiRosterImportMessage(
     : input.imageFile
       ? getPrivateAiAttachmentKind(input.imageFile) === 'pdf' ? 'roster PDF' : 'roster image'
       : 'roster instructions';
-  const question = compactText(input.text) || `Review the attached ${sourceLabel} for roster import.`;
+  const question = input.csvText
+    ? 'Review pasted roster CSV data for import.'
+    : input.imageFile
+      ? `Review the attached ${sourceLabel} for roster import.`
+      : 'Review roster instructions for import.';
   const activeConversationId = requestedConversationId === DRAFT_PRIVATE_AI_CONVERSATION_ID
     ? await createPrivateAiConversation(user, buildConversationTitle(question)).then((conversation) => conversation.id)
     : requestedConversationId;
@@ -1026,6 +1038,7 @@ export async function revisePrivateAiRosterImportProposal(
   };
   const nextSummary = `Roster import | Team: ${teamId} | ${rosterSummary.total} operations | ${rosterSummary.invitations} invitations${validationErrors.length ? ` | ${validationErrors.length} errors` : ''}`;
   const pendingRef = doc(db, 'users', user.uid, privateAiPendingActionCollectionName, confirmationId);
+  const teamPayloadRef = doc(db, 'teams', teamId, teamPrivateAiPendingActionCollectionName, confirmationId);
 
   const updated = await runTransaction(db, async (transaction: any) => {
     const snapshot = await transaction.get(pendingRef);
@@ -1036,11 +1049,11 @@ export async function revisePrivateAiRosterImportProposal(
       || data.status !== 'pending'
       || compactText(data.userId) !== user.uid
       || compactText(data.toolName) !== 'apply_roster_import'
-      || compactText(isPlainObject(data.args) ? data.args.teamId : '') !== teamId
+      || compactText(data.teamId || (isPlainObject(data.args) ? data.args.teamId : '')) !== teamId
       || Date.parse(compactText(data.expiresAt)) <= Date.now()
     ) return false;
     transaction.set(pendingRef, {
-      args: nextArgs,
+      args: sanitizePendingActionArgsForUserStorage('apply_roster_import', nextArgs),
       summary: nextSummary,
       previewSummary: artifactSummary,
       editedAt: serverTimestamp(),
@@ -1048,6 +1061,14 @@ export async function revisePrivateAiRosterImportProposal(
         lastEditedBy: user.uid,
         lastEditedAt: new Date().toISOString()
       }
+    }, { merge: true });
+    transaction.set(teamPayloadRef, {
+      userId: user.uid,
+      toolName: 'apply_roster_import',
+      args: nextArgs,
+      status: 'pending',
+      editedAt: serverTimestamp(),
+      expiresAt: pending.expiresAt
     }, { merge: true });
     return true;
   });
@@ -1169,17 +1190,26 @@ export function parsePrivateAiPlannerResponse(text: string): { answer: string; t
 }
 
 export async function runPrivateAiTool(user: AuthUser, call: PrivateAiToolCall, context: PrivateAiToolContext = {}): Promise<PrivateAiToolResult> {
+  return runPrivateAiToolInternal(user, call, context);
+}
+
+async function runPrivateAiToolInternal(
+  user: AuthUser,
+  call: PrivateAiToolCall,
+  context: InternalPrivateAiToolContext = {}
+): Promise<PrivateAiToolResult> {
   const name = compactText(call.name);
-  const args = isPlainObject(call.args) ? call.args : {};
+  const args = sanitizeToolCallArgs(isPlainObject(call.args) ? call.args : {});
   const definition = getPrivateAiToolDefinition(name);
   let scheduleImportTimer: ReturnType<typeof startWorkflowTimer> | null = null;
+  const isConfirmedWrite = context.confirmedWriteToken === confirmedWriteExecutionToken;
 
   try {
     if (!definition) {
       return { name, ok: false, error: `Unsupported tool: ${name}` };
     }
 
-    if (definition.mode === 'write' && args.__confirmed !== true) {
+    if (definition.mode === 'write' && !isConfirmedWrite) {
       const prepared = definition.prepare ? await definition.prepare(user, args) : { args };
       const pending = await savePrivateAiPendingAction(user, definition, prepared.args, context, prepared);
       return {
@@ -1195,7 +1225,7 @@ export async function runPrivateAiTool(user: AuthUser, call: PrivateAiToolCall, 
       };
     }
 
-    if (definition.name === 'apply_schedule_import' && args.__confirmed === true) {
+    if (definition.name === 'apply_schedule_import' && isConfirmedWrite) {
       scheduleImportTimer = startWorkflowTimer(WORKFLOW_TIMING.scheduleImport, {
         teamId: compactText(args.teamId),
         rowCount: Array.isArray(args.rows) ? args.rows.length : 0
@@ -1237,7 +1267,7 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
     aliases: ['list_tasks'],
     resolve: async (user) => {
       const [home, teams] = await Promise.all([
-        loadParentHome(user).catch(() => ({ teams: [], players: [] } as any)),
+        loadParentHome(user),
         loadAccessibleAiTeams(user)
       ]);
       return {
@@ -1632,6 +1662,10 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
       if (rows.length > 3 && createdIds.length) {
         await finalizeScheduleImportBatch(teamId, batchId, createdIds.length, user).catch(() => {});
       }
+      if (!createdIds.length && failures.length) {
+        const failedRows = failures.map((failure) => failure.rowNumber).join(', ');
+        throw new Error(`Schedule import failed: no rows were saved. Failed row${failures.length === 1 ? '' : 's'}: ${failedRows}.`);
+      }
       return {
         teamId,
         importedCount: createdIds.length,
@@ -2023,9 +2057,9 @@ function buildCoachAdminPrivateAiToolDefinitions(): PrivateAiToolDefinition[] {
         const service = await import('./teamDetailService');
         const [detail, staff, tracking, invites] = await Promise.all([
           service.loadParentTeamDetail(teamId, user),
-          service.loadTeamStaffPermissions(teamId, user).catch(() => null),
-          service.loadTeamTrackingAdmin(teamId, user).catch(() => []),
-          service.loadTeamRosterParentInvites(teamId, user).catch(() => [])
+          service.loadTeamStaffPermissions(teamId, user),
+          service.loadTeamTrackingAdmin(teamId, user),
+          service.loadTeamRosterParentInvites(teamId, user)
         ]);
         return {
           detail: summarizeTeamDetail(detail),
@@ -2211,18 +2245,27 @@ function buildCoachAdminPrivateAiToolDefinitions(): PrivateAiToolDefinition[] {
           throw new Error('At least one player attendance change is required.');
         }
         const playersById = new Map(currentAttendance.players.map((player) => [player.playerId, player]));
-        suppliedPlayers.forEach((player) => {
+        suppliedPlayers.forEach((player, index) => {
           const playerId = compactText(player?.playerId);
-          if (!playerId) return;
+          if (!playerId) {
+            throw new Error(`Attendance change ${index + 1} is missing a player ID.`);
+          }
+          const currentPlayer = playersById.get(playerId);
+          if (!currentPlayer) {
+            throw new Error(`Player ${playerId} is not on the current practice roster.`);
+          }
+          const status = compactText(player?.status).toLowerCase();
+          if (!['not_marked', 'present', 'late', 'absent'].includes(status)) {
+            throw new Error(`Attendance status for ${currentPlayer.displayName || playerId} must be present, late, absent, or not_marked.`);
+          }
           playersById.set(playerId, {
-            ...(playersById.get(playerId) || {}),
-            ...player,
-            playerId
-          } as any);
+            ...currentPlayer,
+            status,
+            ...(hasOwn(player, 'note') ? { note: compactText(player.note) || null } : {})
+          } as typeof currentPlayer);
         });
         const attendance = {
           ...currentAttendance,
-          ...attendanceInput,
           players: Array.from(playersById.values())
         };
         return service.saveStaffPracticeAttendance(event, user, attendance as any);
@@ -2530,22 +2573,49 @@ async function savePrivateAiPendingAction(
   const conversationId = normalizeConversationId(context.conversationId);
   const confirmationGroupId = compactText(context.confirmationGroupId);
   await supersedeOlderPendingActions(user, conversationId, confirmationGroupId);
+  const preparedArgs = sanitizePendingActionPayloadArgs(args);
+  const teamId = compactText(args.teamId);
+  const payloadScope = isTeamScopedPrivateAiPayload(definition.name) ? 'team' : 'user';
+  if (payloadScope === 'team' && !teamId) {
+    throw new Error('A managed team is required to securely prepare this AI action.');
+  }
   const pending: PrivateAiPendingAction = {
     id,
     userId: user.uid,
     toolName: definition.name,
-    args: sanitizePendingActionArgs(args),
+    args: preparedArgs,
     summary: compactText(prepared.summary) || buildPendingActionSummary(definition, args),
     createdAt: createdAt.toISOString(),
     conversationId,
     confirmationGroupId,
     previewSummary: prepared.previewSummary,
+    teamId: teamId || undefined,
+    payloadScope,
     expiresAt: new Date(createdAt.getTime() + pendingActionLifetimeMs).toISOString(),
     status: 'pending'
   };
+  if (payloadScope === 'team') {
+    await setDoc(doc(db, 'teams', teamId, teamPrivateAiPendingActionCollectionName, id), {
+      userId: user.uid,
+      toolName: definition.name,
+      args: preparedArgs,
+      status: pending.status,
+      createdAt: serverTimestamp(),
+      clientCreatedAt: pending.createdAt,
+      expiresAt: pending.expiresAt,
+      expiresAtAt: new Date(pending.expiresAt),
+      audit: {
+        preparedBy: user.uid,
+        preparedAt: pending.createdAt,
+        conversationId,
+        confirmationGroupId
+      }
+    });
+  }
   pendingActionMemory.set(`${user.uid}:${id}`, pending);
   await setDoc(doc(db, 'users', user.uid, privateAiPendingActionCollectionName, id), {
     ...pending,
+    args: sanitizePendingActionArgsForUserStorage(definition.name, preparedArgs),
     createdAt: serverTimestamp(),
     clientCreatedAt: pending.createdAt,
     expiresAt: pending.expiresAt,
@@ -2581,6 +2651,7 @@ async function supersedeOlderPendingActions(
       status: 'superseded',
       supersededAt: serverTimestamp()
     }, { merge: true }).catch(() => {}));
+    writes.push(clearTeamScopedPrivateAiPayload(user, pending, 'superseded'));
   });
   const snapshot = await getDocs(query(
     collection(db, 'users', user.uid, privateAiPendingActionCollectionName),
@@ -2602,6 +2673,15 @@ async function supersedeOlderPendingActions(
       status: 'superseded',
       supersededAt: serverTimestamp()
     }, { merge: true }).catch(() => {}));
+    const teamId = compactText(data.teamId);
+    if (data.payloadScope === 'team' && teamId) {
+      writes.push(setDoc(doc(db, 'teams', teamId, teamPrivateAiPendingActionCollectionName, pendingId), {
+        args: {},
+        status: 'superseded',
+        payloadClearedAt: serverTimestamp(),
+        payloadClearedBy: user.uid
+      }, { merge: true }).catch(() => {}));
+    }
   });
   await Promise.all(writes);
 }
@@ -2663,12 +2743,11 @@ async function executeConfirmedPrivateAiAction(user: AuthUser, confirmationId: s
     return { name: pending.toolName, ok: false, error: 'That AI change was already confirmed, superseded, or is currently running.' };
   }
 
-  const result = await runPrivateAiTool(user, {
+  const result = await runPrivateAiToolInternal(user, {
     name: definition.name,
-    args: {
-      ...pending.args,
-      __confirmed: true
-    }
+    args: pending.args
+  }, {
+    confirmedWriteToken: confirmedWriteExecutionToken
   });
   if (result.ok) {
     pending.status = 'completed';
@@ -2678,6 +2757,7 @@ async function executeConfirmedPrivateAiAction(user: AuthUser, confirmationId: s
       completedAt: serverTimestamp(),
       completedBy: user.uid
     }, { merge: true }).catch(() => {});
+    await clearTeamScopedPrivateAiPayload(user, pending, 'completed');
   } else {
     pending.status = 'failed';
     pendingActionMemory.set(`${user.uid}:${id}`, pending);
@@ -2686,11 +2766,38 @@ async function executeConfirmedPrivateAiAction(user: AuthUser, confirmationId: s
       failedAt: serverTimestamp(),
       failure: result.error || 'Action failed.'
     }, { merge: true }).catch(() => {});
+    await clearTeamScopedPrivateAiPayload(user, pending, 'failed');
   }
   return {
     ...result,
     confirmationId: id
   };
+}
+
+async function clearTeamScopedPrivateAiPayload(
+  user: AuthUser,
+  pending: PrivateAiPendingAction,
+  status: 'completed' | 'failed' | 'superseded'
+) {
+  if (pending.payloadScope !== 'team' || !pending.teamId) return;
+  await setDoc(doc(
+    db,
+    'teams',
+    pending.teamId,
+    teamPrivateAiPendingActionCollectionName,
+    pending.id
+  ), {
+    args: {},
+    status,
+    payloadClearedAt: serverTimestamp(),
+    payloadClearedBy: user.uid
+  }, { merge: true }).catch((error) => {
+    logger.warn('Unable to clear team-scoped private AI payload.', {
+      error,
+      teamId: pending.teamId,
+      confirmationId: pending.id
+    });
+  });
 }
 
 async function loadPrivateAiPendingAction(user: AuthUser, confirmationId: string): Promise<PrivateAiPendingAction | null> {
@@ -2702,16 +2809,44 @@ async function loadPrivateAiPendingAction(user: AuthUser, confirmationId: string
   const data = typeof snapshot?.data === 'function' ? snapshot.data() : null;
   if (!snapshot?.exists?.() || !isPlainObject(data) || data.status !== 'pending') return null;
   if (compactText(data.userId) !== user.uid) return null;
+  const toolName = compactText(data.toolName);
+  const teamId = compactText(data.teamId);
+  const payloadScope = data.payloadScope === 'team' ? 'team' : 'user';
+  let args = isPlainObject(data.args) ? data.args : {};
+  if (payloadScope === 'team') {
+    if (!teamId) return null;
+    const detail = await loadParentTeamDetail(teamId, user).catch(() => null);
+    if (!detail?.team || detail.canManageTeam !== true) return null;
+    const payloadSnapshot = await getDoc(doc(
+      db,
+      'teams',
+      teamId,
+      teamPrivateAiPendingActionCollectionName,
+      confirmationId
+    )).catch(() => null);
+    const payload = typeof payloadSnapshot?.data === 'function' ? payloadSnapshot.data() : null;
+    if (
+      !payloadSnapshot?.exists?.()
+      || !isPlainObject(payload)
+      || payload.status !== 'pending'
+      || compactText(payload.userId) !== user.uid
+      || compactText(payload.toolName) !== toolName
+      || !isPlainObject(payload.args)
+    ) return null;
+    args = payload.args;
+  }
   return {
     id: confirmationId,
     userId: user.uid,
-    toolName: compactText(data.toolName),
-    args: isPlainObject(data.args) ? data.args : {},
+    toolName,
+    args,
     summary: compactText(data.summary),
     createdAt: normalizeScheduleDate(data.createdAt)?.toISOString() || compactText(data.clientCreatedAt) || new Date().toISOString(),
     conversationId: normalizeConversationId(data.conversationId),
     confirmationGroupId: compactText(data.confirmationGroupId),
     previewSummary: isPlainObject(data.previewSummary) ? data.previewSummary : undefined,
+    teamId: teamId || undefined,
+    payloadScope,
     expiresAt: compactText(data.expiresAt) || new Date(Date.now() + pendingActionLifetimeMs).toISOString(),
     status: 'pending'
   };
@@ -2775,7 +2910,7 @@ async function savePrivateAiActionAudit(
   const auditId = createConfirmationId();
   await setDoc(doc(db, 'users', user.uid, 'privateAiActionAudit', auditId), {
     toolName,
-    args: sanitizePendingActionArgs(args),
+    args: sanitizePendingActionArgsForUserStorage(toolName, args),
     result: summarizeAuditResult(result),
     createdAt: serverTimestamp(),
     clientCreatedAt: new Date().toISOString()
@@ -2819,7 +2954,15 @@ function hasOwn(value: Record<string, unknown>, key: string) {
   return Object.prototype.hasOwnProperty.call(value, key);
 }
 
-function sanitizePendingActionArgs(args: Record<string, unknown>) {
+function sanitizeToolCallArgs(args: Record<string, unknown>) {
+  return Object.entries(args).reduce<Record<string, unknown>>((sanitized, [key, value]) => {
+    if (key === '__confirmed') return sanitized;
+    sanitized[key] = value;
+    return sanitized;
+  }, {});
+}
+
+function sanitizePendingActionPayloadArgs(args: Record<string, unknown>) {
   const blocked = new Set(['__confirmed', 'photoFile', 'file', 'profilePhotoFile', 'highlightClipFile']);
   return Object.entries(args).reduce<Record<string, unknown>>((acc, [key, value]) => {
     if (blocked.has(key)) return acc;
@@ -2827,6 +2970,26 @@ function sanitizePendingActionArgs(args: Record<string, unknown>) {
     acc[key] = value;
     return acc;
   }, {});
+}
+
+function isTeamScopedPrivateAiPayload(toolName: string) {
+  return toolName === 'apply_roster_import';
+}
+
+function sanitizePendingActionArgsForUserStorage(toolName: string, args: Record<string, unknown>) {
+  const sanitized = sanitizePendingActionPayloadArgs(args);
+  if (!isTeamScopedPrivateAiPayload(toolName)) return sanitized;
+  const operations = Array.isArray(sanitized.operations)
+    ? sanitized.operations as RosterImportPlannedOperationForApp[]
+    : [];
+  return {
+    teamId: compactText(sanitized.teamId),
+    source: compactText(sanitized.source),
+    operationSummary: summarizeRosterOperations(operations),
+    validationErrorCount: Array.isArray(sanitized.__rosterValidationErrors)
+      ? sanitized.__rosterValidationErrors.length
+      : 0
+  };
 }
 
 function buildPendingActionSummary(definition: PrivateAiToolDefinition, args: Record<string, unknown>) {
@@ -2852,8 +3015,48 @@ function summarizeExecutedAction(result: PrivateAiToolResult) {
   if (result.name === 'request_ride_spot') return 'Ride request submitted.';
   if (result.name === 'cancel_ride_request') return 'Ride request cancelled.';
   if (result.name === 'set_ride_offer_status') return 'Ride offer updated.';
-  if (result.name === 'apply_roster_import') return 'Roster imported and family invitations processed.';
-  if (result.name === 'apply_schedule_import') return 'Schedule imported.';
+  if (result.name === 'apply_roster_import') {
+    const data = isPlainObject(result.data) ? result.data : {};
+    const savedCount = Array.isArray(data.savedOperations) ? data.savedOperations.length : 0;
+    const invitationSummary = isPlainObject(data.invitationSummary)
+      ? data.invitationSummary
+      : summarizeRosterInvitationResults(data.inviteResults);
+    const linked = Number(invitationSummary.linked || 0);
+    const emailed = Number(invitationSummary.emailed || 0);
+    const retryable = Number(invitationSummary.retryable || 0);
+    const failed = Number(invitationSummary.failed || 0);
+    const retryableRecipients = Array.isArray(invitationSummary.retryableRecipients)
+      ? invitationSummary.retryableRecipients.map(compactText).filter(Boolean)
+      : [];
+    const failedRecipients = Array.isArray(invitationSummary.failedRecipients)
+      ? invitationSummary.failedRecipients.map(compactText).filter(Boolean)
+      : [];
+    const deliveryDetails = [
+      `${linked} linked`,
+      `${emailed} emailed`,
+      `${retryable} retryable`,
+      `${failed} failed`
+    ].join(', ');
+    const followUp = [
+      retryableRecipients.length ? `Retry email for: ${retryableRecipients.join(', ')}.` : '',
+      failedRecipients.length ? `Invitation failed for: ${failedRecipients.join(', ')}.` : ''
+    ].filter(Boolean).join(' ');
+    return `Roster import saved ${savedCount} operation${savedCount === 1 ? '' : 's'}. Invitations: ${deliveryDetails}.${followUp ? ` ${followUp}` : ''}`;
+  }
+  if (result.name === 'apply_schedule_import') {
+    const data = isPlainObject(result.data) ? result.data : {};
+    const importedCount = Number(data.importedCount || 0);
+    const failedCount = Number(data.failedCount || 0);
+    if (failedCount > 0) {
+      const failedRows = Array.isArray(data.failures)
+        ? data.failures
+          .map((failure) => isPlainObject(failure) ? Number(failure.rowNumber || 0) : 0)
+          .filter(Boolean)
+        : [];
+      return `Schedule import partially completed: ${importedCount} imported and ${failedCount} failed${failedRows.length ? ` (rows ${failedRows.join(', ')})` : ''}. Correct and retry only the failed rows.`;
+    }
+    return `Schedule imported: ${importedCount} row${importedCount === 1 ? '' : 's'} saved.`;
+  }
   if (result.name === 'invite_roster_parent') {
     const data = isPlainObject(result.data) ? result.data : {};
     const email = compactText(data.email);
@@ -2888,6 +3091,34 @@ function summarizeExecutedAction(result: PrivateAiToolResult) {
   if (result.name === 'set_player_incentive_cap') return 'Player incentive cap updated.';
   if (result.name === 'mark_player_incentive_paid') return 'Player incentive marked paid.';
   return `${result.name} completed.`;
+}
+
+function summarizeRosterInvitationResults(value: unknown) {
+  const results = Array.isArray(value) ? value : [];
+  return results.reduce((summary, invite) => {
+    if (!isPlainObject(invite)) return summary;
+    const status = compactText(invite.status);
+    const emailStatus = compactText(invite.emailStatus);
+    const email = compactText(invite.email);
+    if (status === 'linked') summary.linked += 1;
+    if (emailStatus === 'emailed' || (!emailStatus && status === 'emailed')) summary.emailed += 1;
+    if (emailStatus === 'retryable' || (!emailStatus && status === 'code-created')) {
+      summary.retryable += 1;
+      if (email) summary.retryableRecipients.push(email);
+    }
+    if (status === 'failed') {
+      summary.failed += 1;
+      if (email) summary.failedRecipients.push(email);
+    }
+    return summary;
+  }, {
+    linked: 0,
+    emailed: 0,
+    retryable: 0,
+    failed: 0,
+    retryableRecipients: [] as string[],
+    failedRecipients: [] as string[]
+  });
 }
 
 function summarizeExecutedActions(results: PrivateAiToolResult[]) {
@@ -2960,21 +3191,6 @@ function stripPrivateAiArtifactForStorage(artifact: PrivateAiArtifactReference) 
   if (artifact.type === 'document-analysis') {
     stored.fileName = artifact.fileName;
     stored.mimeType = artifact.mimeType;
-  } else if (artifact.type === 'roster-import' && artifact.previewRows?.length) {
-    stored.previewRows = sanitizePrivateAiStorageValue(artifact.previewRows.slice(0, 200).map((row) => ({
-      rowNumber: row.rowNumber,
-      action: row.action,
-      playerId: row.playerId,
-      name: row.name,
-      number: row.number,
-      reason: row.reason,
-      fields: row.fields,
-      contacts: row.contacts,
-      inviteCount: row.inviteCount,
-      duplicatePlayerId: row.duplicatePlayerId,
-      duplicatePlayerName: row.duplicatePlayerName,
-      errors: row.errors
-    })));
   } else if (artifact.type === 'schedule-import' && artifact.previewRows?.length) {
     stored.previewRows = sanitizePrivateAiStorageValue(artifact.previewRows.slice(0, 200).map((row) => ({
       rowNumber: row.rowNumber,
@@ -3733,7 +3949,7 @@ function summarizeHelpKnowledge(results: ReturnType<typeof searchHelpKnowledge>)
 }
 
 async function loadAccessibleAiTeams(user: AuthUser) {
-  const home = await loadParentHome(user).catch(() => ({ teams: [], players: [] } as any));
+  const home = await loadParentHome(user);
   const teamIds = new Set<string>();
   (home.teams || []).forEach((team: any) => {
     const teamId = compactText(team.teamId || team.id);
@@ -3745,8 +3961,10 @@ async function loadAccessibleAiTeams(user: AuthUser) {
   });
 
   const details = await Promise.all(Array.from(teamIds).slice(0, 60).map(async (teamId) => {
-    const detail = await loadParentTeamDetail(teamId, user).catch(() => null);
-    if (!detail?.team) return null;
+    const detail = await loadParentTeamDetail(teamId, user);
+    if (!detail?.team) {
+      throw new Error(`Could not verify access to team ${teamId}. Try again before making changes.`);
+    }
     return {
       teamId,
       teamName: compactText(detail.team.name) || teamId,
@@ -3755,7 +3973,7 @@ async function loadAccessibleAiTeams(user: AuthUser) {
       detail
     };
   }));
-  return details.filter((team): team is NonNullable<typeof team> => Boolean(team));
+  return details;
 }
 
 async function resolveAccessibleTeamId(
@@ -3769,7 +3987,7 @@ async function resolveAccessibleTeamId(
   const eligibleTeams = options.requireManager ? teams.filter((team) => team.canManageTeam) : teams;
   if (teamId && eligibleTeams.some((team) => team.teamId === teamId)) return teamId;
   if (teamId && options.requireManager) {
-    const directDetail = await loadParentTeamDetail(teamId, user).catch(() => null);
+    const directDetail = await loadParentTeamDetail(teamId, user);
     if (directDetail?.team && directDetail.canManageTeam === true) return teamId;
   }
   if (teamId) return null;
@@ -3828,7 +4046,7 @@ async function resolveManagedRosterPlayer(user: AuthUser, args: Record<string, u
   let managedTeams: any[] = (await loadAccessibleAiTeams(user))
     .filter((team) => team.canManageTeam);
   if (requestedTeamId && !managedTeams.some((team) => team.teamId === requestedTeamId)) {
-    const directDetail = await loadParentTeamDetail(requestedTeamId, user).catch(() => null);
+    const directDetail = await loadParentTeamDetail(requestedTeamId, user);
     if (directDetail?.team && directDetail.canManageTeam === true) {
       managedTeams.push({
         teamId: requestedTeamId,
@@ -3897,7 +4115,7 @@ async function resolveAccessiblePlayer(user: AuthUser, args: Record<string, unkn
   const requestedTeamId = compactText(args.teamId);
   const requestedPlayerId = compactText(args.playerId);
   const requestedPlayerName = compactText(args.playerName).toLowerCase();
-  const home = await loadParentHome(user).catch(() => ({ teams: [], players: [] } as any));
+  const home = await loadParentHome(user);
   const accessibleTeams = await loadAccessibleAiTeams(user);
   const players = [
     ...(home.players || []).map((player: any) => ({
