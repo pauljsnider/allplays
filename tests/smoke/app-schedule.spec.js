@@ -1455,14 +1455,14 @@ test('iOS-sized schedule smoke covers list, event nav, and rideshare without ove
     await expect(mobileActionQueue.getByText('Needs attention', { exact: true })).toBeVisible();
     const gameHubAction = mobileActionQueue.getByRole('link', { name: /RSVP needed for Pat.*vs\. Falcons/ });
     await expect(gameHubAction).toHaveAttribute('href', /#\/schedule\/team-1\/game-1\?childId=player-1&section=game$/);
-    const firstScheduleRow = page.locator('.schedule-list > a').first();
+    const firstScheduleRow = page.locator('.schedule-event-row-detail').first();
     await expect(firstScheduleRow).toBeVisible();
     const queueBox = await mobileActionQueue.boundingBox();
     const firstRowBox = await firstScheduleRow.boundingBox();
     expect(queueBox && firstRowBox && queueBox.y + queueBox.height <= firstRowBox.y).toBe(true);
     await expect(firstScheduleRow.getByText('1 task open')).toBeVisible();
     await expect(firstScheduleRow.getByText('4 seats open')).toBeVisible();
-    const scheduleRowCount = await page.locator('.schedule-list > a').count();
+    const scheduleRowCount = await page.locator('.schedule-event-row-detail').count();
     expect(scheduleRowCount).toBeGreaterThanOrEqual(2);
     expect(scheduleRowCount).toBeLessThanOrEqual(3);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
@@ -1578,7 +1578,7 @@ test('iOS-sized staff schedule keeps tools collapsed below the event list', asyn
     await page.goto(appUrl(baseURL, '/schedule'), { waitUntil: 'domcontentloaded' });
 
     await expect(mobileScheduleFilter(page)).toBeVisible({ timeout: 15000 });
-    await expect(page.locator('.schedule-list > a').first()).toBeVisible();
+    await expect(page.locator('.schedule-event-row-detail').first()).toBeVisible();
     await expect(page.getByRole('button', { name: /Manage schedule/ })).toBeVisible();
     await expect(page.getByText('Add external calendar')).toHaveCount(0);
     await expect(page.getByText('Draft schedule with AI')).toHaveCount(0);
@@ -1938,7 +1938,7 @@ test('app schedule keeps filters compact on phone', async ({ page, baseURL }) =>
     const scheduleFilter = mobileScheduleFilter(page);
     await waitForScheduleRoute(page, scheduleFilter);
 
-    const mobileRows = page.locator('.schedule-list > a');
+    const mobileRows = page.locator('.schedule-event-row-detail');
     await expect(async () => {
         await expect(scheduleFilter).toBeVisible({ timeout: 1000 });
         await expect(page.getByRole('button', { name: 'Upcoming Practices' })).toBeHidden();
@@ -1970,7 +1970,7 @@ test('app schedule paginates long agenda lists and resets on filter changes', as
     await page.goto(appUrl(baseURL, '/schedule'), { waitUntil: 'domcontentloaded' });
 
     await waitForScheduleRoute(page, mobileScheduleFilter(page));
-    const mobileRows = page.locator('.schedule-list > a');
+    const mobileRows = page.locator('.schedule-event-row-detail');
     await expect(async () => {
         await expect(mobileRows.first()).toBeVisible({ timeout: 1000 });
         await expect(mobileRows).toHaveCount(20, { timeout: 1000 });
