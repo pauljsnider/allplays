@@ -495,6 +495,10 @@
                 return;
             }
 
+            // This destination only depends on the URL context, so expose it before
+            // slower team and per-game reads complete.
+            document.getElementById('back-link').href = `team.html#teamId=${teamId}`;
+
             try {
                 currentTeamId = teamId; // Store global
                 const [team, players, games, configs] = await Promise.all([
@@ -598,8 +602,6 @@
                     ? requestedGame.id
                     : ([...perGameStats].sort((a, b) => b.date - a.date)[0]?.gameId || games[0]?.id || null);
                 const selectedGame = games.find((entry) => entry.id === selectedGameId) || null;
-                // Set back-link href to team page (fallback navigation when banner not shown)
-                document.getElementById('back-link').href = `team.html#teamId=${teamId}`;
 
                 const rosterProfileFields = getVisibleRosterFieldValues(team, player, getRosterFieldAccess(player));
                 const rosterProfileFieldsHtml = rosterProfileFields.length > 0 ? `
