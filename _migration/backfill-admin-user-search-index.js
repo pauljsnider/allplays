@@ -103,7 +103,7 @@ async function runAccessTokenBackfill(accessToken) {
                 `Firestore REST batch write returned ${result.status?.length ?? 0} status entries for ${batchWrites.length} writes`
             );
         }
-        const failedWrite = result.status?.find((status) => Number(status.code || 0) !== 0);
+        const failedWrite = result.status.find((status) => Number(status.code || 0) !== 0);
         if (failedWrite) {
             throw new Error(
                 `Firestore REST batch write failed (${failedWrite.code}): ${failedWrite.message || 'unknown error'}`
