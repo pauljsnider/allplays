@@ -2113,6 +2113,7 @@ function ScheduleEventCard({ event, preferGameHubForStaff }: {
         {mapHref ? (
           <button
             type="button"
+            aria-label={`Directions to ${eventTitle} at ${event.location}`}
             className="schedule-event-directions flex min-h-11 w-full items-center justify-center gap-1.5 border-t border-gray-100 px-3 text-xs font-black text-primary-700 transition hover:bg-primary-50"
             onClick={() => void openPublicUrl(mapHref)}
           >

@@ -5,7 +5,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Schedule, getGenericEventDetailPath } from './Schedule';
-import { getScheduleMapHref, type ParentScheduleEvent } from '../lib/scheduleLogic';
+import type { ParentScheduleEvent } from '../lib/scheduleLogic';
 import type { AuthState } from '../lib/types';
 
 const scheduleServiceMocks = vi.hoisted(() => ({
@@ -52,13 +52,8 @@ const staffToolsLoaderMocks = vi.hoisted(() => ({
   load: vi.fn(() => import('../components/schedule/ScheduleStaffTools'))
 }));
 
-const publicActionMocks = vi.hoisted(() => ({
-  openPublicUrl: vi.fn()
-}));
-
 vi.mock('../lib/scheduleService', () => scheduleServiceMocks);
 vi.mock('../lib/appDataCache', () => appDataCacheMocks);
-vi.mock('../lib/publicActions', () => publicActionMocks);
 vi.mock('../lib/telemetry', () => ({
   recordAppWorkflowTiming: vi.fn(),
   startAppInitialLoadTimer: vi.fn(() => initialLoadTelemetryMocks)
@@ -1561,46 +1556,6 @@ describe('Schedule', () => {
 
     expect(mobileRow.textContent).toContain('1 task open');
     expect(mobileRow.textContent).toContain('4 seats open');
-  });
-
-  it('opens mobile directions externally without changing the schedule route', async () => {
-    shellLayoutMocks.isDesktopWeb = false;
-    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
-      children: [
-        { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
-      ],
-      events: [
-        buildScheduleEvent(1),
-        buildScheduleEvent(2, { location: 'TBD' })
-      ]
-    });
-
-    const { container } = render(
-      <MemoryRouter initialEntries={['/schedule?filter=upcoming-games']}>
-        <RouteProbe />
-        <Routes>
-          <Route path="/schedule" element={<Schedule auth={auth} />} />
-          <Route path="/schedule/:teamId/:eventId" element={<div>Event detail</div>} />
-        </Routes>
-      </MemoryRouter>
-    );
-
-    const directions = await screen.findByRole('button', { name: 'Directions' });
-    expect(screen.getAllByRole('button', { name: 'Directions' })).toHaveLength(1);
-    expect(directions.className).toContain('min-h-11');
-
-    fireEvent.click(directions);
-
-    expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith(getScheduleMapHref('Main Gym'));
-    expect(screen.getByTestId('route-probe').textContent).toBe('/schedule?filter=upcoming-games');
-
-    const detailLink = container.querySelector('.schedule-event-row-detail') as HTMLAnchorElement;
-    expect(detailLink?.getAttribute('href')).toBe('/schedule/team-1/event-1?childId=player-1&section=availability');
-    fireEvent.click(detailLink);
-
-    await waitFor(() => {
-      expect(screen.getByTestId('route-probe').textContent).toBe('/schedule/team-1/event-1?childId=player-1&section=availability');
-    });
   });
 
   it('shows the remaining event count when only one more event is hidden', async () => {

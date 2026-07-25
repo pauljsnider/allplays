@@ -2,7 +2,8 @@
 import React, { act } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot } from 'react-dom/client';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
+import { getScheduleMapHref } from '../../apps/app/src/lib/scheduleLogic.ts';
 
 const scheduleMocks = vi.hoisted(() => ({
     addTeamCalendarUrl: vi.fn(),
@@ -25,8 +26,12 @@ const layoutState = vi.hoisted(() => ({
     isNative: false,
     isMobileWeb: false
 }));
+const publicActionMocks = vi.hoisted(() => ({
+    openPublicUrl: vi.fn()
+}));
 
 vi.mock('../../apps/app/src/lib/scheduleService.ts', () => scheduleMocks);
+vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionMocks);
 vi.mock('../../apps/app/src/lib/performanceInstrumentation.ts', () => ({
     now: vi.fn(() => 0),
     startPerformanceSpan: vi.fn(() => ({ startedAt: 0, end: vi.fn() })),
@@ -111,7 +116,12 @@ function event(overrides = {}) {
     };
 }
 
-async function renderSchedule() {
+function RouteProbe() {
+    const location = useLocation();
+    return React.createElement('div', { 'data-testid': 'route-probe' }, `${location.pathname}${location.search}`);
+}
+
+async function renderSchedule(initialEntries) {
     const container = document.createElement('div');
     document.body.appendChild(container);
     const root = createRoot(container);
@@ -119,8 +129,13 @@ async function renderSchedule() {
     await act(async () => {
         root.render(React.createElement(
             MemoryRouter,
-            null,
-            React.createElement(Schedule, { auth })
+            initialEntries ? { initialEntries } : null,
+            React.createElement(
+                React.Fragment,
+                null,
+                initialEntries ? React.createElement(RouteProbe) : null,
+                React.createElement(Schedule, { auth })
+            )
         ));
     });
 
@@ -517,6 +532,44 @@ describe('React app desktop Schedule controls', () => {
         await waitForText(container, 'Add external calendar');
         expect(container.textContent).toContain('Draft schedule with AI');
         expect(container.textContent).toContain('Import schedule CSV');
+    });
+
+    it('opens event-specific mobile directions externally without changing the schedule route', async () => {
+        layoutState.isDesktopWeb = false;
+        layoutState.isMobileWeb = true;
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            children: [
+                { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
+            ],
+            events: [
+                event(),
+                event({
+                    eventKey: 'team-1::game-2::player-1',
+                    id: 'game-2',
+                    opponent: 'Hawks',
+                    location: 'River Field'
+                })
+            ]
+        });
+
+        const { container } = await renderSchedule(['/schedule?filter=upcoming-games']);
+        await waitForText(container, 'River Field');
+
+        const falconsDirections = container.querySelector('button[aria-label="Directions to vs. Falcons at Main Gym"]');
+        const hawksDirections = container.querySelector('button[aria-label="Directions to vs. Hawks at River Field"]');
+        expect(falconsDirections).toBeTruthy();
+        expect(hawksDirections).toBeTruthy();
+        expect(falconsDirections.textContent.trim()).toBe('Directions');
+        expect(hawksDirections.textContent.trim()).toBe('Directions');
+        expect(falconsDirections.className).toContain('min-h-11');
+
+        await act(async () => {
+            falconsDirections.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        });
+
+        expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith(getScheduleMapHref('Main Gym'));
+        expect(container.querySelector('[data-testid="route-probe"]').textContent)
+            .toBe('/schedule?filter=upcoming-games');
     });
 
     it('reuses the cached schedule when the route remounts', async () => {
