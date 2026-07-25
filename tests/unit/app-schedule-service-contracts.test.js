@@ -240,7 +240,7 @@ vi.mock('../../js/snack-helpers.js', () => ({
     }))
 }));
 
-import { addTeamCalendarUrl, cancelPracticeOccurrenceForApp, createScheduledGameForApp, createScheduleImportGame, createScheduleImportPractice, createStaffRsvpReminderPreviewLoader, loadParentPlayerSchedule, loadParentSchedule, loadParentScheduleEventDetail, loadScheduleStatTrackerConfigsForApp, loadScorekeeperStatTrackerConfigsForApp, parseRecurringPracticeOccurrenceId, removeTeamCalendarUrl, updateScheduledGameForApp } from '../../apps/app/src/lib/scheduleService.ts';
+import { addTeamCalendarUrl, cancelPracticeOccurrenceForApp, createScheduledGameForApp, createScheduleImportGame, createScheduleImportPractice, createStaffRsvpReminderPreviewLoader, loadParentPlayerSchedule, loadParentSchedule, loadParentScheduleEventDetail, loadScheduleStatTrackerConfigsForApp, loadScorekeeperStatTrackerConfigsForApp, loadTeamOverviewSchedule, parseRecurringPracticeOccurrenceId, removeTeamCalendarUrl, updateScheduledGameForApp } from '../../apps/app/src/lib/scheduleService.ts';
 import { clearAppDataCache } from '../../apps/app/src/lib/appDataCache.ts';
 import { getScheduleForecastHref, getScheduleMapHref } from '../../apps/app/src/lib/scheduleLogic.ts';
 
@@ -448,6 +448,27 @@ afterEach(() => {
 });
 
 describe('React app schedule service contract integration', () => {
+    it('loads a deduplicated team-level schedule for overview surfaces', async () => {
+        const result = await loadTeamOverviewSchedule('team-1', 'Bears', user());
+
+        expect(result.filter((event) => event.id === 'ics-game-1')).toHaveLength(1);
+        expect(result.find((event) => event.id === 'ics-game-1')).toMatchObject({
+            childId: 'staff-team-team-1',
+            teamId: 'team-1',
+            location: 'Imported Field',
+            locationDetail: 'Field 14',
+            sourceLabel: 'Imported calendar',
+            isDbGame: false
+        });
+        expect(dbMocks.getTeam).toHaveBeenCalledWith('team-1');
+        expect(utilsMocks.fetchAndParseCalendar).toHaveBeenCalledWith('mock://team-calendar');
+    });
+
+    it('does not load a team overview schedule without an authenticated user', async () => {
+        await expect(loadTeamOverviewSchedule('team-1', 'Bears', null)).resolves.toEqual([]);
+        expect(dbMocks.getTeam).not.toHaveBeenCalled();
+    });
+
     it('keeps ordinary staff discovery on the scoped adapter instead of the team catalog', () => {
         const staffTeamSource = getScheduleServiceSlice('async function loadStaffTeams', 'async function saveTeamCalendarUrls');
 

@@ -70,6 +70,7 @@ import { createLogger } from './logger';
 import { getNativeRestDedupKey, loadDedupedNativeRestRequest, shouldDedupNativeRestRequest } from './nativeRestDedup';
 import { loadProfileDocument } from './profileService';
 import { normalizeOptionalHttpUrl, parseTeamLivestreamInput } from './teamLinks';
+import type { ParentScheduleEvent } from './scheduleLogic';
 import type { AuthUser } from './types';
 
 const primaryDataTimeoutMs = 5000;
@@ -139,6 +140,7 @@ export type TeamDetailEvent = {
   title: string;
   date: Date;
   location: string;
+  locationDetail?: string | null;
   opponent: string;
   status: string;
   liveStatus: string;
@@ -150,6 +152,8 @@ export type TeamDetailEvent = {
   homeScore: number | null;
   awayScore: number | null;
   isCancelled: boolean;
+  isDbGame?: boolean;
+  sourceLabel?: string | null;
   statTrackerConfigId: string;
   statTrackerConfigLabel: string;
   statTrackerConfigBaseType: string;
@@ -1486,12 +1490,23 @@ export async function loadParentTeamDetail(
       Promise.resolve([])
     ]);
 
+  const overviewSchedule = await loadTeamDetailOverviewSchedule(teamId, cleanString(team?.name) || teamId, accessUser)
+    .catch((error) => {
+      logger.warn('Unable to merge imported calendar events into team overview.', {
+        operation: 'team-overview-schedule-load',
+        teamId,
+        error
+      });
+      return null;
+    });
+
   return buildTeamDetailModel({
     teamId,
     team,
     players,
     games,
     configs,
+    scheduleEvents: accessUser?.uid && overviewSchedule ? overviewSchedule : undefined,
     user: accessUser,
     linkedPlayerIds,
     seasonStatsByPlayerId,
@@ -1501,6 +1516,11 @@ export async function loadParentTeamDetail(
     includeStaffPermissions: false,
     includeInsights: includeDeferredData
   });
+}
+
+async function loadTeamDetailOverviewSchedule(teamId: string, teamName: string, user: AuthUser | null) {
+  const { loadTeamOverviewSchedule } = await import('./scheduleService');
+  return loadTeamOverviewSchedule(teamId, teamName, user);
 }
 
 export async function loadParentTeamDetailBootstrap(teamId: string, user: AuthUser | null): Promise<TeamDetailModel> {
@@ -1738,6 +1758,7 @@ export function buildTeamDetailModel({
   team,
   players = [],
   games = [],
+  scheduleEvents,
   configs = [],
   user = null,
   linkedPlayerIds = getLinkedPlayerIds(user, teamId, players),
@@ -1754,6 +1775,7 @@ export function buildTeamDetailModel({
   team: Record<string, any>;
   players?: any[];
   games?: any[];
+  scheduleEvents?: ParentScheduleEvent[];
   configs?: any[];
   user?: AuthUser | null;
   linkedPlayerIds?: string[];
@@ -1770,7 +1792,7 @@ export function buildTeamDetailModel({
   const normalizedPlayers = normalizePlayers(players, linkedPlayerIds, { includeParentContacts: canManageTeam });
   const normalizedInactivePlayers = normalizePlayers(players, linkedPlayerIds, { inactiveOnly: true, includeParentContacts: canManageTeam });
   const normalizedStatTrackerConfigs = buildTeamStatTrackerConfigs(configs, games);
-  const normalizedEvents = normalizeEvents(games, normalizedStatTrackerConfigs.byId);
+  const normalizedEvents = normalizeEvents(scheduleEvents || games, normalizedStatTrackerConfigs.byId);
   const seasonLabels = listSeasonLabels(games);
   const currentYearLabel = String(new Date().getFullYear());
   const seasonLabel = seasonLabels.includes(currentYearLabel) ? currentYearLabel : (seasonLabels[0] || currentYearLabel);
@@ -2228,6 +2250,7 @@ function normalizeEvents(games: any[], configById: Map<string, TeamDetailStatTra
         title: cleanString(game?.title) || (type === 'practice' ? 'Practice' : `vs. ${cleanString(game?.opponent) || 'TBD'}`),
         date,
         location: cleanString(game?.location) || 'TBD',
+        locationDetail: cleanString(game?.locationDetail) || null,
         opponent: cleanString(game?.opponent) || 'TBD',
         status: cleanString(game?.status || game?.liveStatus),
         liveStatus: cleanString(game?.liveStatus),
@@ -2239,6 +2262,8 @@ function normalizeEvents(games: any[], configById: Map<string, TeamDetailStatTra
         homeScore: toNullableNumber(game?.homeScore),
         awayScore: toNullableNumber(game?.awayScore),
         isCancelled: cleanString(game?.status).toLowerCase() === 'cancelled',
+        isDbGame: game?.isDbGame !== false,
+        sourceLabel: cleanString(game?.sourceLabel) || null,
         statTrackerConfigId,
         statTrackerConfigLabel: statTrackerConfigId
           ? (matchedConfig?.name || `Missing config (${statTrackerConfigId})`)

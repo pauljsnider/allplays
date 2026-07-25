@@ -3,13 +3,20 @@ import {
   formatEventDateLabel,
   formatEventTimeLabel,
   getScheduleForecastHref,
-  getScheduleLocationLabel,
   getScheduleMapHref,
   getScheduleTournamentInfo,
   type ParentScheduleEvent,
   type ScheduleTournamentInfo,
   type ScheduleTournamentStandingRow
 } from '../../lib/scheduleLogic';
+
+type EventDetailRow = {
+  label: string;
+  value: string;
+  detail?: string | null;
+  icon: LucideIcon;
+  emphasis?: boolean;
+};
 
 export function EventDetailsPanel({ event, open }: { event: ParentScheduleEvent; open: boolean }) {
   if (!open) return null;
@@ -23,12 +30,16 @@ export function EventDetailsPanel({ event, open }: { event: ParentScheduleEvent;
       {tournamentInfo.isTournament ? <TournamentEventDetailsSummary info={tournamentInfo} /> : null}
       <dl className="divide-y divide-gray-200 px-3">
         {rows.map((row) => (
-          <div key={row.label} className="flex items-start gap-3 py-3">
+          <div
+            key={row.label}
+            className={`flex items-start gap-3 py-3 ${row.emphasis ? '-mx-3 bg-primary-50/60 px-3' : ''}`}
+          >
             <div className="mt-0.5 flex h-8 w-8 flex-none items-center justify-center rounded-full bg-primary-50 text-primary-600">
               <row.icon className="h-4 w-4" aria-hidden="true" />
             </div>
             <div className="min-w-0 flex-1">
               <dt className="text-sm font-black text-gray-950">{row.value}</dt>
+              {row.detail ? <div className="mt-0.5 text-xs font-semibold text-gray-600">{row.detail}</div> : null}
               <dd className="mt-0.5 text-xs font-semibold text-gray-500">{row.label}</dd>
             </div>
           </div>
@@ -55,12 +66,18 @@ export function EventDetailsPanel({ event, open }: { event: ParentScheduleEvent;
 }
 
 function getEventDetailRows(event: ParentScheduleEvent) {
-  return [
+  const rows: Array<EventDetailRow | null> = [
     { label: 'Date', value: formatEventDateLabel(event.date), icon: CalendarDays },
     { label: 'Start time', value: formatEventTimeLabel(event.date), icon: Clock },
     event.endDate ? { label: 'End time', value: formatEventTimeLabel(event.endDate), icon: Clock } : null,
     event.arrivalTime ? { label: 'Arrival time', value: formatEventTimeLabel(event.arrivalTime), icon: Clock } : null,
-    { label: 'Location', value: getScheduleLocationLabel(event), icon: MapPin },
+    {
+      label: 'Location',
+      value: event.locationDetail || event.location || 'TBD',
+      detail: event.locationDetail ? event.location || 'TBD' : null,
+      icon: MapPin,
+      emphasis: Boolean(event.locationDetail)
+    },
     { label: 'Game info', value: formatGameInfo(event), icon: ClipboardCheck },
     event.seasonLabel ? { label: 'Season', value: event.seasonLabel, icon: CalendarDays } : null,
     event.competitionType ? { label: 'Competition', value: event.competitionType, icon: ClipboardCheck } : null,
@@ -69,7 +86,8 @@ function getEventDetailRows(event: ParentScheduleEvent) {
     event.practiceAttendanceSummary ? { label: 'Practice', value: event.practiceAttendanceSummary, icon: ClipboardCheck } : null,
     event.practiceHomePacketSummary ? { label: 'Home packet', value: event.practiceHomePacketSummary, icon: FileText } : null,
     event.notes ? { label: 'Notes', value: event.notes, icon: FileText } : null
-  ].filter((row): row is { label: string; value: string; icon: LucideIcon } => Boolean(row));
+  ];
+  return rows.filter((row): row is EventDetailRow => Boolean(row));
 }
 
 function TournamentEventDetailsSummary({ info }: { info: ScheduleTournamentInfo }) {

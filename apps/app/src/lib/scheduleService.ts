@@ -3698,6 +3698,19 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
   return events;
 }
 
+export async function loadTeamOverviewSchedule(teamId: string, teamName: string, user: AuthUser | null): Promise<ParentScheduleEvent[]> {
+  const normalizedTeamId = compactString(teamId);
+  if (!normalizedTeamId || !user?.uid) return [];
+
+  const normalizedTeamName = compactString(teamName) || normalizedTeamId;
+  return buildTeamSchedule(normalizedTeamId, [{
+    teamId: normalizedTeamId,
+    teamName: normalizedTeamName,
+    playerId: `staff-team-${normalizedTeamId}`,
+    playerName: normalizedTeamName
+  }], user);
+}
+
 async function buildTargetedTeamScheduleEvent(teamId: string, eventId: string, teamChildren: ParentScheduleChild[], user: AuthUser) {
   const occurrenceMatch = eventId.match(/^(.*)__([0-9]{4}-[0-9]{2}-[0-9]{2})$/);
   const [team, initialGame] = await Promise.all([
