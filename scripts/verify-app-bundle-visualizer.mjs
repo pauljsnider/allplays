@@ -60,6 +60,14 @@ try {
         throw new Error('Generated bundle visualizer hid its tooltip while the tooltip itself was hovered.');
     }
 
+    document.body.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+    await wait(0);
+    if (!tooltip.classList.contains('tooltip-hidden')) {
+        throw new Error(
+            'Generated bundle visualizer tooltip remained visible after hovering outside the tooltip and module nodes.'
+        );
+    }
+
     includeInput.value = '**/react/**';
     includeInput.dispatchEvent(new Event('input', { bubbles: true }));
     includeInput.value = '**/react-dom/**';
