@@ -81,6 +81,6 @@
     "firebase": "12.16.0",
     "html-to-image": "^1.11.13",
     "jsdom": "^29.1.1",
-    "web-vitals": "^5.3.0"
+    "web-vitals": "^6.0.0"
   }
 }

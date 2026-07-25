@@ -244,6 +244,7 @@ async function openBulkAiTab(page, baseURL) {
     await mockEditRosterDependencies(page);
     await page.goto(`${baseURL}/edit-roster.html?teamId=team-1`, { waitUntil: 'domcontentloaded' });
     await expect(page.locator('#team-name-display')).toHaveText('Test Team');
+    await expect(page.locator('#roster-list')).toContainText('No players yet.');
     await page.click('#tab-bulk-ai');
     await expect(page.locator('#content-bulk-ai')).toBeVisible();
 }
