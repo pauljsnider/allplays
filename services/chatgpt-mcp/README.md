@@ -1,8 +1,16 @@
 # AllPlays ChatGPT MCP Service (read-only, rules-enforced)
 
 Remote MCP server exposing permission-aware AllPlays tools to ChatGPT:
-`get_profile`, `list_schedule`, `get_game_summary` — names aligned with the
-in-app private AI registry (`apps/app/src/lib/privateAiService.ts`).
+`get_profile`, `list_schedule`, `get_last_game`, `get_schedule_event`,
+`list_rsvps`, `list_ride_offers`, `list_assignments`,
+`get_practice_packet`, and `get_game_summary`.
+
+The first eight tools are created by `src/sharedPrivateAiTools.js`, the same
+implementation imported by the in-app private AI registry
+(`apps/app/src/lib/privateAiService.ts`). The browser and MCP layers only
+provide environment-specific, rules-authorized data adapters. Filtering,
+event selection, summaries, aliases, and response projection live in the
+shared module.
 
 `list_schedule` combines Firestore games and practices with events from the
 private ICS feeds already attached to each authorized team. External feeds are
@@ -52,8 +60,15 @@ configuration below.
 Get a bearer token (prints your refresh token):
 
 ```bash
-ALLPLAYS_EMAIL=you@example.com ALLPLAYS_PASSWORD=... node scripts/get-token.mjs
+FIREBASE_WEB_API_KEY=your-web-api-key \
+ALLPLAYS_EMAIL=you@example.com \
+ALLPLAYS_PASSWORD=... \
+node scripts/get-token.mjs
 ```
+
+The helper has no checked-in API-key fallback. Supply configuration at runtime
+through environment variables or the deployment platform; do not commit local
+values.
 
 Smoke check:
 
@@ -223,9 +238,18 @@ instance-local grants and invalidates the multi-instance guarantee.
   and encryption secret; audit both IAM access paths.
 - Responses are additionally field-whitelisted in `src/core.js`;
   `players/*/private/*` and `privatePlayerStats` are never requested.
+- Schedule/profile response matching and projection is shared with the in-app
+  assistant through `src/sharedPrivateAiTools.js`; `src/mcpPrivateAiAdapter.js`
+  performs only user-credentialed MCP data loading.
 - A forged JWT yields no data: every Firestore call presents that same token
   and is rejected by the backend.
 
-Focused OAuth tests:
-`npx vitest run tests/unit/chatgpt-mcp-oauth.test.js --reporter=verbose`
-from the repo root.
+Focused tests from the repo root:
+
+```bash
+npx vitest run \
+  tests/unit/shared-private-ai-tools.test.js \
+  tests/unit/chatgpt-mcp-core.test.js \
+  tests/unit/chatgpt-mcp-oauth.test.js \
+  tests/unit/app-private-ai-service.test.js
+```

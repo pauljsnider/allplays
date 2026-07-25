@@ -31,19 +31,24 @@ afterEach(() => {
 });
 
 describe('app production artifact guard', () => {
-    it('allows only app, legacy bridge, and dependency modules from inside the repository', () => {
+    it('allows only app, explicit shared bridges, and dependency modules from inside the repository', () => {
         const repoRoot = path.resolve('/workspace/allplays');
         const appDirectory = path.join(repoRoot, 'apps/app');
 
         expect(() => assertSafeProductionModuleGraph([
             path.join(appDirectory, 'src/main.tsx'),
             path.join(repoRoot, 'js/firebase-runtime-config.js'),
+            path.join(repoRoot, 'services/chatgpt-mcp/src/sharedPrivateAiTools.js'),
             path.join(repoRoot, 'node_modules/react/index.js'),
             '\0vite/preload-helper.js'
-        ], { appDirectory, repoRoot })).not.toThrow();
+        ], {
+            appDirectory,
+            repoRoot,
+            sharedModules: [path.join(repoRoot, 'services/chatgpt-mcp/src/sharedPrivateAiTools.js')]
+        })).not.toThrow();
     });
 
-    it('rejects a repository-root module even when Vite would inline it', () => {
+    it('rejects repository-root and non-shared service modules even when Vite would inline them', () => {
         const repoRoot = path.resolve('/workspace/allplays');
         const appDirectory = path.join(repoRoot, 'apps/app');
 
@@ -51,6 +56,10 @@ describe('app production artifact guard', () => {
             path.join(appDirectory, 'src/main.tsx'),
             `${path.join(repoRoot, 'AGENTS.md')}?url`
         ], { appDirectory, repoRoot })).toThrow(/AGENTS\.md/);
+        expect(() => assertSafeProductionModuleGraph([
+            path.join(appDirectory, 'src/main.tsx'),
+            path.join(repoRoot, 'services/chatgpt-mcp/src/server.js')
+        ], { appDirectory, repoRoot })).toThrow(/server\.js/);
     });
 
     it('rejects emitted repository documents and inlined root-glob maps', () => {

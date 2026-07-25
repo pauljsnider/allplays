@@ -18,12 +18,19 @@ import { z } from 'zod';
 import {
     DomainError,
     resolveUserContext,
-    listMyTeams,
-    getFamilySchedule,
     getGameSummary
 } from './core.js';
 import { createIdentityResolver, extractBearerToken } from './identity.js';
 import { createUserDb } from './firestoreRest.js';
+import {
+    createSharedPrivateAiReadToolDefinitions,
+    SHARED_PRIVATE_AI_READ_TOOL_CATALOG,
+    SharedPrivateAiToolError
+} from './sharedPrivateAiTools.js';
+import {
+    createMcpPrivateAiReadAdapter,
+    createMcpSharedUser
+} from './mcpPrivateAiAdapter.js';
 import { createOAuthBroker, metadataFor, OAuthError } from './oauth.js';
 import { escapeHtml, renderSignInPage } from './signInPage.js';
 import {
@@ -177,14 +184,31 @@ function toolResult(payload) {
 }
 
 function toolError(error) {
-    const code = error instanceof DomainError ? error.code : 'internal';
-    const message = error instanceof DomainError ? error.message : 'Internal error.';
-    if (!(error instanceof DomainError)) console.error('[chatgpt-mcp] tool failure:', error);
+    const isSafeToolError = error instanceof DomainError || error instanceof SharedPrivateAiToolError;
+    const code = isSafeToolError ? error.code : 'internal';
+    const message = isSafeToolError ? error.message : 'Internal error.';
+    if (!isSafeToolError) console.error('[chatgpt-mcp] tool failure:', error);
     return { isError: true, content: [{ type: 'text', text: JSON.stringify({ error: code, message }) }] };
 }
 
+function toolTitle(name) {
+    return String(name || '')
+        .split('_')
+        .filter(Boolean)
+        .map((word) => `${word[0].toUpperCase()}${word.slice(1)}`)
+        .join(' ');
+}
+
+function sharedInputSchema(parameters = {}) {
+    return Object.fromEntries(Object.entries(parameters).map(([name, type]) => {
+        if (type === 'number') return [name, z.number().optional()];
+        if (type === 'boolean') return [name, z.boolean().optional()];
+        return [name, z.string().optional()];
+    }));
+}
+
 function buildServer(identity) {
-    const server = new McpServer({ name: 'allplays', version: '0.2.0' });
+    const server = new McpServer({ name: 'allplays', version: '0.3.0' });
     const db = createUserDb({ projectId: PROJECT_ID, idToken: identity.idToken });
 
     const run = (handler) => async (args) => {
@@ -196,26 +220,21 @@ function buildServer(identity) {
         }
     };
 
-    server.registerTool('get_profile', {
-        title: 'Get profile',
-        description: 'Account roles, linked teams, and linked players for the signed-in AllPlays user.',
-        inputSchema: {},
-        annotations: { readOnlyHint: true },
-        securitySchemes: READ_SECURITY_SCHEMES,
-        _meta: { securitySchemes: READ_SECURITY_SCHEMES }
-    }, run((context) => listMyTeams(db, context)));
-
-    server.registerTool('list_schedule', {
-        title: 'List schedule',
-        description: 'Stored and imported-calendar games and practices in a date range (default: next 7 days) across the user\'s teams, with RSVP state where available and deep links into AllPlays.',
-        inputSchema: {
-            startDate: z.string().optional().describe('ISO date, inclusive. Defaults to today.'),
-            endDate: z.string().optional().describe('ISO date, inclusive. Defaults to startDate + 7 days.')
-        },
-        annotations: { readOnlyHint: true },
-        securitySchemes: READ_SECURITY_SCHEMES,
-        _meta: { securitySchemes: READ_SECURITY_SCHEMES }
-    }, run((context, args) => getFamilySchedule(db, context, args)));
+    for (const catalogTool of SHARED_PRIVATE_AI_READ_TOOL_CATALOG) {
+        server.registerTool(catalogTool.name, {
+            title: toolTitle(catalogTool.name),
+            description: catalogTool.description,
+            inputSchema: sharedInputSchema(catalogTool.parameters),
+            annotations: { readOnlyHint: true },
+            securitySchemes: READ_SECURITY_SCHEMES,
+            _meta: { securitySchemes: READ_SECURITY_SCHEMES }
+        }, run(async (context, args) => {
+            const adapter = createMcpPrivateAiReadAdapter(db, context);
+            const definitions = createSharedPrivateAiReadToolDefinitions(adapter);
+            const definition = definitions.find((candidate) => candidate.name === catalogTool.name);
+            return definition.resolve(createMcpSharedUser(identity, context), args);
+        }));
+    }
 
     server.registerTool('get_game_summary', {
         title: 'Get game summary',

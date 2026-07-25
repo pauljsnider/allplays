@@ -59,9 +59,11 @@ export function assertSafeProductionModuleGraph(
   {
     appDirectory,
     repoRoot,
-    legacyDirectory = path.join(repoRoot, 'js')
+    legacyDirectory = path.join(repoRoot, 'js'),
+    sharedModules = []
   }
 ) {
+  const normalizedSharedModules = new Set(sharedModules.map(normalizePath));
   const unexpectedModules = [];
   for (const moduleId of moduleIds) {
     const modulePath = normalizeModulePath(moduleId);
@@ -69,6 +71,7 @@ export function assertSafeProductionModuleGraph(
     if (
       isWithin(appDirectory, modulePath)
       || isWithin(legacyDirectory, modulePath)
+      || normalizedSharedModules.has(normalizePath(modulePath))
       || normalizePath(modulePath).includes('/node_modules/')
     ) {
       continue;
@@ -78,7 +81,7 @@ export function assertSafeProductionModuleGraph(
 
   if (unexpectedModules.length > 0) {
     throw new Error(
-      `App production build imported files outside apps/app and the intentional js bridge: ${[...new Set(unexpectedModules)].sort().join(', ')}`
+      `App production build imported files outside apps/app and its intentional shared bridges: ${[...new Set(unexpectedModules)].sort().join(', ')}`
     );
   }
 }
@@ -151,7 +154,7 @@ export function assertSafeProductionDist(
   };
 }
 
-export function createProductionArtifactGuard({ appDirectory, repoRoot }) {
+export function createProductionArtifactGuard({ appDirectory, repoRoot, sharedModules = [] }) {
   let distDirectory = path.join(appDirectory, 'dist');
   let publicDirectory = path.join(appDirectory, 'public');
 
@@ -165,7 +168,7 @@ export function createProductionArtifactGuard({ appDirectory, repoRoot }) {
         : path.resolve(config.root, config.publicDir);
     },
     generateBundle(_outputOptions, bundle) {
-      assertSafeProductionModuleGraph(this.getModuleIds(), { appDirectory, repoRoot });
+      assertSafeProductionModuleGraph(this.getModuleIds(), { appDirectory, repoRoot, sharedModules });
       assertSafeProductionBundle(bundle);
     },
     writeBundle() {

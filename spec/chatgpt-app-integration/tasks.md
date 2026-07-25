@@ -19,13 +19,13 @@
 - [x] 12. Deploy to Cloud Run behind `https://mcp.allplays.ai/mcp`, with the branded domain certificate and OAuth discovery ready. _Req 1.1_
 - [ ] 13. Structured security tests for parent, coach, unauthorized, and cross-team scenarios against the live service. _Req 2.3_
 
-## Phase 2+ (per plan §10, not started)
+## Phase 2+ (per plan §10)
 
-- [ ] 14. Extract the in-app private AI registry's `summarize*`/`loadParent*` layer (`apps/app/src/lib/privateAiService.ts`, `parentToolsService.ts`) into a shared package so MCP tools and the app assistant run one implementation (covers practice sessions, assignments, rideshare, RSVP fallback resolution the spike omits).
+- [x] 14. Extract the schedule/profile read registry's selectors, summaries, aliases, and projection into `sharedPrivateAiTools.js`; route both `privateAiService.ts` and MCP through adapters to the same eight-tool implementation (schedule, imported calendars, practice packets, assignments, rideshare, and RSVP context).
 - [x] 15. OAuth broker: dynamic client registration, authorization code + PKCE (S256), refresh grant, AllPlays sign-in page; broker tokens map to the user's Firebase refresh token. _Req 2.4_
 - [x] 15a. Persist encrypted authorization codes, access tokens, and rotating refresh grants in an isolated Firestore database; bind grants to the canonical MCP resource and `allplays.read` scope.
 - [x] 15b. Match the `/app` authentication UX and support verified Firebase email/password, Google, and password-reset flows on the authorize page.
 - [ ] 15c. Add an explicit token revocation/disconnect endpoint and distributed rate limiting.
-- [ ] 16. `get_event_details`, `get_coach_attention_items`, `get_practice_context` read tools (mirror app registry names where they exist).
+- [ ] 16. Complete the remaining expanded reads. `get_schedule_event` and `get_practice_packet` now share the app implementation; `get_coach_attention_items` remains.
 - [ ] 17. Embedded UI cards (family schedule, game summary).
 - [ ] 18. Write tools with confirmation, idempotency, audit — reuse the app registry's pending-confirmation staging (`update_rsvp`, practice-plan save). _Req 6.1_

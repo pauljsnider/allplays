@@ -1017,7 +1017,17 @@ describe('chatgpt-mcp oauth: metadata', () => {
             expect(toolsResponse.status).toBe(200);
             const eventStream = await toolsResponse.text();
             const payload = JSON.parse(eventStream.match(/^data:\s*(.+)$/m)[1]);
-            expect(payload.result.tools).toHaveLength(3);
+            expect(payload.result.tools.map((tool) => tool.name)).toEqual([
+                'get_profile',
+                'list_schedule',
+                'get_last_game',
+                'get_schedule_event',
+                'list_rsvps',
+                'list_ride_offers',
+                'list_assignments',
+                'get_practice_packet',
+                'get_game_summary'
+            ]);
             for (const tool of payload.result.tools) {
                 expect(tool.securitySchemes).toEqual([{ type: 'oauth2', scopes: ['allplays.read'] }]);
                 expect(tool._meta.securitySchemes).toEqual(tool.securitySchemes);

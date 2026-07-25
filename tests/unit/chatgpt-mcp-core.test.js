@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import {
     DomainError,
     resolveUserContext,
@@ -273,6 +273,53 @@ describe('chatgpt-mcp core: getFamilySchedule', () => {
         expect(result.events[1].myRsvp).toEqual({ response: 'not_responded', playerIds: [] });
     });
 
+    it('projects task summaries without exposing embedded packet or rideshare internals', async () => {
+        const db = parentDb({
+            queries: {
+                teams: () => [],
+                'teams/team-a/games': () => [{
+                    id: 'practice-1',
+                    data: {
+                        type: 'practice',
+                        date: new Date('2026-07-27T22:30:00Z'),
+                        assignments: [{
+                            role: 'Cones',
+                            claimable: true,
+                            internalToken: 'assignment-secret'
+                        }],
+                        rideshareSummary: {
+                            offerCount: 1,
+                            seatsLeft: 2,
+                            requests: 1,
+                            privateDriverNotes: 'rideshare-secret'
+                        },
+                        practiceHomePacketSummary: '2 drills · 20 min',
+                        practiceHomePacket: {
+                            blocks: [{ title: 'Private coach plan' }],
+                            privateCoachNotes: 'packet-secret'
+                        }
+                    }
+                }]
+            }
+        });
+        const context = await resolveUserContext(db, parentIdentity);
+        const result = await getFamilySchedule(db, context, {
+            startDate: '2026-07-24',
+            endDate: '2026-07-31'
+        });
+
+        expect(result.events[0]).toMatchObject({
+            assignments: [{ role: 'Cones', claimable: true }],
+            rideshareSummary: { offerCount: 1, seatsLeft: 2, requests: 1 },
+            practiceHomePacketSummary: '2 drills · 20 min'
+        });
+        const serialized = JSON.stringify(result);
+        expect(serialized).not.toContain('assignment-secret');
+        expect(serialized).not.toContain('rideshare-secret');
+        expect(serialized).not.toContain('packet-secret');
+        expect(result.events[0].practiceHomePacket).toBeUndefined();
+    });
+
     it('merges imported team-calendar events without exposing the private feed URL', async () => {
         const privateCalendarUrl = 'webcal://calendar.example.test/private.ics?token=secret';
         const db = parentDb({
@@ -324,6 +371,47 @@ describe('chatgpt-mcp core: getFamilySchedule', () => {
         expect(result.warnings).toEqual([]);
         expect(JSON.stringify(result)).not.toContain(privateCalendarUrl);
         expect(JSON.stringify(result)).not.toContain('token=secret');
+    });
+
+    it('keeps the newest imported events when a descending history query is bounded', async () => {
+        const db = parentDb({
+            docs: {
+                'teams/team-a': {
+                    name: 'Vipers',
+                    calendarUrls: ['https://calendar.example.test/private.ics']
+                }
+            },
+            queries: {
+                teams: () => [],
+                'teams/team-a/games': () => []
+            }
+        });
+        const context = await resolveUserContext(db, parentIdentity);
+        const imported = Array.from({ length: 5 }, (_, index) => ({
+            calendarEventId: `event-${index + 1}`,
+            calendarEventUid: `uid-${index + 1}`,
+            type: 'game',
+            date: new Date(`2026-07-${String(index + 20).padStart(2, '0')}T18:00:00Z`),
+            endDate: null,
+            opponent: `Opponent ${index + 1}`,
+            title: null,
+            location: 'Field',
+            status: 'scheduled'
+        }));
+
+        const result = await getFamilySchedule(
+            db,
+            context,
+            { startDate: '2026-07-01', endDate: '2026-07-31' },
+            new Date('2026-07-24T12:00:00Z'),
+            {
+                orderDirection: 'desc',
+                maxEventsPerTeam: 2,
+                loadCalendarFeedEvents: async () => imported
+            }
+        );
+
+        expect(result.events.map((event) => event.gameId)).toEqual(['event-4', 'event-5']);
     });
 
     it('keeps stored events and reports a safe warning when an imported calendar fails', async () => {
@@ -529,6 +617,33 @@ describe('chatgpt-mcp server configuration', () => {
         expect(source).toContain('const WEB_API_KEY = process.env.FIREBASE_WEB_API_KEY;');
         expect(source).toContain('if (!PROJECT_ID || !WEB_API_KEY)');
         expect(source).not.toMatch(/AIza[0-9A-Za-z_-]+/);
+    });
+
+    it('keeps credential-shaped values out of the connector source tree', () => {
+        const serviceRoot = new URL('../../services/chatgpt-mcp/', import.meta.url);
+        const sourceFiles = [];
+        const visit = (directory) => {
+            for (const entry of readdirSync(directory, { withFileTypes: true })) {
+                if (entry.name === 'node_modules' || entry.name === 'package-lock.json') continue;
+                const url = new URL(entry.name, directory);
+                if (entry.isDirectory()) {
+                    visit(new URL(`${entry.name}/`, directory));
+                } else if (/\.(?:js|mjs|json|md)$/.test(entry.name) || entry.name === 'Dockerfile') {
+                    sourceFiles.push(url);
+                }
+            }
+        };
+        visit(serviceRoot);
+        const combined = sourceFiles.map((url) => readFileSync(url, 'utf8')).join('\n');
+        const tokenScript = readFileSync(
+            new URL('../../services/chatgpt-mcp/scripts/get-token.mjs', import.meta.url),
+            'utf8'
+        );
+
+        expect(combined).not.toMatch(/AIza[0-9A-Za-z_-]{30,}/);
+        expect(combined).not.toMatch(/-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/);
+        expect(tokenScript).toContain('const API_KEY = process.env.FIREBASE_WEB_API_KEY;');
+        expect(tokenScript).not.toContain('process.env.FIREBASE_WEB_API_KEY ||');
     });
 });
 

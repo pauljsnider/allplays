@@ -240,11 +240,51 @@ function whitelistRsvpSummary(summary) {
     return Object.keys(out).length ? out : null;
 }
 
+function whitelistAssignments(assignments) {
+    return (Array.isArray(assignments) ? assignments : []).slice(0, 30).map((assignment) => ({
+        role: cleanString(assignment?.role),
+        value: cleanString(assignment?.value) || null,
+        claimable: assignment?.claimable === true,
+        claimed: assignment?.claimed === true,
+        claimedBy: cleanString(assignment?.claimedBy) || null,
+        claimedByName: cleanString(assignment?.claimedByName) || null,
+        claimantName: cleanString(assignment?.claimantName) || null,
+        note: cleanString(assignment?.note) || null
+    }));
+}
+
+function whitelistRideshareSummary(summary) {
+    if (!summary || typeof summary !== 'object') return null;
+    const result = {};
+    for (const key of ['offerCount', 'offers', 'seatsLeft', 'requests', 'pending', 'confirmed']) {
+        if (typeof summary[key] === 'number' && Number.isFinite(summary[key])) result[key] = summary[key];
+    }
+    if (typeof summary.isFull === 'boolean') result.isFull = summary.isFull;
+    return Object.keys(result).length ? result : null;
+}
+
+function whitelistPracticePacketSummary(summary) {
+    if (typeof summary === 'string') return cleanString(summary) || null;
+    if (!summary || typeof summary !== 'object') return null;
+    const result = {};
+    for (const key of ['count', 'drillCount', 'totalMinutes', 'durationMinutes']) {
+        if (typeof summary[key] === 'number' && Number.isFinite(summary[key])) result[key] = summary[key];
+    }
+    for (const key of ['label', 'summary']) {
+        if (typeof summary[key] === 'string' && summary[key].trim()) result[key] = summary[key].trim();
+    }
+    return Object.keys(result).length ? result : null;
+}
+
 export async function getFamilySchedule(db, context, args = {}, now = new Date(), options = {}) {
     const { start, end } = parseScheduleRange(args, now);
     const events = [];
     const warnings = [];
     const calendarLoader = options.loadCalendarFeedEvents || loadCalendarFeedEvents;
+    const orderDirection = options.orderDirection === 'desc' ? 'desc' : 'asc';
+    const eventLimit = Number.isInteger(options.maxEventsPerTeam)
+        ? Math.min(Math.max(options.maxEventsPerTeam, 1), 100)
+        : MAX_EVENTS_PER_TEAM;
 
     for (const entry of context.teams.values()) {
         const calendarUrls = (Array.isArray(entry.team.calendarUrls) ? entry.team.calendarUrls : [])
@@ -260,8 +300,8 @@ export async function getFamilySchedule(db, context, args = {}, now = new Date()
         const snap = await db.collection(`teams/${entry.teamId}/games`)
             .where('date', '>=', start)
             .where('date', '<=', end)
-            .orderBy('date')
-            .limit(MAX_EVENTS_PER_TEAM)
+            .orderBy('date', orderDirection)
+            .limit(eventLimit)
             .get();
         const trackedCalendarIds = new Set();
         const storedEventTimes = [];
@@ -279,8 +319,21 @@ export async function getFamilySchedule(db, context, args = {}, now = new Date()
                 gameId: doc.id,
                 type: data.type === 'practice' ? 'practice' : 'game',
                 date: toIso(data.date),
+                endDate: toIso(data.endDate || data.end || data.endTime),
                 opponent: cleanString(data.opponent) || cleanString(data.opponentTeamName) || null,
+                title: cleanString(data.title) || null,
                 location: cleanString(data.location) || null,
+                status: cleanString(data.status) || null,
+                isCancelled: data.status === 'cancelled',
+                isDbGame: true,
+                source: cleanString(data.sourceMetadata?.sourceType || data.source) || 'db',
+                isImported: Boolean(data.sourceMetadata || data.source === 'calendar' || data.source === 'registration'),
+                homeScore: typeof data.homeScore === 'number' ? data.homeScore : null,
+                awayScore: typeof data.awayScore === 'number' ? data.awayScore : null,
+                assignments: whitelistAssignments(data.assignments),
+                rideshareSummary: whitelistRideshareSummary(data.rideshareSummary),
+                practiceHomePacketSummary: whitelistPracticePacketSummary(data.practiceHomePacketSummary),
+                practiceSessionId: cleanString(data.practiceSessionId) || null,
                 rsvpSummary: whitelistRsvpSummary(data.rsvpSummary),
                 myRsvp: null,
                 linkedPlayerIds: [...entry.linkedPlayerIds],
@@ -305,7 +358,10 @@ export async function getFamilySchedule(db, context, args = {}, now = new Date()
                 calendarFailed = true;
                 continue;
             }
-            for (const calendarEvent of result.value.slice(0, MAX_EVENTS_PER_TEAM)) {
+            const calendarEvents = orderDirection === 'desc'
+                ? result.value.slice(-eventLimit)
+                : result.value.slice(0, eventLimit);
+            for (const calendarEvent of calendarEvents) {
                 if (
                     trackedCalendarIds.has(calendarEvent.calendarEventId)
                     || (calendarEvent.calendarEventUid && trackedCalendarIds.has(calendarEvent.calendarEventUid))
@@ -334,6 +390,12 @@ export async function getFamilySchedule(db, context, args = {}, now = new Date()
                     status: calendarEvent.status,
                     source: 'calendar',
                     isImported: true,
+                    isDbGame: false,
+                    isCancelled: calendarEvent.status === 'cancelled',
+                    assignments: [],
+                    rideshareSummary: null,
+                    practiceHomePacketSummary: null,
+                    practiceSessionId: null,
                     rsvpSummary: null,
                     myRsvp: null,
                     linkedPlayerIds: [...entry.linkedPlayerIds],

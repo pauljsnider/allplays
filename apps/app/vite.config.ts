@@ -47,7 +47,11 @@ export default defineConfig(({ mode }) => {
       open: false
     }),
     bundleVisualizerTooltipFixPlugin,
-    createProductionArtifactGuard({ appDirectory, repoRoot })
+    createProductionArtifactGuard({
+      appDirectory,
+      repoRoot,
+      sharedModules: [path.resolve(repoRoot, 'services/chatgpt-mcp/src/sharedPrivateAiTools.js')]
+    })
   ],
   server: {
     port: 5174,

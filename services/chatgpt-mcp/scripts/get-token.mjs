@@ -8,12 +8,14 @@
 // Credentials are read from env only (never argv) so they stay out of shell
 // history and process listings.
 
-const API_KEY = process.env.FIREBASE_WEB_API_KEY || 'AIzaSyDoixIoKJuUVWdmImwjYRTthjKOv2mU0Jc';
+const API_KEY = process.env.FIREBASE_WEB_API_KEY;
 const email = process.env.ALLPLAYS_EMAIL;
 const password = process.env.ALLPLAYS_PASSWORD;
 
-if (!email || !password) {
-    console.error('Set ALLPLAYS_EMAIL and ALLPLAYS_PASSWORD environment variables.');
+if (!API_KEY || !email || !password) {
+    console.error(
+        'Set FIREBASE_WEB_API_KEY, ALLPLAYS_EMAIL, and ALLPLAYS_PASSWORD environment variables.'
+    );
     process.exit(1);
 }
 

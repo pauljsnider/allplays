@@ -2,9 +2,14 @@
 
 ## Overview
 
-A thin Node.js MCP service (`services/chatgpt-mcp/`) exposes permission-aware read tools over Streamable HTTP. It resolves the caller's identity from the bearer token and performs **user-credentialed Firestore access over the REST API** — every read carries the user's own Firebase ID token, so the same `firestore.rules` that protect the web/app clients authorize each read. The service holds no privileged credentials (no service account, no Admin SDK). Domain logic lives in a pure, dependency-injected core module.
+A thin Node.js MCP service (`services/chatgpt-mcp/`) exposes permission-aware read tools over Streamable HTTP. It resolves the caller's identity from the bearer token and performs **user-credentialed Firestore access over the REST API** — every application-data read carries the user's own Firebase ID token, so the same `firestore.rules` that protect the web/app clients authorize each read. The service identity is restricted to the isolated encrypted OAuth grant store and does not perform application-data reads.
 
-Tool names mirror the in-app private AI registry (`apps/app/src/lib/privateAiService.ts`, ~45 tools with confirmation-staged writes and audit) so the ChatGPT surface and the app assistant converge on one catalog; extracting that registry's summarizers into shared code is the follow-on reuse task.
+The schedule/profile read tools and the in-app private AI registry
+(`apps/app/src/lib/privateAiService.ts`, ~45 tools with confirmation-staged
+writes and audit) are built from `services/chatgpt-mcp/src/sharedPrivateAiTools.js`.
+The two surfaces therefore use one implementation for matching, filtering,
+summarizing, aliases, and result projection. Each surface supplies its own
+authorized data adapter.
 
 Per the plan (§4): "Build the app as a thin orchestration layer over a reusable AllPlays application service. Do not embed business rules or authorization only inside MCP tool handlers."
 
@@ -15,10 +20,13 @@ flowchart LR
     U[User] --> C[ChatGPT conversation]
     C -->|Streamable HTTP + Bearer token| M[MCP service<br/>services/chatgpt-mcp]
     M --> I[identity.js<br/>refresh token → user ID token]
-    M --> K[core.js<br/>roles, boundaries, whitelists]
+    M --> A[mcpPrivateAiAdapter.js<br/>rules-authorized data adapter]
+    A --> S[sharedPrivateAiTools.js<br/>shared app + MCP tool behavior]
+    A --> K[core.js<br/>roles, boundaries, whitelists]
     K --> R[firestoreRest.js<br/>reads AS the user]
     R -->|rules-enforced| F[(Firestore<br/>game-flow-c6311)]
-    M -->|structured JSON + deep links| C
+    S -->|structured JSON + deep links| C
+    P[In-app private assistant] -->|browser-authorized adapter| S
 ```
 
 - **Transport:** `@modelcontextprotocol/sdk` `StreamableHTTPServerTransport` in stateless mode (new server+transport per request) — Cloud Run friendly, no session affinity needed.
@@ -32,8 +40,10 @@ flowchart LR
 | `src/identity.js` | Bearer token → `{uid, email, idToken}`: Firebase refresh-token exchange via `securetoken.googleapis.com` (public web API key), cached until expiry; raw ID tokens also accepted |
 | `src/firestoreRest.js` | Firestore REST adapter scoped to the user's ID token — rules-enforced reads; maps 403 → `permission_denied`, 404 → not-found |
 | `src/core.js` | Pure domain logic with injected Firestore handle: role resolution, schedule assembly, game summary, field whitelists, deep links |
-| `src/oauth.js` | OAuth 2.1 broker: dynamic client registration, authorization code + PKCE (S256), refresh grant; opaque broker tokens map to the user's Firebase refresh token. In-memory storage (single-instance dev); Firestore-backed storage before multi-instance Cloud Run |
-| `scripts/get-token.mjs` | Sign-in helper that prints the refresh token (manual curl testing) |
+| `src/sharedPrivateAiTools.js` | Browser/server-safe shared definitions for eight schedule/profile read tools: catalog, selectors, filters, summaries, and output projection |
+| `src/mcpPrivateAiAdapter.js` | Adapts user-credentialed MCP reads to the shared tool interface; no business response formatting |
+| `src/oauth.js` | OAuth 2.1 broker: dynamic registration, authorization code + PKCE, rotating refresh grants, and opaque access tokens backed by the isolated encrypted production grant store |
+| `scripts/get-token.mjs` | Manual sign-in helper; all configuration and credentials are runtime environment variables |
 
 ## Identity and authorization
 
@@ -55,12 +65,18 @@ flowchart LR
 - `teams/{teamId}/games/{gameId}/rsvps/{uid}` — the caller's own RSVP doc
 - `teams/{teamId}/games/{gameId}/aggregatedStats/{playerId}` — per-player stats (public tier; `privatePlayerStats` is never read)
 
-## Tool contract (MVP)
+## Tool contract
 
 | Tool | Mode | Input | Output |
 |---|---|---|---|
-| `get_profile` | Read | — | `{teams: [{teamId, name, roles[], linkedPlayers[{playerId, name, number}]}]}` |
-| `list_schedule` | Read | `startDate?`, `endDate?` (ISO; default today → +7d) | `{events: [{teamId, teamName, gameId, type, date, opponent, location, rsvpSummary, myRsvp?, deepLink}]}` |
+| `get_profile` | Read | — | Account roles, safe profile fields, teams, and linked players |
+| `list_schedule` | Read | Date/range, team, player, and type filters | Stored and imported events with RSVP, rideshare, assignments, score, and deep links |
+| `get_last_game` | Read | Optional team/player selector | Most recent past game plus nearby games; practices never substitute for games |
+| `get_schedule_event` | Read | Event plus optional team/player selector | One event and per-child detail context |
+| `list_rsvps` | Read | Schedule filters | Per-child RSVP state and aggregate summaries |
+| `list_ride_offers` | Read | Event selector | Safe ride offers, requests, and capacity summary |
+| `list_assignments` | Read | Event selector | Safe volunteer/task assignments and claims |
+| `get_practice_packet` | Read | Practice selector | Parent packet and completion state |
 | `get_game_summary` | Read | `teamId`, `gameId` | `{game: {…whitelisted}, playerStats[], deepLink}` |
 
 Deep links use the validated legacy routes, e.g. `https://allplays.ai/live-game.html?teamId=…&gameId=…&replay=true`.
@@ -80,5 +96,7 @@ Deep links use the validated legacy routes, e.g. `https://allplays.ai/live-game.
 - **Stateless HTTP transport** over sessions: simplest correct spike; revisit if streaming/UI resources need session state.
 - **User-credentialed Firestore REST access** over Admin SDK: reuses `firestore.rules` as the single authorization source (no duplicated permission logic to drift), removes all privileged credentials from the service, and matches how the parent UI is authorized. Trade-off: REST latency per read and no rules bypass for future cross-user aggregation — those later workflows (e.g. coach attention items) may need an Admin-SDK path behind the extracted application service.
 - **Refresh token as spike bearer** (public web API key exchange): long-lived like a connector secret, revocable per-user, and structurally identical to what the OAuth broker will produce.
-- **Tool names mirror the in-app private AI registry** (`get_profile`, `list_schedule`): one catalog across surfaces; code-level sharing of the app's `summarize*` functions is the follow-on extraction task.
+- **Shared schedule/profile read implementation:** the app and MCP import the
+  same tool factory. Authorization and data access remain adapter-specific,
+  while selectors and response behavior cannot drift between surfaces.
 - **Separate package** with its own `package.json` (like `functions/`): deployable to Cloud Run independently; root repo tests still cover the pure core.

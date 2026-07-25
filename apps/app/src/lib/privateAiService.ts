@@ -55,7 +55,6 @@ import {
 import {
   formatEventDateLabel,
   formatEventTimeLabel,
-  getOpenScheduleAssignments,
   getScheduleTitle,
   normalizeScheduleDate,
   normalizeRsvpResponse,
@@ -75,11 +74,18 @@ import {
   releaseParentScheduleAssignmentClaim,
   setParentScheduleRideOfferStatus,
   submitParentScheduleRsvp,
-  submitParentScheduleRsvpForChildren,
-  summarizeParentScheduleRideOffers
+  submitParentScheduleRsvpForChildren
 } from './scheduleService';
 import { loadParentTeamDetail } from './teamDetailService';
 import type { AuthUser } from './types';
+import {
+  createSharedPrivateAiReadToolDefinitions,
+  pickPrivateAiFields as pickFields,
+  summarizeSharedAssignment as summarizeAssignment,
+  summarizeSharedPracticePacket as summarizePracticePacket,
+  summarizeSharedRideOffer as summarizeRideOffer,
+  summarizeSharedScheduleEvent as summarizeScheduleEvent
+} from '../../../../services/chatgpt-mcp/src/sharedPrivateAiTools.js';
 
 export type PrivateAiRole = 'user' | 'assistant';
 
@@ -513,124 +519,30 @@ export async function runPrivateAiTool(user: AuthUser, call: PrivateAiToolCall, 
   }
 }
 
+const sharedPrivateAiReadToolDefinitions = createSharedPrivateAiReadToolDefinitions({
+  loadProfile: async (user) => ({
+    profile: await getUserProfile(user.uid).catch(() => null)
+  }),
+  loadSchedule: async (user, { includePastGames }) => loadParentSchedule(user as AuthUser, { includePastGames }),
+  loadScheduleEventDetail: async (user, event) => loadParentScheduleEventDetail(user as AuthUser, {
+    teamId: event.teamId,
+    eventId: event.id,
+    childId: event.childId,
+    eventType: event.type
+  } as any),
+  loadRideOffers: async (_user, event) => loadParentScheduleRideOffers(event),
+  loadAssignments: async (_user, event) => loadParentScheduleAssignments(event),
+  loadPracticePacket: async (user, event) => loadPracticePacketForAi(user as AuthUser, event)
+}) as PrivateAiToolDefinition[];
+
 const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
-  {
-    name: 'get_profile',
-    mode: 'read',
-    description: 'Account profile, roles, notification preferences, linked teams, and linked players.',
-    resolve: async (user) => summarizeProfile(user, await getUserProfile(user.uid).catch(() => null))
-  },
+  ...sharedPrivateAiReadToolDefinitions,
   {
     name: 'get_home',
     mode: 'read',
     description: 'Parent dashboard tasks, players, teams, next events, unread messages, packets, fees, and priority actions.',
     aliases: ['list_tasks'],
     resolve: async (user) => summarizeHome(await loadParentHome(user))
-  },
-  {
-    name: 'list_schedule',
-    mode: 'read',
-    description: 'Schedule events with RSVP, rideshare, assignments, score, location, and player context.',
-    aliases: ['get_schedule'],
-    resolve: async (user, args) => {
-      const range = compactText(args.range).toLowerCase();
-      return summarizeSchedule(await loadParentSchedule(user, {
-        includePastGames: range === 'all'
-      }), args);
-    }
-  },
-  {
-    name: 'get_last_game',
-    mode: 'read',
-    description: 'Most recent past game for the parent account, including RSVP status. Args: teamId, teamName, playerId, childId, playerName, childName.',
-    aliases: ['last_game', 'get_previous_game'],
-    resolve: async (user, args) => summarizeLastGame(await loadParentSchedule(user, {
-      includePastGames: true
-    }), args)
-  },
-  {
-    name: 'get_schedule_event',
-    mode: 'read',
-    description: 'One schedule event with detail context. Args: eventId, teamId, playerName, teamName.',
-    resolve: async (user, args) => {
-      const event = await resolveAccessibleScheduleEvent(user, args);
-      if (!event) throw new Error('No matching event was found for this account.');
-      const detail = await loadParentScheduleEventDetail(user, {
-        teamId: event.teamId,
-        eventId: event.id,
-        childId: event.childId,
-        eventType: event.type
-      } as any).catch(() => null);
-      return {
-        event: summarizeScheduleEvent(event),
-        childEvents: (detail?.events || []).slice(0, 8).map(summarizeScheduleEvent)
-      };
-    }
-  },
-  {
-    name: 'list_rsvps',
-    mode: 'read',
-    description: 'RSVP status and summaries for schedule events.',
-    resolve: async (user, args) => {
-      const schedule = await loadParentSchedule(user, { includePastGames: compactText(args.range).toLowerCase() === 'all' });
-      return {
-        events: summarizeSchedule(schedule, args).events.map((event: any) => pickFields(event, [
-          'eventId',
-          'teamId',
-          'teamName',
-          'title',
-          'childId',
-          'childName',
-          'date',
-          'dateLabel',
-          'timeLabel',
-          'myRsvp',
-          'rsvpSummary'
-        ]))
-      };
-    }
-  },
-  {
-    name: 'list_ride_offers',
-    mode: 'read',
-    description: 'Rideshare offers and requests for one event. Args: eventId, teamId, playerName, teamName.',
-    resolve: async (user, args) => {
-      const event = await resolveAccessibleScheduleEvent(user, args);
-      if (!event) throw new Error('No matching event was found for this account.');
-      const offers = await loadParentScheduleRideOffers(event);
-      return {
-        event: summarizeScheduleEvent(event),
-        summary: summarizeParentScheduleRideOffers(offers),
-        offers: offers.slice(0, 20).map(summarizeRideOffer)
-      };
-    }
-  },
-  {
-    name: 'list_assignments',
-    mode: 'read',
-    description: 'Volunteer/task assignments for one schedule event. Args: eventId, teamId, playerName, teamName.',
-    aliases: ['get_assignments', 'list_tasks_for_event'],
-    resolve: async (user, args) => {
-      const event = await resolveAccessibleScheduleEvent(user, args);
-      if (!event) throw new Error('No matching event was found for this account.');
-      const assignments = await loadParentScheduleAssignments(event);
-      return {
-        event: summarizeScheduleEvent(event),
-        assignments: assignments.map(summarizeAssignment)
-      };
-    }
-  },
-  {
-    name: 'get_practice_packet',
-    mode: 'read',
-    description: 'Parent practice/home packet details and completion status for a practice. Args: eventId, teamId, playerName, teamName.',
-    resolve: async (user, args) => {
-      const event = await resolveAccessibleScheduleEvent(user, buildPracticePacketEventArgs(args));
-      if (!event) throw new Error('No matching practice was found for this account.');
-      const packet = await loadPracticePacketForAi(user, event);
-      if (!packet) throw new Error('No practice packet was found for this practice.');
-      return summarizePracticePacket(packet);
-    }
   },
   {
     name: 'get_messages',
@@ -1588,24 +1500,6 @@ function summarizeChatHistory(messages: PrivateAiMessage[]) {
     }));
 }
 
-function summarizeProfile(user: AuthUser, profile: Record<string, any> | null) {
-  return {
-    account: summarizeSignedInUser(user),
-    profile: pickFields(profile || {}, [
-      'fullName',
-      'displayName',
-      'email',
-      'phone',
-      'photoUrl',
-      'emailVerified',
-      'notificationPreferences',
-      'parentTeamIds',
-      'parentPlayerKeys',
-      'coachTeamIds'
-    ])
-  };
-}
-
 function summarizeHome(home: any) {
   return {
     metrics: home.metrics,
@@ -1637,71 +1531,6 @@ function summarizeHome(home: any) {
   };
 }
 
-function summarizeSchedule(schedule: any, args: Record<string, unknown>) {
-  const now = new Date();
-  const requestedLimit = Number(args.limit || 12);
-  const itemLimit = Number.isFinite(requestedLimit) ? Math.min(Math.max(requestedLimit, 1), 25) : 12;
-  const range = compactText(args.range || 'upcoming').toLowerCase();
-  const eventType = compactText(args.type).toLowerCase();
-  const teamId = compactText(args.teamId);
-  const teamName = compactText(args.teamName).toLowerCase();
-  const playerName = compactText(args.playerName).toLowerCase();
-
-  let events = Array.isArray(schedule.events) ? schedule.events.slice() : [];
-  if (range === 'upcoming') {
-    events = events.filter((event: ParentScheduleEvent) => event.date.getTime() >= startOfDay(now).getTime());
-  } else if (range === 'recent') {
-    events = events.filter((event: ParentScheduleEvent) => event.date.getTime() < startOfDay(now).getTime()).reverse();
-  }
-  if (eventType === 'game' || eventType === 'practice') {
-    events = events.filter((event: ParentScheduleEvent) => event.type === eventType);
-  }
-  if (teamId) {
-    events = events.filter((event: ParentScheduleEvent) => event.teamId === teamId);
-  }
-  if (teamName) {
-    events = events.filter((event: ParentScheduleEvent) => event.teamName.toLowerCase().includes(teamName));
-  }
-  if (playerName) {
-    events = events.filter((event: ParentScheduleEvent) => event.childName.toLowerCase().includes(playerName));
-  }
-
-  return {
-    children: (schedule.children || []).slice(0, 20).map((child: any) => pickFields(child, ['playerId', 'childId', 'name', 'childName', 'teamId', 'teamName'])),
-    events: events.slice(0, itemLimit).map(summarizeScheduleEvent)
-  };
-}
-
-function summarizeLastGame(schedule: any, args: Record<string, unknown>) {
-  const now = new Date();
-  const requestedTeamId = compactText(args.teamId);
-  const requestedChildId = compactText(args.childId || args.playerId);
-  const requestedTeamName = compactText(args.teamName).toLowerCase();
-  const requestedPlayerName = compactText(args.playerName || args.childName).toLowerCase();
-  const allEvents = Array.isArray(schedule.events) ? schedule.events : [];
-  const matchingGames = allEvents
-    .filter((event: ParentScheduleEvent) => event.type === 'game')
-    .filter((event: ParentScheduleEvent) => !requestedTeamId || event.teamId === requestedTeamId)
-    .filter((event: ParentScheduleEvent) => !requestedChildId || event.childId === requestedChildId)
-    .filter((event: ParentScheduleEvent) => !requestedTeamName || event.teamName.toLowerCase().includes(requestedTeamName))
-    .filter((event: ParentScheduleEvent) => !requestedPlayerName || event.childName.toLowerCase().includes(requestedPlayerName));
-  const pastGames = matchingGames
-    .filter((event: ParentScheduleEvent) => event.date.getTime() < now.getTime())
-    .sort((a: ParentScheduleEvent, b: ParentScheduleEvent) => b.date.getTime() - a.date.getTime());
-  const upcomingGames = matchingGames
-    .filter((event: ParentScheduleEvent) => event.date.getTime() >= now.getTime())
-    .sort((a: ParentScheduleEvent, b: ParentScheduleEvent) => a.date.getTime() - b.date.getTime());
-
-  return {
-    lastGame: pastGames[0] ? summarizeScheduleEvent(pastGames[0]) : null,
-    recentGames: pastGames.slice(0, 5).map(summarizeScheduleEvent),
-    upcomingGames: upcomingGames.slice(0, 3).map(summarizeScheduleEvent),
-    message: pastGames.length
-      ? ''
-      : 'No past games were found for the requested player or team.'
-  };
-}
-
 function summarizeMessages(inbox: any) {
   return {
     teams: (inbox.teams || []).slice(0, 20).map((team: any) => ({
@@ -1730,40 +1559,6 @@ function summarizeMessageThreads(teamId: string, team: any, conversations: any[]
       'lastMessagePreview',
       'unreadCount',
       'muted'
-    ]))
-  };
-}
-
-function summarizeAssignment(assignment: any) {
-  return pickFields(assignment || {}, [
-    'role',
-    'value',
-    'claimable',
-    'claimed',
-    'claimedBy',
-    'claimedByName',
-    'claimantName',
-    'note'
-  ]);
-}
-
-function summarizePracticePacket(packet: any) {
-  return {
-    sessionId: packet.sessionId,
-    teamId: packet.teamId,
-    eventId: packet.eventId,
-    title: packet.title,
-    date: normalizeScheduleDate(packet.date)?.toISOString() || null,
-    location: packet.location,
-    homePacket: packet.homePacket,
-    children: (packet.children || []).map((child: any) => pickFields(child, ['id', 'name'])),
-    completions: (packet.completions || []).map((completion: any) => pickFields(completion, [
-      'id',
-      'childId',
-      'childName',
-      'status',
-      'completedAt',
-      'updatedAt'
     ]))
   };
 }
@@ -1865,28 +1660,6 @@ function summarizeStatRowsTotals(rows: any[]) {
   return {
     gameCount: Array.isArray(rows) ? rows.length : 0,
     totals
-  };
-}
-
-function summarizeRideOffer(offer: any) {
-  return {
-    id: offer.id,
-    sourceGameId: offer.sourceGameId || null,
-    driverUserId: offer.driverUserId || null,
-    driverName: offer.driverName || null,
-    seatCapacity: offer.seatCapacity,
-    seatCountConfirmed: offer.seatCountConfirmed,
-    seatsLeft: Math.max(0, Number(offer.seatCapacity || 0) - Number(offer.seatCountConfirmed || 0)),
-    direction: offer.direction,
-    status: offer.status,
-    note: offer.note || null,
-    requests: (offer.requests || []).slice(0, 12).map((request: any) => pickFields(request, [
-      'id',
-      'parentUserId',
-      'childId',
-      'childName',
-      'status'
-    ]))
   };
 }
 
@@ -2039,33 +1812,6 @@ async function resolvePlayerIncentiveRule(user: AuthUser, args: Record<string, u
   return { player, rule };
 }
 
-function summarizeScheduleEvent(event: ParentScheduleEvent) {
-  const openAssignments = getOpenScheduleAssignments(event.assignments || []);
-  return {
-    eventId: event.id,
-    teamId: event.teamId,
-    teamName: event.teamName,
-    type: event.type,
-    title: getScheduleTitle(event),
-    childId: event.childId,
-    childName: event.childName,
-    date: event.date.toISOString(),
-    dateLabel: formatEventDateLabel(event.date),
-    timeLabel: formatEventTimeLabel(event.date),
-    location: event.location,
-    status: event.status || null,
-    isCancelled: event.isCancelled,
-    myRsvp: event.myRsvp || 'not_responded',
-    rsvpSummary: event.rsvpSummary || null,
-    rideshareSummary: event.rideshareSummary || null,
-    openAssignments: openAssignments.map((assignment) => assignment.role).filter(Boolean),
-    practiceHomePacketSummary: event.practiceHomePacketSummary || null,
-    score: typeof event.homeScore === 'number' || typeof event.awayScore === 'number'
-      ? { home: event.homeScore ?? null, away: event.awayScore ?? null }
-      : null
-  };
-}
-
 function summarizeTeamEvent(event: any) {
   const date = normalizeScheduleDate(event.date);
   return {
@@ -2095,16 +1841,6 @@ function parseJsonObject(text: string): any | null {
   } catch {
     return null;
   }
-}
-
-function pickFields(source: Record<string, any>, fields: string[]) {
-  return fields.reduce<Record<string, any>>((acc, field) => {
-    const value = source?.[field];
-    if (value !== undefined && value !== null && value !== '') {
-      acc[field] = value;
-    }
-    return acc;
-  }, {});
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -2177,8 +1913,4 @@ function looksLikeLastGameQuestion(question: string) {
 
 function clampAnswer(answer: string) {
   return compactText(answer).slice(0, maxAnswerCharacters) || 'I could not find enough information to answer that.';
-}
-
-function startOfDay(date: Date) {
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
 }
