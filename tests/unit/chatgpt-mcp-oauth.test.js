@@ -966,4 +966,68 @@ describe('chatgpt-mcp oauth: metadata', () => {
         expect(meta.protectedResource.resource).toBe('https://example.ngrok.dev/mcp');
         expect(meta.protectedResource.authorization_servers).toEqual(['https://example.ngrok.dev']);
     });
+
+    it('serves both discovery formats and emits top-level tool security schemes', async () => {
+        const previousProjectId = process.env.FIREBASE_PROJECT_ID;
+        const previousApiKey = process.env.FIREBASE_WEB_API_KEY;
+        process.env.FIREBASE_PROJECT_ID = 'test-project';
+        process.env.FIREBASE_WEB_API_KEY = 'test-api-key';
+        const { app } = await import('../../services/chatgpt-mcp/src/server.js');
+        const server = createServer(app);
+        await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+
+        try {
+            const { port } = server.address();
+            const baseUrl = `http://127.0.0.1:${port}`;
+            const [oauthDiscovery, oidcDiscovery] = await Promise.all([
+                fetch(`${baseUrl}/.well-known/oauth-authorization-server`),
+                fetch(`${baseUrl}/.well-known/openid-configuration`)
+            ]);
+            expect(oauthDiscovery.status).toBe(200);
+            expect(oidcDiscovery.status).toBe(200);
+            await expect(oidcDiscovery.json()).resolves.toMatchObject({
+                issuer: baseUrl,
+                authorization_endpoint: `${baseUrl}/oauth/authorize`,
+                token_endpoint: `${baseUrl}/oauth/token`
+            });
+
+            const jwt = [
+                Buffer.from(JSON.stringify({ alg: 'none' })).toString('base64url'),
+                Buffer.from(JSON.stringify({
+                    user_id: 'tool-catalog-user',
+                    email: 'catalog@example.com',
+                    exp: Math.floor(Date.now() / 1000) + 300
+                })).toString('base64url'),
+                'signature'
+            ].join('.');
+            const toolsResponse = await fetch(`${baseUrl}/mcp`, {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${jwt}`,
+                    'Content-Type': 'application/json',
+                    Accept: 'application/json, text/event-stream'
+                },
+                body: JSON.stringify({
+                    jsonrpc: '2.0',
+                    id: 1,
+                    method: 'tools/list',
+                    params: {}
+                })
+            });
+            expect(toolsResponse.status).toBe(200);
+            const eventStream = await toolsResponse.text();
+            const payload = JSON.parse(eventStream.match(/^data:\s*(.+)$/m)[1]);
+            expect(payload.result.tools).toHaveLength(3);
+            for (const tool of payload.result.tools) {
+                expect(tool.securitySchemes).toEqual([{ type: 'oauth2', scopes: ['allplays.read'] }]);
+                expect(tool._meta.securitySchemes).toEqual(tool.securitySchemes);
+            }
+        } finally {
+            await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+            if (previousProjectId === undefined) delete process.env.FIREBASE_PROJECT_ID;
+            else process.env.FIREBASE_PROJECT_ID = previousProjectId;
+            if (previousApiKey === undefined) delete process.env.FIREBASE_WEB_API_KEY;
+            else process.env.FIREBASE_WEB_API_KEY = previousApiKey;
+        }
+    });
 });

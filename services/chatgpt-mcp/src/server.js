@@ -13,6 +13,7 @@ import express from 'express';
 import { pathToFileURL } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import {
     DomainError,
@@ -228,6 +229,22 @@ function buildServer(identity) {
         _meta: { securitySchemes: READ_SECURITY_SCHEMES }
     }, run((context, args) => getGameSummary(db, context, args)));
 
+    // The current MCP TypeScript SDK accepts securitySchemes in registerTool()
+    // but does not yet emit the field in tools/list. ChatGPT's plugin contract
+    // requires the top-level field (the _meta copy remains for compatibility),
+    // so decorate the SDK-generated catalog until the SDK emits it natively.
+    const sdkListToolsHandler = server.server._requestHandlers.get('tools/list');
+    server.server.setRequestHandler(ListToolsRequestSchema, async (request, extra) => {
+        const result = await sdkListToolsHandler(request, extra);
+        return {
+            ...result,
+            tools: result.tools.map((tool) => ({
+                ...tool,
+                securitySchemes: READ_SECURITY_SCHEMES
+            }))
+        };
+    });
+
     return server;
 }
 
@@ -256,6 +273,12 @@ app.get('/healthz', (req, res) => res.json({ ok: true }));
 // --- OAuth broker endpoints (discovery, registration, authorize, token) ---
 
 app.get(['/.well-known/oauth-authorization-server', '/.well-known/oauth-authorization-server/mcp'], (req, res) => {
+    res.json(metadataFor(publicBaseUrl(req)).authorizationServer);
+});
+// ChatGPT probes both RFC 8414 and OpenID discovery after token exchange.
+// This broker is OAuth-only, but the authorization-server fields are valid at
+// either discovery location and publishing both avoids a post-login 404.
+app.get(['/.well-known/openid-configuration', '/.well-known/openid-configuration/mcp'], (req, res) => {
     res.json(metadataFor(publicBaseUrl(req)).authorizationServer);
 });
 
