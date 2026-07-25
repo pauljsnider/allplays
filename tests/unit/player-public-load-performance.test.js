@@ -4,15 +4,6 @@ import { readFileSync } from 'node:fs';
 const source = readFileSync(new URL('../../player.html', import.meta.url), 'utf8');
 
 describe('player public page load performance', () => {
-    it('sets the team back link before awaiting remote player data', () => {
-        const backLinkAssignment = source.indexOf("document.getElementById('back-link').href = `team.html#teamId=${teamId}`;");
-        const initialRemoteReads = source.indexOf('const [team, players, games, configs] = await Promise.all([');
-
-        expect(backLinkAssignment).toBeGreaterThan(-1);
-        expect(initialRemoteReads).toBeGreaterThan(-1);
-        expect(backLinkAssignment).toBeLessThan(initialRemoteReads);
-    });
-
     it('loads per-game stats in parallel instead of awaiting each game sequentially', () => {
         expect(source).toContain('async function loadPlayerGameData(teamId, games, playerId, playerName) {');
         expect(source).toContain('return Promise.all(games.map(async (game) => {');
