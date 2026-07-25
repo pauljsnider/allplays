@@ -19,6 +19,7 @@ import { createLogger } from '../lib/logger';
 import { startAppInitialLoadTimer } from '../lib/telemetry';
 import { recordFirstMeaningfulRender, startScreenMountTimer } from '../lib/uxTiming';
 import { completeParentCoreWorkflowTimer } from '../lib/parentWorkflowTiming';
+import { openPublicUrl } from '../lib/publicActions';
 import { useViewLoadTimer } from '../lib/viewLoadTiming';
 import { useAsyncOperation } from '../lib/useAsyncOperation';
 import { useRefreshOnResume } from '../lib/useRefreshOnResume';
@@ -2068,46 +2069,58 @@ function ScheduleEventCard({ event, preferGameHubForStaff }: {
 
   return (
     <>
-      <Link to={detailPath} className={`block border-b border-gray-100 px-3 py-2 transition last:border-b-0 hover:bg-gray-50 sm:hidden ${event.isCancelled ? 'opacity-65' : ''}`}>
-        <div className="flex items-center gap-2.5">
-          <div className="flex h-12 w-11 flex-none flex-col items-center justify-center rounded-lg bg-gray-50 ring-1 ring-gray-100">
-            <div className="text-[10px] font-black uppercase leading-none tracking-[0.04em] text-gray-500">{event.date.toLocaleDateString('en-US', { month: 'short' })}</div>
-            <div className="mt-0.5 text-lg font-black leading-none text-gray-950">{event.date.getDate()}</div>
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="flex min-w-0 items-center gap-1.5">
-              <span className={`h-2.5 w-2.5 flex-none rounded-full ${event.type === 'practice' ? 'bg-amber-500' : 'bg-primary-600'}`} aria-hidden="true" />
-              <h2 className={`truncate text-[15px] font-black leading-tight text-gray-950 ${event.isCancelled ? 'line-through' : ''}`}>{eventTitle}</h2>
+      <div className={`schedule-event-row-mobile border-b border-gray-100 last:border-b-0 sm:hidden ${event.isCancelled ? 'opacity-65' : ''}`}>
+        <Link to={detailPath} className="schedule-event-row-detail block px-3 py-2 transition hover:bg-gray-50">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-12 w-11 flex-none flex-col items-center justify-center rounded-lg bg-gray-50 ring-1 ring-gray-100">
+              <div className="text-[10px] font-black uppercase leading-none tracking-[0.04em] text-gray-500">{event.date.toLocaleDateString('en-US', { month: 'short' })}</div>
+              <div className="mt-0.5 text-lg font-black leading-none text-gray-950">{event.date.getDate()}</div>
             </div>
-            <div className="mt-0.5 truncate text-xs font-bold leading-5 text-gray-600">
-              {childLabel} · {event.teamName}
-            </div>
-            <div className="truncate text-xs font-semibold leading-5 text-gray-500">
-              {getScheduleLocationLabel(event)}
-            </div>
-            {tournamentInfo.isTournament ? (
-              <div className="truncate text-xs font-bold leading-5 text-indigo-700">
-                {tournamentInfo.label}{tournamentInfo.details ? ` - ${tournamentInfo.details}` : ''}
+            <div className="min-w-0 flex-1">
+              <div className="flex min-w-0 items-center gap-1.5">
+                <span className={`h-2.5 w-2.5 flex-none rounded-full ${event.type === 'practice' ? 'bg-amber-500' : 'bg-primary-600'}`} aria-hidden="true" />
+                <h2 className={`truncate text-[15px] font-black leading-tight text-gray-950 ${event.isCancelled ? 'line-through' : ''}`}>{eventTitle}</h2>
               </div>
-            ) : null}
-            {mobileActionPills.length ? (
-              <div className="mt-1 flex max-h-5 flex-wrap gap-1 overflow-hidden">
-                {mobileActionPills.map((pill) => (
-                  <span key={pill} className="inline-flex min-h-5 items-center rounded-full border border-gray-200 bg-white px-1.5 text-[10px] font-black leading-none text-gray-700">
-                    {pill}
-                  </span>
-                ))}
+              <div className="mt-0.5 truncate text-xs font-bold leading-5 text-gray-600">
+                {childLabel} · {event.teamName}
               </div>
-            ) : null}
+              <div className="truncate text-xs font-semibold leading-5 text-gray-500">
+                {getScheduleLocationLabel(event)}
+              </div>
+              {tournamentInfo.isTournament ? (
+                <div className="truncate text-xs font-bold leading-5 text-indigo-700">
+                  {tournamentInfo.label}{tournamentInfo.details ? ` - ${tournamentInfo.details}` : ''}
+                </div>
+              ) : null}
+              {mobileActionPills.length ? (
+                <div className="mt-1 flex max-h-5 flex-wrap gap-1 overflow-hidden">
+                  {mobileActionPills.map((pill) => (
+                    <span key={pill} className="inline-flex min-h-5 items-center rounded-full border border-gray-200 bg-white px-1.5 text-[10px] font-black leading-none text-gray-700">
+                      {pill}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+            <div className="flex w-[72px] flex-none flex-col items-end gap-1 text-right">
+              <span className="text-xs font-black text-gray-700">{formatEventTimeLabel(event.date)}</span>
+              {isRsvpNeeded ? <span className="rounded-full bg-primary-50 px-2 py-0.5 text-[10px] font-black uppercase text-primary-700">RSVP</span> : null}
+              {hasPracticePacket ? <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-black uppercase text-blue-700">Packet</span> : null}
+              {event.type === 'game' && getScoreLabel(event) ? <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-black uppercase text-emerald-700">{getScoreLabel(event)}</span> : null}
+            </div>
           </div>
-          <div className="flex w-[72px] flex-none flex-col items-end gap-1 text-right">
-            <span className="text-xs font-black text-gray-700">{formatEventTimeLabel(event.date)}</span>
-            {isRsvpNeeded ? <span className="rounded-full bg-primary-50 px-2 py-0.5 text-[10px] font-black uppercase text-primary-700">RSVP</span> : null}
-            {hasPracticePacket ? <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-black uppercase text-blue-700">Packet</span> : null}
-            {event.type === 'game' && getScoreLabel(event) ? <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-black uppercase text-emerald-700">{getScoreLabel(event)}</span> : null}
-          </div>
-        </div>
-      </Link>
+        </Link>
+        {mapHref ? (
+          <button
+            type="button"
+            className="schedule-event-directions flex min-h-11 w-full items-center justify-center gap-1.5 border-t border-gray-100 px-3 text-xs font-black text-primary-700 transition hover:bg-primary-50"
+            onClick={() => void openPublicUrl(mapHref)}
+          >
+            <MapPin className="h-4 w-4" aria-hidden="true" />
+            Directions
+          </button>
+        ) : null}
+      </div>
 
       <article className={`app-card schedule-event-card hidden p-4 transition sm:block ${event.isCancelled ? 'opacity-65' : ''}`}>
         <div className="flex items-start gap-3">
