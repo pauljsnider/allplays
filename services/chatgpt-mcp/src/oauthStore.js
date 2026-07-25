@@ -58,6 +58,8 @@ export function createMemoryOAuthGrantStore({
             clientId,
             redirectUri,
             codeChallenge,
+            resource,
+            scope,
             firebaseRefreshToken,
             expiresAt
         }) {
@@ -65,6 +67,8 @@ export function createMemoryOAuthGrantStore({
                 clientId,
                 redirectUri,
                 codeChallenge,
+                resource,
+                scope,
                 firebaseRefreshToken,
                 expiresAt
             }, now(), maxStoredGrants);
@@ -87,6 +91,8 @@ export function createMemoryOAuthGrantStore({
             refreshToken,
             firebaseRefreshToken,
             clientId,
+            resource,
+            scope,
             accessExpiresAt,
             refreshExpiresAt
         }) {
@@ -94,11 +100,15 @@ export function createMemoryOAuthGrantStore({
             setBounded(stores.accessTokens, accessToken, {
                 firebaseRefreshToken,
                 clientId,
+                resource,
+                scope,
                 expiresAt: accessExpiresAt
             }, currentTime, maxStoredGrants);
             setBounded(stores.refreshTokens, refreshToken, {
                 firebaseRefreshToken,
                 clientId,
+                resource,
+                scope,
                 expiresAt: refreshExpiresAt
             }, currentTime, maxStoredGrants);
         },
@@ -106,13 +116,20 @@ export function createMemoryOAuthGrantStore({
         async resolveAccessToken(token) {
             pruneExpired(stores.accessTokens, now());
             const record = stores.accessTokens.get(token);
-            return record ? { firebaseRefreshToken: record.firebaseRefreshToken } : null;
+            return record ? {
+                firebaseRefreshToken: record.firebaseRefreshToken,
+                clientId: record.clientId,
+                resource: record.resource,
+                scope: record.scope
+            } : null;
         },
 
         async rotateRefreshToken({
             refreshToken,
             newAccessToken,
             newRefreshToken,
+            clientId,
+            resource,
             accessExpiresAt,
             refreshExpiresAt
         }) {
@@ -120,6 +137,8 @@ export function createMemoryOAuthGrantStore({
             pruneExpired(stores.refreshTokens, currentTime);
             const record = stores.refreshTokens.get(refreshToken);
             if (!record) return false;
+            if (clientId && record.clientId !== clientId) return false;
+            if (resource && record.resource !== resource) return false;
 
             // No await occurs between the read and delete, so concurrent calls
             // against shared state have one consume winner.
@@ -127,14 +146,22 @@ export function createMemoryOAuthGrantStore({
             setBounded(stores.accessTokens, newAccessToken, {
                 firebaseRefreshToken: record.firebaseRefreshToken,
                 clientId: record.clientId,
+                resource: record.resource,
+                scope: record.scope,
                 expiresAt: accessExpiresAt
             }, currentTime, maxStoredGrants);
             setBounded(stores.refreshTokens, newRefreshToken, {
                 firebaseRefreshToken: record.firebaseRefreshToken,
                 clientId: record.clientId,
+                resource: record.resource,
+                scope: record.scope,
                 expiresAt: refreshExpiresAt
             }, currentTime, maxStoredGrants);
-            return true;
+            return {
+                clientId: record.clientId,
+                resource: record.resource,
+                scope: record.scope
+            };
         }
     };
 }
@@ -151,11 +178,22 @@ function decodeEncryptionKey(value) {
     return key;
 }
 
-function authenticatedMetadata({ type, digest, clientId, expiresAt, redirectUri, codeChallenge }) {
+function authenticatedMetadata({
+    type,
+    digest,
+    clientId,
+    expiresAt,
+    redirectUri,
+    codeChallenge,
+    resource,
+    scope
+}) {
     const metadata = {
         type,
         digest,
         clientId: clientId || '',
+        resource: resource || '',
+        scope: scope || '',
         expiresAt
     };
     if (type === 'code') {
@@ -204,15 +242,26 @@ function documentFields(record) {
     );
 }
 
-function grantRecord({ type, token, firebaseRefreshToken, clientId, expiresAt, encryptionKey }) {
+function grantRecord({
+    type,
+    token,
+    firebaseRefreshToken,
+    clientId,
+    resource,
+    scope,
+    expiresAt,
+    encryptionKey
+}) {
     const digest = tokenDigest(token);
-    const metadata = { type, digest, clientId, expiresAt };
+    const metadata = { type, digest, clientId, resource, scope, expiresAt };
     return {
         id: `${type}_${digest}`,
         digest,
         fields: {
             type,
             clientId,
+            resource,
+            scope,
             expiresAt: new Date(expiresAt),
             encryptedBinding: encryptBinding(encryptionKey, firebaseRefreshToken, metadata)
         }
@@ -224,6 +273,8 @@ function authorizationCodeRecord({
     clientId,
     redirectUri,
     codeChallenge,
+    resource,
+    scope,
     firebaseRefreshToken,
     expiresAt,
     encryptionKey
@@ -236,6 +287,8 @@ function authorizationCodeRecord({
         clientId,
         redirectUri,
         codeChallenge,
+        resource,
+        scope,
         expiresAt
     };
     return {
@@ -246,6 +299,8 @@ function authorizationCodeRecord({
             clientId,
             redirectUri,
             codeChallenge,
+            resource,
+            scope,
             expiresAt: new Date(expiresAt),
             encryptedBinding: encryptBinding(encryptionKey, firebaseRefreshToken, metadata)
         }
@@ -387,16 +442,22 @@ export function createFirestoreOAuthGrantStore({
             result.record.type !== type
             || !Number.isFinite(expiresAt)
             || typeof result.record.clientId !== 'string'
+            || typeof result.record.resource !== 'string'
+            || typeof result.record.scope !== 'string'
         ) {
             throw new Error('Stored OAuth grant has an invalid schema.');
         }
         return {
             clientId: result.record.clientId,
+            resource: result.record.resource,
+            scope: result.record.scope,
             expiresAt,
             firebaseRefreshToken: decryptBinding(key, result.record.encryptedBinding, {
                 type,
                 digest: result.digest,
                 clientId: result.record.clientId,
+                resource: result.record.resource,
+                scope: result.record.scope,
                 expiresAt
             })
         };
@@ -412,6 +473,8 @@ export function createFirestoreOAuthGrantStore({
             || typeof result.record.clientId !== 'string'
             || typeof result.record.redirectUri !== 'string'
             || typeof result.record.codeChallenge !== 'string'
+            || typeof result.record.resource !== 'string'
+            || typeof result.record.scope !== 'string'
         ) {
             throw new Error('Stored OAuth authorization code has an invalid schema.');
         }
@@ -421,12 +484,16 @@ export function createFirestoreOAuthGrantStore({
             clientId: result.record.clientId,
             redirectUri: result.record.redirectUri,
             codeChallenge: result.record.codeChallenge,
+            resource: result.record.resource,
+            scope: result.record.scope,
             expiresAt
         };
         return {
             clientId: result.record.clientId,
             redirectUri: result.record.redirectUri,
             codeChallenge: result.record.codeChallenge,
+            resource: result.record.resource,
+            scope: result.record.scope,
             expiresAt,
             firebaseRefreshToken: decryptBinding(
                 key,
@@ -442,6 +509,8 @@ export function createFirestoreOAuthGrantStore({
             clientId,
             redirectUri,
             codeChallenge,
+            resource,
+            scope,
             firebaseRefreshToken,
             expiresAt
         }) {
@@ -450,6 +519,8 @@ export function createFirestoreOAuthGrantStore({
                 clientId,
                 redirectUri,
                 codeChallenge,
+                resource,
+                scope,
                 firebaseRefreshToken,
                 expiresAt,
                 encryptionKey: key
@@ -485,6 +556,8 @@ export function createFirestoreOAuthGrantStore({
             refreshToken,
             firebaseRefreshToken,
             clientId,
+            resource,
+            scope,
             accessExpiresAt,
             refreshExpiresAt
         }) {
@@ -493,6 +566,8 @@ export function createFirestoreOAuthGrantStore({
                 token: accessToken,
                 firebaseRefreshToken,
                 clientId,
+                resource,
+                scope,
                 expiresAt: accessExpiresAt,
                 encryptionKey: key
             });
@@ -501,6 +576,8 @@ export function createFirestoreOAuthGrantStore({
                 token: refreshToken,
                 firebaseRefreshToken,
                 clientId,
+                resource,
+                scope,
                 expiresAt: refreshExpiresAt,
                 encryptionKey: key
             });
@@ -519,13 +596,20 @@ export function createFirestoreOAuthGrantStore({
                 await deleteExpired('access', result.digest, result.document.updateTime);
                 return null;
             }
-            return { firebaseRefreshToken: grant.firebaseRefreshToken };
+            return {
+                firebaseRefreshToken: grant.firebaseRefreshToken,
+                clientId: grant.clientId,
+                resource: grant.resource,
+                scope: grant.scope
+            };
         },
 
         async rotateRefreshToken({
             refreshToken,
             newAccessToken,
             newRefreshToken,
+            clientId,
+            resource,
             accessExpiresAt,
             refreshExpiresAt
         }) {
@@ -543,12 +627,16 @@ export function createFirestoreOAuthGrantStore({
                 await deleteExpired('refresh', current.digest, current.document.updateTime);
                 return false;
             }
+            if (clientId && grant.clientId !== clientId) return false;
+            if (resource && grant.resource !== resource) return false;
 
             const access = grantRecord({
                 type: 'access',
                 token: newAccessToken,
                 firebaseRefreshToken: grant.firebaseRefreshToken,
                 clientId: grant.clientId,
+                resource: grant.resource,
+                scope: grant.scope,
                 expiresAt: accessExpiresAt,
                 encryptionKey: key
             });
@@ -557,6 +645,8 @@ export function createFirestoreOAuthGrantStore({
                 token: newRefreshToken,
                 firebaseRefreshToken: grant.firebaseRefreshToken,
                 clientId: grant.clientId,
+                resource: grant.resource,
+                scope: grant.scope,
                 expiresAt: refreshExpiresAt,
                 encryptionKey: key
             });
@@ -568,7 +658,11 @@ export function createFirestoreOAuthGrantStore({
                 createdDocumentWrite(documentName(access.id), access),
                 createdDocumentWrite(documentName(refresh.id), refresh)
             ]);
-            return result.ok;
+            return result.ok ? {
+                clientId: grant.clientId,
+                resource: grant.resource,
+                scope: grant.scope
+            } : false;
         }
     };
 }

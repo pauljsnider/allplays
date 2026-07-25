@@ -12,8 +12,11 @@ import {
     createFirestoreOAuthGrantStore,
     createMemoryOAuthGrantStore
 } from '../../services/chatgpt-mcp/src/oauthStore.js';
+import { renderSignInPage } from '../../services/chatgpt-mcp/src/signInPage.js';
 
 const REDIRECT = 'https://chatgpt.com/connector_platform_oauth_redirect';
+const CURRENT_REDIRECT = 'https://chatgpt.com/connector/oauth/ddSY6LEwq_Wi';
+const RESOURCE = 'https://mcp.allplays.ai/mcp';
 const VERIFIER = 'test-verifier-string-with-plenty-of-entropy-1234567890';
 
 function registeredBroker(overrides = {}) {
@@ -37,6 +40,24 @@ describe('chatgpt-mcp oauth: registration', () => {
         const client = broker.registerClient({ redirect_uris: [REDIRECT] });
         expect(client.client_id).toBeTruthy();
         expect(client.token_endpoint_auth_method).toBe('none');
+    });
+
+    it('accepts current per-connection ChatGPT callbacks and rejects lookalikes', () => {
+        const broker = createOAuthBroker();
+        expect(broker.registerClient({
+            redirect_uris: [CURRENT_REDIRECT]
+        }).redirect_uris).toEqual([CURRENT_REDIRECT]);
+        for (const redirectUri of [
+            'https://chatgpt.com/connector/oauth/',
+            'https://chatgpt.com/connector/oauth/id?next=https://evil.example',
+            'https://chatgpt.com.evil.example/connector/oauth/id',
+            'https://evil.example/connector/oauth/id',
+            'http://chatgpt.com/connector/oauth/id'
+        ]) {
+            expect(() => broker.registerClient({
+                redirect_uris: [redirectUri]
+            })).toThrow(OAuthError);
+        }
     });
 
     it('uses one configured client registration across broker instances', () => {
@@ -67,6 +88,28 @@ describe('chatgpt-mcp oauth: registration', () => {
             clientId: 'configured-chatgpt-client',
             redirectUri: REDIRECT
         });
+    });
+
+    it('accepts an explicitly allowlisted legacy public client during migration', () => {
+        const broker = createOAuthBroker({
+            trustedClientId: 'current-client',
+            legacyClientIds: ['previous-client']
+        });
+        const valid = {
+            client_id: 'previous-client',
+            redirect_uri: CURRENT_REDIRECT,
+            response_type: 'code',
+            code_challenge: s256Challenge(VERIFIER),
+            code_challenge_method: 'S256'
+        };
+        expect(broker.validateAuthorizeRequest(valid).clientId).toBe('previous-client');
+        expect(() => broker.validateAuthorizeRequest({
+            ...valid,
+            client_id: 'unregistered-client'
+        })).toThrow(/client_id/);
+        expect(broker.registerClient({
+            redirect_uris: [CURRENT_REDIRECT]
+        }).client_id).toBe('current-client');
     });
 
     it('rejects untrusted redirect uris regardless of scheme', () => {
@@ -187,6 +230,104 @@ describe('chatgpt-mcp oauth: authorize validation', () => {
         expect(() => broker.validateAuthorizeRequest({ ...valid, code_challenge_method: 'plain' })).toThrow(/S256/);
         expect(() => broker.validateAuthorizeRequest({ ...valid, code_challenge: '' })).toThrow(/code_challenge/);
     });
+
+    it('binds codes and tokens to the canonical MCP resource and read scope', async () => {
+        const broker = createOAuthBroker({ resource: RESOURCE });
+        const client = broker.registerClient({ redirect_uris: [CURRENT_REDIRECT] });
+        const request = {
+            client_id: client.client_id,
+            redirect_uri: CURRENT_REDIRECT,
+            response_type: 'code',
+            code_challenge: s256Challenge(VERIFIER),
+            code_challenge_method: 'S256',
+            resource: RESOURCE,
+            scope: 'allplays.read'
+        };
+
+        expect(broker.validateAuthorizeRequest(request)).toMatchObject({
+            resource: RESOURCE,
+            scope: 'allplays.read'
+        });
+        expect(() => broker.validateAuthorizeRequest({
+            ...request,
+            resource: undefined
+        })).toThrow(/resource/);
+        expect(() => broker.validateAuthorizeRequest({
+            ...request,
+            resource: 'https://attacker.example/mcp'
+        })).toThrow(/resource/);
+        expect(() => broker.validateAuthorizeRequest({
+            ...request,
+            scope: 'allplays.write'
+        })).toThrow(/allplays.read/);
+
+        const code = await broker.approveAuthorization({
+            clientId: client.client_id,
+            redirectUri: CURRENT_REDIRECT,
+            codeChallenge: request.code_challenge,
+            resource: RESOURCE,
+            scope: 'allplays.read',
+            firebaseRefreshToken: 'firebase-resource-bound'
+        });
+        const tokens = await broker.exchange({
+            grant_type: 'authorization_code',
+            code,
+            code_verifier: VERIFIER,
+            client_id: client.client_id,
+            redirect_uri: CURRENT_REDIRECT,
+            resource: RESOURCE
+        });
+
+        expect(tokens.scope).toBe('allplays.read');
+        await expect(broker.resolveAccessToken(tokens.access_token)).resolves.toMatchObject({
+            firebaseRefreshToken: 'firebase-resource-bound',
+            clientId: client.client_id,
+            resource: RESOURCE,
+            scope: 'allplays.read'
+        });
+        await expect(broker.exchange({
+            grant_type: 'refresh_token',
+            refresh_token: tokens.refresh_token,
+            client_id: client.client_id,
+            resource: 'https://attacker.example/mcp'
+        })).rejects.toMatchObject({ code: 'invalid_target' });
+        const refreshed = await broker.exchange({
+            grant_type: 'refresh_token',
+            refresh_token: tokens.refresh_token,
+            client_id: client.client_id,
+            resource: RESOURCE
+        });
+        expect(refreshed.scope).toBe('allplays.read');
+    });
+});
+
+describe('chatgpt-mcp oauth: AllPlays sign-in experience', () => {
+    it('renders app-matched auth controls, consent, Google, reset, and escaped OAuth state', () => {
+        const html = renderSignInPage({
+            clientId: 'client-id',
+            redirectUri: CURRENT_REDIRECT,
+            codeChallenge: 'challenge',
+            state: 'state"><script>alert(1)</script>',
+            scope: 'allplays.read',
+            resource: RESOURCE,
+            email: 'parent+test@example.com',
+            firebaseConfig: {
+                apiKey: 'public-api-key',
+                authDomain: 'game-flow-c6311.firebaseapp.com',
+                projectId: '</script><script>alert(2)</script>'
+            }
+        });
+
+        expect(html).toContain('https://allplays.ai/app/logo_small.png');
+        expect(html).toContain('Sign in &amp; connect ChatGPT');
+        expect(html).toContain('Continue with Google');
+        expect(html).toContain('Forgot password?');
+        expect(html).toContain('It cannot make changes in AllPlays.');
+        expect(html).toContain(`name="resource" value="${RESOURCE}"`);
+        expect(html).toContain('parent+test@example.com');
+        expect(html).not.toContain('state"><script>alert(1)</script>');
+        expect(html).not.toContain('</script><script>alert(2)</script>');
+    });
 });
 
 describe('chatgpt-mcp oauth: code exchange', () => {
@@ -202,7 +343,7 @@ describe('chatgpt-mcp oauth: code exchange', () => {
         });
         expect(tokens.token_type).toBe('Bearer');
         expect(tokens.expires_in).toBeGreaterThan(0);
-        await expect(broker.resolveAccessToken(tokens.access_token)).resolves.toEqual({
+        await expect(broker.resolveAccessToken(tokens.access_token)).resolves.toMatchObject({
             firebaseRefreshToken: 'firebase-rt-42'
         });
     });
@@ -281,7 +422,7 @@ describe('chatgpt-mcp oauth: code exchange', () => {
             redirect_uri: REDIRECT
         });
 
-        await expect(second.broker.resolveAccessToken(tokens.access_token)).resolves.toEqual({
+        await expect(second.broker.resolveAccessToken(tokens.access_token)).resolves.toMatchObject({
             firebaseRefreshToken: 'firebase-cross-instance-code'
         });
     });
@@ -365,7 +506,7 @@ describe('chatgpt-mcp oauth: refresh and access tokens', () => {
         const first = await broker.exchange({ grant_type: 'authorization_code', code, code_verifier: VERIFIER });
         const second = await broker.exchange({ grant_type: 'refresh_token', refresh_token: first.refresh_token });
         expect(second.access_token).not.toBe(first.access_token);
-        await expect(broker.resolveAccessToken(second.access_token)).resolves.toEqual({
+        await expect(broker.resolveAccessToken(second.access_token)).resolves.toMatchObject({
             firebaseRefreshToken: 'firebase-rt-9'
         });
         await expect(broker.exchange({
@@ -427,7 +568,7 @@ describe('chatgpt-mcp oauth: refresh and access tokens', () => {
             code_verifier: VERIFIER
         });
 
-        await expect(second.broker.resolveAccessToken(tokens.access_token)).resolves.toEqual({
+        await expect(second.broker.resolveAccessToken(tokens.access_token)).resolves.toMatchObject({
             firebaseRefreshToken: 'firebase-cross-instance'
         });
     });
@@ -451,7 +592,7 @@ describe('chatgpt-mcp oauth: refresh and access tokens', () => {
             grant_type: 'refresh_token',
             refresh_token: first.refresh_token
         });
-        await expect(afterRestart.broker.resolveAccessToken(rotated.access_token)).resolves.toEqual({
+        await expect(afterRestart.broker.resolveAccessToken(rotated.access_token)).resolves.toMatchObject({
             firebaseRefreshToken: 'firebase-after-restart'
         });
     });
@@ -612,7 +753,7 @@ describe('chatgpt-mcp oauth: Firestore grant store', () => {
         expect(persisted).not.toContain('firebase-secret-binding');
         expect(persisted).not.toContain(first.access_token);
         expect(persisted).not.toContain(first.refresh_token);
-        await expect(broker.resolveAccessToken(first.access_token)).resolves.toEqual({
+        await expect(broker.resolveAccessToken(first.access_token)).resolves.toMatchObject({
             firebaseRefreshToken: 'firebase-secret-binding'
         });
 
@@ -683,7 +824,7 @@ describe('chatgpt-mcp oauth: Firestore grant store', () => {
         expect(rotationCommit.writes.slice(1).every((write) => (
             write.currentDocument?.exists === false
         ))).toBe(true);
-        await expect(broker.resolveAccessToken(second.access_token)).resolves.toEqual({
+        await expect(broker.resolveAccessToken(second.access_token)).resolves.toMatchObject({
             firebaseRefreshToken: 'firebase-secret-binding'
         });
 
@@ -749,6 +890,7 @@ describe('chatgpt-mcp oauth: durable deployment configuration', () => {
             NODE_ENV: 'production',
             FIREBASE_PROJECT_ID: 'application-project',
             FIREBASE_WEB_API_KEY: 'test-api-key',
+            PUBLIC_BASE_URL: 'https://mcp.allplays.ai',
             OAUTH_GRANT_STORE: 'firestore',
             OAUTH_GRANT_ENCRYPTION_KEY: Buffer.alloc(32).toString('base64')
         };
@@ -807,7 +949,7 @@ describe('chatgpt-mcp oauth: durable deployment configuration', () => {
         expect(readme).toContain('--database="$OAUTH_GRANT_STORE_DATABASE_ID"');
         expect(readme).toContain('OAUTH_GRANT_KEY_VERSION=1');
         expect(readme).toContain(
-            'projects/$OAUTH_GRANT_STORE_PROJECT_ID/secrets/chatgpt-mcp-oauth-grant-key:$OAUTH_GRANT_KEY_VERSION'
+            'OAUTH_GRANT_ENCRYPTION_KEY=chatgpt-mcp-oauth-grant-key:$OAUTH_GRANT_KEY_VERSION'
         );
         expect(readme).not.toContain('chatgpt-mcp-oauth-grant-key:latest');
         expect(readme).toContain('Key rotation and rollback');

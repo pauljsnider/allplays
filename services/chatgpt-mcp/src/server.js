@@ -24,6 +24,7 @@ import {
 import { createIdentityResolver, extractBearerToken } from './identity.js';
 import { createUserDb } from './firestoreRest.js';
 import { createOAuthBroker, metadataFor, OAuthError } from './oauth.js';
+import { escapeHtml, renderSignInPage } from './signInPage.js';
 import {
     createFirestoreOAuthGrantStore,
     createMemoryOAuthGrantStore,
@@ -34,9 +35,13 @@ const PORT = Number(process.env.PORT) || 8787;
 const PROJECT_ID = process.env.FIREBASE_PROJECT_ID;
 const WEB_API_KEY = process.env.FIREBASE_WEB_API_KEY;
 const IS_PRODUCTION = process.env.NODE_ENV === 'production' || Boolean(process.env.K_SERVICE);
+const CONFIGURED_PUBLIC_BASE_URL = String(process.env.PUBLIC_BASE_URL || '').replace(/\/$/, '');
 
 if (!PROJECT_ID || !WEB_API_KEY) {
     throw new Error('FIREBASE_PROJECT_ID and FIREBASE_WEB_API_KEY must be set.');
+}
+if (IS_PRODUCTION && !CONFIGURED_PUBLIC_BASE_URL) {
+    throw new Error('Production and Cloud Run require PUBLIC_BASE_URL for OAuth audience binding.');
 }
 
 const resolveIdentity = createIdentityResolver({ apiKey: WEB_API_KEY });
@@ -91,14 +96,26 @@ const oauthGrantStore = OAUTH_GRANT_STORE === 'firestore'
     : createMemoryOAuthGrantStore();
 const oauth = createOAuthBroker({
     trustedClientId: process.env.CHATGPT_OAUTH_CLIENT_ID,
+    legacyClientIds: String(process.env.CHATGPT_OAUTH_LEGACY_CLIENT_IDS || '')
+        .split(',')
+        .map((clientId) => clientId.trim())
+        .filter(Boolean),
+    resource: CONFIGURED_PUBLIC_BASE_URL ? `${CONFIGURED_PUBLIC_BASE_URL}/mcp` : '',
     grantStore: oauthGrantStore
 });
 const SIGNIN_REFERER = process.env.ALLPLAYS_REFERER || 'https://allplays.ai/';
+const FIREBASE_CLIENT_CONFIG = {
+    apiKey: WEB_API_KEY,
+    authDomain: `${PROJECT_ID}.firebaseapp.com`,
+    projectId: PROJECT_ID
+};
+const READ_SCOPE = 'allplays.read';
+const READ_SECURITY_SCHEMES = [{ type: 'oauth2', scopes: [READ_SCOPE] }];
 
 // Public base URL for OAuth metadata: env override, else derive from the
 // proxy-forwarded headers (ngrok / Cloud Run set these).
 function publicBaseUrl(req) {
-    if (process.env.PUBLIC_BASE_URL) return process.env.PUBLIC_BASE_URL.replace(/\/$/, '');
+    if (CONFIGURED_PUBLIC_BASE_URL) return CONFIGURED_PUBLIC_BASE_URL;
     const proto = req.get('x-forwarded-proto') || req.protocol || 'https';
     const host = req.get('x-forwarded-host') || req.get('host');
     return `${proto}://${host}`;
@@ -118,51 +135,40 @@ async function firebaseSignIn(email, password) {
     return { refreshToken: body.refreshToken, uid: body.localId };
 }
 
-function escapeHtml(value) {
-    return String(value ?? '').replace(/[&<>"']/g, (ch) => (
-        { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]
-    ));
+async function verifyFirebaseRefreshToken(refreshToken) {
+    const value = String(refreshToken || '').trim();
+    if (!value || value.split('.').length === 3) {
+        throw new OAuthError('access_denied', 'Google sign-in did not produce a valid refresh credential.');
+    }
+    try {
+        const identity = await resolveIdentity(`Bearer ${value}`);
+        if (identity.via !== 'refresh-token' || !identity.uid) {
+            throw new Error('Unexpected credential type.');
+        }
+        return { refreshToken: value, uid: identity.uid };
+    } catch {
+        throw new OAuthError('access_denied', 'Google sign-in could not be verified.');
+    }
 }
 
-function renderSignInPage({ clientId, redirectUri, codeChallenge, state, scope, error }) {
-    const hidden = { client_id: clientId, redirect_uri: redirectUri, code_challenge: codeChallenge, state, scope };
-    const hiddenInputs = Object.entries(hidden)
-        .filter(([, value]) => value)
-        .map(([name, value]) => `<input type="hidden" name="${escapeHtml(name)}" value="${escapeHtml(value)}">`)
-        .join('\n            ');
-    return `<!doctype html>
-<html lang="en">
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Sign in to ALL PLAYS</title>
-    <style>
-        body { font-family: -apple-system, system-ui, sans-serif; background: #0f172a; color: #e2e8f0; display: flex; justify-content: center; padding: 3rem 1rem; }
-        .card { background: #1e293b; border-radius: 12px; padding: 2rem; max-width: 22rem; width: 100%; }
-        h1 { font-size: 1.25rem; margin: 0 0 0.5rem; }
-        p { color: #94a3b8; font-size: 0.875rem; margin: 0 0 1.25rem; }
-        label { display: block; font-size: 0.8rem; margin: 0.75rem 0 0.25rem; color: #cbd5e1; }
-        input[type=email], input[type=password] { width: 100%; box-sizing: border-box; padding: 0.6rem; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #e2e8f0; }
-        button { margin-top: 1.25rem; width: 100%; padding: 0.7rem; border: 0; border-radius: 8px; background: #38bdf8; color: #0f172a; font-weight: 600; cursor: pointer; }
-        .error { background: #7f1d1d; color: #fecaca; padding: 0.6rem; border-radius: 8px; font-size: 0.8rem; margin-bottom: 0.5rem; }
-    </style>
-</head>
-<body>
-    <div class="card">
-        <h1>ALL PLAYS</h1>
-        <p>Sign in to connect your AllPlays account to ChatGPT. ChatGPT will be able to read your teams, schedule, and game summaries.</p>
-        ${error ? `<div class="error">${escapeHtml(error)}</div>` : ''}
-        <form method="POST" action="/oauth/authorize">
-            ${hiddenInputs}
-            <label for="email">Email</label>
-            <input id="email" name="email" type="email" autocomplete="username" required>
-            <label for="password">Password</label>
-            <input id="password" name="password" type="password" autocomplete="current-password" required>
-            <button type="submit">Sign in &amp; approve</button>
-        </form>
-    </div>
-</body>
-</html>`;
+async function firebasePasswordReset(email) {
+    const response = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=${WEB_API_KEY}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Referer: SIGNIN_REFERER },
+        body: JSON.stringify({ requestType: 'PASSWORD_RESET', email })
+    });
+    // Keep the response account-enumeration safe. Firebase may return
+    // EMAIL_NOT_FOUND depending on the project's enumeration-protection mode.
+    if (!response.ok) {
+        await response.json().catch(() => ({}));
+    }
+}
+
+function signInPage(params) {
+    return renderSignInPage({
+        ...params,
+        firebaseConfig: FIREBASE_CLIENT_CONFIG
+    });
 }
 
 function toolResult(payload) {
@@ -193,7 +199,9 @@ function buildServer(identity) {
         title: 'Get profile',
         description: 'Account roles, linked teams, and linked players for the signed-in AllPlays user.',
         inputSchema: {},
-        annotations: { readOnlyHint: true }
+        annotations: { readOnlyHint: true },
+        securitySchemes: READ_SECURITY_SCHEMES,
+        _meta: { securitySchemes: READ_SECURITY_SCHEMES }
     }, run((context) => listMyTeams(db, context)));
 
     server.registerTool('list_schedule', {
@@ -203,7 +211,9 @@ function buildServer(identity) {
             startDate: z.string().optional().describe('ISO date, inclusive. Defaults to today.'),
             endDate: z.string().optional().describe('ISO date, inclusive. Defaults to startDate + 7 days.')
         },
-        annotations: { readOnlyHint: true }
+        annotations: { readOnlyHint: true },
+        securitySchemes: READ_SECURITY_SCHEMES,
+        _meta: { securitySchemes: READ_SECURITY_SCHEMES }
     }, run((context, args) => getFamilySchedule(db, context, args)));
 
     server.registerTool('get_game_summary', {
@@ -213,7 +223,9 @@ function buildServer(identity) {
             teamId: z.string().describe('Team id from get_profile'),
             gameId: z.string().describe('Game id from list_schedule')
         },
-        annotations: { readOnlyHint: true }
+        annotations: { readOnlyHint: true },
+        securitySchemes: READ_SECURITY_SCHEMES,
+        _meta: { securitySchemes: READ_SECURITY_SCHEMES }
     }, run((context, args) => getGameSummary(db, context, args)));
 
     return server;
@@ -223,6 +235,22 @@ export const app = express();
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: false }));
 
+app.use('/oauth', (req, res, next) => {
+    res.set({
+        'Cache-Control': 'no-store',
+        'Referrer-Policy': 'same-origin',
+        'X-Content-Type-Options': 'nosniff',
+        'X-Frame-Options': 'DENY'
+    });
+    next();
+});
+
+app.get('/', (req, res) => res.json({
+    ok: true,
+    service: 'allplays-chatgpt-mcp',
+    mcp: `${publicBaseUrl(req)}/mcp`
+}));
+app.get('/health', (req, res) => res.json({ ok: true }));
 app.get('/healthz', (req, res) => res.json({ ok: true }));
 
 // --- OAuth broker endpoints (discovery, registration, authorize, token) ---
@@ -246,13 +274,14 @@ app.post('/oauth/register', (req, res) => {
 
 app.get('/oauth/authorize', (req, res) => {
     try {
-        const { clientId, redirectUri, codeChallenge } = oauth.validateAuthorizeRequest(req.query || {});
-        res.type('html').send(renderSignInPage({
-            clientId,
-            redirectUri,
-            codeChallenge,
-            state: req.query.state,
-            scope: req.query.scope
+        const validated = oauth.validateAuthorizeRequest(req.query || {});
+        res.type('html').send(signInPage({
+            clientId: validated.clientId,
+            redirectUri: validated.redirectUri,
+            codeChallenge: validated.codeChallenge,
+            resource: validated.resource,
+            scope: validated.scope,
+            state: req.query.state
         }));
     } catch (error) {
         const message = error instanceof OAuthError ? error.message : 'Invalid authorization request.';
@@ -263,35 +292,58 @@ app.get('/oauth/authorize', (req, res) => {
 app.post('/oauth/authorize', async (req, res) => {
     const params = req.body || {};
     try {
-        const { clientId, redirectUri, codeChallenge } = oauth.validateAuthorizeRequest({
+        const validated = oauth.validateAuthorizeRequest({
             client_id: params.client_id,
             redirect_uri: params.redirect_uri,
             response_type: 'code',
             code_challenge: params.code_challenge,
-            code_challenge_method: 'S256'
+            code_challenge_method: 'S256',
+            resource: params.resource,
+            scope: params.scope
         });
-        // Only Firebase's sign-in response may create a grant. In particular,
-        // do not persist an unverified refresh_token posted to this public route.
-        const signedIn = await firebaseSignIn(String(params.email || ''), String(params.password || ''));
+        if (params.intent === 'password_reset') {
+            const email = String(params.email || '').trim();
+            if (!email) throw new OAuthError('invalid_request', 'Enter your email address.');
+            await firebasePasswordReset(email);
+            res.type('html').send(signInPage({
+                ...validated,
+                state: params.state,
+                email,
+                message: 'If that email belongs to an AllPlays account, a password-reset link is on the way.'
+            }));
+            return;
+        }
+
+        // Email/password credentials are exchanged by the server. Google uses
+        // the same Firebase browser SDK as the app, then posts a refresh
+        // credential that is verified against Secure Token before storage.
+        const signedIn = params.firebase_refresh_token
+            ? await verifyFirebaseRefreshToken(params.firebase_refresh_token)
+            : await firebaseSignIn(String(params.email || ''), String(params.password || ''));
         const firebaseRefreshToken = signedIn.refreshToken;
         const code = await oauth.approveAuthorization({
-            clientId,
-            redirectUri,
-            codeChallenge,
+            clientId: validated.clientId,
+            redirectUri: validated.redirectUri,
+            codeChallenge: validated.codeChallenge,
+            resource: validated.resource,
+            scope: validated.scope,
             firebaseRefreshToken
         });
-        const redirect = new URL(redirectUri);
+        const redirect = new URL(validated.redirectUri);
         redirect.searchParams.set('code', code);
         if (params.state) redirect.searchParams.set('state', params.state);
+        redirect.searchParams.set('iss', publicBaseUrl(req));
         res.redirect(302, redirect.toString());
     } catch (error) {
         if (error instanceof OAuthError && error.code === 'access_denied') {
-            res.status(401).type('html').send(renderSignInPage({
+            res.status(401).type('html').send(signInPage({
                 clientId: params.client_id,
                 redirectUri: params.redirect_uri,
                 codeChallenge: params.code_challenge,
                 state: params.state,
                 scope: params.scope,
+                resource: params.resource,
+                email: params.email,
                 error: 'Sign-in failed. Check your email and password.'
             }));
             return;
@@ -324,12 +376,22 @@ app.post('/mcp', async (req, res) => {
         // token; direct Firebase refresh/ID tokens pass through unchanged.
         const bearer = extractBearerToken(authHeader);
         const brokerGrant = bearer ? await oauth.resolveAccessToken(bearer) : null;
-        if (brokerGrant) authHeader = `Bearer ${brokerGrant.firebaseRefreshToken}`;
+        if (brokerGrant) {
+            const expectedResource = metadataFor(publicBaseUrl(req)).protectedResource.resource;
+            const grantedScopes = String(brokerGrant.scope || '').split(/\s+/);
+            if (brokerGrant.resource !== expectedResource || !grantedScopes.includes(READ_SCOPE)) {
+                throw new DomainError('unauthenticated', 'OAuth token is not valid for this AllPlays resource.');
+            }
+            authHeader = `Bearer ${brokerGrant.firebaseRefreshToken}`;
+        }
         identity = await resolveIdentity(authHeader);
     } catch (error) {
         const message = error instanceof DomainError ? error.message : 'Unauthorized.';
         res.status(401)
-            .set('WWW-Authenticate', `Bearer resource_metadata="${publicBaseUrl(req)}/.well-known/oauth-protected-resource"`)
+            .set(
+                'WWW-Authenticate',
+                `Bearer resource_metadata="${publicBaseUrl(req)}/.well-known/oauth-protected-resource/mcp", scope="${READ_SCOPE}"`
+            )
             .json({
                 jsonrpc: '2.0',
                 error: { code: -32001, message },

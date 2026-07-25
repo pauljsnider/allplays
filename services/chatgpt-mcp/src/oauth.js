@@ -18,9 +18,9 @@ const ACCESS_TOKEN_TTL_MS = 60 * 60 * 1000;
 const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_STORED_GRANTS = 1000;
 const DEFAULT_TRUSTED_CLIENT_ID = 'allplays-chatgpt-connector';
-const TRUSTED_REDIRECT_URIS = new Set([
-    'https://chatgpt.com/connector_platform_oauth_redirect'
-]);
+const DEFAULT_SCOPE = 'allplays.read';
+const LEGACY_CHATGPT_REDIRECT_URI = 'https://chatgpt.com/connector_platform_oauth_redirect';
+const CHATGPT_REDIRECT_PATH = /^\/connector\/oauth\/[A-Za-z0-9_-]{1,256}$/;
 
 export class OAuthError extends Error {
     constructor(code, message) {
@@ -35,7 +35,46 @@ export function s256Challenge(verifier) {
 }
 
 function isAllowedRedirectUri(uri) {
-    return typeof uri === 'string' && TRUSTED_REDIRECT_URIS.has(uri);
+    if (typeof uri !== 'string') return false;
+    if (uri === LEGACY_CHATGPT_REDIRECT_URI) return true;
+    try {
+        const parsed = new URL(uri);
+        return parsed.protocol === 'https:'
+            && parsed.hostname === 'chatgpt.com'
+            && parsed.port === ''
+            && parsed.search === ''
+            && parsed.hash === ''
+            && CHATGPT_REDIRECT_PATH.test(parsed.pathname);
+    } catch {
+        return false;
+    }
+}
+
+function normalizeScope(scope) {
+    const requested = String(scope || DEFAULT_SCOPE).trim().split(/\s+/).filter(Boolean);
+    if (requested.length !== 1 || requested[0] !== DEFAULT_SCOPE) {
+        throw new OAuthError('invalid_scope', `Only ${DEFAULT_SCOPE} is supported.`);
+    }
+    return DEFAULT_SCOPE;
+}
+
+function normalizeResource(requestedResource, configuredResource) {
+    const requested = String(requestedResource || '').trim();
+    if (configuredResource && requested !== configuredResource) {
+        throw new OAuthError('invalid_target', 'resource must identify this AllPlays MCP endpoint.');
+    }
+    if (!requested) return configuredResource || '';
+    try {
+        const parsed = new URL(requested);
+        const isLoopbackHttp = parsed.protocol === 'http:'
+            && (parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost');
+        if (parsed.protocol !== 'https:' && !isLoopbackHttp) {
+            throw new Error('Untrusted resource scheme.');
+        }
+    } catch {
+        throw new OAuthError('invalid_target', 'resource must be an absolute MCP endpoint URL.');
+    }
+    return requested;
 }
 
 export function createOAuthBroker({
@@ -43,6 +82,8 @@ export function createOAuthBroker({
     randomId = (bytes = 32) => randomBytes(bytes).toString('base64url'),
     maxStoredGrants = MAX_STORED_GRANTS,
     trustedClientId = DEFAULT_TRUSTED_CLIENT_ID,
+    legacyClientIds = [],
+    resource = '',
     grantStore = createMemoryOAuthGrantStore({ now, maxStoredGrants })
 } = {}) {
     if (!Number.isInteger(maxStoredGrants) || maxStoredGrants < 1) {
@@ -51,6 +92,13 @@ export function createOAuthBroker({
     if (typeof trustedClientId !== 'string' || !trustedClientId.trim()) {
         throw new Error('trustedClientId must be a non-empty string.');
     }
+    if (
+        !Array.isArray(legacyClientIds)
+        || legacyClientIds.some((clientId) => typeof clientId !== 'string' || !clientId.trim())
+    ) {
+        throw new Error('legacyClientIds must contain only non-empty strings.');
+    }
+    const configuredResource = resource ? normalizeResource(resource, '') : '';
     if (
         !grantStore
         || typeof grantStore.issueAuthorizationCode !== 'function'
@@ -61,10 +109,11 @@ export function createOAuthBroker({
     ) {
         throw new Error('grantStore must implement the OAuth grant store contract.');
     }
-    const registeredClient = {
-        clientId: trustedClientId.trim(),
-        redirectUris: [...TRUSTED_REDIRECT_URIS]
-    };
+    const registeredClient = { clientId: trustedClientId.trim() };
+    const allowedClientIds = new Set([
+        registeredClient.clientId,
+        ...legacyClientIds.map((clientId) => clientId.trim())
+    ]);
     function registerClient({ redirect_uris: redirectUris } = {}) {
         if (!Array.isArray(redirectUris) || redirectUris.length === 0) {
             throw new OAuthError('invalid_request', 'redirect_uris is required.');
@@ -76,35 +125,59 @@ export function createOAuthBroker({
         // is stable across instances.
         return {
             client_id: registeredClient.clientId,
-            redirect_uris: registeredClient.redirectUris,
+            client_id_issued_at: Math.floor(now() / 1000),
+            redirect_uris: [...redirectUris],
             token_endpoint_auth_method: 'none',
             grant_types: ['authorization_code', 'refresh_token'],
             response_types: ['code']
         };
     }
 
-    function validateAuthorizeRequest({ client_id: clientId, redirect_uri: redirectUri, response_type: responseType, code_challenge: codeChallenge, code_challenge_method: method }) {
-        if (clientId !== registeredClient.clientId) {
+    function validateAuthorizeRequest({
+        client_id: clientId,
+        redirect_uri: redirectUri,
+        response_type: responseType,
+        code_challenge: codeChallenge,
+        code_challenge_method: method,
+        resource: requestedResource,
+        scope: requestedScope
+    }) {
+        if (!allowedClientIds.has(clientId)) {
             throw new OAuthError('invalid_client', 'Unknown client_id.');
         }
-        if (!registeredClient.redirectUris.includes(redirectUri)) {
+        if (!isAllowedRedirectUri(redirectUri)) {
             throw new OAuthError('invalid_request', 'redirect_uri is not registered for this client.');
         }
         if (responseType !== 'code') throw new OAuthError('invalid_request', 'Only response_type=code is supported.');
         if (!codeChallenge) throw new OAuthError('invalid_request', 'code_challenge is required (PKCE).');
         if (method !== 'S256') throw new OAuthError('invalid_request', 'Only code_challenge_method=S256 is supported.');
-        return { clientId, redirectUri, codeChallenge };
+        return {
+            clientId,
+            redirectUri,
+            codeChallenge,
+            resource: normalizeResource(requestedResource, configuredResource),
+            scope: normalizeScope(requestedScope)
+        };
     }
 
-    async function approveAuthorization({ clientId, redirectUri, codeChallenge, firebaseRefreshToken }) {
+    async function approveAuthorization({
+        clientId,
+        redirectUri,
+        codeChallenge,
+        resource: requestedResource,
+        scope: requestedScope,
+        firebaseRefreshToken
+    }) {
         if (!firebaseRefreshToken) throw new OAuthError('invalid_request', 'Sign-in did not produce a credential.');
         // Re-validate so a tampered approval form cannot bypass the checks.
-        validateAuthorizeRequest({
+        const validated = validateAuthorizeRequest({
             client_id: clientId,
             redirect_uri: redirectUri,
             response_type: 'code',
             code_challenge: codeChallenge,
-            code_challenge_method: 'S256'
+            code_challenge_method: 'S256',
+            resource: requestedResource,
+            scope: requestedScope
         });
         const code = randomId(32);
         await grantStore.issueAuthorizationCode({
@@ -112,22 +185,25 @@ export function createOAuthBroker({
             clientId,
             redirectUri,
             codeChallenge,
+            resource: validated.resource,
+            scope: validated.scope,
             firebaseRefreshToken,
             expiresAt: now() + CODE_TTL_MS
         });
         return code;
     }
 
-    function tokenResponse(accessToken, refreshToken) {
+    function tokenResponse(accessToken, refreshToken, scope) {
         return {
             access_token: accessToken,
             token_type: 'Bearer',
             expires_in: Math.floor(ACCESS_TOKEN_TTL_MS / 1000),
-            refresh_token: refreshToken
+            refresh_token: refreshToken,
+            scope
         };
     }
 
-    async function issueTokens(firebaseRefreshToken, clientId) {
+    async function issueTokens(firebaseRefreshToken, clientId, resource, scope) {
         const accessToken = randomId(32);
         const refreshToken = randomId(32);
         const issuedAt = now();
@@ -136,10 +212,12 @@ export function createOAuthBroker({
             refreshToken,
             firebaseRefreshToken,
             clientId,
+            resource,
+            scope,
             accessExpiresAt: issuedAt + ACCESS_TOKEN_TTL_MS,
             refreshExpiresAt: issuedAt + REFRESH_TOKEN_TTL_MS
         });
-        return tokenResponse(accessToken, refreshToken);
+        return tokenResponse(accessToken, refreshToken, scope);
     }
 
     async function exchange(params = {}) {
@@ -155,12 +233,21 @@ export function createOAuthBroker({
             if (params.redirect_uri && params.redirect_uri !== record.redirectUri) {
                 throw new OAuthError('invalid_grant', 'redirect_uri does not match the authorization.');
             }
+            if (record.resource && params.resource !== record.resource) {
+                throw new OAuthError('invalid_target', 'resource does not match the authorization.');
+            }
             if (!params.code_verifier || s256Challenge(params.code_verifier) !== record.codeChallenge) {
                 throw new OAuthError('invalid_grant', 'PKCE verification failed.');
             }
-            return issueTokens(record.firebaseRefreshToken, record.clientId);
+            return issueTokens(
+                record.firebaseRefreshToken,
+                record.clientId,
+                record.resource,
+                record.scope
+            );
         }
         if (grantType === 'refresh_token') {
+            const requestedResource = normalizeResource(params.resource, configuredResource);
             const accessToken = randomId(32);
             const refreshToken = randomId(32);
             const issuedAt = now();
@@ -168,11 +255,13 @@ export function createOAuthBroker({
                 refreshToken: params.refresh_token,
                 newAccessToken: accessToken,
                 newRefreshToken: refreshToken,
+                clientId: params.client_id,
+                resource: requestedResource,
                 accessExpiresAt: issuedAt + ACCESS_TOKEN_TTL_MS,
                 refreshExpiresAt: issuedAt + REFRESH_TOKEN_TTL_MS
             });
             if (!rotated) throw new OAuthError('invalid_grant', 'Unknown refresh token.');
-            return tokenResponse(accessToken, refreshToken);
+            return tokenResponse(accessToken, refreshToken, rotated.scope);
         }
         throw new OAuthError('invalid_request', 'Unsupported grant_type.');
     }
@@ -195,13 +284,14 @@ export function metadataFor(baseUrl) {
             grant_types_supported: ['authorization_code', 'refresh_token'],
             code_challenge_methods_supported: ['S256'],
             token_endpoint_auth_methods_supported: ['none'],
-            scopes_supported: ['allplays.read']
+            scopes_supported: [DEFAULT_SCOPE],
+            authorization_response_iss_parameter_supported: true
         },
         protectedResource: {
             resource: `${baseUrl}/mcp`,
             authorization_servers: [baseUrl],
             bearer_methods_supported: ['header'],
-            scopes_supported: ['allplays.read']
+            scopes_supported: [DEFAULT_SCOPE]
         }
     };
 }

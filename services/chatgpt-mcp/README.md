@@ -25,14 +25,20 @@ cd services/chatgpt-mcp
 npm install
 FIREBASE_PROJECT_ID=your-project-id \
 FIREBASE_WEB_API_KEY=your-web-api-key \
+PUBLIC_BASE_URL=https://your-public-host \
 CHATGPT_OAUTH_CLIENT_ID=allplays-chatgpt-connector \
 npm start           # listens on :8787, endpoint POST /mcp
 ```
 
 `FIREBASE_PROJECT_ID` and `FIREBASE_WEB_API_KEY` are required; the service
-exits at startup when either is missing. `CHATGPT_OAUTH_CLIENT_ID` identifies
-the trusted public ChatGPT client and defaults to `allplays-chatgpt-connector`;
-set the same value on every broker instance.
+exits at startup when either is missing. Production also requires
+`PUBLIC_BASE_URL`, which binds authorization codes and access/refresh grants to
+that exact `${PUBLIC_BASE_URL}/mcp` resource. `CHATGPT_OAUTH_CLIENT_ID`
+identifies the trusted public ChatGPT client and defaults to
+`allplays-chatgpt-connector`; set the same value on every broker instance.
+During a migration, `CHATGPT_OAUTH_LEGACY_CLIENT_IDS` may contain a
+comma-separated allowlist of previously issued public client IDs. Remove each
+entry after its ChatGPT connection has been recreated.
 
 Local development defaults to `OAUTH_GRANT_STORE=memory`. This mode is bounded
 but process-local. Production rejects memory mode and requires the durable
@@ -79,10 +85,13 @@ dynamic client registration, authorization code + PKCE (S256 only), refresh
 grant, and opaque access tokens that map to the signed-in user's Firebase
 refresh token. Codes are single-use with a 10-minute TTL; access tokens last
 1 hour. The trusted ChatGPT client registration is configuration-backed and
-stable across instances. Access and refresh grants use Firestore in production,
-so they survive restarts and resolve across Cloud Run instances. Authorization
-codes use the same durable store, retain their PKCE/client/redirect/expiry
-binding, and are atomically consumed before token-exchange validation.
+stable across instances. Both ChatGPT's current per-connection callback
+(`https://chatgpt.com/connector/oauth/{id}`) and its legacy callback are
+strictly allowlisted. Access and refresh grants use Firestore in production, so
+they survive restarts and resolve across Cloud Run instances. Authorization
+codes use the same durable store, retain their
+PKCE/client/redirect/resource/scope/expiry binding, and are atomically consumed
+before token-exchange validation.
 Refresh-token consume-and-reissue and authorization-code consumption use
 conditional Firestore commits, so concurrent reuse has one winner.
 
@@ -94,8 +103,16 @@ on every consume, read, or rotation; Firestore TTL provides eventual physical
 cleanup.
 
 Sign-in accepts AllPlays email/password (proxied to Firebase Identity Toolkit
-with the site referer; the password is never stored). Google sign-in is a
-follow-up.
+with the site referer; the password is never stored) and Google through the
+same Firebase browser SDK used by the app. Google refresh credentials are
+validated through Firebase Secure Token before any broker grant is created.
+The page also provides the app's password-reset flow and a read-only consent
+summary.
+
+For Google sign-in, add the MCP hostname (for example,
+`mcp.allplays.ai`) to Firebase Authentication's authorized domains and add
+`https://mcp.allplays.ai/*` to the Firebase browser API key's HTTP-referrer
+allowlist.
 
 For manual curl testing you can still bypass OAuth: a Firebase refresh token
 or ID token works directly as the MCP bearer.
@@ -111,6 +128,8 @@ Required production variables:
 | `OAUTH_GRANT_STORE_DATABASE_ID` | Explicit Firestore database ID. Required in production. The application project's `(default)` database is rejected. |
 | `OAUTH_GRANT_STORE_COLLECTION` | Collection/collection-group name. Defaults to `chatgptMcpOAuthGrants`. |
 | `OAUTH_GRANT_ENCRYPTION_KEY` | Base64-encoded 32-byte AES key, supplied from Secret Manager. |
+| `PUBLIC_BASE_URL` | Canonical HTTPS issuer/resource base. Required in production, without a trailing slash. |
+| `CHATGPT_OAUTH_LEGACY_CLIENT_IDS` | Optional comma-separated migration allowlist for public client IDs issued by an older broker. |
 
 Create the encryption secret without committing the key:
 
@@ -161,8 +180,8 @@ gcloud run deploy allplays-chatgpt-mcp \
   --project game-flow-c6311 \
   --region us-central1 \
   --service-account chatgpt-mcp@game-flow-c6311.iam.gserviceaccount.com \
-  --set-env-vars OAUTH_GRANT_STORE=firestore,OAUTH_GRANT_STORE_PROJECT_ID=oauth-grant-project,OAUTH_GRANT_STORE_DATABASE_ID='(default)',OAUTH_GRANT_STORE_COLLECTION=chatgptMcpOAuthGrants \
-  --set-secrets "OAUTH_GRANT_ENCRYPTION_KEY=projects/$OAUTH_GRANT_STORE_PROJECT_ID/secrets/chatgpt-mcp-oauth-grant-key:$OAUTH_GRANT_KEY_VERSION"
+  --set-env-vars FIREBASE_PROJECT_ID=game-flow-c6311,FIREBASE_WEB_API_KEY=your-web-api-key,PUBLIC_BASE_URL=https://mcp.allplays.ai,CHATGPT_OAUTH_CLIENT_ID=allplays-chatgpt-connector,OAUTH_GRANT_STORE=firestore,OAUTH_GRANT_STORE_PROJECT_ID=game-flow-c6311,OAUTH_GRANT_STORE_DATABASE_ID=chatgpt-mcp-oauth,OAUTH_GRANT_STORE_COLLECTION=chatgptMcpOAuthGrants \
+  --set-secrets "OAUTH_GRANT_ENCRYPTION_KEY=chatgpt-mcp-oauth-grant-key:$OAUTH_GRANT_KEY_VERSION"
 ```
 
 Before increasing the minimum or maximum instance count, verify cross-instance
