@@ -59,6 +59,7 @@ describe('webVitals', () => {
       id: 'vital-1',
       rating: 'needs-improvement',
       navigationType: 'navigate',
+      navigationId: 0,
       entries: []
     } as Metric);
 
