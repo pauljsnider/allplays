@@ -68,10 +68,12 @@ describe('mobile-build CI workflow', () => {
 
     it('fails the required gate job when a mobile-relevant PR actually breaks native builds', () => {
         const gateSection = workflow.slice(workflow.indexOf('  mobile-build:'));
+        const gateRun = gateSection.slice(gateSection.indexOf('        run: |'));
         expect(gateSection).toContain('ANDROID_RESULT: ${{ needs.android-debug.result }}');
         expect(gateSection).toContain('IOS_RESULT: ${{ needs.ios-simulator.result }}');
         expect(gateSection).toContain('"$ANDROID_RESULT" != "success"');
         expect(gateSection).toContain('"$IOS_RESULT" != "success"');
+        expect(gateRun).not.toContain('${{ needs.');
         expect(gateSection).toContain('exit 1');
     });
 
