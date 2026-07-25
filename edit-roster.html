@@ -162,7 +162,7 @@
                     <div id="content-bulk-ai" class="p-6 hidden">
                         <div class="mb-3">
                             <h2 class="text-xl font-bold">Bulk AI Update</h2>
-                            <p class="text-sm text-gray-600">Upload a roster image and add text hints, or skip the image and paste raw roster text. Short instructions steer what gets imported.</p>
+                            <p class="text-sm text-gray-600">Upload or paste a roster image and add text hints, or skip the image and paste raw roster text. Short instructions steer what gets imported.</p>
                         </div>
 
                         <div class="space-y-4">
@@ -172,7 +172,7 @@
                                 </label>
                                 <input type="file" id="roster-image-input" accept="image/*"
                                     class="w-full text-sm text-gray-600 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100">
-                                <p class="text-xs text-gray-500 mt-1">Screenshot/photo works. Text below can further filter (e.g., “just varsity”).</p>
+                                <p class="text-xs text-gray-500 mt-1">Upload, paste (Ctrl/Cmd+V), or drop a screenshot/photo. You can paste directly into the text box below; text can further filter (e.g., “just varsity”).</p>
 
                                 <!-- Image preview -->
                                 <div id="roster-image-preview" class="hidden mt-3">
@@ -564,6 +564,7 @@
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
         import { hasFullTeamAccess, normalizeTeamPermissions } from './js/team-access.js';
         import { formatRegistrationRosterImportResults, getRegistrationRosterPlayers, hasConfiguredRegistrationProviderMetadata, isExternallyLinkedRosterTeam, planRegistrationRosterImport } from './js/edit-roster-registration-import.js?v=3';
+        import { createBulkAiImageController } from './js/edit-schedule-ai-import.js?v=2';
         import { buildRegistrationReviewCsv, buildRegistrationReviewCsvFilename, getDefaultRegistrationReviewCsvColumnKeys, getRegistrationReviewCsvColumnDefinitions, matchesRegistrationReviewScreeningStatus, summarizeRegistrationReviewScreening } from './js/registration-review.js?v=6';
         import { buildRosterPrintHtml } from './js/roster-print.js?v=2';
         import { getApp } from './js/vendor/firebase-app.js';
@@ -2562,34 +2563,26 @@
         document.getElementById('download-roster-template-btn').addEventListener('click', downloadFullRosterTemplate);
         document.getElementById('import-csv-btn').addEventListener('click', () => handleRosterCsvImport());
 
-        // Image preview handler
-        document.getElementById('roster-image-input').addEventListener('change', (e) => {
-            const file = e.target.files[0];
-            if (file) {
-                const reader = new FileReader();
-                reader.onload = (event) => {
-                    document.getElementById('roster-image-preview-img').src = event.target.result;
-                    document.getElementById('roster-image-preview').classList.remove('hidden');
-                };
-                reader.readAsDataURL(file);
-            }
+        // Image upload, paste, drop, and preview handlers
+        const rosterAiImageController = createBulkAiImageController({
+            imageInput: document.getElementById('roster-image-input'),
+            preview: document.getElementById('roster-image-preview'),
+            previewImage: document.getElementById('roster-image-preview-img'),
+            removeButton: document.getElementById('remove-roster-image')
+        });
+        rosterAiImageController.bindBulkAiImageControls({
+            container: document.getElementById('content-bulk-ai'),
+            textInput: document.getElementById('bulk-text-input')
         });
 
-        // Remove image handler
         function resetBulkAiImageState() {
-            document.getElementById('roster-image-input').value = '';
-            document.getElementById('roster-image-preview').classList.add('hidden');
-            document.getElementById('roster-image-preview-img').src = '';
+            rosterAiImageController.clearBulkAiImage();
         }
 
         function resetBulkAiDraftState() {
             resetBulkAiImageState();
             document.getElementById('bulk-text-input').value = '';
         }
-
-        document.getElementById('remove-roster-image').addEventListener('click', () => {
-            resetBulkAiImageState();
-        });
 
         // Helper function to convert image file to base64 for Gemini
         async function fileToGenerativePart(file) {
@@ -2606,7 +2599,7 @@
         // Process with AI
         document.getElementById('process-ai-btn').addEventListener('click', async () => {
             const textInput = document.getElementById('bulk-text-input').value.trim();
-            const imageFile = document.getElementById('roster-image-input').files[0];
+            const imageFile = rosterAiImageController.getBulkAiImageFile();
 
             if (!textInput && !imageFile) {
                 alert('Please upload an image or paste roster text');

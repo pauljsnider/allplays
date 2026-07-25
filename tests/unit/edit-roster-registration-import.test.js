@@ -498,7 +498,7 @@ describe('bulk AI roster update wiring', () => {
         expect(source).toContain('id="bulk-text-input"');
         expect(source).toContain("if (!textInput && !imageFile)");
         expect(source).toContain("alert('Please upload an image or paste roster text')");
-        expect(source).toContain("const imageFile = document.getElementById('roster-image-input').files[0];");
+        expect(source).toContain('const imageFile = rosterAiImageController.getBulkAiImageFile();');
         expect(source).toContain("Extract ALL players ${imageFile ? 'from the image' : 'from the text'}");
         expect(source).toContain('let promptParts = [promptText];');
         expect(source).toContain('if (imageFile) {');
