@@ -298,7 +298,9 @@ beforeEach(() => {
             date: new Date('2026-05-21T18:00:00Z'),
             endDate: new Date('2026-05-21T19:30:00Z'),
             location: 'Main Gym',
+            locationDetail: 'Court A',
             opponent: 'Falcons',
+            statTrackerConfigId: 'config-1',
             opponentTeamId: 'team-2',
             sharedScheduleOpponentTeamId: 'team-2',
             status: 'scheduled',
@@ -460,6 +462,12 @@ describe('React app schedule service contract integration', () => {
             sourceLabel: 'Imported calendar',
             isDbGame: false
         });
+        expect(result.find((event) => event.id === 'game-1')).toMatchObject({
+            location: 'Main Gym',
+            locationDetail: 'Court A',
+            statTrackerConfigId: 'config-1',
+            isDbGame: true
+        });
         expect(dbMocks.getTeam).toHaveBeenCalledWith('team-1');
         expect(utilsMocks.fetchAndParseCalendar).toHaveBeenCalledWith('mock://team-calendar');
     });
@@ -482,6 +490,43 @@ describe('React app schedule service contract integration', () => {
 
         expect(dbMocks.getGames).not.toHaveBeenCalled();
         expect(utilsMocks.fetchAndParseCalendar).not.toHaveBeenCalled();
+    });
+
+    it('uses recurring occurrence field details with a master fallback', async () => {
+        dbMocks.getGames.mockResolvedValueOnce([{
+            id: 'practice-series',
+            type: 'practice',
+            title: 'Weekly Practice',
+            date: new Date('2026-05-20T18:00:00Z'),
+            location: 'Sports Complex',
+            locationDetail: 'Master Field',
+            isSeriesMaster: true,
+            recurrence: { frequency: 'weekly' }
+        }]);
+        utilsMocks.expandRecurrence.mockReturnValueOnce([
+            {
+                masterId: 'practice-series',
+                instanceDate: '2026-05-27',
+                date: new Date('2026-05-27T18:00:00Z'),
+                location: 'Sports Complex',
+                locationDetail: 'Occurrence Field'
+            },
+            {
+                masterId: 'practice-series',
+                instanceDate: '2026-06-03',
+                date: new Date('2026-06-03T18:00:00Z'),
+                location: 'Sports Complex'
+            }
+        ]);
+
+        const result = await loadTeamOverviewSchedule('team-1', 'Bears', user());
+
+        expect(result.find((event) => event.id === 'practice-series__2026-05-27')).toMatchObject({
+            locationDetail: 'Occurrence Field'
+        });
+        expect(result.find((event) => event.id === 'practice-series__2026-06-03')).toMatchObject({
+            locationDetail: 'Master Field'
+        });
     });
 
     it('keeps ordinary staff discovery on the scoped adapter instead of the team catalog', () => {
@@ -704,6 +749,7 @@ describe('React app schedule service contract integration', () => {
             date: new Date('2026-05-21T18:00:00Z'),
             endDate: new Date('2026-05-21T19:30:00Z'),
             location: 'Main Gym',
+            locationDetail: 'Court A',
             opponent: 'Falcons',
             opponentTeamId: 'team-2',
             sharedScheduleOpponentTeamId: 'team-2',
@@ -749,6 +795,7 @@ describe('React app schedule service contract integration', () => {
         expect(result.events).toHaveLength(2);
         expect(result.events.every((event) => event.id === 'game-1')).toBe(true);
         expect(result.events.find((event) => event.childId === 'player-1')).toMatchObject({
+            locationDetail: 'Court A',
             competitionType: 'tournament',
             tournament: {
                 divisionName: '10U Gold',
