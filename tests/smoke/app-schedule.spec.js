@@ -1575,7 +1575,7 @@ test('landscape mobile shell keeps the game-day score tray fixed above navigatio
 test('iOS-sized staff schedule keeps tools collapsed below the event list', async ({ page, baseURL }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await mockScheduleModules(page, { isCoach: true, staffManageable: true });
-    await page.goto(appUrl(baseURL, '/schedule'), { waitUntil: 'domcontentloaded' });
+    await page.goto(appUrl(baseURL, '/schedule?scope=staff'), { waitUntil: 'domcontentloaded' });
 
     await expect(mobileScheduleFilter(page)).toBeVisible({ timeout: 15000 });
     await expect(page.locator('.schedule-event-row-detail').first()).toBeVisible();
@@ -1586,8 +1586,8 @@ test('iOS-sized staff schedule keeps tools collapsed below the event list', asyn
 
     await page.getByRole('button', { name: /Manage schedule/ }).click();
     await expect(page.getByText('Add external calendar')).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Import schedule' })).toBeVisible();
-    const importLink = page.getByRole('link', { name: 'Start schedule import' });
+    await expect(page.getByRole('heading', { name: 'Manage the whole schedule in chat' })).toBeVisible();
+    const importLink = page.getByRole('link', { name: 'Manage with AI' });
     await expect(importLink).toBeVisible();
     await expect(importLink).toHaveAttribute('href', /\/ai\?.*newChat=1.*intent=schedule-import/);
     await expect(page.getByText('Draft schedule with AI')).toHaveCount(0);
