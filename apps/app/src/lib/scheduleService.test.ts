@@ -4139,6 +4139,7 @@ describe('team schedule game windowing (#2034)', () => {
       date: new Date('2025-01-08T18:00:00.000Z'),
       end: new Date('2025-01-08T19:30:00.000Z'),
       location: 'North Field',
+      locationDetail: 'Court 2',
       title: 'Weekly Practice',
       startTime: '18:00',
       endDayOffset: 1,
@@ -4153,6 +4154,7 @@ describe('team schedule game windowing (#2034)', () => {
 
     expect(mapped).toMatchObject({
       id: 'practice-master',
+      locationDetail: 'Court 2',
       startTime: '18:00',
       endDayOffset: 1,
       exDates: ['2026-06-17'],

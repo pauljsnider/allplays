@@ -397,6 +397,7 @@ export function mapScheduleEventRecord(value: unknown, fallbackId = ''): Schedul
         opponent: asTrimmedString(decoded.opponent),
         title: asTrimmedString(decoded.title),
         location: asTrimmedString(decoded.location),
+        locationDetail: asTrimmedString(decoded.locationDetail),
         opponentTeamId: asTrimmedString(decoded.opponentTeamId),
         opponentTeamName: asTrimmedString(decoded.opponentTeamName),
         awayTeamName: asTrimmedString(decoded.awayTeamName),

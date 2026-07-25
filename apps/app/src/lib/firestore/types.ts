@@ -102,6 +102,7 @@ export type ScheduleEventFirestoreRecord = {
     opponent?: string | null;
     title?: string | null;
     location?: string | null;
+    locationDetail?: string | null;
     opponentTeamId?: string | null;
     opponentTeamName?: string | null;
     awayTeamName?: string | null;

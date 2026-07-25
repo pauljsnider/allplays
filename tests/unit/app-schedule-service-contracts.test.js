@@ -240,7 +240,7 @@ vi.mock('../../js/snack-helpers.js', () => ({
     }))
 }));
 
-import { addTeamCalendarUrl, cancelPracticeOccurrenceForApp, createScheduledGameForApp, createScheduleImportGame, createScheduleImportPractice, createStaffRsvpReminderPreviewLoader, loadParentPlayerSchedule, loadParentSchedule, loadParentScheduleEventDetail, loadScheduleStatTrackerConfigsForApp, loadScorekeeperStatTrackerConfigsForApp, parseRecurringPracticeOccurrenceId, removeTeamCalendarUrl, updateScheduledGameForApp } from '../../apps/app/src/lib/scheduleService.ts';
+import { addTeamCalendarUrl, cancelPracticeOccurrenceForApp, createScheduledGameForApp, createScheduleImportGame, createScheduleImportPractice, createStaffRsvpReminderPreviewLoader, loadParentPlayerSchedule, loadParentSchedule, loadParentScheduleEventDetail, loadScheduleStatTrackerConfigsForApp, loadScorekeeperStatTrackerConfigsForApp, loadTeamOverviewSchedule, parseRecurringPracticeOccurrenceId, removeTeamCalendarUrl, updateScheduledGameForApp } from '../../apps/app/src/lib/scheduleService.ts';
 import { clearAppDataCache } from '../../apps/app/src/lib/appDataCache.ts';
 import { getScheduleForecastHref, getScheduleMapHref } from '../../apps/app/src/lib/scheduleLogic.ts';
 
@@ -298,7 +298,9 @@ beforeEach(() => {
             date: new Date('2026-05-21T18:00:00Z'),
             endDate: new Date('2026-05-21T19:30:00Z'),
             location: 'Main Gym',
+            locationDetail: 'Court A',
             opponent: 'Falcons',
+            statTrackerConfigId: 'config-1',
             opponentTeamId: 'team-2',
             sharedScheduleOpponentTeamId: 'team-2',
             status: 'scheduled',
@@ -448,6 +450,85 @@ afterEach(() => {
 });
 
 describe('React app schedule service contract integration', () => {
+    it('loads a deduplicated team-level schedule for overview surfaces', async () => {
+        const result = await loadTeamOverviewSchedule('team-1', 'Bears', user());
+
+        expect(result.filter((event) => event.id === 'ics-game-1')).toHaveLength(1);
+        expect(result.find((event) => event.id === 'ics-game-1')).toMatchObject({
+            childId: 'staff-team-team-1',
+            teamId: 'team-1',
+            location: 'Imported Field',
+            locationDetail: 'Field 14',
+            sourceLabel: 'Imported calendar',
+            isDbGame: false
+        });
+        expect(result.find((event) => event.id === 'game-1')).toMatchObject({
+            location: 'Main Gym',
+            locationDetail: 'Court A',
+            statTrackerConfigId: 'config-1',
+            isDbGame: true
+        });
+        expect(dbMocks.getTeam).toHaveBeenCalledWith('team-1');
+        expect(utilsMocks.fetchAndParseCalendar).toHaveBeenCalledWith('mock://team-calendar');
+    });
+
+    it('does not load a team overview schedule without an authenticated user', async () => {
+        await expect(loadTeamOverviewSchedule('team-1', 'Bears', null)).resolves.toEqual([]);
+        expect(dbMocks.getTeam).not.toHaveBeenCalled();
+    });
+
+    it('does not expose a team overview schedule to an unrelated authenticated user', async () => {
+        profileMocks.loadProfileDocument.mockResolvedValueOnce({ parentOf: [] });
+        const unrelatedUser = {
+            uid: 'unrelated-user',
+            email: 'unrelated@example.com',
+            roles: ['parent'],
+            parentOf: []
+        };
+
+        await expect(loadTeamOverviewSchedule('team-1', 'Bears', unrelatedUser)).resolves.toEqual([]);
+
+        expect(dbMocks.getGames).not.toHaveBeenCalled();
+        expect(utilsMocks.fetchAndParseCalendar).not.toHaveBeenCalled();
+    });
+
+    it('uses recurring occurrence field details with a master fallback', async () => {
+        dbMocks.getGames.mockResolvedValueOnce([{
+            id: 'practice-series',
+            type: 'practice',
+            title: 'Weekly Practice',
+            date: new Date('2026-05-20T18:00:00Z'),
+            location: 'Sports Complex',
+            locationDetail: 'Master Field',
+            isSeriesMaster: true,
+            recurrence: { frequency: 'weekly' }
+        }]);
+        utilsMocks.expandRecurrence.mockReturnValueOnce([
+            {
+                masterId: 'practice-series',
+                instanceDate: '2026-05-27',
+                date: new Date('2026-05-27T18:00:00Z'),
+                location: 'Sports Complex',
+                locationDetail: 'Occurrence Field'
+            },
+            {
+                masterId: 'practice-series',
+                instanceDate: '2026-06-03',
+                date: new Date('2026-06-03T18:00:00Z'),
+                location: 'Sports Complex'
+            }
+        ]);
+
+        const result = await loadTeamOverviewSchedule('team-1', 'Bears', user());
+
+        expect(result.find((event) => event.id === 'practice-series__2026-05-27')).toMatchObject({
+            locationDetail: 'Occurrence Field'
+        });
+        expect(result.find((event) => event.id === 'practice-series__2026-06-03')).toMatchObject({
+            locationDetail: 'Master Field'
+        });
+    });
+
     it('keeps ordinary staff discovery on the scoped adapter instead of the team catalog', () => {
         const staffTeamSource = getScheduleServiceSlice('async function loadStaffTeams', 'async function saveTeamCalendarUrls');
 
@@ -668,6 +749,7 @@ describe('React app schedule service contract integration', () => {
             date: new Date('2026-05-21T18:00:00Z'),
             endDate: new Date('2026-05-21T19:30:00Z'),
             location: 'Main Gym',
+            locationDetail: 'Court A',
             opponent: 'Falcons',
             opponentTeamId: 'team-2',
             sharedScheduleOpponentTeamId: 'team-2',
@@ -713,6 +795,7 @@ describe('React app schedule service contract integration', () => {
         expect(result.events).toHaveLength(2);
         expect(result.events.every((event) => event.id === 'game-1')).toBe(true);
         expect(result.events.find((event) => event.childId === 'player-1')).toMatchObject({
+            locationDetail: 'Court A',
             competitionType: 'tournament',
             tournament: {
                 divisionName: '10U Gold',

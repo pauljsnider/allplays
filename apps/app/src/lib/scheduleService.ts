@@ -3503,6 +3503,7 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
             date,
             endDate: occurrence.endDate || occurrence.end || game.endDate || game.end || null,
             location: occurrence.location || 'TBD',
+            locationDetail: compactString(occurrence.locationDetail) || game.locationDetail || null,
             opponent: 'TBD',
             title: occurrence.title || null,
             isDbGame: true,
@@ -3522,6 +3523,7 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
             competitionType: game.competitionType || null,
             countsTowardSeasonRecord: game.countsTowardSeasonRecord ?? null,
             tournament: game.tournament || null,
+            statTrackerConfigId: game.statTrackerConfigId || null,
             sourceType: game.sourceMetadata?.sourceType || game.source || 'db',
             sourceLabel: getScheduleSourceLabel(game),
             isImported: Boolean(game.sourceMetadata || game.source === 'calendar' || game.source === 'registration'),
@@ -3557,6 +3559,7 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
           date,
           endDate: game.endDate || game.end || game.endTime || null,
           location: game.location || 'TBD',
+          locationDetail: game.locationDetail || null,
           opponent: game.opponent || 'TBD',
           opponentTeamId: game.opponentTeamId || null,
           opponentTeamName: game.opponentTeamName || game.awayTeamName || null,
@@ -3586,6 +3589,7 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
           competitionType: game.competitionType || null,
           countsTowardSeasonRecord: game.countsTowardSeasonRecord ?? null,
           tournament: game.tournament || null,
+          statTrackerConfigId: game.statTrackerConfigId || null,
           sourceType: game.sourceMetadata?.sourceType || game.source || 'db',
           sourceLabel: getScheduleSourceLabel(game),
           isImported: Boolean(game.sourceMetadata || game.source === 'calendar' || game.source === 'registration'),
@@ -3698,6 +3702,24 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
   return events;
 }
 
+export async function loadTeamOverviewSchedule(teamId: string, teamName: string, user: AuthUser | null): Promise<ParentScheduleEvent[]> {
+  const normalizedTeamId = compactString(teamId);
+  if (!normalizedTeamId || !user?.uid) return [];
+
+  const scope = await loadParentScheduleScope(user);
+  const hasTeamAccess = scope.children.some((child) => child.teamId === normalizedTeamId)
+    || scope.staffTeams?.some((team) => team.teamId === normalizedTeamId) === true;
+  if (!hasTeamAccess) return [];
+
+  const normalizedTeamName = compactString(teamName) || normalizedTeamId;
+  return buildTeamSchedule(normalizedTeamId, [{
+    teamId: normalizedTeamId,
+    teamName: normalizedTeamName,
+    playerId: `staff-team-${normalizedTeamId}`,
+    playerName: normalizedTeamName
+  }], user);
+}
+
 async function buildTargetedTeamScheduleEvent(teamId: string, eventId: string, teamChildren: ParentScheduleChild[], user: AuthUser) {
   const occurrenceMatch = eventId.match(/^(.*)__([0-9]{4}-[0-9]{2}-[0-9]{2})$/);
   const [team, initialGame] = await Promise.all([
@@ -3761,6 +3783,7 @@ async function buildTargetedTeamScheduleEvent(teamId: string, eventId: string, t
       date: occurrenceDate,
       endDate: occurrence.endDate || occurrence.end || game.endDate || game.end || null,
       location: occurrence.location || 'TBD',
+      locationDetail: compactString(occurrence.locationDetail) || game.locationDetail || null,
       opponent: 'TBD',
       title: occurrence.title || null,
       isDbGame: true,
@@ -3815,6 +3838,7 @@ async function buildTargetedTeamScheduleEvent(teamId: string, eventId: string, t
     date,
     endDate: game.endDate || game.end || game.endTime || null,
     location: game.location || 'TBD',
+    locationDetail: game.locationDetail || null,
     opponent: game.opponent || 'TBD',
     opponentTeamId: game.opponentTeamId || null,
     opponentTeamName: game.opponentTeamName || game.awayTeamName || null,

@@ -610,6 +610,7 @@ describe('TeamDetail', () => {
         opponent: 'Tigers',
         status: 'scheduled',
         isCancelled: false,
+        isDbGame: true,
         homeScore: null,
         awayScore: null,
         statTrackerConfigId: '',
@@ -645,6 +646,43 @@ describe('TeamDetail', () => {
 
     expect(await screen.findByText('All player RSVPs are in.')).toBeTruthy();
     expect(scheduleServiceMocks.loadPreview).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not offer database RSVP reminders for imported calendar events', async () => {
+    const futureDate = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue({
+      ...model,
+      canManageTeam: true,
+      upcomingEvents: [{
+        id: 'imported-practice',
+        title: 'Bears Practice',
+        type: 'practice',
+        date: futureDate,
+        location: 'Soccer Complex',
+        locationDetail: 'Field 7 NE',
+        opponent: 'TBD',
+        status: 'scheduled',
+        isCancelled: false,
+        isDbGame: false,
+        homeScore: null,
+        awayScore: null,
+        statTrackerConfigId: '',
+        statTrackerConfigExists: false,
+        statTrackerConfigLabel: 'No stat config',
+        statTrackerConfigIsBasketball: false
+      }]
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1?tab=schedule']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('Bears Practice')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Review reminder' })).toBeNull();
   });
 
   it('does not reload team detail when the auth object identity changes but the signed-in user does not', async () => {

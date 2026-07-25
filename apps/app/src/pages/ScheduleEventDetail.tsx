@@ -647,7 +647,8 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
               eventType={selectedEvent.type}
               title={title}
               timeLabel={formatHeroTime(selectedEvent)}
-              location={getScheduleLocationLabel(selectedEvent, 'Location TBD')}
+              location={selectedEvent.location || 'Location TBD'}
+              locationDetail={selectedEvent.locationDetail}
               playerSummary={events.length > 1 ? (
                 <>
                   <PlayerSwitcher events={events} selectedChildId={selectedEvent.childId} onSelect={selectChild} compact />

@@ -50,6 +50,10 @@ const authServiceMocks = vi.hoisted(() => ({
   getNativeAuthIdToken: vi.fn()
 }));
 
+const scheduleServiceMocks = vi.hoisted(() => ({
+  loadTeamOverviewSchedule: vi.fn()
+}));
+
 const seasonRecordMocks = vi.hoisted(() => ({
   calculateSeasonRecord: vi.fn(() => ({ wins: 0, losses: 0, ties: 0 })),
   getTeamScorePair: vi.fn((game: any) => {
@@ -114,6 +118,7 @@ vi.mock('./authService', () => authServiceMocks);
 vi.mock('./inviteUrls', () => ({ buildAppAcceptInviteUrl: vi.fn(() => 'https://allplays.ai/app#/accept-invite') }));
 vi.mock('./nativeRestLogging', () => ({ sanitizeErrorForLogging: vi.fn((error) => error) }));
 vi.mock('./profileService', () => ({ loadProfileDocument: vi.fn(async () => ({})) }));
+vi.mock('./scheduleService', () => scheduleServiceMocks);
 
 import {
   __resetTeamDetailBaseSnapshotCacheForTests,
@@ -360,6 +365,7 @@ describe('team detail bootstrap loading', () => {
     dbMocks.getPlayers.mockResolvedValue([{ id: 'player-1', name: 'Pat Star', active: true }]);
     dbMocks.getGames.mockResolvedValue([{ id: 'game-1', type: 'game', status: 'scheduled' }]);
     dbMocks.getConfigs.mockResolvedValue([{ id: 'config-1', name: 'Config' }]);
+    scheduleServiceMocks.loadTeamOverviewSchedule.mockResolvedValue(null);
     __resetTeamDetailBaseSnapshotCacheForTests();
   });
 
@@ -384,6 +390,204 @@ describe('team detail bootstrap loading', () => {
     expect(dbMocks.getPlayers).toHaveBeenCalledTimes(1);
     expect(dbMocks.getGames).toHaveBeenCalledTimes(1);
     expect(dbMocks.getConfigs).toHaveBeenCalledTimes(1);
+  });
+
+  it('includes imported calendar events in the team overview schedule', async () => {
+    const importedPractice = {
+      eventKey: 'team-1::calendar-practice::staff-team-team-1',
+      id: 'calendar-practice',
+      teamId: 'team-1',
+      teamName: 'Bears',
+      type: 'practice',
+      title: 'Bears Practice',
+      date: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      location: 'Scheels Overland Park Soccer Complex',
+      locationDetail: 'Field 7 NE',
+      opponent: null,
+      childId: 'staff-team-team-1',
+      childName: 'Bears',
+      isDbGame: false,
+      isCancelled: false,
+      sourceLabel: 'Imported calendar',
+      assignments: [],
+      openAssignmentCount: 0
+    };
+    dbMocks.getGames.mockResolvedValueOnce([]);
+    scheduleServiceMocks.loadTeamOverviewSchedule.mockResolvedValueOnce([importedPractice]);
+
+    const model = await loadParentTeamDetail('team-1', { uid: 'owner-1' } as any, { includeDeferredData: false });
+
+    expect(scheduleServiceMocks.loadTeamOverviewSchedule).toHaveBeenCalledWith('team-1', 'Bears', expect.objectContaining({ uid: 'owner-1' }));
+    expect(model.upcomingEvents).toHaveLength(1);
+    expect(model.nextEvent).toMatchObject({
+      id: 'calendar-practice',
+      title: 'Bears Practice',
+      location: 'Scheels Overland Park Soccer Complex',
+      locationDetail: 'Field 7 NE',
+      isDbGame: false,
+      sourceLabel: 'Imported calendar'
+    });
+  });
+
+  it('preserves completed database games outside the imported calendar history window', async () => {
+    const historicalGame = {
+      id: 'historical-game',
+      type: 'game',
+      title: 'Bears vs. Alumni',
+      date: new Date('2020-01-15T18:00:00Z'),
+      location: 'Old Gym',
+      opponent: 'Alumni',
+      status: 'completed',
+      homeScore: 42,
+      awayScore: 40
+    };
+    dbMocks.getGames.mockResolvedValueOnce([historicalGame]);
+    scheduleServiceMocks.loadTeamOverviewSchedule.mockResolvedValueOnce([]);
+
+    const model = await loadParentTeamDetail('team-1', { uid: 'owner-1' } as any, { includeDeferredData: false });
+
+    expect(model.recentResults).toEqual([
+      expect.objectContaining({
+        id: 'historical-game',
+        title: 'Bears vs. Alumni',
+        isDbGame: true
+      })
+    ]);
+  });
+
+  it('keeps cancelled imported calendar events out of the team overview', () => {
+    const built = buildTeamDetailModel({
+      teamId: 'team-1',
+      team: { id: 'team-1', ownerId: 'owner-1', name: 'Bears' },
+      scheduleEvents: [{
+        eventKey: 'team-1::cancelled-practice::staff-team-team-1',
+        id: 'cancelled-practice',
+        teamId: 'team-1',
+        teamName: 'Bears',
+        type: 'practice',
+        title: 'Cancelled Practice',
+        date: new Date('2100-06-01T18:00:00Z'),
+        location: 'Fieldhouse',
+        opponent: null,
+        childId: 'staff-team-team-1',
+        childName: 'Bears',
+        isDbGame: false,
+        isCancelled: true,
+        assignments: [],
+        openAssignmentCount: 0
+      }]
+    });
+
+    expect(built.upcomingEvents).toEqual([]);
+  });
+
+  it('overlays database metadata onto matching calendar projections', () => {
+    const built = buildTeamDetailModel({
+      teamId: 'team-1',
+      team: { id: 'team-1', ownerId: 'owner-1', name: 'Bears' },
+      configs: [{ id: 'config-1', name: 'Varsity', baseType: 'Basketball' }],
+      games: [{
+        id: 'game-1',
+        type: 'game',
+        date: new Date('2100-06-01T18:00:00Z'),
+        opponent: 'Falcons',
+        statTrackerConfigId: 'config-1',
+        locationDetail: 'Court 2',
+        isPrivate: true,
+        isPublic: false,
+        shareable: false,
+        publicCalendar: false
+      }],
+      scheduleEvents: [{
+        eventKey: 'team-1::game-1::staff-team-team-1',
+        id: 'game-1',
+        teamId: 'team-1',
+        teamName: 'Bears',
+        type: 'game',
+        title: 'vs. Falcons',
+        date: new Date('2100-06-01T18:00:00Z'),
+        location: 'Main Gym',
+        locationDetail: null,
+        opponent: 'Falcons',
+        statTrackerConfigId: null,
+        childId: 'staff-team-team-1',
+        childName: 'Bears',
+        isDbGame: true,
+        isCancelled: false,
+        assignments: [],
+        openAssignmentCount: 0
+      }]
+    });
+
+    expect(built.upcomingEvents).toEqual([
+      expect.objectContaining({
+        id: 'game-1',
+        statTrackerConfigId: 'config-1',
+        statTrackerConfigLabel: 'Varsity',
+        statTrackerConfigExists: true,
+        locationDetail: 'Court 2',
+        isPrivate: true,
+        isPublic: false,
+        shareable: false,
+        publicCalendar: false
+      })
+    ]);
+  });
+
+  it('replaces recurring practice masters with their expanded schedule occurrences', () => {
+    const built = buildTeamDetailModel({
+      teamId: 'team-1',
+      team: { id: 'team-1', ownerId: 'owner-1', name: 'Bears' },
+      games: [{
+        id: 'practice-master',
+        type: 'practice',
+        title: 'Weekly Practice',
+        date: new Date('2100-06-01T18:00:00Z'),
+        recurring: true
+      }],
+      scheduleEvents: [{
+        eventKey: 'team-1::practice-master__2100-06-08::staff-team-team-1',
+        id: 'practice-master__2100-06-08',
+        teamId: 'team-1',
+        teamName: 'Bears',
+        type: 'practice',
+        title: 'Weekly Practice',
+        date: new Date('2100-06-08T18:00:00Z'),
+        location: 'Practice Field',
+        opponent: null,
+        childId: 'staff-team-team-1',
+        childName: 'Bears',
+        isDbGame: true,
+        isCancelled: false,
+        assignments: [],
+        openAssignmentCount: 0
+      }]
+    });
+
+    expect(built.upcomingEvents.map((event) => event.id)).toEqual(['practice-master__2100-06-08']);
+  });
+
+  it('falls back to database events when the optional calendar load exceeds its deadline', async () => {
+    vi.useFakeTimers();
+    try {
+      dbMocks.getGames.mockResolvedValueOnce([{
+        id: 'game-1',
+        type: 'game',
+        title: 'vs. Falcons',
+        date: new Date('2100-06-01T18:00:00Z'),
+        opponent: 'Falcons'
+      }]);
+      scheduleServiceMocks.loadTeamOverviewSchedule.mockReturnValueOnce(new Promise(() => {}));
+
+      const modelPromise = loadParentTeamDetail('team-1', { uid: 'owner-1' } as any, { includeDeferredData: false });
+      await vi.advanceTimersByTimeAsync(1500);
+
+      await expect(modelPromise).resolves.toMatchObject({
+        upcomingEvents: [expect.objectContaining({ id: 'game-1', isDbGame: true })]
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('keeps deferred insights aligned to the current header season without final scores', async () => {

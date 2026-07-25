@@ -9,6 +9,7 @@ interface ScheduleEventHeaderProps {
   title: string;
   timeLabel: string;
   location?: string | null;
+  locationDetail?: string | null;
   playerSummary: ReactNode;
   rsvpLabel: string;
   rsvpClassName: string;
@@ -22,6 +23,7 @@ export function ScheduleEventHeader({
   title,
   timeLabel,
   location,
+  locationDetail,
   playerSummary,
   rsvpLabel,
   rsvpClassName,
@@ -41,6 +43,15 @@ export function ScheduleEventHeader({
           <h1 className="mt-0.5 text-lg font-black leading-tight text-gray-950 sm:text-2xl">{title}</h1>
           <div className="mt-0 flex min-w-0 flex-wrap gap-x-2 gap-y-0.5 text-xs font-bold leading-5 text-gray-600 sm:text-sm">
             <span>{timeLabel}</span>
+            {locationDetail ? (
+              <span
+                className="flex-none font-black text-primary-800"
+                aria-label={`Field or court: ${locationDetail}`}
+                data-testid="event-location-detail"
+              >
+                {locationDetail}
+              </span>
+            ) : null}
             <span className="min-w-0 truncate">{location || 'Location TBD'}</span>
           </div>
         </div>

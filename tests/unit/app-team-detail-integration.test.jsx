@@ -131,12 +131,12 @@ function model() {
             { id: 'player-1', name: 'Pat Star', number: '9', photoUrl: 'https://img.example.test/player.png', position: 'Guard', isLinked: true }
         ],
         upcomingEvents: [
-            { id: 'game-1', type: 'game', title: 'vs. Falcons', date: nextDate, location: 'Main Gym', opponent: 'Falcons', status: '', liveStatus: '', visibility: '', isPrivate: false, isPublic: false, shareable: true, publicCalendar: false, homeScore: null, awayScore: null, isCancelled: false, statTrackerConfigId: 'cfg-basketball', statTrackerConfigLabel: 'Varsity Basketball', statTrackerConfigBaseType: 'Basketball', statTrackerConfigExists: true, statTrackerConfigIsBasketball: true }
+            { id: 'game-1', type: 'game', title: 'vs. Falcons', date: nextDate, location: 'Main Gym', opponent: 'Falcons', status: '', liveStatus: '', visibility: '', isPrivate: false, isPublic: false, shareable: true, publicCalendar: false, homeScore: null, awayScore: null, isCancelled: false, isDbGame: true, statTrackerConfigId: 'cfg-basketball', statTrackerConfigLabel: 'Varsity Basketball', statTrackerConfigBaseType: 'Basketball', statTrackerConfigExists: true, statTrackerConfigIsBasketball: true }
         ],
         recentResults: [
             { id: 'game-final', type: 'game', title: 'vs. Wolves', date: new Date('2026-05-01T18:00:00Z'), location: 'Main Gym', opponent: 'Wolves', status: 'completed', liveStatus: '', visibility: '', isPrivate: false, isPublic: false, shareable: false, publicCalendar: false, homeScore: 42, awayScore: 35, isCancelled: false, statTrackerConfigId: '', statTrackerConfigLabel: 'No config assigned', statTrackerConfigBaseType: '', statTrackerConfigExists: false, statTrackerConfigIsBasketball: false }
         ],
-        nextEvent: { id: 'game-1', type: 'game', title: 'vs. Falcons', date: nextDate, location: 'Main Gym', opponent: 'Falcons', status: '', liveStatus: '', visibility: '', isPrivate: false, isPublic: false, shareable: true, publicCalendar: false, homeScore: null, awayScore: null, isCancelled: false, statTrackerConfigId: 'cfg-basketball', statTrackerConfigLabel: 'Varsity Basketball', statTrackerConfigBaseType: 'Basketball', statTrackerConfigExists: true, statTrackerConfigIsBasketball: true },
+        nextEvent: { id: 'game-1', type: 'game', title: 'vs. Falcons', date: nextDate, location: 'Main Gym', opponent: 'Falcons', status: '', liveStatus: '', visibility: '', isPrivate: false, isPublic: false, shareable: true, publicCalendar: false, homeScore: null, awayScore: null, isCancelled: false, isDbGame: true, statTrackerConfigId: 'cfg-basketball', statTrackerConfigLabel: 'Varsity Basketball', statTrackerConfigBaseType: 'Basketball', statTrackerConfigExists: true, statTrackerConfigIsBasketball: true },
         record: { label: '2100', wins: 4, losses: 2, ties: 1, gamesPlayed: 7, winPercentage: 64.3 },
         standings: {
             enabled: true,
@@ -761,7 +761,7 @@ describe('React app TeamDetail page', () => {
         managerModel.canManageTeam = true;
         managerModel.upcomingEvents = [
             managerModel.upcomingEvents[0],
-            { id: 'game-2', type: 'game', title: 'at Tigers', date: new Date('2100-06-03T18:00:00Z'), location: 'North Gym', opponent: 'Tigers', status: '', liveStatus: '', visibility: '', isPrivate: false, isPublic: false, shareable: true, publicCalendar: false, homeScore: null, awayScore: null, isCancelled: false, statTrackerConfigId: '', statTrackerConfigLabel: 'No config assigned', statTrackerConfigBaseType: '', statTrackerConfigExists: false, statTrackerConfigIsBasketball: false }
+            { id: 'game-2', type: 'game', title: 'at Tigers', date: new Date('2100-06-03T18:00:00Z'), location: 'North Gym', opponent: 'Tigers', status: '', liveStatus: '', visibility: '', isPrivate: false, isPublic: false, shareable: true, publicCalendar: false, homeScore: null, awayScore: null, isCancelled: false, isDbGame: true, statTrackerConfigId: '', statTrackerConfigLabel: 'No config assigned', statTrackerConfigBaseType: '', statTrackerConfigExists: false, statTrackerConfigIsBasketball: false }
         ];
         managerModel.nextEvent = managerModel.upcomingEvents[0];
         teamDetailMocks.loadParentTeamDetailBootstrap.mockResolvedValueOnce(managerModel);
