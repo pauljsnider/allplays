@@ -5,10 +5,13 @@
 // Firestore Admin handle is injected so this module stays testable without
 // firebase-admin.
 
+import { loadCalendarFeedEvents } from './calendar.js';
+
 export const APP_BASE_URL = 'https://allplays.ai';
 export const DEFAULT_SCHEDULE_DAYS = 7;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const MAX_EVENTS_PER_TEAM = 50;
+const MAX_CALENDAR_URLS_PER_TEAM = 10;
 const MAX_PLAYER_STATS = 60;
 
 export class DomainError extends Error {
@@ -213,6 +216,11 @@ function gameDeepLink(teamId, gameId, { replay = false } = {}) {
     return `${APP_BASE_URL}/live-game.html?${params.toString()}`;
 }
 
+function scheduleDeepLink(teamId) {
+    const params = new URLSearchParams({ teamId });
+    return `${APP_BASE_URL}/app/schedule?${params.toString()}`;
+}
+
 function whitelistRsvp(data, linkedPlayerIds) {
     if (!data) return null;
     const playerIds = (Array.isArray(data.playerIds) ? data.playerIds : [data.playerId])
@@ -232,20 +240,39 @@ function whitelistRsvpSummary(summary) {
     return Object.keys(out).length ? out : null;
 }
 
-export async function getFamilySchedule(db, context, args = {}, now = new Date()) {
+export async function getFamilySchedule(db, context, args = {}, now = new Date(), options = {}) {
     const { start, end } = parseScheduleRange(args, now);
     const events = [];
+    const warnings = [];
+    const calendarLoader = options.loadCalendarFeedEvents || loadCalendarFeedEvents;
 
     for (const entry of context.teams.values()) {
+        const calendarUrls = (Array.isArray(entry.team.calendarUrls) ? entry.team.calendarUrls : [])
+            .filter((url) => typeof url === 'string' && url.trim())
+            .slice(0, MAX_CALENDAR_URLS_PER_TEAM);
+        const calendarResultsPromise = Promise.allSettled(calendarUrls.map((calendarUrl) => (
+            calendarLoader(calendarUrl, {
+                start,
+                end,
+                teamName: cleanString(entry.team.name)
+            })
+        )));
         const snap = await db.collection(`teams/${entry.teamId}/games`)
             .where('date', '>=', start)
             .where('date', '<=', end)
             .orderBy('date')
             .limit(MAX_EVENTS_PER_TEAM)
             .get();
+        const trackedCalendarIds = new Set();
+        const storedEventTimes = [];
 
         for (const doc of snap.docs) {
             const data = doc.data() || {};
+            for (const value of [data.calendarEventUid, data.calendarEventId]) {
+                if (typeof value === 'string' && value) trackedCalendarIds.add(value);
+            }
+            const storedDate = toDate(data.date);
+            if (storedDate) storedEventTimes.push(storedDate.getTime());
             const event = {
                 teamId: entry.teamId,
                 teamName: cleanString(entry.team.name),
@@ -269,13 +296,62 @@ export async function getFamilySchedule(db, context, args = {}, now = new Date()
 
             events.push(event);
         }
+
+        const calendarResults = await calendarResultsPromise;
+        let calendarFailed = false;
+        const projectedCalendarIds = new Set();
+        for (const result of calendarResults) {
+            if (result.status === 'rejected') {
+                calendarFailed = true;
+                continue;
+            }
+            for (const calendarEvent of result.value.slice(0, MAX_EVENTS_PER_TEAM)) {
+                if (
+                    trackedCalendarIds.has(calendarEvent.calendarEventId)
+                    || (calendarEvent.calendarEventUid && trackedCalendarIds.has(calendarEvent.calendarEventUid))
+                    || projectedCalendarIds.has(calendarEvent.calendarEventId)
+                ) {
+                    continue;
+                }
+                const eventTime = toDate(calendarEvent.date)?.getTime();
+                if (
+                    Number.isFinite(eventTime)
+                    && storedEventTimes.some((storedTime) => Math.abs(storedTime - eventTime) < 60_000)
+                ) {
+                    continue;
+                }
+                projectedCalendarIds.add(calendarEvent.calendarEventId);
+                events.push({
+                    teamId: entry.teamId,
+                    teamName: cleanString(entry.team.name),
+                    gameId: calendarEvent.calendarEventId,
+                    type: calendarEvent.type,
+                    date: toIso(calendarEvent.date),
+                    endDate: toIso(calendarEvent.endDate),
+                    opponent: calendarEvent.opponent,
+                    title: calendarEvent.title,
+                    location: calendarEvent.location,
+                    status: calendarEvent.status,
+                    source: 'calendar',
+                    isImported: true,
+                    rsvpSummary: null,
+                    myRsvp: null,
+                    linkedPlayerIds: [...entry.linkedPlayerIds],
+                    deepLink: scheduleDeepLink(entry.teamId)
+                });
+            }
+        }
+        if (calendarFailed) {
+            warnings.push(`${cleanString(entry.team.name) || 'A linked team'} imported calendar could not be loaded.`);
+        }
     }
 
     events.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
     return {
         startDate: start.toISOString(),
         endDate: end.toISOString(),
-        events
+        events,
+        warnings
     };
 }
 

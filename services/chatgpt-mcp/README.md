@@ -4,6 +4,11 @@ Remote MCP server exposing permission-aware AllPlays tools to ChatGPT:
 `get_profile`, `list_schedule`, `get_game_summary` — names aligned with the
 in-app private AI registry (`apps/app/src/lib/privateAiService.ts`).
 
+`list_schedule` combines Firestore games and practices with events from the
+private ICS feeds already attached to each authorized team. External feeds are
+retrieved through the same SSRF-protected calendar proxy used by the AllPlays
+app; private feed URLs are never returned to ChatGPT.
+
 Spec: `/spec/chatgpt-app-integration/` · Plan: `AllPlays_ChatGPT_App_Integration_Plan.docx`
 
 ## How authorization works
@@ -130,6 +135,7 @@ Required production variables:
 | `OAUTH_GRANT_ENCRYPTION_KEY` | Base64-encoded 32-byte AES key, supplied from Secret Manager. |
 | `PUBLIC_BASE_URL` | Canonical HTTPS issuer/resource base. Required in production, without a trailing slash. |
 | `CHATGPT_OAUTH_LEGACY_CLIENT_IDS` | Optional comma-separated migration allowlist for public client IDs issued by an older broker. |
+| `CALENDAR_FETCH_FUNCTION_URL` | Optional calendar proxy override. Defaults to the production AllPlays `fetchCalendarIcs` function. |
 
 Create the encryption secret without committing the key:
 

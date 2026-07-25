@@ -273,6 +273,90 @@ describe('chatgpt-mcp core: getFamilySchedule', () => {
         expect(result.events[1].myRsvp).toEqual({ response: 'not_responded', playerIds: [] });
     });
 
+    it('merges imported team-calendar events without exposing the private feed URL', async () => {
+        const privateCalendarUrl = 'webcal://calendar.example.test/private.ics?token=secret';
+        const db = parentDb({
+            docs: {
+                'teams/team-a': {
+                    name: 'Vipers',
+                    ownerId: 'coach-9',
+                    sport: 'Soccer',
+                    calendarUrls: [privateCalendarUrl]
+                }
+            },
+            queries: {
+                teams: () => [],
+                'teams/team-a/games': () => []
+            }
+        });
+        const context = await resolveUserContext(db, parentIdentity);
+        const result = await getFamilySchedule(
+            db,
+            context,
+            { startDate: '2026-07-24', endDate: '2026-07-31' },
+            new Date('2026-07-24T12:00:00Z'),
+            {
+                loadCalendarFeedEvents: async (url) => {
+                    expect(url).toBe(privateCalendarUrl);
+                    return [{
+                        calendarEventId: 'practice-1',
+                        calendarEventUid: 'practice-series',
+                        type: 'practice',
+                        date: new Date('2026-07-27T23:00:00Z'),
+                        endDate: new Date('2026-07-28T00:00:00Z'),
+                        opponent: null,
+                        title: 'Vipers FC U8B Practice',
+                        location: 'Practice field',
+                        status: 'scheduled'
+                    }];
+                }
+            }
+        );
+
+        expect(result.events).toEqual([expect.objectContaining({
+            teamName: 'Vipers',
+            gameId: 'practice-1',
+            type: 'practice',
+            title: 'Vipers FC U8B Practice',
+            source: 'calendar',
+            isImported: true
+        })]);
+        expect(result.warnings).toEqual([]);
+        expect(JSON.stringify(result)).not.toContain(privateCalendarUrl);
+        expect(JSON.stringify(result)).not.toContain('token=secret');
+    });
+
+    it('keeps stored events and reports a safe warning when an imported calendar fails', async () => {
+        const db = parentDb({
+            docs: {
+                'teams/team-a': {
+                    name: 'Vipers',
+                    calendarUrls: ['https://calendar.example.test/private.ics?token=secret']
+                }
+            },
+            queries: {
+                teams: () => [],
+                'teams/team-a/games': () => [{
+                    id: 'game-1',
+                    data: { type: 'game', date: new Date('2026-07-25T17:00:00Z'), opponent: 'Hawks' }
+                }]
+            }
+        });
+        const context = await resolveUserContext(db, parentIdentity);
+        const result = await getFamilySchedule(
+            db,
+            context,
+            { startDate: '2026-07-24', endDate: '2026-07-31' },
+            new Date('2026-07-24T12:00:00Z'),
+            { loadCalendarFeedEvents: async () => { throw new Error('upstream failed'); } }
+        );
+
+        expect(result.events.map((event) => event.gameId)).toEqual(['game-1']);
+        expect(result.warnings).toEqual(['Vipers imported calendar could not be loaded.']);
+        expect(JSON.stringify(result)).not.toContain('token=secret');
+        expect(JSON.stringify(result)).not.toContain('upstream failed');
+    });
+
     it('rejects an invalid date range', async () => {
         const db = scheduleDb();
         const context = await resolveUserContext(db, parentIdentity);

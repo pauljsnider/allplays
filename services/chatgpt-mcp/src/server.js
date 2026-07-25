@@ -207,7 +207,7 @@ function buildServer(identity) {
 
     server.registerTool('list_schedule', {
         title: 'List schedule',
-        description: 'Games and practices in a date range (default: next 7 days) across the user\'s teams, with RSVP state for linked players and deep links into AllPlays.',
+        description: 'Stored and imported-calendar games and practices in a date range (default: next 7 days) across the user\'s teams, with RSVP state where available and deep links into AllPlays.',
         inputSchema: {
             startDate: z.string().optional().describe('ISO date, inclusive. Defaults to today.'),
             endDate: z.string().optional().describe('ISO date, inclusive. Defaults to startDate + 7 days.')
@@ -219,7 +219,7 @@ function buildServer(identity) {
 
     server.registerTool('get_game_summary', {
         title: 'Get game summary',
-        description: 'Score, status, summary, and aggregated player statistics for one game on a team the user belongs to.',
+        description: 'Score, status, summary, and aggregated player statistics for one stored AllPlays game on a team the user belongs to. Imported calendar events do not have game summaries.',
         inputSchema: {
             teamId: z.string().describe('Team id from get_profile'),
             gameId: z.string().describe('Game id from list_schedule')
