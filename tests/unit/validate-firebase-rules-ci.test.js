@@ -103,6 +103,8 @@ concurrency:
           fetch-depth: 0
       permissions:
         actions: read
+        deployments: read
+        deployments: write
       outputs:
         storage_changed: \${{ steps.firestore_config.outputs.storage_changed }}
       - name: Detect Firebase rules changes
@@ -129,7 +131,9 @@ concurrency:
             echo "storage_changed=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          git diff --quiet "$last_success_sha" "$GITHUB_SHA" -- firestore.rules firestore.indexes.json
+          gh api --method GET "repos/\${GITHUB_REPOSITORY}/deployments" -f environment=production-firestore
+          firestore_success_sha="$deployment_sha"
+          git diff --quiet "$firestore_success_sha" "$GITHUB_SHA" -- firestore.rules firestore.indexes.json
           git diff --quiet "$last_success_sha" "$GITHUB_SHA" -- storage.rules
       - name: Deploy Firebase Storage rules when available
         env:
@@ -154,10 +158,14 @@ concurrency:
           env:
             FIRESTORE_CONFIG_CHANGED: \${{ needs.prepare-deploy.outputs.firestore_changed }}
           retry_delay_seconds=$((base_delay_seconds * (2 ** (attempt - 1))))
+          retry_jitter_seconds=$((RANDOM % 16))
           if (( retry_delay_seconds > 120 )); then
             retry_delay_seconds=120
           fi
           if [[ "$deploy_label" == "firestore" ]]; then
+            echo "latest version of firestore.rules already up to date, skipping upload"
+            echo "deployed indexes in firestore.indexes.json successfully"
+            echo "accepting the duplicate release 409 as success"
             api_surface="Firestore Rules API (firebaserules.googleapis.com)"
             grep -Eio 'HTTP Error:[[:space:]]*(409|429|500|502|503|504)|(^|[^[:digit:]])(409|429|500|502|503|504)([^[:digit:]]|$)' "$deploy_log" \\
               | grep -Eo '(409|429|500|502|503|504)'
@@ -174,6 +182,10 @@ concurrency:
           else
             :
           fi
+          record_component_deployment() {
+            echo 'state: "success"'
+          }
+          record_component_deployment "production-firestore"
           retry_firebase_deploy "functions:processAccountDeletionRequest,functions:syncTeamOwnerAccessOnCreate" "retry-enabled-functions" 3 15 true
           retry_firebase_deploy "hosting,functions" "application"
         `;
@@ -216,9 +228,9 @@ concurrency:
             'Production Storage rules ANSI log normalization'
         );
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
-            'git diff --quiet "$last_success_sha" "$GITHUB_SHA" -- firestore.rules firestore.indexes.json',
+            'git diff --quiet "$firestore_success_sha" "$GITHUB_SHA" -- firestore.rules firestore.indexes.json',
             'git diff --quiet "\${{ github.event.before }}" "\${{ github.sha }}" -- firestore.rules firestore.indexes.json'
-        ))).toThrow('Production Firestore change detection is missing');
+        ))).toThrow('Production Firestore component change detection is missing');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
             'if last_success_sha="$(gh api',
             'last_success_sha="$(gh api'
@@ -269,7 +281,7 @@ concurrency:
             `retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 8 30`,
             `retry_firebase_deploy "hosting,functions" "application"
             retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 8 30`
-        ))).toThrow('Production Firestore deploy must run first when its configuration changed');
+        ))).toThrow('Production Firestore deploy and component marker must run first when its configuration changed');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
             `else
             :
