@@ -506,7 +506,7 @@ describe('React app desktop Schedule controls', () => {
         expect(container.textContent).not.toContain('Add external calendar');
         expect(container.textContent).not.toContain('Draft schedule with AI');
         expect(container.textContent).not.toContain('Import schedule CSV');
-        expect(container.querySelector('.schedule-list > a')).toBeTruthy();
+        expect(container.querySelector('.schedule-list > .schedule-event-row-mobile .schedule-event-row-detail')).toBeTruthy();
         expect(buttonContainingText(container, 'Manage schedule').getAttribute('aria-expanded')).toBe('false');
 
         await act(async () => {
