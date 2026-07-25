@@ -168,6 +168,10 @@ ${brokenTooltipHandler}
             await new Promise((resolve) => setTimeout(resolve, 0));
             expect(tooltip.className).not.toContain('tooltip-hidden');
 
+            document.body.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            expect(tooltip.className).toContain('tooltip-hidden');
+
             includeInput.value = '**/react/**';
             includeInput.dispatchEvent(new Event('input', { bubbles: true }));
             includeInput.value = '**/react-dom/**';
@@ -205,6 +209,8 @@ ${brokenTooltipHandler}
         expect(verifierSource).toContain("document.querySelector('.node')");
         expect(verifierSource).toContain("document.querySelector('.tooltip')");
         expect(verifierSource).toContain("document.querySelector('#module-filter-include')");
+        expect(verifierSource).toContain("document.body.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))");
+        expect(verifierSource).toContain('remained visible after hovering outside the tooltip and module nodes');
         expect(verifierSource).toContain("includeInput.value = '**/react-dom/**';");
         expect(verifierSource).toContain("document.querySelector('svg')?.textContent.includes('react-dom')");
     });
