@@ -11477,27 +11477,26 @@ exports.postSharedGameCancellationNotification = functions.https.onCall(async (d
   }
   await assertSensitiveEmailVerified(context, 'post-shared-game-cancellation');
 
-  const teamId = normalizeText(data?.teamId, 160);
-  const gameId = normalizeText(data?.gameId, 160);
-  const counterpartTeamId = normalizeText(data?.counterpartTeamId, 160);
-
-  if (!teamId || !gameId || !counterpartTeamId) {
-    throw new functions.https.HttpsError('invalid-argument', 'teamId, gameId, and counterpartTeamId are required.');
+  let teamId;
+  let gameId;
+  let counterpartTeamId;
+  try {
+    teamId = normalizeFirestoreId(data?.teamId, 'teamId');
+    gameId = normalizeFirestoreId(data?.gameId, 'gameId');
+    counterpartTeamId = normalizeFirestoreId(data?.counterpartTeamId, 'counterpartTeamId');
+  } catch (error) {
+    throw new functions.https.HttpsError('invalid-argument', error.message);
   }
 
   const callerEmail = String(context.auth.token?.email || '').trim().toLowerCase();
-  const [sourceTeamSnap, counterpartTeamSnap, sourceGameSnap, userSnap] = await Promise.all([
+  const [sourceTeamSnap, sourceGameSnap, userSnap] = await Promise.all([
     firestore.doc(`teams/${teamId}`).get(),
-    firestore.doc(`teams/${counterpartTeamId}`).get(),
     firestore.doc(`teams/${teamId}/games/${gameId}`).get(),
     firestore.doc(`users/${context.auth.uid}`).get()
   ]);
 
   if (!sourceTeamSnap.exists) {
     throw new functions.https.HttpsError('not-found', 'Source team not found.');
-  }
-  if (!counterpartTeamSnap.exists) {
-    throw new functions.https.HttpsError('not-found', 'Counterpart team not found.');
   }
   if (!sourceGameSnap.exists) {
     throw new functions.https.HttpsError('not-found', 'Source game not found.');
@@ -11509,14 +11508,66 @@ exports.postSharedGameCancellationNotification = functions.https.onCall(async (d
     throw new functions.https.HttpsError('permission-denied', 'Only team coaches and admins can notify the linked team chat.');
   }
 
-  const counterpartTeam = counterpartTeamSnap.data() || {};
   const sourceGame = sourceGameSnap.data() || {};
-  const linkedCounterpartTeamId = String(sourceGame.sharedScheduleOpponentTeamId || sourceGame.opponentTeamId || '').trim();
-  if (!linkedCounterpartTeamId || linkedCounterpartTeamId !== counterpartTeamId) {
+  let linkedCounterpartTeamId;
+  let linkedCounterpartGameId;
+  try {
+    linkedCounterpartTeamId = normalizeFirestoreId(
+      sourceGame.sharedScheduleOpponentTeamId,
+      'sharedScheduleOpponentTeamId'
+    );
+    linkedCounterpartGameId = normalizeFirestoreId(
+      sourceGame.sharedScheduleOpponentGameId,
+      'sharedScheduleOpponentGameId'
+    );
+  } catch (error) {
+    throw new functions.https.HttpsError('failed-precondition', 'Game does not have a valid reciprocal shared-game link.');
+  }
+  if (linkedCounterpartTeamId !== counterpartTeamId) {
     throw new functions.https.HttpsError('failed-precondition', 'Game is not linked to the requested counterpart team.');
   }
   if (String(sourceGame.status || '').trim().toLowerCase() !== 'cancelled') {
     throw new functions.https.HttpsError('failed-precondition', 'Cancel the game before notifying the linked team chat.');
+  }
+
+  const sharedScheduleId = String(sourceGame.sharedScheduleId || '').trim();
+  if (!sharedScheduleId) {
+    throw new functions.https.HttpsError('failed-precondition', 'Game does not have a valid reciprocal shared-game link.');
+  }
+
+  const [counterpartTeamSnap, counterpartGameSnap] = await Promise.all([
+    firestore.doc(`teams/${counterpartTeamId}`).get(),
+    firestore.doc(`teams/${counterpartTeamId}/games/${linkedCounterpartGameId}`).get()
+  ]);
+  if (!counterpartTeamSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Counterpart team not found.');
+  }
+  if (!counterpartGameSnap.exists) {
+    throw new functions.https.HttpsError('failed-precondition', 'Reciprocal counterpart game not found.');
+  }
+
+  const counterpartTeam = counterpartTeamSnap.data() || {};
+  const counterpartGame = counterpartGameSnap.data() || {};
+  let reciprocalTeamId;
+  let reciprocalGameId;
+  try {
+    reciprocalTeamId = normalizeFirestoreId(
+      counterpartGame.sharedScheduleOpponentTeamId,
+      'counterpart sharedScheduleOpponentTeamId'
+    );
+    reciprocalGameId = normalizeFirestoreId(
+      counterpartGame.sharedScheduleOpponentGameId,
+      'counterpart sharedScheduleOpponentGameId'
+    );
+  } catch (error) {
+    throw new functions.https.HttpsError('failed-precondition', 'Counterpart game does not have a valid reciprocal shared-game link.');
+  }
+  if (
+    reciprocalTeamId !== teamId
+    || reciprocalGameId !== gameId
+    || String(counterpartGame.sharedScheduleId || '').trim() !== sharedScheduleId
+  ) {
+    throw new functions.https.HttpsError('failed-precondition', 'Counterpart game does not reciprocally match the source game.');
   }
 
   const text = buildSharedGameCancellationCounterpartMessage({

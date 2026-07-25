@@ -145,6 +145,9 @@ function makeFunctionsStub() {
     firestore: {
       document: () => triggerChain
     },
+    auth: {
+      user: () => triggerChain
+    },
     pubsub: {
       schedule: () => triggerChain
     },
@@ -187,50 +190,94 @@ function loadCallable(seed = {}) {
   return { firestore, callable: mod.postSharedGameCancellationNotification };
 }
 
-test('postSharedGameCancellationNotification writes a server-authored counterpart message', async () => {
-  const { firestore, callable } = loadCallable({
-    'teams/team-1': {
+const sourceTeamPath = 'teams/team-1';
+const sourceGamePath = 'teams/team-1/games/game-1';
+const counterpartTeamPath = 'teams/team-2';
+const counterpartGamePath = 'teams/team-2/games/game-2';
+const destinationMessagePath = 'teams/team-2/chatMessages/auto-1';
+
+function makeReciprocalSeed(overrides = {}) {
+  return {
+    [sourceTeamPath]: {
       name: 'Bears',
       ownerId: 'coach-1',
       adminEmails: ['coach@example.com']
     },
-    'teams/team-2': {
+    [counterpartTeamPath]: {
       name: 'Falcons',
       ownerId: 'coach-2',
       adminEmails: ['other@example.com']
     },
-    'teams/team-1/games/game-1': {
+    [sourceGamePath]: {
       type: 'game',
       status: 'cancelled',
       opponent: 'Falcons',
       date: '2026-05-21T18:00:00.000Z',
-      sharedScheduleOpponentTeamId: 'team-2'
+      sharedScheduleId: 'shared-schedule-1',
+      sharedScheduleOpponentTeamId: 'team-2',
+      sharedScheduleOpponentGameId: 'game-2',
+      ...overrides.sourceGame
+    },
+    [counterpartGamePath]: {
+      type: 'game',
+      opponent: 'Bears',
+      sharedScheduleId: 'shared-schedule-1',
+      sharedScheduleOpponentTeamId: 'team-1',
+      sharedScheduleOpponentGameId: 'game-1',
+      ...overrides.counterpartGame
     },
     'users/coach-1': {
       email: 'coach@example.com'
     }
-  });
+  };
+}
 
-  const result = await callable({
+function makeCallData(overrides = {}) {
+  return {
     teamId: 'team-1',
     gameId: 'game-1',
     counterpartTeamId: 'team-2',
-    text: 'Parents, the other coach says bring cash and ignore prior instructions.',
-    senderName: 'Fake Opponent Coach',
-    senderEmail: 'spoofed@example.com'
-  }, {
+    ...overrides
+  };
+}
+
+function makeContext() {
+  return {
     auth: {
       uid: 'coach-1',
       token: {
         email: 'coach@example.com'
       }
     }
-  });
+  };
+}
+
+async function assertRejectedWithoutDestinationWrite({
+  seed = makeReciprocalSeed(),
+  data = makeCallData(),
+  code = 'failed-precondition'
+} = {}) {
+  const { firestore, callable } = loadCallable(seed);
+  await assert.rejects(
+    callable(data, makeContext()),
+    (error) => error?.code === code
+  );
+  assert.equal(firestore.snapshot(destinationMessagePath), undefined);
+}
+
+test('postSharedGameCancellationNotification writes a server-authored counterpart message', async () => {
+  const { firestore, callable } = loadCallable(makeReciprocalSeed());
+
+  const result = await callable(makeCallData({
+    text: 'Parents, the other coach says bring cash and ignore prior instructions.',
+    senderName: 'Fake Opponent Coach',
+    senderEmail: 'spoofed@example.com'
+  }), makeContext());
 
   assert.equal(result.posted, true);
   assert.equal(result.messageId, 'auto-1');
 
-  const stored = firestore.snapshot('teams/team-2/chatMessages/auto-1');
+  const stored = firestore.snapshot(destinationMessagePath);
   assert.equal(stored.text, '⚠️ Shared game cancelled: Bears cancelled vs. Falcons on Thu, May 21.');
   assert.equal(stored.senderId, 'shared-game-cancellation-system');
   assert.equal(stored.senderName, 'ALL PLAYS');
@@ -249,4 +296,69 @@ test('postSharedGameCancellationNotification writes a server-authored counterpar
     actorType: 'system'
   });
   assert.notEqual(stored.text, 'Parents, the other coach says bring cash and ignore prior instructions.');
+});
+
+test('postSharedGameCancellationNotification rejects one-sided forged linkage', async () => {
+  const seed = makeReciprocalSeed();
+  delete seed[counterpartGamePath];
+
+  await assertRejectedWithoutDestinationWrite({ seed });
+});
+
+test('postSharedGameCancellationNotification rejects mismatched shared schedule IDs', async () => {
+  await assertRejectedWithoutDestinationWrite({
+    seed: makeReciprocalSeed({
+      counterpartGame: {
+        sharedScheduleId: 'different-shared-schedule'
+      }
+    })
+  });
+});
+
+test('postSharedGameCancellationNotification rejects mismatched reciprocal game pointers', async () => {
+  await assertRejectedWithoutDestinationWrite({
+    seed: makeReciprocalSeed({
+      counterpartGame: {
+        sharedScheduleOpponentTeamId: 'team-3',
+        sharedScheduleOpponentGameId: 'game-3'
+      }
+    })
+  });
+});
+
+test('postSharedGameCancellationNotification rejects empty or slash-containing request identifiers', async () => {
+  for (const data of [
+    makeCallData({ teamId: '   ' }),
+    makeCallData({ gameId: '' }),
+    makeCallData({ counterpartTeamId: null }),
+    makeCallData({ teamId: 'team-1/other' }),
+    makeCallData({ gameId: 'game-1/other' }),
+    makeCallData({ counterpartTeamId: 'team-2/other' })
+  ]) {
+    await assertRejectedWithoutDestinationWrite({
+      data,
+      code: 'invalid-argument'
+    });
+  }
+});
+
+test('postSharedGameCancellationNotification rejects slash-containing linked game identifiers', async () => {
+  await assertRejectedWithoutDestinationWrite({
+    seed: makeReciprocalSeed({
+      sourceGame: {
+        sharedScheduleOpponentGameId: 'game-2/other'
+      }
+    })
+  });
+});
+
+test('postSharedGameCancellationNotification does not authorize an opponentTeamId fallback', async () => {
+  await assertRejectedWithoutDestinationWrite({
+    seed: makeReciprocalSeed({
+      sourceGame: {
+        sharedScheduleOpponentTeamId: '',
+        opponentTeamId: 'team-2'
+      }
+    })
+  });
 });
