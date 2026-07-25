@@ -44,6 +44,7 @@ function createCertificateStudioHarness() {
         'async function openSavedCertificate',
         'function startCustomCertificate',
         'async function waitForActiveRegeneration',
+        'async function downloadSelectedZip',
         'async function saveDrafts'
     ].map((signature) => extractFunction(studio, signature)).join('\n\n');
 
@@ -115,6 +116,10 @@ function createCertificateStudioHarness() {
         archiveCertificate: vi.fn(async () => undefined),
         updateCertificateBatch: vi.fn(async () => undefined),
         setCertificateDefaults: vi.fn(async () => undefined),
+        renderDraftToBlob: vi.fn(async (draft) => new Blob([draft.recipientName])),
+        getCertificateFilename: vi.fn(({ recipientName, extension }) => `${recipientName}.${extension}`),
+        downloadCertificateZip: vi.fn(async () => undefined),
+        certificateTeamName: vi.fn(() => 'Demo Team'),
         listCertificates: vi.fn(async () => []),
         listCertificateBatches: vi.fn(async () => []),
         loadOptionalCertificateResource: async (_label, loader, fallback) => {
@@ -154,6 +159,10 @@ function createCertificateStudioHarness() {
         const archiveCertificate = deps.archiveCertificate;
         const updateCertificateBatch = deps.updateCertificateBatch;
         const setCertificateDefaults = deps.setCertificateDefaults;
+        const renderDraftToBlob = deps.renderDraftToBlob;
+        const getCertificateFilename = deps.getCertificateFilename;
+        const downloadCertificateZip = deps.downloadCertificateZip;
+        const certificateTeamName = deps.certificateTeamName;
         const listCertificates = deps.listCertificates;
         const listCertificateBatches = deps.listCertificateBatches;
         const loadOptionalCertificateResource = deps.loadOptionalCertificateResource;
@@ -187,6 +196,7 @@ function createCertificateStudioHarness() {
             archiveSavedCertificate,
             saveDraftsToLocalHistory,
             saveDrafts,
+            downloadSelectedZip,
             openSavedBatch,
             openSavedCertificate,
             startCustomCertificate,
@@ -194,6 +204,8 @@ function createCertificateStudioHarness() {
             updateCertificate,
             archiveCertificate,
             updateCertificateBatch,
+            setCertificateDefaults,
+            downloadCertificateZip,
             listCertificates
         };
     `)(deps);
@@ -349,6 +361,49 @@ describe('awards and certificates workflow wiring', () => {
         expect(saveBody).toContain('if (!guardPublishableDraftDescriptions(status)) return;');
         expect(saveBody).toContain('createCertificateBatch(state.teamId');
         expect(saveBody).toContain('createCertificate(state.teamId');
+    });
+
+    it('persists shared defaults before downloading the selected certificate ZIP', async () => {
+        const harness = createCertificateStudioHarness();
+        harness.state.drafts = [{
+            id: 'draft-1',
+            recipientName: 'Pat Star',
+            includeInExport: true
+        }];
+
+        await harness.downloadSelectedZip();
+
+        expect(harness.setCertificateDefaults).toHaveBeenCalledWith('team-1', harness.state.shared);
+        expect(harness.downloadCertificateZip).toHaveBeenCalledWith(
+            [expect.objectContaining({ name: 'Pat Star.png', blob: expect.any(Blob) })],
+            'demo-team-certificates.zip'
+        );
+        expect(harness.setCertificateDefaults.mock.invocationCallOrder[0])
+            .toBeLessThan(harness.downloadCertificateZip.mock.invocationCallOrder[0]);
+    });
+
+    it('continues the ZIP download when defaults persistence fails', async () => {
+        const harness = createCertificateStudioHarness();
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        harness.state.drafts = [{
+            id: 'draft-1',
+            recipientName: 'Pat Star',
+            includeInExport: true
+        }];
+        harness.setCertificateDefaults.mockRejectedValue(new Error('permission denied'));
+
+        await harness.downloadSelectedZip();
+
+        expect(harness.downloadCertificateZip).toHaveBeenCalledOnce();
+        expect(harness.showAlert).toHaveBeenCalledWith(
+            'ZIP export will continue, but team defaults could not be updated.',
+            'warning'
+        );
+        expect(warn).toHaveBeenCalledWith(
+            '[certificates] Unable to save certificate defaults after ZIP export:',
+            expect.any(Error)
+        );
+        warn.mockRestore();
     });
 
     it('persists a distinct frame purchase link and renders only safe parent actions', async () => {
