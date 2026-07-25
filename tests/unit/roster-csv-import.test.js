@@ -907,11 +907,11 @@ describe('roster CSV import planning', () => {
 
     it('summarizes imported contact invitation outcomes for retry UX', () => {
         expect(summarizeRosterContactInviteResults([
+            { status: 'sent', emailStatus: 'sent' },
             { status: 'sent' },
-            { status: 'sent' },
-            { status: 'linked' },
-            { status: 'code-created' },
+            { status: 'linked', emailStatus: 'retryable' },
+            { status: 'code-created', emailStatus: 'retryable' },
             { status: 'failed' }
-        ])).toEqual({ sent: 2, linked: 1, codeCreated: 1, failed: 1 });
+        ])).toEqual({ sent: 2, linked: 1, codeCreated: 1, retryable: 2, failed: 1 });
     });
 });

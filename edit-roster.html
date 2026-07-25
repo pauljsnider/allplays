@@ -2122,8 +2122,20 @@
                 } catch (emailError) {
                     console.warn('Could not email imported roster contact invite:', emailError);
                 }
-                if (result.autoLinked) return { ...request, status: 'linked' };
-                return { ...request, status: emailSent ? 'sent' : 'code-created', code: result.code || '' };
+                if (result.autoLinked) {
+                    return {
+                        ...request,
+                        status: 'linked',
+                        emailStatus: emailSent ? 'sent' : 'retryable',
+                        code: result.code || ''
+                    };
+                }
+                return {
+                    ...request,
+                    status: emailSent ? 'sent' : 'code-created',
+                    emailStatus: emailSent ? 'sent' : 'retryable',
+                    code: result.code || ''
+                };
             } catch (error) {
                 console.warn('Could not create imported roster contact invite:', error);
                 return { ...request, status: 'failed', error: error?.message || 'Invite failed.' };
@@ -2135,7 +2147,7 @@
             const parts = [];
             if (summary.sent) parts.push(`${summary.sent} emailed`);
             if (summary.linked) parts.push(`${summary.linked} linked`);
-            if (summary.codeCreated) parts.push(`${summary.codeCreated} code${summary.codeCreated === 1 ? '' : 's'} created for retry`);
+            if (summary.retryable) parts.push(`${summary.retryable} email${summary.retryable === 1 ? '' : 's'} ready to retry`);
             if (summary.failed) parts.push(`${summary.failed} failed and can be retried from the imported contact row`);
             return parts.length ? ` Family invites: ${parts.join(', ')}.` : '';
         }
@@ -2358,6 +2370,7 @@
 
         let proposedOperations = [];
         let proposedAiOperations = [];
+        let proposedPlanErrors = [];
         let bulkAiExistingPlayers = [];
         let bulkAiModulesPromise = null;
         let bulkAiModules = null;
@@ -2595,8 +2608,9 @@ EXAMPLES:
                     source: 'roster-ai'
                 });
                 proposedOperations = rosterAiPlan.operations;
+                proposedPlanErrors = rosterAiPlan.errors;
 
-                if (proposedOperations.length === 0) {
+                if (proposedOperations.length === 0 && proposedPlanErrors.length === 0) {
                     alert('AI did not find any players to add, update, deactivate, or reactivate. Please try being more specific.');
                 }
 
@@ -2691,12 +2705,14 @@ EXAMPLES:
         }
 
         function replanBulkAiOperations() {
-            proposedOperations = planRosterAiImport({
+            const rosterAiPlan = planRosterAiImport({
                 aiOperations: proposedAiOperations,
                 fields: rosterFieldDefinitions,
                 existingPlayers: bulkAiExistingPlayers,
                 source: 'roster-ai'
-            }).operations;
+            });
+            proposedOperations = rosterAiPlan.operations;
+            proposedPlanErrors = rosterAiPlan.errors;
         }
 
         function getEditableBulkAiDraft(operationIndex) {
@@ -2724,15 +2740,21 @@ EXAMPLES:
             const list = document.getElementById('proposed-changes-list');
             const countSpan = document.getElementById('changes-count');
 
-            if (proposedOperations.length === 0) {
+            if (proposedOperations.length === 0 && proposedPlanErrors.length === 0) {
                 section.classList.add('hidden');
                 return;
             }
 
             section.classList.remove('hidden');
-            countSpan.textContent = `${proposedOperations.length} change${proposedOperations.length === 1 ? '' : 's'}`;
+            countSpan.textContent = `${proposedOperations.length} change${proposedOperations.length === 1 ? '' : 's'}${proposedPlanErrors.length ? ` · ${proposedPlanErrors.length} import error${proposedPlanErrors.length === 1 ? '' : 's'}` : ''}`;
 
-            list.innerHTML = proposedOperations.map((op, index) => {
+            const planErrors = proposedPlanErrors.length
+                ? `<div class="rounded-lg border border-red-300 bg-red-50 p-3 text-sm font-semibold text-red-800" role="alert">
+                    <div class="mb-1 font-bold">This import cannot be applied yet.</div>
+                    ${proposedPlanErrors.map((error) => `<div>${escapeHtml(error)}</div>`).join('')}
+                </div>`
+                : '';
+            list.innerHTML = planErrors + proposedOperations.map((op, index) => {
                 const action = op.action || op.type;
                 if (action === 'deactivate') {
                     return `
@@ -2824,7 +2846,8 @@ EXAMPLES:
                     );
                 });
             });
-            document.getElementById('apply-changes-btn').disabled = proposedOperations.some((operation) => (operation.errors || []).length > 0);
+            document.getElementById('apply-changes-btn').disabled = proposedPlanErrors.length > 0
+                || proposedOperations.some((operation) => (operation.errors || []).length > 0);
         }
 
         // Update operation when user edits
@@ -2866,6 +2889,7 @@ EXAMPLES:
         document.getElementById('cancel-changes-btn').addEventListener('click', () => {
             proposedOperations = [];
             proposedAiOperations = [];
+            proposedPlanErrors = [];
             document.getElementById('proposed-changes-section').classList.add('hidden');
             resetBulkAiDraftState();
         });
@@ -2873,6 +2897,10 @@ EXAMPLES:
         // Apply changes to database
         document.getElementById('apply-changes-btn').addEventListener('click', async () => {
             if (proposedOperations.length === 0) return;
+            if (proposedPlanErrors.length > 0) {
+                alert(proposedPlanErrors.join('\n'));
+                return;
+            }
             const invalidOperations = proposedOperations.filter((operation) => (operation.errors || []).length > 0);
             if (invalidOperations.length > 0) {
                 alert('Fix or remove the highlighted operations before applying this import.');
@@ -2920,6 +2948,7 @@ EXAMPLES:
                 // Reset and reload
                 proposedOperations = [];
                 proposedAiOperations = [];
+                proposedPlanErrors = [];
                 document.getElementById('proposed-changes-section').classList.add('hidden');
                 if (errorCount === 0) {
                     resetBulkAiDraftState();

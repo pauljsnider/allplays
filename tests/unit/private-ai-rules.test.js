@@ -66,6 +66,7 @@ describe('private AI Firestore rules', () => {
         expect(teamRules).toContain('allow update: if isVerifiedForSensitiveWrite() &&');
         expect(teamRules).toContain("resource.data.get('userId', '') == request.auth.uid");
         expect(teamRules).toContain('allow delete: if isVerifiedForSensitiveWrite() &&');
+        expect(teamRules).toContain("request.resource.data.get('userId', '') == resource.data.get('userId', '')");
     });
 
     describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('emulator authorization coverage', () => {
@@ -85,8 +86,8 @@ describe('private AI Firestore rules', () => {
                 await setDoc(doc(adminDb, 'users/platform-admin'), { isAdmin: true });
                 await setDoc(doc(adminDb, 'teams/team-1'), {
                     ownerId: 'owner',
-                    adminEmails: ['manager@example.com'],
-                    name: 'Bears'
+                    name: 'Bears',
+                    adminEmails: ['second-manager@example.com']
                 });
                 await setDoc(doc(adminDb, 'teams/team-1/privateAiPendingActions/seeded'), {
                     userId: 'owner',
@@ -137,17 +138,28 @@ describe('private AI Firestore rules', () => {
             }
         });
 
-        it('allows current team managers and denies removed or unrelated staff from roster payloads', async () => {
+        it('allows managers to read pending payloads but only the originating manager can mutate them', async () => {
             const ownerDb = testEnv.authenticatedContext('owner').firestore();
-            const managerDb = testEnv.authenticatedContext('manager', {
-                email: 'manager@example.com',
+            const secondManagerDb = testEnv.authenticatedContext('second-manager', {
+                email: 'second-manager@example.com',
                 email_verified: true
             }).firestore();
             const unrelatedDb = testEnv.authenticatedContext('former-coach').firestore();
             const payloadPath = 'teams/team-1/privateAiPendingActions/seeded';
 
             await assertSucceeds(getDoc(doc(ownerDb, payloadPath)));
-            await assertSucceeds(getDoc(doc(managerDb, payloadPath)));
+            await assertSucceeds(getDoc(doc(secondManagerDb, payloadPath)));
+            await assertSucceeds(updateDoc(doc(ownerDb, payloadPath), {
+                args: { operations: [] }
+            }));
+            await assertFails(updateDoc(doc(secondManagerDb, payloadPath), {
+                args: { operations: [{ payload: { name: 'Tampered' } }] }
+            }));
+            await assertFails(setDoc(doc(secondManagerDb, payloadPath), {
+                userId: 'second-manager',
+                args: { operations: [] }
+            }, { merge: true }));
+            await assertFails(deleteDoc(doc(secondManagerDb, payloadPath)));
             await assertSucceeds(setDoc(doc(ownerDb, 'teams/team-1/privateAiPendingActions/new'), {
                 userId: 'owner',
                 toolName: 'apply_roster_import',
@@ -162,18 +174,21 @@ describe('private AI Firestore rules', () => {
                 expiresAtAt: new Date(Date.now() - 60_000),
                 args: { operations: [] }
             }));
-            await assertFails(getDoc(doc(ownerDb, 'teams/team-1/privateAiPendingActions/expired')));
-            await assertFails(updateDoc(doc(managerDb, payloadPath), {
-                args: { operations: [{ playerId: 'attacker-controlled' }] }
-            }));
-            await assertFails(setDoc(doc(managerDb, payloadPath), {
-                userId: 'manager',
+            await assertSucceeds(setDoc(doc(secondManagerDb, 'teams/team-1/privateAiPendingActions/second-manager'), {
+                userId: 'second-manager',
                 toolName: 'apply_roster_import',
                 status: 'pending',
                 expiresAtAt: new Date(Date.now() + 60_000),
-                args: { operations: [{ playerId: 'attacker-controlled' }] }
+                args: { operations: [] }
             }));
-            await assertFails(deleteDoc(doc(managerDb, payloadPath)));
+            await assertFails(setDoc(doc(secondManagerDb, 'teams/team-1/privateAiPendingActions/forged'), {
+                userId: 'owner',
+                toolName: 'apply_roster_import',
+                status: 'pending',
+                expiresAtAt: new Date(Date.now() + 60_000),
+                args: { operations: [] }
+            }));
+            await assertFails(getDoc(doc(ownerDb, 'teams/team-1/privateAiPendingActions/expired')));
             await assertFails(getDoc(doc(unrelatedDb, payloadPath)));
             await assertFails(setDoc(doc(unrelatedDb, 'teams/team-1/privateAiPendingActions/injected'), {
                 args: { operations: [] }

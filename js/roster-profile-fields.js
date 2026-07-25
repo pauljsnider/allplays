@@ -801,12 +801,13 @@ export function buildFullRosterCsvTemplate(fields = []) {
 }
 
 export function summarizeRosterContactInviteResults(results = []) {
-    const summary = { sent: 0, linked: 0, codeCreated: 0, failed: 0 };
+    const summary = { sent: 0, linked: 0, codeCreated: 0, retryable: 0, failed: 0 };
     (Array.isArray(results) ? results : []).forEach((result) => {
         if (result?.status === 'linked') summary.linked += 1;
-        else if (result?.status === 'sent') summary.sent += 1;
-        else if (result?.status === 'code-created') summary.codeCreated += 1;
-        else if (result?.status === 'failed') summary.failed += 1;
+        if (result?.emailStatus === 'sent' || (!result?.emailStatus && result?.status === 'sent')) summary.sent += 1;
+        if (result?.status === 'code-created') summary.codeCreated += 1;
+        if (result?.emailStatus === 'retryable' || (!result?.emailStatus && result?.status === 'code-created')) summary.retryable += 1;
+        if (result?.status === 'failed') summary.failed += 1;
     });
     return summary;
 }

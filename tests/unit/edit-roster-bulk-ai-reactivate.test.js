@@ -61,4 +61,17 @@ describe('edit roster Bulk AI proposed changes preview', () => {
         expect(source).toContain("source: 'roster-ai'");
         expect(source).not.toContain('function mergeBulkAiPrivateFamilyContactsForUpdate');
     });
+
+    it('retains and renders plan-level errors and blocks oversized AI imports', () => {
+        const source = readEditRoster();
+        const renderSource = getRenderProposedChangesSource();
+        const applySource = getApplyChangesSource();
+
+        expect(source).toContain('let proposedPlanErrors = [];');
+        expect(source).toContain('proposedPlanErrors = rosterAiPlan.errors;');
+        expect(renderSource).toContain('This import cannot be applied yet.');
+        expect(renderSource).toContain('proposedPlanErrors.length > 0');
+        expect(applySource).toContain("alert(proposedPlanErrors.join('\\n'))");
+        expect(applySource).toContain('if (proposedPlanErrors.length > 0)');
+    });
 });

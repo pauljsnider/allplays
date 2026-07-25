@@ -135,7 +135,11 @@ const { createAuthEmailDeliveryStore } = require('./auth-email-delivery-store.cj
 const { createResendAuthEmailDelivery } = require('./resend-auth-email-delivery.cjs');
 const { createPasswordResetEmailWorker } = require('./auth-email-password-reset-worker.cjs');
 const { createPasswordResetEmailSweeper } = require('./auth-email-password-reset-sweeper.cjs');
-const { findOwnedInviteCode: findOwnedAuthEmailInviteCode } = require('./auth-email-invite-store.cjs');
+const {
+  canQueueInviteEmailForCaller,
+  findInviteCode: findAuthEmailInviteCode,
+  findOwnedInviteCode: findOwnedAuthEmailInviteCode
+} = require('./auth-email-invite-store.cjs');
 const {
   normalizeEmail,
   normalizeAccountMergePreviewInput,
@@ -2597,8 +2601,36 @@ exports.queueInviteEmail = functions.https.onCall(async (data, context) => {
     throw new functions.https.HttpsError('invalid-argument', 'A valid eight-character invite code is required.');
   }
 
-  const invite = await findOwnedInviteCode(code, uid);
+  const invite = await findAuthEmailInviteCode({
+    firestore,
+    code,
+    allowedTypes: INVITE_EMAIL_TYPES
+  });
   if (!invite) {
+    throw new functions.https.HttpsError('not-found', 'Invite could not be found.');
+  }
+  let canQueue = canQueueInviteEmailForCaller({
+    invite: invite.data,
+    uid,
+    email: context.auth.token?.email
+  });
+  if (!canQueue && String(invite.data.type || '').trim().toLowerCase() === 'parent_invite') {
+    const teamId = String(invite.data.teamId || '').trim();
+    if (teamId) {
+      const [teamSnap, userSnap] = await Promise.all([
+        firestore.doc(`teams/${teamId}`).get(),
+        firestore.doc(`users/${uid}`).get()
+      ]);
+      canQueue = canQueueInviteEmailForCaller({
+        invite: invite.data,
+        team: teamSnap.exists ? teamSnap.data() || {} : null,
+        user: userSnap.exists ? userSnap.data() || {} : {},
+        uid,
+        email: context.auth.token?.email
+      });
+    }
+  }
+  if (!canQueue) {
     throw new functions.https.HttpsError('not-found', 'Invite could not be found.');
   }
   if (!isValidInviteRecipientEmail(invite.data.email)) {

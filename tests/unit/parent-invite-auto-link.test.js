@@ -65,4 +65,14 @@ describe('parent invite auto-linking', () => {
         // Non-auto-linked message also reflects email
         expect(existingUserBlock).toContain('An invite email was sent to');
     });
+
+    it('reports auto-linked bulk invite email failures as retryable', () => {
+        const source = readFileSync(resolve(process.cwd(), 'edit-roster.html'), 'utf8');
+        const helperStart = source.indexOf('async function sendImportedRosterContactInvite');
+        const helperSource = source.slice(helperStart, source.indexOf('function formatRosterContactInviteSummary', helperStart));
+
+        expect(helperSource).toContain("status: 'linked'");
+        expect(helperSource).toContain("emailStatus: emailSent ? 'sent' : 'retryable'");
+        expect(helperSource).toContain("code: result.code || ''");
+    });
 });

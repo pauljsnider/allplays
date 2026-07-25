@@ -305,4 +305,19 @@ describe('roster profile fields', () => {
         ]);
         expect(plan.operations[0].inviteRequests).toEqual([]);
     });
+
+    it('reports a blocking plan error instead of silently accepting the first 200 AI rows', () => {
+        const aiOperations = Array.from({ length: 201 }, (_, index) => ({
+            action: 'add',
+            player: {
+                name: `Player ${index + 1}`,
+                number: String(index + 1)
+            }
+        }));
+
+        const plan = planRosterAiImport({ aiOperations });
+
+        expect(plan.operations).toHaveLength(200);
+        expect(plan.errors).toEqual(['Import at most 200 roster rows at a time.']);
+    });
 });

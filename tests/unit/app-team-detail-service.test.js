@@ -310,6 +310,37 @@ describe('React app team detail model', () => {
         });
     });
 
+    it('keeps an auto-linked invite retryable when its notification email cannot be queued', async () => {
+        getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', adminEmails: ['coach@example.com'] });
+        getPlayers.mockResolvedValue([]);
+        getGames.mockResolvedValue([]);
+        getConfigs.mockResolvedValue([]);
+        inviteParent.mockResolvedValue({
+            code: 'AUTOLINK',
+            autoLinked: true,
+            existingUser: true,
+            teamName: 'Bears',
+            playerName: 'Pat Star'
+        });
+        queueInviteEmail.mockRejectedValue(new Error('mail unavailable'));
+
+        const result = await createRosterParentInviteForApp(
+            'team-1',
+            { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'] },
+            { id: 'player-1', number: '9' },
+            { email: 'parent@example.com', relation: 'Parent' }
+        );
+
+        expect(result).toMatchObject({
+            code: 'AUTOLINK',
+            status: 'accepted',
+            autoLinked: true,
+            emailQueued: false,
+            emailSent: false,
+            emailError: 'mail unavailable'
+        });
+    });
+
     it('keeps saved roster changes when one sibling invite email fails and scopes each invite to its player', async () => {
         const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'] };
         const submittedOperations = [
@@ -345,8 +376,8 @@ describe('React app team detail model', () => {
             })
             .mockResolvedValueOnce({
                 code: 'SIBLING2',
-                autoLinked: false,
-                existingUser: false,
+                autoLinked: true,
+                existingUser: true,
                 teamName: 'Bears',
                 playerName: 'Sibling Two'
             });
@@ -387,14 +418,14 @@ describe('React app team detail model', () => {
             {
                 playerId: 'player-2',
                 email: 'parent@allplays.ai',
-                status: 'code-created',
+                status: 'linked',
                 emailStatus: 'retryable',
                 error: 'mail unavailable',
                 code: 'SIBLING2'
             }
         ]);
         expect(result.invitationSummary).toEqual({
-            linked: 0,
+            linked: 1,
             emailed: 1,
             retryable: 1,
             failed: 0,
@@ -403,7 +434,7 @@ describe('React app team detail model', () => {
         });
     });
 
-    it('retries the existing active parent invite email without creating a second invite', async () => {
+    it('lets another current manager retry an accepted auto-linked invite without creating a second invite', async () => {
         const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'] };
         getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', ownerId: 'coach-1' });
         getPlayers.mockResolvedValue([]);
@@ -420,8 +451,9 @@ describe('React app team detail model', () => {
                     playerId: 'player-1',
                     playerName: 'Pat Star',
                     email: 'parent@example.com',
-                    generatedBy: 'coach-1',
-                    used: false,
+                    generatedBy: 'another-manager',
+                    used: true,
+                    status: 'accepted',
                     createdAt: { toMillis: () => 200 }
                 })
             }]

@@ -1719,7 +1719,7 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
     mode: 'write',
     domain: 'roster-and-invites',
     audience: 'manager',
-    description: 'Retry the acceptance email for an existing active parent invitation. Args: playerId/playerName, email, and optional teamId/teamName. A unique managed-roster player match resolves the team automatically.',
+    description: 'Retry the email for an existing pending or auto-linked parent invitation. Args: playerId/playerName, email, and optional teamId/teamName. A unique managed-roster player match resolves the team automatically.',
     aliases: ['retry_parent_invite_email', 'resend_parent_invite'],
     prepare: async (user, args) => {
       const target = await resolveManagedRosterPlayer(user, args);

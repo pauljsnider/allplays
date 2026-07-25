@@ -887,16 +887,30 @@ function isPendingParentInvite(invite: any) {
   return expiresAtMs == null || Date.now() < expiresAtMs;
 }
 
-async function loadPendingParentInvites(teamId: string) {
+function isRetryableParentInviteEmail(invite: any) {
+  if (invite?.type !== 'parent_invite') return false;
+  if (invite.revoked === true || invite.active === false) return false;
+  const status = cleanString(invite.status).toLowerCase();
+  if (['removed', 'cancelled', 'revoked'].includes(status)) return false;
+  if (invite.used === true || status === 'accepted') return true;
+  const expiresAtMs = getExpirationTime(invite.expiresAt);
+  return expiresAtMs == null || Date.now() < expiresAtMs;
+}
+
+async function loadParentInvites(teamId: string) {
   return readWithNativeFallback(
-    `pending parent invites ${teamId}`,
+    `parent invites ${teamId}`,
     async () => {
       const snapshot = await getDocs(query(collection(db, 'accessCodes'), where('teamId', '==', teamId)));
       return snapshot.docs.map((docSnap: any) => ({ id: docSnap.id, ...(docSnap.data() || {}) }));
     },
     async () => nativeRunQuery('accessCodes', 'teamId', 'EQUAL', teamId)
-  ).then((invites: any[]) => (Array.isArray(invites) ? invites : [])
-    .filter(isPendingParentInvite));
+  ).then((invites: any[]) => (Array.isArray(invites) ? invites : []));
+}
+
+async function loadPendingParentInvites(teamId: string) {
+  return loadParentInvites(teamId)
+    .then((invites: any[]) => invites.filter(isPendingParentInvite));
 }
 
 async function loadUserById(userId: string) {
@@ -1254,18 +1268,19 @@ export async function retryRosterParentInviteEmailForApp(
   if (!team || !hasFullTeamAccess(user, team)) {
     throw new Error('You do not have permission to resend parent invitations for this team.');
   }
-  const invite = (await loadPendingParentInvites(normalizedTeamId))
+  const invite = (await loadParentInvites(normalizedTeamId))
     .filter((candidate: any) => (
+      isRetryableParentInviteEmail(candidate)
+      &&
       cleanString(candidate.playerId) === normalizedPlayerId
       && cleanString(candidate.email).toLowerCase() === normalizedEmail
-      && (!cleanString(candidate.generatedBy) || cleanString(candidate.generatedBy) === user?.uid)
     ))
     .sort((left: any, right: any) => (
       (getExpirationTime(right.createdAt) || 0) - (getExpirationTime(left.createdAt) || 0)
     ))[0];
   const code = cleanString(invite?.code).toUpperCase();
   if (!code) {
-    throw new Error('No active invitation matched that player and email. Create a new parent invitation instead.');
+    throw new Error('No retryable invitation matched that player and email. Create a new parent invitation instead.');
   }
 
   const queueResult = await queueInviteEmail(code);
