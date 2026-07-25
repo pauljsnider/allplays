@@ -3,11 +3,11 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ParentHomeTeam } from '../lib/homeLogic';
-import { getPublicTeamsPage } from '../lib/publicTeamsService';
-import { PublicTeamsBrowse } from './PublicTeamsBrowse';
+import type { ParentHomeTeam } from '../../apps/app/src/lib/homeLogic';
+import { getPublicTeamsPage } from '../../apps/app/src/lib/publicTeamsService';
+import { PublicTeamsBrowse } from '../../apps/app/src/pages/PublicTeamsBrowse';
 
-vi.mock('../lib/publicTeamsService', () => ({
+vi.mock('../../apps/app/src/lib/publicTeamsService', () => ({
   getPublicTeamsPage: vi.fn(),
   hydratePublicTeamRosterCounts: vi.fn((teams: ParentHomeTeam[]) => Promise.resolve(teams))
 }));

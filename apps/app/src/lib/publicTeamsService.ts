@@ -2,6 +2,28 @@ import { discoverPublicTeams, getPublicTeamProfile, getPublicTeamRosterCount, ty
 import { type ParentHomeTeam } from './homeLogic';
 
 const PUBLIC_ROSTER_COUNT_CONCURRENCY = 6;
+let activePublicRosterCountRequests = 0;
+const pendingPublicRosterCountRequests: Array<() => void> = [];
+
+function getBoundedPublicTeamRosterCount(teamId: string): Promise<PublicTeamRosterCount> {
+    return new Promise((resolve, reject) => {
+        const runRequest = () => {
+            activePublicRosterCountRequests += 1;
+            void getPublicTeamRosterCount(teamId)
+                .then(resolve, reject)
+                .finally(() => {
+                    activePublicRosterCountRequests -= 1;
+                    pendingPublicRosterCountRequests.shift()?.();
+                });
+        };
+
+        if (activePublicRosterCountRequests < PUBLIC_ROSTER_COUNT_CONCURRENCY) {
+            runRequest();
+        } else {
+            pendingPublicRosterCountRequests.push(runRequest);
+        }
+    });
+}
 
 export type PublicTeamsPage = {
     teams: ParentHomeTeam[];
@@ -82,7 +104,7 @@ export async function hydratePublicTeamRosterCounts(teams: ParentHomeTeam[]): Pr
         const teamBatch = teams.slice(index, index + PUBLIC_ROSTER_COUNT_CONCURRENCY);
         const mappedBatch = await Promise.all(teamBatch.map(async (team) => {
             try {
-                const rosterCount = await getPublicTeamRosterCount(team.teamId);
+                const rosterCount = await getBoundedPublicTeamRosterCount(team.teamId);
                 return {
                     ...team,
                     publicRosterCount: rosterCount.count,

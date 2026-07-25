@@ -1,15 +1,16 @@
 // @vitest-environment jsdom
 
 import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import type { ComponentProps } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup, within } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
-import { PublicTeamSearch } from './PublicTeamSearch';
-import { getPublicTeamsPage, hydratePublicTeamRosterCounts } from '../lib/publicTeamsService';
-import { ParentHomeTeam } from '../lib/homeLogic';
+import { PublicTeamSearch } from '../../apps/app/src/components/PublicTeamSearch';
+import { getPublicTeamsPage, hydratePublicTeamRosterCounts } from '../../apps/app/src/lib/publicTeamsService';
+import { ParentHomeTeam } from '../../apps/app/src/lib/homeLogic';
 
-vi.mock('../lib/publicTeamsService', () => ({
+vi.mock('../../apps/app/src/lib/publicTeamsService', () => ({
     getPublicTeamsPage: vi.fn() as MockInstance<(args?: { searchText?: string; cursor?: unknown | null; pageSize?: number; includeRosterCounts?: boolean }) => Promise<{ teams: ParentHomeTeam[]; nextCursor: unknown | null }>>,
     hydratePublicTeamRosterCounts: vi.fn() as MockInstance<(teams: ParentHomeTeam[]) => Promise<ParentHomeTeam[]>>,
 }));
@@ -95,7 +96,7 @@ describe('PublicTeamSearch', () => {
     });
 
     it('keeps the public browse route decoupled from the private Teams page module', () => {
-        const source = readFileSync('src/components/PublicTeamSearch.tsx', 'utf8');
+        const source = readFileSync(resolve(import.meta.dirname, '../../apps/app/src/components/PublicTeamSearch.tsx'), 'utf8');
 
         expect(source).not.toContain('../pages/Teams');
         expect(source).toContain('./TeamSummaryPrimitives');
