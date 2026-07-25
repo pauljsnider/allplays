@@ -3,12 +3,13 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ParentHomeTeam } from '../lib/homeLogic';
-import { getPublicTeamsPage } from '../lib/publicTeamsService';
-import { PublicTeamsBrowse } from './PublicTeamsBrowse';
+import type { ParentHomeTeam } from '../../apps/app/src/lib/homeLogic';
+import { getPublicTeamsPage } from '../../apps/app/src/lib/publicTeamsService';
+import { PublicTeamsBrowse } from '../../apps/app/src/pages/PublicTeamsBrowse';
 
-vi.mock('../lib/publicTeamsService', () => ({
-  getPublicTeamsPage: vi.fn()
+vi.mock('../../apps/app/src/lib/publicTeamsService', () => ({
+  getPublicTeamsPage: vi.fn(),
+  hydratePublicTeamRosterCounts: vi.fn((teams: ParentHomeTeam[]) => Promise.resolve(teams))
 }));
 
 const atlantaTeam: ParentHomeTeam = {
@@ -64,7 +65,8 @@ describe('PublicTeamsBrowse', () => {
     await waitFor(() =>
       expect(getPublicTeamsPage).toHaveBeenNthCalledWith(1, {
         searchText: undefined,
-        cursor: null
+        cursor: null,
+        includeRosterCounts: false
       })
     );
     expect(await screen.findByText('Atlanta Fire')).toBeTruthy();
@@ -76,7 +78,8 @@ describe('PublicTeamsBrowse', () => {
     await waitFor(() =>
       expect(getPublicTeamsPage).toHaveBeenNthCalledWith(2, {
         searchText: 'Atlanta, GA',
-        cursor: null
+        cursor: null,
+        includeRosterCounts: false
       })
     );
     fireEvent.click(await screen.findByRole('button', { name: 'Load more teams' }));
@@ -84,7 +87,8 @@ describe('PublicTeamsBrowse', () => {
     await waitFor(() =>
       expect(getPublicTeamsPage).toHaveBeenNthCalledWith(3, {
         searchText: 'Atlanta, GA',
-        cursor: 'atlanta-cursor-2'
+        cursor: 'atlanta-cursor-2',
+        includeRosterCounts: false
       })
     );
     expect(await screen.findByText('Atlanta United 2')).toBeTruthy();
@@ -111,7 +115,8 @@ describe('PublicTeamsBrowse', () => {
     await waitFor(() =>
       expect(getPublicTeamsPage).toHaveBeenNthCalledWith(3, {
         searchText: undefined,
-        cursor: null
+        cursor: null,
+        includeRosterCounts: false
       })
     );
     expect(await screen.findByText('Atlanta Fire')).toBeTruthy();

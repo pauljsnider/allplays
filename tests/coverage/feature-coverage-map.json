@@ -261,7 +261,7 @@
                 "apps/app/src/pages/CreateTeam.test.tsx",
                 "apps/app/src/pages/Home.test.tsx",
                 "apps/app/src/pages/PlayerDetail.test.tsx",
-                "apps/app/src/pages/PublicTeamsBrowse.test.tsx",
+                "tests/unit/app-public-teams-browse.test.tsx",
                 "apps/app/src/pages/TeamDetail.test.tsx",
                 "apps/app/src/pages/TeamSettings.test.tsx",
                 "apps/app/src/pages/Teams.test.tsx",
@@ -784,7 +784,7 @@
             "integrationTests": [
                 "apps/app/src/lib/authNextRoute.test.ts",
                 "apps/app/src/lib/opportunityLogic.test.ts",
-                "apps/app/src/lib/publicTeamsService.test.ts",
+                "tests/unit/app-public-teams-service.test.ts",
                 "apps/app/src/pages/Discover.test.tsx",
                 "apps/app/src/pages/PublicTeamDetail.test.tsx"
             ],
