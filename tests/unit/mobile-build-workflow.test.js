@@ -28,20 +28,19 @@ describe('mobile-build CI workflow', () => {
         expect(workflow).toContain('capacitor\\.config\\.json');
     });
 
-    it('defers native integration while external development owns the PR and reruns on handoff', () => {
+    it('runs for code changes without creating duplicate runs for label churn', () => {
         const triggerSection = workflow.slice(workflow.indexOf('\non:'), workflow.indexOf('\nconcurrency:'));
         const changesSection = workflow.slice(workflow.indexOf('  changes:'), workflow.indexOf('  android-debug:'));
         const gateSection = workflow.slice(workflow.indexOf('  mobile-build:'));
 
-        expect(triggerSection).toContain('      - unlabeled');
-        expect(triggerSection).toContain('      - labeled');
-        expect(changesSection).toContain("contains(github.event.pull_request.labels.*.name, 'external-claim')");
-        expect(changesSection).toContain('[ "$EXTERNAL_CLAIMED" = "true" ]');
-        expect(changesSection).toContain('echo "landing=false" >> "$GITHUB_OUTPUT"');
-        expect(changesSection).toContain('[ "$ACTION" = "labeled" ] || [ "$ACTION" = "unlabeled" ]');
-        expect(workflow).toContain("format('mobile-build-label-noop-{0}', github.run_id)");
-        expect(gateSection).toContain("'mobile-build-label-noop' || 'mobile-build'");
-        expect(gateSection).toContain('needs.changes.outputs.landing');
+        expect(triggerSection).toContain('      - synchronize');
+        expect(triggerSection).not.toContain('      - unlabeled');
+        expect(triggerSection).not.toContain('      - labeled');
+        expect(workflow).toContain('group: mobile-build-${{ github.workflow }}-${{ github.ref }}');
+        expect(changesSection).not.toContain('external-claim');
+        expect(changesSection).not.toContain('LABEL_NAME');
+        expect(gateSection).toContain('name: mobile-build');
+        expect(gateSection).not.toContain('label-noop');
     });
 
     it('skips the native builds themselves for non-mobile changes but always runs the required mobile-build gate job', () => {
@@ -88,6 +87,18 @@ describe('mobile-build CI workflow', () => {
         expect(changesResultCheckIndex).toBeGreaterThan(-1);
         expect(mobileOutputCheckIndex).toBeGreaterThan(-1);
         expect(changesResultCheckIndex).toBeLessThan(mobileOutputCheckIndex);
+    });
+
+    it('pins third-party actions to immutable commit SHAs', () => {
+        const actionReferences = [...workflow.matchAll(/uses:\s+([^@\s]+)@([^\s#]+)/g)];
+        const thirdPartyReferences = actionReferences.filter(
+            ([, action]) => !action.startsWith('actions/') && !action.startsWith('github/')
+        );
+
+        expect(thirdPartyReferences.length).toBeGreaterThan(0);
+        for (const [, action, ref] of thirdPartyReferences) {
+            expect(ref, action).toMatch(/^[0-9a-f]{40}$/);
+        }
     });
 
     it('keeps every CI and release workflow on production App Check assets', () => {

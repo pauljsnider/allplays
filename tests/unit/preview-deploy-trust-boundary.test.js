@@ -181,15 +181,15 @@ describe('preview deployment workflow trust boundary', () => {
         expect(pullRequestWorkflow).toContain('include-hidden-files: true');
         expect(pullRequestWorkflow).toMatch(/build-preview-artifact:[\s\S]*needs: \[regression-guards\]/);
         expect(pullRequestWorkflow).not.toContain('  unit-tests:');
-        expect(pullRequestWorkflow).toContain("!contains(github.event.pull_request.labels.*.name, 'external-claim')");
+        expect(pullRequestWorkflow).not.toContain('external-claim');
     });
 
     it('cancels in-flight preview work when its pull request closes', () => {
         expect(pullRequestWorkflow).toContain('      - closed');
-        expect(pullRequestWorkflow).toContain("format('preview-{0}', github.event.pull_request.number)");
+        expect(pullRequestWorkflow).toContain('group: preview-${{ github.event.pull_request.number }}');
         expect(pullRequestWorkflow).toContain('cancel-in-progress: true');
-        expect(pullRequestWorkflow).toContain('      - unlabeled');
-        expect(pullRequestWorkflow).toContain('      - labeled');
+        expect(pullRequestWorkflow).not.toContain('      - unlabeled');
+        expect(pullRequestWorkflow).not.toContain('      - labeled');
     });
 
     it('runs the credentialed deploy only from trusted default-branch code', () => {
