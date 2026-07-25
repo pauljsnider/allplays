@@ -240,6 +240,17 @@ describe('bounded admin user search queries', () => {
         expect(migration).toContain('process.env.GOOGLE_OAUTH_ACCESS_TOKEN');
         expect(migration).toContain('process.env.GOOGLE_APPLICATION_CREDENTIALS');
         expect(migration).toContain('applicationDefault()');
+        expect(migration).toContain("'/documents:runQuery'");
+        expect(migration).toContain("'/documents:batchWrite'");
+        expect(migration).not.toContain('getAccessToken: async');
+        expect(migration).toContain('const FIRESTORE_REST_BATCH_LIMIT = 20;');
+        expect(migration).toContain('process.env.FIREBASE_PROJECT_ID');
+        expect(migration).toContain('!Array.isArray(result.status)');
+        expect(migration).toContain('result.status.length !== batchWrites.length');
+        expect(migration.indexOf('!Array.isArray(result.status)'))
+            .toBeLessThan(migration.indexOf('result.status.find('));
+        expect(migration).toContain('documentCount += 1;');
+        expect(migration).not.toContain('results.filter((result) => result.document).length');
         expect(migration).toContain("new URL('./serviceAccountKey.json', import.meta.url)");
     });
 });
