@@ -61,7 +61,11 @@ describe('private AI Firestore rules', () => {
         expect(teamRules).toContain('allow read: if isTeamOwnerOrAdmin(teamId) &&');
         expect(teamRules).toContain("resource.data.get('status', '') == 'pending'");
         expect(teamRules).toContain("resource.data.get('expiresAtAt', null) > request.time");
-        expect(teamRules).toContain('allow create, update, delete: if isVerifiedForSensitiveWrite() && isTeamOwnerOrAdmin(teamId);');
+        expect(teamRules).toContain('allow create: if isVerifiedForSensitiveWrite() &&');
+        expect(teamRules).toContain("request.resource.data.get('userId', '') == request.auth.uid");
+        expect(teamRules).toContain('allow update: if isVerifiedForSensitiveWrite() &&');
+        expect(teamRules).toContain("resource.data.get('userId', '') == request.auth.uid");
+        expect(teamRules).toContain('allow delete: if isVerifiedForSensitiveWrite() &&');
     });
 
     describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('emulator authorization coverage', () => {
@@ -79,7 +83,11 @@ describe('private AI Firestore rules', () => {
             await testEnv.withSecurityRulesDisabled(async (context) => {
                 const adminDb = context.firestore();
                 await setDoc(doc(adminDb, 'users/platform-admin'), { isAdmin: true });
-                await setDoc(doc(adminDb, 'teams/team-1'), { ownerId: 'owner', name: 'Bears' });
+                await setDoc(doc(adminDb, 'teams/team-1'), {
+                    ownerId: 'owner',
+                    adminEmails: ['manager@example.com'],
+                    name: 'Bears'
+                });
                 await setDoc(doc(adminDb, 'teams/team-1/privateAiPendingActions/seeded'), {
                     userId: 'owner',
                     toolName: 'apply_roster_import',
@@ -131,10 +139,15 @@ describe('private AI Firestore rules', () => {
 
         it('allows current team managers and denies removed or unrelated staff from roster payloads', async () => {
             const ownerDb = testEnv.authenticatedContext('owner').firestore();
+            const managerDb = testEnv.authenticatedContext('manager', {
+                email: 'manager@example.com',
+                email_verified: true
+            }).firestore();
             const unrelatedDb = testEnv.authenticatedContext('former-coach').firestore();
             const payloadPath = 'teams/team-1/privateAiPendingActions/seeded';
 
             await assertSucceeds(getDoc(doc(ownerDb, payloadPath)));
+            await assertSucceeds(getDoc(doc(managerDb, payloadPath)));
             await assertSucceeds(setDoc(doc(ownerDb, 'teams/team-1/privateAiPendingActions/new'), {
                 userId: 'owner',
                 toolName: 'apply_roster_import',
@@ -150,6 +163,17 @@ describe('private AI Firestore rules', () => {
                 args: { operations: [] }
             }));
             await assertFails(getDoc(doc(ownerDb, 'teams/team-1/privateAiPendingActions/expired')));
+            await assertFails(updateDoc(doc(managerDb, payloadPath), {
+                args: { operations: [{ playerId: 'attacker-controlled' }] }
+            }));
+            await assertFails(setDoc(doc(managerDb, payloadPath), {
+                userId: 'manager',
+                toolName: 'apply_roster_import',
+                status: 'pending',
+                expiresAtAt: new Date(Date.now() + 60_000),
+                args: { operations: [{ playerId: 'attacker-controlled' }] }
+            }));
+            await assertFails(deleteDoc(doc(managerDb, payloadPath)));
             await assertFails(getDoc(doc(unrelatedDb, payloadPath)));
             await assertFails(setDoc(doc(unrelatedDb, 'teams/team-1/privateAiPendingActions/injected'), {
                 args: { operations: [] }
