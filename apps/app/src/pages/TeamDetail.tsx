@@ -3216,7 +3216,7 @@ function TeamEventReminderAction({ event, model, auth, reminderPreviewLoader }: 
 }
 
 function buildTeamReminderScheduleEvent(event: TeamDetailEvent, model: TeamDetailModel): ParentScheduleEvent | null {
-  if (!model.canManageTeam || event.isCancelled || !event.id || !event.date) return null;
+  if (!model.canManageTeam || !event.isDbGame || event.isCancelled || !event.id || !event.date) return null;
   return {
     eventKey: `${model.team.id}:${event.id}`,
     id: event.id,
@@ -3229,7 +3229,7 @@ function buildTeamReminderScheduleEvent(event: TeamDetailEvent, model: TeamDetai
     title: event.title,
     childId: '',
     childName: '',
-    isDbGame: true,
+    isDbGame: event.isDbGame,
     isCancelled: event.isCancelled,
     status: event.status,
     homeScore: event.homeScore,

@@ -412,6 +412,7 @@ describe('team detail bootstrap loading', () => {
       assignments: [],
       openAssignmentCount: 0
     };
+    dbMocks.getGames.mockResolvedValueOnce([]);
     scheduleServiceMocks.loadTeamOverviewSchedule.mockResolvedValueOnce([importedPractice]);
 
     const model = await loadParentTeamDetail('team-1', { uid: 'owner-1' } as any, { includeDeferredData: false });
@@ -426,6 +427,32 @@ describe('team detail bootstrap loading', () => {
       isDbGame: false,
       sourceLabel: 'Imported calendar'
     });
+  });
+
+  it('preserves completed database games outside the imported calendar history window', async () => {
+    const historicalGame = {
+      id: 'historical-game',
+      type: 'game',
+      title: 'Bears vs. Alumni',
+      date: new Date('2020-01-15T18:00:00Z'),
+      location: 'Old Gym',
+      opponent: 'Alumni',
+      status: 'completed',
+      homeScore: 42,
+      awayScore: 40
+    };
+    dbMocks.getGames.mockResolvedValueOnce([historicalGame]);
+    scheduleServiceMocks.loadTeamOverviewSchedule.mockResolvedValueOnce([]);
+
+    const model = await loadParentTeamDetail('team-1', { uid: 'owner-1' } as any, { includeDeferredData: false });
+
+    expect(model.recentResults).toEqual([
+      expect.objectContaining({
+        id: 'historical-game',
+        title: 'Bears vs. Alumni',
+        isDbGame: true
+      })
+    ]);
   });
 
   it('keeps deferred insights aligned to the current header season without final scores', async () => {

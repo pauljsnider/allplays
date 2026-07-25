@@ -1792,7 +1792,10 @@ export function buildTeamDetailModel({
   const normalizedPlayers = normalizePlayers(players, linkedPlayerIds, { includeParentContacts: canManageTeam });
   const normalizedInactivePlayers = normalizePlayers(players, linkedPlayerIds, { inactiveOnly: true, includeParentContacts: canManageTeam });
   const normalizedStatTrackerConfigs = buildTeamStatTrackerConfigs(configs, games);
-  const normalizedEvents = normalizeEvents(scheduleEvents || games, normalizedStatTrackerConfigs.byId);
+  const normalizedEvents = normalizeEvents(
+    mergeTeamScheduleSources(games, scheduleEvents),
+    normalizedStatTrackerConfigs.byId
+  );
   const seasonLabels = listSeasonLabels(games);
   const currentYearLabel = String(new Date().getFullYear());
   const seasonLabel = seasonLabels.includes(currentYearLabel) ? currentYearLabel : (seasonLabels[0] || currentYearLabel);
@@ -2283,6 +2286,25 @@ function normalizeEvents(games: any[], configById: Map<string, TeamDetailStatTra
       .filter((event) => event.status.toLowerCase() === 'completed' || (event.homeScore !== null && event.awayScore !== null && event.date.getTime() < Date.now()))
       .sort((a, b) => b.date.getTime() - a.date.getTime())
   };
+}
+
+function mergeTeamScheduleSources(games: any[], scheduleEvents?: ParentScheduleEvent[]) {
+  if (!scheduleEvents) return games;
+
+  const scheduledDbGameIds = new Set(
+    scheduleEvents
+      .filter((event) => event?.isDbGame !== false)
+      .map((event) => cleanString(event?.id))
+      .filter(Boolean)
+  );
+
+  return [
+    ...scheduleEvents,
+    ...(Array.isArray(games) ? games : []).filter((game) => {
+      const gameId = cleanString(game?.id || game?.gameId);
+      return !gameId || !scheduledDbGameIds.has(gameId);
+    })
+  ];
 }
 
 function isInUpcomingWindow(value: any) {
