@@ -8,7 +8,8 @@ import { getPublicTeamsPage } from '../lib/publicTeamsService';
 import { PublicTeamsBrowse } from './PublicTeamsBrowse';
 
 vi.mock('../lib/publicTeamsService', () => ({
-  getPublicTeamsPage: vi.fn()
+  getPublicTeamsPage: vi.fn(),
+  hydratePublicTeamRosterCounts: vi.fn((teams: ParentHomeTeam[]) => Promise.resolve(teams))
 }));
 
 const atlantaTeam: ParentHomeTeam = {
@@ -64,7 +65,8 @@ describe('PublicTeamsBrowse', () => {
     await waitFor(() =>
       expect(getPublicTeamsPage).toHaveBeenNthCalledWith(1, {
         searchText: undefined,
-        cursor: null
+        cursor: null,
+        includeRosterCounts: false
       })
     );
     expect(await screen.findByText('Atlanta Fire')).toBeTruthy();
@@ -76,7 +78,8 @@ describe('PublicTeamsBrowse', () => {
     await waitFor(() =>
       expect(getPublicTeamsPage).toHaveBeenNthCalledWith(2, {
         searchText: 'Atlanta, GA',
-        cursor: null
+        cursor: null,
+        includeRosterCounts: false
       })
     );
     fireEvent.click(await screen.findByRole('button', { name: 'Load more teams' }));
@@ -84,7 +87,8 @@ describe('PublicTeamsBrowse', () => {
     await waitFor(() =>
       expect(getPublicTeamsPage).toHaveBeenNthCalledWith(3, {
         searchText: 'Atlanta, GA',
-        cursor: 'atlanta-cursor-2'
+        cursor: 'atlanta-cursor-2',
+        includeRosterCounts: false
       })
     );
     expect(await screen.findByText('Atlanta United 2')).toBeTruthy();
@@ -111,7 +115,8 @@ describe('PublicTeamsBrowse', () => {
     await waitFor(() =>
       expect(getPublicTeamsPage).toHaveBeenNthCalledWith(3, {
         searchText: undefined,
-        cursor: null
+        cursor: null,
+        includeRosterCounts: false
       })
     );
     expect(await screen.findByText('Atlanta Fire')).toBeTruthy();
