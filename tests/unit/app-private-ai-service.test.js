@@ -918,6 +918,19 @@ describe('private AI service', () => {
         expect(combinedRolePrompt).toContain('apply_roster_import');
         expect(combinedRolePrompt).toContain('apply_schedule_import');
         expect(combinedRolePrompt).toContain('get_player_stats');
+
+        aiMocks.model.generateContent.mockClear();
+        const platformAdminUser = {
+            ...authUser,
+            roles: ['platformAdmin'],
+            coachOf: [],
+            isPlatformAdmin: true
+        };
+        await generatePrivateAiAnswer(platformAdminUser, 'What can you help me with?');
+        const platformAdminPrompt = aiMocks.model.generateContent.mock.calls[0][0];
+        expect(platformAdminPrompt).toContain('list_managed_teams');
+        expect(platformAdminPrompt).toContain('apply_roster_import');
+        expect(platformAdminPrompt).toContain('apply_schedule_import');
     });
 
     it('validates supported AI chat files and infers roster, schedule, or general analysis intent', async () => {
@@ -1111,6 +1124,44 @@ describe('private AI service', () => {
             source: 'csv',
             previewRows: [previewRow]
         });
+    });
+
+    it('extracts a pasted roster CSV before truncating the generic chat prompt', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        const csvText = [
+            'Name,Number,Parent Email',
+            ...Array.from({ length: 120 }, (_, index) => (
+                `Player ${String(index + 1).padStart(3, '0')},${index + 1},parent${index + 1}@example.com`
+            ))
+        ].join('\n');
+        const prompt = `For Bears, import this complete roster:\n${csvText}`;
+        const previewRow = rosterPreviewRow();
+        expect(prompt.length).toBeGreaterThan(1800);
+        homeMocks.loadParentHome.mockResolvedValue({ teams: [], players: [], actionItems: [], upcomingEvents: [], fees: [] });
+        rosterAiMocks.extractPastedRosterCsv.mockImplementation((value) => value === prompt ? csvText : '');
+        rosterAiMocks.generateRosterAiImportRows.mockResolvedValue({
+            rows: [previewRow],
+            errors: [],
+            source: 'csv'
+        });
+
+        const { sendPrivateAiMessage } = await import('../../apps/app/src/lib/privateAiService.ts');
+        await sendPrivateAiMessage(
+            coachUser,
+            prompt,
+            'roster-chat',
+            { teamId: 'team-1', teamName: 'Bears' }
+        );
+
+        expect(rosterAiMocks.extractPastedRosterCsv).toHaveBeenCalledWith(prompt);
+        expect(rosterAiMocks.generateRosterAiImportRows).toHaveBeenCalledWith(expect.objectContaining({
+            csvText
+        }));
     });
 
     it('keeps informational roster questions in generic chat instead of staging an import', async () => {

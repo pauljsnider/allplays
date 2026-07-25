@@ -149,7 +149,7 @@ export function buildScheduleSubmenuGroups(auth: AuthState, selectedTeamId = '')
       id: 'staff',
       label: 'Team management',
       items: [
-        { id: 'staff-schedule', label: 'Team schedule', mobileLabel: 'Schedule', path: `/schedule?scope=staff&view=list${teamQuery}`, icon: CalendarDays },
+        { id: 'staff-schedule', label: 'Team schedule', mobileLabel: 'Schedule', path: `/schedule?scope=staff&view=list&filter=upcoming-all${teamQuery}`, icon: CalendarDays },
         { id: 'staff-add', label: 'Add event', mobileLabel: 'Add', path: `/schedule?scope=staff&staffTools=1&staffSection=add${teamQuery}`, icon: CalendarPlus },
         { id: 'staff-attendance', label: 'Attendance', path: `/schedule?scope=staff&view=list&filter=upcoming-practices&staffSection=attendance${teamQuery}`, icon: ClipboardCheck },
         { id: 'staff-ai', label: 'Manage with AI', mobileLabel: 'AI', path: `/schedule?scope=staff&staffTools=1&staffSection=ai${teamQuery}`, icon: Sparkles }

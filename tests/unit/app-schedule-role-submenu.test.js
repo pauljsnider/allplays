@@ -75,7 +75,8 @@ describe('role-aware Schedule submenu', () => {
 
         expect(hasFamilyScheduleAccess(auth)).toBe(false);
         expect(hasStaffScheduleAccess(auth)).toBe(true);
-        expect(buildScheduleSubmenuGroups(auth, 'team-1')).toEqual([
+        const groups = buildScheduleSubmenuGroups(auth, 'team-1');
+        expect(groups).toEqual([
             expect.objectContaining({
                 id: 'staff',
                 items: expect.arrayContaining([
@@ -86,6 +87,8 @@ describe('role-aware Schedule submenu', () => {
                 ])
             })
         ]);
+        expect(groups[0].items.find((item) => item.id === 'staff-schedule')?.path)
+            .toBe('/schedule?scope=staff&view=list&filter=upcoming-all&teamId=team-1');
     });
 
     it('unions both submenu groups for a combined parent and coach account', () => {

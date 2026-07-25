@@ -419,13 +419,14 @@ export async function sendPrivateAiMessage(
     throw new Error('Sign in before using the AI chat.');
   }
 
-  const rawQuestion = String(prompt || '').trim().slice(0, maxPromptCharacters);
+  const untruncatedRawQuestion = String(prompt || '').trim();
+  const rawQuestion = untruncatedRawQuestion.slice(0, maxPromptCharacters);
   const question = compactText(rawQuestion);
   if (!question) {
     throw new Error('Type a message first.');
   }
-  if (isPrivateAiRosterImportRequest(rawQuestion)) {
-    const csvText = extractPastedRosterCsv(rawQuestion);
+  if (isPrivateAiRosterImportRequest(untruncatedRawQuestion)) {
+    const csvText = extractPastedRosterCsv(untruncatedRawQuestion);
     return sendPrivateAiRosterImportMessage(user, {
       teamId: compactText(requestContext.teamId),
       teamName: compactText(requestContext.teamName),
@@ -3343,8 +3344,10 @@ function inferPrivateAiToolDomain(name: string) {
 function getRoleAuthorizedPrivateAiToolDefinitions(user: AuthUser) {
   const roles = new Set((user.roles || []).map((role) => compactText(role).toLowerCase()));
   const hasManagerRole = Boolean(
-    user.coachOf?.length
-    || ['coach', 'admin', 'administrator', 'team-admin', 'team_admin', 'staff', 'manager'].some((role) => roles.has(role))
+    user.isAdmin
+    || user.isPlatformAdmin
+    || user.coachOf?.length
+    || ['coach', 'admin', 'administrator', 'platformadmin', 'platform-admin', 'platform_admin', 'team-admin', 'team_admin', 'staff', 'manager'].some((role) => roles.has(role))
   );
   return privateAiToolDefinitions.filter((definition) => definition.audience !== 'manager' || hasManagerRole);
 }
