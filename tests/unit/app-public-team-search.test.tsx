@@ -169,7 +169,7 @@ describe('PublicTeamSearch', () => {
         fireEvent.keyDown(searchInput, { key: 'Enter', code: 'Enter', charCode: 13 });
 
         expect(getPublicTeamsPage).toHaveBeenCalledTimes(1);
-        expect(searchButton).toBeDisabled();
+        expect((searchButton as HTMLButtonElement).disabled).toBe(true);
 
         if (!resolveSearch) {
             throw new Error('Expected public team search request to be captured before resolving it.');
