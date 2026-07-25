@@ -1,7 +1,12 @@
 const crypto = require('node:crypto');
+const {
+  getCalendarFeedDateWindow
+} = require('./calendar-feed-window-core.cjs');
 
 const FEED_PRODUCT_ID = '-//ALL PLAYS//Team Calendar//EN';
 const DEFAULT_EVENT_DURATION_MS = 60 * 60 * 1000;
+const MILLIS_PER_DAY = 24 * 60 * 60 * 1000;
+const RECURRENCE_DAY_CODES = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
 
 function hashCalendarToken(token) {
   const normalized = String(token || '').trim();
@@ -140,6 +145,148 @@ function getEventDescription(event) {
   return parts.join('\n');
 }
 
+function toUtcDateKey(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function getRecurrenceUtcOffsetMinutes(master) {
+  const masterStart = toDate(master.date);
+  const startTime = String(master.startTime || '').trim();
+  if (!masterStart || !/^\d{2}:\d{2}$/.test(startTime)) return 0;
+
+  const [localHours, localMinutes] = startTime.split(':').map(Number);
+  let offsetMinutes = (localHours * 60 + localMinutes) -
+    (masterStart.getUTCHours() * 60 + masterStart.getUTCMinutes());
+  if (offsetMinutes > 12 * 60) offsetMinutes -= 24 * 60;
+  if (offsetMinutes < -12 * 60) offsetMinutes += 24 * 60;
+  return offsetMinutes;
+}
+
+function buildRecurringOccurrence(master, occurrenceDay, dateKey, override = {}, utcOffsetMinutes = 0) {
+  const startDate = new Date(occurrenceDay);
+  const startTime = String(override.startTime || master.startTime || '').trim();
+  if (/^\d{2}:\d{2}$/.test(startTime)) {
+    const [hours, minutes] = startTime.split(':').map(Number);
+    startDate.setUTCHours(hours, minutes - utcOffsetMinutes, 0, 0);
+  } else {
+    const masterStart = toDate(master.date);
+    startDate.setUTCHours(
+      masterStart.getUTCHours(),
+      masterStart.getUTCMinutes(),
+      masterStart.getUTCSeconds(),
+      masterStart.getUTCMilliseconds()
+    );
+  }
+
+  const occurrence = {
+    ...master,
+    ...override,
+    id: `${master.id || master.gameId || master.eventId}__${dateKey}`,
+    masterId: master.id || master.gameId || master.eventId,
+    instanceDate: dateKey,
+    isInstance: true,
+    isSeriesMaster: false,
+    date: startDate
+  };
+
+  const endTime = String(override.endTime || master.endTime || '').trim();
+  if (/^\d{2}:\d{2}$/.test(endTime)) {
+    const [hours, minutes] = endTime.split(':').map(Number);
+    const endDate = new Date(occurrenceDay);
+    endDate.setUTCHours(hours, minutes - utcOffsetMinutes, 0, 0);
+    const explicitDayOffset = override.endDayOffset ?? master.endDayOffset;
+    const inferredDayOffset = endDate <= startDate ? 1 : 0;
+    endDate.setUTCDate(endDate.getUTCDate() + (
+      explicitDayOffset == null ? inferredDayOffset : Math.max(0, Number(explicitDayOffset) || 0)
+    ));
+    occurrence.end = endDate;
+  } else {
+    const masterStart = toDate(master.date);
+    const masterEnd = toDate(master.end || master.endDate || master.endsAt);
+    if (masterStart && masterEnd && masterEnd > masterStart) {
+      occurrence.end = new Date(startDate.getTime() + (masterEnd.getTime() - masterStart.getTime()));
+    }
+  }
+
+  return occurrence;
+}
+
+function expandRecurringCalendarEvent(master, { now = new Date() } = {}) {
+  if (master?.type !== 'practice' || master?.isSeriesMaster !== true || !master?.recurrence) {
+    return [master];
+  }
+
+  const seriesStart = toDate(master.date);
+  if (!seriesStart) return [];
+
+  const { start: windowStart, end: windowEnd } = getCalendarFeedDateWindow(now);
+  const recurrence = master.recurrence || {};
+  const frequency = String(recurrence.freq || '').toLowerCase();
+  if (!['daily', 'weekly'].includes(frequency)) return [];
+
+  const interval = Math.max(1, Number.parseInt(recurrence.interval, 10) || 1);
+  const count = Math.max(0, Number.parseInt(recurrence.count, 10) || 0);
+  const until = toDate(recurrence.until || recurrence.endDate || recurrence.untilDate);
+  const untilEnd = until
+    ? new Date(Date.UTC(until.getUTCFullYear(), until.getUTCMonth(), until.getUTCDate(), 23, 59, 59, 999))
+    : null;
+  const byDays = new Set(
+    (Array.isArray(recurrence.byDays) ? recurrence.byDays : [])
+      .map((day) => String(day || '').toUpperCase())
+      .filter((day) => RECURRENCE_DAY_CODES.includes(day))
+  );
+  const excludedDates = new Set(Array.isArray(master.exDates) ? master.exDates : []);
+  const overrides = master.overrides && typeof master.overrides === 'object' && !Array.isArray(master.overrides)
+    ? master.overrides
+    : {};
+  const utcOffsetMinutes = getRecurrenceUtcOffsetMinutes(master);
+  const localSeriesStart = new Date(seriesStart.getTime() + utcOffsetMinutes * 60 * 1000);
+  const startDay = new Date(Date.UTC(
+    localSeriesStart.getUTCFullYear(),
+    localSeriesStart.getUTCMonth(),
+    localSeriesStart.getUTCDate()
+  ));
+  const startDayNumber = Math.floor(startDay.getTime() / MILLIS_PER_DAY);
+  const startWeekNumber = Math.floor((startDayNumber - startDay.getUTCDay()) / 7);
+  const lastDay = new Date(Math.min(windowEnd.getTime(), untilEnd?.getTime() || windowEnd.getTime()));
+  const occurrences = [];
+  let generated = 0;
+
+  for (let current = new Date(startDay); current <= lastDay; current.setUTCDate(current.getUTCDate() + 1)) {
+    const currentDayNumber = Math.floor(current.getTime() / MILLIS_PER_DAY);
+    const daysSinceStart = currentDayNumber - startDayNumber;
+    const currentWeekNumber = Math.floor((currentDayNumber - current.getUTCDay()) / 7);
+    const weeksSinceStart = currentWeekNumber - startWeekNumber;
+    const dayCode = RECURRENCE_DAY_CODES[current.getUTCDay()];
+    const matches = frequency === 'daily'
+      ? daysSinceStart >= 0 && daysSinceStart % interval === 0
+      : daysSinceStart >= 0 &&
+        weeksSinceStart >= 0 &&
+        weeksSinceStart % interval === 0 &&
+        (byDays.size > 0 ? byDays.has(dayCode) : current.getUTCDay() === startDay.getUTCDay());
+
+    if (!matches) continue;
+    generated += 1;
+    if (count && generated > count) break;
+    if (current < windowStart) continue;
+
+    const dateKey = toUtcDateKey(current);
+    const occurrence = buildRecurringOccurrence(
+      master,
+      current,
+      dateKey,
+      overrides[dateKey] || {},
+      utcOffsetMinutes
+    );
+    if (excludedDates.has(dateKey)) {
+      occurrence.status = 'cancelled';
+    }
+    occurrences.push(occurrence);
+  }
+
+  return occurrences;
+}
+
 function buildTeamCalendarIcs({ teamId, team = {}, events = [], now = new Date() }) {
   const teamName = team.name || 'Team';
   const dtstamp = formatIcsDate(now);
@@ -153,6 +300,7 @@ function buildTeamCalendarIcs({ teamId, team = {}, events = [], now = new Date()
   ];
 
   events
+    .flatMap((event) => expandRecurringCalendarEvent(event, { now }))
     .filter(isVisibleCalendarEvent)
     .sort((a, b) => toDate(a.date) - toDate(b.date))
     .forEach((event) => {
@@ -189,6 +337,7 @@ function buildTeamCalendarIcs({ teamId, team = {}, events = [], now = new Date()
 
 module.exports = {
   buildTeamCalendarIcs,
+  expandRecurringCalendarEvent,
   escapeIcsText,
   formatIcsDate,
   formatRsvpSummary,

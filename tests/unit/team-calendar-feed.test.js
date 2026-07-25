@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 const require = createRequire(import.meta.url);
 const {
     buildTeamCalendarIcs,
+    expandRecurringCalendarEvent,
     formatRsvpSummary,
     hashCalendarToken,
     normalizeCalendarRequest
@@ -81,6 +82,80 @@ describe('team calendar subscription feed', () => {
         expect(updated).toContain('STATUS:CANCELLED');
     });
 
+    it('emits bounded future occurrences for old recurring practice masters', () => {
+        const master = {
+            id: 'practice-series',
+            type: 'practice',
+            isSeriesMaster: true,
+            date: new Date('2025-01-06T18:00:00Z'),
+            startTime: '18:00',
+            endTime: '19:30',
+            title: 'Weekly Skills',
+            location: 'North Field',
+            recurrence: {
+                freq: 'weekly',
+                interval: 1,
+                byDays: ['MO']
+            },
+            exDates: ['2026-07-27'],
+            overrides: {
+                '2026-08-03': {
+                    title: 'Indoor Skills',
+                    location: 'Fieldhouse',
+                    startTime: '19:00',
+                    endTime: '20:00'
+                }
+            }
+        };
+
+        const occurrences = expandRecurringCalendarEvent(master, {
+            now: new Date('2026-07-25T12:00:00Z')
+        });
+        const ics = buildTeamCalendarIcs({
+            teamId: 'team-1',
+            team: { name: 'Sharks' },
+            events: [master],
+            now: new Date('2026-07-25T12:00:00Z')
+        });
+
+        expect(occurrences.find((occurrence) => occurrence.instanceDate === '2026-07-27')).toMatchObject({
+            id: 'practice-series__2026-07-27',
+            status: 'cancelled'
+        });
+        expect(ics).toContain('UID:team-1-practice-series__2026-07-27@allplays.ai');
+        expect(ics).toContain('DTSTART:20260727T180000Z');
+        expect(ics).toContain('STATUS:CANCELLED');
+        expect(ics).toContain('UID:team-1-practice-series__2026-08-03@allplays.ai');
+        expect(ics).toContain('DTSTART:20260803T190000Z');
+        expect(ics).toContain('DTEND:20260803T200000Z');
+        expect(ics).toContain('SUMMARY:Indoor Skills');
+        expect(ics).toContain('LOCATION:Fieldhouse');
+        expect(ics).not.toContain('UID:team-1-practice-series@allplays.ai');
+    });
+
+    it('preserves the stored local weekday when the practice starts on the next UTC day', () => {
+        const occurrences = expandRecurringCalendarEvent({
+            id: 'monday-evening',
+            type: 'practice',
+            isSeriesMaster: true,
+            date: new Date('2025-01-07T00:00:00Z'),
+            startTime: '19:00',
+            endTime: '20:30',
+            recurrence: {
+                freq: 'weekly',
+                interval: 1,
+                byDays: ['MO']
+            }
+        }, {
+            now: new Date('2026-07-25T12:00:00Z')
+        });
+
+        expect(occurrences.find((occurrence) => occurrence.instanceDate === '2026-07-27')).toMatchObject({
+            date: new Date('2026-07-28T00:00:00Z'),
+            end: new Date('2026-07-28T01:30:00Z')
+        });
+    });
+
     it('builds feeds from game-level fields without depending on attendee RSVP arrays', () => {
         const baseEvent = {
             id: 'game-2',
@@ -150,6 +225,8 @@ describe('team calendar subscription feed', () => {
         const teamCalendarFeedSource = functionsSource.slice(feedStart, feedEnd);
 
         expect(teamCalendarFeedSource).toContain('getCalendarFeedGamesQuery(teamId).get()');
+        expect(teamCalendarFeedSource).toContain('getCalendarFeedRecurringMastersQuery(teamId).get()');
+        expect(teamCalendarFeedSource).toContain('[...eventsSnap.docs, ...recurringPracticeDocs]');
         expect(teamCalendarFeedSource).not.toContain("firestore.collection(`teams/${teamId}/games`).get()");
         expect(teamCalendarFeedSource).not.toContain("firestore.collection(`teams/${teamId}/games`).orderBy('date').get()");
         expect(teamCalendarFeedSource).toContain('const game = { id: docSnap.id, ...(docSnap.data() || {}) }');
