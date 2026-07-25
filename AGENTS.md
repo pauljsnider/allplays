@@ -65,6 +65,15 @@ HTML test pages in the repo root (`test-foul-tracking.html`, `test-pr-changes.ht
 
 ## Commit & Pull Request Guidelines
 - Recent commit messages are short, imperative, and sentence-case (e.g., “Fix bugs found in code review”).
+- Automation may open a draft PR early for visibility, but it must not mark the
+  PR ready until the exact pushed head has passed the producer preflight: the
+  worktree is clean, required focused tests have passed, the PR scope/body are
+  complete, and no follow-up commit is still being written.
+- Treat “ready for review” as the controller handoff event. After marking a PR
+  ready, do not amend or force-push that head; push a new commit when a fix is
+  needed so CI and PaulBot can bind every decision to an observable SHA.
+- Report draft age separately from landing age. Landing latency starts at the
+  latest ready exact head, not when the early draft was opened.
 - PRs should include:
   - What changed and why (bullet summary).
   - Manual test steps executed, with affected pages (e.g., `edit-schedule.html`, `login.html`).
