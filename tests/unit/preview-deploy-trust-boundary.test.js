@@ -316,6 +316,11 @@ describe('preview deployment workflow trust boundary', () => {
         expect(scheduledProdSmokeWorkflow).toContain('ref: master');
     });
 
+    it('limits scheduled production browser smoke to four runs per day', () => {
+        expect(scheduledProdSmokeWorkflow).toContain("cron: '23 */6 * * *'");
+        expect(scheduledProdSmokeWorkflow).not.toContain("cron: '*/15 * * * *'");
+    });
+
     it('documents the keyless credential and exact-head operational contract', () => {
         expect(trustBoundaryRunbook).toContain('must remain absent');
         expect(trustBoundaryRunbook).toContain('firebase-preview-trusted');
