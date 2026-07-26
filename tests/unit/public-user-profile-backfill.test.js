@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
     buildStaffTeamIndexes,
+    cleanupIneligiblePublicProfile,
+    loadEligibleBackfillAuthRecord,
     processBackfillUsers,
     resolveBackfillExitCode,
     resolveProjectId,
@@ -86,5 +88,96 @@ describe('public user profile backfill', () => {
         expect(processed).toEqual(['user-1', 'user-2']);
         expect(failed).toBe(1);
         expect(logger.error).toHaveBeenCalledWith('FAILED user-1:', 'write failed');
+    });
+
+    it('reports stale profile cleanup without deleting in dry-run mode', async () => {
+        const publicProfileRef = {
+            path: 'publicUserProfiles/user-1',
+            delete: vi.fn()
+        };
+        const logger = { warn: vi.fn() };
+
+        await cleanupIneligiblePublicProfile(publicProfileRef, {
+            apply: false,
+            logger,
+            reason: 'email is not verified.'
+        });
+
+        expect(publicProfileRef.delete).not.toHaveBeenCalled();
+        expect(logger.warn).toHaveBeenCalledWith(
+            'WOULD DELETE publicUserProfiles/user-1: email is not verified.'
+        );
+    });
+
+    it('deletes stale profiles in apply mode and surfaces cleanup failures', async () => {
+        const cleanupError = new Error('delete failed');
+        const publicProfileRef = {
+            path: 'publicUserProfiles/user-1',
+            delete: vi.fn().mockRejectedValue(cleanupError)
+        };
+
+        await expect(cleanupIneligiblePublicProfile(publicProfileRef, {
+            apply: true,
+            logger: { warn: vi.fn() },
+            reason: 'Firebase Auth user not found.'
+        })).rejects.toBe(cleanupError);
+        expect(publicProfileRef.delete).toHaveBeenCalledOnce();
+    });
+
+    it.each([
+        {
+            name: 'missing Auth users',
+            getUser: vi.fn().mockRejectedValue(
+                Object.assign(new Error('missing'), { code: 'auth/user-not-found' })
+            ),
+            expectedStatus: 'missing-auth',
+            expectedReason: 'Firebase Auth user not found.'
+        },
+        {
+            name: 'unverified users',
+            getUser: vi.fn().mockResolvedValue({ emailVerified: false }),
+            expectedStatus: 'unverified',
+            expectedReason: 'email is not verified.'
+        }
+    ])('removes stale backfill projections for $name', async ({
+        getUser,
+        expectedStatus,
+        expectedReason
+    }) => {
+        const publicProfileRef = {
+            path: 'publicUserProfiles/user-1',
+            delete: vi.fn().mockResolvedValue(undefined)
+        };
+        const logger = { warn: vi.fn() };
+
+        await expect(loadEligibleBackfillAuthRecord(
+            { getUser },
+            'user-1',
+            publicProfileRef,
+            { apply: true, logger }
+        )).resolves.toEqual({ authRecord: null, status: expectedStatus });
+
+        expect(publicProfileRef.delete).toHaveBeenCalledOnce();
+        expect(logger.warn).toHaveBeenCalledWith(
+            `DELETE publicUserProfiles/user-1: ${expectedReason}`
+        );
+    });
+
+    it('does not delete a profile when Firebase Auth has an operational failure', async () => {
+        const authError = Object.assign(new Error('Auth service unavailable'), {
+            code: 'auth/internal-error'
+        });
+        const publicProfileRef = {
+            path: 'publicUserProfiles/user-1',
+            delete: vi.fn()
+        };
+
+        await expect(loadEligibleBackfillAuthRecord(
+            { getUser: vi.fn().mockRejectedValue(authError) },
+            'user-1',
+            publicProfileRef,
+            { apply: true, logger: { warn: vi.fn() } }
+        )).rejects.toBe(authError);
+        expect(publicProfileRef.delete).not.toHaveBeenCalled();
     });
 });

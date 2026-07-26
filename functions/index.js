@@ -2812,7 +2812,8 @@ async function syncPublicUserProfileProjectionForUser(userId, options = {}) {
     return null;
   }
   if (authIdentity.emailVerified !== true) {
-    functions.logger.info('Public profile projection deferred until email verification.', {
+    await publicProfileRef.delete();
+    functions.logger.info('Public profile projection removed until email verification.', {
       userId: normalizedUserId
     });
     return null;

@@ -28,7 +28,8 @@ const require = createRequire(import.meta.url);
 const {
     buildPublicUserProfileProjection,
     compactPublicProfileString,
-    derivePublicProfileTeamIds
+    derivePublicProfileTeamIds,
+    isPublicProfileAuthUserNotFound
 } = require('../functions/public-user-profile-projection-core.cjs');
 
 function readArg(name, argv = process.argv) {
@@ -148,6 +149,46 @@ export async function processBackfillUsers(userDocs, processUser, logger = conso
     return failed;
 }
 
+export async function cleanupIneligiblePublicProfile(publicProfileRef, options = {}) {
+    const apply = options.apply === true;
+    const logger = options.logger || console;
+    logger.warn(
+        `${apply ? 'DELETE' : 'WOULD DELETE'} ${publicProfileRef.path}: ${options.reason}`
+    );
+    if (apply) {
+        await publicProfileRef.delete();
+    }
+}
+
+export async function loadEligibleBackfillAuthRecord(
+    auth,
+    userId,
+    publicProfileRef,
+    options = {}
+) {
+    let authRecord;
+    try {
+        authRecord = await auth.getUser(userId);
+    } catch (error) {
+        if (!isPublicProfileAuthUserNotFound(error)) {
+            throw error;
+        }
+        await cleanupIneligiblePublicProfile(publicProfileRef, {
+            ...options,
+            reason: 'Firebase Auth user not found.'
+        });
+        return { authRecord: null, status: 'missing-auth' };
+    }
+    if (authRecord.emailVerified !== true) {
+        await cleanupIneligiblePublicProfile(publicProfileRef, {
+            ...options,
+            reason: 'email is not verified.'
+        });
+        return { authRecord: null, status: 'unverified' };
+    }
+    return { authRecord, status: 'eligible' };
+}
+
 export function resolveBackfillExitCode(result = {}) {
     return Number(result.failed || 0) > 0 ? 1 : 0;
 }
@@ -173,19 +214,22 @@ export async function backfillPublicUserProfiles() {
 
     const failed = await processBackfillUsers(userDocs, async (userDoc) => {
         const userData = userDoc.data() || {};
-        let authRecord;
-        try {
-            authRecord = await auth.getUser(userDoc.id);
-        } catch {
+        const publicProfileRef = db.doc(`publicUserProfiles/${userDoc.id}`);
+        const authResolution = await loadEligibleBackfillAuthRecord(
+            auth,
+            userDoc.id,
+            publicProfileRef,
+            { apply: APPLY }
+        );
+        if (authResolution.status === 'missing-auth') {
             missingAuth++;
-            console.warn(`SKIP ${userDoc.id}: Firebase Auth user not found.`);
             return;
         }
-        if (authRecord.emailVerified !== true) {
+        if (authResolution.status === 'unverified') {
             unverified++;
-            console.warn(`SKIP ${userDoc.id}: email is not verified.`);
             return;
         }
+        const { authRecord } = authResolution;
 
         const discoveryTeamIds = resolveProjectionTeamIds(
             userDoc.id,
@@ -199,7 +243,6 @@ export async function backfillPublicUserProfiles() {
             trustedPhotoUrl: authRecord.photoURL || null,
             discoveryTeamIds
         });
-        const publicProfileRef = db.doc(`publicUserProfiles/${userDoc.id}`);
         const currentSnap = await publicProfileRef.get();
         const current = currentSnap.exists ? comparableProjection(currentSnap.data() || {}) : null;
         const next = comparableProjection(projection);

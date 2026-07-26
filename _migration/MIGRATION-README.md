@@ -24,7 +24,9 @@ Rebuilds the `publicUserProfiles/{uid}` Friends-discovery projection for
 verified accounts from private user membership, Firebase Auth identity, and
 team owner/admin links. Every run requires an explicit `--project` (or
 `FIREBASE_PROJECT_ID`). It is dry-run-only unless `--apply` and an exact
-`--confirm-project` are both provided.
+`--confirm-project` are both provided. Apply mode also removes stale
+projections for unverified users and user records whose Firebase Auth account
+no longer exists.
 
 ```bash
 node _migration/backfill-public-user-profiles.js --email parent@example.com \

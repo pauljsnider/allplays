@@ -137,6 +137,28 @@ describe('public user profile sync', () => {
         expect(functionsSource).toContain('if (authIdentity.emailVerified !== true)');
     });
 
+    it('removes stale discovery projections for unverified Auth identities', () => {
+        const syncStart = functionsSource.indexOf(
+            'async function syncPublicUserProfileProjectionForUser'
+        );
+        const syncEnd = functionsSource.indexOf(
+            'async function getPublicProfileStaffUserIdsForTeam',
+            syncStart
+        );
+        const syncSource = functionsSource.slice(syncStart, syncEnd);
+        const verificationGuard = syncSource.indexOf('if (authIdentity.emailVerified !== true)');
+        const guardEnd = syncSource.indexOf('\n  }', verificationGuard);
+        const verificationGuardSource = syncSource.slice(verificationGuard, guardEnd);
+
+        expect(syncStart).toBeGreaterThanOrEqual(0);
+        expect(syncEnd).toBeGreaterThan(syncStart);
+        expect(verificationGuard).toBeGreaterThanOrEqual(0);
+        expect(verificationGuardSource).toContain('await publicProfileRef.delete();');
+        expect(verificationGuardSource).toContain(
+            'Public profile projection removed until email verification.'
+        );
+    });
+
     it('refreshes coach and owner discovery membership when team staff changes', () => {
         expect(functionsSource).toContain('async function getPublicProfileStaffUserIdsForTeam(team = null)');
         expect(functionsSource).toContain("const ownerId = String(team.ownerId || '').trim();");
