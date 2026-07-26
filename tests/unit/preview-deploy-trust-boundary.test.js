@@ -245,6 +245,12 @@ describe('preview deployment workflow trust boundary', () => {
 
         expect(preDeployCheckIndex).toBeGreaterThan(deployStepIndex);
         expect(deployWriteIndex).toBeGreaterThan(preDeployCheckIndex);
+        expect(
+            trustedWorkflow.slice(preDeployCheckIndex, deployWriteIndex)
+        ).toContain('jq -e \'.state == "closed"\'');
+        expect(
+            trustedWorkflow.slice(preDeployCheckIndex, deployWriteIndex)
+        ).toContain('skip_preview "The pull request closed before the trusted preview write');
         expect(preCommentCheckIndex).toBeGreaterThan(commentStepIndex);
         expect(preCommentCheckIndex).toBeGreaterThan(commentDiscoveryIndex);
         expect(commentWriteIndex).toBeGreaterThan(preCommentCheckIndex);
