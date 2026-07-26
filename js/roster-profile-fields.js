@@ -1016,10 +1016,12 @@ export function planRosterCsvImport({ csvText = '', fields = [], existingPlayers
         const existingPrivateValues = existing?.privateProfileRosterFields && typeof existing.privateProfileRosterFields === 'object'
             ? existing.privateProfileRosterFields
             : {};
-        PRIVATE_BUILT_IN_PROFILE_FIELDS.forEach((key) => {
-            if (Object.prototype.hasOwnProperty.call(existingPrivateValues, key)) {
-                legacyPrivateValues[key] = existingPrivateValues[key];
-            }
+        Object.entries(existingPrivateValues).forEach(([key, value]) => {
+            // The private profile document is authoritative for both protected
+            // standard fields and configured non-public fields. Carry the full
+            // map into an update so Firestore's nested-map write cannot erase
+            // private fields that were not present in this import row.
+            legacyPrivateValues[key] = value;
         });
         Object.entries(legacyPrivateValues).forEach(([key, value]) => {
             if (key === 'address' && value && typeof value === 'object' && privateValues.address && typeof privateValues.address === 'object') {

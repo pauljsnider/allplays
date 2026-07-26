@@ -1226,6 +1226,12 @@ describe('private AI service', () => {
             coachOf: [],
             isPlatformAdmin: true
         };
+        scheduleMocks.loadParentScheduleScope.mockResolvedValueOnce({
+            profile: {},
+            children: [],
+            staffTeams: [{ teamId: 'team-1', teamName: 'Bears' }],
+            isPartial: false
+        });
         await generatePrivateAiAnswer(platformAdminUser, 'What can you help me with?');
         const platformAdminPrompt = aiMocks.model.generateContent.mock.calls[0][0];
         expect(platformAdminPrompt).toContain('list_managed_teams');
@@ -1257,6 +1263,95 @@ describe('private AI service', () => {
         expect(plannerPrompt).toContain('apply_roster_import');
         expect(plannerPrompt).toContain('apply_schedule_import');
         expect(plannerPrompt).toContain('"managedTeamCount":1');
+    });
+
+    it('resolves and executes manager tools for an email-only team admin', async () => {
+        const emailOnlyAdmin = {
+            ...authUser,
+            roles: ['parent'],
+            coachOf: [],
+            isAdmin: false,
+            isPlatformAdmin: false
+        };
+        homeMocks.loadParentHome.mockResolvedValueOnce({
+            teams: [],
+            players: [],
+            actionItems: [],
+            upcomingEvents: [],
+            fees: []
+        });
+        scheduleMocks.loadParentScheduleScope.mockResolvedValueOnce({
+            profile: {},
+            children: [],
+            staffTeams: [{ teamId: 'team-1', teamName: 'Bears' }],
+            isPartial: false
+        });
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        await expect(runPrivateAiTool(emailOnlyAdmin, {
+            name: 'list_managed_teams'
+        })).resolves.toMatchObject({
+            ok: true,
+            data: {
+                teams: [{
+                    teamId: 'team-1',
+                    teamName: 'Bears',
+                    playerCount: 1,
+                    canManageTeam: true
+                }]
+            }
+        });
+        expect(teamMocks.loadParentTeamDetail).toHaveBeenCalledWith('team-1', emailOnlyAdmin);
+    });
+
+    it('does not advertise manager tools from a role label without an authorized team', async () => {
+        const unassignedCoach = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: [],
+            isAdmin: false,
+            isPlatformAdmin: false
+        };
+        scheduleMocks.loadParentScheduleScope.mockResolvedValueOnce({
+            profile: {},
+            children: [],
+            staffTeams: [],
+            isPartial: false
+        });
+        aiMocks.model.generateContent.mockResolvedValue(modelText(JSON.stringify({ answer: 'Ready.' })));
+        const { generatePrivateAiAnswer } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        await generatePrivateAiAnswer(unassignedCoach, 'What can you help me with?');
+
+        const plannerPrompt = aiMocks.model.generateContent.mock.calls[0][0];
+        expect(plannerPrompt).not.toContain('list_managed_teams');
+        expect(plannerPrompt).not.toContain('apply_roster_import');
+        expect(plannerPrompt).not.toContain('apply_schedule_import');
+    });
+
+    it('fails closed when authoritative team discovery is partial', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        scheduleMocks.loadParentScheduleScope.mockResolvedValueOnce({
+            profile: {},
+            children: [],
+            staffTeams: [{ teamId: 'team-1', teamName: 'Bears' }],
+            isPartial: true
+        });
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        await expect(runPrivateAiTool(coachUser, {
+            name: 'update_team_settings',
+            args: { settings: { name: 'Unsafe Update' } }
+        })).resolves.toMatchObject({
+            ok: false,
+            error: 'Could not verify all team access. Try again before using team AI tools.'
+        });
+        expect(teamMocks.loadParentTeamDetail).not.toHaveBeenCalled();
     });
 
     it('validates supported AI chat files and infers roster, schedule, or general analysis intent', async () => {

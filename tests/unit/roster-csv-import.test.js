@@ -603,6 +603,43 @@ describe('roster CSV import planning', () => {
         });
     });
 
+    it('preserves unrelated configured private fields during a CSV update', () => {
+        const plan = planRosterCsvImport({
+            fields: [{
+                key: 'medicalNote',
+                label: 'Medical Note',
+                type: 'text',
+                visibility: 'admin',
+                active: true
+            }],
+            existingPlayers: [{
+                id: 'p1',
+                name: 'Avery Lee',
+                profile: {
+                    customFields: { favoriteColor: 'blue' }
+                },
+                privateProfileRosterFields: {
+                    birthDate: '2014-03-04',
+                    medicalNote: 'Carries an inhaler'
+                }
+            }],
+            csvText: 'Name,Number\nAvery Lee,8'
+        });
+
+        expect(plan.errors).toEqual([]);
+        expect(plan.operations[0]).toMatchObject({
+            type: 'update',
+            payload: {
+                number: '8',
+                profile: { customFields: { favoriteColor: 'blue' } }
+            },
+            privateRosterFields: {
+                birthDate: '2014-03-04',
+                medicalNote: 'Carries an inhaler'
+            }
+        });
+    });
+
     it('migrates protected values from every guarded nested legacy profile map', () => {
         const plan = planRosterCsvImport({
             fields: [],

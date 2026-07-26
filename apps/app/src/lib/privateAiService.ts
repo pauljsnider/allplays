@@ -4472,19 +4472,16 @@ function hasDeclaredPrivateAiManagerRole(user: AuthUser) {
 }
 
 export async function loadPrivateAiRoleCapabilities(user: AuthUser): Promise<PrivateAiRoleCapabilities> {
-  const declaredManagedTeamCount = new Set((user.coachOf || []).map(compactText).filter(Boolean)).size;
-  if (hasDeclaredPrivateAiManagerRole(user)) {
-    return {
-      isTeamManager: true,
-      managedTeamCount: declaredManagedTeamCount
-    };
-  }
+  const declaredManagedTeamIds = new Set((user.coachOf || []).map(compactText).filter(Boolean));
 
   try {
     const scope = await loadParentScheduleScope(user);
-    const managedTeamIds = new Set(
-      (scope.staffTeams || []).map((team) => compactText(team.teamId)).filter(Boolean)
-    );
+    if (scope.isPartial === true) throw new Error('Team access discovery was partial.');
+    const managedTeamIds = new Set(declaredManagedTeamIds);
+    (scope.staffTeams || []).forEach((team) => {
+      const teamId = compactText(team.teamId);
+      if (teamId) managedTeamIds.add(teamId);
+    });
     return {
       isTeamManager: managedTeamIds.size > 0,
       managedTeamCount: managedTeamIds.size
@@ -4492,18 +4489,19 @@ export async function loadPrivateAiRoleCapabilities(user: AuthUser): Promise<Pri
   } catch (error) {
     logger.warn('Unable to discover private AI manager capabilities.', { error });
     return {
-      isTeamManager: false,
-      managedTeamCount: 0
+      isTeamManager: declaredManagedTeamIds.size > 0,
+      managedTeamCount: declaredManagedTeamIds.size
     };
   }
 }
 
 function getRoleAuthorizedPrivateAiToolDefinitions(
-  user: AuthUser,
+  _user: AuthUser,
   roleCapabilities: PrivateAiRoleCapabilities
 ) {
-  const hasManagerRole = roleCapabilities.isTeamManager || hasDeclaredPrivateAiManagerRole(user);
-  return privateAiToolDefinitions.filter((definition) => definition.audience !== 'manager' || hasManagerRole);
+  return privateAiToolDefinitions.filter(
+    (definition) => definition.audience !== 'manager' || roleCapabilities.isTeamManager
+  );
 }
 
 function summarizeSignedInUser(
@@ -4893,10 +4891,20 @@ function summarizeHelpKnowledge(results: ReturnType<typeof searchHelpKnowledge>)
 }
 
 async function loadAccessibleAiTeams(user: AuthUser) {
-  const home = await loadParentHome(user);
+  const [home, scheduleScope] = await Promise.all([
+    loadParentHome(user),
+    loadParentScheduleScope(user)
+  ]);
+  if (scheduleScope.isPartial === true) {
+    throw new Error('Could not verify all team access. Try again before using team AI tools.');
+  }
   const teamIds = new Set<string>();
   (home.teams || []).forEach((team: any) => {
     const teamId = compactText(team.teamId || team.id);
+    if (teamId) teamIds.add(teamId);
+  });
+  (scheduleScope.staffTeams || []).forEach((team) => {
+    const teamId = compactText(team.teamId);
     if (teamId) teamIds.add(teamId);
   });
   (user.coachOf || []).forEach((teamId) => {
