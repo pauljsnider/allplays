@@ -2576,6 +2576,158 @@ describe('private AI service', () => {
         }
     });
 
+    it('stages a replacement without reading an expired older team payload', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        homeMocks.loadParentHome.mockResolvedValue({ teams: [], players: [] });
+        const expiredPendingData = {
+            status: 'pending',
+            userId: 'user-1',
+            toolName: 'apply_roster_import',
+            args: { teamId: 'team-1', operationSummary: { total: 1 } },
+            payloadScope: 'team',
+            teamId: 'team-1',
+            conversationId: 'roster-chat',
+            confirmationGroupId: 'expired-group',
+            expiresAt: new Date(Date.now() - 60_000).toISOString()
+        };
+        firebaseMocks.getDocs.mockResolvedValueOnce({
+            docs: [{ id: 'expired-action', data: () => expiredPendingData }]
+        });
+        const reads = [];
+        const writes = [];
+        firebaseMocks.runTransaction.mockImplementationOnce((db, callback) => callback({
+            get: vi.fn(async (reference) => {
+                const path = reference?.path?.join('/');
+                reads.push(path);
+                if (path === 'users/user-1/privateAiConversations/roster-chat') {
+                    return {
+                        exists: () => true,
+                        data: () => ({ pendingActionIds: ['expired-action'], pendingGroupId: 'expired-group' })
+                    };
+                }
+                if (path === 'users/user-1/privateAiPendingActions/expired-action') {
+                    return { exists: () => true, data: () => expiredPendingData };
+                }
+                if (path === 'teams/team-1/privateAiPendingActions/expired-action') {
+                    throw new Error('Expired team payload should not be read.');
+                }
+                return { exists: () => false, data: () => null };
+            }),
+            set: vi.fn((reference, value) => {
+                writes.push({ path: reference?.path?.join('/'), value });
+            })
+        }));
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await runPrivateAiTool(coachUser, {
+            name: 'apply_roster_import',
+            args: {
+                teamId: 'team-1',
+                __preparedRosterOperations: [{
+                    type: 'add',
+                    payload: { name: 'Replacement Player' },
+                    errors: []
+                }]
+            }
+        }, { conversationId: 'roster-chat', confirmationGroupId: 'replacement-group' });
+
+        expect(result).toMatchObject({
+            name: 'apply_roster_import',
+            ok: true,
+            requiresConfirmation: true
+        });
+        expect(reads).not.toContain('teams/team-1/privateAiPendingActions/expired-action');
+        expect(writes).not.toContainEqual(expect.objectContaining({
+            path: 'users/user-1/privateAiPendingActions/expired-action',
+            value: expect.objectContaining({ status: 'superseded' })
+        }));
+        expect(writes).toContainEqual(expect.objectContaining({
+            path: 'users/user-1/privateAiConversations/roster-chat',
+            value: expect.objectContaining({ pendingActionIds: [result.confirmationId] })
+        }));
+    });
+
+    it('supersedes an older user action without reading a team payload after access loss', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        homeMocks.loadParentHome.mockResolvedValue({ teams: [], players: [] });
+        const oldPendingData = {
+            status: 'pending',
+            userId: 'user-1',
+            toolName: 'apply_roster_import',
+            args: { teamId: 'team-2', operationSummary: { total: 1 } },
+            payloadScope: 'team',
+            teamId: 'team-2',
+            conversationId: 'roster-chat',
+            confirmationGroupId: 'lost-access-group',
+            expiresAt: new Date(Date.now() + 60_000).toISOString()
+        };
+        firebaseMocks.getDocs.mockResolvedValueOnce({
+            docs: [{ id: 'lost-access-action', data: () => oldPendingData }]
+        });
+        const reads = [];
+        const writes = [];
+        firebaseMocks.runTransaction.mockImplementationOnce((db, callback) => callback({
+            get: vi.fn(async (reference) => {
+                const path = reference?.path?.join('/');
+                reads.push(path);
+                if (path === 'users/user-1/privateAiConversations/roster-chat') {
+                    return {
+                        exists: () => true,
+                        data: () => ({ pendingActionIds: ['lost-access-action'], pendingGroupId: 'lost-access-group' })
+                    };
+                }
+                if (path === 'users/user-1/privateAiPendingActions/lost-access-action') {
+                    return { exists: () => true, data: () => oldPendingData };
+                }
+                if (path === 'teams/team-2/privateAiPendingActions/lost-access-action') {
+                    throw new Error('Former team payload is no longer readable.');
+                }
+                return { exists: () => false, data: () => null };
+            }),
+            set: vi.fn((reference, value) => {
+                writes.push({ path: reference?.path?.join('/'), value });
+            })
+        }));
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await runPrivateAiTool(coachUser, {
+            name: 'apply_roster_import',
+            args: {
+                teamId: 'team-1',
+                __preparedRosterOperations: [{
+                    type: 'add',
+                    payload: { name: 'Authorized Team Player' },
+                    errors: []
+                }]
+            }
+        }, { conversationId: 'roster-chat', confirmationGroupId: 'authorized-group' });
+
+        expect(result).toMatchObject({
+            name: 'apply_roster_import',
+            ok: true,
+            requiresConfirmation: true
+        });
+        expect(reads).not.toContain('teams/team-2/privateAiPendingActions/lost-access-action');
+        expect(writes).toContainEqual(expect.objectContaining({
+            path: 'users/user-1/privateAiPendingActions/lost-access-action',
+            value: expect.objectContaining({ status: 'superseded' })
+        }));
+        expect(writes).toContainEqual(expect.objectContaining({
+            path: expect.stringMatching(/^teams\/team-1\/privateAiPendingActions\//),
+            value: expect.objectContaining({ status: 'pending', teamId: 'team-1' })
+        }));
+    });
+
     it('transactionally replaces a roster pending payload and persisted artifact after in-chat edits', async () => {
         const coachUser = {
             ...authUser,

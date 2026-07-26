@@ -3276,6 +3276,7 @@ async function savePrivateAiPendingAction(
       && candidate.data.status === 'pending'
       && compactText(candidate.data.userId) === user.uid
       && normalizeConversationId(candidate.data.conversationId) === conversationId
+      && Date.parse(compactText(candidate.data.expiresAt)) > Date.now()
     ));
     const supersededRecords = pendingRecords.filter((candidate) => (
       compactText(candidate.data.confirmationGroupId) !== confirmationGroupId
@@ -3285,7 +3286,11 @@ async function savePrivateAiPendingAction(
       .map((candidate) => candidate.id);
     const teamRecords = await Promise.all(supersededRecords.map(async (candidate) => {
       const oldTeamId = compactText(candidate.data.teamId);
-      if (candidate.data.payloadScope !== 'team' || !oldTeamId) return null;
+      // The new team payload create proves current access only for `teamId`.
+      // Superseding the owner-readable user action is sufficient to make an
+      // older cross-team action non-executable; avoid reading a youth-data
+      // payload from a team the user may no longer manage.
+      if (candidate.data.payloadScope !== 'team' || !oldTeamId || oldTeamId !== teamId) return null;
       const reference = doc(db, 'teams', oldTeamId, teamPrivateAiPendingActionCollectionName, candidate.id);
       const snapshot = await transaction.get(reference);
       const data = typeof snapshot?.data === 'function' ? snapshot.data() : null;
