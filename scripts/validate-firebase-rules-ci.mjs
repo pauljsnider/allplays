@@ -309,8 +309,8 @@ export function validateProductionDeployCommand(deployProd) {
     );
     assertIncludes(
         deployProd,
-        'retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 1 0',
-        'Production Firestore deploy gets one post-preflight mutation attempt'
+        'retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 3 20',
+        'Production Firestore deploy gets bounded post-preflight retries'
     );
     assertIncludes(deployProd, 'if (( retry_delay_seconds > 120 )); then', 'Production Firebase retry delay cap');
     assertIncludes(deployProd, 'retry_jitter_seconds=$((RANDOM % 16))', 'Production Firebase retry jitter');
@@ -397,6 +397,16 @@ export function validateProductionDeployCommand(deployProd) {
     if (unchangedBranch.includes('"firestore"')) {
         throw new Error('Production must not redeploy unchanged Firestore configuration.');
     }
+    assertIncludes(
+        changedBranch,
+        'retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 3 20',
+        'Production Firestore transient deploy retries'
+    );
+    assertIncludes(
+        changedBranch,
+        'projects:test calls bounded to at most five per release run',
+        'Production Firestore retry request bound'
+    );
     const retryEnabledDeploy = deployProd.indexOf('"retry-enabled-functions"', conditionalEnd);
     const componentMarker = deployProd.indexOf('record_component_deployment', conditionalEnd);
     const applicationDeploy = deployProd.indexOf('retry_firebase_deploy "hosting,functions" "application"', conditionalEnd);
