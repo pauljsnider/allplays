@@ -165,9 +165,15 @@ concurrency:
           if (( retry_delay_seconds > 120 )); then
             retry_delay_seconds=120
           fi
+          verify_active_firestore_rules() {
+            curl "https://firebaserules.googleapis.com/v1/projects/game-flow-c6311/releases/cloud.firestore"
+            curl "https://firebaserules.googleapis.com/v1/\${ruleset_name}"
+            jq '.source.files[]? | select(.name == "firestore.rules")'
+          }
           if [[ "$deploy_label" == "firestore" ]]; then
             echo "latest version of firestore.rules already up to date, skipping upload"
             echo "deployed indexes in firestore.indexes.json successfully"
+            echo "The active Firestore release exactly matches this commit and indexes deployed"
             echo "accepting the duplicate release 409 as success"
             api_surface="Firestore Rules API (firebaserules.googleapis.com)"
             grep -Eio 'HTTP Error:[[:space:]]*(409|429|500|502|503|504)|(^|[^[:digit:]])(409|429|500|502|503|504)([^[:digit:]]|$)' "$deploy_log" \\

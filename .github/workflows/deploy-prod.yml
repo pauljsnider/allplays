@@ -483,6 +483,50 @@ jobs:
           firebase_config="$FIREBASE_PRODUCTION_BUNDLE/firebase-prod.generated.json"
           transient_pattern='(^|[^[:alnum:]])(429|500|502|503|504)([^[:alnum:]]|$)|HTTP Error:[[:space:]]*409,[[:space:]]*Requested entity already exists|service[[:space:]_-]+unavailable|econnreset|connection[[:space:]_-]+reset|network[[:space:]_-]+reset|etimedout|timed[[:space:]_-]+out|timeout'
 
+          verify_active_firestore_rules() {
+            local release_json ruleset_json ruleset_name local_rules_b64 active_rules_b64
+            release_json="$(mktemp "$RUNNER_TEMP/firestore-release.XXXXXX.json")"
+            ruleset_json="$(mktemp "$RUNNER_TEMP/firestore-ruleset.XXXXXX.json")"
+
+            if ! curl --silent --show-error --fail \
+              --connect-timeout 10 \
+              --max-time 30 \
+              --header "Authorization: Bearer ${GOOGLE_OAUTH_ACCESS_TOKEN}" \
+              "https://firebaserules.googleapis.com/v1/projects/game-flow-c6311/releases/cloud.firestore" \
+              > "$release_json"; then
+              rm -f "$release_json" "$ruleset_json"
+              return 1
+            fi
+
+            ruleset_name="$(jq -er '.rulesetName' "$release_json" 2>/dev/null || true)"
+            if [[ ! "$ruleset_name" =~ ^projects/game-flow-c6311/rulesets/[A-Za-z0-9_-]+$ ]]; then
+              rm -f "$release_json" "$ruleset_json"
+              return 1
+            fi
+
+            if ! curl --silent --show-error --fail \
+              --connect-timeout 10 \
+              --max-time 30 \
+              --header "Authorization: Bearer ${GOOGLE_OAUTH_ACCESS_TOKEN}" \
+              "https://firebaserules.googleapis.com/v1/${ruleset_name}" \
+              > "$ruleset_json"; then
+              rm -f "$release_json" "$ruleset_json"
+              return 1
+            fi
+
+            local_rules_b64="$(base64 < "$FIREBASE_PRODUCTION_BUNDLE/firestore.rules" | tr -d '\n')"
+            active_rules_b64="$(
+              jq -er '
+                [.source.files[]? | select(.name == "firestore.rules")]
+                | if length == 1 then (.[0].content | @base64)
+                  else error("expected exactly one firestore.rules source file")
+                  end
+              ' "$ruleset_json" 2>/dev/null || true
+            )"
+            rm -f "$release_json" "$ruleset_json"
+            [[ -n "$active_rules_b64" && "$active_rules_b64" == "$local_rules_b64" ]]
+          }
+
           retry_firebase_deploy() {
             local deploy_targets="$1"
             local deploy_label="$2"
@@ -526,11 +570,18 @@ jobs:
               if [[ "$deploy_label" == "firestore" ]]; then
                 deploy_plain_log="${deploy_log}.plain"
                 sed -E 's/\x1B\[[0-9;]*[[:alpha:]]//g' "$deploy_log" > "$deploy_plain_log"
-                if grep -Fq "latest version of firestore.rules already up to date, skipping upload" "$deploy_plain_log" \
-                  && grep -Fq "deployed indexes in firestore.indexes.json successfully" "$deploy_plain_log" \
+                if grep -Fq "deployed indexes in firestore.indexes.json successfully" "$deploy_plain_log" \
                   && grep -Eq 'HTTP Error:[[:space:]]*409,[[:space:]]*Requested entity already exists' "$deploy_plain_log"; then
-                  echo "::notice::Firestore rules and indexes are already current; accepting the duplicate release 409 as success."
-                  return 0
+                  if grep -Fq "latest version of firestore.rules already up to date, skipping upload" "$deploy_plain_log"; then
+                    echo "::notice::Firestore rules and indexes are already current; accepting the duplicate release 409 as success."
+                    return 0
+                  fi
+                  if grep -Fq "rules file firestore.rules compiled successfully" "$deploy_plain_log" \
+                    && grep -Fq "uploading rules firestore.rules" "$deploy_plain_log" \
+                    && verify_active_firestore_rules; then
+                    echo "::notice::The active Firestore release exactly matches this commit and indexes deployed; accepting the duplicate release 409 as success."
+                    return 0
+                  fi
                 fi
               fi
 
