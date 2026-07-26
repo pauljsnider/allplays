@@ -600,6 +600,14 @@ export function isPrivateAiScheduleAttachmentMutationRequest(value: unknown) {
     && /\b(schedule|calendar|events?|games?|practices?|fixtures?|dates?|times?|locations?|opponents?|existing|current|these|those)\b/.test(text);
 }
 
+function isUneditedPrivateAiScheduleLaunchPrompt(value: unknown) {
+  const text = compactText(value).toLowerCase();
+  const match = text.match(
+    /^manage the (.+?) schedule\. i can add or update games, add one-time or recurring practices, cancel events, send rsvp reminders, or attach a csv, image, or pdf for bulk schedule changes\. use (.+?) unless i explicitly choose another managed team, and show me an editable review before saving or sending anything\.$/
+  );
+  return Boolean(match && match[1] === match[2]);
+}
+
 export async function sendPrivateAiAttachmentMessage(
   user: AuthUser,
   input: PrivateAiAttachmentInput,
@@ -631,8 +639,11 @@ export async function sendPrivateAiAttachmentMessage(
   }
   if (intent === 'schedule-import') {
     if (
-      input.launchIntent !== 'schedule-import'
-      && isPrivateAiScheduleAttachmentMutationRequest(input.text)
+      isPrivateAiScheduleAttachmentMutationRequest(input.text)
+      && !(
+        input.launchIntent === 'schedule-import'
+        && isUneditedPrivateAiScheduleLaunchPrompt(input.text)
+      )
     ) {
       return sendPrivateAiScheduleManagementAttachmentMessage(user, {
         teamId: input.teamId,
@@ -1863,13 +1874,13 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
     description: 'Combined family/player and coach/admin dashboard context: tasks, players, teams, managed teams, next events, unread messages, packets, fees, and priority actions.',
     aliases: ['list_tasks'],
     resolve: async (user) => {
-      const [home, teams] = await Promise.all([
+      const [home, access] = await Promise.all([
         loadParentHome(user),
         loadAccessibleAiTeams(user)
       ]);
       return {
         ...summarizeHome(home),
-        managedTeams: teams.filter((team) => team.canManageTeam).map((team) => ({
+        managedTeams: access.teams.filter((team) => team.canManageTeam).map((team) => ({
           teamId: team.teamId,
           teamName: team.teamName,
           playerCount: team.playerCount
@@ -2022,9 +2033,9 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
     description: 'Teams the signed-in coach or administrator can manage, including roster and schedule context.',
     aliases: ['get_managed_teams'],
     resolve: async (user) => {
-      const teams = await loadAccessibleAiTeams(user);
+      const access = await loadAccessibleAiTeams(user);
       return {
-        teams: teams
+        teams: access.teams
           .filter((team) => team.canManageTeam)
           .map((team) => ({
             teamId: team.teamId,
@@ -2246,24 +2257,22 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
       if (!rows.length) throw new Error('No valid schedule rows remain to import.');
       const pendingActionId = compactText(args.__pendingActionId);
       if (!pendingActionId) throw new Error('This schedule proposal is missing its durable action identifier. Prepare it again.');
-      if (args.__recoveringExecution !== true) {
-        const schedule = await loadParentSchedule(user, { includePastGames: true });
-        if (schedule.isPartial === true) {
-          throw new Error('The existing schedule could not be loaded completely. Retry before confirming so duplicate games and practices are not missed.');
-        }
-        const conflicts = appendScheduleImportConflictErrors(
-          rows.map((row, index) => ({
-            rowNumber: Number(row.rowNumber) || index + 1,
-            draft: {},
-            normalized: row,
-            errors: []
-          })),
-          getCurrentScheduleImportEvents(schedule.events || [], teamId)
-            .filter((event) => !compactText(event.id).startsWith(`${pendingActionId}_event_`))
-        ).flatMap((row) => row.errors || []);
-        if (conflicts.length) {
-          throw new Error(`The schedule changed after this preview. Review it again before importing. ${conflicts.join(' ')}`);
-        }
+      const schedule = await loadParentSchedule(user, { includePastGames: true });
+      if (schedule.isPartial === true) {
+        throw new Error('The existing schedule could not be loaded completely. Retry before confirming so duplicate games and practices are not missed.');
+      }
+      const conflicts = appendScheduleImportConflictErrors(
+        rows.map((row, index) => ({
+          rowNumber: Number(row.rowNumber) || index + 1,
+          draft: {},
+          normalized: row,
+          errors: []
+        })),
+        getCurrentScheduleImportEvents(schedule.events || [], teamId)
+          .filter((event) => !compactText(event.id).startsWith(`${pendingActionId}_event_`))
+      ).flatMap((row) => row.errors || []);
+      if (conflicts.length) {
+        throw new Error(`The schedule changed after this preview. Review it again before importing. ${conflicts.join(' ')}`);
       }
       const batchId = `ai-schedule-import-${pendingActionId}`;
       const importedAt = new Date().toISOString();
@@ -5128,7 +5137,6 @@ export async function loadPrivateAiRoleCapabilities(user: AuthUser): Promise<Pri
 
   try {
     const scope = await loadParentScheduleScope(user);
-    if (scope.isPartial === true) throw new Error('Team access discovery was partial.');
     const managedTeamIds = new Set(declaredManagedTeamIds);
     (scope.staffTeams || []).forEach((team) => {
       const teamId = compactText(team.teamId);
@@ -5542,14 +5550,44 @@ function summarizeHelpKnowledge(results: ReturnType<typeof searchHelpKnowledge>)
   };
 }
 
-async function loadAccessibleAiTeams(user: AuthUser) {
-  const [home, scheduleScope] = await Promise.all([
+type AccessibleAiTeam = {
+  teamId: string;
+  teamName: string;
+  canManageTeam: boolean;
+  playerCount: number;
+  detail: any;
+};
+
+type AccessibleAiTeamsResult = {
+  teams: AccessibleAiTeam[];
+  isPartial: boolean;
+  partialError?: unknown;
+};
+
+async function loadAccessibleAiTeams(user: AuthUser): Promise<AccessibleAiTeamsResult> {
+  const [homeResult, scheduleScopeResult] = await Promise.allSettled([
     loadParentHome(user),
     loadParentScheduleScope(user)
   ]);
-  if (scheduleScope.isPartial === true) {
-    throw new Error('Could not verify all team access. Try again before using team AI tools.');
+  let isPartial = homeResult.status === 'rejected' || scheduleScopeResult.status === 'rejected';
+  let partialError: unknown = homeResult.status === 'rejected'
+    ? homeResult.reason
+    : scheduleScopeResult.status === 'rejected'
+      ? scheduleScopeResult.reason
+      : undefined;
+  if (homeResult.status === 'rejected') {
+    logger.warn('Unable to load home teams for private AI access discovery.', { error: homeResult.reason });
   }
+  if (scheduleScopeResult.status === 'rejected') {
+    logger.warn('Unable to load schedule teams for private AI access discovery.', { error: scheduleScopeResult.reason });
+  }
+  const home = homeResult.status === 'fulfilled'
+    ? homeResult.value
+    : { teams: [] };
+  const scheduleScope = scheduleScopeResult.status === 'fulfilled'
+    ? scheduleScopeResult.value
+    : { staffTeams: [], isPartial: true };
+  if (scheduleScope.isPartial === true) isPartial = true;
   const teamIds = new Set<string>();
   (home.teams || []).forEach((team: any) => {
     const teamId = compactText(team.teamId || team.id);
@@ -5564,20 +5602,30 @@ async function loadAccessibleAiTeams(user: AuthUser) {
     if (normalized) teamIds.add(normalized);
   });
 
-  const details = await Promise.all(Array.from(teamIds).slice(0, 60).map(async (teamId) => {
+  const detailResults = await Promise.allSettled(Array.from(teamIds).slice(0, 60).map(async (teamId) => {
     const detail = await loadParentTeamDetail(teamId, user);
-    if (!detail?.team) {
-      throw new Error(`Could not verify access to team ${teamId}. Try again before making changes.`);
-    }
+    if (!detail?.team) return null;
     return {
       teamId,
       teamName: compactText(detail.team.name) || teamId,
       canManageTeam: detail.canManageTeam === true,
       playerCount: (detail.players || []).length + (detail.inactivePlayers || []).length,
       detail
-    };
+    } satisfies AccessibleAiTeam;
   }));
-  return details;
+  const details: AccessibleAiTeam[] = [];
+  detailResults.forEach((result) => {
+    if (result.status === 'fulfilled' && result.value) {
+      details.push(result.value);
+    } else {
+      isPartial = true;
+      if (result.status === 'rejected') {
+        partialError ||= result.reason;
+        logger.warn('Unable to verify one private AI team.', { error: result.reason });
+      }
+    }
+  });
+  return { teams: details, isPartial, ...(partialError ? { partialError } : {}) };
 }
 
 async function resolveAccessibleTeamId(
@@ -5587,14 +5635,20 @@ async function resolveAccessibleTeamId(
 ) {
   const teamId = compactText(args.teamId);
   const teamName = compactText(args.teamName).toLowerCase();
-  const teams = await loadAccessibleAiTeams(user);
-  const eligibleTeams = options.requireManager ? teams.filter((team) => team.canManageTeam) : teams;
+  const access = await loadAccessibleAiTeams(user);
+  const eligibleTeams = options.requireManager
+    ? access.teams.filter((team) => team.canManageTeam)
+    : access.teams;
   if (teamId && eligibleTeams.some((team) => team.teamId === teamId)) return teamId;
   if (teamId && options.requireManager) {
     const directDetail = await loadParentTeamDetail(teamId, user);
     if (directDetail?.team && directDetail.canManageTeam === true) return teamId;
   }
   if (teamId) return null;
+  if (access.isPartial) {
+    if (access.partialError instanceof Error) throw access.partialError;
+    throw new Error('Could not verify all team access. Try again before using team AI tools.');
+  }
   if (teamName) {
     const exactMatches = eligibleTeams.filter((team) => compactText(team.teamName).toLowerCase() === teamName);
     const matchingTeams = exactMatches.length
@@ -5654,8 +5708,8 @@ async function resolveManagedRosterPlayer(user: AuthUser, args: Record<string, u
     throw new Error('A player name or player ID is required for a parent invitation.');
   }
 
-  let managedTeams: any[] = (await loadAccessibleAiTeams(user))
-    .filter((team) => team.canManageTeam);
+  const access = await loadAccessibleAiTeams(user);
+  let managedTeams: any[] = access.teams.filter((team) => team.canManageTeam);
   if (requestedTeamId && !managedTeams.some((team) => team.teamId === requestedTeamId)) {
     const directDetail = await loadParentTeamDetail(requestedTeamId, user);
     if (directDetail?.team && directDetail.canManageTeam === true) {
@@ -5666,6 +5720,9 @@ async function resolveManagedRosterPlayer(user: AuthUser, args: Record<string, u
         detail: directDetail
       });
     }
+  }
+  if (access.isPartial && !requestedTeamId) {
+    throw new Error('Could not verify all managed teams. Choose a specific team and try again.');
   }
 
   if (requestedTeamId) {
@@ -5728,7 +5785,10 @@ async function resolveAccessiblePlayer(user: AuthUser, args: Record<string, unkn
   const requestedPlayerId = compactText(args.playerId || args.childId);
   const requestedPlayerName = compactText(args.playerName || args.childName).toLowerCase();
   const home = await loadParentHome(user);
-  const accessibleTeams = await loadAccessibleAiTeams(user);
+  const access = await loadAccessibleAiTeams(user);
+  if (access.isPartial && !requestedTeamId) {
+    throw new Error('Could not verify all player access. Choose a specific team and try again.');
+  }
   const players = [
     ...(home.players || []).map((player: any) => ({
       teamId: player.teamId,
@@ -5742,7 +5802,7 @@ async function resolveAccessiblePlayer(user: AuthUser, args: Record<string, unkn
       name: player.name || player.childName || player.playerName,
       teamName: team.teamName
     }))),
-    ...accessibleTeams.flatMap((team) => [
+    ...access.teams.flatMap((team) => [
       ...(team.detail.players || []),
       ...(team.detail.inactivePlayers || [])
     ].map((player: any) => ({

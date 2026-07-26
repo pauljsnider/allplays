@@ -198,6 +198,53 @@ describe('private AI Firestore rules', () => {
             }));
         });
 
+        it('keeps random parent-invite idempotency records writable only by verified current managers', async () => {
+            const ownerDb = testEnv.authenticatedContext('owner', {
+                email: 'owner@example.com',
+                email_verified: true
+            }).firestore();
+            const secondManagerDb = testEnv.authenticatedContext('second-manager', {
+                email: 'second-manager@example.com',
+                email_verified: true
+            }).firestore();
+            const unrelatedDb = testEnv.authenticatedContext('unrelated', {
+                email: 'unrelated@example.com',
+                email_verified: true
+            }).firestore();
+            const idempotencyPath = 'teams/team-1/inviteIdempotency/parent_abc123';
+            const now = new Date();
+            const ownerPayload = {
+                accessCode: 'ABCD2345',
+                type: 'parent_invite',
+                playerId: 'player-1',
+                email: 'parent@example.com',
+                generatedBy: 'owner',
+                createdAt: now,
+                updatedAt: now
+            };
+
+            await assertSucceeds(setDoc(doc(ownerDb, idempotencyPath), ownerPayload));
+            await assertSucceeds(getDoc(doc(ownerDb, idempotencyPath)));
+            await assertSucceeds(getDoc(doc(secondManagerDb, idempotencyPath)));
+            await assertFails(getDoc(doc(unrelatedDb, idempotencyPath)));
+            await assertFails(setDoc(doc(secondManagerDb, idempotencyPath), {
+                ...ownerPayload,
+                generatedBy: 'owner'
+            }));
+            await assertSucceeds(setDoc(doc(secondManagerDb, idempotencyPath), {
+                ...ownerPayload,
+                accessCode: 'WXYZ6789',
+                generatedBy: 'second-manager',
+                updatedAt: new Date()
+            }));
+            await assertFails(setDoc(doc(secondManagerDb, idempotencyPath), {
+                ...ownerPayload,
+                accessCode: 'SHORT',
+                generatedBy: 'second-manager'
+            }));
+            await assertFails(deleteDoc(doc(secondManagerDb, idempotencyPath)));
+        });
+
         it('lets only the originating current manager restage an executing payload', async () => {
             const ownerDb = testEnv.authenticatedContext('owner').firestore();
             const secondManagerDb = testEnv.authenticatedContext('second-manager', {

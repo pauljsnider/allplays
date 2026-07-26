@@ -4730,26 +4730,25 @@ export function generateAccessCode() {
     return generateJoinCode();
 }
 
-function deterministicAccessCode(value, attempt = 0) {
-    const source = `${String(value || '')}:${attempt}`;
-    let first = 2166136261;
-    let second = 2246822519;
-    for (let index = 0; index < source.length; index += 1) {
-        const code = source.charCodeAt(index);
-        first = Math.imul(first ^ code, 16777619) >>> 0;
-        second = Math.imul(second ^ code, 3266489917) >>> 0;
+async function buildAccessCodeIdempotencyId(value) {
+    const cryptoApi = globalThis.crypto || globalThis.msCrypto;
+    if (!cryptoApi?.subtle || typeof TextEncoder === 'undefined') {
+        throw new Error('Secure invite idempotency is not available in this browser.');
     }
-    return `${first.toString(36).padStart(7, '0')}${second.toString(36).padStart(7, '0')}`
-        .slice(0, 8)
-        .toUpperCase();
+    const digest = await cryptoApi.subtle.digest(
+        'SHA-256',
+        new TextEncoder().encode(String(value || ''))
+    );
+    return `parent_${Array.from(new Uint8Array(digest))
+        .map(byte => byte.toString(16).padStart(2, '0'))
+        .join('')}`;
 }
 
 function matchesReusableAccessCode(existing = {}, expected = {}) {
     return existing.type === expected.type &&
         String(existing.teamId || '') === String(expected.teamId || '') &&
         String(existing.playerId || '') === String(expected.playerId || '') &&
-        String(existing.email || '').trim().toLowerCase() === String(expected.email || '').trim().toLowerCase() &&
-        String(existing.generatedBy || '') === String(expected.generatedBy || '');
+        String(existing.email || '').trim().toLowerCase() === String(expected.email || '').trim().toLowerCase();
 }
 
 function isReusableAccessCodeEligible(existing = {}, expected = {}) {
@@ -4763,15 +4762,33 @@ function isReusableAccessCodeEligible(existing = {}, expected = {}) {
         !isAccessCodeExpired(existing.expiresAt);
 }
 
+function isCompletedParentAccessCode(existing = {}, expected = {}) {
+    const status = String(existing.status || '').trim().toLowerCase();
+    return matchesReusableAccessCode(existing, expected) &&
+        existing.type === 'parent_invite' &&
+        existing.used === true &&
+        status === 'accepted' &&
+        Boolean(String(existing.usedBy || '').trim()) &&
+        existing.revoked !== true &&
+        existing.active !== false;
+}
+
 async function createUniqueAccessCode(accessCodeData, preferredCode, options = {}) {
     const idempotencyKey = String(options?.idempotencyKey || '').trim();
+    const idempotencyRef = idempotencyKey && accessCodeData.type === 'parent_invite' && accessCodeData.teamId
+        ? doc(
+            db,
+            'teams',
+            String(accessCodeData.teamId),
+            'inviteIdempotency',
+            await buildAccessCodeIdempotencyId(idempotencyKey)
+        )
+        : null;
     for (let attempt = 0; attempt < ACCESS_CODE_MAX_ATTEMPTS; attempt += 1) {
         const candidateCode = normalizeJoinCode(
-            idempotencyKey
-                ? deterministicAccessCode(idempotencyKey, attempt)
-                : attempt === 0 && preferredCode
-                    ? preferredCode
-                    : generateAccessCode()
+            attempt === 0 && preferredCode
+                ? preferredCode
+                : generateAccessCode()
         );
         if (!candidateCode) {
             continue;
@@ -4779,16 +4796,36 @@ async function createUniqueAccessCode(accessCodeData, preferredCode, options = {
 
         const codeRef = doc(db, "accessCodes", candidateCode);
         const created = await runTransaction(db, async (transaction) => {
+            let idempotencySnapshot = null;
+            if (idempotencyRef) {
+                idempotencySnapshot = await transaction.get(idempotencyRef);
+                if (idempotencySnapshot.exists()) {
+                    const idempotencyData = idempotencySnapshot.data() || {};
+                    const existingCode = normalizeJoinCode(idempotencyData.accessCode);
+                    if (existingCode) {
+                        const existingRef = doc(db, 'accessCodes', existingCode);
+                        const existingSnapshot = await transaction.get(existingRef);
+                        if (existingSnapshot.exists()) {
+                            const existingData = existingSnapshot.data() || {};
+                            if (
+                                isReusableAccessCodeEligible(existingData, accessCodeData) ||
+                                isCompletedParentAccessCode(existingData, accessCodeData)
+                            ) {
+                                return {
+                                    id: existingRef.id || existingCode,
+                                    code: existingCode,
+                                    reused: true,
+                                    completed: isCompletedParentAccessCode(existingData, accessCodeData),
+                                    existingData
+                                };
+                            }
+                        }
+                    }
+                }
+            }
+
             const codeSnapshot = await transaction.get(codeRef);
             if (codeSnapshot.exists()) {
-                if (idempotencyKey && isReusableAccessCodeEligible(codeSnapshot.data() || {}, accessCodeData)) {
-                    return {
-                        id: codeRef.id || candidateCode,
-                        code: candidateCode,
-                        reused: true,
-                        existingData: codeSnapshot.data() || {}
-                    };
-                }
                 return null;
             }
 
@@ -4797,6 +4834,20 @@ async function createUniqueAccessCode(accessCodeData, preferredCode, options = {
                 code: candidateCode
             };
             transaction.set(codeRef, payload);
+            if (idempotencyRef) {
+                const previousIdempotencyData = idempotencySnapshot?.exists()
+                    ? idempotencySnapshot.data() || {}
+                    : {};
+                transaction.set(idempotencyRef, {
+                    accessCode: candidateCode,
+                    type: accessCodeData.type,
+                    playerId: String(accessCodeData.playerId || ''),
+                    email: String(accessCodeData.email || '').trim().toLowerCase(),
+                    generatedBy: String(accessCodeData.generatedBy || ''),
+                    createdAt: previousIdempotencyData.createdAt || accessCodeData.createdAt,
+                    updatedAt: accessCodeData.createdAt
+                });
+            }
             return {
                 id: codeRef.id || candidateCode,
                 code: candidateCode
@@ -5245,6 +5296,7 @@ export async function inviteParent(teamId, playerId, playerNum, parentEmail, rel
         id: accessCodeId,
         code,
         reused = false,
+        completed = false,
         existingData = null
     } = await createUniqueAccessCode(accessCodeData, null, {
         idempotencyKey: String(options?.idempotencyKey || '').trim()
@@ -5254,9 +5306,9 @@ export async function inviteParent(teamId, playerId, playerNum, parentEmail, rel
     // Non-global-admin team owners/admins cannot query /users from the client,
     // so a client-side lookup would throw permission-denied here even though
     // the invite code was already created and the invite email already queued.
-    let existingUser = reused && existingData?.used === true;
+    let existingUser = reused && (completed || existingData?.used === true);
     let autoLinked = existingUser;
-    if (normalizedParentEmail) {
+    if (normalizedParentEmail && !completed) {
         try {
             const autoAcceptResult = await autoAcceptParentInviteForExistingUser(accessCodeId);
             existingUser = autoAcceptResult.existingUser;
@@ -5274,7 +5326,9 @@ export async function inviteParent(teamId, playerId, playerNum, parentEmail, rel
         teamName: team?.name || null,
         playerName: player?.name || null,
         existingUser,
-        autoLinked
+        autoLinked,
+        reused,
+        completed
     };
 }
 

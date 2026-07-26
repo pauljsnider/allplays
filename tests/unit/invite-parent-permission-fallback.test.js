@@ -165,14 +165,14 @@ describe('inviteParent permission fallback (issue #3844)', () => {
 
     it('reuses the same player-scoped invite code after an interrupted retry', async () => {
         const { inviteParent } = await import('../../js/db.js');
-        let storedAccessCode = null;
+        const storedDocs = new Map();
         const transactionSet = vi.fn((reference, value) => {
-            storedAccessCode = { id: reference.id, ...value };
+            storedDocs.set(reference.path, { id: reference.id, ...value });
         });
         runTransactionMock.mockImplementation(async (database, updateFn) => updateFn({
-            get: vi.fn(async () => ({
-                exists: () => Boolean(storedAccessCode),
-                data: () => storedAccessCode
+            get: vi.fn(async (reference) => ({
+                exists: () => storedDocs.has(reference.path),
+                data: () => storedDocs.get(reference.path)
             })),
             set: transactionSet
         }));
@@ -199,7 +199,15 @@ describe('inviteParent permission fallback (issue #3844)', () => {
         );
 
         expect(retried.code).toBe(first.code);
-        expect(transactionSet).toHaveBeenCalledTimes(1);
+        expect(transactionSet).toHaveBeenCalledTimes(2);
+        expect(transactionSet).toHaveBeenCalledWith(
+            expect.objectContaining({ path: expect.stringMatching(/^accessCodes\/[A-Z2-9]{8}$/) }),
+            expect.objectContaining({ code: first.code })
+        );
+        expect(transactionSet).toHaveBeenCalledWith(
+            expect.objectContaining({ path: expect.stringMatching(/^teams\/team-1\/inviteIdempotency\/parent_[a-f0-9]{64}$/) }),
+            expect.objectContaining({ accessCode: first.code })
+        );
         expect(callableMock).toHaveBeenCalledTimes(2);
     });
 
@@ -212,16 +220,16 @@ describe('inviteParent permission fallback (issue #3844)', () => {
         ['removed', { status: 'removed' }],
         ['cancelled', { status: 'cancelled' }],
         ['revoked status', { status: 'revoked' }]
-    ])('creates a fresh deterministic attempt instead of reusing a %s parent invite', async (_label, invalidState) => {
+    ])('creates a fresh secure random code instead of reusing a %s parent invite', async (_label, invalidState) => {
         const { inviteParent } = await import('../../js/db.js');
-        const storedAccessCodes = new Map();
+        const storedDocs = new Map();
         const transactionSet = vi.fn((reference, value) => {
-            storedAccessCodes.set(reference.id, { id: reference.id, ...value });
+            storedDocs.set(reference.path, { id: reference.id, ...value });
         });
         runTransactionMock.mockImplementation(async (database, updateFn) => updateFn({
             get: vi.fn(async (reference) => ({
-                exists: () => storedAccessCodes.has(reference.id),
-                data: () => storedAccessCodes.get(reference.id)
+                exists: () => storedDocs.has(reference.path),
+                data: () => storedDocs.get(reference.path)
             })),
             set: transactionSet
         }));
@@ -238,8 +246,9 @@ describe('inviteParent permission fallback (issue #3844)', () => {
             'Father',
             options
         );
-        storedAccessCodes.set(first.code, {
-            ...storedAccessCodes.get(first.code),
+        const firstCodePath = `accessCodes/${first.code}`;
+        storedDocs.set(firstCodePath, {
+            ...storedDocs.get(firstCodePath),
             ...invalidState
         });
         const retried = await inviteParent(
@@ -252,8 +261,60 @@ describe('inviteParent permission fallback (issue #3844)', () => {
         );
 
         expect(retried.code).not.toBe(first.code);
-        expect(transactionSet).toHaveBeenCalledTimes(2);
+        expect(transactionSet).toHaveBeenCalledTimes(4);
         expect(callableMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('reuses a completed auto-linked invite without auto-linking or creating another code', async () => {
+        const { inviteParent } = await import('../../js/db.js');
+        const storedDocs = new Map();
+        const transactionSet = vi.fn((reference, value) => {
+            storedDocs.set(reference.path, { id: reference.id, ...value });
+        });
+        runTransactionMock.mockImplementation(async (database, updateFn) => updateFn({
+            get: vi.fn(async (reference) => ({
+                exists: () => storedDocs.has(reference.path),
+                data: () => storedDocs.get(reference.path)
+            })),
+            set: transactionSet
+        }));
+        callableMock.mockResolvedValue({
+            data: { autoLinked: true, existingUser: true, userId: 'parent-1' }
+        });
+        const options = { idempotencyKey: 'ai_retry1:invite:player-1:dad@allplays.ai' };
+
+        const first = await inviteParent(
+            'team-1',
+            'player-1',
+            '1',
+            'dad@allplays.ai',
+            'Father',
+            options
+        );
+        const firstCodePath = `accessCodes/${first.code}`;
+        storedDocs.set(firstCodePath, {
+            ...storedDocs.get(firstCodePath),
+            used: true,
+            usedBy: 'parent-1',
+            status: 'accepted',
+            autoAccepted: true
+        });
+        const retried = await inviteParent(
+            'team-1',
+            'player-1',
+            '1',
+            'dad@allplays.ai',
+            'Father',
+            options
+        );
+
+        expect(retried).toMatchObject({
+            code: first.code,
+            existingUser: true,
+            autoLinked: true
+        });
+        expect(transactionSet).toHaveBeenCalledTimes(2);
+        expect(callableMock).toHaveBeenCalledTimes(1);
     });
 });
 

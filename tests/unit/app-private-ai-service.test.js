@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { buildPrivateAiLaunchPrompt } from '../../apps/app/src/lib/privateAiLaunch.ts';
 
 const dbMocks = vi.hoisted(() => ({
     getUserProfile: vi.fn()
@@ -1291,6 +1292,28 @@ describe('private AI service', () => {
         expect(plannerPrompt).toContain('"managedTeamCount":1');
     });
 
+    it('retains successfully discovered email-only admin capabilities when another access read is partial', async () => {
+        const emailOnlyAdmin = {
+            ...authUser,
+            roles: ['parent'],
+            coachOf: [],
+            isAdmin: false,
+            isPlatformAdmin: false
+        };
+        scheduleMocks.loadParentScheduleScope.mockResolvedValueOnce({
+            profile: {},
+            children: [],
+            staffTeams: [{ teamId: 'team-1', teamName: 'Bears' }],
+            isPartial: true
+        });
+        const { loadPrivateAiRoleCapabilities } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        await expect(loadPrivateAiRoleCapabilities(emailOnlyAdmin)).resolves.toEqual({
+            isTeamManager: true,
+            managedTeamCount: 1
+        });
+    });
+
     it('resolves and executes manager tools for an email-only team admin', async () => {
         const emailOnlyAdmin = {
             ...authUser,
@@ -1326,6 +1349,39 @@ describe('private AI service', () => {
                     canManageTeam: true
                 }]
             }
+        });
+        expect(teamMocks.loadParentTeamDetail).toHaveBeenCalledWith('team-1', emailOnlyAdmin);
+    });
+
+    it('allows a specifically targeted verified manager team when broader access discovery is partial', async () => {
+        const emailOnlyAdmin = {
+            ...authUser,
+            roles: ['parent'],
+            coachOf: [],
+            isAdmin: false,
+            isPlatformAdmin: false
+        };
+        homeMocks.loadParentHome.mockResolvedValueOnce({
+            teams: [],
+            players: []
+        });
+        scheduleMocks.loadParentScheduleScope.mockResolvedValueOnce({
+            profile: {},
+            children: [],
+            staffTeams: [{ teamId: 'team-1', teamName: 'Bears' }],
+            isPartial: true
+        });
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        await expect(runPrivateAiTool(emailOnlyAdmin, {
+            name: 'update_team_settings',
+            args: {
+                teamId: 'team-1',
+                settings: { name: 'Bears Updated' }
+            }
+        })).resolves.toMatchObject({
+            ok: true,
+            requiresConfirmation: true
         });
         expect(teamMocks.loadParentTeamDetail).toHaveBeenCalledWith('team-1', emailOnlyAdmin);
     });
@@ -1377,7 +1433,7 @@ describe('private AI service', () => {
             ok: false,
             error: 'Could not verify all team access. Try again before using team AI tools.'
         });
-        expect(teamMocks.loadParentTeamDetail).not.toHaveBeenCalled();
+        expect(teamMocks.loadParentTeamDetail).toHaveBeenCalledWith('team-1', coachUser);
     });
 
     it('validates supported AI chat files and infers roster, schedule, or general analysis intent', async () => {
@@ -1768,7 +1824,7 @@ describe('private AI service', () => {
         const { sendPrivateAiAttachmentMessage } = await import('../../apps/app/src/lib/privateAiService.ts');
         const result = await sendPrivateAiAttachmentMessage(coachUser, {
             teamId: 'team-1',
-            text: 'Manage the Bears schedule. I can add or update games, cancel events, or attach this CSV for bulk schedule changes.',
+            text: buildPrivateAiLaunchPrompt('schedule-import', 'Bears'),
             file: csv,
             launchIntent: 'schedule-import'
         }, 'schedule-launch-import');
@@ -1789,6 +1845,54 @@ describe('private AI service', () => {
             })
         ]);
         expect(aiMocks.model.generateContent).not.toHaveBeenCalled();
+    });
+
+    it('honors an explicit schedule mutation even when the first attachment still carries the launcher intent', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        const csvText = [
+            'Event ID,Event Type,Date,Opponent,Location',
+            'game-1,game,2026-06-01,Rockets,Field 1'
+        ].join('\n');
+        const csv = new File([csvText], 'schedule.csv', { type: 'text/csv' });
+        Object.defineProperty(csv, 'text', { value: async () => csvText });
+        aiMocks.model.generateContent
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                toolCalls: [{
+                    name: 'update_schedule_event',
+                    args: {
+                        teamId: 'team-1',
+                        eventId: 'game-1',
+                        eventType: 'game',
+                        input: { location: 'Field 2' }
+                    }
+                }]
+            })))
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                answer: 'I staged the requested update. Reply yes to confirm.'
+            })));
+
+        const { sendPrivateAiAttachmentMessage } = await import('../../apps/app/src/lib/privateAiService.ts');
+        const result = await sendPrivateAiAttachmentMessage(coachUser, {
+            teamId: 'team-1',
+            text: `${buildPrivateAiLaunchPrompt('schedule-import', 'Bears')} Actually, update the existing Rockets game location from this schedule.`,
+            file: csv,
+            launchIntent: 'schedule-import'
+        }, 'schedule-launch-explicit-mutation');
+
+        expect(result.toolResults).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                name: 'update_schedule_event',
+                ok: true,
+                requiresConfirmation: true
+            })
+        ]));
+        expect(result.toolResults.some((tool) => tool.name === 'apply_schedule_import')).toBe(false);
+        expect(result.assistantMessage.artifacts).toEqual([]);
     });
 
     it('stores a private attachment receipt without persisting the raw roster file', async () => {
@@ -4050,6 +4154,92 @@ describe('private AI service', () => {
             }),
             { merge: true }
         );
+    });
+
+    it('revalidates recovered schedule imports against conflicts created after the execution lease expired', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        const row = {
+            rowNumber: 1,
+            eventType: 'game',
+            startsAt: '2026-08-01T18:00:00.000Z',
+            endsAt: null,
+            opponent: 'Hawks',
+            title: null,
+            location: 'Field 1',
+            arrivalTime: null,
+            isHome: true,
+            notes: null
+        };
+        const expiresAt = new Date(Date.now() + 60_000).toISOString();
+        const expiredLease = new Date(Date.now() - 1_000).toISOString();
+        firebaseMocks.getDoc.mockImplementation(async (reference) => {
+            const path = reference?.path?.join('/');
+            const isTeamPayload = path === 'teams/team-1/privateAiPendingActions/ai_schedrec1';
+            return {
+                exists: () => true,
+                data: () => ({
+                    status: 'executing',
+                    userId: 'user-1',
+                    toolName: 'apply_schedule_import',
+                    teamId: 'team-1',
+                    payloadScope: 'team',
+                    args: isTeamPayload
+                        ? { teamId: 'team-1', rows: [row] }
+                        : { teamId: 'team-1', previewSummary: { total: 1, games: 1 } },
+                    executionLeaseExpiresAt: expiredLease,
+                    expiresAt
+                })
+            };
+        });
+        firebaseMocks.runTransaction.mockImplementationOnce((db, callback) => callback({
+            get: vi.fn(async (reference) => {
+                const path = reference?.path?.join('/');
+                const isTeamPayload = path === 'teams/team-1/privateAiPendingActions/ai_schedrec1';
+                return {
+                    exists: () => true,
+                    data: () => ({
+                        status: 'executing',
+                        userId: 'user-1',
+                        toolName: 'apply_schedule_import',
+                        teamId: 'team-1',
+                        payloadScope: 'team',
+                        args: isTeamPayload
+                            ? { teamId: 'team-1', rows: [row] }
+                            : { teamId: 'team-1', previewSummary: { total: 1, games: 1 } },
+                        executionLeaseExpiresAt: expiredLease,
+                        expiresAt
+                    })
+                };
+            }),
+            set: vi.fn()
+        }));
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            children: [],
+            events: [futureEvent({
+                id: 'concurrent-game',
+                eventKey: 'team-1:concurrent-game:player-1',
+                date: new Date(row.startsAt),
+                opponent: 'Hawks',
+                location: 'Field 1'
+            })],
+            staffTeams: [{ teamId: 'team-1', teamName: 'Bears' }],
+            isPartial: false
+        });
+        const { generatePrivateAiAnswer } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const confirmed = await generatePrivateAiAnswer(coachUser, 'confirm ai_schedrec1');
+
+        expect(confirmed.toolResults[0]).toMatchObject({
+            ok: false,
+            error: expect.stringContaining('schedule changed after this preview')
+        });
+        expect(scheduleMocks.createScheduleImportGame).not.toHaveBeenCalled();
+        expect(scheduleMocks.createScheduleImportPractice).not.toHaveBeenCalled();
     });
 
     it.each([
