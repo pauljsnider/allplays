@@ -7,66 +7,47 @@ const workflowPath = '.github/workflows/deploy-candidate-host.yml';
 const workflowSource = readFileSync(resolve(process.cwd(), workflowPath), 'utf8');
 const workflow = parseYaml(workflowSource);
 
-describe('candidate-host deployment workflow', () => {
-    it('is manually gated and targets only the fixed candidate Hosting site', () => {
+describe('candidate-host validation workflow', () => {
+    it('is manually gated, deny-by-default, and contains one read-only job', () => {
         expect(workflow.on).toHaveProperty('workflow_dispatch');
         expect(workflow.on).not.toHaveProperty('push');
+        expect(workflow.permissions).toEqual({});
+        expect(Object.keys(workflow.jobs)).toEqual(['validate-candidate-bundle']);
 
-        const deployJob = workflow.jobs['deploy-candidate'];
-        expect(deployJob.environment).toBe('candidate-host');
-        expect(workflowSource).toContain('.hosting.site = "game-flow-c6311"');
-        expect(workflowSource).toContain('--project game-flow-c6311');
-        expect(workflowSource).toContain('--only hosting');
+        const validationJob = workflow.jobs['validate-candidate-bundle'];
+        expect(validationJob.permissions).toEqual({ contents: 'read' });
+        expect(validationJob.permissions?.['id-token']).toBeUndefined();
+        expect(validationJob['timeout-minutes']).toBe(15);
+    });
+
+    it('builds and validates a production-equivalent credential-free bundle', () => {
+        const validationJob = workflow.jobs['validate-candidate-bundle'];
+        const validationText = JSON.stringify(validationJob);
+
+        expect(validationText).toContain('npm run app:build');
+        expect(validationText).toContain('scripts/stage-pages-bundle.mjs');
+        expect(validationText).toContain('scripts/write-firebase-hosting-config.mjs');
+        expect(validationText).toContain('$bundle/site/index.html');
+        expect(validationText).toContain('$bundle/site/app/index.html');
+        expect(validationText).toContain('del(.hosting.site, .functions, .firestore, .storage)');
+        expect(validationText).toContain('persist-credentials');
+    });
+
+    it('cannot authenticate, publish an artifact handoff, or deploy', () => {
+        expect(workflowSource).not.toContain('id-token: write');
+        expect(workflowSource).not.toContain('google-github-actions/auth');
+        expect(workflowSource).not.toContain('firebase-tools@');
+        expect(workflowSource).not.toContain('actions/upload-artifact');
+        expect(workflowSource).not.toContain('actions/download-artifact');
+        expect(workflowSource).not.toMatch(/\bhosting:channel:deploy\b/);
+        expect(workflowSource).not.toMatch(/\bdeploy\s+--only\b/);
+        expect(workflowSource).not.toContain('game-flow-c6311');
         expect(workflowSource).not.toContain('allplays.ai');
-        expect(workflowSource).not.toMatch(/\b(dns|domain:|functions|firestore|storage)\s+deploy\b/i);
     });
 
-    it('prepares executable tooling outside the OIDC-capable deploy job', () => {
-        const prepareJob = workflow.jobs['prepare-candidate-artifact'];
-        const deployJob = workflow.jobs['deploy-candidate'];
-        const prepareText = JSON.stringify(prepareJob);
-        const deployText = JSON.stringify(deployJob);
-
-        expect(prepareText).toContain('npm run app:build');
-        expect(prepareText).toContain('scripts/stage-pages-bundle.mjs');
-        expect(prepareText).toContain('scripts/write-firebase-hosting-config.mjs');
-        expect(deployText).toContain('$bundle/site/index.html');
-        expect(deployText).toContain('$bundle/site/app/index.html');
-        expect(prepareText).toContain('firebase-tools@15.24.0');
-        expect(prepareText).toContain('$bundle/firebase-cli/node_modules/firebase-tools/lib/bin/firebase.js');
-        expect(deployText).not.toMatch(/npm (?:ci|install)/);
-        expect(deployText).toContain('$bundle/firebase-cli/node_modules/firebase-tools/lib/bin/firebase.js');
-        expect(prepareJob.permissions?.['id-token']).toBeUndefined();
-        expect(deployJob.permissions?.['id-token']).toBe('write');
-        expect(deployText).not.toMatch(/stage-pages-bundle|write-firebase-hosting-config/);
-    });
-
-    it('validates the explicit Hosting-only handoff before authentication', () => {
-        const validation = workflowSource.indexOf('name: Validate candidate target and artifact before OIDC');
-        const authentication = workflowSource.indexOf('name: Authenticate candidate Hosting deploy through OIDC');
-        const deployment = workflowSource.indexOf('name: Deploy candidate Firebase Hosting site');
-
-        expect(validation).toBeGreaterThan(-1);
-        expect(authentication).toBeGreaterThan(validation);
-        expect(deployment).toBeGreaterThan(authentication);
-        expect(workflowSource.slice(validation, authentication)).toContain('.hosting.site == "game-flow-c6311"');
-        expect(workflowSource.slice(validation, authentication)).toContain('has("functions") | not');
-        expect(workflowSource.slice(validation, authentication)).toContain('has("firestore") | not');
-        expect(workflowSource.slice(validation, authentication)).toContain('has("storage") | not');
-        expect(workflowSource).not.toMatch(/credentials_json\s*:/i);
-    });
-
-    it('smokes and reports the candidate origin only after deployment succeeds', () => {
-        const smokeJob = workflow.jobs['smoke-candidate'];
-        const smokeText = JSON.stringify(smokeJob);
-
-        expect(smokeJob.needs).toBe('deploy-candidate');
-        expect(smokeJob.permissions).toEqual({ contents: 'read' });
-        expect(smokeJob.permissions?.['id-token']).toBeUndefined();
-        expect(smokeJob.env.CANDIDATE_HOST_URL).toBe('https://game-flow-c6311.web.app');
-        expect(smokeJob.env.ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY)
-            .toBe('${{ vars.APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY }}');
-        expect(smokeText).toContain('echo \\"Testing candidate origin: $CANDIDATE_HOST_URL\\"');
-        expect(smokeText).toContain('npm run smoke:candidate-host -- \\"$CANDIDATE_HOST_URL\\"');
+    it('reports why deployment is disabled', () => {
+        expect(workflowSource).toContain(
+            'Deployment is intentionally disabled until an isolated integration Firebase project is available.'
+        );
     });
 });

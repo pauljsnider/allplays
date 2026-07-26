@@ -4,6 +4,12 @@ This runbook gates a future move of `allplays.ai` and `www.allplays.ai` from
 GitHub Pages to the Firebase Hosting candidate at
 `https://game-flow-c6311.web.app`. It does not authorize or execute that change.
 
+The candidate origin currently uses the production Firebase project and is
+therefore refreshed only by the protected production deployment. The
+`deploy-candidate-host` workflow validates a production-equivalent bundle but
+cannot authenticate or deploy. Independent candidate deployments remain
+disabled until an isolated integration Firebase project is provisioned.
+
 The rollback target is the last known-good GitHub Pages deployment serving the
 canonical domains immediately before cutover. The GitHub Pages origin is
 `pauljsnider.github.io`. The exact pre-cutover DNS provider export is the
