@@ -42,14 +42,44 @@ async function findOwnedInviteCode({ firestore, code, uid, allowedTypes }) {
 
 function canQueueInviteEmailForCaller({ invite = {}, team = null, user = {}, uid, email }) {
   const normalizedUid = String(uid || '').trim();
-  if (String(invite.generatedBy || '').trim() === normalizedUid) return true;
-  if (String(invite.type || '').trim().toLowerCase() !== 'parent_invite') return false;
-  if (!String(invite.teamId || '').trim() || !team) return false;
-  return hasTeamAdminAccess({ team, user, uid: normalizedUid, email });
+  const inviteType = String(invite.type || '').trim().toLowerCase();
+  if (inviteType === 'parent_invite') {
+    if (!String(invite.teamId || '').trim() || !team) return false;
+    return hasTeamAdminAccess({ team, user, uid: normalizedUid, email });
+  }
+  return String(invite.generatedBy || '').trim() === normalizedUid;
+}
+
+function getInviteExpirationMillis(expiresAt) {
+  if (!expiresAt) return null;
+  if (typeof expiresAt.toMillis === 'function') return expiresAt.toMillis();
+  if (expiresAt instanceof Date) return expiresAt.getTime();
+  if (Number.isFinite(Number(expiresAt))) return Number(expiresAt);
+  if (Number.isFinite(Number(expiresAt._seconds))) return Number(expiresAt._seconds) * 1000;
+  const parsed = new Date(expiresAt).getTime();
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function isInviteEmailDeliveryEligible(invite = {}, now = Date.now()) {
+  if (invite.revoked === true || invite.active === false) return false;
+  const status = String(invite.status || '').trim().toLowerCase();
+  if (['cancelled', 'expired', 'removed', 'revoked'].includes(status)) return false;
+
+  const inviteType = String(invite.type || '').trim().toLowerCase();
+  const isLinkedParent = inviteType === 'parent_invite'
+    && invite.used === true
+    && status === 'accepted'
+    && Boolean(String(invite.usedBy || '').trim());
+  if (isLinkedParent) return true;
+  if (invite.used === true || status === 'accepted') return false;
+
+  const expiresAtMillis = getInviteExpirationMillis(invite.expiresAt);
+  return expiresAtMillis == null || expiresAtMillis > now;
 }
 
 module.exports = {
   canQueueInviteEmailForCaller,
   findInviteCode,
-  findOwnedInviteCode
+  findOwnedInviteCode,
+  isInviteEmailDeliveryEligible
 };

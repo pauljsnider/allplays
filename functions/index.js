@@ -140,7 +140,8 @@ const { createPasswordResetEmailSweeper } = require('./auth-email-password-reset
 const {
   canQueueInviteEmailForCaller,
   findInviteCode: findAuthEmailInviteCode,
-  findOwnedInviteCode: findOwnedAuthEmailInviteCode
+  findOwnedInviteCode: findOwnedAuthEmailInviteCode,
+  isInviteEmailDeliveryEligible
 } = require('./auth-email-invite-store.cjs');
 const {
   normalizeEmail,
@@ -2468,13 +2469,23 @@ async function queueInviteEmailForCode(codeId, codeData = {}, options = {}) {
   const type = String(codeData.type || '').trim().toLowerCase();
   const email = normalizeParentInviteEmail(codeData.email);
   const code = String(codeData.code || '').trim().toUpperCase();
-  if (!INVITE_EMAIL_TYPES.has(type) || !normalizeInviteEmailType(type) || !isValidInviteRecipientEmail(email) || !code) {
+  if (!INVITE_EMAIL_TYPES.has(type) ||
+      !normalizeInviteEmailType(type) ||
+      !isValidInviteRecipientEmail(email) ||
+      !code ||
+      !isInviteEmailDeliveryEligible(codeData)) {
     return { queued: false, reason: 'not_email_eligible' };
   }
 
   const message = buildParentInviteEmailMessage({ ...codeData, type, code });
   const forceNewDelivery = options.forceNewDelivery === true;
   const deliveryId = String(options.deliveryId || '').trim();
+  const resendRateLimitType = 'invite_resend';
+  const resendRateLimitScope = String(codeId || '').trim();
+  if (forceNewDelivery) {
+    const reserved = await reserveAuthEmailDelivery(resendRateLimitType, email, resendRateLimitScope);
+    if (!reserved) return { queued: false, reason: 'cooldown' };
+  }
   const mailRef = firestore.collection('mail').doc(buildInviteMailDocId(codeId, {
     forceNewDelivery,
     deliveryId
@@ -2504,6 +2515,9 @@ async function queueInviteEmailForCode(codeId, codeData = {}, options = {}) {
   } catch (error) {
     if (isAlreadyExistsError(error)) {
       return { queued: true, deduplicated: true, signupUrl: message.signupUrl };
+    }
+    if (forceNewDelivery) {
+      await releaseAuthEmailDelivery(resendRateLimitType, email, resendRateLimitScope);
     }
     throw error;
   }
@@ -2614,27 +2628,30 @@ exports.queueInviteEmail = functions.https.onCall(async (data, context) => {
   if (!invite) {
     throw new functions.https.HttpsError('not-found', 'Invite could not be found.');
   }
-  let canQueue = canQueueInviteEmailForCaller({
-    invite: invite.data,
-    uid,
-    email: context.auth.token?.email
-  });
-  if (!canQueue && String(invite.data.type || '').trim().toLowerCase() === 'parent_invite') {
+  if (!isInviteEmailDeliveryEligible(invite.data)) {
+    throw new functions.https.HttpsError('failed-precondition', 'Invite is no longer eligible for email delivery.');
+  }
+  const inviteType = String(invite.data.type || '').trim().toLowerCase();
+  let team = null;
+  let user = {};
+  if (inviteType === 'parent_invite') {
     const teamId = String(invite.data.teamId || '').trim();
     if (teamId) {
       const [teamSnap, userSnap] = await Promise.all([
         firestore.doc(`teams/${teamId}`).get(),
         firestore.doc(`users/${uid}`).get()
       ]);
-      canQueue = canQueueInviteEmailForCaller({
-        invite: invite.data,
-        team: teamSnap.exists ? teamSnap.data() || {} : null,
-        user: userSnap.exists ? userSnap.data() || {} : {},
-        uid,
-        email: context.auth.token?.email
-      });
+      team = teamSnap.exists ? teamSnap.data() || {} : null;
+      user = userSnap.exists ? userSnap.data() || {} : {};
     }
   }
+  const canQueue = canQueueInviteEmailForCaller({
+    invite: invite.data,
+    team,
+    user,
+    uid,
+    email: context.auth.token?.email
+  });
   if (!canQueue) {
     throw new functions.https.HttpsError('not-found', 'Invite could not be found.');
   }

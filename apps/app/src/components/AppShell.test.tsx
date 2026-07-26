@@ -91,15 +91,21 @@ vi.mock('./NotificationInboxSheet', () => ({
   ),
 }));
 
-function ReportDiscoveredScheduleAccess() {
+function ReportDiscoveredScheduleAccess({
+  hasFamily = false,
+  hasStaff = true
+}: {
+  hasFamily?: boolean;
+  hasStaff?: boolean;
+} = {}) {
   const reportAccess = useScheduleAccessReporter();
   useEffect(() => {
     reportAccess({
       userId: 'user-123',
-      hasFamily: false,
-      hasStaff: true
+      hasFamily,
+      hasStaff
     });
-  }, [reportAccess]);
+  }, [hasFamily, hasStaff, reportAccess]);
   return <div>Schedule content</div>;
 }
 
@@ -170,6 +176,74 @@ describe('AppShell', () => {
       expect(screen.getByText('Manage with AI')).toBeTruthy();
     });
     expect(screen.queryByText('Family schedule')).toBeNull();
+  });
+
+  it('keeps Family in desktop navigation for an authoritatively discovered email-only parent', async () => {
+    const emailOnlyParentAuth = {
+      ...signedInAuth,
+      roles: [],
+      isParent: false,
+      user: signedInAuth.user ? {
+        ...signedInAuth.user,
+        roles: [],
+        parentTeamIds: [],
+        parentPlayerKeys: [],
+        parentOf: [],
+        coachOf: []
+      } : null
+    };
+
+    render(
+      <MemoryRouter initialEntries={['/schedule']}>
+        <AppShell auth={emailOnlyParentAuth}>
+          <Routes>
+            <Route
+              path="/schedule"
+              element={<ReportDiscoveredScheduleAccess hasFamily hasStaff={false} />}
+            />
+            <Route path="/parent-tools" element={<div>Family tools</div>} />
+          </Routes>
+        </AppShell>
+      </MemoryRouter>
+    );
+
+    const primaryNav = screen.getByRole('navigation', { name: 'Primary navigation' });
+    const familyLink = await within(primaryNav).findByRole('link', { name: 'Family' });
+    fireEvent.click(familyLink);
+
+    expect(await screen.findByText('Family tools')).toBeTruthy();
+    expect(within(primaryNav).getByRole('link', { name: 'Family' })).toBeTruthy();
+  });
+
+  it('keeps Family in mobile More for an authoritatively discovered email-only parent', async () => {
+    useShellLayoutMock.mockReturnValue({ isDesktopWeb: false });
+    const emailOnlyParentAuth = {
+      ...signedInAuth,
+      roles: [],
+      isParent: false,
+      user: signedInAuth.user ? {
+        ...signedInAuth.user,
+        roles: [],
+        parentTeamIds: [],
+        parentPlayerKeys: [],
+        parentOf: [],
+        coachOf: []
+      } : null
+    };
+
+    render(
+      <MemoryRouter initialEntries={['/schedule']}>
+        <AppShell auth={emailOnlyParentAuth}>
+          <ReportDiscoveredScheduleAccess hasFamily hasStaff={false} />
+        </AppShell>
+      </MemoryRouter>
+    );
+
+    const primaryNav = screen.getByRole('navigation', { name: 'Primary navigation' });
+    fireEvent.click(within(primaryNav).getByRole('button', { name: 'More' }));
+    const moreNav = within(screen.getByRole('dialog', { name: 'More from ALL PLAYS' }))
+      .getByRole('navigation', { name: 'More navigation' });
+    expect((await within(moreNav).findByRole('link', { name: /Family/ })).getAttribute('href')).toBe('/parent-tools');
   });
 
   beforeEach(() => {

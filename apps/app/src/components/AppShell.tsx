@@ -141,6 +141,10 @@ export function AppShell({ auth, children }: AppShellProps) {
     : 'No unread notifications';
   const reportScheduleAccess = useCallback((report: ScheduleAccessReport | null) => {
     setReportedScheduleAccess((current) => {
+      // Keep authoritative access discovered by Schedule available to the
+      // global shell after that route unmounts. It is keyed to the signed-in
+      // user below, so a sign-out or account switch cannot reuse stale access.
+      if (!report) return current;
       if (
         current?.userId === report?.userId
         && current?.hasFamily === report?.hasFamily
@@ -326,7 +330,8 @@ export function AppShell({ auth, children }: AppShellProps) {
       ? 'Signed in'
       : 'Explore ALL PLAYS';
   const teamNavPath = getSingleTeamNavPath(auth.user);
-  const hasFamilyNavigation = hasFamilyScheduleAccess(auth);
+  const hasFamilyNavigation = hasFamilyScheduleAccess(auth)
+    || activeReportedScheduleAccess?.hasFamily === true;
   const roleFilteredDesktopNavItems = hasFamilyNavigation
     ? desktopNavItems
     : desktopNavItems.filter((item) => item.path !== familyNavItem.path);
