@@ -162,6 +162,18 @@ async function mockPrivateAiModules(page, { firstRun = false, roles = ['parent']
                     }, { total: 0, add: 0, update: 0, deactivate: 0, reactivate: 0, invitations: 0, errors: 0 });
                 }
 
+                export async function revisePrivateAiScheduleImportProposal(user, revision) {
+                    return {
+                        rows: revision.rows,
+                        summary: revision.rows.reduce((summary, row) => {
+                            summary.total += 1;
+                            summary[row.normalized.eventType === 'practice' ? 'practices' : 'games'] += 1;
+                            summary.errors += (row.errors || []).length;
+                            return summary;
+                        }, { total: 0, games: 0, practices: 0, errors: 0 })
+                    };
+                }
+
                 export function getPrivateAiAttachmentValidationError() {
                     return '';
                 }
