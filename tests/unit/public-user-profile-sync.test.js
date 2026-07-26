@@ -161,6 +161,8 @@ describe('public user profile sync', () => {
         expect(functionsSource).toContain('createPublicProfileAuthDeleteHandler({ firestore })');
         expect(functionsSource).toContain('exports.sweepIneligiblePublicUserProfiles = functions');
         expect(functionsSource).toContain("schedule('every 24 hours')");
+        expect(functionsSource).toContain('reconcileAuthIdentity: async (userId, authIdentity) => {');
+        expect(functionsSource).toContain('syncEligibleProfile: (userId, authIdentity) => (');
         expect(functionsSource).toContain('loadPublicUserProfileAuthIdentity(context.params.uid)');
         expect(functionsSource).not.toContain('if (publicProfileSnap.exists) return null;');
     });
@@ -172,14 +174,15 @@ describe('public user profile sync', () => {
         expect(functionsSource).toContain('const emailCandidates = uniqueNonEmptyStrings([rawEmail, rawEmail.toLowerCase()]);');
         expect(functionsSource).toContain('await reconcilePublicProfileStaffMembershipsForTeam({');
         expect(functionsSource).toContain("currentStaffUserIds: afterUserIds");
+        expect(functionsSource).toContain('await reconcilePublicProfileStaffMembershipsForUser({');
+        expect(functionsSource).toContain('currentStaffTeamIds: [...teamIds]');
         expect(functionsSource).toContain('...indexedUserIds');
         expect(functionsSource).toContain('loadPublicProfileStaffTeamIds(firestore, normalizedUid)');
         expect(functionsSource).toMatch(
             /exports\.syncPublicUserProfilesOnTeamWrite = functions\s+\.runWith\(\{ failurePolicy: true \}\)\s+\.firestore/
         );
-        expect(functionsSource).toContain(
-            'await syncPublicUserProfilesForTeamChange(context.params.teamId, before, after);'
-        );
+        expect(functionsSource).toContain('createPublicProfileTeamWriteHandler({');
+        expect(functionsSource).toContain('syncTeam: syncPublicUserProfilesForTeamChange');
         expect(functionsSource).toContain('if (publicUserProfileProjection.isPublicProfileAuthUserNotFound(error))');
         expect(functionsSource).toContain('throw error;');
         expect(functionsSource).toContain("reason: authIdentity.userMissing === true ? 'auth-user-missing' : 'email-unverified'");

@@ -5,8 +5,10 @@ const test = require('node:test');
 const {
   createPublicProfileAuthDeleteHandler,
   createPublicProfileEligibilitySweepHandler,
+  createPublicProfileTeamWriteHandler,
   loadPublicProfileStaffTeamIds,
   reconcilePublicProfileStaffMembershipsForTeam,
+  reconcilePublicProfileStaffMembershipsForUser,
   resolvePublicProfileStaffUserIds,
   removePublicProfileForIneligibleAuth
 } = require('../public-user-profile-lifecycle-core.cjs');
@@ -83,6 +85,8 @@ test('Auth deletion ignores records without a uid', async () => {
 
 test('scheduled eligibility sweep removes newly unverified and missing Auth users', async () => {
   const deletedUserIds = [];
+  const reconciledUserIds = [];
+  const syncedUserIds = [];
   const profileDocs = ['verified-user', 'unverified-user', 'missing-user'].map((id) => ({
     id,
     ref: {
@@ -113,11 +117,28 @@ test('scheduled eligibility sweep removes newly unverified and missing Auth user
     auth,
     documentIdField: 'document-id',
     isAuthUserNotFound: (error) => error?.code === 'auth/user-not-found',
+    reconcileAuthIdentity: async (userId, authIdentity) => {
+      reconciledUserIds.push([userId, authIdentity]);
+    },
+    syncEligibleProfile: async (userId, authIdentity) => {
+      syncedUserIds.push([userId, authIdentity]);
+    },
     batchSize: 10
   });
 
   assert.deepEqual(await handler(), { scanned: 3, removed: 2 });
   assert.deepEqual(deletedUserIds.sort(), ['missing-user', 'unverified-user']);
+  assert.deepEqual(reconciledUserIds.map(([userId]) => userId), [
+    'verified-user',
+    'unverified-user',
+    'missing-user'
+  ]);
+  assert.deepEqual(syncedUserIds, [['verified-user', {
+    email: null,
+    displayName: null,
+    photoUrl: null,
+    emailVerified: true
+  }]]);
 });
 
 test('mixed-case admin emails resolve once to a stable uid-based staff membership', async () => {
@@ -217,4 +238,118 @@ test('team reconciliation removes a former admin after their Auth email changes'
     await loadPublicProfileStaffTeamIds(firestore, 'former-admin'),
     []
   );
+});
+
+test('Auth reconciliation removes old staff discovery and adds a new team without a team write', async () => {
+  const memberships = new Map([
+    ['team-old-former-admin', {
+      teamId: 'team-old',
+      userId: 'admin-user'
+    }]
+  ]);
+  const firestore = {
+    collection: (collectionName) => {
+      assert.equal(collectionName, 'publicProfileStaffMemberships');
+      return {
+        where: (field, operator, value) => {
+          assert.deepEqual([field, operator, value], ['userId', '==', 'admin-user']);
+          return {
+            get: async () => ({
+              docs: [...memberships].map(([id, membership]) => ({
+                id,
+                data: () => membership,
+                ref: {
+                  delete: async () => memberships.delete(id)
+                }
+              }))
+            })
+          };
+        }
+      };
+    },
+    doc: (path) => ({
+      set: async (membership) => {
+        memberships.set(path.split('/').at(-1), membership);
+      }
+    })
+  };
+
+  const removedTeamIds = await reconcilePublicProfileStaffMembershipsForUser({
+    firestore,
+    userId: 'admin-user',
+    currentStaffTeamIds: [],
+    buildMembershipId: (teamId, userId) => `${teamId}-${userId}`,
+    updatedAt: 'server-time'
+  });
+
+  assert.deepEqual(removedTeamIds, ['team-old']);
+  assert.deepEqual([...memberships], []);
+
+  const addedTeamIds = await reconcilePublicProfileStaffMembershipsForUser({
+    firestore,
+    userId: 'admin-user',
+    currentStaffTeamIds: ['team-new'],
+    buildMembershipId: (teamId, userId) => `${teamId}-${userId}`,
+    updatedAt: 'server-time'
+  });
+
+  assert.deepEqual(addedTeamIds, ['team-new']);
+  assert.deepEqual([...memberships], [['team-new-admin-user', {
+    teamId: 'team-new',
+    userId: 'admin-user',
+    updatedAt: 'server-time'
+  }]]);
+});
+
+test('stale team trigger retries reconcile from the current team document', async () => {
+  const syncCalls = [];
+  const firestore = {
+    doc: (path) => {
+      assert.equal(path, 'teams/team-1');
+      return {
+        get: async () => ({
+          exists: true,
+          data: () => ({
+            ownerId: 'current-owner',
+            adminEmails: ['current@example.com']
+          })
+        })
+      };
+    }
+  };
+  const handler = createPublicProfileTeamWriteHandler({
+    firestore,
+    syncTeam: async (...args) => syncCalls.push(args)
+  });
+
+  await handler({
+    before: {
+      exists: true,
+      data: () => ({
+        ownerId: 'old-owner',
+        adminEmails: ['old@example.com']
+      })
+    },
+    after: {
+      exists: true,
+      data: () => ({
+        ownerId: 'stale-retry-owner',
+        adminEmails: ['stale@example.com']
+      })
+    }
+  }, {
+    params: { teamId: 'team-1' }
+  });
+
+  assert.deepEqual(syncCalls, [[
+    'team-1',
+    {
+      ownerId: 'old-owner',
+      adminEmails: ['old@example.com']
+    },
+    {
+      ownerId: 'current-owner',
+      adminEmails: ['current@example.com']
+    }
+  ]]);
 });

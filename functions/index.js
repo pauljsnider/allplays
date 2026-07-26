@@ -7,8 +7,10 @@ const publicUserProfileProjection = require('./public-user-profile-projection-co
 const {
   createPublicProfileAuthDeleteHandler,
   createPublicProfileEligibilitySweepHandler,
+  createPublicProfileTeamWriteHandler,
   loadPublicProfileStaffTeamIds,
   reconcilePublicProfileStaffMembershipsForTeam,
+  reconcilePublicProfileStaffMembershipsForUser,
   resolvePublicProfileStaffUserIds,
   removePublicProfileForIneligibleAuth
 } = require('./public-user-profile-lifecycle-core.cjs');
@@ -2762,7 +2764,18 @@ exports.sweepIneligiblePublicUserProfiles = functions
       firestore,
       auth: admin.auth(),
       documentIdField: admin.firestore.FieldPath.documentId(),
-      isAuthUserNotFound: publicUserProfileProjection.isPublicProfileAuthUserNotFound
+      isAuthUserNotFound: publicUserProfileProjection.isPublicProfileAuthUserNotFound,
+      reconcileAuthIdentity: async (userId, authIdentity) => {
+        const userSnap = await firestore.doc(`users/${userId}`).get();
+        await reconcilePublicProfileStaffMembershipsForAuthUser(
+          userId,
+          authIdentity,
+          userSnap.exists ? (userSnap.data() || {}) : {}
+        );
+      },
+      syncEligibleProfile: (userId, authIdentity) => (
+        syncPublicUserProfileProjectionForUser(userId, { authIdentity })
+      )
     });
     const result = await publicProfileEligibilitySweepHandler();
     functions.logger.info('Completed public profile eligibility sweep.', result);
@@ -2835,6 +2848,11 @@ async function syncPublicUserProfileProjectionForUser(userId, options = {}) {
 
   const userData = userSnap.data() || {};
   const authIdentity = options.authIdentity || await loadPublicUserProfileAuthIdentity(normalizedUserId);
+  const discoveryTeamIds = await reconcilePublicProfileStaffMembershipsForAuthUser(
+    normalizedUserId,
+    authIdentity,
+    userData
+  );
   const removedForIneligibleAuth = await removePublicProfileForIneligibleAuth(
     publicProfileRef,
     authIdentity
@@ -2847,15 +2865,6 @@ async function syncPublicUserProfileProjectionForUser(userId, options = {}) {
     return null;
   }
 
-  const membershipUserData = {
-    ...userData,
-    email: authIdentity.email || userData.email || null
-  };
-  const discoveryTeamIds = await getNotificationRecipientTeamIdsForUser(
-    membershipUserData,
-    normalizedUserId,
-    options.extraTeamIds
-  );
   const payload = buildTrustedPublicUserProfileProjectionPayload(userData, {
     trustedEmail: authIdentity.email || userData.email || null,
     trustedDisplayName: authIdentity.displayName || null,
@@ -2873,7 +2882,38 @@ async function getPublicProfileStaffUserIdsForTeam(team = null) {
   });
 }
 
-async function syncPublicUserProfilesForTeamChange(teamId, beforeTeam, afterTeam) {
+async function reconcilePublicProfileStaffMembershipsForAuthUser(
+  userId,
+  authIdentity = {},
+  userData = {}
+) {
+  const normalizedUserId = String(userId || '').trim();
+  const teamIds = new Set();
+  const queries = [
+    firestore.collection('teams').where('ownerId', '==', normalizedUserId).get()
+  ];
+  const rawEmail = String(authIdentity.email || '').trim();
+  uniqueNonEmptyStrings([rawEmail, rawEmail.toLowerCase()]).forEach((email) => {
+    queries.push(firestore.collection('teams').where('adminEmails', 'array-contains', email).get());
+  });
+  const querySnaps = await Promise.all(queries);
+  querySnaps.forEach((snap) => {
+    (snap.docs || []).forEach((docSnap) => teamIds.add(String(docSnap.id || '').trim()));
+  });
+  await reconcilePublicProfileStaffMembershipsForUser({
+    firestore,
+    userId: normalizedUserId,
+    currentStaffTeamIds: [...teamIds],
+    buildMembershipId: publicUserProfileProjection.buildPublicProfileStaffMembershipId,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+  });
+  return uniqueNonEmptyStrings([
+    ...publicUserProfileProjection.derivePublicProfileTeamIds(userData),
+    ...teamIds
+  ]);
+}
+
+async function syncPublicUserProfilesForTeamChange(teamId, beforeTeam, afterTeam, attempt = 0) {
   const beforeKey = publicUserProfileProjection.buildTeamStaffMembershipKey(beforeTeam);
   const afterKey = publicUserProfileProjection.buildTeamStaffMembershipKey(afterTeam);
   if (beforeKey === afterKey) return;
@@ -2899,6 +2939,16 @@ async function syncPublicUserProfilesForTeamChange(teamId, beforeTeam, afterTeam
       syncPublicUserProfileProjectionForUser(candidateUserId)
     ))
   );
+  const latestTeamSnap = await firestore.doc(`teams/${teamId}`).get();
+  const latestTeam = latestTeamSnap.exists ? (latestTeamSnap.data() || {}) : null;
+  if (
+    publicUserProfileProjection.buildTeamStaffMembershipKey(latestTeam) !== afterKey
+  ) {
+    if (attempt >= 2) {
+      throw new Error(`Team ${teamId} changed repeatedly during public profile reconciliation.`);
+    }
+    await syncPublicUserProfilesForTeamChange(teamId, afterTeam, latestTeam, attempt + 1);
+  }
 }
 
 function buildApprovedParentMembershipUserUpdate({ userData = {}, requestData = {}, team = {}, player = {} }) {
@@ -7328,16 +7378,7 @@ exports.syncPublicUserProfileOnUserWrite = functions
       !== publicUserProfileProjection.buildPublicProfileUserSourceKey(after);
     let authIdentity;
     if (!sourceChanged) {
-      const [publicProfileSnap, loadedAuthIdentity] = await Promise.all([
-        publicProfileRef.get(),
-        loadPublicUserProfileAuthIdentity(context.params.uid)
-      ]);
-      authIdentity = loadedAuthIdentity;
-      if (
-        publicProfileSnap.exists &&
-        authIdentity.userMissing !== true &&
-        authIdentity.emailVerified === true
-      ) return null;
+      authIdentity = await loadPublicUserProfileAuthIdentity(context.params.uid);
     }
     await syncPublicUserProfileProjectionForUser(context.params.uid, {
       userSnap: change.after,
@@ -7380,12 +7421,10 @@ exports.syncPublicUserProfilesOnTeamWrite = functions
   .runWith({ failurePolicy: true })
   .firestore
   .document('teams/{teamId}')
-  .onWrite(async (change, context) => {
-    const before = change.before.exists ? (change.before.data() || {}) : null;
-    const after = change.after.exists ? (change.after.data() || {}) : null;
-    await syncPublicUserProfilesForTeamChange(context.params.teamId, before, after);
-    return null;
-  });
+  .onWrite(createPublicProfileTeamWriteHandler({
+    firestore,
+    syncTeam: syncPublicUserProfilesForTeamChange
+  }));
 
 exports.syncTeamOwnerAccessOnCreate = functions
   .runWith({ failurePolicy: true })

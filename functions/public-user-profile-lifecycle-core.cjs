@@ -101,6 +101,79 @@ async function reconcilePublicProfileStaffMembershipsForTeam({
   return [...candidateUserIds];
 }
 
+async function reconcilePublicProfileStaffMembershipsForUser({
+  firestore,
+  userId,
+  currentStaffTeamIds = [],
+  buildMembershipId,
+  updatedAt
+}) {
+  if (!firestore || typeof buildMembershipId !== 'function') {
+    throw new TypeError('firestore and buildMembershipId are required');
+  }
+  const normalizedUserId = String(userId || '').trim();
+  if (!normalizedUserId) return [];
+
+  const existingSnap = await firestore.collection('publicProfileStaffMemberships')
+    .where('userId', '==', normalizedUserId)
+    .get();
+  const desiredById = new Map();
+  const candidateTeamIds = new Set();
+  [...new Set(currentStaffTeamIds
+    .map((teamId) => String(teamId || '').trim())
+    .filter(Boolean))]
+    .forEach((teamId) => {
+      const membershipId = buildMembershipId(teamId, normalizedUserId);
+      if (!membershipId) return;
+      candidateTeamIds.add(teamId);
+      desiredById.set(membershipId, {
+        teamId,
+        userId: normalizedUserId
+      });
+    });
+
+  for (const existingDoc of existingSnap.docs || []) {
+    const existing = existingDoc.data() || {};
+    const existingTeamId = String(existing.teamId || '').trim();
+    if (existingTeamId) candidateTeamIds.add(existingTeamId);
+    const desired = desiredById.get(existingDoc.id);
+    if (
+      desired &&
+      existingTeamId === desired.teamId &&
+      existing.userId === desired.userId
+    ) {
+      desiredById.delete(existingDoc.id);
+      continue;
+    }
+    await existingDoc.ref.delete();
+  }
+
+  for (const [membershipId, membership] of desiredById) {
+    await firestore.doc(`publicProfileStaffMemberships/${membershipId}`).set({
+      ...membership,
+      ...(updatedAt !== undefined ? { updatedAt } : {})
+    });
+  }
+
+  return [...candidateTeamIds];
+}
+
+function createPublicProfileTeamWriteHandler({ firestore, syncTeam }) {
+  if (!firestore || typeof syncTeam !== 'function') {
+    throw new TypeError('firestore and syncTeam are required');
+  }
+
+  return async function syncCurrentPublicProfileTeam(change, context) {
+    const teamId = String(context?.params?.teamId || '').trim();
+    if (!teamId) return null;
+    const currentTeamSnap = await firestore.doc(`teams/${teamId}`).get();
+    const beforeTeam = change?.before?.exists ? (change.before.data() || {}) : null;
+    const currentTeam = currentTeamSnap.exists ? (currentTeamSnap.data() || {}) : null;
+    await syncTeam(teamId, beforeTeam, currentTeam);
+    return null;
+  };
+}
+
 function createPublicProfileAuthDeleteHandler({ firestore }) {
   if (!firestore) throw new TypeError('firestore is required');
 
@@ -127,6 +200,8 @@ function createPublicProfileEligibilitySweepHandler({
   auth,
   documentIdField,
   isAuthUserNotFound,
+  reconcileAuthIdentity,
+  syncEligibleProfile,
   batchSize = 200,
   concurrency = 20
 }) {
@@ -150,12 +225,24 @@ function createPublicProfileEligibilitySweepHandler({
           let authIdentity;
           try {
             const authRecord = await auth.getUser(profileDoc.id);
-            authIdentity = { emailVerified: authRecord.emailVerified === true };
+            authIdentity = {
+              email: authRecord.email || null,
+              displayName: authRecord.displayName || null,
+              photoUrl: authRecord.photoURL || null,
+              emailVerified: authRecord.emailVerified === true
+            };
           } catch (error) {
             if (!isAuthUserNotFound(error)) throw error;
             authIdentity = { userMissing: true };
           }
-          return removePublicProfileForIneligibleAuth(profileDoc.ref, authIdentity);
+          if (typeof reconcileAuthIdentity === 'function') {
+            await reconcileAuthIdentity(profileDoc.id, authIdentity);
+          }
+          const removed = await removePublicProfileForIneligibleAuth(profileDoc.ref, authIdentity);
+          if (!removed && typeof syncEligibleProfile === 'function') {
+            await syncEligibleProfile(profileDoc.id, authIdentity);
+          }
+          return removed;
         }));
         removed += results.filter(Boolean).length;
       }
@@ -172,8 +259,10 @@ function createPublicProfileEligibilitySweepHandler({
 module.exports = {
   createPublicProfileAuthDeleteHandler,
   createPublicProfileEligibilitySweepHandler,
+  createPublicProfileTeamWriteHandler,
   loadPublicProfileStaffTeamIds,
   reconcilePublicProfileStaffMembershipsForTeam,
+  reconcilePublicProfileStaffMembershipsForUser,
   resolvePublicProfileStaffUserIds,
   removePublicProfileForIneligibleAuth
 };
