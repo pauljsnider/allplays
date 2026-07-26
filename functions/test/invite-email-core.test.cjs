@@ -4,9 +4,11 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   buildInviteSignupUrl,
+  buildLinkedTeamUrl,
   buildParentInviteEmailMessage,
   isValidInviteRecipientEmail,
-  normalizeInviteEmailType
+  normalizeInviteEmailType,
+  shouldQueueInviteEmailOnCreate
 } = require('../invite-email-core.cjs');
 
 test('normalizes supported parent invite types', () => {
@@ -72,4 +74,46 @@ test('builds co-parent invite copy through the canonical accept flow', () => {
   assert.match(message.subject, /co-parent Sam/);
   assert.match(message.text, /as a co-parent/);
   assert.match(message.signupUrl, /accept-invite\.html\?code=COPA1234&type=coparent/);
+});
+
+test('builds an auto-linked parent notification without a consumed acceptance link', () => {
+  const invite = {
+    code: 'LINK1234',
+    type: 'parent_invite',
+    teamId: 'team 1',
+    teamName: 'Bears',
+    playerName: 'Pat Star',
+    relation: 'Guardian',
+    used: true,
+    usedBy: 'parent-1',
+    status: 'accepted',
+    autoAccepted: true
+  };
+
+  const initialMessage = buildParentInviteEmailMessage(invite);
+  const retryMessage = buildParentInviteEmailMessage({ ...invite });
+
+  assert.equal(buildLinkedTeamUrl('team 1'), 'https://allplays.ai/app/#/teams/team%201');
+  assert.equal(initialMessage.messageKind, 'linked');
+  assert.equal(retryMessage.messageKind, 'linked');
+  assert.match(initialMessage.subject, /connected to Pat Star/);
+  assert.match(initialMessage.text, /No acceptance step or invite code is needed/);
+  assert.match(initialMessage.html, /Open ALL PLAYS/);
+  assert.doesNotMatch(initialMessage.text, /LINK1234|accept-invite/);
+  assert.doesNotMatch(retryMessage.html, /LINK1234|accept-invite/);
+});
+
+test('defers parent on-create email until auto-linking completes', () => {
+  assert.equal(shouldQueueInviteEmailOnCreate({
+    type: 'parent_invite',
+    email: 'parent@example.com'
+  }), false);
+  assert.equal(shouldQueueInviteEmailOnCreate({
+    type: 'household_invite',
+    email: 'family@example.com'
+  }), true);
+  assert.equal(shouldQueueInviteEmailOnCreate({
+    type: 'coparent_invite',
+    email: 'friend@example.com'
+  }), true);
 });

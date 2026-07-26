@@ -118,7 +118,8 @@ const {
 const {
   buildParentInviteEmailMessage,
   isValidInviteRecipientEmail,
-  normalizeInviteEmailType
+  normalizeInviteEmailType,
+  shouldQueueInviteEmailOnCreate
 } = require('./invite-email-core.cjs');
 const {
   AUTH_EMAIL_TYPES,
@@ -2495,7 +2496,8 @@ async function queueInviteEmailForCode(codeId, codeData = {}, options = {}) {
         playerId: String(codeData.playerId || '').trim() || null,
         generatedBy: String(codeData.generatedBy || '').trim() || null,
         deliveryId: forceNewDelivery ? deliveryId : null,
-        isResend: forceNewDelivery
+        isResend: forceNewDelivery,
+        messageKind: message.messageKind
       }
     });
     return { queued: true, deduplicated: false, signupUrl: message.signupUrl };
@@ -2659,8 +2661,10 @@ exports.queueParentInviteEmail = functions.firestore
   .document('accessCodes/{codeId}')
   .onCreate(async (snap, context) => {
     const codeData = snap.data() || {};
-    if (!INVITE_EMAIL_TYPES.has(String(codeData.type || '').trim().toLowerCase()) ||
-        !isValidInviteRecipientEmail(codeData.email)) {
+    // Parent invites are queued explicitly after the existing-account
+    // auto-link attempt, so their email can accurately say either "accept"
+    // or "you were linked." Household/co-parent invites do not auto-link.
+    if (!shouldQueueInviteEmailOnCreate(codeData)) {
       return null;
     }
     await queueInviteEmailForCode(context.params.codeId, codeData);

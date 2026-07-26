@@ -110,6 +110,7 @@ import {
   type ScheduleCsvImportPreviewRow
 } from './scheduleCsvImport';
 import type { AuthUser } from './types';
+import { assertPrivateAiPendingPayloadFitsFirestore } from './privateAiStorageBounds';
 import { startWorkflowTimer, WORKFLOW_TIMING } from './workflowTiming';
 
 export type PrivateAiRole = 'user' | 'assistant';
@@ -1321,6 +1322,17 @@ export async function revisePrivateAiRosterImportProposal(
     operations: plan.operations,
     ...(validationErrors.length ? { __rosterValidationErrors: validationErrors } : {})
   };
+  const nextArtifact = stripPrivateAiArtifactForTeamStorage({
+    type: 'roster-import',
+    confirmationId,
+    revision: expectedRevision + 1,
+    teamId,
+    teamName: 'Team',
+    source: 'ai-text',
+    summary: artifactSummary,
+    previewRows: rows
+  });
+  assertPrivateAiPendingPayloadFitsFirestore('roster', nextArgs, nextArtifact);
   const nextSummary = `Roster import | Team: ${teamId} | ${rosterSummary.total} operations | ${rosterSummary.invitations} invitations${validationErrors.length ? ` | ${validationErrors.length} errors` : ''}`;
   const pendingRef = doc(db, 'users', user.uid, privateAiPendingActionCollectionName, confirmationId);
   const teamPayloadRef = doc(db, 'teams', teamId, teamPrivateAiPendingActionCollectionName, confirmationId);
@@ -1366,6 +1378,12 @@ export async function revisePrivateAiRosterImportProposal(
       && compactText(artifact.teamId) === teamId
     ));
     if (!matchingArtifact) return false;
+    const storedNextArtifact = {
+      ...nextArtifact,
+      teamName: compactText(matchingArtifact.teamName) || 'Team',
+      source: normalizePrivateAiImportSource(matchingArtifact.source)
+    };
+    assertPrivateAiPendingPayloadFitsFirestore('roster', nextArgs, storedNextArtifact);
     transaction.set(pendingRef, {
       args: sanitizePendingActionArgsForUserStorage('apply_roster_import', nextArgs),
       summary: nextSummary,
@@ -1382,16 +1400,7 @@ export async function revisePrivateAiRosterImportProposal(
       toolName: 'apply_roster_import',
       revision: expectedRevision + 1,
       args: nextArgs,
-      artifact: stripPrivateAiArtifactForTeamStorage({
-        type: 'roster-import',
-        confirmationId,
-        revision: expectedRevision + 1,
-        teamId,
-        teamName: compactText(matchingArtifact.teamName) || 'Team',
-        source: normalizePrivateAiImportSource(matchingArtifact.source),
-        summary: artifactSummary,
-        previewRows: rows
-      }),
+      artifact: storedNextArtifact,
       status: 'pending',
       editedAt: serverTimestamp(),
       expiresAt: pending.expiresAt
@@ -1485,6 +1494,17 @@ export async function revisePrivateAiScheduleImportProposal(
     source: compactText(pending.args.source) || 'ai',
     ...(validationErrors.length ? { __scheduleValidationErrors: validationErrors } : {})
   };
+  const nextArtifact = stripPrivateAiArtifactForTeamStorage({
+    type: 'schedule-import',
+    confirmationId,
+    revision: expectedRevision + 1,
+    teamId,
+    teamName: 'Team',
+    source: normalizePrivateAiImportSource(pending.args.source),
+    summary,
+    previewRows: rows
+  });
+  assertPrivateAiPendingPayloadFitsFirestore('schedule', nextArgs, nextArtifact);
   const pendingRef = doc(db, 'users', user.uid, privateAiPendingActionCollectionName, confirmationId);
   const teamPayloadRef = doc(db, 'teams', teamId, teamPrivateAiPendingActionCollectionName, confirmationId);
   const messageRef = messageId
@@ -1529,6 +1549,15 @@ export async function revisePrivateAiScheduleImportProposal(
       && compactText(artifact.confirmationId) === confirmationId
     ));
     if (!hasStoredArtifact) return false;
+    const storedNextArtifact = {
+      ...nextArtifact,
+      teamName: compactText(storedArtifacts.find((artifact) => (
+        isPlainObject(artifact)
+        && artifact.type === 'schedule-import'
+        && compactText(artifact.confirmationId) === confirmationId
+      ))?.teamName) || 'Team'
+    };
+    assertPrivateAiPendingPayloadFitsFirestore('schedule', nextArgs, storedNextArtifact);
     transaction.set(pendingRef, {
       args: sanitizePendingActionArgsForUserStorage('apply_schedule_import', nextArgs),
       summary: `Schedule import | Team: ${teamId} | ${summary.total} rows${validationErrors.length ? ` | ${validationErrors.length} errors` : ''}`,
@@ -1545,20 +1574,7 @@ export async function revisePrivateAiScheduleImportProposal(
       toolName: 'apply_schedule_import',
       revision: expectedRevision + 1,
       args: nextArgs,
-      artifact: stripPrivateAiArtifactForTeamStorage({
-        type: 'schedule-import',
-        confirmationId,
-        revision: expectedRevision + 1,
-        teamId,
-        teamName: compactText(storedArtifacts.find((artifact) => (
-          isPlainObject(artifact)
-          && artifact.type === 'schedule-import'
-          && compactText(artifact.confirmationId) === confirmationId
-        ))?.teamName) || 'Team',
-        source: normalizePrivateAiImportSource(pending.args.source),
-        summary,
-        previewRows: rows
-      }),
+      artifact: storedNextArtifact,
       status: 'pending',
       editedAt: serverTimestamp(),
       expiresAt: pending.expiresAt,
@@ -3145,19 +3161,29 @@ async function savePrivateAiPendingAction(
       confirmationGroupId
     }
   };
+  const preparedTeamArtifact = payloadScope === 'team' && context.preparedArtifact
+    ? stripPrivateAiArtifactForTeamStorage({
+        ...context.preparedArtifact,
+        confirmationId: id,
+        teamId
+      })
+    : null;
+  if (payloadScope === 'team') {
+    assertPrivateAiPendingPayloadFitsFirestore(
+      definition.name === 'apply_roster_import' ? 'roster' : 'schedule',
+      preparedArgs,
+      preparedTeamArtifact
+    );
+  }
   const teamPayload = payloadScope === 'team' ? {
     userId: user.uid,
     teamId,
     toolName: definition.name,
     args: preparedArgs,
-    ...(context.preparedArtifact
+    ...(preparedTeamArtifact
       ? {
           revision: 0,
-          artifact: stripPrivateAiArtifactForTeamStorage({
-            ...context.preparedArtifact,
-            confirmationId: id,
-            teamId
-          })
+          artifact: preparedTeamArtifact
         }
       : {}),
     status: pending.status,
@@ -3737,6 +3763,9 @@ function summarizeExecutedAction(result: PrivateAiToolResult) {
     const playerName = compactText(data.playerName);
     const recipient = [email, playerName ? `for ${playerName}` : ''].filter(Boolean).join(' ');
     if (data.emailQueued === true || data.emailSent === true) {
+      if (data.autoLinked === true) {
+        return `The existing parent account ${recipient} was linked and a notification email was queued.`;
+      }
       return data.emailDeduplicated === true
         ? `The parent invitation ${recipient} was already queued for email.`
         : `Parent invitation created and acceptance email queued ${recipient}.`;

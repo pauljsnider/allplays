@@ -3231,6 +3231,54 @@ describe('private AI service', () => {
         );
     });
 
+    it('rejects oversized roster and schedule proposals before Firestore persistence', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        const oversizedText = 'x'.repeat(750 * 1024);
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const rosterResult = await runPrivateAiTool(coachUser, {
+            name: 'apply_roster_import',
+            args: {
+                teamId: 'team-1',
+                __preparedRosterOperations: [{
+                    type: 'update',
+                    playerId: 'player-1',
+                    payload: { medicalInfo: oversizedText },
+                    inviteRequests: [],
+                    errors: []
+                }]
+            }
+        });
+        const scheduleResult = await runPrivateAiTool(coachUser, {
+            name: 'apply_schedule_import',
+            args: {
+                teamId: 'team-1',
+                __preparedScheduleRows: [{
+                    rowNumber: 1,
+                    eventType: 'game',
+                    startsAt: '2026-07-30T18:00:00.000Z',
+                    opponent: 'Rockets',
+                    notes: oversizedText
+                }]
+            }
+        });
+
+        expect(rosterResult).toMatchObject({
+            ok: false,
+            error: expect.stringMatching(/roster import is too large.*Split it into smaller files/s)
+        });
+        expect(scheduleResult).toMatchObject({
+            ok: false,
+            error: expect.stringMatching(/schedule import is too large.*Split it into smaller files/s)
+        });
+        expect(firebaseMocks.runTransaction).not.toHaveBeenCalled();
+    });
+
     it('previews a grouped schedule import and executes it only once after confirmation', async () => {
         const coachUser = {
             ...authUser,

@@ -5194,7 +5194,8 @@ export async function inviteParent(teamId, playerId, playerNum, parentEmail, rel
             existingUser = autoAcceptResult.existingUser;
             autoLinked = autoAcceptResult.autoLinked;
         } catch (error) {
-            // The invite was already created and emailed; never fail it on auto-link.
+            // The invite was already created; never fail it on auto-link.
+            // The caller still queues the correct invite-or-linked email.
             console.warn(`Could not auto-link existing parent invite: ${error?.message || 'Unknown error'}`);
         }
     }
