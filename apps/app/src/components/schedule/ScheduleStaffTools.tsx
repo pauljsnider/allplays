@@ -1,15 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { ClipboardCheck, Link as LinkIcon } from 'lucide-react';
+import { Link as LinkIcon } from 'lucide-react';
 import { Modal } from '../../components/Modal';
-import { capturePastedImage } from '../../lib/clipboardImage';
 import {
   addTeamCalendarUrl,
   createScheduledGameForApp,
   createScheduledPracticeForApp,
   createScheduledTournamentBlockForApp,
-  createScheduleImportGame,
-  createScheduleImportPractice,
-  finalizeScheduleImportBatch,
   loadScheduleStatTrackerConfigsForApp,
   removeTeamCalendarUrl,
   type PracticeRecurrenceFormInput,
@@ -18,75 +14,20 @@ import {
   type ScheduleStatTrackerConfigOption,
   type ScheduleTournamentCreateFormInput
 } from '../../lib/scheduleService';
-import { validateExternalCalendarUrl, type ParentScheduleEvent, type ParentScheduleTeamOption } from '../../lib/scheduleLogic';
+import { validateExternalCalendarUrl, type ParentScheduleTeamOption } from '../../lib/scheduleLogic';
 import type { AuthState } from '../../lib/types';
 import { WORKFLOW_TIMING, startWorkflowTimer } from '../../lib/workflowTiming';
 
-type ScheduleCsvImportFieldKey = 'startDateTime' | 'date' | 'startTime' | 'endTime' | 'eventType' | 'opponent' | 'title' | 'location' | 'arrivalTime' | 'isHome' | 'notes';
-type ScheduleCsvImportMapping = Partial<Record<ScheduleCsvImportFieldKey, string>>;
-type ScheduleCsvImportNormalizedRow = {
-  rowNumber: number;
-  eventType: 'game' | 'practice';
-  startsAt: string;
-  endsAt: string | null;
-  opponent: string | null;
-  title: string | null;
-  location: string | null;
-  arrivalTime: string | null;
-  isHome: boolean | null;
-  notes: string | null;
-};
-type ScheduleCsvImportPreviewRow = {
-  rowNumber: number;
-  draft: Record<string, string>;
-  normalized: ScheduleCsvImportNormalizedRow;
-  errors: string[];
-};
 type ScheduleTournamentGameFieldErrors = Partial<Record<'opponent' | 'startDate' | 'endDate' | 'arrivalTime', string>>;
 type ScheduleTournamentCreateFieldErrors = Partial<Record<'divisionName' | 'bracketName' | 'roundName' | 'games', string>> & {
   gameRows?: ScheduleTournamentGameFieldErrors[];
 };
 
-const SCHEDULE_CSV_IMPORT_FIELDS: Array<{ key: ScheduleCsvImportFieldKey; label: string }> = [
-  { key: 'startDateTime', label: 'Start Date & Time' },
-  { key: 'date', label: 'Date' },
-  { key: 'startTime', label: 'Start Time' },
-  { key: 'endTime', label: 'End Time' },
-  { key: 'eventType', label: 'Event Type' },
-  { key: 'opponent', label: 'Opponent' },
-  { key: 'title', label: 'Title' },
-  { key: 'location', label: 'Location' },
-  { key: 'arrivalTime', label: 'Arrival Time' },
-  { key: 'isHome', label: 'Home / Away' },
-  { key: 'notes', label: 'Notes' }
-];
-
-type ScheduleCsvImportModule = typeof import('../../lib/scheduleCsvImport');
-type ScheduleAiImportModule = typeof import('../../lib/scheduleAiImport');
-
-let scheduleCsvImportModulePromise: Promise<ScheduleCsvImportModule> | null = null;
-let scheduleAiImportModulePromise: Promise<ScheduleAiImportModule> | null = null;
-
-function loadScheduleCsvImportModule() {
-  if (!scheduleCsvImportModulePromise) {
-    scheduleCsvImportModulePromise = import('../../lib/scheduleCsvImport');
-  }
-  return scheduleCsvImportModulePromise;
-}
-
-function loadScheduleAiImportModule() {
-  if (!scheduleAiImportModulePromise) {
-    scheduleAiImportModulePromise = import('../../lib/scheduleAiImport');
-  }
-  return scheduleAiImportModulePromise;
-}
-
-
 export type ScheduleStaffToolsProps = {
   auth: AuthState;
-  events: ParentScheduleEvent[];
   manageableTeamOptions: ParentScheduleTeamOption[];
   selectedTeamId: string;
+  initialSection?: string;
   onRefresh: () => Promise<unknown>;
   onStatusMessage: (message: string | null) => void;
   onClearError: () => void;
@@ -94,9 +35,9 @@ export type ScheduleStaffToolsProps = {
 
 export function ScheduleStaffTools({
   auth,
-  events,
   manageableTeamOptions,
   selectedTeamId,
+  initialSection = '',
   onRefresh,
   onStatusMessage,
   onClearError
@@ -104,23 +45,6 @@ export function ScheduleStaffTools({
   const [calendarUrl, setCalendarUrl] = useState('');
   const [calendarUrlError, setCalendarUrlError] = useState<string | null>(null);
   const [savingCalendarUrl, setSavingCalendarUrl] = useState(false);
-  const [csvHeaders, setCsvHeaders] = useState<string[]>([]);
-  const [csvMapping, setCsvMapping] = useState<ScheduleCsvImportMapping>({});
-  const csvHeadersRef = useRef<string[]>([]);
-  const csvRowsRef = useRef<Array<Record<string, string>>>([]);
-  const csvMappingRef = useRef<ScheduleCsvImportMapping>({});
-  const csvLoadPromiseRef = useRef<Promise<void> | null>(null);
-  const [csvPreviewRows, setCsvPreviewRows] = useState<ScheduleCsvImportPreviewRow[]>([]);
-  const [scheduleImportPreviewSource, setScheduleImportPreviewSource] = useState<'csv' | 'ai' | null>(null);
-  const [csvImportErrors, setCsvImportErrors] = useState<string[]>([]);
-  const [csvFileName, setCsvFileName] = useState('');
-  const [loadingCsvFile, setLoadingCsvFile] = useState(false);
-  const [aiScheduleText, setAiScheduleText] = useState('');
-  const [aiScheduleImage, setAiScheduleImage] = useState<File | null>(null);
-  const [aiScheduleImageName, setAiScheduleImageName] = useState('');
-  const [aiImportErrors, setAiImportErrors] = useState<string[]>([]);
-  const [processingAiImport, setProcessingAiImport] = useState(false);
-  const [importingCsv, setImportingCsv] = useState(false);
   const [removingCalendarUrl, setRemovingCalendarUrl] = useState<string | null>(null);
   const [gameForm, setGameForm] = useState<ScheduleGameFormInput>(() => getDefaultScheduleGameForm());
   const [savingGame, setSavingGame] = useState(false);
@@ -174,6 +98,17 @@ export function ScheduleStaffTools({
       appliedPageSelectedTeamIdRef.current = '';
     }
   }, [manageableTeamOptions, selectedTeamId]);
+
+  useEffect(() => {
+    if (!selectedCalendarTeam || !['add', 'ai', 'imports'].includes(initialSection)) return;
+    const frame = window.requestAnimationFrame(() => {
+      const target = document.getElementById(`schedule-staff-${initialSection}`);
+      if (target && typeof target.scrollIntoView === 'function') {
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [initialSection, selectedCalendarTeam]);
 
   useEffect(() => {
     if (previousSelectedTeamIdRef.current && previousSelectedTeamIdRef.current !== selectedCalendarTeam?.teamId) {
@@ -234,13 +169,6 @@ export function ScheduleStaffTools({
     requestTrackerConfigLoad();
   }, [requestTrackerConfigLoad, selectedCalendarTeam]);
 
-  const clearAiPreview = () => {
-    if (scheduleImportPreviewSource === 'ai') {
-      setCsvPreviewRows([]);
-      setScheduleImportPreviewSource(null);
-    }
-  };
-
   const renderScheduleStaffToolsContent = () => {
     const teamPicker = shouldShowManageScheduleTeamPicker ? (
       <section className="app-card p-3 sm:p-4" aria-label="Choose team to manage">
@@ -277,118 +205,97 @@ export function ScheduleStaffTools({
     return (
       <>
         {teamPicker}
-        <ScheduleGameCreatePanel
-          teamName={selectedCalendarTeam.teamName}
-          form={gameForm}
-          configs={gameTrackerConfigs}
-          configsLoading={gameTrackerConfigsLoading}
-          saving={savingGame}
-          error={gameFormError}
-          configError={gameTrackerConfigError}
-          onStartUsing={requestTrackerConfigLoad}
-          onChange={(nextForm) => {
-            setGameForm(nextForm);
-            if (gameFormError) setGameFormError(null);
-          }}
-          onSubmit={handleCreateGame}
-        />
-        <ScheduleTournamentEntryCard
-          teamName={selectedCalendarTeam.teamName}
-          onOpen={() => {
-            requestTrackerConfigLoad();
-            setTournamentFormError(null);
-            setTournamentFormFieldErrors({});
-            setScheduleStaffToolMode('tournament');
-          }}
-        />
-        {scheduleStaffToolMode === 'tournament' ? (
-          <ScheduleTournamentCreateModal
-            saving={savingTournament}
-            onClose={() => {
-              if (savingTournament) return;
-              setTournamentForm(getDefaultScheduleTournamentForm());
+        <div id="schedule-staff-add" className="scroll-mt-24 space-y-3">
+          <ScheduleGameCreatePanel
+            teamName={selectedCalendarTeam.teamName}
+            form={gameForm}
+            configs={gameTrackerConfigs}
+            configsLoading={gameTrackerConfigsLoading}
+            saving={savingGame}
+            error={gameFormError}
+            configError={gameTrackerConfigError}
+            onStartUsing={requestTrackerConfigLoad}
+            onChange={(nextForm) => {
+              setGameForm(nextForm);
+              if (gameFormError) setGameFormError(null);
+            }}
+            onSubmit={handleCreateGame}
+          />
+          <ScheduleTournamentEntryCard
+            teamName={selectedCalendarTeam.teamName}
+            onOpen={() => {
+              requestTrackerConfigLoad();
               setTournamentFormError(null);
               setTournamentFormFieldErrors({});
-              setScheduleStaffToolMode('menu');
+              setScheduleStaffToolMode('tournament');
             }}
-          >
-            <ScheduleTournamentCreatePanel
-              teamName={selectedCalendarTeam.teamName}
-              form={tournamentForm}
-              configs={gameTrackerConfigs}
+          />
+          {scheduleStaffToolMode === 'tournament' ? (
+            <ScheduleTournamentCreateModal
               saving={savingTournament}
-              error={tournamentFormError}
-              fieldErrors={tournamentFormFieldErrors}
-              configError={gameTrackerConfigError}
-              onStartUsing={requestTrackerConfigLoad}
-              onChange={(nextForm) => {
-                setTournamentForm(nextForm);
-                if (tournamentFormError || hasScheduleTournamentFieldErrors(tournamentFormFieldErrors)) {
-                  const validation = getScheduleTournamentCreateFormValidation(nextForm);
-                  setTournamentFormError(validation.formError);
-                  setTournamentFormFieldErrors(validation.fieldErrors);
-                }
-              }}
-              onCancel={() => {
+              onClose={() => {
+                if (savingTournament) return;
                 setTournamentForm(getDefaultScheduleTournamentForm());
                 setTournamentFormError(null);
                 setTournamentFormFieldErrors({});
                 setScheduleStaffToolMode('menu');
               }}
-              onSubmit={handleCreateTournament}
-            />
-          </ScheduleTournamentCreateModal>
-        ) : null}
-        <SchedulePracticeCreatePanel
-          teamName={selectedCalendarTeam.teamName}
-          form={practiceForm}
-          saving={savingPractice}
-          error={practiceFormError}
-          onChange={(nextForm) => {
-            setPracticeForm(nextForm);
-            if (practiceFormError) setPracticeFormError(null);
-          }}
-          onSubmit={handleCreatePractice}
-        />
-        <ScheduleImportTools
-          teamName={selectedCalendarTeam.teamName}
-          calendarUrl={calendarUrl}
-          calendarUrls={selectedCalendarTeam.calendarUrls || []}
-          calendarUrlError={calendarUrlError}
-          savingCalendarUrl={savingCalendarUrl}
-          removingCalendarUrl={removingCalendarUrl}
-          aiScheduleText={aiScheduleText}
-          aiScheduleImageName={aiScheduleImageName}
-          aiPreviewRows={scheduleImportPreviewSource === 'ai' ? csvPreviewRows : []}
-          aiImportErrors={aiImportErrors}
-          processingAiImport={processingAiImport}
-          csvHeaders={csvHeaders}
-          csvMapping={csvMapping}
-          csvPreviewRows={scheduleImportPreviewSource === 'csv' ? csvPreviewRows : []}
-          csvImportErrors={csvImportErrors}
-          csvFileName={csvFileName}
-          loadingCsvFile={loadingCsvFile}
-          importingCsv={importingCsv}
-          onCalendarUrlChange={(value) => {
-            setCalendarUrl(value);
-            if (calendarUrlError) setCalendarUrlError(null);
-          }}
-          onAddCalendarUrl={handleAddCalendarUrl}
-          onRemoveCalendarUrl={handleRemoveCalendarUrl}
-          onAiTextChange={(value) => {
-            setAiScheduleText(value);
-            clearAiPreview();
-            if (aiImportErrors.length) setAiImportErrors([]);
-          }}
-          onAiImageChange={handleAiImageChange}
-          onAiGeneratePreview={handleAiGeneratePreview}
-          onImportCsv={handleCsvImport}
-          onClearAi={handleAiClear}
-          onCsvFileChange={handleCsvFileChange}
-          onCsvMappingChange={handleCsvMappingChange}
-          onCsvPreview={handleCsvPreview}
-          onClearCsv={handleCsvClear}
-        />
+            >
+              <ScheduleTournamentCreatePanel
+                teamName={selectedCalendarTeam.teamName}
+                form={tournamentForm}
+                configs={gameTrackerConfigs}
+                saving={savingTournament}
+                error={tournamentFormError}
+                fieldErrors={tournamentFormFieldErrors}
+                configError={gameTrackerConfigError}
+                onStartUsing={requestTrackerConfigLoad}
+                onChange={(nextForm) => {
+                  setTournamentForm(nextForm);
+                  if (tournamentFormError || hasScheduleTournamentFieldErrors(tournamentFormFieldErrors)) {
+                    const validation = getScheduleTournamentCreateFormValidation(nextForm);
+                    setTournamentFormError(validation.formError);
+                    setTournamentFormFieldErrors(validation.fieldErrors);
+                  }
+                }}
+                onCancel={() => {
+                  setTournamentForm(getDefaultScheduleTournamentForm());
+                  setTournamentFormError(null);
+                  setTournamentFormFieldErrors({});
+                  setScheduleStaffToolMode('menu');
+                }}
+                onSubmit={handleCreateTournament}
+              />
+            </ScheduleTournamentCreateModal>
+          ) : null}
+          <SchedulePracticeCreatePanel
+            teamName={selectedCalendarTeam.teamName}
+            form={practiceForm}
+            saving={savingPractice}
+            error={practiceFormError}
+            onChange={(nextForm) => {
+              setPracticeForm(nextForm);
+              if (practiceFormError) setPracticeFormError(null);
+            }}
+            onSubmit={handleCreatePractice}
+          />
+        </div>
+        <div id="schedule-staff-imports" className="scroll-mt-24">
+          <ScheduleImportTools
+            teamName={selectedCalendarTeam.teamName}
+            calendarUrl={calendarUrl}
+            calendarUrls={selectedCalendarTeam.calendarUrls || []}
+            calendarUrlError={calendarUrlError}
+            savingCalendarUrl={savingCalendarUrl}
+            removingCalendarUrl={removingCalendarUrl}
+            onCalendarUrlChange={(value) => {
+              setCalendarUrl(value);
+              if (calendarUrlError) setCalendarUrlError(null);
+            }}
+            onAddCalendarUrl={handleAddCalendarUrl}
+            onRemoveCalendarUrl={handleRemoveCalendarUrl}
+          />
+        </div>
       </>
     );
   };
@@ -498,235 +405,6 @@ export function ScheduleStaffTools({
       timer.end({ error: practiceError });
     } finally {
       setSavingPractice(false);
-    }
-  };
-
-  const handleCsvFileChange = async (file: File | null) => {
-    setCsvImportErrors([]);
-    setCsvPreviewRows([]);
-    setScheduleImportPreviewSource(null);
-    setCsvHeaders([]);
-    setCsvMapping({});
-    csvHeadersRef.current = [];
-    csvRowsRef.current = [];
-    csvMappingRef.current = {};
-    setCsvFileName(file?.name || '');
-    setLoadingCsvFile(Boolean(file));
-    if (!file) {
-      csvLoadPromiseRef.current = null;
-      return;
-    }
-    const loadPromise = (async () => {
-      const [{ parseCsvText, inferScheduleCsvMapping }, csvText] = await Promise.all([
-        loadScheduleCsvImportModule(),
-        file.text()
-      ]);
-      const parsed = parseCsvText(csvText);
-      const inferredMapping = inferScheduleCsvMapping(parsed.headers);
-      csvHeadersRef.current = parsed.headers;
-      csvRowsRef.current = parsed.rows;
-      csvMappingRef.current = inferredMapping;
-      setCsvHeaders(parsed.headers);
-      setCsvMapping(inferredMapping);
-    })();
-    csvLoadPromiseRef.current = loadPromise;
-    try {
-      await loadPromise;
-    } catch (csvError: any) {
-      setCsvImportErrors([csvError?.message || 'Could not read the CSV file.']);
-    } finally {
-      if (csvLoadPromiseRef.current === loadPromise) {
-        csvLoadPromiseRef.current = null;
-      }
-      setLoadingCsvFile(false);
-    }
-  };
-
-  const handleCsvPreview = async () => {
-    if (csvLoadPromiseRef.current) {
-      await csvLoadPromiseRef.current;
-    }
-    const { buildScheduleImportPreview } = await loadScheduleCsvImportModule();
-    const preview = buildScheduleImportPreview({
-      rows: csvRowsRef.current,
-      mapping: csvMappingRef.current,
-      teamName: selectedCalendarTeam?.teamName || ''
-    });
-    setCsvImportErrors(preview.errors);
-    setCsvPreviewRows(preview.rows);
-    setScheduleImportPreviewSource(preview.rows.length ? 'csv' : null);
-  };
-
-  const handleCsvClear = () => {
-    setCsvHeaders([]);
-    setCsvMapping({});
-    csvHeadersRef.current = [];
-    csvRowsRef.current = [];
-    csvMappingRef.current = {};
-    csvLoadPromiseRef.current = null;
-    setCsvPreviewRows([]);
-    setCsvImportErrors([]);
-    setCsvFileName('');
-    setLoadingCsvFile(false);
-    setScheduleImportPreviewSource(null);
-  };
-
-  const handleCsvMappingChange = (field: keyof ScheduleCsvImportMapping, value: string) => {
-    setCsvMapping((current) => {
-      const next = { ...current, [field]: value || undefined };
-      csvMappingRef.current = next;
-      return next;
-    });
-  };
-
-  const handleAiImageChange = (file: File | null) => {
-    setAiImportErrors([]);
-    clearAiPreview();
-    setAiScheduleImage(file);
-    setAiScheduleImageName(file?.name || '');
-  };
-
-  const handleAiClear = () => {
-    setAiScheduleText('');
-    setAiScheduleImage(null);
-    setAiScheduleImageName('');
-    setAiImportErrors([]);
-    clearAiPreview();
-  };
-
-  const handleAiGeneratePreview = async () => {
-    if (!selectedCalendarTeam || processingAiImport) return;
-    setAiImportErrors([]);
-    setCsvImportErrors([]);
-    setCsvPreviewRows([]);
-    setScheduleImportPreviewSource(null);
-    onStatusMessage(null);
-    onClearError();
-    const currentGames = events
-      .filter((event) => event.teamId === selectedCalendarTeam.teamId && event.type === 'game' && event.isDbGame)
-      .map((event) => ({
-        id: event.id,
-        date: event.date,
-        opponent: event.opponent,
-        location: event.location,
-        status: event.isCancelled ? 'cancelled' : 'scheduled'
-      }));
-
-    setProcessingAiImport(true);
-    const timer = startWorkflowTimer(WORKFLOW_TIMING.scheduleAiPreview, {
-      route: 'schedule',
-      imageAttached: Boolean(aiScheduleImage),
-      textLengthBucket: aiScheduleText ? Math.min(5000, Math.ceil(aiScheduleText.length / 250) * 250) : 0,
-      currentGameCount: currentGames.length
-    });
-    try {
-      const { generateScheduleAiImportRows } = await loadScheduleAiImportModule();
-      const result = await generateScheduleAiImportRows({
-        teamName: selectedCalendarTeam.teamName,
-        text: aiScheduleText,
-        imageFile: aiScheduleImage,
-        currentGames
-      });
-      setAiImportErrors(result.errors);
-      setCsvPreviewRows(result.rows);
-      setScheduleImportPreviewSource(result.rows.length ? 'ai' : null);
-      if (result.rows.length) {
-        onStatusMessage(`AI generated ${result.rows.length} draft game row(s). Review them below before importing.`);
-      }
-      timer.end({
-        rowCount: result.rows.length,
-        errorCount: result.errors.length
-      });
-    } catch (aiError: any) {
-      setAiImportErrors([aiError?.message || 'Unable to generate schedule preview.']);
-      timer.end({ error: aiError });
-    } finally {
-      setProcessingAiImport(false);
-    }
-  };
-
-  const handleCsvImport = async () => {
-    if (!selectedCalendarTeam || !auth.user || importingCsv) return;
-    const invalidRows = csvPreviewRows.filter((row) => row.errors.length > 0);
-    if (!csvPreviewRows.length) {
-      setCsvImportErrors(['Preview rows before importing.']);
-      return;
-    }
-    if (invalidRows.length > 0) {
-      setCsvImportErrors(['Fix invalid rows before importing.']);
-      return;
-    }
-
-    setImportingCsv(true);
-    setCsvImportErrors([]);
-    onStatusMessage(null);
-    onClearError();
-    const failedRows: ScheduleCsvImportPreviewRow[] = [];
-    const importBatchId = `app-schedule-import-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-    const importBatchTimestamp = new Date().toISOString();
-    const totalCount = csvPreviewRows.length;
-    let importedCount = 0;
-    const successfulImportIds: string[] = [];
-    const timer = startWorkflowTimer(WORKFLOW_TIMING.scheduleImport, {
-      route: 'schedule',
-      source: scheduleImportPreviewSource || 'csv',
-      rowCount: totalCount
-    });
-    try {
-      for (const [index, row] of csvPreviewRows.entries()) {
-        const normalizedRow = {
-          ...row.normalized,
-          importBatch: {
-            batchId: importBatchId,
-            totalCount,
-            rowNumber: row.normalized.rowNumber || row.rowNumber || index + 1,
-            importedAt: importBatchTimestamp,
-            importedBy: auth.user.uid
-          }
-        };
-        try {
-          const createdId = row.normalized.eventType === 'game'
-            ? await createScheduleImportGame(selectedCalendarTeam.teamId, normalizedRow, auth.user)
-            : await createScheduleImportPractice(selectedCalendarTeam.teamId, normalizedRow, auth.user);
-          if (createdId) {
-            successfulImportIds.push(createdId);
-          }
-          importedCount += 1;
-        } catch (importError: any) {
-          failedRows.push({
-            ...row,
-            errors: [importError?.message || 'Import failed for this row.']
-          });
-        }
-      }
-
-      if (totalCount > 3 && importedCount > 0) {
-        try {
-          await finalizeScheduleImportBatch(selectedCalendarTeam.teamId, importBatchId, successfulImportIds.length || importedCount, auth.user);
-        } catch {
-          // Ignore notification finalization errors so successful imports still complete.
-        }
-      }
-
-      setCsvPreviewRows(failedRows);
-      await onRefresh();
-      onStatusMessage(failedRows.length
-        ? `Imported ${importedCount} row(s); ${failedRows.length} row(s) failed and remain below for retry.`
-        : `Imported ${importedCount} schedule row(s) and refreshed the schedule.`);
-      timer.end({
-        importedCount,
-        failedRowCount: failedRows.length,
-        refreshed: true
-      });
-    } catch (importError: any) {
-      setCsvImportErrors([importError?.message || 'Unable to import schedule rows.']);
-      timer.end({
-        importedCount,
-        failedRowCount: failedRows.length,
-        error: importError
-      });
-    } finally {
-      setImportingCsv(false);
     }
   };
 
@@ -1091,30 +769,9 @@ function ScheduleImportTools({
   calendarUrlError,
   savingCalendarUrl,
   removingCalendarUrl,
-  aiScheduleText,
-  aiScheduleImageName,
-  aiPreviewRows,
-  aiImportErrors,
-  processingAiImport,
-  csvHeaders,
-  csvMapping,
-  csvPreviewRows,
-  csvImportErrors,
-  csvFileName,
-  loadingCsvFile,
-  importingCsv,
   onCalendarUrlChange,
   onAddCalendarUrl,
-  onRemoveCalendarUrl,
-  onAiTextChange,
-  onAiImageChange,
-  onAiGeneratePreview,
-  onImportCsv,
-  onClearAi,
-  onCsvFileChange,
-  onCsvMappingChange,
-  onCsvPreview,
-  onClearCsv
+  onRemoveCalendarUrl
 }: {
   teamName: string;
   calendarUrl: string;
@@ -1122,30 +779,9 @@ function ScheduleImportTools({
   calendarUrlError: string | null;
   savingCalendarUrl: boolean;
   removingCalendarUrl: string | null;
-  aiScheduleText: string;
-  aiScheduleImageName: string;
-  aiPreviewRows: ScheduleCsvImportPreviewRow[];
-  aiImportErrors: string[];
-  processingAiImport: boolean;
-  csvHeaders: string[];
-  csvMapping: ScheduleCsvImportMapping;
-  csvPreviewRows: ScheduleCsvImportPreviewRow[];
-  csvImportErrors: string[];
-  csvFileName: string;
-  loadingCsvFile: boolean;
-  importingCsv: boolean;
   onCalendarUrlChange: (value: string) => void;
   onAddCalendarUrl: (event: FormEvent<HTMLFormElement>) => void;
   onRemoveCalendarUrl: (url: string) => void;
-  onAiTextChange: (value: string) => void;
-  onAiImageChange: (file: File | null) => void;
-  onAiGeneratePreview: () => void;
-  onImportCsv: () => void;
-  onClearAi: () => void;
-  onCsvFileChange: (file: File | null) => void;
-  onCsvMappingChange: (field: keyof ScheduleCsvImportMapping, value: string) => void;
-  onCsvPreview: () => void;
-  onClearCsv: () => void;
 }) {
   return (
     <>
@@ -1160,213 +796,7 @@ function ScheduleImportTools({
         onSubmit={onAddCalendarUrl}
         onRemove={onRemoveCalendarUrl}
       />
-      <ScheduleAiImportPanel
-        teamName={teamName}
-        text={aiScheduleText}
-        imageName={aiScheduleImageName}
-        previewRows={aiPreviewRows}
-        errors={aiImportErrors}
-        processing={processingAiImport}
-        importing={importingCsv}
-        onTextChange={onAiTextChange}
-        onImageChange={onAiImageChange}
-        onGeneratePreview={onAiGeneratePreview}
-        onImport={onImportCsv}
-        onClear={onClearAi}
-      />
-      <ScheduleCsvImportPanel
-        teamName={teamName}
-        headers={csvHeaders}
-        mapping={csvMapping}
-        previewRows={csvPreviewRows}
-        errors={csvImportErrors}
-        fileName={csvFileName}
-        loadingCsvFile={loadingCsvFile}
-        importing={importingCsv}
-        onFileChange={onCsvFileChange}
-        onMappingChange={onCsvMappingChange}
-        onPreview={onCsvPreview}
-        onImport={onImportCsv}
-        onClear={onClearCsv}
-      />
     </>
-  );
-}
-
-function ScheduleAiImportPanel({ teamName, text, imageName, previewRows, errors, processing, importing, onTextChange, onImageChange, onGeneratePreview, onImport, onClear }: {
-  teamName: string;
-  text: string;
-  imageName: string;
-  previewRows: ScheduleCsvImportPreviewRow[];
-  errors: string[];
-  processing: boolean;
-  importing: boolean;
-  onTextChange: (value: string) => void;
-  onImageChange: (file: File | null) => void;
-  onGeneratePreview: () => void;
-  onImport: () => void;
-  onClear: () => void;
-}) {
-  const invalidCount = previewRows.filter((row) => row.errors.length > 0).length;
-  return (
-    <section className="app-card p-4" aria-label="AI schedule import">
-      <div className="flex items-start gap-3">
-        <div className="flex h-9 w-9 flex-none items-center justify-center rounded-xl bg-violet-50 text-violet-700">
-          <ClipboardCheck className="h-4 w-4" aria-hidden="true" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="app-label">Staff schedule tools</div>
-          <h2 className="mt-1 text-base font-black text-gray-950">Draft schedule with AI</h2>
-          <p className="mt-1 text-xs font-semibold leading-5 text-gray-500">Paste schedule text or an image for {teamName}. AI drafts game rows only; nothing is saved until you review and import.</p>
-        </div>
-      </div>
-
-      <div className="mt-3 space-y-3">
-        <label className="block">
-          <span className="text-xs font-black uppercase tracking-[0.08em] text-gray-500">Schedule text or instructions</span>
-          <textarea
-            className="auth-input mt-1 min-h-28 !px-3 !py-2 text-sm font-semibold"
-            placeholder="Paste schedule lines, or add instructions like 'only home games' when uploading an image."
-            value={text}
-            onChange={(event) => onTextChange(event.target.value)}
-            onPaste={(event) => capturePastedImage(event, onImageChange)}
-            disabled={processing || importing}
-            aria-label="Schedule text or AI instructions"
-            aria-describedby="schedule-ai-paste-help"
-          />
-          <span id="schedule-ai-paste-help" className="mt-1 block text-[11px] font-semibold text-gray-500">Paste text normally, or paste a copied schedule screenshot here to attach it.</span>
-        </label>
-
-        <label className="block">
-          <span className="text-xs font-black uppercase tracking-[0.08em] text-gray-500">Schedule image</span>
-          <input
-            className="auth-input mt-1 min-h-10 !px-3 !py-2 text-sm font-semibold"
-            type="file"
-            accept="image/png,image/jpeg,image/webp,image/heic,image/heif"
-            aria-label="Schedule image"
-            onChange={(event) => onImageChange(event.target.files?.[0] || null)}
-            disabled={processing || importing}
-          />
-        </label>
-        {imageName ? <div className="text-xs font-bold text-gray-500" role="status" aria-live="polite">Image ready: {imageName}</div> : null}
-
-        {errors.length ? (
-          <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-bold text-rose-700" role="alert">
-            {errors.map((item) => <div key={item}>{item}</div>)}
-          </div>
-        ) : null}
-
-        {previewRows.length ? (
-          <div className="space-y-2">
-            <div className="text-xs font-black uppercase tracking-[0.08em] text-gray-500">AI draft preview {previewRows.length} row(s){invalidCount ? `, ${invalidCount} needs review` : ''}</div>
-            {previewRows.map((row) => (
-              <div key={row.rowNumber} className={`rounded-xl border p-3 text-sm ${row.errors.length ? 'border-rose-200 bg-rose-50' : 'border-violet-200 bg-violet-50'}`}>
-                <div className="font-black text-gray-900">Draft {row.rowNumber}: Game vs {row.normalized.opponent || 'opponent TBD'}</div>
-                <div className="mt-1 text-xs font-semibold text-gray-600">{row.normalized.startsAt || 'Start TBD'} · {row.normalized.location || 'Location TBD'}</div>
-                {row.normalized.notes ? <div className="mt-1 text-xs font-semibold text-gray-600 whitespace-pre-line">{row.normalized.notes}</div> : null}
-                {row.errors.length ? <ul className="mt-2 list-disc pl-4 text-xs font-bold text-rose-700">{row.errors.map((item) => <li key={item}>{item}</li>)}</ul> : null}
-              </div>
-            ))}
-          </div>
-        ) : null}
-
-        <div className="flex flex-wrap gap-2">
-          <button type="button" className="secondary-button" onClick={onGeneratePreview} disabled={processing || importing}>{processing ? 'Processing…' : 'Generate draft rows'}</button>
-          <button type="button" className="primary-button" onClick={onImport} disabled={!previewRows.length || invalidCount > 0 || processing || importing}>{importing ? 'Importing…' : 'Import reviewed rows'}</button>
-          <button type="button" className="secondary-button" onClick={onClear} disabled={processing || importing}>Clear AI input</button>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function ScheduleCsvImportPanel({ teamName, headers, mapping, previewRows, errors, fileName, loadingCsvFile, importing, onFileChange, onMappingChange, onPreview, onImport, onClear }: {
-  teamName: string;
-  headers: string[];
-  mapping: ScheduleCsvImportMapping;
-  previewRows: ScheduleCsvImportPreviewRow[];
-  errors: string[];
-  fileName: string;
-  loadingCsvFile: boolean;
-  importing: boolean;
-  onFileChange: (file: File | null) => void;
-  onMappingChange: (field: keyof ScheduleCsvImportMapping, value: string) => void;
-  onPreview: () => void;
-  onImport: () => void;
-  onClear: () => void;
-}) {
-  const invalidCount = previewRows.filter((row) => row.errors.length > 0).length;
-  return (
-    <section className="app-card p-4" aria-label="CSV schedule import">
-      <div className="flex items-start gap-3">
-        <div className="flex h-9 w-9 flex-none items-center justify-center rounded-xl bg-emerald-50 text-emerald-700">
-          <ClipboardCheck className="h-4 w-4" aria-hidden="true" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="app-label">Staff schedule tools</div>
-          <h2 className="mt-1 text-base font-black text-gray-950">Import schedule CSV</h2>
-          <p className="mt-1 text-xs font-semibold leading-5 text-gray-500">Upload a UTF-8 CSV for {teamName}, confirm column mapping, preview rows, then import games and practices.</p>
-        </div>
-      </div>
-
-      <div className="mt-3 space-y-3">
-        <label className="block">
-          <span className="text-xs font-black uppercase tracking-[0.08em] text-gray-500">CSV file</span>
-          <input
-            className="auth-input mt-1 min-h-10 !px-3 !py-2 text-sm font-semibold"
-            type="file"
-            accept=".csv,text/csv"
-            aria-label="Schedule CSV file"
-            onChange={(event) => onFileChange(event.target.files?.[0] || null)}
-          />
-        </label>
-        {fileName ? <div className="text-xs font-bold text-gray-500">Loaded {fileName}</div> : null}
-
-        {headers.length ? (
-          <div className="grid gap-2 sm:grid-cols-2">
-            {SCHEDULE_CSV_IMPORT_FIELDS.map((field: { key: string; label: string }) => (
-              <label key={field.key} className="block">
-                <span className="text-xs font-bold text-gray-600">{field.label}</span>
-                <select
-                  className="auth-input mt-1 min-h-10 !px-3 !py-2 text-sm font-semibold"
-                  aria-label={`CSV mapping ${field.label}`}
-                  value={mapping[field.key as keyof ScheduleCsvImportMapping] || ''}
-                  onChange={(event) => onMappingChange(field.key as keyof ScheduleCsvImportMapping, event.target.value)}
-                >
-                  <option value="">Not mapped</option>
-                  {headers.map((header) => <option key={header} value={header}>{header}</option>)}
-                </select>
-              </label>
-            ))}
-          </div>
-        ) : null}
-
-        {errors.length ? (
-          <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-bold text-rose-700" role="alert">
-            {errors.map((item) => <div key={item}>{item}</div>)}
-          </div>
-        ) : null}
-
-        {previewRows.length ? (
-          <div className="space-y-2">
-            <div className="text-xs font-black uppercase tracking-[0.08em] text-gray-500">Preview {previewRows.length} row(s){invalidCount ? `, ${invalidCount} invalid` : ''}</div>
-            {previewRows.map((row) => (
-              <div key={row.rowNumber} className={`rounded-xl border p-3 text-sm ${row.errors.length ? 'border-rose-200 bg-rose-50' : 'border-emerald-200 bg-emerald-50'}`}>
-                <div className="font-black text-gray-900">Row {row.rowNumber}: {row.normalized.eventType === 'game' ? `Game vs ${row.normalized.opponent || 'opponent TBD'}` : row.normalized.title || 'Practice'}</div>
-                <div className="mt-1 text-xs font-semibold text-gray-600">{row.normalized.startsAt || 'Start TBD'} · {row.normalized.location || 'Location TBD'}</div>
-                {row.errors.length ? <ul className="mt-2 list-disc pl-4 text-xs font-bold text-rose-700">{row.errors.map((item) => <li key={item}>{item}</li>)}</ul> : null}
-              </div>
-            ))}
-          </div>
-        ) : null}
-
-        <div className="flex flex-wrap gap-2">
-          <button type="button" className="secondary-button" onClick={onPreview} disabled={!fileName || importing || loadingCsvFile}>{loadingCsvFile ? 'Reading CSV…' : 'Preview rows'}</button>
-          <button type="button" className="primary-button" onClick={onImport} disabled={!previewRows.length || invalidCount > 0 || importing || loadingCsvFile}>{importing ? 'Importing…' : 'Import rows'}</button>
-          <button type="button" className="secondary-button" onClick={onClear} disabled={importing}>Clear</button>
-        </div>
-      </div>
-    </section>
   );
 }
 

@@ -43,6 +43,7 @@ function renderComposer(overrides: Partial<Parameters<typeof Composer>[0]> = {})
         onTextChange: vi.fn(),
         onSubmit: vi.fn(),
         onAttach: vi.fn(),
+        onPasteImages: vi.fn(),
         onRemoveFile: vi.fn(),
         onVoice: vi.fn(),
         onAudience: vi.fn(),
@@ -75,6 +76,27 @@ describe('Chat Composer', () => {
 
         expect(props.onTextChange).not.toHaveBeenCalled();
         expect(props.onSubmit).not.toHaveBeenCalled();
+    });
+
+    it('adds pasted images to the message instead of inserting clipboard text', () => {
+        const props = renderComposer();
+        const textarea = screen.getByPlaceholderText('Message Bears');
+        const image = new File(['image'], 'clipboard.png', { type: 'image/png' });
+
+        expect(screen.getByText('Paste an image here or add an attachment')).toBeTruthy();
+        fireEvent.paste(textarea, {
+            clipboardData: {
+                items: [{
+                    kind: 'file',
+                    type: 'image/png',
+                    getAsFile: () => image
+                }],
+                files: [image]
+            }
+        });
+
+        expect(props.onPasteImages).toHaveBeenCalledWith([image]);
+        expect(props.onTextChange).not.toHaveBeenCalled();
     });
 
     it('defers moderator audience and email actions behind one staff action', () => {

@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from 'react';
-import { AlertCircle, CalendarDays, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, ClipboardCheck, Copy, Download, Filter, ListChecks, MapPin, RefreshCw } from 'lucide-react';
+import { AlertCircle, CalendarDays, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, ClipboardCheck, Copy, Download, Filter, ListChecks, MapPin, MessageCircle, RefreshCw, Sparkles } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Modal } from '../components/Modal';
 import { SchedulePageSkeleton } from '../components/PageSkeletons';
 import { PullToRefresh } from '../components/PullToRefresh';
+import { hasFamilyScheduleAccess, hasStaffScheduleAccess, ScheduleRoleSubmenu } from '../components/ScheduleRoleSubmenu';
+import { useScheduleAccessReporter } from '../components/ScheduleAccessReporting';
 import {
   hydrateParentScheduleRsvps,
   loadParentSchedule,
@@ -21,6 +23,7 @@ import { recordFirstMeaningfulRender, startScreenMountTimer } from '../lib/uxTim
 import { completeParentCoreWorkflowTimer } from '../lib/parentWorkflowTiming';
 import { openPublicUrl } from '../lib/publicActions';
 import { useViewLoadTimer } from '../lib/viewLoadTiming';
+import { buildPrivateAiLaunchPath } from '../lib/privateAiLaunch';
 import { useAsyncOperation } from '../lib/useAsyncOperation';
 import { useRefreshOnResume } from '../lib/useRefreshOnResume';
 import { useShellLayout } from '../lib/useShellLayout';
@@ -88,7 +91,7 @@ const scheduleViewModes: ScheduleViewMode[] = ['list', 'compact', 'calendar', 'p
 const scheduleFilterValues = filterOptions.map((option) => option.value);
 const scheduleTimeRangeValues = timeRangeOptions.map((option) => option.value);
 
-const upcomingListPageSize = 20;
+const upcomingListPageSize = 10;
 const pastListPageSize = 10;
 const pastScheduleCutoffMs = 3 * 60 * 60 * 1000;
 const pastScheduleHistoryPageWindowMs = 365 * 24 * 60 * 60 * 1000;
@@ -173,9 +176,25 @@ function mergePartialScheduleScope(
   };
 }
 
+function resolveScheduleScope(
+  auth: AuthState,
+  requestedScope: string | null,
+  childCount: number,
+  staffTeamCount: number
+): 'family' | 'staff' {
+  const hasFamilyAccess = hasFamilyScheduleAccess(auth) || childCount > 0;
+  const hasStaffAccess = hasStaffScheduleAccess(auth) || staffTeamCount > 0;
+  if (requestedScope === 'staff' && hasStaffAccess) return 'staff';
+  if (requestedScope === 'family' && hasFamilyAccess) return 'family';
+  return hasStaffAccess && !hasFamilyAccess ? 'staff' : 'family';
+}
+
 export function Schedule({ auth }: { auth: AuthState }) {
   const [searchParams] = useSearchParams();
   const { isDesktopWeb } = useShellLayout();
+  const reportScheduleAccess = useScheduleAccessReporter();
+  const requestedScheduleScope = searchParams.get('scope');
+  const staffSection = String(searchParams.get('staffSection') || '').trim();
   const [filter, setFilter] = useState<ParentScheduleFilter>(() => getScheduleFilterFromQuery(searchParams.get('filter')) || 'upcoming-all');
   const [view, setView] = useState<ScheduleViewMode>(() => getScheduleViewFromQuery(searchParams.get('view')) || 'list');
   const [selectedPlayerId, setSelectedPlayerId] = useState(() => String(searchParams.get('playerId') || '').trim());
@@ -184,6 +203,14 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const [children, setChildren] = useState<ParentScheduleChild[]>([]);
   const [events, setEvents] = useState<ParentScheduleEvent[]>([]);
   const [staffTeams, setStaffTeams] = useState<ParentScheduleStaffTeam[]>([]);
+  const hasFamilyAccess = hasFamilyScheduleAccess(auth) || children.length > 0;
+  const hasStaffAccess = hasStaffScheduleAccess(auth) || staffTeams.length > 0;
+  const scheduleScope = resolveScheduleScope(
+    auth,
+    requestedScheduleScope,
+    children.length,
+    staffTeams.length
+  );
   const [scheduleLoadError, setScheduleLoadError] = useState<AppServiceError | null>(null);
   const {
     loading: scheduleReadLoading,
@@ -216,6 +243,9 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const pastHistoryLoadedRef = useRef(false);
   const childrenRef = useRef<ParentScheduleChild[]>([]);
   const eventsRef = useRef<ParentScheduleEvent[]>([]);
+  const staffTeamsRef = useRef<ParentScheduleStaffTeam[]>([]);
+  const activeScheduleScopeRef = useRef<'family' | 'staff'>(scheduleScope);
+  activeScheduleScopeRef.current = scheduleScope;
   const activeUserIdRef = useRef<string | null>(auth.user?.uid || null);
   const scheduleRefreshVersionRef = useRef(0);
   activeUserIdRef.current = auth.user?.uid || null;
@@ -231,10 +261,48 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const applyScheduleResult = (data: { children: ParentScheduleChild[]; events: ParentScheduleEvent[]; staffTeams?: ParentScheduleStaffTeam[]; }) => {
     childrenRef.current = data.children;
     eventsRef.current = data.events;
+    staffTeamsRef.current = data.staffTeams ?? [];
+    activeScheduleScopeRef.current = resolveScheduleScope(
+      auth,
+      requestedScheduleScope,
+      data.children.length,
+      staffTeamsRef.current.length
+    );
     setChildren(data.children);
     setEvents(data.events);
-    setStaffTeams(data.staffTeams ?? []);
+    setStaffTeams(staffTeamsRef.current);
   };
+
+  const updateScheduleStaffTeams = (
+    updater: (current: ParentScheduleStaffTeam[]) => ParentScheduleStaffTeam[]
+  ) => {
+    const nextStaffTeams = updater(staffTeamsRef.current);
+    staffTeamsRef.current = nextStaffTeams;
+    activeScheduleScopeRef.current = resolveScheduleScope(
+      auth,
+      requestedScheduleScope,
+      childrenRef.current.length,
+      nextStaffTeams.length
+    );
+    setStaffTeams(nextStaffTeams);
+  };
+
+  useEffect(() => {
+    const userId = auth.user?.uid;
+    if (!userId) {
+      reportScheduleAccess(null);
+      return;
+    }
+    reportScheduleAccess({
+      userId,
+      hasFamily: hasFamilyAccess,
+      hasStaff: hasStaffAccess
+    });
+  }, [auth.user?.uid, hasFamilyAccess, hasStaffAccess, reportScheduleAccess]);
+
+  useEffect(() => () => {
+    reportScheduleAccess(null);
+  }, [reportScheduleAccess]);
 
   const mergeScheduleResult = (data: { children: ParentScheduleChild[]; events: ParentScheduleEvent[]; }) => {
     const mergedChildren = [...childrenRef.current];
@@ -328,7 +396,12 @@ export function Schedule({ auth }: { auth: AuthState }) {
       }
     });
 
-    const teamIds = Array.from(new Set(childrenRef.current.map((child) => child.teamId).filter(Boolean)));
+    const teamIds = Array.from(new Set([
+      ...childrenRef.current.map((child) => child.teamId),
+      ...(activeScheduleScopeRef.current === 'staff'
+        ? staffTeamsRef.current.map((team) => team.teamId)
+        : [])
+    ].filter(Boolean)));
     if (!teamIds.length) {
       return null;
     }
@@ -411,6 +484,16 @@ export function Schedule({ auth }: { auth: AuthState }) {
     setSelectedPlayerId(String(searchParams.get('playerId') || '').trim());
   }, [searchParams]);
 
+  useEffect(() => {
+    if (searchParams.get('staffTools') !== '1') return;
+    setStaffToolsRequested(true);
+    if (isDesktopWeb) {
+      setDesktopStaffToolsOpen(true);
+    } else {
+      setMobileStaffToolsOpen(true);
+    }
+  }, [isDesktopWeb, searchParams]);
+
   const refreshSchedule = async (force = false) => {
     if (!auth.user) return null;
     clearScheduleReadError();
@@ -452,7 +535,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
           );
           childrenRef.current = mergedScope.children;
           setChildren(mergedScope.children);
-          setStaffTeams((currentStaffTeams) => (
+          updateScheduleStaffTeams((currentStaffTeams) => (
             mergePartialScheduleScope(
               childrenRef.current,
               eventsRef.current,
@@ -467,6 +550,13 @@ export function Schedule({ auth }: { auth: AuthState }) {
         refreshedChildren = parentScope.children ?? [];
         refreshedStaffTeams = parentScope.staffTeams ?? [];
         childrenRef.current = refreshedChildren;
+        staffTeamsRef.current = refreshedStaffTeams;
+        activeScheduleScopeRef.current = resolveScheduleScope(
+          auth,
+          requestedScheduleScope,
+          refreshedChildren.length,
+          refreshedStaffTeams.length
+        );
         setChildren(refreshedChildren);
         setStaffTeams(refreshedStaffTeams);
         updateScheduleEvents((currentEvents) => applyAuthoritativeScheduleScope(
@@ -653,15 +743,31 @@ export function Schedule({ auth }: { auth: AuthState }) {
     recordFirstMeaningfulRender('schedule');
   }, [isInitialScheduleLoad, scheduleReadLoading]);
 
+  const scopedEvents = useMemo(() => {
+    if (scheduleScope === 'staff') {
+      const staffTeamIds = new Set(staffTeams.map((team) => team.teamId));
+      return events.filter((event) => event.isTeamStaff === true || staffTeamIds.has(event.teamId));
+    }
+    const familyTeamIds = new Set(children.map((child) => child.teamId));
+    return events.filter((event) => (
+      event.isLinkedParentChild === true
+      || (event.isLinkedParentChild == null && familyTeamIds.has(event.teamId))
+    ));
+  }, [children, events, scheduleScope, staffTeams]);
+  const scopeChildren = useMemo(
+    () => (scheduleScope === 'family' ? children : []),
+    [children, scheduleScope]
+  );
+  const activeSelectedPlayerId = scheduleScope === 'family' ? selectedPlayerId : '';
   const visibleEvents = useMemo(() => (
-    filterParentScheduleEvents(events, { filter, playerId: selectedPlayerId, teamId: selectedTeamId, timeRange })
-  ), [events, filter, selectedPlayerId, selectedTeamId, timeRange]);
-  const allBulkRsvpCandidates = useMemo(() => getBulkRsvpCandidates(filterParentScheduleEvents(events, {
+    filterParentScheduleEvents(scopedEvents, { filter, playerId: activeSelectedPlayerId, teamId: selectedTeamId, timeRange })
+  ), [activeSelectedPlayerId, filter, scopedEvents, selectedTeamId, timeRange]);
+  const allBulkRsvpCandidates = useMemo(() => getBulkRsvpCandidates(filterParentScheduleEvents(scopedEvents, {
     filter: 'upcoming-all',
-    playerId: selectedPlayerId,
+    playerId: activeSelectedPlayerId,
     teamId: selectedTeamId,
     timeRange: 'all'
-  })), [events, selectedPlayerId, selectedTeamId]);
+  })), [activeSelectedPlayerId, scopedEvents, selectedTeamId]);
   const bulkRsvpCandidates = useMemo(
     () => getBulkRsvpNoteReadyCandidates(allBulkRsvpCandidates),
     [allBulkRsvpCandidates]
@@ -710,7 +816,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
 
   useEffect(() => {
     setVisibleListCount(filter === 'past-all' ? pastListPageSize : upcomingListPageSize);
-  }, [filter, selectedPlayerId, selectedTeamId, timeRange, view]);
+  }, [filter, scheduleScope, selectedPlayerId, selectedTeamId, timeRange, view]);
 
   const listWindowLimit = visibleListCount + 1;
   const calendarEntries = useMemo(() => (
@@ -766,9 +872,28 @@ export function Schedule({ auth }: { auth: AuthState }) {
     }
   };
   const teamOptions = useMemo(
-    () => getParentScheduleTeamOptions(events, children, staffTeams),
-    [children, events, staffTeams]
+    () => getParentScheduleTeamOptions(
+      scopedEvents,
+      scopeChildren,
+      scheduleScope === 'staff' ? staffTeams : []
+    ),
+    [scheduleScope, scopeChildren, scopedEvents, staffTeams]
   );
+  useEffect(() => {
+    if (!hasLoadedSchedule || scheduleReadLoading) return;
+    if (scheduleScope === 'staff' && selectedPlayerId) {
+      setSelectedPlayerId('');
+    } else if (
+      scheduleScope === 'family'
+      && selectedPlayerId
+      && !scopeChildren.some((child) => child.playerId === selectedPlayerId)
+    ) {
+      setSelectedPlayerId('');
+    }
+    if (selectedTeamId && !teamOptions.some((team) => team.teamId === selectedTeamId)) {
+      setSelectedTeamId('');
+    }
+  }, [hasLoadedSchedule, scheduleReadLoading, scheduleScope, scopeChildren, selectedPlayerId, selectedTeamId, teamOptions]);
   const selectedDayEntries = useMemo(() => {
     if (!selectedDay) return [];
     return calendarEntries.filter((event) =>
@@ -803,6 +928,13 @@ export function Schedule({ auth }: { auth: AuthState }) {
     return selectedManageableTeam?.teamName
       || (manageableTeamOptions.length === 1 ? manageableTeamOptions[0].teamName : null);
   }, [manageableTeamOptions, selectedTeamId]);
+  const staffAiTeam = useMemo(() => {
+    const selectedManageableTeam = selectedTeamId
+      ? manageableTeamOptions.find((team) => team.teamId === selectedTeamId)
+      : null;
+    return selectedManageableTeam
+      || (manageableTeamOptions.length === 1 ? manageableTeamOptions[0] : null);
+  }, [manageableTeamOptions, selectedTeamId]);
 
   useEffect(() => {
     if (isDesktopWeb || !hasManageableScheduleTeams) setMobileStaffToolsOpen(false);
@@ -813,9 +945,9 @@ export function Schedule({ auth }: { auth: AuthState }) {
   }, [hasManageableScheduleTeams, isDesktopWeb]);
 
   const handleExport = () => {
-    const exportEvents = filterParentScheduleEvents(events, {
+    const exportEvents = filterParentScheduleEvents(scopedEvents, {
       filter: 'upcoming-all',
-      playerId: selectedPlayerId,
+      playerId: activeSelectedPlayerId,
       teamId: selectedTeamId,
       timeRange: 'all'
     });
@@ -829,10 +961,10 @@ export function Schedule({ auth }: { auth: AuthState }) {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    const selectedChild = children.find((child) => child.playerId === selectedPlayerId);
+    const selectedChild = scopeChildren.find((child) => child.playerId === activeSelectedPlayerId);
     link.download = selectedChild
       ? `${selectedChild.playerName || 'player'}-schedule.ics`.replace(/[^a-z0-9]+/gi, '-').toLowerCase()
-      : 'family-schedule.ics';
+      : scheduleScope === 'staff' ? 'team-schedule.ics' : 'family-schedule.ics';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -841,9 +973,9 @@ export function Schedule({ auth }: { auth: AuthState }) {
   };
 
   const handleCopyAgenda = async () => {
-    const agendaEvents = visibleEvents.length ? visibleEvents : filterParentScheduleEvents(events, {
+    const agendaEvents = visibleEvents.length ? visibleEvents : filterParentScheduleEvents(scopedEvents, {
       filter: 'upcoming-all',
-      playerId: selectedPlayerId,
+      playerId: activeSelectedPlayerId,
       teamId: selectedTeamId,
       timeRange
     });
@@ -937,70 +1069,19 @@ export function Schedule({ auth }: { auth: AuthState }) {
           </div>
         </div>
 
-        <div className="mt-3 grid grid-cols-3 gap-2">
-          <Segment active={view === 'list'} onClick={() => setView('list')} icon={ListChecks} label="List" />
-          <Segment active={view === 'calendar'} onClick={() => setView('calendar')} icon={CalendarDays} label="Calendar" />
-          <Segment active={view === 'packets'} onClick={() => setView('packets')} icon={ClipboardCheck} label="Packets" />
-        </div>
-
-        <div className="mt-2 grid grid-cols-2 gap-2">
-          <label>
-            <span className="sr-only">Schedule filter</span>
-            <select
-              aria-label="Schedule filter"
-              className="auth-input min-h-11 truncate !px-3 !py-2 text-xs font-black"
-              value={filter}
-              onChange={(event) => setFilter(event.target.value as ParentScheduleFilter)}
-            >
-              {filterOptions.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <span className="sr-only">Schedule range</span>
-            <select
-              aria-label="Schedule range"
-              className="auth-input min-h-11 truncate !px-3 !py-2 text-xs font-black"
-              value={timeRange}
-              onChange={(event) => setTimeRange(event.target.value as ScheduleTimeRange)}
-            >
-              {timeRangeOptions.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
-          </label>
-        </div>
-
-        <div className="mt-2 grid grid-cols-2 gap-2">
-          <label>
-            <span className="sr-only">Team filter</span>
-            <select aria-label="Team filter" className="auth-input min-h-11 truncate !px-3 !py-2 text-xs font-black" value={selectedTeamId} onChange={(event) => setSelectedTeamId(event.target.value)}>
-              <option value="">All Teams</option>
-              {teamOptions.map((team) => (
-                <option key={team.teamId} value={team.teamId}>{team.teamName}</option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <span className="sr-only">Player filter</span>
-            <select aria-label="Player filter" className="auth-input min-h-11 truncate !px-3 !py-2 text-xs font-black" value={selectedPlayerId} onChange={(event) => setSelectedPlayerId(event.target.value)}>
-              <option value="">All Players</option>
-              {children.map((child) => (
-                <option key={`${child.teamId}-${child.playerId}`} value={child.playerId}>{child.playerName}</option>
-              ))}
-            </select>
-          </label>
-        </div>
       </section>
 
       <section className="schedule-header app-card hidden p-3 sm:block sm:p-4">
         <div className="schedule-web-hero-layout">
           <div className="min-w-0 flex-1">
             <div className="app-label">Schedule</div>
-            <h1 className="mt-1 text-xl font-black text-gray-950 sm:text-2xl">Games, practices, RSVP</h1>
+            <h1 className="mt-1 text-xl font-black text-gray-950 sm:text-2xl">
+              {scheduleScope === 'staff' ? 'Team schedule management' : 'Games, practices, RSVP'}
+            </h1>
             <p className="mt-2 hidden text-sm font-semibold leading-6 text-gray-600 sm:block">
-              A family command center for what is next, what needs a parent decision, and what can wait.
+              {scheduleScope === 'staff'
+                ? 'Review team events, add games and practices, track attendance, or open import and AI tools.'
+                : 'A family command center for what is next, what needs a parent decision, and what can wait.'}
             </p>
 
             <div className="mt-3 grid grid-cols-5 gap-1.5 sm:mt-4 sm:gap-2">
@@ -1034,16 +1115,42 @@ export function Schedule({ auth }: { auth: AuthState }) {
           <ScheduleNextUpCard event={webInsights.nextEvent} preferGameHubForStaff={!isDesktopWeb} />
         </div>
 
-        {!isDesktopWeb ? (
-          <div className="mt-3 grid grid-cols-3 gap-2 sm:mt-4 sm:flex sm:flex-wrap">
-            <Segment active={view === 'list'} onClick={() => setView('list')} icon={ListChecks} label="List" />
-            <Segment active={view === 'calendar'} onClick={() => setView('calendar')} icon={CalendarDays} label="Calendar" />
-            <Segment active={view === 'packets'} onClick={() => setView('packets')} icon={ClipboardCheck} label="Packets" />
-            <label className="sm:hidden">
+      </section>
+
+      {!isDesktopWeb ? (
+        <ScheduleRoleSubmenu
+          auth={auth}
+          selectedTeamId={selectedTeamId}
+          variant="page"
+          activeState={{ scope: scheduleScope, view, filter, staffSection }}
+          access={{ hasFamily: hasFamilyAccess, hasStaff: hasStaffAccess }}
+        />
+      ) : null}
+
+      {!isDesktopWeb && (scheduleScope === 'family' || !staffSection) ? (
+        <section className="schedule-mobile-controls app-card p-3" aria-label="Schedule view and filters">
+          <div className="app-label">{scheduleScope === 'staff' ? 'Team schedule view' : 'Refine schedule'}</div>
+          <div className="mt-2 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+            {scheduleScope === 'staff' ? (
+              <label className="min-w-0 sm:min-w-36 sm:max-w-44">
+                <span className="sr-only">Schedule view</span>
+                <select
+                  aria-label="Schedule view"
+                  className="auth-input min-h-11 truncate !px-3 !py-2 text-xs font-black sm:text-sm"
+                  value={view === 'calendar' || view === 'packets' ? view : 'list'}
+                  onChange={(event) => setView(event.target.value as ScheduleViewMode)}
+                >
+                  <option value="list">List</option>
+                  <option value="calendar">Calendar</option>
+                  <option value="packets">Packets</option>
+                </select>
+              </label>
+            ) : null}
+            <label className="min-w-0 sm:min-w-40 sm:max-w-48">
               <span className="sr-only">Schedule filter</span>
               <select
                 aria-label="Schedule filter"
-                className="auth-input min-h-11 truncate !px-3 !py-2 text-xs font-black"
+                className="auth-input min-h-11 truncate !px-3 !py-2 text-xs font-black sm:text-sm"
                 value={filter}
                 onChange={(event) => setFilter(event.target.value as ParentScheduleFilter)}
               >
@@ -1052,46 +1159,49 @@ export function Schedule({ auth }: { auth: AuthState }) {
                 ))}
               </select>
             </label>
-            <label className="min-w-0 flex-1 sm:min-w-32 sm:max-w-40">
-              <span className="sr-only">Range</span>
-              <select aria-label="Range" className="auth-input min-h-11 truncate !px-3 !py-2 text-xs font-black sm:text-sm" value={timeRange} onChange={(event) => setTimeRange(event.target.value as ScheduleTimeRange)}>
+            <label className="min-w-0 sm:min-w-32 sm:max-w-40">
+              <span className="sr-only">Schedule range</span>
+              <select aria-label="Schedule range" className="auth-input min-h-11 truncate !px-3 !py-2 text-xs font-black sm:text-sm" value={timeRange} onChange={(event) => setTimeRange(event.target.value as ScheduleTimeRange)}>
                 {timeRangeOptions.map((option) => (
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
               </select>
             </label>
-            <label className="min-w-0 flex-1 sm:min-w-48 sm:max-w-64">
-              <span className="sr-only">Team</span>
-              <select aria-label="Team" className="auth-input min-h-11 truncate !px-3 !py-2 text-xs font-black sm:text-sm" value={selectedTeamId} onChange={(event) => setSelectedTeamId(event.target.value)}>
+            <label className="min-w-0 sm:min-w-48 sm:max-w-64">
+              <span className="sr-only">Team filter</span>
+              <select aria-label="Team filter" className="auth-input min-h-11 truncate !px-3 !py-2 text-xs font-black sm:text-sm" value={selectedTeamId} onChange={(event) => setSelectedTeamId(event.target.value)}>
                 <option value="">All Teams</option>
                 {teamOptions.map((team) => (
                   <option key={team.teamId} value={team.teamId}>{team.teamName}</option>
                 ))}
               </select>
             </label>
-            <label className="min-w-0 flex-1 sm:min-w-48 sm:max-w-64">
-              <span className="sr-only">Player</span>
-              <select aria-label="Player" className="auth-input min-h-11 truncate !px-3 !py-2 text-xs font-black sm:text-sm" value={selectedPlayerId} onChange={(event) => setSelectedPlayerId(event.target.value)}>
-                <option value="">All Players</option>
-                {children.map((child) => (
-                  <option key={`${child.teamId}-${child.playerId}`} value={child.playerId}>{child.playerName}</option>
-                ))}
-              </select>
-            </label>
+            {scheduleScope === 'family' ? (
+              <label className="min-w-0 sm:min-w-48 sm:max-w-64">
+                <span className="sr-only">Player filter</span>
+                <select aria-label="Player filter" className="auth-input min-h-11 truncate !px-3 !py-2 text-xs font-black sm:text-sm" value={activeSelectedPlayerId} onChange={(event) => setSelectedPlayerId(event.target.value)}>
+                  <option value="">All Players</option>
+                  {scopeChildren.map((child) => (
+                    <option key={`${child.teamId}-${child.playerId}`} value={child.playerId}>{child.playerName}</option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
           </div>
-        ) : null}
-      </section>
+        </section>
+      ) : null}
 
       <div className="schedule-workbench">
         {isDesktopWeb ? (
           <aside className="schedule-web-sidebar space-y-3">
             <ScheduleWebControls
+              scope={scheduleScope}
               filter={filter}
               view={view}
-              selectedPlayerId={selectedPlayerId}
+              selectedPlayerId={activeSelectedPlayerId}
               selectedTeamId={selectedTeamId}
               timeRange={timeRange}
-              children={children}
+              players={scopeChildren}
               teamOptions={teamOptions}
               loading={scheduleReadLoading}
               insights={webInsights}
@@ -1153,6 +1263,13 @@ export function Schedule({ auth }: { auth: AuthState }) {
           ) : null}
 
           {scheduleReadLoading && events.length ? <ScheduleProgressLoading /> : null}
+
+          {scheduleScope === 'staff' && hasManageableScheduleTeams ? (
+            <ScheduleAiManagerCard
+              teamId={staffAiTeam?.teamId || ''}
+              teamName={staffAiTeam?.teamName || ''}
+            />
+          ) : null}
 
           {(scheduleReadLoading || isInitialScheduleLoad) && !events.length ? (
             <LoadingSchedule />
@@ -1216,9 +1333,9 @@ export function Schedule({ auth }: { auth: AuthState }) {
               {staffToolsRequested ? (
                 <DeferredScheduleStaffTools
                   auth={auth}
-                  events={events}
                   manageableTeamOptions={manageableTeamOptions}
                   selectedTeamId={selectedTeamId}
+                  initialSection={staffSection}
                   onRefresh={() => refreshSchedule(true)}
                   onStatusMessage={setStatusMessage}
                   onClearError={clearScheduleReadError}
@@ -1241,9 +1358,9 @@ export function Schedule({ auth }: { auth: AuthState }) {
               {staffToolsRequested ? (
                 <DeferredScheduleStaffTools
                   auth={auth}
-                  events={events}
                   manageableTeamOptions={manageableTeamOptions}
                   selectedTeamId={selectedTeamId}
+                  initialSection={staffSection}
                   onRefresh={() => refreshSchedule(true)}
                   onStatusMessage={setStatusMessage}
                   onClearError={clearScheduleReadError}
@@ -1267,9 +1384,9 @@ export function Schedule({ auth }: { auth: AuthState }) {
 
 type DeferredScheduleStaffToolsProps = {
   auth: AuthState;
-  events: ParentScheduleEvent[];
   manageableTeamOptions: ParentScheduleTeamOption[];
   selectedTeamId: string;
+  initialSection?: string;
   onRefresh: () => Promise<unknown>;
   onStatusMessage: (message: string | null) => void;
   onClearError: () => void;
@@ -1315,6 +1432,48 @@ function DeferredScheduleStaffTools(props: DeferredScheduleStaffToolsProps) {
   return <StaffTools {...props} />;
 }
 
+function ScheduleAiManagerCard({ teamId, teamName }: { teamId: string; teamName: string }) {
+  const teamLabel = teamName || 'your managed teams';
+  const launchPath = buildPrivateAiLaunchPath({
+    intent: 'schedule-import',
+    teamId,
+    teamName: teamName || 'my teams'
+  });
+
+  return (
+    <section id="schedule-staff-ai" className="app-card scroll-mt-24 overflow-hidden border-violet-200 bg-gradient-to-br from-violet-100 via-white to-primary-50 p-4 shadow-sm" aria-label="Manage schedule with AI">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 items-start gap-3">
+          <div className="flex h-10 w-10 flex-none items-center justify-center rounded-xl bg-violet-100 text-violet-700">
+            <Sparkles className="h-4 w-4" aria-hidden="true" />
+          </div>
+          <div className="min-w-0">
+            <div className="app-label text-violet-700">Your AI schedule manager</div>
+            <h2 className="mt-1 text-lg font-black text-gray-950">Manage the whole schedule in chat</h2>
+            <p className="mt-1 text-xs font-semibold leading-5 text-gray-600">
+              Tell AI what the schedule needs for {teamLabel}: add or update games, create one-time or recurring practices, cancel events, send RSVP reminders, or import a CSV, image, or PDF.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-1.5 text-[11px] font-black text-violet-700">
+              <span className="rounded-full bg-white px-2 py-1">Games</span>
+              <span className="rounded-full bg-white px-2 py-1">Recurring practices</span>
+              <span className="rounded-full bg-white px-2 py-1">Updates & cancellations</span>
+              <span className="rounded-full bg-white px-2 py-1">RSVP reminders</span>
+              <span className="rounded-full bg-white px-2 py-1">Bulk imports</span>
+            </div>
+            <div className="mt-2 text-[11px] font-bold text-gray-500">
+              {teamId ? `${teamName} is preselected` : 'AI will resolve the team from your request'} · nothing saves or sends before you reply yes
+            </div>
+          </div>
+        </div>
+        <Link className="primary-button !min-h-10 flex-none text-xs" to={launchPath}>
+          <MessageCircle className="h-4 w-4" aria-hidden="true" />
+          Manage with AI
+        </Link>
+      </div>
+    </section>
+  );
+}
+
 function ScheduleStaffToolsSection({ open, teamName, contentId, onToggle, children }: { open: boolean; teamName: string | null; contentId: string; onToggle: () => void; children: ReactNode }) {
   return (
     <section className="app-card p-3" aria-label="Manage schedule tools">
@@ -1328,7 +1487,7 @@ function ScheduleStaffToolsSection({ open, teamName, contentId, onToggle, childr
         <div className="min-w-0">
           <div className="app-label">Staff schedule tools</div>
           <h2 className="mt-1 text-base font-black text-gray-950">Manage schedule</h2>
-          <p className="mt-1 text-xs font-semibold leading-5 text-gray-500">{teamName ? `Calendar feeds and imports for ${teamName} stay tucked away until you need them.` : 'Choose a team here to unlock schedule tools without relying on the page-level team filter.'}</p>
+          <p className="mt-1 text-xs font-semibold leading-5 text-gray-500">{teamName ? `Add games and recurring practices, manage attendance, or connect calendar feeds for ${teamName}.` : 'Choose a team here to unlock its schedule tools without relying on the page-level team filter.'}</p>
         </div>
         <ChevronDown className={`h-5 w-5 flex-none text-gray-500 transition ${open ? 'rotate-180' : ''}`} aria-hidden="true" />
       </button>
@@ -1595,13 +1754,14 @@ function ScheduleNextUpCard({ event, preferGameHubForStaff }: { event: ParentSch
   );
 }
 
-function ScheduleWebControls({ filter, view, selectedPlayerId, selectedTeamId, timeRange, children, teamOptions, loading, insights, advancedControlsOpen, onFilterChange, onViewChange, onPlayerChange, onTeamChange, onTimeRangeChange, onRefresh, onExport, onCopyAgenda, onAdvancedControlsOpenChange, onResetFilters }: {
+function ScheduleWebControls({ scope, filter, view, selectedPlayerId, selectedTeamId, timeRange, players, teamOptions, loading, insights, advancedControlsOpen, onFilterChange, onViewChange, onPlayerChange, onTeamChange, onTimeRangeChange, onRefresh, onExport, onCopyAgenda, onAdvancedControlsOpenChange, onResetFilters }: {
+  scope: 'staff' | 'family';
   filter: ParentScheduleFilter;
   view: ScheduleViewMode;
   selectedPlayerId: string;
   selectedTeamId: string;
   timeRange: ScheduleTimeRange;
-  children: ParentScheduleChild[];
+  players: ParentScheduleChild[];
   teamOptions: ParentScheduleTeamOption[];
   loading: boolean;
   insights: ScheduleWebInsights;
@@ -1620,14 +1780,17 @@ function ScheduleWebControls({ filter, view, selectedPlayerId, selectedTeamId, t
   const filterLabel = filterOptions.find((option) => option.value === filter)?.label || 'Schedule';
   const rangeLabel = timeRangeOptions.find((option) => option.value === timeRange)?.label || 'All';
   const teamLabel = teamOptions.find((team) => team.teamId === selectedTeamId)?.teamName || 'All teams';
-  const playerLabel = children.find((child) => child.playerId === selectedPlayerId)?.playerName || 'All players';
+  const playerLabel = players.find((player) => player.playerId === selectedPlayerId)?.playerName || 'All players';
+  const activeFilterLabels = scope === 'staff'
+    ? [filterLabel, rangeLabel, teamLabel]
+    : [filterLabel, rangeLabel, teamLabel, playerLabel];
 
   return (
     <section className="app-card schedule-control-panel p-4">
       <div className="flex items-center justify-between gap-2">
         <div>
           <div className="app-label">Plan view</div>
-          <h2 className="mt-1 text-base font-black text-gray-950">Family agenda</h2>
+          <h2 className="mt-1 text-base font-black text-gray-950">{scope === 'staff' ? 'Team plan' : 'Family agenda'}</h2>
         </div>
         <button type="button" className="ghost-button !h-11 !min-h-11 !w-11 !p-0" onClick={onRefresh} disabled={loading} aria-label="Refresh schedule">
           <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />
@@ -1636,7 +1799,7 @@ function ScheduleWebControls({ filter, view, selectedPlayerId, selectedTeamId, t
 
       <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-3">
         <div className="app-label">Active filters</div>
-        <div className="mt-1 text-sm font-black text-gray-950">{filterLabel} · {rangeLabel} · {teamLabel} · {playerLabel}</div>
+        <div className="mt-1 text-sm font-black text-gray-950">{activeFilterLabels.join(' · ')}</div>
         <div className="mt-3 grid grid-cols-2 gap-2">
           <button
             type="button"
@@ -1671,14 +1834,26 @@ function ScheduleWebControls({ filter, view, selectedPlayerId, selectedTeamId, t
       </div>
 
       <label className="mt-4 block">
-        <span className="app-label">Player</span>
-        <select aria-label="Player" className="auth-input mt-1 min-h-10 truncate !px-3 !py-2 text-sm font-black" value={selectedPlayerId} onChange={(event) => onPlayerChange(event.target.value)}>
-          <option value="">All Players</option>
-          {children.map((child) => (
-            <option key={`${child.teamId}-${child.playerId}`} value={child.playerId}>{child.playerName}</option>
+        <span className="app-label">Team</span>
+        <select aria-label="Team" className="auth-input mt-1 min-h-10 truncate !px-3 !py-2 text-sm font-black" value={selectedTeamId} onChange={(event) => onTeamChange(event.target.value)}>
+          <option value="">All Teams</option>
+          {teamOptions.map((team) => (
+            <option key={team.teamId} value={team.teamId}>{team.teamName}</option>
           ))}
         </select>
       </label>
+
+      {scope === 'family' ? (
+        <label className="mt-3 block">
+          <span className="app-label">Player</span>
+          <select aria-label="Player" className="auth-input mt-1 min-h-10 truncate !px-3 !py-2 text-sm font-black" value={selectedPlayerId} onChange={(event) => onPlayerChange(event.target.value)}>
+            <option value="">All Players</option>
+            {players.map((player) => (
+              <option key={`${player.teamId}-${player.playerId}`} value={player.playerId}>{player.playerName}</option>
+            ))}
+          </select>
+        </label>
+      ) : null}
 
       <div className="mt-4 grid grid-cols-2 gap-2">
         <button type="button" className="secondary-button w-full" onClick={onExport}>
@@ -1693,12 +1868,17 @@ function ScheduleWebControls({ filter, view, selectedPlayerId, selectedTeamId, t
 
       {advancedControlsOpen ? (
         <>
-      <div className="mt-4 grid grid-cols-2 gap-2">
-        <Segment active={view === 'list'} onClick={() => onViewChange('list')} icon={ListChecks} label="List" />
-        <Segment active={view === 'compact'} onClick={() => onViewChange('compact')} icon={ListChecks} label="Compact" />
-        <Segment active={view === 'calendar'} onClick={() => onViewChange('calendar')} icon={CalendarDays} label="Calendar" />
-        <Segment active={view === 'packets'} onClick={() => onViewChange('packets')} icon={ClipboardCheck} label="Packets" />
-      </div>
+      <button
+        type="button"
+        className={`mt-4 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border px-3 py-2 text-sm font-black transition ${
+          view === 'compact' ? 'border-primary-200 bg-primary-50 text-primary-700' : 'border-gray-200 bg-white text-gray-600'
+        }`}
+        onClick={() => onViewChange('compact')}
+        aria-pressed={view === 'compact'}
+      >
+        <ListChecks className="h-4 w-4" aria-hidden="true" />
+        Compact
+      </button>
 
       <label className="mt-4 block">
         <span className="app-label">Range</span>
@@ -1708,52 +1888,6 @@ function ScheduleWebControls({ filter, view, selectedPlayerId, selectedTeamId, t
           ))}
         </select>
       </label>
-
-      <label className="mt-4 block">
-        <span className="app-label">Team</span>
-        <select aria-label="Team" className="auth-input mt-1 min-h-10 truncate !px-3 !py-2 text-sm font-black" value={selectedTeamId} onChange={(event) => onTeamChange(event.target.value)}>
-          <option value="">All Teams</option>
-          {teamOptions.map((team) => (
-            <option key={team.teamId} value={team.teamId}>{team.teamName}</option>
-          ))}
-        </select>
-      </label>
-
-      <label className="mt-4 block">
-        <span className="app-label">Player</span>
-        <select aria-label="Player" className="auth-input mt-1 min-h-10 truncate !px-3 !py-2 text-sm font-black" value={selectedPlayerId} onChange={(event) => onPlayerChange(event.target.value)}>
-          <option value="">All Players</option>
-          {children.map((child) => (
-            <option key={`${child.teamId}-${child.playerId}`} value={child.playerId}>{child.playerName}</option>
-          ))}
-        </select>
-      </label>
-
-      <div className="mt-4 space-y-2" aria-label="Schedule filters">
-        {filterOptions.map((option) => (
-          <ScheduleFilterButton
-            key={option.value}
-            option={option}
-            active={filter === option.value}
-            onClick={() => onFilterChange(option.value)}
-            fullWidth
-          />
-        ))}
-      </div>
-
-      <div className="mt-4 grid grid-cols-2 gap-2">
-        <button type="button" className="secondary-button w-full" onClick={onExport}>
-          <Download className="h-4 w-4" aria-hidden="true" />
-          Download
-        </button>
-        <button type="button" className="secondary-button w-full" onClick={onCopyAgenda}>
-          <Copy className="h-4 w-4" aria-hidden="true" />
-          Copy
-        </button>
-      </div>
-      <div className="mt-2 rounded-xl border border-gray-200 bg-gray-50 p-2 text-[11px] font-semibold leading-4 text-gray-500">
-        Use the calendar file for Apple or Google Calendar import. Copy agenda sends plain event details.
-      </div>
 
       <div className="mt-4 grid grid-cols-2 gap-2">
         <ScheduleInsightMini label="RSVP" value={insights.rsvpNeeded} />

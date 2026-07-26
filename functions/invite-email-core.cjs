@@ -34,6 +34,26 @@ function buildInviteSignupUrl(code, inviteType, origin = ALLPLAYS_ORIGIN) {
   return url.toString();
 }
 
+function buildLinkedTeamUrl(teamId, origin = ALLPLAYS_ORIGIN) {
+  const normalizedTeamId = String(teamId || '').trim();
+  const url = new URL('/app/', origin);
+  url.hash = `/teams/${encodeURIComponent(normalizedTeamId)}`;
+  return url.toString();
+}
+
+function isLinkedParentInvite(invite = {}) {
+  if (normalizeInviteEmailType(invite.type) !== 'parent') return false;
+  const status = String(invite.status || '').trim().toLowerCase();
+  return invite.autoAccepted === true
+    || (invite.used === true && status === 'accepted' && Boolean(String(invite.usedBy || '').trim()));
+}
+
+function shouldQueueInviteEmailOnCreate(invite = {}) {
+  const inviteType = normalizeInviteEmailType(invite.type);
+  return Boolean(inviteType)
+    && isValidInviteRecipientEmail(invite.email);
+}
+
 function buildParentInviteEmailMessage(invite = {}, origin = ALLPLAYS_ORIGIN) {
   const code = String(invite.code || '').trim().toUpperCase();
   const inviteType = normalizeInviteEmailType(invite.type);
@@ -45,6 +65,35 @@ function buildParentInviteEmailMessage(invite = {}, origin = ALLPLAYS_ORIGIN) {
   const playerName = String(invite.playerName || '').trim() || 'a player';
   const teamName = String(invite.teamName || '').trim();
   const relation = String(invite.relation || '').trim();
+  if (isLinkedParentInvite(invite)) {
+    const linkedTeamUrl = buildLinkedTeamUrl(invite.teamId, origin);
+    const context = teamName ? `${playerName} on ${teamName}` : playerName;
+    const subject = `You're connected to ${playerName} on ALL PLAYS`;
+    const intro = `Your ALL PLAYS account was linked to ${context}${relation ? ` as ${relation}` : ''}.`;
+    const text = [
+      intro,
+      '',
+      `Open ALL PLAYS: ${linkedTeamUrl}`,
+      '',
+      'No acceptance step or invite code is needed.'
+    ].join('\n');
+    const html = `
+      <div style="font-family:Arial,sans-serif;line-height:1.5;color:#111827;max-width:560px;margin:0 auto">
+        <h1 style="font-size:24px;margin:0 0 16px">You're connected on ALL PLAYS</h1>
+        <p>${escapeHtml(intro)}</p>
+        <p><a href="${escapeHtml(linkedTeamUrl)}" style="display:inline-block;padding:12px 18px;border-radius:8px;background:#4f46e5;color:#ffffff;text-decoration:none;font-weight:700">Open ALL PLAYS</a></p>
+        <p style="font-size:13px;color:#4b5563">No acceptance step or invite code is needed.</p>
+      </div>
+    `.trim();
+    return {
+      subject,
+      text,
+      html,
+      signupUrl: linkedTeamUrl,
+      inviteType,
+      messageKind: 'linked'
+    };
+  }
   const isHouseholdInvite = inviteType === 'household';
   const isCoParentInvite = inviteType === 'coparent';
   const subject = isHouseholdInvite
@@ -80,13 +129,16 @@ function buildParentInviteEmailMessage(invite = {}, origin = ALLPLAYS_ORIGIN) {
     </div>
   `.trim();
 
-  return { subject, text, html, signupUrl, inviteType };
+  return { subject, text, html, signupUrl, inviteType, messageKind: 'invite' };
 }
 
 module.exports = {
   ALLPLAYS_ORIGIN,
   buildInviteSignupUrl,
+  buildLinkedTeamUrl,
   buildParentInviteEmailMessage,
   isValidInviteRecipientEmail,
-  normalizeInviteEmailType
+  isLinkedParentInvite,
+  normalizeInviteEmailType,
+  shouldQueueInviteEmailOnCreate
 };

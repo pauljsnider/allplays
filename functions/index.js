@@ -118,8 +118,10 @@ const {
 const {
   buildParentInviteEmailMessage,
   isValidInviteRecipientEmail,
-  normalizeInviteEmailType
+  normalizeInviteEmailType,
+  shouldQueueInviteEmailOnCreate
 } = require('./invite-email-core.cjs');
+const { createInviteEmailOnCreateHandler } = require('./invite-email-trigger-core.cjs');
 const {
   AUTH_EMAIL_TYPES,
   buildAuthEmailMailDocId,
@@ -132,10 +134,16 @@ const {
 } = require('./auth-email-core.cjs');
 const { createAuthEmailCallableHandlers } = require('./auth-email-callables.cjs');
 const { createAuthEmailDeliveryStore } = require('./auth-email-delivery-store.cjs');
+const { buildInviteMailDocId } = require('./invite-email-queue-core.cjs');
 const { createResendAuthEmailDelivery } = require('./resend-auth-email-delivery.cjs');
 const { createPasswordResetEmailWorker } = require('./auth-email-password-reset-worker.cjs');
 const { createPasswordResetEmailSweeper } = require('./auth-email-password-reset-sweeper.cjs');
-const { findOwnedInviteCode: findOwnedAuthEmailInviteCode } = require('./auth-email-invite-store.cjs');
+const {
+  canQueueInviteEmailForCaller,
+  findInviteCode: findAuthEmailInviteCode,
+  findOwnedInviteCode: findOwnedAuthEmailInviteCode,
+  isInviteEmailDeliveryEligible
+} = require('./auth-email-invite-store.cjs');
 const {
   normalizeEmail,
   normalizeAccountMergePreviewInput,
@@ -2454,25 +2462,35 @@ const releaseAuthEmailDelivery = authEmailDeliveryStore.release;
 const queueAuthEmailDelivery = authEmailDeliveryStore.queue;
 const enqueuePasswordResetRequest = authEmailDeliveryStore.enqueuePasswordResetRequest;
 
-function buildInviteMailDocId(codeId) {
-  const safeCodeId = String(codeId || '').replace(/[^\w.-]+/g, '_').slice(0, 240);
-  return `invite_${safeCodeId}`;
-}
-
 function isAlreadyExistsError(error) {
   return error?.code === 6 || error?.code === '6' || error?.code === 'already-exists';
 }
 
-async function queueInviteEmailForCode(codeId, codeData = {}) {
+async function queueInviteEmailForCode(codeId, codeData = {}, options = {}) {
   const type = String(codeData.type || '').trim().toLowerCase();
   const email = normalizeParentInviteEmail(codeData.email);
   const code = String(codeData.code || '').trim().toUpperCase();
-  if (!INVITE_EMAIL_TYPES.has(type) || !normalizeInviteEmailType(type) || !isValidInviteRecipientEmail(email) || !code) {
+  if (!INVITE_EMAIL_TYPES.has(type) ||
+      !normalizeInviteEmailType(type) ||
+      !isValidInviteRecipientEmail(email) ||
+      !code ||
+      !isInviteEmailDeliveryEligible(codeData)) {
     return { queued: false, reason: 'not_email_eligible' };
   }
 
   const message = buildParentInviteEmailMessage({ ...codeData, type, code });
-  const mailRef = firestore.collection('mail').doc(buildInviteMailDocId(codeId));
+  const forceNewDelivery = options.forceNewDelivery === true;
+  const deliveryId = String(options.deliveryId || '').trim();
+  const resendRateLimitType = 'invite_resend';
+  const resendRateLimitScope = String(codeId || '').trim();
+  if (forceNewDelivery) {
+    const reserved = await reserveAuthEmailDelivery(resendRateLimitType, email, resendRateLimitScope);
+    if (!reserved) return { queued: false, reason: 'cooldown' };
+  }
+  const mailRef = firestore.collection('mail').doc(buildInviteMailDocId(codeId, {
+    forceNewDelivery,
+    deliveryId
+  }));
   try {
     await mailRef.create({
       to: [email],
@@ -2488,13 +2506,19 @@ async function queueInviteEmailForCode(codeId, codeData = {}) {
         accessCodeId: String(codeId || '').trim(),
         teamId: String(codeData.teamId || '').trim() || null,
         playerId: String(codeData.playerId || '').trim() || null,
-        generatedBy: String(codeData.generatedBy || '').trim() || null
+        generatedBy: String(codeData.generatedBy || '').trim() || null,
+        deliveryId: forceNewDelivery ? deliveryId : null,
+        isResend: forceNewDelivery,
+        messageKind: message.messageKind
       }
     });
     return { queued: true, deduplicated: false, signupUrl: message.signupUrl };
   } catch (error) {
     if (isAlreadyExistsError(error)) {
       return { queued: true, deduplicated: true, signupUrl: message.signupUrl };
+    }
+    if (forceNewDelivery) {
+      await releaseAuthEmailDelivery(resendRateLimitType, email, resendRateLimitScope);
     }
     throw error;
   }
@@ -2597,32 +2621,87 @@ exports.queueInviteEmail = functions.https.onCall(async (data, context) => {
     throw new functions.https.HttpsError('invalid-argument', 'A valid eight-character invite code is required.');
   }
 
-  const invite = await findOwnedInviteCode(code, uid);
+  const invite = await findAuthEmailInviteCode({
+    firestore,
+    code,
+    allowedTypes: INVITE_EMAIL_TYPES
+  });
   if (!invite) {
+    throw new functions.https.HttpsError('not-found', 'Invite could not be found.');
+  }
+  if (!isInviteEmailDeliveryEligible(invite.data)) {
+    throw new functions.https.HttpsError('failed-precondition', 'Invite is no longer eligible for email delivery.');
+  }
+  const inviteType = String(invite.data.type || '').trim().toLowerCase();
+  let team = null;
+  let user = {};
+  if (inviteType === 'parent_invite') {
+    const teamId = String(invite.data.teamId || '').trim();
+    if (teamId) {
+      const [teamSnap, userSnap] = await Promise.all([
+        firestore.doc(`teams/${teamId}`).get(),
+        firestore.doc(`users/${uid}`).get()
+      ]);
+      team = teamSnap.exists ? teamSnap.data() || {} : null;
+      user = userSnap.exists ? userSnap.data() || {} : {};
+    }
+  }
+  const canQueue = canQueueInviteEmailForCaller({
+    invite: invite.data,
+    team,
+    user,
+    uid,
+    email: context.auth.token?.email
+  });
+  if (!canQueue) {
     throw new functions.https.HttpsError('not-found', 'Invite could not be found.');
   }
   if (!isValidInviteRecipientEmail(invite.data.email)) {
     throw new functions.https.HttpsError('failed-precondition', 'Invite does not have a valid recipient email.');
   }
 
-  const result = await queueInviteEmailForCode(invite.id, invite.data);
+  const forceNewDelivery = data?.forceNewDelivery === true;
+  const deliveryId = String(data?.deliveryId || '').trim();
+  if (forceNewDelivery && !/^[A-Za-z0-9_.-]{8,80}$/.test(deliveryId)) {
+    throw new functions.https.HttpsError('invalid-argument', 'A valid delivery ID is required to resend an invite email.');
+  }
+  const result = await queueInviteEmailForCode(invite.id, invite.data, {
+    forceNewDelivery,
+    deliveryId
+  });
   if (!result.queued) {
     throw new functions.https.HttpsError('failed-precondition', 'Invite is not eligible for email delivery.');
   }
   return result;
 });
 
-exports.queueParentInviteEmail = functions.firestore
+const autoAcceptParentInviteHandler = createAutoAcceptParentInviteHandler({
+  firestore,
+  Timestamp: admin.firestore.Timestamp,
+  HttpsError: functions.https.HttpsError,
+  normalizeFirestoreId,
+  validateCode: validateAutoAcceptParentInviteCode
+});
+
+const inviteEmailOnCreateHandler = createInviteEmailOnCreateHandler({
+  shouldQueueInviteEmail: shouldQueueInviteEmailOnCreate,
+  autoLinkParentInvite: (codeId, generatedBy) => autoAcceptParentInviteHandler(
+    { codeId },
+    { auth: { uid: generatedBy, token: {} } }
+  ),
+  loadLatestInvite: async (snapshot) => {
+    const latestSnapshot = await snapshot.ref.get();
+    return latestSnapshot.exists ? latestSnapshot.data() || {} : snapshot.data() || {};
+  },
+  queueInviteEmail: queueInviteEmailForCode,
+  logger: functions.logger
+});
+
+exports.queueParentInviteEmail = functions
+  .runWith({ failurePolicy: true })
+  .firestore
   .document('accessCodes/{codeId}')
-  .onCreate(async (snap, context) => {
-    const codeData = snap.data() || {};
-    if (!INVITE_EMAIL_TYPES.has(String(codeData.type || '').trim().toLowerCase()) ||
-        !isValidInviteRecipientEmail(codeData.email)) {
-      return null;
-    }
-    await queueInviteEmailForCode(context.params.codeId, codeData);
-    return null;
-  });
+  .onCreate(inviteEmailOnCreateHandler);
 
 exports.cleanupFailedInviteSignup = functions.https.onCall(async (data, context) => {
   if (!context.auth?.uid) {
@@ -3165,13 +3244,7 @@ exports.confirmParentAccountMerge = functions.https.onCall(async (data, context)
   return { merged: true, idempotent: false, requestId: requestRef.id, affectedCollections: [...affectedCollections] };
 });
 
-exports.autoAcceptParentInviteForExistingUser = functions.https.onCall(createAutoAcceptParentInviteHandler({
-  firestore,
-  Timestamp: admin.firestore.Timestamp,
-  HttpsError: functions.https.HttpsError,
-  normalizeFirestoreId,
-  validateCode: validateAutoAcceptParentInviteCode
-}));
+exports.autoAcceptParentInviteForExistingUser = functions.https.onCall(autoAcceptParentInviteHandler);
 
 
 exports.redeemParentInvite = functions.https.onCall(async (data, context) => {
@@ -5234,7 +5307,9 @@ function getAllowedOriginPolicy() {
       'https://allplays.ai',
       'https://www.allplays.ai',
       'http://localhost:8000',
-      'http://127.0.0.1:8000'
+      'http://127.0.0.1:8000',
+      'http://localhost:5174',
+      'http://127.0.0.1:5174'
     ],
     allowFirebaseHosting: true
   };

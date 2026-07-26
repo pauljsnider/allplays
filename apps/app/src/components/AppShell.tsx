@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
@@ -42,6 +42,11 @@ import { loadNotificationInboxService } from '../lib/notificationInboxServiceLoa
 import type { AuthState, AuthUser, NavItem } from '../lib/types';
 import { RoleBadge } from './Badges';
 import { Modal } from './Modal';
+import { hasFamilyScheduleAccess, ScheduleRoleSubmenu } from './ScheduleRoleSubmenu';
+import {
+  ScheduleAccessReportingProvider,
+  type ScheduleAccessReport
+} from './ScheduleAccessReporting';
 
 const AppSearchDialog = lazy(() => import('./AppSearchDialog').then((module) => ({ default: module.AppSearchDialog })));
 const NotificationInboxSheet = lazy(() => import('./NotificationInboxSheet').then((module) => ({ default: module.NotificationInboxSheet })));
@@ -56,10 +61,6 @@ const navItems: NavItem[] = [
 ];
 
 const familyNavItem: NavItem = { label: 'Family', path: '/parent-tools', icon: UsersRound };
-const mobileSignedInNavItems: NavItem[] = [
-  ...navItems,
-  familyNavItem,
-];
 const desktopNavItems: NavItem[] = [
   ...navItems.slice(0, -1),
   familyNavItem,
@@ -111,6 +112,7 @@ export function AppShell({ auth, children }: AppShellProps) {
   const [unreadCount, setUnreadCount] = useState(0);
   const [unreadState, setUnreadState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [signingOut, setSigningOut] = useState(false);
+  const [reportedScheduleAccess, setReportedScheduleAccess] = useState<ScheduleAccessReport | null>(null);
   const { isDesktopWeb } = useShellLayout();
   const navigate = useNavigate();
   const location = useLocation();
@@ -137,6 +139,25 @@ export function AppShell({ auth, children }: AppShellProps) {
           ? `${unreadCount} unread notification${unreadCount === 1 ? '' : 's'}`
           : 'No unread notifications'
     : 'No unread notifications';
+  const reportScheduleAccess = useCallback((report: ScheduleAccessReport | null) => {
+    setReportedScheduleAccess((current) => {
+      // Keep authoritative access discovered by Schedule available to the
+      // global shell after that route unmounts. It is keyed to the signed-in
+      // user below, so a sign-out or account switch cannot reuse stale access.
+      if (!report) return current;
+      if (
+        current?.userId === report?.userId
+        && current?.hasFamily === report?.hasFamily
+        && current?.hasStaff === report?.hasStaff
+      ) {
+        return current;
+      }
+      return report;
+    });
+  }, []);
+  const activeReportedScheduleAccess = reportedScheduleAccess?.userId === auth.user?.uid
+    ? reportedScheduleAccess
+    : null;
   const handleSignOut = async () => {
     setSigningOut(true);
     try {
@@ -309,13 +330,21 @@ export function AppShell({ auth, children }: AppShellProps) {
       ? 'Signed in'
       : 'Explore ALL PLAYS';
   const teamNavPath = getSingleTeamNavPath(auth.user);
+  const hasFamilyNavigation = hasFamilyScheduleAccess(auth)
+    || activeReportedScheduleAccess?.hasFamily === true;
+  const roleFilteredDesktopNavItems = hasFamilyNavigation
+    ? desktopNavItems
+    : desktopNavItems.filter((item) => item.path !== familyNavItem.path);
+  const roleFilteredMobileMoreNavItems = hasFamilyNavigation
+    ? mobileMoreNavItems
+    : mobileMoreNavItems.filter((item) => item.path !== familyNavItem.path);
   const activeNavItems = hasSignedInSession
     ? withTeamContextSchedulePath(withTeamNavPath(mobilePrimaryNavItems, teamNavPath), location.pathname)
     : publicNavItems;
   const activeDesktopNavItems = hasSignedInSession
-    ? withTeamContextSchedulePath(withTeamNavPath(desktopNavItems, teamNavPath), location.pathname)
+    ? withTeamContextSchedulePath(withTeamNavPath(roleFilteredDesktopNavItems, teamNavPath), location.pathname)
     : publicNavItems;
-  const moreNavActive = hasSignedInSession && mobileMoreNavItems.some((item) => isRouteActive(location.pathname, item.path));
+  const moreNavActive = hasSignedInSession && roleFilteredMobileMoreNavItems.some((item) => isRouteActive(location.pathname, item.path));
   const commonAddWorkflows = commonAddWorkflowIds
     .map((id) => addWorkflows.find((workflow) => workflow.id === id))
     .filter((workflow): workflow is AddWorkflow => workflow !== undefined);
@@ -392,6 +421,7 @@ export function AppShell({ auth, children }: AppShellProps) {
   );
 
   return (
+    <ScheduleAccessReportingProvider onReport={reportScheduleAccess}>
     <div className={isDesktopWeb ? `desktop-app-page ${isDesktopMessages ? 'desktop-app-page-messages' : ''}` : `app-page ${isMobileChatDetail ? 'app-page-chat-detail' : ''} ${isAiRoute ? 'app-page-ai' : ''}`}>
       <div className="sr-only" role="status" aria-live="polite" aria-atomic="true" aria-label="Notification status" data-testid="app-shell-notification-status">
         {unreadNotificationStatus}
@@ -463,16 +493,29 @@ export function AppShell({ auth, children }: AppShellProps) {
                   const isActive = location.pathname === item.path || (item.path !== '/home' && location.pathname.startsWith(item.path + '/'));
 
                   return (
-                    <NavLink
-                      key={item.path}
-                      to={item.path}
-                      className={`flex min-h-11 items-center gap-3 rounded-xl px-3 text-sm font-black transition ${
-                        isActive ? 'bg-primary-50 text-primary-700' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-950'
-                      }`}
-                    >
-                      <Icon className="h-5 w-5" aria-hidden="true" />
-                      <span>{item.label}</span>
-                    </NavLink>
+                    <div key={item.path}>
+                      <NavLink
+                        to={item.path}
+                        className={`flex min-h-11 items-center gap-3 rounded-xl px-3 text-sm font-black transition ${
+                          isActive ? 'bg-primary-50 text-primary-700' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-950'
+                        }`}
+                      >
+                        <Icon className="h-5 w-5" aria-hidden="true" />
+                        <span>{item.label}</span>
+                      </NavLink>
+                      {item.label === 'Schedule' && location.pathname === '/schedule' ? (
+                        <ScheduleRoleSubmenu
+                          auth={auth}
+                          selectedTeamId={new URLSearchParams(location.search).get('teamId') || ''}
+                          access={activeReportedScheduleAccess
+                            ? {
+                                hasFamily: activeReportedScheduleAccess.hasFamily,
+                                hasStaff: activeReportedScheduleAccess.hasStaff
+                              }
+                            : undefined}
+                        />
+                      ) : null}
+                    </div>
                   );
                 })}
               </nav>
@@ -640,7 +683,7 @@ export function AppShell({ auth, children }: AppShellProps) {
               </button>
             </div>
             <nav className="mt-3 grid gap-2" aria-label="More navigation">
-              {mobileMoreNavItems.map((item) => {
+              {roleFilteredMobileMoreNavItems.map((item) => {
                 const Icon = item.icon;
                 const isActive = isRouteActive(location.pathname, item.path);
                 return (
@@ -760,6 +803,7 @@ export function AppShell({ auth, children }: AppShellProps) {
         </Modal>
       ) : null}
     </div>
+    </ScheduleAccessReportingProvider>
   );
 }
 

@@ -34,11 +34,20 @@ describe('parent invite auto-linking', () => {
         expect(helperIndex).toBeGreaterThanOrEqual(0);
 
         const helperSource = source.slice(helperIndex, helperIndex + 900);
-        expect(helperSource).toContain('functions.https.onCall(createAutoAcceptParentInviteHandler({');
-        expect(helperSource).toContain('firestore,');
-        expect(helperSource).toContain('Timestamp: admin.firestore.Timestamp');
-        expect(helperSource).toContain('HttpsError: functions.https.HttpsError');
-        expect(helperSource).toContain('validateCode: validateAutoAcceptParentInviteCode');
+        expect(helperSource).toContain('functions.https.onCall(autoAcceptParentInviteHandler)');
+    });
+
+    it('owns first parent-invite delivery on the retryable server trigger', () => {
+        const source = readFileSync(resolve(process.cwd(), 'functions/index.js'), 'utf8');
+        const triggerIndex = source.indexOf('exports.queueParentInviteEmail');
+        expect(triggerIndex).toBeGreaterThanOrEqual(0);
+
+        const triggerSource = source.slice(triggerIndex - 1200, triggerIndex + 500);
+        expect(triggerSource).toContain('createInviteEmailOnCreateHandler({');
+        expect(triggerSource).toContain('autoLinkParentInvite:');
+        expect(triggerSource).toContain('loadLatestInvite:');
+        expect(triggerSource).toContain('.runWith({ failurePolicy: true })');
+        expect(triggerSource).toContain('.onCreate(inviteEmailOnCreateHandler)');
     });
 
     it('shows auto-linked confirmation instead of code-first instructions in roster UI', () => {
@@ -64,5 +73,15 @@ describe('parent invite auto-linking', () => {
         expect(existingUserBlock).toContain('A notification email was also sent to');
         // Non-auto-linked message also reflects email
         expect(existingUserBlock).toContain('An invite email was sent to');
+    });
+
+    it('reports auto-linked bulk invite email failures as retryable', () => {
+        const source = readFileSync(resolve(process.cwd(), 'edit-roster.html'), 'utf8');
+        const helperStart = source.indexOf('async function sendImportedRosterContactInvite');
+        const helperSource = source.slice(helperStart, source.indexOf('function formatRosterContactInviteSummary', helperStart));
+
+        expect(helperSource).toContain("status: 'linked'");
+        expect(helperSource).toContain("emailStatus: emailSent ? 'sent' : 'retryable'");
+        expect(helperSource).toContain("code: result.code || ''");
     });
 });

@@ -465,6 +465,13 @@ async function fetchAndParseCalendarOnce(normalizedUrl, options = {}) {
     if (typeof configuredBaseUrl === 'string' && configuredBaseUrl.trim()) {
       return `${configuredBaseUrl.trim().replace(/\/$/, '')}/fetchCalendarIcs`;
     }
+    if (
+      window.location?.protocol === 'http:'
+      && ['localhost', '127.0.0.1'].includes(window.location.hostname)
+      && window.location.port === '5174'
+    ) {
+      return '/__allplays/calendar';
+    }
     return DEFAULT_CALENDAR_FETCH_FUNCTION_URL;
   }
 

@@ -1,16 +1,27 @@
 import { Capacitor, type PluginListenerHandle } from '@capacitor/core';
-import {
-  SpeechRecognition,
-  type LastPartialResult,
-  type SpeechRecognitionAvailability,
-  type SpeechRecognitionListeningEvent,
-  type SpeechRecognitionPartialResultEvent,
-  type SpeechRecognitionPermissionStatus,
-  type SpeechRecognitionStartOptions,
-  type SpeechRecognitionErrorEvent
+import type {
+  LastPartialResult,
+  SpeechRecognitionAvailability,
+  SpeechRecognitionListeningEvent,
+  SpeechRecognitionPartialResultEvent,
+  SpeechRecognitionPermissionStatus,
+  SpeechRecognitionStartOptions,
+  SpeechRecognitionErrorEvent
 } from '@capgo/capacitor-speech-recognition';
 
 export type VoiceListenerHandle = PluginListenerHandle;
+
+type NativeSpeechRecognitionPlugin = typeof import('@capgo/capacitor-speech-recognition')['SpeechRecognition'];
+
+let nativeSpeechRecognitionPromise: Promise<NativeSpeechRecognitionPlugin> | null = null;
+
+function loadNativeSpeechRecognition(): Promise<NativeSpeechRecognitionPlugin> {
+  if (!nativeSpeechRecognitionPromise) {
+    nativeSpeechRecognitionPromise = import('@capgo/capacitor-speech-recognition')
+      .then((module) => module.SpeechRecognition);
+  }
+  return nativeSpeechRecognitionPromise;
+}
 
 export const voiceRecognition = {
   isNativeRuntime() {
@@ -21,43 +32,43 @@ export const voiceRecognition = {
     return typeof window !== 'undefined' && Boolean((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
   },
 
-  available(): Promise<SpeechRecognitionAvailability> {
-    return SpeechRecognition.available();
+  async available(): Promise<SpeechRecognitionAvailability> {
+    return (await loadNativeSpeechRecognition()).available();
   },
 
-  checkPermissions(): Promise<SpeechRecognitionPermissionStatus> {
-    return SpeechRecognition.checkPermissions();
+  async checkPermissions(): Promise<SpeechRecognitionPermissionStatus> {
+    return (await loadNativeSpeechRecognition()).checkPermissions();
   },
 
-  requestPermissions(): Promise<SpeechRecognitionPermissionStatus> {
-    return SpeechRecognition.requestPermissions();
+  async requestPermissions(): Promise<SpeechRecognitionPermissionStatus> {
+    return (await loadNativeSpeechRecognition()).requestPermissions();
   },
 
-  start(options: SpeechRecognitionStartOptions) {
-    return SpeechRecognition.start(options);
+  async start(options: SpeechRecognitionStartOptions) {
+    return (await loadNativeSpeechRecognition()).start(options);
   },
 
-  stop() {
-    return SpeechRecognition.stop();
+  async stop() {
+    return (await loadNativeSpeechRecognition()).stop();
   },
 
-  forceStop(options: { timeout: number }) {
-    return SpeechRecognition.forceStop(options);
+  async forceStop(options: { timeout: number }) {
+    return (await loadNativeSpeechRecognition()).forceStop(options);
   },
 
-  getLastPartialResult(): Promise<LastPartialResult> {
-    return SpeechRecognition.getLastPartialResult();
+  async getLastPartialResult(): Promise<LastPartialResult> {
+    return (await loadNativeSpeechRecognition()).getLastPartialResult();
   },
 
-  addPartialResultsListener(listener: (event: SpeechRecognitionPartialResultEvent) => void): Promise<VoiceListenerHandle> {
-    return SpeechRecognition.addListener('partialResults', listener);
+  async addPartialResultsListener(listener: (event: SpeechRecognitionPartialResultEvent) => void): Promise<VoiceListenerHandle> {
+    return (await loadNativeSpeechRecognition()).addListener('partialResults', listener);
   },
 
-  addListeningStateListener(listener: (event: SpeechRecognitionListeningEvent) => void): Promise<VoiceListenerHandle> {
-    return SpeechRecognition.addListener('listeningState', listener);
+  async addListeningStateListener(listener: (event: SpeechRecognitionListeningEvent) => void): Promise<VoiceListenerHandle> {
+    return (await loadNativeSpeechRecognition()).addListener('listeningState', listener);
   },
 
-  addErrorListener(listener: (event: SpeechRecognitionErrorEvent) => void): Promise<VoiceListenerHandle> {
-    return SpeechRecognition.addListener('error', listener);
+  async addErrorListener(listener: (event: SpeechRecognitionErrorEvent) => void): Promise<VoiceListenerHandle> {
+    return (await loadNativeSpeechRecognition()).addListener('error', listener);
   }
 };

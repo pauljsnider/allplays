@@ -11,12 +11,13 @@ describe('performance wiring', () => {
 
   it('keeps high-value workflows instrumented', () => {
     const schedule = readFileSync('src/components/schedule/ScheduleStaffTools.tsx', 'utf8');
+    const privateAi = readFileSync('src/lib/privateAiService.ts', 'utf8');
     const media = readFileSync('src/pages/TeamMedia.tsx', 'utf8');
     const tracker = readFileSync('src/pages/StandardTracker.tsx', 'utf8');
 
     expect(schedule).toContain('WORKFLOW_TIMING.scheduleCreateGame');
-    expect(schedule).toContain('WORKFLOW_TIMING.scheduleImport');
-    expect(schedule).toContain('WORKFLOW_TIMING.scheduleAiPreview');
+    expect(privateAi).toContain('WORKFLOW_TIMING.scheduleImport');
+    expect(privateAi).toContain('WORKFLOW_TIMING.scheduleAiPreview');
     expect(media).toContain('WORKFLOW_TIMING.teamMediaPhotoUpload');
     expect(media).toContain('WORKFLOW_TIMING.teamMediaFileUpload');
     expect(media).toContain('WORKFLOW_TIMING.teamMediaAlbumCreate');

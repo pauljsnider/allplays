@@ -2,13 +2,19 @@
 import React, { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot } from 'react-dom/client';
+import { MemoryRouter } from 'react-router-dom';
 
 const privateAiMocks = vi.hoisted(() => ({
     DEFAULT_PRIVATE_AI_CONVERSATION_ID: 'default',
     DRAFT_PRIVATE_AI_CONVERSATION_ID: '__draft__',
     createPrivateAiConversation: vi.fn(),
+    getPrivateAiAttachmentValidationError: vi.fn(),
     loadPrivateAiConversations: vi.fn(),
     loadPrivateAiMessages: vi.fn(),
+    loadPrivateAiRoleCapabilities: vi.fn(),
+    revisePrivateAiRosterImportProposal: vi.fn(),
+    revisePrivateAiScheduleImportProposal: vi.fn(),
+    sendPrivateAiAttachmentMessage: vi.fn(),
     sendPrivateAiMessage: vi.fn()
 }));
 
@@ -44,14 +50,20 @@ const auth = {
     signOut: async () => {}
 };
 
-async function renderPrivateAi() {
+async function renderPrivateAi(initialEntry = '/ai') {
     const { PrivateAiChat } = await import('../../apps/app/src/pages/PrivateAiChat.tsx');
     const container = document.createElement('div');
     document.body.appendChild(container);
     const root = createRoot(container);
 
     await act(async () => {
-        root.render(React.createElement(PrivateAiChat, { auth }));
+        root.render(
+            React.createElement(
+                MemoryRouter,
+                { initialEntries: [initialEntry] },
+                React.createElement(PrivateAiChat, { auth })
+            )
+        );
     });
 
     await flush();
@@ -103,6 +115,29 @@ beforeEach(() => {
             toolNames: []
         }
     ]);
+    privateAiMocks.loadPrivateAiRoleCapabilities.mockResolvedValue({
+        isTeamManager: false,
+        managedTeamCount: 0
+    });
+    privateAiMocks.getPrivateAiAttachmentValidationError.mockReturnValue('');
+    privateAiMocks.sendPrivateAiAttachmentMessage.mockResolvedValue({
+        userMessage: {
+            id: 'attachment-user',
+            role: 'user',
+            text: 'Manage the Bears schedule.',
+            conversationId: 'attachment-chat',
+            createdAt: new Date('2026-05-21T12:01:00Z')
+        },
+        assistantMessage: {
+            id: 'attachment-assistant',
+            role: 'assistant',
+            text: 'Review the schedule import.',
+            conversationId: 'attachment-chat',
+            createdAt: new Date('2026-05-21T12:01:02Z'),
+            toolNames: ['apply_schedule_import']
+        },
+        toolResults: [{ name: 'apply_schedule_import', ok: true }]
+    });
     privateAiMocks.sendPrivateAiMessage.mockResolvedValue({
         userMessage: {
             id: 'msg-2',
@@ -158,6 +193,123 @@ describe('private AI chat page', () => {
         expect(privateAiMocks.sendPrivateAiMessage).toHaveBeenCalledWith(auth.user, 'What is next?', 'default');
         expect(container.textContent).toContain('Bears play Monday at 6:00 PM.');
         expect(container.textContent).toContain('Looked up get_schedule');
+    });
+
+    it('passes the one-time launcher intent with an attached schedule import', async () => {
+        const prompt = 'Manage the Bears schedule. I can add or update games, cancel events, or attach a CSV for bulk schedule changes.';
+        const search = new URLSearchParams({
+            newChat: '1',
+            intent: 'schedule-import',
+            teamId: 'team-1',
+            teamName: 'Bears',
+            prompt
+        });
+        const { container } = await renderPrivateAi(`/ai?${search.toString()}`);
+        const input = container.querySelector('input[type="file"]');
+        const csv = new File([
+            'Event Type,Date,Start Time,Opponent\n',
+            'game,2026-07-30,6:00 PM,Rockets'
+        ], 'schedule.csv', { type: 'text/csv' });
+        Object.defineProperty(input, 'files', {
+            configurable: true,
+            value: [csv]
+        });
+
+        await act(async () => {
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        await flush();
+        await click(container.querySelector('button[aria-label="Send AI message"]'));
+
+        expect(privateAiMocks.sendPrivateAiAttachmentMessage).toHaveBeenCalledWith(
+            auth.user,
+            {
+                teamId: 'team-1',
+                text: prompt,
+                file: csv,
+                launchIntent: 'schedule-import'
+            },
+            '__draft__'
+        );
+    });
+
+    it('clears the one-time launcher intent when switching to an existing chat before attaching a file', async () => {
+        const prompt = 'Manage the Bears schedule. I can add or update games, cancel events, or attach a CSV for bulk schedule changes.';
+        const search = new URLSearchParams({
+            newChat: '1',
+            intent: 'schedule-import',
+            teamId: 'team-1',
+            teamName: 'Bears',
+            prompt
+        });
+        const { container } = await renderPrivateAi(`/ai?${search.toString()}`);
+        const savedConversation = Array.from(container.querySelectorAll('.private-ai-conversation-chip'))
+            .find((button) => button.textContent.includes('Recent chat'));
+        expect(savedConversation).toBeTruthy();
+        await click(savedConversation);
+
+        const textarea = container.querySelector('textarea');
+        await setFieldValue(textarea, 'Analyze this file normally.');
+        const input = container.querySelector('input[type="file"]');
+        const csv = new File(['Name,Number\nPlayer One,1'], 'players.csv', { type: 'text/csv' });
+        Object.defineProperty(input, 'files', {
+            configurable: true,
+            value: [csv]
+        });
+        await act(async () => {
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        await flush();
+        await click(container.querySelector('button[aria-label="Send AI message"]'));
+
+        expect(privateAiMocks.sendPrivateAiAttachmentMessage).toHaveBeenCalledWith(
+            auth.user,
+            {
+                teamId: '',
+                text: 'Analyze this file normally.',
+                file: csv,
+                launchIntent: undefined
+            },
+            'default'
+        );
+    });
+
+    it('clears the one-time launcher intent when starting another new chat before attaching a file', async () => {
+        const prompt = 'Import the Bears roster from a CSV.';
+        const search = new URLSearchParams({
+            newChat: '1',
+            intent: 'roster-import',
+            teamId: 'team-1',
+            teamName: 'Bears',
+            prompt
+        });
+        const { container } = await renderPrivateAi(`/ai?${search.toString()}`);
+        await click(container.querySelector('button[aria-label="New AI chat"]'));
+
+        const textarea = container.querySelector('textarea');
+        await setFieldValue(textarea, 'Analyze this file normally.');
+        const input = container.querySelector('input[type="file"]');
+        const csv = new File(['Name,Number\nPlayer One,1'], 'players.csv', { type: 'text/csv' });
+        Object.defineProperty(input, 'files', {
+            configurable: true,
+            value: [csv]
+        });
+        await act(async () => {
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        await flush();
+        await click(container.querySelector('button[aria-label="Send AI message"]'));
+
+        expect(privateAiMocks.sendPrivateAiAttachmentMessage).toHaveBeenCalledWith(
+            auth.user,
+            {
+                teamId: '',
+                text: 'Analyze this file normally.',
+                file: csv,
+                launchIntent: undefined
+            },
+            '__draft__'
+        );
     });
 
     it('renders desktop prompt rail and sends a selected suggestion', async () => {

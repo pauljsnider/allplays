@@ -9,6 +9,7 @@ import {
   limit as legacyLimit,
   orderBy as legacyOrderBy,
   query as legacyQuery,
+  runTransaction as legacyRunTransaction,
   serverTimestamp as legacyServerTimestamp,
   startAfter as legacyStartAfter,
   setDoc as legacySetDoc
@@ -31,6 +32,7 @@ export const getDocs = legacyGetDocs as (...args: any[]) => Promise<any>;
 export const limit = legacyLimit as (...args: any[]) => any;
 export const orderBy = legacyOrderBy as (...args: any[]) => any;
 export const query = legacyQuery as (...args: any[]) => any;
+export const runTransaction = legacyRunTransaction as (...args: any[]) => Promise<any>;
 export const serverTimestamp = legacyServerTimestamp as (...args: any[]) => any;
 export const startAfter = legacyStartAfter as (...args: any[]) => any;
 export const setDoc = legacySetDoc as (...args: any[]) => Promise<any>;
