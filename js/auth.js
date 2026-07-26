@@ -103,15 +103,21 @@ async function linkFriendInviteOrRollback(user, friendInviteCode) {
 export async function login(email, password) {
     const userCredential = await signInWithEmailAndPassword(auth, email, password);
 
-    // Update user profile in Firestore to ensure they appear in Admin Users list
-    try {
-        await updateUserProfile(userCredential.user.uid, {
+    // Keep the successful authentication response off the profile/projection
+    // write path. That write is best-effort and can wait on Firestore or a
+    // callable without holding the login page in its submitting state.
+    void Promise.resolve()
+        .then(() => updateUserProfile(userCredential.user.uid, {
             email: email,
             lastLogin: new Date()
+        }))
+        .catch((error) => {
+            const errorCode = typeof error?.code === 'string' &&
+                /^[a-z0-9/_-]{1,80}$/i.test(error.code)
+                ? error.code
+                : 'unknown';
+            console.warn('[auth] Deferred login profile sync failed.', { code: errorCode });
         });
-    } catch (e) {
-        console.error('Error updating user profile on login:', e);
-    }
 
     return userCredential;
 }
