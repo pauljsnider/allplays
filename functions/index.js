@@ -80,6 +80,13 @@ const {
   normalizePublicRegistrationSecurityMode
 } = require('./public-registration-abuse-core.cjs');
 const { buildPublicGamesIcs, canExposeEmptyPublicFeed, isPublicFanGame } = require('./public-calendar-core.cjs');
+const {
+  buildPublicGamesResponse,
+  buildPublicRosterResponse,
+  isStrictPublicTeam,
+  normalizeTeamId,
+  parsePublicGamesQuery
+} = require('./public-team-api-core.cjs');
 const { buildCalendarFeedGamesQuery } = require('./calendar-feed-window-core.cjs');
 const {
   buildPublicRsvpSummaryProjection,
@@ -360,6 +367,11 @@ const checkPasswordResetEmailRateLimit = createInMemoryRateLimiter({
   maxKeys: 10_000
 });
 const checkCalendarFetchRateLimit = createInMemoryRateLimiter({
+  windowMs: 60_000,
+  maxRequests: 120,
+  maxKeys: 5_000
+});
+const checkPublicTeamApiRateLimit = createInMemoryRateLimiter({
   windowMs: 60_000,
   maxRequests: 120,
   maxKeys: 5_000
@@ -5886,6 +5898,143 @@ const calendarIcsCache = createCalendarIcsCache({
 function getCalendarFeedGamesQuery(teamId) {
   return buildCalendarFeedGamesQuery(firestore.collection(`teams/${teamId}/games`));
 }
+
+const PUBLIC_TEAM_API_CACHE_CONTROL = 'public, max-age=60, s-maxage=300, stale-while-revalidate=86400';
+
+function setPublicTeamApiCorsHeaders(res) {
+  res.set('Access-Control-Allow-Origin', '*');
+  res.set('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+  res.set('Access-Control-Allow-Headers', 'Content-Type');
+  res.set('Access-Control-Max-Age', '86400');
+  res.set('Vary', 'Accept-Encoding');
+}
+
+function sendPublicTeamApiError(res, status, code, message) {
+  res.set('Cache-Control', 'no-store');
+  res.status(status).json({ error: { code, message } });
+}
+
+function beginPublicTeamApiRequest(req, res) {
+  setPublicTeamApiCorsHeaders(res);
+  if (req.method === 'OPTIONS') {
+    res.status(204).end();
+    return { complete: true };
+  }
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    sendPublicTeamApiError(res, 405, 'method_not_allowed', 'Use GET or HEAD for this endpoint.');
+    return { complete: true };
+  }
+
+  const rateLimit = checkPublicTeamApiRateLimit(req);
+  res.set('X-RateLimit-Remaining', String(rateLimit.remaining));
+  if (!rateLimit.allowed) {
+    res.set('Retry-After', String(rateLimit.retryAfterSeconds));
+    sendPublicTeamApiError(res, 429, 'rate_limited', 'Too many requests. Please try again shortly.');
+    return { complete: true };
+  }
+
+  const teamId = normalizeTeamId(req.query.teamId);
+  if (!teamId) {
+    sendPublicTeamApiError(res, 400, 'invalid_team_id', 'A valid teamId query parameter is required.');
+    return { complete: true };
+  }
+  return { complete: false, teamId };
+}
+
+async function getStrictPublicTeam(teamId) {
+  const teamSnap = await firestore.doc(`teams/${teamId}`).get();
+  if (!teamSnap.exists) return null;
+  const team = { id: teamId, ...(teamSnap.data() || {}) };
+  return isStrictPublicTeam(team) ? team : null;
+}
+
+function sendPublicTeamApiSuccess(req, res, body) {
+  res.set('Cache-Control', PUBLIC_TEAM_API_CACHE_CONTROL);
+  res.set('Content-Type', 'application/json; charset=utf-8');
+  if (req.method === 'HEAD') {
+    res.status(200).end();
+    return;
+  }
+  res.status(200).json(body);
+}
+
+exports.publicTeamRosterV1 = functions
+  .runWith(fetchCalendarRuntime)
+  .https
+  .onRequest(async (req, res) => {
+    const request = beginPublicTeamApiRequest(req, res);
+    if (request.complete) return;
+
+    try {
+      const team = await getStrictPublicTeam(request.teamId);
+      if (!team) {
+        sendPublicTeamApiError(res, 404, 'not_found', 'Public team not found.');
+        return;
+      }
+
+      const playersSnap = await firestore.collection(`teams/${request.teamId}/players`).get();
+      const players = [];
+      playersSnap.forEach((docSnap) => players.push({ id: docSnap.id, ...(docSnap.data() || {}) }));
+      const body = buildPublicRosterResponse({
+        teamId: request.teamId,
+        team,
+        players
+      });
+      sendPublicTeamApiSuccess(req, res, body);
+    } catch (error) {
+      functions.logger.error('Failed to build public team roster response.', {
+        teamId: request.teamId,
+        error: error?.message || String(error)
+      });
+      sendPublicTeamApiError(res, 500, 'unavailable', 'Public roster is temporarily unavailable.');
+    }
+  });
+
+exports.publicTeamGamesV1 = functions
+  .runWith(fetchCalendarRuntime)
+  .https
+  .onRequest(async (req, res) => {
+    const request = beginPublicTeamApiRequest(req, res);
+    if (request.complete) return;
+
+    const range = parsePublicGamesQuery(req.query || {});
+    if (range.error) {
+      sendPublicTeamApiError(res, 400, 'invalid_query', range.error);
+      return;
+    }
+
+    try {
+      const team = await getStrictPublicTeam(request.teamId);
+      if (!team) {
+        sendPublicTeamApiError(res, 404, 'not_found', 'Public team not found.');
+        return;
+      }
+
+      const gamesSnap = await firestore.collection(`teams/${request.teamId}/games`)
+        .where('date', '>=', range.fromDate)
+        .where('date', '<=', range.toDate)
+        .orderBy('date')
+        .limit(range.limit + 1)
+        .get();
+      const games = [];
+      gamesSnap.forEach((docSnap) => games.push({ id: docSnap.id, ...(docSnap.data() || {}) }));
+      const body = buildPublicGamesResponse({
+        teamId: request.teamId,
+        team,
+        games,
+        from: range.from,
+        to: range.to,
+        limit: range.limit
+      });
+      sendPublicTeamApiSuccess(req, res, body);
+    } catch (error) {
+      functions.logger.error('Failed to build public team games response.', {
+        teamId: request.teamId,
+        error: error?.message || String(error)
+      });
+      sendPublicTeamApiError(res, 500, 'unavailable', 'Public games are temporarily unavailable.');
+    }
+  });
 
 exports.publicTeamGamesIcs = functions
   .runWith(fetchCalendarRuntime)

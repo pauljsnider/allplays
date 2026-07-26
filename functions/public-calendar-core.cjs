@@ -5,7 +5,7 @@ function toBooleanTrue(value) {
 }
 
 function isPublicTeam(team = {}) {
-  return team?.isPublic !== false && team?.active !== false;
+  return team?.isPublic === true && team?.active !== false;
 }
 
 function canExposeEmptyPublicFeed(team = {}) {
