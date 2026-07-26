@@ -39,7 +39,11 @@ function normalizeTeamId(value) {
 }
 
 function isStrictPublicTeam(team = {}) {
-  return team?.isPublic === true && team?.active !== false;
+  const status = compactText(team?.status, 32).toLowerCase();
+  return team?.isPublic === true &&
+    team?.active !== false &&
+    team?.archived !== true &&
+    !['archived', 'inactive', 'disabled'].includes(status);
 }
 
 function isActivePublicPlayer(player = {}) {
@@ -182,12 +186,27 @@ function parsePublicGamesQuery(query = {}, now = new Date()) {
 
   const hasFrom = query.from !== undefined && String(query.from).trim() !== '';
   const hasTo = query.to !== undefined && String(query.to).trim() !== '';
+  const defaultDate = (yearOffset, endOfDay) => {
+    const year = anchor.getUTCFullYear() + yearOffset;
+    const month = anchor.getUTCMonth();
+    const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+    const day = Math.min(anchor.getUTCDate(), lastDay);
+    return new Date(Date.UTC(
+      year,
+      month,
+      day,
+      endOfDay ? 23 : 0,
+      endOfDay ? 59 : 0,
+      endOfDay ? 59 : 0,
+      endOfDay ? 999 : 0
+    ));
+  };
   const fromDate = hasFrom
     ? parseDateOnly(query.from, false)
-    : new Date(anchor.getTime() - 365 * MILLIS_PER_DAY);
+    : defaultDate(-1, false);
   const toDateValue = hasTo
     ? parseDateOnly(query.to, true)
-    : new Date(anchor.getTime() + 730 * MILLIS_PER_DAY);
+    : defaultDate(2, true);
   if (!fromDate || !toDateValue) {
     return { error: 'from and to must use YYYY-MM-DD format.' };
   }

@@ -13,7 +13,7 @@ test('exports versioned public roster and games HTTPS handlers', () => {
 });
 
 test('public team handlers use bounded games reads and field-whitelisting serializers', () => {
-  const start = source.indexOf('exports.publicTeamRosterV1 = functions');
+  const start = source.indexOf('async function getPublicTeamGames');
   const end = source.indexOf('exports.publicTeamGamesIcs = functions', start);
   const apiSource = source.slice(start, end);
 
@@ -21,7 +21,10 @@ test('public team handlers use bounded games reads and field-whitelisting serial
   assert.match(apiSource, /buildPublicGamesResponse/);
   assert.match(apiSource, /\.where\('date', '>=', range\.fromDate\)/);
   assert.match(apiSource, /\.where\('date', '<=', range\.toDate\)/);
-  assert.match(apiSource, /\.limit\(range\.limit \+ 1\)/);
+  assert.match(apiSource, /PUBLIC_TEAM_API_MAX_GAME_SCAN_DOCUMENTS/);
+  assert.match(apiSource, /\.limit\(currentBatchSize\)/);
+  assert.match(apiSource, /\.startAfter\(lastDoc\)/);
+  assert.match(apiSource, /if \(serializePublicGame\(game\)\) games\.push\(game\)/);
   assert.doesNotMatch(apiSource, /collection\(`teams\/\$\{request\.teamId\}\/games`\)\.get\(\)/);
 });
 

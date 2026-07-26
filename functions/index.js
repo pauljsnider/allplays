@@ -85,7 +85,8 @@ const {
   buildPublicRosterResponse,
   isStrictPublicTeam,
   normalizeTeamId,
-  parsePublicGamesQuery
+  parsePublicGamesQuery,
+  serializePublicGame
 } = require('./public-team-api-core.cjs');
 const { buildCalendarFeedGamesQuery } = require('./calendar-feed-window-core.cjs');
 const {
@@ -5900,6 +5901,7 @@ function getCalendarFeedGamesQuery(teamId) {
 }
 
 const PUBLIC_TEAM_API_CACHE_CONTROL = 'public, max-age=60, s-maxage=300, stale-while-revalidate=86400';
+const PUBLIC_TEAM_API_MAX_GAME_SCAN_DOCUMENTS = 5000;
 
 function setPublicTeamApiCorsHeaders(res) {
   res.set('Access-Control-Allow-Origin', '*');
@@ -5946,6 +5948,41 @@ async function getStrictPublicTeam(teamId) {
   if (!teamSnap.exists) return null;
   const team = { id: teamId, ...(teamSnap.data() || {}) };
   return isStrictPublicTeam(team) ? team : null;
+}
+
+async function getPublicTeamGames(teamId, range) {
+  const games = [];
+  const batchSize = Math.min(range.limit + 1, 500);
+  let lastDoc = null;
+  let scannedDocuments = 0;
+
+  while (games.length <= range.limit && scannedDocuments < PUBLIC_TEAM_API_MAX_GAME_SCAN_DOCUMENTS) {
+    const currentBatchSize = Math.min(
+      batchSize,
+      PUBLIC_TEAM_API_MAX_GAME_SCAN_DOCUMENTS - scannedDocuments
+    );
+    let query = firestore.collection(`teams/${teamId}/games`)
+      .where('date', '>=', range.fromDate)
+      .where('date', '<=', range.toDate)
+      .orderBy('date');
+    if (lastDoc) query = query.startAfter(lastDoc);
+
+    const gamesSnap = await query.limit(currentBatchSize).get();
+    if (gamesSnap.empty) break;
+
+    gamesSnap.forEach((docSnap) => {
+      const game = { id: docSnap.id, ...(docSnap.data() || {}) };
+      if (serializePublicGame(game)) games.push(game);
+    });
+    scannedDocuments += gamesSnap.size;
+    lastDoc = gamesSnap.docs[gamesSnap.docs.length - 1];
+    if (gamesSnap.size < currentBatchSize) break;
+  }
+
+  if (games.length <= range.limit && scannedDocuments >= PUBLIC_TEAM_API_MAX_GAME_SCAN_DOCUMENTS) {
+    throw new Error('Public games scan limit exceeded.');
+  }
+  return games;
 }
 
 function sendPublicTeamApiSuccess(req, res, body) {
@@ -6010,14 +6047,7 @@ exports.publicTeamGamesV1 = functions
         return;
       }
 
-      const gamesSnap = await firestore.collection(`teams/${request.teamId}/games`)
-        .where('date', '>=', range.fromDate)
-        .where('date', '<=', range.toDate)
-        .orderBy('date')
-        .limit(range.limit + 1)
-        .get();
-      const games = [];
-      gamesSnap.forEach((docSnap) => games.push({ id: docSnap.id, ...(docSnap.data() || {}) }));
+      const games = await getPublicTeamGames(request.teamId, range);
       const body = buildPublicGamesResponse({
         teamId: request.teamId,
         team,

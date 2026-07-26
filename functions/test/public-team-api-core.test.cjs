@@ -16,6 +16,10 @@ test('strict public teams require an explicit public flag and cannot be inactive
   assert.equal(isStrictPublicTeam({ active: true }), false);
   assert.equal(isStrictPublicTeam({ isPublic: false, active: true }), false);
   assert.equal(isStrictPublicTeam({ isPublic: true, active: false }), false);
+  assert.equal(isStrictPublicTeam({ isPublic: true, active: true, archived: true }), false);
+  for (const status of ['archived', 'inactive', 'disabled', 'ARCHIVED']) {
+    assert.equal(isStrictPublicTeam({ isPublic: true, active: true, status }), false);
+  }
 });
 
 test('roster response includes only active players and returns whitelisted fields in jersey order', () => {
@@ -160,6 +164,18 @@ test('query parsing validates dates, range, and limit', () => {
   assert.equal(parsePublicGamesQuery({ from: '2026-02-30' }).error.includes('YYYY-MM-DD'), true);
   assert.equal(parsePublicGamesQuery({ from: '2026-02-01', to: '2026-01-01' }).error.includes('on or after'), true);
   assert.equal(parsePublicGamesQuery({ limit: '501' }).error.includes('1 to 500'), true);
+});
+
+test('query parsing uses complete UTC days and calendar years for default bounds', () => {
+  const defaults = parsePublicGamesQuery({}, new Date('2026-07-26T12:34:56.789Z'));
+  assert.equal(defaults.fromDate.toISOString(), '2025-07-26T00:00:00.000Z');
+  assert.equal(defaults.toDate.toISOString(), '2028-07-26T23:59:59.999Z');
+  assert.equal(defaults.from, '2025-07-26');
+  assert.equal(defaults.to, '2028-07-26');
+
+  const leapDayDefaults = parsePublicGamesQuery({}, new Date('2024-02-29T23:00:00.000Z'));
+  assert.equal(leapDayDefaults.fromDate.toISOString(), '2023-02-28T00:00:00.000Z');
+  assert.equal(leapDayDefaults.toDate.toISOString(), '2026-02-28T23:59:59.999Z');
 });
 
 test('location and team id sanitizers reject unsafe values', () => {
