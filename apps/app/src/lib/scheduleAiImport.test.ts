@@ -45,7 +45,7 @@ describe('scheduleAiImport', () => {
     });
 
     expect(prompt).toContain('Team: U10 Bears');
-    expect(prompt).toContain('Current games in DB: 1');
+    expect(prompt).toContain('Current games and practices in DB: 1');
     expect(prompt).toContain('Rockets');
     expect(prompt).toContain('schedule is attached as an image');
     expect(prompt).toContain('only home games');

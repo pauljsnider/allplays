@@ -99,6 +99,7 @@ import {
   type RosterAiImportPreviewRow
 } from './rosterAiImport';
 import {
+  appendScheduleImportConflictErrors,
   generateScheduleAiImportRows
 } from './scheduleAiImport';
 import {
@@ -135,6 +136,7 @@ export type PrivateAiAttachmentReceipt = {
 export type PrivateAiRosterArtifactReference = {
   type: 'roster-import';
   confirmationId: string;
+  revision?: number;
   teamId: string;
   teamName: string;
   source: 'csv' | 'ai-text' | 'ai-image' | 'ai-document';
@@ -153,6 +155,7 @@ export type PrivateAiRosterArtifactReference = {
 export type PrivateAiScheduleArtifactReference = {
   type: 'schedule-import';
   confirmationId: string;
+  revision?: number;
   teamId: string;
   teamName: string;
   source: 'csv' | 'ai-text' | 'ai-image' | 'ai-document';
@@ -190,6 +193,7 @@ type PrivateAiTeamArtifactDraft =
 
 export type PrivateAiRosterProposalRevision = {
   confirmationId: string;
+  expectedRevision?: number;
   teamId: string;
   messageId: string;
   rows: RosterAiImportPreviewRow[];
@@ -197,6 +201,7 @@ export type PrivateAiRosterProposalRevision = {
 
 export type PrivateAiScheduleProposalRevision = {
   confirmationId: string;
+  expectedRevision?: number;
   teamId: string;
   messageId?: string;
   rows: ScheduleCsvImportPreviewRow[];
@@ -932,22 +937,14 @@ async function sendPrivateAiScheduleImportMessage(
 
   try {
     const schedule = await loadParentSchedule(user, { includePastGames: true });
-    const currentGames = (schedule.events || [])
-      .filter((event) => event.teamId === teamId && event.type === 'game' && event.isDbGame)
-      .map((event) => ({
-        id: event.id,
-        date: event.date,
-        opponent: event.opponent,
-        location: event.location,
-        status: event.isCancelled ? 'cancelled' : 'scheduled'
-      }));
+    const currentEvents = getCurrentScheduleImportEvents(schedule.events || [], teamId);
 
     if (input.csvText) {
       try {
         const parsed = parseCsvText(input.csvText);
         const mapping = inferScheduleCsvMapping(parsed.headers);
         const deterministic = buildScheduleImportPreview({ rows: parsed.rows, mapping, teamName });
-        rows = deterministic.rows;
+        rows = appendScheduleImportConflictErrors(deterministic.rows, currentEvents);
         previewErrors = deterministic.errors;
       } catch (csvError: any) {
         previewErrors = [csvError?.message || 'Could not parse the schedule CSV.'];
@@ -956,7 +953,7 @@ async function sendPrivateAiScheduleImportMessage(
         const fallback = await generateScheduleAiImportRows({
           teamName,
           text: `${input.text || ''}\n\nSchedule CSV:\n${input.csvText.slice(0, 120_000)}`,
-          currentGames
+          currentEvents
         });
         if (fallback.rows.length) {
           rows = fallback.rows;
@@ -970,7 +967,7 @@ async function sendPrivateAiScheduleImportMessage(
         teamName,
         text: input.text,
         imageFile: input.documentFile,
-        currentGames
+        currentEvents
       });
       rows = preview.rows;
       previewErrors = preview.errors;
@@ -993,6 +990,7 @@ async function sendPrivateAiScheduleImportMessage(
     };
     const preparedArtifact: PrivateAiTeamArtifactDraft = {
       type: 'schedule-import',
+      revision: 0,
       teamId,
       teamName,
       source,
@@ -1066,6 +1064,7 @@ async function sendPrivateAiScheduleImportMessage(
     const artifact: PrivateAiScheduleArtifactReference = {
       type: 'schedule-import',
       confirmationId: toolResult?.confirmationId || '',
+      revision: toolResult?.confirmationId ? 0 : undefined,
       teamId,
       teamName,
       source,
@@ -1166,6 +1165,7 @@ export async function sendPrivateAiRosterImportMessage(
     };
     const preparedArtifact: PrivateAiTeamArtifactDraft = {
       type: 'roster-import',
+      revision: 0,
       teamId,
       teamName,
       source: preview.source,
@@ -1241,6 +1241,7 @@ export async function sendPrivateAiRosterImportMessage(
     const artifact: PrivateAiArtifactReference = {
       type: 'roster-import',
       confirmationId: toolResult?.confirmationId || '',
+      revision: toolResult?.confirmationId ? 0 : undefined,
       teamId,
       teamName,
       source: preview.source,
@@ -1288,6 +1289,7 @@ export async function revisePrivateAiRosterImportProposal(
   const confirmationId = compactText(revision.confirmationId);
   const teamId = compactText(revision.teamId);
   const messageId = compactText(revision.messageId);
+  const expectedRevision = Math.max(0, Number(revision.expectedRevision) || 0);
   if (!confirmationId || !teamId || !messageId) {
     throw new Error('This roster proposal is no longer editable.');
   }
@@ -1350,6 +1352,7 @@ export async function revisePrivateAiRosterImportProposal(
       || compactText(teamPayload.userId) !== user.uid
       || compactText(teamPayload.toolName) !== 'apply_roster_import'
       || compactText(teamPayload.teamId) !== teamId
+      || Number(teamPayload.revision || 0) !== expectedRevision
       || (compactText(teamPayload.expiresAt) && Date.parse(compactText(teamPayload.expiresAt)) <= Date.now())
     ) return false;
     const messageData = typeof messageSnapshot?.data === 'function' ? messageSnapshot.data() : null;
@@ -1377,10 +1380,12 @@ export async function revisePrivateAiRosterImportProposal(
       userId: user.uid,
       teamId,
       toolName: 'apply_roster_import',
+      revision: expectedRevision + 1,
       args: nextArgs,
       artifact: stripPrivateAiArtifactForTeamStorage({
         type: 'roster-import',
         confirmationId,
+        revision: expectedRevision + 1,
         teamId,
         teamName: compactText(matchingArtifact.teamName) || 'Team',
         source: normalizePrivateAiImportSource(matchingArtifact.source),
@@ -1402,6 +1407,7 @@ export async function revisePrivateAiRosterImportProposal(
         return stripPrivateAiArtifactForStorage({
           type: 'roster-import',
           confirmationId,
+          revision: expectedRevision + 1,
           teamId,
           teamName: compactText(artifact.teamName) || 'Team',
           source: normalizePrivateAiImportSource(artifact.source),
@@ -1412,7 +1418,7 @@ export async function revisePrivateAiRosterImportProposal(
     return true;
   });
   if (!updated) {
-    throw new Error('This roster proposal expired, was replaced, or is currently being confirmed.');
+    throw new Error('This roster proposal changed elsewhere, expired, was replaced, or is currently being confirmed. Reload the chat before editing again.');
   }
 
   pending.args = nextArgs;
@@ -1433,6 +1439,7 @@ export async function revisePrivateAiScheduleImportProposal(
   const confirmationId = compactText(revision.confirmationId);
   const teamId = compactText(revision.teamId);
   const messageId = compactText(revision.messageId);
+  const expectedRevision = Math.max(0, Number(revision.expectedRevision) || 0);
   if (!confirmationId || !teamId) throw new Error('This schedule proposal is no longer editable.');
 
   const pending = await loadPrivateAiPendingAction(user, confirmationId);
@@ -1450,7 +1457,7 @@ export async function revisePrivateAiScheduleImportProposal(
   const inputRows = Array.isArray(revision.rows) ? revision.rows : [];
   if (!inputRows.length) throw new Error('Keep at least one schedule row in the proposal.');
   if (inputRows.length > 200) throw new Error('Import at most 200 schedule rows at a time.');
-  const rows = inputRows.map((row, index) => normalizeScheduleImportDraft({
+  const normalizedRows = inputRows.map((row, index) => normalizeScheduleImportDraft({
     eventType: row.draft?.eventType ?? row.normalized.eventType,
     startsAt: row.draft?.startsAt ?? row.normalized.startsAt,
     endsAt: row.draft?.endsAt ?? row.normalized.endsAt ?? '',
@@ -1461,6 +1468,11 @@ export async function revisePrivateAiScheduleImportProposal(
     isHome: row.draft?.isHome ?? row.normalized.isHome,
     notes: row.draft?.notes ?? row.normalized.notes ?? ''
   }, { rowNumber: index + 1 })) as ScheduleCsvImportPreviewRow[];
+  const schedule = await loadParentSchedule(user, { includePastGames: true });
+  const rows = appendScheduleImportConflictErrors(
+    normalizedRows,
+    getCurrentScheduleImportEvents(schedule.events || [], teamId)
+  );
   const validationErrors = rows.flatMap((row) => row.errors || []);
   const counts = summarizeSchedulePreview(rows);
   const summary = {
@@ -1504,6 +1516,7 @@ export async function revisePrivateAiScheduleImportProposal(
       || compactText(teamPayload.userId) !== user.uid
       || compactText(teamPayload.toolName) !== 'apply_schedule_import'
       || compactText(teamPayload.teamId) !== teamId
+      || Number(teamPayload.revision || 0) !== expectedRevision
       || (compactText(teamPayload.expiresAt) && Date.parse(compactText(teamPayload.expiresAt)) <= Date.now())
     ) return false;
     const messageData = typeof messageSnapshot?.data === 'function' ? messageSnapshot.data() : null;
@@ -1530,10 +1543,12 @@ export async function revisePrivateAiScheduleImportProposal(
       userId: user.uid,
       teamId,
       toolName: 'apply_schedule_import',
+      revision: expectedRevision + 1,
       args: nextArgs,
       artifact: stripPrivateAiArtifactForTeamStorage({
         type: 'schedule-import',
         confirmationId,
+        revision: expectedRevision + 1,
         teamId,
         teamName: compactText(storedArtifacts.find((artifact) => (
           isPlainObject(artifact)
@@ -1560,6 +1575,7 @@ export async function revisePrivateAiScheduleImportProposal(
           return stripPrivateAiArtifactForStorage({
             type: 'schedule-import',
             confirmationId,
+            revision: expectedRevision + 1,
             teamId,
             teamName: compactText(artifact.teamName) || 'Team',
             source: normalizePrivateAiImportSource(artifact.source),
@@ -1571,7 +1587,7 @@ export async function revisePrivateAiScheduleImportProposal(
     return true;
   });
   if (!updated) {
-    throw new Error('This schedule proposal expired, was replaced, or is currently being confirmed.');
+    throw new Error('This schedule proposal changed elsewhere, expired, was replaced, or is currently being confirmed. Reload the chat before editing again.');
   }
 
   pending.args = nextArgs;
@@ -3136,6 +3152,7 @@ async function savePrivateAiPendingAction(
     args: preparedArgs,
     ...(context.preparedArtifact
       ? {
+          revision: 0,
           artifact: stripPrivateAiArtifactForTeamStorage({
             ...context.preparedArtifact,
             confirmationId: id,
@@ -3823,6 +3840,26 @@ function summarizeSchedulePreview(rows: ScheduleCsvImportPreviewRow[]) {
   return summarizeScheduleRows(rows.map((row) => row.normalized));
 }
 
+function getCurrentScheduleImportEvents(events: ParentScheduleEvent[], teamId: string) {
+  return events
+    .filter((event) => (
+      event.teamId === teamId
+      && (
+        (event.type === 'game' && event.isDbGame)
+        || event.type === 'practice'
+      )
+    ))
+    .map((event) => ({
+      id: event.id,
+      type: event.type === 'practice' ? 'practice' as const : 'game' as const,
+      date: event.date,
+      opponent: event.opponent,
+      title: event.title,
+      location: event.location,
+      status: event.isCancelled ? 'cancelled' : 'scheduled'
+    }));
+}
+
 function summarizeScheduleRows(rows: ScheduleCsvImportPreviewRow['normalized'][]) {
   return rows.reduce((summary, row) => {
     summary.total += 1;
@@ -3845,6 +3882,9 @@ function stripPrivateAiArtifactForStorage(artifact: PrivateAiArtifactReference) 
     source: artifact.source,
     summary: artifact.summary
   };
+  if (artifact.type !== 'document-analysis') {
+    stored.revision = Math.max(0, Number(artifact.revision) || 0);
+  }
   if (artifact.type === 'document-analysis') {
     stored.fileName = artifact.fileName;
     stored.mimeType = artifact.mimeType;
@@ -3985,6 +4025,7 @@ function normalizePrivateAiArtifact(value: unknown): PrivateAiArtifactReference 
     return {
       type: 'schedule-import',
       confirmationId: compactText(value.confirmationId),
+      revision: Math.max(0, Number(value.revision) || 0),
       teamId: compactText(value.teamId),
       teamName: compactText(value.teamName) || 'Team',
       source: normalizePrivateAiImportSource(value.source),
@@ -4001,6 +4042,7 @@ function normalizePrivateAiArtifact(value: unknown): PrivateAiArtifactReference 
   return {
     type: 'roster-import',
     confirmationId: compactText(value.confirmationId),
+    revision: Math.max(0, Number(value.revision) || 0),
     teamId: compactText(value.teamId),
     teamName: compactText(value.teamName) || 'Team',
     source: normalizePrivateAiImportSource(value.source),

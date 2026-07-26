@@ -524,6 +524,7 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
           );
       const summary = await revisePrivateAiRosterImportProposal(auth.user, {
         confirmationId: artifact.confirmationId,
+        expectedRevision: artifact.revision || 0,
         teamId: artifact.teamId,
         messageId,
         rows: nextRows
@@ -532,7 +533,7 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
         ? {
             ...message,
             artifacts: message.artifacts?.map((candidate) => candidate.type === 'roster-import' && candidate.confirmationId === artifact.confirmationId
-              ? { ...candidate, previewRows: nextRows, summary }
+              ? { ...candidate, revision: (artifact.revision || 0) + 1, previewRows: nextRows, summary }
               : candidate)
           }
         : message));
@@ -573,6 +574,7 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
       });
       const revised = await revisePrivateAiScheduleImportProposal(auth.user, {
         confirmationId: artifact.confirmationId,
+        expectedRevision: artifact.revision || 0,
         teamId: artifact.teamId,
         messageId,
         rows: nextRows
@@ -581,7 +583,7 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
         ? {
             ...message,
             artifacts: message.artifacts?.map((candidate) => candidate.type === 'schedule-import' && candidate.confirmationId === artifact.confirmationId
-              ? { ...candidate, previewRows: revised.rows, summary: revised.summary }
+              ? { ...candidate, revision: (artifact.revision || 0) + 1, previewRows: revised.rows, summary: revised.summary }
               : candidate)
           }
         : message));

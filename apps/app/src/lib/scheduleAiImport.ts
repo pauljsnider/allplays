@@ -1,18 +1,23 @@
 import { getAI, getApp, getGenerativeModel, GoogleAIBackend, Schema } from './adapters/legacyGenerativeAi';
 import { normalizeScheduleImportDraft, type ScheduleCsvImportPreviewRow } from './scheduleCsvImport';
 
-export type ScheduleAiImportCurrentGame = {
+export type ScheduleAiImportCurrentEvent = {
   id?: string;
+  type?: 'game' | 'practice';
   date?: string | Date | null;
   opponent?: string | null;
+  title?: string | null;
   location?: string | null;
   status?: string | null;
 };
+
+export type ScheduleAiImportCurrentGame = ScheduleAiImportCurrentEvent;
 
 export type ScheduleAiImportInput = {
   teamName: string;
   text?: string;
   imageFile?: File | null;
+  currentEvents?: ScheduleAiImportCurrentEvent[];
   currentGames?: ScheduleAiImportCurrentGame[];
   now?: Date;
 };
@@ -29,7 +34,7 @@ type ScheduleAiOperation = {
   reason?: string;
 };
 
-const maxContextGames = 30;
+const maxContextEvents = 60;
 
 export async function generateScheduleAiImportRows(input: ScheduleAiImportInput): Promise<ScheduleAiImportResult> {
   const text = compactText(input.text || '');
@@ -60,12 +65,14 @@ export async function generateScheduleAiImportRows(input: ScheduleAiImportInput)
 export function buildScheduleAiImportPrompt(input: ScheduleAiImportInput): string {
   const teamName = compactText(input.teamName) || 'the selected team';
   const now = input.now || new Date();
-  const currentGames = (input.currentGames || []).slice(0, maxContextGames).map((game) => ({
-    id: compactText(game.id || ''),
-    date: normalizeContextDate(game.date),
-    opponent: compactText(game.opponent || ''),
-    location: compactText(game.location || ''),
-    status: compactText(game.status || 'scheduled')
+  const currentEvents = getCurrentEvents(input).slice(0, maxContextEvents).map((event) => ({
+    id: compactText(event.id || ''),
+    type: event.type === 'practice' ? 'practice' : 'game',
+    date: normalizeContextDate(event.date),
+    opponent: compactText(event.opponent || ''),
+    title: compactText(event.title || ''),
+    location: compactText(event.location || ''),
+    status: compactText(event.status || 'scheduled')
   }));
   const text = compactText(input.text || '');
   const hasDocument = Boolean(input.imageFile);
@@ -78,8 +85,8 @@ export function buildScheduleAiImportPrompt(input: ScheduleAiImportInput): strin
 CONTEXT:
 - Today: ${now.toISOString().split('T')[0]}
 - Team: ${teamName}
-- Current games in DB: ${currentGames.length}
-- Current games JSON: ${JSON.stringify(currentGames)}
+- Current games and practices in DB: ${currentEvents.length}
+- Current schedule JSON: ${JSON.stringify(currentEvents)}
 
 INPUT:
 ${hasDocument ? `- The schedule is attached as ${documentLabel === 'image' ? 'an' : 'a'} ${documentLabel}. Extract visible game and practice rows from the attachment.` : '- Schedule text is pasted below.'}
@@ -99,7 +106,10 @@ JSON shape:
 {"operations":[{"action":"add","event":{"eventType":"game","date":"2026-06-01T18:00:00","opponent":"Rockets","location":"Field 1","isHome":true,"arrivalTime":"2026-06-01T17:30:00","notes":"Snack: Lee family","assignments":[{"role":"snack","value":"Lee family"}],"status":"scheduled"},"reason":"read from schedule row"},{"action":"add","event":{"eventType":"practice","date":"2026-06-02T17:30:00","endsAt":"2026-06-02T19:00:00","title":"Team practice","location":"Gym"}}]}`;
 }
 
-export function normalizeScheduleAiImportResponse(response: unknown, input: Partial<Pick<ScheduleAiImportInput, 'teamName' | 'currentGames'>> = {}): ScheduleAiImportResult {
+export function normalizeScheduleAiImportResponse(
+  response: unknown,
+  input: Partial<Pick<ScheduleAiImportInput, 'teamName' | 'currentEvents' | 'currentGames'>> = {}
+): ScheduleAiImportResult {
   const operations = Array.isArray((response as any)?.operations) ? (response as any).operations as ScheduleAiOperation[] : [];
   if (!Array.isArray((response as any)?.operations)) {
     return { rows: [], errors: ['AI response did not include an operations array.'] };
@@ -113,12 +123,12 @@ export function normalizeScheduleAiImportResponse(response: unknown, input: Part
         rowNumber: index + 1,
         teamName: input.teamName || ''
       }) as ScheduleCsvImportPreviewRow;
-      const conflictErrors = preview.normalized.eventType === 'game'
-        ? findCurrentGameConflictErrors(preview, input.currentGames || [])
-        : [];
       return {
         ...preview,
-        errors: [...preview.errors, ...conflictErrors]
+        errors: [
+          ...preview.errors,
+          ...findCurrentEventConflictErrors(preview, getCurrentEvents(input))
+        ]
       };
     });
 
@@ -252,22 +262,64 @@ function buildDraftFromAiEvent(event: Record<string, unknown>, reason?: string) 
   };
 }
 
-function findCurrentGameConflictErrors(row: ScheduleCsvImportPreviewRow, currentGames: ScheduleAiImportCurrentGame[]): string[] {
+export function appendScheduleImportConflictErrors(
+  rows: ScheduleCsvImportPreviewRow[],
+  currentEvents: ScheduleAiImportCurrentEvent[]
+): ScheduleCsvImportPreviewRow[] {
+  return rows.map((row) => {
+    const conflictErrors = findCurrentEventConflictErrors(row, currentEvents);
+    return conflictErrors.length
+      ? { ...row, errors: Array.from(new Set([...(row.errors || []), ...conflictErrors])) }
+      : row;
+  });
+}
+
+function findCurrentEventConflictErrors(
+  row: ScheduleCsvImportPreviewRow,
+  currentEvents: ScheduleAiImportCurrentEvent[]
+): string[] {
   const startsAt = row.normalized.startsAt ? new Date(row.normalized.startsAt) : null;
   if (!startsAt || Number.isNaN(startsAt.getTime())) return [];
-  const rowOpponent = compactText(row.normalized.opponent || '').toLowerCase();
+  const rowType = row.normalized.eventType === 'practice' ? 'practice' : 'game';
+  const rowOpponent = normalizeComparableText(row.normalized.opponent);
+  const rowTitle = normalizeComparableText(row.normalized.title || 'Practice');
+  const rowLocation = normalizeComparableText(row.normalized.location);
 
-  const conflict = currentGames.find((game) => {
-    const gameDate = normalizeContextDate(game.date);
-    if (!gameDate) return false;
-    const existing = new Date(gameDate);
+  const conflict = currentEvents.find((event) => {
+    const eventType = event.type === 'practice' ? 'practice' : 'game';
+    if (eventType !== rowType) return false;
+    const eventDate = normalizeContextDate(event.date);
+    if (!eventDate) return false;
+    const existing = new Date(eventDate);
     if (Number.isNaN(existing.getTime())) return false;
-    const sameOpponent = rowOpponent && compactText(game.opponent || '').toLowerCase() === rowOpponent;
     const hoursApart = Math.abs(existing.getTime() - startsAt.getTime()) / (60 * 60 * 1000);
-    return sameOpponent && hoursApart <= 24;
+    if (rowType === 'game') {
+      return Boolean(
+        rowOpponent
+        && normalizeComparableText(event.opponent) === rowOpponent
+        && hoursApart <= 24
+      );
+    }
+    const sameTitle = rowTitle && normalizeComparableText(event.title || 'Practice') === rowTitle;
+    const sameLocation = rowLocation && normalizeComparableText(event.location) === rowLocation;
+    return hoursApart <= 0.25 || (hoursApart <= 2 && Boolean(sameTitle || sameLocation));
   });
 
-  return conflict ? [`Possible duplicate/conflict with existing game vs ${compactText(conflict.opponent || 'opponent')} within 24 hours.`] : [];
+  if (!conflict) return [];
+  return rowType === 'game'
+    ? [`Possible duplicate/conflict with existing game vs ${compactText(conflict.opponent || 'opponent')} within 24 hours.`]
+    : [`Possible duplicate/conflict with existing practice ${compactText(conflict.title || 'Practice')} at the same time.`];
+}
+
+function getCurrentEvents(
+  input: Partial<Pick<ScheduleAiImportInput, 'currentEvents' | 'currentGames'>>
+): ScheduleAiImportCurrentEvent[] {
+  if (Array.isArray(input.currentEvents)) return input.currentEvents;
+  return (input.currentGames || []).map((game) => ({ ...game, type: 'game' }));
+}
+
+function normalizeComparableText(value: unknown): string {
+  return compactText(value).toLowerCase();
 }
 
 function normalizeContextDate(value: unknown): string {
