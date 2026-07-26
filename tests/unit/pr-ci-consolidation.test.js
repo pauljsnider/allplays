@@ -1,6 +1,8 @@
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { parse as parseYaml } from 'yaml';
 
 const repoRoot = path.resolve(import.meta.dirname, '../..');
 
@@ -49,6 +51,41 @@ describe('pull request CI consolidation', () => {
         const integration = workflow('pr-integration.yml');
 
         expect(integration).not.toContain('secrets: inherit');
+    });
+
+    it.each([
+        ['mobile-build', { MOBILE_RESULT: 'cancelled' }],
+        ['preview-smoke', {
+            HEAD_REPOSITORY: 'allplays/allplays',
+            PREVIEW_ARTIFACT_RESULT: 'success',
+            PREVIEW_RESULT: 'success',
+            REGRESSION_RESULT: 'cancelled'
+        }],
+        ['preview-smoke', {
+            HEAD_REPOSITORY: 'allplays/allplays',
+            PREVIEW_ARTIFACT_RESULT: 'success',
+            PREVIEW_RESULT: 'cancelled',
+            REGRESSION_RESULT: 'success'
+        }],
+        ['preview-smoke', {
+            HEAD_REPOSITORY: 'allplays/allplays',
+            PREVIEW_ARTIFACT_RESULT: 'cancelled',
+            PREVIEW_RESULT: 'success',
+            REGRESSION_RESULT: 'success'
+        }]
+    ])('runs %s after cancellation and rejects cancelled upstream results', (jobName, env) => {
+        const integration = parseYaml(workflow('pr-integration.yml'));
+        const job = integration.jobs[jobName];
+        const result = spawnSync('bash', ['-c', job.steps[0].run], {
+            env: {
+                ...process.env,
+                GITHUB_REPOSITORY: 'allplays/allplays',
+                ...env
+            }
+        });
+
+        expect(job.if).toBe('${{ always() }}');
+        expect(result.status).toBe(1);
     });
 
     it('binds trusted preview deployment to the consolidated source run', () => {

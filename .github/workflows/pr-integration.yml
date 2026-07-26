@@ -30,7 +30,7 @@ jobs:
   mobile-build:
     name: mobile-build
     needs: mobile-integration
-    if: ${{ always() && !cancelled() }}
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
       - name: Enforce reusable mobile workflow result
@@ -49,7 +49,7 @@ jobs:
       - regression-integration
       - preview-integration
       - preview-artifact
-    if: ${{ always() && !cancelled() }}
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
       - name: Enforce complete integration result
