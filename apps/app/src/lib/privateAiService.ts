@@ -186,6 +186,7 @@ export type PrivateAiArtifactReference =
 export type PrivateAiRosterProposalRevision = {
   confirmationId: string;
   teamId: string;
+  messageId: string;
   rows: RosterAiImportPreviewRow[];
 };
 
@@ -444,10 +445,14 @@ export async function sendPrivateAiMessage(
   }
   if (isPrivateAiRosterImportRequest(untruncatedRawQuestion)) {
     const csvText = extractPastedRosterCsv(untruncatedRawQuestion);
+    const rosterInstruction = stripPastedRosterCsvFromInstruction(
+      untruncatedRawQuestion,
+      csvText
+    ).slice(0, maxPromptCharacters);
     return sendPrivateAiRosterImportMessage(user, {
       teamId: compactText(requestContext.teamId),
       teamName: compactText(requestContext.teamName),
-      text: rawQuestion,
+      text: rosterInstruction,
       csvText: csvText || undefined
     }, conversationId);
   }
@@ -1073,11 +1078,12 @@ export async function sendPrivateAiRosterImportMessage(
     : input.imageFile
       ? getPrivateAiAttachmentKind(input.imageFile) === 'pdf' ? 'roster PDF' : 'roster image'
       : 'roster instructions';
-  const question = input.csvText
-    ? 'Review pasted roster CSV data for import.'
-    : input.imageFile
-      ? `Review the attached ${sourceLabel} for roster import.`
-      : 'Review roster instructions for import.';
+  const question = String(input.text || '').trim().slice(0, maxPromptCharacters)
+    || (input.csvText
+      ? 'Review pasted roster CSV data for import.'
+      : input.imageFile
+        ? `Review the attached ${sourceLabel} for roster import.`
+        : 'Review roster instructions for import.');
   const activeConversationId = requestedConversationId === DRAFT_PRIVATE_AI_CONVERSATION_ID
     ? await createPrivateAiConversation(user, buildConversationTitle(question)).then((conversation) => conversation.id)
     : requestedConversationId;
@@ -1220,7 +1226,10 @@ export async function revisePrivateAiRosterImportProposal(
   if (!user?.uid) throw new Error('Sign in before editing an AI roster proposal.');
   const confirmationId = compactText(revision.confirmationId);
   const teamId = compactText(revision.teamId);
-  if (!confirmationId || !teamId) throw new Error('This roster proposal is no longer editable.');
+  const messageId = compactText(revision.messageId);
+  if (!confirmationId || !teamId || !messageId) {
+    throw new Error('This roster proposal is no longer editable.');
+  }
 
   const pending = await loadPrivateAiPendingAction(user, confirmationId);
   if (!pending || pending.toolName !== 'apply_roster_import') {
@@ -1252,9 +1261,13 @@ export async function revisePrivateAiRosterImportProposal(
   const nextSummary = `Roster import | Team: ${teamId} | ${rosterSummary.total} operations | ${rosterSummary.invitations} invitations${validationErrors.length ? ` | ${validationErrors.length} errors` : ''}`;
   const pendingRef = doc(db, 'users', user.uid, privateAiPendingActionCollectionName, confirmationId);
   const teamPayloadRef = doc(db, 'teams', teamId, teamPrivateAiPendingActionCollectionName, confirmationId);
+  const messageRef = doc(db, 'users', user.uid, privateAiCollectionName, messageId);
 
   const updated = await runTransaction(db, async (transaction: any) => {
-    const snapshot = await transaction.get(pendingRef);
+    const [snapshot, messageSnapshot] = await Promise.all([
+      transaction.get(pendingRef),
+      transaction.get(messageRef)
+    ]);
     const data = typeof snapshot?.data === 'function' ? snapshot.data() : null;
     if (
       !snapshot?.exists?.()
@@ -1265,6 +1278,17 @@ export async function revisePrivateAiRosterImportProposal(
       || compactText(data.teamId || (isPlainObject(data.args) ? data.args.teamId : '')) !== teamId
       || Date.parse(compactText(data.expiresAt)) <= Date.now()
     ) return false;
+    const messageData = typeof messageSnapshot?.data === 'function' ? messageSnapshot.data() : null;
+    const storedArtifacts = isPlainObject(messageData) && Array.isArray(messageData.artifacts)
+      ? messageData.artifacts
+      : [];
+    const matchingArtifact = storedArtifacts.find((artifact) => (
+      isPlainObject(artifact)
+      && artifact.type === 'roster-import'
+      && compactText(artifact.confirmationId) === confirmationId
+      && compactText(artifact.teamId) === teamId
+    ));
+    if (!matchingArtifact) return false;
     transaction.set(pendingRef, {
       args: sanitizePendingActionArgsForUserStorage('apply_roster_import', nextArgs),
       summary: nextSummary,
@@ -1282,6 +1306,25 @@ export async function revisePrivateAiRosterImportProposal(
       status: 'pending',
       editedAt: serverTimestamp(),
       expiresAt: pending.expiresAt
+    }, { merge: true });
+    transaction.set(messageRef, {
+      artifacts: storedArtifacts.map((artifact) => {
+        if (
+          !isPlainObject(artifact)
+          || artifact.type !== 'roster-import'
+          || compactText(artifact.confirmationId) !== confirmationId
+          || compactText(artifact.teamId) !== teamId
+        ) return artifact;
+        return stripPrivateAiArtifactForStorage({
+          type: 'roster-import',
+          confirmationId,
+          teamId,
+          teamName: compactText(artifact.teamName) || 'Team',
+          source: normalizePrivateAiImportSource(artifact.source),
+          summary: artifactSummary,
+          previewRows: rows
+        });
+      })
     }, { merge: true });
     return true;
   });
@@ -3852,6 +3895,39 @@ function sanitizePrivateAiStorageValue(value: unknown): unknown {
 function normalizePrivateAiImportSource(value: unknown): 'csv' | 'ai-text' | 'ai-image' | 'ai-document' {
   if (value === 'csv' || value === 'ai-image' || value === 'ai-document') return value;
   return 'ai-text';
+}
+
+function stripPastedRosterCsvFromInstruction(value: string, csvText: string) {
+  const source = String(value || '').trim();
+  const csvHeader = String(csvText || '').split(/\r?\n/, 1)[0]?.trim();
+  if (!source || !csvHeader) return source;
+
+  const lines = source.split(/\r?\n/);
+  const headerIndex = lines.findIndex((line) => line.trim() === csvHeader);
+  if (headerIndex < 0) return source;
+
+  let endIndex = headerIndex + 1;
+  let dataRowCount = 0;
+  while (endIndex < lines.length) {
+    const line = lines[endIndex]!;
+    const trimmed = line.trim();
+    if (!trimmed) {
+      if (dataRowCount > 0) {
+        endIndex += 1;
+        break;
+      }
+      endIndex += 1;
+      continue;
+    }
+    if (!line.includes(',')) break;
+    dataRowCount += 1;
+    endIndex += 1;
+  }
+
+  return [
+    ...lines.slice(0, headerIndex),
+    ...lines.slice(endIndex)
+  ].join('\n').trim();
 }
 
 async function savePrivateAiMessage(user: AuthUser, input: {

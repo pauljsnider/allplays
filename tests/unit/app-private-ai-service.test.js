@@ -1187,6 +1187,7 @@ describe('private AI service', () => {
             rosterFields: []
         });
         expect(aiMocks.model.generateContent).not.toHaveBeenCalled();
+        expect(result.userMessage.text).toBe(prompt);
         expect(result.assistantMessage.text).toContain('Reply yes to import these players');
         expect(result.assistantMessage.artifacts).toEqual([
             expect.objectContaining({
@@ -1283,6 +1284,7 @@ describe('private AI service', () => {
         } = await import('../../apps/app/src/lib/privateAiService.ts');
         const result = await sendPrivateAiRosterImportMessage(coachUser, {
             teamId: 'team-1',
+            text: 'Update Avery to jersey 10 and keep every omitted field unchanged.',
             csvText: 'Name,Number\nAvery,10'
         }, 'roster-preview-failure');
 
@@ -1304,7 +1306,10 @@ describe('private AI service', () => {
         });
         const reloaded = await loadPrivateAiMessages(coachUser, undefined, 'roster-preview-failure');
         expect(reloaded).toEqual(expect.arrayContaining([
-            expect.objectContaining({ role: 'user' }),
+            expect.objectContaining({
+                role: 'user',
+                text: 'Update Avery to jersey 10 and keep every omitted field unchanged.'
+            }),
             expect.objectContaining({
                 role: 'assistant',
                 error: true,
@@ -1495,7 +1500,7 @@ describe('private AI service', () => {
         }, 'roster-chat');
 
         expect(result.userMessage).toMatchObject({
-            text: 'Review pasted roster CSV data for import.',
+            text: 'Update the Bears roster.',
             attachment: {
                 name: 'players.csv',
                 kind: 'csv',
@@ -1506,7 +1511,7 @@ describe('private AI service', () => {
             .map((call) => call[1])
             .find((payload) => payload.role === 'user');
         expect(storedUser).toMatchObject({
-            text: 'Review pasted roster CSV data for import.',
+            text: 'Update the Bears roster.',
             attachment: {
                 name: 'players.csv',
                 kind: 'csv',
@@ -1514,6 +1519,76 @@ describe('private AI service', () => {
             }
         });
         expect(storedUser).not.toHaveProperty('file');
+        expect(JSON.stringify(storedUser)).not.toContain('parent@example.com');
+    });
+
+    it.each([
+        { label: 'image', name: 'roster.png', type: 'image/png' },
+        { label: 'PDF', name: 'roster.pdf', type: 'application/pdf' }
+    ])('preserves $label roster instructions through failed extraction and reload without storing the raw file', async ({
+        name,
+        type
+    }) => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        const instruction = 'Assign parent@example.com to Avery and keep every other roster field unchanged.';
+        const file = new File(['private roster bytes'], name, { type });
+        rosterAiMocks.generateRosterAiImportRows.mockRejectedValueOnce(new Error('Roster extraction failed.'));
+
+        const {
+            loadPrivateAiMessages,
+            sendPrivateAiAttachmentMessage
+        } = await import('../../apps/app/src/lib/privateAiService.ts');
+        const result = await sendPrivateAiAttachmentMessage(coachUser, {
+            teamId: 'team-1',
+            text: instruction,
+            file
+        }, `roster-${type}-failure`);
+
+        expect(result.userMessage).toMatchObject({
+            text: instruction,
+            attachment: {
+                name,
+                mimeType: type
+            }
+        });
+        const storedMessages = firebaseMocks.addDoc.mock.calls
+            .map((call) => call[1])
+            .filter((payload) => payload.conversationId === `roster-${type}-failure`);
+        expect(storedMessages[0]).toMatchObject({
+            role: 'user',
+            text: instruction,
+            attachment: { name, mimeType: type }
+        });
+        expect(JSON.stringify(storedMessages[0])).not.toContain('private roster bytes');
+
+        firebaseMocks.getDocs.mockResolvedValueOnce({
+            docs: storedMessages.map((message, index) => ({
+                id: `stored-roster-${type}-${index + 1}`,
+                data: () => message
+            }))
+        });
+        const reloaded = await loadPrivateAiMessages(
+            coachUser,
+            undefined,
+            `roster-${type}-failure`
+        );
+        expect(reloaded).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                role: 'user',
+                text: instruction,
+                attachment: expect.objectContaining({ name, mimeType: type })
+            }),
+            expect.objectContaining({
+                role: 'assistant',
+                error: true,
+                text: expect.stringContaining('Roster extraction failed.')
+            })
+        ]));
     });
 
     it('persists an actionable schedule failure when the pending import cannot be saved', async () => {
@@ -1653,7 +1728,7 @@ describe('private AI service', () => {
         );
 
         expect(rosterAiMocks.generateRosterAiImportRows).toHaveBeenCalledWith(expect.objectContaining({
-            text: prompt,
+            text: 'For Bears, update this roster:\n\nKeep omitted fields unchanged.',
             csvText
         }));
         expect(rosterAiMocks.extractPastedRosterCsv).toHaveBeenCalledWith(prompt);
@@ -1664,6 +1739,8 @@ describe('private AI service', () => {
             source: 'csv',
             previewRows: [previewRow]
         });
+        expect(result.userMessage.text).toBe('For Bears, update this roster:\n\nKeep omitted fields unchanged.');
+        expect(result.userMessage.text).not.toContain(csvText);
     });
 
     it('extracts a pasted roster CSV before truncating the generic chat prompt', async () => {
@@ -1691,7 +1768,7 @@ describe('private AI service', () => {
         });
 
         const { sendPrivateAiMessage } = await import('../../apps/app/src/lib/privateAiService.ts');
-        await sendPrivateAiMessage(
+        const result = await sendPrivateAiMessage(
             coachUser,
             prompt,
             'roster-chat',
@@ -1700,8 +1777,11 @@ describe('private AI service', () => {
 
         expect(rosterAiMocks.extractPastedRosterCsv).toHaveBeenCalledWith(prompt);
         expect(rosterAiMocks.generateRosterAiImportRows).toHaveBeenCalledWith(expect.objectContaining({
+            text: 'For Bears, import this complete roster:',
             csvText
         }));
+        expect(result.userMessage.text).toBe('For Bears, import this complete roster:');
+        expect(result.userMessage.text).not.toContain('parent120@example.com');
     });
 
     it('keeps informational roster questions in generic chat instead of staging an import', async () => {
@@ -2266,7 +2346,7 @@ describe('private AI service', () => {
         }
     });
 
-    it('transactionally replaces a roster pending payload after in-chat edits', async () => {
+    it('transactionally replaces a roster pending payload and persisted artifact after in-chat edits', async () => {
         const coachUser = {
             ...authUser,
             roles: ['coach'],
@@ -2277,6 +2357,7 @@ describe('private AI service', () => {
         const transactionSet = vi.fn();
         const {
             generatePrivateAiAnswer,
+            loadPrivateAiMessages,
             revisePrivateAiRosterImportProposal,
             runPrivateAiTool
         } = await import('../../apps/app/src/lib/privateAiService.ts');
@@ -2304,22 +2385,58 @@ describe('private AI service', () => {
             conversationId: 'roster-chat'
         });
         firebaseMocks.runTransaction.mockImplementationOnce((db, callback) => callback({
-            get: vi.fn(async () => ({
-                exists: () => true,
-                data: () => ({
-                    status: 'pending',
-                    userId: 'user-1',
-                    toolName: 'apply_roster_import',
-                    teamId: 'team-1',
-                    args: { teamId: 'team-1' },
-                    expiresAt: new Date(Date.now() + 60_000).toISOString()
-                })
-            })),
+            get: vi.fn(async (reference) => {
+                const path = reference?.path?.join('/');
+                if (path === `users/user-1/privateAiPendingActions/${staged.confirmationId}`) {
+                    return {
+                        exists: () => true,
+                        data: () => ({
+                            status: 'pending',
+                            userId: 'user-1',
+                            toolName: 'apply_roster_import',
+                            teamId: 'team-1',
+                            args: { teamId: 'team-1' },
+                            expiresAt: new Date(Date.now() + 60_000).toISOString()
+                        })
+                    };
+                }
+                if (path === 'users/user-1/privateAiMessages/assistant-roster') {
+                    return {
+                        exists: () => true,
+                        data: () => ({
+                            artifacts: [{
+                                type: 'roster-import',
+                                confirmationId: staged.confirmationId,
+                                teamId: 'team-1',
+                                teamName: 'Bears',
+                                source: 'ai-text',
+                                summary: {
+                                    total: 1,
+                                    add: 1,
+                                    update: 0,
+                                    deactivate: 0,
+                                    reactivate: 0,
+                                    invitations: 0,
+                                    errors: 0
+                                },
+                                previewRows: [rosterPreviewRow({
+                                    action: 'add',
+                                    playerId: '',
+                                    name: 'Avery',
+                                    operation: originalOperation
+                                })]
+                            }]
+                        })
+                    };
+                }
+                return { exists: () => false, data: () => null };
+            }),
             set: transactionSet
         }));
         const summary = await revisePrivateAiRosterImportProposal(coachUser, {
             confirmationId: staged.confirmationId,
             teamId: 'team-1',
+            messageId: 'assistant-roster',
             rows: [{
                 rowNumber: 1,
                 action: 'add',
@@ -2363,6 +2480,60 @@ describe('private AI service', () => {
             }),
             { merge: true }
         );
+        expect(transactionSet).toHaveBeenNthCalledWith(
+            3,
+            expect.objectContaining({ path: ['users', 'user-1', 'privateAiMessages', 'assistant-roster'] }),
+            expect.objectContaining({
+                artifacts: [
+                    expect.objectContaining({
+                        type: 'roster-import',
+                        confirmationId: staged.confirmationId,
+                        summary: expect.objectContaining({ total: 1, add: 1, errors: 0 }),
+                        previewRows: [
+                            expect.objectContaining({
+                                action: 'add',
+                                name: 'Avery Smith',
+                                fields: expect.arrayContaining([
+                                    expect.objectContaining({ key: 'name', value: 'Avery Smith' })
+                                ])
+                            })
+                        ]
+                    })
+                ]
+            }),
+            { merge: true }
+        );
+
+        const persistedArtifact = transactionSet.mock.calls[2][1].artifacts[0];
+        firebaseMocks.getDocs.mockResolvedValueOnce({
+            docs: [{
+                id: 'assistant-roster',
+                data: () => ({
+                    role: 'assistant',
+                    text: 'I prepared one roster operation.',
+                    conversationId: 'roster-chat',
+                    artifacts: [persistedArtifact],
+                    clientCreatedAt: '2026-07-25T12:00:00Z'
+                })
+            }]
+        });
+        const reloaded = await loadPrivateAiMessages(coachUser, undefined, 'roster-chat');
+        expect(reloaded[0]).toMatchObject({
+            id: 'assistant-roster',
+            artifacts: [{
+                type: 'roster-import',
+                confirmationId: staged.confirmationId,
+                previewRows: [
+                    expect.objectContaining({
+                        action: 'add',
+                        name: 'Avery Smith',
+                        fields: expect.arrayContaining([
+                            expect.objectContaining({ key: 'name', value: 'Avery Smith' })
+                        ])
+                    })
+                ]
+            }]
+        });
 
         mockTeamScopedPendingActionPersistence({
             confirmationId: staged.confirmationId,

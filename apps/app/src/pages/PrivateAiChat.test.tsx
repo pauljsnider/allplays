@@ -619,6 +619,7 @@ describe('PrivateAiChat', () => {
                 expect.objectContaining({
                     confirmationId: 'ai_roster1',
                     teamId: 'team-1',
+                    messageId: 'assistant-roster',
                     rows: expect.arrayContaining([
                         expect.objectContaining({ name: 'Avery Smith', errors: [] })
                     ])
@@ -700,6 +701,7 @@ describe('PrivateAiChat', () => {
                 expect.objectContaining({
                     confirmationId: 'ai_roster_unmatched',
                     teamId: 'team-1',
+                    messageId: 'assistant-roster',
                     rows: [
                         expect.objectContaining({
                             action: 'add',

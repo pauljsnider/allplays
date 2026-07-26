@@ -497,6 +497,7 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
       const summary = await revisePrivateAiRosterImportProposal(auth.user, {
         confirmationId: artifact.confirmationId,
         teamId: artifact.teamId,
+        messageId,
         rows: nextRows
       });
       setMessages((current) => current.map((message) => message.id === messageId
