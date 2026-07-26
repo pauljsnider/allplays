@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
     buildStaffTeamIndexes,
     processBackfillUsers,
+    resolveProjectId,
     resolveUserDocs,
     resolveProjectionTeamIds
 } from '../../_migration/backfill-public-user-profiles.js';
@@ -11,6 +12,18 @@ function team(id, data) {
 }
 
 describe('public user profile backfill', () => {
+    it('requires an explicit Firebase project instead of defaulting to production', () => {
+        expect(resolveProjectId(['node', 'script'], {})).toBe('');
+        expect(resolveProjectId(
+            ['node', 'script', '--project', 'project-from-arg'],
+            { FIREBASE_PROJECT_ID: 'project-from-env' }
+        )).toBe('project-from-arg');
+        expect(resolveProjectId(
+            ['node', 'script'],
+            { FIREBASE_PROJECT_ID: 'project-from-env' }
+        )).toBe('project-from-env');
+    });
+
     it('indexes team owners and case-insensitive admin emails', () => {
         const indexes = buildStaffTeamIndexes([
             team('team-1', {

@@ -2814,7 +2814,8 @@ async function syncPublicUserProfileProjectionForUser(userId, options = {}) {
   };
   const discoveryTeamIds = await getNotificationRecipientTeamIdsForUser(
     membershipUserData,
-    normalizedUserId
+    normalizedUserId,
+    options.extraTeamIds
   );
   const payload = buildTrustedPublicUserProfileProjectionPayload(userData, {
     trustedEmail: authIdentity.email || userData.email || null,
@@ -2836,7 +2837,7 @@ async function getPublicProfileStaffUserIdsForTeam(team = null) {
   return Array.from(userIds);
 }
 
-async function syncPublicUserProfilesForTeamChange(beforeTeam, afterTeam) {
+async function syncPublicUserProfilesForTeamChange(teamId, beforeTeam, afterTeam) {
   const beforeKey = publicUserProfileProjection.buildTeamStaffMembershipKey(beforeTeam);
   const afterKey = publicUserProfileProjection.buildTeamStaffMembershipKey(afterTeam);
   if (beforeKey === afterKey) return;
@@ -2845,10 +2846,13 @@ async function syncPublicUserProfilesForTeamChange(beforeTeam, afterTeam) {
     getPublicProfileStaffUserIdsForTeam(beforeTeam),
     getPublicProfileStaffUserIdsForTeam(afterTeam)
   ]);
+  const currentStaffUserIds = new Set(afterUserIds);
   const candidateUserIds = new Set([...beforeUserIds, ...afterUserIds]);
   await Promise.all(
     Array.from(candidateUserIds).map((candidateUserId) => (
-      syncPublicUserProfileProjectionForUser(candidateUserId)
+      syncPublicUserProfileProjectionForUser(candidateUserId, {
+        extraTeamIds: currentStaffUserIds.has(candidateUserId) ? [teamId] : []
+      })
     ))
   );
 }
@@ -7160,10 +7164,11 @@ async function getNotificationRecipientTeamIdsForUser(user, uid, extraTeamIds = 
   );
 
   const queries = [firestore.collection('teams').where('ownerId', '==', normalizedUid).get()];
-  const email = String(user.email || user.profileEmail || '').trim().toLowerCase();
-  if (email) {
+  const rawEmail = String(user.email || user.profileEmail || '').trim();
+  const emailCandidates = uniqueNonEmptyStrings([rawEmail, rawEmail.toLowerCase()]);
+  emailCandidates.forEach((email) => {
     queries.push(firestore.collection('teams').where('adminEmails', 'array-contains', email).get());
-  }
+  });
 
   const querySnaps = await Promise.all(queries);
   querySnaps.forEach((snap) => {
@@ -7254,7 +7259,9 @@ exports.syncTeamNotificationRecipientsOnUserWrite = functions.firestore
     return null;
   });
 
-exports.syncPublicUserProfileOnUserWrite = functions.firestore
+exports.syncPublicUserProfileOnUserWrite = functions
+  .runWith({ failurePolicy: true })
+  .firestore
   .document('users/{uid}')
   .onWrite(async (change, context) => {
     const publicProfileRef = firestore.doc(`publicUserProfiles/${context.params.uid}`);
@@ -7306,12 +7313,14 @@ exports.syncTeamNotificationRecipientsOnTeamWrite = functions.firestore
     return null;
   });
 
-exports.syncPublicUserProfilesOnTeamWrite = functions.firestore
+exports.syncPublicUserProfilesOnTeamWrite = functions
+  .runWith({ failurePolicy: true })
+  .firestore
   .document('teams/{teamId}')
-  .onWrite(async (change) => {
+  .onWrite(async (change, context) => {
     const before = change.before.exists ? (change.before.data() || {}) : null;
     const after = change.after.exists ? (change.after.data() || {}) : null;
-    await syncPublicUserProfilesForTeamChange(before, after);
+    await syncPublicUserProfilesForTeamChange(context.params.teamId, before, after);
     return null;
   });
 

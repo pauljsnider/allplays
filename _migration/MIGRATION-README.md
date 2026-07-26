@@ -22,14 +22,16 @@ the `firebase-admin` SDK against production using Application Default Credential
 
 Rebuilds the `publicUserProfiles/{uid}` Friends-discovery projection for
 verified accounts from private user membership, Firebase Auth identity, and
-team owner/admin links. It is dry-run-only unless `--apply` and an exact
+team owner/admin links. Every run requires an explicit `--project` (or
+`FIREBASE_PROJECT_ID`). It is dry-run-only unless `--apply` and an exact
 `--confirm-project` are both provided.
 
 ```bash
-node _migration/backfill-public-user-profiles.js --email parent@example.com
+node _migration/backfill-public-user-profiles.js --email parent@example.com \
+  --project game-flow-c6311
 node _migration/backfill-public-user-profiles.js --apply --email parent@example.com \
   --project game-flow-c6311 --confirm-project game-flow-c6311
-node _migration/backfill-public-user-profiles.js --all
+node _migration/backfill-public-user-profiles.js --all --project game-flow-c6311
 ```
 
 ### fix-orphaned-invite-redemptions.js

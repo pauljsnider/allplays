@@ -12,6 +12,16 @@ function uniquePublicProfileStrings(values = []) {
     .filter(Boolean))];
 }
 
+function isValidPublicProfileTeamId(value) {
+  const teamId = compactPublicProfileString(value);
+  return Boolean(teamId)
+    && teamId !== '.'
+    && teamId !== '..'
+    && !teamId.includes('/')
+    && !/^__.*__$/.test(teamId)
+    && Buffer.byteLength(teamId, 'utf8') <= 1500;
+}
+
 function derivePublicProfileTeamIds(userData = {}, extraTeamIds = []) {
   const parentOfTeamIds = Array.isArray(userData.parentOf)
     ? userData.parentOf.map((link) => link?.teamId)
@@ -23,7 +33,7 @@ function derivePublicProfileTeamIds(userData = {}, extraTeamIds = []) {
     ...parentOfTeamIds,
     ...parentTeamIds,
     ...(Array.isArray(extraTeamIds) ? extraTeamIds : [])
-  ]);
+  ]).filter(isValidPublicProfileTeamId);
 }
 
 function hashPublicProfileEmail(email) {
@@ -32,7 +42,6 @@ function hashPublicProfileEmail(email) {
 }
 
 function buildPublicUserProfileProjection(userData = {}, options = {}) {
-  const profileName = compactPublicProfileString(userData.profileName);
   const trustedDisplayName = compactPublicProfileString(options.trustedDisplayName);
   const fullName = compactPublicProfileString(
     userData.fullName || userData.displayName || userData.name || trustedDisplayName
@@ -46,7 +55,6 @@ function buildPublicUserProfileProjection(userData = {}, options = {}) {
   return {
     displayName: displayName || null,
     fullName: fullName || null,
-    profileName: profileName || null,
     photoUrl: photoUrl || null,
     discoveryTeamIds: derivePublicProfileTeamIds(userData, options.discoveryTeamIds),
     emailHash: hashPublicProfileEmail(trustedEmail)
@@ -67,7 +75,6 @@ function buildPublicProfileUserSourceKey(userData = null) {
   return JSON.stringify({
     displayName: compactPublicProfileString(userData.displayName),
     fullName: compactPublicProfileString(userData.fullName),
-    profileName: compactPublicProfileString(userData.profileName),
     name: compactPublicProfileString(userData.name),
     photoUrl: compactPublicProfileString(userData.photoUrl),
     email: compactPublicProfileString(userData.email).toLowerCase(),
@@ -82,5 +89,6 @@ module.exports = {
   compactPublicProfileString,
   derivePublicProfileTeamIds,
   hashPublicProfileEmail,
+  isValidPublicProfileTeamId,
   uniquePublicProfileStrings
 };

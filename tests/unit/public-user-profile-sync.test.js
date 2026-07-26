@@ -130,7 +130,9 @@ describe('public user profile sync', () => {
         expect(legacyAuthSource).toContain('updateUserProfile,');
         expect(appAuthSource).toContain('return executeEmailPasswordSignup({');
         expect(appAuthSource).toContain('updateUserProfile: dbModule.updateUserProfile');
-        expect(functionsSource).toContain('exports.syncPublicUserProfileOnUserWrite = functions.firestore');
+        expect(functionsSource).toMatch(
+            /exports\.syncPublicUserProfileOnUserWrite = functions\s+\.runWith\(\{ failurePolicy: true \}\)\s+\.firestore/
+        );
         expect(functionsSource).toContain('await syncPublicUserProfileProjectionForUser(context.params.uid, {');
         expect(functionsSource).toContain('if (authIdentity.emailVerified !== true)');
     });
@@ -139,8 +141,14 @@ describe('public user profile sync', () => {
         expect(functionsSource).toContain('async function getPublicProfileStaffUserIdsForTeam(team = null)');
         expect(functionsSource).toContain("const ownerId = String(team.ownerId || '').trim();");
         expect(functionsSource).toContain('const adminUserIds = await getUserIdsByEmails(team.adminEmails || []);');
-        expect(functionsSource).toContain('exports.syncPublicUserProfilesOnTeamWrite = functions.firestore');
-        expect(functionsSource).toContain('await syncPublicUserProfilesForTeamChange(before, after);');
+        expect(functionsSource).toContain('const emailCandidates = uniqueNonEmptyStrings([rawEmail, rawEmail.toLowerCase()]);');
+        expect(functionsSource).toContain('extraTeamIds: currentStaffUserIds.has(candidateUserId) ? [teamId] : []');
+        expect(functionsSource).toMatch(
+            /exports\.syncPublicUserProfilesOnTeamWrite = functions\s+\.runWith\(\{ failurePolicy: true \}\)\s+\.firestore/
+        );
+        expect(functionsSource).toContain(
+            'await syncPublicUserProfilesForTeamChange(context.params.teamId, before, after);'
+        );
     });
 
     it('refreshes server-owned public projection when a parent membership request is approved', () => {

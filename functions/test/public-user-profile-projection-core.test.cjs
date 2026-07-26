@@ -7,7 +7,8 @@ const {
   buildPublicUserProfileProjection,
   buildTeamStaffMembershipKey,
   derivePublicProfileTeamIds,
-  hashPublicProfileEmail
+  hashPublicProfileEmail,
+  isValidPublicProfileTeamId
 } = require('../public-user-profile-projection-core.cjs');
 
 test('combines parent and server-resolved staff teams without duplicates', () => {
@@ -18,6 +19,24 @@ test('combines parent and server-resolved staff teams without duplicates', () =>
     }, ['team-coach', 'team-parent']),
     ['team-parent', 'team-shared', 'team-coach']
   );
+});
+
+test('keeps valid legacy team ids while rejecting invalid Firestore document ids', () => {
+  assert.deepEqual(
+    derivePublicProfileTeamIds({
+      parentTeamIds: [
+        'legacy team 1',
+        'équipe-2',
+        'invalid/path',
+        '.',
+        '..',
+        '__reserved__'
+      ]
+    }, ['staff-team']),
+    ['legacy team 1', 'équipe-2', 'staff-team']
+  );
+  assert.equal(isValidPublicProfileTeamId('a'.repeat(1500)), true);
+  assert.equal(isValidPublicProfileTeamId('é'.repeat(751)), false);
 });
 
 test('uses Firebase Auth identity when a legacy user profile has only an email', () => {
@@ -33,27 +52,21 @@ test('uses Firebase Auth identity when a legacy user profile has only an email',
   assert.deepEqual(projection, {
     displayName: 'Tim Coach',
     fullName: 'Tim Coach',
-    profileName: null,
     photoUrl: 'https://example.com/tim.jpg',
     discoveryTeamIds: ['team-coach'],
     emailHash: hashPublicProfileEmail('tim@example.com')
   });
 });
 
-test('projects profileName and refreshes when it changes', () => {
-  const before = {
+test('projects only fields accepted by public profile security rules', () => {
+  const projection = buildPublicUserProfileProjection({
     email: 'parent@example.com',
-    profileName: 'Parent One'
-  };
-  const after = {
-    ...before,
-    profileName: 'Parent Two'
-  };
+    profileName: 'Private profile label'
+  });
 
-  assert.equal(buildPublicUserProfileProjection(after).profileName, 'Parent Two');
-  assert.notEqual(
-    buildPublicProfileUserSourceKey(before),
-    buildPublicProfileUserSourceKey(after)
+  assert.deepEqual(
+    Object.keys(projection).sort(),
+    ['discoveryTeamIds', 'displayName', 'emailHash', 'fullName', 'photoUrl']
   );
 });
 

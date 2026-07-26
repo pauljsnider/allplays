@@ -3,8 +3,10 @@
  * Backfill the publicUserProfiles projection used by Friends discovery.
  *
  * Dry-run examples:
- *   node _migration/backfill-public-user-profiles.js --email parent@example.com
- *   node _migration/backfill-public-user-profiles.js --all
+ *   node _migration/backfill-public-user-profiles.js --email parent@example.com \
+ *     --project game-flow-c6311
+ *   node _migration/backfill-public-user-profiles.js --all \
+ *     --project game-flow-c6311
  *
  * Apply examples:
  *   node _migration/backfill-public-user-profiles.js --apply --email parent@example.com \
@@ -29,12 +31,12 @@ const {
     derivePublicProfileTeamIds
 } = require('../functions/public-user-profile-projection-core.cjs');
 
-function readArg(name) {
+function readArg(name, argv = process.argv) {
     const prefix = `--${name}=`;
-    const inline = process.argv.find((arg) => arg.startsWith(prefix));
+    const inline = argv.find((arg) => arg.startsWith(prefix));
     if (inline) return inline.slice(prefix.length);
-    const index = process.argv.indexOf(`--${name}`);
-    return index >= 0 ? process.argv[index + 1] || '' : '';
+    const index = argv.indexOf(`--${name}`);
+    return index >= 0 ? argv[index + 1] || '' : '';
 }
 
 function hasFlag(name) {
@@ -45,13 +47,20 @@ const APPLY = hasFlag('apply');
 const ALL = hasFlag('all');
 const TARGET_EMAIL = compactPublicProfileString(readArg('email')).toLowerCase();
 const TARGET_UID = compactPublicProfileString(readArg('uid'));
-const PROJECT_ID = compactPublicProfileString(readArg('project') || process.env.FIREBASE_PROJECT_ID || 'game-flow-c6311');
+export function resolveProjectId(argv = process.argv, env = process.env) {
+    return compactPublicProfileString(readArg('project', argv) || env.FIREBASE_PROJECT_ID);
+}
+
+const PROJECT_ID = resolveProjectId();
 const CONFIRMED_PROJECT_ID = compactPublicProfileString(readArg('confirm-project'));
 
 function assertSafeArguments() {
     const targetCount = Number(ALL) + Number(Boolean(TARGET_EMAIL)) + Number(Boolean(TARGET_UID));
     if (targetCount !== 1) {
         throw new Error('Choose exactly one target: --email EMAIL, --uid UID, or --all.');
+    }
+    if (!PROJECT_ID) {
+        throw new Error('Choose a Firebase project with --project PROJECT_ID or FIREBASE_PROJECT_ID.');
     }
     if (APPLY && CONFIRMED_PROJECT_ID !== PROJECT_ID) {
         throw new Error(`Apply mode requires --confirm-project ${PROJECT_ID}.`);
@@ -100,7 +109,6 @@ function comparableProjection(profile = {}) {
     return {
         displayName: profile.displayName || null,
         fullName: profile.fullName || null,
-        profileName: profile.profileName || null,
         photoUrl: profile.photoUrl || null,
         discoveryTeamIds: Array.isArray(profile.discoveryTeamIds) ? profile.discoveryTeamIds : [],
         emailHash: profile.emailHash || null
@@ -196,7 +204,6 @@ export async function backfillPublicUserProfiles() {
             return;
         }
 
-        changed++;
         console.log(`${APPLY ? 'WRITE' : 'WOULD WRITE'} ${publicProfileRef.path}`, {
             displayName: projection.displayName,
             discoveryTeamIds: projection.discoveryTeamIds
@@ -207,6 +214,7 @@ export async function backfillPublicUserProfiles() {
                 updatedAt: FieldValue.serverTimestamp()
             }, { merge: true });
         }
+        changed++;
     });
 
     console.log(`Changed: ${changed}`);
