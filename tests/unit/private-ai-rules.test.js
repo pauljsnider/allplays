@@ -11,6 +11,7 @@ import {
     doc,
     getDoc,
     getDocs,
+    runTransaction,
     setDoc,
     updateDoc
 } from 'firebase/firestore';
@@ -60,6 +61,8 @@ describe('private AI Firestore rules', () => {
 
         expect(teamRules).toContain('allow read: if isTeamOwnerOrAdmin(teamId) &&');
         expect(teamRules).toContain("resource.data.get('status', '') == 'pending'");
+        expect(teamRules).toContain("resource.data.get('status', '') == 'executing'");
+        expect(teamRules).toContain("resource.data.get('userId', '') == request.auth.uid");
         expect(teamRules).toContain("resource.data.get('expiresAtAt', null) > request.time");
         expect(teamRules).toContain('allow create: if isVerifiedForSensitiveWrite() &&');
         expect(teamRules).toContain("request.resource.data.get('userId', '') == request.auth.uid");
@@ -193,6 +196,45 @@ describe('private AI Firestore rules', () => {
             await assertFails(setDoc(doc(unrelatedDb, 'teams/team-1/privateAiPendingActions/injected'), {
                 args: { operations: [] }
             }));
+        });
+
+        it('lets only the originating current manager restage an executing payload', async () => {
+            const ownerDb = testEnv.authenticatedContext('owner').firestore();
+            const secondManagerDb = testEnv.authenticatedContext('second-manager', {
+                email: 'second-manager@example.com',
+                email_verified: true
+            }).firestore();
+            const ownerPayloadRef = doc(ownerDb, 'teams/team-1/privateAiPendingActions/seeded');
+            const secondManagerPayloadRef = doc(secondManagerDb, 'teams/team-1/privateAiPendingActions/seeded');
+
+            await assertSucceeds(updateDoc(ownerPayloadRef, { status: 'executing' }));
+            await assertFails(getDoc(secondManagerPayloadRef));
+            await assertSucceeds(runTransaction(ownerDb, async (transaction) => {
+                const snapshot = await transaction.get(ownerPayloadRef);
+                expect(snapshot.data().status).toBe('executing');
+                transaction.update(ownerPayloadRef, {
+                    status: 'pending',
+                    args: {
+                        rows: [{
+                            rowNumber: 2,
+                            eventType: 'practice',
+                            startsAt: '2026-07-31T18:00:00.000Z'
+                        }]
+                    }
+                });
+            }));
+
+            const restoredSnapshot = await assertSucceeds(getDoc(ownerPayloadRef));
+            expect(restoredSnapshot.data()).toMatchObject({
+                status: 'pending',
+                args: {
+                    rows: [{
+                        rowNumber: 2,
+                        eventType: 'practice',
+                        startsAt: '2026-07-31T18:00:00.000Z'
+                    }]
+                }
+            });
         });
 
         it('revokes roster and schedule preview details while retaining only safe chat summaries', async () => {

@@ -3160,9 +3160,11 @@ service cloud.firestore {
       // remain behind the team's current manager authorization boundary.
       match /privateAiPendingActions/{actionId} {
         allow read: if isTeamOwnerOrAdmin(teamId) &&
-                       resource.data.get('status', '') == 'pending' &&
                        resource.data.get('expiresAtAt', null) is timestamp &&
-                       resource.data.get('expiresAtAt', null) > request.time;
+                       resource.data.get('expiresAtAt', null) > request.time &&
+                       (resource.data.get('status', '') == 'pending' ||
+                        (resource.data.get('status', '') == 'executing' &&
+                         resource.data.get('userId', '') == request.auth.uid));
         allow create: if isVerifiedForSensitiveWrite() &&
                         isTeamOwnerOrAdmin(teamId) &&
                         request.resource.data.get('userId', '') == request.auth.uid;
