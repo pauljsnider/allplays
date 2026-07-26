@@ -1,7 +1,6 @@
 name: app-github-pages
 
 on:
-  pull_request:
   workflow_dispatch:
 
 permissions: {}

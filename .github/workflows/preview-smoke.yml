@@ -1,11 +1,8 @@
 name: preview-smoke
 
 on:
-  pull_request:
-    types:
-      - opened
-      - synchronize
-      - reopened
+  workflow_call:
+  workflow_dispatch:
 
 concurrency:
   group: preview-smoke-${{ github.event.pull_request.number }}

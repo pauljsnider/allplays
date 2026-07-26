@@ -2,10 +2,13 @@
 
 ## Required invariants
 
-The `deploy-preview` pull-request workflow executes untrusted PR code. It must
-never receive a Firebase credential or a repository token with write
-permissions. It may only test, build, stage public Hosting content, and upload
-the single `firebase-preview-hosting-bundle` artifact.
+The `pr-integration` pull-request workflow calls the reusable
+`deploy-preview` artifact builder, which executes untrusted PR code. Neither may
+receive a Firebase credential or a repository token with write permissions.
+The reusable builder may only build, stage public Hosting content, and upload
+the single `firebase-preview-hosting-bundle` artifact. The same consolidated
+run must also pass the reusable regression and preview-smoke workflows before
+its stable `preview-smoke` aggregate succeeds.
 
 The `deploy-preview-trusted` workflow is the only preview deployer. GitHub runs
 its `workflow_run` definition from the default branch. It checks out only the
@@ -86,8 +89,8 @@ Before merging a change to either preview workflow:
 5. Review the exact PR head SHA after all requested automated reviews and CI
    complete. Any new commit invalidates prior review evidence.
 
-The first `workflow_run` preview cannot execute until this workflow and its
-trusted verifier scripts are present on the default branch. The PR workflow's
+The first `workflow_run` preview cannot execute until `pr-integration` and its
+trusted verifier scripts are present on the default branch. The reusable
 artifact build remains testable before merge; the first post-merge PR run is
 the deployment canary.
 

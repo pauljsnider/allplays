@@ -1,14 +1,7 @@
 name: mobile-build
 
 on:
-  pull_request:
-    types:
-      - opened
-      - synchronize
-      - reopened
-  push:
-    branches:
-      - master
+  workflow_call:
   workflow_dispatch:
 
 concurrency:

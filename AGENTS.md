@@ -84,4 +84,18 @@ HTML test pages in the repo root (`test-foul-tracking.html`, `test-pr-changes.ht
 - Update Firebase web config in `js/firebase.js` and `js/firebase-images.js` when changing projects.
 - Ensure Auth authorized domains include local dev and the deployed host.
 - Public Firebase config in app/native bundles is expected; do not commit service account keys, private API keys, provisioning profiles, or signing certificates.
-- GitHub Pages deployment uses `.github/workflows/app-github-pages.yml` and `scripts/stage-pages-bundle.mjs` to publish the legacy site root plus the React build under `/app/`.
+- Pull-request CI has two code-head entrypoints: `pr-fast` for unit and app
+  quality checks, and `pr-integration` for reusable regression, native, preview
+  smoke, and untrusted preview-artifact work. Preserve the stable
+  `unit-tests`, `cache-bust-guard`, `app-quality`, `mobile-build`, and
+  `preview-smoke` contexts.
+- `external-claim` is ownership metadata and must not trigger or restart CI.
+  Legacy workflow files are reusable/manual only; do not restore competing
+  pull-request or master-push triggers.
+- GitHub Pages publication is serialized behind the exact-SHA production
+  release in `.github/workflows/deploy-prod.yml`.
+  `.github/workflows/app-github-pages.yml` is manual validation only.
+- Keep the untrusted reusable `deploy-preview.yml` builder separate from the
+  default-branch `deploy-preview-trusted.yml` OIDC workflow. The trusted
+  verifier is bound to the successful `pr-integration` run and exact current
+  head.

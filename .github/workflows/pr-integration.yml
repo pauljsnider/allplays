@@ -1,0 +1,82 @@
+name: pr-integration
+
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-integration-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  regression-integration:
+    uses: ./.github/workflows/regression-guards.yml
+
+  mobile-integration:
+    uses: ./.github/workflows/mobile-build.yml
+
+  preview-integration:
+    uses: ./.github/workflows/preview-smoke.yml
+    secrets: inherit
+
+  preview-artifact:
+    uses: ./.github/workflows/deploy-preview.yml
+
+  mobile-build:
+    name: mobile-build
+    needs: mobile-integration
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enforce reusable mobile workflow result
+        env:
+          MOBILE_RESULT: ${{ needs.mobile-integration.result }}
+        run: |
+          if [ "$MOBILE_RESULT" != "success" ]; then
+            echo "Mobile integration did not succeed ($MOBILE_RESULT)." >&2
+            exit 1
+          fi
+          echo "Mobile integration succeeded or safely skipped non-mobile work."
+
+  preview-smoke:
+    name: preview-smoke
+    needs:
+      - regression-integration
+      - preview-integration
+      - preview-artifact
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enforce complete integration result
+        env:
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          PREVIEW_ARTIFACT_RESULT: ${{ needs.preview-artifact.result }}
+          PREVIEW_RESULT: ${{ needs.preview-integration.result }}
+          REGRESSION_RESULT: ${{ needs.regression-integration.result }}
+        run: |
+          set -euo pipefail
+          if [ "$REGRESSION_RESULT" != "success" ]; then
+            echo "Regression integration did not succeed ($REGRESSION_RESULT)." >&2
+            exit 1
+          fi
+          if [ "$PREVIEW_RESULT" != "success" ]; then
+            echo "Preview smoke integration did not succeed ($PREVIEW_RESULT)." >&2
+            exit 1
+          fi
+          if [ "$HEAD_REPOSITORY" = "$GITHUB_REPOSITORY" ] && [ "$PREVIEW_ARTIFACT_RESULT" != "success" ]; then
+            echo "Same-repository preview artifact did not succeed ($PREVIEW_ARTIFACT_RESULT)." >&2
+            exit 1
+          fi
+          if [ "$HEAD_REPOSITORY" != "$GITHUB_REPOSITORY" ] && \
+             [ "$PREVIEW_ARTIFACT_RESULT" != "success" ] && \
+             [ "$PREVIEW_ARTIFACT_RESULT" != "skipped" ]; then
+            echo "Fork preview artifact had an unexpected result ($PREVIEW_ARTIFACT_RESULT)." >&2
+            exit 1
+          fi
+          echo "Integration checks succeeded with fail-closed stable contexts."

@@ -1,10 +1,8 @@
 name: regression-guards
 
 on:
-  pull_request:
-  push:
-    branches:
-      - master
+  workflow_call:
+  workflow_dispatch:
 
 concurrency:
   group: regression-guards-${{ github.workflow }}-${{ github.ref }}
