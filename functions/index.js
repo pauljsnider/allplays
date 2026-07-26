@@ -132,6 +132,7 @@ const {
 } = require('./auth-email-core.cjs');
 const { createAuthEmailCallableHandlers } = require('./auth-email-callables.cjs');
 const { createAuthEmailDeliveryStore } = require('./auth-email-delivery-store.cjs');
+const { buildInviteMailDocId } = require('./invite-email-queue-core.cjs');
 const { createResendAuthEmailDelivery } = require('./resend-auth-email-delivery.cjs');
 const { createPasswordResetEmailWorker } = require('./auth-email-password-reset-worker.cjs');
 const { createPasswordResetEmailSweeper } = require('./auth-email-password-reset-sweeper.cjs');
@@ -2458,16 +2459,11 @@ const releaseAuthEmailDelivery = authEmailDeliveryStore.release;
 const queueAuthEmailDelivery = authEmailDeliveryStore.queue;
 const enqueuePasswordResetRequest = authEmailDeliveryStore.enqueuePasswordResetRequest;
 
-function buildInviteMailDocId(codeId) {
-  const safeCodeId = String(codeId || '').replace(/[^\w.-]+/g, '_').slice(0, 240);
-  return `invite_${safeCodeId}`;
-}
-
 function isAlreadyExistsError(error) {
   return error?.code === 6 || error?.code === '6' || error?.code === 'already-exists';
 }
 
-async function queueInviteEmailForCode(codeId, codeData = {}) {
+async function queueInviteEmailForCode(codeId, codeData = {}, options = {}) {
   const type = String(codeData.type || '').trim().toLowerCase();
   const email = normalizeParentInviteEmail(codeData.email);
   const code = String(codeData.code || '').trim().toUpperCase();
@@ -2476,7 +2472,12 @@ async function queueInviteEmailForCode(codeId, codeData = {}) {
   }
 
   const message = buildParentInviteEmailMessage({ ...codeData, type, code });
-  const mailRef = firestore.collection('mail').doc(buildInviteMailDocId(codeId));
+  const forceNewDelivery = options.forceNewDelivery === true;
+  const deliveryId = String(options.deliveryId || '').trim();
+  const mailRef = firestore.collection('mail').doc(buildInviteMailDocId(codeId, {
+    forceNewDelivery,
+    deliveryId
+  }));
   try {
     await mailRef.create({
       to: [email],
@@ -2492,7 +2493,9 @@ async function queueInviteEmailForCode(codeId, codeData = {}) {
         accessCodeId: String(codeId || '').trim(),
         teamId: String(codeData.teamId || '').trim() || null,
         playerId: String(codeData.playerId || '').trim() || null,
-        generatedBy: String(codeData.generatedBy || '').trim() || null
+        generatedBy: String(codeData.generatedBy || '').trim() || null,
+        deliveryId: forceNewDelivery ? deliveryId : null,
+        isResend: forceNewDelivery
       }
     });
     return { queued: true, deduplicated: false, signupUrl: message.signupUrl };
@@ -2637,7 +2640,15 @@ exports.queueInviteEmail = functions.https.onCall(async (data, context) => {
     throw new functions.https.HttpsError('failed-precondition', 'Invite does not have a valid recipient email.');
   }
 
-  const result = await queueInviteEmailForCode(invite.id, invite.data);
+  const forceNewDelivery = data?.forceNewDelivery === true;
+  const deliveryId = String(data?.deliveryId || '').trim();
+  if (forceNewDelivery && !/^[A-Za-z0-9_.-]{8,80}$/.test(deliveryId)) {
+    throw new functions.https.HttpsError('invalid-argument', 'A valid delivery ID is required to resend an invite email.');
+  }
+  const result = await queueInviteEmailForCode(invite.id, invite.data, {
+    forceNewDelivery,
+    deliveryId
+  });
   if (!result.queued) {
     throw new functions.https.HttpsError('failed-precondition', 'Invite is not eligible for email delivery.');
   }

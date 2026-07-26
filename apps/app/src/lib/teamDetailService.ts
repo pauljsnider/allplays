@@ -1283,7 +1283,7 @@ export async function retryRosterParentInviteEmailForApp(
     throw new Error('No retryable invitation matched that player and email. Create a new parent invitation instead.');
   }
 
-  const queueResult = await queueInviteEmail(code);
+  const queueResult = await queueInviteEmail(code, { forceNewDelivery: true });
   return {
     code,
     email: normalizedEmail,

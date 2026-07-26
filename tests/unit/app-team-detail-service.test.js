@@ -458,7 +458,7 @@ describe('React app team detail model', () => {
                 })
             }]
         });
-        queueInviteEmail.mockResolvedValue({ queued: true, deduplicated: true });
+        queueInviteEmail.mockResolvedValue({ queued: true, deduplicated: false });
 
         const result = await retryRosterParentInviteEmailForApp(
             'team-1',
@@ -467,13 +467,13 @@ describe('React app team detail model', () => {
             ' Parent@Example.com '
         );
 
-        expect(queueInviteEmail).toHaveBeenCalledWith('ABCD1234');
+        expect(queueInviteEmail).toHaveBeenCalledWith('ABCD1234', { forceNewDelivery: true });
         expect(inviteParent).not.toHaveBeenCalled();
         expect(result).toMatchObject({
             code: 'ABCD1234',
             email: 'parent@example.com',
             emailQueued: true,
-            emailDeduplicated: true,
+            emailDeduplicated: false,
             teamName: 'Bears',
             playerName: 'Pat Star'
         });
