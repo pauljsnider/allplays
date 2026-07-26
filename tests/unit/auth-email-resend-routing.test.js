@@ -141,6 +141,8 @@ describe('authentication email delivery routing', () => {
         expect(productionSource).toContain('if (( retry_delay_seconds > 120 )); then');
         expect(productionSource).toContain('test_firestore_rules_api 2 20');
         expect(productionSource).toContain('retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 3 20');
+        expect(productionSource).toContain('if verify_active_firestore_rules; then');
+        expect(productionSource).toContain('retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 20');
         expect(productionSource).toContain('projects:test calls bounded to at most five per release run');
         expect(productionSource).toContain('retry_firebase_deploy "hosting,functions" "application"');
         const retryEnabledDeploy = productionSource.indexOf('"retry-enabled-functions"');
@@ -151,6 +153,7 @@ describe('authentication email delivery routing', () => {
         const unchangedBranch = productionSource.slice(unchangedBranchStart, conditionalEnd);
         const applicationDeploy = productionSource.lastIndexOf('retry_firebase_deploy "hosting,functions" "application"');
         expect(changedBranch).toContain('"firestore"');
+        expect(changedBranch).toContain('"firestore-indexes"');
         expect(unchangedBranch).not.toContain('"application"');
         expect(unchangedBranch).not.toContain('"firestore"');
         expect(retryEnabledDeploy).toBeGreaterThan(conditionalEnd);
