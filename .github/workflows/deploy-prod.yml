@@ -809,14 +809,23 @@ jobs:
 
       - name: Validate Pages handoff identity
         env:
+          EXPECTED_APP_CHECK_SITE_KEY: ${{ vars.APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY }}
           PREPARED_HEAD_SHA: ${{ needs.prepare-deploy.outputs.head_sha }}
         run: |
           set -euo pipefail
           bundle="$RUNNER_TEMP/firebase-production-ready"
+          runtime_config="$bundle/site/.well-known/allplays-runtime-config.json"
           [[ "$PREPARED_HEAD_SHA" == "$GITHUB_SHA" ]]
           grep -Fxq "$GITHUB_SHA" "$bundle/head-sha"
           test -f "$bundle/site/index.html"
           test -f "$bundle/site/app/index.html"
+          test -f "$bundle/site/.nojekyll"
+          [[ "$EXPECTED_APP_CHECK_SITE_KEY" =~ ^[A-Za-z0-9_-]{10,200}$ ]]
+          jq -e \
+            --arg expected_site_key "$EXPECTED_APP_CHECK_SITE_KEY" \
+            '.appCheck.enabled == true and
+             .appCheck.recaptchaEnterpriseSiteKey == $expected_site_key' \
+            "$runtime_config" >/dev/null
 
       - name: Upload exact-SHA Pages artifact
         uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3

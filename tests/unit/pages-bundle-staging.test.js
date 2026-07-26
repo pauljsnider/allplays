@@ -491,6 +491,10 @@ describe('pages bundle staging', () => {
         expect(pagesWorkflow).not.toContain('\n  deploy:');
         expect(deployJob).toContain("vars.RELEASE_GITHUB_PAGES_DEPLOY_ENABLED == 'true'");
         expect(deployJob).toContain('grep -Fxq "$GITHUB_SHA" "$bundle/head-sha"');
+        expect(deployJob).toContain('EXPECTED_APP_CHECK_SITE_KEY: ${{ vars.APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY }}');
+        expect(deployJob).toContain('test -f "$bundle/site/.nojekyll"');
+        expect(deployJob).toContain('.appCheck.enabled == true');
+        expect(deployJob).toContain('.appCheck.recaptchaEnterpriseSiteKey == $expected_site_key');
         expect(downloadIndex).toBeGreaterThan(-1);
         expect(verifyIndex).toBeGreaterThan(downloadIndex);
         expect(pagesUploadIndex).toBeGreaterThan(verifyIndex);
