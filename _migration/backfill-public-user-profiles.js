@@ -267,6 +267,38 @@ export async function reconcileBackfillStaffMemberships(
     return changed;
 }
 
+export async function reconcileBackfillAuthIdentity(
+    db,
+    userId,
+    authRecord,
+    options = {}
+) {
+    const apply = options.apply === true;
+    const logger = options.logger || console;
+    const identityRef = db.doc(`publicProfileAuthIdentities/${userId}`);
+    const identitySnap = await identityRef.get();
+    const email = compactPublicProfileString(authRecord?.email).toLowerCase();
+    const currentEmail = identitySnap.exists
+        ? compactPublicProfileString(identitySnap.data()?.email).toLowerCase()
+        : '';
+    if (email === currentEmail && Boolean(email) === identitySnap.exists) return 0;
+
+    if (!email) {
+        logger.warn(`${apply ? 'DELETE' : 'WOULD DELETE'} ${identityRef.path}`);
+        if (apply) await identityRef.delete();
+        return 1;
+    }
+
+    logger.log(`${apply ? 'WRITE' : 'WOULD WRITE'} ${identityRef.path}`);
+    if (apply) {
+        await identityRef.set({
+            email,
+            ...(options.updatedAt !== undefined ? { updatedAt: options.updatedAt } : {})
+        });
+    }
+    return 1;
+}
+
 export function resolveBackfillExitCode(result = {}) {
     return Number(result.failed || 0) > 0 ? 1 : 0;
 }
@@ -289,6 +321,7 @@ export async function backfillPublicUserProfiles() {
     let changed = 0;
     let unchanged = 0;
     let staffMembershipsChanged = 0;
+    let authIdentitiesChanged = 0;
     let missingAuth = 0;
     let unverified = 0;
     let orphaned = 0;
@@ -307,6 +340,12 @@ export async function backfillPublicUserProfiles() {
             { apply: APPLY }
         );
         if (authResolution.status === 'missing-auth') {
+            authIdentitiesChanged += await reconcileBackfillAuthIdentity(
+                db,
+                userDoc.id,
+                null,
+                { apply: APPLY }
+            );
             staffMembershipsChanged += await reconcileBackfillStaffMemberships(
                 db,
                 userDoc.id,
@@ -317,6 +356,12 @@ export async function backfillPublicUserProfiles() {
             return;
         }
         if (authResolution.status === 'unverified') {
+            authIdentitiesChanged += await reconcileBackfillAuthIdentity(
+                db,
+                userDoc.id,
+                null,
+                { apply: APPLY }
+            );
             staffMembershipsChanged += await reconcileBackfillStaffMemberships(
                 db,
                 userDoc.id,
@@ -351,6 +396,12 @@ export async function backfillPublicUserProfiles() {
         const current = currentSnap.exists ? comparableProjection(currentSnap.data() || {}) : null;
         const next = comparableProjection(projection);
         if (current && JSON.stringify(current) === JSON.stringify(next)) {
+            authIdentitiesChanged += await reconcileBackfillAuthIdentity(
+                db,
+                userDoc.id,
+                authRecord,
+                { apply: APPLY, updatedAt: FieldValue.serverTimestamp() }
+            );
             unchanged++;
             return;
         }
@@ -365,6 +416,12 @@ export async function backfillPublicUserProfiles() {
                 updatedAt: FieldValue.serverTimestamp()
             }, { merge: true });
         }
+        authIdentitiesChanged += await reconcileBackfillAuthIdentity(
+            db,
+            userDoc.id,
+            authRecord,
+            { apply: APPLY, updatedAt: FieldValue.serverTimestamp() }
+        );
         changed++;
     });
 
@@ -373,6 +430,12 @@ export async function backfillPublicUserProfiles() {
             apply: APPLY,
             reason: 'private user profile not found.'
         });
+        authIdentitiesChanged += await reconcileBackfillAuthIdentity(
+            db,
+            profileDoc.id,
+            null,
+            { apply: APPLY }
+        );
         staffMembershipsChanged += await reconcileBackfillStaffMemberships(
             db,
             profileDoc.id,
@@ -385,6 +448,7 @@ export async function backfillPublicUserProfiles() {
     console.log(`Changed: ${changed}`);
     console.log(`Unchanged: ${unchanged}`);
     console.log(`Staff memberships changed: ${staffMembershipsChanged}`);
+    console.log(`Auth identities changed: ${authIdentitiesChanged}`);
     console.log(`Missing Auth users: ${missingAuth}`);
     console.log(`Unverified users: ${unverified}`);
     console.log(`Orphaned public profiles: ${orphaned}`);
@@ -393,6 +457,7 @@ export async function backfillPublicUserProfiles() {
         changed,
         unchanged,
         staffMembershipsChanged,
+        authIdentitiesChanged,
         missingAuth,
         unverified,
         orphaned,

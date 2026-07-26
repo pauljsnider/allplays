@@ -188,6 +188,7 @@ function createPublicProfileAuthDeleteHandler({ firestore }) {
     ]);
     const refs = [
       firestore.doc(`publicUserProfiles/${userId}`),
+      firestore.doc(`publicProfileAuthIdentities/${userId}`),
       ...(staffMembershipSnap.docs || []).map((entry) => entry.ref)
     ];
     await Promise.all(refs.map((ref) => ref.delete()));

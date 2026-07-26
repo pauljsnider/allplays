@@ -2841,8 +2841,12 @@ async function syncPublicUserProfileProjectionForUser(userId, options = {}) {
 
   const userSnap = options.userSnap || await firestore.doc(`users/${normalizedUserId}`).get();
   const publicProfileRef = firestore.doc(`publicUserProfiles/${normalizedUserId}`);
+  const authIdentityRef = firestore.doc(`publicProfileAuthIdentities/${normalizedUserId}`);
   if (!userSnap.exists) {
-    await publicProfileRef.delete();
+    await Promise.all([
+      publicProfileRef.delete(),
+      authIdentityRef.delete()
+    ]);
     return null;
   }
 
@@ -2858,6 +2862,7 @@ async function syncPublicUserProfileProjectionForUser(userId, options = {}) {
     authIdentity
   );
   if (removedForIneligibleAuth) {
+    await authIdentityRef.delete();
     functions.logger.info('Public profile projection removed for ineligible Auth identity.', {
       userId: normalizedUserId,
       reason: authIdentity.userMissing === true ? 'auth-user-missing' : 'email-unverified'
@@ -2871,7 +2876,13 @@ async function syncPublicUserProfileProjectionForUser(userId, options = {}) {
     trustedPhotoUrl: authIdentity.photoUrl || null,
     discoveryTeamIds
   });
-  await publicProfileRef.set(payload, { merge: true });
+  const batch = firestore.batch();
+  batch.set(publicProfileRef, payload, { merge: true });
+  batch.set(authIdentityRef, {
+    email: String(authIdentity.email || '').trim().toLowerCase(),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+  });
+  await batch.commit();
   return payload;
 }
 
@@ -7368,8 +7379,12 @@ exports.syncPublicUserProfileOnUserWrite = functions
   .document('users/{uid}')
   .onWrite(async (change, context) => {
     const publicProfileRef = firestore.doc(`publicUserProfiles/${context.params.uid}`);
+    const authIdentityRef = firestore.doc(`publicProfileAuthIdentities/${context.params.uid}`);
     if (!change.after.exists) {
-      await publicProfileRef.delete();
+      await Promise.all([
+        publicProfileRef.delete(),
+        authIdentityRef.delete()
+      ]);
       return null;
     }
     const before = change.before.exists ? (change.before.data() || {}) : null;

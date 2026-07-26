@@ -1543,10 +1543,16 @@ service cloud.firestore {
     function currentUserPublicProfileTeamIds() {
       let userPath = /databases/$(database)/documents/users/$(request.auth.uid);
       let publicProfilePath = /databases/$(database)/documents/publicUserProfiles/$(request.auth.uid);
+      let authIdentityPath = /databases/$(database)/documents/publicProfileAuthIdentities/$(request.auth.uid);
       let privateParentTeamIds = isSignedIn() && exists(userPath)
         ? get(userPath).data.get('parentTeamIds', [])
         : [];
-      let projectedTeamIds = isSignedIn() && exists(publicProfilePath)
+      let projectedAuthIdentityIsCurrent = isSignedIn() &&
+        request.auth.token.email != null &&
+        exists(authIdentityPath) &&
+        get(authIdentityPath).data.get('email', '') is string &&
+        get(authIdentityPath).data.get('email', '').lower() == request.auth.token.email.lower();
+      let projectedTeamIds = projectedAuthIdentityIsCurrent && exists(publicProfilePath)
         ? get(publicProfilePath).data.get('discoveryTeamIds', [])
         : [];
       return projectedTeamIds.concat(privateParentTeamIds);
@@ -2753,6 +2759,10 @@ service cloud.firestore {
     }
 
     match /publicProfileStaffMemberships/{membershipId} {
+      allow read, write: if false;
+    }
+
+    match /publicProfileAuthIdentities/{userId} {
       allow read, write: if false;
     }
 

@@ -66,6 +66,7 @@ test('Auth deletion removes the public profile and normalized staff memberships'
   const handler = createPublicProfileAuthDeleteHandler({ firestore });
   assert.equal(await handler({ uid: 'deleted-user' }), null);
   assert.deepEqual(deletedPaths.sort(), [
+    'publicProfileAuthIdentities/deleted-user',
     'publicProfileStaffMemberships/staff-1',
     'publicProfileStaffMemberships/staff-2',
     'publicUserProfiles/deleted-user'

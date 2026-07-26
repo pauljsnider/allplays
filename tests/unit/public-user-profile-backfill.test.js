@@ -4,6 +4,7 @@ import {
     cleanupIneligiblePublicProfile,
     loadEligibleBackfillAuthRecord,
     processBackfillUsers,
+    reconcileBackfillAuthIdentity,
     reconcileBackfillStaffMemberships,
     resolveBackfillExitCode,
     resolveOrphanPublicProfileDocs,
@@ -273,5 +274,41 @@ describe('public user profile backfill', () => {
             userId: 'coach-user',
             updatedAt: 'timestamp'
         });
+    });
+
+    it('writes the current Auth email identity and removes it when Auth is missing', async () => {
+        const identity = {
+            exists: false,
+            data: () => ({}),
+            get: vi.fn(),
+            set: vi.fn(),
+            delete: vi.fn(),
+            path: 'publicProfileAuthIdentities/coach-user'
+        };
+        identity.get.mockImplementation(async () => identity);
+        const db = {
+            doc: vi.fn().mockReturnValue(identity)
+        };
+
+        await expect(reconcileBackfillAuthIdentity(
+            db,
+            'coach-user',
+            { email: 'Coach@Example.com' },
+            { apply: true, logger: { log: vi.fn(), warn: vi.fn() }, updatedAt: 'timestamp' }
+        )).resolves.toBe(1);
+        expect(identity.set).toHaveBeenCalledWith({
+            email: 'coach@example.com',
+            updatedAt: 'timestamp'
+        });
+
+        identity.exists = true;
+        identity.data = () => ({ email: 'coach@example.com' });
+        await expect(reconcileBackfillAuthIdentity(
+            db,
+            'coach-user',
+            null,
+            { apply: true, logger: { log: vi.fn(), warn: vi.fn() } }
+        )).resolves.toBe(1);
+        expect(identity.delete).toHaveBeenCalledOnce();
     });
 });
