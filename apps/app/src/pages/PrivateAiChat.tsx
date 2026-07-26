@@ -614,12 +614,14 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
     setDraft('');
     setAttachment(null);
     setActiveLaunchContext(null);
+    pendingLaunchIntentRef.current = '';
   };
 
   const selectConversation = (conversationId: string) => {
     setActiveConversationId(conversationId || DEFAULT_PRIVATE_AI_CONVERSATION_ID);
     setStatus(null);
     setActiveLaunchContext(null);
+    pendingLaunchIntentRef.current = '';
   };
 
   const stats = useMemo(() => ({
